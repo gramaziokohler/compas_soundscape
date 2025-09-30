@@ -7,8 +7,8 @@ build-backend = "setuptools.build_meta"
 # ============================================================================
 
 [project]
-name = "compas_acoustics_test"
-description = "Toy project to test template for compas acoustics"
+name = "compas_soundscape"
+description = "Toy project to test template for Compas Soundscape"
 keywords = []
 authors = [
     { name = "Taha Bouizargan", email = "tbouizargan@ethz.ch" },
@@ -31,11 +31,11 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://.github.io/compas_acoustics_test"
-Documentation = "https://.github.io/compas_acoustics_test"
+Homepage = "https://.github.io/compas_soundscape"
+Documentation = "https://.github.io/compas_soundscape"
 Repository = ""
 Changelog = ""
-Issues = "https://github.com//compas_acoustics_test/issues"
+Issues = "https://github.com//compas_soundscape/issues"
 Forum = "https://forum.compas-framework.org/"
 
 # ============================================================================
@@ -48,7 +48,7 @@ include-package-data = true
 zip-safe = false
 
 [tool.setuptools.dynamic]
-version = { attr = "compas_acoustics_test.__version__" }
+version = { attr = "compas_soundscape.__version__" }
 dependencies = { file = "requirements.txt" }
 optional-dependencies = { dev = { file = "requirements-dev.txt" } }
 
@@ -61,7 +61,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-testpaths = ["tests", "src/compas_acoustics_test"]
+testpaths = ["tests", "src/compas_soundscape"]
 python_files = ["test_*.py", "*_test.py", "test.py"]
 addopts = [
     "-ra",
@@ -89,7 +89,7 @@ commit = true
 tag = true
 
 [[tool.bumpversion.files]]
-filename = "src/compas_acoustics_test/__init__.py"
+filename = "src/compas_soundscape/__init__.py"
 search = "{current_version}"
 replace = "{new_version}"
 
@@ -120,7 +120,7 @@ select = ["E", "F", "I"]
 
 [tool.ruff.lint.isort]
 force-single-line = true
-known-first-party = ["compas_acoustics_test"]
+known-first-party = ["compas_soundscape"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
