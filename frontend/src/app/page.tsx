@@ -1,158 +1,116 @@
-// src/app/page.tsx
-
 "use client";
 
-import Image from "next/image";
-import { useEffect, useRef, useState } from "react";
-import * as THREE from "three";
+import { useEffect, useState, useCallback } from "react";
+import { ThreeScene } from "@/components/scene/ThreeScene";
+import { Sidebar } from "@/components/layout/Sidebar";
+import { useFileUpload } from "@/hooks/useFileUpload";
+import { useTextGeneration } from "@/hooks/useTextGeneration";
+import { useSoundGeneration } from "@/hooks/useSoundGeneration";
+import { useAudioControls } from "@/hooks/useAudioControls";
+import { apiService } from "@/services/api";
+import { API_BASE_URL } from "@/lib/constants";
+import type { LoadTab } from "@/types";
 
-// Define a type for our COMPAS geometry data for TypeScript
-interface CompasGeometry {
-  vertices: number[][]; // Array of [x, y, z]
-  faces: number[][];    // Array of [i, j, k, ...]
-}
-
-// Helper function to triangulate faces (e.g., convert quads to two triangles)
-function triangulate(faces: number[][]): number[] {
-  const indices: number[] = [];
-  for (const face of faces) {
-    if (face.length < 3) continue; // Skip points and lines
-    // The first vertex is the pivot
-    const v0 = face[0];
-    for (let i = 1; i < face.length - 1; i++) {
-      const v1 = face[i];
-      const v2 = face[i + 1];
-      indices.push(v0, v1, v2);
-    }
-  }
-  return indices;
-}
-
-
-function ThreeScene() {
-  const mountRef = useRef<HTMLDivElement>(null);
-  const [geometryData, setGeometryData] = useState<CompasGeometry | null>(null);
-
-  // Effect to fetch data from the backend
-  useEffect(() => {
-    const fetchGeometry = async () => {
-      try {
-        // Fetch data from your FastAPI backend
-        const response = await fetch("http://127.0.0.1:8000/api/geometry");
-        if (!response.ok) {
-          throw new Error("Network response was not ok");
-        }
-        const data: CompasGeometry = await response.json();
-        setGeometryData(data);
-      } catch (error) {
-        console.error("Failed to fetch geometry:", error);
-      }
-    };
-
-    fetchGeometry();
-  }, []); // Empty dependency array means this runs once on mount
-
-  // Effect to set up the Three.js scene and render the fetched geometry
-  useEffect(() => {
-    if (!mountRef.current || !geometryData) return;
-
-    // === THREE.JS SCENE SETUP ===
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(
-      75,
-      window.innerWidth / window.innerHeight,
-      0.1,
-      1000
-    );
-    camera.position.z = 5;
-
-    const renderer = new THREE.WebGLRenderer({ alpha: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    mountRef.current.appendChild(renderer.domElement);
-
-    // === GEOMETRY CREATION FROM FETCHED DATA ===
-    const vertices = new Float32Array(geometryData.vertices.flat());
-    const indices = triangulate(geometryData.faces);
-
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
-    geometry.setIndex(indices);
-    geometry.computeVertexNormals(); // For lighting, if you add it later
-
-    const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: false, fog: true });
-    const fog = new THREE.Fog(0x3453E0, 1, 10);
-    scene.fog = fog;
-    const mesh = new THREE.Mesh(geometry, material);
-    scene.add(mesh);
-
-    // === ANIMATION LOOP ===
-    const animate = () => {
-      mesh.rotation.x += 0.005;
-      mesh.rotation.y += 0.005;
-      renderer.render(scene, camera);
-    };
-    renderer.setAnimationLoop(animate);
-    
-    // === RESIZE HANDLING AND CLEANUP ===
-    const handleResize = () => {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    };
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      if (mountRef.current) {
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-        mountRef.current.removeChild(renderer.domElement);
-      }
-      renderer.setAnimationLoop(null);
-      geometry.dispose();
-      material.dispose();
-    };
-  }, [geometryData]); // This effect re-runs if geometryData changes
-
-  return (
-    <div
-      ref={mountRef}
-      style={{
-        position: "fixed",
-        top: -200,
-        left: 0,
-        width: "100%",
-        height: "100%",
-        zIndex: -1,
-      }}
-    />
-  );
-}
-
-// Your original page component remains the same
 export default function Home() {
+  const fileUpload = useFileUpload();
+  const textGen = useTextGeneration(fileUpload.modelEntities);
+  const soundGen = useSoundGeneration(fileUpload.geometryBounds);
+  const audioControls = useAudioControls(soundGen.generatedSounds);
+  const [activeLoadTab, setActiveLoadTab] = useState<LoadTab>('upload');
+
+  // Load sounds from text generation into sound generation tab
+  const handleLoadSoundsToGeneration = useCallback(() => {
+    if (textGen.pendingSoundConfigs.length > 0) {
+      soundGen.setSoundConfigsFromPrompts(textGen.pendingSoundConfigs);
+      textGen.setActiveAiTab('sound');
+      textGen.setPendingSoundConfigs([]);
+    }
+  }, [textGen.pendingSoundConfigs, soundGen, textGen]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    apiService.cleanupGeneratedSounds();
+    return () => {
+      navigator.sendBeacon(`${API_BASE_URL}/api/cleanup-generated-sounds`);
+    };
+  }, []);
+
   return (
-    <>
-      <ThreeScene />
-      <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-        <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-          <Image
-            className="dark:invert"
-            src="/next.svg"
-            alt="Next.js logo"
-            width={180}
-            height={38}
-            priority
-          />
-          <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-              Compas geometry fetched from the FastAPI backend at{" "}
-              <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-                http://127.0.0.1:8000/api/geometry
-              </code>.
-          </ol>
-          {/* ... The rest of your page content ... */}
-        </main>
-        {/* ... The rest of your page content ... */}
-      </div>
-    </>
+    <div className="flex w-screen h-screen bg-gray-100 dark:bg-gray-900">
+      <Sidebar
+        // File upload props
+        file={fileUpload.file}
+        geometryData={fileUpload.geometryData}
+        uploadError={fileUpload.uploadError}
+        isUploading={fileUpload.isUploading}
+        isDragging={fileUpload.isDragging}
+        modelEntities={fileUpload.modelEntities}
+        isAnalyzingModel={fileUpload.isAnalyzingModel}
+        analysisProgress={fileUpload.analysisProgress}
+        onFileChange={fileUpload.handleFileChange}
+        onDragOver={fileUpload.handleDragOver}
+        onDragLeave={fileUpload.handleDragLeave}
+        onDrop={fileUpload.handleDrop}
+        onUpload={fileUpload.handleUpload}
+        onLoadSampleIfc={fileUpload.handleLoadSampleIfc}
+        onClearModel={fileUpload.clearModel}
+        activeLoadTab={activeLoadTab}
+        setActiveLoadTab={setActiveLoadTab}
+
+        // Text generation props
+        aiPrompt={textGen.aiPrompt}
+        numSounds={textGen.numSounds}
+        isGenerating={textGen.isGenerating}
+        aiError={textGen.aiError}
+        aiResponse={textGen.aiResponse}
+        llmProgress={textGen.llmProgress}
+        showConfirmLoadSounds={textGen.showConfirmLoadSounds}
+        pendingSoundConfigs={textGen.pendingSoundConfigs}
+        setAiPrompt={textGen.setAiPrompt}
+        setNumSounds={textGen.setNumSounds}
+        onGenerateText={textGen.handleGenerateText}
+        onLoadSoundsToGeneration={handleLoadSoundsToGeneration}
+
+        // Sound generation props
+        soundConfigs={soundGen.soundConfigs}
+        activeSoundConfigTab={soundGen.activeSoundConfigTab}
+        isSoundGenerating={soundGen.isSoundGenerating}
+        soundGenError={soundGen.soundGenError}
+        generatedSounds={soundGen.generatedSounds}
+        setActiveSoundConfigTab={soundGen.setActiveSoundConfigTab}
+        onAddSoundConfig={soundGen.handleAddConfig}
+        onRemoveSoundConfig={soundGen.handleRemoveConfig}
+        onUpdateSoundConfig={soundGen.handleUpdateConfig}
+        onGenerateSounds={soundGen.handleGenerate}
+
+        // Audio controls props
+        soundscapeState={audioControls.soundscapeState}
+        selectedVariants={audioControls.selectedVariants}
+        onPlayAll={audioControls.playAll}
+        onPauseAll={audioControls.pauseAll}
+        onStopAll={audioControls.stopAll}
+
+        // AI tab props
+        activeAiTab={textGen.activeAiTab}
+        setActiveAiTab={textGen.setActiveAiTab}
+
+        // Soundscape data
+        soundscapeData={soundGen.soundscapeData}
+      />
+
+      <main className="flex-1">
+        <ThreeScene
+          geometryData={fileUpload.geometryData}
+          soundscapeData={soundGen.soundscapeData}
+          soundscapeState={audioControls.soundscapeState}
+          individualSoundStates={audioControls.individualSoundStates}
+          selectedVariants={audioControls.selectedVariants}
+          onToggleSound={audioControls.toggleSound}
+          onVariantChange={audioControls.handleVariantChange}
+          scaleForSounds={fileUpload.scaleForSounds}
+          className="w-full h-full"
+        />
+      </main>
+    </div>
   );
 }

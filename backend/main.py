@@ -1,23 +1,47 @@
 # backend/main.py
 
+import os
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+import google.genai as genai
 
-# Import COMPAS geometry
-from compas.geometry import Box, Frame
-from compas.datastructures import Mesh
+# Import services
+from services.llm_service import LLMService
+from services.audio_service import AudioService
 
-# 1. Initialize FastAPI app
+# Import routers
+from routers import upload, analysis, generation, sounds
+
+# --- Initialization ---
+
+# Load environment variables from the .env file
+load_dotenv()
+
+# Configure the Google AI client with the API key from the environment
+api_key = os.getenv("GOOGLE_API_KEY")
+
+client = genai.Client()
+if not client:
+    print("Warning: GOOGLE_API_KEY environment variable not set.")
+
+# Initialize services
+llm_service = LLMService(client)
+audio_service = AudioService()
+
+# Initialize routers with services
+generation.init_generation_router(llm_service)
+sounds.init_sounds_router(audio_service)
+
+# Launch the API
 app = FastAPI()
 
-# 2. Configure CORS (Cross-Origin Resource Sharing)
-# This is crucial to allow your Next.js app (e.g., on localhost:3000)
-# to request data from your FastAPI app (e.g., on localhost:8000)
-origins = [
-    "http://localhost",
-    "http://localhost:3000", # The default Next.js dev server port
-]
+# This makes files in "static/" available at "http://.../static/"
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# --- CORS Middleware ---
+origins = ["http://localhost", "http://localhost:3000"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -26,29 +50,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 3. Define the API endpoint
-@app.get("/api/geometry")
-def get_geometry():
-    """
-    Creates a COMPAS geometry and returns its vertices and faces
-    in a simple, web-friendly format.
-    """
-    # 1. Create the COMPAS geometry
-    box = Box.from_width_height_depth(1.5, 1.5, 1.5)
-    mesh = Mesh.from_shape(box)
+# --- Include Routers ---
+app.include_router(upload.router)
+app.include_router(analysis.router)
+app.include_router(generation.router)
+app.include_router(sounds.router)
 
-    # 2. Extract vertices and faces into a simple list format
-    #    This is the exact format our frontend expects.
-    vertices = list(mesh.vertices_attributes('xyz'))
-    faces = [mesh.face_vertices(fkey) for fkey in mesh.faces()]
 
-    # 3. Return the data in a dictionary
-    return {
-        "vertices": vertices,
-        "faces": faces
-    }
-
-# Optional: A simple root endpoint to check if the server is running
 @app.get("/")
 def read_root():
-    return {"message": "COMPAS API is running"}
+    return {"message": "COMPAS Soundscape API is running"}

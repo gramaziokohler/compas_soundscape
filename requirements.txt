@@ -1,1 +1,18 @@
-compas >= 2
+# Core frameworks
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.0.0
+
+# COMPAS and 3D file processing
+compas>=2.13,<3
+compas_ifc>=0.6.0
+rhino3dm>=8.0.0
+
+# AI/ML packages
+google-genai>=0.3.0
+torch>=2.0.0
+torchaudio>=2.0.0
+tangoflux
+
+# Utilities
+python-dotenv>=1.0.0
