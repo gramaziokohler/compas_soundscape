@@ -91,3 +91,7 @@ Frontend runs at: `http://localhost:3000`
 - Generate spatial audio using TangoFlux
 - Interactive 3D visualization with Three.js
 - Real-time audio playback with positional sound
+
+## Web-app architecture
+
+- 
