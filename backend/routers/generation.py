@@ -35,13 +35,14 @@ async def generate_prompts(request: UnifiedPromptGenerationRequest):
             entity_prompts = []
             for entity in selected_entities:
                 try:
-                    sound_prompt = llm_service.generate_sound_prompt_for_entity(
+                    result = llm_service.generate_sound_prompt_for_entity(
                         entity,
                         request.context
                     )
                     entity_prompts.append({
                         "entity": entity,
-                        "prompt": sound_prompt
+                        "prompt": result["prompt"],
+                        "display_name": result["display_name"]
                     })
                 except Exception as e:
                     print(f"Error generating prompt for {entity.get('type')}: {e}")
@@ -56,9 +57,8 @@ async def generate_prompts(request: UnifiedPromptGenerationRequest):
                 request.num_sounds
             )
 
-            # Format to match entity-based response
-            prompts = [{"prompt": sound} for sound in sound_list]
-            return {"prompts": prompts, "text": raw_text}
+            # sound_list now contains dicts with {"prompt": str, "display_name": str}
+            return {"prompts": sound_list, "text": raw_text}
 
         else:
             raise HTTPException(status_code=400, detail="Either context or entities must be provided")

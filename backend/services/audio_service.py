@@ -82,19 +82,37 @@ class AudioService:
             if not prompt:
                 continue
 
-            # Create shortened filename from prompt
-            short_prompt = prompt[:50].replace(' ', '_').replace('/', '_').replace('\\', '_').replace(':', '_')
+            # Create shortened filename from prompt - sanitize all illegal characters
+            # Windows illegal characters: < > : " / \ | ? *
+            short_prompt = (prompt[:50]
+                .replace(' ', '_')
+                .replace('/', '_')
+                .replace('\\', '_')
+                .replace(':', '_')
+                .replace('*', '_')
+                .replace('?', '_')
+                .replace('"', '_')
+                .replace('<', '_')
+                .replace('>', '_')
+                .replace('|', '_'))
 
-            # Extract keywords for display name
-            words = prompt.split()[:3]
-            display_name = ' '.join(words).title()
+            # Use display_name from config if provided by LLM, otherwise fallback
+            display_name = sound_config.get('display_name')
+            if not display_name:
+                # Fallback: extract first 3 words
+                words = prompt.split()[:3]
+                display_name = ' '.join(words).title()
 
             for copy_idx in range(seed_copies):
                 filename = f"{short_prompt}_copy{copy_idx}.wav"
-                output_path = os.path.join(output_dir, filename)
+                output_path = os.path.normpath(os.path.join(output_dir, filename))
 
-                # Generate position
-                position = self.get_random_position(idx, len(sound_configs), bounding_box)
+                # Use entity position if available, otherwise generate random position
+                entity = sound_config.get('entity')
+                if entity and entity.get('position'):
+                    position = entity['position']
+                else:
+                    position = self.get_random_position(idx, len(sound_configs), bounding_box)
 
                 # Skip if file already exists
                 if os.path.exists(output_path):

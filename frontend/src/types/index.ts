@@ -2,6 +2,7 @@
 export interface CompasGeometry {
   vertices: number[][];
   faces: number[][];
+  face_entity_map?: number[];  // Maps face index to entity index
 }
 
 export interface SoundEvent {
@@ -25,6 +26,27 @@ export interface UIOverlay {
   displayName: string;
   variants: SoundEvent[];
   selectedVariantIdx: number;
+}
+
+export interface EntityData {
+  index: number;
+  type: string;
+  name?: string;
+  layer?: string;
+  material?: string;
+  position: number[];
+  bounds: {
+    min: number[];
+    max: number[];
+    center?: number[];
+  };
+}
+
+export interface EntityOverlay {
+  x: number;
+  y: number;
+  visible: boolean;
+  entity: EntityData;
 }
 
 export interface SoundGenerationConfig {

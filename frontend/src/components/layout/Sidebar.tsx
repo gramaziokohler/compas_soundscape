@@ -39,6 +39,7 @@ interface SidebarProps {
   llmProgress: string;
   showConfirmLoadSounds: boolean;
   pendingSoundConfigs: any[];
+  useModelAsContext: boolean;
   onFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onDragOver: (e: React.DragEvent<HTMLDivElement>) => void;
   onDragLeave: (e: React.DragEvent<HTMLDivElement>) => void;
@@ -60,6 +61,7 @@ interface SidebarProps {
   onPlayAll: () => void;
   onPauseAll: () => void;
   onStopAll: () => void;
+  setUseModelAsContext: (value: boolean) => void;
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -110,6 +112,7 @@ export function Sidebar(props: SidebarProps) {
               isAnalyzingModel={props.isAnalyzingModel}
               uploadError={props.uploadError}
               analysisProgress={props.analysisProgress}
+              useModelAsContext={props.useModelAsContext}
               onFileChange={props.onFileChange}
               onDragOver={props.onDragOver}
               onDragLeave={props.onDragLeave}
@@ -118,6 +121,7 @@ export function Sidebar(props: SidebarProps) {
               onLoadSampleIfc={props.onLoadSampleIfc}
               onClearModel={props.onClearModel}
               setActiveLoadTab={props.setActiveLoadTab}
+              setUseModelAsContext={props.setUseModelAsContext}
             />
 
             <TextGenerationSection

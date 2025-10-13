@@ -57,15 +57,13 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
       }
       const result = await response.json();
 
-      const soundEvents = result.sounds.map((sound: any, idx: number) => {
-        // Check if this sound config has entity position data
-        const config: any = validConfigs[Math.floor(idx / (sound.total_copies || 1))];
-        const hasEntityPosition = config.entity && config.entity.position;
-
+      const soundEvents = result.sounds.map((sound: any) => {
+        // The backend already handles positioning correctly
+        // For entity-based sounds, it uses the entity position
+        // For random sounds, it uses the bounding box
         return {
           ...sound,
-          // Override position with entity position if available
-          position: hasEntityPosition ? config.entity.position : sound.position,
+          position: sound.position,
           geometry: sound.geometry || {
             vertices: [],
             faces: []

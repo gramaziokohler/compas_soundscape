@@ -12,6 +12,36 @@ class LLMService:
     def __init__(self, client: genai.Client):
         self.client = client
 
+    def _parse_prompt_and_name(self, text: str) -> dict:
+        """Parse structured PROMPT: ... NAME: ... format into dict
+
+        Args:
+            text: Raw text that may contain PROMPT: and NAME: markers
+
+        Returns:
+            dict: {"prompt": str, "display_name": str} or None if parsing fails
+        """
+        # Try to parse PROMPT: ... NAME: ... format
+        prompt_match = re.search(r'PROMPT:\s*(.+?)(?=\s*NAME:|$)', text, re.DOTALL)
+        name_match = re.search(r'NAME:\s*(.+?)$', text, re.DOTALL | re.MULTILINE)
+
+        if prompt_match and name_match:
+            sound_prompt = prompt_match.group(1).strip()
+            display_name = name_match.group(1).strip()
+
+            # Clean up formatting
+            sound_prompt = re.sub(r'^\d+[\.\)]\s*', '', sound_prompt)
+            sound_prompt = re.sub(r'^[-\*]\s*', '', sound_prompt)
+            display_name = re.sub(r'^[-\*"\'\[\]]\s*', '', display_name)
+            display_name = re.sub(r'\s*[-"\'\[\]]$', '', display_name)
+
+            return {
+                "prompt": sound_prompt,
+                "display_name": display_name
+            }
+
+        return None
+
     def select_diverse_entities(self, entities: list, max_sounds: int, entity_type: str = "objects") -> list:
         """Select most diverse entities using LLM"""
         if len(entities) <= max_sounds:
@@ -41,7 +71,8 @@ Select exactly {max_sounds} {entity_type} that would produce the MOST DIFFERENT 
 - Different object types
 - Different materials (wood, metal, glass, concrete, etc.)
 - Different layers (which may indicate function or location)
-- Different acoustic properties (hard vs soft, heavy vs light, moving vs static)
+
+Prioritize : Name, then Type, then position, then Material.
 
 Return ONLY a JSON array of the selected indices (numbers), like: [0, 5, 12, 18, ...]
 No explanation, just the JSON array."""
@@ -64,8 +95,12 @@ No explanation, just the JSON array."""
             print(f"Error in diversity selection: {e}")
             return entities[:max_sounds]
 
-    def generate_sound_prompt_for_entity(self, entity: dict, context: str = None) -> str:
-        """Generate a sound prompt for a specific entity using LLM"""
+    def generate_sound_prompt_for_entity(self, entity: dict, context: str = None) -> dict:
+        """Generate a sound prompt and display name for a specific entity using LLM
+
+        Returns:
+            dict: {"prompt": str, "display_name": str}
+        """
         entity_description = f"{entity.get('type', 'object')}"
         if entity.get('name'):
             entity_description += f" named '{entity['name']}'"
@@ -82,42 +117,81 @@ No explanation, just the JSON array."""
 
         llm_prompt = f"""{context_intro} a single sound that would be made by or associated with a {entity_description}.
 
-Generate only ONE short, descriptive sound prompt suitable for an audio generation model. Follow these guidelines:
+Generate a sound prompt suitable for an audio generation model, AND a short 2-3 word display name.
+
+Follow these guidelines for the sound prompt:
 - Use adjectives for description (e.g., "clear", "gentle", "heavy")
 - Be context-specific (e.g., "rolling on wooden floor", "closing latch click")
 - Consider the material properties if mentioned
 - Use general terms (avoid brand names)
-- Do not include architectural acoustics features or perspective info
+- Do not include architectural acoustics features nor perspective info
 - Focus on the sound itself, not the environment
 
-Return ONLY the sound prompt, nothing else."""
+For the display name:
+- Extract 2-3 most important words that identify the sound source
+- Use title case (e.g., "Sliding Door", "Metal Lid", "HVAC System")
+
+Return your response in this EXACT format, without any extra text:
+PROMPT: [your sound prompt here]
+NAME: [your 2-3 word display name here]"""
 
         try:
             response = self.client.models.generate_content(
                 model="gemini-2.5-flash", contents=llm_prompt
             )
-            sound_prompt = response.text.strip()
+            response_text = response.text.strip()
 
-            # Clean up formatting
-            sound_prompt = re.sub(r'^\d+[\.\)]\s*', '', sound_prompt)
-            sound_prompt = re.sub(r'^[-\*]\s*', '', sound_prompt)
+            # Use unified parsing function
+            parsed = self._parse_prompt_and_name(response_text)
 
-            return sound_prompt
+            if parsed:
+                return parsed
+            else:
+                # Fallback: treat entire response as prompt and extract name from entity
+                sound_prompt = response_text
+                sound_prompt = re.sub(r'^\d+[\.\)]\s*', '', sound_prompt)
+                sound_prompt = re.sub(r'^[-\*]\s*', '', sound_prompt)
+
+                # Generate fallback display name from entity info
+                display_name = entity.get('name') or entity.get('type', 'Sound')
+                if len(display_name) > 20:
+                    display_name = display_name[:20]
+
+                return {
+                    "prompt": sound_prompt,
+                    "display_name": display_name.title()
+                }
+
         except Exception as e:
             print(f"Error generating prompt for {entity.get('type')}: {e}")
             raise
 
-    def generate_text_based_prompts(self, context: str, num_sounds: int) -> tuple[str, list[str]]:
-        """Generate sound prompts from text description only"""
+    def generate_text_based_prompts(self, context: str, num_sounds: int) -> tuple[str, list[dict]]:
+        """Generate sound prompts with display names from text description only
+
+        Returns:
+            tuple: (raw_text, list of {"prompt": str, "display_name": str})
+        """
         enhanced_prompt = f"""Imagine {num_sounds} possible sounds that can happen in {context}.
 
-Format your response as a simple numbered list (without introduction phrase), with each sound on its own line.
-For each identified sound event, write a clear, descriptive text prompt suitable for an audio generation model like audioldm2. Follow these prompt guidelines:
+For each sound, provide both a detailed prompt and a short 2-3 word display name.
+
+Format your response as a numbered list with each sound using this EXACT format, , without any extra text:
+1. PROMPT: [your sound prompt here]
+NAME: [your 2-3 word display name here]
+2.
+...and so on
+
+For the sound prompts:
     *   Use adjectives for description (e.g., "clear", "gentle", "heavy").
     *   Be context-specific (e.g., "rolling on wooden floor", "closing latch click").
     *   Use general terms (e.g., "office chair", not a brand name).
     *   Do not include titles, categorization, conditions, architectural acoustics features (e.g., "in a large reverberant room") or perspective/perception info in the prompt itself (e.g., "distant sound").
     *   Only impact sounds should potentially include textural/architectural info (e.g., "on wooden floor").
+
+For the display names:
+    *   Extract 2-3 most important words that identify the sound source
+    *   Use title case (e.g., "Office Chair", "Water Fountain", "Air Conditioner")
 
 Now generate {num_sounds} sounds for: {context}"""
 
@@ -128,13 +202,34 @@ Now generate {num_sounds} sounds for: {context}"""
         raw_text = response.text
         sound_list = []
 
-        for line in raw_text.strip().split('\n'):
-            line = line.strip()
-            if not line:
+        # Split by numbered entries (1., 2., etc.)
+        entries = re.split(r'\n\s*\d+[\.\)]\s*', raw_text)
+
+        for entry in entries:
+            entry = entry.strip()
+            if not entry:
                 continue
-            cleaned = re.sub(r'^\d+[\.\)]\s*', '', line)
-            cleaned = re.sub(r'^[-\*]\s*', '', cleaned)
-            if cleaned:
-                sound_list.append(cleaned)
+
+            # Use unified parsing function
+            parsed = self._parse_prompt_and_name(entry)
+
+            if parsed:
+                sound_list.append(parsed)
+            else:
+                # Fallback: treat as plain prompt, extract name from first few words
+                cleaned = re.sub(r'^\d+[\.\)]\s*', '', entry)
+                cleaned = re.sub(r'^[-\*]\s*', '', cleaned)
+
+                if cleaned:
+                    words = cleaned.split()
+                    # Try to find nouns (skip common adjectives)
+                    skip_words = {'a', 'an', 'the', 'subtle', 'gentle', 'soft', 'loud', 'quiet', 'clear', 'heavy', 'light'}
+                    name_words = [w for w in words[:5] if w.lower() not in skip_words][:3]
+                    display_name = ' '.join(name_words).title() if name_words else 'Sound'
+
+                    sound_list.append({
+                        "prompt": cleaned,
+                        "display_name": display_name
+                    })
 
         return raw_text, sound_list

@@ -15,6 +15,7 @@ export function useFileUpload() {
   const [analysisProgress, setAnalysisProgress] = useState('');
   const [geometryBounds, setGeometryBounds] = useState<{min: number[], max: number[]} | null>(null);
   const [scaleForSounds, setScaleForSounds] = useState(1.0);
+  const [useModelAsContext, setUseModelAsContext] = useState(true);
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setFile(e.target.files ? e.target.files[0] : null);
@@ -107,14 +108,20 @@ export function useFileUpload() {
     try {
       const geometry = await apiService.uploadFile(file);
       processGeometry(geometry);
-      await analyzeModel(file);
+
+      // Only analyze model if useModelAsContext is true
+      if (useModelAsContext) {
+        await analyzeModel(file);
+      } else {
+        setAnalysisProgress('Model loaded for positioning only');
+      }
     } catch (err: any) {
       setUploadError(err.message);
       setIsAnalyzingModel(false);
     } finally {
       setIsUploading(false);
     }
-  }, [file, processGeometry, analyzeModel]);
+  }, [file, processGeometry, analyzeModel, useModelAsContext]);
 
   const handleLoadSampleIfc = useCallback(async () => {
     setIsUploading(true);
@@ -127,18 +134,23 @@ export function useFileUpload() {
       const geometry = await apiService.loadSampleIfc();
       processGeometry(geometry);
 
-      setIsAnalyzingModel(true);
-      setAnalysisProgress('Analyzing IFC entities...');
-      const analyzed = await apiService.analyzeIfc();
-      setModelEntities(analyzed.entities);
-      setAnalysisProgress(`Found ${analyzed.entities.length} entities`);
+      // Only analyze model if useModelAsContext is true
+      if (useModelAsContext) {
+        setIsAnalyzingModel(true);
+        setAnalysisProgress('Analyzing IFC entities...');
+        const analyzed = await apiService.analyzeIfc();
+        setModelEntities(analyzed.entities);
+        setAnalysisProgress(`Found ${analyzed.entities.length} entities`);
+      } else {
+        setAnalysisProgress('Model loaded for positioning only');
+      }
     } catch (err: any) {
       setUploadError(err.message);
     } finally {
       setIsUploading(false);
       setIsAnalyzingModel(false);
     }
-  }, [processGeometry]);
+  }, [processGeometry, useModelAsContext]);
 
   const clearModel = useCallback(() => {
     setModelEntities([]);
@@ -158,6 +170,7 @@ export function useFileUpload() {
     analysisProgress,
     geometryBounds,
     scaleForSounds,
+    useModelAsContext,
     handleFileChange,
     handleDragOver,
     handleDragLeave,
@@ -165,6 +178,7 @@ export function useFileUpload() {
     handleUpload,
     handleLoadSampleIfc,
     clearModel,
-    setFile
+    setFile,
+    setUseModelAsContext
   };
 }

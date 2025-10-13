@@ -9,6 +9,7 @@ interface ModelLoadSectionProps {
   isAnalyzingModel: boolean;
   uploadError: string | null;
   analysisProgress: string;
+  useModelAsContext: boolean;
   onFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onDragOver: (e: React.DragEvent<HTMLDivElement>) => void;
   onDragLeave: (e: React.DragEvent<HTMLDivElement>) => void;
@@ -17,6 +18,7 @@ interface ModelLoadSectionProps {
   onLoadSampleIfc: () => void;
   onClearModel: () => void;
   setActiveLoadTab: (tab: LoadTab) => void;
+  setUseModelAsContext: (value: boolean) => void;
 }
 
 export function ModelLoadSection({
@@ -28,6 +30,7 @@ export function ModelLoadSection({
   isAnalyzingModel,
   uploadError,
   analysisProgress,
+  useModelAsContext,
   onFileChange,
   onDragOver,
   onDragLeave,
@@ -35,7 +38,8 @@ export function ModelLoadSection({
   onUpload,
   onLoadSampleIfc,
   onClearModel,
-  setActiveLoadTab
+  setActiveLoadTab,
+  setUseModelAsContext
 }: ModelLoadSectionProps) {
   return (
     <div>
@@ -50,6 +54,25 @@ export function ModelLoadSection({
                 ✓ Model loaded with {modelEntities.length} objects
               </p>
             </div>
+
+            <label className="flex items-center gap-2 px-2 py-1 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={useModelAsContext}
+                onChange={(e) => setUseModelAsContext(e.target.checked)}
+                className="w-4 h-4 rounded focus:ring-2 focus:ring-[#F500B8] accent-[#F500B8]"
+              />
+              <span className="text-xs text-gray-700 dark:text-gray-300">
+                Use model as context for sound generation
+              </span>
+            </label>
+
+            {!useModelAsContext && (
+              <div className="p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded text-xs text-yellow-700 dark:text-yellow-300">
+                ℹ️ Model will be used for positioning only
+              </div>
+            )}
+
             <button
               onClick={onClearModel}
               className="w-full rounded-md bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 font-medium py-2 text-xs hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
@@ -147,16 +170,34 @@ export function ModelLoadSection({
                   )}
                 </button>
 
+                <label className="flex items-center gap-2 px-2 py-1 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={useModelAsContext}
+                    onChange={(e) => setUseModelAsContext(e.target.checked)}
+                    className="w-4 h-4 rounded focus:ring-2 focus:ring-[#F500B8] accent-[#F500B8]"
+                  />
+                  <span className="text-xs text-gray-700 dark:text-gray-300">
+                    Use model as context for sound generation
+                  </span>
+                </label>
+
                 {isAnalyzingModel && analysisProgress && (
                   <div className="p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-xs text-blue-700 dark:text-blue-300">
                     🔍 {analysisProgress}
+                  </div>
+                )}
+
+                {!useModelAsContext && file && !isUploading && (
+                  <div className="p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded text-xs text-yellow-700 dark:text-yellow-300">
+                    ℹ️ Model will be used for positioning only
                   </div>
                 )}
               </div>
             )}
 
             {activeLoadTab === 'sample' && (
-              <>
+              <div className="flex flex-col gap-2">
                 <button
                   onClick={onLoadSampleIfc}
                   disabled={isUploading || isAnalyzingModel}
@@ -175,12 +216,30 @@ export function ModelLoadSection({
                   )}
                 </button>
 
+                <label className="flex items-center gap-2 px-2 py-1 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={useModelAsContext}
+                    onChange={(e) => setUseModelAsContext(e.target.checked)}
+                    className="w-4 h-4 rounded focus:ring-2 focus:ring-[#F500B8] accent-[#F500B8]"
+                  />
+                  <span className="text-xs text-gray-700 dark:text-gray-300">
+                    Use model as context for sound generation
+                  </span>
+                </label>
+
                 {isAnalyzingModel && analysisProgress && (
-                  <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-xs text-blue-700 dark:text-blue-300">
+                  <div className="p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-xs text-blue-700 dark:text-blue-300">
                     🔍 {analysisProgress}
                   </div>
                 )}
-              </>
+
+                {!useModelAsContext && !isUploading && (
+                  <div className="p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded text-xs text-yellow-700 dark:text-yellow-300">
+                    ℹ️ Model will be used for positioning only
+                  </div>
+                )}
+              </div>
             )}
 
             {uploadError && (

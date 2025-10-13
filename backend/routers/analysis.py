@@ -4,11 +4,9 @@ from compas_ifc.model import Model
 from compas.datastructures import Mesh
 import rhino3dm
 
-router = APIRouter()
+from utils.helpers import rotate_y_up_to_z_up
 
-def rotate_y_up_to_z_up(coords):
-    """Rotate from Y-up to Z-up coordinate system"""
-    return [coords[0], coords[2], coords[1]]
+router = APIRouter()
 
 
 @router.get("/api/analyze-ifc")

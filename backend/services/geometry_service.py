@@ -46,7 +46,7 @@ class GeometryService:
 
     @staticmethod
     def process_ifc_file(file_path: str):
-        """Process IFC file and return combined geometry"""
+        """Process IFC file and return combined geometry with face-to-entity mapping"""
         try:
             model = Model(file_path, load_geometries=True)
         except Exception as e:
@@ -54,6 +54,7 @@ class GeometryService:
 
         all_vertices = []
         all_faces = []
+        face_entity_map = []  # Maps face index to entity index
         vertex_offset = 0
 
         entities = []
@@ -95,6 +96,7 @@ class GeometryService:
                         face_vertices = mesh.face_vertices(fkey)
                         adjusted_face = [v + vertex_offset for v in face_vertices]
                         all_faces.append(adjusted_face)
+                        face_entity_map.append(i)  # Map this face to entity index i
 
                     vertex_offset += len(vertices)
 
@@ -108,7 +110,7 @@ class GeometryService:
         if len(all_vertices) == 0:
             raise HTTPException(status_code=400, detail="No geometry found in IFC file.")
 
-        return {"vertices": all_vertices, "faces": all_faces}
+        return {"vertices": all_vertices, "faces": all_faces, "face_entity_map": face_entity_map}
 
     @staticmethod
     def rhino_geom_to_mesh(geom):
@@ -164,7 +166,7 @@ class GeometryService:
 
     @staticmethod
     def process_3dm_file(file_path: str):
-        """Process Rhino 3DM file and return geometry"""
+        """Process Rhino 3DM file and return geometry with face-to-entity mapping"""
         try:
             file3dm = rhino3dm.File3dm.Read(file_path)
         except Exception as e:
@@ -172,7 +174,9 @@ class GeometryService:
 
         all_vertices = []
         all_faces = []
+        face_entity_map = []  # Maps face index to entity index
         vertex_offset = 0
+        entity_index = 0  # Track actual entities (skip failed ones)
 
         for i, obj in enumerate(file3dm.Objects):
             try:
@@ -194,8 +198,10 @@ class GeometryService:
                         face_vertices = mesh.face_vertices(fkey)
                         adjusted_face = [v + vertex_offset for v in face_vertices]
                         all_faces.append(adjusted_face)
+                        face_entity_map.append(entity_index)  # Map this face to current entity
 
                     vertex_offset += len(vertices)
+                    entity_index += 1
 
                 if (i + 1) % 20 == 0:
                     print(f"Processed {i + 1}/{len(file3dm.Objects)} objects")
@@ -208,4 +214,4 @@ class GeometryService:
         if len(all_vertices) == 0:
             raise HTTPException(status_code=400, detail="No geometry found in 3DM file.")
 
-        return {"vertices": all_vertices, "faces": all_faces}
+        return {"vertices": all_vertices, "faces": all_faces, "face_entity_map": face_entity_map}

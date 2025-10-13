@@ -2,7 +2,7 @@ import { useState, useCallback } from "react";
 import { API_BASE_URL } from "@/lib/constants";
 import { ActiveTab } from "@/types";
 
-export function useTextGeneration(modelEntities: any[]) {
+export function useTextGeneration(modelEntities: any[], useModelAsContext: boolean) {
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiResponse, setAiResponse] = useState<string | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -12,10 +12,14 @@ export function useTextGeneration(modelEntities: any[]) {
   const [showConfirmLoadSounds, setShowConfirmLoadSounds] = useState(false);
   const [pendingSoundConfigs, setPendingSoundConfigs] = useState<any[]>([]);
   const [activeAiTab, setActiveAiTab] = useState<ActiveTab>('text');
+  const [selectedDiverseEntities, setSelectedDiverseEntities] = useState<any[]>([]);
 
   const handleGenerateText = useCallback(async () => {
-    if (modelEntities.length === 0 && !aiPrompt.trim()) {
-      setAiError("Please load a model or enter a space description.");
+    // Only use entities if checkbox is checked
+    const shouldUseEntities = modelEntities.length > 0 && useModelAsContext;
+
+    if (!shouldUseEntities && !aiPrompt.trim()) {
+      setAiError("Please enter a space description.");
       return;
     }
     setAiError(null);
@@ -30,7 +34,8 @@ export function useTextGeneration(modelEntities: any[]) {
         num_sounds: numSounds
       };
 
-      if (modelEntities.length > 0) {
+      // Only send entities if checkbox is checked
+      if (shouldUseEntities) {
         requestBody.entities = modelEntities;
         if (modelEntities.length > numSounds) {
           setLlmProgress(`Selecting ${numSounds} most diverse objects from ${modelEntities.length} total...`);
@@ -53,25 +58,52 @@ export function useTextGeneration(modelEntities: any[]) {
 
       // Handle both text-only and entity-based responses
       if (result.prompts && result.prompts.length > 0) {
-        // Entity-based prompts (from loaded model)
-        const newSoundConfigsWithEntities = result.prompts.map((item: any) => ({
-          prompt: item.prompt,
-          duration: 5,
-          guidance_scale: 4.5,
-          negative_prompt: "",
-          seed_copies: 1,
-          entity: item.entity // Store entity for position info
-        }));
-        setPendingSoundConfigs(newSoundConfigsWithEntities);
-        setShowConfirmLoadSounds(true);
+        // Check if entity-based or text-based by checking for entity field
+        const hasEntities = result.prompts.some((item: any) => item.entity);
 
-        // Create display text from prompts
-        const displayText = result.prompts.map((item: any, idx: number) =>
-          `${idx + 1}. ${item.prompt}`
-        ).join('\n');
-        setAiResponse(displayText);
+        if (hasEntities) {
+          // Entity-based prompts (from loaded model)
+          const newSoundConfigsWithEntities = result.prompts.map((item: any) => ({
+            prompt: item.prompt,
+            duration: 5,
+            guidance_scale: 4.5,
+            negative_prompt: "",
+            seed_copies: 1,
+            entity: item.entity, // Store entity for position info
+            display_name: item.display_name // Store LLM-generated display name
+          }));
+          setPendingSoundConfigs(newSoundConfigsWithEntities);
+          setShowConfirmLoadSounds(true);
+
+          // Store the selected diverse entities for highlighting
+          const entities = result.prompts.map((item: any) => item.entity);
+          setSelectedDiverseEntities(entities);
+
+          // Backend now properly parses prompts - just display them directly
+          const displayText = result.prompts.map((item: any, idx: number) =>
+            `${idx + 1}. ${item.prompt}`
+          ).join('\n');
+          setAiResponse(displayText);
+        } else {
+          // Text-only prompts (no model loaded)
+          const newSoundConfigs = result.prompts.map((item: any) => ({
+            prompt: item.prompt,
+            duration: 5,
+            guidance_scale: 4.5,
+            negative_prompt: "",
+            seed_copies: 1,
+            display_name: item.display_name // Store LLM-generated display name
+          }));
+          setPendingSoundConfigs(newSoundConfigs);
+          setShowConfirmLoadSounds(true);
+
+          // Backend now properly parses prompts - just display them directly
+          setAiResponse(result.prompts.map((item: any, idx: number) =>
+            `${idx + 1}. ${item.prompt}`
+          ).join('\n'));
+        }
       } else if (result.sounds && result.sounds.length > 0) {
-        // Text-only prompts (no model loaded)
+        // Legacy format - Text-only prompts (no model loaded)
         const newSoundConfigs = result.sounds.map((soundDesc: string) => ({
           prompt: soundDesc,
           duration: 5,
@@ -93,7 +125,7 @@ export function useTextGeneration(modelEntities: any[]) {
     } finally {
       setIsGenerating(false);
     }
-  }, [aiPrompt, numSounds, modelEntities]);
+  }, [aiPrompt, numSounds, modelEntities, useModelAsContext]);
 
   return {
     aiPrompt,
@@ -105,10 +137,12 @@ export function useTextGeneration(modelEntities: any[]) {
     showConfirmLoadSounds,
     pendingSoundConfigs,
     activeAiTab,
+    selectedDiverseEntities,
     setAiPrompt,
     setNumSounds,
     setActiveAiTab,
     handleGenerateText,
-    setPendingSoundConfigs
+    setPendingSoundConfigs,
+    setSelectedDiverseEntities
   };
 }

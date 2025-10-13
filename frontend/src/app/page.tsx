@@ -13,7 +13,7 @@ import type { LoadTab } from "@/types";
 
 export default function Home() {
   const fileUpload = useFileUpload();
-  const textGen = useTextGeneration(fileUpload.modelEntities);
+  const textGen = useTextGeneration(fileUpload.modelEntities, fileUpload.useModelAsContext);
   const soundGen = useSoundGeneration(fileUpload.geometryBounds);
   const audioControls = useAudioControls(soundGen.generatedSounds);
   const [activeLoadTab, setActiveLoadTab] = useState<LoadTab>('upload');
@@ -47,6 +47,7 @@ export default function Home() {
         modelEntities={fileUpload.modelEntities}
         isAnalyzingModel={fileUpload.isAnalyzingModel}
         analysisProgress={fileUpload.analysisProgress}
+        useModelAsContext={fileUpload.useModelAsContext}
         onFileChange={fileUpload.handleFileChange}
         onDragOver={fileUpload.handleDragOver}
         onDragLeave={fileUpload.handleDragLeave}
@@ -54,6 +55,7 @@ export default function Home() {
         onUpload={fileUpload.handleUpload}
         onLoadSampleIfc={fileUpload.handleLoadSampleIfc}
         onClearModel={fileUpload.clearModel}
+        setUseModelAsContext={fileUpload.setUseModelAsContext}
         activeLoadTab={activeLoadTab}
         setActiveLoadTab={setActiveLoadTab}
 
@@ -108,6 +110,8 @@ export default function Home() {
           onToggleSound={audioControls.toggleSound}
           onVariantChange={audioControls.handleVariantChange}
           scaleForSounds={fileUpload.scaleForSounds}
+          modelEntities={fileUpload.modelEntities}
+          selectedDiverseEntities={textGen.selectedDiverseEntities}
           className="w-full h-full"
         />
       </main>

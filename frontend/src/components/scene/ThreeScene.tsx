@@ -5,9 +5,18 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { DragControls } from "three/examples/jsm/controls/DragControls.js";
 import { SoundUIOverlay } from "@/components/overlays/SoundUIOverlay";
+import { EntityUIOverlay } from "@/components/overlays/EntityUIOverlay";
 import { triangulate } from "@/lib/utils";
 import { API_BASE_URL } from "@/lib/constants";
-import type { CompasGeometry, SoundEvent, SoundState, UIOverlay } from "@/types";
+import {
+  createArcticModeScene,
+  setupArcticModeLighting,
+  createArcticModeGrid,
+  createArcticModeMaterial,
+  setupOrbitControls,
+  frameCameraToObject
+} from "@/lib/three/sceneSetup";
+import type { CompasGeometry, SoundEvent, SoundState, UIOverlay, EntityData, EntityOverlay } from "@/types";
 
 interface ThreeSceneProps {
   geometryData: CompasGeometry | null;
@@ -18,6 +27,8 @@ interface ThreeSceneProps {
   onToggleSound: (soundId: string) => void;
   onVariantChange: (promptIdx: number, variantIdx: number) => void;
   scaleForSounds: number;
+  modelEntities?: EntityData[];
+  selectedDiverseEntities?: EntityData[];
   className?: string;
 }
 
@@ -30,6 +41,8 @@ export function ThreeScene({
   onToggleSound,
   onVariantChange,
   scaleForSounds,
+  modelEntities = [],
+  selectedDiverseEntities = [],
   className
 }: ThreeSceneProps) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -46,6 +59,25 @@ export function ThreeScene({
   const prevSoundscapeDataRef = useRef<SoundEvent[] | null>(null);
 
   const [uiOverlays, setUiOverlays] = useState<UIOverlay[]>([]);
+  const [entityOverlay, setEntityOverlay] = useState<EntityOverlay | null>(null);
+  const [selectedEntity, setSelectedEntity] = useState<EntityData | null>(null);
+  const raycasterRef = useRef<THREE.Raycaster>(new THREE.Raycaster());
+  const mouseRef = useRef<THREE.Vector2>(new THREE.Vector2());
+  const entityMarkersRef = useRef<THREE.Group | null>(null);
+  const highlightMeshRef = useRef<THREE.Mesh | null>(null);
+  const remainingMeshRef = useRef<THREE.Mesh | null>(null);
+  const diverseHighlightsRef = useRef<THREE.Group | null>(null);
+  const geometryDataRef = useRef<CompasGeometry | null>(null);
+  const modelEntitiesRef = useRef<EntityData[]>([]);
+
+  // Keep refs updated with latest props for click handler
+  useEffect(() => {
+    geometryDataRef.current = geometryData;
+  }, [geometryData]);
+
+  useEffect(() => {
+    modelEntitiesRef.current = modelEntities;
+  }, [modelEntities]);
 
   // Memoize triangulated geometry data
   const triangulatedGeometry = useMemo(() => {
@@ -61,8 +93,7 @@ export function ThreeScene({
     const mountNode = mountRef.current;
     if (!mountNode) return;
 
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xf0f0f0);
+    const scene = createArcticModeScene();
     sceneRef.current = scene;
 
     const camera = new THREE.PerspectiveCamera(75, mountNode.clientWidth / mountNode.clientHeight, 0.1, 1000);
@@ -77,24 +108,25 @@ export function ThreeScene({
     mountNode.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.target.set(0, 0, 0);
-    controls.update();
+    const controls = setupOrbitControls(camera, renderer.domElement);
     controlsRef.current = controls;
 
-    const gridHelper = new THREE.GridHelper(20, 20, 0x888888, 0xcccccc);
+    const gridHelper = createArcticModeGrid();
     scene.add(gridHelper);
 
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
-    scene.add(ambientLight);
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(10, 10, 10);
-    scene.add(directionalLight);
+    setupArcticModeLighting(scene);
 
     const contentGroup = new THREE.Group();
     scene.add(contentGroup);
     contentGroupRef.current = contentGroup;
+
+    const entityMarkers = new THREE.Group();
+    scene.add(entityMarkers);
+    entityMarkersRef.current = entityMarkers;
+
+    const diverseHighlights = new THREE.Group();
+    scene.add(diverseHighlights);
+    diverseHighlightsRef.current = diverseHighlights;
 
     const animate = () => {
       controls.update();
@@ -113,8 +145,89 @@ export function ThreeScene({
     });
     resizeObserver.observe(mountNode);
 
+    // Click handler for entity selection
+    const handleClick = (event: MouseEvent) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+      raycasterRef.current.setFromCamera(mouseRef.current, camera);
+
+      // Use refs to get current values
+      const currentGeometryData = geometryDataRef.current;
+      const currentModelEntities = modelEntitiesRef.current;
+
+      // Check if we clicked on the main geometry mesh
+      if (contentGroup.children.length > 0) {
+        const geometryMesh = contentGroup.children.find(child =>
+          child instanceof THREE.Mesh && child.userData.isGeometry === true
+        );
+
+        if (geometryMesh) {
+          const intersects = raycasterRef.current.intersectObject(geometryMesh, false);
+
+          if (intersects.length > 0) {
+            const intersection = intersects[0];
+
+            // Use face-entity mapping if available
+            if (currentGeometryData?.face_entity_map && intersection.faceIndex !== undefined && intersection.faceIndex !== null && currentModelEntities.length > 0) {
+              const triangleIndex = intersection.faceIndex;
+              const faceIndex = Math.floor(triangleIndex / 1);
+
+              if (faceIndex < currentGeometryData.face_entity_map.length) {
+                const entityIndex = currentGeometryData.face_entity_map[faceIndex];
+                const entity = currentModelEntities.find(e => e.index === entityIndex);
+
+                if (entity) {
+                  setSelectedEntity(entity);
+                  return;
+                }
+              }
+            }
+
+            // Fallback: use bounding box method if mapping not available
+            const clickPoint = intersection.point;
+            let closestEntity = null;
+            let minDistance = Infinity;
+
+            currentModelEntities.forEach(entity => {
+              const min = entity.bounds.min;
+              const max = entity.bounds.max;
+              const isInside =
+                clickPoint.x >= min[0] && clickPoint.x <= max[0] &&
+                clickPoint.y >= min[1] && clickPoint.y <= max[1] &&
+                clickPoint.z >= min[2] && clickPoint.z <= max[2];
+
+              if (isInside) {
+                const entityPos = new THREE.Vector3(
+                  entity.position[0],
+                  entity.position[1],
+                  entity.position[2]
+                );
+                const distance = clickPoint.distanceTo(entityPos);
+
+                if (distance < minDistance) {
+                  minDistance = distance;
+                  closestEntity = entity;
+                }
+              }
+            });
+
+            setSelectedEntity(closestEntity);
+            return;
+          }
+        }
+      }
+
+      // If no geometry clicked, deselect
+      setSelectedEntity(null);
+    };
+
+    renderer.domElement.addEventListener('click', handleClick);
+
     return () => {
       resizeObserver.disconnect();
+      renderer.domElement.removeEventListener('click', handleClick);
       if (animationFrameIdRef.current !== null) {
         cancelAnimationFrame(animationFrameIdRef.current);
       }
@@ -132,7 +245,255 @@ export function ThreeScene({
         mountNode.removeChild(renderer.domElement);
       }
     };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-highlight diverse entities after analysis and create gray mesh for non-diverse
+  useEffect(() => {
+    const scene = sceneRef.current;
+    const diverseGroup = diverseHighlightsRef.current;
+    const contentGroup = contentGroupRef.current;
+    if (!diverseGroup || !scene || !contentGroup) return;
+
+    // Find the main geometry mesh
+    const mainGeometryMesh = contentGroup.children.find(child =>
+      child instanceof THREE.Mesh && child.userData.isGeometry === true
+    ) as THREE.Mesh | undefined;
+
+    // Clear existing diverse highlights
+    while (diverseGroup.children.length > 0) {
+      const mesh = diverseGroup.children[0];
+      if (mesh instanceof THREE.Mesh) {
+        mesh.geometry.dispose();
+        if (mesh.material instanceof THREE.Material) {
+          mesh.material.dispose();
+        }
+      }
+      diverseGroup.remove(mesh);
+    }
+
+    // Create highlights for all diverse entities and gray mesh for non-diverse
+    if (selectedDiverseEntities.length > 0 && geometryData?.face_entity_map && geometryData.vertices && geometryData.faces) {
+      // Hide main mesh since we'll create separate meshes
+      if (mainGeometryMesh) {
+        mainGeometryMesh.visible = false;
+      }
+
+      const diverseEntityIndices = new Set(selectedDiverseEntities.map(e => e.index));
+      const diverseFaces: number[][] = [];
+      const nonDiverseFaces: number[][] = [];
+
+      // Separate faces into diverse and non-diverse
+      geometryData.face_entity_map.forEach((entityIndex, faceIndex) => {
+        if (diverseEntityIndices.has(entityIndex)) {
+          diverseFaces.push(geometryData.faces[faceIndex]);
+        } else {
+          nonDiverseFaces.push(geometryData.faces[faceIndex]);
+        }
+      });
+
+      // Create pink meshes for diverse entities
+      if (diverseFaces.length > 0) {
+        const diverseIndices = triangulate(diverseFaces);
+        const diverseGeom = new THREE.BufferGeometry();
+        const positions = new Float32Array(geometryData.vertices.flat());
+        diverseGeom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+        diverseGeom.setIndex(diverseIndices);
+        diverseGeom.computeVertexNormals();
+
+        const diverseMaterial = new THREE.MeshStandardMaterial({
+          color: 0xF500B8,
+          roughness: 0.3,
+          metalness: 0.0,
+          transparent: true,
+          opacity: 0.5,
+          emissive: 0xF500B8,
+          emissiveIntensity: 0.4,
+          side: THREE.DoubleSide,
+          depthTest: true,
+          depthWrite: false
+        });
+
+        const diverseMesh = new THREE.Mesh(diverseGeom, diverseMaterial);
+        diverseMesh.renderOrder = 999;
+        diverseGroup.add(diverseMesh);
+      }
+
+      // Create gray mesh for non-diverse entities
+      if (nonDiverseFaces.length > 0) {
+        const nonDiverseIndices = triangulate(nonDiverseFaces);
+        const nonDiverseGeom = new THREE.BufferGeometry();
+        const positions = new Float32Array(geometryData.vertices.flat());
+        nonDiverseGeom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+        nonDiverseGeom.setIndex(nonDiverseIndices);
+        nonDiverseGeom.computeVertexNormals();
+
+        const nonDiverseMaterial = createArcticModeMaterial();
+        const nonDiverseMesh = new THREE.Mesh(nonDiverseGeom, nonDiverseMaterial);
+        diverseGroup.add(nonDiverseMesh);
+      }
+    } else {
+      // No diverse entities, show main mesh
+      if (mainGeometryMesh) {
+        mainGeometryMesh.visible = true;
+      }
+    }
+  }, [selectedDiverseEntities, geometryData]);
+
+  // Create pink highlight for selected entity and gray mesh for others
+  useEffect(() => {
+    const scene = sceneRef.current;
+    const contentGroup = contentGroupRef.current;
+    const diverseGroup = diverseHighlightsRef.current;
+    if (!scene || !contentGroup) return;
+
+    // Find the main geometry mesh
+    const mainGeometryMesh = contentGroup.children.find(child =>
+      child instanceof THREE.Mesh && child.userData.isGeometry === true
+    ) as THREE.Mesh | undefined;
+
+    // Remove existing highlight and remaining mesh
+    if (highlightMeshRef.current) {
+      scene.remove(highlightMeshRef.current);
+      highlightMeshRef.current.geometry.dispose();
+      if (highlightMeshRef.current.material instanceof THREE.Material) {
+        highlightMeshRef.current.material.dispose();
+      }
+      highlightMeshRef.current = null;
+    }
+
+    if (remainingMeshRef.current) {
+      scene.remove(remainingMeshRef.current);
+      remainingMeshRef.current.geometry.dispose();
+      if (remainingMeshRef.current.material instanceof THREE.Material) {
+        remainingMeshRef.current.material.dispose();
+      }
+      remainingMeshRef.current = null;
+    }
+
+    // Create new highlight if entity is selected
+    if (selectedEntity && geometryData?.face_entity_map && geometryData.vertices && geometryData.faces) {
+      // Hide the main gray mesh and diverse highlights
+      if (mainGeometryMesh) {
+        mainGeometryMesh.visible = false;
+      }
+      if (diverseGroup) {
+        diverseGroup.visible = false;
+      }
+
+      // Check if this is a diverse entity (brighter pink)
+      const isDiverse = selectedDiverseEntities.some(de => de.index === selectedEntity.index);
+
+      // Separate faces into selected entity and others
+      const selectedEntityFaces: number[][] = [];
+      const otherFaces: number[][] = [];
+
+      geometryData.face_entity_map.forEach((entityIndex, faceIndex) => {
+        if (entityIndex === selectedEntity.index) {
+          selectedEntityFaces.push(geometryData.faces[faceIndex]);
+        } else {
+          otherFaces.push(geometryData.faces[faceIndex]);
+        }
+      });
+
+      // Create pink highlight mesh for selected entity
+      if (selectedEntityFaces.length > 0) {
+        const entityIndices = triangulate(selectedEntityFaces);
+        const highlightGeom = new THREE.BufferGeometry();
+        const positions = new Float32Array(geometryData.vertices.flat());
+        highlightGeom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+        highlightGeom.setIndex(entityIndices);
+        highlightGeom.computeVertexNormals();
+
+        const highlightMaterial = new THREE.MeshStandardMaterial({
+          color: 0xF500B8,
+          roughness: 0.3,
+          metalness: 0.0,
+          transparent: true,
+          opacity: isDiverse ? 0.6 : 0.35,
+          emissive: 0xF500B8,
+          emissiveIntensity: isDiverse ? 0.5 : 0.25,
+          side: THREE.DoubleSide,
+          depthTest: true,
+          depthWrite: false
+        });
+
+        const highlightMesh = new THREE.Mesh(highlightGeom, highlightMaterial);
+        highlightMesh.renderOrder = 1000;
+        scene.add(highlightMesh);
+        highlightMeshRef.current = highlightMesh;
+      }
+
+      // Create gray mesh for remaining entities
+      if (otherFaces.length > 0) {
+        const remainingIndices = triangulate(otherFaces);
+        const remainingGeom = new THREE.BufferGeometry();
+        const positions = new Float32Array(geometryData.vertices.flat());
+        remainingGeom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+        remainingGeom.setIndex(remainingIndices);
+        remainingGeom.computeVertexNormals();
+
+        const remainingMaterial = createArcticModeMaterial();
+        const remainingMesh = new THREE.Mesh(remainingGeom, remainingMaterial);
+        scene.add(remainingMesh);
+        remainingMeshRef.current = remainingMesh;
+      }
+    } else {
+      // Show appropriate meshes when nothing is selected
+      if (diverseGroup && diverseGroup.children.length > 0) {
+        // If there are diverse entities, show them and hide the main mesh
+        mainGeometryMesh && (mainGeometryMesh.visible = false);
+        diverseGroup.visible = true;
+      } else {
+        // No diverse entities, show the main gray mesh
+        mainGeometryMesh && (mainGeometryMesh.visible = true);
+        diverseGroup && (diverseGroup.visible = false);
+      }
+    }
+  }, [selectedEntity, selectedDiverseEntities, geometryData]);
+
+  // Update entity overlay position
+  useEffect(() => {
+    if (!selectedEntity || !cameraRef.current || !rendererRef.current) {
+      setEntityOverlay(null);
+      return;
+    }
+
+    const updateEntityOverlay = () => {
+      if (!selectedEntity || !cameraRef.current || !rendererRef.current) return;
+
+      const camera = cameraRef.current;
+      const renderer = rendererRef.current;
+
+      const vector = new THREE.Vector3(
+        selectedEntity.position[0],
+        selectedEntity.position[1],
+        selectedEntity.position[2]
+      );
+      vector.project(camera);
+
+      const isBehindCamera = vector.z > 1;
+      const x = (vector.x * 0.5 + 0.5) * renderer.domElement.clientWidth;
+      const y = (-(vector.y * 0.5) + 0.5) * renderer.domElement.clientHeight;
+
+      setEntityOverlay({
+        x,
+        y,
+        visible: !isBehindCamera,
+        entity: selectedEntity
+      });
+    };
+
+    let animationId: number;
+    const animate = () => {
+      updateEntityOverlay();
+      animationId = requestAnimationFrame(animate);
+    };
+    animationId = requestAnimationFrame(animate);
+
+    return () => {
+      cancelAnimationFrame(animationId);
+    };
+  }, [selectedEntity]);
 
   // Update UI overlay positions every frame
   useEffect(() => {
@@ -221,32 +582,15 @@ export function ThreeScene({
       geom.setAttribute("position", new THREE.BufferAttribute(triangulatedGeometry.positions, 3));
       geom.setIndex(triangulatedGeometry.indices);
       geom.computeVertexNormals();
-      const mesh = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({
-        color: 0xF5E6D3,
-        roughness: 0.7,
-        metalness: 0.05,
-        side: THREE.DoubleSide
-      }));
+      const mesh = new THREE.Mesh(geom, createArcticModeMaterial());
       mesh.userData.isGeometry = true;
       contentGroup.add(mesh);
 
-      const box = new THREE.Box3().setFromObject(contentGroup);
-      const size = new THREE.Vector3();
-      const center = new THREE.Vector3();
-      box.getSize(size);
-      box.getCenter(center);
-      const maxDim = Math.max(size.x, size.y, size.z);
-      const fov = camera.fov * (Math.PI / 180);
-      let cameraDistance = Math.abs(maxDim / (2 * Math.tan(fov / 2)));
-      cameraDistance *= 1.5;
-      const angle = Math.PI / 4;
-      camera.position.set(
-        center.x + cameraDistance * Math.cos(angle),
-        center.y + cameraDistance * Math.sin(angle),
-        center.z + cameraDistance * 0.7
-      );
-      controls.target.copy(center);
-      controls.update();
+      // Only frame camera on first load (when camera is at default position)
+    //   const isDefaultPosition = camera.position.x === 15 && camera.position.y === 10 && camera.position.z === 15;
+    //   if (isDefaultPosition) {
+      frameCameraToObject(camera, controls, contentGroup, 1.25);
+    //   }
     }
   }, [triangulatedGeometry]);
 
@@ -257,6 +601,12 @@ export function ThreeScene({
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     if (!scene || !contentGroup || !camera || !controls) return;
+
+    // Reset entity selection when sound generation completes
+    if (soundscapeData && soundscapeData.length > 0) {
+      setSelectedEntity(null);
+      setEntityOverlay(null);
+    }
 
     const isOnlyVariantChange =
       prevSoundscapeDataRef.current === soundscapeData &&
@@ -506,6 +856,9 @@ export function ThreeScene({
             onVariantChange={onVariantChange}
           />
         ))}
+
+        {/* Entity data overlay */}
+        {entityOverlay && <EntityUIOverlay overlay={entityOverlay} />}
       </div>
     </div>
   );
