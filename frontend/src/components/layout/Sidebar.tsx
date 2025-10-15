@@ -16,7 +16,6 @@ interface SidebarProps {
   file: File | null;
   geometryData: CompasGeometry | null;
   soundscapeData: SoundEvent[] | null;
-  soundscapeState: SoundState;
   selectedVariants: {[key: number]: number};
   activeAiTab: ActiveTab;
   activeLoadTab: LoadTab;
@@ -26,6 +25,10 @@ interface SidebarProps {
   soundConfigs: SoundGenerationConfig[];
   activeSoundConfigTab: number;
   generatedSounds: any[];
+  globalDuration: number;
+  globalSteps: number;
+  globalNegativePrompt: string;
+  applyDenoising: boolean;
   isUploading: boolean;
   isAnalyzingModel: boolean;
   isGenerating: boolean;
@@ -58,6 +61,10 @@ interface SidebarProps {
   onRemoveSoundConfig: (index: number) => void;
   onUpdateSoundConfig: (index: number, field: keyof SoundGenerationConfig, value: string | number) => void;
   onGenerateSounds: () => void;
+  onGlobalDurationChange: (duration: number) => void;
+  onGlobalStepsChange: (steps: number) => void;
+  onGlobalNegativePromptChange: (prompt: string) => void;
+  onApplyDenoisingChange: (apply: boolean) => void;
   onPlayAll: () => void;
   onPauseAll: () => void;
   onStopAll: () => void;
@@ -67,9 +74,10 @@ interface SidebarProps {
 export function Sidebar(props: SidebarProps) {
   return (
     <aside className="w-96 flex-shrink-0 p-8 border-r border-gray-200 dark:border-gray-700 flex flex-col gap-8 shadow-lg bg-white dark:bg-gray-800 overflow-y-auto">
-      <div className="flex items-center gap-4">
-        <Image className="dark:invert" src="/compas_icon_white.png" alt="compas logo" width={50} height={50} priority />
-        <h1 className="text-2xl font-bold">COMPAS Soundscape</h1>
+      {/* Fixed header - prevents wrapping issues */}
+      <div className="flex items-center gap-4 flex-shrink-0 min-h-[50px]">
+        <Image className="dark:invert flex-shrink-0" src="/compas_icon_white.png" alt="compas logo" width={50} height={50} priority />
+        <h1 className="text-2xl font-bold whitespace-nowrap">COMPAS Soundscape</h1>
       </div>
 
       {/* Generative AI Section with Tabs */}
@@ -82,7 +90,7 @@ export function Sidebar(props: SidebarProps) {
             onClick={() => props.setActiveAiTab('text')}
             className={`px-4 py-2 font-medium transition-colors ${
               props.activeAiTab === 'text'
-                ? 'border-b-2 border-[#F500B8] text-[#F500B8]'
+                ? 'border-b-2 border-primary text-primary'
                 : 'text-gray-500 hover:text-gray-700'
             }`}
           >
@@ -92,7 +100,7 @@ export function Sidebar(props: SidebarProps) {
             onClick={() => props.setActiveAiTab('sound')}
             className={`px-4 py-2 font-medium transition-colors ${
               props.activeAiTab === 'sound'
-                ? 'border-b-2 border-[#F500B8] text-[#F500B8]'
+                ? 'border-b-2 border-primary text-primary'
                 : 'text-gray-500 hover:text-gray-700'
             }`}
           >
@@ -151,12 +159,19 @@ export function Sidebar(props: SidebarProps) {
             isSoundGenerating={props.isSoundGenerating}
             soundGenError={props.soundGenError}
             generatedSounds={props.generatedSounds}
-            soundscapeState={props.soundscapeState}
+            globalDuration={props.globalDuration}
+            globalSteps={props.globalSteps}
+            globalNegativePrompt={props.globalNegativePrompt}
+            applyDenoising={props.applyDenoising}
             onSetActiveTab={props.setActiveSoundConfigTab}
             onAddConfig={props.onAddSoundConfig}
             onRemoveConfig={props.onRemoveSoundConfig}
             onUpdateConfig={props.onUpdateSoundConfig}
             onGenerate={props.onGenerateSounds}
+            onGlobalDurationChange={props.onGlobalDurationChange}
+            onGlobalStepsChange={props.onGlobalStepsChange}
+            onGlobalNegativePromptChange={props.onGlobalNegativePromptChange}
+            onApplyDenoisingChange={props.onApplyDenoisingChange}
             onPlayAll={props.onPlayAll}
             onPauseAll={props.onPauseAll}
             onStopAll={props.onStopAll}

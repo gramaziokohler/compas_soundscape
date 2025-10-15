@@ -34,14 +34,45 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
         num_sounds: numSounds
       };
 
-      // Only send entities if checkbox is checked
+      // Step 1: Select diverse entities first (if using model)
+      let selectedEntities = null;
       if (shouldUseEntities) {
-        requestBody.entities = modelEntities;
         if (modelEntities.length > numSounds) {
           setLlmProgress(`Selecting ${numSounds} most diverse objects from ${modelEntities.length} total...`);
+        } else {
+          setLlmProgress(`Analyzing ${modelEntities.length} objects from 3D model...`);
+        }
+
+        // Call backend to select diverse entities first
+        const selectionResponse = await fetch(`${API_BASE_URL}/api/select-entities`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entities: modelEntities,
+            max_sounds: numSounds
+          }),
+        });
+
+        if (selectionResponse.ok) {
+          const selectionResult = await selectionResponse.json();
+          selectedEntities = selectionResult.selected_entities;
+
+          // Step 2: Show selected entities with highlighting
+          setSelectedDiverseEntities(selectedEntities);
+          setLlmProgress(`Selected ${selectedEntities.length} objects. Generating sound prompts...`);
+
+          // Give time for highlighting to be visible
+          await new Promise(resolve => setTimeout(resolve, 800));
+
+          // Use selected entities for prompt generation
+          requestBody.entities = selectedEntities;
+        } else {
+          // Fallback: use all entities
+          requestBody.entities = modelEntities;
         }
       }
 
+      // Step 3: Generate prompts
       const response = await fetch(`${API_BASE_URL}/api/generate-text`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -69,15 +100,20 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
             guidance_scale: 4.5,
             negative_prompt: "",
             seed_copies: 1,
+            steps: 25,
             entity: item.entity, // Store entity for position info
-            display_name: item.display_name // Store LLM-generated display name
+            display_name: item.display_name, // Store LLM-generated display name
+            spl_db: item.spl_db || 70.0, // Store LLM-estimated SPL level
+            interval_seconds: item.interval_seconds || 30.0 // Store LLM-estimated interval
           }));
           setPendingSoundConfigs(newSoundConfigsWithEntities);
           setShowConfirmLoadSounds(true);
 
-          // Store the selected diverse entities for highlighting
-          const entities = result.prompts.map((item: any) => item.entity);
-          setSelectedDiverseEntities(entities);
+          // Keep the already-selected entities for highlighting (don't override)
+          // If we didn't pre-select, use the entities from the response
+          if (!selectedEntities && result.selected_entities) {
+            setSelectedDiverseEntities(result.selected_entities);
+          }
 
           // Backend now properly parses prompts - just display them directly
           const displayText = result.prompts.map((item: any, idx: number) =>
@@ -92,7 +128,10 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
             guidance_scale: 4.5,
             negative_prompt: "",
             seed_copies: 1,
-            display_name: item.display_name // Store LLM-generated display name
+            steps: 25,
+            display_name: item.display_name, // Store LLM-generated display name
+            spl_db: item.spl_db || 70.0, // Store LLM-estimated SPL level
+            interval_seconds: item.interval_seconds || 30.0 // Store LLM-estimated interval
           }));
           setPendingSoundConfigs(newSoundConfigs);
           setShowConfirmLoadSounds(true);
@@ -109,7 +148,8 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
           duration: 5,
           guidance_scale: 4.5,
           negative_prompt: "",
-          seed_copies: 1
+          seed_copies: 1,
+          steps: 25
         }));
         setPendingSoundConfigs(newSoundConfigs);
         setShowConfirmLoadSounds(true);

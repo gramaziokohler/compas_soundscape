@@ -227,6 +227,7 @@ apiService (services/api.ts)
 ├── loadSampleIfc()        → GET /api/load-sample-ifc
 ├── analyze3dm()           → POST /api/analyze-3dm
 ├── analyzeIfc()           → GET /api/analyze-ifc
+├── selectEntities()       → POST /api/select-entities (NEW)
 ├── generateText()         → POST /api/generate-text
 ├── generateSounds()       → POST /api/generate-sounds
 └── cleanupGeneratedSounds() → POST /api/cleanup-generated-sounds
@@ -245,7 +246,8 @@ GeometryService
 
 LLMService
 ├── select_diverse_entities()
-├── generate_sound_prompt_for_entity()
+├── _create_base_sound_prompt() (NEW - unified prompt)
+├── generate_prompts_for_entities() (NEW - batch processing)
 └── generate_text_based_prompts()
 
 AudioService
@@ -334,3 +336,96 @@ AudioService
 - **Easier testing** with isolated components/services
 - **Type safety** throughout the stack
 - **Faster development** - easy to find and modify code
+
+## Recent Updates
+
+### Entity Selection Progress Display (2025-10-15)
+
+**Problem:** Progress message "Selected N objects. Generating sound prompts..." was not visible because it was being set AFTER the backend had already completed both entity selection AND prompt generation.
+
+**Solution:** Split the entity-based generation workflow into two separate API calls to provide better UX and visual feedback.
+
+#### New Workflow Architecture
+
+**Before (Single API Call):**
+```
+Frontend                          Backend
+   |------- POST /api/generate-text
+   |                              |-- Select diverse entities (LLM)
+   |                              |-- Generate prompts (LLM)
+   |<----- Response with prompts
+   |-- Set progress (too late!)
+```
+
+**After (Two API Calls):**
+```
+Frontend                          Backend
+   |-- Progress: "Selecting..."
+   |------- POST /api/select-entities
+   |                              |-- Select diverse entities (LLM)
+   |<----- Selected entities
+   |-- Highlight entities ✓
+   |-- Progress: "Selected N objects. Generating sound prompts..." ✓
+   |-- Wait 800ms (user sees this!)
+   |------- POST /api/generate-prompts
+   |                              |-- Generate prompts (LLM)
+   |<----- Response with prompts
+   |-- Display results
+```
+
+#### API Updates
+
+**New Endpoint:** `/api/select-entities`
+- **Location:** `backend/routers/generation.py` (lines 23-48)
+- **Purpose:** Selects diverse entities using LLM and returns them immediately
+- **Request:** `{ entities: list[dict], max_sounds: int }`
+- **Response:** `{ selected_entities: list[dict], count: int }`
+- **Benefits:** Allows frontend to show progress and highlighting before prompt generation
+
+**Updated Endpoint:** `/api/generate-prompts`
+- **Location:** `backend/routers/generation.py` (lines 51-93)
+- **Changes:** Now accepts pre-selected entities (fallback to diversity selection if needed)
+- **Optimization:** Batch processing of all entities in single LLM call
+
+#### LLM Service Unification
+
+**New Methods:**
+- `_create_base_sound_prompt()` - Unified base prompt for both entity and text-based generation
+- `generate_prompts_for_entities()` - Batch processing for multiple entities in single LLM call
+
+**Benefits:**
+- Single source of truth for prompt structure
+- Reduced LLM API calls (batch instead of per-entity)
+- Consistent output format across workflows
+
+#### Frontend Changes
+
+**File:** `frontend/src/hooks/useTextGeneration.ts` (lines 37-88)
+
+**Progress Steps:**
+1. **Step 1:** Select diverse entities
+   - Progress: "Selecting N most diverse objects..."
+   - Calls `/api/select-entities`
+2. **Step 2:** Show selection with highlighting
+   - Updates `selectedDiverseEntities` → triggers 3D highlighting
+   - Progress: "Selected N objects. Generating sound prompts..."
+   - Waits 800ms for visual feedback
+3. **Step 3:** Generate prompts
+   - Calls `/api/generate-prompts` with pre-selected entities
+   - Progress cleared, results displayed
+
+**interval_seconds Fix:**
+- Now properly passed from LLM → generation.py → audio service → frontend
+- Added to sound configs in both entity-based and text-based workflows
+- Ensures sound playback intervals match LLM estimates
+
+#### Testing the Progress Display
+
+1. Load a 3D model with many entities (>10)
+2. Check "Use model context"
+3. Set number of sounds to 5
+4. Click "Generate Sound Ideas"
+5. Watch for:
+   - ⏳ "Selecting 5 most diverse objects from N total..."
+   - 🔄 "Selected 5 objects. Generating sound prompts..." (with highlighted entities in 3D view)
+   - ✨ Final results displayed

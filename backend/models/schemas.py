@@ -13,6 +13,7 @@ class PromptRequest(BaseModel):
 class SoundGenerationRequest(BaseModel):
     sounds: list[dict]
     bounding_box: dict | None = None
+    apply_denoising: bool = False
 
 
 class IFCEntityInfo(BaseModel):

@@ -27,6 +27,18 @@ export default function Home() {
     }
   }, [textGen.pendingSoundConfigs, soundGen, textGen]);
 
+  // Handle sound deletion
+  const handleDeleteSound = useCallback((soundId: string, promptIdx: number) => {
+    if (!soundGen.soundscapeData) return;
+
+    // Filter out all sounds with this prompt index
+    const updatedSounds = soundGen.soundscapeData.filter(
+      sound => (sound as any).prompt_index !== promptIdx
+    );
+
+    soundGen.setSoundscapeData(updatedSounds.length > 0 ? updatedSounds : null);
+  }, [soundGen]);
+
   // Cleanup on unmount
   useEffect(() => {
     apiService.cleanupGeneratedSounds();
@@ -79,14 +91,21 @@ export default function Home() {
         isSoundGenerating={soundGen.isSoundGenerating}
         soundGenError={soundGen.soundGenError}
         generatedSounds={soundGen.generatedSounds}
+        globalDuration={soundGen.globalDuration}
+        globalSteps={soundGen.globalSteps}
+        globalNegativePrompt={soundGen.globalNegativePrompt}
+        applyDenoising={soundGen.applyDenoising}
         setActiveSoundConfigTab={soundGen.setActiveSoundConfigTab}
         onAddSoundConfig={soundGen.handleAddConfig}
         onRemoveSoundConfig={soundGen.handleRemoveConfig}
         onUpdateSoundConfig={soundGen.handleUpdateConfig}
         onGenerateSounds={soundGen.handleGenerate}
+        onGlobalDurationChange={soundGen.handleGlobalDurationChange}
+        onGlobalStepsChange={soundGen.handleGlobalStepsChange}
+        onGlobalNegativePromptChange={soundGen.setGlobalNegativePrompt}
+        onApplyDenoisingChange={soundGen.setApplyDenoising}
 
         // Audio controls props
-        soundscapeState={audioControls.soundscapeState}
         selectedVariants={audioControls.selectedVariants}
         onPlayAll={audioControls.playAll}
         onPauseAll={audioControls.pauseAll}
@@ -104,11 +123,15 @@ export default function Home() {
         <ThreeScene
           geometryData={fileUpload.geometryData}
           soundscapeData={soundGen.soundscapeData}
-          soundscapeState={audioControls.soundscapeState}
           individualSoundStates={audioControls.individualSoundStates}
           selectedVariants={audioControls.selectedVariants}
+          soundVolumes={audioControls.soundVolumes}
+          soundIntervals={audioControls.soundIntervals}
           onToggleSound={audioControls.toggleSound}
           onVariantChange={audioControls.handleVariantChange}
+          onVolumeChange={audioControls.handleVolumeChange}
+          onIntervalChange={audioControls.handleIntervalChange}
+          onDeleteSound={handleDeleteSound}
           scaleForSounds={fileUpload.scaleForSounds}
           modelEntities={fileUpload.modelEntities}
           selectedDiverseEntities={textGen.selectedDiverseEntities}

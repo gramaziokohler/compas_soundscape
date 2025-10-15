@@ -4,10 +4,11 @@ import { useRef, useState, useMemo, useEffect } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { DragControls } from "three/examples/jsm/controls/DragControls.js";
+
 import { SoundUIOverlay } from "@/components/overlays/SoundUIOverlay";
 import { EntityUIOverlay } from "@/components/overlays/EntityUIOverlay";
 import { triangulate } from "@/lib/utils";
-import { API_BASE_URL } from "@/lib/constants";
+import { API_BASE_URL, PRIMARY_COLOR_HEX } from "@/lib/constants";
 import {
   createArcticModeScene,
   setupArcticModeLighting,
@@ -16,37 +17,78 @@ import {
   setupOrbitControls,
   frameCameraToObject
 } from "@/lib/three/sceneSetup";
+import { AudioScheduler } from "@/lib/audio-scheduler";
 import type { CompasGeometry, SoundEvent, SoundState, UIOverlay, EntityData, EntityOverlay } from "@/types";
 
+/**
+ * ThreeScene Component Props
+ */
 interface ThreeSceneProps {
   geometryData: CompasGeometry | null;
   soundscapeData: SoundEvent[] | null;
-  soundscapeState: SoundState;
   individualSoundStates: {[key: string]: SoundState};
   selectedVariants: {[key: number]: number};
+  soundVolumes: {[key: string]: number};
+  soundIntervals: {[key: string]: number};
   onToggleSound: (soundId: string) => void;
   onVariantChange: (promptIdx: number, variantIdx: number) => void;
+  onVolumeChange: (soundId: string, volumeDb: number) => void;
+  onIntervalChange: (soundId: string, intervalSeconds: number) => void;
+  onDeleteSound: (soundId: string, promptIdx: number) => void;
   scaleForSounds: number;
   modelEntities?: EntityData[];
   selectedDiverseEntities?: EntityData[];
   className?: string;
 }
 
+/**
+ * ThreeScene Component
+ *
+ * Main 3D scene component for the COMPAS Soundscape application.
+ * Handles visualization of 3D geometry, spatial audio playback, and entity selection.
+ *
+ * Key Features:
+ * - 3D geometry visualization with Three.js
+ * - Interval-based spatial audio scheduling with random variance
+ * - Two playback modes:
+ *   1. Soundscape Mode: All sounds play together with synchronized scheduling
+ *   2. Individual Mode: Each sound has its own independent scheduler
+ * - Entity highlighting (diverse and individual selection)
+ * - Draggable sound sources with positional audio
+ *
+ * Audio Scheduling:
+ * - Playback interval = sound_duration + interval_setting + random_variance
+ * - Random variance: ±10% by default (e.g., 10s → 9-11s)
+ * - Individual schedulers are isolated and don't interfere with soundscape playback
+ *
+ * Architecture:
+ * - Follows Single Responsibility Principle
+ * - Audio scheduling logic kept internal due to tight coupling with 3D scene
+ * - Uses refs for Three.js objects to avoid unnecessary re-renders
+ * - Clear section comments for maintainability
+ */
+
 export function ThreeScene({
   geometryData,
   soundscapeData,
-  soundscapeState,
   individualSoundStates,
   selectedVariants,
+  soundVolumes,
+  soundIntervals,
   onToggleSound,
   onVariantChange,
+  onVolumeChange,
+  onIntervalChange,
+  onDeleteSound,
   scaleForSounds,
   modelEntities = [],
   selectedDiverseEntities = [],
   className
 }: ThreeSceneProps) {
+  // ============================================================================
+  // Refs - Three.js Scene Objects
+  // ============================================================================
   const mountRef = useRef<HTMLDivElement>(null);
-  const audioSourcesRef = useRef<Map<string, THREE.PositionalAudio>>(new Map());
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -54,13 +96,28 @@ export function ThreeScene({
   const dragControlsRef = useRef<DragControls | null>(null);
   const contentGroupRef = useRef<THREE.Group | null>(null);
   const animationFrameIdRef = useRef<number | null>(null);
+
+  // ============================================================================
+  // Refs - Audio Management
+  // ============================================================================
+  const audioSourcesRef = useRef<Map<string, THREE.PositionalAudio>>(new Map());
+  const audioSchedulersRef = useRef<Map<string, AudioScheduler>>(new Map());
+
+  // ============================================================================
+  // Refs - Sound Sphere Management
+  // ============================================================================
   const draggableObjectsRef = useRef<THREE.Object3D[]>([]);
   const spherePositionsRef = useRef<{[key: string]: THREE.Vector3}>({});
   const prevSoundscapeDataRef = useRef<SoundEvent[] | null>(null);
 
-  const [uiOverlays, setUiOverlays] = useState<UIOverlay[]>([]);
-  const [entityOverlay, setEntityOverlay] = useState<EntityOverlay | null>(null);
-  const [selectedEntity, setSelectedEntity] = useState<EntityData | null>(null);
+  // Track previous state to detect changes
+  const prevIndividualSoundStatesRef = useRef<{[key: string]: SoundState}>({});
+  const prevSoundIntervalsRef = useRef<{[key: string]: number}>({});
+  const isPlayAllRef = useRef<boolean>(false);
+
+  // ============================================================================
+  // Refs - Entity Highlighting
+  // ============================================================================
   const raycasterRef = useRef<THREE.Raycaster>(new THREE.Raycaster());
   const mouseRef = useRef<THREE.Vector2>(new THREE.Vector2());
   const entityMarkersRef = useRef<THREE.Group | null>(null);
@@ -70,7 +127,17 @@ export function ThreeScene({
   const geometryDataRef = useRef<CompasGeometry | null>(null);
   const modelEntitiesRef = useRef<EntityData[]>([]);
 
-  // Keep refs updated with latest props for click handler
+  // ============================================================================
+  // State - UI Overlays and Visibility
+  // ============================================================================
+  const [uiOverlays, setUiOverlays] = useState<UIOverlay[]>([]);
+  const [entityOverlay, setEntityOverlay] = useState<EntityOverlay | null>(null);
+  const [selectedEntity, setSelectedEntity] = useState<EntityData | null>(null);
+  const [showSoundBoxes, setShowSoundBoxes] = useState<boolean>(true);
+
+  // ============================================================================
+  // Effect - Sync Props to Refs (for event handlers)
+  // ============================================================================
   useEffect(() => {
     geometryDataRef.current = geometryData;
   }, [geometryData]);
@@ -79,7 +146,38 @@ export function ThreeScene({
     modelEntitiesRef.current = modelEntities;
   }, [modelEntities]);
 
-  // Memoize triangulated geometry data
+  // ============================================================================
+  // Handlers - Camera and UI Controls
+  // ============================================================================
+
+  // Reset camera to default or model view
+  const handleResetZoom = () => {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    const contentGroup = contentGroupRef.current;
+    if (!camera || !controls) return;
+
+    if (geometryData && contentGroup) {
+      // Frame to model if it exists
+      frameCameraToObject(camera, controls, contentGroup, 1.25);
+    } else {
+      // Reset to default position
+      camera.position.set(15, 10, 15);
+      controls.target.set(0, 0, 0);
+      controls.update();
+    }
+  };
+
+  // Toggle sound boxes visibility
+  const handleToggleSoundBoxes = () => {
+    setShowSoundBoxes(prev => !prev);
+  };
+
+  // ============================================================================
+  // Memoized Values
+  // ============================================================================
+
+  // Memoize triangulated geometry data for performance
   const triangulatedGeometry = useMemo(() => {
     if (!geometryData) return null;
     return {
@@ -88,7 +186,9 @@ export function ThreeScene({
     };
   }, [geometryData]);
 
-  // Initialize scene, camera, renderer (only once)
+  // ============================================================================
+  // Effect - Initialize Three.js Scene (runs once)
+  // ============================================================================
   useEffect(() => {
     const mountNode = mountRef.current;
     if (!mountNode) return;
@@ -247,7 +347,9 @@ export function ThreeScene({
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-highlight diverse entities after analysis and create gray mesh for non-diverse
+  // ============================================================================
+  // Effect - Entity Highlighting (Diverse Selection)
+  // ============================================================================
   useEffect(() => {
     const scene = sceneRef.current;
     const diverseGroup = diverseHighlightsRef.current;
@@ -301,12 +403,12 @@ export function ThreeScene({
         diverseGeom.computeVertexNormals();
 
         const diverseMaterial = new THREE.MeshStandardMaterial({
-          color: 0xF500B8,
+          color: PRIMARY_COLOR_HEX,
           roughness: 0.3,
           metalness: 0.0,
           transparent: true,
           opacity: 0.5,
-          emissive: 0xF500B8,
+          emissive: PRIMARY_COLOR_HEX,
           emissiveIntensity: 0.4,
           side: THREE.DoubleSide,
           depthTest: true,
@@ -339,7 +441,9 @@ export function ThreeScene({
     }
   }, [selectedDiverseEntities, geometryData]);
 
-  // Create pink highlight for selected entity and gray mesh for others
+  // ============================================================================
+  // Effect - Entity Highlighting (Individual Selection)
+  // ============================================================================
   useEffect(() => {
     const scene = sceneRef.current;
     const contentGroup = contentGroupRef.current;
@@ -405,12 +509,12 @@ export function ThreeScene({
         highlightGeom.computeVertexNormals();
 
         const highlightMaterial = new THREE.MeshStandardMaterial({
-          color: 0xF500B8,
+          color: PRIMARY_COLOR_HEX,
           roughness: 0.3,
           metalness: 0.0,
           transparent: true,
           opacity: isDiverse ? 0.6 : 0.35,
-          emissive: 0xF500B8,
+          emissive: PRIMARY_COLOR_HEX,
           emissiveIntensity: isDiverse ? 0.5 : 0.25,
           side: THREE.DoubleSide,
           depthTest: true,
@@ -451,7 +555,9 @@ export function ThreeScene({
     }
   }, [selectedEntity, selectedDiverseEntities, geometryData]);
 
-  // Update entity overlay position
+  // ============================================================================
+  // Effect - Update Entity Overlay Position (Animation Loop)
+  // ============================================================================
   useEffect(() => {
     if (!selectedEntity || !cameraRef.current || !rendererRef.current) {
       setEntityOverlay(null);
@@ -495,7 +601,9 @@ export function ThreeScene({
     };
   }, [selectedEntity]);
 
-  // Update UI overlay positions every frame
+  // ============================================================================
+  // Effect - Update Sound UI Overlay Positions (Animation Loop)
+  // ============================================================================
   useEffect(() => {
     const updateUIOverlayPositions = () => {
       if (!cameraRef.current || !rendererRef.current || !soundscapeData) return;
@@ -559,7 +667,9 @@ export function ThreeScene({
     };
   }, [soundscapeData, selectedVariants]);
 
-  // Update geometry when geometryData changes
+  // ============================================================================
+  // Effect - Update Geometry Mesh
+  // ============================================================================
   useEffect(() => {
     const contentGroup = contentGroupRef.current;
     const camera = cameraRef.current;
@@ -594,7 +704,9 @@ export function ThreeScene({
     }
   }, [triangulatedGeometry]);
 
-  // Update soundscape when soundscapeData changes
+  // ============================================================================
+  // Effect - Update Sound Spheres and Audio Sources
+  // ============================================================================
   useEffect(() => {
     const scene = sceneRef.current;
     const contentGroup = contentGroupRef.current;
@@ -682,8 +794,8 @@ export function ThreeScene({
         }
 
         const material = new THREE.MeshStandardMaterial({
-          color: 0xF500B8,
-          emissive: 0xF500B8,
+          color: PRIMARY_COLOR_HEX,
+          emissive: PRIMARY_COLOR_HEX,
           emissiveIntensity: 0.3,
           roughness: 0.3,
           metalness: 0.7
@@ -706,18 +818,15 @@ export function ThreeScene({
 
         const positionalAudio = new THREE.PositionalAudio(listener);
         const fullUrl = `${API_BASE_URL}${soundEvent.url}`;
-        const promptIdx = (soundEvent as any).prompt_index ?? 0;
 
         audioLoader.load(
           fullUrl,
           (buffer) => {
             positionalAudio.setBuffer(buffer);
-            positionalAudio.setLoop(true);
+            positionalAudio.setLoop(false); // Don't loop - scheduler handles intervals
             positionalAudio.setRefDistance(5);
 
-            if (playingByPromptIndex.get(promptIdx) && listener.context.state !== 'suspended') {
-              positionalAudio.play();
-            }
+            // Note: Don't auto-play here - let the scheduler handle it
           },
           undefined,
           (error) => {
@@ -770,95 +879,243 @@ export function ThreeScene({
     }
   }, [soundscapeData, selectedVariants, scaleForSounds]);
 
-  // Control audio playback based on soundscapeState
+  // ============================================================================
+  // Effect - Cleanup Audio Schedulers on Unmount
+  // ============================================================================
+  useEffect(() => {
+    return () => {
+      // Cleanup all schedulers on unmount
+      audioSchedulersRef.current.forEach(scheduler => scheduler.dispose());
+      audioSchedulersRef.current.clear();
+    };
+  }, []);
+
+  // ============================================================================
+  // Effect - Control Individual Sound Playback (Granular Updates Only)
+  // ============================================================================
   useEffect(() => {
     const sources = audioSourcesRef.current;
     const camera = cameraRef.current;
-    if (sources.size === 0 || !camera) return;
+    if (sources.size === 0 || !camera || camera.children.length === 0) return;
 
     const listener = camera.children[0] as THREE.AudioListener;
+    const prevStates = prevIndividualSoundStatesRef.current;
+    const prevIntervals = prevSoundIntervalsRef.current;
 
-    switch (soundscapeState) {
-      case 'playing':
-        if (listener.context.state === 'suspended') {
-          listener.context.resume().then(() => {
-            sources.forEach(s => {
-              if (s.buffer && !s.isPlaying) {
-                s.play();
-              }
-            });
-          });
-        } else {
-          sources.forEach(s => {
-            if (s.buffer && !s.isPlaying) {
-              s.play();
-            }
-          });
-        }
-        break;
-      case 'paused':
-        sources.forEach(s => {
-          if (s.isPlaying) s.pause();
-        });
-        break;
-      case 'stopped':
-        sources.forEach(s => {
-          if (s.isPlaying) s.stop();
-        });
-        break;
-    }
-  }, [soundscapeState]);
+    // Only process sounds that have changed
+    const allSoundIds = new Set([
+      ...Object.keys(individualSoundStates),
+      ...Object.keys(prevStates)
+    ]);
 
-  // Control individual sound playback
-  useEffect(() => {
-    const sources = audioSourcesRef.current;
-    const camera = cameraRef.current;
-    if (sources.size === 0 || !camera) return;
+    // Detect if this is a "Play All" scenario (multiple sounds changing to 'playing' at once)
+    const soundsChangingToPlaying = Array.from(allSoundIds).filter(soundId => {
+      const currentState = individualSoundStates[soundId];
+      const prevState = prevStates[soundId];
+      return currentState === 'playing' && prevState !== 'playing';
+    });
 
-    const listener = camera.children[0] as THREE.AudioListener;
+    // If 2 or more sounds are starting at the same time, it's likely "Play All"
+    const isPlayAll = soundsChangingToPlaying.length >= 2;
+    isPlayAllRef.current = isPlayAll;
 
-    Object.entries(individualSoundStates).forEach(([soundId, state]) => {
+    allSoundIds.forEach(soundId => {
+      const currentState = individualSoundStates[soundId];
+      const prevState = prevStates[soundId];
+      const currentInterval = soundIntervals[soundId];
+      const prevInterval = prevIntervals[soundId];
+
+      const stateChanged = currentState !== prevState;
+      const intervalChanged = currentInterval !== prevInterval;
+
+      // Skip if nothing changed for this sound
+      if (!stateChanged && !intervalChanged) return;
+
       const audio = sources.get(soundId);
       if (!audio || !audio.buffer) return;
 
-      switch (state) {
-        case 'playing':
-          if (listener.context.state === 'suspended') {
-            listener.context.resume().then(() => {
-              if (!audio.isPlaying) audio.play();
-            });
-          } else {
-            if (!audio.isPlaying) audio.play();
-          }
-          break;
-        case 'paused':
-          if (audio.isPlaying) audio.pause();
-          break;
-        case 'stopped':
-          if (audio.isPlaying) audio.stop();
-          break;
+      // Get or create scheduler for this sound
+      let scheduler = audioSchedulersRef.current.get(soundId);
+      if (!scheduler) {
+        scheduler = new AudioScheduler(listener);
+        audioSchedulersRef.current.set(soundId, scheduler);
+      }
+
+      // Handle state changes
+      if (stateChanged) {
+        switch (currentState) {
+          case 'playing':
+            // Only schedule if not already scheduled (prevents restart)
+            if (!scheduler.isScheduled(soundId)) {
+              const intervalSeconds = currentInterval ?? 30;
+              const randomnessPercent = 10; // ±10% variance
+
+              // Calculate initial delay if this is Play All
+              let initialDelayMs = 0;
+              if (isPlayAll) {
+                // Random delay from 0 to half the sound's interval
+                const soundDurationMs = audio.buffer ? (audio.buffer.duration * 1000) : 0;
+                const totalIntervalMs = (intervalSeconds * 1000) + soundDurationMs;
+                const maxDelayMs = totalIntervalMs / 2;
+                initialDelayMs = Math.random() * maxDelayMs;
+              }
+
+              scheduler.scheduleSound(soundId, audio, intervalSeconds, randomnessPercent, initialDelayMs);
+            }
+            break;
+
+          case 'paused':
+            // Unschedule and pause
+            scheduler.unscheduleSound(soundId);
+            if (audio.isPlaying) audio.pause();
+            break;
+
+          case 'stopped':
+            // Unschedule and stop
+            scheduler.unscheduleSound(soundId);
+            if (audio.isPlaying) audio.stop();
+            audio.setLoop(false);
+            break;
+        }
+      }
+      // Handle interval changes (only if sound is playing and interval changed)
+      else if (intervalChanged && currentState === 'playing' && scheduler.isScheduled(soundId)) {
+        const intervalSeconds = currentInterval ?? 30;
+        scheduler.updateInterval(soundId, intervalSeconds);
       }
     });
-  }, [individualSoundStates]);
 
+    // Update previous values
+    prevIndividualSoundStatesRef.current = { ...individualSoundStates };
+    prevSoundIntervalsRef.current = { ...soundIntervals };
+  }, [individualSoundStates, soundIntervals]);
+
+
+  // ============================================================================
+  // Effect - Apply Volume Changes
+  // ============================================================================
+  useEffect(() => {
+    const sources = audioSourcesRef.current;
+    if (sources.size === 0 || !soundscapeData) return;
+
+    soundscapeData.forEach(soundEvent => {
+      const audio = sources.get(soundEvent.id);
+      if (!audio) return;
+
+      // Get the current volume setting
+      const targetVolumeDb = soundVolumes[soundEvent.id] ?? soundEvent.volume_db ?? 70;
+      const baseVolumeDb = soundEvent.volume_db ?? 70;
+
+      // Calculate the volume difference in dB
+      const dbDiff = targetVolumeDb - baseVolumeDb;
+
+      // Convert dB difference to linear gain
+      // gain = 10^(dB/20)
+      const gainFactor = Math.pow(10, dbDiff / 20);
+
+      // Apply the gain (THREE.js uses linear gain, not dB)
+      // Clamp to reasonable range (0.0 to 10.0)
+      audio.setVolume(Math.max(0.0, Math.min(10.0, gainFactor)));
+    });
+  }, [soundVolumes, soundscapeData]);
+
+  // ============================================================================
+  // Render
+  // ============================================================================
   return (
     <div className="relative w-full h-full">
       <div ref={mountRef} className={className} />
 
       {/* 3D UI Overlays */}
       <div className="absolute inset-0 pointer-events-none">
-        {uiOverlays.map((overlay) => (
-          <SoundUIOverlay
-            key={overlay.promptKey}
-            overlay={overlay}
-            soundState={individualSoundStates[overlay.soundId] || 'stopped'}
-            onToggleSound={onToggleSound}
-            onVariantChange={onVariantChange}
-          />
-        ))}
+        {showSoundBoxes && uiOverlays.map((overlay) => {
+          const selectedSound = overlay.variants[overlay.selectedVariantIdx];
+          const currentVolumeDb = soundVolumes[selectedSound?.id] ?? selectedSound?.volume_db ?? 70;
+
+          return (
+            <SoundUIOverlay
+              key={overlay.promptKey}
+              overlay={{
+                ...overlay,
+                variants: overlay.variants.map(v => ({
+                  ...v,
+                  current_volume_db: soundVolumes[v.id] ?? v.volume_db,
+                  current_interval_seconds: soundIntervals[v.id] ?? v.interval_seconds
+                }))
+              }}
+              soundState={individualSoundStates[overlay.soundId] || 'stopped'}
+              onToggleSound={onToggleSound}
+              onVariantChange={onVariantChange}
+              onVolumeChange={onVolumeChange}
+              onIntervalChange={onIntervalChange}
+              onDelete={onDeleteSound}
+            />
+          );
+        })}
 
         {/* Entity data overlay */}
         {entityOverlay && <EntityUIOverlay overlay={entityOverlay} />}
+      </div>
+
+      {/* Bottom-left control buttons */}
+      <div className="absolute bottom-6 right-6 flex flex-col gap-2 pointer-events-auto">
+        {/* Reset Zoom Button */}
+        <button
+          onClick={handleResetZoom}
+          className="w-12 h-12 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-lg shadow-lg hover:bg-white dark:hover:bg-gray-700 transition-all duration-200 flex items-center justify-center group border border-gray-200 dark:border-gray-600"
+          title="Reset camera view"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="w-5 h-5 text-gray-700 dark:text-gray-200 group-hover:text-primary transition-colors"
+          >
+            {/* Dashed square icon - typical "fit to view" symbol */}
+            <rect x="3" y="3" width="18" height="18" strokeDasharray="3 3" />
+          </svg>
+        </button>
+
+        {/* Toggle Sound Boxes Button */}
+        <button
+          onClick={handleToggleSoundBoxes}
+          className="w-12 h-12 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-lg shadow-lg hover:bg-white dark:hover:bg-gray-700 transition-all duration-200 flex items-center justify-center group border border-gray-200 dark:border-gray-600"
+          title={showSoundBoxes ? "Hide sound controls" : "Show sound controls"}
+        >
+          {showSoundBoxes ? (
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="w-5 h-5 text-gray-700 dark:text-gray-200 group-hover:text-primary transition-colors"
+            >
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          ) : (
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="w-5 h-5 text-gray-700 dark:text-gray-200 group-hover:text-primary transition-colors"
+            >
+              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+              <line x1="1" y1="1" x2="23" y2="23" />
+            </svg>
+          )}
+        </button>
       </div>
     </div>
   );

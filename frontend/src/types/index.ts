@@ -14,6 +14,10 @@ export interface SoundEvent {
   prompt?: string;
   prompt_index?: number;
   total_copies?: number;
+  volume_db?: number; // SPL level in dB
+  current_volume_db?: number; // Current volume override (user-adjustable)
+  interval_seconds?: number; // Playback interval in seconds
+  current_interval_seconds?: number; // Current interval override (user-adjustable)
 }
 
 export interface UIOverlay {
@@ -55,7 +59,11 @@ export interface SoundGenerationConfig {
   guidance_scale: number;
   negative_prompt: string;
   seed_copies: number;
+  steps: number;
   entity?: any;
+  display_name?: string;
+  spl_db?: number; // SPL level from LLM estimation
+  interval_seconds?: number; // Playback interval from LLM estimation
 }
 
 export type SoundState = 'playing' | 'paused' | 'stopped';

@@ -27,7 +27,8 @@ async def generate_sounds(request: SoundGenerationRequest):
         generated_files = audio_service.generate_multiple_sounds(
             request.sounds,
             output_dir,
-            request.bounding_box
+            request.bounding_box,
+            request.apply_denoising
         )
 
         return {"sounds": generated_files}

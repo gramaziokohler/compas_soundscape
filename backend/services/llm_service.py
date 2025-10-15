@@ -13,17 +13,19 @@ class LLMService:
         self.client = client
 
     def _parse_prompt_and_name(self, text: str) -> dict:
-        """Parse structured PROMPT: ... NAME: ... format into dict
+        """Parse structured PROMPT: ... NAME: ... SPL: ... INTERVAL: ... format into dict
 
         Args:
-            text: Raw text that may contain PROMPT: and NAME: markers
+            text: Raw text that may contain PROMPT:, NAME:, SPL:, and INTERVAL: markers
 
         Returns:
-            dict: {"prompt": str, "display_name": str} or None if parsing fails
+            dict: {"prompt": str, "display_name": str, "spl_db": float, "interval_seconds": float} or None if parsing fails
         """
-        # Try to parse PROMPT: ... NAME: ... format
+        # Try to parse PROMPT: ... NAME: ... SPL: ... INTERVAL: ... format
         prompt_match = re.search(r'PROMPT:\s*(.+?)(?=\s*NAME:|$)', text, re.DOTALL)
-        name_match = re.search(r'NAME:\s*(.+?)$', text, re.DOTALL | re.MULTILINE)
+        name_match = re.search(r'NAME:\s*(.+?)(?=\s*SPL:|$)', text, re.DOTALL | re.MULTILINE)
+        spl_match = re.search(r'SPL:\s*(\d+(?:\.\d+)?)', text, re.IGNORECASE)
+        interval_match = re.search(r'INTERVAL:\s*(\d+(?:\.\d+)?)', text, re.IGNORECASE)
 
         if prompt_match and name_match:
             sound_prompt = prompt_match.group(1).strip()
@@ -35,9 +37,31 @@ class LLMService:
             display_name = re.sub(r'^[-\*"\'\[\]]\s*', '', display_name)
             display_name = re.sub(r'\s*[-"\'\[\]]$', '', display_name)
 
+            # Extract SPL value
+            spl_db = 70.0  # Default value
+            if spl_match:
+                try:
+                    spl_db = float(spl_match.group(1))
+                    # Clamp to reasonable range (30-120 dB SPL)
+                    spl_db = max(30.0, min(120.0, spl_db))
+                except ValueError:
+                    pass
+
+            # Extract interval value
+            interval_seconds = 30.0  # Default value
+            if interval_match:
+                try:
+                    interval_seconds = float(interval_match.group(1))
+                    # Clamp to reasonable range (5-300 seconds)
+                    interval_seconds = max(5.0, min(300.0, interval_seconds))
+                except ValueError:
+                    pass
+
             return {
                 "prompt": sound_prompt,
-                "display_name": display_name
+                "display_name": display_name,
+                "spl_db": spl_db,
+                "interval_seconds": interval_seconds
             }
 
         return None
@@ -72,7 +96,7 @@ Select exactly {max_sounds} {entity_type} that would produce the MOST DIFFERENT 
 - Different materials (wood, metal, glass, concrete, etc.)
 - Different layers (which may indicate function or location)
 
-Prioritize : Name, then Type, then position, then Material.
+Prioritize : Name, then position, then Material, then type.
 
 Return ONLY a JSON array of the selected indices (numbers), like: [0, 5, 12, 18, ...]
 No explanation, just the JSON array."""
@@ -95,45 +119,89 @@ No explanation, just the JSON array."""
             print(f"Error in diversity selection: {e}")
             return entities[:max_sounds]
 
-    def generate_sound_prompt_for_entity(self, entity: dict, context: str = None) -> dict:
-        """Generate a sound prompt and display name for a specific entity using LLM
+    def _create_base_sound_prompt(self, context: str, num_sounds: int, entities: list[dict] = None) -> str:
+        """Create unified base prompt for sound generation (entity-based or text-based)
+
+        Args:
+            context: Context description (e.g., "an office space")
+            num_sounds: Number of sounds to generate
+            entities: Optional list of entities from 3D model
 
         Returns:
-            dict: {"prompt": str, "display_name": str}
+            str: Complete LLM prompt
         """
-        entity_description = f"{entity.get('type', 'object')}"
-        if entity.get('name'):
-            entity_description += f" named '{entity['name']}'"
-        if entity.get('layer'):
-            entity_description += f" on layer '{entity['layer']}'"
-        if entity.get('material'):
-            entity_description += f" with material '{entity['material']}'"
+        if entities and len(entities) > 0:
+            # Entity-based generation
 
-        context_intro = ""
-        if context and context.strip():
-            context_intro = f"In the context of {context}, imagine"
+            # Build entity descriptions
+            entity_descriptions = []
+            for i, entity in enumerate(entities):
+                desc = f"{i+1}. {entity.get('type', 'object')}"
+                if entity.get('name'):
+                    desc += f" named '{entity['name']}'"
+                if entity.get('layer'):
+                    desc += f" on layer '{entity['layer']}'"
+                if entity.get('material'):
+                    desc += f" with material '{entity['material']}'"
+                entity_descriptions.append(desc)
+
+            entities_text = "\n".join(entity_descriptions)
+            if context and context.strip():
+                context_intro = f"In the context of {context}, with an architectural scene made of the following {len(entities)} objects: {entities_text}, imagine {len(entities)}"
+            else:
+                context_intro = f"In an architectural scene made of the following {len(entities)} objects: {entities_text}, imagine {len(entities)}"
         else:
-            context_intro = "Imagine"
+            context_intro = f"Imagine {num_sounds}"
 
-        llm_prompt = f"""{context_intro} a single sound that would be made by or associated with a {entity_description}.
+        return f"""{context_intro} possible sounds that could happen. 
 
-Generate a sound prompt suitable for an audio generation model, AND a short 2-3 word display name.
+For each object, provide a 5 to 10 words sound prompt, a short 2-3 word display name, estimate the Sound Pressure Level (SPL) in dB at the source, AND estimate how often this sound would typically occur (in seconds).
 
-Follow these guidelines for the sound prompt:
-- Use adjectives for description (e.g., "clear", "gentle", "heavy")
-- Be context-specific (e.g., "rolling on wooden floor", "closing latch click")
-- Consider the material properties if mentioned
-- Use general terms (avoid brand names)
-- Do not include architectural acoustics features nor perspective info
-- Focus on the sound itself, not the environment
+Format your response as a numbered list with each sound using this EXACT format, without any extra text:
+1. PROMPT: [your sound prompt here]
+NAME: [your 2-3 word display name here]
+SPL: [estimated dB value, e.g., 75]
+INTERVAL: [estimated interval in seconds, e.g., 120]
+2.
+...and so on
 
-For the display name:
-- Extract 2-3 most important words that identify the sound source
-- Use title case (e.g., "Sliding Door", "Metal Lid", "HVAC System")
+For the sound prompts:
+    *   Use in priority words from AudioSet audio event classes.
+    *   Use adjectives for description (e.g., "clear", "gentle", "heavy").
+    *   Be context-specific (e.g., "rolling on wooden floor", "closing latch click").
+    *   Consider the material properties if mentioned.
+    *   Use general terms (e.g., "office chair", not a brand name).
+    *   Do not include titles, categorization, conditions, architectural acoustics features (e.g., "in a large reverberant room") or perspective/perception info in the prompt itself (e.g., "distant sound").
+    *   Only impact sounds should potentially include textural/architectural info (e.g., "on wooden floor").
 
-Return your response in this EXACT format, without any extra text:
-PROMPT: [your sound prompt here]
-NAME: [your 2-3 word display name here]"""
+For the display names:
+    *   Extract 2-3 most important words that identify the sound source
+    *   Use title case (e.g., "Sliding Door", "Metal Lid", "HVAC System")
+
+For the SPL estimation (in dB):
+    *   Consider typical source levels for this type of sound
+    *   Reference examples: whisper (30 dB), normal conversation (60 dB), vacuum cleaner (70 dB), heavy traffic (85 dB), power tools (95 dB), rock concert (110 dB)
+    *   Provide a single number between 30-120 dB representing the typical SPL at 1 meter from the source
+
+For the interval estimation (in seconds):
+    *   How often would this sound typically occur in the given context?
+    *   Examples: door closing (120 seconds), keyboard typing (10 seconds), HVAC hum (continuous, use 5 seconds), footsteps (20 seconds), phone ringing (180 seconds)
+    *   Provide a single number between 5-300 seconds representing how often the sound would play"""
+
+    def generate_prompts_for_entities(self, entities: list[dict], context: str = None) -> list[dict]:
+        """Generate sound prompts for multiple entities in a single LLM call (batch processing)
+
+        Args:
+            entities: List of entity dictionaries
+            context: Optional context description
+
+        Returns:
+            list[dict]: List of {"prompt": str, "display_name": str, "spl_db": float, "interval_seconds": float}
+        """
+        if not entities or len(entities) == 0:
+            return []
+
+        llm_prompt = self._create_base_sound_prompt(context or "", len(entities), entities)
 
         try:
             response = self.client.models.generate_content(
@@ -141,65 +209,80 @@ NAME: [your 2-3 word display name here]"""
             )
             response_text = response.text.strip()
 
-            # Use unified parsing function
-            parsed = self._parse_prompt_and_name(response_text)
+            # Print raw LLM response to terminal
+            print(f"\n=== LLM Raw Response (Batch Entity Generation: {len(entities)} entities) ===")
+            print(response_text)
+            print("=" * 60 + "\n", flush=True)
 
-            if parsed:
-                return parsed
-            else:
-                # Fallback: treat entire response as prompt and extract name from entity
-                sound_prompt = response_text
-                sound_prompt = re.sub(r'^\d+[\.\)]\s*', '', sound_prompt)
-                sound_prompt = re.sub(r'^[-\*]\s*', '', sound_prompt)
+            sound_list = []
 
-                # Generate fallback display name from entity info
-                display_name = entity.get('name') or entity.get('type', 'Sound')
-                if len(display_name) > 20:
-                    display_name = display_name[:20]
+            # Split by numbered entries (1., 2., etc.)
+            entries = re.split(r'\n\s*\d+[\.\)]\s*', response_text)
 
-                return {
-                    "prompt": sound_prompt,
-                    "display_name": display_name.title()
-                }
+            for i, entry in enumerate(entries):
+                entry = entry.strip()
+                if not entry:
+                    continue
+
+                # Use unified parsing function
+                parsed = self._parse_prompt_and_name(entry)
+
+                if parsed:
+                    sound_list.append(parsed)
+                else:
+                    # Fallback: treat as plain prompt, extract name from entity
+                    cleaned = re.sub(r'^\d+[\.\)]\s*', '', entry)
+                    cleaned = re.sub(r'^[-\*]\s*', '', cleaned)
+
+                    if cleaned:
+                        # Try to get display name from corresponding entity
+                        entity_idx = len(sound_list)  # Current position in results
+                        if entity_idx < len(entities):
+                            entity = entities[entity_idx]
+                            display_name = entity.get('name') or entity.get('type', 'Sound')
+                            if len(display_name) > 20:
+                                display_name = display_name[:20]
+                            display_name = display_name.title()
+                        else:
+                            # Fallback: extract from prompt
+                            words = cleaned.split()
+                            skip_words = {'a', 'an', 'the', 'subtle', 'gentle', 'soft', 'loud', 'quiet', 'clear', 'heavy', 'light'}
+                            name_words = [w for w in words[:5] if w.lower() not in skip_words][:3]
+                            display_name = ' '.join(name_words).title() if name_words else 'Sound'
+
+                        sound_list.append({
+                            "prompt": cleaned,
+                            "display_name": display_name,
+                            "spl_db": 70.0,  # Default fallback SPL
+                            "interval_seconds": 30.0  # Default fallback interval
+                        })
+
+            return sound_list
 
         except Exception as e:
-            print(f"Error generating prompt for {entity.get('type')}: {e}")
+            print(f"Error generating prompts for entities: {e}")
             raise
 
     def generate_text_based_prompts(self, context: str, num_sounds: int) -> tuple[str, list[dict]]:
         """Generate sound prompts with display names from text description only
 
         Returns:
-            tuple: (raw_text, list of {"prompt": str, "display_name": str})
+            tuple: (raw_text, list of {"prompt": str, "display_name": str, "spl_db": float, "interval_seconds": float})
         """
-        enhanced_prompt = f"""Imagine {num_sounds} possible sounds that can happen in {context}.
-
-For each sound, provide both a detailed prompt and a short 2-3 word display name.
-
-Format your response as a numbered list with each sound using this EXACT format, , without any extra text:
-1. PROMPT: [your sound prompt here]
-NAME: [your 2-3 word display name here]
-2.
-...and so on
-
-For the sound prompts:
-    *   Use adjectives for description (e.g., "clear", "gentle", "heavy").
-    *   Be context-specific (e.g., "rolling on wooden floor", "closing latch click").
-    *   Use general terms (e.g., "office chair", not a brand name).
-    *   Do not include titles, categorization, conditions, architectural acoustics features (e.g., "in a large reverberant room") or perspective/perception info in the prompt itself (e.g., "distant sound").
-    *   Only impact sounds should potentially include textural/architectural info (e.g., "on wooden floor").
-
-For the display names:
-    *   Extract 2-3 most important words that identify the sound source
-    *   Use title case (e.g., "Office Chair", "Water Fountain", "Air Conditioner")
-
-Now generate {num_sounds} sounds for: {context}"""
+        # Use unified base prompt (no entities)
+        enhanced_prompt = self._create_base_sound_prompt(context, num_sounds, entities=None)
 
         response = self.client.models.generate_content(
             model="gemini-2.5-flash", contents=enhanced_prompt
         )
 
         raw_text = response.text
+
+        # Print raw LLM response to terminal
+        print(f"\n=== LLM Raw Response (Text-based generation) ===")
+        print(raw_text)
+        print("=" * 60 + "\n")
+
         sound_list = []
 
         # Split by numbered entries (1., 2., etc.)
@@ -229,7 +312,9 @@ Now generate {num_sounds} sounds for: {context}"""
 
                     sound_list.append({
                         "prompt": cleaned,
-                        "display_name": display_name
+                        "display_name": display_name,
+                        "spl_db": 70.0,  # Default fallback SPL
+                        "interval_seconds": 30.0  # Default fallback interval
                     })
 
         return raw_text, sound_list

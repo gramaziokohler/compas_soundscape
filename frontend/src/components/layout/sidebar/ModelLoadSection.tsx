@@ -60,7 +60,7 @@ export function ModelLoadSection({
                 type="checkbox"
                 checked={useModelAsContext}
                 onChange={(e) => setUseModelAsContext(e.target.checked)}
-                className="w-4 h-4 rounded focus:ring-2 focus:ring-[#F500B8] accent-[#F500B8]"
+                className="w-4 h-4 rounded focus:ring-2 accent-primary"
               />
               <span className="text-xs text-gray-700 dark:text-gray-300">
                 Use model as context for sound generation
@@ -87,7 +87,7 @@ export function ModelLoadSection({
                 onClick={() => setActiveLoadTab('upload')}
                 className={`flex-1 px-3 py-2 text-xs font-medium rounded transition-colors ${
                   activeLoadTab === 'upload'
-                    ? 'bg-[#F500B8] text-white'
+                    ? 'bg-primary text-white'
                     : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300'
                 }`}
               >
@@ -97,7 +97,7 @@ export function ModelLoadSection({
                 onClick={() => setActiveLoadTab('sample')}
                 className={`flex-1 px-3 py-2 text-xs font-medium rounded transition-colors ${
                   activeLoadTab === 'sample'
-                    ? 'bg-[#F500B8] text-white'
+                    ? 'bg-primary text-white'
                     : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300'
                 }`}
               >
@@ -113,8 +113,8 @@ export function ModelLoadSection({
                   onDrop={onDrop}
                   className={`border-2 border-dashed rounded-lg p-4 text-center transition-colors ${
                     isDragging
-                      ? 'border-[#F500B8] bg-pink-50 dark:bg-pink-900/20'
-                      : 'border-gray-300 dark:border-gray-600 hover:border-[#F500B8]'
+                      ? 'border-primary bg-primary-light'
+                      : 'border-gray-300 dark:border-gray-600 hover:border-primary'
                   }`}
                 >
                   <div className="flex flex-col items-center gap-1">
@@ -126,7 +126,10 @@ export function ModelLoadSection({
                         <p className="text-xs font-medium text-gray-700 dark:text-gray-300">
                           {file.name}
                         </p>
-                        <label htmlFor="file-upload" className="cursor-pointer text-[#F500B8] hover:text-[#d600a0] font-medium text-xs">
+                        <label
+                          htmlFor="file-upload"
+                          className="cursor-pointer font-medium text-xs text-primary hover:text-primary-hover"
+                        >
                           Choose different file
                         </label>
                       </>
@@ -138,7 +141,10 @@ export function ModelLoadSection({
                         <p className="text-xs font-medium text-gray-700 dark:text-gray-300">
                           Drag & drop or
                         </p>
-                        <label htmlFor="file-upload" className="cursor-pointer text-[#F500B8] hover:text-[#d600a0] font-medium text-xs">
+                        <label
+                          htmlFor="file-upload"
+                          className="cursor-pointer font-medium text-xs text-primary hover:text-primary-hover"
+                        >
                           Browse (.obj, .stl, .ifc, .3dm)
                         </label>
                       </>
@@ -155,7 +161,7 @@ export function ModelLoadSection({
                 <button
                   onClick={onUpload}
                   disabled={isUploading || isAnalyzingModel || !file}
-                  className="w-full rounded-md bg-[#F500B8] text-white font-medium py-2 text-sm disabled:bg-gray-400 hover:bg-[#d600a0] flex items-center justify-center gap-2"
+                  className="w-full rounded-md text-white font-medium py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-gray-400 disabled:hover:bg-gray-400 flex items-center justify-center gap-2 transition-colors"
                 >
                   {isUploading || isAnalyzingModel ? (
                     <>
@@ -175,7 +181,7 @@ export function ModelLoadSection({
                     type="checkbox"
                     checked={useModelAsContext}
                     onChange={(e) => setUseModelAsContext(e.target.checked)}
-                    className="w-4 h-4 rounded focus:ring-2 focus:ring-[#F500B8] accent-[#F500B8]"
+                    className="w-4 h-4 rounded focus:ring-2 accent-primary"
                   />
                   <span className="text-xs text-gray-700 dark:text-gray-300">
                     Use model as context for sound generation
@@ -201,7 +207,7 @@ export function ModelLoadSection({
                 <button
                   onClick={onLoadSampleIfc}
                   disabled={isUploading || isAnalyzingModel}
-                  className="w-full rounded-md bg-[#F500B8] text-white font-medium py-2 text-sm disabled:bg-gray-400 hover:bg-[#d600a0] flex items-center justify-center gap-2"
+                  className="w-full rounded-md text-white font-medium py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-gray-400 disabled:hover:bg-gray-400 flex items-center justify-center gap-2 transition-colors"
                 >
                   {isUploading || isAnalyzingModel ? (
                     <>
@@ -221,7 +227,7 @@ export function ModelLoadSection({
                     type="checkbox"
                     checked={useModelAsContext}
                     onChange={(e) => setUseModelAsContext(e.target.checked)}
-                    className="w-4 h-4 rounded focus:ring-2 focus:ring-[#F500B8] accent-[#F500B8]"
+                    className="w-4 h-4 rounded focus:ring-2 accent-primary"
                   />
                   <span className="text-xs text-gray-700 dark:text-gray-300">
                     Use model as context for sound generation

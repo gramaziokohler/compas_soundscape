@@ -61,7 +61,7 @@ export function TextGenerationSection({
           onChange={(e) => setNumSounds(parseInt(e.target.value))}
           min="1"
           max="30"
-          className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 accent-[#F500B8]"
+          className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 accent-primary"
         />
         <div className="flex justify-between text-xs text-gray-500 mt-1">
           <span>1</span>
@@ -69,13 +69,30 @@ export function TextGenerationSection({
         </div>
       </div>
 
-      <button
-        onClick={onGenerateText}
-        disabled={isGenerating || (modelEntities.length === 0 && !aiPrompt.trim())}
-        className="w-full rounded-full bg-[#F500B8] text-white font-medium h-10 disabled:bg-gray-400 hover:bg-[#d600a0]"
-      >
-        {isGenerating ? "Generating..." : "Generate Sound Ideas"}
-      </button>
+      {/* Generate button and Load button layout */}
+      <div className="flex gap-2">
+        <button
+          onClick={onGenerateText}
+          disabled={isGenerating || (modelEntities.length === 0 && !aiPrompt.trim())}
+          className={`flex-1 rounded-full text-white font-medium h-10 transition-colors ${
+            isGenerating || (modelEntities.length === 0 && !aiPrompt.trim())
+              ? 'bg-gray-400'
+              : 'bg-primary hover:bg-primary-hover'
+          }`}
+        >
+          {isGenerating ? "Generating..." : showConfirmLoadSounds ? "Generate Ideas " : "Generate Sound Ideas"}
+        </button>
+
+        {showConfirmLoadSounds && (
+          <button
+            onClick={onLoadSoundsToGeneration}
+            className="flex-1 rounded-full bg-green-600 text-white font-medium h-10 hover:bg-green-700 transition-colors"
+            title="Load sound ideas into generation tab"
+          >
+            Load Sounds →
+          </button>
+        )}
+      </div>
 
       {isAnalyzingModel && (
         <div className="p-2 bg-blue-50 dark:bg-blue-900/20 rounded text-xs text-blue-700 dark:text-blue-300">
@@ -96,24 +113,13 @@ export function TextGenerationSection({
       )}
 
       {aiResponse && (
-        <>
-          <div className="p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg max-h-64 overflow-y-auto">
-            <h4 className="text-xs font-semibold mb-2 text-green-800 dark:text-green-300 flex items-center">
-              <span className="mr-2">✨</span>
-              Generated Sound Ideas:
-            </h4>
-            <div className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{aiResponse}</div>
-          </div>
-
-          {showConfirmLoadSounds && (
-            <button
-              onClick={onLoadSoundsToGeneration}
-              className="w-full rounded-full bg-green-600 text-white font-medium h-10 hover:bg-green-700 transition-colors"
-            >
-              Load into Sound Generation →
-            </button>
-          )}
-        </>
+        <div className="p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg max-h-64 overflow-y-auto">
+          <h4 className="text-xs font-semibold mb-2 text-green-800 dark:text-green-300 flex items-center">
+            <span className="mr-2">✨</span>
+            Generated Sound Ideas:
+          </h4>
+          <div className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{aiResponse}</div>
+        </div>
       )}
     </>
   );

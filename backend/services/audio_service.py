@@ -6,6 +6,11 @@ import torch
 import torchaudio
 from tangoflux import TangoFluxInference
 import random
+from utils.audio_processing import (
+    normalize_audio_rms,
+    apply_spl_calibration,
+    apply_denoising as denoise_audio
+)
 
 
 class AudioService:
@@ -45,28 +50,54 @@ class AudioService:
         prompt: str,
         output_path: str,
         duration: int = 5,
-        guidance_scale: float = 4.5
+        guidance_scale: float = 4.5,
+        steps: int = 25,
+        spl_db: float = 70.0,
+        apply_denoising: bool = False
     ) -> None:
-        """Generate a single audio file from a text prompt"""
+        """Generate a single audio file from a text prompt with SPL calibration and optional denoising
+
+        Args:
+            prompt: Text prompt for sound generation
+            output_path: Path to save the generated audio
+            duration: Duration in seconds
+            guidance_scale: Guidance scale for generation
+            steps: Number of diffusion steps
+            spl_db: Target SPL level in dB
+            apply_denoising: Whether to apply noise reduction
+        """
         model = self._init_model()
 
-        print(f"Generating sound: {prompt}")
+        denoise_suffix = " + denoising" if apply_denoising else ""
+        print(f"Generating sound: {prompt} (Target SPL: {spl_db} dB{denoise_suffix})")
 
         audio = model.generate(
             prompt,
-            steps=25,
+            steps=steps,
             duration=duration,
             guidance_scale=guidance_scale
         )
 
+        # Step 1: Normalize to base RMS level
+        audio = normalize_audio_rms(audio, target_rms=0.1)
+
+        # Step 2: Apply denoising if requested
+        if apply_denoising:
+            print("Applying noise reduction...")
+            audio = denoise_audio(audio, sample_rate=44100)
+
+        # Step 3: Apply SPL calibration
+        audio = apply_spl_calibration(audio, target_spl_db=spl_db)
+
         torchaudio.save(output_path, audio.cpu(), 44100)
-        print(f"Saved to: {output_path}")
+        print(f"Saved to: {output_path} (calibrated to {spl_db} dB SPL{denoise_suffix})")
 
     def generate_multiple_sounds(
         self,
         sound_configs: list[dict],
         output_dir: str,
-        bounding_box: dict = None
+        bounding_box: dict = None,
+        apply_denoising: bool = False
     ) -> list[dict]:
         """Generate multiple audio files from a list of sound configurations"""
         os.makedirs(output_dir, exist_ok=True)
@@ -78,6 +109,9 @@ class AudioService:
             duration = sound_config.get('duration', 5)
             guidance_scale = sound_config.get('guidance_scale', 4.5)
             seed_copies = sound_config.get('seed_copies', 1)
+            steps = sound_config.get('steps', 25)
+            spl_db = sound_config.get('spl_db', 70.0)  # Get SPL from config
+            interval_seconds = sound_config.get('interval_seconds', 30.0)  # Get interval from config
 
             if not prompt:
                 continue
@@ -126,14 +160,16 @@ class AudioService:
                         "duration": duration,
                         "copy_index": copy_idx,
                         "total_copies": seed_copies,
-                        "position": position
+                        "position": position,
+                        "volume_db": spl_db,
+                        "interval_seconds": interval_seconds
                     })
                     continue
 
                 print(f"Generating sound {idx + 1}/{len(sound_configs)} (copy {copy_idx + 1}/{seed_copies}): {prompt}")
 
-                # Generate audio
-                self.generate_sound_file(prompt, output_path, duration, guidance_scale)
+                # Generate audio with SPL calibration and optional denoising
+                self.generate_sound_file(prompt, output_path, duration, guidance_scale, steps, spl_db, apply_denoising)
 
                 generated_files.append({
                     "id": f"generated_{idx}_{copy_idx}",
@@ -144,7 +180,9 @@ class AudioService:
                     "duration": duration,
                     "copy_index": copy_idx,
                     "total_copies": seed_copies,
-                    "position": position
+                    "position": position,
+                    "volume_db": spl_db,
+                    "interval_seconds": interval_seconds
                 })
 
         return generated_files
