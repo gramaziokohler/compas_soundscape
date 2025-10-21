@@ -1,19 +1,4 @@
-interface TextGenerationSectionProps {
-  modelEntities: any[];
-  aiPrompt: string;
-  numSounds: number;
-  isGenerating: boolean;
-  isAnalyzingModel: boolean;
-  llmProgress: string;
-  aiError: string | null;
-  aiResponse: string | null;
-  showConfirmLoadSounds: boolean;
-  analysisProgress: string;
-  setAiPrompt: (prompt: string) => void;
-  setNumSounds: (num: number) => void;
-  onGenerateText: () => void;
-  onLoadSoundsToGeneration: () => void;
-}
+import type { TextGenerationSectionProps } from "@/types/components";
 
 export function TextGenerationSection({
   modelEntities,
@@ -34,24 +19,6 @@ export function TextGenerationSection({
   return (
     <>
       <div>
-        <label htmlFor="ai-prompt" className="text-sm text-gray-600 font-medium block dark:text-gray-400 mb-2">
-          {modelEntities.length > 0 ? 'Space Description (Optional)' : 'Space Description (Optional)'}
-        </label>
-        <textarea
-          id="ai-prompt"
-          value={aiPrompt}
-          onChange={(e) => setAiPrompt(e.target.value)}
-          placeholder={
-            modelEntities.length > 0
-              ? "e.g., a busy office in the afternoon (combines with model)"
-              : "e.g., an office space in the afternoon"
-          }
-          className="w-full h-20 p-2 text-sm border rounded bg-gray-50 dark:bg-gray-700 border-gray-300 dark:border-gray-600 focus:ring-2 focus:ring-[#F500B8]"
-          rows={3}
-        />
-      </div>
-
-      <div>
         <label className="text-sm text-gray-600 dark:text-gray-400 mb-2">
           Number of sounds: <span className="text-[#F500B8] font-bold">{numSounds}</span>
         </label>
@@ -67,6 +34,24 @@ export function TextGenerationSection({
           <span>1</span>
           <span>30</span>
         </div>
+      </div>
+
+      <div>
+        <label htmlFor="ai-prompt" className="text-sm text-gray-600 font-medium block dark:text-gray-400 mb-2">
+          {modelEntities.length > 0 ? 'Space Description (Optional)' : 'Space Description (Optional)'}
+        </label>
+        <textarea
+          id="ai-prompt"
+          value={aiPrompt}
+          onChange={(e) => setAiPrompt(e.target.value)}
+          placeholder={
+            modelEntities.length > 0
+              ? "e.g., a busy office in the afternoon (combines with model)"
+              : "e.g., an office space in the afternoon"
+          }
+          className="w-full h-20 p-2 text-sm border rounded bg-gray-50 dark:bg-gray-700 border-gray-300 dark:border-gray-600 focus:ring-2 focus:ring-[#F500B8]"
+          rows={3}
+        />
       </div>
 
       {/* Generate button and Load button layout */}

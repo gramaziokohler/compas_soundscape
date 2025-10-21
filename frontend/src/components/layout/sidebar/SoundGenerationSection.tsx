@@ -1,29 +1,8 @@
 import { useState, useEffect, useRef } from "react";
-import { SoundGenerationConfig, SoundEvent } from "@/types";
-
-interface SoundGenerationSectionProps {
-  soundConfigs: SoundGenerationConfig[];
-  activeSoundConfigTab: number;
-  isSoundGenerating: boolean;
-  soundGenError: string | null;
-  onAddConfig: () => void;
-  onRemoveConfig: (index: number) => void;
-  onUpdateConfig: (index: number, field: keyof SoundGenerationConfig, value: string | number) => void;
-  onSetActiveTab: (index: number) => void;
-  onGenerate: () => void;
-  generatedSounds: SoundEvent[];
-  globalDuration: number;
-  globalSteps: number;
-  globalNegativePrompt: string;
-  applyDenoising: boolean;
-  onGlobalDurationChange: (duration: number) => void;
-  onGlobalStepsChange: (steps: number) => void;
-  onGlobalNegativePromptChange: (prompt: string) => void;
-  onApplyDenoisingChange: (apply: boolean) => void;
-  onPlayAll: () => void;
-  onPauseAll: () => void;
-  onStopAll: () => void;
-}
+import type { SoundGenerationSectionProps } from "@/types/components";
+import type { SoundGenerationMode } from "@/types";
+import { FileUploadArea } from "@/components/controls/FileUploadArea";
+import { trimDisplayName } from "@/lib/utils";
 
 export function SoundGenerationSection({
   soundConfigs,
@@ -33,6 +12,7 @@ export function SoundGenerationSection({
   onAddConfig,
   onRemoveConfig,
   onUpdateConfig,
+  onModeChange,
   onSetActiveTab,
   onGenerate,
   generatedSounds,
@@ -44,12 +24,21 @@ export function SoundGenerationSection({
   onGlobalStepsChange,
   onGlobalNegativePromptChange,
   onApplyDenoisingChange,
-  onPlayAll,
-  onPauseAll,
-  onStopAll
+  onUploadAudio,
+  onClearUploadedAudio,
+  onLibrarySearch,
+  onLibrarySoundSelect
 }: SoundGenerationSectionProps) {
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
   const prevGeneratedSoundsLengthRef = useRef(0);
+
+  // File upload state
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+
+  // State for inline title editing
+  const [editingTabIndex, setEditingTabIndex] = useState<number | null>(null);
+  const [editingValue, setEditingValue] = useState("");
 
   // Auto-collapse advanced options when sound generation completes
   useEffect(() => {
@@ -64,22 +53,91 @@ export function SoundGenerationSection({
     prevGeneratedSoundsLengthRef.current = currentLength;
   }, [generatedSounds.length]);
 
-  // Helper function to get display name for a config index
+  // Helper function to get display name for a config index (trimmed to 5 words max)
   const getDisplayName = (index: number): string => {
     // First priority: display_name from the config itself (from text generation)
     const config = soundConfigs[index];
     if (config?.display_name) {
-      return config.display_name;
+      return trimDisplayName(config.display_name);
     }
 
     // Second priority: display_name from generated sounds (from overlays)
     const sound = generatedSounds.find(s => s.prompt_index === index);
     if (sound?.display_name) {
-      return sound.display_name;
+      return trimDisplayName(sound.display_name);
     }
 
     // Fallback: generic name
     return `Sound ${index + 1}`;
+  };
+
+  // Get current config and mode
+  const currentConfig = soundConfigs[activeSoundConfigTab];
+  const currentMode = currentConfig?.mode || 'text-to-audio';
+  const hasUploadedAudio = currentConfig?.uploadedAudioInfo !== undefined;
+
+  // Drag and drop handlers
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      setUploadFile(file);
+      await onUploadAudio(activeSoundConfigTab, file);
+    }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setUploadFile(file);
+      await onUploadAudio(activeSoundConfigTab, file);
+      // Reset input so same file can be selected again
+      e.target.value = "";
+    }
+  };
+
+  const handleClearAudio = () => {
+    setUploadFile(null);
+    onClearUploadedAudio(activeSoundConfigTab);
+  };
+
+  // Inline title editing handlers
+  const handleDoubleClick = (index: number) => {
+    setEditingTabIndex(index);
+    setEditingValue(getDisplayName(index));
+  };
+
+  const handleEditSave = () => {
+    if (editingTabIndex !== null && editingValue.trim()) {
+      onUpdateConfig(editingTabIndex, 'display_name', editingValue.trim());
+    }
+    setEditingTabIndex(null);
+  };
+
+  const handleEditCancel = () => {
+    setEditingTabIndex(null);
+  };
+
+  const handleEditKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleEditSave();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      handleEditCancel();
+    }
   };
 
   return (
@@ -89,17 +147,40 @@ export function SoundGenerationSection({
       {/* Sound titles Tabs */}
       <div className="flex gap-1 overflow-x-auto pb-1">
         {soundConfigs.map((_, index) => (
-          <button
-            key={index}
-            onClick={() => onSetActiveTab(index)}
-            className={`px-3 py-1 text-xs font-medium rounded-t transition-colors whitespace-nowrap ${
-              activeSoundConfigTab === index
-                ? 'bg-primary text-white'
-                : 'bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-400 dark:hover:bg-gray-500'
-            }`}
-          >
-            {getDisplayName(index)}
-          </button>
+          <div key={index} className="relative group flex-shrink-0">
+            {editingTabIndex === index ? (
+              /* Edit mode: Inline input */
+              <input
+                type="text"
+                value={editingValue}
+                onChange={(e) => setEditingValue(e.target.value)}
+                onBlur={handleEditSave}
+                onKeyDown={handleEditKeyDown}
+                autoFocus
+                className={`px-3 py-1 text-xs font-medium rounded-t outline-none ${
+                  activeSoundConfigTab === index
+                    ? 'bg-primary text-white'
+                    : 'bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-300'
+                }`}
+                style={{ width: '120px' }}
+              />
+            ) : (
+              /* View mode: Button with hover pencil */
+              <button
+                onClick={() => onSetActiveTab(index)}
+                onDoubleClick={() => handleDoubleClick(index)}
+                className={`px-3 py-1 text-xs font-medium rounded-t transition-colors flex items-center gap-1 max-w-[120px] ${
+                  activeSoundConfigTab === index
+                    ? 'bg-primary text-white'
+                    : 'bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-400 dark:hover:bg-gray-500'
+                }`}
+                title={`${getDisplayName(index)} (Double-click to edit)`}
+              >
+                <span className="truncate">{getDisplayName(index)}</span>
+                <span className="text-[10px] opacity-0 group-hover:opacity-50 transition-opacity flex-shrink-0">✏️</span>
+              </button>
+            )}
+          </div>
         ))}
         <button
           onClick={onAddConfig}
@@ -113,63 +194,215 @@ export function SoundGenerationSection({
       {/* Sound configs Tab */}
       {soundConfigs[activeSoundConfigTab] && (
         <div className="p-3 border rounded bg-gray-50 dark:bg-gray-700 border-gray-300 dark:border-gray-600">
-          <div className="flex justify-between items-center mb-2">
-            <span className="text-xs font-semibold">Sound {activeSoundConfigTab + 1}</span>
+          <div className="flex justify-between items-center mb-3">
+            {/* Mode dropdown - left side */}
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-600 dark:text-gray-400">Mode:</label>
+              <select
+                value={currentMode}
+                onChange={(e) => onModeChange(activeSoundConfigTab, e.target.value as SoundGenerationMode)}
+                className="text-xs px-2 py-1 text-white bg-primary dark:bg-gray-800 border dark:border-gray-600 rounded focus:outline-none focus:ring-1 focus:ring-white"
+              >
+                <option value="text-to-audio">Text-to-Audio Generation</option>
+                <option value="upload">Upload File</option>
+                <option value="library">Sound Library Search</option>
+              </select>
+            </div>
+
+            {/* Remove button - right side */}
             {soundConfigs.length > 1 && (
               <button
                 onClick={() => onRemoveConfig(activeSoundConfigTab)}
-                className="text-red-500 hover:text-red-700 text-xs"
+                className="w-6 h-6 flex items-center justify-center text-lg text-primary hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-colors"
+                title="Remove sound"
               >
-                Remove
+                ×
               </button>
             )}
           </div>
 
-          <textarea
-            value={soundConfigs[activeSoundConfigTab].prompt}
-            onChange={(e) => onUpdateConfig(activeSoundConfigTab, 'prompt', e.target.value)}
-            placeholder="e.g., Hammer hitting wooden table"
-            className="w-full h-16 p-2 text-sm border rounded bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 mb-2"
-            rows={2}
-          />
-
-          <div className="grid grid-cols-2 gap-2 mb-2">
-            <div>
-              <label className="text-xs block mb-1">Duration: {soundConfigs[activeSoundConfigTab].duration}s</label>
-              <input
-                type="range"
-                value={soundConfigs[activeSoundConfigTab].duration}
-                onChange={(e) => onUpdateConfig(activeSoundConfigTab, 'duration', parseInt(e.target.value))}
-                className="w-full accent-primary"
-                min="1"
-                max="30"
+          {/* Conditional UI based on mode */}
+          {currentMode === 'text-to-audio' && (
+            <>
+              {/* Text-to-Audio Generation UI */}
+              <textarea
+                value={soundConfigs[activeSoundConfigTab].prompt}
+                onChange={(e) => onUpdateConfig(activeSoundConfigTab, 'prompt', e.target.value)}
+                placeholder="e.g., Hammer hitting wooden table"
+                className="w-full h-16 p-2 text-sm border rounded bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 mb-2"
+                rows={2}
               />
-            </div>
-            <div>
-              <label className="text-xs block mb-1">Guidance: {(soundConfigs[activeSoundConfigTab].guidance_scale / 10).toFixed(1)}</label>
-              <input
-                type="range"
-                value={soundConfigs[activeSoundConfigTab].guidance_scale}
-                onChange={(e) => onUpdateConfig(activeSoundConfigTab, 'guidance_scale', parseFloat(e.target.value))}
-                className="w-full accent-primary"
-                min="0"
-                max="10"
-                step="0.5"
-              />
-            </div>
-          </div>
 
-          <div className="mb-2">
-            <label className="text-xs block mb-1">Number of variants: {soundConfigs[activeSoundConfigTab].seed_copies}</label>
-            <input
-              type="range"
-              value={soundConfigs[activeSoundConfigTab].seed_copies}
-              onChange={(e) => onUpdateConfig(activeSoundConfigTab, 'seed_copies', parseInt(e.target.value))}
-              className="w-full accent-primary"
-              min="1"
-              max="5"
-            />
-          </div>
+              <div className="grid grid-cols-2 gap-2 mb-2">
+                <div>
+                  <label className="text-xs block mb-1">Duration: {soundConfigs[activeSoundConfigTab].duration}s</label>
+                  <input
+                    type="range"
+                    value={soundConfigs[activeSoundConfigTab].duration}
+                    onChange={(e) => onUpdateConfig(activeSoundConfigTab, 'duration', parseInt(e.target.value))}
+                    className="w-full accent-primary"
+                    min="1"
+                    max="30"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs block mb-1">Guidance: {((soundConfigs[activeSoundConfigTab].guidance_scale ?? 4.5) / 10).toFixed(1)}</label>
+                  <input
+                    type="range"
+                    value={soundConfigs[activeSoundConfigTab].guidance_scale ?? 4.5}
+                    onChange={(e) => onUpdateConfig(activeSoundConfigTab, 'guidance_scale', parseFloat(e.target.value))}
+                    className="w-full accent-primary"
+                    min="0"
+                    max="10"
+                    step="0.5"
+                  />
+                </div>
+              </div>
+
+              <div className="mb-2">
+                <label className="text-xs block mb-1">Number of variants: {soundConfigs[activeSoundConfigTab].seed_copies}</label>
+                <input
+                  type="range"
+                  value={soundConfigs[activeSoundConfigTab].seed_copies}
+                  onChange={(e) => onUpdateConfig(activeSoundConfigTab, 'seed_copies', parseInt(e.target.value))}
+                  className="w-full accent-primary"
+                  min="1"
+                  max="5"
+                />
+              </div>
+            </>
+          )}
+
+          {currentMode === 'upload' && (
+            <>
+              {/* Upload File UI */}
+              {!hasUploadedAudio ? (
+                <FileUploadArea
+                  file={uploadFile}
+                  isDragging={isDragging}
+                  acceptedFormats="audio/*,.wav,.mp3,.ogg,.flac"
+                  acceptedExtensions=".wav, .mp3, .ogg, .flac"
+                  onFileChange={handleFileChange}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  inputId={`sound-upload-${activeSoundConfigTab}`}
+                />
+              ) : (
+                <div className="space-y-2">
+                  {/* Audio file info display */}
+                  <div className="bg-white dark:bg-gray-800 rounded p-2">
+                    <div className="text-xs text-gray-600 dark:text-gray-400 space-y-1">
+                      <div className="flex justify-between">
+                        <span>File:</span>
+                        <span className="font-mono truncate ml-2" title={currentConfig.uploadedAudioInfo?.filename}>
+                          {currentConfig.uploadedAudioInfo?.filename}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Duration:</span>
+                        <span className="font-mono">{currentConfig.uploadedAudioInfo?.duration.toFixed(3)}s</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Sample Rate:</span>
+                        <span className="font-mono">{currentConfig.uploadedAudioInfo?.sample_rate}Hz</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Channels:</span>
+                        <span className="font-mono">{currentConfig.uploadedAudioInfo?.channels}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Samples:</span>
+                        <span className="font-mono">{currentConfig.uploadedAudioInfo?.num_samples.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Clear audio button */}
+                  <button
+                    onClick={handleClearAudio}
+                    className="w-full text-xs py-1.5 px-3 bg-gray-500 hover:bg-gray-600 text-white rounded transition-colors"
+                  >
+                    Clear Uploaded Audio
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+
+          {currentMode === 'library' && (
+            <>
+              {/* Sound Library Search UI */}
+              <div className="space-y-2">
+                {/* Search Input */}
+                <div className="flex gap-2">
+                  <textarea
+                    value={soundConfigs[activeSoundConfigTab].prompt}
+                    onChange={(e) => onUpdateConfig(activeSoundConfigTab, 'prompt', e.target.value)}
+                    placeholder="e.g., Urban traffic, birds chirping, footsteps"
+                    className="flex-1 h-12 p-2 text-sm border rounded bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
+                    rows={2}
+                  />
+                  <button
+                    onClick={() => onLibrarySearch(activeSoundConfigTab)}
+                    disabled={!currentConfig.prompt.trim() || currentConfig.librarySearchState?.isSearching}
+                    className="px-4 py-2 text-xs font-medium bg-primary hover:bg-primary-hover text-white rounded transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+                  >
+                    {currentConfig.librarySearchState?.isSearching ? 'Searching...' : 'Search'}
+                  </button>
+                </div>
+
+                {/* Search Results */}
+                {currentConfig.librarySearchState?.results && currentConfig.librarySearchState.results.length > 0 && (
+                  <div className="bg-white dark:bg-gray-800 rounded p-2 max-h-64 overflow-y-auto">
+                    <p className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Found {currentConfig.librarySearchState.results.length} results:
+                    </p>
+                    <div className="space-y-1">
+                      {currentConfig.librarySearchState.results.map((result) => (
+                        <button
+                          key={result.location}
+                          onClick={() => onLibrarySoundSelect(activeSoundConfigTab, result)}
+                          className={`w-full text-left p-2 rounded text-xs transition-colors ${
+                            currentConfig.selectedLibrarySound?.location === result.location
+                              ? 'bg-primary text-white'
+                              : 'bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300'
+                          }`}
+                        >
+                          <div className="font-medium truncate">{result.description}</div>
+                          <div className="text-[10px] opacity-75 flex justify-between mt-0.5">
+                            <span>{result.category}</span>
+                            <span>{result.duration}</span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* No Results Message */}
+                {currentConfig.librarySearchState?.results && currentConfig.librarySearchState.results.length === 0 && !currentConfig.librarySearchState.isSearching && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400 text-center py-4">
+                    No sounds found. Try a different search term.
+                  </p>
+                )}
+
+                {/* Error Message */}
+                {currentConfig.librarySearchState?.error && (
+                  <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded p-2">
+                    {currentConfig.librarySearchState.error}
+                  </p>
+                )}
+
+                {/* Help Text */}
+                {!currentConfig.librarySearchState?.results && !currentConfig.librarySearchState?.isSearching && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400 italic">
+                    Enter search terms and click "Search" to find sounds from the BBC Sound Effects library
+                  </p>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -193,120 +426,91 @@ export function SoundGenerationSection({
       )}
 
       {/* Advanced Options - Collapsible, hidden by default, only show before generation */}
-      {/*generatedSounds.length === 0 && ( */
-        <div className="border rounded bg-gray-50 dark:bg-gray-700 border-gray-300 dark:border-gray-600">
-          <button
-            onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
-            className="w-full p-3 flex items-center justify-between text-sm font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors rounded"
-          >
-            <span>Advanced Options</span>
-            <span className="text-xs">{showAdvancedOptions ? '▼' : '▶'}</span>
-          </button>
+      <div className="border rounded bg-gray-50 dark:bg-gray-700 border-gray-300 dark:border-gray-600">
+        <button
+          onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
+          className="w-full p-3 flex items-center justify-between text-sm font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors rounded"
+        >
+          <span>Advanced Options</span>
+          <span className="text-xs">{showAdvancedOptions ? '▼' : '▶'}</span>
+        </button>
 
-          {showAdvancedOptions && (
-            <div className="p-3 pt-0 space-y-3">
-              {/* Global Duration Slider */}
-              <div>
-                <label className="text-sm font-medium block mb-2 text-gray-700 dark:text-gray-300">
-                  Global Duration: {globalDuration}s
-                </label>
-                <input
-                  type="range"
-                  value={globalDuration}
-                  onChange={(e) => onGlobalDurationChange(parseInt(e.target.value))}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-600 accent-primary"
-                  min="1"
-                  max="30"
-                />
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Applies to all sound tabs
-                </p>
-              </div>
-
-              {/* Diffusion Steps Slider */}
-              <div>
-                <label className="text-sm font-medium block mb-2 text-gray-700 dark:text-gray-300">
-                  Diffusion Steps: {globalSteps}
-                </label>
-                <input
-                  type="range"
-                  value={globalSteps}
-                  onChange={(e) => onGlobalStepsChange(parseInt(e.target.value))}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-600 accent-primary"
-                  min="10"
-                  max="100"
-                  step="5"
-                />
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Higher steps = better quality but slower generation
-                </p>
-              </div>
-
-              {/* Global Negative Prompt */}
-              <div>
-                <label className="text-sm font-medium block mb-2 text-gray-700 dark:text-gray-300">
-                  Global Negative Prompt
-                </label>
-                <textarea
-                  value={globalNegativePrompt}
-                  onChange={(e) => onGlobalNegativePromptChange(e.target.value)}
-                  placeholder="e.g., distorted, reverb, echo"
-                  className="w-full p-2 text-xs border rounded bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
-                  rows={2}
-                />
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Terms to avoid in all generated sounds
-                </p>
-              </div>
-
-              {/* Background Noise Removal Checkbox */}
-              <div>
-                <label className="flex items-center space-x-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={applyDenoising}
-                    onChange={(e) => onApplyDenoisingChange(e.target.checked)}
-                    className="w-4 h-4 accent-primary cursor-pointer"
-                  />
-                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                    Remove Background Noise
-                  </span>
-                </label>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Apply noise reduction to clean up generated sounds
-                </p>
-              </div>
+        {showAdvancedOptions && (
+          <div className="p-3 pt-0 space-y-3">
+            {/* Global Duration Slider */}
+            <div>
+              <label className="text-sm font-medium block mb-2 text-gray-700 dark:text-gray-300">
+                Global Duration: {globalDuration}s
+              </label>
+              <input
+                type="range"
+                value={globalDuration}
+                onChange={(e) => onGlobalDurationChange(parseInt(e.target.value))}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-600 accent-primary"
+                min="1"
+                max="30"
+              />
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Applies to all sound tabs
+              </p>
             </div>
-          )}
-        </div>
-      }
 
-      {generatedSounds.length > 0 && (
-        <div className="flex flex-col gap-2 mt-2">
-          <div className="text-sm font-semibold">Playback Controls</div>
-          <div className="flex gap-2">
-            <button
-              onClick={onPlayAll}
-              className="flex-1 py-1.5 px-3 bg-green-500 hover:bg-green-600 text-white text-sm font-medium rounded transition-colors"
-            >
-              Play All
-            </button>
-            <button
-              onClick={onPauseAll}
-              className="flex-1 py-1.5 px-3 bg-yellow-500 hover:bg-yellow-600 text-white text-sm font-medium rounded transition-colors"
-            >
-              Pause All
-            </button>
-            <button
-              onClick={onStopAll}
-              className="flex-1 py-1.5 px-3 bg-red-500 hover:bg-red-600 text-white text-sm font-medium rounded transition-colors"
-            >
-              Stop All
-            </button>
+            {/* Diffusion Steps Slider */}
+            <div>
+              <label className="text-sm font-medium block mb-2 text-gray-700 dark:text-gray-300">
+                Diffusion Steps: {globalSteps}
+              </label>
+              <input
+                type="range"
+                value={globalSteps}
+                onChange={(e) => onGlobalStepsChange(parseInt(e.target.value))}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-600 accent-primary"
+                min="10"
+                max="100"
+                step="5"
+              />
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Higher steps = better quality but slower generation
+              </p>
+            </div>
+
+            {/* Global Negative Prompt */}
+            <div>
+              <label className="text-sm font-medium block mb-2 text-gray-700 dark:text-gray-300">
+                Global Negative Prompt
+              </label>
+              <textarea
+                value={globalNegativePrompt}
+                onChange={(e) => onGlobalNegativePromptChange(e.target.value)}
+                placeholder="e.g., distorted, reverb, echo"
+                className="w-full p-2 text-xs border rounded bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
+                rows={2}
+              />
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Terms to avoid in all generated sounds
+              </p>
+            </div>
+
+            {/* Background Noise Removal Checkbox */}
+            <div>
+              <label className="flex items-center space-x-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={applyDenoising}
+                  onChange={(e) => onApplyDenoisingChange(e.target.checked)}
+                  className="w-4 h-4 accent-primary cursor-pointer"
+                />
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Remove Background Noise
+                </span>
+              </label>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Apply noise reduction to clean up generated sounds
+              </p>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
-

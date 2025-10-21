@@ -12,7 +12,7 @@ from services.llm_service import LLMService
 from services.audio_service import AudioService
 
 # Import routers
-from routers import upload, analysis, generation, sounds
+from routers import upload, analysis, generation, sounds, sed_analysis, library_search
 
 # --- Initialization ---
 
@@ -55,6 +55,8 @@ app.include_router(upload.router)
 app.include_router(analysis.router)
 app.include_router(generation.router)
 app.include_router(sounds.router)
+app.include_router(sed_analysis.router)
+app.include_router(library_search.router)
 
 
 @app.get("/")

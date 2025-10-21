@@ -1,13 +1,15 @@
 "use client";
 
-import { useRef, useState, useMemo, useEffect } from "react";
+import { useRef, useState, useMemo, useEffect, useCallback } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { DragControls } from "three/examples/jsm/controls/DragControls.js";
 
 import { SoundUIOverlay } from "@/components/overlays/SoundUIOverlay";
 import { EntityUIOverlay } from "@/components/overlays/EntityUIOverlay";
-import { triangulate } from "@/lib/utils";
+import { PlaybackControls } from "@/components/controls/PlaybackControls";
+import { ControlsInfo } from "@/components/layout/sidebar/ControlsInfo";
+import { triangulate, trimDisplayName } from "@/lib/utils";
 import { API_BASE_URL, PRIMARY_COLOR_HEX } from "@/lib/constants";
 import {
   createArcticModeScene,
@@ -18,28 +20,9 @@ import {
   frameCameraToObject
 } from "@/lib/three/sceneSetup";
 import { AudioScheduler } from "@/lib/audio-scheduler";
-import type { CompasGeometry, SoundEvent, SoundState, UIOverlay, EntityData, EntityOverlay } from "@/types";
-
-/**
- * ThreeScene Component Props
- */
-interface ThreeSceneProps {
-  geometryData: CompasGeometry | null;
-  soundscapeData: SoundEvent[] | null;
-  individualSoundStates: {[key: string]: SoundState};
-  selectedVariants: {[key: number]: number};
-  soundVolumes: {[key: string]: number};
-  soundIntervals: {[key: string]: number};
-  onToggleSound: (soundId: string) => void;
-  onVariantChange: (promptIdx: number, variantIdx: number) => void;
-  onVolumeChange: (soundId: string, volumeDb: number) => void;
-  onIntervalChange: (soundId: string, intervalSeconds: number) => void;
-  onDeleteSound: (soundId: string, promptIdx: number) => void;
-  scaleForSounds: number;
-  modelEntities?: EntityData[];
-  selectedDiverseEntities?: EntityData[];
-  className?: string;
-}
+import { processImpulseResponse } from "@/lib/audio/impulse-response";
+import type { CompasGeometry, SoundEvent, SoundState, UIOverlay, EntityData, EntityOverlay, ReceiverData } from "@/types";
+import type { ThreeSceneProps } from "@/types/three-scene";
 
 /**
  * ThreeScene Component
@@ -80,9 +63,19 @@ export function ThreeScene({
   onVolumeChange,
   onIntervalChange,
   onDeleteSound,
+  onPlayAll,
+  onPauseAll,
+  onStopAll,
+  isAnyPlaying,
   scaleForSounds,
   modelEntities = [],
   selectedDiverseEntities = [],
+  auralizationConfig,
+  receivers = [],
+  onUpdateReceiverPosition,
+  onPlaceReceiver,
+  isPlacingReceiver = false,
+  onCancelPlacingReceiver,
   className
 }: ThreeSceneProps) {
   // ============================================================================
@@ -102,6 +95,7 @@ export function ThreeScene({
   // ============================================================================
   const audioSourcesRef = useRef<Map<string, THREE.PositionalAudio>>(new Map());
   const audioSchedulersRef = useRef<Map<string, AudioScheduler>>(new Map());
+  const convolverNodeRef = useRef<ConvolverNode | null>(null);
 
   // ============================================================================
   // Refs - Sound Sphere Management
@@ -109,6 +103,18 @@ export function ThreeScene({
   const draggableObjectsRef = useRef<THREE.Object3D[]>([]);
   const spherePositionsRef = useRef<{[key: string]: THREE.Vector3}>({});
   const prevSoundscapeDataRef = useRef<SoundEvent[] | null>(null);
+
+  // ============================================================================
+  // Refs - Receiver Sphere Management
+  // ============================================================================
+  const receiverSpheresRef = useRef<THREE.Mesh[]>([]);
+  const receiverDragControlsRef = useRef<DragControls | null>(null);
+  const previewReceiverRef = useRef<THREE.Mesh | null>(null);
+  const receiverDraggableObjectsRef = useRef<THREE.Object3D[]>([]);
+  const isDraggingRef = useRef<boolean>(false);
+  const lockedReceiverPositionRef = useRef<THREE.Vector3 | null>(null);
+  const firstPersonModeRef = useRef<boolean>(false);
+  const firstPersonRotationRef = useRef<{ yaw: number; pitch: number }>({ yaw: 0, pitch: 0 });
 
   // Track previous state to detect changes
   const prevIndividualSoundStatesRef = useRef<{[key: string]: SoundState}>({});
@@ -150,12 +156,41 @@ export function ThreeScene({
   // Handlers - Camera and UI Controls
   // ============================================================================
 
+  // Calculate average position of sound spheres
+  const calculateSoundSpheresAverage = (): THREE.Vector3 | null => {
+    if (draggableObjectsRef.current.length === 0) return null;
+
+    const sum = new THREE.Vector3();
+    draggableObjectsRef.current.forEach(obj => {
+      sum.add(obj.position);
+    });
+    sum.divideScalar(draggableObjectsRef.current.length);
+    return sum;
+  };
+
   // Reset camera to default or model view
   const handleResetZoom = () => {
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     const contentGroup = contentGroupRef.current;
     if (!camera || !controls) return;
+
+    // Unlock receiver position lock
+    lockedReceiverPositionRef.current = null;
+
+    // Reset distance constraints
+    controls.minDistance = 0;
+    controls.maxDistance = Infinity;
+
+    // Reset to default settings
+    controls.rotateSpeed = 1.0;
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+
+    // Re-enable panning and zooming
+    controls.enablePan = true;
+    controls.enableZoom = true;
+    controls.enableRotate = true;
 
     if (geometryData && contentGroup) {
       // Frame to model if it exists
@@ -229,7 +264,37 @@ export function ThreeScene({
     diverseHighlightsRef.current = diverseHighlights;
 
     const animate = () => {
-      controls.update();
+      // First-person mode: Arrow key rotation control
+      if (firstPersonModeRef.current && lockedReceiverPositionRef.current) {
+        // Disable OrbitControls entirely in first-person mode
+        controls.enabled = false;
+
+        // Lock camera position at receiver
+        camera.position.copy(lockedReceiverPositionRef.current);
+
+        // Calculate look-at target based on yaw (horizontal) and pitch (vertical) angles
+        const yaw = firstPersonRotationRef.current.yaw;
+        const pitch = firstPersonRotationRef.current.pitch;
+
+        // Convert to direction vector
+        const direction = new THREE.Vector3(
+          Math.sin(yaw) * Math.cos(pitch),
+          Math.sin(pitch),
+          Math.cos(yaw) * Math.cos(pitch)
+        );
+
+        const target = new THREE.Vector3().addVectors(
+          lockedReceiverPositionRef.current,
+          direction
+        );
+
+        camera.lookAt(target);
+      } else {
+        // Normal mode: Use OrbitControls
+        controls.enabled = true;
+        controls.update();
+      }
+
       renderer.render(scene, camera);
       animationFrameIdRef.current = requestAnimationFrame(animate);
     };
@@ -245,13 +310,83 @@ export function ThreeScene({
     });
     resizeObserver.observe(mountNode);
 
-    // Click handler for entity selection
+    // Click/Double-click handler for entity selection, receiver placement, and receiver camera reset
+    let clickTimeout: NodeJS.Timeout | null = null;
+    let clickCount = 0;
+
     const handleClick = (event: MouseEvent) => {
       const rect = renderer.domElement.getBoundingClientRect();
       mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
       raycasterRef.current.setFromCamera(mouseRef.current, camera);
+
+      // If in placing mode, place the receiver at the clicked position
+      if (onPlaceReceiver && previewReceiverRef.current) {
+        const position = previewReceiverRef.current.position;
+        onPlaceReceiver([position.x, position.y, position.z]);
+        return;
+      }
+
+      // Check for receiver cube double-click first
+      const receiverIntersects = raycasterRef.current.intersectObjects(receiverSpheresRef.current, false);
+      if (receiverIntersects.length > 0) {
+        clickCount++;
+
+        if (clickCount === 1) {
+          clickTimeout = setTimeout(() => {
+            clickCount = 0;
+          }, 300);
+        } else if (clickCount === 2) {
+          // Double-click detected
+          if (clickTimeout) clearTimeout(clickTimeout);
+          clickCount = 0;
+
+          // Lock camera at receiver position (first-person view)
+          const receiverMesh = receiverIntersects[0].object as THREE.Mesh;
+          const receiverPosition = receiverMesh.position.clone();
+
+          // Calculate initial look-at target (average of sound spheres or forward)
+          const soundSpheresAvg = calculateSoundSpheresAverage();
+          const initialTarget = soundSpheresAvg || new THREE.Vector3(
+            receiverPosition.x,
+            receiverPosition.y,
+            receiverPosition.z - 5
+          );
+
+          // Calculate initial rotation angles from direction to target
+          const direction = new THREE.Vector3().subVectors(initialTarget, receiverPosition).normalize();
+          const initialYaw = Math.atan2(direction.x, direction.z);
+          const initialPitch = Math.asin(direction.y);
+
+          // Enable first-person mode
+          firstPersonModeRef.current = true;
+          firstPersonRotationRef.current = {
+            yaw: initialYaw,
+            pitch: initialPitch
+          };
+
+          // Lock camera position at receiver
+          lockedReceiverPositionRef.current = receiverPosition.clone();
+
+          // Set camera position at receiver
+          camera.position.copy(receiverPosition);
+
+          console.log('[FirstPerson] Enabled - Use arrow keys to rotate view', {
+            receiverPos: receiverPosition.toArray(),
+            initialYaw,
+            initialPitch,
+          });
+
+          // OrbitControls will be disabled in animate loop
+          controls.enabled = false;
+          
+          return;
+        }
+
+        // Single click on receiver - just ignore and don't deselect entity
+        return;
+      }
 
       // Use refs to get current values
       const currentGeometryData = geometryDataRef.current;
@@ -319,15 +454,95 @@ export function ThreeScene({
         }
       }
 
-      // If no geometry clicked, deselect
+      // If no geometry clicked, deselect (but don't unlock camera - removed per user request)
       setSelectedEntity(null);
     };
 
+    // Mouse move handler for preview receiver sphere
+    const handleMouseMove = (event: MouseEvent) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+      if (previewReceiverRef.current) {
+        raycasterRef.current.setFromCamera(mouseRef.current, camera);
+
+        // Raycast against geometry or use a plane at y=0
+        const planeY = 1.6; // Default ear height
+        const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -planeY);
+        const intersectPoint = new THREE.Vector3();
+        raycasterRef.current.ray.intersectPlane(plane, intersectPoint);
+
+        if (intersectPoint) {
+          previewReceiverRef.current.position.copy(intersectPoint);
+        }
+      }
+    };
+
+    // Keydown handler for arrow key rotation, canceling receiver placement, and resetting camera
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Arrow key rotation in first-person mode
+      if (firstPersonModeRef.current) {
+        const rotationSpeed = 0.05; // Radians per keypress
+        const pitchSpeed = 0.03; // Slower vertical rotation
+
+        switch(event.key) {
+          case 'ArrowLeft':
+            firstPersonRotationRef.current.yaw += rotationSpeed;
+            event.preventDefault();
+            break;
+          case 'ArrowRight':
+            firstPersonRotationRef.current.yaw -= rotationSpeed;
+            event.preventDefault();
+            break;
+          case 'ArrowUp':
+            firstPersonRotationRef.current.pitch += pitchSpeed;
+            // Clamp pitch to prevent looking too far up/down
+            firstPersonRotationRef.current.pitch = Math.min(Math.PI / 2 - 0.1, firstPersonRotationRef.current.pitch);
+            event.preventDefault();
+            break;
+          case 'ArrowDown':
+            firstPersonRotationRef.current.pitch -= pitchSpeed;
+            // Clamp pitch to prevent looking too far up/down
+            firstPersonRotationRef.current.pitch = Math.max(-Math.PI / 2 + 0.1, firstPersonRotationRef.current.pitch);
+            event.preventDefault();
+            break;
+        }
+      }
+
+      if (event.key === 'Escape') {
+        // Cancel receiver placement if active
+        if (onCancelPlacingReceiver) {
+          onCancelPlacingReceiver();
+        }
+        // Exit first-person mode
+        firstPersonModeRef.current = false;
+        // Unlock receiver position lock
+        lockedReceiverPositionRef.current = null;
+        // Reset distance constraints
+        controls.minDistance = 0;
+        controls.maxDistance = Infinity;
+        // Reset to default settings
+        controls.rotateSpeed = 1.0;
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        // Re-enable pan, zoom, and rotate
+        controls.enablePan = true;
+        controls.enableZoom = true;
+        controls.enableRotate = true;
+      }
+    };
+
     renderer.domElement.addEventListener('click', handleClick);
+    renderer.domElement.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('keydown', handleKeyDown);
 
     return () => {
       resizeObserver.disconnect();
       renderer.domElement.removeEventListener('click', handleClick);
+      renderer.domElement.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('keydown', handleKeyDown);
+      if (clickTimeout) clearTimeout(clickTimeout);
       if (animationFrameIdRef.current !== null) {
         cancelAnimationFrame(animationFrameIdRef.current);
       }
@@ -612,6 +827,10 @@ export function ThreeScene({
       const renderer = rendererRef.current;
       const newOverlays: UIOverlay[] = [];
 
+      // Get renderer dimensions to check viewport boundaries
+      const rendererWidth = renderer.domElement.clientWidth;
+      const rendererHeight = renderer.domElement.clientHeight;
+
       const soundsByPromptIndex: {[key: number]: SoundEvent[]} = {};
       soundscapeData.forEach(sound => {
         const promptIdx = (sound as any).prompt_index ?? 0;
@@ -636,17 +855,34 @@ export function ThreeScene({
         vector.project(camera);
 
         const isBehindCamera = vector.z > 1;
-        const x = (vector.x * 0.5 + 0.5) * renderer.domElement.clientWidth;
-        const y = (-(vector.y * 0.5) + 0.5) * renderer.domElement.clientHeight;
+        const x = (vector.x * 0.5 + 0.5) * rendererWidth;
+        const y = (-(vector.y * 0.5) + 0.5) * rendererHeight;
+
+        // Check if overlay is within viewport bounds with margin
+        // Add margin of 250px to account for overlay size
+        const margin = 250;
+        const isInViewport =
+          x >= -margin &&
+          x <= rendererWidth + margin &&
+          y >= -margin &&
+          y <= rendererHeight + margin;
+
+        // Only show overlay if it's in front of camera AND within viewport
+        const isVisible = !isBehindCamera && isInViewport;
+
+        // Also hide the sphere itself if not visible
+        if (sphere) {
+          sphere.visible = isVisible;
+        }
 
         newOverlays.push({
           promptKey,
           promptIdx,
           x,
           y,
-          visible: !isBehindCamera,
+          visible: isVisible,
           soundId: selectedSound.id,
-          displayName: selectedSound.display_name || selectedSound.id,
+          displayName: trimDisplayName(selectedSound.display_name || selectedSound.id),
           variants: sounds,
           selectedVariantIdx: selectedIdx
         });
@@ -705,6 +941,87 @@ export function ThreeScene({
   }, [triangulatedGeometry]);
 
   // ============================================================================
+  // Helper - Setup Unified DragControls
+  // ============================================================================
+  const setupDragControls = useCallback(() => {
+    const camera = cameraRef.current;
+    const renderer = rendererRef.current;
+    if (!camera || !renderer) return;
+
+    // Don't recreate DragControls during an active drag
+    if (isDraggingRef.current) {
+      console.log('[DragControls] Skipping setup - drag in progress');
+      return;
+    }
+
+    console.log('[DragControls] Setup running - sounds:', draggableObjectsRef.current.length, 'receivers:', receiverDraggableObjectsRef.current.length);
+
+    // Dispose existing drag controls
+    if (dragControlsRef.current) {
+      dragControlsRef.current.dispose();
+      dragControlsRef.current = null;
+    }
+
+    // Combine all draggable objects (sounds + receivers)
+    const allDraggableObjects = [...draggableObjectsRef.current, ...receiverDraggableObjectsRef.current];
+
+    console.log('[DragControls] Total draggable objects:', allDraggableObjects.length);
+
+    if (allDraggableObjects.length > 0) {
+      const dragControls = new DragControls(
+        allDraggableObjects,
+        camera,
+        renderer.domElement
+      );
+
+      (dragControls as any).transformGroup = false;
+
+      dragControls.addEventListener('dragstart', (event) => {
+        isDraggingRef.current = true;
+        if (controlsRef.current) {
+          controlsRef.current.enabled = false;
+        }
+        if (event.object) {
+          event.object.userData.isDragging = true;
+        }
+        console.log('[DragControls] Drag started:', event.object.userData);
+      });
+
+      dragControls.addEventListener('drag', (event) => {
+        if (event.object && event.object.userData.promptKey) {
+          // Sound sphere dragging
+          spherePositionsRef.current[event.object.userData.promptKey] = event.object.position.clone();
+          console.log('[DragControls] Dragging sound sphere:', event.object.userData.promptKey);
+        } else if (event.object && event.object.userData.receiverId && onUpdateReceiverPosition) {
+          // Receiver cube dragging
+          const receiverId = event.object.userData.receiverId;
+          const position: [number, number, number] = [
+            event.object.position.x,
+            event.object.position.y,
+            event.object.position.z
+          ];
+          onUpdateReceiverPosition(receiverId, position);
+          console.log('[DragControls] Dragging receiver sphere:', receiverId, position);
+        }
+      });
+
+      dragControls.addEventListener('dragend', (event) => {
+        isDraggingRef.current = false;
+        if (controlsRef.current) {
+          controlsRef.current.enabled = true;
+        }
+        if (event.object) {
+          event.object.userData.isDragging = false;
+        }
+        console.log('[DragControls] Drag ended:', event.object.userData);
+      });
+
+      dragControlsRef.current = dragControls;
+      console.log('[DragControls] DragControls successfully created with', allDraggableObjects.length, 'objects');
+    }
+  }, [onUpdateReceiverPosition]);
+
+  // ============================================================================
   // Effect - Update Sound Spheres and Audio Sources
   // ============================================================================
   useEffect(() => {
@@ -739,7 +1056,12 @@ export function ThreeScene({
 
     audioSourcesRef.current.forEach(sound => {
       if (sound.isPlaying) sound.stop();
-      sound.disconnect();
+      try {
+        sound.disconnect();
+      } catch (error) {
+        // Ignore disconnect errors - node may not be connected
+        console.debug('Audio node disconnect error (expected):', error);
+      }
     });
     audioSourcesRef.current.clear();
     draggableObjectsRef.current = [];
@@ -817,7 +1139,11 @@ export function ThreeScene({
         draggableObjectsRef.current.push(sphereMesh);
 
         const positionalAudio = new THREE.PositionalAudio(listener);
-        const fullUrl = `${API_BASE_URL}${soundEvent.url}`;
+
+        // Check if this is an uploaded sound (blob URL) or generated sound (backend URL)
+        // Uploaded sounds have blob: or http: URLs, generated sounds are relative paths
+        const isUploadedSound = soundEvent.url.startsWith('blob:') || soundEvent.url.startsWith('http');
+        const fullUrl = isUploadedSound ? soundEvent.url : `${API_BASE_URL}${soundEvent.url}`;
 
         audioLoader.load(
           fullUrl,
@@ -825,6 +1151,28 @@ export function ThreeScene({
             positionalAudio.setBuffer(buffer);
             positionalAudio.setLoop(false); // Don't loop - scheduler handles intervals
             positionalAudio.setRefDistance(5);
+
+            // Apply auralization if enabled and convolver is available
+            if (auralizationConfig.enabled && convolverNodeRef.current) {
+              try {
+                // Get the positional audio's output
+                const audioContext = listener.context;
+                const sourceNode = positionalAudio.getOutput();
+
+                // Disconnect from current destination
+                sourceNode.disconnect();
+
+                // Connect through convolver
+                sourceNode.connect(convolverNodeRef.current);
+                convolverNodeRef.current.connect(audioContext.destination);
+
+                console.log(`[Auralization] Applied convolver to sound: ${soundEvent.id}`);
+              } catch (error) {
+                console.error('[Auralization] Error applying convolver:', error);
+                // Fallback: reconnect directly
+                positionalAudio.getOutput().connect(listener.context.destination);
+              }
+            }
 
             // Note: Don't auto-play here - let the scheduler handle it
           },
@@ -837,47 +1185,122 @@ export function ThreeScene({
         audioSourcesRef.current.set(soundEvent.id, positionalAudio);
       });
 
-      if (draggableObjectsRef.current.length > 0 && camera && rendererRef.current) {
-        if (dragControlsRef.current) {
-          dragControlsRef.current.dispose();
+      // Trigger DragControls update after sounds are created
+      setupDragControls();
+    }
+  }, [soundscapeData, selectedVariants, scaleForSounds, setupDragControls]);
+
+  // ============================================================================
+  // Effect - Update Receiver Spheres
+  // ============================================================================
+  useEffect(() => {
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    const renderer = rendererRef.current;
+    if (!scene || !camera || !renderer) return;
+
+    // Remove existing receiver spheres
+    receiverSpheresRef.current.forEach(mesh => {
+      if (mesh.geometry) mesh.geometry.dispose();
+      if (mesh.material instanceof THREE.Material) mesh.material.dispose();
+      scene.remove(mesh);
+    });
+    receiverSpheresRef.current = [];
+    receiverDraggableObjectsRef.current = [];
+
+    // Create receiver cubes (draggable - handled by combined DragControls in sound spheres effect)
+    receivers.forEach(receiver => {
+      // Use same sizing logic as sound spheres (0.3 * scaleForSounds for spheres)
+      // For cubes, use 0.3 * scaleForSounds as the side length to maintain similar visual size
+      const cubeSize = 0.3 * scaleForSounds;
+      const cubeGeom = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+
+      // Blue color for receivers (sky-500: #0ea5e9)
+      const material = new THREE.MeshStandardMaterial({
+        color: 0x0ea5e9,
+        emissive: 0x0ea5e9,
+        emissiveIntensity: 0.3,
+        roughness: 0.3,
+        metalness: 0.7
+      });
+
+      const cubeMesh = new THREE.Mesh(cubeGeom, material);
+      cubeMesh.position.fromArray(receiver.position);
+      cubeMesh.userData.receiverId = receiver.id;
+      cubeMesh.userData.isReceiver = true;
+
+      scene.add(cubeMesh);
+      receiverSpheresRef.current.push(cubeMesh);
+      receiverDraggableObjectsRef.current.push(cubeMesh);
+    });
+
+    // Trigger DragControls update after receivers are created
+    setupDragControls();
+  }, [receivers, setupDragControls]);
+
+  // ============================================================================
+  // Effect - Preview Receiver Cube (Placing Mode)
+  // ============================================================================
+  useEffect(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+
+    // Create or remove preview cube based on placing mode
+    if (isPlacingReceiver) {
+      // Create transparent preview cube with same sizing as regular receivers
+      const cubeSize = 0.3 * scaleForSounds;
+      const cubeGeom = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+
+      const material = new THREE.MeshStandardMaterial({
+        color: 0x0ea5e9,
+        emissive: 0x0ea5e9,
+        emissiveIntensity: 0.3,
+        roughness: 0.3,
+        metalness: 0.7,
+        transparent: true,
+        opacity: 0.5
+      });
+
+      const previewMesh = new THREE.Mesh(cubeGeom, material);
+      previewMesh.position.set(0, 1.6, 0);
+      previewMesh.userData.isPreview = true;
+
+      scene.add(previewMesh);
+      previewReceiverRef.current = previewMesh;
+
+      // Disable orbit controls during placement
+      if (controlsRef.current) {
+        controlsRef.current.enabled = false;
+      }
+    } else {
+      // Remove preview cube
+      if (previewReceiverRef.current) {
+        if (previewReceiverRef.current.geometry) previewReceiverRef.current.geometry.dispose();
+        if (previewReceiverRef.current.material instanceof THREE.Material) {
+          previewReceiverRef.current.material.dispose();
         }
+        scene.remove(previewReceiverRef.current);
+        previewReceiverRef.current = null;
+      }
 
-        const dragControls = new DragControls(
-          draggableObjectsRef.current,
-          camera,
-          rendererRef.current.domElement
-        );
-
-        (dragControls as any).transformGroup = false;
-
-        dragControls.addEventListener('dragstart', (event) => {
-          if (controlsRef.current) {
-            controlsRef.current.enabled = false;
-          }
-          if (event.object) {
-            event.object.userData.isDragging = true;
-          }
-        });
-
-        dragControls.addEventListener('drag', (event) => {
-          if (event.object && event.object.userData.promptKey) {
-            spherePositionsRef.current[event.object.userData.promptKey] = event.object.position.clone();
-          }
-        });
-
-        dragControls.addEventListener('dragend', (event) => {
-          if (controlsRef.current) {
-            controlsRef.current.enabled = true;
-          }
-          if (event.object) {
-            event.object.userData.isDragging = false;
-          }
-        });
-
-        dragControlsRef.current = dragControls;
+      // Re-enable orbit controls
+      if (controlsRef.current) {
+        controlsRef.current.enabled = true;
       }
     }
-  }, [soundscapeData, selectedVariants, scaleForSounds]);
+
+    return () => {
+      // Cleanup on unmount
+      if (previewReceiverRef.current) {
+        if (previewReceiverRef.current.geometry) previewReceiverRef.current.geometry.dispose();
+        if (previewReceiverRef.current.material instanceof THREE.Material) {
+          previewReceiverRef.current.material.dispose();
+        }
+        scene.remove(previewReceiverRef.current);
+        previewReceiverRef.current = null;
+      }
+    };
+  }, [isPlacingReceiver]);
 
   // ============================================================================
   // Effect - Cleanup Audio Schedulers on Unmount
@@ -947,6 +1370,7 @@ export function ThreeScene({
           case 'playing':
             // Only schedule if not already scheduled (prevents restart)
             if (!scheduler.isScheduled(soundId)) {
+              console.log(`[ThreeScene] Starting sound ${soundId}, isPlayAll: ${isPlayAll}`);
               const intervalSeconds = currentInterval ?? 30;
               const randomnessPercent = 10; // ±10% variance
 
@@ -961,6 +1385,8 @@ export function ThreeScene({
               }
 
               scheduler.scheduleSound(soundId, audio, intervalSeconds, randomnessPercent, initialDelayMs);
+            } else {
+              console.log(`[ThreeScene] Sound ${soundId} already scheduled, skipping`);
             }
             break;
 
@@ -972,6 +1398,7 @@ export function ThreeScene({
 
           case 'stopped':
             // Unschedule and stop
+            console.log(`[ThreeScene] Stopping sound ${soundId}, isPlaying: ${audio.isPlaying}`);
             scheduler.unscheduleSound(soundId);
             if (audio.isPlaying) audio.stop();
             audio.setLoop(false);
@@ -990,6 +1417,102 @@ export function ThreeScene({
     prevSoundIntervalsRef.current = { ...soundIntervals };
   }, [individualSoundStates, soundIntervals]);
 
+
+  // ============================================================================
+  // Effect - Setup Auralization Convolver
+  // ============================================================================
+  useEffect(() => {
+    console.log('[Auralization] Effect triggered:', {
+      enabled: auralizationConfig.enabled,
+      hasBuffer: !!auralizationConfig.impulseResponseBuffer,
+      bufferDuration: auralizationConfig.impulseResponseBuffer?.duration,
+      normalize: auralizationConfig.normalize
+    });
+
+    const camera = cameraRef.current;
+    if (!camera || camera.children.length === 0) {
+      console.log('[Auralization] Camera or listener not ready');
+      return;
+    }
+
+    const listener = camera.children[0] as THREE.AudioListener;
+    const audioContext = listener.context;
+
+    console.log('[Auralization] AudioContext state:', audioContext.state);
+
+    // Create or update convolver node
+    if (auralizationConfig.enabled && auralizationConfig.impulseResponseBuffer) {
+      try {
+        // Process the impulse response
+        const processedIR = processImpulseResponse(
+          auralizationConfig.impulseResponseBuffer,
+          audioContext,
+          auralizationConfig.normalize
+        );
+
+        // Clean up old convolver if it exists
+        if (convolverNodeRef.current) {
+          convolverNodeRef.current.disconnect();
+        }
+
+        // Create new convolver node
+        const convolver = audioContext.createConvolver();
+        convolver.normalize = false; // We handle normalization in processImpulseResponse
+        convolver.buffer = processedIR;
+
+        // Store the convolver
+        convolverNodeRef.current = convolver;
+
+        console.log('[Auralization] Convolver node created and configured');
+        console.log(`  - IR Duration: ${processedIR.duration.toFixed(3)}s`);
+        console.log(`  - IR Channels: ${processedIR.numberOfChannels}`);
+        console.log(`  - IR Sample Rate: ${processedIR.sampleRate}Hz`);
+        console.log(`  - Normalized: ${auralizationConfig.normalize}`);
+
+        // Reconnect all existing audio sources through the convolver
+        audioSourcesRef.current.forEach((audio, soundId) => {
+          if (audio.buffer) {
+            try {
+              const sourceNode = audio.getOutput();
+              sourceNode.disconnect();
+              sourceNode.connect(convolver);
+              convolver.connect(audioContext.destination);
+              console.log(`[Auralization] Reconnected sound ${soundId} through convolver`);
+            } catch (error) {
+              console.error(`[Auralization] Error reconnecting sound ${soundId}:`, error);
+            }
+          }
+        });
+      } catch (error) {
+        console.error('[Auralization] Error setting up convolver:', error);
+        convolverNodeRef.current = null;
+      }
+    } else {
+      // Auralization disabled or no IR - disconnect convolver
+      if (convolverNodeRef.current) {
+        // Reconnect audio sources directly to destination
+        audioSourcesRef.current.forEach((audio, soundId) => {
+          if (audio.buffer) {
+            try {
+              const sourceNode = audio.getOutput();
+              sourceNode.disconnect();
+              sourceNode.connect(audioContext.destination);
+              console.log(`[Auralization] Reconnected sound ${soundId} directly (bypass convolver)`);
+            } catch (error) {
+              console.error(`[Auralization] Error reconnecting sound ${soundId}:`, error);
+            }
+          }
+        });
+
+        convolverNodeRef.current = null;
+        console.log('[Auralization] Convolver disabled');
+      }
+    }
+  }, [
+    auralizationConfig.enabled,
+    auralizationConfig.impulseResponseBuffer,
+    auralizationConfig.normalize
+  ]);
 
   // ============================================================================
   // Effect - Apply Volume Changes
@@ -1023,8 +1546,8 @@ export function ThreeScene({
   // Render
   // ============================================================================
   return (
-    <div className="relative w-full h-full">
-      <div ref={mountRef} className={className} />
+    <div className="relative w-full h-full overflow-hidden">
+      <div ref={mountRef} className={`${className} w-full h-full`} />
 
       {/* 3D UI Overlays */}
       <div className="absolute inset-0 pointer-events-none">
@@ -1057,7 +1580,19 @@ export function ThreeScene({
         {entityOverlay && <EntityUIOverlay overlay={entityOverlay} />}
       </div>
 
-      {/* Bottom-left control buttons */}
+      {/* Playback Controls - Bottom Center */}
+      <PlaybackControls
+        onPlayAll={onPlayAll}
+        onPauseAll={onPauseAll}
+        onStopAll={onStopAll}
+        isAnyPlaying={isAnyPlaying}
+        hasSounds={soundscapeData !== null && soundscapeData.length > 0}
+      />
+
+      {/* 3D Controls Info - Bottom Left */}
+      <ControlsInfo />
+
+      {/* Bottom-right control buttons */}
       <div className="absolute bottom-6 right-6 flex flex-col gap-2 pointer-events-auto">
         {/* Reset Zoom Button */}
         <button

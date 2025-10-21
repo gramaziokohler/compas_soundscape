@@ -2,74 +2,8 @@ import Image from "next/image";
 import { ModelLoadSection } from "./sidebar/ModelLoadSection";
 import { TextGenerationSection } from "./sidebar/TextGenerationSection";
 import { SoundGenerationSection } from "./sidebar/SoundGenerationSection";
-import { ControlsInfo } from "./sidebar/ControlsInfo";
-import type {
-  CompasGeometry,
-  SoundEvent,
-  SoundGenerationConfig,
-  ActiveTab,
-  LoadTab,
-  SoundState
-} from "@/types";
-
-interface SidebarProps {
-  file: File | null;
-  geometryData: CompasGeometry | null;
-  soundscapeData: SoundEvent[] | null;
-  selectedVariants: {[key: number]: number};
-  activeAiTab: ActiveTab;
-  activeLoadTab: LoadTab;
-  modelEntities: any[];
-  aiPrompt: string;
-  numSounds: number;
-  soundConfigs: SoundGenerationConfig[];
-  activeSoundConfigTab: number;
-  generatedSounds: any[];
-  globalDuration: number;
-  globalSteps: number;
-  globalNegativePrompt: string;
-  applyDenoising: boolean;
-  isUploading: boolean;
-  isAnalyzingModel: boolean;
-  isGenerating: boolean;
-  isSoundGenerating: boolean;
-  isDragging: boolean;
-  uploadError: string | null;
-  aiError: string | null;
-  soundGenError: string | null;
-  aiResponse: string | null;
-  analysisProgress: string;
-  llmProgress: string;
-  showConfirmLoadSounds: boolean;
-  pendingSoundConfigs: any[];
-  useModelAsContext: boolean;
-  onFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  onDragOver: (e: React.DragEvent<HTMLDivElement>) => void;
-  onDragLeave: (e: React.DragEvent<HTMLDivElement>) => void;
-  onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
-  onUpload: () => void;
-  onLoadSampleIfc: () => void;
-  onClearModel: () => void;
-  setActiveAiTab: (tab: ActiveTab) => void;
-  setActiveLoadTab: (tab: LoadTab) => void;
-  setAiPrompt: (prompt: string) => void;
-  setNumSounds: (num: number) => void;
-  onGenerateText: () => void;
-  onLoadSoundsToGeneration: () => void;
-  setActiveSoundConfigTab: (tab: number) => void;
-  onAddSoundConfig: () => void;
-  onRemoveSoundConfig: (index: number) => void;
-  onUpdateSoundConfig: (index: number, field: keyof SoundGenerationConfig, value: string | number) => void;
-  onGenerateSounds: () => void;
-  onGlobalDurationChange: (duration: number) => void;
-  onGlobalStepsChange: (steps: number) => void;
-  onGlobalNegativePromptChange: (prompt: string) => void;
-  onApplyDenoisingChange: (apply: boolean) => void;
-  onPlayAll: () => void;
-  onPauseAll: () => void;
-  onStopAll: () => void;
-  setUseModelAsContext: (value: boolean) => void;
-}
+import { AcousticsTab } from "./sidebar/AcousticsTab";
+import type { SidebarProps } from "@/types/components";
 
 export function Sidebar(props: SidebarProps) {
   return (
@@ -82,30 +16,42 @@ export function Sidebar(props: SidebarProps) {
 
       {/* Generative AI Section with Tabs */}
       <div className="flex flex-col gap-4 w-full">
-        <h2 className="text-md font-regular">Populate your architectural model with contextualized sound events</h2>
+        <h2 className="text-md font-regular">Soundscape driven architectural design</h2>
 
-        {/* Tab Buttons */}
-        <div className="flex gap-2 border-b border-gray-300 dark:border-gray-600">
-          <button
-            onClick={() => props.setActiveAiTab('text')}
-            className={`px-4 py-2 font-medium transition-colors ${
-              props.activeAiTab === 'text'
-                ? 'border-b-2 border-primary text-primary'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Text Generation
-          </button>
-          <button
-            onClick={() => props.setActiveAiTab('sound')}
-            className={`px-4 py-2 font-medium transition-colors ${
-              props.activeAiTab === 'sound'
-                ? 'border-b-2 border-primary text-primary'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Sound Generation
-          </button>
+        {/* Tab Buttons - Horizontally scrollable without scrollbar */}
+        <div className="overflow-x-auto scrollbar-hide border-b border-gray-300 dark:border-gray-600">
+          <div className="flex gap-2 min-w-max">
+            <button
+              onClick={() => props.setActiveAiTab('text')}
+              className={`px-5 py-2 font-medium transition-colors whitespace-nowrap text-sm ${
+                props.activeAiTab === 'text'
+                  ? 'border-b-2 border-primary text-primary'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Analysis
+            </button>
+            <button
+              onClick={() => props.setActiveAiTab('sound')}
+              className={`px-5 py-2 font-medium transition-colors whitespace-nowrap text-sm ${
+                props.activeAiTab === 'sound'
+                  ? 'border-b-2 border-primary text-primary'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Sound Generation
+            </button>
+            <button
+              onClick={() => props.setActiveAiTab('acoustics')}
+              className={`px-5 py-2 font-medium transition-colors whitespace-nowrap text-sm ${
+                props.activeAiTab === 'acoustics'
+                  ? 'border-b-2 border-primary text-primary'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Acoustics
+            </button>
+          </div>
         </div>
 
         {/* Text Generation Tab */}
@@ -130,6 +76,14 @@ export function Sidebar(props: SidebarProps) {
               onClearModel={props.onClearModel}
               setActiveLoadTab={props.setActiveLoadTab}
               setUseModelAsContext={props.setUseModelAsContext}
+              isSEDAnalyzing={props.isSEDAnalyzing}
+              sedAudioInfo={props.sedAudioInfo}
+              sedDetectedSounds={props.sedDetectedSounds}
+              sedError={props.sedError}
+              sedAnalysisOptions={props.sedAnalysisOptions}
+              onAnalyzeSoundEvents={props.onAnalyzeSoundEvents}
+              onToggleSEDOption={props.onToggleSEDOption}
+              onLoadSoundsFromSED={props.onLoadSoundsFromSED}
             />
 
             <TextGenerationSection
@@ -153,34 +107,54 @@ export function Sidebar(props: SidebarProps) {
 
         {/* Sound Generation Tab */}
         {props.activeAiTab === 'sound' && (
-          <SoundGenerationSection
-            soundConfigs={props.soundConfigs}
-            activeSoundConfigTab={props.activeSoundConfigTab}
-            isSoundGenerating={props.isSoundGenerating}
-            soundGenError={props.soundGenError}
-            generatedSounds={props.generatedSounds}
-            globalDuration={props.globalDuration}
-            globalSteps={props.globalSteps}
-            globalNegativePrompt={props.globalNegativePrompt}
-            applyDenoising={props.applyDenoising}
-            onSetActiveTab={props.setActiveSoundConfigTab}
-            onAddConfig={props.onAddSoundConfig}
-            onRemoveConfig={props.onRemoveSoundConfig}
-            onUpdateConfig={props.onUpdateSoundConfig}
-            onGenerate={props.onGenerateSounds}
-            onGlobalDurationChange={props.onGlobalDurationChange}
-            onGlobalStepsChange={props.onGlobalStepsChange}
-            onGlobalNegativePromptChange={props.onGlobalNegativePromptChange}
-            onApplyDenoisingChange={props.onApplyDenoisingChange}
-            onPlayAll={props.onPlayAll}
-            onPauseAll={props.onPauseAll}
-            onStopAll={props.onStopAll}
+          <div className="flex flex-col gap-4">
+            <SoundGenerationSection
+              soundConfigs={props.soundConfigs}
+              activeSoundConfigTab={props.activeSoundConfigTab}
+              isSoundGenerating={props.isSoundGenerating}
+              soundGenError={props.soundGenError}
+              generatedSounds={props.generatedSounds}
+              globalDuration={props.globalDuration}
+              globalSteps={props.globalSteps}
+              globalNegativePrompt={props.globalNegativePrompt}
+              applyDenoising={props.applyDenoising}
+              onSetActiveTab={props.setActiveSoundConfigTab}
+              onAddConfig={props.onAddSoundConfig}
+              onRemoveConfig={props.onRemoveSoundConfig}
+              onUpdateConfig={props.onUpdateSoundConfig}
+              onModeChange={props.onSoundModeChange}
+              onGenerate={props.onGenerateSounds}
+              onGlobalDurationChange={props.onGlobalDurationChange}
+              onGlobalStepsChange={props.onGlobalStepsChange}
+              onGlobalNegativePromptChange={props.onGlobalNegativePromptChange}
+              onApplyDenoisingChange={props.onApplyDenoisingChange}
+              onUploadAudio={props.onUploadAudio}
+              onClearUploadedAudio={props.onClearUploadedAudio}
+              onLibrarySearch={props.onLibrarySearch}
+              onLibrarySoundSelect={props.onLibrarySoundSelect}
+            />
+          </div>
+        )}
+
+        {/* Acoustics Tab */}
+        {props.activeAiTab === 'acoustics' && (
+          <AcousticsTab
+            receivers={props.receivers}
+            isPlacingReceiver={props.isPlacingReceiver}
+            onStartPlacingReceiver={props.onStartPlacingReceiver}
+            onDeleteReceiver={props.onDeleteReceiver}
+            onUpdateReceiverName={props.onUpdateReceiverName}
+            auralizationConfig={props.auralizationConfig}
+            auralizationLoading={props.auralizationLoading}
+            auralizationError={props.auralizationError}
+            onToggleAuralization={props.onToggleAuralization}
+            onToggleNormalize={props.onToggleNormalize}
+            onLoadImpulseResponse={props.onLoadImpulseResponse}
+            onClearImpulseResponse={props.onClearImpulseResponse}
           />
         )}
       </div>
 
-      {/* Controls Info */}
-      {(props.geometryData || props.soundscapeData) && <ControlsInfo />}
     </aside>
   );
 }

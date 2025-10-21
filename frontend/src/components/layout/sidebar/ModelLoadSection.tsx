@@ -1,25 +1,5 @@
-import type { LoadTab } from "@/types";
-
-interface ModelLoadSectionProps {
-  modelEntities: any[];
-  activeLoadTab: LoadTab;
-  file: File | null;
-  isDragging: boolean;
-  isUploading: boolean;
-  isAnalyzingModel: boolean;
-  uploadError: string | null;
-  analysisProgress: string;
-  useModelAsContext: boolean;
-  onFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  onDragOver: (e: React.DragEvent<HTMLDivElement>) => void;
-  onDragLeave: (e: React.DragEvent<HTMLDivElement>) => void;
-  onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
-  onUpload: () => void;
-  onLoadSampleIfc: () => void;
-  onClearModel: () => void;
-  setActiveLoadTab: (tab: LoadTab) => void;
-  setUseModelAsContext: (value: boolean) => void;
-}
+import type { ModelLoadSectionProps } from "@/types/components";
+import { isAudioFile, is3DModelFile, formatConfidence } from "@/lib/audio/audio-info";
 
 export function ModelLoadSection({
   modelEntities,
@@ -31,6 +11,11 @@ export function ModelLoadSection({
   uploadError,
   analysisProgress,
   useModelAsContext,
+  isSEDAnalyzing = false,
+  sedAudioInfo = null,
+  sedDetectedSounds = [],
+  sedError = null,
+  sedAnalysisOptions = { analyzeAmplitudes: true, analyzeDurations: true },
   onFileChange,
   onDragOver,
   onDragLeave,
@@ -39,12 +24,23 @@ export function ModelLoadSection({
   onLoadSampleIfc,
   onClearModel,
   setActiveLoadTab,
-  setUseModelAsContext
+  setUseModelAsContext,
+  onAnalyzeSoundEvents,
+  onToggleSEDOption,
+  onLoadSoundsFromSED
 }: ModelLoadSectionProps) {
+  // Determine file type: null, 'model', or 'audio'
+  const fileType = file ? (isAudioFile(file.name) ? 'audio' : is3DModelFile(file.name) ? 'model' : null) : null;
+  const isAudio = fileType === 'audio';
+  const isModel = fileType === 'model';
+
+  // Has SED analysis completed successfully?
+  const hasSEDResults = sedDetectedSounds && sedDetectedSounds.length > 0;
+
   return (
     <div>
-      <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">3D Model (Optional) 
-
+      <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+        Context (3D model or sound recording)
       </p>
       <div>
         {modelEntities.length > 0 ? (
@@ -82,29 +78,6 @@ export function ModelLoadSection({
           </div>
         ) : (
           <>
-            <div className="flex gap-2 mb-3">
-              <button
-                onClick={() => setActiveLoadTab('upload')}
-                className={`flex-1 px-3 py-2 text-xs font-medium rounded transition-colors ${
-                  activeLoadTab === 'upload'
-                    ? 'bg-primary text-white'
-                    : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300'
-                }`}
-              >
-                Upload File
-              </button>
-              <button
-                onClick={() => setActiveLoadTab('sample')}
-                className={`flex-1 px-3 py-2 text-xs font-medium rounded transition-colors ${
-                  activeLoadTab === 'sample'
-                    ? 'bg-primary text-white'
-                    : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300'
-                }`}
-              >
-                Sample IFC
-              </button>
-            </div>
-
             {activeLoadTab === 'upload' && (
               <div className="flex flex-col gap-2">
                 <div
@@ -126,6 +99,9 @@ export function ModelLoadSection({
                         <p className="text-xs font-medium text-gray-700 dark:text-gray-300">
                           {file.name}
                         </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          {isAudio ? '🎵 Audio file' : isModel ? '🏗️ 3D model' : '📄 File'}
+                        </p>
                         <label
                           htmlFor="file-upload"
                           className="cursor-pointer font-medium text-xs text-primary hover:text-primary-hover"
@@ -145,7 +121,7 @@ export function ModelLoadSection({
                           htmlFor="file-upload"
                           className="cursor-pointer font-medium text-xs text-primary hover:text-primary-hover"
                         >
-                          Browse (.obj, .stl, .ifc, .3dm)
+                          Browse (.obj, .stl, .ifc, .3dm, .wav, .mp3)
                         </label>
                       </>
                     )}
@@ -153,50 +129,174 @@ export function ModelLoadSection({
                       id="file-upload"
                       type="file"
                       onChange={onFileChange}
-                      accept=".obj,.stl,.ifc,.3dm"
+                      accept=".obj,.stl,.ifc,.3dm,.wav,.mp3,.flac,.ogg,.m4a"
                       className="hidden"
                     />
                   </div>
                 </div>
-                <button
-                  onClick={onUpload}
-                  disabled={isUploading || isAnalyzingModel || !file}
-                  className="w-full rounded-md text-white font-medium py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-gray-400 disabled:hover:bg-gray-400 flex items-center justify-center gap-2 transition-colors"
-                >
-                  {isUploading || isAnalyzingModel ? (
-                    <>
-                      <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                      {isUploading ? "Loading..." : "Analyzing..."}
-                    </>
-                  ) : (
-                    "Load Model"
+
+                {/* Show audio info if audio file is selected (appears immediately) */}
+                {file && isAudio && sedAudioInfo && !hasSEDResults && (
+                  <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                    <p className="text-xs font-semibold text-blue-800 dark:text-blue-300 mb-2">Audio Information</p>
+                    <div className="text-xs text-blue-700 dark:text-blue-300 space-y-1">
+                      <div className="flex justify-between">
+                        <span>Duration:</span>
+                        <span className="font-mono">{sedAudioInfo.duration.toFixed(2)}s</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Sample Rate:</span>
+                        <span className="font-mono">{sedAudioInfo.sample_rate} Hz</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Channels:</span>
+                        <span className="font-mono">{sedAudioInfo.channels}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* SED Analysis Options (only for audio files, before analysis) */}
+                {file && isAudio && !hasSEDResults && (
+                  <div className="p-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg">
+                    <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">Analysis Options</p>
+                    <div className="space-y-2">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={sedAnalysisOptions.analyzeAmplitudes}
+                          onChange={(e) => onToggleSEDOption?.('analyzeAmplitudes', e.target.checked)}
+                          className="w-4 h-4 rounded focus:ring-2 accent-primary"
+                        />
+                        <span className="text-xs text-gray-700 dark:text-gray-300">
+                          Analyze amplitudes (dB levels)
+                        </span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={sedAnalysisOptions.analyzeDurations}
+                          onChange={(e) => onToggleSEDOption?.('analyzeDurations', e.target.checked)}
+                          className="w-4 h-4 rounded focus:ring-2 accent-primary"
+                        />
+                        <span className="text-xs text-gray-700 dark:text-gray-300">
+                          Analyze temporal durations
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+                )}
+
+                {/* Main Action Button and Load Sounds button layout */}
+                <div className="flex gap-2">
+                  <button
+                    onClick={isAudio ? onAnalyzeSoundEvents : onUpload}
+                    disabled={isUploading || isAnalyzingModel || isSEDAnalyzing || !file}
+                    className={`${hasSEDResults && isAudio ? 'flex-1' : 'w-full'} rounded-md text-white font-medium py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-gray-400 disabled:hover:bg-gray-400 flex items-center justify-center gap-2 transition-colors`}
+                  >
+                    {isUploading || isAnalyzingModel || isSEDAnalyzing ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        {isSEDAnalyzing ? "Analyzing sounds..." : isUploading ? "Loading..." : "Analyzing..."}
+                      </>
+                    ) : (
+                      <>
+                        {isAudio ? "Analyze Sound Events" : "Load Model"}
+                      </>
+                    )}
+                  </button>
+
+                  {hasSEDResults && isAudio && (
+                    <button
+                      onClick={onLoadSoundsFromSED}
+                      className="flex-1 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium py-2 text-sm transition-colors"
+                      title="Load detected sounds into generation tab"
+                    >
+                      Load Sounds →
+                    </button>
                   )}
-                </button>
+                </div>
 
-                <label className="flex items-center gap-2 px-2 py-1 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={useModelAsContext}
-                    onChange={(e) => setUseModelAsContext(e.target.checked)}
-                    className="w-4 h-4 rounded focus:ring-2 accent-primary"
-                  />
-                  <span className="text-xs text-gray-700 dark:text-gray-300">
-                    Use model as context for sound generation
-                  </span>
-                </label>
+                {/* Model-specific checkbox (only for 3D models) */}
+                {file && isModel && !isUploading && (
+                  <label className="flex items-center gap-2 px-2 py-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={useModelAsContext}
+                      onChange={(e) => setUseModelAsContext(e.target.checked)}
+                      className="w-4 h-4 rounded focus:ring-2 accent-primary"
+                    />
+                    <span className="text-xs text-gray-700 dark:text-gray-300">
+                      Use model as context for sound generation
+                    </span>
+                  </label>
+                )}
 
-                {isAnalyzingModel && analysisProgress && (
+                {/* Progress indicator */}
+                {(isAnalyzingModel || isSEDAnalyzing) && analysisProgress && (
                   <div className="p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-xs text-blue-700 dark:text-blue-300">
                     🔍 {analysisProgress}
                   </div>
                 )}
 
-                {!useModelAsContext && file && !isUploading && (
+                {/* Warning for model positioning only */}
+                {file && isModel && !useModelAsContext && !isUploading && (
                   <div className="p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded text-xs text-yellow-700 dark:text-yellow-300">
                     ℹ️ Model will be used for positioning only
+                  </div>
+                )}
+
+                {/* SED Error Display - Friendly error message */}
+                {sedError && file && isAudio && !hasSEDResults && (
+                  <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                    <div className="flex items-start gap-2">
+                      <svg className="w-4 h-4 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <div className="flex-1">
+                        <p className="text-xs font-semibold text-red-800 dark:text-red-300 mb-1">Analysis Failed</p>
+                        <p className="text-xs text-red-700 dark:text-red-300">{sedError}</p>
+                        {/* Show format helper only for loading/audio errors, not analysis errors */}
+                        {(sedError.toLowerCase().includes('load') ||
+                          sedError.toLowerCase().includes('corrupt') ||
+                          sedError.toLowerCase().includes('format') ||
+                          sedError.toLowerCase().includes('audio file') ||
+                          sedError.toLowerCase().includes('0 samples')) && (
+                          <p className="text-xs text-red-600 dark:text-red-400 mt-2">
+                            💡 Try: Checking your audio file format, ensuring it's not corrupted, or using a 16kHz WAV file
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* SED Results Display - Scrollable like Text Generation */}
+                {hasSEDResults && (
+                  <div className="p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+                    <p className="text-xs font-semibold text-green-800 dark:text-green-300 mb-2 flex items-center">
+                      <span className="mr-2">✨</span>
+                      Detected Sound Events:
+                    </p>
+                    {/* Scrollable container matching TextGenerationSection style */}
+                    <div className="max-h-64 overflow-y-auto space-y-1">
+                      {sedDetectedSounds.map((sound, idx) => (
+                        <div key={idx} className="text-xs text-green-700 dark:text-green-300 flex justify-between items-center gap-2">
+                          <span className="flex-1">{sound.name}</span>
+                          <div className="flex items-center gap-2 font-mono text-right">
+                            <span>{formatConfidence(sound.confidence)}</span>
+                            {/* {sedAnalysisOptions?.analyzeAmplitudes && sound.avg_amplitude_db !== null && (
+                              <span className="text-green-600 dark:text-green-400">
+                                ({sound.avg_amplitude_db.toFixed(1)} dB)
+                              </span> */}
+                            {/* )} */}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

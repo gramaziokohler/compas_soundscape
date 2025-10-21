@@ -4,6 +4,15 @@
 import json
 import re
 import google.genai as genai
+from config.constants import (
+    LLM_MODEL_NAME,
+    LLM_DEFAULT_SPL,
+    LLM_DEFAULT_INTERVAL,
+    SPL_MIN,
+    SPL_MAX,
+    INTERVAL_MIN,
+    INTERVAL_MAX,
+)
 
 
 class LLMService:
@@ -38,22 +47,22 @@ class LLMService:
             display_name = re.sub(r'\s*[-"\'\[\]]$', '', display_name)
 
             # Extract SPL value
-            spl_db = 70.0  # Default value
+            spl_db = LLM_DEFAULT_SPL
             if spl_match:
                 try:
                     spl_db = float(spl_match.group(1))
-                    # Clamp to reasonable range (30-120 dB SPL)
-                    spl_db = max(30.0, min(120.0, spl_db))
+                    # Clamp to reasonable range
+                    spl_db = max(SPL_MIN, min(SPL_MAX, spl_db))
                 except ValueError:
                     pass
 
             # Extract interval value
-            interval_seconds = 30.0  # Default value
+            interval_seconds = LLM_DEFAULT_INTERVAL
             if interval_match:
                 try:
                     interval_seconds = float(interval_match.group(1))
-                    # Clamp to reasonable range (5-300 seconds)
-                    interval_seconds = max(5.0, min(300.0, interval_seconds))
+                    # Clamp to reasonable range
+                    interval_seconds = max(INTERVAL_MIN, min(INTERVAL_MAX, interval_seconds))
                 except ValueError:
                     pass
 
@@ -103,7 +112,7 @@ No explanation, just the JSON array."""
 
         try:
             response = self.client.models.generate_content(
-                model="gemini-2.5-flash", contents=diversity_prompt
+                model=LLM_MODEL_NAME, contents=diversity_prompt
             )
             response_text = response.text.strip()
 
@@ -151,7 +160,7 @@ No explanation, just the JSON array."""
             else:
                 context_intro = f"In an architectural scene made of the following {len(entities)} objects: {entities_text}, imagine {len(entities)}"
         else:
-            context_intro = f"Imagine {num_sounds}"
+            context_intro = f"In the architectural context of {context}, imagine {num_sounds}"
 
         return f"""{context_intro} possible sounds that could happen. 
 
@@ -168,10 +177,10 @@ INTERVAL: [estimated interval in seconds, e.g., 120]
 For the sound prompts:
     *   Use in priority words from AudioSet audio event classes.
     *   Use adjectives for description (e.g., "clear", "gentle", "heavy").
-    *   Be context-specific (e.g., "rolling on wooden floor", "closing latch click").
+    *   Be context-specific if mentionned (e.g., "rolling on wooden floor", "closing latch click").
     *   Consider the material properties if mentioned.
     *   Use general terms (e.g., "office chair", not a brand name).
-    *   Do not include titles, categorization, conditions, architectural acoustics features (e.g., "in a large reverberant room") or perspective/perception info in the prompt itself (e.g., "distant sound").
+    *   DO NOT INCLUDE: titles, categorization, conditions, architectural acoustics features (e.g., "in a large reverberant room"), distances or perspective/perception info in the prompt itself (e.g., "distant sound").
     *   Only impact sounds should potentially include textural/architectural info (e.g., "on wooden floor").
 
 For the display names:
@@ -186,7 +195,7 @@ For the SPL estimation (in dB):
 For the interval estimation (in seconds):
     *   How often would this sound typically occur in the given context?
     *   Examples: door closing (120 seconds), keyboard typing (10 seconds), HVAC hum (continuous, use 5 seconds), footsteps (20 seconds), phone ringing (180 seconds)
-    *   Provide a single number between 5-300 seconds representing how often the sound would play"""
+    *   Provide a single number between 0-300 seconds representing how often the sound would play"""
 
     def generate_prompts_for_entities(self, entities: list[dict], context: str = None) -> list[dict]:
         """Generate sound prompts for multiple entities in a single LLM call (batch processing)
@@ -205,7 +214,7 @@ For the interval estimation (in seconds):
 
         try:
             response = self.client.models.generate_content(
-                model="gemini-2.5-flash", contents=llm_prompt
+                model=LLM_MODEL_NAME, contents=llm_prompt
             )
             response_text = response.text.strip()
 
@@ -253,8 +262,8 @@ For the interval estimation (in seconds):
                         sound_list.append({
                             "prompt": cleaned,
                             "display_name": display_name,
-                            "spl_db": 70.0,  # Default fallback SPL
-                            "interval_seconds": 30.0  # Default fallback interval
+                            "spl_db": LLM_DEFAULT_SPL,
+                            "interval_seconds": LLM_DEFAULT_INTERVAL
                         })
 
             return sound_list
@@ -273,7 +282,7 @@ For the interval estimation (in seconds):
         enhanced_prompt = self._create_base_sound_prompt(context, num_sounds, entities=None)
 
         response = self.client.models.generate_content(
-            model="gemini-2.5-flash", contents=enhanced_prompt
+            model=LLM_MODEL_NAME, contents=enhanced_prompt
         )
 
         raw_text = response.text
@@ -313,8 +322,8 @@ For the interval estimation (in seconds):
                     sound_list.append({
                         "prompt": cleaned,
                         "display_name": display_name,
-                        "spl_db": 70.0,  # Default fallback SPL
-                        "interval_seconds": 30.0  # Default fallback interval
+                        "spl_db": LLM_DEFAULT_SPL,
+                        "interval_seconds": LLM_DEFAULT_INTERVAL
                     })
 
         return raw_text, sound_list

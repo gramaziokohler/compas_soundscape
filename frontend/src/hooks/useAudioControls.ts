@@ -95,6 +95,8 @@ export function useAudioControls(generatedSounds: any[]) {
    * Play all sounds (each maintains independent timing with initial random delay)
    */
   const playAll = useCallback(() => {
+    console.log('[Audio Controls] Play All requested');
+    console.log(`[Audio Controls] Total sounds available: ${generatedSounds.length}`);
     setIndividualSoundStates(prev => {
       const newStates = { ...prev };
 
@@ -112,10 +114,19 @@ export function useAudioControls(generatedSounds: any[]) {
       // The initial delay will be calculated in ThreeScene based on each sound's interval
       Object.entries(soundsByPromptIndex).forEach(([promptIdxStr, sounds]) => {
         const promptIdx = parseInt(promptIdxStr);
-        const selectedIdx = selectedVariants[promptIdx] || 0;
-        const selectedSound = sounds[selectedIdx] || sounds[0];
-        if (selectedSound) {
-          newStates[selectedSound.id] = 'playing';
+
+        // For uploaded/library sounds (total_copies = 1), just play them directly
+        if (sounds.length === 1 && sounds[0].total_copies === 1) {
+          console.log(`[Audio Controls] Playing uploaded/library sound at index ${promptIdx}: ${sounds[0].id}`);
+          newStates[sounds[0].id] = 'playing';
+        } else {
+          // For generated sounds with variants, play the selected variant
+          const selectedIdx = selectedVariants[promptIdx] || 0;
+          const selectedSound = sounds[selectedIdx] || sounds[0];
+          if (selectedSound) {
+            console.log(`[Audio Controls] Playing generated sound variant ${selectedIdx} at index ${promptIdx}: ${selectedSound.id}`);
+            newStates[selectedSound.id] = 'playing';
+          }
         }
       });
 
@@ -141,17 +152,25 @@ export function useAudioControls(generatedSounds: any[]) {
 
   /**
    * Stop all sounds (including all variants)
+   *
+   * IMPORTANT: Sets ALL sound states to 'stopped'.
+   * The ThreeScene effect will detect these state changes and stop the audio.
    */
   const stopAll = useCallback(() => {
+    console.log('[Audio Controls] Stop All requested');
+    console.log(`[Audio Controls] Total sounds to stop: ${generatedSounds.length}`);
     setIndividualSoundStates(prev => {
       const newStates = { ...prev };
       // Stop ALL sounds in the state, not just generatedSounds
-      Object.keys(newStates).forEach(soundId => {
-        newStates[soundId] = 'stopped';
+      // Also ensure we add any sounds that might not be in state yet
+      generatedSounds.forEach(sound => {
+        const prevState = newStates[sound.id];
+        newStates[sound.id] = 'stopped';
+        console.log(`[Audio Controls] Stopping sound ${sound.id}: ${prevState} -> stopped`);
       });
       return newStates;
     });
-  }, []);
+  }, [generatedSounds]);
 
   /**
    * Check if any sound is currently playing
@@ -159,6 +178,16 @@ export function useAudioControls(generatedSounds: any[]) {
   const isAnyPlaying = useCallback(() => {
     return Object.values(individualSoundStates).some(state => state === 'playing');
   }, [individualSoundStates]);
+
+  /**
+   * Force stop all audio - robust method that clears all state
+   * This method is more aggressive than stopAll and ensures everything is killed
+   */
+  const forceStopAll = useCallback(() => {
+    setIndividualSoundStates({});
+    setSoundVolumes({});
+    setSoundIntervals({});
+  }, []);
 
   return {
     individualSoundStates,
@@ -172,6 +201,7 @@ export function useAudioControls(generatedSounds: any[]) {
     playAll,
     pauseAll,
     stopAll,
-    isAnyPlaying
+    isAnyPlaying,
+    forceStopAll
   };
 }
