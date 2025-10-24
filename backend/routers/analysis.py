@@ -5,6 +5,7 @@ from compas.datastructures import Mesh
 import rhino3dm
 
 from utils.helpers import rotate_y_up_to_z_up
+from config.constants import SAMPLE_IFC_FILE_PATH, TEMP_UPLOADS_DIR
 
 router = APIRouter()
 
@@ -15,13 +16,11 @@ async def analyze_ifc():
     Analyzes the sample IFC model and extracts entity information for sound generation.
     Returns: list of entities with their type, name, position, and geometry bounds.
     """
-    sample_ifc_path = "data/Duplex_A_20110907.ifc"
-
-    if not os.path.exists(sample_ifc_path):
-        raise HTTPException(status_code=404, detail=f"Sample IFC file not found at {sample_ifc_path}")
+    if not os.path.exists(SAMPLE_IFC_FILE_PATH):
+        raise HTTPException(status_code=404, detail=f"Sample IFC file not found at {SAMPLE_IFC_FILE_PATH}")
 
     try:
-        model = Model(sample_ifc_path, load_geometries=True)
+        model = Model(SAMPLE_IFC_FILE_PATH, load_geometries=True)
 
         # Get building elements
         entities = []
@@ -104,9 +103,8 @@ async def analyze_3dm(file: UploadFile = File(...)):
     Analyzes a 3DM model and extracts entity information for sound generation.
     Returns: list of objects with their type, name, layer, material, position, and geometry bounds.
     """
-    temp_dir = "temp_uploads"
-    os.makedirs(temp_dir, exist_ok=True)
-    temp_path = os.path.join(temp_dir, file.filename)
+    os.makedirs(TEMP_UPLOADS_DIR, exist_ok=True)
+    temp_path = os.path.join(TEMP_UPLOADS_DIR, file.filename)
 
     def get_bbox(geom):
         """Get bounding box from Rhino geometry"""

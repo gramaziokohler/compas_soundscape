@@ -1,24 +1,32 @@
 import { useState, useCallback } from "react";
 import { SoundGenerationConfig, SoundGenerationMode, LibrarySearchResult, LibrarySearchState } from "@/types";
-import { API_BASE_URL } from "@/lib/constants";
+import {
+  API_BASE_URL,
+  DEFAULT_DURATION_SECONDS,
+  DEFAULT_GUIDANCE_SCALE,
+  DEFAULT_DIFFUSION_STEPS,
+  DEFAULT_SEED_COPIES
+} from "@/lib/constants";
 import { loadAudioFile, revokeAudioUrl } from "@/lib/audio/audio-upload";
+import { calculateSoundPosition, type GeometryBounds } from "@/lib/sound/positioning";
+import { createSoundEventFromUpload } from "@/lib/sound/event-factory";
 
 export function useSoundGeneration(geometryBounds: {min: number[], max: number[]} | null) {
   const [soundConfigs, setSoundConfigs] = useState<SoundGenerationConfig[]>([
-    { prompt: "", duration: 5, guidance_scale: 4.5, negative_prompt: "", seed_copies: 1, steps: 25, mode: 'text-to-audio' }
+    { prompt: "", duration: DEFAULT_DURATION_SECONDS, guidance_scale: DEFAULT_GUIDANCE_SCALE, negative_prompt: "", seed_copies: DEFAULT_SEED_COPIES, steps: DEFAULT_DIFFUSION_STEPS, mode: 'text-to-audio' }
   ]);
   const [activeSoundConfigTab, setActiveSoundConfigTab] = useState<number>(0);
   const [isSoundGenerating, setIsSoundGenerating] = useState<boolean>(false);
   const [soundGenError, setSoundGenError] = useState<string | null>(null);
   const [generatedSounds, setGeneratedSounds] = useState<any[]>([]);
   const [soundscapeData, setSoundscapeData] = useState<any[] | null>(null);
-  const [globalDuration, setGlobalDuration] = useState<number>(5);
-  const [globalSteps, setGlobalSteps] = useState<number>(25);
+  const [globalDuration, setGlobalDuration] = useState<number>(DEFAULT_DURATION_SECONDS);
+  const [globalSteps, setGlobalSteps] = useState<number>(DEFAULT_DIFFUSION_STEPS);
   const [globalNegativePrompt, setGlobalNegativePrompt] = useState<string>("distorted, reverb, echo, background noise, hall, spaciousness");
   const [applyDenoising, setApplyDenoising] = useState<boolean>(false);
 
   const handleAddConfig = useCallback(() => {
-    setSoundConfigs([...soundConfigs, { prompt: "", duration: globalDuration, guidance_scale: 4.5, negative_prompt: "", seed_copies: 1, steps: globalSteps, mode: 'text-to-audio' }]);
+    setSoundConfigs([...soundConfigs, { prompt: "", duration: globalDuration, guidance_scale: DEFAULT_GUIDANCE_SCALE, negative_prompt: "", seed_copies: DEFAULT_SEED_COPIES, steps: globalSteps, mode: 'text-to-audio' }]);
     setActiveSoundConfigTab(soundConfigs.length);
   }, [soundConfigs, globalDuration, globalSteps]);
 
@@ -159,40 +167,13 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
       // Create sound events for uploaded audio configs
       if (uploadedConfigsWithIndices.length > 0) {
         uploadedEvents = uploadedConfigsWithIndices.map(({ config, originalIndex }) => {
-          // Use entity position if available, otherwise use bounding box center
-          let position: [number, number, number];
-          if (config.entity?.position) {
-            position = config.entity.position;
-          } else if (geometryBounds) {
-            const center = [
-              (geometryBounds.min[0] + geometryBounds.max[0]) / 2,
-              (geometryBounds.min[1] + geometryBounds.max[1]) / 2,
-              (geometryBounds.min[2] + geometryBounds.max[2]) / 2
-            ];
-            position = center as [number, number, number];
-          } else {
-            position = [0, 0, 0];
-          }
-
-          return {
-            id: `uploaded-${originalIndex}-0`,
-            url: config.uploadedAudioUrl!,
-            position: position,
-            geometry: config.entity?.geometry || {
-              vertices: [],
-              faces: []
-            },
-            display_name: config.display_name || config.uploadedAudioInfo?.filename || `Uploaded ${originalIndex + 1}`,
-            prompt: config.prompt || 'Uploaded audio',
-            prompt_index: originalIndex, // Use the ACTUAL original index
-            total_copies: 1,
-            // Default to 70 dB (same as generated sounds) for proper volume
-            volume_db: config.spl_db ?? 70,
-            // Default to 30 seconds interval (same as TTA sounds)
-            interval_seconds: config.interval_seconds ?? 30,
-            // Mark as uploaded so ThreeScene knows to handle it differently
-            isUploaded: true
-          };
+          return createSoundEventFromUpload(
+            config,
+            config.uploadedAudioUrl!,
+            originalIndex,
+            geometryBounds as GeometryBounds | undefined,
+            'uploaded'
+          );
         });
       }
 
@@ -225,38 +206,16 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
             const audioBlob = await downloadResponse.blob();
             const audioUrl = URL.createObjectURL(audioBlob);
 
-            // Position calculation (same as uploaded sounds)
-            let position: [number, number, number];
-            if (config.entity?.position) {
-              position = config.entity.position;
-            } else if (geometryBounds) {
-              const center = [
-                (geometryBounds.min[0] + geometryBounds.max[0]) / 2,
-                (geometryBounds.min[1] + geometryBounds.max[1]) / 2,
-                (geometryBounds.min[2] + geometryBounds.max[2]) / 2
-              ];
-              position = center as [number, number, number];
-            } else {
-              position = [0, 0, 0];
-            }
+            // Create sound event using factory function
+            const soundEvent = createSoundEventFromUpload(
+              config,
+              audioUrl,
+              originalIndex,
+              geometryBounds as GeometryBounds | undefined,
+              'library'
+            );
 
-            // Create sound event (same structure as uploaded sounds)
-            libraryEvents.push({
-              id: `library-${originalIndex}-0`,
-              url: audioUrl,
-              position: position,
-              geometry: config.entity?.geometry || {
-                vertices: [],
-                faces: []
-              },
-              display_name: config.display_name || config.selectedLibrarySound.description,
-              prompt: config.prompt || config.selectedLibrarySound.description,
-              prompt_index: originalIndex,
-              total_copies: 1,
-              volume_db: config.spl_db ?? 70,
-              interval_seconds: config.interval_seconds ?? 30,
-              isUploaded: true // Treat library sounds same as uploaded
-            });
+            libraryEvents.push(soundEvent);
 
             console.log(`[Sound Generation] Library sound added: ${config.selectedLibrarySound.description}`);
           } catch (error) {
@@ -428,6 +387,55 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     console.log(`[Library Search] Selected sound: ${sound.description}`);
   }, [soundConfigs]);
 
+  /**
+   * Reprocess existing generated sounds to add or remove denoising
+   */
+  const handleReprocessSounds = useCallback(async (applyDenoising: boolean) => {
+    if (!soundscapeData || soundscapeData.length === 0) {
+      console.log('[Sound Reprocess] No sounds to reprocess');
+      return;
+    }
+
+    try {
+      console.log(`[Sound Reprocess] Reprocessing ${soundscapeData.length} sounds with denoising=${applyDenoising}`);
+      
+      // Extract sound URLs from soundscapeData
+      const soundUrls = soundscapeData.map((sound: any) => sound.url);
+
+      const response = await fetch(`${API_BASE_URL}/api/reprocess-sounds`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sound_urls: soundUrls,
+          apply_denoising: applyDenoising
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.detail || 'Failed to reprocess sounds');
+      }
+
+      const result = await response.json();
+      console.log(`[Sound Reprocess] Successfully reprocessed ${result.reprocessed_count} sounds`);
+
+      // Force reload of the sounds by updating the soundscape data with cache-busting URLs
+      // This will trigger a re-render and force the browser to reload the audio files
+      const timestamp = Date.now();
+      const updatedSounds = soundscapeData.map((sound: any) => ({
+        ...sound,
+        url: sound.url.includes('?') 
+          ? `${sound.url}&t=${timestamp}` 
+          : `${sound.url}?t=${timestamp}`
+      }));
+      setSoundscapeData(updatedSounds);
+      
+    } catch (error) {
+      console.error('[Sound Reprocess] Error:', error);
+      setSoundGenError(error instanceof Error ? error.message : 'Failed to reprocess sounds');
+    }
+  }, [soundscapeData]);
+
   return {
     soundConfigs,
     activeSoundConfigTab,
@@ -446,6 +454,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     handleGenerate,
     handleGlobalDurationChange,
     handleGlobalStepsChange,
+    handleReprocessSounds,
     setActiveSoundConfigTab,
     setSoundConfigsFromPrompts,
     setSoundscapeData,

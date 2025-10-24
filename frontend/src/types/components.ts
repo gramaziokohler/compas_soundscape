@@ -77,6 +77,7 @@ export interface SidebarProps {
   onGlobalStepsChange: (steps: number) => void;
   onGlobalNegativePromptChange: (prompt: string) => void;
   onApplyDenoisingChange: (apply: boolean) => void;
+  onReprocessSounds?: (applyDenoising: boolean) => Promise<void>;
   setUseModelAsContext: (value: boolean) => void;
   onUploadAudio: (index: number, file: File) => Promise<void>;
   onClearUploadedAudio: (index: number) => void;
@@ -85,6 +86,7 @@ export interface SidebarProps {
   // SED props
   isSEDAnalyzing?: boolean;
   sedAudioInfo?: SEDAudioInfo | null;
+  sedAudioBuffer?: AudioBuffer | null;
   sedDetectedSounds?: DetectedSound[];
   sedError?: string | null;
   sedAnalysisOptions?: {
@@ -126,6 +128,7 @@ export interface ModelLoadSectionProps {
   // SED-specific props
   isSEDAnalyzing?: boolean;
   sedAudioInfo?: SEDAudioInfo | null;
+  sedAudioBuffer?: AudioBuffer | null;
   sedDetectedSounds?: DetectedSound[];
   sedError?: string | null;
   sedAnalysisOptions?: {
@@ -170,6 +173,7 @@ export interface SoundGenerationSectionProps {
   onGlobalStepsChange: (steps: number) => void;
   onGlobalNegativePromptChange: (prompt: string) => void;
   onApplyDenoisingChange: (apply: boolean) => void;
+  onReprocessSounds?: (applyDenoising: boolean) => Promise<void>;
   onUploadAudio: (index: number, file: File) => Promise<void>;
   onClearUploadedAudio: (index: number) => void;
   onLibrarySearch: (index: number) => Promise<void>;

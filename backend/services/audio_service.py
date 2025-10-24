@@ -11,6 +11,27 @@ from utils.audio_processing import (
     apply_spl_calibration,
     apply_denoising as denoise_audio
 )
+from config.constants import (
+    TANGOFLUX_MODEL_NAME,
+    DEFAULT_DURATION_SECONDS,
+    DEFAULT_GUIDANCE_SCALE,
+    DEFAULT_DIFFUSION_STEPS,
+    DEFAULT_SEED_COPIES,
+    DEFAULT_INTERVAL_BETWEEN_SOUNDS,
+    DEFAULT_POSITION_SPACING,
+    DEFAULT_POSITION_OFFSET,
+    DEFAULT_POSITION_Y,
+    DEFAULT_POSITION_Z,
+    FILENAME_MAX_LENGTH,
+    PARAM_HASH_LENGTH,
+    DISPLAY_NAME_WORD_COUNT,
+    WINDOWS_ILLEGAL_FILENAME_CHARS,
+    TARGET_RMS,
+    AUDIO_SAMPLE_RATE,
+    DEFAULT_SPL_DB,
+    GENERATED_SOUNDS_DIR,
+    GENERATED_SOUND_URL_PREFIX
+)
 
 
 class AudioService:
@@ -24,7 +45,7 @@ class AudioService:
     def _init_model(self):
         """Lazy initialization of the audio generation model"""
         if self.model is None:
-            self.model = TangoFluxInference(name='declare-lab/TangoFlux', device=self.device)
+            self.model = TangoFluxInference(name=TANGOFLUX_MODEL_NAME, device=self.device)
         return self.model
 
     @staticmethod
@@ -40,19 +61,19 @@ class AudioService:
             ]
         else:
             return [
-                (idx * 3) - total_sounds * 1.5,
-                1,
-                0
+                (idx * DEFAULT_POSITION_SPACING) - total_sounds * DEFAULT_POSITION_OFFSET,
+                DEFAULT_POSITION_Y,
+                DEFAULT_POSITION_Z
             ]
 
     def generate_sound_file(
         self,
         prompt: str,
         output_path: str,
-        duration: int = 5,
-        guidance_scale: float = 4.5,
-        steps: int = 25,
-        spl_db: float = 70.0,
+        duration: int = DEFAULT_DURATION_SECONDS,
+        guidance_scale: float = DEFAULT_GUIDANCE_SCALE,
+        steps: int = DEFAULT_DIFFUSION_STEPS,
+        spl_db: float = DEFAULT_SPL_DB,
         apply_denoising: bool = False
     ) -> None:
         """Generate a single audio file from a text prompt with SPL calibration and optional denoising
@@ -79,17 +100,17 @@ class AudioService:
         )
 
         # Step 1: Normalize to base RMS level
-        audio = normalize_audio_rms(audio, target_rms=0.1)
+        audio = normalize_audio_rms(audio, target_rms=TARGET_RMS)
 
         # Step 2: Apply denoising if requested
         if apply_denoising:
             print("Applying noise reduction...")
-            audio = denoise_audio(audio, sample_rate=44100)
+            audio = denoise_audio(audio, sample_rate=AUDIO_SAMPLE_RATE)
 
         # Step 3: Apply SPL calibration
         audio = apply_spl_calibration(audio, target_spl_db=spl_db)
 
-        torchaudio.save(output_path, audio.cpu(), 44100)
+        torchaudio.save(output_path, audio.cpu(), AUDIO_SAMPLE_RATE)
         print(f"Saved to: {output_path} (calibrated to {spl_db} dB SPL{denoise_suffix})")
 
     def generate_multiple_sounds(
@@ -106,39 +127,37 @@ class AudioService:
 
         for idx, sound_config in enumerate(sound_configs):
             prompt = sound_config.get('prompt', '')
-            duration = sound_config.get('duration', 5)
-            guidance_scale = sound_config.get('guidance_scale', 4.5)
-            seed_copies = sound_config.get('seed_copies', 1)
-            steps = sound_config.get('steps', 25)
-            spl_db = sound_config.get('spl_db', 70.0)  # Get SPL from config
-            interval_seconds = sound_config.get('interval_seconds', 30.0)  # Get interval from config
+            # Prefer duration_seconds from LLM output, fallback to duration, then default
+            duration = sound_config.get('duration_seconds') or sound_config.get('duration', DEFAULT_DURATION_SECONDS)
+            guidance_scale = sound_config.get('guidance_scale', DEFAULT_GUIDANCE_SCALE)
+            seed_copies = sound_config.get('seed_copies', DEFAULT_SEED_COPIES)
+            steps = sound_config.get('steps', DEFAULT_DIFFUSION_STEPS)
+            spl_db = sound_config.get('spl_db', DEFAULT_SPL_DB)  # Get SPL from config
+            interval_seconds = sound_config.get('interval_seconds', DEFAULT_INTERVAL_BETWEEN_SOUNDS)  # Get interval from config
 
             if not prompt:
                 continue
 
             # Create shortened filename from prompt - sanitize all illegal characters
-            # Windows illegal characters: < > : " / \ | ? *
-            short_prompt = (prompt[:50]
-                .replace(' ', '_')
-                .replace('/', '_')
-                .replace('\\', '_')
-                .replace(':', '_')
-                .replace('*', '_')
-                .replace('?', '_')
-                .replace('"', '_')
-                .replace('<', '_')
-                .replace('>', '_')
-                .replace('|', '_'))
+            short_prompt = prompt[:FILENAME_MAX_LENGTH]
+            for char in WINDOWS_ILLEGAL_FILENAME_CHARS:
+                short_prompt = short_prompt.replace(char, '_')
+            short_prompt = short_prompt.replace(' ', '_')
 
             # Use display_name from config if provided by LLM, otherwise fallback
             display_name = sound_config.get('display_name')
             if not display_name:
-                # Fallback: extract first 3 words
-                words = prompt.split()[:3]
+                # Fallback: extract first N words
+                words = prompt.split()[:DISPLAY_NAME_WORD_COUNT]
                 display_name = ' '.join(words).title()
 
+            # Create a hash of all generation parameters for unique identification
+            import hashlib
+            param_string = f"{prompt}_{duration}_{guidance_scale}_{steps}_{apply_denoising}"
+            param_hash = hashlib.md5(param_string.encode()).hexdigest()[:PARAM_HASH_LENGTH]
+
             for copy_idx in range(seed_copies):
-                filename = f"{short_prompt}_copy{copy_idx}.wav"
+                filename = f"{short_prompt}_{param_hash}_copy{copy_idx}.wav"
                 output_path = os.path.normpath(os.path.join(output_dir, filename))
 
                 # Use entity position if available, otherwise generate random position
@@ -148,15 +167,15 @@ class AudioService:
                 else:
                     position = self.get_random_position(idx, len(sound_configs), bounding_box)
 
-                # Skip if file already exists
+                # Skip if file with exact same parameters already exists
                 if os.path.exists(output_path):
-                    print(f"Sound already exists, skipping: {filename}")
+                    print(f"Sound with identical parameters already exists, skipping: {filename}")
                     generated_files.append({
                         "id": f"generated_{idx}_{copy_idx}",
                         "prompt": prompt,
                         "prompt_index": idx,
                         "display_name": display_name,
-                        "url": f"/static/sounds/generated/{filename}",
+                        "url": f"{GENERATED_SOUND_URL_PREFIX}/{filename}",
                         "duration": duration,
                         "copy_index": copy_idx,
                         "total_copies": seed_copies,
@@ -176,7 +195,7 @@ class AudioService:
                     "prompt": prompt,
                     "prompt_index": idx,
                     "display_name": display_name,
-                    "url": f"/static/sounds/generated/{filename}",
+                    "url": f"{GENERATED_SOUND_URL_PREFIX}/{filename}",
                     "duration": duration,
                     "copy_index": copy_idx,
                     "total_copies": seed_copies,
@@ -187,8 +206,54 @@ class AudioService:
 
         return generated_files
 
+    def reprocess_audio_file(self, file_path: str, apply_denoising: bool):
+        """Reprocess an existing audio file to add or remove denoising
+        
+        Args:
+            file_path: Path to the audio file
+            apply_denoising: Whether to apply denoising
+        """
+        import soundfile as sf
+        import torch
+        from utils.audio_processing import apply_denoising as denoise_audio
+        
+        # Read the existing audio file
+        audio_np, sample_rate = sf.read(file_path)
+        
+        if apply_denoising:
+            # Apply denoising
+            print(f"Applying denoising to: {file_path}")
+            
+            # Convert numpy to torch tensor (handle mono/stereo)
+            if audio_np.ndim == 1:
+                # Mono: (samples,) -> (1, samples)
+                audio_tensor = torch.from_numpy(audio_np).unsqueeze(0)
+            else:
+                # Stereo: (samples, channels) -> (channels, samples)
+                audio_tensor = torch.from_numpy(audio_np.T)
+            
+            # Apply denoising
+            audio_tensor = denoise_audio(audio_tensor, sample_rate=sample_rate)
+            
+            # Convert back to numpy
+            audio_np = audio_tensor.squeeze().cpu().numpy()
+            
+            # If stereo, transpose back to (samples, channels)
+            if audio_tensor.shape[0] > 1:
+                audio_np = audio_np.T
+        else:
+            # To remove denoising, we would need the original file
+            # Since we can't truly "remove" denoising from an already processed file,
+            # we just log that the file is already in its current state
+            print(f"File already processed: {file_path} (cannot reverse denoising)")
+            return
+        
+        # Save the processed audio back to the same file
+        sf.write(file_path, audio_np, sample_rate)
+        print(f"Reprocessed: {file_path}")
+
     @staticmethod
-    def cleanup_generated_sounds(output_dir: str = './static/sounds/generated'):
+    def cleanup_generated_sounds(output_dir: str = GENERATED_SOUNDS_DIR):
         """Delete all generated sound files"""
         if os.path.exists(output_dir):
             for filename in os.listdir(output_dir):
@@ -196,3 +261,4 @@ class AudioService:
                 if os.path.isfile(file_path):
                     os.remove(file_path)
             print("Generated sounds cleaned up")
+

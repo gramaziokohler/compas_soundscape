@@ -3,6 +3,13 @@
 
 import torch
 import numpy as np
+from config.constants import (
+    AUDIO_RMS_EPSILON,
+    CLIPPING_THRESHOLD,
+    SPL_CLIPPING_THRESHOLD,
+    DEFAULT_SPL_DB,
+    DENOISING_REDUCTION_STRENGTH
+)
 
 try:
     import noisereduce as nr
@@ -46,7 +53,7 @@ def normalize_audio_rms(audio_tensor: torch.Tensor, target_rms: float = 0.1) -> 
     current_rms = calculate_rms(audio_tensor)
 
     # Avoid division by zero
-    if current_rms < 1e-8:
+    if current_rms < AUDIO_RMS_EPSILON:
         return audio_tensor
 
     # Calculate scaling factor
@@ -57,13 +64,13 @@ def normalize_audio_rms(audio_tensor: torch.Tensor, target_rms: float = 0.1) -> 
 
     # Prevent clipping
     max_val = torch.max(torch.abs(normalized_audio))
-    if max_val > 0.99:
-        normalized_audio = normalized_audio * (0.99 / max_val)
+    if max_val > CLIPPING_THRESHOLD:
+        normalized_audio = normalized_audio * (CLIPPING_THRESHOLD / max_val)
 
     return normalized_audio
 
 
-def apply_spl_calibration(audio_tensor: torch.Tensor, target_spl_db: float, base_spl_db: float = 70.0) -> torch.Tensor:
+def apply_spl_calibration(audio_tensor: torch.Tensor, target_spl_db: float, base_spl_db: float = DEFAULT_SPL_DB) -> torch.Tensor:
     """Apply SPL calibration to audio based on desired dB level
 
     Args:
@@ -86,8 +93,8 @@ def apply_spl_calibration(audio_tensor: torch.Tensor, target_spl_db: float, base
 
     # Prevent clipping
     max_val = torch.max(torch.abs(calibrated_audio))
-    if max_val > 0.99:
-        calibrated_audio = calibrated_audio * (0.99 / max_val)
+    if max_val > SPL_CLIPPING_THRESHOLD:
+        calibrated_audio = calibrated_audio * (SPL_CLIPPING_THRESHOLD / max_val)
 
     return calibrated_audio
 
@@ -128,7 +135,7 @@ def apply_denoising(audio_tensor: torch.Tensor, sample_rate: int = 44100) -> tor
                         y=channel_data,
                         sr=sample_rate,
                         stationary=True,
-                        prop_decrease=0.8  # Reduce noise by 80%
+                        prop_decrease=DENOISING_REDUCTION_STRENGTH
                     )
                     denoised_channels.append(denoised_channel)
                 except Exception as e:
@@ -147,7 +154,7 @@ def apply_denoising(audio_tensor: torch.Tensor, sample_rate: int = 44100) -> tor
                 y=audio_1d,
                 sr=sample_rate,
                 stationary=True,
-                prop_decrease=0.8
+                prop_decrease=DENOISING_REDUCTION_STRENGTH
             )
 
             # Restore original shape if needed

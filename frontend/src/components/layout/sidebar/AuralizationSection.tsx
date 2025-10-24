@@ -2,6 +2,8 @@ import { useState } from "react";
 import type { AuralizationConfig } from "@/hooks/useAuralization";
 import { getIRInfo } from "@/lib/audio/impulse-response";
 import { FileUploadArea } from "@/components/controls/FileUploadArea";
+import { AudioWaveformDisplay } from "@/components/audio/AudioWaveformDisplay";
+import type { SEDAudioInfo } from "@/types";
 
 interface AuralizationSectionProps {
   config: AuralizationConfig;
@@ -72,6 +74,19 @@ export function AuralizationSection({
   const irInfo = getIRInfo(config.impulseResponseBuffer);
   const hasIR = config.impulseResponseBuffer !== null;
 
+  // Convert IR buffer info to SEDAudioInfo format for waveform display
+  const irAudioInfo: SEDAudioInfo | null = config.impulseResponseBuffer ? {
+    duration: config.impulseResponseBuffer.duration,
+    sample_rate: config.impulseResponseBuffer.sampleRate,
+    num_samples: config.impulseResponseBuffer.length,
+    channels: config.impulseResponseBuffer.numberOfChannels === 1
+      ? "Mono"
+      : config.impulseResponseBuffer.numberOfChannels === 2
+      ? "Stereo"
+      : `${config.impulseResponseBuffer.numberOfChannels} ch`,
+    filename: config.impulseResponseFilename || "Impulse Response"
+  } : null;
+
   return (
     <div className="flex flex-col gap-3">
       {/* File Upload Area - Only show when no IR is loaded */}
@@ -137,27 +152,13 @@ export function AuralizationSection({
             </label>
           </div>
 
-          {/* IR Info Display */}
-          <div className="bg-white dark:bg-gray-800 rounded p-2">
-            <div className="text-xs text-gray-600 dark:text-gray-400 space-y-1">
-              <div className="flex justify-between">
-                <span>Duration:</span>
-                <span className="font-mono">{irInfo.duration}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Sample Rate:</span>
-                <span className="font-mono">{irInfo.sampleRate}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Channels:</span>
-                <span className="font-mono">{irInfo.channels}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Samples:</span>
-                <span className="font-mono">{irInfo.samples}</span>
-              </div>
-            </div>
-          </div>
+          {/* Waveform Display */}
+          {config.impulseResponseBuffer && irAudioInfo && (
+            <AudioWaveformDisplay
+              audioBuffer={config.impulseResponseBuffer}
+              audioInfo={irAudioInfo}
+            />
+          )}
 
           {/* Clear IR Button - Grey color */}
           <button

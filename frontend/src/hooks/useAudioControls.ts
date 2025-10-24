@@ -117,14 +117,16 @@ export function useAudioControls(generatedSounds: any[]) {
 
         // For uploaded/library sounds (total_copies = 1), just play them directly
         if (sounds.length === 1 && sounds[0].total_copies === 1) {
-          console.log(`[Audio Controls] Playing uploaded/library sound at index ${promptIdx}: ${sounds[0].id}`);
+          const displayName = sounds[0].display_name || sounds[0].id;
+          console.log(`[Audio Controls] Playing uploaded/library sound: ${displayName}`);
           newStates[sounds[0].id] = 'playing';
         } else {
           // For generated sounds with variants, play the selected variant
           const selectedIdx = selectedVariants[promptIdx] || 0;
           const selectedSound = sounds[selectedIdx] || sounds[0];
           if (selectedSound) {
-            console.log(`[Audio Controls] Playing generated sound variant ${selectedIdx} at index ${promptIdx}: ${selectedSound.id}`);
+            const displayName = selectedSound.display_name || selectedSound.id;
+            console.log(`[Audio Controls] Playing variant ${selectedIdx}: ${displayName}`);
             newStates[selectedSound.id] = 'playing';
           }
         }
@@ -157,20 +159,34 @@ export function useAudioControls(generatedSounds: any[]) {
    * The ThreeScene effect will detect these state changes and stop the audio.
    */
   const stopAll = useCallback(() => {
-    console.log('[Audio Controls] Stop All requested');
-    console.log(`[Audio Controls] Total sounds to stop: ${generatedSounds.length}`);
+    // Count how many sounds are actually playing or paused before stopping
+    const soundsToStop = generatedSounds.filter(sound => {
+      const state = individualSoundStates[sound.id];
+      return state === 'playing' || state === 'paused';
+    });
+
+    // Only log if there are sounds to stop
+    if (soundsToStop.length > 0) {
+      console.log('[Audio Controls] Stop All requested');
+      console.log(`[Audio Controls] Stopping ${soundsToStop.length} sound(s)`);
+    }
+
     setIndividualSoundStates(prev => {
       const newStates = { ...prev };
       // Stop ALL sounds in the state, not just generatedSounds
       // Also ensure we add any sounds that might not be in state yet
       generatedSounds.forEach(sound => {
         const prevState = newStates[sound.id];
+        // Only log if state is actually changing
+        if (prevState && prevState !== 'stopped') {
+          const displayName = sound.display_name || sound.id;
+          console.log(`[Audio Controls] Stopping ${displayName}: ${prevState} -> stopped`);
+        }
         newStates[sound.id] = 'stopped';
-        console.log(`[Audio Controls] Stopping sound ${sound.id}: ${prevState} -> stopped`);
       });
       return newStates;
     });
-  }, [generatedSounds]);
+  }, [generatedSounds, individualSoundStates]);
 
   /**
    * Check if any sound is currently playing

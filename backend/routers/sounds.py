@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from services.audio_service import AudioService
 from models.schemas import SoundGenerationRequest
+from config.constants import GENERATED_SOUNDS_DIR
 
 router = APIRouter()
 
@@ -22,11 +23,9 @@ async def generate_sounds(request: SoundGenerationRequest):
     If bounding_box is provided, positions sounds randomly within the geometry bounds.
     """
     try:
-        output_dir = './static/sounds/generated'
-
         generated_files = audio_service.generate_multiple_sounds(
             request.sounds,
-            output_dir,
+            GENERATED_SOUNDS_DIR,
             request.bounding_box,
             request.apply_denoising
         )

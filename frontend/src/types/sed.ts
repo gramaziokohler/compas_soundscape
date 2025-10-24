@@ -66,6 +66,7 @@ export interface SEDUIState {
 export interface UseSEDReturn {
   isSEDAnalyzing: boolean;
   sedAudioInfo: SEDAudioInfo | null;
+  sedAudioBuffer: AudioBuffer | null;
   sedDetectedSounds: DetectedSound[];
   sedAnalysisOptions: SEDAnalysisOptions;
   sedError: string | null;

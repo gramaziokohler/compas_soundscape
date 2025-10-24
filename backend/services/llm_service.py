@@ -6,12 +6,15 @@ import re
 import google.genai as genai
 from config.constants import (
     LLM_MODEL_NAME,
-    LLM_DEFAULT_SPL,
-    LLM_DEFAULT_INTERVAL,
+    DEFAULT_SPL_DB,
+    LLM_SUGGESTED_INTERVAL_SECONDS,
+    DEFAULT_DURATION_SECONDS,
     SPL_MIN,
     SPL_MAX,
     INTERVAL_MIN,
     INTERVAL_MAX,
+    DURATION_MIN,
+    DURATION_MAX,
 )
 
 
@@ -22,19 +25,20 @@ class LLMService:
         self.client = client
 
     def _parse_prompt_and_name(self, text: str) -> dict:
-        """Parse structured PROMPT: ... NAME: ... SPL: ... INTERVAL: ... format into dict
+        """Parse structured PROMPT: ... NAME: ... SPL: ... INTERVAL: ... DURATION: ... format into dict
 
         Args:
-            text: Raw text that may contain PROMPT:, NAME:, SPL:, and INTERVAL: markers
+            text: Raw text that may contain PROMPT:, NAME:, SPL:, INTERVAL:, and DURATION: markers
 
         Returns:
-            dict: {"prompt": str, "display_name": str, "spl_db": float, "interval_seconds": float} or None if parsing fails
+            dict: {"prompt": str, "display_name": str, "spl_db": float, "interval_seconds": float, "duration_seconds": float} or None if parsing fails
         """
-        # Try to parse PROMPT: ... NAME: ... SPL: ... INTERVAL: ... format
+        # Try to parse PROMPT: ... NAME: ... SPL: ... INTERVAL: ... DURATION: ... format
         prompt_match = re.search(r'PROMPT:\s*(.+?)(?=\s*NAME:|$)', text, re.DOTALL)
         name_match = re.search(r'NAME:\s*(.+?)(?=\s*SPL:|$)', text, re.DOTALL | re.MULTILINE)
         spl_match = re.search(r'SPL:\s*(\d+(?:\.\d+)?)', text, re.IGNORECASE)
         interval_match = re.search(r'INTERVAL:\s*(\d+(?:\.\d+)?)', text, re.IGNORECASE)
+        duration_match = re.search(r'DURATION:\s*(\d+(?:\.\d+)?)', text, re.IGNORECASE)
 
         if prompt_match and name_match:
             sound_prompt = prompt_match.group(1).strip()
@@ -47,7 +51,7 @@ class LLMService:
             display_name = re.sub(r'\s*[-"\'\[\]]$', '', display_name)
 
             # Extract SPL value
-            spl_db = LLM_DEFAULT_SPL
+            spl_db = DEFAULT_SPL_DB
             if spl_match:
                 try:
                     spl_db = float(spl_match.group(1))
@@ -57,7 +61,7 @@ class LLMService:
                     pass
 
             # Extract interval value
-            interval_seconds = LLM_DEFAULT_INTERVAL
+            interval_seconds = LLM_SUGGESTED_INTERVAL_SECONDS
             if interval_match:
                 try:
                     interval_seconds = float(interval_match.group(1))
@@ -66,11 +70,24 @@ class LLMService:
                 except ValueError:
                     pass
 
+            # Extract duration value
+            duration_seconds = DEFAULT_DURATION_SECONDS
+            if duration_match:
+                try:
+                    duration_seconds = float(duration_match.group(1))
+                    # Clamp to reasonable range
+                    duration_seconds = max(DURATION_MIN, min(DURATION_MAX, duration_seconds))
+                    # Round to 0.1 precision
+                    duration_seconds = round(duration_seconds, 1)
+                except ValueError:
+                    pass
+
             return {
                 "prompt": sound_prompt,
                 "display_name": display_name,
                 "spl_db": spl_db,
-                "interval_seconds": interval_seconds
+                "interval_seconds": interval_seconds,
+                "duration_seconds": duration_seconds
             }
 
         return None
@@ -164,13 +181,14 @@ No explanation, just the JSON array."""
 
         return f"""{context_intro} possible sounds that could happen. 
 
-For each object, provide a 5 to 10 words sound prompt, a short 2-3 word display name, estimate the Sound Pressure Level (SPL) in dB at the source, AND estimate how often this sound would typically occur (in seconds).
+For each object, provide a 5 to 10 words sound prompt, a short 2-3 word display name, estimate the Sound Pressure Level (SPL) in dB at the source, estimate how often this sound would typically occur (in seconds), AND estimate the typical duration of the sound event (in seconds with 0.1 precision).
 
 Format your response as a numbered list with each sound using this EXACT format, without any extra text:
 1. PROMPT: [your sound prompt here]
 NAME: [your 2-3 word display name here]
 SPL: [estimated dB value, e.g., 75]
 INTERVAL: [estimated interval in seconds, e.g., 120]
+DURATION: [estimated duration in seconds with 0.1 precision, e.g., 3.5]
 2.
 ...and so on
 
@@ -195,7 +213,14 @@ For the SPL estimation (in dB):
 For the interval estimation (in seconds):
     *   How often would this sound typically occur in the given context?
     *   Examples: door closing (120 seconds), keyboard typing (10 seconds), HVAC hum (continuous, use 5 seconds), footsteps (20 seconds), phone ringing (180 seconds)
-    *   Provide a single number between 0-300 seconds representing how often the sound would play"""
+    *   Provide a single number between 5-300 seconds representing how often the sound would play
+
+For the duration estimation (in seconds with 0.1 precision):
+    *   How long does this specific sound event last?
+    *   Consider the nature of the sound: impact sounds are brief, continuous sounds are longer
+    *   Examples: door slam (0.8 seconds), keyboard click (0.1 seconds), phone ring cycle (2.5 seconds), HVAC hum (use 10.0 for continuous), footstep (0.3 seconds), drawer closing (1.2 seconds)
+    *   Provide a single number between 0.5-30.0 seconds with 0.1 precision (e.g., 2.3, 0.7, 5.0)
+    *   Brief impacts: 0.1-1.0 seconds | Short events: 1.0-5.0 seconds | Medium events: 5.0-15.0 seconds | Long/continuous: 15.0-30.0 seconds"""
 
     def generate_prompts_for_entities(self, entities: list[dict], context: str = None) -> list[dict]:
         """Generate sound prompts for multiple entities in a single LLM call (batch processing)
@@ -262,8 +287,9 @@ For the interval estimation (in seconds):
                         sound_list.append({
                             "prompt": cleaned,
                             "display_name": display_name,
-                            "spl_db": LLM_DEFAULT_SPL,
-                            "interval_seconds": LLM_DEFAULT_INTERVAL
+                            "spl_db": DEFAULT_SPL_DB,
+                            "interval_seconds": LLM_SUGGESTED_INTERVAL_SECONDS,
+                            "duration_seconds": DEFAULT_DURATION_SECONDS
                         })
 
             return sound_list
@@ -322,8 +348,9 @@ For the interval estimation (in seconds):
                     sound_list.append({
                         "prompt": cleaned,
                         "display_name": display_name,
-                        "spl_db": LLM_DEFAULT_SPL,
-                        "interval_seconds": LLM_DEFAULT_INTERVAL
+                        "spl_db": DEFAULT_SPL_DB,
+                        "interval_seconds": LLM_SUGGESTED_INTERVAL_SECONDS,
+                        "duration_seconds": DEFAULT_DURATION_SECONDS
                     })
 
         return raw_text, sound_list

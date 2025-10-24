@@ -7,7 +7,8 @@
 
 import { useState, useCallback } from 'react';
 import type { SEDAudioInfo, DetectedSound, SoundGenerationConfig, SEDAnalysisOptions, UseSEDReturn } from '@/types';
-import { loadAudioFileInfo } from '@/lib/audio/audio-info';
+import { loadAudioFileWithBuffer } from '@/lib/audio/audio-info';
+import { API_BASE_URL, DEFAULT_SPL_DB, DEFAULT_DIFFUSION_STEPS, LLM_SUGGESTED_INTERVAL_SECONDS, DEFAULT_DURATION_SECONDS } from '@/lib/constants';
 
 /**
  * Custom hook for Sound Event Detection
@@ -28,6 +29,7 @@ import { loadAudioFileInfo } from '@/lib/audio/audio-info';
 export function useSED(): UseSEDReturn {
   const [isSEDAnalyzing, setIsSEDAnalyzing] = useState(false);
   const [sedAudioInfo, setSedAudioInfo] = useState<SEDAudioInfo | null>(null);
+  const [sedAudioBuffer, setSedAudioBuffer] = useState<AudioBuffer | null>(null);
   const [sedDetectedSounds, setSedDetectedSounds] = useState<DetectedSound[]>([]);
   const [sedError, setSedError] = useState<string | null>(null);
   const [sedProgress, setSedProgress] = useState('');
@@ -38,11 +40,11 @@ export function useSED(): UseSEDReturn {
   });
 
   /**
-   * Load audio file metadata without analysis
+   * Load audio file metadata and buffer for waveform visualization
    *
    * Decodes audio file using Web Audio API to extract duration, sample rate,
-   * and channel information. This runs immediately when a file is selected,
-   * before the user clicks "Analyze Sound Events".
+   * channel information, and AudioBuffer for waveform display. This runs
+   * immediately when a file is selected, before the user clicks "Analyze Sound Events".
    *
    * @param file - Audio file to load
    */
@@ -50,9 +52,10 @@ export function useSED(): UseSEDReturn {
     setSedError(null);
 
     try {
-      const audioInfo = await loadAudioFileInfo(file);
-      if (audioInfo) {
-        setSedAudioInfo(audioInfo);
+      const result = await loadAudioFileWithBuffer(file);
+      if (result) {
+        setSedAudioInfo(result.audioInfo);
+        setSedAudioBuffer(result.audioBuffer);
       } else {
         setSedError('Failed to load audio file info');
       }
@@ -88,7 +91,7 @@ export function useSED(): UseSEDReturn {
       setSedProgress('Analyzing sound events...');
 
       // Send request to backend
-      const response = await fetch('http://localhost:8000/api/analyze-sound-events', {
+      const response = await fetch(`${API_BASE_URL}/api/analyze-sound-events`, {
         method: 'POST',
         body: formData,
       });
@@ -181,7 +184,7 @@ export function useSED(): UseSEDReturn {
       // dBFS: 0 = max amplitude, -60 = very quiet
       // SPL: 30 = whisper, 60 = conversation, 85 = traffic, 110 = concert
       // Mapping: dBFS -60 to -3 → SPL 30 to 85
-      let volumeSPL = 70.0; // Default to conversation level
+      let volumeSPL = DEFAULT_SPL_DB; // Default to conversation level
       if (sedAnalysisOptions.analyze_amplitudes && sound.max_amplitude_db !== null && isFinite(sound.max_amplitude_db)) {
         // Linear mapping from dBFS range to SPL range
         // dBFS typically ranges from -60 (quiet) to -3 (loud)
@@ -194,7 +197,7 @@ export function useSED(): UseSEDReturn {
 
       // Use max_silence_duration_sec for playback interval
       // This represents the maximum time the sound is ABSENT (longest silence period)
-      let playbackInterval = 30.0; // Default 30 seconds
+      let playbackInterval = LLM_SUGGESTED_INTERVAL_SECONDS; // Default 30 seconds
       if (sedAnalysisOptions.analyze_durations && sound.max_silence_duration_sec !== null && sound.max_silence_duration_sec !== undefined) {
         // Use max silence duration as interval (how long to wait before repeating)
         playbackInterval = Math.max(5, Math.min(120, sound.max_silence_duration_sec));
@@ -204,7 +207,7 @@ export function useSED(): UseSEDReturn {
 
       // Use max_detection_duration_sec for sound generation duration
       // This represents the maximum time the sound is PRESENT (longest detection)
-      let soundDuration = 5.0; // Default 5 seconds
+      let soundDuration = DEFAULT_DURATION_SECONDS; // Default 5 seconds
       if (sedAnalysisOptions.analyze_durations && sound.max_detection_duration_sec !== null && sound.max_detection_duration_sec !== undefined) {
         // Use max detection duration for generated sound length
         soundDuration = Math.max(1, Math.min(30, sound.max_detection_duration_sec));
@@ -217,7 +220,7 @@ export function useSED(): UseSEDReturn {
         duration: soundDuration, // From max_detection_duration_sec (rounded to 0.1)
         negative_prompt: '', // No negative prompt by default
         seed_copies: 1, // Single variant
-        steps: 50, // Default diffusion steps
+        steps: DEFAULT_DIFFUSION_STEPS, // Default diffusion steps
         display_name: sound.name, // Display name from SED
         spl_db: volumeSPL, // From max_amplitude_db (rounded to 0.1)
         interval_seconds: playbackInterval, // From max_silence_duration_sec (rounded to 0.1)
@@ -232,6 +235,7 @@ export function useSED(): UseSEDReturn {
    */
   const clearSEDResults = useCallback(() => {
     setSedAudioInfo(null);
+    setSedAudioBuffer(null);
     setSedDetectedSounds([]);
     setSedError(null);
     setSedProgress('');
@@ -241,6 +245,7 @@ export function useSED(): UseSEDReturn {
     // State
     isSEDAnalyzing,
     sedAudioInfo,
+    sedAudioBuffer,
     sedDetectedSounds,
     sedAnalysisOptions,
     sedError,

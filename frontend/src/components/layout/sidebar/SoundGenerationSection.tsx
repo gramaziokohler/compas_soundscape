@@ -2,7 +2,9 @@ import { useState, useEffect, useRef } from "react";
 import type { SoundGenerationSectionProps } from "@/types/components";
 import type { SoundGenerationMode } from "@/types";
 import { FileUploadArea } from "@/components/controls/FileUploadArea";
+import { AudioWaveformDisplay } from "@/components/audio/AudioWaveformDisplay";
 import { trimDisplayName } from "@/lib/utils";
+import { useHorizontalScroll } from "@/hooks/useHorizontalScroll";
 
 export function SoundGenerationSection({
   soundConfigs,
@@ -24,6 +26,7 @@ export function SoundGenerationSection({
   onGlobalStepsChange,
   onGlobalNegativePromptChange,
   onApplyDenoisingChange,
+  onReprocessSounds,
   onUploadAudio,
   onClearUploadedAudio,
   onLibrarySearch,
@@ -31,6 +34,9 @@ export function SoundGenerationSection({
 }: SoundGenerationSectionProps) {
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
   const prevGeneratedSoundsLengthRef = useRef(0);
+  
+  // Horizontal scroll for sound config tabs
+  const tabsScrollRef = useHorizontalScroll<HTMLDivElement>();
 
   // File upload state
   const [isDragging, setIsDragging] = useState(false);
@@ -39,6 +45,10 @@ export function SoundGenerationSection({
   // State for inline title editing
   const [editingTabIndex, setEditingTabIndex] = useState<number | null>(null);
   const [editingValue, setEditingValue] = useState("");
+  
+  // State for denoising confirmation dialog
+  const [showDenoisingConfirm, setShowDenoisingConfirm] = useState(false);
+  const [pendingDenoisingValue, setPendingDenoisingValue] = useState<boolean>(false);
 
   // Auto-collapse advanced options when sound generation completes
   useEffect(() => {
@@ -140,12 +150,40 @@ export function SoundGenerationSection({
     }
   };
 
+  // Denoising checkbox change handler
+  const handleDenoisingChange = (checked: boolean) => {
+    // If sounds are already generated, show confirmation dialog
+    if (generatedSounds.length > 0) {
+      setPendingDenoisingValue(checked);
+      setShowDenoisingConfirm(true);
+    } else {
+      // No sounds generated yet, just update the setting
+      onApplyDenoisingChange(checked);
+    }
+  };
+
+  // Confirm denoising change and reprocess sounds
+  const handleConfirmDenoising = async () => {
+    onApplyDenoisingChange(pendingDenoisingValue);
+    setShowDenoisingConfirm(false);
+    
+    // Reprocess existing sounds if the callback is provided
+    if (onReprocessSounds) {
+      await onReprocessSounds(pendingDenoisingValue);
+    }
+  };
+
+  // Cancel denoising change
+  const handleCancelDenoising = () => {
+    setShowDenoisingConfirm(false);
+  };
+
   return (
     <div className="flex flex-col gap-3">
       <p className="text-sm text-gray-600 dark:text-gray-400">Generate sounds from text descriptions</p>
 
       {/* Sound titles Tabs */}
-      <div className="flex gap-1 overflow-x-auto pb-1">
+      <div ref={tabsScrollRef} className="flex gap-1 overflow-x-auto pb-1">
         {soundConfigs.map((_, index) => (
           <div key={index} className="relative group flex-shrink-0">
             {editingTabIndex === index ? (
@@ -228,6 +266,14 @@ export function SoundGenerationSection({
               <textarea
                 value={soundConfigs[activeSoundConfigTab].prompt}
                 onChange={(e) => onUpdateConfig(activeSoundConfigTab, 'prompt', e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.ctrlKey && e.key === 'Enter') {
+                    e.preventDefault();
+                    if (!isSoundGenerating) {
+                      onGenerate();
+                    }
+                  }
+                }}
                 placeholder="e.g., Hammer hitting wooden table"
                 className="w-full h-16 p-2 text-sm border rounded bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 mb-2"
                 rows={2}
@@ -290,33 +336,13 @@ export function SoundGenerationSection({
                 />
               ) : (
                 <div className="space-y-2">
-                  {/* Audio file info display */}
-                  <div className="bg-white dark:bg-gray-800 rounded p-2">
-                    <div className="text-xs text-gray-600 dark:text-gray-400 space-y-1">
-                      <div className="flex justify-between">
-                        <span>File:</span>
-                        <span className="font-mono truncate ml-2" title={currentConfig.uploadedAudioInfo?.filename}>
-                          {currentConfig.uploadedAudioInfo?.filename}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Duration:</span>
-                        <span className="font-mono">{currentConfig.uploadedAudioInfo?.duration.toFixed(3)}s</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Sample Rate:</span>
-                        <span className="font-mono">{currentConfig.uploadedAudioInfo?.sample_rate}Hz</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Channels:</span>
-                        <span className="font-mono">{currentConfig.uploadedAudioInfo?.channels}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Samples:</span>
-                        <span className="font-mono">{currentConfig.uploadedAudioInfo?.num_samples.toLocaleString()}</span>
-                      </div>
-                    </div>
-                  </div>
+                  {/* Waveform Display */}
+                  {currentConfig.uploadedAudioBuffer && currentConfig.uploadedAudioInfo && (
+                    <AudioWaveformDisplay
+                      audioBuffer={currentConfig.uploadedAudioBuffer}
+                      audioInfo={currentConfig.uploadedAudioInfo}
+                    />
+                  )}
 
                   {/* Clear audio button */}
                   <button
@@ -339,6 +365,14 @@ export function SoundGenerationSection({
                   <textarea
                     value={soundConfigs[activeSoundConfigTab].prompt}
                     onChange={(e) => onUpdateConfig(activeSoundConfigTab, 'prompt', e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.ctrlKey && e.key === 'Enter') {
+                        e.preventDefault();
+                        if (currentConfig.prompt.trim() && !currentConfig.librarySearchState?.isSearching) {
+                          onLibrarySearch(activeSoundConfigTab);
+                        }
+                      }
+                    }}
                     placeholder="e.g., Urban traffic, birds chirping, footsteps"
                     className="flex-1 h-12 p-2 text-sm border rounded bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
                     rows={2}
@@ -437,67 +471,13 @@ export function SoundGenerationSection({
 
         {showAdvancedOptions && (
           <div className="p-3 pt-0 space-y-3">
-            {/* Global Duration Slider */}
-            <div>
-              <label className="text-sm font-medium block mb-2 text-gray-700 dark:text-gray-300">
-                Global Duration: {globalDuration}s
-              </label>
-              <input
-                type="range"
-                value={globalDuration}
-                onChange={(e) => onGlobalDurationChange(parseInt(e.target.value))}
-                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-600 accent-primary"
-                min="1"
-                max="30"
-              />
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Applies to all sound tabs
-              </p>
-            </div>
-
-            {/* Diffusion Steps Slider */}
-            <div>
-              <label className="text-sm font-medium block mb-2 text-gray-700 dark:text-gray-300">
-                Diffusion Steps: {globalSteps}
-              </label>
-              <input
-                type="range"
-                value={globalSteps}
-                onChange={(e) => onGlobalStepsChange(parseInt(e.target.value))}
-                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-600 accent-primary"
-                min="10"
-                max="100"
-                step="5"
-              />
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Higher steps = better quality but slower generation
-              </p>
-            </div>
-
-            {/* Global Negative Prompt */}
-            <div>
-              <label className="text-sm font-medium block mb-2 text-gray-700 dark:text-gray-300">
-                Global Negative Prompt
-              </label>
-              <textarea
-                value={globalNegativePrompt}
-                onChange={(e) => onGlobalNegativePromptChange(e.target.value)}
-                placeholder="e.g., distorted, reverb, echo"
-                className="w-full p-2 text-xs border rounded bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
-                rows={2}
-              />
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Terms to avoid in all generated sounds
-              </p>
-            </div>
-
-            {/* Background Noise Removal Checkbox */}
-            <div>
+            {/* Background Noise Removal - Standalone */}
+            <div className="relative">
               <label className="flex items-center space-x-2 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={applyDenoising}
-                  onChange={(e) => onApplyDenoisingChange(e.target.checked)}
+                  onChange={(e) => handleDenoisingChange(e.target.checked)}
                   className="w-4 h-4 accent-primary cursor-pointer"
                 />
                 <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -507,7 +487,106 @@ export function SoundGenerationSection({
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                 Apply noise reduction to clean up generated sounds
               </p>
+              
+              {/* Confirmation Dialog */}
+              {showDenoisingConfirm && (
+                <div className="mt-2 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded-lg">
+                  <p className="text-xs text-yellow-800 dark:text-yellow-300 mb-2">
+                    {pendingDenoisingValue 
+                      ? "Apply noise reduction to all existing sounds?"
+                      : "Remove noise reduction from all existing sounds?"}
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleConfirmDenoising}
+                      className="flex-1 px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-hover text-white rounded transition-colors"
+                    >
+                      Yes, modify sounds
+                    </button>
+                    <button
+                      onClick={handleCancelDenoising}
+                      className="flex-1 px-3 py-1.5 text-xs font-medium bg-gray-300 hover:bg-gray-400 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-800 dark:text-gray-200 rounded transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
+
+
+            {/* Text-to-Audio Parameters Group */}
+            <div className="border border-gray-300 dark:border-gray-600 rounded-lg p-3 bg-white dark:bg-gray-800">
+              <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-3 uppercase tracking-wide">
+                Text-to-Audio Parameters
+              </h4>
+              
+              <div className="space-y-3">
+                {/* Global Duration Slider */}
+                <div>
+                  <label className="text-sm font-medium block mb-2 text-gray-700 dark:text-gray-300">
+                    Global Duration: {globalDuration}s
+                  </label>
+                  <input
+                    type="range"
+                    value={globalDuration}
+                    onChange={(e) => onGlobalDurationChange(parseInt(e.target.value))}
+                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-600 accent-primary"
+                    min="1"
+                    max="30"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Applies to all sound tabs
+                  </p>
+                </div>
+
+                {/* Diffusion Steps Slider */}
+                <div>
+                  <label className="text-sm font-medium block mb-2 text-gray-700 dark:text-gray-300">
+                    Diffusion Steps: {globalSteps}
+                  </label>
+                  <input
+                    type="range"
+                    value={globalSteps}
+                    onChange={(e) => onGlobalStepsChange(parseInt(e.target.value))}
+                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-600 accent-primary"
+                    min="10"
+                    max="100"
+                    step="5"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Higher steps = better quality but slower generation
+                  </p>
+                </div>
+
+                {/* Global Negative Prompt */}
+                <div>
+                  <label className="text-sm font-medium block mb-2 text-gray-700 dark:text-gray-300">
+                    Global Negative Prompt
+                  </label>
+                  <textarea
+                    value={globalNegativePrompt}
+                    onChange={(e) => onGlobalNegativePromptChange(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.ctrlKey && e.key === 'Enter') {
+                        e.preventDefault();
+                        if (!isSoundGenerating) {
+                          onGenerate();
+                        }
+                      }
+                    }}
+                    placeholder="e.g., distorted, reverb, echo"
+                    className="w-full p-2 text-xs border rounded bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
+                    rows={2}
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Terms to avoid in all generated sounds
+                  </p>
+                </div>
+              </div>
+            </div>
+
+
           </div>
         )}
       </div>

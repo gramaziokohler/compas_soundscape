@@ -8,6 +8,7 @@ export interface AuralizationConfig {
   enabled: boolean;
   impulseResponseUrl: string | null;
   impulseResponseBuffer: AudioBuffer | null;
+  impulseResponseFilename: string | null;
   normalize: boolean;
 }
 

@@ -1,5 +1,15 @@
 import { useState, useCallback } from "react";
-import { API_BASE_URL } from "@/lib/constants";
+import {
+  API_BASE_URL,
+  DEFAULT_NUM_SOUNDS,
+  ENTITY_HIGHLIGHT_DELAY_MS,
+  DEFAULT_DURATION_SECONDS,
+  DEFAULT_GUIDANCE_SCALE,
+  DEFAULT_SEED_COPIES,
+  DEFAULT_DIFFUSION_STEPS,
+  DEFAULT_SPL_DB,
+  LLM_SUGGESTED_INTERVAL_SECONDS
+} from "@/lib/constants";
 import { ActiveTab } from "@/types";
 
 export function useTextGeneration(modelEntities: any[], useModelAsContext: boolean) {
@@ -7,7 +17,7 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
   const [aiResponse, setAiResponse] = useState<string | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [numSounds, setNumSounds] = useState(5);
+  const [numSounds, setNumSounds] = useState(DEFAULT_NUM_SOUNDS);
   const [llmProgress, setLlmProgress] = useState("");
   const [showConfirmLoadSounds, setShowConfirmLoadSounds] = useState(false);
   const [pendingSoundConfigs, setPendingSoundConfigs] = useState<any[]>([]);
@@ -62,7 +72,7 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
           setLlmProgress(`Selected ${selectedEntities.length} objects. Generating sound prompts...`);
 
           // Give time for highlighting to be visible
-          await new Promise(resolve => setTimeout(resolve, 800));
+          await new Promise(resolve => setTimeout(resolve, ENTITY_HIGHLIGHT_DELAY_MS));
 
           // Use selected entities for prompt generation
           requestBody.entities = selectedEntities;
@@ -96,7 +106,7 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
           // Entity-based prompts (from loaded model)
           const newSoundConfigsWithEntities = result.prompts.map((item: any) => ({
             prompt: item.prompt,
-            duration: 5,
+            duration: item.duration_seconds || 5, // Use LLM-estimated duration
             guidance_scale: 4.5,
             negative_prompt: "",
             seed_copies: 1,
@@ -124,14 +134,14 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
           // Text-only prompts (no model loaded)
           const newSoundConfigs = result.prompts.map((item: any) => ({
             prompt: item.prompt,
-            duration: 5,
-            guidance_scale: 4.5,
+            duration: item.duration_seconds || DEFAULT_DURATION_SECONDS, // Use LLM-estimated duration
+            guidance_scale: DEFAULT_GUIDANCE_SCALE,
             negative_prompt: "",
-            seed_copies: 1,
-            steps: 25,
+            seed_copies: DEFAULT_SEED_COPIES,
+            steps: DEFAULT_DIFFUSION_STEPS,
             display_name: item.display_name, // Store LLM-generated display name
-            spl_db: item.spl_db || 70.0, // Store LLM-estimated SPL level
-            interval_seconds: item.interval_seconds || 30.0 // Store LLM-estimated interval
+            spl_db: item.spl_db || DEFAULT_SPL_DB, // Store LLM-estimated SPL level
+            interval_seconds: item.interval_seconds || LLM_SUGGESTED_INTERVAL_SECONDS // Store LLM-estimated interval
           }));
           setPendingSoundConfigs(newSoundConfigs);
           setShowConfirmLoadSounds(true);
@@ -145,11 +155,11 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
         // Legacy format - Text-only prompts (no model loaded)
         const newSoundConfigs = result.sounds.map((soundDesc: string) => ({
           prompt: soundDesc,
-          duration: 5,
-          guidance_scale: 4.5,
+          duration: DEFAULT_DURATION_SECONDS,
+          guidance_scale: DEFAULT_GUIDANCE_SCALE,
           negative_prompt: "",
-          seed_copies: 1,
-          steps: 25
+          seed_copies: DEFAULT_SEED_COPIES,
+          steps: DEFAULT_DIFFUSION_STEPS
         }));
         setPendingSoundConfigs(newSoundConfigs);
         setShowConfirmLoadSounds(true);

@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 from fastapi import UploadFile
-from config.constants import TEMP_UPLOADS_DIR, TEMP_LIBRARY_DIR
+from config.constants import TEMP_UPLOADS_DIR, TEMP_LIBRARY_DIR, TEMP_DIR
 
 
 def sanitize_filename(filename: str) -> str:
@@ -183,3 +183,41 @@ def get_safe_file_path(directory: str | Path, filename: str, extension: str = ""
         safe_name += extension
 
     return Path(directory) / safe_name
+
+
+def cleanup_all_temp_directories() -> dict[str, int]:
+    """
+    Clean up all temporary directories used by the application.
+
+    This function should be called on application startup to ensure
+    a clean state. It removes all files from temporary directories.
+
+    Returns:
+        dict[str, int]: Dictionary mapping directory paths to number of files deleted
+
+    Example:
+        ```python
+        results = cleanup_all_temp_directories()
+        print(f"Cleaned up {sum(results.values())} total files")
+        ```
+    """
+    temp_directories = [TEMP_UPLOADS_DIR, TEMP_LIBRARY_DIR, TEMP_DIR]
+    results = {}
+
+    for temp_dir in temp_directories:
+        try:
+            deleted = cleanup_temp_directory(temp_dir)
+            results[temp_dir] = deleted
+            if deleted > 0:
+                print(f"Cleaned up {deleted} file(s) from {temp_dir}")
+        except Exception as e:
+            print(f"Warning: Failed to cleanup {temp_dir}: {e}")
+            results[temp_dir] = 0
+
+    total_deleted = sum(results.values())
+    if total_deleted > 0:
+        print(f"Total: Cleaned up {total_deleted} temporary file(s)")
+    else:
+        print("No temporary files to clean up")
+
+    return results

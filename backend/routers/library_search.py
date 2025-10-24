@@ -16,11 +16,12 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.bbc_service import search_sounds, download_sound_file
+from config.constants import TEMP_LIBRARY_DIR
 
 router = APIRouter(prefix="/api/library", tags=["library"])
 
 # Temporary download directory for library sounds
-LIBRARY_DOWNLOADS_DIR = Path("temp_library_downloads")
+LIBRARY_DOWNLOADS_DIR = Path(TEMP_LIBRARY_DIR)
 LIBRARY_DOWNLOADS_DIR.mkdir(exist_ok=True)
 
 

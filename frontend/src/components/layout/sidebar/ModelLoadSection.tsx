@@ -1,5 +1,7 @@
 import type { ModelLoadSectionProps } from "@/types/components";
 import { isAudioFile, is3DModelFile, formatConfidence } from "@/lib/audio/audio-info";
+import { AudioWaveformDisplay } from "@/components/audio/AudioWaveformDisplay";
+import { AUDIO_VISUALIZATION, MODEL_FILE_EXTENSIONS, AUDIO_FILE_EXTENSIONS } from "@/lib/constants";
 
 export function ModelLoadSection({
   modelEntities,
@@ -13,6 +15,7 @@ export function ModelLoadSection({
   useModelAsContext,
   isSEDAnalyzing = false,
   sedAudioInfo = null,
+  sedAudioBuffer = null,
   sedDetectedSounds = [],
   sedError = null,
   sedAnalysisOptions = { analyzeAmplitudes: true, analyzeDurations: true },
@@ -121,7 +124,7 @@ export function ModelLoadSection({
                           htmlFor="file-upload"
                           className="cursor-pointer font-medium text-xs text-primary hover:text-primary-hover"
                         >
-                          Browse (.obj, .stl, .ifc, .3dm, .wav, .mp3)
+                          Browse ({[...MODEL_FILE_EXTENSIONS, '.wav', '.mp3'].join(', ')})
                         </label>
                       </>
                     )}
@@ -129,14 +132,22 @@ export function ModelLoadSection({
                       id="file-upload"
                       type="file"
                       onChange={onFileChange}
-                      accept=".obj,.stl,.ifc,.3dm,.wav,.mp3,.flac,.ogg,.m4a"
+                      accept={[...MODEL_FILE_EXTENSIONS, ...AUDIO_FILE_EXTENSIONS].join(',')}
                       className="hidden"
                     />
                   </div>
                 </div>
 
-                {/* Show audio info if audio file is selected (appears immediately) */}
-                {file && isAudio && sedAudioInfo && !hasSEDResults && (
+                {/* Show audio waveform if audio file is selected (appears immediately) */}
+                {file && isAudio && sedAudioInfo && sedAudioBuffer && AUDIO_VISUALIZATION.ENABLE_WAVEFORM_DISPLAY && (
+                  <AudioWaveformDisplay
+                    audioBuffer={sedAudioBuffer}
+                    audioInfo={sedAudioInfo}
+                  />
+                )}
+
+                {/* Fallback: Show text-only audio info if waveform is disabled */}
+                {file && isAudio && sedAudioInfo && !hasSEDResults && !AUDIO_VISUALIZATION.ENABLE_WAVEFORM_DISPLAY && (
                   <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
                     <p className="text-xs font-semibold text-blue-800 dark:text-blue-300 mb-2">Audio Information</p>
                     <div className="text-xs text-blue-700 dark:text-blue-300 space-y-1">

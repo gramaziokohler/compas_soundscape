@@ -3,9 +3,13 @@ import { ModelLoadSection } from "./sidebar/ModelLoadSection";
 import { TextGenerationSection } from "./sidebar/TextGenerationSection";
 import { SoundGenerationSection } from "./sidebar/SoundGenerationSection";
 import { AcousticsTab } from "./sidebar/AcousticsTab";
+import { useHorizontalScroll } from "@/hooks/useHorizontalScroll";
 import type { SidebarProps } from "@/types/components";
 
 export function Sidebar(props: SidebarProps) {
+  // Horizontal scroll for main tabs
+  const mainTabsScrollRef = useHorizontalScroll<HTMLDivElement>();
+  
   return (
     <aside className="w-96 flex-shrink-0 p-8 border-r border-gray-200 dark:border-gray-700 flex flex-col gap-8 shadow-lg bg-white dark:bg-gray-800 overflow-y-auto">
       {/* Fixed header - prevents wrapping issues */}
@@ -19,7 +23,7 @@ export function Sidebar(props: SidebarProps) {
         <h2 className="text-md font-regular">Soundscape driven architectural design</h2>
 
         {/* Tab Buttons - Horizontally scrollable without scrollbar */}
-        <div className="overflow-x-auto scrollbar-hide border-b border-gray-300 dark:border-gray-600">
+        <div ref={mainTabsScrollRef} className="overflow-x-auto scrollbar-hide border-b border-gray-300 dark:border-gray-600">
           <div className="flex gap-2 min-w-max">
             <button
               onClick={() => props.setActiveAiTab('text')}
@@ -78,6 +82,7 @@ export function Sidebar(props: SidebarProps) {
               setUseModelAsContext={props.setUseModelAsContext}
               isSEDAnalyzing={props.isSEDAnalyzing}
               sedAudioInfo={props.sedAudioInfo}
+              sedAudioBuffer={props.sedAudioBuffer}
               sedDetectedSounds={props.sedDetectedSounds}
               sedError={props.sedError}
               sedAnalysisOptions={props.sedAnalysisOptions}
@@ -128,6 +133,7 @@ export function Sidebar(props: SidebarProps) {
               onGlobalStepsChange={props.onGlobalStepsChange}
               onGlobalNegativePromptChange={props.onGlobalNegativePromptChange}
               onApplyDenoisingChange={props.onApplyDenoisingChange}
+              onReprocessSounds={props.onReprocessSounds}
               onUploadAudio={props.onUploadAudio}
               onClearUploadedAudio={props.onClearUploadedAudio}
               onLibrarySearch={props.onLibrarySearch}

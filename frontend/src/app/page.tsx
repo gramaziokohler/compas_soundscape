@@ -29,7 +29,7 @@ export default function Home() {
     if (textGen.pendingSoundConfigs.length > 0) {
       soundGen.setSoundConfigsFromPrompts(textGen.pendingSoundConfigs);
       textGen.setActiveAiTab('sound');
-      textGen.setPendingSoundConfigs([]);
+      // Don't clear pendingSoundConfigs - allow loading multiple times
     }
   }, [textGen.pendingSoundConfigs, soundGen, textGen]);
 
@@ -140,6 +140,7 @@ export default function Home() {
         // SED props
         isSEDAnalyzing={sed.isSEDAnalyzing}
         sedAudioInfo={sed.sedAudioInfo}
+        sedAudioBuffer={sed.sedAudioBuffer}
         sedDetectedSounds={sed.sedDetectedSounds}
         sedError={sed.sedError}
         sedAnalysisOptions={sed.sedAnalysisOptions}
@@ -181,6 +182,7 @@ export default function Home() {
         onGlobalStepsChange={soundGen.handleGlobalStepsChange}
         onGlobalNegativePromptChange={soundGen.setGlobalNegativePrompt}
         onApplyDenoisingChange={soundGen.setApplyDenoising}
+        onReprocessSounds={soundGen.handleReprocessSounds}
         onUploadAudio={soundGen.handleUploadAudio}
         onClearUploadedAudio={soundGen.handleClearUploadedAudio}
         onLibrarySearch={soundGen.handleLibrarySearch}

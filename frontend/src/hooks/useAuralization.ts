@@ -1,14 +1,17 @@
 import { useState, useCallback } from "react";
-import type { AuralizationConfig, WAVParseResult } from "@/types/auralization";
+import type { AuralizationConfig } from "@/types/auralization";
+import { parseWAVFile, createAudioBufferFromWAV } from "@/lib/audio/wav-parser";
 
 // Re-export for backwards compatibility
 export type { AuralizationConfig };
 
-/**
- * Parse WAV file header and extract audio data
- * Handles multi-channel WAV files that browsers can't decode natively
- */
-function parseWavFile(arrayBuffer: ArrayBuffer): WAVParseResult {
+// Alias for backwards compatibility within this file
+const parseWavFile = parseWAVFile;
+
+// Note: Old parseWavFile function removed - now imported from @/lib/audio/wav-parser
+// The function below is kept temporarily for reference but not used
+/*
+function parseWavFile_OLD(arrayBuffer: ArrayBuffer) {
   const view = new DataView(arrayBuffer);
   
   // Check RIFF header
@@ -114,6 +117,7 @@ function parseWavFile(arrayBuffer: ArrayBuffer): WAVParseResult {
     audioData
   };
 }
+*/
 
 /**
  * Auralization Hook
@@ -139,6 +143,7 @@ export function useAuralization() {
     enabled: false,
     impulseResponseUrl: null,
     impulseResponseBuffer: null,
+    impulseResponseFilename: null,
     normalize: false
   });
 
@@ -195,7 +200,8 @@ export function useAuralization() {
           
           // Copy channel data
           for (let ch = 0; ch < channelsToUse; ch++) {
-            audioBuffer.copyToChannel(wavData.audioData[ch], ch);
+            const channelData = audioBuffer.getChannelData(ch);
+            channelData.set(wavData.audioData[ch]);
           }
           
           console.log(`[useAuralization] Loaded ${channelsToUse} channel(s)`);
@@ -231,6 +237,7 @@ export function useAuralization() {
         ...prev,
         impulseResponseUrl: URL.createObjectURL(file),
         impulseResponseBuffer: audioBuffer,
+        impulseResponseFilename: file.name,
         enabled: true // Auto-enable auralization when IR is loaded
       }));
 
@@ -277,7 +284,8 @@ export function useAuralization() {
     setConfig(prev => ({
       ...prev,
       impulseResponseUrl: null,
-      impulseResponseBuffer: null
+      impulseResponseBuffer: null,
+      impulseResponseFilename: null
     }));
   }, [config.impulseResponseUrl]);
 
@@ -294,7 +302,8 @@ export function useAuralization() {
     setConfig(prev => ({
       ...prev,
       impulseResponseUrl: name,
-      impulseResponseBuffer: buffer
+      impulseResponseBuffer: buffer,
+      impulseResponseFilename: name
     }));
   }, []);
 

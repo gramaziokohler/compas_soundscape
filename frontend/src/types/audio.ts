@@ -12,6 +12,7 @@ export interface ScheduledSound {
   randomnessPercent: number;
   timerId: NodeJS.Timeout | null;
   isScheduled: boolean;
+  initialDelayMs: number; // Initial delay before first playback
 }
 
 export interface WAVHeader {
@@ -27,4 +28,23 @@ export interface WAVParseResult {
   numberOfChannels: number;
   bitsPerSample: number;
   audioData: Float32Array[];
+}
+
+/**
+ * Timeline Types
+ */
+
+export interface TimelineSound {
+  id: string;
+  displayName: string;
+  color: string;
+  intervalMs: number;
+  soundDurationMs: number;
+  scheduledIterations: number[]; // Array of timestamps (ms) when sound will play
+}
+
+export interface TimelinePlaybackState {
+  isPlaying: boolean;
+  currentTime: number; // Current playback time in milliseconds
+  duration: number; // Total timeline duration in milliseconds
 }

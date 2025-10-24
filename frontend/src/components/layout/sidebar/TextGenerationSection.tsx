@@ -44,6 +44,14 @@ export function TextGenerationSection({
           id="ai-prompt"
           value={aiPrompt}
           onChange={(e) => setAiPrompt(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.ctrlKey && e.key === 'Enter') {
+              e.preventDefault();
+              if (!isGenerating && (modelEntities.length > 0 || aiPrompt.trim())) {
+                onGenerateText();
+              }
+            }
+          }}
           placeholder={
             modelEntities.length > 0
               ? "e.g., a busy office in the afternoon (combines with model)"

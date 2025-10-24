@@ -1,763 +1,971 @@
-# Changelog
-
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
-
-### Changed - [2025-10-21] - 3D Controls UI Repositioned
-
-**Changes**:
-- **Moved 3D controls info to bottom-left of 3D scene** (previously in sidebar)
-- **Minimalistic, compact design** with no background
-- Fixed position overlay with `text-[10px]` size
-- Non-interactive (`pointer-events-none`) to avoid blocking scene interaction
-- Shortened control descriptions for compactness:
-  - "Left click + drag: Rotate view" → "Left click + drag: Rotate"
-  - "Double-click receiver (blue cube): First-person view" → "Double-click cube: First-person"
-  - "ESC: Exit first-person mode" → "ESC: Exit mode"
-
-**Files Changed**:
-- `frontend/src/components/layout/sidebar/ControlsInfo.tsx`:
-  - Changed from sidebar component to scene overlay component
-  - Removed border, background, and heading
-  - Reduced text size and spacing for minimal footprint
-  - Updated positioning to `absolute bottom-6 left-6`
-- `frontend/src/components/scene/ThreeScene.tsx`:
-  - Added `ControlsInfo` import and render
-  - Positioned as overlay in scene container
-- `frontend/src/components/layout/Sidebar.tsx`:
-  - Removed `ControlsInfo` import and usage
-
-**Technical Details**:
-- Uses Tailwind classes: `text-[10px]`, `space-y-0.5`, `leading-tight`
-- Positioned to avoid collision with playback controls (bottom-center) and control buttons (bottom-right)
-
----
-
-### Changed - [2025-10-21] - Receiver Visual Updates & Display Name Trimming
-
-**Changes**:
-1. **Receivers now render as cubes instead of spheres** for better visual distinction from sound sources
-   - Uses same sizing logic as sound spheres (0.3 * scaleForSounds)
-   - Blue color (sky-500: #0ea5e9) maintained for consistency
-   - Applied to both placed receivers and preview during placement mode
-
-2. **Display names trimmed to 5 words maximum** to prevent UI clutter
-   - Applies to 3D scene overlays and sidebar titles
-   - Names longer than 5 words are truncated with "..." suffix
-   - Affects all display names from text generation, library sounds, and uploaded audio
-
-3. **Updated UI controls documentation** to reflect cube shape (was "sphere")
-
-**Files Changed**:
-- `frontend/src/components/scene/ThreeScene.tsx`:
-  - Changed receiver geometry from `SphereGeometry` to `BoxGeometry`
-  - Updated preview receiver to use cube geometry
-  - Applied `trimDisplayName` to overlay display names
-  - Updated comments: "receiver sphere" → "receiver cube"
-- `frontend/src/lib/utils.ts`:
-  - Added `trimDisplayName` utility function
-- `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx`:
-  - Applied `trimDisplayName` to sidebar tab titles
-- `frontend/src/components/layout/sidebar/ControlsInfo.tsx`:
-  - Updated controls text: "blue sphere" → "blue cube"
-
-**Technical Details**:
-- `trimDisplayName`: Splits name by whitespace, takes first 5 words, adds "..." if truncated
-- Cube size calculation: `0.3 * scaleForSounds` (matches sound sphere radius formula)
-- DragControls already prevents scene rotation during drag (OrbitControls disabled on dragstart)
-
----
-
-### Changed - [2025-10-21] - Receiver First-Person View Rotation
-
-**Issue**:
-Mouse-based rotation from receiver perspective was difficult to control and not working well.
-
-**Solution**:
-Replaced mouse drag rotation with arrow key rotation for better control in first-person view:
-- Arrow Left/Right: Rotate view horizontally (yaw)
-- Arrow Up/Down: Rotate view vertically (pitch)
-- Rotation happens around the receiver's fixed position
-- Smooth rotation with appropriate speed (0.05 rad/keypress for horizontal, 0.03 rad/keypress for vertical)
-- Pitch clamped to ±90° to prevent camera flipping
-- ESC key exits first-person mode
-
-**Files Changed**:
-- `frontend/src/components/scene/ThreeScene.tsx`:
-  - Replaced mouse drag rotation handlers with arrow key rotation in `handleKeyDown`
-  - Changed rotation from spherical coordinates (theta/phi) to yaw/pitch for clearer semantics
-  - Simplified animation loop rotation calculation
-  - Removed mouse down/up/move rotation event listeners
-  - Updated ESC key handler to exit first-person mode
-- `frontend/src/components/layout/sidebar/ControlsInfo.tsx`:
-  - Added controls explanation for first-person mode
-  - Listed arrow key controls and ESC to exit
-
-**Technical Details**:
-- Rotation uses yaw (horizontal) and pitch (vertical) angles converted to direction vector
-- Direction vector: `[sin(yaw)*cos(pitch), sin(pitch), cos(yaw)*cos(pitch)]`
-- Camera position locked at receiver, lookAt target calculated from direction
-- Arrow keys provide discrete rotation steps for precise control
-
----
-
-### Fixed - [2025-10-20 18:30] - Receiver Dragging & Camera First-Person View
-
-**Issue**: 
-1. Receiver spheres were not draggable during drag operations
-2. Camera rotation after double-clicking receiver had severe resistance - nearly impossible to rotate
-
-**Root Cause**:
-1. **Receiver Dragging**: DragControls was being recreated mid-drag when `onUpdateReceiverPosition` triggered re-renders, disposing the active DragControls instance
-2. **Camera Rotation Resistance**: The combination of distance constraints (`minDistance = maxDistance`) and position locking created a double-constraint that made OrbitControls nearly unable to calculate new camera orientations. OrbitControls needs freedom to move the camera temporarily before we lock it back.
-
-**Solution**:
-1. **Receiver Dragging**: Added `isDraggingRef` to track active drag state and prevent `setupDragControls()` from recreating DragControls during drag
-2. **Smooth First-Person Rotation**: 
-   - **Removed distance constraints entirely** - let OrbitControls work freely
-   - Set target very close to camera (1 unit) for natural first-person feel
-   - Order: `controls.update()` first (calculate new orientation) → then lock position
-   - Disabled damping for immediate response
-   - This allows OrbitControls to freely calculate rotation while position is locked each frame
-
-**Files Changed**:
-- `frontend/src/components/scene/ThreeScene.tsx`:
-  - Added `isDraggingRef` to track drag state
-  - Added `lockedReceiverPositionRef` to track locked camera position
-  - Modified `setupDragControls()` to skip setup during active drag
-  - Animation loop: `controls.update()` FIRST, then lock position (allows rotation calculation)
-  - Double-click handler: No distance constraints, very short target distance (1 unit), disabled damping
-  - Updated `handleResetZoom` and `handleKeyDown` to reset damping and distance constraints
-  - Enhanced DragControls logging for better debugging
-
-**Technical Details**:
-- **Drag Issue**: React re-renders during drag caused receiver effect to run → `setupDragControls()` called → DragControls disposed and recreated → drag interrupted
-- **Solution**: Guard `setupDragControls()` with `isDraggingRef` to prevent recreation during active drag
-- **Rotation Resistance Root Cause**: 
-  - `minDistance = maxDistance = X` constrained OrbitControls to a fixed sphere
-  - Position lock every frame added second constraint
-  - Double constraint = OrbitControls couldn't calculate valid camera positions = sluggish/stuck
-- **Solution**: 
-  - Remove distance constraints (let OrbitControls move camera freely during calculation)
-  - Let `controls.update()` calculate new orientation based on mouse input
-  - Then lock position back to receiver each frame
-  - Result: OrbitControls can rotate freely, position is locked only at render time
-
-### Added - Acoustic Receivers & Tab Reorganization (2025-10-20 Session 5 + Fixes v5)
-
-**Session Description**: Implemented acoustic receiver spheres with click-to-place functionality, draggable positioning after placement, camera lock at receiver position with smooth rotation, and reorganized sidebar with streamlined Acoustics tab.
-
-**Key Features**:
-1. **Receiver Spheres** (Click-to-Place + Draggable):
-   - Blue spheres (distinct from pink sound spheres, color: sky-500 #0ea5e9)
-   - **Placement**: Click "Create Receiver" → Transparent preview follows mouse → Click to place (ESC to cancel)
-   - **Dragging**: After placement, receivers are fully draggable (unified DragControls with sound spheres)
-   - Placement at horizontal plane (y=1.6m ear height)
-   - **Double-click** → Camera **locks** at receiver position (x,y,z fixed), looks at sound spheres average
-   - **Rotation after lock** → Free rotation around sound spheres, camera position stays locked at receiver
-   - **Unlock camera** → ESC key or reset zoom button (clicking elsewhere removed)
-   - Real-time position display in sidebar (updated via drag/placement)
-
-2. **Streamlined Acoustics Tab**:
-   - Third tab in sidebar: Analysis | Sound Generation | **Acoustics**
-   - Horizontally scrollable tabs without visible scrollbar
-   - **Receivers Section**: Direct UI (no grey box/collapsible), create/list/rename/delete receivers
-   - **Auralization Section**: Direct UI (removed collapsible wrapper), moved from Sound Generation tab
-   - Clean, consistent styling matching Analysis tab layout
-
-3. **Global UI Improvements**:
-   - All vertical scrollbars hidden throughout the application (CSS `scrollbar-width: none`)
-
-**Files Created**:
-- [frontend/src/types/receiver.ts](frontend/src/types/receiver.ts): ReceiverData and ReceiverOverlay types
-- [frontend/src/hooks/useReceivers.ts](frontend/src/hooks/useReceivers.ts): Receiver state management with placing mode
-- [frontend/src/components/layout/sidebar/ReceiversSection.tsx](frontend/src/components/layout/sidebar/ReceiversSection.tsx): Receivers UI section
-- [frontend/src/components/layout/sidebar/AcousticsTab.tsx](frontend/src/components/layout/sidebar/AcousticsTab.tsx): Combined Acoustics tab component
-
-**Files Modified**:
-- [frontend/src/types/index.ts](frontend/src/types/index.ts): Export receiver types, add 'acoustics' to ActiveTab
-- [frontend/src/components/scene/ThreeScene.tsx](frontend/src/components/scene/ThreeScene.tsx):
-  - Added receiver sphere rendering with blue material (**now draggable**)
-  - Implemented transparent preview sphere for click-to-place mode
-  - `mousemove` handler updates preview position via raycasting to horizontal plane
-  - `click` handler places receiver at preview position when in placing mode
-  - `keydown` handler (ESC) cancels placement mode
-  - Double-click detection with 300ms timeout
-  - **FIXED v3-v4: Camera position lock** - Camera position locked at receiver via animation loop enforcement
-  - **FIXED v3-v4: Unified DragControls** - Separate effect for DragControls (works with receivers-only or sounds-only)
-  - Added `lockedCameraPositionRef` to track locked camera position
-  - Animation loop enforces locked position every frame: `camera.position.copy(lockedCameraPositionRef.current)`
-  - **v4: Zoom also disabled** when camera locked (`controls.enableZoom = false`) for smoother rotation
-  - Pan and zoom disabled when locked, lock set BEFORE controls.target update
-  - ESC key or reset zoom unlocks camera and re-enables pan/zoom (clicking elsewhere removed)
-  - New effect for preview sphere lifecycle (created/destroyed based on `isPlacingReceiver`)
-  - Added `receiverDraggableObjectsRef` to track draggable receiver meshes
-- [frontend/src/components/layout/Sidebar.tsx](frontend/src/components/layout/Sidebar.tsx):
-  - Added horizontally scrollable tabs container with `scrollbar-hide` class
-  - Removed AuralizationSection from Sound Generation tab
-  - Added Acoustics tab with direct UI (no wrappers)
-  - Updated receiver props: `isPlacingReceiver`, `onStartPlacingReceiver` (changed from `onCreateReceiver`)
-- [frontend/src/components/layout/sidebar/ReceiversSection.tsx](frontend/src/components/layout/sidebar/ReceiversSection.tsx):
-  - **FIXED: Removed grey box and padding**, direct content rendering
-  - Button text changes based on `isPlacingReceiver` state
-  - Help text updated to explain click-to-place workflow
-- [frontend/src/components/layout/sidebar/AuralizationSection.tsx](frontend/src/components/layout/sidebar/AuralizationSection.tsx):
-  - **FIXED: Removed collapsible wrapper and grey box**
-  - Direct content rendering (no header/expand/collapse)
-  - Removed `isExpanded` state (always visible)
-- [frontend/src/components/layout/sidebar/AcousticsTab.tsx](frontend/src/components/layout/sidebar/AcousticsTab.tsx):
-  - Added "Auralization" heading wrapper for AuralizationSection
-  - Increased gap between sections (gap-6)
-- [frontend/src/app/globals.css](frontend/src/app/globals.css):
-  - Added `.scrollbar-hide` utility class (cross-browser)
-  - **FIXED: Added global scrollbar hiding** (`* { scrollbar-width: none }` for all elements)
-- [frontend/src/app/page.tsx](frontend/src/app/page.tsx):
-  - Integrated useReceivers hook
-  - Passed placing mode props to Sidebar and ThreeScene
-  - Added `onPlaceReceiver`, `isPlacingReceiver`, `onCancelPlacingReceiver` to ThreeScene
-
-**Technical Details**:
-- **Click-to-Place Workflow**:
-  - `isPlacingReceiver` state activates preview mode
-  - Preview sphere created with 50% opacity, follows mouse via `mousemove` + raycasting against horizontal plane
-  - OrbitControls disabled during placement to prevent camera rotation
-  - Click → `onPlaceReceiver` called with preview position, creates actual receiver
-  - ESC key → `onCancelPlacingReceiver` cancels placement mode
-- **Camera Lock Logic (FIXED v3-v5)**:
-  - Raycaster checks receiver intersection first (priority over entity selection)
-  - Double-click detection: `clickCount` + 300ms timeout
-  - Camera position set to receiver position and **locked** via `lockedCameraPositionRef`
-  - Camera looks at sound spheres average (or 5 units forward if none)
-  - OrbitControls target = sound spheres average (allows rotation around it)
-  - Animation loop enforces lock: `if (lockedCameraPositionRef.current) camera.position.copy(...)`
-  - Pan and zoom disabled when locked to prevent camera movement
-  - **v5 Rotation Fix**: Explicitly remove rotation restrictions (lines 360-363):
-    - `controls.minAzimuthAngle = -Infinity` (horizontal rotation left)
-    - `controls.maxAzimuthAngle = Infinity` (horizontal rotation right)
-    - `controls.minPolarAngle = 0` (vertical rotation up)
-    - `controls.maxPolarAngle = Math.PI` (vertical rotation down)
-    - Allows full 360° rotation around target point
-  - **Unlock triggers (v4 updated)**: ESC key, reset zoom → clears lock + re-enables pan/zoom (click elsewhere removed)
-- **Unified DragControls (FIXED v3-v4-v5)**:
-  - **v3 Problem**: Separate DragControls for sounds and receivers caused conflict (receivers barely moved)
-  - **v3 Solution**: Single DragControls instance in sound spheres effect
-  - **v4 Problem**: DragControls only ran when sounds exist (receivers-only didn't work)
-  - **v4 Solution**: Separate effect for DragControls that depends on BOTH sounds and receivers
-  - **v5 Problem**: DragControls effect still didn't work for receivers-only (same trigger as receiver creation)
-  - **v5 Root Cause**: Both receiver creation effect and DragControls effect had `receivers` dependency, but effects with same dependencies run in unpredictable order. DragControls could run before `receiverDraggableObjectsRef.current` was populated.
-  - **v5 Solution**: Converted DragControls to `useCallback` helper function, called directly from both sound and receiver effects AFTER mesh creation
-  - Combined array: `[...draggableObjectsRef.current, ...receiverDraggableObjectsRef.current]`
-  - Function called at end of sound spheres effect (line 1056) and receiver spheres effect (line 1103)
-  - Drag event checks `userData.promptKey` (sound) or `userData.receiverId` (receiver)
-  - Calls appropriate position update handler based on object type
-- **Inline Editing**: Double-click receiver name to edit (Enter saves, Escape cancels)
-- **Separation of Concerns**: `useReceivers` hook handles state, ThreeScene renders spheres, ReceiversSection provides UI
-
-**Styling Consistency**:
-- Receiver color: `0x0ea5e9` (sky-500 blue) to distinguish from sound spheres (pink)
-- Button styling: bg-primary hover:bg-primary-hover (consistent with existing buttons)
-- **Direct UI**: No grey boxes or collapsible wrappers in Acoustics tab (matches Analysis tab)
-- Tab styling: Uses existing border-b-2 border-primary active state
-- Global scrollbar hiding for cleaner UI
-
-**Bug Fixes**:
-- **v1 Issue**: Camera couldn't rotate after double-click (target was at camera position)
-- **v1 Fix**: Set orbit target 5 units in front of camera using world direction
-- **v2 Issue**: Receivers not draggable after placement
-- **v2 Fix**: Added DragControls to receivers using same pattern as sound spheres
-- **v3 Issue #1**: Camera position not locked (moved when rotating after double-click)
-- **v3 Fix #1**: Animation loop enforces locked position every frame, pan disabled
-- **v3 Issue #2**: Receiver dragging barely worked (conflict between two DragControls)
-- **v3 Fix #2**: Unified DragControls handles both sounds and receivers in single instance
-- **v4 Issue #1**: Receiver dragging only worked when sounds exist in scene
-- **v4 Fix #1**: Moved DragControls to separate effect that depends on both sounds and receivers
-- **v4 Issue #2**: Camera rotation very buggy/difficult after double-click on receiver
-- **v4 Fix #2**: Disabled zoom when locked, set lock BEFORE target update, proper control order
-- **v4 Issue #3**: Clicking elsewhere unlocked camera (unintended)
-- **v4 Fix #3**: Removed click-elsewhere unlock trigger, only ESC and reset zoom unlock
-- **v5 Issue #1**: Receiver dragging not working when receivers-only (no sounds in scene)
-- **v5 Fix #1**: Converted DragControls effect to useCallback helper function called directly after mesh creation
-- **v5 Issue #2**: Camera rotation restricted to ~10 degrees on each side after double-click
-- **v5 Fix #2**: Explicitly set rotation angle limits to infinity (minAzimuthAngle/maxAzimuthAngle = -Infinity/Infinity)
-### Added - BBC Sound Library Search Integration (2025-10-20 Session 4)
-
-**Session Description**: Implemented complete sound library search feature with BBC Sound Effects integration, enabling users to search 30,000+ professional sounds and use them exactly like uploaded files.
-
-**Backend Implementation**:
-1. **Streamlined BBC Service** ([backend/services/bbc_service.py](backend/services/bbc_service.py)):
-   - Removed 300+ lines of unnecessary download code
-   - Created clean API with `BBCSoundLibrary` class
-   - `search(prompt, max_results=5)`: Fuzzy matching on category/description
-   - `download_sound(location, output_path)`: Downloads ZIP, extracts WAV
-   - Singleton pattern for efficient CSV loading (30k+ entries)
-   - Scoring: Category weight 2.0, Description weight 1.0, Threshold: 120
-
-2. **Library Search Router** ([backend/routers/library_search.py](backend/routers/library_search.py)):
-   - `POST /api/library/search`: Returns top 5 results with score/duration/category
-   - `POST /api/library/download`: Downloads selected sound as WAV
-   - `GET /api/library/health`: Health check endpoint
-   - Integrated into main FastAPI app
-
-**Frontend Implementation**:
-3. **Type Definitions** ([frontend/src/types/index.ts](frontend/src/types/index.ts)):
-   - `LibrarySearchResult`: location, description, category, duration, score
-   - `LibrarySearchState`: isSearching, results, selectedSound, error
-   - Added to `SoundGenerationConfig` for per-tab search state
-
-4. **Sound Generation Hook** ([frontend/src/hooks/useSoundGeneration.ts](frontend/src/hooks/useSoundGeneration.ts)):
-   - `handleLibrarySearch(index)`: Calls search API, stores results in config
-   - `handleLibrarySoundSelect(index, sound)`: Marks sound as selected
-   - Updated `handleGenerate()`: Downloads selected sounds, creates sound events
-   - Library sounds treated identically to uploaded sounds (blob URLs, same volume/interval defaults)
-
-5. **UI Component** ([frontend/src/components/layout/sidebar/SoundGenerationSection.tsx](frontend/src/components/layout/sidebar/SoundGenerationSection.tsx)):
-   - **Search Input + Button**: Disabled when empty or searching
-   - **Results List**: Clickable cards showing description, category, duration
-   - **Visual Selection**: Selected sound highlighted in primary color
-   - **States**: Loading, no results, error messages
-   - **Help Text**: Instructions when no search performed
-
-**Workflow**:
-1. User selects "Sound Library Search" mode
-2. Enters search term (e.g., "urban traffic")
-3. Clicks "Search" → API returns 5 best matches
-4. User clicks desired sound → Highlights selection
-5. Clicks "Generate Sounds" → Downloads WAV, creates sound sphere
-6. Playback/controls work identically to uploaded files
-
-**Integration Points**:
-- [backend/main.py](backend/main.py): Registered library_search router
-- [frontend/src/components/layout/Sidebar.tsx](frontend/src/components/layout/Sidebar.tsx): Added library handlers to props
-- [frontend/src/app/page.tsx](frontend/src/app/page.tsx): Connected handlers from hook
-
-**Technical Details**:
-- **Search Algorithm**: Fuzzy token set ratio (thefuzz library)
-- **Scoring Formula**: `(2.0 × category_score) + (1.0 × description_score)`
-- **Download**: Fetches BBC ZIP → Extracts first WAV → Returns as blob
-- **Memory**: Object URLs created for downloaded sounds (revoked on cleanup)
-- **Volume/Interval**: Defaults to 70dB / 30s (same as uploaded sounds)
-
-**Benefits**:
-- Access to 30,000+ professional BBC sound effects
-- No manual downloads required
-- Seamless integration with existing upload workflow
-- Same playback controls, volume, interval settings
-- Fast search with relevance scoring
-
-### Fixed - Uploaded Sound Playback & Control Issues (2025-10-20 Session 3)
-
-**Session Description**: Fixed critical playback issues where uploaded sounds had zero volume and weren't included in Play All functionality.
-
-**Issues Fixed**:
-1. **Zero Volume on Uploaded Sounds (Critical)**:
-   - **Problem**: Uploaded sounds defaulted to `volume_db: 0`, making them inaudible
-   - **Root Cause**: Line 29 in useSoundGeneration.ts used `|| 0` instead of `?? 70`
-   - **Impact**: Users couldn't hear uploaded sounds even with volume slider at max
-   - **Solution**: Changed default from `0` to `70 dB` (matching TTA-generated sounds)
-   - **Files Modified**: [frontend/src/hooks/useSoundGeneration.ts](frontend/src/hooks/useSoundGeneration.ts):190
-
-2. **Zero Playback Interval (Critical)**:
-   - **Problem**: Uploaded sounds defaulted to `interval_seconds: 0`, causing rapid looping issues
-   - **Root Cause**: Same line used `|| 0` instead of proper default
-   - **Solution**: Changed default from `0` to `30 seconds` (matching TTA sounds)
-   - **Files Modified**: [frontend/src/hooks/useSoundGeneration.ts](frontend/src/hooks/useSoundGeneration.ts):192
-
-**Uniformity Verification** (All Sound Controls Work Across All Modes):
-- ✅ **Volume Control**: Works uniformly (ThreeScene.tsx:1168-1180)
-- ✅ **Playback Interval**: AudioScheduler handles all types equally
-- ✅ **Play All Button**: Groups by prompt_index, works for all modes (useAudioControls.ts:97-124)
-- ✅ **Individual Play/Pause**: Uses soundId map, no type discrimination (useAudioControls.ts:25-34)
-- ✅ **Pause All / Stop All**: Works across all sound types (useAudioControls.ts:129-154)
-- ✅ **Volume Slider**: Applied via soundVolumes state map uniformly
-- ✅ **Interval Slider**: AudioScheduler.updateInterval() for all types
-- ✅ **Audio Loading**: Handles both blob: URLs (uploaded) and backend URLs (TTA) (ThreeScene.tsx:863)
-
-**Technical Fix**:
-```typescript
-// Before: Silent uploaded sounds
-volume_db: config.spl_db || 0,           // Defaults to 0 (silent)
-interval_seconds: config.interval_seconds || 0,  // Defaults to 0 (no interval)
-
-// After: Audible uploaded sounds with proper interval
-volume_db: config.spl_db ?? 70,          // Defaults to 70 dB (audible)
-interval_seconds: config.interval_seconds ?? 30, // Defaults to 30s (standard)
-```
-
-**Code Quality**:
-- **Consistency**: All sound types now have identical default values
-- **Logic**: Changed from falsy check (`||`) to nullish check (`??`) for proper 0-value handling
-- **Uniformity**: No special cases - all sound types treated equally by playback system
-
-**Breaking Changes**: None - fixes bugs, doesn't change API
-
-### Fixed - Sound Generation Mode System Improvements (2025-10-20 Session 2)
-
-**Session Description**: Fixed critical workflow collisions, updated Auralization UI consistency, and added safeguards for mode switching.
-
-**Issues Fixed**:
-1. **Sound Variant Collision (Critical)**:
-   - **Problem**: Generating uploaded sound at index 0, then TTA sound at index 1 created TTA as variant of uploaded sound
-   - **Root Cause**: Backend returns `prompt_index` based on filtered array order, not original `soundConfigs` indices
-   - **Solution**: Track original indices through entire generation pipeline, map backend response correctly
-   - **Files Modified**: [frontend/src/hooks/useSoundGeneration.ts](frontend/src/hooks/useSoundGeneration.ts) (lines 65-141)
-
-2. **Auralization UI Inconsistency**:
-   - **Problem**: Auralization section used different upload UI (button) instead of drag-and-drop
-   - **Solution**: Replaced with `FileUploadArea` component for consistency
-   - **Benefits**: Consistent UX, drag-and-drop support, matches Sound Generation Upload mode
-   - **Files Modified**: [frontend/src/components/layout/sidebar/AuralizationSection.tsx](frontend/src/components/layout/sidebar/AuralizationSection.tsx)
-
-**Workflow Collision Audit** (All 10 Scenarios Tested):
-- ✅ **Scenario 1**: Upload → Add Tab → Generate TTA - FIXED with index mapping
-- ✅ **Scenario 2**: Multiple modes in same generation - SAFE (separate filters)
-- ✅ **Scenario 3**: Mode switch without clearing data - SAFE (filter checks mode + data)
-- ✅ **Scenario 4**: TTA to Upload with prompt - SAFE (mode determines workflow)
-- ✅ **Scenario 5**: Re-generate after partial success - WORKING AS DESIGNED
-- ✅ **Scenario 6**: Delete tab after generation - WORKING AS DESIGNED (must regenerate)
-- ✅ **Scenario 7**: Mode change with uploaded file - SAFE (uploadedAudioUrl check)
-- ✅ **Scenario 8**: Clear audio in wrong mode - SAFE (UI prevents)
-- ✅ **Scenario 9**: Empty prompts with mixed modes - SAFE (prompt validation)
-- ✅ **Scenario 10**: Library mode without API - SAFE (placeholder logs only)
-
-**Safeguards Added**:
-- **Mode Switch Cleanup**: When switching from Upload mode to another mode, uploaded audio is automatically cleared (memory freed, state cleaned)
-- **Index Mapping**: All modes (TTA, Upload, Library) track `originalIndex` separately from filtered array indices
-- **Validation**: Each mode validates its required fields (prompt, uploadedAudioUrl, etc.)
-
-**Technical Implementation**:
-```typescript
-// Before: Simple filter by mode
-const uploadedConfigs = soundConfigs.filter(config => config.mode === 'upload');
-
-// After: Track original indices through pipeline
-const uploadedConfigsWithIndices = soundConfigs
-  .map((config, idx) => ({ config, originalIndex: idx }))
-  .filter(({ config }) => config.mode === 'upload' && config.uploadedAudioUrl);
-
-// Map backend response back to original indices
-const actualOriginalIndex = generationConfigsWithIndices[backendIndex]?.originalIndex ?? backendIndex;
-```
-
-**Code Quality**:
-- **DRY**: FileUploadArea reused in Auralization section
-- **Defensive**: Mode switching cleans up resources (revokeAudioUrl)
-- **Type-Safe**: All indices properly typed and validated
-- **Memory-Safe**: Object URLs revoked when no longer needed
-
-**Breaking Changes**: None - backward compatible
-
-### Added - Sound Generation Mode System (2025-10-20)
-
-**Session Description**: Restructured Sound Generation Section with 3 distinct modes accessible via dropdown menu, enabling flexible workflows for text-to-audio generation, file upload, and library search.
-
-**Files Created**:
-- **Reusable Upload Component** (`frontend/src/components/controls/FileUploadArea.tsx`): Generic drag-and-drop file upload UI
-  - Extracted from ModelLoadSection for reusability (DRY principle)
-  - Props: file, isDragging, acceptedFormats, acceptedExtensions, handlers
-  - Features: Drag-and-drop, click-to-browse, file info display, dynamic styling
-  - Configurable via props for different contexts (model upload, sound upload, etc.)
-
-**Files Modified**:
-- **Types** (`frontend/src/types/index.ts`):
-  - Added `SoundGenerationMode` type: `'text-to-audio' | 'upload' | 'library'`
-  - Added `mode?: SoundGenerationMode` field to `SoundGenerationConfig`
-  - Fixed TypeScript import for `SEDAudioInfo` (import before use)
-- **Hook** (`frontend/src/hooks/useSoundGeneration.ts`):
-  - Added `handleModeChange()` for switching between modes
-  - Updated `handleGenerate()` to filter configs by mode:
-    - `text-to-audio`: Existing generation workflow
-    - `upload`: Uses uploaded audio files (existing upload logic)
-    - `library`: Placeholder for future search API (logs search requests)
-  - New configs default to `mode: 'text-to-audio'`
-- **UI Component** (`frontend/src/components/layout/sidebar/SoundGenerationSection.tsx`):
-  - **Dropdown Menu** (top-left): 3 mode options with clear labels
-    - "Text-to-Audio Generation" (default)
-    - "Upload File"
-    - "Sound Library Search"
-  - **Conditional UI Rendering** based on selected mode:
-    - **Mode 1 (Text-to-Audio)**: Prompt textarea + duration/guidance/variants sliders
-    - **Mode 2 (Upload)**: FileUploadArea component → Audio info display → Clear button
-    - **Mode 3 (Library)**: Prompt textarea only + "API coming soon" message
-  - **Removed**: Top-right upload button (now integrated into Mode 2)
-  - **Kept**: Remove button (×) on right side, all Advanced Options
-- **Integration** (`frontend/src/app/page.tsx`, `frontend/src/components/layout/Sidebar.tsx`):
-  - Added `onSoundModeChange` prop with `handleModeChange` handler
-  - Proper prop threading through component hierarchy
-
-**UI/UX Improvements**:
-- **Cleaner Interface**: Upload functionality moved to dedicated mode (no button clutter)
-- **Clear Workflow**: Dropdown explicitly shows what each mode does
-- **Future-Ready**: Library search mode prepared for API integration
-- **Consistent Styling**: Dropdown matches project design (Tailwind, primary colors)
-- **State Preservation**: Mode selection persists per sound tab
-
-**Technical Implementation**:
-- **Mode Routing**: `handleGenerate()` separates configs by mode for proper workflow handling
-- **Backward Compatibility**: Configs without `mode` default to `'text-to-audio'`
-- **Memory Management**: Upload mode still uses object URLs with proper cleanup
-- **Error Handling**: Each mode validates inputs appropriately
-- **TypeScript Safety**: Full type checking for mode values and props
-
-**Code Quality**:
-- **DRY**: FileUploadArea extracted for reuse (no code duplication with ModelLoadSection)
-- **SRP**: Each mode has focused UI and clear responsibility
-- **Modular**: New component file follows project structure (`components/controls/`)
-- **Type Safety**: Strict TypeScript types for mode enum and handlers
-- **Maintainable**: Clear separation between mode selection and mode-specific UI
-
-**Future Extension Points**:
-- Library search mode ready for API endpoint integration
-- Additional modes can be added by extending `SoundGenerationMode` type
-- FileUploadArea can be reused in other features
-
-### Added - Per-Sound Audio Upload Feature (2025-10-17 17:00-18:00)
-
-**Session Description**: Implemented upload functionality for individual sounds in the Sound Generation tab, allowing users to import their own audio files and bypass sound generation. Reused existing audio processing utilities from the impulse response feature.
-
-**Files Created**:
-- **Audio Upload Utility** (`frontend/src/lib/audio/audio-upload.ts`): Reusable audio file upload and processing functions
-  - `loadAudioFile()`: Reads file, decodes to AudioBuffer, creates object URL, extracts metadata
-  - `revokeAudioUrl()`: Memory cleanup for object URLs
-  - `isValidAudioFile()`: File type validation
-  - `formatFileSize()`: Size formatting utility
-  - Uses Web Audio API (FileReader + AudioContext.decodeAudioData)
-  - Supports all browser-supported formats (wav, mp3, ogg, flac, m4a, etc.)
-
-**Files Modified**:
-- **Types** (`frontend/src/types/index.ts`):
-  - Added `uploadedAudioBuffer`, `uploadedAudioInfo`, `uploadedAudioUrl` to SoundGenerationConfig
-  - Added `isUploaded` flag to SoundEvent interface
-- **UI Component** (`frontend/src/components/layout/sidebar/SoundGenerationSection.tsx`):
-  - Added circular upload button (↑) with styling matching "+" button
-  - Replaced "Remove" text button with "×" button in circular style
-  - Conditional UI: Shows audio info when uploaded, generation controls when not
-  - Audio info display: filename, duration, sample rate, channels, samples (same as impulse response)
-  - Hidden file input with accept="audio/*"
-  - "Clear Uploaded Audio" button (grey, same as IR clear button)
-- **Hook** (`frontend/src/hooks/useSoundGeneration.ts`):
-  - `handleUploadAudio()`: Loads audio file using audio-upload utility, updates config with buffer/info/URL
-  - `handleClearUploadedAudio()`: Revokes URL, clears audio data from config
-  - Updated `handleGenerate()`: Separates uploaded and generation configs, creates SoundEvents for uploaded audio with proper positioning
-- **Integration** (`frontend/src/app/page.tsx`, `frontend/src/components/layout/Sidebar.tsx`):
-  - Connected upload/clear handlers from hook to UI component
-  - Proper prop threading through component hierarchy
-
-**Technical Implementation**:
-- Uploaded audio bypasses backend generation completely
-- Uses object URLs for audio playback (revoked on clear to prevent memory leaks)
-- Positioning: Uses entity position if available, otherwise bounding box center
-- SoundEvent created with `isUploaded: true` flag for ThreeScene identification
-- Display name defaults to filename (without extension) if not set
-- Validation error messages on upload failure
-
-**UI Styling**:
-- Upload button: `w-6 h-6` circular, `bg-gray-200 dark:bg-gray-700`, hover effects
-- Remove button: `w-6 h-6` circular, red text (`text-red-500`), hover background (`hover:bg-red-50`)
-- Buttons positioned together with `gap-2` spacing
-- Consistent with existing project styling (Tailwind classes, primary colors)
-
-**Code Quality**:
-- **DRY**: Extracted common audio loading logic to `audio-upload.ts` (reusable across features)
-- **SRP**: Separate files for upload utilities, separate functions for upload/clear/generate
-- **Modular**: New utility file instead of duplicating impulse response code
-- **Type Safety**: Full TypeScript types for all new interfaces and props
-- **Error Handling**: Try-catch blocks, user-friendly error messages, proper cleanup
-
-**Bug Fixes (2025-10-17 18:00-18:15)**:
-- **URL Construction** (`frontend/src/components/scene/ThreeScene.tsx:858-859`): Fixed blob URL handling for uploaded sounds
-  - Added check to detect blob: URLs vs backend relative paths
-  - Prevents incorrect URL construction like `http://127.0.0.1:8000blob:http://localhost:3000/...`
-  - Uploaded sounds now use direct blob URLs without prepending API_BASE_URL
-- **Audio Node Disconnect** (`frontend/src/components/scene/ThreeScene.tsx:777-782`): Wrapped disconnect() in try-catch
-  - Prevents "Failed to execute 'disconnect' on 'AudioNode'" error
-  - Audio nodes may already be disconnected during cleanup, error is expected and now silently handled
-
-### Added - Editable Sound Display Titles (2025-10-17 18:15-18:30)
-
-**Session Description**: Implemented minimalistic inline editing for sound tab titles, allowing users to customize display names without cluttering the UI.
-
-**Implementation Details**:
-- **Inline Editing UI** (`frontend/src/components/layout/sidebar/SoundGenerationSection.tsx:55-56, 111-136, 144-179`):
-  - Added `editingTabIndex` and `editingValue` state for tracking editing mode
-  - Conditional rendering: Input field when editing, button with hover pencil when viewing
-  - Pencil icon (✏️) appears on hover with opacity transition (subtle visual hint)
-  - Auto-focus on input when entering edit mode
-
-**User Interaction**:
-- **Double-click** any sound tab to enter edit mode
-- **Enter key** or **blur** (clicking away) to save changes
-- **Escape key** to cancel editing without saving
-- Pencil icon (✏️) shows on hover to indicate editability
-- Input maintains active tab styling (primary color or default)
-
-**Technical Implementation**:
-- Uses existing `onUpdateConfig(index, 'display_name', value)` handler (no new hook functions needed)
-- `display_name` field already exists in SoundGenerationConfig type
-- Local state only for UI (editing state), persistent state via hook
-- Input styling matches tab appearance for seamless transition
-
-**UI/UX Benefits**:
-- **Minimalistic**: No extra buttons or UI elements in default state
-- **Discoverable**: Pencil icon hint on hover, tooltip says "Double-click to edit"
-- **Intuitive**: Standard double-click-to-edit pattern
-- **Keyboard-friendly**: Enter/Escape shortcuts for power users
-- **Clean**: Inline editing maintains compact tab layout
-- **Responsive**: minWidth/maxWidth constraints prevent layout shifts
-
-**Code Quality**:
-- **DRY**: Reuses existing `onUpdateConfig` handler (no code duplication)
-- **SRP**: Edit handlers focused on UI state management only
-- **Maintainable**: Simple state machine (view/edit modes)
-- **Type-Safe**: TypeScript for all event handlers and state
-
-**Bug Fix (2025-10-17 18:30-18:35)**:
-- **Tab Title Overflow** (`frontend/src/components/layout/sidebar/SoundGenerationSection.tsx:145, 160, 167, 174`): Fixed tab titles wrapping to multiple lines
-  - Added `max-w-[120px]` constraint on tab buttons to prevent wrapping
-  - Applied `truncate` class to tab title text for ellipsis overflow
-  - Added `flex-shrink-0` to tab containers to maintain fixed width
-  - Fixed input width to `120px` (was dynamic minWidth/maxWidth)
-  - Removed `whitespace-nowrap` from button (handled by truncate)
-  - Full title now visible in tooltip on hover
-  - Pencil icon set to `flex-shrink-0` to always remain visible
-  - Result: Single-line tabs that scroll horizontally when needed, no wrapping
-
-**Bug Fix (2025-10-17 18:35-18:40)**:
-- **Main Tab Navigation Wrapping** (`frontend/src/components/layout/Sidebar.tsx:114, 124`): Fixed "Text Generation" and "Sound Generation" tab titles wrapping to multiple lines when scrollbar appears
-  - Added `whitespace-nowrap` to both tab buttons to prevent text wrapping
-  - Reduced horizontal padding from `px-4` to `px-3` (more compact)
-  - Added `text-sm` class for slightly smaller font size
-  - Result: Tab titles stay on single line even when vertical scrollbar reduces horizontal space
-  - More compact tabs fit better in sidebar width (384px minus scrollbar ~17px = 367px available)
-
-### Added - Sound Event Detection (SED) Feature (2025-01-17)
-
-**Session 1 - Initial Implementation (14:00-15:30)**
-- **Backend Services** (`backend/services/sed_service.py`): YAMNet-based sound event detection with 521 AudioSet classes
-- **Backend Utilities** (`backend/utils/sed_processing.py`): Reusable audio processing functions (RMS, dBFS conversion, segment analysis)
-- **Backend API** (`backend/routers/sed_analysis.py`): POST `/api/analyze-sound-events` endpoint with lazy-loading singleton pattern
-- **Frontend Types** (`frontend/src/types/sed.ts`): Complete TypeScript definitions for SED analysis
-- **Frontend Hook** (`frontend/src/hooks/useSED.ts`): State management for SED with API integration
-- **Frontend Utils** (`frontend/src/lib/audio/audio-info.ts`): Audio metadata extraction and formatting utilities
-- **Dual Workflow UI** (`frontend/src/components/layout/sidebar/ModelLoadSection.tsx`): Conditional interface supporting both 3D models and audio files
-
-**Session 2 - Full Integration (15:30-16:00)**
-- **Page Integration** (`frontend/src/app/page.tsx`): Connected useSED hook with handlers for analysis, loading, and file changes
-- **Sidebar Props** (`frontend/src/components/layout/Sidebar.tsx`): Added 7 SED-specific props with proper TypeScript types
-- **Load Sounds Feature**: "Load Sounds to Generation" button formats SED results as sound configs and auto-switches tabs
-
-**Session 3 - Refinements (16:00-17:00)**
-- **Audio Info Pre-Analysis** (`frontend/src/lib/audio/audio-info.ts`): `loadAudioFileInfo()` function using Web Audio API for immediate metadata display
-- **Sample Rate Conversion** (`backend/utils/sed_processing.py`): Explicit detection and logging of resampling from any rate to 16kHz
-- **Results Filtering** (`frontend/src/hooks/useSED.ts`): Automatic removal of "Silence" class and 0% confidence sounds
-- **Scrollable Results** (`ModelLoadSection.tsx`): max-h-64 overflow container matching Text Generation style
-- **Amplitude Display**: Conditional dB display next to confidence when "Analyze amplitudes" is checked
-- **SPL Conversion**: Fixed dBFS→SPL mapping (dBFS -60 to -3 → SPL 30 to 85 dB) for realistic sound pressure levels
-- **Temporal Intervals**: Detection duration parsing (×2) for intelligent playback interval calculation
-
-**Session 4 - Bug Fix: Audio Loading Simplified (2025-10-17 13:30-14:30)**
-- **Simplified** (`backend/utils/sed_processing.py`): Cleaned up audio loading to use only librosa
-  - Removed: Attempted WAV header repair and soundfile fallback logic
-  - Updated: `librosa.resample()` to use explicit `y=` parameter for librosa 0.11.0+ compatibility
-  - Error handling: Now raises clear errors for corrupted files instead of attempting repair
-  - Advice: Users should use properly formatted audio files (16kHz WAV recommended)
-
-**Session 5 - SED Conditional Analysis & Error UI (2025-10-17 14:30-15:30)**
-- **Fixed** (`frontend/src/hooks/useSED.ts:112`): Now sends both `analyze_amplitudes` and `analyze_durations` parameters to backend
-  - Backend already supported conditional analysis, frontend now properly sends both flags
-  - Dependencies updated in useCallback to trigger re-analysis when options change
-- **Fixed** (`frontend/src/hooks/useSED.ts:178-266`): Corrected SED→Sound Generation mapping
-  - **silence_duration_range** → playback interval (time between repetitions) [5-120s range]
-  - **max_amplitude_db** → volume/SPL (peak loudness) [30-85 dB SPL range]
-  - **detection_duration_range** → sound duration (length of generated sound) [1-30s range]
-  - Previous mapping used detection_duration for interval (incorrect)
-  - Conditional checks: Only use amplitude/duration data if respective options are enabled
-- **Added** (`frontend/src/components/layout/sidebar/ModelLoadSection.tsx:18, 275-290`): User-friendly error UI
-  - New `sedError` prop with error icon and formatted message display
-  - Helpful tips: "Try checking file format, ensuring it's not corrupted, or using 16kHz WAV"
-  - Error only shows when: audio file selected, no results, and error exists
-  - Prevents UI crash by gracefully displaying errors in sidebar
-- **Prop Threading**: Added `sedError` through component hierarchy
-  - `page.tsx:142` → `Sidebar.tsx:77, 157` → `ModelLoadSection.tsx:18, 51`
-
-**Session 6 - Numerical Duration Fields & Silence Handling (2025-10-17 15:30-16:15)**
-- **Changed** (`backend/utils/sed_processing.py:166-189, 236`): Return numerical duration lists instead of formatted strings
-  - `analyze_class_segments()` now returns `(detected_durations_sec, silent_durations_sec)` as lists of floats
-  - Removed formatting logic from utility function (Single Responsibility Principle)
-  - Updated return type signature: `Tuple[list, list]` instead of `Tuple[str, str]`
-- **Changed** (`backend/services/sed_service.py:159-167, 184-193`): Calculate and send average durations
-  - Computes `avg_detection_duration` and `avg_silence_duration` as numerical seconds
-  - Response fields changed: `avg_detection_duration_sec`, `avg_silence_duration_sec` (instead of `_range` strings)
-  - Fixed JSON serialization: Use `None` instead of `-np.inf` when `analyze_amplitudes=False`
-- **Fixed** (`backend/routers/sed_analysis.py:122-123`): Updated router to use new field names
-  - Was still accessing `detection_duration_range`, `silence_duration_range` (KeyError)
-  - Now correctly accesses `avg_detection_duration_sec`, `avg_silence_duration_sec`
-  - Updated API docstring to reflect nullable fields
-- **Changed** (`frontend/src/types/sed.ts:21-30`): Updated DetectedSound interface
-  - Removed: `detection_duration_range`, `silence_duration_range` (string fields)
-  - Added: `avg_detection_duration_sec`, `avg_silence_duration_sec` (number | null fields)
-  - All nullable fields now properly typed for conditional analysis
-- **Changed** (`frontend/src/hooks/useSED.ts:139-143, 197-232`): Updated to use numerical fields
-  - Removed string parsing logic (no more regex matching on "1.50s - 3.20s")
-  - Direct numerical comparison: `sound.avg_silence_duration_sec !== null`
-  - Silence class: Show in UI results but exclude from sound generation via filter
-  - Cleaner, more maintainable code without string parsing
-- **Improved** (`frontend/src/components/layout/sidebar/ModelLoadSection.tsx:284-293`): Conditional error helper
-  - Audio format helper now only shows for loading/format errors
-  - Checks error message for keywords: 'load', 'corrupt', 'format', 'audio file', '0 samples'
-  - Analysis errors (non-loading) show error message only, without confusing format suggestions
-- **Fixed** (`backend/services/sed_service.py:180-184`): Convert numpy floats to Python floats for JSON serialization
-  - When `analyze_amplitudes=True`, amplitude values were returned as numpy.float32
-  - FastAPI's JSON encoder cannot serialize numpy types, causing TypeError
-  - Solution: Explicitly convert all amplitude values to Python float() with None for -inf values
-  - Handles: max_amp_0_1, max_amp_db, avg_amp_0_1, avg_amp_db
-
-**Session 7 - Value Rounding & Guidance Removal (2025-10-17 16:15-16:30)**
-- **Changed** (`frontend/src/hooks/useSED.ts:220, 230, 240`): Round all numerical values to 0.1 precision
-  - Formula: `Math.round(value * 10) / 10`
-  - Applied to: `volumeSPL` (dB), `playbackInterval` (seconds), `soundDuration` (seconds)
-  - Ensures clean, consistent values for sound generation (e.g., 5.0s, 70.5dB, 12.3s)
-- **Removed** (`frontend/src/hooks/useSED.ts:206-208, 243`): All guidance_scale calculation and usage
-  - Deleted: Commented-out guidance_scale calculation code
-  - Removed: `guidance_scale` field from returned SoundGenerationConfig
-  - Reason: Not needed for SED workflow, simplifies config object
-- **Fixed** (`frontend/src/types/index.ts:59`): Made `guidance_scale` optional in SoundGenerationConfig
-  - Was causing NaN display when SED configs were loaded without guidance_scale
-  - Changed from `guidance_scale: number` to `guidance_scale?: number`
-- **Updated** (`frontend/src/hooks/useSED.ts:191-196`): Documentation reflects rounding and no guidance
-
-**Session 8 - Use Max Values Instead of Averages (2025-10-17 16:30-16:45)**
-- **Changed** (`backend/services/sed_service.py:163-167, 196-197`): Use max instead of average for durations
-  - `np.max()` instead of `np.mean()` for detected_durations_sec and silent_durations_sec
-  - Field names: `max_detection_duration_sec`, `max_silence_duration_sec` (was `avg_*`)
-  - Reason: Max values better represent the longest occurrences for sound generation parameters
-- **Changed** (`backend/routers/sed_analysis.py:124-125, 69-70`): Updated router for max field names
-- **Changed** (`frontend/src/types/sed.ts:28-29`): Updated DetectedSound interface
-  - `max_detection_duration_sec` and `max_silence_duration_sec` (was `avg_*`)
-- **Changed** (`frontend/src/hooks/useSED.ts:183-187, 222-240, 244, 250`): Updated to use max values
-  - Uses `sound.max_silence_duration_sec` for playback interval
-  - Uses `sound.max_detection_duration_sec` for sound duration
-  - Comments clarified: "maximum time" instead of "average"
+# CHANGELOG
+
+## [2025-10-24 19:30] - Stop All Re-scheduling Fix & Comprehensive Seek Debugging
+### Fixed
+- **Stop All Sounds Keep Getting Re-scheduled**
+  - Root cause: Previous state tracking wasn't cleared after Stop All, causing updateSoundPlayback to see "state changes" and re-schedule
+  - Solution: Clear `prevIndividualSoundStates`, `prevSoundIntervals`, and `isPlayAll` flag in stopAllSounds
+  - Prevents any re-scheduling after emergency kill
+  - `frontend/src/lib/audio/playback-scheduler-service.ts:184-188` - State clearing
+
+- **Timeline Seek Sounds Getting Descheduled (No Debug Info)**
+  - Added comprehensive per-sound logging showing exact state of each sound during seek
+  - Each sound now logs: ✅ PLAYING, ⏰ SCHEDULED, or ❌ SKIPPED with reason
+  - Shows which sounds failed to play and why (no buffer, wrong state, play() failed)
+  - Audio context and sources state logged BEFORE and AFTER seek
+  - `frontend/src/lib/audio/playback-scheduler-service.ts:261-362` - Detailed seek logging
+
+### Added
+- **Per-Sound Seek Results Logging**
+  ```
+  [PlaybackScheduler] SEEK RESULTS:
+    Bird chirp: ✅ PLAYING from 2.3s, next in 7.7s
+    Dog bark: ⏰ SCHEDULED to play in 3.5s
+    Car horn: ❌ SKIPPED - State: paused
+    Wind sound: ❌ FAILED TO PLAY - Audio.play() called but isPlaying=false
+  ```
+
+- **Stop All Enhanced Logging**
+  ```
+  [PlaybackScheduler] STOP ALL - Emergency kill activated
+  [PlaybackScheduler] STOP ALL - State cleared, preventing re-schedule
+  [PlaybackScheduler] STOP ALL - Complete
+  ```
+
+- **Seek Operation Tracking**
+  - Shows total sounds vs sounds that should be playing
+  - Tracks what decision was made for each sound
+  - Detects if audio.play() was called but isPlaying remains false
+  - Verifies audio context state after seek completes
 
 ### Changed
+- **stopAllSounds() Now Clears All State**
+  - Clears previous state tracking to prevent re-scheduling
+  - Resets isPlayAll flag
+  - Ensures clean slate after Stop All
 
-- **Audio Loading**: Enhanced error handling with explicit exception types and stack traces
-- **Type Safety**: Unified option types (`'analyzeAmplitudes' | 'analyzeDurations'`) across Sidebar and ModelLoadSection
-- **UI/UX**: Checkboxes now hide after analysis, audio info appears immediately on file selection
+**Debugging Output Examples:**
 
-### Technical Details
+1. **Stop All:**
+   ```
+   [PlaybackScheduler] STOP ALL - Emergency kill activated
+   [EMERGENCY AUDIO KILL] Activating failsafe...
+   [AUDIO DEBUG BEFORE KILL] AudioContext State: { state: 'running', masterVolume: 1 }
+   [EMERGENCY AUDIO KILL] Killed 5 audio source(s)
+   [PlaybackScheduler] STOP ALL - State cleared, preventing re-schedule
+   [PlaybackScheduler] STOP ALL - Complete
+   ```
 
-**Architecture**: Modular design following DRY and SRP principles
-- Backend: Utilities → Service → Router separation
-- Frontend: Types → Utils → Hook → Component hierarchy
-- No code duplication (audio loading reuses impulse-response patterns)
+2. **Timeline Seek:**
+   ```
+   [PlaybackScheduler] SEEK to 15.50s
+   [PlaybackScheduler] SEEK: 5 sounds should be playing out of 5 total
+   [PlaybackScheduler] SEEK RESULTS:
+     Sound 1: ✅ PLAYING from 1.2s, next in 8.8s
+     Sound 2: ⏰ SCHEDULED to play in 2.3s
+     Sound 3: ✅ PLAYING from 0.5s, next in 4.5s
+   [AUDIO DEBUG AFTER SEEK] AudioContext State: { state: 'running', masterVolume: 1 }
+   [AUDIO DEBUG AFTER SEEK] Audio Sources: { total: 5, playing: 3, stopped: 2 }
+   [PlaybackScheduler] SEEK Complete
+   ```
 
-**API Flow**: FormData upload → YAMNet inference → Amplitude/temporal analysis → Filtered results
-**File Type Detection**: Automatic differentiation between audio (.wav, .mp3, .flac) and 3D models (.obj, .ifc, .3dm)
-**Data Conversion**:
-- Frontend dBFS (Web Audio) ↔ Backend SPL (sound generation)
-- Detection duration → Playback interval (minimum 5s)
+**Files Modified:**
+- `frontend/src/lib/audio/playback-scheduler-service.ts` - Stop state clearing + seek debugging
 
+## [2025-10-24 19:00] - Audio Playback Synchronization Fixes
+### Fixed
+- **Stop All → Play All Not Playing Sounds**
+  - Root cause: Audio context was being suspended during emergency kill and not properly resumed
+  - Removed audio context suspension from emergency kill (only mutes + stops sources)
+  - Made `restoreAudioAfterKill()` async and force resume audio context
+  - Made `stopAllSounds()` async and properly await restoration
+  - `frontend/src/lib/audio/emergency-audio-kill.ts:73-76` - Removed context suspension
+  - `frontend/src/lib/audio/emergency-audio-kill.ts:87-108` - Async restore with forced resume
+  - `frontend/src/lib/audio/playback-scheduler-service.ts:170-185` - Async stopAllSounds
+
+- **Timeline Seek Not Playing Sounds at Correct Time**
+  - Made `seekToTime()` async to ensure audio context is resumed before scheduling
+  - Added audio context state verification before seek operation
+  - Properly await async operations in ThreeScene handlers
+  - `frontend/src/lib/audio/playback-scheduler-service.ts:217-222` - Async seekToTime
+  - `frontend/src/components/scene/ThreeScene.tsx:182-201` - Async handleSeek
+
+- **Async Operations Not Properly Awaited**
+  - Updated all calls to `stopAllSounds()` to properly await completion
+  - Used async IIFE in useEffect hooks to handle async operations
+  - `frontend/src/components/scene/ThreeScene.tsx:510-516` - Await in variant change effect
+  - `frontend/src/components/scene/ThreeScene.tsx:635-650` - Await in auralization effect
+
+### Added
+- **Comprehensive Audio Debugging System**
+  - New `audio-debug.ts` utility for tracking audio state and synchronization
+  - Real-time audio context state logging (running/suspended)
+  - Audio sources state verification (playing/stopped/disconnected)
+  - Timeline sync reporting (scheduled vs playing vs displayed)
+  - Automatic audio context resume with error handling
+  - `frontend/src/lib/audio/audio-debug.ts` - Complete debugging utility
+
+- **Enhanced Logging Throughout Audio Stack**
+  - Audio context state logged at key points (before/after operations)
+  - Playback verification when scheduling sounds
+  - Seek operation logging with sound count tracking
+  - Emergency kill now logs before/after state
+  - `frontend/src/lib/audio/playback-scheduler-service.ts:49` - Context check in updatePlayback
+  - `frontend/src/lib/audio/playback-scheduler-service.ts:223-247` - Seek debugging
+  - `frontend/src/lib/audio/emergency-audio-kill.ts:35-36` - Before kill logging
+
+### Changed
+- **Emergency Kill No Longer Suspends Audio Context**
+  - Audio context suspension was causing resume issues
+  - Now only mutes master volume + stops individual sources
+  - More reliable for Stop All → Play All workflow
+  - Context automatically resumes when needed for playback
+
+**Debugging Features:**
+- `audioDebugger.logAudioContextState()` - Check context state and master volume
+- `audioDebugger.logAudioSourcesState()` - List playing/stopped/disconnected sources
+- `audioDebugger.verifyAudioPlayback()` - Verify sounds will actually play
+- `audioDebugger.forceResumeAudioContext()` - Force resume if suspended
+- `audioDebugger.printTimelineSyncReport()` - Compare scheduled vs playing vs displayed
+
+**Files Modified:**
+- `frontend/src/lib/audio/audio-debug.ts` - New file
+- `frontend/src/lib/audio/emergency-audio-kill.ts` - Async restore + no suspension
+- `frontend/src/lib/audio/playback-scheduler-service.ts` - Async methods + debugging
+- `frontend/src/components/scene/ThreeScene.tsx` - Properly await async operations
+
+**Files Added:**
+- `frontend/src/lib/audio/audio-debug.ts`
+
+## [2025-10-24 17:30] - Emergency Audio Kill Switch (Failsafe)
+### Added
+- **Emergency Audio Kill Switch**
+  - Created last-resort failsafe to immediately silence all audio
+  - Independent of scheduling, state management, or timers
+  - Three-level kill approach:
+    1. **Master Volume Mute**: Sets AudioListener master volume to 0
+    2. **Individual Source Kill**: Stops, mutes, and disconnects each audio source
+    3. **Audio Context Suspend**: Suspends the browser's audio context
+  - `frontend/src/lib/audio/emergency-audio-kill.ts` - New emergency kill utility
+
+- **Integrated into Stop All Flow**
+  - Emergency kill activates FIRST when Stop All is clicked
+  - Provides instantaneous audio cutoff regardless of any other state
+  - Normal stop flow (unscheduling, state updates) happens AFTER
+  - Audio system automatically restores after 50ms (ready for next play)
+  - `frontend/src/components/scene/ThreeScene.tsx:177-196` - Emergency kill in handleStopAll
+  - `frontend/src/lib/audio/playback-scheduler-service.ts:166-180` - Emergency kill in stopAllSounds
+
+### Fixed
+- **Stop All Button Not Silencing All Sounds**
+  - Some sounds would continue playing after clicking Stop All
+  - Root cause: Scheduled sounds with pending timeouts could start playing after stop
+  - Emergency kill switch provides absolute silence guarantee
+  - Master volume mute ensures no sound can play even if scheduled
+
+**How It Works:**
+1. User clicks "Stop All"
+2. **IMMEDIATELY**: Emergency kill mutes master volume + stops all sources
+3. Unschedules all timers and clears state
+4. After 50ms: Restores master volume (ready for next play)
+5. Result: Guaranteed silence, no lingering audio
+
+**Files Modified:**
+- `frontend/src/lib/audio/emergency-audio-kill.ts` - New file
+- `frontend/src/components/scene/ThreeScene.tsx` - Emergency kill in handleStopAll
+- `frontend/src/lib/audio/playback-scheduler-service.ts` - Emergency kill in stopAllSounds
+
+**Files Added:**
+- `frontend/src/lib/audio/emergency-audio-kill.ts`
+
+## [2025-10-24 17:00] - Real-time Scheduled Sounds Logger
+### Added
+- **New Real-time Scheduled Sounds Display**
+  - Created `scheduled-sounds-logger.ts` utility for clean console output
+  - Displays a formatted table showing all scheduled sounds with live updates
+  - Shows sound name, interval, time until next play, and status (🔊 Playing or ⏰ Scheduled)
+  - Table updates in real-time as sounds are scheduled, played, or unscheduled
+  - Optional periodic updates for countdown timers (1 second intervals)
+  - `frontend/src/lib/audio/scheduled-sounds-logger.ts` - New logger utility
+
+### Changed
+- **Replaced Verbose AudioScheduler Logs**
+  - Removed detailed console logs from AudioScheduler
+  - Integrated with new scheduled-sounds-logger for clean output
+  - Logger updates on: schedule, play, next playback, unschedule events
+  - `frontend/src/lib/audio-scheduler.ts` - Uses scheduledSoundsLogger instead of console.log
+
+- **Simplified PlaybackSchedulerService Logs**
+  - Removed verbose debugging logs from playback state changes
+  - Removed "Starting sound", "Stopping sound", "Processing" logs
+  - Removed seek operation logs
+  - Audio scheduling now appears only in the formatted table
+  - `frontend/src/lib/audio/playback-scheduler-service.ts` - Removed console.log statements
+
+**Console Output Before:**
+```
+[AudioScheduler] Scheduling sound Bird chirp:
+  - Sound duration: 5000ms
+  - Interval setting: 10s (10000ms)
+  - Total interval: 15000ms
+  - Randomness: ±10%
+  - Initial delay: 2500ms
+[AudioScheduler] Playing sound Bird chirp (after initial delay)
+[AudioScheduler] Next playback for Bird chirp in 16.2s (base: 15.0s)
+[PlaybackScheduler] Starting sound Dog bark, isPlayAll: true
+[PlaybackScheduler] Interval sources: UI=5, Event=10, Final=5s
+```
+
+**Console Output After:**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    SCHEDULED SOUNDS (Real-time)                 │
+├─────────────────────────────────────────────────────────────────┤
+│ Sound Name                  | Interval | Next Play | Status     │
+├─────────────────────────────────────────────────────────────────┤
+│ Bird chirp                  | 10s      | 12.3s     | 🔊 Playing │
+│ Dog bark                    | 5s       | 3.1s      | ⏰ Scheduled│
+│ Car horn                    | 15s      | 8.7s      | ⏰ Scheduled│
+└─────────────────────────────────────────────────────────────────┘
+Total Scheduled: 3 sound(s) | Updated: 5:00:23 PM
+```
+
+**Files Modified:**
+- `frontend/src/lib/audio/scheduled-sounds-logger.ts` - New file with logger utility
+- `frontend/src/lib/audio-scheduler.ts` - Integrated scheduledSoundsLogger
+- `frontend/src/lib/audio/playback-scheduler-service.ts` - Removed verbose logs
+
+**Files Added:**
+- `frontend/src/lib/audio/scheduled-sounds-logger.ts`
+
+## [2025-10-24 16:30] - Interactive Timeline Seeking
+### Added
+- **Click-to-Seek Timeline Functionality**
+  - Users can now click anywhere on the timeline to jump to that time position
+  - Clicking stops current sounds, unschedules all scheduled sounds, and repositions playback
+  - Timeline cursor moves to clicked position and sounds resume from correct timestamps
+  - Initial delays are not taken into account when seeking (only base intervals)
+  - Timeline remains visible and responsive during seeking
+  - Cursor changes to pointer when hovering over timeline to indicate interactivity
+  - `frontend/src/components/audio/AudioTimeline.tsx:66-88` - Added click handler to calculate time from click position
+  - `frontend/src/components/audio/AudioTimeline.tsx:7-18` - Added `onSeek` callback prop
+  - `frontend/src/components/audio/AudioTimeline.tsx:214` - Added cursor-pointer class and onClick handler
+
+- **Seek Logic in PlaybackSchedulerService**
+  - New `seekToTime()` method handles smart playback repositioning
+  - Calculates which iteration of each sound should be active at seek time
+  - If seeking lands during a sound's playback, plays sound from correct offset
+  - If seeking lands during interval gap, schedules sound with appropriate delay
+  - Preserves interval-based scheduling after seek operation completes
+  - `frontend/src/lib/audio/playback-scheduler-service.ts:218-329` - Complete seek implementation
+
+- **Timeline and Audio Coordination**
+  - New `handleSeek()` callback in ThreeScene coordinates timeline cursor and audio playback
+  - Updates both timeline visual cursor and audio playback state simultaneously
+  - Ensures timeline and audio stay perfectly synchronized after seeking
+  - `frontend/src/components/scene/ThreeScene.tsx:182-200` - Seek handler implementation
+  - `frontend/src/components/scene/ThreeScene.tsx:763` - Wire up onSeek prop to AudioTimeline
+
+### Changed
+- **AudioTimeline Component**
+  - Updated documentation to reflect click-to-seek functionality
+  - Changed from "read-only visualization" to interactive timeline
+  - Added cursor-pointer class for better UX feedback
+  - `frontend/src/components/audio/AudioTimeline.tsx:20-33` - Updated component documentation
+
+**Behavior After Changes:**
+- **Click Timeline** → Stops all sounds, moves cursor to clicked position, resumes playback from that time
+  - Sounds currently playing at that time start from correct offset
+  - Sounds in interval gaps are scheduled with correct delays
+  - Timeline cursor and audio playback stay synchronized
+- **Play All / Pause All / Stop All** → Continue to work as before
+- **Individual Sound Controls** → Continue to work as before
+
+**Files Modified:**
+- `frontend/src/components/audio/AudioTimeline.tsx` - Added click-to-seek handler and onSeek prop
+- `frontend/src/lib/audio/playback-scheduler-service.ts` - Added seekToTime() method
+- `frontend/src/components/scene/ThreeScene.tsx` - Added handleSeek callback and wired it to AudioTimeline
+
+## [2025-10-23 23:45] - Timeline Behavior Refinements
+### Fixed
+- **Timeline Stays Visible During "Pause All"**
+  - When "Pause All" is pressed, timeline cursor freezes at current position and remains visible
+  - Timeline data is preserved to show all sound schedules while paused
+  - `frontend/src/components/scene/ThreeScene.tsx:657-663` - Keep timeline data when sounds are paused
+  - `frontend/src/components/scene/ThreeScene.tsx:675-677` - Pause timeline cursor instead of stopping
+
+- **Individual Paused Sounds Hidden From Timeline**
+  - When an individual sound is paused, it is removed from the timeline visualization
+  - Only applies to individual pauses, not "Pause All"
+  - `frontend/src/lib/audio-scheduler.ts:142-148` - Restored original `unscheduleSound()` behavior
+  - `frontend/src/lib/audio/playback-scheduler-service.ts:133-135` - Unschedule on individual pause
+
+- **Resume From Pause Plays Immediately**
+  - "Pause All → Play All" now resumes sounds immediately without staggered delays
+  - Distinguishes between fresh "Play All" (from stopped) and resume "Play All" (from paused)
+  - Fresh "Play All" uses random staggered delays for natural soundscape
+  - Resume "Play All" starts all sounds immediately to continue where left off
+  - `frontend/src/lib/audio/playback-scheduler-service.ts:62-74` - Detect pause resume vs fresh start
+
+### Removed
+- **Timeline Seeking Disabled**
+  - Timeline is now read-only for visualization purposes
+  - Removed click-to-seek functionality and cursor pointer
+  - `frontend/src/components/audio/AudioTimeline.tsx:7-16` - Removed `onSeek` prop
+  - `frontend/src/components/audio/AudioTimeline.tsx:203-212` - Removed click handler and cursor style
+  - `frontend/src/components/scene/ThreeScene.tsx:743-749` - Removed `onSeek` prop from usage
+
+**Behavior After Changes:**
+- **Play All** → Sounds start with random stagger, timeline shows all scheduled iterations
+- **Pause All** → Timeline cursor freezes and stays visible, all sounds shown on timeline
+- **Individual Pause** → That specific sound disappears from timeline
+- **Play All (after Pause All)** → Sounds resume immediately without stagger
+- **Stop All** → Timeline cursor resets to 0 and clears all scheduled sounds
+- **Timeline Click** → No action (timeline is read-only)
+
+**Files Modified:**
+- `frontend/src/components/scene/ThreeScene.tsx` - Timeline sync and visibility logic
+- `frontend/src/components/audio/AudioTimeline.tsx` - Removed seeking functionality
+- `frontend/src/lib/audio-scheduler.ts` - Restored original unschedule behavior
+- `frontend/src/lib/audio/playback-scheduler-service.ts` - Detect pause resume vs fresh start
+
+## [2025-10-23 22:00] - Critical Timeline Sync Bug Fixes
+### Fixed
+- **Issue 1: Pause All No Longer Resets Timeline Cursor**
+  - **Root Cause:** Sync effect was calling `stopTimeline()` when no sounds were 'playing', including when paused
+  - **Fix:** Changed logic to only call `stopTimeline()` when ALL sounds are 'stopped' (not paused)
+  - Now distinguishes between paused (cursor frozen) and stopped (cursor reset to 0)
+  - Timeline cursor maintains its position when pausing, as expected
+  - `ThreeScene.tsx` - Updated sync effect condition from `!anySoundPlaying` to `allSoundsStopped`
+
+- **Issue 4: Individual Sound After Pause All Shows Correct Scheduling**
+  - **Root Cause:** `isPlayAll` flag was never reset after "Play All", so individual sounds after pause got random initial delays
+  - **Fix:** Reset `isPlayAll = false` when only 1 sound starts playing (individual playback)
+  - Play All → Pause All → Play Individual Sound now shows correct scheduling without stagger
+  - Timeline immediately updates with new scheduler data (initialDelayMs = 0 for individual sounds)
+  - `playback-scheduler-service.ts` - Added logic to reset isPlayAll flag for individual playback
+
+**Behavior After Fixes:**
+- **Play All** → Sounds start with random stagger (initialDelayMs), timeline shows staggered schedule
+- **Pause All** → Timeline cursor freezes at current position (doesn't reset to 0)
+- **Play Individual** → Sound starts immediately (no stagger), timeline updates to show new schedule
+- **Stop All** → Timeline cursor resets to 0
+
+**Files Modified:**
+- `frontend/src/components/scene/ThreeScene.tsx` - Fixed sync effect logic
+- `frontend/src/lib/audio/playback-scheduler-service.ts` - Reset isPlayAll flag for individual sounds
+
+## [2025-10-23 21:30] - Timeline Interaction & Sync Fixes
+### Fixed
+- **Click-to-Seek Behavior:**
+  - Clicking timeline now only moves cursor position (doesn't stop audio)
+  - Audio continues playing from current schedulers
+  - Removed unnecessary `onStopAll()` call from `handleTimelineSeek()`
+
+- **Individual Sound Playback:**
+  - Timeline cursor now moves when individual sounds play (not just "Play All")
+  - Added new effect to sync timeline playback with `individualSoundStates`
+  - Timeline automatically starts when any sound begins playing
+  - Timeline automatically stops when all sounds stop
+
+- **Timeline Visibility:**
+  - Confirmed: Pause All does NOT hide timeline (already working correctly)
+  - Timeline only hidden/shown by user clicking toggle button
+
+- **Real-time Timeline Updates:**
+  - Timeline already updates when individual sounds play after pausing "Play All"
+  - Effect dependency on `individualSoundStates` ensures timeline re-extracts on any state change
+  - New schedulers with new timings are immediately reflected in visualization
+
+**Files Modified:**
+- `frontend/src/components/scene/ThreeScene.tsx` - Fixed handleTimelineSeek, added sync effect
+
+**Impact:** Timeline now provides seamless, non-intrusive interaction and automatically syncs cursor movement with both "Play All" and individual sound playback modes.
+
+## [2025-10-23 21:00] - Timeline UI/UX Improvements
+### Changed
+- **Timeline Visibility:**
+  - Timeline now visible by default (no longer hidden on load)
+  - Remains visible regardless of play/pause/stop state
+  - Only hidden when user manually clicks toggle button
+  
+- **Timeline Height:**
+  - Dynamic height calculation based on number of sounds
+  - Minimal vertical space usage (adapts to content)
+  - Removed fixed height prop from AudioTimeline component
+  
+- **Initial Delay Synchronization:**
+  - Timeline now accurately reflects initial delay for "Play All" scenarios
+  - `ScheduledSound` type updated with `initialDelayMs` property
+  - First sound iteration now starts at initialDelayMs instead of 0
+  - Visual and audio are now perfectly synced
+  
+- **Real-time Timeline Updates:**
+  - Timeline updates when individual sounds are played (not just "Play All")
+  - Timeline updates when new sounds are added during active playback
+  - Effect dependency changed from `isAnyPlaying` to `individualSoundStates`
+  
+- **Click-to-Seek Functionality:**
+  - Added interactive canvas click handler
+  - Clicking anywhere on timeline stops all sounds and moves cursor to that position
+  - Ready for future enhancement: resume playback from seek position
+
+**Files Modified:**
+- `frontend/src/components/audio/AudioTimeline.tsx` - Dynamic height, click handler, removed scrolling
+- `frontend/src/components/scene/ThreeScene.tsx` - Timeline defaults to visible, handleTimelineSeek callback
+- `frontend/src/lib/audio-scheduler.ts` - Store initialDelayMs in ScheduledSound
+- `frontend/src/lib/audio/timeline-utils.ts` - Account for initialDelayMs in iteration calculations
+- `frontend/src/types/audio.ts` - Added initialDelayMs to ScheduledSound interface
+
+**Impact:** Timeline now provides accurate, real-time visualization of all scheduled sounds with minimal UI footprint and interactive seeking capability.
+
+## [2025-10-23 20:30] - Timeline Playback Control Integration
+### Changed
+- **`frontend/src/components/audio/AudioTimeline.tsx`:**
+  - Removed internal Play/Pause/Stop buttons
+  - Now controlled externally via props (`currentTime`, `isPlaying`)
+  - Simplified to pure visualization component without playback logic
+- **`frontend/src/components/scene/ThreeScene.tsx`:**
+  - Integrated `useTimelinePlayback` hook to manage timeline cursor state
+  - Connected PlaybackControls buttons to control both audio playback AND timeline cursor
+  - Play All → plays audio + starts timeline cursor
+  - Pause All → pauses audio + pauses timeline cursor
+  - Stop All → stops audio + resets timeline cursor to start
+  - Timeline cursor now syncs with audio playback state
+
+**Impact:** Unified playback control - Play All/Pause All/Stop All buttons now control both the audio sounds and the timeline visualization cursor simultaneously. Timeline is now a pure display component controlled by the main playback system.
+
+## [2025-10-23 20:00] - Audio Timeline Integration
+### Added
+- **`frontend/src/components/audio/AudioTimeline.tsx`:**
+  - Minimalistic timeline component for visualizing scheduled sounds
+  - Canvas-based rendering with real-time playback cursor
+  - Integrated into ThreeScene with toggle button
+- **`frontend/src/hooks/useTimelinePlayback.ts`:**
+  - Custom hook for timeline playback state management
+- **`frontend/src/lib/audio/timeline-utils.ts`:**
+  - Utility functions to extract timeline data from PlaybackSchedulerService
+  - Color-codes sounds by generation method (Import/Library/TTA)
+- **`frontend/src/lib/audio/playback-scheduler-service.ts`:**
+  - Added `getAudioSchedulers()` method for timeline visualization
+- **`frontend/src/lib/audio-scheduler.ts`:**
+  - Added `getScheduledSounds()` method for read-only access
+- **`frontend/src/types/audio.ts`:**
+  - Added `TimelineSound` and `TimelinePlaybackState` interfaces
+- **`frontend/src/lib/constants.ts`:**
+  - Added `AUDIO_TIMELINE` configuration with 3 colors for sound sources:
+    - Blue (#3B82F6) - Imported sounds
+    - Green (#10B981) - Library sounds (BBC, Freesound)
+    - Pink (#F500B8) - Text-to-Audio (TangoFlux)
+
+### Changed
+- **`frontend/src/components/scene/ThreeScene.tsx`:**
+  - Integrated AudioTimeline component with toggle button
+  - Timeline displays at bottom center, above playback controls
+  - Automatically updates when sounds change or playback state changes
+
+**Impact:** Timeline visualization provides real-time view of scheduled sound playback patterns, color-coded by generation method. Toggle button allows hiding/showing timeline as needed.
+
+## [2025-10-23 18:00] - Major Architectural Refactor: Separation of Concerns
+### Added
+- **`frontend/src/lib/audio/playback-scheduler-service.ts`:**
+  - NEW service to handle ONLY audio playback scheduling
+  - Manages schedulers, play/pause/stop state, and interval timing
+  - Completely separated from audio routing concerns
+
+### Changed
+- **`frontend/src/lib/audio/auralization-service.ts`:**
+  - REMOVED all playback scheduling code (moved to PlaybackSchedulerService)
+  - NOW ONLY handles impulse response convolution and audio routing
+  - No longer manages schedulers or playback state
+  - Pure audio routing service with no playback control
+- **`frontend/src/components/scene/ThreeScene.tsx`:**
+  - Added `playbackSchedulerRef` for new PlaybackSchedulerService
+  - Playback control effect now uses PlaybackSchedulerService
+  - Auralization effect now ONLY runs when IR buffer exists
+  - Clear separation: PlaybackScheduler = playback, AuralizationService = routing
+- **`frontend/src/lib/audio/playback-scheduler-service.ts`:**
+  - Fixed interval fallback logic to properly handle 0 values
+  - Explicit null/undefined checks instead of falsy checks
+  - Prevents showing "0s" when event has valid 5s interval
+
+### Fixed
+- **Auralization logs appearing when no impulse response loaded:**
+  - PlaybackSchedulerService handles all playback (no auralization involved)
+  - AuralizationService ONLY runs when IR buffer exists
+  - No more "[Auralization] Stopping and unscheduling" when just playing sounds
+- **Multiple unnecessary "Stop All" calls:**
+  - Only stop sounds when there are actual old audio sources
+  - Prevents spam logs on app startup and sound generation
+
+**Impact:** Clean architectural separation - playback scheduling is completely independent of auralization. Auralization service is now pure audio routing (convolution only). No more confusing logs when playing sounds without impulse response. The codebase is more maintainable with clear single responsibilities.
+
+## [2025-10-23 17:00] - Audio Controls & Auralization Improvements
+### Fixed
+- **Unnecessary "Stop All" calls on app startup and sound generation:**
+  - `frontend/src/components/scene/ThreeScene.tsx`:
+    - Only call `stopAllSounds()` and `onStopAll()` when there are actual old audio sources to stop (line 445-448)
+    - Prevents spam logs when loading app or generating new sounds
+  - `frontend/src/hooks/useAudioControls.ts`:
+    - Only log "Stop All requested" when there are actually sounds playing or paused (line 169-172)
+    - Only log individual sound stops when state is actually changing (line 181-184)
+    - Use `display_name` instead of IDs in all logs
+- **Auralization effect running when no impulse response loaded:**
+  - `frontend/src/components/scene/ThreeScene.tsx`:
+    - Added proper guards to only run auralization effect when IR buffer exists (line 555-560)
+    - Effect only runs when enabling/disabling auralization with actual IR loaded
+    - Prevents unnecessary audio routing changes when just playing sounds without auralization
+- **Audio controls logs showing IDs instead of display names:**
+  - `frontend/src/hooks/useAudioControls.ts`:
+    - Use `sound.display_name` in Play All logs (line 120, 128)
+    - Use `sound.display_name` in Stop All logs (line 182)
+    - Improved log clarity for uploaded/library sounds vs variants
+
+**Impact:** Console logs are much cleaner - no spam on startup, sound generation, or normal playback. Auralization effect only runs when actually needed (IR loaded). All logs show meaningful file names for better debugging.
+
+## [2025-10-23 16:30] - Audio Playback & Logging Improvements
+### Fixed
+- **Drag controls log spam:**
+  - `frontend/src/lib/three/input-handler.ts`:
+    - Removed verbose "Setting up drag controls" and "successfully created" console logs
+    - Only log when drag events actually occur (dragstart, dragend)
+    - Prevents log spam on every play/pause interaction
+- **Variant switching bug - old variant continues playing:**
+  - `frontend/src/lib/audio/auralization-service.ts`:
+    - Modified `stopAllSounds()` to unschedule ALL schedulers (not just current audio sources)
+    - Clear all schedulers after stopping to prevent old variants from continuing
+    - Ensures complete cleanup when variants change
+  - `frontend/src/components/scene/ThreeScene.tsx`:
+    - Stop all schedulers before updating sound spheres when variants change
+    - Call `onStopAll()` after variant switch to sync UI state
+    - Prevents old variant audio from playing after switching to new variant
+- **Logs using internal IDs instead of display names:**
+  - `frontend/src/lib/audio-scheduler.ts`:
+    - Extract `display_name` from `audio.userData.soundEvent` for all logs
+    - Logs now show actual file names (e.g., "dramatic_conversation_dd3a59f7_copy0") instead of IDs (e.g., "generated_0_0")
+  - `frontend/src/lib/audio/auralization-service.ts`:
+    - Use `display_name` in all sound-related logs (starting, stopping, connecting)
+    - Improves debuggability with meaningful names
+  - `frontend/src/lib/three/sound-sphere-manager.ts`:
+    - Use `display_name` in audio source logs (removing, reconnecting)
+    - Consistent naming across all audio operations
+
+**Impact:** Console logs are much cleaner (no spam on play/pause), variant switching works correctly (old variants fully stop), and all logs show meaningful file names instead of cryptic IDs like "generated_0_0".
+
+## [2025-10-23] - Auralization Bug Fixes & Architecture Cleanup
+### Fixed
+- **Audio clipping and UI state issues when toggling auralization:**
+  - `frontend/src/lib/audio/auralization-service.ts`:
+    - Separated playback control from audio routing (removed play/pause logic from `setupAuralization()`)
+    - Added `stopAllSounds()` method for explicit sound stopping before routing changes
+    - Fixed unscheduling of sounds when stopping to allow immediate replay
+  - `frontend/src/components/scene/ThreeScene.tsx`:
+    - Split sound sphere update effect from drag controls effect to prevent unnecessary mesh recreation
+    - Added guards to prevent auralization effect from running on startup when disabled
+    - Used refs instead of props for `auralizationConfig` in sound sphere updates to prevent recreation
+    - Fixed drag controls not being called unnecessarily on app startup (only when objects exist)
+  - `frontend/src/lib/three/sound-sphere-manager.ts`:
+    - Fixed variant switching by explicitly stopping playing audio before removing sources
+    - Store `soundEvent` metadata on audio objects for interval fallback
+- **Drag controls errors after importing impulse response:**
+  - `frontend/src/lib/three/input-handler.ts`:
+    - Added deep validation of entire parent chain for valid `matrixWorld`
+    - Wrapped DragControls creation in try-catch for better error handling
+    - Always dispose and recreate drag controls (no reuse) to avoid stale references
+  - `frontend/src/components/scene/ThreeScene.tsx`:
+    - Removed `auralizationConfig` from sound sphere update effect dependencies
+    - Sound spheres only recreated when soundscape/variants/scale changes (not auralization)
+- **Interval settings using wrong default:**
+  - `frontend/src/lib/constants.ts`:
+    - Added `AUDIO_PLAYBACK` constants (`DEFAULT_INTERVAL_SECONDS: 5`, `INTERVAL_RANDOMNESS_PERCENT: 10`)
+  - `frontend/src/lib/audio/auralization-service.ts`:
+    - Fixed interval fallback chain: UI value → sound event's `interval_seconds` → default (5s)
+    - Removed hardcoded 30s and 10% values
+### Changed
+- **Architectural improvements:**
+  - Separated concerns: Auralization service handles ONLY audio routing, not playback control
+  - Centralized all audio constants in `frontend/src/lib/constants.ts`
+  - Improved effect dependencies to prevent unnecessary re-renders
+
+**Impact:** Auralization works smoothly without audio clipping, UI state mismatches, or drag control errors. Sound spheres remain draggable after importing impulse responses. Sounds play immediately after enabling auralization (no Play→Pause→Play required). Interval settings use correct 5-second default from sound events instead of 30 seconds.
+
+## [2025-10-22] - Audio Waveform Interactive Zoom & Pan
+### Added
+- **Interactive zoom and pan for waveform visualizations:**
+  - `frontend/src/hooks/useWaveformInteraction.ts`:
+    - **NEW custom hook** for managing waveform zoom/pan interactions
+    - Mouse wheel zoom (1x to 10x, centered on cursor position)
+    - Click-and-drag panning with visual feedback
+    - Double-click to reset viewport
+    - Programmatic reset function
+    - Automatic pan/zoom constraints to prevent empty space
+    - Event listener management with proper cleanup
+  - `frontend/src/components/audio/AudioWaveformDisplay.tsx`:
+    - **Integrated zoom/pan interactions** via `useWaveformInteraction` hook
+    - **Reset button** in top-right corner (only visible when zoomed)
+    - **Dynamic cursor feedback** (default/grab/grabbing)
+    - Passes viewport state to rendering function
+  - `frontend/src/lib/audio/waveform-utils.ts`:
+    - **Added viewport parameter** to `renderWaveform()` function
+    - **Viewport transformation algorithm** for zoom and pan
+    - Only renders visible waveform points (performance optimization)
+    - Supports horizontal pan (timeline) and vertical pan (amplitude)
+    - Mathematical transform: maps data points to viewport coordinates
+    - **Grid lines follow zoom/pan transform** (both vertical time lines and horizontal amplitude lines)
+    - **Center axis follows vertical transform** (moves with pan, only draws when visible)
+    - **Amplitude labels follow vertical transform** (positioned based on zoom/pan state)
+    - **Canvas clipping for stereo tracks** prevents waveforms from overlapping between L/R channels
+  - `ARCHITECTURE.md`:
+    - Added `useWaveformInteraction.ts` to hooks section
+
+### Changed
+- **Waveform rendering now supports viewport transformations:**
+  - Zoom range: 1x (normal) to 10x (maximum magnification)
+  - Pan constrained based on zoom level
+  - Zoom sensitivity: 0.001 for smooth interaction
+  - Applied to all three upload locations (Analysis, Impulse Response, Sound Generation)
+
+### Fixed
+- **Grid and axis now follow zoom/pan transformations:**
+  - Vertical grid lines (time) adjust based on horizontal zoom/pan
+  - Horizontal grid lines (amplitude) adjust based on vertical zoom/pan
+  - Center axis moves with vertical pan and is only drawn when visible within track bounds
+- **Stereo waveform collision prevented:**
+  - Added canvas clipping region for each track (L/R channels)
+  - Each track stays within its own vertical bounds when zoomed
+  - Prevents waveforms from bleeding into adjacent tracks
+- **Amplitude labels now follow vertical transform:**
+  - Labels (+1, 0, -1) move with vertical pan
+  - Only visible labels within track bounds are drawn
+  - Works correctly for both mono and stereo displays
+
+## [2025-10-22] - Audio Waveform Visualization (Redesigned)
+### Added
+- **Professional waveform display for ALL audio uploads:**
+  - `frontend/src/lib/audio/waveform-utils.ts`:
+    - **Completely redesigned waveform rendering with new visual style**
+    - Black background with primary color (#F500B8) waveforms
+    - White dotted grid background for reference
+    - Mirrored positive/negative amplitudes around center axis
+    - Dual-track display for stereo (split height vertically)
+    - **X and Y axis labels positioned INSIDE the graph area** (prevents cropping)
+    - **Fixed bottom cropping**: Increased bottom padding to 20px for time labels visibility
+    - **Time labels positioned below axis line** (+10px offset from bottom)
+    - Channel labels (L/R) for stereo tracks
+    - Supports both mono and stereo with automatic layout adjustment
+  - `frontend/src/components/audio/AudioWaveformDisplay.tsx`:
+    - React component for waveform visualization
+    - Container-aware sizing to prevent overflow
+    - **Removed "Audio Waveform" title text**
+    - **Shows minimal info below: filename, sample rate, and total duration**
+    - No padding around canvas for cleaner appearance
+    - Grey container with black waveform canvas
+  - `frontend/src/lib/constants.ts`:
+    - **Added `AUDIO_VISUALIZATION` constants** (enable flag, waveform points, dimensions)
+    - Global toggle: `ENABLE_WAVEFORM_DISPLAY`
+  - `frontend/src/components/layout/sidebar/AuralizationSection.tsx`:
+    - **Added waveform display for Impulse Response files**
+    - Replaces old text-only IR info display
+  - `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx`:
+    - **Added waveform display for uploaded audio in Sound Generation tab**
+    - Replaces old text-only display (removed lines 340-365)
+
+### Changed
+- **Impulse Response filename display:**
+  - `frontend/src/types/auralization.ts`:
+    - Added `impulseResponseFilename: string | null` to `AuralizationConfig`
+  - `frontend/src/hooks/useAuralization.ts`:
+    - Now stores filename when IR is loaded
+    - Passes filename to waveform display (no longer shows "Impulse Response" hardcoded)
+  - `frontend/src/components/layout/sidebar/AuralizationSection.tsx`:
+    - Uses `config.impulseResponseFilename` for display
+    - All three upload methods now use identical display logic via `AudioWaveformDisplay`
+- **Updated audio loading to support waveform visualization:**
+  - `frontend/src/lib/audio/audio-info.ts`:
+    - Added `loadAudioFileWithBuffer()`: Returns both SEDAudioInfo and AudioBuffer
+    - Existing `loadAudioFileInfo()` remains for backward compatibility
+  - `frontend/src/hooks/useSED.ts`:
+    - Now stores `sedAudioBuffer` (AudioBuffer) alongside `sedAudioInfo`
+    - Updated `loadAudioInfo()` to use `loadAudioFileWithBuffer()`
+    - Updated `clearSEDResults()` to clear audio buffer
+    - Removed verbose debug logging
+  - `frontend/src/types/sed.ts`:
+    - Added `sedAudioBuffer: AudioBuffer | null` to `UseSEDReturn` interface
+  - `frontend/src/types/components.ts`:
+    - Added `sedAudioBuffer?: AudioBuffer | null` to `ModelLoadSectionProps` and `SidebarProps`
+  - `frontend/src/app/page.tsx`:
+    - Pass `sedAudioBuffer` prop from `useSED()` hook to Sidebar
+  - `frontend/src/components/layout/sidebar/ModelLoadSection.tsx`:
+    - **Replaced text-only audio info display with `AudioWaveformDisplay` component**
+    - Shows waveform when `ENABLE_WAVEFORM_DISPLAY` is true
+    - Falls back to text-only display when waveform is disabled
+    - Removed debug logging
+  - `frontend/src/components/layout/Sidebar.tsx`:
+    - **Fixed: Added missing `sedAudioBuffer` prop** to ModelLoadSection (line 85)
+
+### Visual Design Changes
+- **No blue colors**: Replaced all blue styling with grey/black
+- **Black waveform background**: High contrast display on black canvas
+- **Primary color waveforms**: Magenta (#F500B8) for visibility
+- **Dotted grid**: White dotted grid for time/amplitude reference
+- **Mirrored display**: Shows positive and negative amplitudes symmetrically
+- **Stereo support**: Dual tracks with L/R labels when stereo audio is loaded
+- **Labels inside graph**: Axis labels (time, amplitude) positioned inside plot area - prevents cropping
+- **No title text**: Removed "Audio Waveform" header for cleaner display
+- **Duration instead of Channels**: Info shows filename, sample rate, and **total duration** (not channel count)
+
+**Impact:** All audio uploads (Analysis tab, Impulse Response in Acoustics tab, Sound Generation tab) now display a professional waveform visualization. Fixed cropping issues - the entire graph including time axis is now fully visible. Labels are positioned inside the graph area for maximum space usage. The redesigned appearance with black background, dotted grid, and mirrored amplitudes provides better visual feedback. Stereo files show dual tracks.
+
+## [2025-10-21 20:00] - Physically Accurate Auralization Implementation
+### Changed
+- **Removed artificial gain reduction for physical accuracy:**
+  - `frontend/src/lib/audio/auralization-service.ts`:
+    - Removed `-12dB output gain node` that artificially reduced all sound levels
+    - Replaced compressor with **brick-wall limiter** (20:1 ratio, -0.5dB threshold)
+    - Limiter only engages at digital clipping threshold, maintaining physical SPL accuracy
+    - Updated audio chain: `convolver → limiter → destination` (previously had unnecessary gain stage)
+    - Enhanced documentation explaining physical accuracy approach
+  - `frontend/src/lib/audio/impulse-response.ts`:
+    - Imported constants from `@/lib/constants`
+    - Updated to use `IMPULSE_RESPONSE` constants for all processing parameters
+    - Improved normalization logging to show dB values
+  - `frontend/src/lib/constants.ts`:
+    - **Added `AURALIZATION_LIMITER` constants** (threshold, knee, ratio, attack, release)
+    - **Added `IMPULSE_RESPONSE` constants** (normalization scale, min amplitude, fade-in samples, max channels)
+    - All audio processing values now centralized and documented
+
+### Fixed
+- `frontend/src/lib/audio/auralization-service.ts`:
+  - Fixed `dispose()` method to clean up limiter node instead of removed gain/compressor nodes
+
+**Impact:** Auralization is now physically accurate - sounds maintain their calibrated SPL levels, room acoustics apply naturally, and distance attenuation works correctly. The brick-wall limiter prevents digital clipping only when necessary (typically when many sounds peak simultaneously), preserving the physical realism of the acoustic simulation 99% of the time. Perfect for acoustic research and architectural auralization where accuracy is critical.
+
+## [2025-10-21 19:30] - Auralization Clipping Prevention & Audio Chain Fix
+### Fixed
+- **Audio clipping and extreme amplitude issues:**
+  - `frontend/src/lib/audio/impulse-response.ts`:
+    - Fixed normalization to always scale IR to 0.5 (-6dB) instead of 1.0, providing headroom for convolution
+    - Changed normalization threshold from 0.1 to 0.001 to ensure proper scaling
+    - Added logging to show normalization scaling factor
+  - `frontend/src/lib/audio/auralization-service.ts`:
+    - Added output gain node (-12dB) to reduce level when summing multiple convolved sources
+    - Added dynamics compressor (threshold: -6dB, ratio: 4:1, attack: 3ms, release: 250ms) to prevent clipping
+    - Created proper audio chain: `convolver → outputGain → compressor → destination`
+    - Fixed Web Audio routing to avoid multiple connections from convolver to destination
+    - All audio sources now connect only to convolver, which connects once to the processing chain
+  - `frontend/src/lib/three/sound-sphere-manager.ts`:
+    - Removed redundant convolver-to-destination connections when attaching audio
+    - Fixed fallback error handling when audio connection fails
+    - Audio chain now managed centrally by AuralizationService
+
+### Changed
+- `frontend/src/lib/audio/auralization-service.ts`:
+  - Added private `outputGainNode` and `compressorNode` properties
+  - Enhanced logging to show gain and compressor settings
+  - Updated `dispose()` to clean up all audio nodes properly
+
+**Impact:** Auralization now works properly without extreme volume spikes or clipping. Multiple convolved sounds sum safely with proper headroom and dynamic range compression. Audio output stays within safe listening levels even with multiple simultaneous sounds.
+
+## [2025-10-21 19:00] - Advanced Options UI Reorganization
+### Changed
+- `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx`:
+  - Grouped Text-to-Audio parameters (Global Duration, Diffusion Steps, Global Negative Prompt) into a minimalistic bordered section with header
+  - Separated "Remove Background Noise" as standalone option outside the parameter group
+  - Improved visual hierarchy with subtle borders and spacing
+  - Dark mode support maintained throughout
+
+**Impact:** Clearer UI organization distinguishes generation parameters from post-processing options, improving user understanding of which settings affect audio generation vs output processing.
+
+## [2025-10-21 18:30] - React Key Uniqueness & Sound Generation Deduplication
+### Fixed
+- **React duplicate key warning fix:**
+  - `frontend/src/lib/three/sound-sphere-manager.ts` - Changed `promptKey` from using prompt text to `prompt_${promptIdx}` to ensure uniqueness across sounds with identical prompts
+  - `frontend/src/components/scene/ThreeScene.tsx` - Updated overlay key generation to use `prompt_${promptIdx}` pattern
+- **Sound generation parameter-based deduplication:**
+  - `backend/services/audio_service.py`:
+    - Added MD5 hash of all generation parameters (prompt, duration, guidance_scale, steps, apply_denoising)
+    - Updated filename pattern to include parameter hash: `{short_prompt}_{param_hash}_copy{copy_idx}.wav`
+    - Skip message now indicates "Sound with identical parameters already exists"
+
+**Impact:** Eliminates React console warnings for sounds with duplicate names (e.g., "talking"). Sound generation now only skips files with truly identical parameters (same prompt + duration + guidance + steps + denoising), allowing different variations of the same prompt to generate separately.
+
+## [2025-10-21 18:00] - Audio Reprocessing Bug Fixes
+### Fixed
+- **Backend numpy/torch type mismatch:**
+  - `backend/services/audio_service.py` - Fixed `reprocess_audio_file()` method to convert numpy arrays from `soundfile.read()` to torch tensors before calling `denoise_audio()`
+  - Added proper shape handling: mono audio uses `unsqueeze(0)` to add channel dimension, stereo audio transposes from (samples, channels) to (channels, samples)
+  - Converts back to numpy after denoising with inverse transformations
+- **Frontend audio cache-busting:**
+  - `frontend/src/hooks/useSoundGeneration.ts` - Added timestamp parameter to audio URLs after reprocessing to force browser reload: `sound.url?t=${Date.now()}`
+- **Frontend Three.js matrixWorld error:**
+  - `frontend/src/lib/three/input-handler.ts` - Filter out objects without parents before creating DragControls: `draggableObjects.filter(obj => obj.parent !== null)`
+  - Prevents raycasting errors when objects are being removed/recreated during sound updates
+- **Frontend audio loading safety:**
+  - `frontend/src/lib/three/sound-sphere-manager.ts` - Added null check in audio load callback to verify sphere still exists before attaching audio buffer
+
+**Impact:** Audio reprocessing with denoising toggle now works correctly without backend type errors or frontend rendering crashes. Reprocessed audio files reload properly in the browser.
+
+## [2025-10-21 17:30] - Background Noise Removal Confirmation Dialog
+### Added
+- `backend/routers/reprocess.py` - New router for reprocessing existing sounds with/without denoising
+- Confirmation dialog in Sound Generation section when toggling "Remove Background Noise" with existing sounds
+### Changed
+- `backend/services/audio_service.py` - Added `reprocess_audio_file()` method to apply/remove denoising from existing audio files
+- `backend/main.py` - Registered reprocess router
+- `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx`:
+  - Added confirmation dialog when user changes "Remove Background Noise" checkbox with existing sounds
+  - Dialog asks user if they want to modify existing sounds
+  - Shows different messages for enabling vs disabling denoising
+- `frontend/src/hooks/useSoundGeneration.ts` - Added `handleReprocessSounds()` function to call backend reprocess API
+- `frontend/src/types/components.ts` - Added `onReprocessSounds` prop to SidebarProps and SoundGenerationSectionProps
+- `frontend/src/components/layout/Sidebar.tsx` - Pass through `onReprocessSounds` prop
+- `frontend/src/app/page.tsx` - Wire up `handleReprocessSounds` from hook to Sidebar
+
+**Impact:** Users can now modify the denoising setting and apply changes to all existing generated sounds. Prevents accidental changes with confirmation dialog.
+
+## [2025-10-21 17:00] - Keyboard Shortcuts and Horizontal Mouse Wheel Scrolling
+### Added
+- `frontend/src/hooks/useHorizontalScroll.ts` - Custom hook that converts vertical mouse wheel scrolling to horizontal scrolling in overflow containers
+### Changed
+- `frontend/src/components/layout/sidebar/TextGenerationSection.tsx` - Added Ctrl+Enter shortcut to trigger "Generate Sound Ideas" button
+- `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx`:
+  - Added Ctrl+Enter shortcuts to sound prompt, library search, and global negative prompt textareas
+  - Integrated `useHorizontalScroll` hook for sound config tabs to enable mouse wheel horizontal scrolling
+- `frontend/src/components/layout/Sidebar.tsx` - Integrated `useHorizontalScroll` hook for main tabs (Analysis, Sound Generation, Acoustics) to enable mouse wheel horizontal scrolling
+- `frontend/src/app/page.tsx` - Removed incorrect middle mouse button implementation
+
+**Impact:** Improved UX with keyboard shortcuts for faster workflow and intuitive mouse wheel horizontal scrolling through both main tabs and sound config tabs.
+
+## [2025-10-21 16:45] - Allow Multiple "Load Sounds" Operations
+### Fixed
+- `frontend/src/app/page.tsx` - Removed clearing of `pendingSoundConfigs` in `handleLoadSoundsToGeneration` to allow loading LLM-generated sounds multiple times, enabling users to overwrite existing sound configs at any time
+
+## [2025-10-21 16:30] - LLM Duration Estimation for Sound Generation
+### Added
+- `backend/config/constants.py` - Added `LLM_DEFAULT_DURATION`, `DURATION_MIN`, `DURATION_MAX`, and `DURATION_RANGE` constants
+### Changed
+- `backend/services/llm_service.py`:
+  - Updated LLM prompt to request sound duration estimation at 0.1 second precision
+  - Modified `_parse_prompt_and_name()` to extract and parse DURATION field from LLM responses
+  - Added duration guidance in prompt with examples for different sound types (0.5-30.0 seconds)
+  - Updated all return dictionaries to include `duration_seconds` field
+  - Fallback cases now include `LLM_DEFAULT_DURATION` (5.0 seconds)
+- `backend/routers/generation.py` - Added `duration_seconds` to entity prompt responses
+- `backend/services/audio_service.py` - Updated to prioritize `duration_seconds` from LLM output over manual `duration` config
+- `frontend/src/hooks/useTextGeneration.ts` - Fixed to use `item.duration_seconds` from backend instead of hardcoded `duration: 5`
+
+**Impact:** LLM now intelligently estimates appropriate sound durations based on sound type (impacts: 0.1-1.0s, short events: 1.0-5.0s, etc.), improving soundscape realism. Duration values now correctly display in sidebar after "Load Sounds".
+
+## [2025-10-21 10:00] - Enhanced Documentation Requirements
+- Updated `.claude/output-styles/modular-coding.md`  
+  - Added strict `architecture.md` update checklist (file creation, structure, diagrams).  
+- Added `ARCHITECTURE_UPDATE_GUIDE.md` (new file)  
+  - How to update architecture docs, formatting, and examples.  
+- Updated `architecture.md`  
+  - Expanded `lib/three/` structure and added comments for new service files.
+
+## [2025-10-21 11:00] - DraggableMeshManager Utility
+- **New file:** `frontend/src/lib/three/draggable-mesh-manager.ts`  
+  - Provides `updateDraggableMeshes<T>()`, `disposeMeshes()`, and helper methods.  
+  - Map-based mesh tracking (O(1) lookups).  
+- **Refactored:** `receiver-manager.ts` to use new utility instead of manual mesh creation.  
+- Simplified update logic; improved performance and maintainability.
+
+## [2025-10-21 13:00] - Receiver Drag Persistence Fix
+- Fixed issue where receivers stopped being draggable after first drag.  
+- **Changes:**
+  - `receiver-manager.ts`: reused existing meshes via ID mapping.  
+  - `input-handler.ts`: skipped unnecessary DragControls recreation.  
+- Prevented loss of references and improved interactivity stability.
+
+## [2025-10-21 14:00] - Drag Controls & Overlay Fix
+- **scene-coordinator.ts:** OrbitControls now respect `enabled` state (no forced reactivation).  
+- **ThreeScene.tsx:** overlay cleared when `soundscapeData` is empty.  
+- Prevented unwanted camera rotation during drag and removed stale overlays.
+
+## [2025-10-21 14:30] - 3D Controls Overlay Reposition
+- Moved 3D controls info from sidebar to scene overlay.  
+- **ControlsInfo.tsx:** compact minimal overlay at bottom-left.  
+- **ThreeScene.tsx:** integrated overlay; **Sidebar.tsx:** removed old component.
+
+## [2025-10-21 15:00] - Receiver Visual Update & Name Trim
+- Receivers now render as **blue cubes** instead of spheres.  
+- Added `trimDisplayName()` in `utils.ts` (limit 5 words, add “…”).  
+- Applied name trimming to overlays and sidebar elements.
+
+## [2025-10-21 15:30] - Receiver First-Person Arrow Control
+- Replaced mouse drag rotation with arrow-key rotation (yaw/pitch).  
+- Implemented in `ThreeScene.tsx`; updated info text in `ControlsInfo.tsx`.  
+- Provides smoother and predictable first-person navigation.
+
+## [2025-10-21 16:00] - Receiver Dragging & Camera Lock Fix
+- Added `isDraggingRef` to prevent `DragControls` reset mid-drag.  
+- Removed camera distance constraints for smoother first-person control.  
+- Simplified animation loop: `controls.update()` before lock enforcement.
+
+## [2025-10-20 17:00] - Acoustic Receivers & Acoustics Tab
+- **New files:**  
+  - `types/receiver.ts`, `hooks/useReceivers.ts`,  
+    `ReceiversSection.tsx`, `AcousticsTab.tsx`.  
+- Added click-to-place receivers (blue cubes, 1.6m height).  
+- Added double-click to lock camera at receiver position; ESC unlocks.  
+- Unified DragControls for receivers and sound spheres.  
+- Sidebar: new **Acoustics** tab with Receivers + Auralization.  
+- Removed collapsible sections for cleaner layout.  
+- `globals.css`: hidden scrollbars for uniform UI.
+
+## [2025-10-20 18:30] - Receiver Dragging & Rotation Fix
+- Fixed DragControls recreation during drag (caused stuck meshes).  
+- Removed OrbitControls distance constraints (rotation no longer restricted).  
+- Improved first-person camera fluidity.
+
+## [2025-10-20 16:00] - BBC Sound Library Search
+- **Backend:**  
+  - `bbc_service.py`: lightweight search/download API for 30k+ BBC sounds.  
+  - `library_search.py`: `/api/library/search`, `/api/library/download`.  
+- **Frontend:**  
+  - Integrated into `SoundGenerationSection.tsx`.  
+  - Search bar + result list + sound selection and download.  
+- Unified with generation pipeline; supports upload, TTA, and library modes equally.
+
+## [2025-10-20 15:30] - Uploaded Sound Playback Fix
+- Uploaded sounds had zero volume and no interval.  
+- `useSoundGeneration.ts`: changed defaults  
+  - `volume_db ?? 70`, `interval_seconds ?? 30`.  
+- Ensured uniform playback across generated and uploaded sounds.
+
+## [2025-10-20 14:30] - Sound Generation Mode Fixes
+- Fixed backend index mismatch in mixed-mode workflows.  
+- Preserved `originalIndex` in `useSoundGeneration.ts`.  
+- Cleaned up uploads when switching modes.  
+- Unified Auralization upload UI using `FileUploadArea`.
+
+## [2025-10-20 10:00] - Sound Generation Mode System
+- Added dropdown mode selector (`text-to-audio`, `upload`, `library`).  
+- New reusable `FileUploadArea.tsx`.  
+- Refactored `SoundGenerationSection.tsx`, `Sidebar.tsx`, and `page.tsx`.  
+- Modular and backward-compatible generation workflow.
+
+## [2025-10-17 17:00] - Per-Sound Audio Upload
+- **New:** `frontend/src/lib/audio/audio-upload.ts`  
+  - `loadAudioFile()`, `revokeAudioUrl()`, `isValidAudioFile()`, `formatFileSize()`.  
+- Integrated upload controls in Sound Generation tab.  
+- Blob URLs handled correctly in `ThreeScene.tsx`.  
+- UI: upload + clear buttons, file info (duration, channels, size).  
+
+## [2025-10-17 18:15] - Editable Sound Display Titles
+- Double-click tab title to edit; Enter saves, Esc cancels.  
+- Implemented in `SoundGenerationSection.tsx`.  
+- Fixed text overflow in `Sidebar.tsx` using `truncate` + fixed width.  
+- Added tooltip and hover pencil icon for discoverability.
+
+## [2025-10-17 14:00] - Sound Event Detection (SED)
+- **Backend:**  
+  - `sed_service.py`: YAMNet-based classifier (521 AudioSet classes).  
+  - `sed_processing.py`: amplitude + duration analysis utilities.  
+  - `sed_analysis.py`: `/api/analyze-sound-events` router.  
+- **Frontend:**  
+  - `useSED.ts`, `types/sed.ts`, `audio-info.ts`, `ModelLoadSection.tsx`.  
+- Added conditional amplitude/duration analysis, improved error UI.  
+- Changed duration metrics from average → maximum values.  
+- Rounded numeric results; simplified mappings to generation configs.

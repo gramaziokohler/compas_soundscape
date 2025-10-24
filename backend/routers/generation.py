@@ -2,6 +2,11 @@ from fastapi import APIRouter, HTTPException
 from services.llm_service import LLMService
 from models.schemas import PromptRequest, UnifiedPromptGenerationRequest
 from pydantic import BaseModel
+from config.constants import (
+    DEFAULT_SPL_DB,
+    LLM_SUGGESTED_INTERVAL_SECONDS,
+    DEFAULT_DURATION_SECONDS
+)
 
 router = APIRouter()
 
@@ -83,8 +88,9 @@ async def generate_prompts(request: UnifiedPromptGenerationRequest):
                         "entity": entities_to_use[i],
                         "prompt": sound_data["prompt"],
                         "display_name": sound_data["display_name"],
-                        "spl_db": sound_data.get("spl_db", 70.0),
-                        "interval_seconds": sound_data.get("interval_seconds", 30.0)
+                        "spl_db": sound_data.get("spl_db", DEFAULT_SPL_DB),
+                        "interval_seconds": sound_data.get("interval_seconds", LLM_SUGGESTED_INTERVAL_SECONDS),
+                        "duration_seconds": sound_data.get("duration_seconds", DEFAULT_DURATION_SECONDS)
                     })
 
             return {
