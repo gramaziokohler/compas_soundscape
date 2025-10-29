@@ -41,6 +41,7 @@ export interface TimelineSound {
   intervalMs: number;
   soundDurationMs: number;
   scheduledIterations: number[]; // Array of timestamps (ms) when sound will play
+  audioUrl?: string; // Optional audio URL for WaveSurfer waveform visualization
 }
 
 export interface TimelinePlaybackState {

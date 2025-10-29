@@ -14,6 +14,7 @@ import type {
   LoadTab,
   SoundState,
   SEDAudioInfo,
+  SEDAnalysisOptions,
   DetectedSound,
   LibrarySearchResult,
   ReceiverData,
@@ -83,18 +84,20 @@ export interface SidebarProps {
   onClearUploadedAudio: (index: number) => void;
   onLibrarySearch: (index: number) => Promise<void>;
   onLibrarySoundSelect: (index: number, sound: LibrarySearchResult) => void;
+  // Entity linking props
+  onStartLinkingEntity?: (configIndex: number) => void;
+  onCancelLinkingEntity?: () => void;
+  isLinkingEntity?: boolean;
+  linkingConfigIndex?: number | null;
   // SED props
   isSEDAnalyzing?: boolean;
   sedAudioInfo?: SEDAudioInfo | null;
   sedAudioBuffer?: AudioBuffer | null;
   sedDetectedSounds?: DetectedSound[];
   sedError?: string | null;
-  sedAnalysisOptions?: {
-    analyzeAmplitudes: boolean;
-    analyzeDurations: boolean;
-  };
+  sedAnalysisOptions?: SEDAnalysisOptions;
   onAnalyzeSoundEvents?: () => void;
-  onToggleSEDOption?: (option: "analyzeAmplitudes" | "analyzeDurations", value: boolean) => void;
+  onToggleSEDOption?: (option: keyof SEDAnalysisOptions, value: boolean) => void;
   onLoadSoundsFromSED?: () => void;
   // Auralization props
   auralizationConfig: AuralizationConfig;
@@ -109,7 +112,7 @@ export interface SidebarProps {
   isPlacingReceiver: boolean;
   onStartPlacingReceiver: () => void;
   onDeleteReceiver: (id: string) => void;
-  onUpdateReceiverName: (id: string) => void;
+  onUpdateReceiverName: (id: string, name: string) => void;
 }
 
 /**
@@ -131,10 +134,7 @@ export interface ModelLoadSectionProps {
   sedAudioBuffer?: AudioBuffer | null;
   sedDetectedSounds?: DetectedSound[];
   sedError?: string | null;
-  sedAnalysisOptions?: {
-    analyzeAmplitudes: boolean;
-    analyzeDurations: boolean;
-  };
+  sedAnalysisOptions?: SEDAnalysisOptions;
   onFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onDragOver: (e: React.DragEvent<HTMLDivElement>) => void;
   onDragLeave: (e: React.DragEvent<HTMLDivElement>) => void;
@@ -146,7 +146,7 @@ export interface ModelLoadSectionProps {
   setUseModelAsContext: (value: boolean) => void;
   // SED-specific handlers
   onAnalyzeSoundEvents?: () => void;
-  onToggleSEDOption?: (option: "analyzeAmplitudes" | "analyzeDurations", value: boolean) => void;
+  onToggleSEDOption?: (option: keyof SEDAnalysisOptions, value: boolean) => void;
   onLoadSoundsFromSED?: () => void;
 }
 
@@ -178,6 +178,12 @@ export interface SoundGenerationSectionProps {
   onClearUploadedAudio: (index: number) => void;
   onLibrarySearch: (index: number) => Promise<void>;
   onLibrarySoundSelect: (index: number, sound: LibrarySearchResult) => void;
+  // Entity linking props
+  modelEntities: any[];
+  onStartLinkingEntity?: (configIndex: number) => void;
+  onCancelLinkingEntity?: () => void;
+  isLinkingEntity?: boolean;
+  linkingConfigIndex?: number | null;
 }
 
 /**

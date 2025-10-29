@@ -318,6 +318,7 @@ export function useAuralization() {
       enabled: false,
       impulseResponseUrl: null,
       impulseResponseBuffer: null,
+      impulseResponseFilename: null,
       normalize: false
     });
     setError(null);

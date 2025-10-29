@@ -18,7 +18,7 @@ export function ModelLoadSection({
   sedAudioBuffer = null,
   sedDetectedSounds = [],
   sedError = null,
-  sedAnalysisOptions = { analyzeAmplitudes: true, analyzeDurations: true },
+  sedAnalysisOptions = { analyze_amplitudes: true, analyze_durations: true, analyze_frequencies: false },
   onFileChange,
   onDragOver,
   onDragLeave,
@@ -175,8 +175,8 @@ export function ModelLoadSection({
                       <label className="flex items-center gap-2 cursor-pointer">
                         <input
                           type="checkbox"
-                          checked={sedAnalysisOptions.analyzeAmplitudes}
-                          onChange={(e) => onToggleSEDOption?.('analyzeAmplitudes', e.target.checked)}
+                          checked={sedAnalysisOptions.analyze_amplitudes}
+                          onChange={(e) => onToggleSEDOption?.('analyze_amplitudes', e.target.checked)}
                           className="w-4 h-4 rounded focus:ring-2 accent-primary"
                         />
                         <span className="text-xs text-gray-700 dark:text-gray-300">
@@ -186,8 +186,8 @@ export function ModelLoadSection({
                       <label className="flex items-center gap-2 cursor-pointer">
                         <input
                           type="checkbox"
-                          checked={sedAnalysisOptions.analyzeDurations}
-                          onChange={(e) => onToggleSEDOption?.('analyzeDurations', e.target.checked)}
+                          checked={sedAnalysisOptions.analyze_durations}
+                          onChange={(e) => onToggleSEDOption?.('analyze_durations', e.target.checked)}
                           className="w-4 h-4 rounded focus:ring-2 accent-primary"
                         />
                         <span className="text-xs text-gray-700 dark:text-gray-300">

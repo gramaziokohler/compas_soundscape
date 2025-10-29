@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useRef, useState, useMemo, useEffect, useCallback } from "react";
 import * as THREE from "three";
@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { SoundUIOverlay } from "@/components/overlays/SoundUIOverlay";
 import { EntityUIOverlay } from "@/components/overlays/EntityUIOverlay";
 import { PlaybackControls } from "@/components/controls/PlaybackControls";
-import { AudioTimeline } from "@/components/audio/AudioTimeline";
+import { WaveSurferTimeline } from "@/components/audio/WaveSurferTimeline";
 import { ControlsInfo } from "@/components/layout/sidebar/ControlsInfo";
 import { triangulate, trimDisplayName } from "@/lib/utils";
 import { frameCameraToObject } from "@/lib/three/sceneSetup";
@@ -17,8 +17,20 @@ import { ReceiverManager } from "@/lib/three/receiver-manager";
 import { AuralizationService } from "@/lib/audio/auralization-service";
 import { PlaybackSchedulerService } from "@/lib/audio/playback-scheduler-service";
 import { InputHandler } from "@/lib/three/input-handler";
+import { projectToScreen, isInViewport as isInViewportUtil } from "@/lib/three/projection-utils";
+import { getSoundState } from "@/lib/sound/state-utils";
 import { extractTimelineSounds, calculateTimelineDuration } from "@/lib/audio/timeline-utils";
 import { useTimelinePlayback } from "@/hooks/useTimelinePlayback";
+import { 
+  TIMELINE_DEFAULTS, 
+  UI_TIMING, 
+  AUDIO_VOLUME, 
+  SCREEN_PROJECTION,
+  AUDIO_CONTEXT_STATE,
+  UI_OVERLAY,
+  ENTITY_CONFIG,
+  TIMELINE_LAYOUT
+} from "@/lib/constants";
 import type { UIOverlay, EntityData, EntityOverlay } from "@/types";
 import type { ThreeSceneProps } from "@/types/three-scene";
 import type { TimelineSound } from "@/types/audio";
@@ -53,10 +65,14 @@ export function ThreeScene({
   selectedVariants,
   soundVolumes,
   soundIntervals,
+  mutedSounds,
+  soloedSound,
   onToggleSound,
   onVariantChange,
   onVolumeChange,
   onIntervalChange,
+  onMute,
+  onSolo,
   onDeleteSound,
   onPlayAll,
   onPauseAll,
@@ -71,6 +87,8 @@ export function ThreeScene({
   onPlaceReceiver,
   isPlacingReceiver = false,
   onCancelPlacingReceiver,
+  isLinkingEntity = false,
+  onEntityLinked,
   className
 }: ThreeSceneProps) {
   // ============================================================================
@@ -91,6 +109,7 @@ export function ThreeScene({
   const geometryDataRef = useRef(geometryData);
   const modelEntitiesRef = useRef(modelEntities);
   const auralizationConfigRef = useRef(auralizationConfig);
+  const prevSoundscapeDataLengthRef = useRef<number>(0);
 
   // ============================================================================
   // State - UI Overlays and Visibility
@@ -99,13 +118,19 @@ export function ThreeScene({
   const [entityOverlay, setEntityOverlay] = useState<EntityOverlay | null>(null);
   const [selectedEntity, setSelectedEntity] = useState<EntityData | null>(null);
   const [showSoundBoxes, setShowSoundBoxes] = useState<boolean>(true);
+  
+  // Track user-hidden overlays separately (persists across animation updates)
+  const hiddenOverlaysRef = useRef<Set<string>>(new Set());
 
   // ============================================================================
   // State - Audio Timeline
   // ============================================================================
   const [timelineSounds, setTimelineSounds] = useState<TimelineSound[]>([]);
-  const [timelineDuration, setTimelineDuration] = useState<number>(60000);
+  const [timelineDuration, setTimelineDuration] = useState<number>(TIMELINE_DEFAULTS.DURATION_MS);
   const [showTimeline, setShowTimeline] = useState<boolean>(true);
+
+  // Audio mute state
+  const [isAudioMuted, setIsAudioMuted] = useState<boolean>(false);
 
   // Timeline playback hook (synced with PlaybackControls)
   const { playbackState, play: playTimeline, pause: pauseTimeline, stop: stopTimeline, seekTo } = useTimelinePlayback({
@@ -156,9 +181,85 @@ export function ThreeScene({
     sceneCoordinator.resetCamera(geometryData !== null);
   }, [geometryData]);
 
+  // Toggle audio mute
+  const handleToggleMute = useCallback(() => {
+    const sceneCoordinator = sceneCoordinatorRef.current;
+    if (!sceneCoordinator) return;
+
+    const newMutedState = !isAudioMuted;
+    setIsAudioMuted(newMutedState);
+
+    // Mute/unmute by setting master gain
+    if (sceneCoordinator.listener.context.state === AUDIO_CONTEXT_STATE.RUNNING) {
+      sceneCoordinator.listener.setMasterVolume(newMutedState ? AUDIO_VOLUME.MUTED : AUDIO_VOLUME.FULL);
+      console.log(`[Audio] ${newMutedState ? 'Muted' : 'Unmuted'} all audio`);
+    }
+  }, [isAudioMuted]);
+
   // Toggle sound boxes visibility
   const handleToggleSoundBoxes = useCallback(() => {
-    setShowSoundBoxes(prev => !prev);
+    setShowSoundBoxes(prev => {
+      const newValue = !prev;
+      // If showing controls, clear all individual hidden states
+      if (newValue) {
+        hiddenOverlaysRef.current.clear();
+        setUiOverlays(prevOverlays => [...prevOverlays]); // Force re-render
+      }
+      return newValue;
+    });
+  }, []);
+
+  // Toggle individual overlay hide state
+  const handleOverlayHideToggle = useCallback((promptKey: string) => {
+    const hiddenOverlays = hiddenOverlaysRef.current;
+    if (hiddenOverlays.has(promptKey)) {
+      hiddenOverlays.delete(promptKey);
+    } else {
+      hiddenOverlays.add(promptKey);
+    }
+    // Force re-render by updating state (triggers overlay update in animation loop)
+    setUiOverlays(prev => [...prev]);
+  }, []);
+
+  // Handle overlay dragging - updates both overlay position and sphere position
+  const handleOverlayDrag = useCallback((promptKey: string, deltaX: number, deltaY: number) => {
+    const soundSphereManager = soundSphereManagerRef.current;
+    const sceneCoordinator = sceneCoordinatorRef.current;
+    if (!soundSphereManager || !sceneCoordinator) return;
+
+    // Find the sphere
+    const sphere = soundSphereManager.findSphereByPromptKey(promptKey);
+    if (!sphere) return;
+
+    // Convert screen delta to world space movement
+    const camera = sceneCoordinator.camera;
+    const spherePosition = sphere.position.clone();
+    
+    // Project current position to screen space
+    const vector = spherePosition.clone().project(camera);
+    
+    // Apply screen space delta
+    const canvas = sceneCoordinator.renderer.domElement;
+    const widthHalf = canvas.width / 2;
+    const heightHalf = canvas.height / 2;
+    
+    vector.x += (deltaX / widthHalf);
+    vector.y -= (deltaY / heightHalf);
+    
+    // Unproject back to world space
+    vector.unproject(camera);
+    
+    // Calculate direction from camera
+    const direction = vector.sub(camera.position).normalize();
+    
+    // Calculate distance from camera to sphere
+    const distance = camera.position.distanceTo(spherePosition);
+    
+    // Calculate new position
+    const newPosition = camera.position.clone().add(direction.multiplyScalar(distance));
+    
+    // Update sphere position
+    soundSphereManager.updateSpherePosition(promptKey, newPosition);
   }, []);
 
   // ============================================================================
@@ -262,7 +363,15 @@ export function ThreeScene({
     inputHandlerRef.current = inputHandler;
 
     // Setup Input Handler callbacks
-    inputHandler.setOnEntitySelected((entity) => setSelectedEntity(entity));
+    inputHandler.setOnEntitySelected((entity) => {
+      // If in linking mode, link the entity to the sound config
+      if (isLinkingEntity && onEntityLinked && entity) {
+        onEntityLinked(entity);
+      } else {
+        // Normal entity selection behavior
+        setSelectedEntity(entity);
+      }
+    });
     inputHandler.setOnReceiverPlaced((position) => onPlaceReceiver?.(position));
     inputHandler.setOnFirstPersonModeEnabled((position, yaw, pitch) => {
       sceneCoordinator.enableFirstPersonMode(position, yaw, pitch);
@@ -283,6 +392,14 @@ export function ThreeScene({
     inputHandler.setOnPreviewPositionUpdated((position) => {
       receiverManager.updatePreviewPosition(position);
     });
+    inputHandler.setOnSphereClicked((promptKey) => {
+      // Show overlay if it's hidden by user
+      const hiddenOverlays = hiddenOverlaysRef.current;
+      if (hiddenOverlays.has(promptKey)) {
+        hiddenOverlays.delete(promptKey);
+        setUiOverlays(prev => [...prev]); // Force re-render
+      }
+    });
 
     // Setup Input Handler data getters
     inputHandler.setGeometryDataGetter(() => geometryDataRef.current);
@@ -293,6 +410,7 @@ export function ThreeScene({
     inputHandler.setOrbitControlsGetter(() => sceneCoordinator.controls as any);
     inputHandler.setSoundSpheresAverageGetter(calculateSoundSpheresAverage);
     inputHandler.setFirstPersonModeGetter(() => sceneCoordinator.isFirstPersonMode());
+    inputHandler.setSoundSphereMeshesGetter(() => soundSphereManager.getSoundSphereMeshes());
 
     // Setup event listeners
     inputHandler.setupClickHandler();
@@ -334,12 +452,30 @@ export function ThreeScene({
         sceneCoordinator.camera,
         sceneCoordinator.controls,
         sceneCoordinator.contentGroup,
-        1.25
+        ENTITY_CONFIG.SCALE_MULTIPLIER
       );
     } else {
       geometryRenderer.updateGeometryMesh(null, null);
     }
   }, [triangulatedGeometry]);
+
+  // ============================================================================
+  // Effect - Update Entity Selection Callback (for linking mode)
+  // ============================================================================
+  useEffect(() => {
+    const inputHandler = inputHandlerRef.current;
+    if (!inputHandler) return;
+
+    inputHandler.setOnEntitySelected((entity) => {
+      // If in linking mode, link the entity to the sound config
+      if (isLinkingEntity && onEntityLinked && entity) {
+        onEntityLinked(entity);
+      } else {
+        // Normal entity selection behavior
+        setSelectedEntity(entity);
+      }
+    });
+  }, [isLinkingEntity, onEntityLinked]);
 
   // ============================================================================
   // Effect - Entity Highlighting (Diverse Selection)
@@ -379,17 +515,61 @@ export function ThreeScene({
         selectedEntity.position[1],
         selectedEntity.position[2]
       );
-      vector.project(sceneCoordinator.camera);
+      const { x, y, isBehindCamera } = projectToScreen(
+        vector,
+        sceneCoordinator.camera,
+        sceneCoordinator.renderer.domElement.clientWidth,
+        sceneCoordinator.renderer.domElement.clientHeight
+      );
 
-      const isBehindCamera = vector.z > 1;
-      const x = (vector.x * 0.5 + 0.5) * sceneCoordinator.renderer.domElement.clientWidth;
-      const y = (-(vector.y * 0.5) + 0.5) * sceneCoordinator.renderer.domElement.clientHeight;
+      // Check if this entity has a linked sound
+      let soundOverlay: UIOverlay | undefined = undefined;
+      if (soundscapeData) {
+        // Group sounds by prompt index to get variants
+        const soundsByPromptIndex: { [key: number]: any[] } = {};
+        soundscapeData.forEach(sound => {
+          const promptIdx = (sound as any).prompt_index ?? 0;
+          if (!soundsByPromptIndex[promptIdx]) {
+            soundsByPromptIndex[promptIdx] = [];
+          }
+          soundsByPromptIndex[promptIdx].push(sound);
+        });
+
+        // Find sound linked to this entity
+        Object.entries(soundsByPromptIndex).forEach(([promptIdxStr, sounds]) => {
+          const promptIdx = parseInt(promptIdxStr);
+          const selectedIdx = selectedVariants[promptIdx] || 0;
+          const selectedSound = sounds[selectedIdx] || sounds[0];
+          
+          if (selectedSound && selectedSound.entity_index === selectedEntity.index) {
+            const promptKey = `prompt_${promptIdx}`;
+            soundOverlay = {
+              promptKey,
+              promptIdx,
+              x,
+              y,
+              visible: !isBehindCamera,
+              soundId: selectedSound.id,
+              displayName: trimDisplayName(selectedSound.display_name || selectedSound.id),
+              variants: sounds.map(v => ({
+                ...v,
+                current_volume_db: soundVolumes[v.id] ?? v.volume_db,
+                current_interval_seconds: soundIntervals[v.id] ?? v.interval_seconds
+              })),
+              selectedVariantIdx: selectedIdx,
+              userHidden: hiddenOverlaysRef.current.has(promptKey),
+              isEntityLinked: true
+            };
+          }
+        });
+      }
 
       setEntityOverlay({
         x,
         y,
         visible: !isBehindCamera,
-        entity: selectedEntity
+        entity: selectedEntity,
+        soundOverlay
       });
     };
 
@@ -398,7 +578,7 @@ export function ThreeScene({
     return () => {
       sceneCoordinator.removeAnimationCallback(updateEntityOverlay);
     };
-  }, [selectedEntity]);
+  }, [selectedEntity, soundscapeData, selectedVariants, soundVolumes, soundIntervals]);
 
   // ============================================================================
   // Effect - Update Sound UI Overlay Positions (Animation Loop)
@@ -436,6 +616,12 @@ export function ThreeScene({
         const selectedSound = sounds[selectedIdx] || sounds[0];
         if (!selectedSound) return;
 
+        // Skip entity-linked sounds here - they will be rendered with EntityOverlay
+        const isEntityLinked = selectedSound.entity_index !== undefined;
+        if (isEntityLinked) {
+          return;
+        }
+
         // Use prompt_index as unique key to avoid React key conflicts with duplicate prompt texts
         const promptKey = `prompt_${promptIdx}`;
         const sphere = soundSphereManager.findSphereByPromptKey(promptKey);
@@ -443,20 +629,17 @@ export function ThreeScene({
 
         const vector = new THREE.Vector3();
         sphere.getWorldPosition(vector);
-        vector.project(sceneCoordinator.camera);
+        const { x, y, isBehindCamera } = projectToScreen(
+          vector,
+          sceneCoordinator.camera,
+          rendererWidth,
+          rendererHeight
+        );
 
-        const isBehindCamera = vector.z > 1;
-        const x = (vector.x * 0.5 + 0.5) * rendererWidth;
-        const y = (-(vector.y * 0.5) + 0.5) * rendererHeight;
+        const margin = UI_OVERLAY.MARGIN;
+        const isInViewportFlag = isInViewportUtil(x, y, rendererWidth, rendererHeight, margin);
 
-        const margin = 250;
-        const isInViewport =
-          x >= -margin &&
-          x <= rendererWidth + margin &&
-          y >= -margin &&
-          y <= rendererHeight + margin;
-
-        const isVisible = !isBehindCamera && isInViewport;
+        const isVisible = !isBehindCamera && isInViewportFlag;
 
         if (sphere) {
           sphere.visible = isVisible;
@@ -471,7 +654,9 @@ export function ThreeScene({
           soundId: selectedSound.id,
           displayName: trimDisplayName(selectedSound.display_name || selectedSound.id),
           variants: sounds,
-          selectedVariantIdx: selectedIdx
+          selectedVariantIdx: selectedIdx,
+          userHidden: hiddenOverlaysRef.current.has(promptKey),
+          isEntityLinked: false
         });
       });
 
@@ -493,11 +678,17 @@ export function ThreeScene({
     const soundSphereManager = soundSphereManagerRef.current;
     if (!soundSphereManager) return;
 
-    // Reset entity selection when sound generation completes
-    if (soundscapeData && soundscapeData.length > 0) {
+    // Reset entity selection only when NEW sounds are generated (length changes)
+    // Don't reset when just changing variants (selectedVariants changes but length stays same)
+    const currentLength = soundscapeData?.length ?? 0;
+    const prevLength = prevSoundscapeDataLengthRef.current;
+    
+    if (currentLength > 0 && currentLength !== prevLength) {
       setSelectedEntity(null);
       setEntityOverlay(null);
     }
+    
+    prevSoundscapeDataLengthRef.current = currentLength;
 
     // Get current audio sources before updating (to stop old variants)
     const oldAudioSources = soundSphereManager.getAllAudioSources();
@@ -665,30 +856,99 @@ export function ThreeScene({
   }, [soundVolumes, soundscapeData]);
 
   // ============================================================================
-  // Effect - Update Timeline
+  // Effect - Apply Mute/Solo States
   // ============================================================================
   useEffect(() => {
+    const soundSphereManager = soundSphereManagerRef.current;
+    if (!soundSphereManager) return;
+
+    // Use the new updateMuteSoloStates method which uses separate gain nodes
+    // This won't interfere with volume control
+    soundSphereManager.updateMuteSoloStates(mutedSounds, soloedSound);
+  }, [mutedSounds, soloedSound]);
+
+  // ============================================================================
+  // Effect - Update Timeline Data (Schedule Changes Only)
+  // ============================================================================
+  useEffect(() => {
+    // Clear timeline when soundscape is removed
+    if (!soundscapeData || soundscapeData.length === 0) {
+      setTimelineSounds([]);
+      return;
+    }
+
     const playbackScheduler = playbackSchedulerRef.current;
-    if (!playbackScheduler) return;
+    if (!playbackScheduler) {
+      return;
+    }
 
-    const audioSchedulers = playbackScheduler.getAudioSchedulers();
+    // Use small timeout to ensure scheduler intervals are updated first
+    const timeoutId = setTimeout(() => {
+      const audioSchedulers = playbackScheduler.getAudioSchedulers();
 
-    // Update timeline data whenever sounds are scheduled
-    if (audioSchedulers.size > 0) {
-      const sounds = extractTimelineSounds(audioSchedulers, timelineDuration);
-      const duration = calculateTimelineDuration(audioSchedulers);
+      // Update timeline data if schedulers exist, otherwise clear
+      if (audioSchedulers.size > 0) {
+        // Calculate duration FIRST, then extract sounds using that duration
+        const duration = calculateTimelineDuration(audioSchedulers);
+        const sounds = extractTimelineSounds(audioSchedulers, duration);
 
-      setTimelineSounds(sounds);
-      setTimelineDuration(duration);
-    } else {
-      // Check if sounds are paused (keep timeline visible) or stopped (clear timeline)
-      const anySoundPaused = Object.values(individualSoundStates).some(state => state === 'paused');
-      if (!anySoundPaused) {
+        setTimelineSounds(sounds);
+        setTimelineDuration(duration);
+      } else {
+        // No schedulers yet - clear timeline (will be populated when play starts)
         setTimelineSounds([]);
       }
-      // If paused, keep the existing timeline data visible
+    }, UI_TIMING.UPDATE_DEBOUNCE_MS);
+
+    return () => clearTimeout(timeoutId);
+    // Timeline data represents "what is scheduled", not playback state
+    // Update when soundscape/variants change OR when intervals change
+    // Update when soundscape/variants change OR when intervals change
+  }, [soundscapeData, selectedVariants, soundIntervals]);
+
+  // ============================================================================
+  // Effect - Update Timeline When Playback Starts or Sound Count Changes
+  // ============================================================================
+  useEffect(() => {
+    // When playback starts (Play All clicked), update timeline with scheduler data
+    if (!isAnyPlaying || !soundscapeData || soundscapeData.length === 0) {
+      return;
     }
-  }, [soundscapeData, selectedVariants, individualSoundStates]);
+    
+    // Use setTimeout to ensure schedulers are populated
+    // Schedulers are created asynchronously when Play All is clicked
+    const timeoutId = setTimeout(() => {
+      const playbackScheduler = playbackSchedulerRef.current;
+      if (!playbackScheduler) return;
+
+      const audioSchedulers = playbackScheduler.getAudioSchedulers();
+
+      if (audioSchedulers.size > 0) {
+        // Calculate duration FIRST, then extract sounds using that duration
+        const duration = calculateTimelineDuration(audioSchedulers);
+        const sounds = extractTimelineSounds(audioSchedulers, duration);
+
+        setTimelineSounds(sounds);
+        setTimelineDuration(duration);
+      } else {
+        // Retry after another delay
+        setTimeout(() => {
+          const schedulers = playbackSchedulerRef.current?.getAudioSchedulers();
+
+          if (schedulers && schedulers.size > 0) {
+            // Calculate duration FIRST, then extract sounds using that duration
+            const duration = calculateTimelineDuration(schedulers);
+            const sounds = extractTimelineSounds(schedulers, duration);
+
+            setTimelineSounds(sounds);
+            setTimelineDuration(duration);
+          }
+        }, UI_TIMING.RECEIVER_UPDATE_DELAY_MS);
+      }
+    }, UI_TIMING.SCENE_UPDATE_DELAY_MS);
+
+    return () => clearTimeout(timeoutId);
+  }, [isAnyPlaying, soundscapeData?.length]); // Update when playback starts or sound count changes
 
   // ============================================================================
   // Effect - Sync Timeline Playback with Individual Sounds
@@ -722,7 +982,7 @@ export function ThreeScene({
 
       {/* 3D UI Overlays */}
       <div className="absolute inset-0 pointer-events-none">
-        {showSoundBoxes && uiOverlays.map((overlay) => {
+        {uiOverlays.map((overlay) => {
           const selectedSound = overlay.variants[overlay.selectedVariantIdx];
 
           return (
@@ -730,24 +990,45 @@ export function ThreeScene({
               key={overlay.promptKey}
               overlay={{
                 ...overlay,
+                userHidden: !showSoundBoxes || overlay.userHidden,
                 variants: overlay.variants.map(v => ({
                   ...v,
                   current_volume_db: soundVolumes[v.id] ?? v.volume_db,
                   current_interval_seconds: soundIntervals[v.id] ?? v.interval_seconds
                 }))
               }}
-              soundState={individualSoundStates[overlay.soundId] || 'stopped'}
+              soundState={getSoundState(overlay.soundId, individualSoundStates)}
               onToggleSound={onToggleSound}
               onVariantChange={onVariantChange}
               onVolumeChange={onVolumeChange}
               onIntervalChange={onIntervalChange}
               onDelete={onDeleteSound}
+              onHideToggle={handleOverlayHideToggle}
+              onDragUpdate={handleOverlayDrag}
+              onMute={onMute}
+              onSolo={onSolo}
+              isMuted={mutedSounds.has(overlay.soundId)}
+              isSoloed={soloedSound === overlay.soundId}
             />
           );
         })}
 
-        {/* Entity data overlay */}
-        {entityOverlay && <EntityUIOverlay overlay={entityOverlay} />}
+        {/* Entity data overlay (shown when user clicks on an entity) */}
+        {entityOverlay && (
+          <EntityUIOverlay 
+            overlay={entityOverlay}
+            soundState={entityOverlay.soundOverlay ? getSoundState(entityOverlay.soundOverlay.soundId, individualSoundStates) : 'stopped'}
+            onToggleSound={onToggleSound}
+            onVariantChange={onVariantChange}
+            onVolumeChange={onVolumeChange}
+            onIntervalChange={onIntervalChange}
+            onDelete={onDeleteSound}
+            onMute={onMute}
+            onSolo={onSolo}
+            isMuted={entityOverlay.soundOverlay ? mutedSounds.has(entityOverlay.soundOverlay.soundId) : false}
+            isSoloed={entityOverlay.soundOverlay ? soloedSound === entityOverlay.soundOverlay.soundId : false}
+          />
+        )}
       </div>
 
       {/* Playback Controls - Bottom Center */}
@@ -760,14 +1041,24 @@ export function ThreeScene({
       />
 
       {/* Audio Timeline - Bottom Center (above playback controls) */}
-      {showTimeline && timelineSounds.length > 0 && (
-        <div className="absolute bottom-20 left-1/2 transform -translate-x-1/2 pointer-events-auto z-10" style={{ width: 'calc(100% - 48px - 400px)', maxWidth: '1200px' }}>
-          <AudioTimeline
+      {showTimeline && soundscapeData && soundscapeData.length > 0 && (
+        <div 
+          className="absolute left-1/2 transform -translate-x-1/2 pointer-events-auto z-10" 
+          style={{ 
+            bottom: `${TIMELINE_LAYOUT.BOTTOM_OFFSET_PX * 4}px`, // Convert Tailwind units to pixels (20 * 4 = 80px)
+            width: `calc(100% - ${TIMELINE_LAYOUT.SIDEBAR_WIDTH_PX}px - ${TIMELINE_LAYOUT.CONTENT_WIDTH_PX}px)`, 
+            maxWidth: `${TIMELINE_LAYOUT.MAX_WIDTH_PX}px` 
+          }}
+        >
+          <WaveSurferTimeline
             sounds={timelineSounds}
             duration={timelineDuration}
             currentTime={playbackState.currentTime}
             isPlaying={playbackState.isPlaying}
             onSeek={handleSeek}
+            individualSoundStates={individualSoundStates}
+            mutedSounds={mutedSounds}
+            soloedSound={soloedSound}
           />
         </div>
       )}
@@ -777,6 +1068,45 @@ export function ThreeScene({
 
       {/* Bottom-right control buttons */}
       <div className="absolute bottom-6 right-6 flex flex-col gap-2 pointer-events-auto">
+        {/* Mute All Button */}
+        <button
+          onClick={handleToggleMute}
+          className="w-12 h-12 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-lg shadow-lg hover:bg-white dark:hover:bg-gray-700 transition-all duration-200 flex items-center justify-center group border border-gray-200 dark:border-gray-600"
+          title={isAudioMuted ? "Unmute all audio" : "Mute all audio"}
+        >
+          {isAudioMuted ? (
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="w-5 h-5 text-gray-700 dark:text-gray-200 group-hover:text-primary transition-colors"
+            >
+              <path d="M11 5L6 9H2v6h4l5 4V5z" />
+              <line x1="23" y1="9" x2="17" y2="15" />
+              <line x1="17" y1="9" x2="23" y2="15" />
+            </svg>
+          ) : (
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="w-5 h-5 text-gray-700 dark:text-gray-200 group-hover:text-primary transition-colors"
+            >
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+              <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+            </svg>
+          )}
+        </button>
+
         {/* Reset Zoom Button */}
         <button
           onClick={handleResetZoom}
@@ -835,9 +1165,11 @@ export function ThreeScene({
         </button>
 
         {/* Toggle Timeline Button */}
-        {timelineSounds.length > 0 && (
+        
           <button
-            onClick={() => setShowTimeline(!showTimeline)}
+            onClick={() => {
+              setShowTimeline(!showTimeline);
+            }}
             className="w-12 h-12 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-lg shadow-lg hover:bg-white dark:hover:bg-gray-700 transition-all duration-200 flex items-center justify-center group border border-gray-200 dark:border-gray-600"
             title={showTimeline ? "Hide timeline" : "Show timeline"}
           >
@@ -863,7 +1195,7 @@ export function ThreeScene({
               <path d="M16 18h.01" />
             </svg>
           </button>
-        )}
+        
       </div>
     </div>
   );

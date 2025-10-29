@@ -30,7 +30,12 @@ export function SoundGenerationSection({
   onUploadAudio,
   onClearUploadedAudio,
   onLibrarySearch,
-  onLibrarySoundSelect
+  onLibrarySoundSelect,
+  modelEntities = [],
+  onStartLinkingEntity,
+  onCancelLinkingEntity,
+  isLinkingEntity = false,
+  linkingConfigIndex = null
 }: SoundGenerationSectionProps) {
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
   const prevGeneratedSoundsLengthRef = useRef(0);
@@ -247,17 +252,86 @@ export function SoundGenerationSection({
               </select>
             </div>
 
-            {/* Remove button - right side */}
-            {soundConfigs.length > 1 && (
-              <button
-                onClick={() => onRemoveConfig(activeSoundConfigTab)}
-                className="w-6 h-6 flex items-center justify-center text-lg text-primary hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-colors"
-                title="Remove sound"
-              >
-                ×
-              </button>
-            )}
+            {/* Action buttons - right side */}
+            <div className="flex items-center gap-1">
+              {/* Link to entity button - only show if model has entities */}
+              {modelEntities.length > 0 && (
+                <button
+                  onClick={() => {
+                    if (isLinkingEntity && linkingConfigIndex === activeSoundConfigTab) {
+                      onCancelLinkingEntity?.();
+                    } else {
+                      onStartLinkingEntity?.(activeSoundConfigTab);
+                    }
+                  }}
+                  className={`w-6 h-6 flex items-center justify-center rounded-full transition-colors ${
+                    isLinkingEntity && linkingConfigIndex === activeSoundConfigTab
+                      ? 'bg-primary text-white'
+                      : soundConfigs[activeSoundConfigTab]?.entity
+                      ? 'text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20'
+                      : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-600'
+                  }`}
+                  title={
+                    isLinkingEntity && linkingConfigIndex === activeSoundConfigTab
+                      ? 'Cancel linking'
+                      : soundConfigs[activeSoundConfigTab]?.entity
+                      ? `Linked to entity ${soundConfigs[activeSoundConfigTab].entity.index}`
+                      : 'Link to entity'
+                  }
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                  </svg>
+                </button>
+              )}
+
+              {/* Remove button */}
+              {soundConfigs.length > 1 && (
+                <button
+                  onClick={() => onRemoveConfig(activeSoundConfigTab)}
+                  className="w-6 h-6 flex items-center justify-center text-lg text-primary hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-colors"
+                  title="Remove sound"
+                >
+                  ×
+                </button>
+              )}
+            </div>
           </div>
+
+          {/* Entity linking status message */}
+          {isLinkingEntity && linkingConfigIndex === activeSoundConfigTab && (
+            <div className="mb-3 p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-xs text-blue-700 dark:text-blue-300">
+              <div className="flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>Click on an entity in the 3D view to link this sound</span>
+              </div>
+            </div>
+          )}
+
+          {/* Linked entity info */}
+          {soundConfigs[activeSoundConfigTab]?.entity && (
+            <div className="mb-3 p-2 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded text-xs text-green-700 dark:text-green-300">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  <span>
+                    Linked to entity: {soundConfigs[activeSoundConfigTab].entity.name || `Entity ${soundConfigs[activeSoundConfigTab].entity.index}`}
+                  </span>
+                </div>
+                <button
+                  onClick={() => onUpdateConfig(activeSoundConfigTab, 'entity' as any, undefined as any)}
+                  className="text-green-600 hover:text-green-800 dark:text-green-400 dark:hover:text-green-200"
+                  title="Unlink entity"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Conditional UI based on mode */}
           {currentMode === 'text-to-audio' && (

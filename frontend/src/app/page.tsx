@@ -23,6 +23,10 @@ export default function Home() {
   const sed = useSED();
   const receivers = useReceivers();
   const [activeLoadTab, setActiveLoadTab] = useState<LoadTab>('upload');
+  
+  // Entity linking state
+  const [isLinkingEntity, setIsLinkingEntity] = useState(false);
+  const [linkingConfigIndex, setLinkingConfigIndex] = useState<number | null>(null);
 
   // Load sounds from text generation into sound generation tab
   const handleLoadSoundsToGeneration = useCallback(() => {
@@ -87,6 +91,31 @@ export default function Home() {
 
     soundGen.setSoundscapeData(updatedSounds.length > 0 ? updatedSounds : null);
   }, [soundGen]);
+
+  // Entity linking handlers
+  const handleStartLinkingEntity = useCallback((configIndex: number) => {
+    setIsLinkingEntity(true);
+    setLinkingConfigIndex(configIndex);
+  }, []);
+
+  const handleCancelLinkingEntity = useCallback(() => {
+    setIsLinkingEntity(false);
+    setLinkingConfigIndex(null);
+  }, []);
+
+  const handleEntityLinked = useCallback((entity: any) => {
+    if (linkingConfigIndex !== null) {
+      soundGen.handleUpdateConfig(linkingConfigIndex, 'entity' as any, entity);
+      
+      // Add entity to diverse selection so it gets highlighted
+      if (!textGen.selectedDiverseEntities.find(e => e.index === entity.index)) {
+        textGen.setSelectedDiverseEntities([...textGen.selectedDiverseEntities, entity]);
+      }
+      
+      setIsLinkingEntity(false);
+      setLinkingConfigIndex(null);
+    }
+  }, [linkingConfigIndex, soundGen, textGen]);
 
   // Auralization handlers
   // Note: We don't use a separate AudioContext here. The Three.js scene creates its own
@@ -187,6 +216,10 @@ export default function Home() {
         onClearUploadedAudio={soundGen.handleClearUploadedAudio}
         onLibrarySearch={soundGen.handleLibrarySearch}
         onLibrarySoundSelect={soundGen.handleLibrarySoundSelect}
+        onStartLinkingEntity={handleStartLinkingEntity}
+        onCancelLinkingEntity={handleCancelLinkingEntity}
+        isLinkingEntity={isLinkingEntity}
+        linkingConfigIndex={linkingConfigIndex}
 
         // Audio controls props
         selectedVariants={audioControls.selectedVariants}
@@ -223,10 +256,14 @@ export default function Home() {
           selectedVariants={audioControls.selectedVariants}
           soundVolumes={audioControls.soundVolumes}
           soundIntervals={audioControls.soundIntervals}
+          mutedSounds={audioControls.mutedSounds}
+          soloedSound={audioControls.soloedSound}
           onToggleSound={audioControls.toggleSound}
           onVariantChange={audioControls.handleVariantChange}
           onVolumeChange={audioControls.handleVolumeChange}
           onIntervalChange={audioControls.handleIntervalChange}
+          onMute={audioControls.handleMute}
+          onSolo={audioControls.handleSolo}
           onDeleteSound={handleDeleteSound}
           onPlayAll={audioControls.playAll}
           onPauseAll={audioControls.pauseAll}
@@ -241,6 +278,8 @@ export default function Home() {
           onPlaceReceiver={receivers.placeReceiver}
           isPlacingReceiver={receivers.isPlacingReceiver}
           onCancelPlacingReceiver={receivers.cancelPlacingReceiver}
+          isLinkingEntity={isLinkingEntity}
+          onEntityLinked={handleEntityLinked}
           className="w-full h-full"
         />
       </main>

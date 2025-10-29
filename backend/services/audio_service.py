@@ -164,13 +164,15 @@ class AudioService:
                 entity = sound_config.get('entity')
                 if entity and entity.get('position'):
                     position = entity['position']
+                    entity_index = entity.get('index')  # Get entity index for linking
                 else:
                     position = self.get_random_position(idx, len(sound_configs), bounding_box)
+                    entity_index = None
 
                 # Skip if file with exact same parameters already exists
                 if os.path.exists(output_path):
                     print(f"Sound with identical parameters already exists, skipping: {filename}")
-                    generated_files.append({
+                    sound_data = {
                         "id": f"generated_{idx}_{copy_idx}",
                         "prompt": prompt,
                         "prompt_index": idx,
@@ -182,7 +184,10 @@ class AudioService:
                         "position": position,
                         "volume_db": spl_db,
                         "interval_seconds": interval_seconds
-                    })
+                    }
+                    if entity_index is not None:
+                        sound_data["entity_index"] = entity_index
+                    generated_files.append(sound_data)
                     continue
 
                 print(f"Generating sound {idx + 1}/{len(sound_configs)} (copy {copy_idx + 1}/{seed_copies}): {prompt}")
@@ -190,7 +195,7 @@ class AudioService:
                 # Generate audio with SPL calibration and optional denoising
                 self.generate_sound_file(prompt, output_path, duration, guidance_scale, steps, spl_db, apply_denoising)
 
-                generated_files.append({
+                sound_data = {
                     "id": f"generated_{idx}_{copy_idx}",
                     "prompt": prompt,
                     "prompt_index": idx,
@@ -202,7 +207,10 @@ class AudioService:
                     "position": position,
                     "volume_db": spl_db,
                     "interval_seconds": interval_seconds
-                })
+                }
+                if entity_index is not None:
+                    sound_data["entity_index"] = entity_index
+                generated_files.append(sound_data)
 
         return generated_files
 

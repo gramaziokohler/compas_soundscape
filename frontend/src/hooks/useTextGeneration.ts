@@ -2,7 +2,7 @@ import { useState, useCallback } from "react";
 import {
   API_BASE_URL,
   DEFAULT_NUM_SOUNDS,
-  ENTITY_HIGHLIGHT_DELAY_MS,
+  UI_TIMING,
   DEFAULT_DURATION_SECONDS,
   DEFAULT_GUIDANCE_SCALE,
   DEFAULT_SEED_COPIES,
@@ -72,7 +72,7 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
           setLlmProgress(`Selected ${selectedEntities.length} objects. Generating sound prompts...`);
 
           // Give time for highlighting to be visible
-          await new Promise(resolve => setTimeout(resolve, ENTITY_HIGHLIGHT_DELAY_MS));
+          await new Promise(resolve => setTimeout(resolve, UI_TIMING.ENTITY_HIGHLIGHT_DELAY_MS));
 
           // Use selected entities for prompt generation
           requestBody.entities = selectedEntities;

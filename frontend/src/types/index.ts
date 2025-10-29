@@ -27,6 +27,7 @@ export interface SoundEvent {
   interval_seconds?: number; // Playback interval in seconds
   current_interval_seconds?: number; // Current interval override (user-adjustable)
   isUploaded?: boolean; // Flag indicating this sound was uploaded (not generated)
+  entity_index?: number; // Index of the entity this sound is linked to (for entity-based sounds)
 }
 
 export interface UIOverlay {
@@ -35,10 +36,12 @@ export interface UIOverlay {
   x: number;
   y: number;
   visible: boolean;
+  userHidden?: boolean; // User-toggled visibility (separate from camera visibility)
   soundId: string;
   displayName: string;
   variants: SoundEvent[];
   selectedVariantIdx: number;
+  isEntityLinked?: boolean; // Flag indicating this overlay is linked to an entity (no sphere, no drag)
 }
 
 export interface EntityData {
@@ -60,6 +63,7 @@ export interface EntityOverlay {
   y: number;
   visible: boolean;
   entity: EntityData;
+  soundOverlay?: UIOverlay; // Optional sound overlay data when entity has linked sound
 }
 
 export interface SoundGenerationConfig {

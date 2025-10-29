@@ -118,7 +118,7 @@ Here are {len(entities)} {entity_type}:
 {entities_list}
 
 Select exactly {max_sounds} {entity_type} that would produce the MOST DIFFERENT and DIVERSE sounds. Consider:
-- Different object types
+- Different object names (doors, windows, furniture, appliances, etc.)
 - Different materials (wood, metal, glass, concrete, etc.)
 - Different layers (which may indicate function or location)
 

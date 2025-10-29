@@ -138,6 +138,11 @@ export function Sidebar(props: SidebarProps) {
               onClearUploadedAudio={props.onClearUploadedAudio}
               onLibrarySearch={props.onLibrarySearch}
               onLibrarySoundSelect={props.onLibrarySoundSelect}
+              modelEntities={props.modelEntities}
+              onStartLinkingEntity={props.onStartLinkingEntity}
+              onCancelLinkingEntity={props.onCancelLinkingEntity}
+              isLinkingEntity={props.isLinkingEntity}
+              linkingConfigIndex={props.linkingConfigIndex}
             />
           </div>
         )}

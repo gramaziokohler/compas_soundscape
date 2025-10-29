@@ -43,7 +43,7 @@ export interface WaveformInteractionHook {
 
 interface UseWaveformInteractionOptions {
   /** Canvas element ref */
-  canvasRef: RefObject<HTMLCanvasElement>;
+  canvasRef: RefObject<HTMLCanvasElement | null>;
   /** Minimum zoom level (default: 1) */
   minZoom?: number;
   /** Maximum zoom level (default: 10) */

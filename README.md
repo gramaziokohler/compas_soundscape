@@ -92,6 +92,34 @@ Frontend runs at: `http://localhost:3000`
 - Interactive 3D visualization with Three.js
 - Real-time audio playback with positional sound
 
+## Testing
+
+### Quick Start
+```bash
+# Install test dependencies
+pip install -r requirements-test.txt
+
+# Generate sample audio file (if needed)
+python generate_test_audio.py
+
+# Run comprehensive test suite
+python test_full_workflow.py
+```
+
+The test suite validates both backend and frontend:
+- **Backend**: LLM service, sound generation (text-to-audio, library, upload)
+- **Frontend**: Page load, UI components, workflow integration
+
+**Test Levels:**
+- **Level 1 (Basic)**: Fast validation (~30-60s)
+- **Level 2 (Comprehensive)**: Full validation with interactions (~2-5min)
+
+**Test Outputs:**
+- JSON report: `test_results/test_report_TIMESTAMP.json`
+- Screenshots: `test_results/screenshots/TIMESTAMP/`
+
+📖 **Full Documentation**: See [TEST_QUICKSTART.md](TEST_QUICKSTART.md) and [TEST_README.md](TEST_README.md)
+
 ## Web-app architecture
 
 - 

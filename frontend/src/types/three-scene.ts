@@ -37,6 +37,12 @@ export interface ThreeSceneProps {
   /** Playback intervals in seconds for each sound (keyed by sound ID) */
   soundIntervals: { [key: string]: number };
 
+  /** Set of muted sound IDs */
+  mutedSounds: Set<string>;
+
+  /** ID of the soloed sound (only this sound plays, null if none) */
+  soloedSound: string | null;
+
   /** Callback when a sound's play/pause state is toggled */
   onToggleSound: (soundId: string) => void;
 
@@ -48,6 +54,12 @@ export interface ThreeSceneProps {
 
   /** Callback when a sound's interval is changed */
   onIntervalChange: (soundId: string, intervalSeconds: number) => void;
+
+  /** Callback when a sound is muted/unmuted */
+  onMute: (soundId: string) => void;
+
+  /** Callback when a sound is soloed/unsoloed */
+  onSolo: (soundId: string) => void;
 
   /** Callback when a sound is deleted */
   onDeleteSound: (soundId: string, promptIdx: number) => void;
@@ -90,6 +102,12 @@ export interface ThreeSceneProps {
 
   /** Callback to cancel receiver placement mode */
   onCancelPlacingReceiver?: () => void;
+
+  /** Whether the user is currently in entity linking mode for sounds */
+  isLinkingEntity?: boolean;
+
+  /** Callback when an entity is selected for linking to a sound */
+  onEntityLinked?: (entity: EntityData) => void;
 
   /** Optional CSS class name for the container */
   className?: string;

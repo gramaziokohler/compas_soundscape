@@ -2,6 +2,17 @@ import requests
 import os
 import sys
 from utils.file_operations import sanitize_filename, ensure_directory
+from config.constants import (
+    FREESOUND_API_BASE_URL,
+    FREESOUND_SEARCH_ENDPOINT,
+    FREESOUND_DOWNLOAD_DIR,
+    FREESOUND_API_FIELDS,
+    FREESOUND_DEFAULT_SORT,
+    FREESOUND_DEFAULT_COUNT,
+    FILE_DOWNLOAD_CHUNK_SIZE,
+    MAX_EXTENSION_LENGTH,
+    HTTP_STATUS_UNAUTHORIZED
+)
 
 # --- API CONFIG STEP 1: https://freesound.org/apiv2/oauth2/authorize/?client_id=sa0EXwMTPDeI4iEKeKC3&response_type=code
 
@@ -11,23 +22,19 @@ from utils.file_operations import sanitize_filename, ensure_directory
 # IMPORTANT SECURITY NOTE: (As before)
 FREESOUND_ACCESS_TOKEN = "U1WobU0M5niE7MIdRgMClkf2N2wZSv" # <-- YOUR PROVIDED ACCESS TOKEN
 
-API_BASE_URL = "https://freesound.org/apiv2/"
-SEARCH_ENDPOINT = "search/text/"
-DOWNLOAD_DIR = "freesound_downloads" # Directory to save downloaded files
-
 # --- Helper Functions --- (Now using centralized file_operations utility)
 
-def search_freesound(query, access_token, count=3, sort_by="downloads_desc"):
+def search_freesound(query, access_token, count=FREESOUND_DEFAULT_COUNT, sort_by=FREESOUND_DEFAULT_SORT):
     """
     Searches Freesound using Bearer Token Auth, sorts the results,
     and returns metadata for the top 'count' results.
     """
-    search_url = f"{API_BASE_URL}{SEARCH_ENDPOINT}"
+    search_url = f"{FREESOUND_API_BASE_URL}{FREESOUND_SEARCH_ENDPOINT}"
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {
         "query": query,
         "page_size": count,
-        "fields": "id,name,previews,download,num_downloads",
+        "fields": FREESOUND_API_FIELDS,
         "sort": sort_by
     }
 
@@ -44,7 +51,7 @@ def search_freesound(query, access_token, count=3, sort_by="downloads_desc"):
             try:
                 error_details = response.json()
                 print(f"API Error Details: {error_details.get('detail', 'No details provided.')}")
-                if response.status_code == 401:
+                if response.status_code == HTTP_STATUS_UNAUTHORIZED:
                     print("Authentication failed. Check if the Access Token is correct and not expired.")
             except requests.exceptions.JSONDecodeError:
                 print(f"Could not decode error response: {response.text}")
@@ -83,7 +90,7 @@ def download_sound(sound_info, access_token, download_dir, rank):
         # Handle extension (append if needed)
         final_extension = ""
         base_name, ext = os.path.splitext(safe_original_name)
-        if ext and len(ext) <= 5: # Use existing extension if valid
+        if ext and len(ext) <= MAX_EXTENSION_LENGTH: # Use existing extension if valid
             final_extension = ext
             base_name_for_ranking = base_name # Keep base name without extension
         else:
@@ -91,7 +98,7 @@ def download_sound(sound_info, access_token, download_dir, rank):
             # Guess extension if none was found in the name
             url_path = download_url.split('?')[0]
             guessed_ext = os.path.splitext(url_path)[1]
-            if guessed_ext and len(guessed_ext) <= 5:
+            if guessed_ext and len(guessed_ext) <= MAX_EXTENSION_LENGTH:
                 final_extension = guessed_ext
             else:
                 if "mp3" in download_url: final_extension = ".mp3"
@@ -110,7 +117,7 @@ def download_sound(sound_info, access_token, download_dir, rank):
             response = r
             r.raise_for_status()
             with open(filepath, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
+                for chunk in r.iter_content(chunk_size=FILE_DOWNLOAD_CHUNK_SIZE):
                     f.write(chunk)
 
         print(f"Successfully downloaded to '{filepath}'") # Use the final filepath variable
@@ -119,7 +126,7 @@ def download_sound(sound_info, access_token, download_dir, rank):
     except requests.exceptions.RequestException as e:
         print(f"Error downloading Rank {rank} sound ID {sound_id}: {e}")
         if response is not None:
-            if response.status_code == 401:
+            if response.status_code == HTTP_STATUS_UNAUTHORIZED:
                 print("Download failed due to authentication error (401). Check the Access Token.")
             else:
                 print(f"Download failed with status {response.status_code}. Response: {response.text[:200]}...")
@@ -143,7 +150,7 @@ if __name__ == "__main__":
         print("Search prompt cannot be empty.")
         sys.exit(1)
 
-    results = search_freesound(search_prompt, FREESOUND_ACCESS_TOKEN, count=3) # Gets top 3 sorted by downloads
+    results = search_freesound(search_prompt, FREESOUND_ACCESS_TOKEN, count=FREESOUND_DEFAULT_COUNT) # Gets top 3 sorted by downloads
 
     if results is None:
         print("Failed to retrieve search results.")
@@ -152,13 +159,13 @@ if __name__ == "__main__":
     if not results:
         print(f"No results found for '{search_prompt}'.")
     else:
-        print(f"\nFound {len(results)} result(s). Attempting to download the top {min(len(results), 3)} most downloaded:")
+        print(f"\nFound {len(results)} result(s). Attempting to download the top {min(len(results), FREESOUND_DEFAULT_COUNT)} most downloaded:")
         download_count = 0
         # *** Use enumerate to get index (for rank) and sound data ***
         for index, sound_data in enumerate(results):
              rank = index + 1 # Calculate rank (1, 2, 3)
              # *** Pass the calculated rank to download_sound ***
-             if download_sound(sound_data, FREESOUND_ACCESS_TOKEN, DOWNLOAD_DIR, rank):
+             if download_sound(sound_data, FREESOUND_ACCESS_TOKEN, FREESOUND_DOWNLOAD_DIR, rank):
                  download_count += 1
 
-        print(f"\nFinished. Successfully downloaded {download_count} sound(s) to the '{DOWNLOAD_DIR}' directory.")
+        print(f"\nFinished. Successfully downloaded {download_count} sound(s) to the '{FREESOUND_DOWNLOAD_DIR}' directory.")

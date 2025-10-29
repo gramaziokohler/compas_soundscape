@@ -159,7 +159,9 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
             geometry: sound.geometry || {
               vertices: [],
               faces: []
-            }
+            },
+            // Preserve entity_index if present
+            ...(sound.entity_index !== undefined && { entity_index: sound.entity_index })
           };
         });
       }

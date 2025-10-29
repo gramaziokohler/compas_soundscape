@@ -168,6 +168,7 @@ FREESOUND_DOWNLOAD_DIR = "freesound_downloads"
 FREESOUND_API_FIELDS = "id,name,previews,download,num_downloads"
 FREESOUND_DEFAULT_SORT = "downloads_desc"
 FREESOUND_TOP_RESULTS_COUNT = 3  # Top N results to download from Freesound
+FREESOUND_DEFAULT_COUNT = 3  # Default number of search results
 
 # HTTP Status Codes
 HTTP_STATUS_UNAUTHORIZED = 401

@@ -18,6 +18,10 @@ export function useAudioControls(generatedSounds: any[]) {
   const [selectedVariants, setSelectedVariants] = useState<{[key: number]: number}>({});
   const [soundVolumes, setSoundVolumes] = useState<{[key: string]: number}>({});
   const [soundIntervals, setSoundIntervals] = useState<{[key: string]: number}>({});
+  
+  // Mute and Solo state
+  const [mutedSounds, setMutedSounds] = useState<Set<string>>(new Set());
+  const [soloedSound, setSoloedSound] = useState<string | null>(null);
 
   /**
    * Toggle a single sound between playing and paused
@@ -89,6 +93,42 @@ export function useAudioControls(generatedSounds: any[]) {
    */
   const handleIntervalChange = useCallback((soundId: string, intervalSeconds: number) => {
     setSoundIntervals(prev => ({ ...prev, [soundId]: intervalSeconds }));
+  }, []);
+
+  /**
+   * Toggle mute state for a specific sound
+   * Does not affect playback scheduling, only audio output
+   * If solo is active for this sound, deactivate solo first
+   */
+  const handleMute = useCallback((soundId: string) => {
+    // If this sound is soloed, un-solo it first
+    setSoloedSound(prev => prev === soundId ? null : prev);
+    
+    setMutedSounds(prev => {
+      const newMuted = new Set(prev);
+      if (newMuted.has(soundId)) {
+        newMuted.delete(soundId);
+      } else {
+        newMuted.add(soundId);
+      }
+      return newMuted;
+    });
+  }, []);
+
+  /**
+   * Toggle solo state for a specific sound
+   * When solo is active, all other sounds are effectively muted
+   * If this sound is muted, unmute it when soloing
+   */
+  const handleSolo = useCallback((soundId: string) => {
+    // If this sound is muted, unmute it
+    setMutedSounds(prev => {
+      const newMuted = new Set(prev);
+      newMuted.delete(soundId);
+      return newMuted;
+    });
+    
+    setSoloedSound(prev => prev === soundId ? null : soundId);
   }, []);
 
   /**
@@ -210,10 +250,14 @@ export function useAudioControls(generatedSounds: any[]) {
     selectedVariants,
     soundVolumes,
     soundIntervals,
+    mutedSounds,
+    soloedSound,
     toggleSound,
     handleVariantChange,
     handleVolumeChange,
     handleIntervalChange,
+    handleMute,
+    handleSolo,
     playAll,
     pauseAll,
     stopAll,
