@@ -4,11 +4,18 @@ import { useRef, useState, useMemo, useEffect, useCallback } from "react";
 import * as THREE from "three";
 
 import { SoundUIOverlay } from "@/components/overlays/SoundUIOverlay";
-import { EntityUIOverlay } from "@/components/overlays/EntityUIOverlay";
+import { EntityInfoBox } from "@/components/overlays/EntityInfoBox";
+import { AmbisonicModeNotice } from "@/components/overlays/AmbisonicModeNotice";
+import { ModalAnalysisProgress } from "@/components/overlays/ModalAnalysisProgress";
+import { ImpactSoundPlayback } from "@/components/overlays/ImpactSoundPlayback";
 import { PlaybackControls } from "@/components/controls/PlaybackControls";
+import { OrientationIndicator } from "@/components/controls/OrientationIndicator";
 import { WaveSurferTimeline } from "@/components/audio/WaveSurferTimeline";
 import { ControlsInfo } from "@/components/layout/sidebar/ControlsInfo";
-import { triangulate, trimDisplayName } from "@/lib/utils";
+import { SceneControlButton } from "@/components/scene/SceneControlButton";
+import { Icon } from "@/components/ui/Icon";
+import { VerticalVolumeSlider } from "@/components/ui/VerticalVolumeSlider";
+import { triangulateWithMapping, trimDisplayName } from "@/lib/utils";
 import { frameCameraToObject } from "@/lib/three/sceneSetup";
 import { SceneCoordinator } from "@/lib/three/scene-coordinator";
 import { GeometryRenderer } from "@/lib/three/geometry-renderer";
@@ -16,11 +23,15 @@ import { SoundSphereManager } from "@/lib/three/sound-sphere-manager";
 import { ReceiverManager } from "@/lib/three/receiver-manager";
 import { AuralizationService } from "@/lib/audio/auralization-service";
 import { PlaybackSchedulerService } from "@/lib/audio/playback-scheduler-service";
+import { ModalImpactSynthesizer } from "@/lib/audio/modal-impact-synthesis";
+import { ModeVisualizer } from "@/lib/three/mode-visualizer";
 import { InputHandler } from "@/lib/three/input-handler";
 import { projectToScreen, isInViewport as isInViewportUtil } from "@/lib/three/projection-utils";
 import { getSoundState } from "@/lib/sound/state-utils";
 import { extractTimelineSounds, calculateTimelineDuration } from "@/lib/audio/timeline-utils";
 import { useTimelinePlayback } from "@/hooks/useTimelinePlayback";
+import { apiService } from "@/services/api";
+import { createImpactParameters } from "@/hooks/useModalImpact";
 import { 
   TIMELINE_DEFAULTS, 
   UI_TIMING, 
@@ -28,12 +39,15 @@ import {
   SCREEN_PROJECTION,
   AUDIO_CONTEXT_STATE,
   UI_OVERLAY,
+  UI_COLORS,
+  UI_SCENE_BUTTON,
   ENTITY_CONFIG,
   TIMELINE_LAYOUT
 } from "@/lib/constants";
-import type { UIOverlay, EntityData, EntityOverlay } from "@/types";
+import type { UIOverlay, EntityData, EntityOverlay, CompasGeometry } from "@/types";
 import type { ThreeSceneProps } from "@/types/three-scene";
 import type { TimelineSound } from "@/types/audio";
+import type { ModalAnalysisRequest } from "@/types/modal";
 
 /**
  * ThreeScene Component (Refactored)
@@ -89,6 +103,9 @@ export function ThreeScene({
   onCancelPlacingReceiver,
   isLinkingEntity = false,
   onEntityLinked,
+  modeVisualizationState,
+  onSetModeVisualization,
+  onSelectMode,
   className
 }: ThreeSceneProps) {
   // ============================================================================
@@ -102,6 +119,7 @@ export function ThreeScene({
   const playbackSchedulerRef = useRef<PlaybackSchedulerService | null>(null);
   const auralizationServiceRef = useRef<AuralizationService | null>(null);
   const inputHandlerRef = useRef<InputHandler | null>(null);
+  const modeVisualizerRef = useRef<ModeVisualizer | null>(null);
 
   // ============================================================================
   // Refs - Data for Event Handlers
@@ -123,14 +141,42 @@ export function ThreeScene({
   const hiddenOverlaysRef = useRef<Set<string>>(new Set());
 
   // ============================================================================
+  // State - Modal Impact Sound Synthesis
+  // ============================================================================
+  const [modalImpactMode, setModalImpactMode] = useState<'inactive' | 'analyzing' | 'ready' | 'playing'>('inactive');
+  const [modalImpactEntity, setModalImpactEntity] = useState<EntityData | null>(null);
+  
+  // Cache modal analysis results per entity (key: entity index)
+  const modalAnalysisCache = useRef<Map<number, any>>(new Map());
+  const [currentModalResult, setCurrentModalResult] = useState<any>(null);
+  
+  const [impactAudioBuffer, setImpactAudioBuffer] = useState<AudioBuffer | null>(null);
+  const [isPlayingImpact, setIsPlayingImpact] = useState<boolean>(false);
+  const [highlightImpactHelp, setHighlightImpactHelp] = useState<boolean>(false);
+  
+  // Ref to track current playing audio source for cleanup
+  const impactAudioSourceRef = useRef<AudioBufferSourceNode | null>(null);
+
+  // ============================================================================
+  // State - First-Person Mode & Orientation
+  // ============================================================================
+  const [isFirstPersonMode, setIsFirstPersonMode] = useState<boolean>(false);
+  const [currentOrientation, setCurrentOrientation] = useState<{ yaw: number; pitch: number; roll: number }>({
+    yaw: 0,
+    pitch: 0,
+    roll: 0
+  });
+
+  // ============================================================================
   // State - Audio Timeline
   // ============================================================================
   const [timelineSounds, setTimelineSounds] = useState<TimelineSound[]>([]);
   const [timelineDuration, setTimelineDuration] = useState<number>(TIMELINE_DEFAULTS.DURATION_MS);
   const [showTimeline, setShowTimeline] = useState<boolean>(true);
 
-  // Audio mute state
-  const [isAudioMuted, setIsAudioMuted] = useState<boolean>(false);
+  // Global volume state
+  const [globalVolume, setGlobalVolume] = useState<number>(1); // 0 to 1
+  const [showVolumeSlider, setShowVolumeSlider] = useState<boolean>(false);
 
   // Timeline playback hook (synced with PlaybackControls)
   const { playbackState, play: playTimeline, pause: pauseTimeline, stop: stopTimeline, seekTo } = useTimelinePlayback({
@@ -152,6 +198,25 @@ export function ThreeScene({
   useEffect(() => {
     auralizationConfigRef.current = auralizationConfig;
   }, [auralizationConfig]);
+
+  // Close volume slider when clicking outside
+  useEffect(() => {
+    if (!showVolumeSlider) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      // Check if click is outside the volume slider and button
+      const isVolumeSlider = target.closest('[data-volume-slider]');
+      const isVolumeButton = target.closest('[data-volume-button]');
+      
+      if (!isVolumeSlider && !isVolumeButton) {
+        setShowVolumeSlider(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showVolumeSlider]);
 
   // ============================================================================
   // Handlers - Camera and UI Controls
@@ -181,20 +246,24 @@ export function ThreeScene({
     sceneCoordinator.resetCamera(geometryData !== null);
   }, [geometryData]);
 
-  // Toggle audio mute
-  const handleToggleMute = useCallback(() => {
+  // Toggle global volume slider visibility
+  const handleToggleVolumeSlider = useCallback(() => {
+    setShowVolumeSlider(prev => !prev);
+  }, []);
+
+  // Handle global volume change
+  const handleGlobalVolumeChange = useCallback((volume: number) => {
     const sceneCoordinator = sceneCoordinatorRef.current;
     if (!sceneCoordinator) return;
 
-    const newMutedState = !isAudioMuted;
-    setIsAudioMuted(newMutedState);
+    setGlobalVolume(volume);
 
-    // Mute/unmute by setting master gain
+    // Apply master volume
     if (sceneCoordinator.listener.context.state === AUDIO_CONTEXT_STATE.RUNNING) {
-      sceneCoordinator.listener.setMasterVolume(newMutedState ? AUDIO_VOLUME.MUTED : AUDIO_VOLUME.FULL);
-      console.log(`[Audio] ${newMutedState ? 'Muted' : 'Unmuted'} all audio`);
+      sceneCoordinator.listener.setMasterVolume(volume);
+      console.log(`[Audio] Global volume set to ${(volume * 100).toFixed(0)}%`);
     }
-  }, [isAudioMuted]);
+  }, []);
 
   // Toggle sound boxes visibility
   const handleToggleSoundBoxes = useCallback(() => {
@@ -302,15 +371,257 @@ export function ThreeScene({
   }, [seekTo, individualSoundStates, soundIntervals]);
 
   // ============================================================================
+  // Helper Functions
+  // ============================================================================
+
+  /**
+   * Extract mesh data (vertices and faces) for a specific entity
+   * Uses face_entity_map to filter faces belonging to the entity
+   * Ensures all faces are triangulated for consistent array shape
+   */
+  const extractEntityMesh = useCallback((
+    geometry: CompasGeometry,
+    entityIndex: number
+  ): { vertices: number[][], faces: number[][] } => {
+    if (!geometry.face_entity_map) {
+      // If no face_entity_map, return entire geometry (single entity)
+      // Triangulate faces to ensure homogeneous shape
+      const triangulatedFaces: number[][] = [];
+      geometry.faces.forEach(face => {
+        if (face.length === 3) {
+          triangulatedFaces.push(face);
+        } else if (face.length === 4) {
+          // Split quad into two triangles
+          triangulatedFaces.push([face[0], face[1], face[2]]);
+          triangulatedFaces.push([face[0], face[2], face[3]]);
+        } else if (face.length > 4) {
+          // Fan triangulation for n-gons
+          for (let i = 1; i < face.length - 1; i++) {
+            triangulatedFaces.push([face[0], face[i], face[i + 1]]);
+          }
+        }
+      });
+      
+      return {
+        vertices: geometry.vertices,
+        faces: triangulatedFaces,
+      };
+    }
+
+    // Find all faces that belong to this entity
+    const entityFaceIndices: number[] = [];
+    geometry.face_entity_map.forEach((faceEntityIndex: number, faceIndex: number) => {
+      if (faceEntityIndex === entityIndex) {
+        entityFaceIndices.push(faceIndex);
+      }
+    });
+
+    if (entityFaceIndices.length === 0) {
+      console.warn(`[extractEntityMesh] No faces found for entity ${entityIndex}`);
+      return { vertices: [], faces: [] };
+    }
+
+    // Collect unique vertex indices used by these faces
+    const usedVertexIndices = new Set<number>();
+    const entityFaces: number[][] = [];
+
+    entityFaceIndices.forEach(faceIndex => {
+      const face = geometry.faces[faceIndex];
+      face.forEach((vertexIndex: number) => usedVertexIndices.add(vertexIndex));
+      
+      // Triangulate the face
+      if (face.length === 3) {
+        entityFaces.push(face);
+      } else if (face.length === 4) {
+        // Split quad into two triangles
+        entityFaces.push([face[0], face[1], face[2]]);
+        entityFaces.push([face[0], face[2], face[3]]);
+      } else if (face.length > 4) {
+        // Fan triangulation for n-gons
+        for (let i = 1; i < face.length - 1; i++) {
+          entityFaces.push([face[0], face[i], face[i + 1]]);
+        }
+      }
+    });
+
+    // Create mapping from old vertex indices to new ones
+    const vertexIndexMap = new Map<number, number>();
+    const entityVertices: number[][] = [];
+    
+    Array.from(usedVertexIndices).sort((a, b) => a - b).forEach((oldIndex, newIndex) => {
+      vertexIndexMap.set(oldIndex, newIndex);
+      entityVertices.push(geometry.vertices[oldIndex]);
+    });
+
+    // Remap face indices to new vertex indices
+    const remappedFaces = entityFaces.map(face =>
+      face.map(oldVertexIndex => vertexIndexMap.get(oldVertexIndex)!)
+    );
+
+    console.log(`[extractEntityMesh] Entity ${entityIndex}: ${entityVertices.length} vertices, ${remappedFaces.length} triangular faces`);
+
+    return {
+      vertices: entityVertices,
+      faces: remappedFaces,
+    };
+  }, []);
+
+  // ============================================================================
+  // Modal Impact Handlers
+  // ============================================================================
+  
+  const handleModalImpactClick = useCallback(async (entity: EntityData) => {
+    if (!geometryData) return;
+    
+    // Check if we already have cached results for this entity
+    const cached = modalAnalysisCache.current.get(entity.index);
+    if (cached) {
+      console.log(`[ModalImpact] Using cached analysis for entity ${entity.index}`);
+      setModalImpactEntity(entity);
+      setCurrentModalResult(cached);
+      setModalImpactMode('ready');
+      return;
+    }
+    
+    // Don't hide entity UI - keep it visible with loading state
+    setModalImpactMode('analyzing');
+    setModalImpactEntity(entity);
+    // CRITICAL: Clear old modal result immediately when switching entities
+    // Otherwise visualization will try to apply old entity's data to new entity's mesh
+    setCurrentModalResult(null);
+
+    try {
+      // Extract mesh data for this specific entity
+      const { vertices: entityVertices, faces: entityFaces } = extractEntityMesh(
+        geometryData,
+        entity.index
+      );
+      
+      if (entityFaces.length === 0) {
+        throw new Error('No faces found for this entity');
+      }
+      
+      console.log(`[ModalImpact] Extracted mesh: ${entityVertices.length} vertices, ${entityFaces.length} faces`);
+      
+      // Create analysis request with entity-specific mesh data
+      const request: ModalAnalysisRequest = {
+        vertices: entityVertices,
+        faces: entityFaces,
+        material: "steel", // Default material - could be made configurable
+        num_modes: 20,
+      };
+      
+      // Call backend API
+      const result = await apiService.analyzeModal(request);
+      
+      // Cache the result
+      modalAnalysisCache.current.set(entity.index, result);
+      
+      // Store result and transition to ready mode
+      setCurrentModalResult(result);
+      setModalImpactMode('ready');
+      
+      console.log(`[ModalImpact] Analysis complete, cached for entity ${entity.index}`);
+      
+    } catch (error) {
+      console.error("Modal analysis failed:", error);
+      // Return to inactive on error
+      setModalImpactMode('inactive');
+      setModalImpactEntity(null);
+      setSelectedEntity(entity); // Restore entity selection
+    }
+  }, [geometryData]);
+  
+  const handleImpactPointClick = useCallback(async (impactPoint: [number, number, number]) => {
+    if (!currentModalResult) return;
+    
+    // Prevent clicking while already playing
+    if (isPlayingImpact) return;
+    
+    setIsPlayingImpact(true);
+    setModalImpactMode('playing');
+    
+    // Create synthesizer instance
+    const synthesizer = new ModalImpactSynthesizer();
+    
+    // Create impact parameters from click point
+    const impactParams = createImpactParameters(
+      impactPoint[0],
+      impactPoint[1],
+      impactPoint[2],
+      5.0, // Default impact velocity
+      "steel" // Default material - matches analysis
+    );
+    
+    // Synthesize impact sound
+    const audioBuffer = await synthesizer.synthesizeImpact(
+      currentModalResult,
+      impactParams
+    );
+    
+    // Store buffer
+    setImpactAudioBuffer(audioBuffer);
+    
+    // Play the impact sound
+    const source = synthesizer.playBuffer(audioBuffer);
+    
+    // Store source ref for cleanup
+    impactAudioSourceRef.current = source;
+    
+    // Reset playing state when sound finishes
+    source.onended = () => {
+      // Only update state if we're still in impact mode
+      // (user might have exited while sound was playing)
+      setIsPlayingImpact(false);
+      setModalImpactMode((currentMode) => {
+        // Only return to ready if we're still in playing mode
+        return currentMode === 'playing' ? 'ready' : currentMode;
+      });
+      impactAudioSourceRef.current = null;
+    };
+    
+  }, [currentModalResult, isPlayingImpact]);
+  
+  const exitImpactMode = useCallback(() => {
+    // Stop any currently playing audio
+    if (impactAudioSourceRef.current) {
+      try {
+        impactAudioSourceRef.current.stop();
+        impactAudioSourceRef.current = null;
+      } catch (e) {
+        // Audio might have already stopped
+        console.warn('[ModalImpact] Error stopping audio source:', e);
+      }
+    }
+
+    // Reset modal impact state but keep cache
+    setModalImpactMode('inactive');
+    setModalImpactEntity(null);
+    setCurrentModalResult(null);
+    setImpactAudioBuffer(null);
+    setIsPlayingImpact(false);
+    setHighlightImpactHelp(false);
+
+    // CRITICAL: Reset mode visualization state to prevent stale mode index
+    // Otherwise when selecting a new entity, it might try to show a mode index
+    // that doesn't exist in the new entity's modal analysis result
+    if (onSetModeVisualization) {
+      onSetModeVisualization(false); // Sets isActive=false and selectedModeIndex=null
+    }
+  }, [onSetModeVisualization]);
+
+  // ============================================================================
   // Memoized Values
   // ============================================================================
 
   // Memoize triangulated geometry data for performance
   const triangulatedGeometry = useMemo(() => {
     if (!geometryData) return null;
+    const { indices, triangleToFaceMap } = triangulateWithMapping(geometryData.faces);
     return {
       positions: new Float32Array(geometryData.vertices.flat()),
-      indices: triangulate(geometryData.faces)
+      indices,
+      triangleToFaceMap // Map from triangle index to original face index
     };
   }, [geometryData]);
 
@@ -355,6 +666,10 @@ export function ThreeScene({
     const auralizationService = new AuralizationService(sceneCoordinator.listener);
     auralizationServiceRef.current = auralizationService;
 
+    // Initialize Mode Visualizer
+    const modeVisualizer = new ModeVisualizer();
+    modeVisualizerRef.current = modeVisualizer;
+
     // Initialize Input Handler
     const inputHandler = new InputHandler(
       sceneCoordinator.camera,
@@ -364,8 +679,9 @@ export function ThreeScene({
 
     // Setup Input Handler callbacks
     inputHandler.setOnEntitySelected((entity) => {
-      // If in linking mode, link the entity to the sound config
-      if (isLinkingEntity && onEntityLinked && entity) {
+      // If in linking mode, pass entity (or null) to linking handler
+      // Clicking on empty space (entity === null) will unlink or exit linking mode
+      if (isLinkingEntity && onEntityLinked) {
         onEntityLinked(entity);
       } else {
         // Normal entity selection behavior
@@ -411,6 +727,7 @@ export function ThreeScene({
     inputHandler.setSoundSpheresAverageGetter(calculateSoundSpheresAverage);
     inputHandler.setFirstPersonModeGetter(() => sceneCoordinator.isFirstPersonMode());
     inputHandler.setSoundSphereMeshesGetter(() => soundSphereManager.getSoundSphereMeshes());
+    inputHandler.setTriangleToFaceMapGetter(() => geometryRenderer.getTriangleToFaceMap());
 
     // Setup event listeners
     inputHandler.setupClickHandler();
@@ -425,6 +742,7 @@ export function ThreeScene({
       receiverManager.dispose();
       playbackScheduler.dispose();
       auralizationService.dispose();
+      modeVisualizer.dispose();
       inputHandler.dispose();
 
       if (mountNode.contains(sceneCoordinator.getDomElement())) {
@@ -444,7 +762,8 @@ export function ThreeScene({
     if (triangulatedGeometry) {
       geometryRenderer.updateGeometryMesh(
         triangulatedGeometry.positions,
-        new Uint32Array(triangulatedGeometry.indices)
+        new Uint32Array(triangulatedGeometry.indices),
+        triangulatedGeometry.triangleToFaceMap
       );
 
       // Frame camera to model
@@ -455,27 +774,60 @@ export function ThreeScene({
         ENTITY_CONFIG.SCALE_MULTIPLIER
       );
     } else {
-      geometryRenderer.updateGeometryMesh(null, null);
+      geometryRenderer.updateGeometryMesh(null, null, null);
     }
   }, [triangulatedGeometry]);
 
   // ============================================================================
-  // Effect - Update Entity Selection Callback (for linking mode)
+  // Effect - Update Entity Selection Callback (for linking mode & modal impact)
   // ============================================================================
   useEffect(() => {
     const inputHandler = inputHandlerRef.current;
-    if (!inputHandler) return;
+    const sceneCoordinator = sceneCoordinatorRef.current;
+    if (!inputHandler || !sceneCoordinator) return;
 
     inputHandler.setOnEntitySelected((entity) => {
-      // If in linking mode, link the entity to the sound config
+      // Priority 1: Modal impact mode (ready or playing) - trigger impact or ignore
+      if ((modalImpactMode === 'ready' || modalImpactMode === 'playing') && modalImpactEntity && geometryData) {
+        // Check if user clicked on the correct entity
+        if (entity && entity.index === modalImpactEntity.index) {
+          // Only trigger new impact if not currently playing
+          if (modalImpactMode === 'ready' || !isPlayingImpact) {
+            // Use entity center as impact point
+            const impactPoint: [number, number, number] = [
+              modalImpactEntity.position[0],
+              modalImpactEntity.position[1],
+              modalImpactEntity.position[2],
+            ];
+            
+            handleImpactPointClick(impactPoint);
+          }
+        } else {
+          // User clicked wrong entity or empty space - highlight help text
+          setHighlightImpactHelp(true);
+          setTimeout(() => setHighlightImpactHelp(false), 2000); // Fade out after 2s
+        }
+        return; // Don't select entity in impact modes
+      }
+
+      // Priority 2: Linking mode
       if (isLinkingEntity && onEntityLinked && entity) {
         onEntityLinked(entity);
-      } else {
-        // Normal entity selection behavior
-        setSelectedEntity(entity);
+        return;
       }
+
+      // Priority 3: Normal entity selection
+      setSelectedEntity(entity);
     });
-  }, [isLinkingEntity, onEntityLinked]);
+  }, [
+    isLinkingEntity,
+    onEntityLinked,
+    modalImpactMode,
+    modalImpactEntity,
+    geometryData,
+    isPlayingImpact,
+    handleImpactPointClick
+  ]);
 
   // ============================================================================
   // Effect - Entity Highlighting (Diverse Selection)
@@ -496,6 +848,64 @@ export function ThreeScene({
 
     geometryRenderer.updateEntitySelection(geometryData, selectedEntity, selectedDiverseEntities);
   }, [selectedEntity, selectedDiverseEntities, geometryData]);
+
+  // ============================================================================
+  // Effect - Mode Visualization (Nodal Lines)
+  // ============================================================================
+  useEffect(() => {
+    const modeVisualizer = modeVisualizerRef.current;
+    const geometryRenderer = geometryRendererRef.current;
+    if (!modeVisualizer || !geometryRenderer) return;
+
+    // Check if visualization is active and we have data
+    if (
+      modeVisualizationState?.isActive &&
+      modeVisualizationState.selectedModeIndex !== null &&
+      currentModalResult &&
+      currentModalResult.mode_shape_visualizations
+    ) {
+      const modeIndex = modeVisualizationState.selectedModeIndex;
+      const modeViz = currentModalResult.mode_shape_visualizations[modeIndex];
+
+      if (!modeViz) return;
+
+      // Get the entity's highlight mesh (created when entity is selected in impact mode)
+      // The highlight mesh has the same vertices as the analyzed entity
+      const mesh = geometryRenderer.getHighlightMesh();
+      if (!mesh) return;
+
+      // Apply nodal line visualization
+      modeVisualizer.applyModeVisualization(mesh, modeViz);
+    } else {
+      // Clear visualization if inactive
+      const mesh = geometryRenderer.getHighlightMesh();
+      if (mesh) {
+        modeVisualizer.clearVisualization(mesh);
+      }
+    }
+  }, [
+    modeVisualizationState?.isActive,
+    modeVisualizationState?.selectedModeIndex,
+    currentModalResult,
+  ]);
+
+  // ============================================================================
+  // Effect - Auto-select Mode 0 when Modal Analysis Completes
+  // ============================================================================
+  useEffect(() => {
+    // Auto-select first mode when modal result becomes available
+    if (
+      currentModalResult &&
+      currentModalResult.mode_shape_visualizations &&
+      currentModalResult.mode_shape_visualizations.length > 0 &&
+      modeVisualizationState &&
+      modeVisualizationState.selectedModeIndex === null &&
+      onSelectMode
+    ) {
+      onSelectMode(0);
+    }
+  }, [currentModalResult, modeVisualizationState?.selectedModeIndex, onSelectMode]);
+
 
   // ============================================================================
   // Effect - Update Entity Overlay Position (Animation Loop)
@@ -543,6 +953,7 @@ export function ThreeScene({
           
           if (selectedSound && selectedSound.entity_index === selectedEntity.index) {
             const promptKey = `prompt_${promptIdx}`;
+            // Store entity index for EntityInfoBox positioning (above sound overlay)
             soundOverlay = {
               promptKey,
               promptIdx,
@@ -564,9 +975,22 @@ export function ThreeScene({
         });
       }
 
+      // Position EntityInfoBox dynamically:
+      // - If sound overlay exists AND is visible (not hidden by user AND showSoundBoxes is true):
+      //   Position ABOVE the sound overlay by VERTICAL_STACK_OFFSET
+      // - Otherwise: Position directly at entity (no offset)
+      let entityBoxY = y; // Default: position at entity
+      if (soundOverlay !== undefined) {
+        const overlay = soundOverlay as UIOverlay;
+        const isSoundVisible = showSoundBoxes && !hiddenOverlaysRef.current.has(overlay.promptKey);
+        if (isSoundVisible) {
+          entityBoxY = y - UI_OVERLAY.VERTICAL_STACK_OFFSET; // Offset above sound overlay
+        }
+      }
+
       setEntityOverlay({
         x,
-        y,
+        y: entityBoxY,
         visible: !isBehindCamera,
         entity: selectedEntity,
         soundOverlay
@@ -578,7 +1002,7 @@ export function ThreeScene({
     return () => {
       sceneCoordinator.removeAnimationCallback(updateEntityOverlay);
     };
-  }, [selectedEntity, soundscapeData, selectedVariants, soundVolumes, soundIntervals]);
+  }, [selectedEntity, soundscapeData, selectedVariants, soundVolumes, soundIntervals, showSoundBoxes]); // Add showSoundBoxes for dynamic positioning
 
   // ============================================================================
   // Effect - Update Sound UI Overlay Positions (Animation Loop)
@@ -616,33 +1040,61 @@ export function ThreeScene({
         const selectedSound = sounds[selectedIdx] || sounds[0];
         if (!selectedSound) return;
 
-        // Skip entity-linked sounds here - they will be rendered with EntityOverlay
+        // Check if this sound is linked to an entity
         const isEntityLinked = selectedSound.entity_index !== undefined;
-        if (isEntityLinked) {
-          return;
-        }
 
         // Use prompt_index as unique key to avoid React key conflicts with duplicate prompt texts
         const promptKey = `prompt_${promptIdx}`;
-        const sphere = soundSphereManager.findSphereByPromptKey(promptKey);
-        if (!sphere) return;
 
-        const vector = new THREE.Vector3();
-        sphere.getWorldPosition(vector);
-        const { x, y, isBehindCamera } = projectToScreen(
-          vector,
-          sceneCoordinator.camera,
-          rendererWidth,
-          rendererHeight
-        );
+        let x: number, y: number, isBehindCamera: boolean, isVisible: boolean;
 
-        const margin = UI_OVERLAY.MARGIN;
-        const isInViewportFlag = isInViewportUtil(x, y, rendererWidth, rendererHeight, margin);
+        if (isEntityLinked) {
+          // Entity-linked sound: get position from entity, not sphere
+          const entity = modelEntities.find(e => e.index === selectedSound.entity_index);
+          if (!entity) return; // Skip if entity not found
 
-        const isVisible = !isBehindCamera && isInViewportFlag;
+          const entityVector = new THREE.Vector3(
+            entity.position[0],
+            entity.position[1],
+            entity.position[2]
+          );
+          const screenPos = projectToScreen(
+            entityVector,
+            sceneCoordinator.camera,
+            rendererWidth,
+            rendererHeight
+          );
+          x = screenPos.x;
+          y = screenPos.y;
+          isBehindCamera = screenPos.isBehindCamera;
 
-        if (sphere) {
-          sphere.visible = isVisible;
+          const margin = UI_OVERLAY.MARGIN;
+          const isInViewportFlag = isInViewportUtil(x, y, rendererWidth, rendererHeight, margin);
+          isVisible = !isBehindCamera && isInViewportFlag;
+        } else {
+          // Non-entity-linked sound: get position from sphere
+          const sphere = soundSphereManager.findSphereByPromptKey(promptKey);
+          if (!sphere) return;
+
+          const vector = new THREE.Vector3();
+          sphere.getWorldPosition(vector);
+          const screenPos = projectToScreen(
+            vector,
+            sceneCoordinator.camera,
+            rendererWidth,
+            rendererHeight
+          );
+          x = screenPos.x;
+          y = screenPos.y;
+          isBehindCamera = screenPos.isBehindCamera;
+
+          const margin = UI_OVERLAY.MARGIN;
+          const isInViewportFlag = isInViewportUtil(x, y, rendererWidth, rendererHeight, margin);
+          isVisible = !isBehindCamera && isInViewportFlag;
+
+          if (sphere) {
+            sphere.visible = isVisible;
+          }
         }
 
         newOverlays.push({
@@ -656,7 +1108,7 @@ export function ThreeScene({
           variants: sounds,
           selectedVariantIdx: selectedIdx,
           userHidden: hiddenOverlaysRef.current.has(promptKey),
-          isEntityLinked: false
+          isEntityLinked
         });
       });
 
@@ -668,7 +1120,7 @@ export function ThreeScene({
     return () => {
       sceneCoordinator.removeAnimationCallback(updateUIOverlayPositions);
     };
-  }, [soundscapeData, selectedVariants]);
+  }, [soundscapeData, selectedVariants, modelEntities]); // Add modelEntities for entity-linked sound positioning
 
   // ============================================================================
   // Effect - Update Sound Spheres (Meshes Only)
@@ -808,11 +1260,12 @@ export function ThreeScene({
 
     // Only run this effect when:
     // 1. Auralization is enabled AND an impulse response buffer exists
-    // 2. OR when disabling auralization (enabled false but buffer still exists from previous state)
-    // Don't run when both are false (no IR ever loaded)
+    // 2. OR when disabling auralization (check if convolver nodes exist to clean up)
+    // Don't run when both are false (no IR ever loaded and no nodes to clean up)
     const hasImpulseResponse = auralizationConfig.impulseResponseBuffer !== null;
+    const hasConvolverNodes = auralizationService.hasConvolver();
     const shouldSetupAuralization = auralizationConfig.enabled && hasImpulseResponse;
-    const shouldDisableAuralization = !auralizationConfig.enabled && hasImpulseResponse;
+    const shouldDisableAuralization = !auralizationConfig.enabled && hasConvolverNodes;
 
     if (!shouldSetupAuralization && !shouldDisableAuralization) {
       return;
@@ -866,6 +1319,39 @@ export function ThreeScene({
     // This won't interfere with volume control
     soundSphereManager.updateMuteSoloStates(mutedSounds, soloedSound);
   }, [mutedSounds, soloedSound]);
+
+  // ============================================================================
+  // Effect - Update Listener Orientation for Ambisonic Rotation
+  // ============================================================================
+  useEffect(() => {
+    const sceneCoordinator = sceneCoordinatorRef.current;
+    const auralizationService = auralizationServiceRef.current;
+    if (!sceneCoordinator || !auralizationService) return;
+
+    // Only update orientation if auralization is enabled and uses ambisonics
+    if (!auralizationConfig.enabled || !auralizationConfig.impulseResponseBuffer) {
+      return;
+    }
+
+    // Update orientation in animation loop for smooth rotation tracking
+    const updateOrientation = () => {
+      if (!sceneCoordinator || !auralizationService) return;
+
+      const orientation = sceneCoordinator.getListenerOrientation();
+      auralizationService.updateOrientation(orientation);
+      
+      // Update UI state for orientation indicator
+      setCurrentOrientation(orientation);
+      setIsFirstPersonMode(sceneCoordinator.isFirstPersonMode());
+    };
+
+    // Add to animation loop
+    sceneCoordinator.addAnimationCallback(updateOrientation);
+
+    return () => {
+      sceneCoordinator.removeAnimationCallback(updateOrientation);
+    };
+  }, [auralizationConfig.enabled, auralizationConfig.impulseResponseBuffer]);
 
   // ============================================================================
   // Effect - Update Timeline Data (Schedule Changes Only)
@@ -1014,22 +1500,68 @@ export function ThreeScene({
         })}
 
         {/* Entity data overlay (shown when user clicks on an entity) */}
-        {entityOverlay && (
-          <EntityUIOverlay 
-            overlay={entityOverlay}
-            soundState={entityOverlay.soundOverlay ? getSoundState(entityOverlay.soundOverlay.soundId, individualSoundStates) : 'stopped'}
-            onToggleSound={onToggleSound}
-            onVariantChange={onVariantChange}
-            onVolumeChange={onVolumeChange}
-            onIntervalChange={onIntervalChange}
-            onDelete={onDeleteSound}
-            onMute={onMute}
-            onSolo={onSolo}
-            isMuted={entityOverlay.soundOverlay ? mutedSounds.has(entityOverlay.soundOverlay.soundId) : false}
-            isSoloed={entityOverlay.soundOverlay ? soloedSound === entityOverlay.soundOverlay.soundId : false}
+        {/* Entity-linked sound overlays are already rendered in the main uiOverlays array above */}
+        {/* Only show EntityInfoBox here, positioned ABOVE the sound overlay */}
+        {/* Hide when in impact ready/playing mode */}
+        {entityOverlay && entityOverlay.visible && modalImpactMode === 'inactive' && (
+          <EntityInfoBox 
+            entity={entityOverlay.entity}
+            x={entityOverlay.x}
+            y={entityOverlay.y}
+            onModalImpact={handleModalImpactClick}
+            isAnalyzing={false}
+            isAnalyzed={modalAnalysisCache.current.has(entityOverlay.entity.index)}
+          />
+        )}
+        
+        {/* Entity info while analyzing - show analyzing state */}
+        {entityOverlay && entityOverlay.visible && modalImpactMode === 'analyzing' && modalImpactEntity?.index === entityOverlay.entity.index && (
+          <EntityInfoBox 
+            entity={entityOverlay.entity}
+            x={entityOverlay.x}
+            y={entityOverlay.y}
+            onModalImpact={handleModalImpactClick}
+            isAnalyzing={true}
+            isAnalyzed={false}
+          />
+        )}
+
+        {/* Modal Analysis Progress - removed, now shown inline in button */}
+
+        {/* Impact Sound Playback Overlay - Right Side, Minimalistic */}
+        {/* Show when ready OR playing */}
+        {(modalImpactMode === 'ready' || modalImpactMode === 'playing') && modalImpactEntity && currentModalResult && (
+          <ImpactSoundPlayback
+            isPlaying={isPlayingImpact}
+            numModes={currentModalResult.num_modes_computed}
+            fundamentalFrequency={currentModalResult.frequency_response?.fundamental_frequency || currentModalResult.frequencies[0]}
+            material="steel"
+            meshQuality={currentModalResult.mesh_info?.mesh_quality}
+            onExit={exitImpactMode}
+            highlightHelp={highlightImpactHelp}
+            modalResult={currentModalResult}
+            visualizationState={modeVisualizationState}
+            onSelectMode={onSelectMode}
           />
         )}
       </div>
+
+      {/* Orientation Indicator - Top Left (First-Person Mode Only) */}
+      {isFirstPersonMode && auralizationConfig.enabled && auralizationConfig.impulseResponseBuffer && (
+        <OrientationIndicator
+          yaw={currentOrientation.yaw}
+          pitch={currentOrientation.pitch}
+          className="absolute top-6 left-6 pointer-events-none z-20"
+        />
+      )}
+
+      {/* Ambisonic Mode Notice - Top Right (When Ambisonic IR Active) */}
+      {auralizationConfig.enabled && auralizationConfig.impulseResponseBuffer && (
+        <AmbisonicModeNotice
+          irFormat={auralizationServiceRef.current?.getCurrentIRFormat() || 'mono'}
+          className="absolute top-6 right-6 pointer-events-none z-20"
+        />
+      )}
 
       {/* Playback Controls - Bottom Center */}
       <PlaybackControls
@@ -1067,122 +1599,76 @@ export function ThreeScene({
       <ControlsInfo />
 
       {/* Bottom-right control buttons */}
-      <div className="absolute bottom-6 right-6 flex flex-col gap-2 pointer-events-auto">
-        {/* Mute All Button */}
-        <button
-          onClick={handleToggleMute}
-          className="w-12 h-12 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-lg shadow-lg hover:bg-white dark:hover:bg-gray-700 transition-all duration-200 flex items-center justify-center group border border-gray-200 dark:border-gray-600"
-          title={isAudioMuted ? "Unmute all audio" : "Mute all audio"}
-        >
-          {isAudioMuted ? (
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="w-5 h-5 text-gray-700 dark:text-gray-200 group-hover:text-primary transition-colors"
-            >
-              <path d="M11 5L6 9H2v6h4l5 4V5z" />
-              <line x1="23" y1="9" x2="17" y2="15" />
-              <line x1="17" y1="9" x2="23" y2="15" />
-            </svg>
-          ) : (
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="w-5 h-5 text-gray-700 dark:text-gray-200 group-hover:text-primary transition-colors"
-            >
-              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-              <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-              <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-            </svg>
-          )}
-        </button>
+      <div className="absolute bottom-6 right-6 flex flex-col items-center pointer-events-auto" style={{ gap: UI_SCENE_BUTTON.GAP }}>
+        {/* Global Volume Slider (appears above button when visible) */}
+        {showVolumeSlider && (
+          <div data-volume-slider className="mb-1 flex items-center justify-center">
+            <VerticalVolumeSlider
+              value={globalVolume}
+              onChange={handleGlobalVolumeChange}
+            />
+          </div>
+        )}
+
+        {/* Global Volume Button */}
+        <div data-volume-button>
+          <SceneControlButton
+            onClick={handleToggleVolumeSlider}
+            isActive={globalVolume === 0}
+            activeColor={UI_COLORS.WARNING}
+            title="Global Volume"
+            icon={globalVolume === 0 ? (
+              <Icon>
+                <path d="M11 5L6 9H2v6h4l5 4V5z" />
+                <line x1="23" y1="9" x2="17" y2="15" />
+                <line x1="17" y1="9" x2="23" y2="15" />
+              </Icon>
+            ) : (
+              <Icon>
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+              </Icon>
+            )}
+          />
+        </div>
 
         {/* Reset Zoom Button */}
-        <button
+        <SceneControlButton
           onClick={handleResetZoom}
-          className="w-12 h-12 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-lg shadow-lg hover:bg-white dark:hover:bg-gray-700 transition-all duration-200 flex items-center justify-center group border border-gray-200 dark:border-gray-600"
           title="Reset camera view"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="w-5 h-5 text-gray-700 dark:text-gray-200 group-hover:text-primary transition-colors"
-          >
-            <rect x="3" y="3" width="18" height="18" strokeDasharray="3 3" />
-          </svg>
-        </button>
+          icon={
+            <Icon>
+              <rect x="3" y="3" width="18" height="18" strokeDasharray="3 3" />
+            </Icon>
+          }
+        />
 
         {/* Toggle Sound Boxes Button */}
-        <button
+        <SceneControlButton
           onClick={handleToggleSoundBoxes}
-          className="w-12 h-12 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-lg shadow-lg hover:bg-white dark:hover:bg-gray-700 transition-all duration-200 flex items-center justify-center group border border-gray-200 dark:border-gray-600"
+          isActive={showSoundBoxes}
           title={showSoundBoxes ? "Hide sound controls" : "Show sound controls"}
-        >
-          {showSoundBoxes ? (
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="w-5 h-5 text-gray-700 dark:text-gray-200 group-hover:text-primary transition-colors"
-            >
+          icon={showSoundBoxes ? (
+            <Icon>
               <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
               <circle cx="12" cy="12" r="3" />
-            </svg>
+            </Icon>
           ) : (
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="w-5 h-5 text-gray-700 dark:text-gray-200 group-hover:text-primary transition-colors"
-            >
+            <Icon>
               <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
               <line x1="1" y1="1" x2="23" y2="23" />
-            </svg>
+            </Icon>
           )}
-        </button>
+        />
 
         {/* Toggle Timeline Button */}
-        
-          <button
-            onClick={() => {
-              setShowTimeline(!showTimeline);
-            }}
-            className="w-12 h-12 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-lg shadow-lg hover:bg-white dark:hover:bg-gray-700 transition-all duration-200 flex items-center justify-center group border border-gray-200 dark:border-gray-600"
-            title={showTimeline ? "Hide timeline" : "Show timeline"}
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="w-5 h-5 text-gray-700 dark:text-gray-200 group-hover:text-primary transition-colors"
-            >
+        <SceneControlButton
+          onClick={() => setShowTimeline(!showTimeline)}
+          isActive={showTimeline}
+          title={showTimeline ? "Hide timeline" : "Show timeline"}
+          icon={
+            <Icon>
               <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
               <line x1="16" y1="2" x2="16" y2="6" />
               <line x1="8" y1="2" x2="8" y2="6" />
@@ -1193,9 +1679,9 @@ export function ThreeScene({
               <path d="M8 18h.01" />
               <path d="M12 18h.01" />
               <path d="M16 18h.01" />
-            </svg>
-          </button>
-        
+            </Icon>
+          }
+        />
       </div>
     </div>
   );

@@ -17,6 +17,7 @@
 
 import { useState } from 'react';
 import type { ReceiverData } from '@/types';
+import { UI_COLORS } from '@/lib/constants';
 
 interface ReceiversSectionProps {
   receivers: ReceiverData[];
@@ -65,19 +66,31 @@ export function ReceiversSection({
 
   return (
     <div className="flex flex-col gap-3">
-      <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
-        Receivers
-      </h3>
+      <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
+        RECEIVERS
+      </h4>
 
       {/* Create Receiver Button */}
       <button
         onClick={onStartPlacingReceiver}
         disabled={isPlacingReceiver}
-        className={`w-full py-2 px-4 text-white font-semibold rounded transition-colors ${
-          isPlacingReceiver
-            ? 'bg-gray-400 cursor-not-allowed'
-            : 'bg-primary hover:bg-primary-hover'
-        }`}
+        onMouseEnter={(e) => {
+          if (!isPlacingReceiver) {
+            e.currentTarget.style.opacity = '0.8';
+          }
+        }}
+        onMouseLeave={(e) => {
+          if (!isPlacingReceiver) {
+            e.currentTarget.style.opacity = '1';
+          }
+        }}
+        className="w-full py-2 px-4 text-white font-semibold rounded transition-colors"
+        style={{
+          backgroundColor: isPlacingReceiver ? UI_COLORS.NEUTRAL_400 : UI_COLORS.PRIMARY,
+          borderRadius: '8px',
+          opacity: isPlacingReceiver ? 0.4 : 1,
+          cursor: isPlacingReceiver ? 'not-allowed' : 'pointer'
+        }}
       >
         {isPlacingReceiver ? 'Click in 3D to Place (ESC to cancel)' : '+ Create Receiver'}
       </button>
@@ -88,7 +101,14 @@ export function ReceiversSection({
           {receivers.map((receiver) => (
             <div
               key={receiver.id}
-              className="bg-white dark:bg-gray-800 rounded p-2 border border-gray-200 dark:border-gray-600"
+              className="rounded p-2"
+              style={{
+                backgroundColor: 'white',
+                borderColor: UI_COLORS.NEUTRAL_200,
+                borderWidth: '1px',
+                borderStyle: 'solid',
+                borderRadius: '8px'
+              }}
             >
               {/* Receiver Name - Editable */}
               <div className="flex items-center justify-between mb-1">
@@ -100,12 +120,20 @@ export function ReceiversSection({
                     onBlur={handleEditSave}
                     onKeyDown={handleEditKeyDown}
                     autoFocus
-                    className="flex-1 text-sm font-medium bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded outline-none focus:ring-1 focus:ring-primary"
+                    className="flex-1 text-sm font-medium px-2 py-1 rounded outline-none focus:ring-1"
+                    style={{
+                      backgroundColor: UI_COLORS.NEUTRAL_100,
+                      borderColor: UI_COLORS.PRIMARY,
+                      borderRadius: '8px'
+                    }}
                   />
                 ) : (
                   <div
                     onDoubleClick={() => handleDoubleClick(receiver)}
-                    className="flex-1 text-sm font-medium text-gray-800 dark:text-gray-200 cursor-pointer hover:text-primary transition-colors group"
+                    onMouseEnter={(e) => e.currentTarget.style.color = UI_COLORS.PRIMARY}
+                    onMouseLeave={(e) => e.currentTarget.style.color = UI_COLORS.NEUTRAL_800}
+                    className="flex-1 text-sm font-medium cursor-pointer transition-colors group"
+                    style={{ color: UI_COLORS.NEUTRAL_800 }}
                     title="Double-click to edit name"
                   >
                     {receiver.name}
@@ -116,7 +144,18 @@ export function ReceiversSection({
                 {/* Delete Button */}
                 <button
                   onClick={() => onDeleteReceiver(receiver.id)}
-                  className="w-6 h-6 flex items-center justify-center text-lg text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-colors ml-2"
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = UI_COLORS.ERROR;
+                    e.currentTarget.style.backgroundColor = `${UI_COLORS.ERROR}10`;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = UI_COLORS.ERROR;
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                  }}
+                  className="w-6 h-6 flex items-center justify-center text-lg rounded-full transition-colors ml-2"
+                  style={{
+                    color: UI_COLORS.ERROR
+                  }}
                   title="Delete receiver"
                 >
                   ×
@@ -124,7 +163,7 @@ export function ReceiversSection({
               </div>
 
               {/* Position Display - Read-only */}
-              <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">
+              <div className="text-xs font-mono" style={{ color: UI_COLORS.NEUTRAL_500 }}>
                 Position: ({receiver.position[0].toFixed(2)}, {receiver.position[1].toFixed(2)}, {receiver.position[2].toFixed(2)})
               </div>
             </div>
@@ -134,7 +173,7 @@ export function ReceiversSection({
 
       {/* Help Text */}
       {receivers.length === 0 && !isPlacingReceiver && (
-        <p className="text-xs text-gray-500 dark:text-gray-400 italic">
+        <p className="text-xs italic" style={{ color: UI_COLORS.NEUTRAL_500 }}>
           No receivers created. Click the button above, then click in the 3D scene to place a blue receiver sphere. Double-click on it to reset the camera view.
         </p>
       )}

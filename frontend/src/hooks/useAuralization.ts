@@ -130,9 +130,9 @@ function parseWavFile_OLD(arrayBuffer: ArrayBuffer) {
  *
  * Features:
  * - Import custom impulse responses
- * - Custom WAV parser for multi-channel files (up to 16+ channels)
+ * - Custom WAV parser for multi-channel files (up to 16 channels)
  * - Sample rate conversion
- * - Multi-channel support (extracts first 2 channels)
+ * - Multi-channel support: Mono (1-ch), Binaural (2-ch), FOA (4-ch), TOA (16-ch)
  * - Normalization option
  * - Auto-enable on IR load
  *
@@ -152,7 +152,8 @@ export function useAuralization() {
 
   /**
    * Load and decode impulse response from file
-   * Handles multi-channel WAV files and extracts first 2 channels
+   * Handles multi-channel WAV files (up to 16 channels for TOA)
+   * Supports: Mono (1-ch), Binaural (2-ch), FOA (4-ch), TOA (16-ch)
    */
   const loadImpulseResponse = useCallback(async (file: File, audioContext: AudioContext) => {
     console.log('[useAuralization] loadImpulseResponse called with file:', file.name);
@@ -171,9 +172,9 @@ export function useAuralization() {
         audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
         console.log('[useAuralization] Decoded using native browser decoder');
         
-        // Check channel count after native decoding
-        if (audioBuffer.numberOfChannels > 4) {
-          throw new Error(`Audio file has ${audioBuffer.numberOfChannels} channels. Maximum supported is 4 channels.`);
+        // Check channel count after native decoding (support up to 16 for TOA)
+        if (audioBuffer.numberOfChannels > 16) {
+          throw new Error(`Audio file has ${audioBuffer.numberOfChannels} channels. Maximum supported is 16 channels (TOA).`);
         }
       } catch (decodeError) {
         console.log('[useAuralization] Native decoder failed, trying custom WAV parser...');
@@ -183,12 +184,12 @@ export function useAuralization() {
           const wavData = parseWavFile(arrayBuffer);
           console.log('[useAuralization] Successfully parsed WAV file');
           
-          // Check channel count limit
-          if (wavData.numberOfChannels > 4) {
-            throw new Error(`Audio file has ${wavData.numberOfChannels} channels. Maximum supported is 4 channels. Please use a file with 1-4 channels.`);
+          // Check channel count limit (support up to 16 for TOA)
+          if (wavData.numberOfChannels > 16) {
+            throw new Error(`Audio file has ${wavData.numberOfChannels} channels. Maximum supported is 16 channels (TOA). Please use a file with 1-16 channels.`);
           }
           
-          // Use all available channels (up to 4)
+          // Use all available channels (up to 16)
           const channelsToUse = wavData.numberOfChannels;
           
           // Create AudioBuffer with the parsed data
@@ -227,12 +228,6 @@ export function useAuralization() {
         );
       }
 
-      console.log(`[Auralization] Loaded impulse response:`);
-      console.log(`  - Duration: ${audioBuffer.duration.toFixed(2)}s`);
-      console.log(`  - Sample Rate: ${audioBuffer.sampleRate}Hz`);
-      console.log(`  - Channels: ${audioBuffer.numberOfChannels}`);
-      console.log(`  - Length: ${audioBuffer.length} samples`);
-
       setConfig(prev => ({
         ...prev,
         impulseResponseUrl: URL.createObjectURL(file),
@@ -240,8 +235,6 @@ export function useAuralization() {
         impulseResponseFilename: file.name,
         enabled: true // Auto-enable auralization when IR is loaded
       }));
-
-      console.log('[useAuralization] Auralization auto-enabled after loading IR');
       setIsLoading(false);
       return audioBuffer;
     } catch (err) {
@@ -275,7 +268,7 @@ export function useAuralization() {
   }, []);
 
   /**
-   * Clear impulse response
+   * Clear impulse response and disable auralization
    */
   const clearImpulseResponse = useCallback(() => {
     if (config.impulseResponseUrl) {
@@ -283,6 +276,7 @@ export function useAuralization() {
     }
     setConfig(prev => ({
       ...prev,
+      enabled: false,  // Disable auralization when clearing
       impulseResponseUrl: null,
       impulseResponseBuffer: null,
       impulseResponseFilename: null

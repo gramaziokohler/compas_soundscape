@@ -1,7 +1,7 @@
 import type { ModelLoadSectionProps } from "@/types/components";
 import { isAudioFile, is3DModelFile, formatConfidence } from "@/lib/audio/audio-info";
 import { AudioWaveformDisplay } from "@/components/audio/AudioWaveformDisplay";
-import { AUDIO_VISUALIZATION, MODEL_FILE_EXTENSIONS, AUDIO_FILE_EXTENSIONS } from "@/lib/constants";
+import { AUDIO_VISUALIZATION, MODEL_FILE_EXTENSIONS, AUDIO_FILE_EXTENSIONS, UI_COLORS, UI_CARD, UI_BUTTON } from "@/lib/constants";
 
 export function ModelLoadSection({
   modelEntities,
@@ -48,8 +48,18 @@ export function ModelLoadSection({
       <div>
         {modelEntities.length > 0 ? (
           <div className="flex flex-col gap-2">
-            <div className="p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
-              <p className="text-xs text-green-800 dark:text-green-300 font-semibold">
+            <div 
+              className="rounded-lg"
+              style={{
+                padding: `${UI_CARD.PADDING}px`,
+                backgroundColor: UI_COLORS.SUCCESS_LIGHT,
+                borderColor: UI_COLORS.SUCCESS,
+                borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
+                borderStyle: 'solid',
+                borderRadius: `${UI_CARD.BORDER_RADIUS}px`
+              }}
+            >
+              <p className="text-xs font-semibold" style={{ color: UI_COLORS.SUCCESS }}>
                 ✓ Model loaded with {modelEntities.length} objects
               </p>
             </div>
@@ -67,14 +77,34 @@ export function ModelLoadSection({
             </label>
 
             {!useModelAsContext && (
-              <div className="p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded text-xs text-yellow-700 dark:text-yellow-300">
+              <div 
+                className="rounded text-xs"
+                style={{
+                  padding: `${UI_CARD.PADDING - 4}px`,
+                  backgroundColor: UI_COLORS.WARNING_LIGHT,
+                  borderColor: UI_COLORS.WARNING,
+                  borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
+                  borderStyle: 'solid',
+                  color: UI_COLORS.WARNING_HOVER
+                }}
+              >
                 ℹ️ Model will be used for positioning only
               </div>
             )}
 
             <button
               onClick={onClearModel}
-              className="w-full rounded-md bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 font-medium py-2 text-xs hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+              className="w-full transition-colors"
+              style={{
+                borderRadius: UI_BUTTON.BORDER_RADIUS_MD,
+                padding: UI_BUTTON.PADDING_MD,
+                fontSize: "0.75rem", // text-xs
+                fontWeight: UI_BUTTON.FONT_WEIGHT,
+                backgroundColor: UI_COLORS.NEUTRAL_200,
+                color: UI_COLORS.NEUTRAL_800
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_300}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_200}
             >
               Load Another Model
             </button>
@@ -148,9 +178,18 @@ export function ModelLoadSection({
 
                 {/* Fallback: Show text-only audio info if waveform is disabled */}
                 {file && isAudio && sedAudioInfo && !hasSEDResults && !AUDIO_VISUALIZATION.ENABLE_WAVEFORM_DISPLAY && (
-                  <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-                    <p className="text-xs font-semibold text-blue-800 dark:text-blue-300 mb-2">Audio Information</p>
-                    <div className="text-xs text-blue-700 dark:text-blue-300 space-y-1">
+                  <div 
+                    className="rounded-lg"
+                    style={{
+                      padding: `${UI_CARD.PADDING}px`,
+                      backgroundColor: UI_COLORS.INFO_LIGHT,
+                      borderColor: UI_COLORS.INFO,
+                      borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
+                      borderStyle: 'solid'
+                    }}
+                  >
+                    <p className="text-xs font-semibold mb-2" style={{ color: UI_COLORS.INFO }}>Audio Information</p>
+                    <div className="text-xs space-y-1" style={{ color: UI_COLORS.INFO_HOVER }}>
                       <div className="flex justify-between">
                         <span>Duration:</span>
                         <span className="font-mono">{sedAudioInfo.duration.toFixed(2)}s</span>
@@ -169,7 +208,16 @@ export function ModelLoadSection({
 
                 {/* SED Analysis Options (only for audio files, before analysis) */}
                 {file && isAudio && !hasSEDResults && (
-                  <div className="p-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg">
+                  <div 
+                    className="rounded-lg"
+                    style={{
+                      padding: `${UI_CARD.PADDING}px`,
+                      backgroundColor: UI_COLORS.NEUTRAL_100,
+                      borderColor: UI_COLORS.NEUTRAL_300,
+                      borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
+                      borderStyle: 'solid'
+                    }}
+                  >
                     <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">Analysis Options</p>
                     <div className="space-y-2">
                       <label className="flex items-center gap-2 cursor-pointer">
@@ -203,7 +251,16 @@ export function ModelLoadSection({
                   <button
                     onClick={isAudio ? onAnalyzeSoundEvents : onUpload}
                     disabled={isUploading || isAnalyzingModel || isSEDAnalyzing || !file}
-                    className={`${hasSEDResults && isAudio ? 'flex-1' : 'w-full'} rounded-md text-white font-medium py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-gray-400 disabled:hover:bg-gray-400 flex items-center justify-center gap-2 transition-colors`}
+                    className={`${hasSEDResults && isAudio ? 'flex-1' : 'w-full'} text-white flex items-center justify-center gap-2 transition-colors disabled:opacity-40`}
+                    style={{
+                      borderRadius: UI_BUTTON.BORDER_RADIUS_MD,
+                      padding: UI_BUTTON.PADDING_MD,
+                      fontSize: UI_BUTTON.FONT_SIZE,
+                      fontWeight: UI_BUTTON.FONT_WEIGHT,
+                      backgroundColor: UI_COLORS.PRIMARY
+                    }}
+                    onMouseEnter={(e) => !e.currentTarget.disabled && (e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY_HOVER)}
+                    onMouseLeave={(e) => !e.currentTarget.disabled && (e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY)}
                   >
                     {isUploading || isAnalyzingModel || isSEDAnalyzing ? (
                       <>
@@ -223,7 +280,16 @@ export function ModelLoadSection({
                   {hasSEDResults && isAudio && (
                     <button
                       onClick={onLoadSoundsFromSED}
-                      className="flex-1 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium py-2 text-sm transition-colors"
+                      className="flex-1 text-white transition-colors"
+                      style={{
+                        borderRadius: UI_BUTTON.BORDER_RADIUS_MD,
+                        padding: UI_BUTTON.PADDING_MD,
+                        fontSize: UI_BUTTON.FONT_SIZE,
+                        fontWeight: UI_BUTTON.FONT_WEIGHT,
+                        backgroundColor: UI_COLORS.SUCCESS
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.SUCCESS_HOVER}
+                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.SUCCESS}
                       title="Load detected sounds into generation tab"
                     >
                       Load Sounds →
@@ -248,35 +314,64 @@ export function ModelLoadSection({
 
                 {/* Progress indicator */}
                 {(isAnalyzingModel || isSEDAnalyzing) && analysisProgress && (
-                  <div className="p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-xs text-blue-700 dark:text-blue-300">
+                  <div 
+                    className="rounded text-xs"
+                    style={{
+                      padding: `${UI_CARD.PADDING - 4}px`,
+                      backgroundColor: UI_COLORS.INFO_LIGHT,
+                      borderColor: UI_COLORS.INFO,
+                      borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
+                      borderStyle: 'solid',
+                      color: UI_COLORS.INFO_HOVER
+                    }}
+                  >
                     🔍 {analysisProgress}
                   </div>
                 )}
 
                 {/* Warning for model positioning only */}
                 {file && isModel && !useModelAsContext && !isUploading && (
-                  <div className="p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded text-xs text-yellow-700 dark:text-yellow-300">
+                  <div 
+                    className="rounded text-xs"
+                    style={{
+                      padding: `${UI_CARD.PADDING - 4}px`,
+                      backgroundColor: UI_COLORS.WARNING_LIGHT,
+                      borderColor: UI_COLORS.WARNING,
+                      borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
+                      borderStyle: 'solid',
+                      color: UI_COLORS.WARNING_HOVER
+                    }}
+                  >
                     ℹ️ Model will be used for positioning only
                   </div>
                 )}
 
                 {/* SED Error Display - Friendly error message */}
                 {sedError && file && isAudio && !hasSEDResults && (
-                  <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                  <div 
+                    className="rounded-lg"
+                    style={{
+                      padding: `${UI_CARD.PADDING}px`,
+                      backgroundColor: UI_COLORS.ERROR_LIGHT,
+                      borderColor: UI_COLORS.ERROR,
+                      borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
+                      borderStyle: 'solid'
+                    }}
+                  >
                     <div className="flex items-start gap-2">
-                      <svg className="w-4 h-4 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: UI_COLORS.ERROR }}>
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
                       <div className="flex-1">
-                        <p className="text-xs font-semibold text-red-800 dark:text-red-300 mb-1">Analysis Failed</p>
-                        <p className="text-xs text-red-700 dark:text-red-300">{sedError}</p>
+                        <p className="text-xs font-semibold mb-1" style={{ color: UI_COLORS.ERROR }}>Analysis Failed</p>
+                        <p className="text-xs" style={{ color: UI_COLORS.ERROR_HOVER }}>{sedError}</p>
                         {/* Show format helper only for loading/audio errors, not analysis errors */}
                         {(sedError.toLowerCase().includes('load') ||
                           sedError.toLowerCase().includes('corrupt') ||
                           sedError.toLowerCase().includes('format') ||
                           sedError.toLowerCase().includes('audio file') ||
                           sedError.toLowerCase().includes('0 samples')) && (
-                          <p className="text-xs text-red-600 dark:text-red-400 mt-2">
+                          <p className="text-xs mt-2" style={{ color: UI_COLORS.ERROR }}>
                             💡 Try: Checking your audio file format, ensuring it's not corrupted, or using a 16kHz WAV file
                           </p>
                         )}
@@ -287,23 +382,27 @@ export function ModelLoadSection({
 
                 {/* SED Results Display - Scrollable like Text Generation */}
                 {hasSEDResults && (
-                  <div className="p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
-                    <p className="text-xs font-semibold text-green-800 dark:text-green-300 mb-2 flex items-center">
+                  <div 
+                    className="rounded-lg"
+                    style={{
+                      padding: `${UI_CARD.PADDING}px`,
+                      backgroundColor: UI_COLORS.SUCCESS_LIGHT,
+                      borderColor: UI_COLORS.SUCCESS,
+                      borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
+                      borderStyle: 'solid'
+                    }}
+                  >
+                    <p className="text-xs font-semibold mb-2 flex items-center" style={{ color: UI_COLORS.SUCCESS }}>
                       <span className="mr-2">✨</span>
                       Detected Sound Events:
                     </p>
                     {/* Scrollable container matching TextGenerationSection style */}
                     <div className="max-h-64 overflow-y-auto space-y-1">
                       {sedDetectedSounds.map((sound, idx) => (
-                        <div key={idx} className="text-xs text-green-700 dark:text-green-300 flex justify-between items-center gap-2">
+                        <div key={idx} className="text-xs flex justify-between items-center gap-2" style={{ color: UI_COLORS.SUCCESS_HOVER }}>
                           <span className="flex-1">{sound.name}</span>
                           <div className="flex items-center gap-2 font-mono text-right">
                             <span>{formatConfidence(sound.confidence)}</span>
-                            {/* {sedAnalysisOptions?.analyzeAmplitudes && sound.avg_amplitude_db !== null && (
-                              <span className="text-green-600 dark:text-green-400">
-                                ({sound.avg_amplitude_db.toFixed(1)} dB)
-                              </span> */}
-                            {/* )} */}
                           </div>
                         </div>
                       ))}
@@ -318,7 +417,16 @@ export function ModelLoadSection({
                 <button
                   onClick={onLoadSampleIfc}
                   disabled={isUploading || isAnalyzingModel}
-                  className="w-full rounded-md text-white font-medium py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-gray-400 disabled:hover:bg-gray-400 flex items-center justify-center gap-2 transition-colors"
+                  className="w-full text-white flex items-center justify-center gap-2 transition-colors disabled:opacity-40"
+                  style={{
+                    borderRadius: UI_BUTTON.BORDER_RADIUS_MD,
+                    padding: UI_BUTTON.PADDING_MD,
+                    fontSize: UI_BUTTON.FONT_SIZE,
+                    fontWeight: UI_BUTTON.FONT_WEIGHT,
+                    backgroundColor: UI_COLORS.PRIMARY
+                  }}
+                  onMouseEnter={(e) => !e.currentTarget.disabled && (e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY_HOVER)}
+                  onMouseLeave={(e) => !e.currentTarget.disabled && (e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY)}
                 >
                   {isUploading || isAnalyzingModel ? (
                     <>
@@ -346,13 +454,33 @@ export function ModelLoadSection({
                 </label>
 
                 {isAnalyzingModel && analysisProgress && (
-                  <div className="p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-xs text-blue-700 dark:text-blue-300">
+                  <div 
+                    className="rounded text-xs"
+                    style={{
+                      padding: `${UI_CARD.PADDING - 4}px`,
+                      backgroundColor: UI_COLORS.INFO_LIGHT,
+                      borderColor: UI_COLORS.INFO,
+                      borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
+                      borderStyle: 'solid',
+                      color: UI_COLORS.INFO_HOVER
+                    }}
+                  >
                     🔍 {analysisProgress}
                   </div>
                 )}
 
                 {!useModelAsContext && !isUploading && (
-                  <div className="p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded text-xs text-yellow-700 dark:text-yellow-300">
+                  <div 
+                    className="rounded text-xs"
+                    style={{
+                      padding: `${UI_CARD.PADDING - 4}px`,
+                      backgroundColor: UI_COLORS.WARNING_LIGHT,
+                      borderColor: UI_COLORS.WARNING,
+                      borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
+                      borderStyle: 'solid',
+                      color: UI_COLORS.WARNING_HOVER
+                    }}
+                  >
                     ℹ️ Model will be used for positioning only
                   </div>
                 )}
@@ -360,7 +488,17 @@ export function ModelLoadSection({
             )}
 
             {uploadError && (
-              <div className="mt-2 p-2 bg-red-50 dark:bg-red-900/20 rounded text-xs text-red-600">
+              <div 
+                className="rounded text-xs"
+                style={{
+                  padding: `${UI_CARD.PADDING - 4}px`,
+                  backgroundColor: UI_COLORS.ERROR_LIGHT,
+                  borderColor: UI_COLORS.ERROR,
+                  borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
+                  borderStyle: 'solid',
+                  color: UI_COLORS.ERROR
+                }}
+              >
                 {uploadError}
               </div>
             )}

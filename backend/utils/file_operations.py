@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 from fastapi import UploadFile
-from config.constants import TEMP_UPLOADS_DIR, TEMP_LIBRARY_DIR, TEMP_DIR
+from config.constants import TEMP_UPLOADS_DIR, TEMP_LIBRARY_DIR, TEMP_DIR, IMPULSE_RESPONSE_DIR
 
 
 def sanitize_filename(filename: str) -> str:
@@ -190,7 +190,8 @@ def cleanup_all_temp_directories() -> dict[str, int]:
     Clean up all temporary directories used by the application.
 
     This function should be called on application startup to ensure
-    a clean state. It removes all files from temporary directories.
+    a clean state. It removes all files from temporary directories
+    and the impulse response directory.
 
     Returns:
         dict[str, int]: Dictionary mapping directory paths to number of files deleted
@@ -201,7 +202,7 @@ def cleanup_all_temp_directories() -> dict[str, int]:
         print(f"Cleaned up {sum(results.values())} total files")
         ```
     """
-    temp_directories = [TEMP_UPLOADS_DIR, TEMP_LIBRARY_DIR, TEMP_DIR]
+    temp_directories = [TEMP_UPLOADS_DIR, TEMP_LIBRARY_DIR, TEMP_DIR, IMPULSE_RESPONSE_DIR]
     results = {}
 
     for temp_dir in temp_directories:

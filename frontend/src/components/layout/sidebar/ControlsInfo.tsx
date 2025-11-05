@@ -1,3 +1,5 @@
+import { UI_COLORS } from "@/lib/constants";
+
 /**
  * Minimalistic 3D controls info overlay
  * Renders at bottom-left of 3D scene with no background
@@ -5,7 +7,7 @@
 export function ControlsInfo() {
   return (
     <div className="absolute bottom-6 left-6 pointer-events-none select-none">
-      <ul className="text-[10px] text-gray-600 dark:text-gray-300 space-y-0.5 leading-tight">
+      <ul className="text-[10px] space-y-0.5 leading-tight" style={{ color: UI_COLORS.NEUTRAL_500 }}>
         <li>Left click + drag: Rotate</li>
         <li>Right click + drag: Pan</li>
         <li>Scroll: Zoom</li>

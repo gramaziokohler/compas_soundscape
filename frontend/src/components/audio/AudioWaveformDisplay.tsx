@@ -51,7 +51,19 @@ export function AudioWaveformDisplay({
     // Get container width to ensure waveform fits
     const containerWidth = container.clientWidth;
     const width = Math.min(containerWidth, AUDIO_VISUALIZATION.WAVEFORM_WIDTH);
-    const height = AUDIO_VISUALIZATION.WAVEFORM_HEIGHT;
+    
+    // Dynamic height based on channel count
+    // Base height for 1-2 channels, scale up for multi-channel (FOA/TOA)
+    const numChannels = audioBuffer.numberOfChannels;
+    let height: number = AUDIO_VISUALIZATION.WAVEFORM_HEIGHT;
+    
+    if (numChannels === 4) {
+      // FOA (4-channel): Increase height for better readability
+      height = Math.min(600, AUDIO_VISUALIZATION.WAVEFORM_HEIGHT * 1.5);
+    } else if (numChannels >= 8) {
+      // TOA (16-channel) or multi-channel: Significantly taller
+      height = Math.min(800, AUDIO_VISUALIZATION.WAVEFORM_HEIGHT * 2);
+    }
 
     // Set canvas size with device pixel ratio for crisp rendering
     const dpr = window.devicePixelRatio || 1;

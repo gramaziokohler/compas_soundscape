@@ -1,12 +1,12 @@
 /**
  * AcousticsTab Component
  *
- * Combines Receivers and Auralization sections into a single tab.
+ * Combines Receivers and IR Library sections.
  * This component organizes acoustic-related features in the sidebar.
  *
  * Sections:
  * - Receivers: Create and manage receiver spheres
- * - Auralization: Apply impulse responses for room acoustics
+ * - IR Library: Upload, browse, and select impulse responses
  *
  * Architecture:
  * - Follows modular component pattern
@@ -15,9 +15,11 @@
  */
 
 import { ReceiversSection } from './ReceiversSection';
-import { AuralizationSection } from './AuralizationSection';
+import { ImpulseResponseUpload } from '@/components/audio/ImpulseResponseUpload';
 import type { ReceiverData } from '@/types';
+import type { ImpulseResponseMetadata } from '@/types/audio';
 import type { AuralizationConfig } from '@/hooks/useAuralization';
+import { UI_COLORS } from '@/lib/constants';
 
 interface AcousticsTabProps {
   // Receiver props
@@ -27,14 +29,12 @@ interface AcousticsTabProps {
   onDeleteReceiver: (id: string) => void;
   onUpdateReceiverName: (id: string, name: string) => void;
 
-  // Auralization props
+  // IR Library props
+  onSelectIRFromLibrary: (irMetadata: ImpulseResponseMetadata) => Promise<void>;
+  onClearIR: () => void;
+  onToggleNormalize: (enabled: boolean) => void;
+  selectedIRId: string | null;
   auralizationConfig: AuralizationConfig;
-  auralizationLoading: boolean;
-  auralizationError: string | null;
-  onToggleAuralization: (enabled: boolean) => void;
-  onToggleNormalize: (normalize: boolean) => void;
-  onLoadImpulseResponse: (file: File) => Promise<void>;
-  onClearImpulseResponse: () => void;
 }
 
 export function AcousticsTab({
@@ -43,13 +43,11 @@ export function AcousticsTab({
   onStartPlacingReceiver,
   onDeleteReceiver,
   onUpdateReceiverName,
-  auralizationConfig,
-  auralizationLoading,
-  auralizationError,
-  onToggleAuralization,
+  onSelectIRFromLibrary,
+  onClearIR,
   onToggleNormalize,
-  onLoadImpulseResponse,
-  onClearImpulseResponse
+  selectedIRId,
+  auralizationConfig
 }: AcousticsTabProps) {
   return (
     <div className="flex flex-col gap-6">
@@ -62,19 +60,17 @@ export function AcousticsTab({
         onUpdateReceiverName={onUpdateReceiverName}
       />
 
-      {/* Auralization Section - Direct content without wrapper */}
+      {/* IR Library Management */}
       <div className="flex flex-col gap-3">
-        <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
-          Auralization
-        </h3>
-        <AuralizationSection
-          config={auralizationConfig}
-          isLoading={auralizationLoading}
-          error={auralizationError}
-          onToggleAuralization={onToggleAuralization}
+        <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
+          IMPULSE RESPONSE LIBRARY
+        </h4>
+        <ImpulseResponseUpload
+          onSelectIR={onSelectIRFromLibrary}
+          onClearIR={onClearIR}
           onToggleNormalize={onToggleNormalize}
-          onLoadImpulseResponse={onLoadImpulseResponse}
-          onClearImpulseResponse={onClearImpulseResponse}
+          selectedIRId={selectedIRId}
+          auralizationConfig={auralizationConfig}
         />
       </div>
     </div>

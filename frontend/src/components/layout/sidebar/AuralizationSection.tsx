@@ -4,6 +4,7 @@ import { getIRInfo } from "@/lib/audio/impulse-response";
 import { FileUploadArea } from "@/components/controls/FileUploadArea";
 import { AudioWaveformDisplay } from "@/components/audio/AudioWaveformDisplay";
 import type { SEDAudioInfo } from "@/types";
+import { UI_COLORS } from "@/lib/constants";
 
 interface AuralizationSectionProps {
   config: AuralizationConfig;
@@ -107,11 +108,11 @@ export function AuralizationSection({
       {/* Loading State */}
       {isLoading && (
         <div className="flex items-center justify-center py-4">
-          <svg className="animate-spin h-6 w-6 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <svg className="animate-spin h-6 w-6" style={{ color: UI_COLORS.PRIMARY }} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
-          <span className="ml-2 text-sm text-gray-600 dark:text-gray-400">Loading IR...</span>
+          <span className="ml-2 text-sm" style={{ color: UI_COLORS.NEUTRAL_500 }}>Loading IR...</span>
         </div>
       )}
 
@@ -129,7 +130,8 @@ export function AuralizationSection({
             />
             <label
               htmlFor="enableAuralization"
-              className="text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer"
+              className="text-sm font-medium cursor-pointer"
+              style={{ color: UI_COLORS.NEUTRAL_700 }}
             >
               Enable Auralization
             </label>
@@ -146,7 +148,8 @@ export function AuralizationSection({
             />
             <label
               htmlFor="normalizeIR"
-              className="text-sm text-gray-700 dark:text-gray-300 cursor-pointer"
+              className="text-sm cursor-pointer"
+              style={{ color: UI_COLORS.NEUTRAL_700 }}
             >
               Normalize IR
             </label>
@@ -163,7 +166,13 @@ export function AuralizationSection({
           {/* Clear IR Button - Grey color */}
           <button
             onClick={onClearImpulseResponse}
-            className="w-full text-xs py-1.5 px-3 bg-gray-500 hover:bg-gray-600 text-white rounded transition-colors"
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_600}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_500}
+            className="w-full text-xs py-1.5 px-3 text-white rounded transition-colors"
+            style={{
+              backgroundColor: UI_COLORS.NEUTRAL_500,
+              borderRadius: '8px'
+            }}
           >
             Clear IR
           </button>
@@ -172,14 +181,24 @@ export function AuralizationSection({
 
       {/* Error Message */}
       {error && (
-        <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded p-2">
+        <div 
+          className="text-xs rounded p-2"
+          style={{
+            backgroundColor: UI_COLORS.ERROR_LIGHT,
+            borderColor: UI_COLORS.ERROR,
+            borderWidth: '1px',
+            borderStyle: 'solid',
+            borderRadius: '8px',
+            color: UI_COLORS.ERROR
+          }}
+        >
           {error}
         </div>
       )}
 
       {/* Help Text - Only show when no IR is loaded */}
       {!hasIR && !error && (
-        <div className="text-xs text-gray-500 dark:text-gray-400">
+        <div className="text-xs" style={{ color: UI_COLORS.NEUTRAL_500 }}>
           Import an impulse response file (WAV, MP3, OGG) to apply room acoustics and spatial audio to your sounds.
         </div>
       )}

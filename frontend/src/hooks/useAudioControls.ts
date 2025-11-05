@@ -158,7 +158,6 @@ export function useAudioControls(generatedSounds: any[]) {
         // For uploaded/library sounds (total_copies = 1), just play them directly
         if (sounds.length === 1 && sounds[0].total_copies === 1) {
           const displayName = sounds[0].display_name || sounds[0].id;
-          console.log(`[Audio Controls] Playing uploaded/library sound: ${displayName}`);
           newStates[sounds[0].id] = 'playing';
         } else {
           // For generated sounds with variants, play the selected variant
@@ -166,7 +165,6 @@ export function useAudioControls(generatedSounds: any[]) {
           const selectedSound = sounds[selectedIdx] || sounds[0];
           if (selectedSound) {
             const displayName = selectedSound.display_name || selectedSound.id;
-            console.log(`[Audio Controls] Playing variant ${selectedIdx}: ${displayName}`);
             newStates[selectedSound.id] = 'playing';
           }
         }

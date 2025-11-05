@@ -4,6 +4,7 @@ import { TextGenerationSection } from "./sidebar/TextGenerationSection";
 import { SoundGenerationSection } from "./sidebar/SoundGenerationSection";
 import { AcousticsTab } from "./sidebar/AcousticsTab";
 import { useHorizontalScroll } from "@/hooks/useHorizontalScroll";
+import { UI_COLORS } from "@/lib/constants";
 import type { SidebarProps } from "@/types/components";
 
 export function Sidebar(props: SidebarProps) {
@@ -27,31 +28,61 @@ export function Sidebar(props: SidebarProps) {
           <div className="flex gap-2 min-w-max">
             <button
               onClick={() => props.setActiveAiTab('text')}
-              className={`px-5 py-2 font-medium transition-colors whitespace-nowrap text-sm ${
-                props.activeAiTab === 'text'
-                  ? 'border-b-2 border-primary text-primary'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
+              className="px-4 py-2 font-medium transition-colors whitespace-nowrap text-sm"
+              style={{
+                borderBottom: props.activeAiTab === 'text' ? `2px solid ${UI_COLORS.PRIMARY}` : 'none',
+                color: props.activeAiTab === 'text' ? UI_COLORS.PRIMARY : UI_COLORS.NEUTRAL_600
+              }}
+              onMouseEnter={(e) => {
+                if (props.activeAiTab !== 'text') {
+                  e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (props.activeAiTab !== 'text') {
+                  e.currentTarget.style.color = UI_COLORS.NEUTRAL_600;
+                }
+              }}
             >
               Analysis
             </button>
             <button
               onClick={() => props.setActiveAiTab('sound')}
-              className={`px-5 py-2 font-medium transition-colors whitespace-nowrap text-sm ${
-                props.activeAiTab === 'sound'
-                  ? 'border-b-2 border-primary text-primary'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
+              className="px-4 py-2 font-medium transition-colors whitespace-nowrap text-sm"
+              style={{
+                borderBottom: props.activeAiTab === 'sound' ? `2px solid ${UI_COLORS.PRIMARY}` : 'none',
+                color: props.activeAiTab === 'sound' ? UI_COLORS.PRIMARY : UI_COLORS.NEUTRAL_600
+              }}
+              onMouseEnter={(e) => {
+                if (props.activeAiTab !== 'sound') {
+                  e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (props.activeAiTab !== 'sound') {
+                  e.currentTarget.style.color = UI_COLORS.NEUTRAL_600;
+                }
+              }}
             >
               Sound Generation
             </button>
             <button
               onClick={() => props.setActiveAiTab('acoustics')}
-              className={`px-5 py-2 font-medium transition-colors whitespace-nowrap text-sm ${
-                props.activeAiTab === 'acoustics'
-                  ? 'border-b-2 border-primary text-primary'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
+              className="px-4 py-2 font-medium transition-colors whitespace-nowrap text-sm"
+              style={{
+                borderBottom: props.activeAiTab === 'acoustics' ? `2px solid ${UI_COLORS.PRIMARY}` : 'none',
+                color: props.activeAiTab === 'acoustics' ? UI_COLORS.PRIMARY : UI_COLORS.NEUTRAL_600
+              }}
+              onMouseEnter={(e) => {
+                if (props.activeAiTab !== 'acoustics') {
+                  e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (props.activeAiTab !== 'acoustics') {
+                  e.currentTarget.style.color = UI_COLORS.NEUTRAL_600;
+                }
+              }}
             >
               Acoustics
             </button>
@@ -105,6 +136,7 @@ export function Sidebar(props: SidebarProps) {
               setAiPrompt={props.setAiPrompt}
               setNumSounds={props.setNumSounds}
               onGenerateText={props.onGenerateText}
+              onStopGeneration={props.onStopGeneration}
               onLoadSoundsToGeneration={props.onLoadSoundsToGeneration}
             />
           </div>
@@ -125,10 +157,12 @@ export function Sidebar(props: SidebarProps) {
               applyDenoising={props.applyDenoising}
               onSetActiveTab={props.setActiveSoundConfigTab}
               onAddConfig={props.onAddSoundConfig}
+              onBatchAddConfigs={props.onBatchAddSoundConfigs}
               onRemoveConfig={props.onRemoveSoundConfig}
               onUpdateConfig={props.onUpdateSoundConfig}
               onModeChange={props.onSoundModeChange}
               onGenerate={props.onGenerateSounds}
+              onStopGeneration={props.onStopSoundGeneration}
               onGlobalDurationChange={props.onGlobalDurationChange}
               onGlobalStepsChange={props.onGlobalStepsChange}
               onGlobalNegativePromptChange={props.onGlobalNegativePromptChange}
@@ -155,13 +189,11 @@ export function Sidebar(props: SidebarProps) {
             onStartPlacingReceiver={props.onStartPlacingReceiver}
             onDeleteReceiver={props.onDeleteReceiver}
             onUpdateReceiverName={props.onUpdateReceiverName}
-            auralizationConfig={props.auralizationConfig}
-            auralizationLoading={props.auralizationLoading}
-            auralizationError={props.auralizationError}
-            onToggleAuralization={props.onToggleAuralization}
+            onSelectIRFromLibrary={props.onSelectIRFromLibrary}
+            onClearIR={props.onClearIR}
             onToggleNormalize={props.onToggleNormalize}
-            onLoadImpulseResponse={props.onLoadImpulseResponse}
-            onClearImpulseResponse={props.onClearImpulseResponse}
+            selectedIRId={props.selectedIRId}
+            auralizationConfig={props.auralizationConfig}
           />
         )}
       </div>

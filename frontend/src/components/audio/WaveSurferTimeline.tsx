@@ -601,7 +601,7 @@ export function WaveSurferTimeline({
         className="bg-black/80 backdrop-blur-sm rounded-lg border border-white/20 p-6 text-center"
         style={{ minHeight: `${WAVESURFER_TIMELINE.TRACK_HEIGHT}px` }}
       >
-        <p className="text-gray-400 text-sm">No sounds available for timeline visualization</p>
+        <p className="text-gray-400 text-sm">No sounds are playing</p>
       </div>
     );
   }
@@ -631,8 +631,11 @@ export function WaveSurferTimeline({
             step={WAVESURFER_TIMELINE.ZOOM_STEP}
             value={zoom}
             onChange={(e) => handleZoomChange(parseFloat(e.target.value))}
-            className="w-32 accent-primary"
-            style={{ cursor: 'pointer' }}
+            className="w-32 h-2 rounded-lg appearance-none cursor-pointer accent-primary"
+            style={{ 
+              cursor: 'pointer',
+              backgroundColor: 'rgba(156, 163, 175, 0.3)'
+            }}
           />
           <span className="text-xs text-gray-400 min-w-[3rem]">{zoom.toFixed(1)}x</span>
           <button

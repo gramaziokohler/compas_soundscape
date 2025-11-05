@@ -5,22 +5,24 @@ System architecture of [the repository](https://github.com/bouiz/compas_soundsca
 ```
 compas_soundscape/
 ├── backend/
-│   ├── main.py                      # FastAPI app initialization (62 lines)
+│   ├── main.py                      # FastAPI app initialization (updated)
 │   ├── tasks.py                     # Background tasks
 │   ├── config/
 │   │   ├── __init__.py
-│   │   └── constants.py             # All backend constants
+│   │   └── constants.py             # All backend constants (updated - IR formats, ambisonic channels)
 │   ├── data/
 │   │   ├── AudioSet_classes.py      # AudioSet class definitions
 │   │   ├── BBCSoundEffects.csv      # BBC sound effects database
 │   │   └── [3D model samples]       # IFC, 3DM test files
 │   ├── models/
-│   │   └── schemas.py               # Pydantic request/response models
+│   │   └── schemas.py               # Pydantic request/response models (updated - IR schemas)
 │   ├── routers/
 │   │   ├── __init__.py
 │   │   ├── analysis.py              # 3D geometry analysis endpoints
 │   │   ├── generation.py            # LLM text/prompt generation endpoints
+│   │   ├── impulse_responses.py     # IR upload/list/delete endpoints
 │   │   ├── library_search.py        # Sound library search (BBC, Freesound)
+│   │   ├── modal_analysis.py        # Modal analysis endpoints
 │   │   ├── reprocess.py             # Audio reprocessing (denoising)
 │   │   ├── sed_analysis.py          # Sound Event Detection endpoints
 │   │   ├── sounds.py                # Audio generation endpoints
@@ -30,7 +32,9 @@ compas_soundscape/
 │   │   ├── bbc_service.py           # BBC Sound Effects API
 │   │   ├── freesound_service.py     # Freesound API integration
 │   │   ├── geometry_service.py      # 3D file processing (COMPAS, rhino3dm)
+│   │   ├── impulse_response_service.py  # IR processing & channel extraction
 │   │   ├── llm_service.py           # Google Gemini LLM
+│   │   ├── modal_analysis_service.py    # Modal analysis & mode shape visualization
 │   │   └── sed_service.py           # Sound Event Detection
 │   ├── utils/
 │   │   ├── __init__.py
@@ -39,8 +43,9 @@ compas_soundscape/
 │   │   ├── helpers.py               # General helpers
 │   │   └── sed_processing.py        # SED processing utilities
 │   ├── static/
-│   │   └── sounds/
-│   │       └── generated/           # Generated audio files (served via /static/)
+│   │   ├── sounds/
+│   │   │   └── generated/           # Generated audio files (served via /static/)
+│   │   └── impulse_responses/       # NEW - Uploaded IR files (1/2/4/16 channels)
 │   ├── temp/                        # Temporary processing files
 │   ├── temp_uploads/                # Uploaded files staging area
 │   └── temp_library_downloads/      # Downloaded library audio files
@@ -75,6 +80,7 @@ compas_soundscape/
 │       │   ├── useAuralization.ts   # Spatial audio/auralization
 │       │   ├── useFileUpload.ts     # File upload & processing
 │       │   ├── useHorizontalScroll.ts # Mouse wheel horizontal scrolling
+│       │   ├── useModalImpact.ts    # Modal analysis & impact sound synthesis & mode visualization
 │       │   ├── useReceivers.ts      # Audio receiver management
 │       │   ├── useSED.ts            # Sound Event Detection
 │       │   ├── useSoundGeneration.ts # Sound generation workflow
@@ -83,8 +89,13 @@ compas_soundscape/
 │       │   ├── useTimelinePlayback.ts # Timeline playback state management
 │       │   └── useWaveformInteraction.ts # Waveform zoom/pan interaction
 │       ├── lib/
+│       │   ├── constants.ts         # All constants (updated - AMBISONIC, IR_FORMAT)
 │       │   ├── audio/               # Audio processing utilities
+│       │   │   ├── ambisonic-encoder.ts     # NEW - FOA/TOA encoding (mono → 4/16 ch)
+│       │   │   ├── ambisonic-rotator.ts     # NEW - Ambisonic field rotation
+│       │   │   ├── ambisonic-decoder.ts     # NEW - Binaural decoding (virtual speakers)
 │       │   │   ├── audio-info.ts           # Audio file loading & metadata
+│       │   │   ├── modal-impact-synthesis.ts   # NEW - Impact sound synthesis from modal analysis
 │       │   │   ├── waveform-utils.ts       # Waveform visualization (extraction & rendering)
 │       │   │   ├── timeline-utils.ts       # Timeline data extraction (with audioUrl for WaveSurfer)
 │       │   │   ├── playback-scheduler-service.ts # Audio playback scheduling
@@ -95,9 +106,10 @@ compas_soundscape/
 │       │   │   ├── geometry-renderer.ts      # Geometry mesh rendering & highlighting
 │       │   │   ├── sound-sphere-manager.ts   # Sound sphere creation & audio sources
 │       │   │   ├── receiver-manager.ts          # Receiver cube management
+│       │   │   ├── mode-visualizer.ts           # NEW - Mode shape visualization on meshes
 │       │   │   ├── input-handler.ts             # User input (click, drag, keyboard)
-│       │   │   ├── draggable-mesh-manager.ts    # Shared mesh update utilities (NEW)
-│       │   │   ├── playback-scheduler-service.ts # Audio playback scheduling (NEW)
+│       │   │   ├── draggable-mesh-manager.ts    # Shared mesh update utilities
+│       │   │   ├── playback-scheduler-service.ts # Audio playback scheduling
 │       │   │   ├── auralization-service.ts      # Impulse response convolution (audio routing only)
 │       │   │   ├── sceneSetup.ts               # Scene setup helpers
 │       │   │   ├── materials.ts                # Material definitions
@@ -112,6 +124,7 @@ compas_soundscape/
 │           ├── auralization.ts      # Auralization types
 │           ├── components.ts        # Component prop types
 │           ├── index.ts             # Type exports
+│           ├── modal.ts             # NEW - Modal analysis & mode visualization types
 │           ├── receiver.ts          # Receiver types
 │           ├── sed.ts               # SED types
 │           └── three-scene.ts       # Three.js scene types
@@ -413,3 +426,269 @@ wavesurfer.load(`${API_BASE_URL}${audioUrl}`);
 4. **Bundle Size**
    - WaveSurfer adds ~50KB gzipped
    - Acceptable trade-off for enhanced UX
+
+---
+
+## Multi-Channel Auralization Architecture
+
+### Overview
+COMPAS Soundscape implements a **2-path auralization system** supporting multiple IR formats:
+- **Path 1 (Ambisonic):** FOA (4-ch) or TOA (16-ch) with real-time rotation → Binaural output
+- **Path 2 (Convolution):** Mono (1-ch) or Binaural (2-ch) → Three.js PositionalAudio
+
+### Supported IR Formats
+
+| Format | Channels | Description | Use Case |
+|--------|----------|-------------|----------|
+| **Mono** | 1 | Single-channel IR | Simple room acoustics |
+| **Binaural** | 2 | Stereo HRTF | Pre-spatialized headphone output |
+| **FOA** | 4 | First-Order Ambisonics | Low CPU, good spatial accuracy |
+| **TOA** | 16 | Third-Order Ambisonics | High CPU, excellent spatial accuracy |
+
+### Ambisonic Pipeline (Path 1)
+
+**With Listener Rotation (NEW - Implemented):**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Mono Source                                                 │
+│   ↓                                                         │
+│ 4-ch IR Convolution (FOA) / 16-ch IR Convolution (TOA)     │
+│   • IR already contains spatial room encoding              │
+│   • No encoder needed (SPARTA MultiConv approach)          │
+│   ↓                                                         │
+│ Real-Time Rotator Node (FOA only - ScriptProcessorNode)    │
+│   • Rotates ambisonic field based on listener orientation  │
+│   • Updated every frame via animation loop                 │
+│   • Uses 3x3 rotation matrix (yaw, pitch, roll)            │
+│   • W channel unchanged (omnidirectional)                  │
+│   • X, Y, Z rotated via matrix multiplication              │
+│   ↓                                                         │
+│ JSAmbisonics HRTF-based Binaural Decoder                   │
+│   • Proper HRTF convolution per ambisonic channel          │
+│   • Accurate spatial localization                          │
+│   ↓                                                         │
+│ Limiter (safety) → Stereo Output (L/R)                     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Rotation Pipeline Data Flow:**
+
+```
+SceneCoordinator.getListenerOrientation()
+  │ (called in animation loop)
+  ├─> Returns { yaw, pitch, roll } in radians
+  │   • First-person mode: stored rotation values
+  │   • Orbit mode: calculated from camera direction
+  │
+  ↓
+ThreeScene animation effect
+  │ (updates every frame when auralization enabled)
+  ├─> Calls auralizationService.updateOrientation(orientation)
+  │
+  ↓
+AuralizationService.updateOrientation()
+  │ (stores orientation and updates rotator)
+  ├─> Calls rotatorUpdateFn(orientation)
+  │   • Updates rotation matrix in ScriptProcessorNode
+  │   • Matrix recalculated from Euler angles
+  │
+  ↓
+Rotator ScriptProcessorNode.onaudioprocess
+  │ (processes audio in real-time)
+  └─> Applies rotation matrix to X, Y, Z channels
+      • W channel unchanged (omnidirectional)
+      • Smooth rotation without artifacts
+```
+
+**Single-IR Physical Accuracy:**
+
+✅ **What Works (Rotation):**
+- Head rotation in first-person mode
+- Ambisonic field rotates with listener orientation
+- Sound sources appear to stay fixed in space as you turn your head
+- Physically accurate for single static receiver position
+
+⚠️ **Current Limitations (Translation):**
+- Only ONE impulse response per scene
+- IR is recorded from a FIXED position in the room
+- Moving the listener position (translation) uses the SAME IR
+- This is NOT physically accurate for translation
+- Source position is "baked into" the IR recording
+
+**Why Translation Doesn't Work:**
+- IR encodes the room response from recording position to source
+- Moving listener would require DIFFERENT IR from new position
+- Would need IR library: `IRs[receiver_position][source_position]`
+- Not feasible with current single-IR approach
+
+**Rotation vs. Translation:**
+
+| Action | Physical Accuracy | Implementation |
+|--------|-------------------|----------------|
+| **Head Rotation** | ✅ Accurate | Rotate ambisonic field via matrix |
+| **Listener Translation** | ❌ Not accurate | Uses same IR (wrong!) |
+| **Source Translation** | ❌ Not accurate | Would need new IR recording |
+
+**UI Considerations:**
+- In first-person mode, position is LOCKED (correct behavior)
+- Arrow keys rotate head (yaw/pitch), NOT translate
+- When ambisonic IR is loaded:
+  - Consider disabling source dragging (or show warning)
+  - Add notice: "Source position fixed (from IR recording)"
+  - Add orientation indicator for rotation feedback
+
+**Future Enhancement: Multiple IR Support**
+To enable accurate translation, would need:
+1. IR library with multiple recording positions
+2. Interpolation between nearest IRs
+3. Dynamic IR switching based on listener position
+4. Significant storage/bandwidth requirements
+
+**Legacy Implementation (Encoder-based - deprecated for FOA/TOA):**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Mono Source → Ambisonic Encoder (position-based)            │
+│   ↓                                                         │
+│ 4-ch (FOA) or 16-ch (TOA) Ambisonic Signal                 │
+│   ↓                                                         │
+│ Convolution with IR                                         │
+│   • FOA: Single 4-ch ConvolverNode                         │
+│   • TOA: 16 parallel mono ConvolverNodes (Web Audio limit) │
+│   ↓                                                         │
+│ Binaural Decoding (virtual speakers)                       │
+│   • FOA: 8 virtual speakers (cube layout)                  │
+│   • TOA: 12 virtual speakers (8 horizontal + 4 elevated)   │
+│   • Speaker compensation: 1/√N gain (energy conservation)  │
+│   • Equal-power panning to L/R channels                    │
+│   ↓                                                         │
+│ Stereo Output (L/R) for headphones                         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Critical Implementation Details:**
+- **Speaker Compensation**: Applied in both offline (`decodeAmbisonicToBinaural`) and real-time (`createAmbisonicDecoderNodes`) decoders
+  - FOA: 1/√8 ≈ 0.354 (-9.0dB)
+  - TOA: 1/√12 ≈ 0.289 (-10.8dB)
+  - Prevents clipping when summing multiple virtual speakers
+- **TOA Parallel Convolution**: Web Audio ConvolverNode only supports 1/2/4 channels, so 16-ch TOA uses splitter → 16 mono convolvers → merger
+- **Sample Rate Resampling**: Linear interpolation when IR sample rate ≠ AudioContext sample rate
+
+### Convolution Pipeline (Path 2)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Mono Source (44.1kHz)                                       │
+│   ↓                                                         │
+│ Convolve with IR (1-ch or 2-ch)                            │
+│   • ConvolverNode in Web Audio API                         │
+│   • Mono IR → Mono output                                  │
+│   • Binaural IR → Stereo output                            │
+│   ↓                                                         │
+│ Three.js Spatial Audio (distance + panning)                │
+│   • PositionalAudio for 3D positioning                     │
+│   • Distance attenuation                                   │
+│   ↓                                                         │
+│ Stereo Output (L/R)                                         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Backend IR Processing Flow
+
+```
+1. User uploads WAV file (any channel count)
+   └→ POST /api/impulse-responses/upload
+
+2. ImpulseResponseService.process_ir_file()
+   ├→ Read audio: soundfile.read(always_2d=True)
+   ├→ Detect original channels
+   ├→ Determine target channels:
+   │  • 1-2 channels → Keep as-is
+   │  • 3-15 channels → Extract first 4 (FOA)
+   │  • 16+ channels → Extract first 16 (TOA)
+   ├→ extract_channels() - Get first N channels
+   ├→ Resample to 44.1kHz (if needed)
+   ├→ detect_ir_format() - Auto-detect format
+   ├→ Save as: {name}_{format}_{hash}.wav
+   └→ Return ImpulseResponseMetadata
+
+3. File served via /static/impulse_responses/{filename}
+```
+
+### Frontend Integration Points
+
+**Constants:** `frontend/src/lib/constants.ts`
+- `AMBISONIC` - Channel counts, weights, decoder config, performance limits
+- `IR_FORMAT` - Format string constants (mono, binaural, foa, toa)
+- `IMPULSE_RESPONSE.MAX_CHANNELS` - Updated from 2 to 16
+
+**Types:** `frontend/src/types/audio.ts`
+- `IRFormat`, `AmbisonicOrder`, `ImpulseResponseMetadata`
+- `Position3D`, `SphericalPosition`, `Orientation`
+- `FOACoefficients`, `TOACoefficients`
+
+**Core Libraries:**
+- `ambisonic-encoder.ts` - Spatial encoding (mono → 4/16 ch)
+- `ambisonic-rotator.ts` - Field rotation based on camera
+- `ambisonic-decoder.ts` - Virtual speaker binaural decoding
+
+**API Integration:** `frontend/src/services/api.ts`
+- `uploadImpulseResponse()`, `listImpulseResponses()`, `deleteImpulseResponse()`
+
+### Performance Characteristics
+
+| Format | Convolutions | CPU Load | Max Concurrent | Mobile |
+|--------|--------------|----------|----------------|--------|
+| **Mono** | 1 | Very Low | 20+ | ✅ |
+| **Binaural** | 2 | Low | 15+ | ✅ |
+| **FOA** | 4 | Medium | 8 | ✅ |
+| **TOA** | 16 | High | 4 | ⚠️ (use FOA) |
+
+**Performance Settings:** `AMBISONIC.PERFORMANCE` in constants.ts
+- `MAX_TOA_SOURCES: 4` - Limit concurrent TOA auralizations
+- `MAX_FOA_SOURCES: 8` - Limit concurrent FOA auralizations
+- `PREFER_FOA_ON_MOBILE: true` - Auto-fallback on mobile devices
+
+### Channel Extraction Examples
+
+| Input File | Original Ch | Target Ch | Result Format |
+|------------|-------------|-----------|---------------|
+| Room mono | 1 | 1 | Mono |
+| Binaural HRTF | 2 | 2 | Binaural |
+| Odeon FOA export | 8 | 4 | FOA (first 4) |
+| CATT TOA export | 32 | 16 | TOA (first 16) |
+
+### SN3D Normalization
+
+All ambisonic encoding/decoding uses **SN3D (Schmidt semi-normalized)** standard:
+- **W channel:** `1/√2` (~0.707)
+- **Directional channels (X,Y,Z,...):** `1.0`
+- Ensures consistent energy distribution across orders
+- Industry-standard for ambisonic interchange
+
+### Future Enhancements
+
+**Phase 1 (Current):** ✅
+- Backend IR upload/processing
+- Ambisonic encoder/rotator/decoder libraries
+- API integration
+
+**Phase 2 (Completed):** ✅
+- ✅ Rewrite `auralization-service.ts` for multi-format support
+- ✅ Integration with ThreeScene camera rotation (real-time listener rotation)
+- ✅ ScriptProcessorNode-based rotator for FOA
+- [ ] UI component for IR upload/management (`ImpulseResponseUpload.tsx`)
+
+**Phase 3 (In Progress):**
+- ✅ Real-time FOA rotation (ScriptProcessorNode)
+- [ ] Higher-order TOA rotation (Wigner D-matrices for orders 2-3)
+- [ ] HRTF-based binaural decoding via JSAmbisonics (partially done)
+- [ ] Real-time AudioWorklet processing (replace ScriptProcessorNode)
+
+**Phase 4 (Future):**
+- [ ] Multiple IR support for accurate translation
+- [ ] IR interpolation for smooth position transitions
+- [ ] UI orientation indicator in first-person mode
+- [ ] Source position locking/warning when ambisonic IR loaded
+- [ ] IR reversal for auralization/deauralization workflows

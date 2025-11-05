@@ -1,5 +1,1453 @@
 # CHANGELOG
 
+## [2025-11-05 19:30] - Mode Visualization: Exit→New Entity Workflow Fix (Critical)
+### Fixed
+- **CRITICAL: Exit→New Entity workflow** - Fixed stale mode index when exiting and selecting new entity
+  - **Root cause**: When exiting impact mode, `selectedModeIndex` was not reset
+  - **Scenario**: Entity 1 (mode 5 selected) → Exit → Entity 2 → tries to show mode 5 but Entity 2 only has 3 modes ❌
+  - **Fix**: Added `onSetModeVisualization(false)` in `exitImpactMode()` ([ThreeScene.tsx:609](frontend/src/components/scene/ThreeScene.tsx#L609))
+  - Resets both `isActive=false` and `selectedModeIndex=null` when exiting
+  - Auto-select effect then picks mode 0 for the new entity ✓
+  - **Flow**: Entity 1 → Exit → **visualization state reset** → Entity 2 → auto-select mode 0 → colors apply ✓
+
+## [2025-11-05 19:15] - Mode Visualization: Multi-Mesh Fix Part 3 (Root Cause Fixed)
+### Fixed
+- **CRITICAL ROOT CAUSE: Multi-mesh visualization** - Fixed stale modal results when switching entities
+  - **Root cause**: When clicking a new entity, `currentModalResult` still contained the previous entity's analysis
+  - **Fix**: Added `setCurrentModalResult(null)` when starting analysis for new entity ([ThreeScene.tsx:491](frontend/src/components/scene/ThreeScene.tsx#L491))
+  - Clears old result immediately before new analysis begins
+  - Prevents visualization effect from applying old mesh data to new mesh
+  - **This was the actual root cause** - previous fixes helped but didn't solve the core issue
+  - **Flow**: Mesh 1 analyzed → Mesh 2 clicked → **old result cleared instantly** → new analysis runs → new visualization applied ✓
+
+## [2025-11-05 19:00] - Mode Visualization: Multi-Mesh Fix Part 2 (Critical)
+### Fixed
+- **CRITICAL: Multi-mesh visualization** - Fixed cross-mesh color restoration bug
+  - **Root cause**: When switching meshes directly (without exiting), `clearVisualization(mesh2)` tried to restore mesh1's colors to mesh2
+  - **Fix**: Added mesh ID check in `clearVisualization()` (line 99)
+  - Only restores colors if `this.currentMeshId === meshId`
+  - If different mesh, skips restoration and just resets state
+  - **Flow**: Mesh 1 → Mesh 2 (direct) → skip restoration of mesh1 colors → reset → apply mesh2 colors ✓
+
+## [2025-11-05 18:45] - Mode Visualization: Multi-Mesh Fix Part 1 (Critical)
+### Fixed
+- **CRITICAL: Multi-mesh visualization** - Fixed state not resetting after exiting impact mode
+  - **Root cause**: `clearVisualization()` was not resetting internal state after restoring mesh
+  - **Fix**: Added `reset()` call at end of `clearVisualization()` method (line 124)
+  - Now properly clears state (meshId, colors, material) after exiting impact mode
+  - **Flow**: Mesh 1 → exit mode → **state reset** → Mesh 2 → colors applied ✓
+  - **Note**: This fixed exiting impact mode, but direct mesh switching still had issues (see next fix)
+
+## [2025-11-05 18:30] - Mode Visualization Fixes: Color Scheme & Multi-Mesh Support
+### Fixed
+- **Multi-mesh visualization** - Initial implementation with mesh ID tracking
+  - Added mesh ID tracking to detect when a different entity is selected
+  - Added automatic state reset when mesh ID changes
+  - Added `reset()` method to clear internal state
+  - **Note**: This partially fixed the issue but `clearVisualization()` still needed to call `reset()`
+
+### Changed
+- **Color scheme** - Changed from black/white to grey→pink gradient using design system colors
+  - Low displacement (nodal lines): `ARCTIC_THEME.GEOMETRY_COLOR` (0xf0f4f8 - light grey)
+  - High displacement (vibrating regions): `UI_COLORS.PRIMARY_HEX` (0xF500B8 - pink)
+  - Smooth gradient interpolation between grey and pink based on displacement magnitude
+  - All colors now reference constants from `constants.ts`
+
+### Technical Details
+- **`frontend/src/lib/three/mode-visualizer.ts`**:
+  - Added `currentMeshId` tracking to detect mesh changes
+  - Added `reset()` method to clear state when switching meshes
+  - Imported `UI_COLORS` and `ARCTIC_THEME` from constants
+  - Changed from binary threshold to smooth gradient: `lowColor.lerp(highColor, magnitude)`
+  - Fixed material color multiplication issue (sets base to white)
+  - Automatically resets state when `mesh.id` changes
+
+## [2025-11-05 17:30] - Simplified Mode Visualization - Nodal Lines Only
+### Changed
+- **Removed animation** - No longer shows time-varying mode oscillation
+- **Removed color gradients** - Replaced with simple black/white nodal line visualization
+- **Simplified UI** - Removed Play/Stop button and color palette button from Impact Sound overlay
+
+#### Changes
+- **`frontend/src/types/modal.ts`** - Simplified `ModeVisualizationState`
+  - Removed: `isAnimating`, `animationPhase`, `colorScheme` fields
+  - Now only contains: `isActive`, `selectedModeIndex`
+
+- **`frontend/src/lib/three/mode-visualizer.ts`** - Changed to nodal line visualization
+  - Removed all color gradient functions (heatmap, rainbow, blue-red)
+  - **New visualization**: Black = nodal lines (displacement < 0.1), White = vibrating regions
+  - Simplified `ModeVisualizationOptions` to only `nodalThreshold`
+
+- **`frontend/src/components/overlays/ImpactSoundPlayback.tsx`** - Simplified UI
+  - Removed Play/Stop animation button
+  - Removed color palette cycling button
+  - Changed label to "Nodal Lines (Mode Shape)"
+  - Only shows mode selector dropdown and frequency info
+
+- **`frontend/src/hooks/useModalImpact.ts`** - Removed animation methods
+  - Removed: `setAnimating`, `updateAnimationPhase`, `setColorScheme`
+  - Kept: `setModeVisualization`, `selectMode`
+
+- **`frontend/src/components/scene/ThreeScene.tsx`** - Removed animation loop
+  - Removed entire "Mode Animation Loop" effect
+  - Simplified visualization effect - no longer passes colorScheme or animationPhase
+  - Removed animation callbacks from ImpactSoundPlayback
+  - **[Final cleanup]** Removed leftover `onSetModeAnimating`, `onUpdateAnimationPhase`, `onSetModeColorScheme` from component destructuring
+
+- **`frontend/src/types/three-scene.ts`** - Cleaned up props
+  - Removed: `onSetModeAnimating`, `onUpdateAnimationPhase`, `onSetModeColorScheme`
+
+- **`frontend/src/app/page.tsx`** - Removed prop connections
+  - No longer passes animation/color callbacks to ThreeScene
+
+- **`frontend/src/components/layout/sidebar/ModeVisualizationSection.tsx`** - **DELETED**
+  - File was no longer used after moving controls to Impact Sound overlay
+  - Contained outdated animation code
+
+### Technical Details
+**Nodal Line Visualization:**
+- Black vertices = Nodal lines (points with near-zero displacement)
+- White vertices = Vibrating regions (points that move during resonance)
+- Threshold: 0.1 (normalized magnitude)
+- Shows resonance structure clearly without distraction
+- Useful for identifying where to add acoustic treatments
+
+## [2025-11-05 17:15] - Mode Visualization Mesh Target Fix (Critical)
+### Fixed
+- **`frontend/src/lib/three/geometry-renderer.ts`** - Added `getHighlightMesh()` method
+  - Returns the highlight mesh for the currently selected entity
+  - Allows mode visualization to target the correct mesh with matching vertex count
+
+- **`frontend/src/components/scene/ThreeScene.tsx`** - Changed visualization target mesh
+  - **Before**: Used `getMainGeometryMesh()` - applied colors to entire model (wrong vertices)
+  - **After**: Uses `getHighlightMesh()` - applies colors to selected entity (correct vertices)
+  - **Root cause**: Main mesh had 9 vertices, but entity had 24 vertices → vertex count mismatch
+  - **Result**: Mode visualization colors now display correctly on the analyzed entity
+  - Updated both visualization application AND clearing to use highlight mesh
+
+### Technical Details
+- Modal analysis analyzes entity-specific vertices (e.g., 24 vertices)
+- Entity selection creates a `highlightMesh` with those exact vertices
+- Mode visualization must target the **highlight mesh**, not the main geometry
+- Vertex colors are now applied to the correct mesh with matching vertex indices
+
+## [2025-11-05 17:00] - Mode Visualization Auto-Select Fix
+### Fixed
+- `frontend/src/components/scene/ThreeScene.tsx` - Added auto-select for mode 0
+  - **New effect**: `Effect - Auto-select Mode 0 when Modal Analysis Completes`
+  - Automatically selects first mode (mode 0) when modal analysis completes
+  - Fixes issue where Play button and color scheme button were disabled by default
+  - Mode visualization now appears immediately after analysis without manual dropdown selection
+  - Console log: `[ModeViz] Auto-selecting mode 0` confirms automatic activation
+  - Effect dependencies: `currentModalResult`, `modeVisualizationState?.selectedModeIndex`, `onSelectMode`
+
+### Changed
+- Mode visualization behavior now "enabled by default" - first mode is selected automatically
+- Users can immediately use Play/Stop animation and color scheme buttons after analysis
+
+## [2025-11-05 16:30] - Modal Analysis Mode Visualization Feature
+### Added
+- **Feature**: Visualize resonance modes on meshes independently of impact point
+  - Users can now see vibration patterns for each modal analysis mode
+  - Color-coded displacement visualization shows where the mesh vibrates most
+  - Animation support to visualize mode oscillation over time
+  - Three color schemes: Heatmap, Rainbow, Blue-Red
+
+#### Backend Changes
+- `backend/services/modal_analysis_service.py` - Added mode shape visualization extraction
+  - **New method**: `_extract_mode_shape_visualizations()` - Maps FEM node displacements to original mesh vertices
+  - Returns normalized displacement magnitudes (0-1) and vectors per vertex
+  - Preserves surface mesh vertices from TetGen/Delaunay tetrahedralization
+- `backend/models/schemas.py` - Updated `ModalAnalysisResponse` schema
+  - **New field**: `mode_shape_visualizations` - Vertex-mapped mode data for visualization
+
+#### Frontend Changes
+- `frontend/src/types/modal.ts` - Added mode visualization type definitions
+  - **New interface**: `ModeShapeVisualization` - Displacement data per mode
+  - **New interface**: `ModeVisualizationState` - UI state (active, selected mode, animation, colors)
+  - **Updated**: `ModalAnalysisResult` to include `mode_shape_visualizations`
+
+- `frontend/src/lib/three/mode-visualizer.ts` - **NEW FILE** - Mode visualization service
+  - Applies vertex coloring to Three.js meshes based on displacement magnitudes
+  - Supports 3 color schemes: heatmap, rainbow, blue-red
+  - Animation phase support for oscillating visualization
+  - Manages original color restoration when disabled
+
+- `frontend/src/hooks/useModalImpact.ts` - Extended with mode visualization state
+  - **New state**: `visualizationState` - Manages visualization UI state
+  - **New methods**: `setModeVisualization()`, `selectMode()`, `setAnimating()`, `updateAnimationPhase()`, `setColorScheme()`
+  - Returns visualization state and controls alongside impact synthesis
+
+- `frontend/src/components/overlays/ImpactSoundPlayback.tsx` - **UPDATED** - Added mode visualization controls
+  - Mode selector dropdown (shows frequency for each mode)
+  - Animation play/pause button
+  - Color scheme cycling button (heatmap → rainbow → blue-red)
+  - Mode info display (frequency)
+  - Integrated into Impact Sound UI overlay (enabled by default when modal analysis completes)
+  - Follows UI_COLORS and UI_OVERLAY styling guidelines
+
+- `frontend/src/components/scene/ThreeScene.tsx` - Integrated mode visualization
+  - **New ref**: `modeVisualizerRef` - Stores ModeVisualizer service instance
+  - **New effect**: Applies/clears visualization when state changes
+  - Uses `geometryRenderer.getMainGeometryMesh()` to access geometry
+  - Reacts to visualization state changes (active, mode, colors, phase)
+
+- `frontend/src/types/three-scene.ts` - Added mode visualization props
+  - **New props**: `modeVisualizationState`, `onSetModeVisualization`, `onSelectMode`, `onSetModeAnimating`
+
+- `frontend/src/types/three-scene.ts` - **UPDATED** - Added `onSetModeColorScheme` prop
+  - Enables color scheme changes from ImpactSoundPlayback component
+
+- `frontend/src/app/page.tsx` - Connected mode visualization to ThreeScene
+  - Added `useModalImpact` hook
+  - Connected all visualization callbacks: `onSelectMode`, `onSetModeAnimating`, `onSetModeColorScheme`, etc.
+  - Props flow: page.tsx → ThreeScene → ImpactSoundPlayback
+
+### Usage
+1. Enable Impact Mode by clicking on a mesh entity in the 3D scene
+2. The Impact Sound overlay appears on the right side
+3. After modal analysis completes, mode visualization controls appear automatically
+4. **Mode Shape dropdown** - Select any mode to visualize its displacement pattern on the mesh
+5. **▶ Play / ⏸ Stop button** - Animate the mode oscillation
+6. **🎨 Color scheme button** - Cycle through Heatmap, Rainbow, and Blue-Red color schemes
+7. Mode visualization is enabled by default when modal analysis completes
+
+### Technical Details
+- Mode shapes from FEM are mapped to original surface vertices (first N nodes)
+- Displacement magnitudes are normalized to 0-1 range for consistent coloring
+- Vertex colors are applied via Three.js `BufferAttribute`
+- Animation uses cosine oscillation: `magnitude * |cos(phase)|`
+- Original colors are stored and restored when visualization is disabled
+
+## [2025-11-05] - Dynamic API URL for Local and Network Access
+### Changed
+- `frontend/src/lib/constants.ts` - Dynamic API base URL detection
+  - **Feature**: Auto-detects whether frontend is accessed locally or over network
+  - Localhost access (localhost/127.0.0.1) → `http://localhost:8000`
+  - Network access (e.g., 192.168.x.x) → `http://[same-IP]:8000`
+  - Supports manual override via `NEXT_PUBLIC_API_BASE_URL` env variable
+  - **Impact**: App now works seamlessly both locally and when accessed from network devices
+- `frontend/.env.local` - Updated API URL configuration
+  - Removed hardcoded network IP
+  - Added comments explaining auto-detection behavior
+  - Provided examples for manual override if needed
+
+### Fixed
+- **Bug**: Frontend failed to connect to backend when accessed locally because `.env.local` was configured with network IP
+- **Root Cause**: `NEXT_PUBLIC_API_BASE_URL` was hardcoded to `http://129.132.205.138:8000`, which wasn't accessible when running locally
+- **Fix**: Implemented dynamic URL detection that adapts to the access method
+- **Result**: "Failed to fetch" errors resolved - backend API calls now work in both local and network scenarios
+
+## [2025-11-04 18:30] - Entity Click Selection Bug Fix
+### Fixed
+- **Bug**: When clicking on entities in uploaded 3DM/IFC files with multiple objects (e.g., 4 boxes), the wrong entity was selected. Clicking on a box would select the one next to it, and the first box couldn't be selected at all.
+- **Root Cause**: The raycaster returns triangle indices, but the backend's `face_entity_map` maps original face indices to entities. Since faces are triangulated (quads become 2 triangles), there was a mismatch between triangle indices and face indices.
+- **Fix**: Created a proper triangle-to-face index mapping during triangulation
+  - `frontend/src/lib/utils.ts` - Added `triangulateWithMapping()` function that returns both triangle indices and a `triangleToFaceMap` array
+  - `frontend/src/lib/three/geometry-renderer.ts` - Store and expose the `triangleToFaceMap`
+  - `frontend/src/lib/three/input-handler.ts` - Use the mapping to correctly convert triangle indices to face indices during click detection
+  - `frontend/src/components/scene/ThreeScene.tsx` - Use `triangulateWithMapping()` and pass the mapping through to the geometry renderer
+- **Result**: Entity click selection now works correctly for all entities in multi-object files
+
+## [2025-11-04 17:15] - Entity Linking UX Improvement
+### Added
+- `frontend/src/app/page.tsx` - Click on empty space while in linking mode to unlink or exit
+  - **Feature**: `handleEntityLinked()` now handles null entity (clicked on empty space)
+  - If a sound has a linked entity: clicking empty space unlinks it and exits linking mode
+  - If a sound has no linked entity: clicking empty space simply exits linking mode
+  - Properly removes unlinked entities from highlights
+- `frontend/src/components/scene/ThreeScene.tsx` - Updated to pass null when clicking empty space
+  - Removed entity check in linking mode callback (now calls `onEntityLinked` with null)
+- `frontend/src/types/three-scene.ts` - Updated `onEntityLinked` type to accept `EntityData | null`
+
+## [2025-11-04 17:00] - Entity Highlighting Bug Fix
+### Fixed
+- `frontend/src/app/page.tsx` - Fixed entity highlighting when re-linking sounds
+  - **Bug**: When a sound linked to Entity A was re-linked to Entity B, Entity A stayed highlighted
+  - **Fix**: `handleEntityLinked()` now removes previous entity from `selectedDiverseEntities` before adding new one
+  - **Fix**: Added `handleUpdateSoundConfig()` wrapper to remove entity from highlights when unlinking (setting to undefined)
+  - Ensures only the currently linked entity is highlighted
+
+## [2025-11-04 16:45] - Library Sound Display Name Trimming
+### Changed
+- `frontend/src/hooks/useSoundGeneration.ts` - Apply `trimDisplayName()` to library sound descriptions
+  - Import `trimDisplayName` from `@/lib/utils`
+  - Trim library sound display names to 3 words max (consistent with TTA sounds)
+  - Display names now show "..." suffix when truncated
+
+## [2025-11-04] - Modal Impact Sound Synthesis (Frontend)
+### Added
+- `frontend/src/types/modal.ts` - TypeScript types for modal analysis and impact synthesis
+  - `ModalAnalysisRequest`, `ModalAnalysisResult` - Backend API types
+  - `ImpactParameters`, `ModeContribution` - Impact synthesis parameters
+  - `ModalAnalysisState`, `ImpactSynthesisState` - React state types
+- `frontend/src/lib/audio/modal-impact-synthesis.ts` - Physics-based impact sound synthesis
+  - `ModalImpactSynthesizer` class - Real-time impact sound generation using Web Audio API
+  - Generates damped sinusoids from resonant frequencies
+  - Position-dependent mode excitation based on mode shapes
+  - Material-specific damping (steel, aluminum, concrete, wood, glass)
+  - Exponential amplitude decay for higher modes
+  - Normalization and gain control
+- `frontend/src/hooks/useModalImpact.ts` - React hook for modal impact synthesis
+  - `analyzeModal()` - Perform modal analysis via API
+  - `synthesizeImpact()` - Generate impact sound from modal result
+  - `playImpact()`, `stopImpact()` - Audio playback control
+  - `analyzeAndSynthesize()` - Combined workflow
+  - State management for analysis and synthesis
+- `frontend/src/services/api.ts` - Modal analysis API methods
+  - `analyzeModal()` - POST to `/api/modal-analysis/analyze`
+  - `getModalMaterials()` - GET available material presets
+- `frontend/src/components/debug/ModalImpactTest.tsx` - Test component for modal impact
+  - Material selection UI (steel, aluminum, concrete, wood, glass)
+  - Impact position controls (x, y, z)
+  - Step-by-step workflow: analyze → synthesize → play
+  - Results display with frequencies and audio info
+- `frontend/src/examples/click-to-impact-example.ts` - Integration example
+  - `useClickToImpact` hook - Click-to-impact workflow
+  - Helper functions for Three.js integration
+  - Velocity calculation from mouse movement
+  - Impact visualization example
+- `MODAL_IMPACT_GUIDE.md` - Comprehensive integration guide
+  - Physics background and theory
+  - API reference and usage examples
+  - Performance considerations
+  - Troubleshooting guide
+
+### Changed
+- `frontend/src/lib/constants.ts` - Added modal impact sound synthesis constants
+  - `IMPACT_SOUND` - Duration, damping, excitation, synthesis parameters
+  - `IMPACT_MATERIALS` - Material presets with damping ratios and colors
+  - Material-specific damping: steel (1%), aluminum (1.5%), concrete (5%), wood (3%), glass (0.8%)
+  - Synthesis parameters: sample rate, mode limits, amplitude decay, normalization
+
+## [2025-11-04] - Modal Analysis Feature
+### Added
+- `backend/services/modal_analysis_service.py` - Modal (vibration) analysis service
+  - Computes resonant frequencies and mode shapes using SFepy finite element library
+  - Supports material presets: steel, aluminum, concrete, wood, glass
+  - Custom material properties: Young's modulus, Poisson's ratio, density
+  - Frequency response computation with quality factor and bandwidth
+  - Based on SFepy linear elasticity modal analysis example
+- `backend/routers/modal_analysis.py` - API endpoints for modal analysis
+  - POST `/api/modal-analysis/analyze` - Analyze mesh resonance
+  - GET `/api/modal-analysis/materials` - Get available material presets
+  - Dependency injection pattern for service
+- `backend/models/schemas.py` - Pydantic schemas for modal analysis
+  - `ModalAnalysisRequest` - Request with mesh data and material properties
+  - `ModalAnalysisResponse` - Response with frequencies, mode shapes, material info
+
+### Changed
+- `backend/config/constants.py` - Added modal analysis configuration
+  - Material properties: Young's modulus, Poisson's ratio, density
+  - Analysis parameters: number of modes, mesh resolution, frequency range
+  - Material presets dictionary with properties for common materials
+- `backend/main.py` - Integrated modal analysis service
+  - Import `ModalAnalysisService` and `modal_analysis` router
+  - Initialize modal service and inject into router
+  - Include modal analysis router in app
+
+## [2025-11-03] - Network Access Configuration
+### Added
+- `frontend/.env.local` - Local environment configuration for API base URL
+  - Set to network IP (129.132.205.138:8000) for network access
+  - Allows devices on same network to connect to the app
+- `frontend/.env.example` - Environment variable template
+  - Documents how to configure API_BASE_URL for local vs network access
+  - Provides instructions for finding network IP on Windows
+
+### Changed
+- `backend/config/constants.py` - Network CORS configuration
+  - Added `CORS_ORIGIN_NETWORK` constant for specific network IP
+  - Added `CORS_ALLOW_ALL` constant ("*") for development with dynamic IPs
+  - Allows cross-origin requests from network clients
+- `backend/main.py` - CORS middleware update
+  - Changed from specific origins to `CORS_ALLOW_ALL` for development
+  - Imports new network-related constants
+  - Backend now accepts requests from any origin (development mode)
+- `frontend/package.json` - Dev server network binding
+  - Updated dev script: `next dev --turbopack --hostname 0.0.0.0`
+  - Frontend now binds to all network interfaces instead of localhost only
+  - Allows access from other devices on the network
+- `frontend/src/lib/constants.ts` - Dynamic API base URL
+  - Changed from hardcoded `127.0.0.1:8000` to environment-aware configuration
+  - Uses `process.env.NEXT_PUBLIC_API_BASE_URL` with fallback to `localhost:8000`
+  - Added comment explaining network access setup
+
+## [2025-10-31] - Upload Component Hover Consistency
+### Changed
+- `frontend/src/components/controls/FileUploadArea.tsx` - Added hover highlight
+  - Added `hover:border-primary` class for consistent hover behavior across all tabs
+  - Replaced inline `borderColor` style with conditional Tailwind classes
+  - Now matches ModelLoadSection's upload area hover behavior exactly
+  - **Impact**: Sound Generation and Acoustics tab upload areas now have same hover highlights as Analysis tab
+  - **No redundancy**: Both tabs already use the same reusable FileUploadArea component
+
+## [2025-10-31] - Global Volume Slider
+### Added
+- `frontend/src/components/ui/VerticalVolumeSlider.tsx` - NEW vertical volume slider component
+  - Vertical orientation (bottom = 0, top = 1)
+  - No box, no title, no labels - minimal design
+  - Filled track shows volume level from bottom to current position
+  - **Uses exact same styling constants as horizontal RangeSlider**:
+    - Track width: 8px (h-2 equivalent, matches horizontal slider track height)
+    - Track background: UI_COLORS.NEUTRAL_700
+    - Track border radius: rounded-lg
+    - Thumb size: 16px (matches browser default for accent-primary)
+    - Thumb color: Direct fill with accent color (PRIMARY or WARNING)
+  - Track colored in warning (amber) when volume = 0, primary (pink) otherwise
+  - Only differences from horizontal: vertical orientation + fill visualization
+  - Smooth transitions on volume change
+  - Fixed width/height container (24px × 100px) for proper vertical alignment
+
+- `frontend/src/components/scene/ThreeScene.tsx` - Global volume slider feature
+  - Added global volume state (0 to 1 range)
+  - Added volume slider visibility state
+  - New vertical slider appears directly above "Global Volume" button when clicked
+  - Slider disappears when clicking outside or on button again
+  - Slider track colored in warning color (amber) when volume is 0
+
+### Changed
+- `frontend/src/components/scene/ThreeScene.tsx` - Button and handlers
+  - Renamed "Mute all audio" button to "Global Volume"
+  - Replaced `handleToggleMute` with `handleToggleVolumeSlider` and `handleGlobalVolumeChange`
+  - Replaced `isAudioMuted` state with `globalVolume` state
+  - Button shows warning color when volume is muted (0)
+  - Added click-outside detection via useEffect to close slider
+  - Added data attributes for click-outside logic (`data-volume-slider`, `data-volume-button`)
+  - Simplified slider UI - removed box, title, and value display
+  - Added `items-center` to button container for proper centering of vertical slider
+
+- `frontend/src/components/ui/VerticalVolumeSlider.tsx` - Visual bug fixes
+  - Fixed container dimensions to prevent layout shift (24px × 100px)
+  - Fixed track positioning with proper centering
+  - Fixed thumb styling across all browsers (webkit, moz, ms)
+  - Added pointer-events-none to visual track to prevent interference
+  - Improved slider rotation and transform origin for proper vertical alignment
+
+## [2025-10-31 23:00] - Modular Coding Refactor - Phase 2 (All Patterns)
+### Added
+- **Frontend: Additional Reusable UI Components**
+  - `frontend/src/components/ui/TabButton.tsx` - NEW reusable tab button component
+    - Extracted from Sidebar.tsx (3 tabs → 1 component)
+    - Features: Active/inactive states, primary color when active, hover effects
+    - Eliminates repeated tab button code (~45 lines → 15 lines per usage)
+  
+  - `frontend/src/components/ui/RangeSlider.tsx` - NEW reusable range slider component
+    - Extracted from SoundUIOverlay & EntityUIOverlay (6+ instances)
+    - Features: Label, value display, min/max labels, custom formatting, primary accent
+    - Reduces slider code by ~70% (20 lines → 6 lines per usage)
+    - Supports custom value formatting (e.g., "Loop" for 0, dB suffix)
+  
+  - `frontend/src/components/ui/CheckboxField.tsx` - NEW reusable checkbox+label component
+    - Pattern repeated 8+ times across ModelLoadSection, ImpulseResponseUpload
+    - Features: Consistent layout (flex gap-2), primary accent, focus ring, disabled state
+    - Reduces checkbox code by ~60% (8 lines → 3 lines per usage)
+  
+  - `frontend/src/components/ui/ButtonGroup.tsx` - NEW reusable button group component
+    - Extracted from Mute/Solo button pairs in SoundUIOverlay & EntityUIOverlay
+    - Features: Flex layout with gap-2, equal-width buttons, active/inactive states, custom colors
+    - Reduces button group code by ~80% (60 lines → 12 lines per usage)
+    - Supports icons + labels, customizable colors per button
+  
+  - `frontend/src/components/ui/ValidationMessage.tsx` - NEW reusable validation/status message
+    - Pattern repeated 10+ times for error/success/info/warning messages
+    - Features: Color-coded by type (error=red, success=green, info=blue, warning=amber)
+    - Consistent border styling for validation messages
+    - Optional icon support
+    - Reduces message code by ~50% (10 lines → 5 lines per usage)
+
+### Changed
+- **Frontend: Systematic Refactoring for Modularity**
+  
+  - `frontend/src/components/layout/Sidebar.tsx` - Tab buttons refactored
+    - Replaced 3 tab button implementations with TabButton component
+    - Reduced code duplication by ~70% for tab navigation
+    - Tabs: Analysis, Sound Generation, Acoustics
+  
+  - `frontend/src/components/overlays/SoundUIOverlay.tsx` - Multiple refactors
+    - Replaced volume slider implementation with RangeSlider component
+    - Replaced interval slider implementation with RangeSlider component
+    - Replaced Mute/Solo buttons with ButtonGroup component
+    - Removed handleVolumeChange and handleIntervalChange handlers (no longer needed)
+    - Total reduction: ~90 lines → ~30 lines for sliders + buttons
+  
+  - `frontend/src/components/overlays/EntityUIOverlay.tsx` - Multiple refactors
+    - Replaced volume slider implementation with RangeSlider component
+    - Replaced interval slider implementation with RangeSlider component
+    - Replaced Mute/Solo buttons with ButtonGroup component
+    - Removed handleVolumeChange and handleIntervalChange handlers
+    - Total reduction: ~100 lines → ~35 lines for sliders + buttons
+
+### Impact Summary
+- **Created 5 new reusable components** (TabButton, RangeSlider, CheckboxField, ButtonGroup, ValidationMessage)
+- **Refactored 3 major components** to use new reusable components
+- **Code reduction:**
+  - Tab buttons: ~70% reduction (45 lines → 15 lines per instance)
+  - Range sliders: ~70% reduction (20 lines → 6 lines per instance)
+  - Checkbox fields: ~60% reduction (8 lines → 3 lines per instance)
+  - Button groups: ~80% reduction (60 lines → 12 lines per instance)
+  - Validation messages: ~50% reduction (10 lines → 5 lines per instance)
+- **Total lines saved:** ~350+ lines of repeated code eliminated
+- **Maintainability:** UI changes now centralized in component files
+- **Type safety:** All components have TypeScript interfaces
+- **Consistency:** Guaranteed identical styling across all usages
+
+## [2025-10-31 22:00] - Modular Coding Refactor - Improved Reusability
+### Added
+- **Frontend: UI Constants for Reusability (Systematic Code Review)**
+  - `frontend/src/lib/constants.ts` - Added comprehensive UI pattern constants:
+    - **SVG Constants**: `SVG_XMLNS`, `SVG_STROKE`, `SVG_ICON_PROPS` - Standardize SVG attributes (xmlns, stroke widths, common props)
+    - **Tailwind Class Constants**: For programmatic usage when constructing classes dynamically
+      - `TAILWIND_TEXT_SIZE`: text-xs, text-sm, text-base, etc. (most used: text-xs for labels)
+      - `TAILWIND_ROUNDED`: rounded, rounded-md, rounded-lg, rounded-full
+      - `TAILWIND_PADDING`: Common px/py combinations (px-2 py-1, px-4 py-2, etc.)
+      - `TAILWIND_GAP`: gap-1, gap-2, gap-3, gap-4 (most used: gap-2 for spacing)
+      - `TAILWIND_TRANSITION`: transition-colors, transition-all (most common)
+      - `TAILWIND_OVERLAY`: Complete overlay class strings (dark-blur, light-blur, sky-blur)
+  
+  - `frontend/src/components/scene/SceneControlButton.tsx` - NEW reusable scene control button component
+    - Extracted from ThreeScene.tsx (4 buttons → 1 component with props)
+    - Features: Consistent styling, active/inactive states, customizable colors, hover effects
+    - Size: 24x24px with 12x12px icons (from UI_SCENE_BUTTON constants)
+    - Active color prop (default: PRIMARY), inactive background prop
+  
+  - `frontend/src/components/ui/Icon.tsx` - NEW standardized SVG icon wrapper
+    - Automatically applies xmlns, viewBox, stroke properties from SVG_ICON_PROPS
+    - Configurable size, color, strokeWidth
+    - Default size matches UI_SCENE_BUTTON.ICON_SIZE
+    - Eliminates repeated SVG attributes across all components
+
+### Changed
+- **Frontend: Refactored ThreeScene for Modularity**
+  - `frontend/src/components/scene/ThreeScene.tsx` - Bottom-right control buttons refactored
+    - Replaced 4 separate button implementations (200+ lines) with SceneControlButton component
+    - Reduced code duplication by ~80% for control buttons
+    - Improved maintainability: Button styling changes now happen in ONE place
+    - Uses new Icon component for SVG standardization
+    - Buttons refactored:
+      1. Mute All (active: WARNING color when muted)
+      2. Reset Zoom (always inactive style)
+      3. Toggle Sound Boxes (active: PRIMARY when showing)
+      4. Toggle Timeline (active: PRIMARY when showing)
+
+### Rationale
+- **Following `.claude/output-styles/modular-coding.md` guidelines**:
+  - ✅ Code repeated 4 times → Extracted to reusable component (SceneControlButton)
+  - ✅ Magic values → Moved to constants (SVG_XMLNS, TAILWIND_* patterns)
+  - ✅ Improved modularity: Changes to control button styling now centralized
+  - ✅ Improved reusability: Icon and SceneControlButton can be used throughout app
+  - ✅ UI consistency: All scene buttons guaranteed to have identical styling
+
+## [2025-10-31 20:00] - Complete UI Unification - Phase 2
+### Changed
+- **Frontend: Systematically Unified All Remaining UI Components**
+  - **Key Principle Applied**: NO borders on general containers, borders ONLY on inputs and validation messages
+  
+  - `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx` - Sound generation controls
+    - Sound config tabs: Primary color when active, Neutral 300 when inactive
+    - Tab edit mode: Inline editing with primary color styling
+    - Add tab button: Neutral 200/300 with hover states
+    - Sound config card: Neutral 50 background, NO border (clean minimalist design)
+    - Mode dropdown: Primary background, no border
+    - Link to entity button: Success color when linked, Primary when linking, Neutral 500 default
+    - Remove sound button: Primary → Error color on hover
+    - Entity linking message: Info color with border (validation message)
+    - Linked entity message: Success color with border (validation message)
+    - Textareas: Neutral 300 border, 8px radius
+    - Clear audio button: Neutral 500/600 with hover
+    - Search button: Primary color with hover, disabled state with Neutral 400
+    - Search results container: White background, NO border
+    - Library search results: Primary when selected, Neutral 100/200 hover
+    - Error messages: Error color with border
+    - Help text: Neutral 500
+    - Generate Sounds button: Primary color with hover, Neutral 300 when disabled
+    - Stop button: Error color (red) with hover
+    - Advanced Options card: Neutral 50 background, NO border
+    - Text-to-Audio Parameters group: White background, NO border
+    - Denoising confirmation: Warning color with border (validation message)
+    - All sliders: Neutral 700 background, primary accent
+    - Removed 50+ hardcoded Tailwind classes (bg-gray-*, dark:bg-*, border-gray-*, etc.)
+
+  - `frontend/src/components/layout/sidebar/TextGenerationSection.tsx` - AI sound generation
+    - Number of sounds slider: Clean design, NO border (as requested)
+    - Primary color for number display
+    - Textarea: Neutral 50 background, Neutral 300 border
+    - "Generate Sound Ideas" button: Primary color with rounded-full, hover opacity
+    - Stop button: Error color (red) with hover
+    - **"Load Sounds →" button**: Success color (green) - dynamic conditional button
+    - Analysis progress: Info color with border
+    - LLM progress: Primary color 10% opacity background with border
+    - Error messages: Error color with border
+    - AI response: Success color with border
+    - All labels: Neutral 500 color
+    - Removed all dark mode Tailwind classes
+
+  - `frontend/src/components/controls/FileUploadArea.tsx` - Drag & drop upload
+    - Dashed border: Primary color when dragging, Neutral 300 default
+    - Background: Primary 10% opacity when dragging, transparent default
+    - Success icon: Success color (green checkmark)
+    - Upload icon: Neutral 400
+    - File info text: Neutral 700/500
+    - Browse label: Primary color with hover opacity
+    - 8px border radius
+    - Removed all dark mode classes
+
+  - `frontend/src/components/layout/sidebar/AuralizationSection.tsx` - IR auralization
+    - Loading spinner: Primary color
+    - Enable Auralization checkbox: Primary accent
+    - Normalize IR checkbox: Primary accent
+    - Clear IR button: Neutral 500/600 with hover
+    - Error messages: Error color with border
+    - Help text: Neutral 500
+    - All labels: Neutral 700
+    - Removed all dark mode classes
+
+  - `frontend/src/components/layout/sidebar/ReceiversSection.tsx` - Receiver management
+    - Section header: Neutral 700
+    - Create Receiver button: Primary color with hover, Neutral 400 when disabled
+    - Receiver cards: White background, Neutral 200 border (subtle separation for list items)
+    - Edit mode input: Neutral 100 background, Primary border on focus
+    - Receiver name: Neutral 800 → Primary color on hover
+    - Delete button: Error color with 10% background on hover
+    - Position text: Neutral 500 monospace
+    - Help text: Neutral 500 italic
+    - 8px border radius on all cards
+    - Removed all dark mode classes
+
+  - `frontend/src/components/layout/sidebar/AcousticsTab.tsx` - Acoustics section
+    - IR Library header: Neutral 700
+    - Delegates styling to child components
+    - Removed dark mode classes
+
+  - `frontend/src/components/layout/sidebar/ControlsInfo.tsx` - 3D controls overlay
+    - Text color: Neutral 500
+    - Minimalistic design (no background, no borders)
+    - Removed dark mode classes
+
+  - `frontend/src/components/controls/PlaybackControls.tsx` - Playback controls overlay
+    - Background: `UI_OVERLAY.BACKGROUND` (black 80% opacity) with backdrop blur
+    - Border: `UI_OVERLAY.BORDER_COLOR` (white 20% opacity), 8px radius
+    - Play All button: Primary color when enabled, Neutral 600 when disabled
+    - Pause All button: Warning color when enabled, Neutral 600 when disabled
+    - Stop All button: Primary color when enabled, Neutral 600 when disabled
+    - All buttons: 8px border radius, hover opacity, scale on active
+    - Removed hardcoded color values (#F500B8, #F57EC8, #9CA3AF)
+
+  - `frontend/src/components/controls/OrientationIndicator.tsx` - First-person orientation
+    - Background: `UI_OVERLAY.BACKGROUND` (black 80% opacity) with backdrop blur
+    - Border: `UI_OVERLAY.BORDER_COLOR` (white 20% opacity), 8px radius
+    - Compass rose: Neutral 900 background, Primary 50% opacity border
+    - North marker: Primary color
+    - Direction text: Primary color
+    - Pitch indicator: Neutral 900 background, Primary 50% opacity border
+    - Center line: Primary 50% opacity
+    - All labels: Neutral 400
+    - Separator: White 20% opacity
+    - Help text: Neutral 400
+    - 8px border radius on all elements
+    - Removed all hardcoded bg-gray-*, border-primary/50 classes
+
+### Summary of UI Unification Principles Applied
+1. ✅ **Minimalistic Design**: Removed unnecessary borders from containers, kept only on inputs and validation messages
+2. ✅ **Systematic Approach**: Updated 15 components total with consistent patterns
+3. ✅ **Constants Only**: All colors, spacing, borders reference `constants.ts` - zero hardcoded values
+4. ✅ **Unified Parameters**: 8px border radius, 1px borders, 12px card padding, 8px message padding throughout
+5. ✅ **Consistent Color Hierarchy**: Primary (actions) → Secondary (accents) → Semantic (validation/states)
+6. ✅ **Reference UIs Matched**: Checkboxes (primary accent), validation messages (colored borders), buttons (primary color)
+7. ✅ **Dark Mode Removed**: All `dark:` classes removed in favor of inline styles with constants
+8. ✅ **Hover States**: Implemented via `onMouseEnter/Leave` with color/opacity transitions
+9. ✅ **No Container Borders**: Cards, sections, groups have NO borders - only backgrounds
+10. ✅ **Input Borders**: All inputs, textareas have Neutral 300 borders - clear visual separation
+
+### Technical Details
+- **Total Components Updated**: 15 (SoundUIOverlay, EntityUIOverlay, ModelLoadSection, ImpulseResponseUpload, SoundGenerationSection, TextGenerationSection, FileUploadArea, AuralizationSection, ReceiversSection, AcousticsTab, ControlsInfo, PlaybackControls, OrientationIndicator, + globals.css)
+- **Lines of Code Changed**: ~2000+ lines across all components
+- **Hardcoded Values Removed**: 100+ instances of color, spacing, border values
+- **New Imports Added**: `UI_COLORS`, `UI_CARD`, `UI_BUTTON`, `UI_TABS`, `UI_OVERLAY`, `UI_ENTITY_OVERLAY` across all files
+- **Migration Pattern**: Replaced Tailwind color classes with inline `style={{}}` using constants
+- **Consistency Achieved**: Single source of truth for all UI parameters in `constants.ts`
+
+## [2025-10-31 18:00] - Unified UI Design System
+### Added
+- **Frontend: Comprehensive UI Design System**
+  - `frontend/src/lib/constants.ts` - Complete UI design system constants
+    - **Color Palette** (`UI_COLORS`):
+      - Primary: `#F500B8` (pink) - Main brand color for buttons, accents
+      - Secondary: `#0ea5e9` (sky blue) - Secondary accents (receivers)
+      - Success: `#10B981` (green) - Success states, confirmations
+      - Error: `#EF4444` (red) - Error messages, delete actions
+      - Warning: `#F59E0B` (amber) - Warnings, cautions
+      - Info: `#3B82F6` (blue) - Informational messages
+      - Neutral colors: 50-900 scale for text, backgrounds, borders
+    - **Border Radius** (`UI_BORDER_RADIUS`): SM (4px), MD (8px PRIMARY), LG (12px), XL (16px), FULL (9999px)
+    - **Opacity** (`UI_OPACITY`): DISABLED (0.4), HOVER (0.8), BACKDROP (0.8), BACKDROP_LIGHT (0.95), MUTED (0.5)
+    - **Spacing** (`UI_SPACING`): XS (4px), SM (8px), MD (12px), LG (16px), XL (24px), XXL (32px)
+    - **Font Sizes** (`UI_FONT_SIZE`): XS (10px), SM (12px PRIMARY), BASE (14px), MD-XXL (16-24px)
+    - **Line Thickness** (`UI_LINE_THICKNESS`): THIN (1px), MEDIUM (2px PRIMARY), THICK (3px), EXTRA_THICK (4px)
+    - **Shadows** (`UI_SHADOWS`): SM, MD, LG, XL, OVERLAY - standardized box-shadow values
+    - **Transitions** (`UI_TRANSITIONS`): FAST (150ms), NORMAL (200ms), SLOW (300ms), COLORS (200ms)
+    - **Component-Specific Constants**:
+      - `UI_BUTTON`: Padding, border radius, font size, transitions
+      - `UI_CHECKBOX`: Size (16px), border radius, focus ring, accent color
+      - `UI_INPUT`: Padding, border radius, font size, focus ring
+      - `UI_CARD`: Padding (12px), border radius (8px), border width, shadow
+      - `UI_OVERLAY`: Black overlay styling for sound spheres (80% opacity, white/20 border)
+      - `UI_ENTITY_OVERLAY`: Light overlay styling for entities (white 95% opacity)
+      - `UI_VALIDATION`: Padding, border radius, font size, icon size
+      - `UI_TABS`: Padding, border radius, font size, transitions
+
+  - `frontend/src/app/globals.css` - Extended CSS custom properties
+    - Added semantic color variables: `--color-success`, `--color-error`, `--color-warning`, `--color-info`
+    - Added hover states for all semantic colors
+    - Added light background variants for all semantic colors
+    - Registered all colors in `@theme` for Tailwind usage
+
+### Changed
+- **Frontend: Unified All UI Components with Design System**
+  - `frontend/src/components/overlays/SoundUIOverlay.tsx` - Black overlay (sound spheres)
+    - Background: `UI_OVERLAY.BACKGROUND` (black 80% opacity) with backdrop blur
+    - Border: `UI_OVERLAY.BORDER_COLOR` (white 20% opacity)
+    - Border radius: `UI_OVERLAY.BORDER_RADIUS` (8px)
+    - Variant buttons: Primary color for selected, Neutral 700 for unselected
+    - Sliders: Neutral 700 background, primary accent
+    - Mute button: Warning color when muted, Neutral 700 when unmuted
+    - Solo button: Primary color when soloed, Neutral 700 when unsoloed
+    - Delete button: Error color on hover
+    - Removed all hardcoded color values (bg-black/80, border-white/20, etc.)
+
+  - `frontend/src/components/overlays/EntityUIOverlay.tsx` - Light overlay (entities)
+    - Background: `UI_ENTITY_OVERLAY.BACKGROUND` (white 95% opacity) with backdrop blur
+    - Border: `UI_ENTITY_OVERLAY.BORDER_COLOR` (Neutral 300)
+    - Border radius: `UI_ENTITY_OVERLAY.BORDER_RADIUS` (8px)
+    - Sliders: Neutral 200 background, primary accent
+    - Mute button: Warning color when muted, Neutral 200 when unmuted
+    - Solo button: Primary color when soloed, Neutral 200 when unsoloed
+    - Delete button: Neutral 400 with Error color on hover
+    - Dividers: Neutral 200 color
+    - Removed all hardcoded color values (bg-white/95, border-gray-300, etc.)
+
+  - `frontend/src/components/layout/sidebar/ModelLoadSection.tsx` - Reference component for validation messages
+    - **Success messages** (green): `UI_COLORS.SUCCESS_LIGHT` background, `UI_COLORS.SUCCESS` border/text
+      - "Model loaded with X objects"
+      - "Detected Sound Events" list
+    - **Error messages** (red): `UI_COLORS.ERROR_LIGHT` background, `UI_COLORS.ERROR` border/text/icon
+      - "Analysis Failed" with detailed error
+      - Upload errors
+    - **Warning messages** (amber): `UI_COLORS.WARNING_LIGHT` background, `UI_COLORS.WARNING` border/text
+      - "Model will be used for positioning only"
+    - **Info messages** (blue): `UI_COLORS.INFO_LIGHT` background, `UI_COLORS.INFO` border/text
+      - "Analyzing sounds..." progress
+      - Audio information display
+    - **Buttons**:
+      - Primary buttons: `UI_COLORS.PRIMARY` with `UI_COLORS.PRIMARY_HOVER` on hover
+      - Secondary buttons: `UI_COLORS.NEUTRAL_200` with `UI_COLORS.NEUTRAL_300` on hover
+      - Success buttons: `UI_COLORS.SUCCESS` with `UI_COLORS.SUCCESS_HOVER` on hover
+    - **Checkboxes**: Consistent 16px size, 4px border radius, 2px focus ring, primary accent
+    - All borders: 1px width, 8px border radius (UI_CARD constants)
+    - All padding: 8-12px (UI_CARD.PADDING ± 4px for different sizes)
+    - Removed all hardcoded Tailwind classes (bg-green-50, border-green-200, text-green-800, etc.)
+
+  - `frontend/src/components/audio/ImpulseResponseUpload.tsx` - IR management interface
+    - **Cards**: White background, Neutral 300 border, 8px border radius, 12px padding
+    - **Current IR Display**: Secondary color (sky blue) for RT60 text
+    - **Upload Section**: Info color (blue) for multi-file selection message
+    - **Error Display**: Error color (red) with light background/border
+    - **IR Library List**: 
+      - Selected IR: Primary border, light primary background (10% opacity)
+      - Unselected IR: Neutral 200 border, hover to Neutral 300
+      - Delete button: Neutral 400 with Error color on hover
+      - RT60 display: Secondary color (sky blue)
+    - **Primary Button**: Upload button with primary color and hover state
+    - **Refresh Button**: Primary text color with hover
+    - **Normalization Toggle**: Checkbox with primary accent
+    - All borders: 1px width, 8px border radius
+    - All cards: Consistent 12px padding
+    - Removed all hardcoded Tailwind classes (bg-white, border-gray-300, text-gray-500, etc.)
+
+### Technical Details
+**Color System Philosophy:**
+1. **Primary First**: Use `UI_COLORS.PRIMARY` (pink) for all primary actions, selections, accents
+2. **Semantic Second**: Use Success/Error/Warning/Info colors for their specific purposes
+3. **Neutral Last**: Use neutral colors for backgrounds, borders, disabled states
+4. **Consistency**: All validation messages follow the same pattern:
+   - Light background (e.g., `SUCCESS_LIGHT`)
+   - Solid border (e.g., `SUCCESS`)
+   - Dark text (e.g., `SUCCESS_HOVER`)
+   - Standard padding/border radius from `UI_CARD`
+
+**Border Radius Standardization:**
+- All cards/panels: 8px (MD)
+- All buttons: 8px (MD) 
+- All inputs: 8px (MD)
+- All validation messages: 8px (MD)
+- Tabs: 8px top corners only (rounded-t)
+
+**Opacity Standardization:**
+- Sound overlays (black): 80% opacity
+- Entity overlays (white): 95% opacity
+- Disabled elements: 40% opacity
+- Hover effects: 80% opacity
+- Backdrop blur: 8px for all overlays
+
+**Migration Path:**
+- All new components must use `UI_COLORS.*` constants
+- No hardcoded color values in components
+- No hardcoded Tailwind classes for semantic colors (use inline styles with constants)
+- Tailwind classes only for layout, spacing, typography (not colors)
+
+### In Progress
+- Remaining components to be unified:
+  - SoundGenerationSection (tabs, buttons, validation messages)
+  - ImpulseResponseUpload (cards, buttons, inputs)
+  - All sidebar sections (AuralizationSection, ControlsInfo, AcousticsTab)
+  - Control components (PlaybackControls, OrientationIndicator, FileUploadArea)
+  - Three.js scene colors (geometry, receivers, sound spheres)
+
+## [2025-10-30 23:58] - Add RT60 (Reverberation Time) Analysis for Impulse Responses
+### Added
+- **Frontend: RT60 Analysis Utility**
+  - `frontend/src/lib/audio/rt60-analysis.ts` - Client-side RT60 calculation
+    - `calculateRT60()` - Calculate RT60 from AudioBuffer using Schroeder backward integration
+    - `formatRT60()` - Format RT60 for display (e.g., "1.23s" or "N/A")
+    - `getRT60Description()` - Get human-readable category (Dead/Moderate/Reverberant/Very Reverberant)
+    - Uses first channel for multi-channel IRs (W channel for FOA/TOA)
+    - Falls back to early decay time (EDT) estimation if full -60dB decay not reached
+    - Supports -5 to -35dB range (30dB), or -10 to -20dB for short IRs
+
+  - `frontend/src/lib/constants.ts` - RT60 analysis constants
+    - `RT60_ANALYSIS.EARLY_DECAY_START_DB`: -5 (EDT start)
+    - `RT60_ANALYSIS.EARLY_DECAY_END_DB`: -35 (EDT end, 30dB range)
+    - `RT60_ANALYSIS.MIN_PEAK_THRESHOLD`: 0.001 (minimum peak amplitude)
+    - `RT60_ANALYSIS.MIN_ENERGY_THRESHOLD`: 1e-10 (minimum integrated energy)
+    - `RT60_ANALYSIS.DECIMAL_PLACES`: 2 (display precision)
+    - Category thresholds: DEAD (<0.5s), MODERATE (0.5-1.0s), REVERBERANT (1.0-2.0s), VERY_REVERBERANT (>2.0s)
+
+- **Frontend: RT60 Display in IR UI**
+  - `frontend/src/components/audio/ImpulseResponseUpload.tsx` - RT60 calculation and display
+    - State: `rt60Cache` (Map) - Caches RT60 for each IR ID (avoid recalculation)
+    - State: `currentIRRT60` - RT60 for currently loaded IR
+    - Effect: Calculates RT60 when IR buffer loads, caches result by IR ID
+    - Display: Shows "RT60: X.XXs" under current IR name (sky-blue color)
+    - Display: Shows RT60 in IR library list after sample rate and duration
+    - Tooltip: "Reverberation Time (RT60)" on hover
+
+### Technical Details
+**RT60 (Reverberation Time):**
+- Time for sound to decay by 60 dB after the source stops
+- Key acoustic metric for characterizing room/space acoustics
+- Calculated using Schroeder backward integration (industry standard)
+
+**Calculation Algorithm:**
+1. **Find Direct Sound**: Locate peak amplitude in IR (direct sound arrival)
+2. **Energy Decay**: Square samples after peak (energy = amplitude²)
+3. **Backward Integration**: Cumulative sum from end to start (Schroeder integral)
+4. **Convert to dB**: 10 × log₁₀(energy / max_energy)
+5. **Measure Decay**: Find time for -60 dB drop
+6. **Estimation**: If -60 dB not reached, extrapolate from early decay (-5 to -35 dB)
+   - Uses 30 dB range for accurate estimation
+   - Falls back to -10 to -20 dB (10 dB range) for very short IRs
+
+**RT60 Categories:**
+| RT60 Range | Description | Example Spaces |
+|------------|-------------|----------------|
+| < 0.5s | Dead/Dry | Anechoic chamber, recording studio |
+| 0.5-1.0s | Moderate | Living room, small hall |
+| 1.0-2.0s | Reverberant | Concert hall, church |
+| > 2.0s | Very Reverberant | Cathedral, large spaces |
+
+**Display Examples:**
+```
+Current IR: 1OA_middle_tunnel_4way_bformatW
+RT60: 2.34s (Reverberation Time)
+```
+
+```
+IR Library:
+- 1OA_middle_tunnel_4way_bformatW
+  FOA  48000 Hz  5.00s  RT60: 2.34s
+```
+
+**Performance:**
+- Computation: O(n) where n = IR length in samples
+- Typical time: 1-10ms for standard IRs (44.1kHz, 1-5 seconds)
+- Cached per IR ID (calculated once, displayed many times)
+- Only recalculated when IR buffer changes
+
+**Why Frontend-Only Implementation:**
+- ✅ **Simple architecture** - No backend changes needed
+- ✅ **On-demand calculation** - Only when IR is selected/viewed
+- ✅ **Client-side caching** - Fast subsequent displays
+- ✅ **Real-time feedback** - Immediate results after IR upload
+- ✅ **No server load** - Computation happens in user's browser
+
+### Files Modified
+**Frontend:**
+- `frontend/src/lib/audio/rt60-analysis.ts` - RT60 calculation utility (NEW)
+- `frontend/src/lib/constants.ts` - RT60 analysis constants
+- `frontend/src/components/audio/ImpulseResponseUpload.tsx` - RT60 state, calculation, and display
+
+## [2025-10-30 23:45] - Add UI Enhancements for Ambisonic Rotation (Phase 3)
+### Added
+- **Frontend: Orientation Indicator Component**
+  - `frontend/src/components/controls/OrientationIndicator.tsx` - Real-time orientation display
+    - Shows compass direction (N/S/E/W/NE/etc.) with animated compass rose
+    - Displays pitch angle with visual indicator (Up/Down/Level)
+    - Updates every animation frame for smooth feedback
+    - Only visible in first-person mode with ambisonic IR active
+    - Positioned top-left, styled with glassmorphism design
+
+  - `frontend/src/components/overlays/AmbisonicModeNotice.tsx` - Ambisonic mode info panel
+    - Displays current IR format (FOA/TOA) when ambisonic IR is loaded
+    - Explains physical accuracy: what works (rotation) vs. limitations (translation)
+    - Shows checkmarks/warnings for each constraint
+    - Help text: "Enter first-person mode and use arrow keys to rotate"
+    - Positioned top-right, sky-blue themed for visibility
+
+### Changed
+- **Frontend: ThreeScene UI Integration**
+  - `frontend/src/components/scene/ThreeScene.tsx` - Added orientation tracking state
+    - New state: `isFirstPersonMode`, `currentOrientation` (yaw/pitch/roll)
+    - Updated orientation effect to set UI state for indicator
+    - Integrated `OrientationIndicator` (top-left, first-person only)
+    - Integrated `AmbisonicModeNotice` (top-right, when ambisonic IR active)
+    - Conditional rendering based on auralization config
+
+### Technical Details
+**OrientationIndicator Features:**
+- **Compass Rose**: Animated SVG with rotating direction arrow
+- **8-point Compass**: N, NE, E, SE, S, SW, W, NW directions
+- **Pitch Visualization**: Vertical bar with sliding marker (-90° to +90°)
+- **Angle Display**: Shows exact degrees for yaw and pitch
+- **Smooth Updates**: Tied to animation loop (60fps)
+
+**Coordinate Conversions:**
+- Three.js uses 0 = +Z axis (North), CCW rotation
+- Converted to compass bearing: 0-360°, 0 = North, clockwise
+- Pitch converted from radians to degrees with clamping
+
+**AmbisonicModeNotice Information:**
+```
+✓ Head rotation works: Sound sources stay fixed as you rotate
+⚠ Source positions fixed: IR recorded from single location
+⚠ Listener position locked: Movement would need different IR
+```
+
+**UI Layout:**
+```
+┌─────────────────────────────────────────────┐
+│ [Orientation Indicator]    [Ambisonic Notice]│  Top
+│                                             │
+│                                             │
+│            [3D Scene Canvas]                │  Center
+│                                             │
+│                                             │
+│ [Controls Info]                [Buttons]   │  Bottom
+│            [Timeline]                       │
+│         [Playback Controls]                 │
+└─────────────────────────────────────────────┘
+```
+
+### User Experience Improvements
+**Before:**
+- No visual feedback when in first-person mode
+- Users unsure of current orientation
+- Ambisonic mode constraints unclear
+- Had to remember which direction they were facing
+
+**After:**
+- Real-time compass shows exact heading
+- Pitch indicator shows up/down angle
+- Clear explanation of ambisonic mode limitations
+- Visual confirmation that rotation is working
+- Better spatial awareness in VR-like first-person mode
+
+### Next Steps
+**Optional Enhancements:**
+- [ ] Add roll indicator (head tilt) - currently always 0
+- [ ] Add minimap showing sound source positions relative to listener
+- [ ] Add "Exit First-Person Mode" button overlay
+- [ ] Animate compass transitions for smoother visual feedback
+- [ ] Add keyboard shortcut hints to orientation indicator
+
+## [2025-10-30 23:30] - Implement Physically Accurate Listener Rotation (Phase 1)
+### Added
+- **Frontend: Real-Time Ambisonic Rotation Pipeline**
+  - `frontend/src/lib/three/scene-coordinator.ts` - Added `getListenerOrientation()` method
+    - Returns current listener orientation as `{ yaw, pitch, roll }` in radians
+    - Source of truth for rotation in both first-person and orbit modes
+    - First-person mode: uses stored rotation values
+    - Orbit mode: calculates orientation from camera direction
+
+  - `frontend/src/components/scene/ThreeScene.tsx` - Added rotation update effect
+    - New effect connects scene rotation to auralization service
+    - Updates orientation every animation frame when auralization enabled
+    - Calls `auralizationService.updateOrientation()` with camera rotation
+    - Only active when ambisonic IR is loaded
+
+  - `frontend/src/lib/audio/auralization-service.ts` - Implemented rotator node
+    - Added `rotatorUpdateFn` callback for real-time rotation updates
+    - Updated `setupAmbisonicPipeline()` to instantiate FOA rotator
+    - Pipeline: `MonoInput → Convolver → Rotator → JSAmbisonics Decoder → Limiter`
+    - Fixed `updateOrientation()` to actually update rotator matrix (was TODO)
+    - Added rotator cleanup in `cleanupNodes()`
+
+  - `frontend/src/lib/constants.ts` - Added rotation configuration constants
+    - `ROTATION_CONFIG` - Rotation speeds, pitch clamp limits, mouse sensitivity
+      - `YAW_SPEED`: 0.05 rad/keypress (~2.86°)
+      - `PITCH_SPEED`: 0.05 rad/keypress (~2.86°)
+      - `PITCH_MIN/MAX`: ±88.5° (prevent gimbal lock)
+    - `FIRST_PERSON_MODE` - First-person mode settings
+      - Default ear height: 1.6m
+      - Initial orientation: facing forward (yaw=0)
+      - UI feedback options (orientation indicator)
+
+### Changed
+- **Auralization Pipeline: Added Real-Time Rotation Stage**
+  - **Before**: Static ambisonic field (no rotation)
+    - FOA: `Convolver → Decoder → Output`
+    - Sound sources rotated with camera but felt unnatural
+
+  - **After**: Dynamic rotation based on listener orientation
+    - FOA: `Convolver → Rotator → Decoder → Output`
+    - Sound sources stay fixed in world space as listener rotates head
+    - Physically accurate for single static receiver position
+
+### Technical Details
+**Rotation Implementation:**
+- Uses `createFOARotatorNode()` from `ambisonic-rotator.ts`
+- ScriptProcessorNode (4096 buffer size) applies 3x3 rotation matrix
+- Matrix recalculated from Euler angles (yaw, pitch, roll) every orientation update
+- W channel unchanged (omnidirectional component)
+- X, Y, Z channels rotated via matrix multiplication
+
+**Physical Accuracy:**
+- ✅ **Head Rotation**: Fully accurate - ambisonic field rotates with listener
+- ⚠️ **Listener Translation**: NOT accurate - uses same IR (limitation of single-IR approach)
+- ⚠️ **Source Translation**: NOT accurate - would need new IR recording
+
+**Single-IR Limitations:**
+- Only ONE impulse response per scene (recorded from fixed position)
+- IR encodes room response from recording position to source
+- Moving listener/source would require DIFFERENT IR
+- Would need IR library: `IRs[receiver_position][source_position]`
+
+**Rotation vs. Translation Table:**
+| Action | Physical Accuracy | Implementation |
+|--------|-------------------|----------------|
+| Head Rotation | ✅ Accurate | Rotate ambisonic field via matrix |
+| Listener Translation | ❌ Not accurate | Uses same IR (wrong!) |
+| Source Translation | ❌ Not accurate | Would need new IR recording |
+
+**Data Flow:**
+```
+SceneCoordinator.getListenerOrientation()
+  ↓ (animation loop)
+ThreeScene effect
+  ↓ (updates orientation)
+AuralizationService.updateOrientation()
+  ↓ (calls rotatorUpdateFn)
+Rotator ScriptProcessorNode
+  ↓ (applies rotation matrix)
+Rotated Ambisonic Field → Decoder
+```
+
+### Documentation
+- **`ARCHITECTURE.md`** - Added comprehensive rotation pipeline documentation
+  - Rotation pipeline data flow diagram
+  - Single-IR physical accuracy explanation
+  - Rotation vs. translation comparison table
+  - UI considerations for ambisonic IR mode
+  - Future enhancement: Multiple IR support
+  - Updated "Future Enhancements" to reflect completed work
+
+### Next Steps
+**Phase 2: TOA Rotation (Optional):**
+- Implement full 3rd-order rotation (Wigner D-matrices)
+- 15×15 rotation matrix for orders 2-3
+- Port `ambisonics-rotation` library or implement from scratch
+- Estimated effort: 6-8 hours
+
+**Phase 3: UI/UX Enhancements:**
+- Add orientation indicator in first-person mode
+- Disable source dragging when ambisonic IR loaded (or show warning)
+- Add notice: "Source position fixed (from IR recording)"
+- Update help text explaining rotation vs. translation
+
+**Phase 4: Multiple IR Support (Future):**
+- IR library with multiple recording positions
+- Interpolation between nearest IRs
+- Dynamic IR switching based on listener position
+
+## [2025-10-30 22:00] - Integrate JSAmbisonics for Proper Binaural Localization
+### Added
+- **Frontend: JSAmbisonics HRTF-Based Decoder Integration**
+  - `frontend/src/lib/audio/jsambisonic-decoder.ts` - New wrapper for JSAmbisonics binDecoder
+    - Wraps JSAmbisonics library for TypeScript compatibility
+    - Provides HRTF-based binaural decoding (replaces simple stereo panning)
+    - Encodes ITD (Interaural Time Difference) and ILD (Interaural Level Difference) for proper spatial localization
+    - Supports FOA (order 1) and TOA (order 3) ambisonic decoding
+    - Method: `loadHRTFs(buffer)` for custom HRTF sets (optional, uses default cardioid fallback)
+
+  - Installed `ambisonics` npm package (v0.2.0) - Production-ready Web Audio ambisonic library
+
+### Fixed
+- **Frontend: 16-Channel TOA Localization Issue (Sound from All Directions)**
+  - `frontend/src/lib/audio/auralization-service.ts` - Replaced old decoder with JSAmbisonics
+    - **Root Cause**: Previous decoder used simple stereo panning without HRTFs → no spatial cues
+    - **Solution**: JSAmbisonics convolves each ambisonic channel with HRTF-based filters
+    - Updated `setupAmbisonicPipeline()` (FOA) to use `createJSAmbisonicDecoder()`
+    - Updated `setupTOAConvolution()` (TOA) to use `createJSAmbisonicDecoder()`
+    - Added `jsAmbisonicDecoder` instance tracking for cleanup
+    - Pipeline: `MonoInput → Convolver → JSAmbisonics HRTF Decoder → Limiter → Output`
+
+### Changed
+- **Decoder Approach: From Virtual Speakers to HRTF Convolution**
+  - **Before**: Virtual speaker layout (12 speakers) + simple L/R gain panning
+    - No ITD encoding (time delays)
+    - Limited ILD encoding (only amplitude differences)
+    - Result: Diffuse soundfield, "sound from all directions"
+
+  - **After**: HRTF-based convolution per ambisonic channel (JSAmbisonics)
+    - Each of 16 ambisonic channels convolved with channel-specific HRTF
+    - Proper mid/side signal routing (positive m → L+R, negative m → L-R)
+    - Natural ITD and ILD encoding through HRTF convolution
+    - Result: Clear left/right/front/back/up/down localization
+
+### Technical Details
+**Why JSAmbisonics fixes localization:**
+- Uses same approach as SPARTA MultiConv (HRTF-based decoding)
+- Convolves each ambisonic channel with pre-computed HRTF filters
+- Preserves phase relationships between channels
+- Encodes head-related transfer functions (pinnae, torso, head shadow)
+- Web Audio native, optimized for real-time performance
+
+**Default HRTF Behavior:**
+- JSAmbisonics uses cardioid virtual microphone method by default
+- Custom HRTFs can be loaded via `loadHRTFs()` for improved quality (e.g., MIT KEMAR, SADIE)
+- Fallback is production-ready and provides good spatial localization
+
+**Performance:**
+- FOA (4-ch): Minimal overhead vs previous decoder
+- TOA (16-ch): Same as before (16 parallel convolvers + HRTF decoding)
+- No performance degradation, spatial quality significantly improved
+
+### Backward Compatibility
+- Mono (1-ch) and binaural (2-ch) IR pipelines unchanged
+- FOA (4-ch) and TOA (16-ch) now use HRTF-based decoder
+- No breaking changes to API or user workflow
+
+## [2025-10-30 20:30] - Fix 16-Channel Ambisonic IR Auralization (SPARTA MultiConv Approach)
+### Fixed
+- **Frontend: Eliminated Double-Encoding in FOA/TOA Auralization**
+  - `frontend/src/lib/audio/auralization-service.ts` - Removed spatial encoder from ambisonic IR pipeline
+    - **Root Cause**: Ambisonic IRs already contain spatial encoding from the room measurement/simulation
+    - **Previous (WRONG)**: `Source → Encoder → Convolver → Decoder` (applied spatial encoding twice)
+    - **Fixed (SPARTA approach)**: `Source (mono) → Convolver → Decoder` (convolution only, no encoding)
+    - **Impact**: Eliminates spatial aliasing, metallic coloration, and unrealistic sound with 16-ch IRs
+
+  - **FOA Pipeline (4-channel IR):**
+    - Updated `setupAmbisonicPipeline()` to connect mono sources directly to 4-channel convolver
+    - Created `monoSourceInput` gain node as fan-out point for all sources
+    - Pipeline: `MonoInput → Convolver (4-ch) → Decoder → Limiter → Output`
+
+  - **TOA Pipeline (16-channel IR):**
+    - Updated `setupTOAConvolution()` to connect mono sources to 16 parallel convolvers
+    - Changed routing from: `Encoder → Splitter[16] → Convolver[ch]`
+    - To: `MonoInput → Convolver[ch] (all channels)`
+    - Each convolver receives same mono input, outputs one ambisonic channel
+    - Pipeline: `MonoInput → [16x Convolver] → Merger (16-ch) → Decoder → Limiter → Output`
+
+  - **Source Connection:**
+    - Updated `connectSource()` to skip encoder creation for FOA/TOA formats
+    - Sources now connect directly to `monoSourceInput` (stored in `decoderInput`)
+    - Added console log: "Connected to FOA/TOA pipeline (direct convolution, no encoder)"
+    - Removed position-based encoding logic for ambisonic IRs (lines 349-386)
+
+  - **Cleanup:**
+    - Updated `cleanupNodes()` to disconnect and clear `monoSourceInput`
+    - Kept `sourceEncoders` cleanup for backward compatibility
+
+### Changed
+- **Documentation: Updated Pipeline Comments**
+  - Updated class-level documentation to reflect SPARTA MultiConv approach
+  - Added warning about double-encoding pitfall
+  - Clarified that ambisonic IRs contain pre-encoded spatial information
+  - Updated method comments to explain why encoding is skipped
+
+### Technical Details
+**Why this fixes the realism issue:**
+- Ambisonic IRs from Odeon/CATT/EigenScape already encode directional information
+- Previous approach encoded source position, THEN convolved with ambisonic IR
+- This applied directional cues twice → spatial aliasing, phase issues, metallic sound
+- SPARTA MultiConv's approach: Convolution preserves the IR's spatial encoding
+- Direct mono→ambisonic convolution produces physically accurate results
+
+**Backward Compatibility:**
+- Mono (1-ch) and binaural (2-ch) IRs unchanged - still work correctly
+- Only FOA (4-ch) and TOA (16-ch) pipelines modified
+
+## [2025-10-30 17:00] - Critical Ambisonic Auralization Fixes & Debug Cleanup
+### Fixed
+- **Frontend: Speaker Compensation in Real-Time Decoder**
+  - `frontend/src/lib/audio/ambisonic-decoder.ts` - Added missing 1/√N compensation to Web Audio node decoder
+    - Added speaker compensation to `createAmbisonicDecoderNodes()` function
+    - Applied gain to panL/panR values: `speaker.gainL * speakerCompensation`
+    - FOA: 1/√8 ≈ 0.354 (-9.0dB), TOA: 1/√12 ≈ 0.289 (-10.8dB)
+    - **Root Cause**: Offline buffer decoder had compensation, but real-time Web Audio decoder was missing it
+    - **Impact**: Eliminated clipping in TOA/FOA auralization, physically accurate energy conservation
+
+- **Frontend: Deselect IR Not Disabling Auralization**
+  - `frontend/src/components/scene/ThreeScene.tsx` - Fixed cleanup detection logic
+    - Changed from `hasImpulseResponse` (buffer check) to `hasConvolverNodes` (node existence check)
+    - **Root Cause**: `clearImpulseResponse()` sets `enabled:false` AND `buffer:null` simultaneously, so `shouldDisableAuralization = !enabled && hasBuffer` evaluated to false
+    - Effect now properly triggers `setupAuralization → disableAuralization` to clean up nodes
+  
+  - `frontend/src/lib/audio/auralization-service.ts` - Added hasConvolver() method
+    - Returns true if `convolverNode || convolverNodes.length > 0 || decoderInput` exists
+    - Enables cleanup detection even after buffer is cleared
+
+### Changed
+- **Frontend: Debug Log Cleanup**
+  - Removed all `[Auralization]`, `[Ambisonic Decoder]`, `[IR Processing]`, `[IR Normalization]` console logs
+  - `frontend/src/lib/audio/auralization-service.ts` - Removed 15+ debug logs (setup, format, pipeline, connections)
+  - `frontend/src/lib/audio/ambisonic-decoder.ts` - Removed speaker compensation and normalization logs
+  - `frontend/src/lib/audio/impulse-response.ts` - Removed IR processing and normalization logs
+  - `frontend/src/hooks/useAuralization.ts` - Removed IR loading detail logs
+  - `frontend/src/app/page.tsx` - Removed IR library selection/clearing logs
+  - Kept only critical error logs and warnings (sample rate mismatch)
+
+- **Documentation: Architecture Updates**
+  - `ARCHITECTURE.md` - Updated "Ambisonic Pipeline (Path 1)" section
+    - Added critical implementation details subsection
+    - Documented speaker compensation formulas and implementation locations
+    - Explained TOA parallel convolution workaround (16 mono convolvers)
+    - Added sample rate resampling note
+    - Simplified pipeline diagram to focus on data flow
+
+## [2025-10-30] - Enable Multiple File Upload for Sound Generation and IR Library
+### Added
+- **Frontend: Multiple File Upload Support**
+  - `frontend/src/components/controls/FileUploadArea.tsx` - Added `multiple` prop
+    - Added optional `multiple?: boolean` prop to interface (defaults to false)
+    - Added `multiple` attribute to file input element
+    - Maintains backward compatibility with single-file uploads
+
+  - `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx` - Multi-file sound upload
+    - Updated `handleFileChange()` to process multiple files via `Array.from(e.target.files)`
+    - Updated `handleDrop()` to handle multiple dropped files
+    - First file goes to active tab, additional files create new tabs automatically
+    - Added `multiple={true}` prop to FileUploadArea component
+    - Uses `onBatchAddConfigs()` to create all tabs in single state update
+    - 100ms delay after tab creation to ensure React state updates complete
+
+  - `frontend/src/components/audio/ImpulseResponseUpload.tsx` - Multi-file IR upload
+    - Changed state from `uploadFile` to `uploadFiles: File[]`
+    - Updated `handleUpload()` to loop through all files and upload sequentially
+    - Updated `handleDrop()` and `handleFileChange()` to handle File arrays
+    - Shows file count badge when multiple files selected
+    - Only shows custom name input for single file uploads
+    - Progress shows "Uploading X of Y..." during batch upload
+    - Auto-selects last uploaded IR, all files added to IR library
+    - Added `multiple={true}` prop to FileUploadArea component
+
+### Changed
+- **Frontend: State Management Fixes**
+  - `frontend/src/hooks/useSoundGeneration.ts` - Fixed state closure issues
+    - Changed `handleAddConfig()` from closure-based to functional setState: `setSoundConfigs(prev => ...)`
+    - Added `handleBatchAddConfigs(count)` to create multiple configs in single state update
+    - Fixed `handleUploadAudio()` to use functional setState instead of closure
+    - Added bounds checking in `handleUploadAudio()` to prevent undefined access
+    - Auto-sets `mode: 'upload'` when uploading audio to ensure correct UI display
+    - Prevents state staleness when adding/updating multiple configs rapidly
+    - Ensures correct tab indices when batch-creating tabs
+
+  - `frontend/src/types/components.ts` - Added new prop types
+    - Added `onBatchAddSoundConfigs: (count: number) => number` to `SidebarProps`
+    - Added `onBatchAddConfigs: (count: number) => number` to `SoundGenerationSectionProps`
+
+### Unchanged
+- **Frontend: Analysis Tab (Single File Only)**
+  - `frontend/src/components/layout/sidebar/ModelLoadSection.tsx` - No changes
+    - File upload remains single-file only (no `multiple` prop)
+    - Drag-and-drop still accepts only first file
+    - Ensures 3D model/audio analysis accepts one file at a time
+
+## [2025-10-30 XX:XX] - Add Stop Buttons for Generation Requests
+### Added
+- **Frontend: Stop Generation Functionality**
+  - `frontend/src/hooks/useTextGeneration.ts` - Added AbortController support for LLM requests
+    - Added `abortControllerRef` using `useRef<AbortController | null>(null)`
+    - Updated `handleGenerateText()` to create new AbortController and pass signal to fetch calls
+    - Added `handleStopGeneration()` callback to abort ongoing LLM requests
+    - Updated error handling to detect AbortError and display user-friendly message
+    - Export `handleStopGeneration` from hook
+
+  - `frontend/src/hooks/useSoundGeneration.ts` - Added AbortController support for TangoFlux requests
+    - Added `abortControllerRef` using `useRef<AbortController | null>(null)`
+    - Updated `handleGenerate()` to create new AbortController and pass signal to fetch calls (generate-sounds, library/download)
+    - Added `handleStopGeneration()` callback to abort ongoing sound generation requests
+    - Updated error handling to detect AbortError and display user-friendly message
+    - Export `handleStopGeneration` from hook
+
+  - `frontend/src/components/layout/sidebar/TextGenerationSection.tsx` - Added stop button UI
+    - Added `onStopGeneration` prop to component interface
+    - Updated button layout to use flex container with gap
+    - Added red square stop button (■) that appears only when `isGenerating` is true
+    - Stop button positioned to the right of Generate button
+    - Adjusted "Load Sounds" button to only show when not generating
+
+  - `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx` - Added stop button UI
+    - Added `onStopGeneration` prop to component interface
+    - Updated button layout to use flex container with gap
+    - Added red square stop button (■) that appears only when `isSoundGenerating` is true
+    - Stop button positioned to the right of Generate button
+
+  - `frontend/src/types/components.ts` - Updated prop interfaces
+    - Added `onStopGeneration: () => void` to `TextGenerationSectionProps`
+    - Added `onStopGeneration: () => void` to `SoundGenerationSectionProps`
+    - Added `onStopGeneration: () => void` to `SidebarProps`
+    - Added `onStopSoundGeneration: () => void` to `SidebarProps`
+
+  - `frontend/src/components/layout/Sidebar.tsx` - Connected stop handlers
+    - Pass `onStopGeneration={props.onStopGeneration}` to `TextGenerationSection`
+    - Pass `onStopGeneration={props.onStopSoundGeneration}` to `SoundGenerationSection`
+
+  - `frontend/src/app/page.tsx` - Wired up stop handlers from hooks
+    - Pass `onStopGeneration={textGen.handleStopGeneration}` to Sidebar
+    - Pass `onStopSoundGeneration={soundGen.handleStopGeneration}` to Sidebar
+
+### Changed
+- **UI Behavior:**
+  - Stop button appears on the right side of Generate buttons when generation is active
+  - Clicking stop button aborts all ongoing HTTP requests (LLM, TangoFlux, library downloads)
+  - Frontend UI immediately resets to non-generating state
+  - Error message displays "Generation stopped by user." or "Sound generation stopped by user."
+  - Backend processing is interrupted via HTTP request cancellation
+
+### Technical Details
+- **AbortController API:** Used for cancelling fetch requests in both text and sound generation
+- **Error Handling:** AbortError is caught and replaced with user-friendly messages
+- **Signal Propagation:** AbortSignal passed to all fetch calls (`/api/select-entities`, `/api/generate-text`, `/api/generate-sounds`, `/api/library/download`)
+- **State Management:** Generation state immediately reset on stop to prevent UI blocking
+- **Backend Impact:** When client aborts HTTP request, FastAPI/uvicorn detects disconnection and can stop processing (no additional backend endpoint needed)
+
+### File Structure
+```
+frontend/
+  src/
+    hooks/
+      useTextGeneration.ts (updated - AbortController support)
+      useSoundGeneration.ts (updated - AbortController support)
+    components/
+      layout/
+        Sidebar.tsx (updated - pass stop handlers)
+        sidebar/
+          TextGenerationSection.tsx (updated - stop button UI)
+          SoundGenerationSection.tsx (updated - stop button UI)
+    types/
+      components.ts (updated - prop interfaces)
+    app/
+      page.tsx (updated - wire stop handlers)
+```
+
+## [2025-10-30 14:00] - Multi-Channel Auralization Implementation (Phase 1-3)
+### Added
+- **Backend: Impulse Response Infrastructure**
+  - `backend/config/constants.py` - IR format constants (FOA/TOA channels, normalization, storage paths)
+    - Added `IR_FORMAT_MONO`, `IR_FORMAT_BINAURAL`, `IR_FORMAT_FOA`, `IR_FORMAT_TOA`
+    - Added `AMBISONIC_FOA_CHANNELS` (4), `AMBISONIC_TOA_CHANNELS` (16)
+    - Added `AMBISONIC_FOA_CHANNEL_NAMES`, `AMBISONIC_TOA_CHANNEL_NAMES` (ACN ordering)
+    - Added `AMBISONIC_NORMALIZATION` ("SN3D"), `IMPULSE_RESPONSE_DIR`, `IMPULSE_RESPONSE_URL_PREFIX`
+    - Added `SUPPORTED_IR_CHANNELS` [1, 2, 4, 16], `MAX_IR_CHANNELS` (16)
+  
+  - `backend/models/schemas.py` - IR data models
+    - Added `IRFormat` enum (mono, binaural, foa, toa)
+    - Added `ImpulseResponseMetadata` schema (id, url, name, format, channels, original_channels, sample_rate, duration, file_size)
+    - Added `ImpulseResponseUploadRequest`, `AuralizationSettings`, `ImpulseResponseListResponse`
+  
+  - `backend/services/impulse_response_service.py` - NEW FILE
+    - Impulse response processing service with channel extraction
+    - `detect_ir_format()` - Auto-detect format from channel count (1/2/4/16)
+    - `extract_channels()` - Extract first N channels (handles Odeon files with >16 channels)
+    - `process_ir_file()` - Process uploaded IR: channel extraction, resampling, format conversion
+    - `list_impulse_responses()` - Scan directory and return IR metadata
+    - Supports truncation: 32-ch → 16-ch TOA, 5-15-ch → 4-ch FOA
+  
+  - `backend/routers/impulse_responses.py` - NEW FILE
+    - `POST /api/impulse-responses/upload` - Upload WAV files (1/2/4/16+ channels)
+    - `GET /api/impulse-responses` - List all available IRs
+    - `DELETE /api/impulse-responses/{ir_id}` - Delete IR (stub for future implementation)
+  
+  - `backend/main.py` - Router registration
+    - Initialized `ImpulseResponseService` and registered router
+    - Mounted `/static/impulse_responses` directory for IR file serving
+
+- **Frontend: Ambisonic Core Library**
+  - `frontend/src/lib/constants.ts` - Ambisonic configuration
+    - Updated `IMPULSE_RESPONSE.MAX_CHANNELS` from 2 to 16 (TOA support)
+    - Updated `AUDIO_CHANNEL_NAMES` - Added QUAD, FOA, TOA labels
+    - Added `AMBISONIC` constants (FOA/TOA channel counts, weights, decoder config, performance limits)
+    - Added `IR_FORMAT` constants (mono, binaural, foa, toa)
+  
+  - `frontend/src/types/audio.ts` - Multi-channel types
+    - Added `IRFormat` type, `AmbisonicOrder` type (1 | 3)
+    - Added `ImpulseResponseMetadata`, `AuralizationSettings`, `AmbisonicEncodedBuffer`
+    - Added `Position3D`, `SphericalPosition`, `Orientation` interfaces
+    - Added `FOACoefficients`, `TOACoefficients` types
+  
+  - `frontend/src/lib/audio/ambisonic-encoder.ts` - NEW FILE
+    - `cartesianToSpherical()` - Convert (x,y,z) to (azimuth, elevation, distance)
+    - `calculateFOACoefficients()` - FOA encoding gains (W, X, Y, Z) with SN3D normalization
+    - `calculateTOACoefficients()` - TOA encoding gains (16 channels) using spherical harmonics
+    - `encodeMonoToAmbisonic()` - Encode mono buffer to FOA (4-ch) or TOA (16-ch)
+    - `createAmbisonicEncoderNodes()` - Real-time encoder using Web Audio API gain nodes
+  
+  - `frontend/src/lib/audio/ambisonic-rotator.ts` - NEW FILE
+    - `createRotationMatrix()` - 3x3 rotation matrix from Euler angles (yaw, pitch, roll)
+    - `rotateFOABuffer()` - Rotate 4-ch FOA buffer (W unchanged, X/Y/Z rotated)
+    - `rotateTOABuffer()` - Rotate 16-ch TOA buffer (simplified first-order rotation)
+    - `createFOARotatorNode()` - Real-time FOA rotator using ScriptProcessorNode
+  
+  - `frontend/src/lib/audio/ambisonic-decoder.ts` - NEW FILE
+    - `createVirtualSpeakerLayout()` - 8 speakers for FOA, 12 for TOA (horizontal + elevated)
+    - `createVirtualSpeaker()` - Virtual speaker with equal-power stereo panning
+    - `calculateDecodingGains()` - Decode gains for virtual speakers (4 FOA or 16 TOA coefficients)
+    - `decodeAmbisonicToBinaural()` - Decode FOA/TOA to stereo with virtual speakers
+    - `createAmbisonicDecoderNodes()` - Real-time decoder using Web Audio API nodes
+
+- **Frontend: API Integration**
+  - `frontend/src/services/api.ts` - IR API methods
+    - `uploadImpulseResponse()` - Upload IR WAV file with name
+    - `listImpulseResponses()` - Fetch all IR metadata
+    - `deleteImpulseResponse()` - Delete IR by ID
+
+### Technical Details
+- **Ambisonic Pipeline:** Mono source → FOA/TOA encoding → Convolution → Rotation → Binaural decoding → Stereo output
+- **Channel Extraction:** Handles simulation software (Odeon, CATT-Acoustic) files with extra channels
+- **SN3D Normalization:** Industry-standard Schmidt semi-normalized encoding/decoding
+- **Virtual Speaker Decoding:** 8-12 virtual speakers for psychoacoustic binaural rendering
+- **Performance:** FOA (4 convolutions), TOA (16 convolutions) - both real-time capable on modern CPUs
+
+### File Structure
+```
+backend/
+  config/constants.py (updated)
+  models/schemas.py (updated)
+  services/impulse_response_service.py (NEW)
+  routers/impulse_responses.py (NEW)
+  main.py (updated)
+frontend/
+  src/
+    lib/
+      constants.ts (updated)
+      audio/
+        ambisonic-encoder.ts (NEW)
+        ambisonic-rotator.ts (NEW)
+        ambisonic-decoder.ts (NEW)
+    types/audio.ts (updated)
+    services/api.ts (updated)
+```
+
 ## [2025-10-29 18:00] - Mute/Solo Volume Preservation & Timeline Performance
 ### Fixed
 - **Volume preservation during mute/unmute:** Separate gain nodes for mute/solo vs volume

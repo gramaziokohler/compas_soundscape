@@ -1,4 +1,5 @@
 import type { TextGenerationSectionProps } from "@/types/components";
+import { UI_COLORS, UI_BUTTON } from "@/lib/constants";
 
 export function TextGenerationSection({
   modelEntities,
@@ -14,13 +15,14 @@ export function TextGenerationSection({
   setAiPrompt,
   setNumSounds,
   onGenerateText,
+  onStopGeneration,
   onLoadSoundsToGeneration
 }: TextGenerationSectionProps) {
   return (
     <>
       <div>
-        <label className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-          Number of sounds: <span className="text-[#F500B8] font-bold">{numSounds}</span>
+        <label className="text-sm mb-2" style={{ color: UI_COLORS.NEUTRAL_500 }}>
+          Number of sounds: <span style={{ color: UI_COLORS.PRIMARY, fontWeight: 'bold' }}>{numSounds}</span>
         </label>
         <input
           type="range"
@@ -28,16 +30,17 @@ export function TextGenerationSection({
           onChange={(e) => setNumSounds(parseInt(e.target.value))}
           min="1"
           max="30"
-          className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 accent-primary"
+          className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary"
+          style={{ backgroundColor: UI_COLORS.NEUTRAL_200 }}
         />
-        <div className="flex justify-between text-xs text-gray-500 mt-1">
+        <div className="flex justify-between text-xs mt-1" style={{ color: UI_COLORS.NEUTRAL_500 }}>
           <span>1</span>
           <span>30</span>
         </div>
       </div>
 
       <div>
-        <label htmlFor="ai-prompt" className="text-sm text-gray-600 font-medium block dark:text-gray-400 mb-2">
+        <label htmlFor="ai-prompt" className="text-sm font-medium block mb-2" style={{ color: UI_COLORS.NEUTRAL_500 }}>
           {modelEntities.length > 0 ? 'Space Description (Optional)' : 'Space Description (Optional)'}
         </label>
         <textarea
@@ -57,7 +60,14 @@ export function TextGenerationSection({
               ? "e.g., a busy office in the afternoon (combines with model)"
               : "e.g., an office space in the afternoon"
           }
-          className="w-full h-20 p-2 text-sm border rounded bg-gray-50 dark:bg-gray-700 border-gray-300 dark:border-gray-600 focus:ring-2 focus:ring-[#F500B8]"
+          className="w-full h-20 p-2 text-sm rounded"
+          style={{
+            backgroundColor: UI_COLORS.NEUTRAL_50,
+            borderColor: UI_COLORS.NEUTRAL_300,
+            borderWidth: '1px',
+            borderStyle: 'solid',
+            borderRadius: '8px'
+          }}
           rows={3}
         />
       </div>
@@ -67,19 +77,58 @@ export function TextGenerationSection({
         <button
           onClick={onGenerateText}
           disabled={isGenerating || (modelEntities.length === 0 && !aiPrompt.trim())}
-          className={`flex-1 rounded-full text-white font-medium h-10 transition-colors ${
-            isGenerating || (modelEntities.length === 0 && !aiPrompt.trim())
-              ? 'bg-gray-400'
-              : 'bg-primary hover:bg-primary-hover'
-          }`}
+          onMouseEnter={(e) => {
+            if (!isGenerating && (modelEntities.length > 0 || aiPrompt.trim())) {
+              e.currentTarget.style.opacity = '0.8';
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (!isGenerating && (modelEntities.length > 0 || aiPrompt.trim())) {
+              e.currentTarget.style.opacity = '1';
+            }
+          }}
+          className="flex-1 text-white transition-colors"
+          style={{
+            borderRadius: UI_BUTTON.BORDER_RADIUS_MD,
+            padding: UI_BUTTON.PADDING_MD,
+            fontSize: UI_BUTTON.FONT_SIZE,
+            fontWeight: UI_BUTTON.FONT_WEIGHT,
+            backgroundColor: isGenerating || (modelEntities.length === 0 && !aiPrompt.trim()) ? UI_COLORS.NEUTRAL_400 : UI_COLORS.PRIMARY,
+            opacity: isGenerating || (modelEntities.length === 0 && !aiPrompt.trim()) ? 0.4 : 1,
+            cursor: isGenerating || (modelEntities.length === 0 && !aiPrompt.trim()) ? 'not-allowed' : 'pointer'
+          }}
         >
           {isGenerating ? "Generating..." : showConfirmLoadSounds ? "Generate Ideas " : "Generate Sound Ideas"}
         </button>
 
-        {showConfirmLoadSounds && (
+        {/* Stop button - only visible when generating */}
+        {isGenerating && (
+          <button
+            onClick={onStopGeneration}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#dc2626'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.ERROR}
+            className="w-10 h-10 rounded text-white font-bold transition-colors flex items-center justify-center"
+            style={{
+              backgroundColor: UI_COLORS.ERROR,
+              borderRadius: '8px'
+            }}
+            title="Stop generation"
+            aria-label="Stop generation"
+          >
+            <span className="text-lg leading-none">■</span>
+          </button>
+        )}
+
+        {showConfirmLoadSounds && !isGenerating && (
           <button
             onClick={onLoadSoundsToGeneration}
-            className="flex-1 rounded-full bg-green-600 text-white font-medium h-10 hover:bg-green-700 transition-colors"
+            onMouseEnter={(e) => e.currentTarget.style.opacity = '0.8'}
+            onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+            className="flex-1 rounded-md text-white font-medium py-2 text-sm transition-colors"
+            style={{
+              backgroundColor: UI_COLORS.SUCCESS,
+              borderRadius: '9999px'
+            }}
             title="Load sound ideas into generation tab"
           >
             Load Sounds →
@@ -88,30 +137,69 @@ export function TextGenerationSection({
       </div>
 
       {isAnalyzingModel && (
-        <div className="p-2 bg-blue-50 dark:bg-blue-900/20 rounded text-xs text-blue-700 dark:text-blue-300">
+        <div 
+          className="p-2 rounded text-xs"
+          style={{
+            backgroundColor: UI_COLORS.INFO_LIGHT,
+            borderColor: UI_COLORS.INFO,
+            borderWidth: '1px',
+            borderStyle: 'solid',
+            borderRadius: '8px',
+            color: UI_COLORS.INFO
+          }}
+        >
           ⏳ {analysisProgress}
         </div>
       )}
 
       {llmProgress && (
-        <div className="p-2 bg-purple-50 dark:bg-purple-900/20 rounded text-xs text-purple-700 dark:text-purple-300">
+        <div 
+          className="p-2 rounded text-xs"
+          style={{
+            backgroundColor: `${UI_COLORS.PRIMARY}10`,
+            borderColor: UI_COLORS.PRIMARY,
+            borderWidth: '1px',
+            borderStyle: 'solid',
+            borderRadius: '8px',
+            color: UI_COLORS.PRIMARY
+          }}
+        >
           🔄 {llmProgress}
         </div>
       )}
 
       {aiError && (
-        <div className="p-3 bg-red-50 rounded-lg">
-          <p className="text-red-600 text-sm">{aiError}</p>
+        <div 
+          className="p-3 rounded-lg"
+          style={{
+            backgroundColor: UI_COLORS.ERROR_LIGHT,
+            borderColor: UI_COLORS.ERROR,
+            borderWidth: '1px',
+            borderStyle: 'solid',
+            borderRadius: '8px',
+            color: UI_COLORS.ERROR
+          }}
+        >
+          <p className="text-sm">{aiError}</p>
         </div>
       )}
 
       {aiResponse && (
-        <div className="p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg max-h-64 overflow-y-auto">
-          <h4 className="text-xs font-semibold mb-2 text-green-800 dark:text-green-300 flex items-center">
+        <div 
+          className="p-3 rounded-lg max-h-64 overflow-y-auto"
+          style={{
+            backgroundColor: UI_COLORS.SUCCESS_LIGHT,
+            borderColor: UI_COLORS.SUCCESS,
+            borderWidth: '1px',
+            borderStyle: 'solid',
+            borderRadius: '8px'
+          }}
+        >
+          <h4 className="text-xs font-semibold mb-2 flex items-center" style={{ color: UI_COLORS.SUCCESS }}>
             <span className="mr-2">✨</span>
             Generated Sound Ideas:
           </h4>
-          <div className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{aiResponse}</div>
+          <div className="text-xs whitespace-pre-wrap" style={{ color: UI_COLORS.NEUTRAL_700 }}>{aiResponse}</div>
         </div>
       )}
     </>

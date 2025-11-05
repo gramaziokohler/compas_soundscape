@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import {
   API_BASE_URL,
   DEFAULT_NUM_SOUNDS,
@@ -24,6 +24,9 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
   const [activeAiTab, setActiveAiTab] = useState<ActiveTab>('text');
   const [selectedDiverseEntities, setSelectedDiverseEntities] = useState<any[]>([]);
 
+  // AbortController for cancelling ongoing requests
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   const handleGenerateText = useCallback(async () => {
     // Only use entities if checkbox is checked
     const shouldUseEntities = modelEntities.length > 0 && useModelAsContext;
@@ -37,6 +40,9 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
     setIsGenerating(true);
     setShowConfirmLoadSounds(false);
     setLlmProgress('');
+
+    // Create a new AbortController for this request
+    abortControllerRef.current = new AbortController();
 
     try {
       const requestBody: any = {
@@ -61,6 +67,7 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
             entities: modelEntities,
             max_sounds: numSounds
           }),
+          signal: abortControllerRef.current.signal
         });
 
         if (selectionResponse.ok) {
@@ -87,6 +94,7 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
+        signal: abortControllerRef.current.signal
       });
 
       if (!response.ok) {
@@ -170,12 +178,27 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
         setShowConfirmLoadSounds(false);
       }
     } catch (err: any) {
-      setAiError(err.message);
+      // Don't show error if request was aborted intentionally
+      if (err.name === 'AbortError') {
+        setAiError('Generation stopped by user.');
+      } else {
+        setAiError(err.message);
+      }
       setLlmProgress('');
     } finally {
       setIsGenerating(false);
+      abortControllerRef.current = null;
     }
   }, [aiPrompt, numSounds, modelEntities, useModelAsContext]);
+
+  const handleStopGeneration = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      setIsGenerating(false);
+      setLlmProgress('');
+      setAiError('Generation stopped by user.');
+    }
+  }, []);
 
   return {
     aiPrompt,
@@ -192,6 +215,7 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
     setNumSounds,
     setActiveAiTab,
     handleGenerateText,
+    handleStopGeneration,
     setPendingSoundConfigs,
     setSelectedDiverseEntities
   };

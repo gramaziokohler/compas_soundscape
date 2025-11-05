@@ -7,6 +7,7 @@
 
 import type { CompasGeometry, SoundEvent, SoundState, EntityData, ReceiverData } from "./index";
 import type { AuralizationConfig } from "./auralization";
+import type { ModeVisualizationState } from "./modal";
 
 /**
  * ThreeScene Component Props
@@ -106,8 +107,17 @@ export interface ThreeSceneProps {
   /** Whether the user is currently in entity linking mode for sounds */
   isLinkingEntity?: boolean;
 
-  /** Callback when an entity is selected for linking to a sound */
-  onEntityLinked?: (entity: EntityData) => void;
+  /** Callback when an entity is selected for linking to a sound (or null to unlink/exit) */
+  onEntityLinked?: (entity: EntityData | null) => void;
+
+  /** Mode visualization state (for modal analysis nodal line visualization) */
+  modeVisualizationState?: ModeVisualizationState;
+
+  /** Callback when mode visualization is toggled */
+  onSetModeVisualization?: (active: boolean) => void;
+
+  /** Callback when a specific mode is selected for visualization */
+  onSelectMode?: (modeIndex: number | null) => void;
 
   /** Optional CSS class name for the container */
   className?: string;

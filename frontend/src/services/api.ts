@@ -1,5 +1,7 @@
 import { API_BASE_URL } from '@/lib/constants';
 import type { CompasGeometry, SoundEvent, SoundGenerationConfig } from '@/types';
+import type { ImpulseResponseMetadata } from '@/types/audio';
+import type { ModalAnalysisRequest, ModalAnalysisResult } from '@/types/modal';
 
 // API Service Layer
 export const apiService = {
@@ -106,4 +108,90 @@ export const apiService = {
       method: 'POST'
     });
   },
+
+  // Impulse Response Management
+
+  /**
+   * Upload an impulse response file
+   */
+  async uploadImpulseResponse(file: File, name: string): Promise<ImpulseResponseMetadata> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('name', name);
+    
+    const response = await fetch(`${API_BASE_URL}/api/impulse-responses/upload`, {
+      method: 'POST',
+      body: formData
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to upload impulse response');
+    }
+    
+    return response.json();
+  },
+  
+  /**
+   * List all impulse responses
+   */
+  async listImpulseResponses(): Promise<ImpulseResponseMetadata[]> {
+    const response = await fetch(`${API_BASE_URL}/api/impulse-responses`);
+    
+    if (!response.ok) {
+      throw new Error('Failed to fetch impulse responses');
+    }
+    
+    const data = await response.json();
+    return data.impulse_responses;
+  },
+  
+  /**
+   * Delete an impulse response
+   */
+  async deleteImpulseResponse(irId: string): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/api/impulse-responses/${irId}`, {
+      method: 'DELETE'
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to delete impulse response');
+    }
+  },
+
+  // Modal Analysis
+
+  /**
+   * Perform modal analysis on a mesh to find resonant frequencies
+   */
+  async analyzeModal(request: ModalAnalysisRequest): Promise<ModalAnalysisResult> {
+    const response = await fetch(`${API_BASE_URL}/api/modal-analysis/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Modal analysis failed');
+    }
+
+    return response.json();
+  },
+
+  /**
+   * Get available material presets for modal analysis
+   */
+  async getModalMaterials(): Promise<{
+    materials: Record<string, { young_modulus: number; poisson_ratio: number; density: number }>;
+    description: Record<string, string>;
+  }> {
+    const response = await fetch(`${API_BASE_URL}/api/modal-analysis/materials`);
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch modal materials');
+    }
+
+    return response.json();
+  }
 };

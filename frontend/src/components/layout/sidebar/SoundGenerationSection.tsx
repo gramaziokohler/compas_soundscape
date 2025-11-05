@@ -5,6 +5,7 @@ import { FileUploadArea } from "@/components/controls/FileUploadArea";
 import { AudioWaveformDisplay } from "@/components/audio/AudioWaveformDisplay";
 import { trimDisplayName } from "@/lib/utils";
 import { useHorizontalScroll } from "@/hooks/useHorizontalScroll";
+import { UI_COLORS, UI_CARD, UI_BUTTON, UI_TABS } from "@/lib/constants";
 
 export function SoundGenerationSection({
   soundConfigs,
@@ -12,11 +13,13 @@ export function SoundGenerationSection({
   isSoundGenerating,
   soundGenError,
   onAddConfig,
+  onBatchAddConfigs,
   onRemoveConfig,
   onUpdateConfig,
   onModeChange,
   onSetActiveTab,
   onGenerate,
+  onStopGeneration,
   generatedSounds,
   globalDuration,
   globalSteps,
@@ -106,21 +109,58 @@ export function SoundGenerationSection({
     e.preventDefault();
     setIsDragging(false);
 
-    const file = e.dataTransfer.files[0];
-    if (file) {
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length === 0) return;
+
+    // Store the starting tab index
+    const startingTabIndex = activeSoundConfigTab;
+
+    // Batch create all necessary tabs (one for each file after the first)
+    if (files.length > 1) {
+      onBatchAddConfigs(files.length - 1);
+    }
+
+    // Wait for React to batch update the state
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Now upload each file to its tab
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const tabIndex = i === 0 ? startingTabIndex : startingTabIndex + i;
+
       setUploadFile(file);
-      await onUploadAudio(activeSoundConfigTab, file);
+      await onUploadAudio(tabIndex, file);
     }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setUploadFile(file);
-      await onUploadAudio(activeSoundConfigTab, file);
-      // Reset input so same file can be selected again
-      e.target.value = "";
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const fileArray = Array.from(files);
+
+    // Store the starting tab index
+    const startingTabIndex = activeSoundConfigTab;
+
+    // Batch create all necessary tabs (one for each file after the first)
+    if (fileArray.length > 1) {
+      onBatchAddConfigs(fileArray.length - 1);
     }
+
+    // Wait for React to batch update the state
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Now upload each file to its tab
+    for (let i = 0; i < fileArray.length; i++) {
+      const file = fileArray[i];
+      const tabIndex = i === 0 ? startingTabIndex : startingTabIndex + i;
+
+      setUploadFile(file);
+      await onUploadAudio(tabIndex, file);
+    }
+
+    // Reset input so same files can be selected again
+    e.target.value = "";
   };
 
   const handleClearAudio = () => {
@@ -185,7 +225,7 @@ export function SoundGenerationSection({
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-sm text-gray-600 dark:text-gray-400">Generate sounds from text descriptions</p>
+      <p className="text-sm" style={{ color: UI_COLORS.NEUTRAL_500 }}>Generate sounds from text descriptions</p>
 
       {/* Sound titles Tabs */}
       <div ref={tabsScrollRef} className="flex gap-1 overflow-x-auto pb-1">
@@ -200,23 +240,33 @@ export function SoundGenerationSection({
                 onBlur={handleEditSave}
                 onKeyDown={handleEditKeyDown}
                 autoFocus
-                className={`px-3 py-1 text-xs font-medium rounded-t outline-none ${
-                  activeSoundConfigTab === index
-                    ? 'bg-primary text-white'
-                    : 'bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-300'
-                }`}
-                style={{ width: '120px' }}
+                className="px-3 py-1 text-xs font-medium rounded-t outline-none"
+                style={{
+                  width: '120px',
+                  backgroundColor: activeSoundConfigTab === index ? UI_COLORS.PRIMARY : UI_COLORS.NEUTRAL_300,
+                  color: activeSoundConfigTab === index ? 'white' : UI_COLORS.NEUTRAL_700
+                }}
               />
             ) : (
               /* View mode: Button with hover pencil */
               <button
                 onClick={() => onSetActiveTab(index)}
                 onDoubleClick={() => handleDoubleClick(index)}
-                className={`px-3 py-1 text-xs font-medium rounded-t transition-colors flex items-center gap-1 max-w-[120px] ${
-                  activeSoundConfigTab === index
-                    ? 'bg-primary text-white'
-                    : 'bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-400 dark:hover:bg-gray-500'
-                }`}
+                onMouseEnter={(e) => {
+                  if (activeSoundConfigTab !== index) {
+                    e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_400;
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (activeSoundConfigTab !== index) {
+                    e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_300;
+                  }
+                }}
+                className="px-3 py-1 text-xs font-medium rounded-t transition-colors flex items-center gap-1 max-w-[120px]"
+                style={{
+                  backgroundColor: activeSoundConfigTab === index ? UI_COLORS.PRIMARY : UI_COLORS.NEUTRAL_300,
+                  color: activeSoundConfigTab === index ? 'white' : UI_COLORS.NEUTRAL_700
+                }}
                 title={`${getDisplayName(index)} (Double-click to edit)`}
               >
                 <span className="truncate">{getDisplayName(index)}</span>
@@ -227,7 +277,13 @@ export function SoundGenerationSection({
         ))}
         <button
           onClick={onAddConfig}
-          className="px-3 py-1 text-xs font-medium bg-gray-200 dark:bg-gray-700 rounded-t hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_300}
+          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_200}
+          className="px-3 py-1 text-xs font-medium rounded-t transition-colors"
+          style={{
+            backgroundColor: UI_COLORS.NEUTRAL_200,
+            color: UI_COLORS.NEUTRAL_700
+          }}
           title="Add new sound"
         >
           +
@@ -236,15 +292,25 @@ export function SoundGenerationSection({
 
       {/* Sound configs Tab */}
       {soundConfigs[activeSoundConfigTab] && (
-        <div className="p-3 border rounded bg-gray-50 dark:bg-gray-700 border-gray-300 dark:border-gray-600">
+        <div 
+          className="rounded"
+          style={{
+            padding: `${UI_CARD.PADDING}px`,
+            backgroundColor: UI_COLORS.NEUTRAL_50,
+            borderRadius: `${UI_CARD.BORDER_RADIUS}px`
+          }}
+        >
           <div className="flex justify-between items-center mb-3">
             {/* Mode dropdown - left side */}
             <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-600 dark:text-gray-400">Mode:</label>
+              <label className="text-xs" style={{ color: UI_COLORS.NEUTRAL_500 }}>Mode:</label>
               <select
                 value={currentMode}
                 onChange={(e) => onModeChange(activeSoundConfigTab, e.target.value as SoundGenerationMode)}
-                className="text-xs px-2 py-1 text-white bg-primary dark:bg-gray-800 border dark:border-gray-600 rounded focus:outline-none focus:ring-1 focus:ring-white"
+                className="text-xs px-2 py-1 text-white rounded focus:outline-none focus:ring-1 focus:ring-white"
+                style={{
+                  backgroundColor: UI_COLORS.PRIMARY
+                }}
               >
                 <option value="text-to-audio">Text-to-Audio Generation</option>
                 <option value="upload">Upload File</option>
@@ -264,13 +330,29 @@ export function SoundGenerationSection({
                       onStartLinkingEntity?.(activeSoundConfigTab);
                     }
                   }}
-                  className={`w-6 h-6 flex items-center justify-center rounded-full transition-colors ${
-                    isLinkingEntity && linkingConfigIndex === activeSoundConfigTab
-                      ? 'bg-primary text-white'
-                      : soundConfigs[activeSoundConfigTab]?.entity
-                      ? 'text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20'
-                      : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-600'
-                  }`}
+                  onMouseEnter={(e) => {
+                    if (!(isLinkingEntity && linkingConfigIndex === activeSoundConfigTab)) {
+                      if (soundConfigs[activeSoundConfigTab]?.entity) {
+                        e.currentTarget.style.backgroundColor = `${UI_COLORS.SUCCESS}10`;
+                      } else {
+                        e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_100;
+                      }
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!(isLinkingEntity && linkingConfigIndex === activeSoundConfigTab)) {
+                      e.currentTarget.style.backgroundColor = 'transparent';
+                    }
+                  }}
+                  className="w-6 h-6 flex items-center justify-center rounded-full transition-colors"
+                  style={{
+                    backgroundColor: isLinkingEntity && linkingConfigIndex === activeSoundConfigTab ? UI_COLORS.PRIMARY : 'transparent',
+                    color: isLinkingEntity && linkingConfigIndex === activeSoundConfigTab 
+                      ? 'white' 
+                      : soundConfigs[activeSoundConfigTab]?.entity 
+                      ? UI_COLORS.SUCCESS 
+                      : UI_COLORS.NEUTRAL_500
+                  }}
                   title={
                     isLinkingEntity && linkingConfigIndex === activeSoundConfigTab
                       ? 'Cancel linking'
@@ -289,7 +371,18 @@ export function SoundGenerationSection({
               {soundConfigs.length > 1 && (
                 <button
                   onClick={() => onRemoveConfig(activeSoundConfigTab)}
-                  className="w-6 h-6 flex items-center justify-center text-lg text-primary hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-colors"
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = UI_COLORS.ERROR;
+                    e.currentTarget.style.backgroundColor = `${UI_COLORS.ERROR}10`;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = UI_COLORS.PRIMARY;
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                  }}
+                  className="w-6 h-6 flex items-center justify-center text-lg rounded-full transition-colors"
+                  style={{
+                    color: UI_COLORS.PRIMARY
+                  }}
                   title="Remove sound"
                 >
                   ×
@@ -300,7 +393,18 @@ export function SoundGenerationSection({
 
           {/* Entity linking status message */}
           {isLinkingEntity && linkingConfigIndex === activeSoundConfigTab && (
-            <div className="mb-3 p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-xs text-blue-700 dark:text-blue-300">
+            <div 
+              className="mb-3 rounded text-xs"
+              style={{
+                padding: '8px',
+                backgroundColor: UI_COLORS.INFO_LIGHT,
+                borderColor: UI_COLORS.INFO,
+                borderWidth: '1px',
+                borderStyle: 'solid',
+                borderRadius: '8px',
+                color: UI_COLORS.INFO
+              }}
+            >
               <div className="flex items-center gap-2">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -312,7 +416,18 @@ export function SoundGenerationSection({
 
           {/* Linked entity info */}
           {soundConfigs[activeSoundConfigTab]?.entity && (
-            <div className="mb-3 p-2 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded text-xs text-green-700 dark:text-green-300">
+            <div 
+              className="mb-3 rounded text-xs"
+              style={{
+                padding: '8px',
+                backgroundColor: UI_COLORS.SUCCESS_LIGHT,
+                borderColor: UI_COLORS.SUCCESS,
+                borderWidth: '1px',
+                borderStyle: 'solid',
+                borderRadius: '8px',
+                color: UI_COLORS.SUCCESS
+              }}
+            >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -324,7 +439,9 @@ export function SoundGenerationSection({
                 </div>
                 <button
                   onClick={() => onUpdateConfig(activeSoundConfigTab, 'entity' as any, undefined as any)}
-                  className="text-green-600 hover:text-green-800 dark:text-green-400 dark:hover:text-green-200"
+                  onMouseEnter={(e) => e.currentTarget.style.color = UI_COLORS.SUCCESS}
+                  onMouseLeave={(e) => e.currentTarget.style.color = UI_COLORS.SUCCESS}
+                  style={{ color: UI_COLORS.SUCCESS }}
                   title="Unlink entity"
                 >
                   ×
@@ -349,29 +466,38 @@ export function SoundGenerationSection({
                   }
                 }}
                 placeholder="e.g., Hammer hitting wooden table"
-                className="w-full h-16 p-2 text-sm border rounded bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 mb-2"
+                className="w-full h-16 p-2 text-sm rounded mb-2"
+                style={{
+                  backgroundColor: 'white',
+                  borderColor: UI_COLORS.NEUTRAL_300,
+                  borderWidth: '1px',
+                  borderStyle: 'solid',
+                  borderRadius: '8px'
+                }}
                 rows={2}
               />
 
               <div className="grid grid-cols-2 gap-2 mb-2">
                 <div>
-                  <label className="text-xs block mb-1">Duration: {soundConfigs[activeSoundConfigTab].duration}s</label>
+                  <label className="text-xs block mb-1" style={{ color: UI_COLORS.NEUTRAL_700 }}>Duration: {soundConfigs[activeSoundConfigTab].duration}s</label>
                   <input
                     type="range"
                     value={soundConfigs[activeSoundConfigTab].duration}
                     onChange={(e) => onUpdateConfig(activeSoundConfigTab, 'duration', parseInt(e.target.value))}
-                    className="w-full accent-primary"
+                    className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary"
+                    style={{ backgroundColor: UI_COLORS.NEUTRAL_200 }}
                     min="1"
                     max="30"
                   />
                 </div>
                 <div>
-                  <label className="text-xs block mb-1">Guidance: {((soundConfigs[activeSoundConfigTab].guidance_scale ?? 4.5) / 10).toFixed(1)}</label>
+                  <label className="text-xs block mb-1" style={{ color: UI_COLORS.NEUTRAL_700 }}>Guidance: {((soundConfigs[activeSoundConfigTab].guidance_scale ?? 4.5) / 10).toFixed(1)}</label>
                   <input
                     type="range"
                     value={soundConfigs[activeSoundConfigTab].guidance_scale ?? 4.5}
                     onChange={(e) => onUpdateConfig(activeSoundConfigTab, 'guidance_scale', parseFloat(e.target.value))}
-                    className="w-full accent-primary"
+                    className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary"
+                    style={{ backgroundColor: UI_COLORS.NEUTRAL_200 }}
                     min="0"
                     max="10"
                     step="0.5"
@@ -380,12 +506,13 @@ export function SoundGenerationSection({
               </div>
 
               <div className="mb-2">
-                <label className="text-xs block mb-1">Number of variants: {soundConfigs[activeSoundConfigTab].seed_copies}</label>
+                <label className="text-xs block mb-1" style={{ color: UI_COLORS.NEUTRAL_700 }}>Number of variants: {soundConfigs[activeSoundConfigTab].seed_copies}</label>
                 <input
                   type="range"
                   value={soundConfigs[activeSoundConfigTab].seed_copies}
                   onChange={(e) => onUpdateConfig(activeSoundConfigTab, 'seed_copies', parseInt(e.target.value))}
-                  className="w-full accent-primary"
+                  className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary"
+                  style={{ backgroundColor: UI_COLORS.NEUTRAL_200 }}
                   min="1"
                   max="5"
                 />
@@ -407,6 +534,7 @@ export function SoundGenerationSection({
                   onDragLeave={handleDragLeave}
                   onDrop={handleDrop}
                   inputId={`sound-upload-${activeSoundConfigTab}`}
+                  multiple={true}
                 />
               ) : (
                 <div className="space-y-2">
@@ -421,7 +549,13 @@ export function SoundGenerationSection({
                   {/* Clear audio button */}
                   <button
                     onClick={handleClearAudio}
-                    className="w-full text-xs py-1.5 px-3 bg-gray-500 hover:bg-gray-600 text-white rounded transition-colors"
+                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_600}
+                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_500}
+                    className="w-full text-xs py-1.5 px-3 text-white rounded transition-colors"
+                    style={{
+                      backgroundColor: UI_COLORS.NEUTRAL_500,
+                      borderRadius: '8px'
+                    }}
                   >
                     Clear Uploaded Audio
                   </button>
@@ -448,13 +582,35 @@ export function SoundGenerationSection({
                       }
                     }}
                     placeholder="e.g., Urban traffic, birds chirping, footsteps"
-                    className="flex-1 h-12 p-2 text-sm border rounded bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
+                    className="flex-1 h-12 p-2 text-sm rounded"
+                    style={{
+                      backgroundColor: 'white',
+                      borderColor: UI_COLORS.NEUTRAL_300,
+                      borderWidth: '1px',
+                      borderStyle: 'solid',
+                      borderRadius: '8px'
+                    }}
                     rows={2}
                   />
                   <button
                     onClick={() => onLibrarySearch(activeSoundConfigTab)}
                     disabled={!currentConfig.prompt.trim() || currentConfig.librarySearchState?.isSearching}
-                    className="px-4 py-2 text-xs font-medium bg-primary hover:bg-primary-hover text-white rounded transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+                    onMouseEnter={(e) => {
+                      if (!e.currentTarget.disabled) {
+                        e.currentTarget.style.opacity = '0.8';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!e.currentTarget.disabled) {
+                        e.currentTarget.style.opacity = '1';
+                      }
+                    }}
+                    className="px-4 py-2 text-xs font-medium text-white rounded transition-colors disabled:cursor-not-allowed"
+                    style={{
+                      backgroundColor: !currentConfig.prompt.trim() || currentConfig.librarySearchState?.isSearching ? UI_COLORS.NEUTRAL_400 : UI_COLORS.PRIMARY,
+                      borderRadius: '8px',
+                      opacity: !currentConfig.prompt.trim() || currentConfig.librarySearchState?.isSearching ? 0.4 : 1
+                    }}
                   >
                     {currentConfig.librarySearchState?.isSearching ? 'Searching...' : 'Search'}
                   </button>
@@ -462,8 +618,14 @@ export function SoundGenerationSection({
 
                 {/* Search Results */}
                 {currentConfig.librarySearchState?.results && currentConfig.librarySearchState.results.length > 0 && (
-                  <div className="bg-white dark:bg-gray-800 rounded p-2 max-h-64 overflow-y-auto">
-                    <p className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  <div 
+                    className="rounded p-2 max-h-64 overflow-y-auto"
+                    style={{
+                      backgroundColor: 'white',
+                      borderRadius: '8px'
+                    }}
+                  >
+                    <p className="text-xs font-medium mb-2" style={{ color: UI_COLORS.NEUTRAL_700 }}>
                       Found {currentConfig.librarySearchState.results.length} results:
                     </p>
                     <div className="space-y-1">
@@ -471,11 +633,22 @@ export function SoundGenerationSection({
                         <button
                           key={result.location}
                           onClick={() => onLibrarySoundSelect(activeSoundConfigTab, result)}
-                          className={`w-full text-left p-2 rounded text-xs transition-colors ${
-                            currentConfig.selectedLibrarySound?.location === result.location
-                              ? 'bg-primary text-white'
-                              : 'bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300'
-                          }`}
+                          onMouseEnter={(e) => {
+                            if (currentConfig.selectedLibrarySound?.location !== result.location) {
+                              e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_200;
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (currentConfig.selectedLibrarySound?.location !== result.location) {
+                              e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_100;
+                            }
+                          }}
+                          className="w-full text-left p-2 rounded text-xs transition-colors"
+                          style={{
+                            backgroundColor: currentConfig.selectedLibrarySound?.location === result.location ? UI_COLORS.PRIMARY : UI_COLORS.NEUTRAL_100,
+                            color: currentConfig.selectedLibrarySound?.location === result.location ? 'white' : UI_COLORS.NEUTRAL_700,
+                            borderRadius: '8px'
+                          }}
                         >
                           <div className="font-medium truncate">{result.description}</div>
                           <div className="text-[10px] opacity-75 flex justify-between mt-0.5">
@@ -490,21 +663,31 @@ export function SoundGenerationSection({
 
                 {/* No Results Message */}
                 {currentConfig.librarySearchState?.results && currentConfig.librarySearchState.results.length === 0 && !currentConfig.librarySearchState.isSearching && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400 text-center py-4">
+                  <p className="text-xs text-center py-4" style={{ color: UI_COLORS.NEUTRAL_500 }}>
                     No sounds found. Try a different search term.
                   </p>
                 )}
 
                 {/* Error Message */}
                 {currentConfig.librarySearchState?.error && (
-                  <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded p-2">
+                  <p 
+                    className="text-xs rounded p-2"
+                    style={{
+                      backgroundColor: UI_COLORS.ERROR_LIGHT,
+                      borderColor: UI_COLORS.ERROR,
+                      borderWidth: '1px',
+                      borderStyle: 'solid',
+                      borderRadius: '8px',
+                      color: UI_COLORS.ERROR
+                    }}
+                  >
                     {currentConfig.librarySearchState.error}
                   </p>
                 )}
 
                 {/* Help Text */}
                 {!currentConfig.librarySearchState?.results && !currentConfig.librarySearchState?.isSearching && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400 italic">
+                  <p className="text-xs italic" style={{ color: UI_COLORS.NEUTRAL_500 }}>
                     Enter search terms and click "Search" to find sounds from the BBC Sound Effects library
                   </p>
                 )}
@@ -514,30 +697,86 @@ export function SoundGenerationSection({
         </div>
       )}
 
-      {/* Generate button */}
-      <button
-        onClick={onGenerate}
-        disabled={isSoundGenerating}
-        className={`w-full py-2 px-4 text-white font-semibold rounded transition-colors ${
-          isSoundGenerating
-            ? 'bg-gray-300 dark:bg-gray-700'
-            : 'bg-primary hover:bg-primary-hover'
-        }`}
-      >
-        {isSoundGenerating ? 'Generating Sounds...' : 'Generate Sounds'}
-      </button>
+      {/* Generate button and Stop button */}
+      <div className="flex gap-2">
+        <button
+          onClick={onGenerate}
+          disabled={isSoundGenerating}
+          onMouseEnter={(e) => {
+            if (!isSoundGenerating) {
+              e.currentTarget.style.opacity = '0.8';
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (!isSoundGenerating) {
+              e.currentTarget.style.opacity = '1';
+            }
+          }}
+          className="flex-1 text-white transition-colors"
+          style={{
+            borderRadius: UI_BUTTON.BORDER_RADIUS_MD,
+            padding: UI_BUTTON.PADDING_MD,
+            fontSize: UI_BUTTON.FONT_SIZE,
+            fontWeight: UI_BUTTON.FONT_WEIGHT,
+            backgroundColor: isSoundGenerating ? UI_COLORS.NEUTRAL_400 : UI_COLORS.PRIMARY,
+            opacity: isSoundGenerating ? 0.4 : 1,
+            cursor: isSoundGenerating ? 'not-allowed' : 'pointer'
+          }}
+        >
+          {isSoundGenerating ? 'Generating Sounds...' : 'Generate Sounds'}
+        </button>
+
+        {/* Stop button - only visible when generating */}
+        {isSoundGenerating && (
+          <button
+            onClick={onStopGeneration}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#dc2626'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.ERROR}
+            className="w-10 h-10 rounded text-white font-bold transition-colors flex items-center justify-center"
+            style={{
+              backgroundColor: UI_COLORS.ERROR,
+              borderRadius: '8px'
+            }}
+            title="Stop generation"
+            aria-label="Stop generation"
+          >
+            <span className="text-lg leading-none">■</span>
+          </button>
+        )}
+      </div>
 
       {soundGenError && (
-        <div className="p-3 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded">
+        <div 
+          className="p-3 text-sm rounded"
+          style={{
+            backgroundColor: UI_COLORS.ERROR_LIGHT,
+            borderColor: UI_COLORS.ERROR,
+            borderWidth: '1px',
+            borderStyle: 'solid',
+            borderRadius: '8px',
+            color: UI_COLORS.ERROR
+          }}
+        >
           {soundGenError}
         </div>
       )}
 
       {/* Advanced Options - Collapsible, hidden by default, only show before generation */}
-      <div className="border rounded bg-gray-50 dark:bg-gray-700 border-gray-300 dark:border-gray-600">
+      <div 
+        className="rounded"
+        style={{
+          backgroundColor: UI_COLORS.NEUTRAL_50,
+          borderRadius: '8px'
+        }}
+      >
         <button
           onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
-          className="w-full p-3 flex items-center justify-between text-sm font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors rounded"
+          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_100}
+          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+          className="w-full p-3 flex items-center justify-between text-sm font-semibold transition-colors rounded"
+          style={{
+            color: UI_COLORS.NEUTRAL_700
+          }}
         >
           <span>Advanced Options</span>
           <span className="text-xs">{showAdvancedOptions ? '▼' : '▶'}</span>
@@ -554,18 +793,27 @@ export function SoundGenerationSection({
                   onChange={(e) => handleDenoisingChange(e.target.checked)}
                   className="w-4 h-4 accent-primary cursor-pointer"
                 />
-                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                <span className="text-sm font-medium" style={{ color: UI_COLORS.NEUTRAL_700 }}>
                   Remove Background Noise
                 </span>
               </label>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              <p className="text-xs mt-1" style={{ color: UI_COLORS.NEUTRAL_500 }}>
                 Apply noise reduction to clean up generated sounds
               </p>
               
               {/* Confirmation Dialog */}
               {showDenoisingConfirm && (
-                <div className="mt-2 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded-lg">
-                  <p className="text-xs text-yellow-800 dark:text-yellow-300 mb-2">
+                <div 
+                  className="mt-2 p-3 rounded-lg"
+                  style={{
+                    backgroundColor: UI_COLORS.WARNING_LIGHT,
+                    borderColor: UI_COLORS.WARNING,
+                    borderWidth: '1px',
+                    borderStyle: 'solid',
+                    borderRadius: '8px'
+                  }}
+                >
+                  <p className="text-xs mb-2" style={{ color: UI_COLORS.WARNING }}>
                     {pendingDenoisingValue 
                       ? "Apply noise reduction to all existing sounds?"
                       : "Remove noise reduction from all existing sounds?"}
@@ -573,13 +821,26 @@ export function SoundGenerationSection({
                   <div className="flex gap-2">
                     <button
                       onClick={handleConfirmDenoising}
-                      className="flex-1 px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-hover text-white rounded transition-colors"
+                      onMouseEnter={(e) => e.currentTarget.style.opacity = '0.8'}
+                      onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+                      className="flex-1 px-3 py-1.5 text-xs font-medium text-white rounded transition-colors"
+                      style={{
+                        backgroundColor: UI_COLORS.PRIMARY,
+                        borderRadius: '8px'
+                      }}
                     >
                       Yes, modify sounds
                     </button>
                     <button
                       onClick={handleCancelDenoising}
-                      className="flex-1 px-3 py-1.5 text-xs font-medium bg-gray-300 hover:bg-gray-400 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-800 dark:text-gray-200 rounded transition-colors"
+                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_400}
+                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_300}
+                      className="flex-1 px-3 py-1.5 text-xs font-medium rounded transition-colors"
+                      style={{
+                        backgroundColor: UI_COLORS.NEUTRAL_300,
+                        color: UI_COLORS.NEUTRAL_800,
+                        borderRadius: '8px'
+                      }}
                     >
                       Cancel
                     </button>
@@ -590,52 +851,60 @@ export function SoundGenerationSection({
 
 
             {/* Text-to-Audio Parameters Group */}
-            <div className="border border-gray-300 dark:border-gray-600 rounded-lg p-3 bg-white dark:bg-gray-800">
-              <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-3 uppercase tracking-wide">
+            <div 
+              className="rounded-lg p-3"
+              style={{
+                backgroundColor: 'white',
+                borderRadius: '8px'
+              }}
+            >
+              <h4 className="text-xs font-semibold mb-3 uppercase tracking-wide" style={{ color: UI_COLORS.NEUTRAL_600 }}>
                 Text-to-Audio Parameters
               </h4>
               
               <div className="space-y-3">
                 {/* Global Duration Slider */}
                 <div>
-                  <label className="text-sm font-medium block mb-2 text-gray-700 dark:text-gray-300">
+                  <label className="text-sm font-medium block mb-2" style={{ color: UI_COLORS.NEUTRAL_700 }}>
                     Global Duration: {globalDuration}s
                   </label>
                   <input
                     type="range"
                     value={globalDuration}
                     onChange={(e) => onGlobalDurationChange(parseInt(e.target.value))}
-                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-600 accent-primary"
+                    className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary"
+                    style={{ backgroundColor: UI_COLORS.NEUTRAL_200 }}
                     min="1"
                     max="30"
                   />
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  <p className="text-xs mt-1" style={{ color: UI_COLORS.NEUTRAL_500 }}>
                     Applies to all sound tabs
                   </p>
                 </div>
 
                 {/* Diffusion Steps Slider */}
                 <div>
-                  <label className="text-sm font-medium block mb-2 text-gray-700 dark:text-gray-300">
+                  <label className="text-sm font-medium block mb-2" style={{ color: UI_COLORS.NEUTRAL_700 }}>
                     Diffusion Steps: {globalSteps}
                   </label>
                   <input
                     type="range"
                     value={globalSteps}
                     onChange={(e) => onGlobalStepsChange(parseInt(e.target.value))}
-                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-600 accent-primary"
+                    className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary"
+                    style={{ backgroundColor: UI_COLORS.NEUTRAL_200 }}
                     min="10"
                     max="100"
                     step="5"
                   />
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  <p className="text-xs mt-1" style={{ color: UI_COLORS.NEUTRAL_500 }}>
                     Higher steps = better quality but slower generation
                   </p>
                 </div>
 
                 {/* Global Negative Prompt */}
                 <div>
-                  <label className="text-sm font-medium block mb-2 text-gray-700 dark:text-gray-300">
+                  <label className="text-sm font-medium block mb-2" style={{ color: UI_COLORS.NEUTRAL_700 }}>
                     Global Negative Prompt
                   </label>
                   <textarea
@@ -650,10 +919,17 @@ export function SoundGenerationSection({
                       }
                     }}
                     placeholder="e.g., distorted, reverb, echo"
-                    className="w-full p-2 text-xs border rounded bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
+                    className="w-full p-2 text-xs rounded"
+                    style={{
+                      backgroundColor: 'white',
+                      borderColor: UI_COLORS.NEUTRAL_300,
+                      borderWidth: '1px',
+                      borderStyle: 'solid',
+                      borderRadius: '8px'
+                    }}
                     rows={2}
                   />
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  <p className="text-xs mt-1" style={{ color: UI_COLORS.NEUTRAL_500 }}>
                     Terms to avoid in all generated sounds
                   </p>
                 </div>

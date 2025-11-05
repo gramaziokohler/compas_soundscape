@@ -20,6 +20,7 @@ import type {
   ReceiverData,
 } from "./index";
 import type { AuralizationConfig } from "./auralization";
+import type { ModalAnalysisResult, ModeVisualizationState } from "./modal";
 
 /**
  * Sidebar Component Props
@@ -67,13 +68,16 @@ export interface SidebarProps {
   setAiPrompt: (prompt: string) => void;
   setNumSounds: (num: number) => void;
   onGenerateText: () => void;
+  onStopGeneration: () => void;
   onLoadSoundsToGeneration: () => void;
   setActiveSoundConfigTab: (tab: number) => void;
   onAddSoundConfig: () => void;
+  onBatchAddSoundConfigs: (count: number) => number;
   onRemoveSoundConfig: (index: number) => void;
   onUpdateSoundConfig: (index: number, field: keyof SoundGenerationConfig, value: string | number) => void;
   onSoundModeChange: (index: number, mode: SoundGenerationMode) => void;
   onGenerateSounds: () => void;
+  onStopSoundGeneration: () => void;
   onGlobalDurationChange: (duration: number) => void;
   onGlobalStepsChange: (steps: number) => void;
   onGlobalNegativePromptChange: (prompt: string) => void;
@@ -99,14 +103,12 @@ export interface SidebarProps {
   onAnalyzeSoundEvents?: () => void;
   onToggleSEDOption?: (option: keyof SEDAnalysisOptions, value: boolean) => void;
   onLoadSoundsFromSED?: () => void;
-  // Auralization props
+  // IR Library props
+  onSelectIRFromLibrary: (irMetadata: any) => Promise<void>;
+  onClearIR: () => void;
+  onToggleNormalize: (enabled: boolean) => void;
+  selectedIRId: string | null;
   auralizationConfig: AuralizationConfig;
-  auralizationLoading: boolean;
-  auralizationError: string | null;
-  onToggleAuralization: (enabled: boolean) => void;
-  onToggleNormalize: (normalize: boolean) => void;
-  onLoadImpulseResponse: (file: File) => Promise<void>;
-  onClearImpulseResponse: () => void;
   // Receiver props
   receivers: ReceiverData[];
   isPlacingReceiver: boolean;
@@ -159,11 +161,13 @@ export interface SoundGenerationSectionProps {
   isSoundGenerating: boolean;
   soundGenError: string | null;
   onAddConfig: () => void;
+  onBatchAddConfigs: (count: number) => number;
   onRemoveConfig: (index: number) => void;
   onUpdateConfig: (index: number, field: keyof SoundGenerationConfig, value: string | number) => void;
   onModeChange: (index: number, mode: SoundGenerationMode) => void;
   onSetActiveTab: (index: number) => void;
   onGenerate: () => void;
+  onStopGeneration: () => void;
   generatedSounds: SoundEvent[];
   globalDuration: number;
   globalSteps: number;
@@ -203,5 +207,6 @@ export interface TextGenerationSectionProps {
   setAiPrompt: (prompt: string) => void;
   setNumSounds: (num: number) => void;
   onGenerateText: () => void;
+  onStopGeneration: () => void;
   onLoadSoundsToGeneration: () => void;
 }

@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { SoundGenerationConfig, SoundGenerationMode, LibrarySearchResult, LibrarySearchState } from "@/types";
 import {
   API_BASE_URL,
@@ -10,6 +10,7 @@ import {
 import { loadAudioFile, revokeAudioUrl } from "@/lib/audio/audio-upload";
 import { calculateSoundPosition, type GeometryBounds } from "@/lib/sound/positioning";
 import { createSoundEventFromUpload } from "@/lib/sound/event-factory";
+import { trimDisplayName } from "@/lib/utils";
 
 export function useSoundGeneration(geometryBounds: {min: number[], max: number[]} | null) {
   const [soundConfigs, setSoundConfigs] = useState<SoundGenerationConfig[]>([
@@ -25,10 +26,17 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
   const [globalNegativePrompt, setGlobalNegativePrompt] = useState<string>("distorted, reverb, echo, background noise, hall, spaciousness");
   const [applyDenoising, setApplyDenoising] = useState<boolean>(false);
 
+  // AbortController for cancelling ongoing sound generation requests
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   const handleAddConfig = useCallback(() => {
-    setSoundConfigs([...soundConfigs, { prompt: "", duration: globalDuration, guidance_scale: DEFAULT_GUIDANCE_SCALE, negative_prompt: "", seed_copies: DEFAULT_SEED_COPIES, steps: globalSteps, mode: 'text-to-audio' }]);
-    setActiveSoundConfigTab(soundConfigs.length);
-  }, [soundConfigs, globalDuration, globalSteps]);
+    setSoundConfigs(prev => {
+      const newConfig = { prompt: "", duration: globalDuration, guidance_scale: DEFAULT_GUIDANCE_SCALE, negative_prompt: "", seed_copies: DEFAULT_SEED_COPIES, steps: globalSteps, mode: 'text-to-audio' };
+      const updated = [...prev, newConfig];
+      setActiveSoundConfigTab(updated.length - 1);
+      return updated;
+    });
+  }, [globalDuration, globalSteps]);
 
   const handleRemoveConfig = useCallback((index: number) => {
     setSoundConfigs(soundConfigs.filter((_, i) => i !== index));
@@ -111,6 +119,9 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     setSoundGenError(null);
     setIsSoundGenerating(true);
 
+    // Create a new AbortController for this generation request
+    abortControllerRef.current = new AbortController();
+
     try {
       let generatedEvents: any[] = [];
       let uploadedEvents: any[] = [];
@@ -136,6 +147,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
             bounding_box: hasEntities ? null : geometryBounds,
             apply_denoising: applyDenoising
           }),
+          signal: abortControllerRef.current?.signal
         });
 
         if (!response.ok) {
@@ -197,7 +209,8 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
               body: JSON.stringify({
                 location: config.selectedLibrarySound.location,
                 description: config.selectedLibrarySound.description
-              })
+              }),
+              signal: abortControllerRef.current?.signal
             });
 
             if (!downloadResponse.ok) {
@@ -235,9 +248,15 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
         setSoundscapeData(allSoundEvents);
       }
     } catch (err: any) {
-      setSoundGenError(err.message);
+      // Don't show error if request was aborted intentionally
+      if (err.name === 'AbortError') {
+        setSoundGenError('Sound generation stopped by user.');
+      } else {
+        setSoundGenError(err.message);
+      }
     } finally {
       setIsSoundGenerating(false);
+      abortControllerRef.current = null;
     }
   }, [soundConfigs, geometryBounds, globalNegativePrompt, applyDenoising]);
 
@@ -257,24 +276,33 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
       // Load audio file and get buffer + metadata
       const result = await loadAudioFile(file);
 
-      // Update the config with uploaded audio data
-      const updated = [...soundConfigs];
-      updated[index] = {
-        ...updated[index],
-        uploadedAudioBuffer: result.audioBuffer,
-        uploadedAudioInfo: result.audioInfo,
-        uploadedAudioUrl: result.audioUrl,
-        // Optionally update display name from filename if not set
-        display_name: updated[index].display_name || result.audioInfo.filename.replace(/\.[^/.]+$/, "")
-      };
-      setSoundConfigs(updated);
+      // Update the config with uploaded audio data using functional setState
+      setSoundConfigs(prev => {
+        // Check if index exists
+        if (index >= prev.length) {
+          console.error(`[Sound Generation] Index ${index} out of bounds, soundConfigs length: ${prev.length}`);
+          return prev;
+        }
+
+        const updated = [...prev];
+        updated[index] = {
+          ...updated[index],
+          mode: 'upload' as SoundGenerationMode, // Set mode to upload when audio is uploaded
+          uploadedAudioBuffer: result.audioBuffer,
+          uploadedAudioInfo: result.audioInfo,
+          uploadedAudioUrl: result.audioUrl,
+          // Optionally update display name from filename if not set
+          display_name: updated[index].display_name || result.audioInfo.filename.replace(/\.[^/.]+$/, "")
+        };
+        return updated;
+      });
 
       console.log(`[Sound Generation] Audio uploaded successfully for sound ${index + 1}`);
     } catch (error) {
       console.error(`[Sound Generation] Failed to upload audio for sound ${index + 1}:`, error);
       setSoundGenError(error instanceof Error ? error.message : 'Failed to upload audio file');
     }
-  }, [soundConfigs]);
+  }, []);
 
   /**
    * Clear uploaded audio from a specific sound config
@@ -378,7 +406,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     updated[index] = {
       ...updated[index],
       selectedLibrarySound: sound,
-      display_name: updated[index].display_name || sound.description,
+      display_name: updated[index].display_name || trimDisplayName(sound.description),
       librarySearchState: updated[index].librarySearchState ? {
         ...updated[index].librarySearchState!,
         selectedSound: sound
@@ -400,7 +428,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
 
     try {
       console.log(`[Sound Reprocess] Reprocessing ${soundscapeData.length} sounds with denoising=${applyDenoising}`);
-      
+
       // Extract sound URLs from soundscapeData
       const soundUrls = soundscapeData.map((sound: any) => sound.url);
 
@@ -426,17 +454,51 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
       const timestamp = Date.now();
       const updatedSounds = soundscapeData.map((sound: any) => ({
         ...sound,
-        url: sound.url.includes('?') 
-          ? `${sound.url}&t=${timestamp}` 
+        url: sound.url.includes('?')
+          ? `${sound.url}&t=${timestamp}`
           : `${sound.url}?t=${timestamp}`
       }));
       setSoundscapeData(updatedSounds);
-      
+
     } catch (error) {
       console.error('[Sound Reprocess] Error:', error);
       setSoundGenError(error instanceof Error ? error.message : 'Failed to reprocess sounds');
     }
   }, [soundscapeData]);
+
+  /**
+   * Stop ongoing sound generation
+   * Aborts all pending fetch requests and resets state
+   */
+  const handleStopGeneration = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      setIsSoundGenerating(false);
+      setSoundGenError('Sound generation stopped by user.');
+    }
+  }, []);
+
+  /**
+   * Batch add multiple configs at once (for multi-file upload)
+   * Returns the starting index of the new configs
+   */
+  const handleBatchAddConfigs = useCallback((count: number): number => {
+    let startIndex = 0;
+    setSoundConfigs(prev => {
+      startIndex = prev.length;
+      const newConfigs = Array.from({ length: count }, () => ({
+        prompt: "",
+        duration: globalDuration,
+        guidance_scale: DEFAULT_GUIDANCE_SCALE,
+        negative_prompt: "",
+        seed_copies: DEFAULT_SEED_COPIES,
+        steps: globalSteps,
+        mode: 'text-to-audio' as SoundGenerationMode
+      }));
+      return [...prev, ...newConfigs];
+    });
+    return startIndex;
+  }, [globalDuration, globalSteps]);
 
   return {
     soundConfigs,
@@ -450,10 +512,12 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     globalNegativePrompt,
     applyDenoising,
     handleAddConfig,
+    handleBatchAddConfigs,
     handleRemoveConfig,
     handleUpdateConfig,
     handleModeChange,
     handleGenerate,
+    handleStopGeneration,
     handleGlobalDurationChange,
     handleGlobalStepsChange,
     handleReprocessSounds,

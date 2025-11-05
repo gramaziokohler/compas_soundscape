@@ -10,6 +10,7 @@ import { useAudioControls } from "@/hooks/useAudioControls";
 import { useAuralization } from "@/hooks/useAuralization";
 import { useSED } from "@/hooks/useSED";
 import { useReceivers } from "@/hooks/useReceivers";
+import { useModalImpact } from "@/hooks/useModalImpact";
 import { apiService } from "@/services/api";
 import { API_BASE_URL } from "@/lib/constants";
 import type { LoadTab } from "@/types";
@@ -22,7 +23,11 @@ export default function Home() {
   const auralization = useAuralization();
   const sed = useSED();
   const receivers = useReceivers();
+  const modalImpact = useModalImpact();
   const [activeLoadTab, setActiveLoadTab] = useState<LoadTab>('upload');
+  
+  // IR Library state
+  const [selectedIRId, setSelectedIRId] = useState<string | null>(null);
   
   // Entity linking state
   const [isLinkingEntity, setIsLinkingEntity] = useState(false);
@@ -105,38 +110,139 @@ export default function Home() {
 
   const handleEntityLinked = useCallback((entity: any) => {
     if (linkingConfigIndex !== null) {
-      soundGen.handleUpdateConfig(linkingConfigIndex, 'entity' as any, entity);
-      
-      // Add entity to diverse selection so it gets highlighted
-      if (!textGen.selectedDiverseEntities.find(e => e.index === entity.index)) {
-        textGen.setSelectedDiverseEntities([...textGen.selectedDiverseEntities, entity]);
+      const currentConfig = soundGen.soundConfigs[linkingConfigIndex];
+      const previousEntity = currentConfig?.entity;
+
+      // If entity is null (clicked on empty space)
+      if (entity === null) {
+        // If there's a currently linked entity, unlink it
+        if (previousEntity) {
+          soundGen.handleUpdateConfig(linkingConfigIndex, 'entity' as any, undefined);
+
+          // Remove the previous entity from highlights
+          const updatedEntities = textGen.selectedDiverseEntities.filter(
+            e => e.index !== previousEntity.index
+          );
+          textGen.setSelectedDiverseEntities(updatedEntities);
+        }
+
+        // Exit linking mode (whether we unlinked or not)
+        setIsLinkingEntity(false);
+        setLinkingConfigIndex(null);
+        return;
       }
-      
+
+      // Entity is not null - link the new entity
+      soundGen.handleUpdateConfig(linkingConfigIndex, 'entity' as any, entity);
+
+      // Update diverse selection to highlight the new entity
+      let updatedEntities = [...textGen.selectedDiverseEntities];
+
+      // Remove the previous entity from highlights if it exists
+      if (previousEntity) {
+        updatedEntities = updatedEntities.filter(e => e.index !== previousEntity.index);
+      }
+
+      // Add the new entity to highlights if not already present
+      if (!updatedEntities.find(e => e.index === entity.index)) {
+        updatedEntities.push(entity);
+      }
+
+      textGen.setSelectedDiverseEntities(updatedEntities);
+
       setIsLinkingEntity(false);
       setLinkingConfigIndex(null);
     }
   }, [linkingConfigIndex, soundGen, textGen]);
 
-  // Auralization handlers
-  // Note: We don't use a separate AudioContext here. The Three.js scene creates its own
-  // AudioContext via the AudioListener. The impulse response buffer will be loaded with
-  // a temporary context and then used by Three.js's context (browser handles resampling).
-  const handleLoadImpulseResponse = useCallback(async (file: File) => {
-    console.log('[Auralization Page] handleLoadImpulseResponse called with:', file.name);
-    try {
-      // Use a temporary AudioContext for decoding - Three.js will use its own context
-      const tempContext = new AudioContext();
-      console.log('[Auralization Page] Created temp AudioContext, state:', tempContext.state);
-      await auralization.loadImpulseResponse(file, tempContext);
-      console.log('[Auralization Page] IR loaded successfully, will be used by Three.js AudioListener');
-    } catch (error) {
-      console.error('[Auralization Page] Error loading IR:', error);
+  /**
+   * Wrapper for handleUpdateConfig that handles entity unlinking
+   * When an entity is unlinked (set to undefined), also remove it from highlights
+   */
+  const handleUpdateSoundConfig = useCallback((index: number, field: string, value: any) => {
+    // Check if we're unlinking an entity
+    if (field === 'entity' && value === undefined) {
+      const currentConfig = soundGen.soundConfigs[index];
+      const previousEntity = currentConfig?.entity;
+
+      // If there was a previous entity, remove it from highlights
+      if (previousEntity) {
+        const updatedEntities = textGen.selectedDiverseEntities.filter(
+          e => e.index !== previousEntity.index
+        );
+        textGen.setSelectedDiverseEntities(updatedEntities);
+      }
     }
+
+    // Call the original handler
+    soundGen.handleUpdateConfig(index, field, value);
+  }, [soundGen, textGen]);
+
+  /**
+   * Handle selection of IR from server library
+   * Downloads the IR and loads it into auralization
+   */
+  const handleSelectIRFromLibrary = useCallback(async (irMetadata: any) => {
+    try {
+      // Build full URL (irMetadata.url is relative like "/static/impulse_responses/file.wav")
+      const fullUrl = `${API_BASE_URL}${irMetadata.url}`;
+      
+      // Download the IR file from the server
+      const response = await fetch(fullUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to download IR: ${response.statusText}`);
+      }
+      
+      const blob = await response.blob();
+      const file = new File([blob], irMetadata.name, { type: 'audio/wav' });
+      
+      // Load the IR
+      const tempContext = new AudioContext();
+      await auralization.loadImpulseResponse(file, tempContext);
+      
+      // Update selected IR ID
+      setSelectedIRId(irMetadata.id);
+    } catch (error) {
+      console.error('[Auralization Page] Error loading IR from library:', error);
+      throw error;
+    }
+  }, [auralization]);
+
+  /**
+   * Clear/deselect the current IR (disable auralization)
+   */
+  const handleClearIR = useCallback(() => {
+    auralization.clearImpulseResponse();
+    setSelectedIRId(null);
+  }, [auralization]);
+
+  /**
+   * Toggle IR normalization
+   */
+  const handleToggleNormalize = useCallback((enabled: boolean) => {
+    auralization.toggleNormalize(enabled);
   }, [auralization]);
 
   // Cleanup on unmount
   useEffect(() => {
     apiService.cleanupGeneratedSounds();
+    // Also cleanup impulse responses on page load/refresh
+    fetch(`${API_BASE_URL}/api/impulse-responses`).then(async (response) => {
+      if (response.ok) {
+        const data = await response.json();
+        // Delete all IRs on startup for clean state
+        for (const ir of data.impulse_responses) {
+          try {
+            await apiService.deleteImpulseResponse(ir.id);
+          } catch (error) {
+            console.warn('Failed to cleanup IR:', ir.id, error);
+          }
+        }
+      }
+    }).catch(() => {
+      // Ignore errors during cleanup
+    });
+    
     return () => {
       navigator.sendBeacon(`${API_BASE_URL}/api/cleanup-generated-sounds`);
     };
@@ -189,6 +295,7 @@ export default function Home() {
         setAiPrompt={textGen.setAiPrompt}
         setNumSounds={textGen.setNumSounds}
         onGenerateText={textGen.handleGenerateText}
+        onStopGeneration={textGen.handleStopGeneration}
         onLoadSoundsToGeneration={handleLoadSoundsToGeneration}
 
         // Sound generation props
@@ -203,10 +310,12 @@ export default function Home() {
         applyDenoising={soundGen.applyDenoising}
         setActiveSoundConfigTab={soundGen.setActiveSoundConfigTab}
         onAddSoundConfig={soundGen.handleAddConfig}
+        onBatchAddSoundConfigs={soundGen.handleBatchAddConfigs}
         onRemoveSoundConfig={soundGen.handleRemoveConfig}
-        onUpdateSoundConfig={soundGen.handleUpdateConfig}
+        onUpdateSoundConfig={handleUpdateSoundConfig}
         onSoundModeChange={soundGen.handleModeChange}
         onGenerateSounds={soundGen.handleGenerate}
+        onStopSoundGeneration={soundGen.handleStopGeneration}
         onGlobalDurationChange={soundGen.handleGlobalDurationChange}
         onGlobalStepsChange={soundGen.handleGlobalStepsChange}
         onGlobalNegativePromptChange={soundGen.setGlobalNegativePrompt}
@@ -231,14 +340,12 @@ export default function Home() {
         // Soundscape data
         soundscapeData={soundGen.soundscapeData}
 
-        // Auralization props
+        // IR Library props
+        onSelectIRFromLibrary={handleSelectIRFromLibrary}
+        onClearIR={handleClearIR}
+        onToggleNormalize={handleToggleNormalize}
+        selectedIRId={selectedIRId}
         auralizationConfig={auralization.config}
-        auralizationLoading={auralization.isLoading}
-        auralizationError={auralization.error}
-        onToggleAuralization={auralization.toggleAuralization}
-        onToggleNormalize={auralization.toggleNormalize}
-        onLoadImpulseResponse={handleLoadImpulseResponse}
-        onClearImpulseResponse={auralization.clearImpulseResponse}
 
         // Receiver props
         receivers={receivers.receivers}
@@ -280,6 +387,9 @@ export default function Home() {
           onCancelPlacingReceiver={receivers.cancelPlacingReceiver}
           isLinkingEntity={isLinkingEntity}
           onEntityLinked={handleEntityLinked}
+          modeVisualizationState={modalImpact.visualizationState}
+          onSetModeVisualization={modalImpact.setModeVisualization}
+          onSelectMode={modalImpact.selectMode}
           className="w-full h-full"
         />
       </main>

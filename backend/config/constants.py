@@ -152,6 +152,8 @@ SAMPLE_IFC_FILE_PATH = "data/Duplex_A_20110907.ifc"  # Sample IFC file for testi
 # CORS Configuration
 CORS_ORIGIN_LOCALHOST = "http://localhost"
 CORS_ORIGIN_FRONTEND = "http://localhost:3000"
+CORS_ORIGIN_NETWORK = "http://129.132.205.138:3000"  # Network access for frontend
+CORS_ALLOW_ALL = "*"  # Allow all origins (use for development with dynamic network IPs)
 
 # Static Files
 STATIC_MOUNT_PATH = "/static"
@@ -187,8 +189,100 @@ SPHERE_MESH_RESOLUTION_V = 16  # Sphere mesh resolution (v parameter)
 DEFAULT_SOUND_SOURCE_RADIUS = 0.2  # Default sphere radius for sound source visualization
 
 # ============================================================================
+# Modal Analysis Configuration
+# ============================================================================
+
+# Default Material Properties
+MODAL_ANALYSIS_YOUNG_MODULUS = 200e9  # Young's modulus in Pa (200 GPa - steel)
+MODAL_ANALYSIS_POISSON_RATIO = 0.3  # Poisson's ratio (dimensionless)
+MODAL_ANALYSIS_DENSITY = 7850  # Density in kg/m³ (steel)
+
+# Analysis Parameters
+MODAL_ANALYSIS_NUM_MODES = 10  # Number of vibration modes to compute
+MODAL_ANALYSIS_MESH_RESOLUTION = 8  # FE mesh resolution per dimension
+MODAL_ANALYSIS_MIN_FREQUENCY = 0.1  # Minimum frequency to report (Hz)
+MODAL_ANALYSIS_MAX_FREQUENCY = 20000  # Maximum frequency to report (Hz)
+
+# Material Presets (E, ν, ρ)
+MODAL_ANALYSIS_MATERIALS = {
+    "steel": {
+        "young_modulus": 200e9,  # Pa
+        "poisson_ratio": 0.3,
+        "density": 7850,  # kg/m³
+    },
+    "aluminum": {
+        "young_modulus": 69e9,  # Pa
+        "poisson_ratio": 0.33,
+        "density": 2700,  # kg/m³
+    },
+    "concrete": {
+        "young_modulus": 30e9,  # Pa
+        "poisson_ratio": 0.2,
+        "density": 2400,  # kg/m³
+    },
+    "wood": {
+        "young_modulus": 11e9,  # Pa (average for hardwood)
+        "poisson_ratio": 0.3,
+        "density": 700,  # kg/m³
+    },
+    "glass": {
+        "young_modulus": 70e9,  # Pa
+        "poisson_ratio": 0.24,
+        "density": 2500,  # kg/m³
+    },
+}
+
+# ============================================================================
 # Audio Channel Configuration
 # ============================================================================
 
 # Audio Channel Names
 AUDIO_CHANNEL_MONO = "Mono"  # Audio channel format description
+
+# ============================================================================
+# Impulse Response Configuration
+# ============================================================================
+
+# IR Formats
+IR_FORMAT_MONO = "mono"
+IR_FORMAT_BINAURAL = "binaural"
+IR_FORMAT_FOA = "foa"  # First-Order Ambisonics (4 channels)
+IR_FORMAT_TOA = "toa"  # Third-Order Ambisonics (16 channels)
+
+# Ambisonic Channel Counts
+AMBISONIC_FOA_CHANNELS = 4
+AMBISONIC_TOA_CHANNELS = 16
+
+# Ambisonic Channel Names (ACN ordering)
+AMBISONIC_FOA_CHANNEL_NAMES = ["W", "X", "Y", "Z"]
+AMBISONIC_TOA_CHANNEL_NAMES = [
+    "W",   # 0: Omnidirectional
+    "Y",   # 1: Left-Right (1st order)
+    "Z",   # 2: Up-Down (1st order)
+    "X",   # 3: Front-Back (1st order)
+    "V",   # 4: (2nd order)
+    "T",   # 5: (2nd order)
+    "R",   # 6: (2nd order)
+    "S",   # 7: (2nd order)
+    "U",   # 8: (2nd order)
+    "Q",   # 9: (3rd order)
+    "O",   # 10: (3rd order)
+    "M",   # 11: (3rd order)
+    "K",   # 12: (3rd order)
+    "L",   # 13: (3rd order)
+    "N",   # 14: (3rd order)
+    "P",   # 15: (3rd order)
+]
+
+# Ambisonic Normalization
+AMBISONIC_NORMALIZATION = "SN3D"  # Schmidt semi-normalized (standard)
+
+# IR File Storage
+IMPULSE_RESPONSE_DIR = "./static/impulse_responses"
+IMPULSE_RESPONSE_URL_PREFIX = "/static/impulse_responses"
+
+# Supported IR Channel Counts
+SUPPORTED_IR_CHANNELS = [1, 2, 4, 16]  # Mono, Binaural, FOA, TOA
+
+# Maximum IR channels to extract from files (e.g., from Odeon)
+MAX_IR_CHANNELS = 16

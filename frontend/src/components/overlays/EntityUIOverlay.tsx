@@ -2,7 +2,9 @@
 
 import type { EntityOverlay } from "@/types";
 import type { SoundState } from "@/types";
-import { UI_VOLUME_SLIDER, UI_INTERVAL_SLIDER } from "@/lib/constants";
+import { RangeSlider } from "@/components/ui/RangeSlider";
+import { ButtonGroup } from "@/components/ui/ButtonGroup";
+import { UI_VOLUME_SLIDER, UI_INTERVAL_SLIDER, UI_OVERLAY, UI_COLORS } from "@/lib/constants";
 
 interface EntityUIOverlayProps {
   overlay: EntityOverlay;
@@ -16,6 +18,7 @@ interface EntityUIOverlayProps {
   onSolo?: (soundId: string) => void;
   isMuted?: boolean;
   isSoloed?: boolean;
+  onModalImpact?: () => void;  // NEW: Callback for modal impact button
 }
 
 export function EntityUIOverlay({ 
@@ -29,7 +32,8 @@ export function EntityUIOverlay({
   onMute,
   onSolo,
   isMuted = false,
-  isSoloed = false
+  isSoloed = false,
+  onModalImpact  // NEW
 }: EntityUIOverlayProps) {
   if (!overlay.visible) return null;
 
@@ -38,18 +42,6 @@ export function EntityUIOverlay({
   const selectedSound = soundOverlay?.variants[soundOverlay.selectedVariantIdx];
   const currentVolumeDb = selectedSound?.current_volume_db ?? selectedSound?.volume_db ?? 70;
   const currentIntervalSeconds = selectedSound?.current_interval_seconds ?? selectedSound?.interval_seconds ?? 30;
-
-  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (onVolumeChange && selectedSound) {
-      onVolumeChange(selectedSound.id, parseFloat(e.target.value));
-    }
-  };
-
-  const handleIntervalChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (onIntervalChange && selectedSound) {
-      onIntervalChange(selectedSound.id, parseFloat(e.target.value));
-    }
-  };
 
   const handleDelete = () => {
     if (onDelete && selectedSound && soundOverlay) {
@@ -73,44 +65,80 @@ export function EntityUIOverlay({
       }}
     >
       {/* Entity Information Box */}
-      <div className="bg-white/95 backdrop-blur-sm border border-gray-300 rounded-lg shadow-lg p-3 mb-2 min-w-[200px]">
+      <div 
+        className="backdrop-blur-sm shadow-lg mb-2"
+        style={{
+          background: UI_OVERLAY.BACKGROUND,
+          borderRadius: `${UI_OVERLAY.BORDER_RADIUS}px`,
+          borderColor: UI_OVERLAY.BORDER_COLOR,
+          borderWidth: `${UI_OVERLAY.BORDER_WIDTH}px`,
+          borderStyle: 'solid',
+          padding: `${UI_OVERLAY.PADDING}px`,
+          minWidth: '240px'
+        }}
+      >
+        {/* Modal Impact Button - Top Right */}
+        {onModalImpact && (
+          <div className="flex justify-end mb-2">
+            <button
+              onClick={onModalImpact}
+              className="pointer-events-auto px-3 py-1.5 text-sm font-medium rounded transition-all"
+              style={{
+                backgroundColor: UI_COLORS.PRIMARY,
+                color: 'white',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY_HOVER;
+                e.currentTarget.style.transform = 'scale(1.05)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY;
+                e.currentTarget.style.transform = 'scale(1)';
+              }}
+              title="Analyze vibration modes and enable impact sounds"
+            >
+              🔊 Impact Sound
+            </button>
+          </div>
+        )}
+
         <div className="text-sm space-y-1">
-          <div className="font-semibold text-gray-900 border-b border-gray-200 pb-1 mb-2">
+          <div className="font-semibold border-b pb-1 mb-2" style={{ color: 'white', borderColor: `${UI_OVERLAY.BORDER_COLOR}` }}>
             Entity Information
           </div>
 
           {entity.name && (
             <div className="flex justify-between">
-              <span className="text-gray-600">Name:</span>
-              <span className="text-gray-900 font-medium">{entity.name}</span>
+              <span style={{ color: UI_COLORS.NEUTRAL_400 }}>Name:</span>
+              <span className="font-medium" style={{ color: 'white' }}>{entity.name}</span>
             </div>
           )}
 
           <div className="flex justify-between">
-            <span className="text-gray-600">Type:</span>
-            <span className="text-gray-900 font-medium">{entity.type}</span>
+            <span style={{ color: UI_COLORS.NEUTRAL_400 }}>Type:</span>
+            <span className="font-medium" style={{ color: 'white' }}>{entity.type}</span>
           </div>
 
           {entity.layer && (
             <div className="flex justify-between">
-              <span className="text-gray-600">Layer:</span>
-              <span className="text-gray-900 font-medium">{entity.layer}</span>
+              <span style={{ color: UI_COLORS.NEUTRAL_400 }}>Layer:</span>
+              <span className="font-medium" style={{ color: 'white' }}>{entity.layer}</span>
             </div>
           )}
 
           {entity.material && (
             <div className="flex justify-between">
-              <span className="text-gray-600">Material:</span>
-              <span className="text-gray-900 font-medium">{entity.material}</span>
+              <span style={{ color: UI_COLORS.NEUTRAL_400 }}>Material:</span>
+              <span className="font-medium" style={{ color: 'white' }}>{entity.material}</span>
             </div>
           )}
 
           <div className="flex justify-between">
-            <span className="text-gray-600">Index:</span>
-            <span className="text-gray-900 font-medium">{entity.index}</span>
+            <span style={{ color: UI_COLORS.NEUTRAL_400 }}>Index:</span>
+            <span className="font-medium" style={{ color: 'white' }}>{entity.index}</span>
           </div>
 
-          <div className="text-xs text-gray-500 mt-2 pt-2 border-t border-gray-200">
+          <div className="text-xs mt-2 pt-2" style={{ color: UI_COLORS.NEUTRAL_400, borderTop: `1px solid ${UI_OVERLAY.BORDER_COLOR}` }}>
             Position: ({entity.position[0].toFixed(2)}, {entity.position[1].toFixed(2)}, {entity.position[2].toFixed(2)})
           </div>
         </div>
@@ -118,16 +146,30 @@ export function EntityUIOverlay({
 
       {/* Sound Controls Box (if entity has linked sound) */}
       {hasSound && soundOverlay && selectedSound && (
-        <div className="bg-white/95 backdrop-blur-sm border border-gray-300 rounded-lg shadow-lg p-3 min-w-[200px] pointer-events-auto">
+        <div 
+          className="backdrop-blur-sm shadow-lg pointer-events-auto"
+          style={{
+            background: UI_OVERLAY.BACKGROUND,
+            borderRadius: `${UI_OVERLAY.BORDER_RADIUS}px`,
+            borderColor: UI_OVERLAY.BORDER_COLOR,
+            borderWidth: `${UI_OVERLAY.BORDER_WIDTH}px`,
+            borderStyle: 'solid',
+            padding: `${UI_OVERLAY.PADDING}px`,
+            minWidth: '240px'
+          }}
+        >
           <div className="text-sm space-y-2">
             {/* Sound Title */}
-            <div className="flex items-center justify-between border-b border-gray-200 pb-2">
-              <div className="font-semibold text-gray-900 truncate flex-1">
+            <div className="flex items-center justify-between pb-2" style={{ borderBottom: `1px solid ${UI_OVERLAY.BORDER_COLOR}` }}>
+              <div className="font-semibold truncate flex-1" style={{ color: 'white' }}>
                 {soundOverlay.displayName}
               </div>
               <button
                 onClick={handleDelete}
-                className="ml-2 text-gray-400 hover:text-red-500 transition-colors flex-shrink-0 pointer-events-auto"
+                className="ml-2 transition-colors flex-shrink-0 pointer-events-auto"
+                style={{ color: UI_COLORS.NEUTRAL_400 }}
+                onMouseEnter={(e) => e.currentTarget.style.color = UI_COLORS.ERROR}
+                onMouseLeave={(e) => e.currentTarget.style.color = UI_COLORS.NEUTRAL_400}
                 title="Delete sound"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -137,74 +179,49 @@ export function EntityUIOverlay({
             </div>
 
             {/* Mute and Solo buttons */}
-            <div className="flex gap-2">
-              {onMute && selectedSound && (
-                <button
-                  onClick={() => onMute(selectedSound.id)}
-                  className={`flex-1 py-2 px-4 rounded transition-colors flex items-center justify-center gap-2 pointer-events-auto ${
-                    isMuted
-                      ? 'bg-yellow-500 text-white hover:bg-yellow-600'
-                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                  }`}
-                  title={isMuted ? 'Unmute' : 'Mute'}
-                >
-                  {isMuted ? (
-                    <>
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM12.293 7.293a1 1 0 011.414 0L15 8.586l1.293-1.293a1 1 0 111.414 1.414L16.414 10l1.293 1.293a1 1 0 01-1.414 1.414L15 11.414l-1.293 1.293a1 1 0 01-1.414-1.414L13.586 10l-1.293-1.293a1 1 0 010-1.414z" clipRule="evenodd" />
-                      </svg>
-                      Muted
-                    </>
-                  ) : (
-                    <>
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM14.657 2.929a1 1 0 011.414 0A9.972 9.972 0 0119 10a9.972 9.972 0 01-2.929 7.071 1 1 0 01-1.414-1.414A7.971 7.971 0 0017 10c0-2.21-.894-4.208-2.343-5.657a1 1 0 010-1.414zm-2.829 2.828a1 1 0 011.415 0A5.983 5.983 0 0115 10a5.984 5.984 0 01-1.757 4.243 1 1 0 01-1.415-1.415A3.984 3.984 0 0013 10a3.983 3.983 0 00-1.172-2.828 1 1 0 010-1.415z" clipRule="evenodd" />
-                      </svg>
-                      Mute
-                    </>
-                  )}
-                </button>
-              )}
-              {onSolo && selectedSound && (
-                <button
-                  onClick={() => onSolo(selectedSound.id)}
-                  className={`flex-1 py-2 px-4 rounded transition-colors flex items-center justify-center gap-2 pointer-events-auto ${
-                    isSoloed
-                      ? 'bg-primary text-white hover:bg-primary/90'
-                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                  }`}
-                  title={isSoloed ? 'Unsolo' : 'Solo'}
-                >
-                  {isSoloed ? (
-                    <>
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                        <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                      </svg>
-                      Solo
-                    </>
-                  ) : (
-                    <>
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
-                      </svg>
-                      Solo
-                    </>
-                  )}
-                </button>
-              )}
-            </div>
+            {onMute && onSolo && selectedSound && (
+              <ButtonGroup
+                buttons={[
+                  {
+                    label: isMuted ? '🔇 Muted' : '🔊 Mute',
+                    onClick: () => onMute(selectedSound.id),
+                    isActive: isMuted,
+                    activeColor: UI_COLORS.WARNING,
+                    inactiveColor: UI_COLORS.NEUTRAL_200,
+                    title: isMuted ? 'Unmute' : 'Mute'
+                  },
+                  {
+                    label: isSoloed ? '⭐ Solo' : 'Solo',
+                    onClick: () => onSolo(selectedSound.id),
+                    isActive: isSoloed,
+                    activeColor: UI_COLORS.PRIMARY,
+                    inactiveColor: UI_COLORS.NEUTRAL_200,
+                    title: isSoloed ? 'Unsolo' : 'Solo'
+                  }
+                ]}
+              />
+            )}
 
             {/* Variant Selector */}
             {soundOverlay.variants.length > 1 && (
               <div className="space-y-1">
-                <label className="text-xs text-gray-600">Variant:</label>
+                <label className="text-xs" style={{ color: UI_COLORS.NEUTRAL_400 }}>Variant:</label>
                 <select
                   value={soundOverlay.selectedVariantIdx}
                   onChange={(e) => onVariantChange && onVariantChange(soundOverlay.promptIdx, parseInt(e.target.value))}
-                  className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-primary pointer-events-auto"
+                  className="w-full px-2 py-1 text-xs rounded focus:outline-none focus:ring-1 pointer-events-auto"
+                  style={{ 
+                    borderColor: UI_COLORS.NEUTRAL_300,
+                    borderWidth: '1px',
+                    borderStyle: 'solid',
+                    color: 'white',
+                    backgroundColor: 'rgba(0, 0, 0, 0.3)'
+                  }}
+                  onFocus={(e) => e.currentTarget.style.boxShadow = `0 0 0 1px ${UI_COLORS.PRIMARY}`}
+                  onBlur={(e) => e.currentTarget.style.boxShadow = 'none'}
                 >
                   {soundOverlay.variants.map((_, idx) => (
-                    <option key={idx} value={idx}>
+                    <option key={idx} value={idx} style={{ backgroundColor: '#000', color: 'white' }}>
                       Variant {idx + 1}
                     </option>
                   ))}
@@ -213,46 +230,38 @@ export function EntityUIOverlay({
             )}
 
             {/* Volume Control */}
-            <div className="space-y-1">
-              <div className="flex items-center justify-between text-xs text-gray-600">
-                <span>{UI_VOLUME_SLIDER.LABEL}:</span>
-                <span className="font-mono text-gray-900 font-medium">{currentVolumeDb.toFixed(0)}</span>
-              </div>
-              <input
-                type="range"
+            {onVolumeChange && selectedSound && (
+              <RangeSlider
+                label={UI_VOLUME_SLIDER.LABEL}
+                value={currentVolumeDb}
                 min={UI_VOLUME_SLIDER.MIN}
                 max={UI_VOLUME_SLIDER.MAX}
                 step={UI_VOLUME_SLIDER.STEP}
-                value={currentVolumeDb}
-                onChange={handleVolumeChange}
-                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary pointer-events-auto"
+                onChange={(value) => onVolumeChange(selectedSound.id, value)}
+                minLabel={UI_VOLUME_SLIDER.MIN_LABEL}
+                maxLabel={UI_VOLUME_SLIDER.MAX_LABEL}
+                formatValue={(v) => v.toFixed(0)}
+                valueColor="white"
+                className="space-y-1"
               />
-              <div className="flex justify-between text-xs text-gray-400">
-                <span>{UI_VOLUME_SLIDER.MIN_LABEL}</span>
-                <span>{UI_VOLUME_SLIDER.MAX_LABEL}</span>
-              </div>
-            </div>
+            )}
 
             {/* Interval Control */}
-            <div className="space-y-1">
-              <div className="flex items-center justify-between text-xs text-gray-600">
-                <span>{UI_INTERVAL_SLIDER.LABEL}:</span>
-                <span className="font-mono text-gray-900 font-medium">{currentIntervalSeconds === 0 ? UI_INTERVAL_SLIDER.LOOP_TEXT : currentIntervalSeconds.toFixed(0)}</span>
-              </div>
-              <input
-                type="range"
+            {onIntervalChange && selectedSound && (
+              <RangeSlider
+                label={UI_INTERVAL_SLIDER.LABEL}
+                value={currentIntervalSeconds}
                 min={UI_INTERVAL_SLIDER.MIN}
                 max={UI_INTERVAL_SLIDER.MAX}
                 step={UI_INTERVAL_SLIDER.STEP}
-                value={currentIntervalSeconds}
-                onChange={handleIntervalChange}
-                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary pointer-events-auto"
+                onChange={(value) => onIntervalChange(selectedSound.id, value)}
+                minLabel={UI_INTERVAL_SLIDER.MIN_LABEL}
+                maxLabel={UI_INTERVAL_SLIDER.MAX_LABEL}
+                formatValue={(v) => v === 0 ? UI_INTERVAL_SLIDER.LOOP_TEXT : v.toFixed(0)}
+                valueColor="white"
+                className="space-y-1"
               />
-              <div className="flex justify-between text-xs text-gray-400">
-                <span>{UI_INTERVAL_SLIDER.MIN_LABEL}</span>
-                <span>{UI_INTERVAL_SLIDER.MAX_LABEL}</span>
-              </div>
-            </div>
+            )}
           </div>
         </div>
       )}

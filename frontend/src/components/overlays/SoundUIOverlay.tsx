@@ -1,6 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import type { UIOverlay, SoundState } from '@/types';
-import { UI_VOLUME_SLIDER, UI_INTERVAL_SLIDER } from '@/lib/constants';
+import { RangeSlider } from '@/components/ui/RangeSlider';
+import { ButtonGroup } from '@/components/ui/ButtonGroup';
+import { UI_VOLUME_SLIDER, UI_INTERVAL_SLIDER, UI_OVERLAY, UI_COLORS } from '@/lib/constants';
 
 interface SoundUIOverlayProps {
   overlay: UIOverlay;
@@ -49,18 +51,6 @@ export function SoundUIOverlay({
     onDragUpdateRef.current = onDragUpdate;
     promptKeyRef.current = overlay.promptKey;
   }, [onDragUpdate, overlay.promptKey]);
-
-  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (onVolumeChange && selectedSound) {
-      onVolumeChange(selectedSound.id, parseFloat(e.target.value));
-    }
-  };
-
-  const handleIntervalChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (onIntervalChange && selectedSound) {
-      onIntervalChange(selectedSound.id, parseFloat(e.target.value));
-    }
-  };
 
   const handleDelete = () => {
     if (onDelete && selectedSound) {
@@ -135,7 +125,17 @@ export function SoundUIOverlay({
       }}
       onMouseDown={handleMouseDown}
     >
-      <div className="bg-black/80 backdrop-blur-sm rounded-lg p-3 shadow-xl border border-white/20 min-w-[200px]">
+      <div 
+        className="backdrop-blur-sm rounded-lg shadow-xl border"
+        style={{
+          background: UI_OVERLAY.BACKGROUND,
+          borderRadius: `${UI_OVERLAY.BORDER_RADIUS}px`,
+          borderColor: UI_OVERLAY.BORDER_COLOR,
+          borderWidth: `${UI_OVERLAY.BORDER_WIDTH}px`,
+          padding: `${UI_OVERLAY.PADDING}px`,
+          width: UI_OVERLAY.WIDTH  // Match EntityInfoBox width
+        }}
+      >
         {/* Header with title and buttons */}
         <div className="flex items-center justify-between mb-2">
           <div className="text-white font-semibold text-sm flex-1 text-center">
@@ -154,7 +154,8 @@ export function SoundUIOverlay({
             {onDelete && (
               <button
                 onClick={handleDelete}
-                className="text-red-400 hover:text-red-300 transition-colors text-lg leading-none px-1"
+                className="hover:text-red-400 transition-colors text-lg leading-none px-1"
+                style={{ color: UI_COLORS.ERROR }}
                 title="Delete sound"
               >
                 ×
@@ -173,9 +174,12 @@ export function SoundUIOverlay({
                   onClick={() => onVariantChange(overlay.promptIdx, idx)}
                   className={`px-2 py-1 text-xs rounded transition-colors ${
                     idx === overlay.selectedVariantIdx
-                      ? 'bg-primary text-white'
-                      : 'bg-gray-600 text-gray-300 hover:bg-gray-500'
+                      ? 'text-white'
+                      : 'text-gray-300 hover:bg-gray-700'
                   }`}
+                  style={{
+                    backgroundColor: idx === overlay.selectedVariantIdx ? UI_COLORS.PRIMARY : UI_COLORS.NEUTRAL_700
+                  }}
                 >
                   {idx + 1}
                 </button>
@@ -189,79 +193,59 @@ export function SoundUIOverlay({
 
         {/* Volume slider */}
         {onVolumeChange && (
-          <div className="mb-2">
-            <div className="flex items-center justify-between text-xs text-gray-300 mb-1">
-              <span>{UI_VOLUME_SLIDER.LABEL}</span>
-              <span className="font-mono text-primary">{currentVolumeDb.toFixed(0)}</span>
-            </div>
-            <input
-              type="range"
-              min={UI_VOLUME_SLIDER.MIN}
-              max={UI_VOLUME_SLIDER.MAX}
-              step={UI_VOLUME_SLIDER.STEP}
-              value={currentVolumeDb}
-              onChange={handleVolumeChange}
-              className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary"
-            />
-            <div className="flex justify-between text-xs text-gray-400 mt-1">
-              <span>{UI_VOLUME_SLIDER.MIN_LABEL}</span>
-              <span>{UI_VOLUME_SLIDER.MAX_LABEL}</span>
-            </div>
-          </div>
+          <RangeSlider
+            label={UI_VOLUME_SLIDER.LABEL}
+            value={currentVolumeDb}
+            min={UI_VOLUME_SLIDER.MIN}
+            max={UI_VOLUME_SLIDER.MAX}
+            step={UI_VOLUME_SLIDER.STEP}
+            onChange={(value) => selectedSound && onVolumeChange(selectedSound.id, value)}
+            minLabel={UI_VOLUME_SLIDER.MIN_LABEL}
+            maxLabel={UI_VOLUME_SLIDER.MAX_LABEL}
+            formatValue={(v) => v.toFixed(0)}
+            className="mb-2"
+          />
         )}
 
         {/* Interval slider */}
         {onIntervalChange && (
-          <div className="mb-2">
-            <div className="flex items-center justify-between text-xs text-gray-300 mb-1">
-              <span>{UI_INTERVAL_SLIDER.LABEL}</span>
-              <span className="font-mono text-primary">{currentIntervalSeconds === 0 ? UI_INTERVAL_SLIDER.LOOP_TEXT : currentIntervalSeconds.toFixed(0)}</span>
-            </div>
-            <input
-              type="range"
-              min={UI_INTERVAL_SLIDER.MIN}
-              max={UI_INTERVAL_SLIDER.MAX}
-              step={UI_INTERVAL_SLIDER.STEP}
-              value={currentIntervalSeconds}
-              onChange={handleIntervalChange}
-              className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary"
-            />
-            <div className="flex justify-between text-xs text-gray-400 mt-1">
-              <span>{UI_INTERVAL_SLIDER.MIN_LABEL}</span>
-              <span>{UI_INTERVAL_SLIDER.MAX_LABEL}</span>
-            </div>
-          </div>
+          <RangeSlider
+            label={UI_INTERVAL_SLIDER.LABEL}
+            value={currentIntervalSeconds}
+            min={UI_INTERVAL_SLIDER.MIN}
+            max={UI_INTERVAL_SLIDER.MAX}
+            step={UI_INTERVAL_SLIDER.STEP}
+            onChange={(value) => selectedSound && onIntervalChange(selectedSound.id, value)}
+            minLabel={UI_INTERVAL_SLIDER.MIN_LABEL}
+            maxLabel={UI_INTERVAL_SLIDER.MAX_LABEL}
+            formatValue={(v) => v === 0 ? UI_INTERVAL_SLIDER.LOOP_TEXT : v.toFixed(0)}
+            className="mb-2"
+          />
         )}
 
         {/* Mute and Solo buttons */}
-        <div className="flex gap-2">
-          {onMute && (
-            <button
-              onClick={() => onMute(overlay.soundId)}
-              className={`flex-1 py-2 rounded-md font-medium text-sm transition-colors ${
-                isMuted
-                  ? 'bg-yellow-600 hover:bg-yellow-700 text-white'
-                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-              }`}
-              title={isMuted ? 'Unmute' : 'Mute'}
-            >
-              {isMuted ? '🔇 Muted' : '🔊 Mute'}
-            </button>
-          )}
-          {onSolo && (
-            <button
-              onClick={() => onSolo(overlay.soundId)}
-              className={`flex-1 py-2 rounded-md font-medium text-sm transition-colors ${
-                isSoloed
-                  ? 'bg-primary hover:bg-primary-hover text-white'
-                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-              }`}
-              title={isSoloed ? 'Unsolo' : 'Solo'}
-            >
-              {isSoloed ? '⭐ Solo' : 'Solo'}
-            </button>
-          )}
-        </div>
+        {onMute && onSolo && (
+          <ButtonGroup
+            buttons={[
+              {
+                label: isMuted ? '🔇 Muted' : '🔊 Mute',
+                onClick: () => onMute(overlay.soundId),
+                isActive: isMuted,
+                activeColor: UI_COLORS.WARNING,
+                inactiveColor: UI_COLORS.NEUTRAL_700,
+                title: isMuted ? 'Unmute' : 'Mute'
+              },
+              {
+                label: isSoloed ? '⭐ Solo' : 'Solo',
+                onClick: () => onSolo(overlay.soundId),
+                isActive: isSoloed,
+                activeColor: UI_COLORS.PRIMARY,
+                inactiveColor: UI_COLORS.NEUTRAL_700,
+                title: isSoloed ? 'Unsolo' : 'Solo'
+              }
+            ]}
+          />
+        )}
       </div>
     </div>
   );
