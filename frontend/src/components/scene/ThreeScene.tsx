@@ -176,17 +176,30 @@ export function ThreeScene({
     roll: 0
   });
 
+  // Track previous receiver mode state to prevent unnecessary updates
+  const prevReceiverModeRef = useRef<{ isActive: boolean; receiverId: string | null }>({
+    isActive: false,
+    receiverId: null
+  });
+
   // ============================================================================
   // Effect - Notify Audio Orchestrator of Receiver Mode Changes
   // ============================================================================
   useEffect(() => {
-    if (onReceiverModeChange) {
-      // TODO: Determine actual receiverId when multiple receivers are supported
-      // For now, use first receiver's ID if in first-person mode, or null
-      const receiverId = isFirstPersonMode && receivers.length > 0 ? receivers[0].id : null;
+    if (!onReceiverModeChange) return;
+
+    // Determine receiver ID (use first receiver if available)
+    const receiverId = isFirstPersonMode && receivers.length > 0 ? receivers[0].id : null;
+
+    // Only notify if state actually changed
+    const prev = prevReceiverModeRef.current;
+    if (prev.isActive !== isFirstPersonMode || prev.receiverId !== receiverId) {
+      console.log('[ThreeScene] Receiver mode changed:', { isFirstPersonMode, receiverId });
       onReceiverModeChange(isFirstPersonMode, receiverId);
+      prevReceiverModeRef.current = { isActive: isFirstPersonMode, receiverId };
     }
-  }, [isFirstPersonMode, onReceiverModeChange, receivers]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isFirstPersonMode, receivers[0]?.id]);
 
   // ============================================================================
   // State - Audio Timeline

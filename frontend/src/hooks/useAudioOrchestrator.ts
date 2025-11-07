@@ -87,7 +87,19 @@ export function useAudioOrchestrator() {
     if (!orchestratorRef.current) return;
 
     orchestratorRef.current.setReceiverMode(isActive, receiverId);
-    setStatus(orchestratorRef.current.getStatus());
+
+    // Get new status and only update if it changed
+    const newStatus = orchestratorRef.current.getStatus();
+    setStatus(prevStatus => {
+      // Compare relevant fields to prevent unnecessary re-renders
+      if (!prevStatus ||
+          prevStatus.isReceiverModeActive !== newStatus.isReceiverModeActive ||
+          prevStatus.isIRActive !== newStatus.isIRActive ||
+          prevStatus.uiNotice !== newStatus.uiNotice) {
+        return newStatus;
+      }
+      return prevStatus;
+    });
   }, []);
 
   const loadImpulseResponse = useCallback(async (file: File): Promise<IRMetadata | null> => {
