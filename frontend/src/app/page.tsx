@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { ThreeScene } from "@/components/scene/ThreeScene";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { IRStatusNotice } from "@/components/audio/IRStatusNotice";
 import { useFileUpload } from "@/hooks/useFileUpload";
 import { useTextGeneration } from "@/hooks/useTextGeneration";
 import { useSoundGeneration } from "@/hooks/useSoundGeneration";
@@ -196,41 +197,50 @@ export default function Home() {
 
   /**
    * Handle selection of IR from server library
-   * Downloads the IR and loads it into auralization
+   * Downloads the IR and loads it into auralization AND audio orchestrator
    */
   const handleSelectIRFromLibrary = useCallback(async (irMetadata: any) => {
     try {
       // Build full URL (irMetadata.url is relative like "/static/impulse_responses/file.wav")
       const fullUrl = `${API_BASE_URL}${irMetadata.url}`;
-      
+
       // Download the IR file from the server
       const response = await fetch(fullUrl);
       if (!response.ok) {
         throw new Error(`Failed to download IR: ${response.statusText}`);
       }
-      
+
       const blob = await response.blob();
       const file = new File([blob], irMetadata.name, { type: 'audio/wav' });
-      
-      // Load the IR
+
+      // Load the IR into OLD system (for compatibility)
       const tempContext = new AudioContext();
       await auralization.loadImpulseResponse(file, tempContext);
-      
+
+      // Load the IR into NEW audio orchestrator
+      await audioOrchestrator.loadImpulseResponse?.(file);
+
+      // Disable Resonance Audio when IR is loaded (as per workflow)
+      if (resonanceAudio.config.enabled) {
+        resonanceAudio.toggleResonanceAudio(false);
+      }
+
       // Update selected IR ID
       setSelectedIRId(irMetadata.id);
     } catch (error) {
       console.error('[Auralization Page] Error loading IR from library:', error);
       throw error;
     }
-  }, [auralization]);
+  }, [auralization, audioOrchestrator]);
 
   /**
    * Clear/deselect the current IR (disable auralization)
    */
   const handleClearIR = useCallback(() => {
     auralization.clearImpulseResponse();
+    audioOrchestrator.clearImpulseResponse?.();
     setSelectedIRId(null);
-  }, [auralization]);
+  }, [auralization, audioOrchestrator]);
 
   /**
    * Toggle IR normalization
@@ -400,6 +410,15 @@ export default function Home() {
       />
 
       <main className="flex-1 overflow-hidden relative">
+        {/* IR Status Notice Overlay */}
+        {audioOrchestrator.status?.uiNotice && (
+          <IRStatusNotice
+            message={audioOrchestrator.status.uiNotice}
+            dofDescription={audioOrchestrator.status.dofDescription}
+            isActive={audioOrchestrator.status.isIRActive}
+          />
+        )}
+
         <ThreeScene
           geometryData={fileUpload.geometryData}
           soundscapeData={soundGen.soundscapeData}

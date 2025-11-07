@@ -121,16 +121,18 @@ export function AcousticsTab({
         </div>
       )}
 
-      {/* Resonance Audio Controls */}
-      <ResonanceAudioControls
-        config={resonanceAudioConfig}
-        onToggle={onToggleResonanceAudio}
-        onUpdateRoomMaterials={onUpdateRoomMaterials}
-        hasGeometry={hasGeometry}
-        showBoundingBox={showBoundingBox}
-        onToggleBoundingBox={onToggleBoundingBox}
-        onRefreshBoundingBox={onRefreshBoundingBox}
-      />
+      {/* Resonance Audio Controls - Only show when no IR is loaded AND Resonance mode is selected */}
+      {!hasIR && preferredNoIRMode === 'resonance' && (
+        <ResonanceAudioControls
+          config={resonanceAudioConfig}
+          onToggle={onToggleResonanceAudio}
+          onUpdateRoomMaterials={onUpdateRoomMaterials}
+          hasGeometry={hasGeometry}
+          showBoundingBox={showBoundingBox}
+          onToggleBoundingBox={onToggleBoundingBox}
+          onRefreshBoundingBox={onRefreshBoundingBox}
+        />
+      )}
 
       {/* Output Decoder Toggle - Always visible */}
       {onUpdateOutputDecoder && (
