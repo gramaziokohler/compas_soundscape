@@ -9,10 +9,12 @@
 import type { IAudioOrchestrator } from './interfaces/IAudioOrchestrator';
 import type { IAudioRenderer } from './interfaces/IAudioRenderer';
 import type { IOutputDecoder } from './interfaces/IOutputDecoder';
-import type {
+import {
   AudioRenderMode,
+  OutputDecoderType
+} from './types';
+import type {
   AudioSourceHandle,
-  OutputDecoderType,
   RenderingModeConfig,
   OrchestratorStatus
 } from './types';

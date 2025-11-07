@@ -8,7 +8,8 @@
  */
 
 import type { IAudioRenderer } from '../interfaces/IAudioRenderer';
-import type { AudioRenderMode, AudioSourceHandle } from '../types';
+import { AudioRenderMode } from '../types';
+import type { AudioSourceHandle } from '../types';
 import { AudioSourceHandleImpl } from '../utils/AudioSourceHandleImpl';
 
 export class MonoIRRenderer implements IAudioRenderer {

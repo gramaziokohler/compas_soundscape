@@ -203,6 +203,10 @@ export function Sidebar(props: SidebarProps) {
             showBoundingBox={props.showBoundingBox}
             onToggleBoundingBox={props.onToggleBoundingBox}
             onRefreshBoundingBox={props.onRefreshBoundingBox}
+            preferredNoIRMode={props.preferredNoIRMode}
+            onUpdateNoIRMode={props.onUpdateNoIRMode}
+            outputDecoder={props.outputDecoder}
+            onUpdateOutputDecoder={props.onUpdateOutputDecoder}
           />
         )}
       </div>

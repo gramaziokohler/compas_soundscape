@@ -8,7 +8,8 @@
  */
 
 import type { IAudioRenderer } from '../interfaces/IAudioRenderer';
-import type { AudioRenderMode, AudioSourceHandle, IRFormat } from '../types';
+import { AudioRenderMode } from '../types';
+import type { AudioSourceHandle, IRFormat } from '../types';
 import { AudioSourceHandleImpl } from '../utils/AudioSourceHandleImpl';
 import { AmbisonicHelpers } from '../utils/AmbisonicHelpers';
 

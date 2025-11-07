@@ -10,6 +10,7 @@ import { useAudioControls } from "@/hooks/useAudioControls";
 import { useAuralization } from "@/hooks/useAuralization";
 import { useResonanceAudio } from "@/hooks/useResonanceAudio";
 import { useSED } from "@/hooks/useSED";
+import { useAudioOrchestrator } from "@/hooks/useAudioOrchestrator";
 import { useReceivers } from "@/hooks/useReceivers";
 import { useModalImpact } from "@/hooks/useModalImpact";
 import { apiService } from "@/services/api";
@@ -24,6 +25,9 @@ export default function Home() {
   const auralization = useAuralization();
   const resonanceAudio = useResonanceAudio();
   const sed = useSED();
+
+  // Audio Orchestrator (NEW)
+  const audioOrchestrator = useAudioOrchestrator();
   const receivers = useReceivers();
   const modalImpact = useModalImpact();
   const [activeLoadTab, setActiveLoadTab] = useState<LoadTab>('upload');
@@ -235,6 +239,17 @@ export default function Home() {
     auralization.toggleNormalize(enabled);
   }, [auralization]);
 
+  // Handler: Update No IR Mode (Three.js vs Resonance)
+  const handleUpdateNoIRMode = useCallback((mode: 'threejs' | 'resonance') => {
+    audioOrchestrator.updateNoIRMode?.(mode);
+  }, [audioOrchestrator]);
+
+  // Handler: Update Output Decoder (Binaural vs Stereo)
+  const handleUpdateOutputDecoder = useCallback((decoder: 'binaural' | 'stereo') => {
+    const decoderType = decoder === 'binaural' ? 'binaural_hrtf' : 'stereo_speakers';
+    audioOrchestrator.setOutputDecoder?.(decoderType as any);
+  }, [audioOrchestrator]);
+
   // Cleanup on unmount
   useEffect(() => {
     apiService.cleanupGeneratedSounds();
@@ -376,6 +391,12 @@ export default function Home() {
         showBoundingBox={showBoundingBox}
         onToggleBoundingBox={setShowBoundingBox}
         onRefreshBoundingBox={handleRefreshBoundingBox}
+
+        // Audio Orchestrator props (NEW)
+        preferredNoIRMode={audioOrchestrator.preferredNoIRMode}
+        onUpdateNoIRMode={handleUpdateNoIRMode}
+        outputDecoder={audioOrchestrator.outputDecoder === 'binaural_hrtf' ? 'binaural' : 'stereo'}
+        onUpdateOutputDecoder={handleUpdateOutputDecoder}
       />
 
       <main className="flex-1 overflow-hidden relative">

@@ -126,6 +126,11 @@ export interface SidebarProps {
   showBoundingBox: boolean;
   onToggleBoundingBox: (show: boolean) => void;
   onRefreshBoundingBox?: () => void;
+  // Audio Orchestrator props (NEW)
+  preferredNoIRMode?: 'threejs' | 'resonance';
+  onUpdateNoIRMode?: (mode: 'threejs' | 'resonance') => void;
+  outputDecoder?: 'binaural' | 'stereo';
+  onUpdateOutputDecoder?: (decoder: 'binaural' | 'stereo') => void;
 }
 
 /**

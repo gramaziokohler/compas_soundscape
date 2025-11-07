@@ -5,7 +5,8 @@
  * Supports: Mono (1ch), Binaural (2ch), FOA (4ch), TOA (16ch)
  */
 
-import type { IRFormat, AudioRenderMode } from '../types';
+import { AudioRenderMode } from '../types';
+import type { IRFormat } from '../types';
 
 export class IRFormatDetector {
   /**
