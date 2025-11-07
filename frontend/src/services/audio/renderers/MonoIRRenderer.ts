@@ -8,7 +8,7 @@
  */
 
 import type { IAudioRenderer } from '../interfaces/IAudioRenderer';
-import { AudioRenderMode } from '../types';
+import { AudioRenderMode, OutputDecoderType } from '../types';
 import type { AudioSourceHandle } from '../types';
 import { AudioSourceHandleImpl } from '../utils/AudioSourceHandleImpl';
 
@@ -20,6 +20,7 @@ export class MonoIRRenderer implements IAudioRenderer {
   private masterGain: GainNode | null = null;
   private isReceiverModeActive: boolean = false;
   private enabled: boolean = true;
+  private outputDecoder: OutputDecoderType = OutputDecoderType.BINAURAL_HRTF;
 
   // Source management
   private sources: Set<AudioSourceHandle> = new Set();
@@ -60,10 +61,11 @@ export class MonoIRRenderer implements IAudioRenderer {
     }
 
     // Create panner node for positional audio
-    // For mono IR (0 DOF), use equalpower panning instead of HRTF
-    // This provides distance-based attenuation without head-relative positioning
+    // Panning model determined by output decoder:
+    // - Binaural (HRTF): Head-related positioning for headphones
+    // - Stereo: Equalpower panning for speakers
     const panner = this.audioContext.createPanner();
-    panner.panningModel = 'equalpower';  // Head-locked, not head-relative
+    panner.panningModel = this.outputDecoder === OutputDecoderType.BINAURAL_HRTF ? 'HRTF' : 'equalpower';
     panner.distanceModel = 'inverse';
     panner.refDistance = 1;
     panner.maxDistance = 10000;
@@ -168,6 +170,20 @@ export class MonoIRRenderer implements IAudioRenderer {
       throw new Error('Renderer not initialized');
     }
     return this.masterGain;
+  }
+
+  setOutputDecoder(decoderType: OutputDecoderType): void {
+    if (this.outputDecoder === decoderType) return;
+
+    this.outputDecoder = decoderType;
+
+    // Update panning model on all existing sources
+    const panningModel = decoderType === OutputDecoderType.BINAURAL_HRTF ? 'HRTF' : 'equalpower';
+    this.pannerNodes.forEach(panner => {
+      panner.panningModel = panningModel;
+    });
+
+    console.log(`[MonoIRRenderer] Output decoder changed to ${decoderType}, panning model: ${panningModel}`);
   }
 
   dispose(): void {

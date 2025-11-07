@@ -134,6 +134,16 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       ? this.binauralDecoder
       : this.stereoDecoder;
 
+    // Notify current renderer to update panning model
+    if (this.currentRenderer) {
+      this.currentRenderer.setOutputDecoder(type);
+    }
+
+    // Also update all renderers so they're ready when switched
+    this.noIRRenderer.setOutputDecoder(type);
+    this.monoIRRenderer.setOutputDecoder(type);
+    this.spatialIRRenderer.setOutputDecoder(type);
+
     this.wireAudioGraph();
   }
 

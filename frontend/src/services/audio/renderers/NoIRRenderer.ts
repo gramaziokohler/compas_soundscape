@@ -7,7 +7,7 @@
  */
 
 import type { IAudioRenderer } from '../interfaces/IAudioRenderer';
-import { AudioRenderMode } from '../types';
+import { AudioRenderMode, OutputDecoderType } from '../types';
 import type { AudioSourceHandle } from '../types';
 import { AudioSourceHandleImpl } from '../utils/AudioSourceHandleImpl';
 
@@ -16,6 +16,7 @@ export class NoIRRenderer implements IAudioRenderer {
   private listenerNode: AudioListener | null = null;
   private currentMode: 'threejs' | 'resonance' = 'threejs';
   private enabled: boolean = true;
+  private outputDecoder: OutputDecoderType = OutputDecoderType.BINAURAL_HRTF;
   private masterGain: GainNode | null = null;
   private sources: Set<AudioSourceHandle> = new Set();
 
@@ -41,8 +42,9 @@ export class NoIRRenderer implements IAudioRenderer {
     }
 
     // Create panner node for spatial audio
+    // Panning model determined by output decoder
     const panner = this.audioContext.createPanner();
-    panner.panningModel = 'HRTF';
+    panner.panningModel = this.outputDecoder === OutputDecoderType.BINAURAL_HRTF ? 'HRTF' : 'equalpower';
     panner.distanceModel = 'inverse';
     panner.refDistance = 1;
     panner.maxDistance = 10000;
@@ -145,6 +147,20 @@ export class NoIRRenderer implements IAudioRenderer {
       throw new Error('Renderer not initialized');
     }
     return this.masterGain;
+  }
+
+  setOutputDecoder(decoderType: OutputDecoderType): void {
+    if (this.outputDecoder === decoderType) return;
+
+    this.outputDecoder = decoderType;
+
+    // Update panning model on all existing sources
+    const panningModel = decoderType === OutputDecoderType.BINAURAL_HRTF ? 'HRTF' : 'equalpower';
+    this.pannerNodes.forEach(panner => {
+      panner.panningModel = panningModel;
+    });
+
+    console.log(`[NoIRRenderer] Output decoder changed to ${decoderType}, panning model: ${panningModel}`);
   }
 
   dispose(): void {

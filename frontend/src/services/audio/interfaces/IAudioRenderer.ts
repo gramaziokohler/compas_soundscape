@@ -5,7 +5,7 @@
  * Supports different rendering strategies: No IR, Mono IR, Spatial IR.
  */
 
-import type { AudioRenderMode, AudioSourceHandle } from '../types';
+import type { AudioRenderMode, AudioSourceHandle, OutputDecoderType } from '../types';
 
 export interface IAudioRenderer {
   /**
@@ -38,6 +38,12 @@ export interface IAudioRenderer {
    * Enable or disable the renderer
    */
   setEnabled(enabled: boolean): void;
+
+  /**
+   * Set output decoder type (affects panning model)
+   * @param decoderType - Binaural (HRTF) or Stereo (equalpower)
+   */
+  setOutputDecoder(decoderType: OutputDecoderType): void;
 
   /**
    * Check if receiver mode is required for this renderer

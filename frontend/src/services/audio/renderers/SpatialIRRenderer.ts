@@ -8,7 +8,7 @@
  */
 
 import type { IAudioRenderer } from '../interfaces/IAudioRenderer';
-import { AudioRenderMode } from '../types';
+import { AudioRenderMode, OutputDecoderType } from '../types';
 import type { AudioSourceHandle, IRFormat } from '../types';
 import { AudioSourceHandleImpl } from '../utils/AudioSourceHandleImpl';
 import { AmbisonicHelpers } from '../utils/AmbisonicHelpers';
@@ -20,6 +20,7 @@ export class SpatialIRRenderer implements IAudioRenderer {
   private masterGain: GainNode | null = null;
   private isReceiverModeActive: boolean = false;
   private enabled: boolean = true;
+  private outputDecoder: OutputDecoderType = OutputDecoderType.BINAURAL_HRTF;
   private currentOrientation: [number, number, number] = [0, 0, 0];
   private listenerPosition: [number, number, number] = [0, 0, 0];
 
@@ -281,6 +282,17 @@ export class SpatialIRRenderer implements IAudioRenderer {
       throw new Error('Renderer not initialized');
     }
     return this.masterGain;
+  }
+
+  setOutputDecoder(decoderType: OutputDecoderType): void {
+    if (this.outputDecoder === decoderType) return;
+
+    this.outputDecoder = decoderType;
+
+    // TODO: For proper implementation, this should update the ambisonic decoder matrix
+    // Currently, spatial IR uses basic channel convolution without proper ambisonic decoding
+    // When fully implemented, binaural mode would use HRTF decoder, stereo would use stereo matrix
+    console.log(`[SpatialIRRenderer] Output decoder changed to ${decoderType} (decoder matrix update not yet implemented)`);
   }
 
   dispose(): void {
