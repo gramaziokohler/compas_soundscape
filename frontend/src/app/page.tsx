@@ -252,7 +252,13 @@ export default function Home() {
   // Handler: Update No IR Mode (Three.js vs Resonance)
   const handleUpdateNoIRMode = useCallback((mode: 'threejs' | 'resonance') => {
     audioOrchestrator.updateNoIRMode?.(mode);
-  }, [audioOrchestrator]);
+
+    // Automatically enable/disable Resonance Audio based on mode selection
+    const shouldEnableResonance = mode === 'resonance';
+    if (resonanceAudio.config.enabled !== shouldEnableResonance) {
+      resonanceAudio.toggleResonanceAudio(shouldEnableResonance);
+    }
+  }, [audioOrchestrator, resonanceAudio]);
 
   // Handler: Update Output Decoder (Binaural vs Stereo)
   const handleUpdateOutputDecoder = useCallback((decoder: 'binaural' | 'stereo') => {

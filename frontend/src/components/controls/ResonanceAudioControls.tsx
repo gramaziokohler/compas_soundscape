@@ -192,31 +192,13 @@ export function ResonanceAudioControls({
     <div className={`flex flex-col gap-3 ${className}`}>
       {/* Header with Title */}
       <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-        RESONANCE AUDIO (HRTF SPATIAL AUDIO)
+        RESONANCE AUDIO SETTINGS
       </h4>
-
-      {/* Enable/Disable Toggle */}
-      <div className="flex items-center justify-between">
-        <label className="text-xs" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-          Enable Resonance Audio
-        </label>
-        <button
-          onClick={handleToggle}
-          className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
-            enabled
-              ? 'text-white hover:opacity-80'
-              : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-          }`}
-          style={enabled ? { backgroundColor: UI_COLORS.PRIMARY } : {}}
-        >
-          {enabled ? 'ON' : 'OFF'}
-        </button>
-      </div>
 
       {/* Info when no geometry */}
       {!hasGeometry && (
-        <div className="text-xs p-2 rounded" style={{ 
-          backgroundColor: '#EFF6FF', 
+        <div className="text-xs p-2 rounded" style={{
+          backgroundColor: '#EFF6FF',
           color: '#1E40AF',
           border: '1px solid #BFDBFE'
         }}>

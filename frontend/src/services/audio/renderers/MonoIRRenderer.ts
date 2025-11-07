@@ -60,8 +60,10 @@ export class MonoIRRenderer implements IAudioRenderer {
     }
 
     // Create panner node for positional audio
+    // For mono IR (0 DOF), use equalpower panning instead of HRTF
+    // This provides distance-based attenuation without head-relative positioning
     const panner = this.audioContext.createPanner();
-    panner.panningModel = 'HRTF';
+    panner.panningModel = 'equalpower';  // Head-locked, not head-relative
     panner.distanceModel = 'inverse';
     panner.refDistance = 1;
     panner.maxDistance = 10000;

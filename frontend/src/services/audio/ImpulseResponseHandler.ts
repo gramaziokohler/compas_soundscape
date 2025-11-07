@@ -24,9 +24,18 @@ export class ImpulseResponseHandler implements IImpulseResponseHandler {
       let audioBuffer: AudioBuffer;
       try {
         audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
-        console.log('[ImpulseResponseHandler] Decoded using native browser decoder');
+        console.log('[ImpulseResponseHandler] Decoded successfully:', {
+          channels: audioBuffer.numberOfChannels,
+          sampleRate: audioBuffer.sampleRate,
+          duration: audioBuffer.duration
+        });
       } catch (decodeError) {
-        throw new Error('Failed to decode audio file. Please use a valid WAV, MP3, or OGG format.');
+        console.error('[ImpulseResponseHandler] Decode error details:', decodeError);
+        // Check if it's a channel count issue
+        if (decodeError instanceof Error && decodeError.message.includes('channel')) {
+          throw new Error(`Failed to decode audio file. Your browser may not support ${Math.round(arrayBuffer.byteLength / 1000)}KB files with high channel counts. Try using a browser that supports multi-channel audio (Chrome/Edge recommended).`);
+        }
+        throw new Error(`Failed to decode audio file: ${decodeError instanceof Error ? decodeError.message : 'Unknown error'}. Please use a valid WAV, MP3, or OGG format.`);
       }
 
       // Validate audio buffer
