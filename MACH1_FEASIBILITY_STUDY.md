@@ -18,6 +18,10 @@ This feasibility study assesses the integration of **Mach1 Spatial Audio SDK** i
 
 **Recommendation:** Proceed with a phased implementation approach, starting with a prototype integration for evaluation.
 
+**Related Documentation:**
+- See `AURALIZATION_IMPLEMENTATION_PLAN.md` for detailed auralization workflow redesign
+- Mach1 can be integrated as part of the spatial IR renderer for binaural rotation and format conversion
+
 ---
 
 ## 1. Current Architecture Analysis
@@ -656,3 +660,173 @@ export function SpatialRendererToggle({
 ---
 
 **End of Feasibility Study**
+
+---
+
+## 12. Integration with Auralization Workflow
+
+### 12.1 Cross-Reference
+
+This Mach1 feasibility study complements the **Auralization Implementation Plan** (`AURALIZATION_IMPLEMENTATION_PLAN.md`), which defines a comprehensive physically accurate audio rendering workflow.
+
+### 12.2 Mach1's Role in Auralization Workflow
+
+Mach1 can enhance the auralization workflow in specific scenarios:
+
+#### Scenario 1: Binaural IR Rotation (Spatial IR Mode)
+
+**Current Plan:** Direct binaural convolution without rotation support
+**With Mach1:** Use Mach1Decode for efficient binaural rotation
+- Lower CPU than ambisonic re-encoding
+- Pre-rendered HRTF with runtime rotation
+- Better for 2-channel binaural IRs
+
+```typescript
+// In SpatialIRRenderer (Binaural mode)
+if (irFormat === 'binaural' && useMach1Rotation) {
+  mach1Decoder.setRotationDegrees(yaw, pitch, roll);
+  const coeffs = mach1Decoder.decode();
+  // Apply coefficients to binaural channels
+}
+```
+
+#### Scenario 2: Format Conversion (IR Import)
+
+**Current Plan:** Support mono/2ch/4ch/16ch directly
+**With Mach1:** Use Mach1Transcode for format flexibility
+- Convert between ambisonic orders
+- Import Mach1 spatial mixes
+- Transcode non-standard formats
+
+```typescript
+// In ImpulseResponseHandler
+if (nonStandardFormat) {
+  const mach1IR = Mach1Transcode.toMach1Spatial(irBuffer);
+  const targetFormat = Mach1Transcode.fromMach1To(mach1IR, 'foa');
+  // Use converted IR in workflow
+}
+```
+
+#### Scenario 3: Alternative Decoder (Output Stage)
+
+**Current Plan:** Binaural HRTF (Resonance/Ambisonics.js) OR Stereo
+**With Mach1:** Add Mach1 VVBP as third option
+- Transparent decoding (no HRTF coloration)
+- Lower latency than ambisonics
+- User preference choice
+
+### 12.3 Integration Timeline
+
+| Phase | Auralization Work | Mach1 Integration |
+|-------|-------------------|-------------------|
+| **Phase 1-3** | Foundation, No IR, Mono IR | Research Mach1 SDK, POC |
+| **Phase 4** | Binaural IR (basic) | Optional: Add Mach1 rotation |
+| **Phase 5-6** | FOA/TOA IR | Optional: Mach1Transcode helper |
+| **Phase 7** | Orchestrator | Optional: Mach1 decoder choice |
+| **Phase 8-10** | UI/Testing/Docs | Mach1 documentation if used |
+
+### 12.4 Decision Matrix: When to Use Mach1
+
+| Use Case | Use Mach1? | Reason |
+|----------|-----------|---------|
+| **No IR mode** | Optional | Can replace Resonance Audio for lower latency |
+| **Mono IR** | No | Simple convolution, no benefit |
+| **Binaural IR (static)** | No | Direct convolution sufficient |
+| **Binaural IR (rotated)** | ✅ Yes | Efficient rotation without re-encoding |
+| **FOA IR** | Optional | Mach1 can decode FOA, but ambisonics.js works |
+| **TOA IR** | ✅ Maybe | Mach1Transcode to FOA if TOA too heavy |
+| **Import external formats** | ✅ Yes | Mach1Transcode handles conversions |
+| **Output decoder** | Optional | User preference for transparent vs HRTF |
+
+### 12.5 Recommended Approach
+
+**Phase 1 (Core Auralization):** Implement full auralization workflow WITHOUT Mach1
+- Focus on proven Web Audio API + ambisonics.js
+- Get all modes working: No IR, Mono IR, Spatial IR (binaural/FOA/TOA)
+- Establish modular architecture for easy extension
+
+**Phase 2 (Mach1 Enhancement):** Add Mach1 as optional enhancement
+- Implement Mach1 binaural rotation for 2-channel IRs
+- Add Mach1Transcode for format conversion
+- Add Mach1 decoder as output option
+
+**Benefits of This Approach:**
+- ✅ Core functionality works without Mach1 dependency
+- ✅ Mach1 adds value but isn't critical
+- ✅ Can evaluate Mach1 benefits with working baseline
+- ✅ Easier to debug (fewer moving parts initially)
+
+### 12.6 Updated Architecture Diagram
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                  AUDIO ORCHESTRATOR                            │
+└────────────────────────────────────────────────────────────────┘
+                            │
+        ┌───────────────────┼───────────────────┐
+        ↓                   ↓                   ↓
+┌───────────────┐  ┌────────────────┐  ┌─────────────────────┐
+│   No IR Mode  │  │  Mono IR Mode  │  │  Spatial IR Mode    │
+│               │  │                │  │                     │
+│ - Three.js    │  │ - Convolver    │  │ - Binaural (2ch)    │
+│ - Resonance   │  │   (Mono)       │  │   ├─ Direct         │
+│ - [Mach1]     │  │                │  │   └─ [Mach1 Rotate] │
+│               │  │                │  │ - FOA (4ch)         │
+│               │  │                │  │   ├─ Ambisonics.js  │
+│               │  │                │  │   └─ [Mach1 Decode] │
+│               │  │                │  │ - TOA (16ch)        │
+│               │  │                │  │   ├─ Ambisonics.js  │
+│               │  │                │  │   └─ [Mach1 → FOA]  │
+└───────────────┘  └────────────────┘  └─────────────────────┘
+        │                   │                   │
+        └───────────────────┼───────────────────┘
+                            ↓
+┌────────────────────────────────────────────────────────────────┐
+│                OUTPUT DECODER (User Choice)                    │
+│  - HRTF Binaural (Resonance/Ambisonics.js)                    │
+│  - Stereo Speakers                                             │
+│  - [Mach1 VVBP] (Optional)                                     │
+└────────────────────────────────────────────────────────────────┘
+```
+
+**Legend:** `[Brackets]` = Optional Mach1 integration
+
+### 12.7 Combined Implementation Estimate
+
+| Component | Without Mach1 | With Mach1 | Total |
+|-----------|---------------|------------|-------|
+| **Auralization Workflow** | 10 weeks | - | 10 weeks |
+| **Mach1 POC** | - | 2 weeks | 2 weeks |
+| **Mach1 Integration** | - | 3 weeks | 3 weeks |
+| **Combined Testing** | - | 1 week | 1 week |
+| **Total** | **10 weeks** | **6 weeks** | **16 weeks** |
+
+**Sequential Timeline:** 10 weeks (auralization) + 6 weeks (Mach1) = **16 weeks total**
+**Parallel Timeline:** 10 weeks (some Mach1 work can overlap) = **~12-14 weeks**
+
+### 12.8 Final Recommendation
+
+**Immediate Action (Next 10 weeks):**
+1. ✅ Implement full auralization workflow per `AURALIZATION_IMPLEMENTATION_PLAN.md`
+2. ✅ Use proven technologies (Web Audio API, ambisonics.js)
+3. ✅ Establish modular architecture with interface-based design
+4. ✅ Get all rendering modes working (No IR, Mono IR, Spatial IR)
+
+**Future Enhancement (Weeks 11-16):**
+1. 🔄 Evaluate Mach1 POC during Phase 4-5 of auralization
+2. 🔄 Add Mach1 binaural rotation if performance benefit is clear
+3. 🔄 Add Mach1Transcode for format conversion
+4. 🔄 Optionally add Mach1 output decoder
+
+**This approach ensures:**
+- ✅ Core functionality delivered on time (10 weeks)
+- ✅ Mach1 adds value without delaying core features
+- ✅ Modular design makes Mach1 integration straightforward
+- ✅ Can evaluate Mach1 benefits with working baseline
+
+---
+
+**Cross-Document Summary:**
+- **This document (Mach1 Feasibility):** Technical analysis of Mach1 SDK integration
+- **Auralization Plan:** Detailed implementation of physically accurate audio workflow
+- **Relationship:** Mach1 enhances auralization workflow but is not required for core functionality
