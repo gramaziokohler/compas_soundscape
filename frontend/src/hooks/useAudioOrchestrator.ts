@@ -8,9 +8,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { AudioOrchestrator } from '@/services/audio/AudioOrchestrator';
 import { ImpulseResponseHandler } from '@/services/audio/ImpulseResponseHandler';
-import type {
+import {
   AudioRenderMode,
-  OutputDecoderType,
+  OutputDecoderType
+} from '@/services/audio/types';
+import type {
   RenderingModeConfig,
   OrchestratorStatus,
   IRMetadata
