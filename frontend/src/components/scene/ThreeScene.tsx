@@ -112,6 +112,7 @@ export function ThreeScene({
   modeVisualizationState,
   onSetModeVisualization,
   onSelectMode,
+  onReceiverModeChange,
   className
 }: ThreeSceneProps) {
   // ============================================================================
@@ -174,6 +175,18 @@ export function ThreeScene({
     pitch: 0,
     roll: 0
   });
+
+  // ============================================================================
+  // Effect - Notify Audio Orchestrator of Receiver Mode Changes
+  // ============================================================================
+  useEffect(() => {
+    if (onReceiverModeChange) {
+      // TODO: Determine actual receiverId when multiple receivers are supported
+      // For now, use first receiver's ID if in first-person mode, or null
+      const receiverId = isFirstPersonMode && receivers.length > 0 ? receivers[0].id : null;
+      onReceiverModeChange(isFirstPersonMode, receiverId);
+    }
+  }, [isFirstPersonMode, onReceiverModeChange, receivers]);
 
   // ============================================================================
   // State - Audio Timeline

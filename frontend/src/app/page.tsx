@@ -260,6 +260,12 @@ export default function Home() {
     audioOrchestrator.setOutputDecoder?.(decoderType as any);
   }, [audioOrchestrator]);
 
+  // Handler: Receiver Mode Change (from ThreeScene)
+  const handleReceiverModeChange = useCallback((isActive: boolean, receiverId: string | null) => {
+    console.log('[Page] Receiver mode changed:', { isActive, receiverId });
+    audioOrchestrator.updateReceiverMode?.(isActive, receiverId);
+  }, [audioOrchestrator]);
+
   // Cleanup on unmount
   useEffect(() => {
     apiService.cleanupGeneratedSounds();
@@ -457,6 +463,7 @@ export default function Home() {
           modeVisualizationState={modalImpact.visualizationState}
           onSetModeVisualization={modalImpact.setModeVisualization}
           onSelectMode={modalImpact.selectMode}
+          onReceiverModeChange={handleReceiverModeChange}
           className="w-full h-full"
         />
       </main>

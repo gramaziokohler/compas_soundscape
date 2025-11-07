@@ -132,6 +132,9 @@ export interface ThreeSceneProps {
   /** Callback when a specific mode is selected for visualization */
   onSelectMode?: (modeIndex: number | null) => void;
 
+  /** Callback when receiver mode (first-person view) changes */
+  onReceiverModeChange?: (isActive: boolean, receiverId: string | null) => void;
+
   /** Optional CSS class name for the container */
   className?: string;
 }
