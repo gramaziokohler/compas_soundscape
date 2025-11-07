@@ -121,3 +121,42 @@ export interface FOACoefficients {
 // Ambisonic Encoding Coefficients (TOA) - 16 coefficients
 export type TOACoefficients = number[]; // Array of 16 values
 
+/**
+ * Resonance Audio Types
+ */
+
+// Room materials for Resonance Audio
+export interface ResonanceRoomMaterial {
+  left: string;
+  right: string;
+  front: string;
+  back: string;
+  down: string;
+  up: string;
+}
+
+// Room dimensions for Resonance Audio (meters)
+export interface ResonanceRoomDimensions {
+  width: number;   // X dimension
+  height: number;  // Y dimension
+  depth: number;   // Z dimension
+}
+
+// Resonance Audio source configuration
+export interface ResonanceSourceConfig {
+  gain?: number;                    // Source volume (0-1)
+  rolloff?: string;                 // Distance attenuation model ('logarithmic', 'linear', 'none')
+  minDistance?: number;             // Minimum distance for attenuation (meters)
+  maxDistance?: number;             // Maximum distance for attenuation (meters)
+  directivityPattern?: number;      // Directivity pattern (0 = omnidirectional, 1 = cardioid)
+  directivitySharpness?: number;    // Directivity sharpness (0-1)
+}
+
+// Resonance Audio configuration
+export interface ResonanceAudioConfig {
+  enabled: boolean;
+  ambisonicOrder?: number;          // 1, 2, or 3 (default: 3)
+  roomDimensions: ResonanceRoomDimensions;
+  roomMaterials: ResonanceRoomMaterial;
+}
+

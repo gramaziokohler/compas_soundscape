@@ -20,6 +20,7 @@ import type {
   ReceiverData,
 } from "./index";
 import type { AuralizationConfig } from "./auralization";
+import type { ResonanceAudioConfig, ResonanceRoomDimensions, ResonanceRoomMaterial } from "./audio";
 import type { ModalAnalysisResult, ModeVisualizationState } from "./modal";
 
 /**
@@ -42,6 +43,7 @@ export interface SidebarProps {
   globalSteps: number;
   globalNegativePrompt: string;
   applyDenoising: boolean;
+  audioModel: string;
   isUploading: boolean;
   isAnalyzingModel: boolean;
   isGenerating: boolean;
@@ -82,6 +84,7 @@ export interface SidebarProps {
   onGlobalStepsChange: (steps: number) => void;
   onGlobalNegativePromptChange: (prompt: string) => void;
   onApplyDenoisingChange: (apply: boolean) => void;
+  onAudioModelChange: (model: string) => void;
   onReprocessSounds?: (applyDenoising: boolean) => Promise<void>;
   setUseModelAsContext: (value: boolean) => void;
   onUploadAudio: (index: number, file: File) => Promise<void>;
@@ -115,6 +118,14 @@ export interface SidebarProps {
   onStartPlacingReceiver: () => void;
   onDeleteReceiver: (id: string) => void;
   onUpdateReceiverName: (id: string, name: string) => void;
+  // Resonance Audio props
+  resonanceAudioConfig: ResonanceAudioConfig;
+  onToggleResonanceAudio: (enabled: boolean) => void;
+  onUpdateRoomMaterials: (materials: ResonanceRoomMaterial) => void;
+  hasGeometry: boolean;
+  showBoundingBox: boolean;
+  onToggleBoundingBox: (show: boolean) => void;
+  onRefreshBoundingBox?: () => void;
 }
 
 /**
@@ -173,10 +184,12 @@ export interface SoundGenerationSectionProps {
   globalSteps: number;
   globalNegativePrompt: string;
   applyDenoising: boolean;
+  audioModel: string;
   onGlobalDurationChange: (duration: number) => void;
   onGlobalStepsChange: (steps: number) => void;
   onGlobalNegativePromptChange: (prompt: string) => void;
   onApplyDenoisingChange: (apply: boolean) => void;
+  onAudioModelChange: (model: string) => void;
   onReprocessSounds?: (applyDenoising: boolean) => Promise<void>;
   onUploadAudio: (index: number, file: File) => Promise<void>;
   onClearUploadedAudio: (index: number) => void;

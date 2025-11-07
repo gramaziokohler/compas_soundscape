@@ -93,7 +93,7 @@ export type ActiveTab = 'text' | 'sound' | 'acoustics';
 export type LoadTab = 'sample' | 'upload';
 
 // Sound generation mode types
-export type SoundGenerationMode = 'text-to-audio' | 'upload' | 'library';
+export type SoundGenerationMode = 'text-to-audio' | 'upload' | 'library' | 'sample-audio';
 
 // Library search types
 export interface LibrarySearchResult {

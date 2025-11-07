@@ -5,7 +5,7 @@ import { FileUploadArea } from "@/components/controls/FileUploadArea";
 import { AudioWaveformDisplay } from "@/components/audio/AudioWaveformDisplay";
 import { trimDisplayName } from "@/lib/utils";
 import { useHorizontalScroll } from "@/hooks/useHorizontalScroll";
-import { UI_COLORS, UI_CARD, UI_BUTTON, UI_TABS } from "@/lib/constants";
+import { UI_COLORS, UI_CARD, UI_BUTTON, UI_TABS, AUDIO_MODEL_TANGOFLUX, AUDIO_MODEL_AUDIOLDM2, AUDIO_MODEL_NAMES } from "@/lib/constants";
 
 export function SoundGenerationSection({
   soundConfigs,
@@ -25,10 +25,12 @@ export function SoundGenerationSection({
   globalSteps,
   globalNegativePrompt,
   applyDenoising,
+  audioModel,
   onGlobalDurationChange,
   onGlobalStepsChange,
   onGlobalNegativePromptChange,
   onApplyDenoisingChange,
+  onAudioModelChange,
   onReprocessSounds,
   onUploadAudio,
   onClearUploadedAudio,
@@ -315,6 +317,7 @@ export function SoundGenerationSection({
                 <option value="text-to-audio">Text-to-Audio Generation</option>
                 <option value="upload">Upload File</option>
                 <option value="library">Sound Library Search</option>
+                <option value="sample-audio">Sample Audio</option>
               </select>
             </div>
 
@@ -618,7 +621,7 @@ export function SoundGenerationSection({
 
                 {/* Search Results */}
                 {currentConfig.librarySearchState?.results && currentConfig.librarySearchState.results.length > 0 && (
-                  <div 
+                  <div
                     className="rounded p-2 max-h-64 overflow-y-auto"
                     style={{
                       backgroundColor: 'white',
@@ -670,7 +673,7 @@ export function SoundGenerationSection({
 
                 {/* Error Message */}
                 {currentConfig.librarySearchState?.error && (
-                  <p 
+                  <p
                     className="text-xs rounded p-2"
                     style={{
                       backgroundColor: UI_COLORS.ERROR_LIGHT,
@@ -691,6 +694,35 @@ export function SoundGenerationSection({
                     Enter search terms and click "Search" to find sounds from the BBC Sound Effects library
                   </p>
                 )}
+              </div>
+            </>
+          )}
+
+          {currentMode === 'sample-audio' && (
+            <>
+              {/* Sample Audio UI */}
+              <div className="space-y-2">
+                {/* Waveform Display */}
+                {currentConfig.uploadedAudioBuffer && currentConfig.uploadedAudioInfo && (
+                  <AudioWaveformDisplay
+                    audioBuffer={currentConfig.uploadedAudioBuffer}
+                    audioInfo={currentConfig.uploadedAudioInfo}
+                  />
+                )}
+
+                {/* Clear audio button */}
+                <button
+                  onClick={handleClearAudio}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_600}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_500}
+                  className="w-full text-xs py-1.5 px-3 text-white rounded transition-colors"
+                  style={{
+                    backgroundColor: UI_COLORS.NEUTRAL_500,
+                    borderRadius: '8px'
+                  }}
+                >
+                  Clear Sample Audio
+                </button>
               </div>
             </>
           )}
@@ -849,9 +881,49 @@ export function SoundGenerationSection({
               )}
             </div>
 
+            {/* Audio Model Selection */}
+            <div
+              className="rounded-lg p-3"
+              style={{
+                backgroundColor: 'white',
+                borderRadius: '8px'
+              }}
+            >
+              <h4 className="text-xs font-semibold mb-3 uppercase tracking-wide" style={{ color: UI_COLORS.NEUTRAL_600 }}>
+                Audio Generation Model
+              </h4>
+
+              <div>
+                <label className="text-sm font-medium block mb-2" style={{ color: UI_COLORS.NEUTRAL_700 }}>
+                  Select Model
+                </label>
+                <select
+                  value={audioModel}
+                  onChange={(e) => onAudioModelChange(e.target.value)}
+                  className="w-full px-3 py-2 text-sm rounded focus:outline-none focus:ring-2 focus:ring-primary"
+                  style={{
+                    backgroundColor: 'white',
+                    borderColor: UI_COLORS.NEUTRAL_300,
+                    borderWidth: '1px',
+                    borderStyle: 'solid',
+                    borderRadius: '8px',
+                    color: UI_COLORS.NEUTRAL_700
+                  }}
+                >
+                  <option value={AUDIO_MODEL_TANGOFLUX}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_TANGOFLUX]}</option>
+                  <option value={AUDIO_MODEL_AUDIOLDM2}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_AUDIOLDM2]}</option>
+                </select>
+                <p className="text-xs mt-1" style={{ color: UI_COLORS.NEUTRAL_500 }}>
+                  {audioModel === AUDIO_MODEL_TANGOFLUX
+                    ? "TangoFlux: Fast, high-quality text-to-audio generation (default)"
+                    : "AudioLDM2: Alternative model with different audio characteristics"
+                  }
+                </p>
+              </div>
+            </div>
 
             {/* Text-to-Audio Parameters Group */}
-            <div 
+            <div
               className="rounded-lg p-3"
               style={{
                 backgroundColor: 'white',

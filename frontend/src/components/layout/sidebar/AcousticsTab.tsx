@@ -1,12 +1,13 @@
 /**
  * AcousticsTab Component
  *
- * Combines Receivers and IR Library sections.
+ * Combines Receivers, IR Library, and Resonance Audio sections.
  * This component organizes acoustic-related features in the sidebar.
  *
  * Sections:
  * - Receivers: Create and manage receiver spheres
  * - IR Library: Upload, browse, and select impulse responses
+ * - Resonance Audio: Real-time HRTF-based spatial audio with room acoustics
  *
  * Architecture:
  * - Follows modular component pattern
@@ -16,8 +17,9 @@
 
 import { ReceiversSection } from './ReceiversSection';
 import { ImpulseResponseUpload } from '@/components/audio/ImpulseResponseUpload';
+import { ResonanceAudioControls } from '@/components/controls/ResonanceAudioControls';
 import type { ReceiverData } from '@/types';
-import type { ImpulseResponseMetadata } from '@/types/audio';
+import type { ImpulseResponseMetadata, ResonanceAudioConfig, ResonanceRoomMaterial } from '@/types/audio';
 import type { AuralizationConfig } from '@/hooks/useAuralization';
 import { UI_COLORS } from '@/lib/constants';
 
@@ -35,6 +37,15 @@ interface AcousticsTabProps {
   onToggleNormalize: (enabled: boolean) => void;
   selectedIRId: string | null;
   auralizationConfig: AuralizationConfig;
+
+  // Resonance Audio props
+  resonanceAudioConfig: ResonanceAudioConfig;
+  onToggleResonanceAudio: (enabled: boolean) => void;
+  onUpdateRoomMaterials: (materials: ResonanceRoomMaterial) => void;
+  hasGeometry: boolean;
+  showBoundingBox: boolean;
+  onToggleBoundingBox: (show: boolean) => void;
+  onRefreshBoundingBox?: () => void;
 }
 
 export function AcousticsTab({
@@ -47,7 +58,14 @@ export function AcousticsTab({
   onClearIR,
   onToggleNormalize,
   selectedIRId,
-  auralizationConfig
+  auralizationConfig,
+  resonanceAudioConfig,
+  onToggleResonanceAudio,
+  onUpdateRoomMaterials,
+  hasGeometry,
+  showBoundingBox,
+  onToggleBoundingBox,
+  onRefreshBoundingBox
 }: AcousticsTabProps) {
   return (
     <div className="flex flex-col gap-6">
@@ -73,6 +91,17 @@ export function AcousticsTab({
           auralizationConfig={auralizationConfig}
         />
       </div>
+
+      {/* Resonance Audio Controls */}
+      <ResonanceAudioControls
+        config={resonanceAudioConfig}
+        onToggle={onToggleResonanceAudio}
+        onUpdateRoomMaterials={onUpdateRoomMaterials}
+        hasGeometry={hasGeometry}
+        showBoundingBox={showBoundingBox}
+        onToggleBoundingBox={onToggleBoundingBox}
+        onRefreshBoundingBox={onRefreshBoundingBox}
+      />
     </div>
   );
 }

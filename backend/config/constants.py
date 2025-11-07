@@ -60,10 +60,21 @@ DENOISING_REDUCTION_STRENGTH = 0.8  # Noise reduction strength (prop_decrease)
 # Audio Generation Configuration
 # ============================================================================
 
+# Audio Generation Models
+AUDIO_MODEL_TANGOFLUX = "tangoflux"
+AUDIO_MODEL_AUDIOLDM2 = "audioldm2"
+DEFAULT_AUDIO_MODEL = AUDIO_MODEL_TANGOFLUX  # Default model to use
+
 # TangoFlux Model
 TANGOFLUX_MODEL_NAME = "declare-lab/TangoFlux"
 
-# Default Generation Parameters
+# AudioLDM2 Model
+AUDIOLDM2_MODEL_NAME = "cvssp/audioldm2-large"
+AUDIOLDM2_INFERENCE_STEPS = 200  # Default number of inference steps for AudioLDM2
+AUDIOLDM2_NUM_WAVEFORMS = 1  # Number of waveforms to generate per prompt
+AUDIOLDM2_SAMPLE_RATE = 16000  # AudioLDM2 output sample rate
+
+# Default Generation Parameters (TangoFlux)
 DEFAULT_GUIDANCE_SCALE = 4.5  # Default guidance scale for generation
 DEFAULT_DIFFUSION_STEPS = 25  # Default number of diffusion steps
 DEFAULT_SEED_COPIES = 1  # Default number of copies per sound

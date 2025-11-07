@@ -155,6 +155,7 @@ export function Sidebar(props: SidebarProps) {
               globalSteps={props.globalSteps}
               globalNegativePrompt={props.globalNegativePrompt}
               applyDenoising={props.applyDenoising}
+              audioModel={props.audioModel}
               onSetActiveTab={props.setActiveSoundConfigTab}
               onAddConfig={props.onAddSoundConfig}
               onBatchAddConfigs={props.onBatchAddSoundConfigs}
@@ -167,6 +168,7 @@ export function Sidebar(props: SidebarProps) {
               onGlobalStepsChange={props.onGlobalStepsChange}
               onGlobalNegativePromptChange={props.onGlobalNegativePromptChange}
               onApplyDenoisingChange={props.onApplyDenoisingChange}
+              onAudioModelChange={props.onAudioModelChange}
               onReprocessSounds={props.onReprocessSounds}
               onUploadAudio={props.onUploadAudio}
               onClearUploadedAudio={props.onClearUploadedAudio}
@@ -194,6 +196,13 @@ export function Sidebar(props: SidebarProps) {
             onToggleNormalize={props.onToggleNormalize}
             selectedIRId={props.selectedIRId}
             auralizationConfig={props.auralizationConfig}
+            resonanceAudioConfig={props.resonanceAudioConfig}
+            onToggleResonanceAudio={props.onToggleResonanceAudio}
+            onUpdateRoomMaterials={props.onUpdateRoomMaterials}
+            hasGeometry={props.hasGeometry}
+            showBoundingBox={props.showBoundingBox}
+            onToggleBoundingBox={props.onToggleBoundingBox}
+            onRefreshBoundingBox={props.onRefreshBoundingBox}
           />
         )}
       </div>

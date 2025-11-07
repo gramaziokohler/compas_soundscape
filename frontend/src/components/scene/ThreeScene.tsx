@@ -22,6 +22,7 @@ import { GeometryRenderer } from "@/lib/three/geometry-renderer";
 import { SoundSphereManager } from "@/lib/three/sound-sphere-manager";
 import { ReceiverManager } from "@/lib/three/receiver-manager";
 import { AuralizationService } from "@/lib/audio/auralization-service";
+import { ResonanceAudioService } from "@/lib/audio/resonance-audio-service";
 import { PlaybackSchedulerService } from "@/lib/audio/playback-scheduler-service";
 import { ModalImpactSynthesizer } from "@/lib/audio/modal-impact-synthesis";
 import { ModeVisualizer } from "@/lib/three/mode-visualizer";
@@ -42,7 +43,8 @@ import {
   UI_COLORS,
   UI_SCENE_BUTTON,
   ENTITY_CONFIG,
-  TIMELINE_LAYOUT
+  TIMELINE_LAYOUT,
+  RESONANCE_AUDIO
 } from "@/lib/constants";
 import type { UIOverlay, EntityData, EntityOverlay, CompasGeometry } from "@/types";
 import type { ThreeSceneProps } from "@/types/three-scene";
@@ -96,6 +98,10 @@ export function ThreeScene({
   modelEntities = [],
   selectedDiverseEntities = [],
   auralizationConfig,
+  resonanceAudioConfig,
+  geometryBounds,
+  showBoundingBox = false,
+  refreshBoundingBoxTrigger = 0,
   receivers = [],
   onUpdateReceiverPosition,
   onPlaceReceiver,
@@ -118,8 +124,10 @@ export function ThreeScene({
   const receiverManagerRef = useRef<ReceiverManager | null>(null);
   const playbackSchedulerRef = useRef<PlaybackSchedulerService | null>(null);
   const auralizationServiceRef = useRef<AuralizationService | null>(null);
+  const resonanceAudioServiceRef = useRef<ResonanceAudioService | null>(null);
   const inputHandlerRef = useRef<InputHandler | null>(null);
   const modeVisualizerRef = useRef<ModeVisualizer | null>(null);
+  const boundingBoxGroupRef = useRef<THREE.Group | null>(null);
 
   // ============================================================================
   // Refs - Data for Event Handlers
@@ -666,6 +674,13 @@ export function ThreeScene({
     const auralizationService = new AuralizationService(sceneCoordinator.listener);
     auralizationServiceRef.current = auralizationService;
 
+    // Initialize Resonance Audio Service
+    const resonanceAudioService = new ResonanceAudioService(sceneCoordinator.listener);
+    resonanceAudioServiceRef.current = resonanceAudioService;
+    
+    // Set Resonance Audio service reference in sound sphere manager
+    soundSphereManager.setResonanceAudioService(resonanceAudioService);
+
     // Initialize Mode Visualizer
     const modeVisualizer = new ModeVisualizer();
     modeVisualizerRef.current = modeVisualizer;
@@ -742,6 +757,7 @@ export function ThreeScene({
       receiverManager.dispose();
       playbackScheduler.dispose();
       auralizationService.dispose();
+      resonanceAudioService.dispose();
       modeVisualizer.dispose();
       inputHandler.dispose();
 
@@ -1169,7 +1185,20 @@ export function ThreeScene({
   }, [soundscapeData, selectedVariants, scaleForSounds]);
 
   // ============================================================================
+  // Effect - Update Receiver Cubes
+  // ============================================================================
+  useEffect(() => {
+    const receiverManager = receiverManagerRef.current;
+    if (!receiverManager) return;
+
+    receiverManager.updateReceivers(receivers);
+    // Note: Drag controls are updated in the effect below
+  }, [receivers]);
+
+  // ============================================================================
   // Effect - Update Drag Controls (Only when sound spheres or receivers change)
+  // IMPORTANT: This effect MUST run AFTER the "Update Receiver Cubes" effect
+  // to ensure drag controls include newly created receiver meshes
   // ============================================================================
   useEffect(() => {
     const soundSphereManager = soundSphereManagerRef.current;
@@ -1191,20 +1220,10 @@ export function ThreeScene({
     }
 
     // Update drag controls when sound spheres or receivers change
-    // Do NOT update when auralizationConfig changes (audio routing only)
+    // NOTE: Use receivers.length instead of receivers to avoid recreating on position changes
+    // This allows smooth dragging (same pattern as sound spheres which don't trigger on position change)
     inputHandler.setupDragControls(allDraggableObjects, sceneCoordinator.controls);
-  }, [soundscapeData, selectedVariants, scaleForSounds, receivers]);
-
-  // ============================================================================
-  // Effect - Update Receiver Cubes
-  // ============================================================================
-  useEffect(() => {
-    const receiverManager = receiverManagerRef.current;
-    if (!receiverManager) return;
-
-    receiverManager.updateReceivers(receivers);
-    // Note: Drag controls are updated in the effect above
-  }, [receivers]);
+  }, [soundscapeData, selectedVariants, scaleForSounds, receivers.length]);
 
   // ============================================================================
   // Effect - Preview Receiver Cube (Placing Mode)
@@ -1298,6 +1317,361 @@ export function ThreeScene({
     auralizationConfig.normalize
   ]);
 
+  // Helper: Calculate effective bounding box (from geometry or sound sources)
+  const calculateEffectiveBounds = useCallback((): { min: [number, number, number]; max: [number, number, number] } | null => {
+    if (geometryBounds) {
+      return geometryBounds as { min: [number, number, number]; max: [number, number, number] };
+    }
+    
+    // Auto-calculate from sound sources - use actual current positions from SoundSphereManager
+    const soundSphereManager = soundSphereManagerRef.current;
+    if (soundSphereManager) {
+      const positions = soundSphereManager.getAllSpherePositions();
+
+      if (positions.length > 0) {
+        const threshold = RESONANCE_AUDIO.BOUNDING_BOX.AUTO_BBOX_THRESHOLD;
+        const minSize = RESONANCE_AUDIO.BOUNDING_BOX.AUTO_BBOX_MIN_SIZE;
+        
+        let minX = Infinity, minY = Infinity, minZ = Infinity;
+        let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+        
+        positions.forEach(([x, y, z]) => {
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          minZ = Math.min(minZ, z);
+          maxX = Math.max(maxX, x);
+          maxY = Math.max(maxY, y);
+          maxZ = Math.max(maxZ, z);
+        });
+
+        // Calculate center from actual sound positions
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+        const centerZ = (minZ + maxZ) / 2;
+
+        // Calculate initial dimensions from sound spread
+        const initialWidth = maxX - minX;
+        const initialHeight = maxY - minY;
+        const initialDepth = maxZ - minZ;
+
+        // Ensure minimum dimensions and add threshold
+        const width = Math.max(initialWidth + (threshold * 2), minSize);
+        const height = Math.max(initialHeight + (threshold * 2), minSize);
+        const depth = Math.max(initialDepth + (threshold * 2), minSize);
+
+        // Return bounds centered on sound positions
+        return {
+          min: [centerX - width/2, centerY - height/2, centerZ - depth/2],
+          max: [centerX + width/2, centerY + height/2, centerZ + depth/2]
+        };
+      }
+    }
+    
+    return null;
+  }, [geometryBounds]);
+
+  // ============================================================================
+  // Effect - Setup Resonance Audio (Enable/Disable)
+  // ============================================================================
+  useEffect(() => {
+    const resonanceAudioService = resonanceAudioServiceRef.current;
+    const soundSphereManager = soundSphereManagerRef.current;
+    const sceneCoordinator = sceneCoordinatorRef.current;
+    if (!resonanceAudioService || !soundSphereManager || !resonanceAudioConfig || !sceneCoordinator) return;
+
+    const audioSources = soundSphereManager.getAllAudioSources();
+
+    // Only proceed if we have audio sources
+    if (audioSources.size === 0) {
+      return;
+    }
+
+    console.log('[ThreeScene] Resonance Audio enabled state changed:', resonanceAudioConfig.enabled);
+
+    // Use async IIFE to handle async initialization
+    (async () => {
+      if (resonanceAudioConfig.enabled) {
+        // Start with user-configured room properties
+        let roomDimensions = resonanceAudioConfig.roomDimensions;
+        const roomMaterials = resonanceAudioConfig.roomMaterials;
+
+        // Calculate effective bounds (from geometry or sound sources)
+        const effectiveBounds = calculateEffectiveBounds();
+        
+        if (effectiveBounds) {
+          const [minX, minY, minZ] = effectiveBounds.min;
+          const [maxX, maxY, maxZ] = effectiveBounds.max;
+          roomDimensions = {
+            width: Math.abs(maxX - minX),
+            height: Math.abs(maxY - minY),
+            depth: Math.abs(maxZ - minZ)
+          };
+          console.log('[ThreeScene] Using effective bounds for room dimensions:', roomDimensions);
+        } else {
+          console.log('[ThreeScene] No bounds available - using configured room dimensions:', roomDimensions);
+        }
+        
+        // Always use user-selected materials
+        console.log('[ThreeScene] Using room materials:', roomMaterials);
+
+        // Initialize Resonance Audio scene (async)
+        await resonanceAudioService.initialize({
+          enabled: true,
+          ambisonicOrder: resonanceAudioConfig.ambisonicOrder,
+          roomDimensions,
+          roomMaterials
+        });
+
+        // Create Resonance sources for all audio
+        soundSphereManager.createResonanceAudioSources();
+        
+        // Immediately update listener position to trigger audio processing
+        const position = sceneCoordinator.camera.position;
+        const forward = new THREE.Vector3(0, 0, -1);
+        forward.applyQuaternion(sceneCoordinator.camera.quaternion);
+        const up = new THREE.Vector3(0, 1, 0);
+        up.applyQuaternion(sceneCoordinator.camera.quaternion);
+        resonanceAudioService.updateListener(position, { forward, up });
+        
+        console.log('[ThreeScene] Resonance Audio enabled and listener position set');
+      } else {
+        // Disable Resonance Audio
+        resonanceAudioService.setEnabled(false, audioSources);
+      }
+    })();
+  }, [resonanceAudioConfig?.enabled, geometryBounds, soundscapeData, refreshBoundingBoxTrigger, calculateEffectiveBounds]);
+
+  // ============================================================================
+  // Effect - Update Resonance Audio Room Properties
+  // ============================================================================
+  useEffect(() => {
+    const resonanceAudioService = resonanceAudioServiceRef.current;
+    if (!resonanceAudioService || !resonanceAudioConfig) return;
+
+    // Only update if Resonance is enabled
+    if (!resonanceAudioConfig.enabled) {
+      return;
+    }
+
+    // Calculate effective room dimensions
+    let roomDimensions = resonanceAudioConfig.roomDimensions;
+    
+    const effectiveBounds = calculateEffectiveBounds();
+    if (effectiveBounds) {
+      const [minX, minY, minZ] = effectiveBounds.min;
+      const [maxX, maxY, maxZ] = effectiveBounds.max;
+      roomDimensions = {
+        width: Math.abs(maxX - minX),
+        height: Math.abs(maxY - minY),
+        depth: Math.abs(maxZ - minZ)
+      };
+    }
+
+    console.log('[ThreeScene] Updating Resonance Audio room properties');
+    
+    // Update room properties without recreating the scene
+    resonanceAudioService.setRoomProperties(roomDimensions, resonanceAudioConfig.roomMaterials);
+  }, [
+    resonanceAudioConfig?.roomDimensions,
+    resonanceAudioConfig?.roomMaterials,
+    geometryBounds,
+    soundscapeData,
+    refreshBoundingBoxTrigger,
+    calculateEffectiveBounds
+  ]);
+
+  // ============================================================================
+  // Effect - Bounding Box Visualization
+  // ============================================================================
+  useEffect(() => {
+    const sceneCoordinator = sceneCoordinatorRef.current;
+    const soundSphereManager = soundSphereManagerRef.current;
+    if (!sceneCoordinator || !resonanceAudioConfig) return;
+
+    // Calculate effective bounding box
+    const boundsToUse = calculateEffectiveBounds();
+    
+    if (!boundsToUse) {
+      // If no bounds available and bounding box exists, remove it
+      if (boundingBoxGroupRef.current) {
+        sceneCoordinator.scene.remove(boundingBoxGroupRef.current);
+        boundingBoxGroupRef.current.children.forEach(child => {
+          if (child instanceof THREE.Mesh) {
+            child.geometry.dispose();
+            (child.material as THREE.Material).dispose();
+          } else if (child instanceof THREE.LineSegments) {
+            child.geometry.dispose();
+            (child.material as THREE.Material).dispose();
+          } else if (child instanceof THREE.Sprite) {
+            (child.material as THREE.SpriteMaterial).map?.dispose();
+            (child.material as THREE.Material).dispose();
+          }
+        });
+        boundingBoxGroupRef.current = null;
+      }
+      return;
+    }
+
+    // Always clear existing bounding box when no geometry (for auto bbox recalculation on refresh)
+    if (boundingBoxGroupRef.current && !geometryBounds) {
+      sceneCoordinator.scene.remove(boundingBoxGroupRef.current);
+      boundingBoxGroupRef.current.children.forEach(child => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry.dispose();
+          (child.material as THREE.Material).dispose();
+        } else if (child instanceof THREE.LineSegments) {
+          child.geometry.dispose();
+          (child.material as THREE.Material).dispose();
+        } else if (child instanceof THREE.Sprite) {
+          (child.material as THREE.SpriteMaterial).map?.dispose();
+          (child.material as THREE.Material).dispose();
+        }
+      });
+      boundingBoxGroupRef.current = null;
+    }
+
+    // Create bounding box group if it doesn't exist
+    if (!boundingBoxGroupRef.current) {
+      const [minX, minY, minZ] = boundsToUse.min;
+      const [maxX, maxY, maxZ] = boundsToUse.max;
+      const centerX = (minX + maxX) / 2;
+      const centerY = (minY + maxY) / 2;
+      const centerZ = (minZ + maxZ) / 2;
+      const width = maxX - minX;
+      const height = maxY - minY;
+      const depth = maxZ - minZ;
+
+      // Create group to hold all bounding box elements
+      const boundingBoxGroup = new THREE.Group();
+      boundingBoxGroup.position.set(centerX, centerY, centerZ);
+
+      // 1. Create wireframe edges
+      const boxGeometry = new THREE.BoxGeometry(width, height, depth);
+      const edgesGeometry = new THREE.EdgesGeometry(boxGeometry);
+      const wireframeMaterial = new THREE.LineBasicMaterial({ 
+        color: RESONANCE_AUDIO.BOUNDING_BOX.WIREFRAME_COLOR,
+        linewidth: RESONANCE_AUDIO.BOUNDING_BOX.WIREFRAME_WIDTH,
+        depthTest: false, // Always render on top
+        depthWrite: false
+      });
+      const wireframe = new THREE.LineSegments(edgesGeometry, wireframeMaterial);
+      wireframe.renderOrder = RESONANCE_AUDIO.BOUNDING_BOX.WIREFRAME_RENDER_ORDER;
+      boundingBoxGroup.add(wireframe);
+
+      // Calculate label size based on bounding box dimensions
+      const maxDimension = Math.max(width, height, depth);
+      const labelWidth = maxDimension * RESONANCE_AUDIO.BOUNDING_BOX.LABEL_SCALE_FACTOR;
+      const labelHeight = labelWidth / RESONANCE_AUDIO.BOUNDING_BOX.LABEL_ASPECT_RATIO;
+
+      // 2. Create face planes with materials
+      const faceConfigs = [
+        { name: 'Left', normal: new THREE.Vector3(-1, 0, 0), position: new THREE.Vector3(-width/2, 0, 0), rotation: [0, Math.PI/2, 0], material: 'left', size: [depth, height] },
+        { name: 'Right', normal: new THREE.Vector3(1, 0, 0), position: new THREE.Vector3(width/2, 0, 0), rotation: [0, -Math.PI/2, 0], material: 'right', size: [depth, height] },
+        { name: 'Front', normal: new THREE.Vector3(0, 0, 1), position: new THREE.Vector3(0, 0, depth/2), rotation: [0, 0, 0], material: 'front', size: [width, height] },
+        { name: 'Back', normal: new THREE.Vector3(0, 0, -1), position: new THREE.Vector3(0, 0, -depth/2), rotation: [0, Math.PI, 0], material: 'back', size: [width, height] },
+        { name: 'Floor', normal: new THREE.Vector3(0, -1, 0), position: new THREE.Vector3(0, -height/2, 0), rotation: [Math.PI/2, 0, 0], material: 'down', size: [width, depth] },
+        { name: 'Ceiling', normal: new THREE.Vector3(0, 1, 0), position: new THREE.Vector3(0, height/2, 0), rotation: [-Math.PI/2, 0, 0], material: 'up', size: [width, depth] },
+      ];
+
+      faceConfigs.forEach(config => {
+        // Create semi-transparent plane
+        const planeGeometry = new THREE.PlaneGeometry(config.size[0], config.size[1]);
+        const planeMaterial = new THREE.MeshBasicMaterial({
+          color: 0xffffff,
+          transparent: true,
+          opacity: RESONANCE_AUDIO.BOUNDING_BOX.FACE_BASE_OPACITY,
+          side: THREE.DoubleSide,
+          depthTest: false,
+          depthWrite: false
+        });
+        const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+        plane.position.copy(config.position);
+        plane.rotation.set(config.rotation[0], config.rotation[1], config.rotation[2]);
+        plane.renderOrder = RESONANCE_AUDIO.BOUNDING_BOX.FACE_RENDER_ORDER;
+        plane.userData.faceName = config.material; // Store for updates
+        boundingBoxGroup.add(plane);
+
+        // Create text sprite for label with fixed size and orientation
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d')!;
+        canvas.width = RESONANCE_AUDIO.BOUNDING_BOX.LABEL_CANVAS_WIDTH;
+        canvas.height = RESONANCE_AUDIO.BOUNDING_BOX.LABEL_CANVAS_HEIGHT;
+        context.fillStyle = RESONANCE_AUDIO.BOUNDING_BOX.LABEL_BG_COLOR;
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.font = RESONANCE_AUDIO.BOUNDING_BOX.LABEL_FONT;
+        context.fillStyle = RESONANCE_AUDIO.BOUNDING_BOX.LABEL_TEXT_COLOR;
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.fillText(config.name, canvas.width / 2, canvas.height / 2);
+
+        const texture = new THREE.CanvasTexture(canvas);
+        const spriteMaterial = new THREE.SpriteMaterial({ 
+          map: texture,
+          depthTest: false,
+          depthWrite: false
+        });
+        const sprite = new THREE.Sprite(spriteMaterial);
+        sprite.position.copy(config.position);
+        // Fixed size based on bounding box dimensions
+        sprite.scale.set(labelWidth, labelHeight, 1);
+        sprite.renderOrder = RESONANCE_AUDIO.BOUNDING_BOX.LABEL_RENDER_ORDER;
+        boundingBoxGroup.add(sprite);
+      });
+
+      // Add to scene
+      sceneCoordinator.scene.add(boundingBoxGroup);
+      boundingBoxGroupRef.current = boundingBoxGroup;
+      boxGeometry.dispose();
+    }
+
+    // Update face colors based on materials
+    if (boundingBoxGroupRef.current && resonanceAudioConfig.roomMaterials) {
+      const materials = resonanceAudioConfig.roomMaterials;
+      
+      boundingBoxGroupRef.current.children.forEach(child => {
+        if (child instanceof THREE.Mesh && child.userData.faceName) {
+          const faceMaterial = materials[child.userData.faceName as keyof typeof materials];
+          const absorption = RESONANCE_AUDIO.MATERIAL_ABSORPTION[faceMaterial] || 0;
+          
+          // Color from white (low absorption) to cyan (high absorption)
+          const r = 1 - absorption;
+          const g = 1 - absorption * 0.3;
+          const b = 1;
+          
+          (child.material as THREE.MeshBasicMaterial).color.setRGB(r, g, b);
+          (child.material as THREE.MeshBasicMaterial).opacity = 
+            RESONANCE_AUDIO.BOUNDING_BOX.FACE_BASE_OPACITY + 
+            absorption * RESONANCE_AUDIO.BOUNDING_BOX.FACE_ABSORPTION_OPACITY_SCALE;
+        }
+      });
+    }
+
+    // Toggle visibility based on showBoundingBox prop
+    if (boundingBoxGroupRef.current) {
+      boundingBoxGroupRef.current.visible = showBoundingBox;
+    }
+
+    return () => {
+      // Cleanup on unmount
+      if (boundingBoxGroupRef.current) {
+        sceneCoordinator.scene.remove(boundingBoxGroupRef.current);
+        boundingBoxGroupRef.current.children.forEach(child => {
+          if (child instanceof THREE.Mesh) {
+            child.geometry.dispose();
+            (child.material as THREE.Material).dispose();
+          } else if (child instanceof THREE.LineSegments) {
+            child.geometry.dispose();
+            (child.material as THREE.Material).dispose();
+          } else if (child instanceof THREE.Sprite) {
+            (child.material as THREE.SpriteMaterial).map?.dispose();
+            (child.material as THREE.Material).dispose();
+          }
+        });
+        boundingBoxGroupRef.current = null;
+      }
+    };
+  }, [geometryBounds, showBoundingBox, resonanceAudioConfig?.roomMaterials, refreshBoundingBoxTrigger, soundscapeData, calculateEffectiveBounds]);
+
   // ============================================================================
   // Effect - Apply Volume Changes
   // ============================================================================
@@ -1352,6 +1726,44 @@ export function ThreeScene({
       sceneCoordinator.removeAnimationCallback(updateOrientation);
     };
   }, [auralizationConfig.enabled, auralizationConfig.impulseResponseBuffer]);
+
+  // ============================================================================
+  // Effect - Update Resonance Audio Listener Position and Orientation
+  // ============================================================================
+  useEffect(() => {
+    const sceneCoordinator = sceneCoordinatorRef.current;
+    const resonanceAudioService = resonanceAudioServiceRef.current;
+    if (!sceneCoordinator || !resonanceAudioService || !resonanceAudioConfig) return;
+
+    // Only update listener if Resonance Audio is enabled
+    if (!resonanceAudioConfig.enabled) {
+      return;
+    }
+
+    // Update listener position and orientation in animation loop
+    const updateListener = () => {
+      if (!sceneCoordinator || !resonanceAudioService) return;
+
+      const position = sceneCoordinator.camera.position;
+      
+      // Get camera's forward and up vectors
+      const forward = new THREE.Vector3(0, 0, -1);
+      forward.applyQuaternion(sceneCoordinator.camera.quaternion);
+      
+      const up = new THREE.Vector3(0, 1, 0);
+      up.applyQuaternion(sceneCoordinator.camera.quaternion);
+
+      // Update Resonance Audio listener
+      resonanceAudioService.updateListener(position, { forward, up });
+    };
+
+    // Add to animation loop
+    sceneCoordinator.addAnimationCallback(updateListener);
+
+    return () => {
+      sceneCoordinator.removeAnimationCallback(updateListener);
+    };
+  }, [resonanceAudioConfig?.enabled]);
 
   // ============================================================================
   // Effect - Update Timeline Data (Schedule Changes Only)

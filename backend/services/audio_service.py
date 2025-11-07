@@ -13,6 +13,9 @@ from utils.audio_processing import (
 )
 from config.constants import (
     TANGOFLUX_MODEL_NAME,
+    AUDIO_MODEL_TANGOFLUX,
+    AUDIO_MODEL_AUDIOLDM2,
+    DEFAULT_AUDIO_MODEL,
     DEFAULT_DURATION_SECONDS,
     DEFAULT_GUIDANCE_SCALE,
     DEFAULT_DIFFUSION_STEPS,
@@ -32,21 +35,31 @@ from config.constants import (
     GENERATED_SOUNDS_DIR,
     GENERATED_SOUND_URL_PREFIX
 )
+from services.audioldm2_service import AudioLDM2Service
 
 
 class AudioService:
-    """Service for generating audio from text prompts"""
+    """Service for generating audio from text prompts using multiple models"""
 
     def __init__(self):
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        print(f"Using device: {self.device}")
-        self.model = None
+        print(f"AudioService using device: {self.device}")
+        self.tangoflux_model = None
+        self.audioldm2_service = None
 
-    def _init_model(self):
-        """Lazy initialization of the audio generation model"""
-        if self.model is None:
-            self.model = TangoFluxInference(name=TANGOFLUX_MODEL_NAME, device=self.device)
-        return self.model
+    def _init_tangoflux_model(self):
+        """Lazy initialization of the TangoFlux model"""
+        if self.tangoflux_model is None:
+            print("Initializing TangoFlux model...")
+            self.tangoflux_model = TangoFluxInference(name=TANGOFLUX_MODEL_NAME, device=self.device)
+        return self.tangoflux_model
+
+    def _init_audioldm2_service(self):
+        """Lazy initialization of the AudioLDM2 service"""
+        if self.audioldm2_service is None:
+            print("Initializing AudioLDM2 service...")
+            self.audioldm2_service = AudioLDM2Service()
+        return self.audioldm2_service
 
     @staticmethod
     def get_random_position(idx: int, total_sounds: int, bounding_box: dict = None):
@@ -74,7 +87,9 @@ class AudioService:
         guidance_scale: float = DEFAULT_GUIDANCE_SCALE,
         steps: int = DEFAULT_DIFFUSION_STEPS,
         spl_db: float = DEFAULT_SPL_DB,
-        apply_denoising: bool = False
+        apply_denoising: bool = False,
+        audio_model: str = DEFAULT_AUDIO_MODEL,
+        negative_prompt: str = ""
     ) -> None:
         """Generate a single audio file from a text prompt with SPL calibration and optional denoising
 
@@ -86,39 +101,58 @@ class AudioService:
             steps: Number of diffusion steps
             spl_db: Target SPL level in dB
             apply_denoising: Whether to apply noise reduction
+            audio_model: Model to use ('tangoflux' or 'audioldm2')
+            negative_prompt: Negative prompt (used by AudioLDM2)
         """
-        model = self._init_model()
-
         denoise_suffix = " + denoising" if apply_denoising else ""
-        print(f"Generating sound: {prompt} (Target SPL: {spl_db} dB{denoise_suffix})")
+        print(f"Generating sound with {audio_model}: {prompt} (Target SPL: {spl_db} dB{denoise_suffix})")
 
-        audio = model.generate(
-            prompt,
-            steps=steps,
-            duration=duration,
-            guidance_scale=guidance_scale
-        )
+        # Route to appropriate model
+        if audio_model == AUDIO_MODEL_AUDIOLDM2:
+            # Use AudioLDM2 service
+            audioldm2_service = self._init_audioldm2_service()
+            audioldm2_service.generate_sound_file(
+                prompt=prompt,
+                output_path=output_path,
+                duration=duration,
+                guidance_scale=guidance_scale,
+                steps=steps,
+                spl_db=spl_db,
+                apply_denoising=apply_denoising,
+                negative_prompt=negative_prompt or "Low quality, distorted"
+            )
+        else:
+            # Use TangoFlux (default)
+            model = self._init_tangoflux_model()
 
-        # Step 1: Normalize to base RMS level
-        audio = normalize_audio_rms(audio, target_rms=TARGET_RMS)
+            audio = model.generate(
+                prompt,
+                steps=steps,
+                duration=duration,
+                guidance_scale=guidance_scale
+            )
 
-        # Step 2: Apply denoising if requested
-        if apply_denoising:
-            print("Applying noise reduction...")
-            audio = denoise_audio(audio, sample_rate=AUDIO_SAMPLE_RATE)
+            # Step 1: Normalize to base RMS level
+            audio = normalize_audio_rms(audio, target_rms=TARGET_RMS)
 
-        # Step 3: Apply SPL calibration
-        audio = apply_spl_calibration(audio, target_spl_db=spl_db)
+            # Step 2: Apply denoising if requested
+            if apply_denoising:
+                print("Applying noise reduction...")
+                audio = denoise_audio(audio, sample_rate=AUDIO_SAMPLE_RATE)
 
-        torchaudio.save(output_path, audio.cpu(), AUDIO_SAMPLE_RATE)
-        print(f"Saved to: {output_path} (calibrated to {spl_db} dB SPL{denoise_suffix})")
+            # Step 3: Apply SPL calibration
+            audio = apply_spl_calibration(audio, target_spl_db=spl_db)
+
+            torchaudio.save(output_path, audio.cpu(), AUDIO_SAMPLE_RATE)
+            print(f"Saved to: {output_path} (calibrated to {spl_db} dB SPL{denoise_suffix})")
 
     def generate_multiple_sounds(
         self,
         sound_configs: list[dict],
         output_dir: str,
         bounding_box: dict = None,
-        apply_denoising: bool = False
+        apply_denoising: bool = False,
+        audio_model: str = DEFAULT_AUDIO_MODEL
     ) -> list[dict]:
         """Generate multiple audio files from a list of sound configurations"""
         os.makedirs(output_dir, exist_ok=True)
@@ -134,6 +168,7 @@ class AudioService:
             steps = sound_config.get('steps', DEFAULT_DIFFUSION_STEPS)
             spl_db = sound_config.get('spl_db', DEFAULT_SPL_DB)  # Get SPL from config
             interval_seconds = sound_config.get('interval_seconds', DEFAULT_INTERVAL_BETWEEN_SOUNDS)  # Get interval from config
+            negative_prompt = sound_config.get('negative_prompt', '')  # Get negative prompt from config
 
             if not prompt:
                 continue
@@ -153,7 +188,7 @@ class AudioService:
 
             # Create a hash of all generation parameters for unique identification
             import hashlib
-            param_string = f"{prompt}_{duration}_{guidance_scale}_{steps}_{apply_denoising}"
+            param_string = f"{prompt}_{duration}_{guidance_scale}_{steps}_{apply_denoising}_{audio_model}"
             param_hash = hashlib.md5(param_string.encode()).hexdigest()[:PARAM_HASH_LENGTH]
 
             for copy_idx in range(seed_copies):
@@ -193,7 +228,17 @@ class AudioService:
                 print(f"Generating sound {idx + 1}/{len(sound_configs)} (copy {copy_idx + 1}/{seed_copies}): {prompt}")
 
                 # Generate audio with SPL calibration and optional denoising
-                self.generate_sound_file(prompt, output_path, duration, guidance_scale, steps, spl_db, apply_denoising)
+                self.generate_sound_file(
+                    prompt=prompt,
+                    output_path=output_path,
+                    duration=duration,
+                    guidance_scale=guidance_scale,
+                    steps=steps,
+                    spl_db=spl_db,
+                    apply_denoising=apply_denoising,
+                    audio_model=audio_model,
+                    negative_prompt=negative_prompt
+                )
 
                 sound_data = {
                     "id": f"generated_{idx}_{copy_idx}",

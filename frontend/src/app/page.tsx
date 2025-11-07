@@ -8,6 +8,7 @@ import { useTextGeneration } from "@/hooks/useTextGeneration";
 import { useSoundGeneration } from "@/hooks/useSoundGeneration";
 import { useAudioControls } from "@/hooks/useAudioControls";
 import { useAuralization } from "@/hooks/useAuralization";
+import { useResonanceAudio } from "@/hooks/useResonanceAudio";
 import { useSED } from "@/hooks/useSED";
 import { useReceivers } from "@/hooks/useReceivers";
 import { useModalImpact } from "@/hooks/useModalImpact";
@@ -21,6 +22,7 @@ export default function Home() {
   const soundGen = useSoundGeneration(fileUpload.geometryBounds);
   const audioControls = useAudioControls(soundGen.generatedSounds);
   const auralization = useAuralization();
+  const resonanceAudio = useResonanceAudio();
   const sed = useSED();
   const receivers = useReceivers();
   const modalImpact = useModalImpact();
@@ -29,9 +31,19 @@ export default function Home() {
   // IR Library state
   const [selectedIRId, setSelectedIRId] = useState<string | null>(null);
   
+  // Bounding box visualization state
+  const [showBoundingBox, setShowBoundingBox] = useState(false);
+  const [refreshBoundingBoxTrigger, setRefreshBoundingBoxTrigger] = useState(0);
+  
   // Entity linking state
   const [isLinkingEntity, setIsLinkingEntity] = useState(false);
   const [linkingConfigIndex, setLinkingConfigIndex] = useState<number | null>(null);
+
+  // Handler: Refresh bounding box calculation from sound sources
+  const handleRefreshBoundingBox = useCallback(() => {
+    setRefreshBoundingBoxTrigger(prev => prev + 1);
+    console.log('[Page] Triggering bounding box refresh');
+  }, []);
 
   // Load sounds from text generation into sound generation tab
   const handleLoadSoundsToGeneration = useCallback(() => {
@@ -308,6 +320,7 @@ export default function Home() {
         globalSteps={soundGen.globalSteps}
         globalNegativePrompt={soundGen.globalNegativePrompt}
         applyDenoising={soundGen.applyDenoising}
+        audioModel={soundGen.audioModel}
         setActiveSoundConfigTab={soundGen.setActiveSoundConfigTab}
         onAddSoundConfig={soundGen.handleAddConfig}
         onBatchAddSoundConfigs={soundGen.handleBatchAddConfigs}
@@ -320,6 +333,7 @@ export default function Home() {
         onGlobalStepsChange={soundGen.handleGlobalStepsChange}
         onGlobalNegativePromptChange={soundGen.setGlobalNegativePrompt}
         onApplyDenoisingChange={soundGen.setApplyDenoising}
+        onAudioModelChange={soundGen.setAudioModel}
         onReprocessSounds={soundGen.handleReprocessSounds}
         onUploadAudio={soundGen.handleUploadAudio}
         onClearUploadedAudio={soundGen.handleClearUploadedAudio}
@@ -353,6 +367,15 @@ export default function Home() {
         onStartPlacingReceiver={receivers.startPlacingReceiver}
         onDeleteReceiver={receivers.deleteReceiver}
         onUpdateReceiverName={receivers.updateReceiverName}
+
+        // Resonance Audio props
+        resonanceAudioConfig={resonanceAudio.config}
+        onToggleResonanceAudio={resonanceAudio.toggleResonanceAudio}
+        onUpdateRoomMaterials={resonanceAudio.updateRoomMaterials}
+        hasGeometry={fileUpload.geometryData !== null}
+        showBoundingBox={showBoundingBox}
+        onToggleBoundingBox={setShowBoundingBox}
+        onRefreshBoundingBox={handleRefreshBoundingBox}
       />
 
       <main className="flex-1 overflow-hidden relative">
@@ -380,6 +403,10 @@ export default function Home() {
           modelEntities={fileUpload.modelEntities}
           selectedDiverseEntities={textGen.selectedDiverseEntities}
           auralizationConfig={auralization.config}
+          resonanceAudioConfig={resonanceAudio.config}
+          geometryBounds={fileUpload.geometryBounds}
+          showBoundingBox={showBoundingBox}
+          refreshBoundingBoxTrigger={refreshBoundingBoxTrigger}
           receivers={receivers.receivers}
           onUpdateReceiverPosition={receivers.updateReceiverPosition}
           onPlaceReceiver={receivers.placeReceiver}

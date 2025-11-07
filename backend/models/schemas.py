@@ -6,6 +6,12 @@ from enum import Enum
 from typing import Optional
 
 
+class AudioModel(str, Enum):
+    """Audio generation model enumeration"""
+    TANGOFLUX = "tangoflux"
+    AUDIOLDM2 = "audioldm2"
+
+
 class PromptRequest(BaseModel):
     prompt: str | None = None
     num_sounds: int = 5
@@ -16,6 +22,7 @@ class SoundGenerationRequest(BaseModel):
     sounds: list[dict]
     bounding_box: dict | None = None
     apply_denoising: bool = False
+    audio_model: AudioModel = AudioModel.TANGOFLUX  # Model to use for generation
 
 
 class IFCEntityInfo(BaseModel):

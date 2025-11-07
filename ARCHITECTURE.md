@@ -28,7 +28,8 @@ compas_soundscape/
 │   │   ├── sounds.py                # Audio generation endpoints
 │   │   └── upload.py                # File upload endpoints
 │   ├── services/
-│   │   ├── audio_service.py         # TangoFlux audio generation
+│   │   ├── audio_service.py         # Multi-model audio generation (TangoFlux + AudioLDM2)
+│   │   ├── audioldm2_service.py     # AudioLDM2 audio generation service
 │   │   ├── bbc_service.py           # BBC Sound Effects API
 │   │   ├── freesound_service.py     # Freesound API integration
 │   │   ├── geometry_service.py      # 3D file processing (COMPAS, rhino3dm)
@@ -69,7 +70,9 @@ compas_soundscape/
 │       │   │   └── WaveSurferTimeline.tsx    # Enhanced timeline (WaveSurfer.js, waveform visualization)
 │       │   ├── controls/            # Reusable UI controls
 │       │   │   ├── FileUploadArea.tsx
-│       │   │   └── PlaybackControls.tsx
+│       │   │   ├── PlaybackControls.tsx
+│       │   │   ├── OrientationIndicator.tsx
+│       │   │   └── ResonanceAudioControls.tsx  # NEW - Resonance Audio controls
 │       │   ├── layout/
 │       │   │   ├── Sidebar.tsx
 │       │   │   └── sidebar/         # Sidebar sub-components
@@ -78,6 +81,7 @@ compas_soundscape/
 │       ├── hooks/
 │       │   ├── useAudioControls.ts  # Audio playback state & controls
 │       │   ├── useAuralization.ts   # Spatial audio/auralization
+│       │   ├── useResonanceAudio.ts # NEW - Resonance Audio state management
 │       │   ├── useFileUpload.ts     # File upload & processing
 │       │   ├── useHorizontalScroll.ts # Mouse wheel horizontal scrolling
 │       │   ├── useModalImpact.ts    # Modal analysis & impact sound synthesis & mode visualization
@@ -96,6 +100,7 @@ compas_soundscape/
 │       │   │   ├── ambisonic-decoder.ts     # NEW - Binaural decoding (virtual speakers)
 │       │   │   ├── audio-info.ts           # Audio file loading & metadata
 │       │   │   ├── modal-impact-synthesis.ts   # NEW - Impact sound synthesis from modal analysis
+│       │   │   ├── resonance-audio-service.ts  # NEW - Google Resonance Audio wrapper
 │       │   │   ├── waveform-utils.ts       # Waveform visualization (extraction & rendering)
 │       │   │   ├── timeline-utils.ts       # Timeline data extraction (with audioUrl for WaveSurfer)
 │       │   │   ├── playback-scheduler-service.ts # Audio playback scheduling
@@ -120,12 +125,13 @@ compas_soundscape/
 │       ├── services/
 │       │   └── api.ts               # API client (all backend HTTP calls)
 │       └── types/
-│           ├── audio.ts             # Audio type definitions
+│           ├── audio.ts             # Audio type definitions (updated - Resonance Audio types)
 │           ├── auralization.ts      # Auralization types
 │           ├── components.ts        # Component prop types
 │           ├── index.ts             # Type exports
 │           ├── modal.ts             # NEW - Modal analysis & mode visualization types
 │           ├── receiver.ts          # Receiver types
+│           ├── resonance-audio.d.ts # NEW - Resonance Audio library type declarations
 │           ├── sed.ts               # SED types
 │           └── three-scene.ts       # Three.js scene types
 │
@@ -219,7 +225,9 @@ compas_soundscape/
 │                │  ┌─────────────────────────────────────┐ │     │
 │                │  │    AudioService                     │ │     │
 │                │  │  - Generate audio from text         │ │     │
-│                │  │  - Manage TangoFlux model          │ │     │
+│                │  │  - Manage multiple models           │ │     │
+│                │  │    (TangoFlux + AudioLDM2)         │ │     │
+│                │  │  - Route to selected model          │ │     │
 │                │  │  - Position sound sources           │ │     │
 │                │  └─────────────────────────────────────┘ │     │
 │                │                                           │     │
@@ -692,3 +700,185 @@ All ambisonic encoding/decoding uses **SN3D (Schmidt semi-normalized)** standard
 - [ ] UI orientation indicator in first-person mode
 - [ ] Source position locking/warning when ambisonic IR loaded
 - [ ] IR reversal for auralization/deauralization workflows
+
+---
+
+## Resonance Audio Integration
+
+### Overview
+Google Resonance Audio provides real-time spatial audio rendering with HRTF-based binaural output and room acoustics simulation. It operates **in parallel** with the existing convolution-based auralization system.
+
+### Architecture
+
+**System Design:**
+- **Parallel to IR-based auralization**: Both can run simultaneously
+- **Real-time synthesis**: Room acoustics computed on-the-fly (no pre-recorded IRs)
+- **Interactive**: Room parameters adjustable in real-time
+- **HRTF spatialization**: Accurate 3D sound localization for headphones
+
+**Comparison with IR Auralization:**
+
+| Feature | IR Convolution | Resonance Audio |
+|---------|----------------|-----------------|
+| **Accuracy** | Very high (real recordings) | Good (synthetic) |
+| **Flexibility** | Fixed room (baked into IR) | Adjustable room |
+| **CPU Cost** | Medium (convolution) | Medium-High (real-time synthesis) |
+| **Use Case** | Realistic room acoustics | Interactive spatial audio |
+| **Translation** | ❌ Not accurate | ✅ Fully accurate |
+| **Rotation** | ✅ Accurate (FOA/TOA only) | ✅ Accurate |
+
+### Components
+
+**Service Layer:**
+- `frontend/src/lib/audio/resonance-audio-service.ts`
+  - `ResonanceAudioService` - Main service class
+  - Scene initialization and management
+  - Source creation and positioning
+  - Room acoustics configuration
+  - Listener position/orientation updates
+
+**Type Definitions:**
+- `frontend/src/types/audio.ts`
+  - `ResonanceAudioConfig` - Configuration interface
+  - `ResonanceRoomMaterial` - Material per surface (6 surfaces)
+  - `ResonanceRoomDimensions` - Room size (width, height, depth)
+  - `ResonanceSourceConfig` - Source settings (gain, rolloff, directivity)
+
+- `frontend/src/types/resonance-audio.d.ts`
+  - TypeScript declarations for `resonance-audio` library
+  - ResonanceAudio class interface
+  - ResonanceAudioSource interface
+
+**State Management:**
+- `frontend/src/hooks/useResonanceAudio.ts`
+  - Configuration state management
+  - Room dimensions/materials updates
+  - Preset application
+  - Enable/disable toggle
+
+**UI Components:**
+- `frontend/src/components/controls/ResonanceAudioControls.tsx`
+  - Enable/disable toggle
+  - Room preset selector (Studio, Concert Hall, Living Room, Warehouse, Outdoor)
+  - Room dimensions sliders (width, height, depth)
+  - Surface material dropdowns (6 surfaces, 14+ materials)
+
+**Integration Points:**
+- `frontend/src/lib/three/sound-sphere-manager.ts`
+  - `setResonanceAudioService()` - Set service reference
+  - `createResonanceAudioSources()` - Create sources for all sounds
+  - `updateSpherePosition()` - Update source positions on drag
+
+### Data Flow
+
+```
+User enables Resonance Audio (UI toggle)
+  ↓
+useResonanceAudio hook updates config state
+  ↓
+ThreeScene receives config via props
+  ↓
+ResonanceAudioService.initialize(config)
+  ├─> Creates Resonance scene with ambisonic order
+  ├─> Sets room properties (dimensions, materials)
+  └─> Connects output to audio destination
+  ↓
+For each sound source:
+  ResonanceAudioService.createSource(soundId, audio, sourceConfig)
+  ├─> Gets THREE.PositionalAudio output node
+  ├─> Creates Resonance source
+  ├─> Configures directivity and distance model
+  └─> Connects: THREE.js source → Resonance source → Resonance scene
+  ↓
+Animation loop (every frame):
+  ResonanceAudioService.updateListener(position, orientation)
+  ├─> Updates listener position (x, y, z)
+  └─> Updates listener orientation (forward + up vectors)
+  ↓
+Resonance Audio Scene
+  ├─> Renders room acoustics (early reflections + reverb)
+  ├─> Applies distance attenuation
+  ├─> Applies directivity pattern
+  └─> Outputs binaural stereo (HRTF-based)
+```
+
+### Room Acoustics
+
+**Configurable Parameters:**
+1. **Room Dimensions** (meters)
+   - Width (X axis)
+   - Height (Y axis)
+   - Depth (Z axis)
+
+2. **Surface Materials** (6 surfaces)
+   - Left wall
+   - Right wall
+   - Front wall
+   - Back wall
+   - Floor (down)
+   - Ceiling (up)
+
+3. **Material Library** (24 materials)
+   - Hard surfaces: brick, concrete, glass, marble, metal
+   - Soft surfaces: acoustic tiles, curtains, grass
+   - Intermediate: wood, plaster, carpet
+   - Special: transparent (open space), uniform (equal absorption)
+
+4. **Room Presets**
+   - **Studio**: Acoustic tiles (dry, minimal reverb)
+   - **Concert Hall**: Wood panels, parquet floor (warm reverb)
+   - **Living Room**: Plaster walls, parquet floor (moderate reverb)
+   - **Warehouse**: Concrete walls, metal ceiling (long reverb)
+   - **Outdoor**: Grass, transparent ceiling (no reverb)
+
+### Source Configuration
+
+**Distance Attenuation Models:**
+- **Logarithmic** (default): Natural inverse-square law falloff
+- **Linear**: Constant rate falloff (simpler, less realistic)
+- **None**: No distance attenuation
+
+**Directivity Patterns:**
+- **Pattern**: 0 (omnidirectional) to 1 (cardioid/directional)
+- **Sharpness**: 0 (wide) to 1 (narrow beam)
+- Per-source configuration for realistic sound radiation
+
+**Example Use Cases:**
+- Omnidirectional (0): Point sources, ambient sounds
+- Cardioid (1): Musical instruments, loudspeakers
+
+### Constants
+
+`frontend/src/lib/constants.ts` - `RESONANCE_AUDIO` object:
+```typescript
+DEFAULT_AMBISONIC_ORDER: 3        // 16-channel 3rd order (highest quality)
+DEFAULT_ROOM_DIMENSIONS: {
+  width: 10,                      // 10m × 3m × 10m (medium room)
+  height: 3,
+  depth: 10
+}
+DEFAULT_ROOM_MATERIALS: {
+  left: 'brick-bare',             // Brick walls
+  right: 'brick-bare',
+  front: 'brick-bare',
+  back: 'brick-bare',
+  down: 'parquet-on-concrete',    // Parquet floor
+  up: 'acoustic-ceiling-tiles'    // Acoustic ceiling
+}
+ROOM_PRESETS: {
+  STUDIO, CONCERT_HALL, LIVING_ROOM, WAREHOUSE, OUTDOOR
+}
+DEFAULT_ROLLOFF: 'logarithmic'
+DEFAULT_MIN_DISTANCE: 1           // Meters
+DEFAULT_MAX_DISTANCE: 50          // Meters
+```
+
+### Future Enhancements
+- [ ] Material absorption visualization
+- [ ] RT60 calculation from room configuration
+- [ ] Source directivity visualization (polar patterns)
+- [ ] Multi-listener support
+- [ ] Doppler effect for moving sources
+- [ ] Occlusion/obstruction modeling
+- [ ] Integration with modal analysis for source directivity
+

@@ -7,6 +7,7 @@
 
 import type { CompasGeometry, SoundEvent, SoundState, EntityData, ReceiverData } from "./index";
 import type { AuralizationConfig } from "./auralization";
+import type { ResonanceAudioConfig } from "./audio";
 import type { ModeVisualizationState } from "./modal";
 
 /**
@@ -88,6 +89,18 @@ export interface ThreeSceneProps {
 
   /** Auralization configuration (impulse response settings) */
   auralizationConfig: AuralizationConfig;
+
+  /** Resonance Audio configuration (real-time spatial audio) */
+  resonanceAudioConfig?: ResonanceAudioConfig;
+
+  /** Geometry bounding box (for room dimensions) */
+  geometryBounds?: { min: [number, number, number]; max: [number, number, number] } | null;
+
+  /** Whether to show the bounding box wireframe visualization */
+  showBoundingBox?: boolean;
+
+  /** Trigger to refresh bounding box calculation (increment to refresh) */
+  refreshBoundingBoxTrigger?: number;
 
   /** Array of receiver positions for binaural audio */
   receivers?: ReceiverData[];

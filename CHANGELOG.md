@@ -1,5 +1,197 @@
 # CHANGELOG
 
+## [2025-11-06] - Fix Receiver Dragging
+### Fixed
+- **Frontend: Receivers are now draggable in 3D scene**
+  - `frontend/src/components/scene/ThreeScene.tsx` - Fixed React effect execution and dependencies
+    - Moved "Update Drag Controls" effect to run AFTER "Update Receiver Cubes" effect (lines 1198-1226)
+    - Changed dependency from `receivers` to `receivers.length` to avoid recreating drag controls on position changes (line 1226)
+    - Previously, drag controls were initialized before receiver meshes were created
+    - Also, position updates during drag would trigger effect with full receivers array, recreating controls mid-drag
+    - Now uses same pattern as sound spheres: only recreate when count changes, not positions
+
+  - `frontend/src/lib/three/input-handler.ts` - Unified drag behavior for receivers and sound spheres
+    - Receivers now update position during drag, matching sound sphere behavior (lines 171-182)
+    - Both sound spheres and receivers use identical drag event handling pattern
+    - Removed duplicate/different handling that was causing inconsistencies
+
+  - `frontend/src/lib/three/draggable-mesh-manager.ts` - Skip position updates during drag
+    - Added check to skip position updates for meshes currently being dragged (lines 63-67)
+    - Provides additional protection against state update conflicts
+    - Ensures smooth dragging even if state updates occur
+
+## [2025-11-06] - Sample Audio Mode
+### Added
+- **Sample Audio Mode for Sound Generation**
+  - `frontend/src/types/index.ts` - Added 'sample-audio' to SoundGenerationMode type
+    - New mode: "sample-audio" for loading predefined sample audio
+
+  - `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx` - Sample Audio UI
+    - Added "Sample Audio" option to Mode dropdown
+    - Waveform display for loaded sample audio (auto-loads immediately)
+    - Clear button to remove loaded sample audio
+
+  - `backend/routers/sounds.py` - Sample audio endpoint
+    - New GET endpoint: `/api/sample-audio`
+    - Serves `backend/data/Le Corbeau et le Renard (french).wav`
+    - FileResponse with proper media type and filename
+
+  - `frontend/src/hooks/useSoundGeneration.ts` - Immediate auto-load logic
+    - Sample audio loads automatically when mode is selected (in `handleModeChange`)
+    - Fetches sample audio from backend `/api/sample-audio`
+    - Converts to File and loads using existing audio loading mechanism
+    - Sets display name to "Le Corbeau et le Renard"
+    - Treats sample-audio like upload mode for sound event creation
+    - Includes sample-audio configs in uploaded configs processing
+
+### Changed
+- `frontend/src/hooks/useSoundGeneration.ts` - Mode change handling
+  - Updated `handleModeChange` to async to support immediate audio loading
+  - Clears audio when switching away from sample-audio mode
+  - Sample-audio and upload modes both handled for audio cleanup
+
+## [2025-11-06] - AudioLDM2 Multi-Model Support
+### Added
+- **Backend: AudioLDM2 Audio Generation Model**
+  - `backend/services/audioldm2_service.py` - AudioLDM2 generation service
+    - Integration with HuggingFace's AudioLDM2 pipeline
+    - Lazy model initialization for memory efficiency
+    - Automatic audio resampling (16kHz → 44.1kHz)
+    - Support for negative prompts and guidance scale
+    - Compatible with existing audio processing pipeline (normalization, denoising, SPL calibration)
+
+  - `backend/config/constants.py` - AudioLDM2 configuration constants
+    - `AUDIO_MODEL_TANGOFLUX` - TangoFlux identifier ("tangoflux")
+    - `AUDIO_MODEL_AUDIOLDM2` - AudioLDM2 identifier ("audioldm2")
+    - `DEFAULT_AUDIO_MODEL` - Default model (TangoFlux)
+    - `AUDIOLDM2_MODEL_NAME` - Model path ("cvssp/audioldm2-large")
+    - `AUDIOLDM2_INFERENCE_STEPS` - Default inference steps (200)
+    - `AUDIOLDM2_SAMPLE_RATE` - Output sample rate (16kHz)
+
+  - `backend/models/schemas.py` - Audio model enumeration
+    - `AudioModel` enum - Model selection (TANGOFLUX, AUDIOLDM2)
+    - `SoundGenerationRequest.audio_model` - Model selection field
+
+  - `backend/services/audio_service.py` - Multi-model support
+    - Dual model initialization (TangoFlux + AudioLDM2)
+    - Model routing based on `audio_model` parameter
+    - Unified audio processing pipeline for both models
+    - Parameter hash includes model identifier for caching
+
+- **Frontend: Audio Model Selection UI**
+  - `frontend/src/lib/constants.ts` - Frontend model constants
+    - `AUDIO_MODEL_TANGOFLUX` - TangoFlux identifier
+    - `AUDIO_MODEL_AUDIOLDM2` - AudioLDM2 identifier
+    - `DEFAULT_AUDIO_MODEL` - Default model
+    - `AUDIO_MODEL_NAMES` - Display names map
+
+  - `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx` - Model dropdown
+    - Model selection dropdown in Advanced Options
+    - Dynamic model description based on selection
+    - Positioned above Text-to-Audio Parameters section
+
+  - `frontend/src/hooks/useSoundGeneration.ts` - Model state management
+    - `audioModel` state - Selected audio model
+    - `setAudioModel()` - Update model selection
+    - Model parameter sent to backend API
+
+  - `frontend/src/types/components.ts` - Type definitions
+    - `SoundGenerationSectionProps.audioModel` - Model prop
+    - `SoundGenerationSectionProps.onAudioModelChange` - Model change handler
+    - `SidebarProps.audioModel` - Model prop for sidebar
+
+### Changed
+- `backend/routers/sounds.py` - Updated sound generation endpoint
+  - Added `audio_model` parameter support
+  - Routes to appropriate model based on selection
+- `frontend/src/app/page.tsx` - Updated props to include audio model
+  - Passed `audioModel` and `onAudioModelChange` to sidebar
+- `frontend/src/components/layout/Sidebar.tsx` - Updated props forwarding
+  - Forwarded audio model props to sound generation section
+
+### Technical Details
+- Both models share the same audio processing pipeline (normalization, denoising, SPL calibration)
+- AudioLDM2 generates at 16kHz, automatically resampled to 44.1kHz for consistency
+- Model selection persists across generations within the same session
+- TangoFlux remains the default model for backward compatibility
+
+## [2025-11-06] - Resonance Audio Integration
+### Added
+- **Frontend: Google Resonance Audio Spatial Audio Engine**
+  - `frontend/src/lib/audio/resonance-audio-service.ts` - Resonance Audio wrapper service
+    - Scene initialization with configurable ambisonic order
+    - Room acoustics simulation (dimensions + materials)
+    - HRTF-based binaural spatialization
+    - Source management with directivity and distance attenuation
+    - Real-time listener position/orientation updates
+    - Parallel system to existing convolution-based auralization
+  
+  - `frontend/src/types/audio.ts` - Resonance Audio types
+    - `ResonanceAudioConfig` - Main configuration interface
+    - `ResonanceRoomMaterial` - Room materials per surface (left, right, front, back, down, up)
+    - `ResonanceRoomDimensions` - Room dimensions (width, height, depth in meters)
+    - `ResonanceSourceConfig` - Source configuration (gain, rolloff, directivity)
+  
+  - `frontend/src/types/resonance-audio.d.ts` - Type declarations for resonance-audio library
+    - TypeScript definitions for ResonanceAudio class and Source interface
+    - Method signatures for room properties, listener updates, source creation
+  
+  - `frontend/src/lib/constants.ts` - Resonance Audio constants
+    - `RESONANCE_AUDIO.DEFAULT_AMBISONIC_ORDER` - 3rd order (16 channels)
+    - `RESONANCE_AUDIO.DEFAULT_ROOM_DIMENSIONS` - 10m × 3m × 10m
+    - `RESONANCE_AUDIO.DEFAULT_ROOM_MATERIALS` - Brick walls, parquet floor, acoustic ceiling
+    - `RESONANCE_AUDIO.ROOM_MATERIALS` - 24 material options (brick, concrete, wood, glass, etc.)
+    - `RESONANCE_AUDIO.ROOM_PRESETS` - 5 presets (Studio, Concert Hall, Living Room, Warehouse, Outdoor)
+    - `RESONANCE_AUDIO.DISTANCE_MODELS` - Logarithmic (default), Linear, None
+  
+  - `frontend/src/hooks/useResonanceAudio.ts` - Resonance Audio state management hook
+    - `toggleResonanceAudio()` - Enable/disable spatial audio
+    - `updateRoomDimensions()` - Adjust room size
+    - `updateRoomMaterials()` - Change surface materials
+    - `applyRoomPreset()` - Apply room type preset
+    - `reset()` - Reset to default configuration
+  
+  - `frontend/src/components/controls/ResonanceAudioControls.tsx` - UI controls
+    - Enable/disable toggle
+    - Room preset dropdown (5 presets)
+    - Room dimensions sliders (width, height, depth)
+    - Surface materials dropdowns (collapsible, 6 surfaces)
+    - Material options (14 most common materials)
+  
+  - `frontend/src/lib/three/sound-sphere-manager.ts` - Resonance Audio integration
+    - `setResonanceAudioService()` - Set Resonance Audio service reference
+    - `createResonanceAudioSources()` - Create Resonance sources for all sounds
+    - `updateSpherePosition()` - Update Resonance source position on drag
+
+### Technical Details
+- **Architecture**: Parallel to existing auralization system
+  - Convolution auralization: Pre-recorded impulse responses → realistic room acoustics
+  - Resonance Audio: Real-time synthesis → interactive room acoustics + spatial audio
+  - Both can coexist (e.g., IR for reverb + Resonance for spatialization)
+
+- **Workflow**:
+  1. User enables Resonance Audio in UI
+  2. Service initializes with room configuration
+  3. Audio sources routed through Resonance scene
+  4. Listener position/orientation updated every frame
+  5. Room acoustics rendered in real-time
+
+- **Material System**:
+  - 24 materials with frequency-dependent absorption coefficients
+  - 6 surfaces: left, right, front, back, down, up
+  - 5 presets for common room types
+  - Configurable per surface for asymmetric rooms
+
+- **Distance Attenuation**:
+  - Logarithmic (default): Natural sound falloff
+  - Linear: Constant rate falloff
+  - None: No distance attenuation
+
+- **Directivity**:
+  - Pattern: 0 (omnidirectional) to 1 (cardioid)
+  - Sharpness: 0 (wide) to 1 (narrow)
+  - Per-source configuration for realistic sound radiation
+
 ## [2025-11-05 19:30] - Mode Visualization: Exit→New Entity Workflow Fix (Critical)
 ### Fixed
 - **CRITICAL: Exit→New Entity workflow** - Fixed stale mode index when exiting and selecting new entity

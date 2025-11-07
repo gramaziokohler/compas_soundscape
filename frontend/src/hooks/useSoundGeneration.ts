@@ -5,7 +5,8 @@ import {
   DEFAULT_DURATION_SECONDS,
   DEFAULT_GUIDANCE_SCALE,
   DEFAULT_DIFFUSION_STEPS,
-  DEFAULT_SEED_COPIES
+  DEFAULT_SEED_COPIES,
+  DEFAULT_AUDIO_MODEL
 } from "@/lib/constants";
 import { loadAudioFile, revokeAudioUrl } from "@/lib/audio/audio-upload";
 import { calculateSoundPosition, type GeometryBounds } from "@/lib/sound/positioning";
@@ -25,6 +26,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
   const [globalSteps, setGlobalSteps] = useState<number>(DEFAULT_DIFFUSION_STEPS);
   const [globalNegativePrompt, setGlobalNegativePrompt] = useState<string>("distorted, reverb, echo, background noise, hall, spaciousness");
   const [applyDenoising, setApplyDenoising] = useState<boolean>(false);
+  const [audioModel, setAudioModel] = useState<string>(DEFAULT_AUDIO_MODEL);
 
   // AbortController for cancelling ongoing sound generation requests
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -51,13 +53,13 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     setSoundConfigs(updated);
   }, [soundConfigs]);
 
-  const handleModeChange = useCallback((index: number, mode: SoundGenerationMode) => {
+  const handleModeChange = useCallback(async (index: number, mode: SoundGenerationMode) => {
     const updated = [...soundConfigs];
     const config = updated[index];
 
-    // Clear uploaded audio data when switching away from upload mode
+    // Clear uploaded audio data when switching away from upload or sample-audio mode
     // This prevents confusion and ensures clean state transitions
-    if (config.mode === 'upload' && mode !== 'upload' && config.uploadedAudioUrl) {
+    if ((config.mode === 'upload' || config.mode === 'sample-audio') && mode !== 'upload' && mode !== 'sample-audio' && config.uploadedAudioUrl) {
       revokeAudioUrl(config.uploadedAudioUrl);
       updated[index] = {
         ...config,
@@ -71,6 +73,44 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     }
 
     setSoundConfigs(updated);
+
+    // If switching to sample-audio mode, automatically load the sample audio
+    if (mode === 'sample-audio') {
+      try {
+        console.log(`[Sound Generation] Auto-loading sample audio for sound ${index + 1}`);
+
+        // Fetch the sample audio from backend
+        const response = await fetch(`${API_BASE_URL}/api/sample-audio`);
+        if (!response.ok) {
+          throw new Error('Failed to load sample audio');
+        }
+
+        // Convert response to blob, then to File
+        const blob = await response.blob();
+        const file = new File([blob], "Le Corbeau et le Renard (french).wav", { type: "audio/wav" });
+
+        // Load audio file using the same mechanism as upload
+        const result = await loadAudioFile(file);
+
+        // Update the config with loaded audio data
+        setSoundConfigs(prev => {
+          const updated = [...prev];
+          updated[index] = {
+            ...updated[index],
+            uploadedAudioBuffer: result.audioBuffer,
+            uploadedAudioInfo: result.audioInfo,
+            uploadedAudioUrl: result.audioUrl,
+            display_name: updated[index].display_name || "Le Corbeau et le Renard"
+          };
+          return updated;
+        });
+
+        console.log(`[Sound Generation] Sample audio loaded successfully for sound ${index + 1}`);
+      } catch (error) {
+        console.error(`[Sound Generation] Failed to load sample audio for sound ${index + 1}:`, error);
+        setSoundGenError(error instanceof Error ? error.message : 'Failed to load sample audio');
+      }
+    }
   }, [soundConfigs]);
 
   const handleGlobalDurationChange = useCallback((duration: number) => {
@@ -97,7 +137,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     // Separate configs by mode and track their original indices
     const uploadedConfigsWithIndices = soundConfigs
       .map((config, idx) => ({ config, originalIndex: idx }))
-      .filter(({ config }) => config.mode === 'upload' && config.uploadedAudioUrl);
+      .filter(({ config }) => (config.mode === 'upload' || config.mode === 'sample-audio') && config.uploadedAudioUrl);
 
     const libraryConfigsWithIndices = soundConfigs
       .map((config, idx) => ({ config, originalIndex: idx }))
@@ -145,7 +185,8 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
             sounds: configsWithNegativePrompt,
             // Only use bounding_box for random positioning when no entity data exists
             bounding_box: hasEntities ? null : geometryBounds,
-            apply_denoising: applyDenoising
+            apply_denoising: applyDenoising,
+            audio_model: audioModel
           }),
           signal: abortControllerRef.current?.signal
         });
@@ -511,6 +552,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     globalSteps,
     globalNegativePrompt,
     applyDenoising,
+    audioModel,
     handleAddConfig,
     handleBatchAddConfigs,
     handleRemoveConfig,
@@ -526,6 +568,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     setSoundscapeData,
     setGlobalNegativePrompt,
     setApplyDenoising,
+    setAudioModel,
     handleUploadAudio,
     handleClearUploadedAudio,
     handleLibrarySearch,
