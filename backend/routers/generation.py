@@ -47,51 +47,79 @@ async def select_entities(request: EntitySelectionRequest):
             "count": len(selected_entities)
         }
 
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Error selecting entities: {str(e)}")
+
+        # Check if it's an LLM overload error
+        error_str = str(e)
+        if '503' in error_str or 'overloaded' in error_str.lower() or 'UNAVAILABLE' in error_str:
+            raise HTTPException(
+                status_code=503,
+                detail="LLM service is currently overloaded. Please try again in a moment."
+            )
+
+        raise HTTPException(status_code=500, detail=f"Error selecting entities: {error_str}")
 
 
 @router.post("/api/generate-prompts")
 async def generate_prompts(request: UnifiedPromptGenerationRequest):
     """
     Unified endpoint for generating sound prompts.
-    - If entities are provided: generates contextual prompts based on model objects (batch processing)
+    - If entities are provided: generates MIXED prompts combining:
+      * Entity-linked sounds (based on model objects)
+      * Non-entity context sounds (ambient, human activity, etc.)
       Note: Entities should already be pre-selected using /api/select-entities
+      The LLM decides the best mix to create an immersive soundscape
     - If only context is provided: generates prompts from text description
-    - If both: combines context as introduction with object-based prompts
+    - Total sounds generated = num_sounds (can be different from number of entities)
     """
     try:
         # Case 1: Model entities provided (with or without context)
         if request.entities and len(request.entities) > 0:
-            # Entities should already be pre-selected, but select diverse if needed
+            # If entities are already provided, assume they were pre-selected by /api/select-entities
+            # Only perform diversity selection if we received MORE entities than needed
+            # (indicating the frontend sent all entities, not pre-selected ones)
             entities_to_use = request.entities
-            if len(request.entities) > request.num_sounds:
+
+            # Check if entities seem pre-selected: if count matches num_sounds or is close
+            # If entities >> num_sounds, they likely weren't pre-selected
+            if len(request.entities) > request.num_sounds * 1.5:  # 50% threshold
                 entities_to_use = llm_service.select_diverse_entities(
                     request.entities,
                     request.num_sounds
                 )
 
-            # Generate contextual prompts for all entities in a single LLM call (batch processing)
+            # Generate mixed entity-linked and context-based prompts in a single LLM call
             sound_list = llm_service.generate_prompts_for_entities(
                 entities_to_use,
+                request.num_sounds,
                 request.context
             )
 
-            # Combine results with entity info
+            # Format results - sounds can be a mix of entity-linked and context-based
+            # Use the entity_index from LLM to link sounds to their corresponding entities
             entity_prompts = []
-            for i, sound_data in enumerate(sound_list):
-                # Match each sound with its corresponding entity
-                if i < len(entities_to_use):
-                    entity_prompts.append({
-                        "entity": entities_to_use[i],
-                        "prompt": sound_data["prompt"],
-                        "display_name": sound_data["display_name"],
-                        "spl_db": sound_data.get("spl_db", DEFAULT_SPL_DB),
-                        "interval_seconds": sound_data.get("interval_seconds", LLM_SUGGESTED_INTERVAL_SECONDS),
-                        "duration_seconds": sound_data.get("duration_seconds", DEFAULT_DURATION_SECONDS)
-                    })
+            for sound_data in sound_list:
+                # Get entity_index from parsed data (0-based index, or None for context sounds)
+                entity_idx = sound_data.get("entity_index")
+                entity_data = None
+
+                # If entity_idx is valid, link to that entity
+                if entity_idx is not None and 0 <= entity_idx < len(entities_to_use):
+                    entity_data = entities_to_use[entity_idx]
+
+                entity_prompts.append({
+                    "entity": entity_data,  # Linked to specific entity or None for context sounds
+                    "prompt": sound_data["prompt"],
+                    "display_name": sound_data["display_name"],
+                    "spl_db": sound_data.get("spl_db", DEFAULT_SPL_DB),
+                    "interval_seconds": sound_data.get("interval_seconds", LLM_SUGGESTED_INTERVAL_SECONDS),
+                    "duration_seconds": sound_data.get("duration_seconds", DEFAULT_DURATION_SECONDS)
+                })
 
             return {
                 "prompts": entity_prompts,
@@ -111,10 +139,22 @@ async def generate_prompts(request: UnifiedPromptGenerationRequest):
         else:
             raise HTTPException(status_code=400, detail="Either context or entities must be provided")
 
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Error generating prompts: {str(e)}")
+
+        # Check if it's an LLM overload error
+        error_str = str(e)
+        if '503' in error_str or 'overloaded' in error_str.lower() or 'UNAVAILABLE' in error_str:
+            raise HTTPException(
+                status_code=503,
+                detail="LLM service is currently overloaded. Please try again in a moment."
+            )
+
+        raise HTTPException(status_code=500, detail=f"Error generating prompts: {error_str}")
 
 
 @router.post("/api/generate-text")
@@ -134,6 +174,7 @@ async def generate_text(request: PromptRequest):
     response = {
         "text": result.get("text", "\n".join(sound_list)),
         "sounds": sound_list,
-        "prompts": result["prompts"]  # Include prompts with entity info for frontend
+        "prompts": result["prompts"],  # Include prompts with entity info for frontend
+        "selected_entities": result.get("selected_entities", None)  # Include selected entities for verification
     }
     return response

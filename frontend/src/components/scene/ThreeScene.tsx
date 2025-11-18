@@ -5,7 +5,6 @@ import * as THREE from "three";
 
 import { SoundUIOverlay } from "@/components/overlays/SoundUIOverlay";
 import { EntityInfoBox } from "@/components/overlays/EntityInfoBox";
-import { AmbisonicModeNotice } from "@/components/overlays/AmbisonicModeNotice";
 import { ModalAnalysisProgress } from "@/components/overlays/ModalAnalysisProgress";
 import { ImpactSoundPlayback } from "@/components/overlays/ImpactSoundPlayback";
 import { PlaybackControls } from "@/components/controls/PlaybackControls";
@@ -13,6 +12,7 @@ import { OrientationIndicator } from "@/components/controls/OrientationIndicator
 import { WaveSurferTimeline } from "@/components/audio/WaveSurferTimeline";
 import { ControlsInfo } from "@/components/layout/sidebar/ControlsInfo";
 import { SceneControlButton } from "@/components/scene/SceneControlButton";
+import { AdvancedSettingsPanel } from "@/components/scene/AdvancedSettingsPanel";
 import { Icon } from "@/components/ui/Icon";
 import { VerticalVolumeSlider } from "@/components/ui/VerticalVolumeSlider";
 import { triangulateWithMapping, trimDisplayName } from "@/lib/utils";
@@ -21,8 +21,6 @@ import { SceneCoordinator } from "@/lib/three/scene-coordinator";
 import { GeometryRenderer } from "@/lib/three/geometry-renderer";
 import { SoundSphereManager } from "@/lib/three/sound-sphere-manager";
 import { ReceiverManager } from "@/lib/three/receiver-manager";
-import { AuralizationService } from "@/lib/audio/auralization-service";
-import { ResonanceAudioService } from "@/lib/audio/resonance-audio-service";
 import { PlaybackSchedulerService } from "@/lib/audio/playback-scheduler-service";
 import { ModalImpactSynthesizer } from "@/lib/audio/modal-impact-synthesis";
 import { ModeVisualizer } from "@/lib/three/mode-visualizer";
@@ -31,6 +29,7 @@ import { projectToScreen, isInViewport as isInViewportUtil } from "@/lib/three/p
 import { getSoundState } from "@/lib/sound/state-utils";
 import { extractTimelineSounds, calculateTimelineDuration } from "@/lib/audio/timeline-utils";
 import { useTimelinePlayback } from "@/hooks/useTimelinePlayback";
+import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
 import { apiService } from "@/services/api";
 import { createImpactParameters } from "@/hooks/useModalImpact";
 import { 
@@ -109,12 +108,45 @@ export function ThreeScene({
   onCancelPlacingReceiver,
   isLinkingEntity = false,
   onEntityLinked,
+  onToggleDiverseSelection,
+  onDetachSound,
   modeVisualizationState,
   onSetModeVisualization,
   onSelectMode,
   onReceiverModeChange,
-  className
+  audioRenderingMode = 'basic_mixer',
+  audioOrchestrator,
+  audioContext,
+  selectedIRId,
+  className,
+  // Sound generation advanced settings
+  globalDuration = 5,
+  globalSteps = 25,
+  globalNegativePrompt = '',
+  applyDenoising = false,
+  normalizeImpulseResponses = false,
+  audioModel = 'tangoflux',
+  onGlobalDurationChange,
+  onGlobalStepsChange,
+  onGlobalNegativePromptChange,
+  onApplyDenoisingChange,
+  onNormalizeImpulseResponsesChange,
+  onAudioModelChange,
+  onResetAdvancedSettings
 }: ThreeSceneProps) {
+  // Throttled logging to avoid spam (only log once per second)
+  useEffect(() => {
+    const logTimer = setTimeout(() => {
+      console.log('[ThreeScene] 🎬 Props received:', {
+        hasAudioOrchestrator: !!audioOrchestrator,
+        hasAudioContext: !!audioContext,
+        orchestratorType: audioOrchestrator?.constructor.name
+      });
+    }, 1000);
+    
+    return () => clearTimeout(logTimer);
+  }, [audioOrchestrator, audioContext]);
+
   // ============================================================================
   // Refs - Service Managers
   // ============================================================================
@@ -124,11 +156,17 @@ export function ThreeScene({
   const soundSphereManagerRef = useRef<SoundSphereManager | null>(null);
   const receiverManagerRef = useRef<ReceiverManager | null>(null);
   const playbackSchedulerRef = useRef<PlaybackSchedulerService | null>(null);
-  const auralizationServiceRef = useRef<AuralizationService | null>(null);
-  const resonanceAudioServiceRef = useRef<ResonanceAudioService | null>(null);
   const inputHandlerRef = useRef<InputHandler | null>(null);
+  
+  // Track previous mode to avoid infinite loops
+  const previousModeRef = useRef<string | null>(null);
   const modeVisualizerRef = useRef<ModeVisualizer | null>(null);
   const boundingBoxGroupRef = useRef<THREE.Group | null>(null);
+
+  // Refs for callbacks to avoid infinite loops in useEffect
+  const onStopAllRef = useRef(onStopAll);
+  const onPauseAllRef = useRef(onPauseAll);
+  const onPlayAllRef = useRef(onPlayAll);
 
   // ============================================================================
   // Refs - Data for Event Handlers
@@ -165,6 +203,11 @@ export function ThreeScene({
   
   // Ref to track current playing audio source for cleanup
   const impactAudioSourceRef = useRef<AudioBufferSourceNode | null>(null);
+
+  // ============================================================================
+  // Error Handling
+  // ============================================================================
+  const handleError = useApiErrorHandler();
 
   // ============================================================================
   // State - First-Person Mode & Orientation
@@ -212,6 +255,9 @@ export function ThreeScene({
   const [globalVolume, setGlobalVolume] = useState<number>(1); // 0 to 1
   const [showVolumeSlider, setShowVolumeSlider] = useState<boolean>(false);
 
+  // Settings panel state
+  const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState<boolean>(false);
+
   // Timeline playback hook (synced with PlaybackControls)
   const { playbackState, play: playTimeline, pause: pauseTimeline, stop: stopTimeline, seekTo } = useTimelinePlayback({
     sounds: timelineSounds,
@@ -232,6 +278,19 @@ export function ThreeScene({
   useEffect(() => {
     auralizationConfigRef.current = auralizationConfig;
   }, [auralizationConfig]);
+
+  // Keep callback refs up to date
+  useEffect(() => {
+    onStopAllRef.current = onStopAll;
+  }, [onStopAll]);
+
+  useEffect(() => {
+    onPauseAllRef.current = onPauseAll;
+  }, [onPauseAll]);
+
+  useEffect(() => {
+    onPlayAllRef.current = onPlayAll;
+  }, [onPlayAll]);
 
   // Close volume slider when clicking outside
   useEffect(() => {
@@ -559,12 +618,14 @@ export function ThreeScene({
       
     } catch (error) {
       console.error("Modal analysis failed:", error);
+      // Display error to user with specific error message from backend
+      handleError(error);
       // Return to inactive on error
       setModalImpactMode('inactive');
       setModalImpactEntity(null);
       setSelectedEntity(entity); // Restore entity selection
     }
-  }, [geometryData]);
+  }, [geometryData, handleError]);
   
   const handleImpactPointClick = useCallback(async (impactPoint: [number, number, number]) => {
     if (!currentModalResult) return;
@@ -659,6 +720,41 @@ export function ThreeScene({
     };
   }, [geometryData]);
 
+  // Memoize entity indices that have linked sounds
+  const entitiesWithLinkedSounds = useMemo(() => {
+    const entityIndices = new Set<number>();
+
+    if (!soundscapeData) return entityIndices;
+
+    // Group sounds by prompt index to get selected variants
+    const soundsByPromptIndex: { [key: number]: any[] } = {};
+    soundscapeData.forEach(sound => {
+      const promptIdx = (sound as any).prompt_index ?? 0;
+      if (!soundsByPromptIndex[promptIdx]) {
+        soundsByPromptIndex[promptIdx] = [];
+      }
+      soundsByPromptIndex[promptIdx].push(sound);
+    });
+
+    // Extract entity indices from selected variants
+    Object.entries(soundsByPromptIndex).forEach(([promptIdxStr, sounds]) => {
+      const promptIdx = parseInt(promptIdxStr);
+      const selectedIdx = selectedVariants[promptIdx] || 0;
+      const selectedSound = sounds[selectedIdx] || sounds[0];
+
+      // Check if this sound has a valid entity_index
+      if (
+        selectedSound &&
+        selectedSound.entity_index !== null &&
+        selectedSound.entity_index !== undefined
+      ) {
+        entityIndices.add(selectedSound.entity_index);
+      }
+    });
+
+    return entityIndices;
+  }, [soundscapeData, selectedVariants]);
+
   // ============================================================================
   // Effect - Initialize Three.js Scene and Services (runs once)
   // ============================================================================
@@ -667,7 +763,7 @@ export function ThreeScene({
     if (!mountNode) return;
 
     // Initialize Scene Coordinator
-    const sceneCoordinator = new SceneCoordinator(mountNode);
+    const sceneCoordinator = new SceneCoordinator(mountNode, audioOrchestrator);
     sceneCoordinatorRef.current = sceneCoordinator;
 
     // Initialize Geometry Renderer
@@ -681,7 +777,9 @@ export function ThreeScene({
     // Initialize Sound Sphere Manager
     const soundSphereManager = new SoundSphereManager(
       sceneCoordinator.contentGroup,
-      sceneCoordinator.listener
+      sceneCoordinator.listener,
+      audioOrchestrator,
+      audioContext
     );
     soundSphereManagerRef.current = soundSphereManager;
 
@@ -693,19 +791,16 @@ export function ThreeScene({
     receiverManagerRef.current = receiverManager;
 
     // Initialize Playback Scheduler Service
-    const playbackScheduler = new PlaybackSchedulerService(sceneCoordinator.listener);
+    const playbackScheduler = new PlaybackSchedulerService(sceneCoordinator.listener, audioOrchestrator);
     playbackSchedulerRef.current = playbackScheduler;
 
-    // Initialize Auralization Service (audio routing only)
-    const auralizationService = new AuralizationService(sceneCoordinator.listener);
-    auralizationServiceRef.current = auralizationService;
-
-    // Initialize Resonance Audio Service
-    const resonanceAudioService = new ResonanceAudioService(sceneCoordinator.listener);
-    resonanceAudioServiceRef.current = resonanceAudioService;
-    
-    // Set Resonance Audio service reference in sound sphere manager
-    soundSphereManager.setResonanceAudioService(resonanceAudioService);
+    // Initialize Audio Flow Debugger (for development/debugging)
+    if (typeof window !== 'undefined') {
+      import('@/lib/audio/debug/audio-flow-debugger').then(({ audioFlowDebugger }) => {
+        audioFlowDebugger.initialize(audioOrchestrator || null, null);
+        console.log('💡 Audio Flow Debugger available. Use window.audioFlowDebugger.enable() to activate');
+      });
+    }
 
     // Initialize Mode Visualizer
     const modeVisualizer = new ModeVisualizer();
@@ -782,8 +877,6 @@ export function ThreeScene({
       soundSphereManager.dispose();
       receiverManager.dispose();
       playbackScheduler.dispose();
-      auralizationService.dispose();
-      resonanceAudioService.dispose();
       modeVisualizer.dispose();
       inputHandler.dispose();
 
@@ -792,6 +885,112 @@ export function ThreeScene({
       }
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ============================================================================
+  // Effect - Update SoundSphereManager orchestrator when it becomes available
+  // ============================================================================
+  useEffect(() => {
+    const soundSphereManager = soundSphereManagerRef.current;
+    const playbackScheduler = playbackSchedulerRef.current;
+    const sceneCoordinator = sceneCoordinatorRef.current;
+    
+    if (!soundSphereManager) return;
+
+    // Update orchestrator references when they become available
+    if (audioOrchestrator && audioContext) {
+      console.log('[ThreeScene] 🔄 Updating managers with AudioOrchestrator');
+
+      // Update SoundSphereManager with orchestrator
+      soundSphereManager.setAudioOrchestrator(audioOrchestrator);
+
+      // Update SceneCoordinator with orchestrator
+      if (sceneCoordinator) {
+        sceneCoordinator.setAudioOrchestrator(audioOrchestrator);
+      }
+
+      // Also update PlaybackSchedulerService
+      if (playbackScheduler) {
+        (playbackScheduler as any).audioOrchestrator = audioOrchestrator;
+      }
+
+      // Update audio flow debugger
+      if (typeof window !== 'undefined') {
+        import('@/lib/audio/debug/audio-flow-debugger').then(({ audioFlowDebugger }) => {
+          audioFlowDebugger.initialize(audioOrchestrator, null);
+        });
+      }
+    }
+  }, [audioOrchestrator, audioContext]);
+
+  // ============================================================================
+  // Effect - Re-register sources when orchestrator's actual mode changes
+  // ============================================================================
+  useEffect(() => {
+    const soundSphereManager = soundSphereManagerRef.current;
+    if (!soundSphereManager || !audioOrchestrator) return;
+
+    // Get the actual current mode from orchestrator
+    const status = audioOrchestrator.getStatus?.();
+    const currentMode = status?.currentMode;
+    if (!currentMode) return;
+
+    // Only trigger if mode actually changed
+    if (previousModeRef.current === currentMode) return;
+    
+    // Skip on initial mount  
+    if (previousModeRef.current === null) {
+      previousModeRef.current = currentMode;
+      return;
+    }
+
+    previousModeRef.current = currentMode;
+
+    // Stop all audio and reset timeline
+    onStopAllRef.current();
+
+    // Re-register sources after stop completes
+    const timer = setTimeout(() => {
+      soundSphereManager.reregisterAllSources();
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, [audioOrchestrator]);
+
+  // ============================================================================
+  // Effect - Re-register sources when audio mode changes (UI-driven)
+  // ============================================================================
+  useEffect(() => {
+    const soundSphereManager = soundSphereManagerRef.current;
+    if (!soundSphereManager || !audioOrchestrator) return;
+    
+    // Stop all audio and reset timeline
+    onStopAllRef.current();
+
+    // Re-register sources after stop completes
+    const timer = setTimeout(() => {
+      soundSphereManager.reregisterAllSources();
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, [audioRenderingMode, audioOrchestrator]);
+
+  // ============================================================================
+  // Effect - Re-register sources when IR selection changes
+  // ============================================================================
+  useEffect(() => {
+    const soundSphereManager = soundSphereManagerRef.current;
+    if (!soundSphereManager || !audioOrchestrator) return;
+    
+    // Stop all audio and reset timeline
+    onStopAllRef.current();
+
+    // Re-register sources after stop completes
+    const timer = setTimeout(() => {
+      soundSphereManager.reregisterAllSources();
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, [selectedIRId, audioOrchestrator]);
 
   // ============================================================================
   // Effect - Update Geometry Mesh
@@ -878,8 +1077,8 @@ export function ThreeScene({
     const geometryRenderer = geometryRendererRef.current;
     if (!geometryRenderer) return;
 
-    geometryRenderer.updateDiverseHighlights(geometryData, selectedDiverseEntities);
-  }, [selectedDiverseEntities, geometryData]);
+    geometryRenderer.updateDiverseHighlights(geometryData, selectedDiverseEntities, entitiesWithLinkedSounds);
+  }, [selectedDiverseEntities, geometryData, entitiesWithLinkedSounds]);
 
   // ============================================================================
   // Effect - Entity Highlighting (Individual Selection)
@@ -992,8 +1191,14 @@ export function ThreeScene({
           const promptIdx = parseInt(promptIdxStr);
           const selectedIdx = selectedVariants[promptIdx] || 0;
           const selectedSound = sounds[selectedIdx] || sounds[0];
-          
-          if (selectedSound && selectedSound.entity_index === selectedEntity.index) {
+
+          // Only link if entity_index is a valid number (not null, not undefined) and matches selected entity
+          if (
+            selectedSound &&
+            selectedSound.entity_index !== null &&
+            selectedSound.entity_index !== undefined &&
+            selectedSound.entity_index === selectedEntity.index
+          ) {
             const promptKey = `prompt_${promptIdx}`;
             // Store entity index for EntityInfoBox positioning (above sound overlay)
             soundOverlay = {
@@ -1035,7 +1240,8 @@ export function ThreeScene({
         y: entityBoxY,
         visible: !isBehindCamera,
         entity: selectedEntity,
-        soundOverlay
+        soundOverlay,
+        linkedPromptIndex: (soundOverlay as UIOverlay | undefined)?.promptIdx // Store prompt index for linking display
       });
     };
 
@@ -1082,13 +1288,13 @@ export function ThreeScene({
         const selectedSound = sounds[selectedIdx] || sounds[0];
         if (!selectedSound) return;
 
-        // Check if this sound is linked to an entity
-        const isEntityLinked = selectedSound.entity_index !== undefined;
+        // Check if this sound is linked to an entity (entity_index must be a valid number, not null/undefined)
+        const isEntityLinked = selectedSound.entity_index !== null && selectedSound.entity_index !== undefined;
 
         // Use prompt_index as unique key to avoid React key conflicts with duplicate prompt texts
         const promptKey = `prompt_${promptIdx}`;
 
-        let x: number, y: number, isBehindCamera: boolean, isVisible: boolean;
+        let x: number, y: number, isBehindCamera: boolean, isVisible: boolean, distance: number;
 
         if (isEntityLinked) {
           // Entity-linked sound: get position from entity, not sphere
@@ -1100,6 +1306,10 @@ export function ThreeScene({
             entity.position[1],
             entity.position[2]
           );
+
+          // Calculate distance from camera to entity
+          distance = sceneCoordinator.camera.position.distanceTo(entityVector);
+
           const screenPos = projectToScreen(
             entityVector,
             sceneCoordinator.camera,
@@ -1120,6 +1330,10 @@ export function ThreeScene({
 
           const vector = new THREE.Vector3();
           sphere.getWorldPosition(vector);
+
+          // Calculate distance from camera to sphere
+          distance = sceneCoordinator.camera.position.distanceTo(vector);
+
           const screenPos = projectToScreen(
             vector,
             sceneCoordinator.camera,
@@ -1139,7 +1353,7 @@ export function ThreeScene({
           }
         }
 
-        newOverlays.push({
+        const overlayData = {
           promptKey,
           promptIdx,
           x,
@@ -1150,8 +1364,11 @@ export function ThreeScene({
           variants: sounds,
           selectedVariantIdx: selectedIdx,
           userHidden: hiddenOverlaysRef.current.has(promptKey),
-          isEntityLinked
-        });
+          isEntityLinked,
+          distance
+        };
+
+        newOverlays.push(overlayData);
       });
 
       setUiOverlays(newOverlays);
@@ -1288,61 +1505,6 @@ export function ThreeScene({
     );
   }, [individualSoundStates, soundIntervals]);
 
-  // ============================================================================
-  // Effect - Setup Auralization Convolver
-  // ============================================================================
-  useEffect(() => {
-    const auralizationService = auralizationServiceRef.current;
-    const soundSphereManager = soundSphereManagerRef.current;
-    if (!auralizationService || !soundSphereManager) return;
-
-    const audioSources = soundSphereManager.getAllAudioSources();
-
-    // Only proceed if we have audio sources
-    if (audioSources.size === 0) {
-      return;
-    }
-
-    // Only run this effect when:
-    // 1. Auralization is enabled AND an impulse response buffer exists
-    // 2. OR when disabling auralization (check if convolver nodes exist to clean up)
-    // Don't run when both are false (no IR ever loaded and no nodes to clean up)
-    const hasImpulseResponse = auralizationConfig.impulseResponseBuffer !== null;
-    const hasConvolverNodes = auralizationService.hasConvolver();
-    const shouldSetupAuralization = auralizationConfig.enabled && hasImpulseResponse;
-    const shouldDisableAuralization = !auralizationConfig.enabled && hasConvolverNodes;
-
-    if (!shouldSetupAuralization && !shouldDisableAuralization) {
-      return;
-    }
-
-    console.log('[ThreeScene] Auralization config changed - updating audio routing');
-
-    // Stop and unschedule all sounds before changing routing
-    const playbackScheduler = playbackSchedulerRef.current;
-    if (playbackScheduler) {
-      // Use async IIFE to properly await stopAllSounds
-      (async () => {
-        await playbackScheduler.stopAllSounds(audioSources);
-
-        // Update audio routing (convolution only - no playback control)
-        auralizationService.setupAuralization(auralizationConfig, audioSources);
-
-        // Update sound sphere manager's convolver reference
-        const convolverNode = auralizationService.getConvolverNode();
-        soundSphereManager.setConvolverNode(convolverNode);
-
-        // Update UI state to reflect that all sounds are stopped
-        console.log('[ThreeScene] Stopping all sounds in UI state');
-        onStopAll();
-      })();
-    }
-  }, [
-    auralizationConfig.enabled,
-    auralizationConfig.impulseResponseBuffer,
-    auralizationConfig.normalize
-  ]);
-
   // Helper: Calculate effective bounding box (from geometry or sound sources)
   const calculateEffectiveBounds = useCallback((): { min: [number, number, number]; max: [number, number, number] } | null => {
     if (geometryBounds) {
@@ -1395,116 +1557,6 @@ export function ThreeScene({
     
     return null;
   }, [geometryBounds]);
-
-  // ============================================================================
-  // Effect - Setup Resonance Audio (Enable/Disable)
-  // ============================================================================
-  useEffect(() => {
-    const resonanceAudioService = resonanceAudioServiceRef.current;
-    const soundSphereManager = soundSphereManagerRef.current;
-    const sceneCoordinator = sceneCoordinatorRef.current;
-    if (!resonanceAudioService || !soundSphereManager || !resonanceAudioConfig || !sceneCoordinator) return;
-
-    const audioSources = soundSphereManager.getAllAudioSources();
-
-    // Only proceed if we have audio sources
-    if (audioSources.size === 0) {
-      return;
-    }
-
-    console.log('[ThreeScene] Resonance Audio enabled state changed:', resonanceAudioConfig.enabled);
-
-    // Use async IIFE to handle async initialization
-    (async () => {
-      if (resonanceAudioConfig.enabled) {
-        // Start with user-configured room properties
-        let roomDimensions = resonanceAudioConfig.roomDimensions;
-        const roomMaterials = resonanceAudioConfig.roomMaterials;
-
-        // Calculate effective bounds (from geometry or sound sources)
-        const effectiveBounds = calculateEffectiveBounds();
-        
-        if (effectiveBounds) {
-          const [minX, minY, minZ] = effectiveBounds.min;
-          const [maxX, maxY, maxZ] = effectiveBounds.max;
-          roomDimensions = {
-            width: Math.abs(maxX - minX),
-            height: Math.abs(maxY - minY),
-            depth: Math.abs(maxZ - minZ)
-          };
-          console.log('[ThreeScene] Using effective bounds for room dimensions:', roomDimensions);
-        } else {
-          console.log('[ThreeScene] No bounds available - using configured room dimensions:', roomDimensions);
-        }
-        
-        // Always use user-selected materials
-        console.log('[ThreeScene] Using room materials:', roomMaterials);
-
-        // Initialize Resonance Audio scene (async)
-        await resonanceAudioService.initialize({
-          enabled: true,
-          ambisonicOrder: resonanceAudioConfig.ambisonicOrder,
-          roomDimensions,
-          roomMaterials
-        });
-
-        // Create Resonance sources for all audio
-        soundSphereManager.createResonanceAudioSources();
-        
-        // Immediately update listener position to trigger audio processing
-        const position = sceneCoordinator.camera.position;
-        const forward = new THREE.Vector3(0, 0, -1);
-        forward.applyQuaternion(sceneCoordinator.camera.quaternion);
-        const up = new THREE.Vector3(0, 1, 0);
-        up.applyQuaternion(sceneCoordinator.camera.quaternion);
-        resonanceAudioService.updateListener(position, { forward, up });
-        
-        console.log('[ThreeScene] Resonance Audio enabled and listener position set');
-      } else {
-        // Disable Resonance Audio
-        resonanceAudioService.setEnabled(false, audioSources);
-      }
-    })();
-  }, [resonanceAudioConfig?.enabled, geometryBounds, soundscapeData, refreshBoundingBoxTrigger, calculateEffectiveBounds]);
-
-  // ============================================================================
-  // Effect - Update Resonance Audio Room Properties
-  // ============================================================================
-  useEffect(() => {
-    const resonanceAudioService = resonanceAudioServiceRef.current;
-    if (!resonanceAudioService || !resonanceAudioConfig) return;
-
-    // Only update if Resonance is enabled
-    if (!resonanceAudioConfig.enabled) {
-      return;
-    }
-
-    // Calculate effective room dimensions
-    let roomDimensions = resonanceAudioConfig.roomDimensions;
-    
-    const effectiveBounds = calculateEffectiveBounds();
-    if (effectiveBounds) {
-      const [minX, minY, minZ] = effectiveBounds.min;
-      const [maxX, maxY, maxZ] = effectiveBounds.max;
-      roomDimensions = {
-        width: Math.abs(maxX - minX),
-        height: Math.abs(maxY - minY),
-        depth: Math.abs(maxZ - minZ)
-      };
-    }
-
-    console.log('[ThreeScene] Updating Resonance Audio room properties');
-    
-    // Update room properties without recreating the scene
-    resonanceAudioService.setRoomProperties(roomDimensions, resonanceAudioConfig.roomMaterials);
-  }, [
-    resonanceAudioConfig?.roomDimensions,
-    resonanceAudioConfig?.roomMaterials,
-    geometryBounds,
-    soundscapeData,
-    refreshBoundingBoxTrigger,
-    calculateEffectiveBounds
-  ]);
 
   // ============================================================================
   // Effect - Bounding Box Visualization
@@ -1702,94 +1754,70 @@ export function ThreeScene({
   // Effect - Apply Volume Changes
   // ============================================================================
   useEffect(() => {
-    const soundSphereManager = soundSphereManagerRef.current;
-    if (!soundSphereManager) return;
+    if (audioOrchestrator && soundscapeData) {
+      soundscapeData.forEach(soundEvent => {
+        const targetVolumeDb = soundVolumes[soundEvent.id] ?? soundEvent.volume_db ?? 70;
+        const baseVolumeDb = soundEvent.volume_db ?? 70;
 
-    soundSphereManager.updateVolumes(soundscapeData, soundVolumes);
-  }, [soundVolumes, soundscapeData]);
+        // Calculate volume difference in dB
+        const dbDiff = targetVolumeDb - baseVolumeDb;
+
+        // Convert dB difference to linear gain (0.0 to 1.0)
+        const gainFactor = Math.pow(10, dbDiff / 20);
+        const clampedGain = Math.max(0.0, Math.min(10.0, gainFactor));
+
+        audioOrchestrator.setSourceVolume(soundEvent.id, clampedGain);
+      });
+    }
+  }, [soundVolumes, soundscapeData, audioOrchestrator]);
 
   // ============================================================================
   // Effect - Apply Mute/Solo States
   // ============================================================================
   useEffect(() => {
-    const soundSphereManager = soundSphereManagerRef.current;
-    if (!soundSphereManager) return;
+    if (audioOrchestrator && soundscapeData) {
+      soundscapeData.forEach(soundEvent => {
+        // Determine if this sound should be muted
+        let shouldBeMuted = mutedSounds.has(soundEvent.id);
 
-    // Use the new updateMuteSoloStates method which uses separate gain nodes
-    // This won't interfere with volume control
-    soundSphereManager.updateMuteSoloStates(mutedSounds, soloedSound);
-  }, [mutedSounds, soloedSound]);
+        // If there's a soloed sound, mute everything except that sound
+        if (soloedSound !== null) {
+          shouldBeMuted = soundEvent.id !== soloedSound;
+        }
+
+        audioOrchestrator.setSourceMute(soundEvent.id, shouldBeMuted);
+      });
+    }
+  }, [mutedSounds, soloedSound, soundscapeData, audioOrchestrator]);
 
   // ============================================================================
-  // Effect - Update Listener Orientation for Ambisonic Rotation
+  // Effect - Apply Global Volume
+  // ============================================================================
+  useEffect(() => {
+    if (audioOrchestrator) {
+      audioOrchestrator.setMasterVolume(globalVolume);
+    }
+  }, [globalVolume, audioOrchestrator]);
+
+  // ============================================================================
+  // Effect - Update UI State (Orientation Indicator)
   // ============================================================================
   useEffect(() => {
     const sceneCoordinator = sceneCoordinatorRef.current;
-    const auralizationService = auralizationServiceRef.current;
-    if (!sceneCoordinator || !auralizationService) return;
+    if (!sceneCoordinator) return;
 
-    // Only update orientation if auralization is enabled and uses ambisonics
-    if (!auralizationConfig.enabled || !auralizationConfig.impulseResponseBuffer) {
-      return;
-    }
-
-    // Update orientation in animation loop for smooth rotation tracking
-    const updateOrientation = () => {
-      if (!sceneCoordinator || !auralizationService) return;
-
+    const updateUIState = () => {
+      if (!sceneCoordinator) return;
       const orientation = sceneCoordinator.getListenerOrientation();
-      auralizationService.updateOrientation(orientation);
-      
-      // Update UI state for orientation indicator
       setCurrentOrientation(orientation);
       setIsFirstPersonMode(sceneCoordinator.isFirstPersonMode());
     };
 
-    // Add to animation loop
-    sceneCoordinator.addAnimationCallback(updateOrientation);
-
+    sceneCoordinator.addAnimationCallback(updateUIState);
     return () => {
-      sceneCoordinator.removeAnimationCallback(updateOrientation);
+      sceneCoordinator.removeAnimationCallback(updateUIState);
     };
-  }, [auralizationConfig.enabled, auralizationConfig.impulseResponseBuffer]);
-
-  // ============================================================================
-  // Effect - Update Resonance Audio Listener Position and Orientation
-  // ============================================================================
-  useEffect(() => {
-    const sceneCoordinator = sceneCoordinatorRef.current;
-    const resonanceAudioService = resonanceAudioServiceRef.current;
-    if (!sceneCoordinator || !resonanceAudioService || !resonanceAudioConfig) return;
-
-    // Only update listener if Resonance Audio is enabled
-    if (!resonanceAudioConfig.enabled) {
-      return;
-    }
-
-    // Update listener position and orientation in animation loop
-    const updateListener = () => {
-      if (!sceneCoordinator || !resonanceAudioService) return;
-
-      const position = sceneCoordinator.camera.position;
-      
-      // Get camera's forward and up vectors
-      const forward = new THREE.Vector3(0, 0, -1);
-      forward.applyQuaternion(sceneCoordinator.camera.quaternion);
-      
-      const up = new THREE.Vector3(0, 1, 0);
-      up.applyQuaternion(sceneCoordinator.camera.quaternion);
-
-      // Update Resonance Audio listener
-      resonanceAudioService.updateListener(position, { forward, up });
-    };
-
-    // Add to animation loop
-    sceneCoordinator.addAnimationCallback(updateListener);
-
-    return () => {
-      sceneCoordinator.removeAnimationCallback(updateListener);
-    };
-  }, [resonanceAudioConfig?.enabled]);
+  }, []);
 
   // ============================================================================
   // Effect - Update Timeline Data (Schedule Changes Only)
@@ -1919,7 +1947,8 @@ export function ThreeScene({
                   ...v,
                   current_volume_db: soundVolumes[v.id] ?? v.volume_db,
                   current_interval_seconds: soundIntervals[v.id] ?? v.interval_seconds
-                }))
+                })),
+                distance: overlay.distance // Explicitly preserve distance
               }}
               soundState={getSoundState(overlay.soundId, individualSoundStates)}
               onToggleSound={onToggleSound}
@@ -1942,25 +1971,33 @@ export function ThreeScene({
         {/* Only show EntityInfoBox here, positioned ABOVE the sound overlay */}
         {/* Hide when in impact ready/playing mode */}
         {entityOverlay && entityOverlay.visible && modalImpactMode === 'inactive' && (
-          <EntityInfoBox 
+          <EntityInfoBox
             entity={entityOverlay.entity}
             x={entityOverlay.x}
             y={entityOverlay.y}
             onModalImpact={handleModalImpactClick}
             isAnalyzing={false}
             isAnalyzed={modalAnalysisCache.current.has(entityOverlay.entity.index)}
+            linkedPromptIndex={entityOverlay.linkedPromptIndex}
+            isDiverseSelected={selectedDiverseEntities.some(e => e.index === entityOverlay.entity.index)}
+            onToggleDiverseSelection={onToggleDiverseSelection}
+            onDetachSound={onDetachSound}
           />
         )}
-        
+
         {/* Entity info while analyzing - show analyzing state */}
         {entityOverlay && entityOverlay.visible && modalImpactMode === 'analyzing' && modalImpactEntity?.index === entityOverlay.entity.index && (
-          <EntityInfoBox 
+          <EntityInfoBox
             entity={entityOverlay.entity}
             x={entityOverlay.x}
             y={entityOverlay.y}
             onModalImpact={handleModalImpactClick}
             isAnalyzing={true}
             isAnalyzed={false}
+            linkedPromptIndex={entityOverlay.linkedPromptIndex}
+            isDiverseSelected={selectedDiverseEntities.some(e => e.index === entityOverlay.entity.index)}
+            onToggleDiverseSelection={onToggleDiverseSelection}
+            onDetachSound={onDetachSound}
           />
         )}
 
@@ -1993,13 +2030,45 @@ export function ThreeScene({
         />
       )}
 
-      {/* Ambisonic Mode Notice - Top Right (When Ambisonic IR Active) */}
-      {auralizationConfig.enabled && auralizationConfig.impulseResponseBuffer && (
-        <AmbisonicModeNotice
-          irFormat={auralizationServiceRef.current?.getCurrentIRFormat() || 'mono'}
-          className="absolute top-6 right-6 pointer-events-none z-20"
+      {/* Settings Button - Top Right */}
+      <div className="absolute top-6 right-6 pointer-events-auto z-40">
+        <SceneControlButton
+          onClick={() => setIsSettingsPanelOpen(!isSettingsPanelOpen)}
+          isActive={isSettingsPanelOpen}
+          title="Advanced Settings"
+          icon={
+          <Icon className="transition-transform duration-200 group-hover:rotate-70">
+            <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
+            <path
+              d="M19.4 12.97c.04-.32.06-.65.06-.97s-.02-.65-.06-.97l2.11-1.65a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.49 1
+                a7.2 7.2 0 0 0-1.7-.97l-.38-2.65A.5.5 0 0 0 14.8 2h-3.6a.5.5 0 0 0-.5.42l-.38 2.65c-.6.23-1.17.55-1.7.97l-2.49-1a.5.5
+                0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64L4.6 11.03c-.04.32-.06.65-.06.97s.02.65.06.97L2.49 14.62a.5.5 0 0 0-.12.64l2
+                3.46a.5.5 0 0 0 .6.22l2.49-1c.53.42 1.1.74 1.7.97l.38 2.65a.5.5 0 0 0 .5.42h3.6a.5.5 0 0 0 .5-.42l.38-2.65c.6-.23
+                1.17-.55 1.7-.97l2.49 1a.5.5 0 0 0 .6-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.11-1.65Z"
+            />
+          </Icon>
+          }
         />
-      )}
+      </div>
+
+      {/* Advanced Settings Panel - Top Right (below button) */}
+      <AdvancedSettingsPanel
+        isOpen={isSettingsPanelOpen}
+        onClose={() => setIsSettingsPanelOpen(false)}
+        globalDuration={globalDuration}
+        globalSteps={globalSteps}
+        globalNegativePrompt={globalNegativePrompt}
+        applyDenoising={applyDenoising}
+        normalizeImpulseResponses={normalizeImpulseResponses}
+        audioModel={audioModel}
+        onGlobalDurationChange={onGlobalDurationChange || (() => {})}
+        onGlobalStepsChange={onGlobalStepsChange || (() => {})}
+        onGlobalNegativePromptChange={onGlobalNegativePromptChange || (() => {})}
+        onApplyDenoisingChange={onApplyDenoisingChange || (() => {})}
+        onNormalizeImpulseResponsesChange={onNormalizeImpulseResponsesChange || (() => {})}
+        onAudioModelChange={onAudioModelChange || (() => {})}
+        onResetToDefaults={onResetAdvancedSettings || (() => {})}
+      />
 
       {/* Playback Controls - Bottom Center */}
       <PlaybackControls

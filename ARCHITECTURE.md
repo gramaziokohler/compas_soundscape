@@ -53,85 +53,129 @@ compas_soundscape/
 │
 ├── frontend/
 │   ├── package.json
+│   ├── pnpm-lock.yaml
 │   ├── next.config.ts
 │   ├── tsconfig.json
 │   ├── postcss.config.mjs
 │   ├── public/
-│   │   └── HRTF_KEMAR_front.sofa   # Spatial audio HRTF data
+│   │   ├── hrtf/                   # HRTF data files
+│   │   │   ├── HRTF_KEMAR_front.sofa         # KEMAR HRTF for binaural audio
+│   │   │   └── D1_48K_24bit_256tap_FIR_SOFA.sofa  # High-quality FIR HRTF
+│   │   └── [SVG icons]             # UI icons (file.svg, globe.svg, etc.)
 │   └── src/
 │       ├── app/
 │       │   ├── layout.tsx           # Root layout
-│       │   ├── page.tsx             # Main page (116 lines - orchestration only)
+│       │   ├── page.tsx             # Main page (orchestration only)
 │       │   └── globals.css          # Tailwind + CSS variables
 │       ├── components/
-│       │   ├── audio/               # Audio visualization components
-│       │   │   ├── AudioWaveformDisplay.tsx  # Waveform display component
-│       │   │   ├── AudioTimeline.tsx         # Classic timeline (canvas-based, scheduled iterations)
-│       │   │   └── WaveSurferTimeline.tsx    # Enhanced timeline (WaveSurfer.js, waveform visualization)
+│       │   ├── audio/               # Audio UI components
+│       │   │   ├── AudioWaveformDisplay.tsx     # Waveform display
+│       │   │   ├── WaveSurferTimeline.tsx       # Enhanced timeline (WaveSurfer.js)
+│       │   │   ├── ImpulseResponseUpload.tsx    # IR file upload UI
+│       │   │   ├── IRManagementPanel.tsx        # IR file management UI
+│       │   │   ├── IRStatusNotice.tsx           # IR status notifications
+│       │   │   ├── SpatialModeSelector.tsx      # Spatial audio mode selector
+│       │   │   ├── AudioModeSelector.tsx        # Audio rendering mode selector
+│       │   │   ├── AudioRenderingModeSelector.tsx  # Rendering mode UI
+│       │   │   ├── AmbisonicOrderSelector.tsx   # FOA/TOA order selector
+│       │   │   ├── AnechoicModeToggle.tsx       # Anechoic mode toggle
+│       │   │   ├── AudioStatusDisplay.tsx       # Audio status display
+│       │   │   └── OutputDecoderToggle.tsx      # Output decoder controls
 │       │   ├── controls/            # Reusable UI controls
 │       │   │   ├── FileUploadArea.tsx
 │       │   │   ├── PlaybackControls.tsx
 │       │   │   ├── OrientationIndicator.tsx
-│       │   │   └── ResonanceAudioControls.tsx  # NEW - Resonance Audio controls
+│       │   │   └── ResonanceAudioControls.tsx
 │       │   ├── layout/
 │       │   │   ├── Sidebar.tsx
 │       │   │   └── sidebar/         # Sidebar sub-components
 │       │   ├── overlays/            # UI overlays
-│       │   └── scene/               # 3D scene components
+│       │   ├── scene/               # 3D scene components
+│       │   │   ├── ThreeScene.tsx              # Main 3D scene component
+│       │   │   ├── SceneControlButton.tsx      # Reusable scene control button
+│       │   │   ├── SettingsButton.tsx          # Settings button (top-right)
+│       │   │   └── AdvancedSettingsPanel.tsx   # Advanced settings panel UI
+│       │   └── ui/                  # Reusable UI components
+│       │       └── ErrorToast.tsx   # Toast notification component
 │       ├── hooks/
-│       │   ├── useAudioControls.ts  # Audio playback state & controls
-│       │   ├── useAuralization.ts   # Spatial audio/auralization
-│       │   ├── useResonanceAudio.ts # NEW - Resonance Audio state management
-│       │   ├── useFileUpload.ts     # File upload & processing
-│       │   ├── useHorizontalScroll.ts # Mouse wheel horizontal scrolling
-│       │   ├── useModalImpact.ts    # Modal analysis & impact sound synthesis & mode visualization
-│       │   ├── useReceivers.ts      # Audio receiver management
-│       │   ├── useSED.ts            # Sound Event Detection
-│       │   ├── useSoundGeneration.ts # Sound generation workflow
-│       │   ├── useTextGeneration.ts # Text/prompt generation
-│       │   ├── useTimelineMode.ts   # Timeline mode toggle (classic vs enhanced)
-│       │   ├── useTimelinePlayback.ts # Timeline playback state management
+│       │   ├── useApiErrorHandler.ts     # API error handling with toast notifications
+│       │   ├── useAudioControls.ts       # Audio playback state & controls
+│       │   ├── useAudioOrchestrator.ts   # Audio orchestrator integration
+│       │   ├── useAudioNormalization.ts  # Audio normalization utilities
+│       │   ├── useRoomMaterials.ts       # Room material management
+│       │   ├── useFileUpload.ts          # File upload & processing (with error notifications)
+│       │   ├── useHorizontalScroll.ts    # Mouse wheel horizontal scrolling
+│       │   ├── useModalImpact.ts         # Modal analysis & impact sound synthesis
+│       │   ├── useReceivers.ts           # Audio receiver management
+│       │   ├── useSED.ts                 # Sound Event Detection
+│       │   ├── useSoundGeneration.ts     # Sound generation workflow
+│       │   ├── useTextGeneration.ts      # Text/prompt generation
+│       │   ├── useTimelinePlayback.ts    # Timeline playback state management
 │       │   └── useWaveformInteraction.ts # Waveform zoom/pan interaction
 │       ├── lib/
-│       │   ├── constants.ts         # All constants (updated - AMBISONIC, IR_FORMAT)
-│       │   ├── audio/               # Audio processing utilities
-│       │   │   ├── ambisonic-encoder.ts     # NEW - FOA/TOA encoding (mono → 4/16 ch)
-│       │   │   ├── ambisonic-rotator.ts     # NEW - Ambisonic field rotation
-│       │   │   ├── ambisonic-decoder.ts     # NEW - Binaural decoding (virtual speakers)
-│       │   │   ├── audio-info.ts           # Audio file loading & metadata
-│       │   │   ├── modal-impact-synthesis.ts   # NEW - Impact sound synthesis from modal analysis
-│       │   │   ├── resonance-audio-service.ts  # NEW - Google Resonance Audio wrapper
-│       │   │   ├── waveform-utils.ts       # Waveform visualization (extraction & rendering)
-│       │   │   ├── timeline-utils.ts       # Timeline data extraction (with audioUrl for WaveSurfer)
+│       │   ├── constants.ts         # All constants (AMBISONIC, IR_FORMAT, AUDIO_MODES, etc.)
+│       │   ├── audio/               # Audio processing architecture
+│       │   │   ├── AudioOrchestrator.ts         # Main orchestrator (audio graph management)
+│       │   │   ├── ambisonic-core.ts            # Core ambisonic utilities
+│       │   │   ├── jsambisonic-decoder.ts       # JSAmbisonics HRTF decoder integration
+│       │   │   ├── audio-info.ts                # Audio file loading & metadata
+│       │   │   ├── audio-upload.ts              # Audio upload utilities
+│       │   │   ├── ir-utils.ts                  # IR processing utilities
+│       │   │   ├── modal-impact-synthesis.ts    # Impact sound synthesis
+│       │   │   ├── rt60-analysis.ts             # RT60 reverb time analysis
+│       │   │   ├── waveform-utils.ts            # Waveform visualization
+│       │   │   ├── timeline-utils.ts            # Timeline data extraction
 │       │   │   ├── playback-scheduler-service.ts # Audio playback scheduling
-│       │   │   └── auralization-service.ts      # Impulse response convolution (audio routing only)
+│       │   │   ├── scheduled-sounds-logger.ts    # Debug logging for scheduled sounds
+│       │   │   ├── emergency-audio-kill.ts       # Emergency audio shutdown
+│       │   │   ├── wav-parser.ts                # WAV file parser
+│       │   │   ├── core/                        # Core interfaces & abstractions
+│       │   │   │   └── interfaces/
+│       │   │   │       ├── IAudioMode.ts        # Audio mode interface
+│       │   │   │       ├── IAudioOrchestrator.ts # Orchestrator interface
+│       │   │   │       ├── IBinauralDecoder.ts  # Binaural decoder interface
+│       │   │   │       └── IOutputDecoder.ts    # Output decoder interface
+│       │   │   ├── modes/                       # Audio rendering modes
+│       │   │   │   ├── AmbisonicIRMode.ts       # Ambisonic IR convolution mode
+│       │   │   │   ├── AnechoicMode.ts          # Anechoic (dry) mode
+│       │   │   │   ├── MonoIRMode.ts            # Mono IR convolution mode
+│       │   │   │   ├── ResonanceMode.ts         # Resonance Audio mode
+│       │   │   │   ├── StereoIRMode.ts          # Stereo/binaural IR mode
+│       │   │   │   └── ThreeJSMode.ts           # Three.js PositionalAudio mode
+│       │   │   ├── decoders/                    # Audio decoders
+│       │   │   │   └── BinauralDecoder.ts       # Binaural output decoder
+│       │   │   ├── utils/                       # Audio utilities
+│       │   │   │   ├── error-handling.ts        # Error handling utilities
+│       │   │   │   ├── mode-selector.ts         # Mode selection logic
+│       │   │   │   └── mode-transition.ts       # Mode transition handling
+│       │   │   └── debug/                       # Debug utilities
+│       │   │       └── audio-flow-debugger.ts   # Audio graph flow debugging
 │       │   ├── sound/               # Sound system utilities
 │       │   ├── three/               # Three.js utilities (Service-Oriented Architecture)
 │       │   │   ├── scene-coordinator.ts      # Scene init, camera, animation loop
 │       │   │   ├── geometry-renderer.ts      # Geometry mesh rendering & highlighting
 │       │   │   ├── sound-sphere-manager.ts   # Sound sphere creation & audio sources
-│       │   │   ├── receiver-manager.ts          # Receiver cube management
-│       │   │   ├── mode-visualizer.ts           # NEW - Mode shape visualization on meshes
-│       │   │   ├── input-handler.ts             # User input (click, drag, keyboard)
-│       │   │   ├── draggable-mesh-manager.ts    # Shared mesh update utilities
-│       │   │   ├── playback-scheduler-service.ts # Audio playback scheduling
-│       │   │   ├── auralization-service.ts      # Impulse response convolution (audio routing only)
-│       │   │   ├── sceneSetup.ts               # Scene setup helpers
-│       │   │   ├── materials.ts                # Material definitions
-│       │   │   └── mesh-cleanup.ts             # Resource disposal utilities
-│       │   ├── audio-scheduler.ts   # Audio scheduling logic
-│       │   ├── constants.ts         # Frontend constants (AUDIO_TIMELINE, WAVESURFER_TIMELINE, etc.)
+│       │   │   ├── receiver-manager.ts       # Receiver cube management
+│       │   │   ├── mode-visualizer.ts        # Mode shape visualization on meshes
+│       │   │   ├── input-handler.ts          # User input (click, drag, keyboard)
+│       │   │   ├── draggable-mesh-manager.ts # Shared mesh update utilities
+│       │   │   ├── sceneSetup.ts             # Scene setup helpers
+│       │   │   ├── materials.ts              # Material definitions
+│       │   │   ├── mesh-cleanup.ts           # Resource disposal utilities
+│       │   │   ├── entityMeshes.ts           # Entity mesh management
+│       │   │   └── projection-utils.ts       # 3D projection utilities
 │       │   └── utils.ts             # General utilities
+│       ├── contexts/
+│       │   └── ErrorContext.tsx     # Global error notification context provider
 │       ├── services/
-│       │   └── api.ts               # API client (all backend HTTP calls)
+│       │   └── api.ts               # API client (all backend HTTP calls with error handling)
 │       └── types/
-│           ├── audio.ts             # Audio type definitions (updated - Resonance Audio types)
-│           ├── auralization.ts      # Auralization types
+│           ├── audio.ts             # Audio type definitions (modes, IR, ambisonic, etc.)
 │           ├── components.ts        # Component prop types
 │           ├── index.ts             # Type exports
-│           ├── modal.ts             # NEW - Modal analysis & mode visualization types
+│           ├── modal.ts             # Modal analysis & mode visualization types
 │           ├── receiver.ts          # Receiver types
-│           ├── resonance-audio.d.ts # NEW - Resonance Audio library type declarations
+│           ├── resonance-audio.d.ts # Resonance Audio library type declarations
 │           ├── sed.ts               # SED types
 │           └── three-scene.ts       # Three.js scene types
 │
@@ -242,220 +286,9 @@ compas_soundscape/
 └──────────────────────────────────────────────────────────────────┘
 ```
 
----
 
-## Timeline Architecture (Dual-Mode System)
+### Ambisonic IR Mode Pipeline
 
-### Overview
-The COMPAS Soundscape timeline system supports **two visualization modes** running in parallel:
-
-1. **Classic Timeline** (Canvas-based)
-   - Custom-built canvas rendering
-   - Lightweight and performant
-   - Shows scheduled iterations as colored rectangles
-   - Default mode for stability
-
-2. **Enhanced Timeline** (WaveSurfer.js)
-   - Full waveform visualization
-   - Multi-track layout with regions
-   - Zoom & pan controls
-   - Professional DAW-like experience
-
-### Architecture Decision: Gradual Migration
-We implemented a **parallel system** rather than a hard replacement to:
-- Allow user testing and feedback before deprecating classic mode
-- Provide fallback if enhanced mode has issues
-- Enable A/B comparison for UX validation
-- Minimize risk of breaking changes
-
-### Component Hierarchy
-
-```
-ThreeScene.tsx
-  ├── useTimelineMode() hook
-  │   └── Manages mode state (classic | enhanced)
-  │   └── Persists to localStorage
-  │
-  ├── Timeline Toggle Button
-  │   └── Switches between modes
-  │
-  └── Conditional Rendering:
-      ├── Classic Mode → <AudioTimeline />
-      │   ├── Canvas-based rendering
-      │   ├── Uses AUDIO_TIMELINE constants
-      │   └── Scheduled iterations as rectangles
-      │
-      └── Enhanced Mode → <WaveSurferTimeline />
-          ├── WaveSurfer.js instances (one per track)
-          ├── RegionsPlugin (scheduled iterations)
-          ├── TimelinePlugin (time markers)
-          ├── Uses WAVESURFER_TIMELINE constants
-          └── Zoom/pan controls
-```
-
-### Data Flow
-
-```
-PlaybackSchedulerService
-  └── getAudioSchedulers() → Map<string, AudioScheduler>
-      └── Each AudioScheduler has scheduled sounds
-
-extractTimelineSounds(audioSchedulers)
-  ├── Extracts: id, displayName, color, intervals, iterations
-  ├── **NEW:** Extracts audioUrl from audio.userData.soundEvent.url
-  └── Returns: TimelineSound[] (with optional audioUrl)
-
-TimelineSound {
-  id: string
-  displayName: string
-  color: string
-  intervalMs: number
-  soundDurationMs: number
-  scheduledIterations: number[]  // For classic mode
-  audioUrl?: string              // For enhanced mode (WaveSurfer)
-}
-
-Timeline Components
-  ├── Classic: Uses scheduledIterations → draws rectangles
-  └── Enhanced: Uses audioUrl → loads waveforms, creates regions
-```
-
-### Mode Toggle Implementation
-
-**Hook:** `useTimelineMode.ts`
-```typescript
-const { timelineMode, toggleTimelineMode } = useTimelineMode();
-// Reads/writes 'compas-timeline-mode' from localStorage
-// Returns: 'classic' | 'enhanced'
-```
-
-**UI Integration:** `ThreeScene.tsx:770-810`
-```tsx
-{isClassicMode ? (
-  <AudioTimeline {...props} />
-) : (
-  <WaveSurferTimeline {...props} />
-)}
-```
-
-### WaveSurfer Integration Details
-
-**Plugins Used:**
-1. **RegionsPlugin** - Creates colored overlays for scheduled iterations
-   - Each iteration becomes a region: `{ start, end, color, id }`
-   - Regions are read-only (drag/resize disabled for now)
-
-2. **TimelinePlugin** - Displays time markers and labels
-   - Time markers every 5s
-   - Primary labels every 10s
-
-**Synchronization:**
-- **External Control:** Parent manages playback state
-- **currentTime Prop:** Syncs all WaveSurfer instances via `seekTo()`
-- **onSeek Callback:** Click-to-seek triggers parent PlaybackScheduler
-
-**Audio Loading:**
-```typescript
-// Extract URL from PositionalAudio userData
-const audioUrl = audio.userData?.soundEvent?.url;
-
-// WaveSurfer loads audio from URL
-wavesurfer.load(`${API_BASE_URL}${audioUrl}`);
-
-// Creates waveform visualization automatically
-```
-
-### Performance Considerations
-
-**Classic Timeline:**
-- ✅ Very fast (simple canvas drawing)
-- ✅ No audio loading needed
-- ✅ Minimal memory footprint
-
-**Enhanced Timeline:**
-- ⚠️ Loads audio buffers for waveform generation
-- ⚠️ Higher memory usage (one WaveSurfer per track)
-- ✅ Lazy loading (only when timeline visible)
-- ✅ Caching by WaveSurfer
-- ⚠️ May need virtualization for 20+ tracks
-
-### Future Migration Path
-
-**Phase 1: Parallel System** ✅ (Current)
-- Both timelines available
-- Classic is default
-- User can toggle
-
-**Phase 2: User Testing** (1-2 weeks)
-- Gather feedback on enhanced mode
-- Monitor performance metrics
-- Fix bugs and polish UX
-
-**Phase 3: Default Switch** (Week 3)
-- Make enhanced mode default for new users
-- Keep toggle available
-
-**Phase 4: Deprecation** (Week 4+)
-- Show migration prompt for classic users
-- Eventually remove classic mode
-- Archive AudioTimeline.tsx for reference
-
-### Configuration
-
-**Classic Timeline:** `AUDIO_TIMELINE` in [constants.ts](frontend/src/lib/constants.ts)
-- Track height, spacing, padding
-- Iteration styling
-- Cursor color/width
-- Color scheme (TTA/Library/Import)
-
-**Enhanced Timeline:** `WAVESURFER_TIMELINE` in [constants.ts](frontend/src/lib/constants.ts)
-- Waveform colors (grey/pink)
-- Track height (80px vs 25px classic)
-- Zoom limits (1x - 100x)
-- Regions styling (alpha, border)
-- Timeline markers (5s/10s intervals)
-- Performance limits (max canvas width)
-
-### Known Limitations
-
-1. **Audio URL Requirement**
-   - Enhanced mode needs `audioUrl` in TimelineSound
-   - Works with: generated sounds, uploaded audio, library sounds
-   - May not work with: synthetic sounds without file URLs
-
-2. **Zoom Performance**
-   - Experimental for many tracks (10+)
-   - May need throttling/debouncing
-
-3. **Region Editing**
-   - Currently read-only
-   - Future: enable drag-to-reschedule
-
-4. **Bundle Size**
-   - WaveSurfer adds ~50KB gzipped
-   - Acceptable trade-off for enhanced UX
-
----
-
-## Multi-Channel Auralization Architecture
-
-### Overview
-COMPAS Soundscape implements a **2-path auralization system** supporting multiple IR formats:
-- **Path 1 (Ambisonic):** FOA (4-ch) or TOA (16-ch) with real-time rotation → Binaural output
-- **Path 2 (Convolution):** Mono (1-ch) or Binaural (2-ch) → Three.js PositionalAudio
-
-### Supported IR Formats
-
-| Format | Channels | Description | Use Case |
-|--------|----------|-------------|----------|
-| **Mono** | 1 | Single-channel IR | Simple room acoustics |
-| **Binaural** | 2 | Stereo HRTF | Pre-spatialized headphone output |
-| **FOA** | 4 | First-Order Ambisonics | Low CPU, good spatial accuracy |
-| **TOA** | 16 | Third-Order Ambisonics | High CPU, excellent spatial accuracy |
-
-### Ambisonic Pipeline (Path 1)
-
-**With Listener Rotation (NEW - Implemented):**
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -480,81 +313,6 @@ COMPAS Soundscape implements a **2-path auralization system** supporting multipl
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Rotation Pipeline Data Flow:**
-
-```
-SceneCoordinator.getListenerOrientation()
-  │ (called in animation loop)
-  ├─> Returns { yaw, pitch, roll } in radians
-  │   • First-person mode: stored rotation values
-  │   • Orbit mode: calculated from camera direction
-  │
-  ↓
-ThreeScene animation effect
-  │ (updates every frame when auralization enabled)
-  ├─> Calls auralizationService.updateOrientation(orientation)
-  │
-  ↓
-AuralizationService.updateOrientation()
-  │ (stores orientation and updates rotator)
-  ├─> Calls rotatorUpdateFn(orientation)
-  │   • Updates rotation matrix in ScriptProcessorNode
-  │   • Matrix recalculated from Euler angles
-  │
-  ↓
-Rotator ScriptProcessorNode.onaudioprocess
-  │ (processes audio in real-time)
-  └─> Applies rotation matrix to X, Y, Z channels
-      • W channel unchanged (omnidirectional)
-      • Smooth rotation without artifacts
-```
-
-**Single-IR Physical Accuracy:**
-
-✅ **What Works (Rotation):**
-- Head rotation in first-person mode
-- Ambisonic field rotates with listener orientation
-- Sound sources appear to stay fixed in space as you turn your head
-- Physically accurate for single static receiver position
-
-⚠️ **Current Limitations (Translation):**
-- Only ONE impulse response per scene
-- IR is recorded from a FIXED position in the room
-- Moving the listener position (translation) uses the SAME IR
-- This is NOT physically accurate for translation
-- Source position is "baked into" the IR recording
-
-**Why Translation Doesn't Work:**
-- IR encodes the room response from recording position to source
-- Moving listener would require DIFFERENT IR from new position
-- Would need IR library: `IRs[receiver_position][source_position]`
-- Not feasible with current single-IR approach
-
-**Rotation vs. Translation:**
-
-| Action | Physical Accuracy | Implementation |
-|--------|-------------------|----------------|
-| **Head Rotation** | ✅ Accurate | Rotate ambisonic field via matrix |
-| **Listener Translation** | ❌ Not accurate | Uses same IR (wrong!) |
-| **Source Translation** | ❌ Not accurate | Would need new IR recording |
-
-**UI Considerations:**
-- In first-person mode, position is LOCKED (correct behavior)
-- Arrow keys rotate head (yaw/pitch), NOT translate
-- When ambisonic IR is loaded:
-  - Consider disabling source dragging (or show warning)
-  - Add notice: "Source position fixed (from IR recording)"
-  - Add orientation indicator for rotation feedback
-
-**Future Enhancement: Multiple IR Support**
-To enable accurate translation, would need:
-1. IR library with multiple recording positions
-2. Interpolation between nearest IRs
-3. Dynamic IR switching based on listener position
-4. Significant storage/bandwidth requirements
-
-**Legacy Implementation (Encoder-based - deprecated for FOA/TOA):**
-
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ Mono Source → Ambisonic Encoder (position-based)            │
@@ -575,17 +333,6 @@ To enable accurate translation, would need:
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Critical Implementation Details:**
-- **Speaker Compensation**: Applied in both offline (`decodeAmbisonicToBinaural`) and real-time (`createAmbisonicDecoderNodes`) decoders
-  - FOA: 1/√8 ≈ 0.354 (-9.0dB)
-  - TOA: 1/√12 ≈ 0.289 (-10.8dB)
-  - Prevents clipping when summing multiple virtual speakers
-- **TOA Parallel Convolution**: Web Audio ConvolverNode only supports 1/2/4 channels, so 16-ch TOA uses splitter → 16 mono convolvers → merger
-- **Sample Rate Resampling**: Linear interpolation when IR sample rate ≠ AudioContext sample rate
-
-### Convolution Pipeline (Path 2)
-
-```
 ┌─────────────────────────────────────────────────────────────┐
 │ Mono Source (44.1kHz)                                       │
 │   ↓                                                         │
@@ -601,284 +348,3 @@ To enable accurate translation, would need:
 │ Stereo Output (L/R)                                         │
 └─────────────────────────────────────────────────────────────┘
 ```
-
-### Backend IR Processing Flow
-
-```
-1. User uploads WAV file (any channel count)
-   └→ POST /api/impulse-responses/upload
-
-2. ImpulseResponseService.process_ir_file()
-   ├→ Read audio: soundfile.read(always_2d=True)
-   ├→ Detect original channels
-   ├→ Determine target channels:
-   │  • 1-2 channels → Keep as-is
-   │  • 3-15 channels → Extract first 4 (FOA)
-   │  • 16+ channels → Extract first 16 (TOA)
-   ├→ extract_channels() - Get first N channels
-   ├→ Resample to 44.1kHz (if needed)
-   ├→ detect_ir_format() - Auto-detect format
-   ├→ Save as: {name}_{format}_{hash}.wav
-   └→ Return ImpulseResponseMetadata
-
-3. File served via /static/impulse_responses/{filename}
-```
-
-### Frontend Integration Points
-
-**Constants:** `frontend/src/lib/constants.ts`
-- `AMBISONIC` - Channel counts, weights, decoder config, performance limits
-- `IR_FORMAT` - Format string constants (mono, binaural, foa, toa)
-- `IMPULSE_RESPONSE.MAX_CHANNELS` - Updated from 2 to 16
-
-**Types:** `frontend/src/types/audio.ts`
-- `IRFormat`, `AmbisonicOrder`, `ImpulseResponseMetadata`
-- `Position3D`, `SphericalPosition`, `Orientation`
-- `FOACoefficients`, `TOACoefficients`
-
-**Core Libraries:**
-- `ambisonic-encoder.ts` - Spatial encoding (mono → 4/16 ch)
-- `ambisonic-rotator.ts` - Field rotation based on camera
-- `ambisonic-decoder.ts` - Virtual speaker binaural decoding
-
-**API Integration:** `frontend/src/services/api.ts`
-- `uploadImpulseResponse()`, `listImpulseResponses()`, `deleteImpulseResponse()`
-
-### Performance Characteristics
-
-| Format | Convolutions | CPU Load | Max Concurrent | Mobile |
-|--------|--------------|----------|----------------|--------|
-| **Mono** | 1 | Very Low | 20+ | ✅ |
-| **Binaural** | 2 | Low | 15+ | ✅ |
-| **FOA** | 4 | Medium | 8 | ✅ |
-| **TOA** | 16 | High | 4 | ⚠️ (use FOA) |
-
-**Performance Settings:** `AMBISONIC.PERFORMANCE` in constants.ts
-- `MAX_TOA_SOURCES: 4` - Limit concurrent TOA auralizations
-- `MAX_FOA_SOURCES: 8` - Limit concurrent FOA auralizations
-- `PREFER_FOA_ON_MOBILE: true` - Auto-fallback on mobile devices
-
-### Channel Extraction Examples
-
-| Input File | Original Ch | Target Ch | Result Format |
-|------------|-------------|-----------|---------------|
-| Room mono | 1 | 1 | Mono |
-| Binaural HRTF | 2 | 2 | Binaural |
-| Odeon FOA export | 8 | 4 | FOA (first 4) |
-| CATT TOA export | 32 | 16 | TOA (first 16) |
-
-### SN3D Normalization
-
-All ambisonic encoding/decoding uses **SN3D (Schmidt semi-normalized)** standard:
-- **W channel:** `1/√2` (~0.707)
-- **Directional channels (X,Y,Z,...):** `1.0`
-- Ensures consistent energy distribution across orders
-- Industry-standard for ambisonic interchange
-
-### Future Enhancements
-
-**Phase 1 (Current):** ✅
-- Backend IR upload/processing
-- Ambisonic encoder/rotator/decoder libraries
-- API integration
-
-**Phase 2 (Completed):** ✅
-- ✅ Rewrite `auralization-service.ts` for multi-format support
-- ✅ Integration with ThreeScene camera rotation (real-time listener rotation)
-- ✅ ScriptProcessorNode-based rotator for FOA
-- [ ] UI component for IR upload/management (`ImpulseResponseUpload.tsx`)
-
-**Phase 3 (In Progress):**
-- ✅ Real-time FOA rotation (ScriptProcessorNode)
-- [ ] Higher-order TOA rotation (Wigner D-matrices for orders 2-3)
-- [ ] HRTF-based binaural decoding via JSAmbisonics (partially done)
-- [ ] Real-time AudioWorklet processing (replace ScriptProcessorNode)
-
-**Phase 4 (Future):**
-- [ ] Multiple IR support for accurate translation
-- [ ] IR interpolation for smooth position transitions
-- [ ] UI orientation indicator in first-person mode
-- [ ] Source position locking/warning when ambisonic IR loaded
-- [ ] IR reversal for auralization/deauralization workflows
-
----
-
-## Resonance Audio Integration
-
-### Overview
-Google Resonance Audio provides real-time spatial audio rendering with HRTF-based binaural output and room acoustics simulation. It operates **in parallel** with the existing convolution-based auralization system.
-
-### Architecture
-
-**System Design:**
-- **Parallel to IR-based auralization**: Both can run simultaneously
-- **Real-time synthesis**: Room acoustics computed on-the-fly (no pre-recorded IRs)
-- **Interactive**: Room parameters adjustable in real-time
-- **HRTF spatialization**: Accurate 3D sound localization for headphones
-
-**Comparison with IR Auralization:**
-
-| Feature | IR Convolution | Resonance Audio |
-|---------|----------------|-----------------|
-| **Accuracy** | Very high (real recordings) | Good (synthetic) |
-| **Flexibility** | Fixed room (baked into IR) | Adjustable room |
-| **CPU Cost** | Medium (convolution) | Medium-High (real-time synthesis) |
-| **Use Case** | Realistic room acoustics | Interactive spatial audio |
-| **Translation** | ❌ Not accurate | ✅ Fully accurate |
-| **Rotation** | ✅ Accurate (FOA/TOA only) | ✅ Accurate |
-
-### Components
-
-**Service Layer:**
-- `frontend/src/lib/audio/resonance-audio-service.ts`
-  - `ResonanceAudioService` - Main service class
-  - Scene initialization and management
-  - Source creation and positioning
-  - Room acoustics configuration
-  - Listener position/orientation updates
-
-**Type Definitions:**
-- `frontend/src/types/audio.ts`
-  - `ResonanceAudioConfig` - Configuration interface
-  - `ResonanceRoomMaterial` - Material per surface (6 surfaces)
-  - `ResonanceRoomDimensions` - Room size (width, height, depth)
-  - `ResonanceSourceConfig` - Source settings (gain, rolloff, directivity)
-
-- `frontend/src/types/resonance-audio.d.ts`
-  - TypeScript declarations for `resonance-audio` library
-  - ResonanceAudio class interface
-  - ResonanceAudioSource interface
-
-**State Management:**
-- `frontend/src/hooks/useResonanceAudio.ts`
-  - Configuration state management
-  - Room dimensions/materials updates
-  - Preset application
-  - Enable/disable toggle
-
-**UI Components:**
-- `frontend/src/components/controls/ResonanceAudioControls.tsx`
-  - Enable/disable toggle
-  - Room preset selector (Studio, Concert Hall, Living Room, Warehouse, Outdoor)
-  - Room dimensions sliders (width, height, depth)
-  - Surface material dropdowns (6 surfaces, 14+ materials)
-
-**Integration Points:**
-- `frontend/src/lib/three/sound-sphere-manager.ts`
-  - `setResonanceAudioService()` - Set service reference
-  - `createResonanceAudioSources()` - Create sources for all sounds
-  - `updateSpherePosition()` - Update source positions on drag
-
-### Data Flow
-
-```
-User enables Resonance Audio (UI toggle)
-  ↓
-useResonanceAudio hook updates config state
-  ↓
-ThreeScene receives config via props
-  ↓
-ResonanceAudioService.initialize(config)
-  ├─> Creates Resonance scene with ambisonic order
-  ├─> Sets room properties (dimensions, materials)
-  └─> Connects output to audio destination
-  ↓
-For each sound source:
-  ResonanceAudioService.createSource(soundId, audio, sourceConfig)
-  ├─> Gets THREE.PositionalAudio output node
-  ├─> Creates Resonance source
-  ├─> Configures directivity and distance model
-  └─> Connects: THREE.js source → Resonance source → Resonance scene
-  ↓
-Animation loop (every frame):
-  ResonanceAudioService.updateListener(position, orientation)
-  ├─> Updates listener position (x, y, z)
-  └─> Updates listener orientation (forward + up vectors)
-  ↓
-Resonance Audio Scene
-  ├─> Renders room acoustics (early reflections + reverb)
-  ├─> Applies distance attenuation
-  ├─> Applies directivity pattern
-  └─> Outputs binaural stereo (HRTF-based)
-```
-
-### Room Acoustics
-
-**Configurable Parameters:**
-1. **Room Dimensions** (meters)
-   - Width (X axis)
-   - Height (Y axis)
-   - Depth (Z axis)
-
-2. **Surface Materials** (6 surfaces)
-   - Left wall
-   - Right wall
-   - Front wall
-   - Back wall
-   - Floor (down)
-   - Ceiling (up)
-
-3. **Material Library** (24 materials)
-   - Hard surfaces: brick, concrete, glass, marble, metal
-   - Soft surfaces: acoustic tiles, curtains, grass
-   - Intermediate: wood, plaster, carpet
-   - Special: transparent (open space), uniform (equal absorption)
-
-4. **Room Presets**
-   - **Studio**: Acoustic tiles (dry, minimal reverb)
-   - **Concert Hall**: Wood panels, parquet floor (warm reverb)
-   - **Living Room**: Plaster walls, parquet floor (moderate reverb)
-   - **Warehouse**: Concrete walls, metal ceiling (long reverb)
-   - **Outdoor**: Grass, transparent ceiling (no reverb)
-
-### Source Configuration
-
-**Distance Attenuation Models:**
-- **Logarithmic** (default): Natural inverse-square law falloff
-- **Linear**: Constant rate falloff (simpler, less realistic)
-- **None**: No distance attenuation
-
-**Directivity Patterns:**
-- **Pattern**: 0 (omnidirectional) to 1 (cardioid/directional)
-- **Sharpness**: 0 (wide) to 1 (narrow beam)
-- Per-source configuration for realistic sound radiation
-
-**Example Use Cases:**
-- Omnidirectional (0): Point sources, ambient sounds
-- Cardioid (1): Musical instruments, loudspeakers
-
-### Constants
-
-`frontend/src/lib/constants.ts` - `RESONANCE_AUDIO` object:
-```typescript
-DEFAULT_AMBISONIC_ORDER: 3        // 16-channel 3rd order (highest quality)
-DEFAULT_ROOM_DIMENSIONS: {
-  width: 10,                      // 10m × 3m × 10m (medium room)
-  height: 3,
-  depth: 10
-}
-DEFAULT_ROOM_MATERIALS: {
-  left: 'brick-bare',             // Brick walls
-  right: 'brick-bare',
-  front: 'brick-bare',
-  back: 'brick-bare',
-  down: 'parquet-on-concrete',    // Parquet floor
-  up: 'acoustic-ceiling-tiles'    // Acoustic ceiling
-}
-ROOM_PRESETS: {
-  STUDIO, CONCERT_HALL, LIVING_ROOM, WAREHOUSE, OUTDOOR
-}
-DEFAULT_ROLLOFF: 'logarithmic'
-DEFAULT_MIN_DISTANCE: 1           // Meters
-DEFAULT_MAX_DISTANCE: 50          // Meters
-```
-
-### Future Enhancements
-- [ ] Material absorption visualization
-- [ ] RT60 calculation from room configuration
-- [ ] Source directivity visualization (polar patterns)
-- [ ] Multi-listener support
-- [ ] Doppler effect for moving sources
-- [ ] Occlusion/obstruction modeling
-- [ ] Integration with modal analysis for source directivity
-

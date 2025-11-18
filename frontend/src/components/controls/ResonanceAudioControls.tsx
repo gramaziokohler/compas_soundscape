@@ -118,10 +118,10 @@ function MaterialDropdown({ value, options, onChange }: MaterialDropdownProps) {
 }
 
 /**
- * Resonance Audio Controls
- * 
- * UI for controlling Google Resonance Audio spatial audio engine.
- * 
+ * ShoeBox Acoustics Controls
+ *
+ * UI for controlling Google Resonance Audio spatial audio engine (ShoeBox Acoustics).
+ *
  * Features:
  * - Enable/disable toggle
  * - Room material selection per surface (6 walls)
@@ -192,7 +192,7 @@ export function ResonanceAudioControls({
     <div className={`flex flex-col gap-3 ${className}`}>
       {/* Header with Title */}
       <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-        RESONANCE AUDIO SETTINGS
+        SHOEBOX ACOUSTICS SETTINGS
       </h4>
 
       {/* Info when no geometry */}

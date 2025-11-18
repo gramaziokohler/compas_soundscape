@@ -1,51 +1,88 @@
 import { useState, useCallback } from 'react';
 import { apiService } from '@/services/api';
-import { validateFileExtension, calculateGeometryBounds, calculateScaleForSounds } from '@/lib/utils';
-import { VALID_FILE_EXTENSIONS } from '@/lib/constants';
+import { calculateGeometryBounds, calculateScaleForSounds } from '@/lib/utils';
+import { useApiErrorHandler } from '@/hooks/useApiErrorHandler';
 import type { CompasGeometry } from '@/types';
 
 export function useFileUpload() {
-  const [file, setFile] = useState<File | null>(null);
+  const handleError = useApiErrorHandler();
+  // Separate states for 3D model and audio files
+  const [modelFile, setModelFile] = useState<File | null>(null);
+  const [audioFile, setAudioFile] = useState<File | null>(null);
   const [geometryData, setGeometryData] = useState<CompasGeometry | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
+  const [isDraggingModel, setIsDraggingModel] = useState(false);
+  const [isDraggingAudio, setIsDraggingAudio] = useState(false);
   const [modelEntities, setModelEntities] = useState<any[]>([]);
   const [isAnalyzingModel, setIsAnalyzingModel] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState('');
-  const [geometryBounds, setGeometryBounds] = useState<{min: number[], max: number[]} | null>(null);
+  const [geometryBounds, setGeometryBounds] = useState<{min: [number, number, number], max: [number, number, number]} | null>(null);
   const [scaleForSounds, setScaleForSounds] = useState(1.0);
   const [useModelAsContext, setUseModelAsContext] = useState(true);
 
+  // Helper functions to check file types
+  const is3DModelFile = (filename: string) => {
+    return /\.(ifc|3dm)$/i.test(filename);
+  };
+
+  const isAudioFile = (filename: string) => {
+    return /\.(wav|mp3|flac|ogg|m4a|aac)$/i.test(filename);
+  };
+
+  // Single file handler that determines type and stores appropriately
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setFile(e.target.files ? e.target.files[0] : null);
+    const selectedFile = e.target.files?.[0];
+    if (!selectedFile) return;
+
+    if (is3DModelFile(selectedFile.name)) {
+      // Clear old model data when selecting a new model file
+      setModelEntities([]);
+      setGeometryData(null);
+      setAnalysisProgress('');
+      setModelFile(selectedFile);
+      setUploadError(null);
+    } else if (isAudioFile(selectedFile.name)) {
+      setAudioFile(selectedFile);
+      setUploadError(null);
+    } else {
+      setUploadError('Invalid file type. Please upload .ifc, .3dm, .wav, or .mp3 files.');
+    }
   }, []);
 
+  // Single drag handlers
   const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    setIsDragging(true);
+    setIsDraggingModel(true); // Reuse for general dragging state
   }, []);
 
   const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    setIsDragging(false);
+    setIsDraggingModel(false);
   }, []);
 
   const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    setIsDragging(false);
+    setIsDraggingModel(false);
 
     const droppedFile = e.dataTransfer.files?.[0];
-    if (droppedFile) {
-      if (validateFileExtension(droppedFile.name, VALID_FILE_EXTENSIONS)) {
-        setFile(droppedFile);
-        setUploadError(null);
-      } else {
-        setUploadError(`Invalid file type. Please upload ${VALID_FILE_EXTENSIONS.join(', ')} files only.`);
-      }
+    if (!droppedFile) return;
+
+    if (is3DModelFile(droppedFile.name)) {
+      // Clear old model data when dropping a new model file
+      setModelEntities([]);
+      setGeometryData(null);
+      setAnalysisProgress('');
+      setModelFile(droppedFile);
+      setUploadError(null);
+    } else if (isAudioFile(droppedFile.name)) {
+      setAudioFile(droppedFile);
+      setUploadError(null);
+    } else {
+      setUploadError('Invalid file type. Please upload .ifc, .3dm, .wav, or .mp3 files.');
     }
   }, []);
 
@@ -94,9 +131,9 @@ export function useFileUpload() {
     }
   }, []);
 
-  const handleUpload = useCallback(async () => {
-    if (!file) {
-      setUploadError("Please select a file first.");
+  const handleUploadModel = useCallback(async () => {
+    if (!modelFile) {
+      setUploadError("Please select a model file first.");
       return;
     }
     setUploadError(null);
@@ -106,22 +143,24 @@ export function useFileUpload() {
     setModelEntities([]);
 
     try {
-      const geometry = await apiService.uploadFile(file);
+      const geometry = await apiService.uploadFile(modelFile);
       processGeometry(geometry);
 
       // Only analyze model if useModelAsContext is true
       if (useModelAsContext) {
-        await analyzeModel(file);
+        await analyzeModel(modelFile);
       } else {
         setAnalysisProgress('Model loaded for positioning only');
       }
     } catch (err: any) {
-      setUploadError(err.message);
+      const errorMessage = err.message || 'Failed to upload file';
+      setUploadError(errorMessage);
+      handleError(err, errorMessage);
       setIsAnalyzingModel(false);
     } finally {
       setIsUploading(false);
     }
-  }, [file, processGeometry, analyzeModel, useModelAsContext]);
+  }, [modelFile, processGeometry, analyzeModel, useModelAsContext, handleError]);
 
   const handleLoadSampleIfc = useCallback(async () => {
     setIsUploading(true);
@@ -145,40 +184,52 @@ export function useFileUpload() {
         setAnalysisProgress('Model loaded for positioning only');
       }
     } catch (err: any) {
-      setUploadError(err.message);
+      const errorMessage = err.message || 'Failed to load sample IFC';
+      setUploadError(errorMessage);
+      handleError(err, errorMessage);
     } finally {
       setIsUploading(false);
       setIsAnalyzingModel(false);
     }
-  }, [processGeometry, useModelAsContext]);
+  }, [processGeometry, useModelAsContext, handleError]);
 
   const clearModel = useCallback(() => {
     setModelEntities([]);
     setGeometryData(null);
-    setFile(null);
+    setModelFile(null);
     setAnalysisProgress('');
   }, []);
 
+  const clearAudio = useCallback(() => {
+    setAudioFile(null);
+  }, []);
+
   return {
-    file,
+    // File state
+    modelFile,
+    audioFile,
     geometryData,
     uploadError,
     isUploading,
-    isDragging,
+    isDragging: isDraggingModel, // Reuse as general dragging state
     modelEntities,
     isAnalyzingModel,
     analysisProgress,
     geometryBounds,
     scaleForSounds,
     useModelAsContext,
+    // File handlers (single upload area)
     handleFileChange,
     handleDragOver,
     handleDragLeave,
     handleDrop,
-    handleUpload,
+    handleUploadModel,
+    // Other handlers
     handleLoadSampleIfc,
     clearModel,
-    setFile,
+    clearAudio,
+    setModelFile,
+    setAudioFile,
     setUseModelAsContext
   };
 }

@@ -8,7 +8,8 @@ import {
   DEFAULT_SEED_COPIES,
   DEFAULT_DIFFUSION_STEPS,
   DEFAULT_SPL_DB,
-  LLM_SUGGESTED_INTERVAL_SECONDS
+  LLM_SUGGESTED_INTERVAL_SECONDS,
+  LLM_RETRY
 } from "@/lib/constants";
 import { ActiveTab } from "@/types";
 
@@ -23,9 +24,93 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
   const [pendingSoundConfigs, setPendingSoundConfigs] = useState<any[]>([]);
   const [activeAiTab, setActiveAiTab] = useState<ActiveTab>('text');
   const [selectedDiverseEntities, setSelectedDiverseEntities] = useState<any[]>([]);
+  const [isAnalyzingEntities, setIsAnalyzingEntities] = useState(false);
 
   // AbortController for cancelling ongoing requests
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  /**
+   * Analyze 3D model and select diverse entities (LLM Step 1)
+   * This is separate from sound generation to give users control
+   */
+  const handleAnalyzeModel = useCallback(async () => {
+    if (modelEntities.length === 0) {
+      setAiError("No 3D model loaded.");
+      return;
+    }
+
+    // Store previous selection in case of error
+    const previousSelection = [...selectedDiverseEntities];
+
+    setAiError(null);
+    setIsAnalyzingEntities(true);
+    setLlmProgress('');
+
+    // Create a new AbortController for this request
+    abortControllerRef.current = new AbortController();
+
+    try {
+      if (modelEntities.length > numSounds) {
+        setLlmProgress(`Selecting ${numSounds} most diverse objects from ${modelEntities.length} total... (Auto-retry enabled)`);
+      } else {
+        setLlmProgress(`Analyzing ${modelEntities.length} objects from 3D model... (Auto-retry enabled)`);
+      }
+
+      // Call backend to select diverse entities
+      const selectionResponse = await fetch(`${API_BASE_URL}/api/select-entities`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entities: modelEntities,
+          max_sounds: numSounds
+        }),
+        signal: abortControllerRef.current.signal
+      });
+
+      if (!selectionResponse.ok) {
+        const errorData = await selectionResponse.json().catch(() => ({}));
+        const errorMessage = errorData.detail || 'Failed to select diverse entities';
+        throw new Error(errorMessage);
+      }
+
+      const selectionResult = await selectionResponse.json();
+      const selectedEntities = selectionResult.selected_entities;
+
+      // Show selected entities with highlighting
+      setSelectedDiverseEntities(selectedEntities);
+      setLlmProgress(`Analysis complete! Selected ${selectedEntities.length} diverse objects.`);
+
+      // Clear progress after a delay
+      setTimeout(() => setLlmProgress(''), 2000);
+
+    } catch (err: any) {
+      // Restore previous selection on error
+      if (previousSelection.length > 0) {
+        setSelectedDiverseEntities(previousSelection);
+      }
+
+      // Don't show error if request was aborted intentionally
+      if (err.name === 'AbortError') {
+        setAiError('Analysis stopped by user.');
+      } else {
+        // Show graceful error message
+        const isOverloaded = err.message.includes('overloaded') || err.message.includes('503') || err.message.includes('UNAVAILABLE');
+        if (isOverloaded) {
+          setAiError(
+            `⏳ LLM service is overloaded even after ${LLM_RETRY.MAX_ATTEMPTS} retry attempts. ` +
+            `Please try again in a moment. ` +
+            (previousSelection.length > 0 ? 'Previous selection kept.' : '')
+          );
+        } else {
+          setAiError(err.message);
+        }
+      }
+      setLlmProgress('');
+    } finally {
+      setIsAnalyzingEntities(false);
+      abortControllerRef.current = null;
+    }
+  }, [modelEntities, numSounds, selectedDiverseEntities]);
 
   const handleGenerateText = useCallback(async () => {
     // Only use entities if checkbox is checked
@@ -50,42 +135,62 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
         num_sounds: numSounds
       };
 
-      // Step 1: Select diverse entities first (if using model)
+      // Step 1: Use pre-analyzed entities or select new ones
       let selectedEntities = null;
       if (shouldUseEntities) {
-        if (modelEntities.length > numSounds) {
-          setLlmProgress(`Selecting ${numSounds} most diverse objects from ${modelEntities.length} total...`);
+        // Check if entities were already analyzed
+        if (selectedDiverseEntities.length > 0) {
+          // Use pre-analyzed entities (from handleAnalyzeModel)
+          selectedEntities = selectedDiverseEntities;
+          const entityCount = selectedEntities.length;
+          if (numSounds > entityCount) {
+            setLlmProgress(`Generating ${numSounds} sound prompts (${entityCount} entity-linked + ${numSounds - entityCount} context sounds)...`);
+          } else if (numSounds < entityCount) {
+            setLlmProgress(`Generating ${numSounds} sound prompts from ${entityCount} selected objects...`);
+          } else {
+            setLlmProgress(`Generating ${numSounds} sound prompts for selected objects...`);
+          }
         } else {
-          setLlmProgress(`Analyzing ${modelEntities.length} objects from 3D model...`);
+          // No pre-analysis, select entities now
+          if (modelEntities.length > numSounds) {
+            setLlmProgress(`Selecting ${numSounds} most diverse objects from ${modelEntities.length} total... (Auto-retry enabled)`);
+          } else {
+            setLlmProgress(`Analyzing ${modelEntities.length} objects from 3D model... (Auto-retry enabled)`);
+          }
+
+          // Call backend to select diverse entities
+          const selectionResponse = await fetch(`${API_BASE_URL}/api/select-entities`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              entities: modelEntities,
+              max_sounds: numSounds
+            }),
+            signal: abortControllerRef.current.signal
+          });
+
+          if (selectionResponse.ok) {
+            const selectionResult = await selectionResponse.json();
+            selectedEntities = selectionResult.selected_entities;
+
+            // Show selected entities with highlighting
+            setSelectedDiverseEntities(selectedEntities);
+            setLlmProgress(`Selected ${selectedEntities.length} objects. Generating sound prompts...`);
+
+            // Give time for highlighting to be visible
+            await new Promise(resolve => setTimeout(resolve, UI_TIMING.ENTITY_HIGHLIGHT_DELAY_MS));
+          } else {
+            // Fallback: use all entities
+            requestBody.entities = modelEntities;
+          }
         }
 
-        // Call backend to select diverse entities first
-        const selectionResponse = await fetch(`${API_BASE_URL}/api/select-entities`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            entities: modelEntities,
-            max_sounds: numSounds
-          }),
-          signal: abortControllerRef.current.signal
-        });
-
-        if (selectionResponse.ok) {
-          const selectionResult = await selectionResponse.json();
-          selectedEntities = selectionResult.selected_entities;
-
-          // Step 2: Show selected entities with highlighting
-          setSelectedDiverseEntities(selectedEntities);
-          setLlmProgress(`Selected ${selectedEntities.length} objects. Generating sound prompts...`);
-
-          // Give time for highlighting to be visible
-          await new Promise(resolve => setTimeout(resolve, UI_TIMING.ENTITY_HIGHLIGHT_DELAY_MS));
-
+        if (selectedEntities) {
           // Use selected entities for prompt generation
           requestBody.entities = selectedEntities;
-        } else {
-          // Fallback: use all entities
-          requestBody.entities = modelEntities;
+          // Keep user-specified num_sounds (allows mixed generation: entity-linked + context sounds)
+          // e.g., 5 entities + 7 sounds = 5 entity-linked + 2 context sounds
+          requestBody.num_sounds = numSounds;
         }
       }
 
@@ -127,10 +232,22 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
           setPendingSoundConfigs(newSoundConfigsWithEntities);
           setShowConfirmLoadSounds(true);
 
-          // Keep the already-selected entities for highlighting (don't override)
-          // If we didn't pre-select, use the entities from the response
-          if (!selectedEntities && result.selected_entities) {
-            setSelectedDiverseEntities(result.selected_entities);
+          // Update highlighted entities to match what the backend actually used
+          // This ensures consistency between highlighting and sound positioning
+          if (result.selected_entities) {
+            // Verify backend used the same entities we selected
+            const backendIndices = result.selected_entities.map((e: any) => e.index).sort().join(',');
+            const currentIndices = (selectedEntities || []).map((e: any) => e.index).sort().join(',');
+            if (backendIndices !== currentIndices) {
+              // Backend selected different entities, update to match
+              setSelectedDiverseEntities(result.selected_entities);
+            }
+          } else if (!selectedEntities) {
+            // Fallback: extract entities from prompts if no selected_entities returned
+            const entitiesFromPrompts = result.prompts.map((item: any) => item.entity).filter(Boolean);
+            if (entitiesFromPrompts.length > 0) {
+              setSelectedDiverseEntities(entitiesFromPrompts);
+            }
           }
 
           // Backend now properly parses prompts - just display them directly
@@ -182,22 +299,41 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
       if (err.name === 'AbortError') {
         setAiError('Generation stopped by user.');
       } else {
-        setAiError(err.message);
+        // Show graceful error message for API overload
+        const isOverloaded = err.message.includes('overloaded') || err.message.includes('503') || err.message.includes('UNAVAILABLE');
+        if (isOverloaded) {
+          setAiError(
+            `⏳ LLM service is overloaded even after ${LLM_RETRY.MAX_ATTEMPTS} retry attempts. ` +
+            `The system automatically retried with exponential backoff. Please try again in a moment.`
+          );
+        } else {
+          setAiError(err.message);
+        }
       }
       setLlmProgress('');
     } finally {
       setIsGenerating(false);
       abortControllerRef.current = null;
     }
-  }, [aiPrompt, numSounds, modelEntities, useModelAsContext]);
+  }, [aiPrompt, numSounds, modelEntities, useModelAsContext, selectedDiverseEntities]);
 
   const handleStopGeneration = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       setIsGenerating(false);
+      setIsAnalyzingEntities(false);
       setLlmProgress('');
       setAiError('Generation stopped by user.');
     }
+  }, []);
+
+  /**
+   * Clear analyzed entities (call when model changes or is unloaded)
+   */
+  const handleClearAnalysis = useCallback(() => {
+    setSelectedDiverseEntities([]);
+    setAiError(null);
+    setLlmProgress('');
   }, []);
 
   return {
@@ -205,6 +341,7 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
     aiResponse,
     aiError,
     isGenerating,
+    isAnalyzingEntities,
     numSounds,
     llmProgress,
     showConfirmLoadSounds,
@@ -215,7 +352,9 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
     setNumSounds,
     setActiveAiTab,
     handleGenerateText,
+    handleAnalyzeModel,
     handleStopGeneration,
+    handleClearAnalysis,
     setPendingSoundConfigs,
     setSelectedDiverseEntities
   };

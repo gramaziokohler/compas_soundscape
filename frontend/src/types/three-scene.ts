@@ -6,9 +6,10 @@
  */
 
 import type { CompasGeometry, SoundEvent, SoundState, EntityData, ReceiverData } from "./index";
-import type { AuralizationConfig } from "./auralization";
-import type { ResonanceAudioConfig } from "./audio";
+import type { AuralizationConfig, ResonanceAudioConfig } from "./audio";
 import type { ModeVisualizationState } from "./modal";
+import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSelector";
+import type { AudioOrchestrator } from "@/lib/audio/AudioOrchestrator";
 
 /**
  * ThreeScene Component Props
@@ -90,7 +91,7 @@ export interface ThreeSceneProps {
   /** Auralization configuration (impulse response settings) */
   auralizationConfig: AuralizationConfig;
 
-  /** Resonance Audio configuration (real-time spatial audio) */
+  /** ShoeBox Acoustics configuration (real-time spatial audio) */
   resonanceAudioConfig?: ResonanceAudioConfig;
 
   /** Geometry bounding box (for room dimensions) */
@@ -123,6 +124,12 @@ export interface ThreeSceneProps {
   /** Callback when an entity is selected for linking to a sound (or null to unlink/exit) */
   onEntityLinked?: (entity: EntityData | null) => void;
 
+  /** Callback to toggle entity in diverse selection (for LLM prompts) */
+  onToggleDiverseSelection?: (entity: EntityData) => void;
+
+  /** Callback to detach linked sound from entity and create sound sphere */
+  onDetachSound?: (entity: EntityData) => void;
+
   /** Mode visualization state (for modal analysis nodal line visualization) */
   modeVisualizationState?: ModeVisualizationState;
 
@@ -135,6 +142,58 @@ export interface ThreeSceneProps {
   /** Callback when receiver mode (first-person view) changes */
   onReceiverModeChange?: (isActive: boolean, receiverId: string | null) => void;
 
+  /** Current audio rendering mode (Flat Anechoic, ShoeBox Acoustics, Spatial Anechoic) */
+  audioRenderingMode?: AudioRenderingMode;
+
+  /** Audio orchestrator instance for managing all audio modes */
+  audioOrchestrator?: AudioOrchestrator | null;
+
+  /** Web Audio API context */
+  audioContext?: AudioContext | null;
+
+  /** Currently selected IR ID (triggers re-registration when changed) */
+  selectedIRId?: string | null;
+
   /** Optional CSS class name for the container */
   className?: string;
+
+  // Sound generation advanced settings
+  /** Global duration for all sound tabs (in seconds) */
+  globalDuration?: number;
+
+  /** Global diffusion steps for text-to-audio generation */
+  globalSteps?: number;
+
+  /** Global negative prompt for text-to-audio generation */
+  globalNegativePrompt?: string;
+
+  /** Whether to apply denoising to generated sounds */
+  applyDenoising?: boolean;
+
+  /** Whether to normalize impulse responses globally */
+  normalizeImpulseResponses?: boolean;
+
+  /** Selected audio generation model (TangoFlux or AudioLDM2) */
+  audioModel?: string;
+
+  /** Callback when global duration changes */
+  onGlobalDurationChange?: (value: number) => void;
+
+  /** Callback when global steps changes */
+  onGlobalStepsChange?: (value: number) => void;
+
+  /** Callback when global negative prompt changes */
+  onGlobalNegativePromptChange?: (value: string) => void;
+
+  /** Callback when denoising setting changes */
+  onApplyDenoisingChange?: (value: boolean) => void;
+
+  /** Callback when IR normalization changes */
+  onNormalizeImpulseResponsesChange?: (value: boolean) => void;
+
+  /** Callback when audio model changes */
+  onAudioModelChange?: (value: string) => void;
+
+  /** Callback to reset all advanced settings to defaults */
+  onResetAdvancedSettings?: () => void;
 }

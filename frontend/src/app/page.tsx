@@ -4,31 +4,38 @@ import { useEffect, useState, useCallback } from "react";
 import { ThreeScene } from "@/components/scene/ThreeScene";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { IRStatusNotice } from "@/components/audio/IRStatusNotice";
+import { ErrorProvider } from "@/contexts/ErrorContext";
+import { ErrorToast } from "@/components/ui/ErrorToast";
 import { useFileUpload } from "@/hooks/useFileUpload";
 import { useTextGeneration } from "@/hooks/useTextGeneration";
 import { useSoundGeneration } from "@/hooks/useSoundGeneration";
 import { useAudioControls } from "@/hooks/useAudioControls";
-import { useAuralization } from "@/hooks/useAuralization";
-import { useResonanceAudio } from "@/hooks/useResonanceAudio";
+import { useAudioNormalization } from "@/hooks/useAudioNormalization";
+import { useRoomMaterials } from "@/hooks/useRoomMaterials";
 import { useSED } from "@/hooks/useSED";
 import { useAudioOrchestrator } from "@/hooks/useAudioOrchestrator";
 import { useReceivers } from "@/hooks/useReceivers";
 import { useModalImpact } from "@/hooks/useModalImpact";
 import { apiService } from "@/services/api";
 import { API_BASE_URL } from "@/lib/constants";
-import type { LoadTab } from "@/types";
+import type { LoadTab, SoundGenerationConfig } from "@/types";
+import { AudioStatusDisplay } from "@/components/audio/AudioStatusDisplay";
+import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSelector";
 
-export default function Home() {
+function HomeContent() {
   const fileUpload = useFileUpload();
   const textGen = useTextGeneration(fileUpload.modelEntities, fileUpload.useModelAsContext);
   const soundGen = useSoundGeneration(fileUpload.geometryBounds);
   const audioControls = useAudioControls(soundGen.generatedSounds);
-  const auralization = useAuralization();
-  const resonanceAudio = useResonanceAudio();
+
   const sed = useSED();
 
-  // Audio Orchestrator (NEW)
+  // MAIN AUDIO SYSTEM: Handles all 6 audio modes (Flat Anechoic, ShoeBox Acoustics, Spatial Anechoic, Mono IR, Stereo IR, Ambisonic IR)
   const audioOrchestrator = useAudioOrchestrator();
+
+  // Audio feature hooks (modular, integrate with orchestrator)
+  const audioNormalization = useAudioNormalization(audioOrchestrator.orchestrator);
+  const roomMaterials = useRoomMaterials(audioOrchestrator.orchestrator);
   const receivers = useReceivers();
   const modalImpact = useModalImpact();
   const [activeLoadTab, setActiveLoadTab] = useState<LoadTab>('upload');
@@ -40,9 +47,55 @@ export default function Home() {
   const [showBoundingBox, setShowBoundingBox] = useState(false);
   const [refreshBoundingBoxTrigger, setRefreshBoundingBoxTrigger] = useState(0);
   
+  // Audio rendering mode state (unified: threejs, resonance, anechoic)
+  const [audioRenderingMode, setAudioRenderingMode] = useState<AudioRenderingMode>('anechoic');
+  
+  // Sync audioRenderingMode with orchestrator's current mode
+  useEffect(() => {
+    if (!audioOrchestrator.status) return;
+
+    const currentMode = audioOrchestrator.status.currentMode;
+    const isIRActive = audioOrchestrator.status.isIRActive;
+
+    // Only update if no IR is active (when IR is active, mode is determined by IR type)
+    if (!isIRActive) {
+      // Map AudioMode enum to AudioRenderingMode
+      let newMode: AudioRenderingMode = 'anechoic';
+      if (currentMode === 'basic_mixer') {
+        newMode = 'basic_mixer';
+      } else if (currentMode === 'no_ir_resonance') {
+        newMode = 'resonance';
+      } else if (currentMode === 'anechoic') {
+        newMode = 'anechoic';
+      }
+
+      if (newMode !== audioRenderingMode) {
+        setAudioRenderingMode(newMode);
+      }
+    }
+  }, [audioOrchestrator.status, audioOrchestrator.status?.currentMode, audioOrchestrator.status?.isIRActive]);
+
+  // Auto-hide bounding box when not in ResonanceMode
+  useEffect(() => {
+    if (!audioOrchestrator.status) return;
+
+    const currentMode = audioOrchestrator.status.currentMode;
+
+    // Only show bounding box in ResonanceMode (no_ir_resonance)
+    if (currentMode !== 'no_ir_resonance' && showBoundingBox) {
+      setShowBoundingBox(false);
+    }
+  }, [audioOrchestrator.status?.currentMode, showBoundingBox]);
+  
   // Entity linking state
   const [isLinkingEntity, setIsLinkingEntity] = useState(false);
   const [linkingConfigIndex, setLinkingConfigIndex] = useState<number | null>(null);
+
+  // Clear analyzed entities when model changes
+  useEffect(() => {
+    // Clear the analysis when new model is loaded or model is unloaded
+    textGen.handleClearAnalysis();
+  }, [fileUpload.modelFile, fileUpload.modelEntities.length]);
 
   // Handler: Refresh bounding box calculation from sound sources
   const handleRefreshBoundingBox = useCallback(() => {
@@ -61,23 +114,23 @@ export default function Home() {
 
   // Handler: Analyze sound events when audio file is uploaded
   const handleAnalyzeSoundEvents = useCallback(async () => {
-    if (!fileUpload.file) return;
+    if (!fileUpload.audioFile) return;
 
     try {
       // Use numSounds from text generation settings
-      await sed.analyzeSoundEvents(fileUpload.file, textGen.numSounds);
+      await sed.analyzeSoundEvents(fileUpload.audioFile, textGen.numSounds);
       console.log('✓ Sound event analysis complete');
     } catch (error) {
       console.error('Failed to analyze sound events:', error);
     }
-  }, [fileUpload.file, textGen.numSounds, sed]);
+  }, [fileUpload.audioFile, textGen.numSounds, sed]);
 
   // Handler: Load detected sounds to sound generation tab
   const handleLoadSoundsFromSED = useCallback(() => {
     // Format SED results as sound configs
     const newConfigs = sed.formatForSoundGeneration();
 
-    // Set the sound configs (replaces existing configs)
+    // Add the sound configs (appends to existing configs)
     soundGen.setSoundConfigsFromPrompts(newConfigs);
 
     // Switch to sound generation tab
@@ -89,18 +142,25 @@ export default function Home() {
   // Wrapped file change handler to clear SED results and load audio info
   const handleFileChangeWithSEDClear = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     fileUpload.handleFileChange(e);
-    sed.clearSEDResults();
 
-    // If it's an audio file, load its info immediately
+    // Only clear SED results if it's an audio file (to replace previous audio)
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
       // Check if it's an audio file by extension
       const isAudio = /\.(wav|mp3|flac|ogg|m4a|aac)$/i.test(selectedFile.name);
       if (isAudio) {
+        sed.clearSEDResults();
         await sed.loadAudioInfo(selectedFile);
       }
     }
   }, [fileUpload, sed]);
+
+  // Auto-load model when modelFile changes
+  useEffect(() => {
+    if (fileUpload.modelFile && !fileUpload.isUploading && !fileUpload.isAnalyzingModel && fileUpload.modelEntities.length === 0) {
+      fileUpload.handleUploadModel();
+    }
+  }, [fileUpload.modelFile, fileUpload.isUploading, fileUpload.isAnalyzingModel, fileUpload.modelEntities.length, fileUpload.handleUploadModel]);
 
   // Handle sound deletion
   const handleDeleteSound = useCallback((soundId: string, promptIdx: number) => {
@@ -134,7 +194,8 @@ export default function Home() {
       if (entity === null) {
         // If there's a currently linked entity, unlink it
         if (previousEntity) {
-          soundGen.handleUpdateConfig(linkingConfigIndex, 'entity' as any, undefined);
+          // Detach sound from entity (creates sound sphere, updates soundscapeData)
+          soundGen.handleDetachSoundFromEntity(linkingConfigIndex);
 
           // Remove the previous entity from highlights
           const updatedEntities = textGen.selectedDiverseEntities.filter(
@@ -150,7 +211,8 @@ export default function Home() {
       }
 
       // Entity is not null - link the new entity
-      soundGen.handleUpdateConfig(linkingConfigIndex, 'entity' as any, entity);
+      // This will destroy sound sphere (if exists) and move overlay to entity
+      soundGen.handleAttachSoundToEntity(linkingConfigIndex, entity);
 
       // Update diverse selection to highlight the new entity
       let updatedEntities = [...textGen.selectedDiverseEntities];
@@ -173,10 +235,50 @@ export default function Home() {
   }, [linkingConfigIndex, soundGen, textGen]);
 
   /**
+   * Toggle entity in diverse selection (for LLM prompts)
+   * Used from entity overlay link button: grey <-> pink
+   */
+  const handleToggleDiverseSelection = useCallback((entity: any) => {
+    const isCurrentlySelected = textGen.selectedDiverseEntities.some(e => e.index === entity.index);
+
+    if (isCurrentlySelected) {
+      // Remove from selection
+      const updatedEntities = textGen.selectedDiverseEntities.filter(e => e.index !== entity.index);
+      textGen.setSelectedDiverseEntities(updatedEntities);
+    } else {
+      // Add to selection
+      textGen.setSelectedDiverseEntities([...textGen.selectedDiverseEntities, entity]);
+    }
+  }, [textGen]);
+
+  /**
+   * Detach sound from entity and create sound sphere
+   * Used from entity overlay link button when clicking green (linked) state
+   */
+  const handleDetachSound = useCallback((entity: any) => {
+    // Find the config linked to this entity
+    const configIndex = soundGen.soundConfigs.findIndex(config => config.entity?.index === entity.index);
+
+    if (configIndex === -1) {
+      console.warn('[handleDetachSound] No sound config found for entity', entity.index);
+      return;
+    }
+
+    // Unlink the entity from the sound config AND update soundscape data
+    // This will create a sound sphere in ThreeScene
+    soundGen.handleDetachSoundFromEntity(configIndex);
+
+    // Add entity to diverse selection (pink highlight)
+    if (!textGen.selectedDiverseEntities.some(e => e.index === entity.index)) {
+      textGen.setSelectedDiverseEntities([...textGen.selectedDiverseEntities, entity]);
+    }
+  }, [soundGen, textGen]);
+
+  /**
    * Wrapper for handleUpdateConfig that handles entity unlinking
    * When an entity is unlinked (set to undefined), also remove it from highlights
    */
-  const handleUpdateSoundConfig = useCallback((index: number, field: string, value: any) => {
+  const handleUpdateSoundConfig = useCallback((index: number, field: keyof SoundGenerationConfig, value: any) => {
     // Check if we're unlinking an entity
     if (field === 'entity' && value === undefined) {
       const currentConfig = soundGen.soundConfigs[index];
@@ -213,17 +315,11 @@ export default function Home() {
       const blob = await response.blob();
       const file = new File([blob], irMetadata.name, { type: 'audio/wav' });
 
-      // Load the IR into OLD system (for compatibility)
-      const tempContext = new AudioContext();
-      await auralization.loadImpulseResponse(file, tempContext);
+      // Load into AudioOrchestrator (handles all IR processing)
+      await audioOrchestrator.loadImpulseResponse(file);
 
-      // Load the IR into NEW audio orchestrator
-      await audioOrchestrator.loadImpulseResponse?.(file);
-
-      // Disable Resonance Audio when IR is loaded (as per workflow)
-      if (resonanceAudio.config.enabled) {
-        resonanceAudio.toggleResonanceAudio(false);
-      }
+      // Select the IR to activate it (triggers mode switch)
+      await audioOrchestrator.selectImpulseResponse();
 
       // Update selected IR ID
       setSelectedIRId(irMetadata.id);
@@ -231,46 +327,85 @@ export default function Home() {
       console.error('[Auralization Page] Error loading IR from library:', error);
       throw error;
     }
-  }, [auralization, audioOrchestrator]);
+  }, [audioOrchestrator]);
 
   /**
    * Clear/deselect the current IR (disable auralization)
    */
   const handleClearIR = useCallback(() => {
-    auralization.clearImpulseResponse();
-    audioOrchestrator.clearImpulseResponse?.();
+    audioOrchestrator.clearImpulseResponse();
     setSelectedIRId(null);
-  }, [auralization, audioOrchestrator]);
+  }, [audioOrchestrator]);
 
   /**
    * Toggle IR normalization
    */
   const handleToggleNormalize = useCallback((enabled: boolean) => {
-    auralization.toggleNormalize(enabled);
-  }, [auralization]);
+    audioNormalization.toggleNormalize(enabled);
+  }, [audioNormalization]);
 
-  // Handler: Update No IR Mode (Three.js vs Resonance)
-  const handleUpdateNoIRMode = useCallback((mode: 'threejs' | 'resonance') => {
-    audioOrchestrator.updateNoIRMode?.(mode);
+  const handleResetAdvancedSettings = useCallback(() => {
+    soundGen.handleResetToDefaults();
+    audioNormalization.reset();
+  }, [soundGen.handleResetToDefaults, audioNormalization.reset]);
 
-    // Automatically enable/disable Resonance Audio based on mode selection
-    const shouldEnableResonance = mode === 'resonance';
-    if (resonanceAudio.config.enabled !== shouldEnableResonance) {
-      resonanceAudio.toggleResonanceAudio(shouldEnableResonance);
-    }
-  }, [audioOrchestrator, resonanceAudio]);
+  // Handler: Audio Rendering Mode Change (unified handler for all 3 modes)
+  const handleAudioRenderingModeChange = useCallback((mode: AudioRenderingMode) => {
+    setAudioRenderingMode(mode);
+    console.log('[Page] Audio rendering mode changed to:', mode);
 
-  // Handler: Update Output Decoder (Binaural vs Stereo)
-  const handleUpdateOutputDecoder = useCallback((decoder: 'binaural' | 'stereo') => {
-    const decoderType = decoder === 'binaural' ? 'binaural_hrtf' : 'stereo_speakers';
-    audioOrchestrator.setOutputDecoder?.(decoderType as any);
+    // Update AudioOrchestrator's no-IR preference
+    // This will trigger the orchestrator to switch to the appropriate mode
+    audioOrchestrator.setNoIRPreference(mode);
   }, [audioOrchestrator]);
+
+  // Handler: Update Output Decoder (Removed - binaural is default)
+  const handleUpdateOutputDecoder = useCallback((decoder: 'binaural' | 'stereo') => {
+    // REMOVED - Output decoder toggle removed from UI
+    // Binaural (HRTF) is now the default and only option
+    console.log('[Page] Output decoder changed to:', decoder, '(binaural-only now)');
+  }, []);
+
+  // Create compatibility config objects for components that still expect them
+  const irState = audioOrchestrator.getIRState();
+  const auralizationConfig = {
+    enabled: audioOrchestrator.status?.isIRActive || false,
+    impulseResponseUrl: null,
+    impulseResponseBuffer: irState.buffer || null,
+    impulseResponseFilename: irState.filename || null,
+    normalize: audioNormalization.normalize
+  };
+
+  const resonanceAudioConfig = {
+    enabled: audioOrchestrator.status?.currentMode === 'no_ir_resonance',
+    ambisonicOrder: audioOrchestrator.status?.ambisonicOrder || 1,
+    roomDimensions: roomMaterials.roomDimensions,
+    roomMaterials: roomMaterials.roomMaterials
+  };
+
+  // Handler: Room materials update
+  const handleUpdateRoomMaterials = useCallback((materials: any) => {
+    roomMaterials.updateRoomMaterials(materials);
+  }, [roomMaterials]);
 
   // Handler: Receiver Mode Change (from ThreeScene)
   const handleReceiverModeChange = useCallback((isActive: boolean, receiverId: string | null) => {
-    console.log('[Page] Receiver mode changed:', { isActive, receiverId });
-    audioOrchestrator.updateReceiverMode?.(isActive, receiverId);
-  }, [audioOrchestrator]);
+    const hasReceivers = receivers.receivers.length > 0;
+    console.log('[Page] Receiver mode changed:', { isActive, receiverId, hasReceivers });
+    audioOrchestrator.setReceiverMode(isActive, receiverId || undefined, hasReceivers);
+  }, [audioOrchestrator, receivers.receivers.length]);
+
+  // Sync receiver count with AudioOrchestrator when receivers are added/removed
+  useEffect(() => {
+    if (!audioOrchestrator.isInitialized || !audioOrchestrator.status) return;
+
+    const hasReceivers = receivers.receivers.length > 0;
+    const isReceiverModeActive = audioOrchestrator.status.isReceiverModeActive;
+
+    // Update orchestrator about receiver existence (preserving current active state)
+    // This ensures warning messages update when receivers are created/deleted
+    audioOrchestrator.setReceiverMode(isReceiverModeActive, undefined, hasReceivers);
+  }, [receivers.receivers.length, audioOrchestrator.isInitialized]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -301,7 +436,8 @@ export default function Home() {
     <div className="flex w-screen h-screen overflow-hidden bg-gray-100 dark:bg-gray-900">
       <Sidebar
         // File upload props
-        file={fileUpload.file}
+        modelFile={fileUpload.modelFile}
+        audioFile={fileUpload.audioFile}
         geometryData={fileUpload.geometryData}
         uploadError={fileUpload.uploadError}
         isUploading={fileUpload.isUploading}
@@ -314,9 +450,8 @@ export default function Home() {
         onDragOver={fileUpload.handleDragOver}
         onDragLeave={fileUpload.handleDragLeave}
         onDrop={fileUpload.handleDrop}
-        onUpload={fileUpload.handleUpload}
+        onUploadModel={fileUpload.handleUploadModel}
         onLoadSampleIfc={fileUpload.handleLoadSampleIfc}
-        onClearModel={fileUpload.clearModel}
         setUseModelAsContext={fileUpload.setUseModelAsContext}
         activeLoadTab={activeLoadTab}
         setActiveLoadTab={setActiveLoadTab}
@@ -341,9 +476,12 @@ export default function Home() {
         llmProgress={textGen.llmProgress}
         showConfirmLoadSounds={textGen.showConfirmLoadSounds}
         pendingSoundConfigs={textGen.pendingSoundConfigs}
+        selectedDiverseEntities={textGen.selectedDiverseEntities}
+        isAnalyzingEntities={textGen.isAnalyzingEntities}
         setAiPrompt={textGen.setAiPrompt}
         setNumSounds={textGen.setNumSounds}
         onGenerateText={textGen.handleGenerateText}
+        onAnalyzeModel={textGen.handleAnalyzeModel}
         onStopGeneration={textGen.handleStopGeneration}
         onLoadSoundsToGeneration={handleLoadSoundsToGeneration}
 
@@ -394,9 +532,8 @@ export default function Home() {
         // IR Library props
         onSelectIRFromLibrary={handleSelectIRFromLibrary}
         onClearIR={handleClearIR}
-        onToggleNormalize={handleToggleNormalize}
         selectedIRId={selectedIRId}
-        auralizationConfig={auralization.config}
+        auralizationConfig={auralizationConfig}
 
         // Receiver props
         receivers={receivers.receivers}
@@ -405,31 +542,28 @@ export default function Home() {
         onDeleteReceiver={receivers.deleteReceiver}
         onUpdateReceiverName={receivers.updateReceiverName}
 
-        // Resonance Audio props
-        resonanceAudioConfig={resonanceAudio.config}
-        onToggleResonanceAudio={resonanceAudio.toggleResonanceAudio}
-        onUpdateRoomMaterials={resonanceAudio.updateRoomMaterials}
+        // ShoeBox Acoustics props
+        resonanceAudioConfig={resonanceAudioConfig}
+        onToggleResonanceAudio={() => {}} // No-op: mode switching handled by audioRenderingMode
+        onUpdateRoomMaterials={handleUpdateRoomMaterials}
         hasGeometry={fileUpload.geometryData !== null}
         showBoundingBox={showBoundingBox}
         onToggleBoundingBox={setShowBoundingBox}
         onRefreshBoundingBox={handleRefreshBoundingBox}
 
-        // Audio Orchestrator props (NEW)
-        preferredNoIRMode={audioOrchestrator.preferredNoIRMode}
-        onUpdateNoIRMode={handleUpdateNoIRMode}
-        outputDecoder={audioOrchestrator.outputDecoder === 'binaural_hrtf' ? 'binaural' : 'stereo'}
-        onUpdateOutputDecoder={handleUpdateOutputDecoder}
+        // Audio Orchestrator props (TODO: Phase 1-6)
+        audioRenderingMode={audioRenderingMode}
+        onAudioRenderingModeChange={handleAudioRenderingModeChange}
       />
 
       <main className="flex-1 overflow-hidden relative">
-        {/* IR Status Notice Overlay */}
-        {audioOrchestrator.status?.uiNotice && (
-          <IRStatusNotice
-            message={audioOrchestrator.status.uiNotice}
-            dofDescription={audioOrchestrator.status.dofDescription}
-            isActive={audioOrchestrator.status.isIRActive}
-          />
-        )}
+        {/* Audio Status Display - Top Right Overlay
+        <AudioStatusDisplay
+          status={audioOrchestrator.status}
+          warnings={audioOrchestrator.getWarnings()}
+          onClearWarnings={audioOrchestrator.clearWarnings}
+        /> */}
+
 
         <ThreeScene
           geometryData={fileUpload.geometryData}
@@ -454,8 +588,8 @@ export default function Home() {
           scaleForSounds={fileUpload.scaleForSounds}
           modelEntities={fileUpload.modelEntities}
           selectedDiverseEntities={textGen.selectedDiverseEntities}
-          auralizationConfig={auralization.config}
-          resonanceAudioConfig={resonanceAudio.config}
+          auralizationConfig={auralizationConfig}
+          resonanceAudioConfig={resonanceAudioConfig}
           geometryBounds={fileUpload.geometryBounds}
           showBoundingBox={showBoundingBox}
           refreshBoundingBoxTrigger={refreshBoundingBoxTrigger}
@@ -466,13 +600,41 @@ export default function Home() {
           onCancelPlacingReceiver={receivers.cancelPlacingReceiver}
           isLinkingEntity={isLinkingEntity}
           onEntityLinked={handleEntityLinked}
+          onToggleDiverseSelection={handleToggleDiverseSelection}
+          onDetachSound={handleDetachSound}
           modeVisualizationState={modalImpact.visualizationState}
           onSetModeVisualization={modalImpact.setModeVisualization}
           onSelectMode={modalImpact.selectMode}
           onReceiverModeChange={handleReceiverModeChange}
+          audioRenderingMode={audioRenderingMode}
+          audioOrchestrator={audioOrchestrator.orchestrator}
+          audioContext={audioOrchestrator.audioContext}
+          selectedIRId={selectedIRId}
+          globalDuration={soundGen.globalDuration}
+          globalSteps={soundGen.globalSteps}
+          globalNegativePrompt={soundGen.globalNegativePrompt}
+          applyDenoising={soundGen.applyDenoising}
+          normalizeImpulseResponses={auralizationConfig.normalize}
+          audioModel={soundGen.audioModel}
+          onGlobalDurationChange={soundGen.handleGlobalDurationChange}
+          onGlobalStepsChange={soundGen.handleGlobalStepsChange}
+          onGlobalNegativePromptChange={soundGen.setGlobalNegativePrompt}
+          onApplyDenoisingChange={soundGen.setApplyDenoising}
+          onNormalizeImpulseResponsesChange={handleToggleNormalize}
+          onAudioModelChange={soundGen.setAudioModel}
+          onResetAdvancedSettings={handleResetAdvancedSettings}
           className="w-full h-full"
         />
       </main>
     </div>
+  );
+}
+
+export default function Home() {
+  return (
+    <ErrorProvider>
+      <ErrorToast />
+      <HomeContent />
+    </ErrorProvider>
   );
 }

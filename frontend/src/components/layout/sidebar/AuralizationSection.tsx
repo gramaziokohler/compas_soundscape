@@ -1,6 +1,6 @@
 import { useState } from "react";
-import type { AuralizationConfig } from "@/hooks/useAuralization";
-import { getIRInfo } from "@/lib/audio/impulse-response";
+import type { AuralizationConfig } from "@/types/audio";
+import { getIRInfo } from "@/lib/audio/ir-utils";
 import { FileUploadArea } from "@/components/controls/FileUploadArea";
 import { AudioWaveformDisplay } from "@/components/audio/AudioWaveformDisplay";
 import type { SEDAudioInfo } from "@/types";

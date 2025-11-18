@@ -28,7 +28,7 @@ export function Sidebar(props: SidebarProps) {
           <div className="flex gap-2 min-w-max">
             <button
               onClick={() => props.setActiveAiTab('text')}
-              className="px-4 py-2 font-medium transition-colors whitespace-nowrap text-sm"
+              className="px-3 py-2 font-medium transition-colors whitespace-nowrap text-sm"
               style={{
                 borderBottom: props.activeAiTab === 'text' ? `2px solid ${UI_COLORS.PRIMARY}` : 'none',
                 color: props.activeAiTab === 'text' ? UI_COLORS.PRIMARY : UI_COLORS.NEUTRAL_600
@@ -48,7 +48,7 @@ export function Sidebar(props: SidebarProps) {
             </button>
             <button
               onClick={() => props.setActiveAiTab('sound')}
-              className="px-4 py-2 font-medium transition-colors whitespace-nowrap text-sm"
+              className="px-3 py-2 font-medium transition-colors whitespace-nowrap text-sm"
               style={{
                 borderBottom: props.activeAiTab === 'sound' ? `2px solid ${UI_COLORS.PRIMARY}` : 'none',
                 color: props.activeAiTab === 'sound' ? UI_COLORS.PRIMARY : UI_COLORS.NEUTRAL_600
@@ -68,7 +68,7 @@ export function Sidebar(props: SidebarProps) {
             </button>
             <button
               onClick={() => props.setActiveAiTab('acoustics')}
-              className="px-4 py-2 font-medium transition-colors whitespace-nowrap text-sm"
+              className="px-3 py-2 font-medium transition-colors whitespace-nowrap text-sm"
               style={{
                 borderBottom: props.activeAiTab === 'acoustics' ? `2px solid ${UI_COLORS.PRIMARY}` : 'none',
                 color: props.activeAiTab === 'acoustics' ? UI_COLORS.PRIMARY : UI_COLORS.NEUTRAL_600
@@ -95,7 +95,8 @@ export function Sidebar(props: SidebarProps) {
             <ModelLoadSection
               modelEntities={props.modelEntities}
               activeLoadTab={props.activeLoadTab}
-              file={props.file}
+              modelFile={props.modelFile}
+              audioFile={props.audioFile}
               isDragging={props.isDragging}
               isUploading={props.isUploading}
               isAnalyzingModel={props.isAnalyzingModel}
@@ -106,9 +107,8 @@ export function Sidebar(props: SidebarProps) {
               onDragOver={props.onDragOver}
               onDragLeave={props.onDragLeave}
               onDrop={props.onDrop}
-              onUpload={props.onUpload}
+              onUploadModel={props.onUploadModel}
               onLoadSampleIfc={props.onLoadSampleIfc}
-              onClearModel={props.onClearModel}
               setActiveLoadTab={props.setActiveLoadTab}
               setUseModelAsContext={props.setUseModelAsContext}
               isSEDAnalyzing={props.isSEDAnalyzing}
@@ -120,6 +120,12 @@ export function Sidebar(props: SidebarProps) {
               onAnalyzeSoundEvents={props.onAnalyzeSoundEvents}
               onToggleSEDOption={props.onToggleSEDOption}
               onLoadSoundsFromSED={props.onLoadSoundsFromSED}
+              selectedDiverseEntities={props.selectedDiverseEntities}
+              isAnalyzingEntities={props.isAnalyzingEntities}
+              llmProgress={props.llmProgress}
+              numSounds={props.numSounds}
+              onAnalyzeModel={props.onAnalyzeModel}
+              onStopGeneration={props.onStopGeneration}
             />
 
             <TextGenerationSection
@@ -128,6 +134,7 @@ export function Sidebar(props: SidebarProps) {
               numSounds={props.numSounds}
               isGenerating={props.isGenerating}
               isAnalyzingModel={props.isAnalyzingModel}
+              isAnalyzingEntities={props.isAnalyzingEntities}
               llmProgress={props.llmProgress}
               aiError={props.aiError}
               aiResponse={props.aiResponse}
@@ -193,7 +200,6 @@ export function Sidebar(props: SidebarProps) {
             onUpdateReceiverName={props.onUpdateReceiverName}
             onSelectIRFromLibrary={props.onSelectIRFromLibrary}
             onClearIR={props.onClearIR}
-            onToggleNormalize={props.onToggleNormalize}
             selectedIRId={props.selectedIRId}
             auralizationConfig={props.auralizationConfig}
             resonanceAudioConfig={props.resonanceAudioConfig}
@@ -203,10 +209,8 @@ export function Sidebar(props: SidebarProps) {
             showBoundingBox={props.showBoundingBox}
             onToggleBoundingBox={props.onToggleBoundingBox}
             onRefreshBoundingBox={props.onRefreshBoundingBox}
-            preferredNoIRMode={props.preferredNoIRMode}
-            onUpdateNoIRMode={props.onUpdateNoIRMode}
-            outputDecoder={props.outputDecoder}
-            onUpdateOutputDecoder={props.onUpdateOutputDecoder}
+            audioRenderingMode={props.audioRenderingMode}
+            onAudioRenderingModeChange={props.onAudioRenderingModeChange}
           />
         )}
       </div>

@@ -7,8 +7,8 @@
  * Sections:
  * - Receivers: Create and manage receiver spheres
  * - IR Library: Upload, browse, and select impulse responses
- * - Spatial Mode Selector: Toggle between Three.js and Resonance (No IR only)
- * - Resonance Audio: Real-time HRTF-based spatial audio with room acoustics
+ * - Spatial Mode Selector: Toggle between Flat Anechoic and ShoeBox Acoustics (No IR only)
+ * - ShoeBox Acoustics: Real-time HRTF-based spatial audio with room acoustics
  * - Output Decoder: Choose between Binaural (HRTF) and Stereo Speakers
  *
  * Architecture:
@@ -20,11 +20,9 @@
 import { ReceiversSection } from './ReceiversSection';
 import { ImpulseResponseUpload } from '@/components/audio/ImpulseResponseUpload';
 import { ResonanceAudioControls } from '@/components/controls/ResonanceAudioControls';
-import { SpatialModeSelector } from '@/components/audio/SpatialModeSelector';
-import { OutputDecoderToggle } from '@/components/audio/OutputDecoderToggle';
+import { AudioRenderingModeSelector, type AudioRenderingMode } from '@/components/audio/AudioRenderingModeSelector';
 import type { ReceiverData } from '@/types';
-import type { ImpulseResponseMetadata, ResonanceAudioConfig, ResonanceRoomMaterial } from '@/types/audio';
-import type { AuralizationConfig } from '@/hooks/useAuralization';
+import type { ImpulseResponseMetadata, ResonanceAudioConfig, ResonanceRoomMaterial, AuralizationConfig } from '@/types/audio';
 import { UI_COLORS } from '@/lib/constants';
 
 interface AcousticsTabProps {
@@ -38,7 +36,6 @@ interface AcousticsTabProps {
   // IR Library props
   onSelectIRFromLibrary: (irMetadata: ImpulseResponseMetadata) => Promise<void>;
   onClearIR: () => void;
-  onToggleNormalize: (enabled: boolean) => void;
   selectedIRId: string | null;
   auralizationConfig: AuralizationConfig;
 
@@ -52,10 +49,8 @@ interface AcousticsTabProps {
   onRefreshBoundingBox?: () => void;
 
   // Audio Orchestrator props (NEW)
-  preferredNoIRMode?: 'threejs' | 'resonance';
-  onUpdateNoIRMode?: (mode: 'threejs' | 'resonance') => void;
-  outputDecoder?: 'binaural' | 'stereo';
-  onUpdateOutputDecoder?: (decoder: 'binaural' | 'stereo') => void;
+  audioRenderingMode?: AudioRenderingMode;
+  onAudioRenderingModeChange?: (mode: AudioRenderingMode) => void;
 }
 
 export function AcousticsTab({
@@ -66,7 +61,6 @@ export function AcousticsTab({
   onUpdateReceiverName,
   onSelectIRFromLibrary,
   onClearIR,
-  onToggleNormalize,
   selectedIRId,
   auralizationConfig,
   resonanceAudioConfig,
@@ -76,10 +70,8 @@ export function AcousticsTab({
   showBoundingBox,
   onToggleBoundingBox,
   onRefreshBoundingBox,
-  preferredNoIRMode = 'threejs',
-  onUpdateNoIRMode,
-  outputDecoder = 'binaural',
-  onUpdateOutputDecoder
+  audioRenderingMode = 'basic_mixer',
+  onAudioRenderingModeChange
 }: AcousticsTabProps) {
   const hasIR = auralizationConfig.impulseResponseBuffer !== null;
 
@@ -102,27 +94,23 @@ export function AcousticsTab({
         <ImpulseResponseUpload
           onSelectIR={onSelectIRFromLibrary}
           onClearIR={onClearIR}
-          onToggleNormalize={onToggleNormalize}
           selectedIRId={selectedIRId}
           auralizationConfig={auralizationConfig}
         />
       </div>
 
-      {/* Spatial Mode Selector - Only show when no IR is loaded */}
-      {!hasIR && onUpdateNoIRMode && (
+      {/* Audio Rendering Mode Selector - Only show when no IR is loaded */}
+      {!hasIR && onAudioRenderingModeChange && (
         <div className="flex flex-col gap-3">
-          <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-            SPATIAL AUDIO RENDERER
-          </h4>
-          <SpatialModeSelector
-            currentMode={preferredNoIRMode}
-            onModeChange={onUpdateNoIRMode}
+          <AudioRenderingModeSelector
+            currentMode={audioRenderingMode}
+            onModeChange={onAudioRenderingModeChange}
           />
         </div>
       )}
 
       {/* Resonance Audio Controls - Only show when no IR is loaded AND Resonance mode is selected */}
-      {!hasIR && preferredNoIRMode === 'resonance' && (
+      {!hasIR && audioRenderingMode === 'resonance' && (
         <ResonanceAudioControls
           config={resonanceAudioConfig}
           onToggle={onToggleResonanceAudio}
@@ -132,19 +120,6 @@ export function AcousticsTab({
           onToggleBoundingBox={onToggleBoundingBox}
           onRefreshBoundingBox={onRefreshBoundingBox}
         />
-      )}
-
-      {/* Output Decoder Toggle - Always visible */}
-      {onUpdateOutputDecoder && (
-        <div className="flex flex-col gap-3">
-          <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-            OUTPUT DECODER
-          </h4>
-          <OutputDecoderToggle
-            currentDecoder={outputDecoder}
-            onDecoderChange={onUpdateOutputDecoder}
-          />
-        </div>
       )}
     </div>
   );

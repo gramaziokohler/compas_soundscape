@@ -18,6 +18,12 @@ BACKEND_DIR = Path(__file__).parent.parent.resolve()
 # Model Configuration
 LLM_MODEL_NAME = "gemini-2.5-flash"
 
+# LLM Retry Configuration (for handling 503 overload errors)
+LLM_MAX_RETRIES = 5  # Maximum number of retry attempts
+LLM_INITIAL_RETRY_DELAY = 2.0  # Initial delay in seconds before first retry
+LLM_MAX_RETRY_DELAY = 30.0  # Maximum delay in seconds between retries
+LLM_BACKOFF_MULTIPLIER = 2.0  # Exponential backoff multiplier
+
 # Default Sound Parameters (consolidated from multiple sources)
 DEFAULT_SPL_DB = 70.0  # Default Sound Pressure Level in dB
 DEFAULT_ENTITY_SPL_DB = 70.0  # Default SPL for entity prompts
@@ -213,6 +219,13 @@ MODAL_ANALYSIS_NUM_MODES = 10  # Number of vibration modes to compute
 MODAL_ANALYSIS_MESH_RESOLUTION = 8  # FE mesh resolution per dimension
 MODAL_ANALYSIS_MIN_FREQUENCY = 0.1  # Minimum frequency to report (Hz)
 MODAL_ANALYSIS_MAX_FREQUENCY = 20000  # Maximum frequency to report (Hz)
+MODAL_ANALYSIS_TIMEOUT = 20.0  # Maximum time for analysis in seconds (prevents infinite loops)
+
+# Mesh Validation Thresholds
+MODAL_ANALYSIS_MAX_DEGENERATE_RATIO = 0.05  # Maximum ratio of degenerate triangles (5%)
+MODAL_ANALYSIS_MAX_NONMANIFOLD_RATIO = 0.01  # Maximum ratio of non-manifold edges (1%)
+MODAL_ANALYSIS_DEGENERATE_AREA_THRESHOLD = 1e-10  # Minimum triangle area (m²)
+MODAL_ANALYSIS_VERTEX_COINCIDENCE_DECIMALS = 3 # Decimal places for detecting coincident vertices
 
 # Material Presets (E, ν, ρ)
 MODAL_ANALYSIS_MATERIALS = {

@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { FileUploadArea } from "@/components/controls/FileUploadArea";
 import { AudioWaveformDisplay } from "@/components/audio/AudioWaveformDisplay";
 import { apiService } from "@/services/api";
-import type { ImpulseResponseMetadata } from "@/types/audio";
-import type { AuralizationConfig } from "@/hooks/useAuralization";
+import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
+import type { ImpulseResponseMetadata, AuralizationConfig } from "@/types/audio";
 import type { SEDAudioInfo } from "@/types";
 import { calculateRT60, formatRT60, type RT60Result } from "@/lib/audio/rt60-analysis";
 import { UI_COLORS, UI_CARD } from "@/lib/constants";
@@ -13,7 +13,6 @@ import { UI_COLORS, UI_CARD } from "@/lib/constants";
 interface ImpulseResponseUploadProps {
   onSelectIR: (irMetadata: ImpulseResponseMetadata) => Promise<void>;
   onClearIR: () => void;
-  onToggleNormalize: (enabled: boolean) => void;
   selectedIRId: string | null;
   auralizationConfig: AuralizationConfig;
 }
@@ -40,26 +39,27 @@ interface ImpulseResponseUploadProps {
 export function ImpulseResponseUpload({
   onSelectIR,
   onClearIR,
-  onToggleNormalize,
   selectedIRId,
   auralizationConfig
 }: ImpulseResponseUploadProps) {
+  const handleError = useApiErrorHandler();
   const [impulseResponses, setImpulseResponses] = useState<ImpulseResponseMetadata[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<string>('');
-  
+
   // RT60 cache: Map from IR ID to RT60 result (calculated on-demand)
   const [rt60Cache, setRt60Cache] = useState<Map<string, RT60Result | null>>(new Map());
-  
+
   // RT60 for currently loaded IR
   const [currentIRRT60, setCurrentIRRT60] = useState<RT60Result | null>(null);
 
-  // File upload state - supports multiple files
-  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
-  const [uploadName, setUploadName] = useState<string>('');
+  // File upload state for drag-and-drop area
   const [isDragging, setIsDragging] = useState(false);
+
+  // Hidden file input ref for IR Library Upload button
+  const irLibraryFileInputRef = useRef<HTMLInputElement>(null);
   
   // Calculate RT60 for currently loaded IR buffer
   useEffect(() => {
@@ -92,55 +92,11 @@ export function ImpulseResponseUpload({
       const irs = await apiService.listImpulseResponses();
       setImpulseResponses(irs);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load impulse responses');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load impulse responses';
+      setError(errorMessage);
+      handleError(err, errorMessage);
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const handleUpload = async () => {
-    if (uploadFiles.length === 0) return;
-
-    setIsUploading(true);
-    setError(null);
-
-    try {
-      let lastMetadata: ImpulseResponseMetadata | null = null;
-
-      // Upload each file
-      for (let i = 0; i < uploadFiles.length; i++) {
-        const file = uploadFiles[i];
-        const name = uploadFiles.length === 1 && uploadName.trim()
-          ? uploadName.trim()
-          : file.name.replace(/\.[^/.]+$/, '');
-
-        setUploadProgress(`Uploading ${i + 1} of ${uploadFiles.length}...`);
-
-        const metadata = await apiService.uploadImpulseResponse(file, name);
-        lastMetadata = metadata;
-      }
-
-      setUploadProgress('All uploads complete!');
-
-      // Reload list
-      await loadImpulseResponses();
-
-      // Clear upload form
-      setUploadFiles([]);
-      setUploadName('');
-
-      // Auto-select the last uploaded IR
-      if (lastMetadata) {
-        await handleSelectIR(lastMetadata);
-      }
-
-      // Clear progress message after a delay
-      setTimeout(() => setUploadProgress(''), 2000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed');
-      setUploadProgress('');
-    } finally {
-      setIsUploading(false);
     }
   };
 
@@ -156,17 +112,71 @@ export function ImpulseResponseUpload({
 
       await onSelectIR(ir);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load IR');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load IR';
+      setError(errorMessage);
+      handleError(err, errorMessage);
     }
   };
 
   const handleDeleteIR = async (irId: string, irName: string) => {
     try {
       setError(null);
+
+      // If deleting the currently selected IR, deselect it first
+      if (selectedIRId === irId) {
+        onClearIR();
+      }
+
       await apiService.deleteImpulseResponse(irId);
       await loadImpulseResponses();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete IR');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to delete IR';
+      setError(errorMessage);
+      handleError(err, errorMessage);
+    }
+  };
+
+  // Upload files directly without confirmation
+  const uploadFiles = async (files: FileList | File[]) => {
+    const fileArray = Array.from(files);
+    if (fileArray.length === 0) return;
+
+    setIsUploading(true);
+    setError(null);
+
+    try {
+      let lastMetadata: ImpulseResponseMetadata | null = null;
+
+      // Upload each file
+      for (let i = 0; i < fileArray.length; i++) {
+        const file = fileArray[i];
+        const name = file.name.replace(/\.[^/.]+$/, '');
+
+        setUploadProgress(`Uploading ${i + 1} of ${fileArray.length}...`);
+
+        const metadata = await apiService.uploadImpulseResponse(file, name);
+        lastMetadata = metadata;
+      }
+
+      setUploadProgress('All uploads complete!');
+
+      // Reload list
+      await loadImpulseResponses();
+
+      // Auto-select the last uploaded IR
+      if (lastMetadata) {
+        await handleSelectIR(lastMetadata);
+      }
+
+      // Clear progress message after a delay
+      setTimeout(() => setUploadProgress(''), 2000);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Upload failed';
+      setError(errorMessage);
+      handleError(err, errorMessage);
+      setUploadProgress('');
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -181,34 +191,30 @@ export function ImpulseResponseUpload({
     setIsDragging(false);
   };
 
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragging(false);
 
-    const files = Array.from(e.dataTransfer.files);
+    const files = e.dataTransfer.files;
     if (files.length > 0) {
-      setUploadFiles(files);
-      // Only set name if single file
-      if (files.length === 1) {
-        setUploadName(files[0].name.replace(/\.[^/.]+$/, ''));
-      } else {
-        setUploadName('');
-      }
+      await uploadFiles(files);
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
-      const fileArray = Array.from(files);
-      setUploadFiles(fileArray);
-      // Only set name if single file
-      if (fileArray.length === 1) {
-        setUploadName(fileArray[0].name.replace(/\.[^/.]+$/, ''));
-      } else {
-        setUploadName('');
-      }
-      e.target.value = "";
+      await uploadFiles(files);
+      e.target.value = ""; // Clear input so same file can be uploaded again
+    }
+  };
+
+  // Handler for IR Library Upload button - uploads directly without confirmation
+  const handleIRLibraryUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      await uploadFiles(files);
+      e.target.value = ""; // Clear input so same file can be uploaded again
     }
   };
 
@@ -288,89 +294,47 @@ export function ImpulseResponseUpload({
         </div>
       )}
 
-      {/* Upload Section */}
-      <div 
-        className="rounded-lg"
-        style={{
-          padding: `${UI_CARD.PADDING}px`,
-          backgroundColor: 'white',
-          borderColor: UI_COLORS.NEUTRAL_300,
-          borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
-          borderStyle: 'solid',
-          borderRadius: `${UI_CARD.BORDER_RADIUS}px`
-        }}
-      >
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">
-          Upload New IR
-        </h3>
+      {/* Upload Section - Only show when no IRs exist in library */}
+      {impulseResponses.length === 0 && (
+        <div
+          className="rounded-lg"
+          style={{
+            padding: `${UI_CARD.PADDING}px`,
+            backgroundColor: 'white',
+            borderColor: UI_COLORS.NEUTRAL_300,
+            borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
+            borderStyle: 'solid',
+            borderRadius: `${UI_CARD.BORDER_RADIUS}px`
+          }}
+        >
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">
+            Upload New IR
+          </h3>
 
-        <FileUploadArea
-          file={uploadFiles.length > 0 ? uploadFiles[0] : null}
-          isDragging={isDragging}
-          acceptedFormats="audio/wav,.wav"
-          acceptedExtensions=".wav"
-          onFileChange={handleFileChange}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          inputId="ir-file-upload"
-          multiple={true}
-        />
+          <FileUploadArea
+            file={null}
+            isDragging={isDragging}
+            acceptedFormats="audio/wav,.wav"
+            acceptedExtensions=".wav"
+            onFileChange={handleFileChange}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            inputId="ir-file-upload"
+            multiple={true}
+          />
 
-        {uploadFiles.length > 0 && (
-          <div className="mt-3 space-y-2">
-            {uploadFiles.length > 1 && (
-              <div 
-                className="text-xs rounded"
-                style={{
-                  padding: `${UI_CARD.PADDING - 4}px`,
-                  backgroundColor: UI_COLORS.INFO_LIGHT,
-                  borderColor: UI_COLORS.INFO,
-                  borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
-                  borderStyle: 'solid',
-                  color: UI_COLORS.INFO_HOVER
-                }}
-              >
-                📁 {uploadFiles.length} files selected
-              </div>
-            )}
-
-            {uploadFiles.length === 1 && (
-              <input
-                type="text"
-                placeholder="IR Name (optional)"
-                value={uploadName}
-                onChange={(e) => setUploadName(e.target.value)}
-                className="w-full px-3 py-2 text-sm rounded bg-white text-gray-900"
-                style={{
-                  borderColor: UI_COLORS.NEUTRAL_300,
-                  borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
-                  borderStyle: 'solid',
-                  borderRadius: `${UI_CARD.BORDER_RADIUS}px`
-                }}
-              />
-            )}
-
-            <button
-              onClick={handleUpload}
-              disabled={isUploading}
-              className="w-full py-2 px-4 text-sm font-medium text-white rounded transition-colors disabled:opacity-40"
-              style={{
-                backgroundColor: UI_COLORS.PRIMARY,
-                borderRadius: `${UI_CARD.BORDER_RADIUS}px`
-              }}
-              onMouseEnter={(e) => !e.currentTarget.disabled && (e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY_HOVER)}
-              onMouseLeave={(e) => !e.currentTarget.disabled && (e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY)}
-            >
-              {isUploading ? uploadProgress : `Upload & Process ${uploadFiles.length > 1 ? `(${uploadFiles.length} files)` : ''}`}
-            </button>
-          </div>
-        )}
-      </div>
+          {isUploading && (
+            <div className="mt-3 text-xs text-center" style={{ color: UI_COLORS.PRIMARY }}>
+              {uploadProgress}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Error Display */}
       {error && (
-        <div 
+        <div
           className="text-xs rounded"
           style={{
             padding: `${UI_CARD.PADDING - 4}px`,
@@ -387,37 +351,46 @@ export function ImpulseResponseUpload({
 
       {/* IR Library List - Only show when IRs exist */}
       {impulseResponses.length > 0 && (
-        <div 
-          className="rounded-lg"
-          style={{
-            padding: `${UI_CARD.PADDING}px`,
-            backgroundColor: 'white',
-            borderColor: UI_COLORS.NEUTRAL_300,
-            borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
-            borderStyle: 'solid',
-            borderRadius: `${UI_CARD.BORDER_RADIUS}px`
-          }}
-        >
+        <div
+        className="rounded-lg"
+        style={{
+          padding: `${UI_CARD.PADDING}px`,
+          backgroundColor: 'white',
+          borderColor: UI_COLORS.NEUTRAL_300,
+          borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
+          borderStyle: 'solid',
+          borderRadius: `${UI_CARD.BORDER_RADIUS}px`
+        }}
+      >
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
             IR Library ({impulseResponses.length})
           </h3>
           <button
-            onClick={loadImpulseResponses}
-            disabled={isLoading}
+            onClick={() => irLibraryFileInputRef.current?.click()}
+            disabled={isUploading}
             className="text-xs transition-colors disabled:opacity-40"
             style={{ color: UI_COLORS.PRIMARY }}
             onMouseEnter={(e) => !e.currentTarget.disabled && (e.currentTarget.style.color = UI_COLORS.PRIMARY_HOVER)}
             onMouseLeave={(e) => !e.currentTarget.disabled && (e.currentTarget.style.color = UI_COLORS.PRIMARY)}
           >
-            {isLoading ? 'Loading...' : 'Refresh'}
+            {isUploading ? uploadProgress : 'Upload'}
           </button>
+          {/* Hidden file input for IR Library Upload button */}
+          <input
+            ref={irLibraryFileInputRef}
+            type="file"
+            accept="audio/wav,.wav"
+            multiple
+            onChange={handleIRLibraryUpload}
+            style={{ display: 'none' }}
+          />
         </div>
 
         <div className="space-y-2 max-h-80 overflow-y-auto">
           {impulseResponses.length === 0 ? (
             <div className="text-xs text-center py-4" style={{ color: UI_COLORS.NEUTRAL_500 }}>
-              No impulse responses yet. Upload one above!
+              No impulse responses yet. Click Upload to add one!
             </div>
           ) : (
             impulseResponses.map((ir) => {
@@ -498,36 +471,6 @@ export function ImpulseResponseUpload({
         </div>
       </div>
       )}
-
-      {/* IR Normalization Toggle */}
-      <div 
-        className="rounded-lg"
-        style={{
-          padding: `${UI_CARD.PADDING}px`,
-          backgroundColor: 'white',
-          borderColor: UI_COLORS.NEUTRAL_300,
-          borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
-          borderStyle: 'solid',
-          borderRadius: `${UI_CARD.BORDER_RADIUS}px`
-        }}
-      >
-        <label className="flex items-center gap-3 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={auralizationConfig.normalize}
-            onChange={(e) => onToggleNormalize(e.target.checked)}
-            className="w-4 h-4 rounded focus:ring-2 accent-primary"
-          />
-          <div className="flex-1">
-            <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
-              Normalize IR
-            </span>
-            <p className="text-xs mt-0.5" style={{ color: UI_COLORS.NEUTRAL_500 }}>
-              Scale impulse response to -6dB headroom (prevents clipping with multiple sources)
-            </p>
-          </div>
-        </label>
-      </div>
 
       {/* Help Text */}
       <div className="text-xs" style={{ color: UI_COLORS.NEUTRAL_500 }}>

@@ -33,7 +33,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
 
   const handleAddConfig = useCallback(() => {
     setSoundConfigs(prev => {
-      const newConfig = { prompt: "", duration: globalDuration, guidance_scale: DEFAULT_GUIDANCE_SCALE, negative_prompt: "", seed_copies: DEFAULT_SEED_COPIES, steps: globalSteps, mode: 'text-to-audio' };
+      const newConfig = { prompt: "", duration: globalDuration, guidance_scale: DEFAULT_GUIDANCE_SCALE, negative_prompt: "", seed_copies: DEFAULT_SEED_COPIES, steps: globalSteps, mode: 'text-to-audio' as const };
       const updated = [...prev, newConfig];
       setActiveSoundConfigTab(updated.length - 1);
       return updated;
@@ -302,7 +302,41 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
   }, [soundConfigs, geometryBounds, globalNegativePrompt, applyDenoising]);
 
   const setSoundConfigsFromPrompts = useCallback((prompts: any[]) => {
-    setSoundConfigs(prompts);
+    setSoundConfigs(prev => {
+      // If there's only one empty config, replace it instead of appending
+      if (prev.length === 1 && !prev[0].prompt && !prev[0].uploadedAudioUrl && !prev[0].selectedLibrarySound) {
+        return prompts;
+      }
+      
+      // Filter out duplicates by comparing key fields
+      // A duplicate is defined as having the same prompt AND entity (if present)
+      const newPrompts = prompts.filter(newConfig => {
+        const isDuplicate = prev.some(existingConfig => {
+          // Compare prompt (case-insensitive, trimmed)
+          const samePrompt = existingConfig.prompt.trim().toLowerCase() === newConfig.prompt.trim().toLowerCase();
+          
+          // Compare entity if both have entities (by entity index)
+          const sameEntity = (!existingConfig.entity && !newConfig.entity) || 
+                           (existingConfig.entity?.index !== undefined && 
+                            newConfig.entity?.index !== undefined && 
+                            existingConfig.entity.index === newConfig.entity.index);
+          
+          return samePrompt && sameEntity;
+        });
+        
+        return !isDuplicate;
+      });
+      
+      // If all new prompts are duplicates, just return previous state
+      if (newPrompts.length === 0) {
+        console.log('[Sound Generation] All sounds already exist, skipping duplicates');
+        return prev;
+      }
+      
+      // Otherwise, append the non-duplicate prompts to existing configs
+      console.log(`[Sound Generation] Adding ${newPrompts.length} new sounds (filtered ${prompts.length - newPrompts.length} duplicates)`);
+      return [...prev, ...newPrompts];
+    });
   }, []);
 
   /**
@@ -541,6 +575,101 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     return startIndex;
   }, [globalDuration, globalSteps]);
 
+  // Reset all advanced settings to defaults
+  const handleResetToDefaults = useCallback(() => {
+    setGlobalDuration(DEFAULT_DURATION_SECONDS);
+    setGlobalSteps(DEFAULT_DIFFUSION_STEPS);
+    setGlobalNegativePrompt("distorted, reverb, echo, background noise, hall, spaciousness");
+    setApplyDenoising(false);
+    setAudioModel(DEFAULT_AUDIO_MODEL);
+  }, []);
+
+  /**
+   * Detach sound from entity - removes entity from config and updates soundscape data
+   * This ensures both the config and the actual sound events are updated
+   */
+  const handleDetachSoundFromEntity = useCallback((configIndex: number) => {
+    // Update the config to remove entity
+    const updated = [...soundConfigs];
+    updated[configIndex] = { ...updated[configIndex], entity: undefined };
+    setSoundConfigs(updated);
+
+    // Update soundscapeData to remove entity_index from sounds with this prompt_index
+    if (soundscapeData) {
+      const updatedSoundscape = soundscapeData.map(sound => {
+        if (sound.prompt_index === configIndex) {
+          // Remove entity_index from this sound
+          const { entity_index, ...soundWithoutEntity } = sound;
+          return soundWithoutEntity;
+        }
+        return sound;
+      });
+      setSoundscapeData(updatedSoundscape);
+    }
+
+    // Also update generatedSounds
+    if (generatedSounds.length > 0) {
+      const updatedGenerated = generatedSounds.map(sound => {
+        if (sound.prompt_index === configIndex) {
+          const { entity_index, ...soundWithoutEntity } = sound;
+          return soundWithoutEntity;
+        }
+        return sound;
+      });
+      setGeneratedSounds(updatedGenerated);
+    }
+  }, [soundConfigs, soundscapeData, generatedSounds]);
+
+  /**
+   * Attach sound to entity - adds entity to config and updates soundscape data
+   * This ensures both the config and the actual sound events are updated
+   * Destroys sound sphere and moves overlay to entity
+   */
+  const handleAttachSoundToEntity = useCallback((configIndex: number, entity: any) => {
+    // Update the config to add entity
+    const updated = [...soundConfigs];
+    updated[configIndex] = { ...updated[configIndex], entity };
+    setSoundConfigs(updated);
+
+    // Calculate entity position (use bounds.center if available, otherwise entity.position)
+    const entityPosition: [number, number, number] = entity.bounds?.center
+      ? [entity.bounds.center[0], entity.bounds.center[1], entity.bounds.center[2]]
+      : entity.position?.length >= 3
+        ? [entity.position[0], entity.position[1], entity.position[2]]
+        : [0, 0, 0];
+
+    // Update soundscapeData to add entity_index and update position
+    if (soundscapeData) {
+      const updatedSoundscape = soundscapeData.map(sound => {
+        if (sound.prompt_index === configIndex) {
+          // Add entity_index and update position to entity's position
+          return {
+            ...sound,
+            entity_index: entity.index,
+            position: entityPosition
+          };
+        }
+        return sound;
+      });
+      setSoundscapeData(updatedSoundscape);
+    }
+
+    // Also update generatedSounds
+    if (generatedSounds.length > 0) {
+      const updatedGenerated = generatedSounds.map(sound => {
+        if (sound.prompt_index === configIndex) {
+          return {
+            ...sound,
+            entity_index: entity.index,
+            position: entityPosition
+          };
+        }
+        return sound;
+      });
+      setGeneratedSounds(updatedGenerated);
+    }
+  }, [soundConfigs, soundscapeData, generatedSounds]);
+
   return {
     soundConfigs,
     activeSoundConfigTab,
@@ -572,6 +701,9 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     handleUploadAudio,
     handleClearUploadedAudio,
     handleLibrarySearch,
-    handleLibrarySoundSelect
+    handleLibrarySoundSelect,
+    handleResetToDefaults,
+    handleDetachSoundFromEntity,
+    handleAttachSoundToEntity
   };
 }

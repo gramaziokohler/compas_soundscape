@@ -7,6 +7,7 @@ export function TextGenerationSection({
   numSounds,
   isGenerating,
   isAnalyzingModel,
+  isAnalyzingEntities = false,
   llmProgress,
   aiError,
   aiResponse,
@@ -122,13 +123,16 @@ export function TextGenerationSection({
         {showConfirmLoadSounds && !isGenerating && (
           <button
             onClick={onLoadSoundsToGeneration}
-            onMouseEnter={(e) => e.currentTarget.style.opacity = '0.8'}
-            onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
-            className="flex-1 rounded-md text-white font-medium py-2 text-sm transition-colors"
+            className="flex-1 text-white transition-colors"
             style={{
-              backgroundColor: UI_COLORS.SUCCESS,
-              borderRadius: '9999px'
+              borderRadius: UI_BUTTON.BORDER_RADIUS_MD,
+              padding: UI_BUTTON.PADDING_MD,
+              fontSize: UI_BUTTON.FONT_SIZE,
+              fontWeight: UI_BUTTON.FONT_WEIGHT,
+              backgroundColor: UI_COLORS.SUCCESS
             }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.SUCCESS_HOVER}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.SUCCESS}
             title="Load sound ideas into generation tab"
           >
             Load Sounds →
@@ -152,8 +156,9 @@ export function TextGenerationSection({
         </div>
       )}
 
-      {llmProgress && (
-        <div 
+      {/* Only show llmProgress when generating prompts, NOT when analyzing entities */}
+      {llmProgress && !isAnalyzingEntities && (
+        <div
           className="p-2 rounded text-xs"
           style={{
             backgroundColor: `${UI_COLORS.PRIMARY}10`,

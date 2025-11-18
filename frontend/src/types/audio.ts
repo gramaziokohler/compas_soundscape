@@ -1,10 +1,21 @@
 /**
  * Audio System Types
  *
- * Extracted from audio-scheduler.ts
+ * Unified type definitions for the audio system.
+ * Consolidated from multiple sources for consistency.
  */
 
 import * as THREE from "three";
+
+/* ========================================
+ * POSITION & ORIENTATION TYPES
+ * ======================================== */
+
+// Standard position type - use THREE.Vector3 everywhere
+export type Position = THREE.Vector3;
+
+// Position tuple for interfaces that need array format
+export type PositionTuple = [number, number, number];
 
 export interface ScheduledSound {
   audio: THREE.PositionalAudio;
@@ -58,7 +69,7 @@ export interface TimelinePlaybackState {
 export type IRFormat = "mono" | "binaural" | "foa" | "toa";
 
 // Ambisonic order types
-export type AmbisonicOrder = 1 | 3; // First-order or Third-order
+export type AmbisonicOrder = 1 | 2 | 3; // First-order, Second-order, or Third-order
 
 // Impulse Response Metadata
 export interface ImpulseResponseMetadata {
@@ -122,10 +133,10 @@ export interface FOACoefficients {
 export type TOACoefficients = number[]; // Array of 16 values
 
 /**
- * Resonance Audio Types
+ * ShoeBox Acoustics Types (Google Resonance Audio)
  */
 
-// Room materials for Resonance Audio
+// Room materials for ShoeBox Acoustics
 export interface ResonanceRoomMaterial {
   left: string;
   right: string;
@@ -135,14 +146,14 @@ export interface ResonanceRoomMaterial {
   up: string;
 }
 
-// Room dimensions for Resonance Audio (meters)
+// Room dimensions for ShoeBox Acoustics (meters)
 export interface ResonanceRoomDimensions {
   width: number;   // X dimension
   height: number;  // Y dimension
   depth: number;   // Z dimension
 }
 
-// Resonance Audio source configuration
+// ShoeBox Acoustics source configuration
 export interface ResonanceSourceConfig {
   gain?: number;                    // Source volume (0-1)
   rolloff?: string;                 // Distance attenuation model ('logarithmic', 'linear', 'none')
@@ -152,11 +163,82 @@ export interface ResonanceSourceConfig {
   directivitySharpness?: number;    // Directivity sharpness (0-1)
 }
 
-// Resonance Audio configuration
+// ShoeBox Acoustics configuration
 export interface ResonanceAudioConfig {
   enabled: boolean;
   ambisonicOrder?: number;          // 1, 2, or 3 (default: 3)
   roomDimensions: ResonanceRoomDimensions;
   roomMaterials: ResonanceRoomMaterial;
+}
+
+/* ========================================
+ * AUDIO MODE & ORCHESTRATION TYPES
+ * ======================================== */
+
+/**
+ * Audio rendering modes
+ * Defines how audio sources are processed and spatialized
+ */
+export enum AudioMode {
+  // No IR modes (6 DOF)
+  BASIC_MIXER = 'basic_mixer',          // Flat Anechoic - Basic mono mixer (no spatial audio)
+  NO_IR_RESONANCE = 'no_ir_resonance',  // ShoeBox Acoustics (synthetic room)
+  ANECHOIC = 'anechoic',                // Spatial Anechoic - Dry source → ambisonic encoder → binaural decoder
+
+  // IR modes (3 DOF rotation, static position)
+  MONO_IR = 'mono_ir',                  // Mono IR → convolver → encoder → decoder
+  STEREO_IR = 'stereo_ir',              // Stereo IR → L/R split → encode → decoder
+  AMBISONIC_IR = 'ambisonic_ir'         // FOA/TOA IR → convolver → rotator → decoder
+}
+
+/**
+ * Output decoder types
+ * Note: Binaural-only in current workflow (stereo removed)
+ */
+export enum OutputDecoderType {
+  BINAURAL_HRTF = 'binaural_hrtf'     // HRTF-based binaural for headphones
+}
+
+/**
+ * Audio mode configuration
+ */
+export interface AudioModeConfig {
+  mode: AudioMode;
+  irMetadata?: ImpulseResponseMetadata;  // Required for IR modes
+  ambisonicOrder: 1 | 2 | 3;             // FOA, SOA, or TOA
+}
+
+/**
+ * Orchestrator status for UI display
+ */
+export interface OrchestratorStatus {
+  currentMode: AudioMode;
+  isReceiverModeActive: boolean;
+  isIRActive: boolean;
+  ambisonicOrder: 1 | 2 | 3;
+  dofDescription: string;
+  uiNotice: string | null;
+}
+
+/**
+ * Auralization Configuration (Legacy Compatibility)
+ * Used for UI components that still expect this format
+ */
+export interface AuralizationConfig {
+  enabled: boolean;
+  impulseResponseUrl: string | null;
+  impulseResponseBuffer: AudioBuffer | null;
+  impulseResponseFilename: string | null;
+  normalize: boolean;
+}
+
+/**
+ * WAV Parse Result (for custom WAV parser)
+ */
+export interface WAVParseResult {
+  sampleRate: number;
+  numberOfChannels: number;
+  bitsPerSample: number;
+  audioData: Float32Array[];
 }
 

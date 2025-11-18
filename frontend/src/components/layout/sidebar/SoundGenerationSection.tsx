@@ -42,7 +42,6 @@ export function SoundGenerationSection({
   isLinkingEntity = false,
   linkingConfigIndex = null
 }: SoundGenerationSectionProps) {
-  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
   const prevGeneratedSoundsLengthRef = useRef(0);
   
   // Horizontal scroll for sound config tabs
@@ -55,23 +54,6 @@ export function SoundGenerationSection({
   // State for inline title editing
   const [editingTabIndex, setEditingTabIndex] = useState<number | null>(null);
   const [editingValue, setEditingValue] = useState("");
-  
-  // State for denoising confirmation dialog
-  const [showDenoisingConfirm, setShowDenoisingConfirm] = useState(false);
-  const [pendingDenoisingValue, setPendingDenoisingValue] = useState<boolean>(false);
-
-  // Auto-collapse advanced options when sound generation completes
-  useEffect(() => {
-    const prevLength = prevGeneratedSoundsLengthRef.current;
-    const currentLength = generatedSounds.length;
-
-    // If sounds were just generated (went from 0 or less to more)
-    if (currentLength > 0 && prevLength === 0) {
-      setShowAdvancedOptions(false);
-    }
-
-    prevGeneratedSoundsLengthRef.current = currentLength;
-  }, [generatedSounds.length]);
 
   // Helper function to get display name for a config index (trimmed to 5 words max)
   const getDisplayName = (index: number): string => {
@@ -195,34 +177,6 @@ export function SoundGenerationSection({
       e.preventDefault();
       handleEditCancel();
     }
-  };
-
-  // Denoising checkbox change handler
-  const handleDenoisingChange = (checked: boolean) => {
-    // If sounds are already generated, show confirmation dialog
-    if (generatedSounds.length > 0) {
-      setPendingDenoisingValue(checked);
-      setShowDenoisingConfirm(true);
-    } else {
-      // No sounds generated yet, just update the setting
-      onApplyDenoisingChange(checked);
-    }
-  };
-
-  // Confirm denoising change and reprocess sounds
-  const handleConfirmDenoising = async () => {
-    onApplyDenoisingChange(pendingDenoisingValue);
-    setShowDenoisingConfirm(false);
-    
-    // Reprocess existing sounds if the callback is provided
-    if (onReprocessSounds) {
-      await onReprocessSounds(pendingDenoisingValue);
-    }
-  };
-
-  // Cancel denoising change
-  const handleCancelDenoising = () => {
-    setShowDenoisingConfirm(false);
   };
 
   return (
@@ -778,7 +732,7 @@ export function SoundGenerationSection({
       </div>
 
       {soundGenError && (
-        <div 
+        <div
           className="p-3 text-sm rounded"
           style={{
             backgroundColor: UI_COLORS.ERROR_LIGHT,
@@ -792,226 +746,6 @@ export function SoundGenerationSection({
           {soundGenError}
         </div>
       )}
-
-      {/* Advanced Options - Collapsible, hidden by default, only show before generation */}
-      <div 
-        className="rounded"
-        style={{
-          backgroundColor: UI_COLORS.NEUTRAL_50,
-          borderRadius: '8px'
-        }}
-      >
-        <button
-          onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
-          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_100}
-          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-          className="w-full p-3 flex items-center justify-between text-sm font-semibold transition-colors rounded"
-          style={{
-            color: UI_COLORS.NEUTRAL_700
-          }}
-        >
-          <span>Advanced Options</span>
-          <span className="text-xs">{showAdvancedOptions ? '▼' : '▶'}</span>
-        </button>
-
-        {showAdvancedOptions && (
-          <div className="p-3 pt-0 space-y-3">
-            {/* Background Noise Removal - Standalone */}
-            <div className="relative">
-              <label className="flex items-center space-x-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={applyDenoising}
-                  onChange={(e) => handleDenoisingChange(e.target.checked)}
-                  className="w-4 h-4 accent-primary cursor-pointer"
-                />
-                <span className="text-sm font-medium" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-                  Remove Background Noise
-                </span>
-              </label>
-              <p className="text-xs mt-1" style={{ color: UI_COLORS.NEUTRAL_500 }}>
-                Apply noise reduction to clean up generated sounds
-              </p>
-              
-              {/* Confirmation Dialog */}
-              {showDenoisingConfirm && (
-                <div 
-                  className="mt-2 p-3 rounded-lg"
-                  style={{
-                    backgroundColor: UI_COLORS.WARNING_LIGHT,
-                    borderColor: UI_COLORS.WARNING,
-                    borderWidth: '1px',
-                    borderStyle: 'solid',
-                    borderRadius: '8px'
-                  }}
-                >
-                  <p className="text-xs mb-2" style={{ color: UI_COLORS.WARNING }}>
-                    {pendingDenoisingValue 
-                      ? "Apply noise reduction to all existing sounds?"
-                      : "Remove noise reduction from all existing sounds?"}
-                  </p>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={handleConfirmDenoising}
-                      onMouseEnter={(e) => e.currentTarget.style.opacity = '0.8'}
-                      onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
-                      className="flex-1 px-3 py-1.5 text-xs font-medium text-white rounded transition-colors"
-                      style={{
-                        backgroundColor: UI_COLORS.PRIMARY,
-                        borderRadius: '8px'
-                      }}
-                    >
-                      Yes, modify sounds
-                    </button>
-                    <button
-                      onClick={handleCancelDenoising}
-                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_400}
-                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_300}
-                      className="flex-1 px-3 py-1.5 text-xs font-medium rounded transition-colors"
-                      style={{
-                        backgroundColor: UI_COLORS.NEUTRAL_300,
-                        color: UI_COLORS.NEUTRAL_800,
-                        borderRadius: '8px'
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Audio Model Selection */}
-            <div
-              className="rounded-lg p-3"
-              style={{
-                backgroundColor: 'white',
-                borderRadius: '8px'
-              }}
-            >
-              <h4 className="text-xs font-semibold mb-3 uppercase tracking-wide" style={{ color: UI_COLORS.NEUTRAL_600 }}>
-                Audio Generation Model
-              </h4>
-
-              <div>
-                <label className="text-sm font-medium block mb-2" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-                  Select Model
-                </label>
-                <select
-                  value={audioModel}
-                  onChange={(e) => onAudioModelChange(e.target.value)}
-                  className="w-full px-3 py-2 text-sm rounded focus:outline-none focus:ring-2 focus:ring-primary"
-                  style={{
-                    backgroundColor: 'white',
-                    borderColor: UI_COLORS.NEUTRAL_300,
-                    borderWidth: '1px',
-                    borderStyle: 'solid',
-                    borderRadius: '8px',
-                    color: UI_COLORS.NEUTRAL_700
-                  }}
-                >
-                  <option value={AUDIO_MODEL_TANGOFLUX}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_TANGOFLUX]}</option>
-                  <option value={AUDIO_MODEL_AUDIOLDM2}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_AUDIOLDM2]}</option>
-                </select>
-                <p className="text-xs mt-1" style={{ color: UI_COLORS.NEUTRAL_500 }}>
-                  {audioModel === AUDIO_MODEL_TANGOFLUX
-                    ? "TangoFlux: Fast, high-quality text-to-audio generation (default)"
-                    : "AudioLDM2: Alternative model with different audio characteristics"
-                  }
-                </p>
-              </div>
-            </div>
-
-            {/* Text-to-Audio Parameters Group */}
-            <div
-              className="rounded-lg p-3"
-              style={{
-                backgroundColor: 'white',
-                borderRadius: '8px'
-              }}
-            >
-              <h4 className="text-xs font-semibold mb-3 uppercase tracking-wide" style={{ color: UI_COLORS.NEUTRAL_600 }}>
-                Text-to-Audio Parameters
-              </h4>
-              
-              <div className="space-y-3">
-                {/* Global Duration Slider */}
-                <div>
-                  <label className="text-sm font-medium block mb-2" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-                    Global Duration: {globalDuration}s
-                  </label>
-                  <input
-                    type="range"
-                    value={globalDuration}
-                    onChange={(e) => onGlobalDurationChange(parseInt(e.target.value))}
-                    className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary"
-                    style={{ backgroundColor: UI_COLORS.NEUTRAL_200 }}
-                    min="1"
-                    max="30"
-                  />
-                  <p className="text-xs mt-1" style={{ color: UI_COLORS.NEUTRAL_500 }}>
-                    Applies to all sound tabs
-                  </p>
-                </div>
-
-                {/* Diffusion Steps Slider */}
-                <div>
-                  <label className="text-sm font-medium block mb-2" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-                    Diffusion Steps: {globalSteps}
-                  </label>
-                  <input
-                    type="range"
-                    value={globalSteps}
-                    onChange={(e) => onGlobalStepsChange(parseInt(e.target.value))}
-                    className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary"
-                    style={{ backgroundColor: UI_COLORS.NEUTRAL_200 }}
-                    min="10"
-                    max="100"
-                    step="5"
-                  />
-                  <p className="text-xs mt-1" style={{ color: UI_COLORS.NEUTRAL_500 }}>
-                    Higher steps = better quality but slower generation
-                  </p>
-                </div>
-
-                {/* Global Negative Prompt */}
-                <div>
-                  <label className="text-sm font-medium block mb-2" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-                    Global Negative Prompt
-                  </label>
-                  <textarea
-                    value={globalNegativePrompt}
-                    onChange={(e) => onGlobalNegativePromptChange(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.ctrlKey && e.key === 'Enter') {
-                        e.preventDefault();
-                        if (!isSoundGenerating) {
-                          onGenerate();
-                        }
-                      }
-                    }}
-                    placeholder="e.g., distorted, reverb, echo"
-                    className="w-full p-2 text-xs rounded"
-                    style={{
-                      backgroundColor: 'white',
-                      borderColor: UI_COLORS.NEUTRAL_300,
-                      borderWidth: '1px',
-                      borderStyle: 'solid',
-                      borderRadius: '8px'
-                    }}
-                    rows={2}
-                  />
-                  <p className="text-xs mt-1" style={{ color: UI_COLORS.NEUTRAL_500 }}>
-                    Terms to avoid in all generated sounds
-                  </p>
-                </div>
-              </div>
-            </div>
-
-
-          </div>
-        )}
-      </div>
     </div>
   );
 }

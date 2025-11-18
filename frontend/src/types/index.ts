@@ -42,6 +42,7 @@ export interface UIOverlay {
   variants: SoundEvent[];
   selectedVariantIdx: number;
   isEntityLinked?: boolean; // Flag indicating this overlay is linked to an entity (no sphere, no drag)
+  distance?: number; // Distance from camera to sound source in meters
 }
 
 export interface EntityData {
@@ -64,6 +65,7 @@ export interface EntityOverlay {
   visible: boolean;
   entity: EntityData;
   soundOverlay?: UIOverlay; // Optional sound overlay data when entity has linked sound
+  linkedPromptIndex?: number; // Prompt index of linked sound (if any)
 }
 
 export interface SoundGenerationConfig {

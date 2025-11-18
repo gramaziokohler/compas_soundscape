@@ -19,15 +19,17 @@ import type {
   LibrarySearchResult,
   ReceiverData,
 } from "./index";
-import type { AuralizationConfig } from "./auralization";
-import type { ResonanceAudioConfig, ResonanceRoomDimensions, ResonanceRoomMaterial } from "./audio";
+import type { AuralizationConfig, ResonanceAudioConfig, ResonanceRoomDimensions, ResonanceRoomMaterial } from "./audio";
 import type { ModalAnalysisResult, ModeVisualizationState } from "./modal";
+import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSelector";
 
 /**
  * Sidebar Component Props
  */
 export interface SidebarProps {
-  file: File | null;
+  // Separate model and audio file states
+  modelFile: File | null;
+  audioFile: File | null;
   geometryData: CompasGeometry | null;
   soundscapeData: SoundEvent[] | null;
   selectedVariants: { [key: number]: number };
@@ -58,13 +60,13 @@ export interface SidebarProps {
   showConfirmLoadSounds: boolean;
   pendingSoundConfigs: any[];
   useModelAsContext: boolean;
+  // File handlers (single upload area)
   onFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onDragOver: (e: React.DragEvent<HTMLDivElement>) => void;
   onDragLeave: (e: React.DragEvent<HTMLDivElement>) => void;
   onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
-  onUpload: () => void;
+  onUploadModel: () => void;
   onLoadSampleIfc: () => void;
-  onClearModel: () => void;
   setActiveAiTab: (tab: ActiveTab) => void;
   setActiveLoadTab: (tab: LoadTab) => void;
   setAiPrompt: (prompt: string) => void;
@@ -106,10 +108,13 @@ export interface SidebarProps {
   onAnalyzeSoundEvents?: () => void;
   onToggleSEDOption?: (option: keyof SEDAnalysisOptions, value: boolean) => void;
   onLoadSoundsFromSED?: () => void;
+  // Entity analysis props (LLM Step 1)
+  selectedDiverseEntities?: any[];
+  isAnalyzingEntities?: boolean;
+  onAnalyzeModel?: () => void;
   // IR Library props
   onSelectIRFromLibrary: (irMetadata: any) => Promise<void>;
   onClearIR: () => void;
-  onToggleNormalize: (enabled: boolean) => void;
   selectedIRId: string | null;
   auralizationConfig: AuralizationConfig;
   // Receiver props
@@ -118,7 +123,7 @@ export interface SidebarProps {
   onStartPlacingReceiver: () => void;
   onDeleteReceiver: (id: string) => void;
   onUpdateReceiverName: (id: string, name: string) => void;
-  // Resonance Audio props
+  // ShoeBox Acoustics props
   resonanceAudioConfig: ResonanceAudioConfig;
   onToggleResonanceAudio: (enabled: boolean) => void;
   onUpdateRoomMaterials: (materials: ResonanceRoomMaterial) => void;
@@ -127,10 +132,8 @@ export interface SidebarProps {
   onToggleBoundingBox: (show: boolean) => void;
   onRefreshBoundingBox?: () => void;
   // Audio Orchestrator props (NEW)
-  preferredNoIRMode?: 'threejs' | 'resonance';
-  onUpdateNoIRMode?: (mode: 'threejs' | 'resonance') => void;
-  outputDecoder?: 'binaural' | 'stereo';
-  onUpdateOutputDecoder?: (decoder: 'binaural' | 'stereo') => void;
+  audioRenderingMode?: AudioRenderingMode;
+  onAudioRenderingModeChange?: (mode: AudioRenderingMode) => void;
 }
 
 /**
@@ -139,7 +142,9 @@ export interface SidebarProps {
 export interface ModelLoadSectionProps {
   modelEntities: any[];
   activeLoadTab: LoadTab;
-  file: File | null;
+  // Separate model and audio file states
+  modelFile: File | null;
+  audioFile: File | null;
   isDragging: boolean;
   isUploading: boolean;
   isAnalyzingModel: boolean;
@@ -153,19 +158,26 @@ export interface ModelLoadSectionProps {
   sedDetectedSounds?: DetectedSound[];
   sedError?: string | null;
   sedAnalysisOptions?: SEDAnalysisOptions;
+  // File handlers (single upload area)
   onFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onDragOver: (e: React.DragEvent<HTMLDivElement>) => void;
   onDragLeave: (e: React.DragEvent<HTMLDivElement>) => void;
   onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
-  onUpload: () => void;
+  onUploadModel: () => void;
   onLoadSampleIfc: () => void;
-  onClearModel: () => void;
   setActiveLoadTab: (tab: LoadTab) => void;
   setUseModelAsContext: (value: boolean) => void;
   // SED-specific handlers
   onAnalyzeSoundEvents?: () => void;
   onToggleSEDOption?: (option: keyof SEDAnalysisOptions, value: boolean) => void;
   onLoadSoundsFromSED?: () => void;
+  // Entity analysis props (LLM Step 1)
+  selectedDiverseEntities?: any[];
+  isAnalyzingEntities?: boolean;
+  llmProgress?: string;
+  numSounds?: number;
+  onAnalyzeModel?: () => void;
+  onStopGeneration?: () => void;
 }
 
 /**
@@ -217,6 +229,7 @@ export interface TextGenerationSectionProps {
   numSounds: number;
   isGenerating: boolean;
   isAnalyzingModel: boolean;
+  isAnalyzingEntities?: boolean;  // NEW: for entity analysis state
   llmProgress: string;
   aiError: string | null;
   aiResponse: string | null;

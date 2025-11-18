@@ -1,7 +1,7 @@
 /**
  * Spatial Mode Selector
  *
- * Toggle between Three.js Positional Audio and Resonance Audio
+ * Toggle between Flat Anechoic and ShoeBox Acoustics
  * for No IR rendering mode.
  */
 
@@ -11,8 +11,8 @@ import React from 'react';
 import { UI_COLORS } from '@/lib/constants';
 
 interface SpatialModeSelectorProps {
-  currentMode: 'threejs' | 'resonance';
-  onModeChange: (mode: 'threejs' | 'resonance') => void;
+  currentMode: 'basic_mixer' | 'resonance';
+  onModeChange: (mode: 'basic_mixer' | 'resonance') => void;
   className?: string;
 }
 
@@ -28,15 +28,15 @@ export function SpatialModeSelector({
       </label>
       <div className="flex gap-2">
         <button
-          onClick={() => onModeChange('threejs')}
+          onClick={() => onModeChange('basic_mixer')}
           className={`flex-1 px-3 py-2 text-xs rounded transition-colors ${
-            currentMode === 'threejs'
+            currentMode === 'basic_mixer'
               ? 'text-white'
               : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
           }`}
-          style={currentMode === 'threejs' ? { backgroundColor: UI_COLORS.PRIMARY } : {}}
+          style={currentMode === 'basic_mixer' ? { backgroundColor: UI_COLORS.PRIMARY } : {}}
         >
-          Three.js Positional
+          Flat Anechoic
         </button>
         <button
           onClick={() => onModeChange('resonance')}
@@ -47,12 +47,12 @@ export function SpatialModeSelector({
           }`}
           style={currentMode === 'resonance' ? { backgroundColor: UI_COLORS.PRIMARY } : {}}
         >
-          Resonance Audio
+          ShoeBox Acoustics
         </button>
       </div>
       <p className="text-xs" style={{ color: UI_COLORS.NEUTRAL_500 }}>
-        {currentMode === 'threejs'
-          ? 'Simple distance-based attenuation with HRTF panning'
+        {currentMode === 'basic_mixer'
+          ? 'Simple audio mixer with no spatial processing'
           : 'Advanced HRTF with room acoustics modeling'}
       </p>
     </div>

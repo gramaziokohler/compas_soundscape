@@ -125,7 +125,22 @@ export function SoundUIOverlay({
       }}
       onMouseDown={handleMouseDown}
     >
-      <div 
+      {/* Distance indicator - positioned above the close button, outside the overlay box */}
+      {overlay.distance !== undefined && (
+        <div
+          className="absolute top-0 right-0 primary-color text-opacity-60 pointer-events-none"
+          style={{
+            fontSize: '9px',
+            transform: 'translateY(-100%)',
+            paddingBottom: '2px',
+            fontFamily: 'monospace'
+
+          }}
+        >
+          {overlay.distance.toFixed(1)}m
+        </div>
+      )}
+      <div
         className="backdrop-blur-sm rounded-lg shadow-xl border"
         style={{
           background: UI_OVERLAY.BACKGROUND,

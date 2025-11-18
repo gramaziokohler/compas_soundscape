@@ -36,7 +36,88 @@ from config.constants import (
     MODAL_ANALYSIS_MIN_FREQUENCY,
     MODAL_ANALYSIS_MAX_FREQUENCY,
     MODAL_ANALYSIS_MESH_RESOLUTION,
+    MODAL_ANALYSIS_MAX_DEGENERATE_RATIO,
+    MODAL_ANALYSIS_MAX_NONMANIFOLD_RATIO,
+    MODAL_ANALYSIS_DEGENERATE_AREA_THRESHOLD,
+    MODAL_ANALYSIS_VERTEX_COINCIDENCE_DECIMALS,
+    MODAL_ANALYSIS_TIMEOUT,
 )
+
+
+def _run_mesh_creation_worker(vertices: np.ndarray, faces: np.ndarray, result_file: str):
+    """
+    Worker function for multiprocessing mesh creation.
+
+    Must be at module level for Windows pickling.
+    Uses file-based IPC instead of queue to avoid issues with large arrays.
+
+    Args:
+        vertices: Vertex coordinates array
+        faces: Face indices array
+        result_file: Path to file where result will be saved
+    """
+    import pickle
+    import sys
+
+    try:
+        # Import here to avoid circular imports
+        service = ModalAnalysisService()
+
+        # Create the mesh
+        print("[ModalAnalysis] Worker: Starting mesh creation...", flush=True)
+        sys.stdout.flush()
+
+        mesh, mesh_quality = service._create_fe_mesh(vertices, faces)
+
+        print(f"[ModalAnalysis] Worker: Mesh created successfully", flush=True)
+        sys.stdout.flush()
+
+        # Extract mesh data
+        print("[ModalAnalysis] Worker: Extracting mesh data...", flush=True)
+        sys.stdout.flush()
+
+        # Get connectivity - for tetrahedral mesh, use '3_4' (3D, 4-node) descriptor
+        # mesh.get_conn() returns just the connectivity array (not a tuple)
+        conn = mesh.get_conn(mesh.descs[0])
+
+        print(f"[ModalAnalysis] Worker: Extracted connectivity shape: {conn.shape}", flush=True)
+        sys.stdout.flush()
+
+        result_data = {
+            'success': True,
+            'nodes': np.array(mesh.coors, copy=True),
+            'elements': np.array(conn, copy=True),
+            'n_nod': int(mesh.n_nod),
+            'n_el': int(mesh.n_el),
+            'mesh_quality': mesh_quality
+        }
+
+        # Save to file
+        print(f"[ModalAnalysis] Worker: Saving result to {result_file}...", flush=True)
+        sys.stdout.flush()
+
+        with open(result_file, 'wb') as f:
+            pickle.dump(result_data, f)
+
+        print("[ModalAnalysis] Worker: Result saved successfully", flush=True)
+        sys.stdout.flush()
+
+    except Exception as e:
+        import traceback
+        print(f"[ModalAnalysis] Worker: Exception occurred: {e}", flush=True)
+        sys.stdout.flush()
+
+        result_data = {
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }
+
+        try:
+            with open(result_file, 'wb') as f:
+                pickle.dump(result_data, f)
+        except:
+            pass  # If we can't even write the error, nothing we can do
 
 
 class ModalAnalysisService:
@@ -112,13 +193,19 @@ class ModalAnalysisService:
         vertices_array = np.array(vertices, dtype=np.float64)
         faces_array = np.array(faces, dtype=np.int32)
 
+        # Validate mesh quality before attempting modal analysis
+        is_valid, error_message = self._validate_mesh_quality(vertices_array, faces_array)
+        if not is_valid:
+            raise ValueError(f"Mesh validation failed: {error_message}")
+
         # Get mesh bounds for info
         min_coords = vertices_array.min(axis=0)
         max_coords = vertices_array.max(axis=0)
         dims = max_coords - min_coords
 
-        # Create FE mesh from actual input mesh geometry
-        mesh, mesh_quality = self._create_fe_mesh(vertices_array, faces_array)
+        # Create FE mesh from actual input mesh geometry with timeout protection
+        print(f"[ModalAnalysis] Starting mesh creation with {MODAL_ANALYSIS_TIMEOUT}s timeout...")
+        mesh, mesh_quality = self._create_fe_mesh_with_timeout(vertices_array, faces_array)
 
         # Set up the finite element problem
         problem = self._setup_modal_problem(
@@ -178,6 +265,230 @@ class ModalAnalysisService:
             "num_modes_computed": len(valid_indices),
         }
 
+    def _validate_mesh_quality(
+        self,
+        vertices: np.ndarray,
+        faces: np.ndarray
+    ) -> Tuple[bool, str]:
+        """
+        Validate mesh quality to detect issues that would cause modal analysis to fail.
+
+        Focuses on detecting geometry issues that cause TetGen to fail:
+        - Degenerate triangles (zero or near-zero area)
+        - Invalid face indices
+        - Non-manifold geometry (edges shared by more than 2 faces indicating self-intersections)
+
+        Args:
+            vertices: Vertex coordinates array (N x 3)
+            faces: Face indices array (M x 3)
+
+        Returns:
+            Tuple of (is_valid, error_message)
+            - is_valid: True if mesh passes validation
+            - error_message: Description of the issue if invalid
+        """
+        print(f"[ModalAnalysis] Validating mesh: {len(vertices)} vertices, {len(faces)} faces")
+
+        # Check 1: Validate face indices
+        max_vertex_index = len(vertices) - 1
+        invalid_faces = []
+        for i, face in enumerate(faces):
+            if len(face) != 3:
+                return False, f"Face {i} is not a triangle (has {len(face)} vertices). All faces must be triangles."
+            if any(idx < 0 or idx > max_vertex_index for idx in face):
+                invalid_faces.append(i)
+
+        if invalid_faces:
+            return False, f"Found {len(invalid_faces)} faces with invalid vertex indices. Check your mesh topology."
+
+        # Check 2: Find degenerate triangles (zero area)
+        degenerate_count = 0
+        min_area = float('inf')
+        for i, face in enumerate(faces):
+            try:
+                v0, v1, v2 = vertices[face]
+                # Calculate triangle area using cross product: Area = 0.5 * ||(v1-v0) × (v2-v0)||
+                edge1 = v1 - v0
+                edge2 = v2 - v0
+                cross = np.cross(edge1, edge2)
+                area = 0.5 * np.linalg.norm(cross)
+
+                if area > 0:
+                    min_area = min(min_area, area)
+
+                # Use constant threshold for degenerate triangles
+                if area < MODAL_ANALYSIS_DEGENERATE_AREA_THRESHOLD:
+                    degenerate_count += 1
+            except Exception:
+                continue
+
+        degenerate_ratio = degenerate_count / len(faces) if len(faces) > 0 else 0
+        if degenerate_ratio > MODAL_ANALYSIS_MAX_DEGENERATE_RATIO:
+            return False, (
+                f"Mesh has too many degenerate triangles ({degenerate_count}/{len(faces)}, {degenerate_ratio*100:.1f}%). "
+                f"This indicates a very poor quality mesh with overlapping or zero-area faces. "
+                f"Please clean up the mesh in your 3D modeling software before attempting modal analysis."
+            )
+
+        # Check 3: Detect non-manifold edges (edges shared by more than 2 faces)
+        # This is the PRIMARY check for self-intersecting geometry that causes TetGen to fail
+        # Build edge-to-face mapping
+        edge_faces = {}
+        for face_idx, face in enumerate(faces):
+            # Create edges (sorted vertex pairs)
+            edges = [
+                tuple(sorted([face[0], face[1]])),
+                tuple(sorted([face[1], face[2]])),
+                tuple(sorted([face[2], face[0]]))
+            ]
+            for edge in edges:
+                if edge not in edge_faces:
+                    edge_faces[edge] = []
+                edge_faces[edge].append(face_idx)
+
+        # Count non-manifold edges (shared by more than 2 faces)
+        non_manifold_edges = [edge for edge, face_list in edge_faces.items() if len(face_list) > 2]
+
+        if len(non_manifold_edges) > 0:
+            non_manifold_ratio = len(non_manifold_edges) / len(edge_faces) if len(edge_faces) > 0 else 0
+            if non_manifold_ratio > MODAL_ANALYSIS_MAX_NONMANIFOLD_RATIO:
+                return False, (
+                    f"Mesh has {len(non_manifold_edges)} non-manifold edges ({non_manifold_ratio*100:.1f}% of all edges). "
+                    f"Non-manifold edges indicate self-intersecting or overlapping geometry (facets that share edges incorrectly). "
+                    f"This causes TetGen errors like 'Two facets exactly intersect' or 'A segment and a facet intersect'. "
+                    f"Please repair the mesh using 'Mesh Repair', 'Make2Manifold', or 'Check and Fix' tools in your 3D modeling software."
+                )
+
+        # All checks passed
+        print(f"[ModalAnalysis] Mesh validation passed: "
+              f"min_area={min_area:.6e}, "
+              f"degenerate={degenerate_count}/{len(faces)} ({degenerate_ratio*100:.1f}%), "
+              f"non_manifold={len(non_manifold_edges)}/{len(edge_faces)} ({(len(non_manifold_edges)/len(edge_faces)*100 if len(edge_faces) > 0 else 0):.2f}%)")
+
+        return True, ""
+
+    def _create_fe_mesh_with_timeout(
+        self,
+        vertices: np.ndarray,
+        faces: np.ndarray
+    ):
+        """
+        Wrapper for _create_fe_mesh with timeout protection.
+
+        Prevents infinite loops in TetGen by enforcing a maximum execution time.
+        Uses multiprocessing to run mesh creation in a separate process that can be forcefully terminated.
+
+        Note: Threading doesn't work because TetGen runs in native C code that can't be interrupted.
+        Only a separate process can be killed forcefully. Uses file-based IPC instead of queue
+        to avoid issues with large numpy arrays hanging in queue.put().
+
+        Args:
+            vertices: Vertex coordinates array (N x 3)
+            faces: Face indices array (M x 3)
+
+        Returns:
+            Tuple of (mesh, mesh_quality)
+
+        Raises:
+            TimeoutError: If mesh creation exceeds MODAL_ANALYSIS_TIMEOUT seconds
+        """
+        import multiprocessing
+        import os
+
+        # Create a temporary file for IPC
+        result_file = tempfile.NamedTemporaryFile(suffix='.pkl', delete=False)
+        result_file.close()
+        result_path = result_file.name
+
+        try:
+            # Start mesh creation in a separate process
+            # Using module-level function for Windows compatibility (can't pickle nested functions)
+            # Using file-based IPC instead of queue to avoid issues with large arrays
+            process = multiprocessing.Process(
+                target=_run_mesh_creation_worker,
+                args=(vertices, faces, result_path)
+            )
+            process.start()
+
+            # Wait for completion with timeout
+            process.join(timeout=MODAL_ANALYSIS_TIMEOUT)
+
+            if process.is_alive():
+                # Process is still running - timeout occurred
+                print(f"[ModalAnalysis] ERROR: Mesh creation timed out after {MODAL_ANALYSIS_TIMEOUT}s")
+
+                # Forcefully terminate the process
+                print(f"[ModalAnalysis] Terminating hung TetGen process...")
+                process.terminate()
+                process.join(timeout=2)  # Wait 2s for graceful termination
+
+                if process.is_alive():
+                    print(f"[ModalAnalysis] Force killing TetGen process...")
+                    process.kill()  # Force kill if still alive
+                    process.join(timeout=1)
+
+                raise TimeoutError(
+                    f"Mesh creation exceeded {MODAL_ANALYSIS_TIMEOUT} second timeout. "
+                    f"This indicates the mesh has severe self-intersecting geometry that causes TetGen to hang indefinitely. "
+                    f"Even though validation passed, the mesh has complex overlapping faces that TetGen cannot resolve. "
+                    f"Please use advanced mesh repair tools (e.g., MeshLab 'Remove Duplicate Faces', Blender 'Merge by Distance', "
+                    f"or Rhino 'ExtractBadSrf' followed by 'MeshRepair') to fix the geometry."
+                )
+
+            # Read results from file
+            print(f"[ModalAnalysis] Reading result from {result_path}...")
+            if not os.path.exists(result_path):
+                raise Exception("Worker process completed but result file not found")
+
+            import pickle
+            with open(result_path, 'rb') as f:
+                result = pickle.load(f)
+
+            # Check for errors
+            if not result.get('success', False):
+                error_msg = result.get('error', 'Unknown error')
+                traceback_msg = result.get('traceback', '')
+                print(f"[ModalAnalysis] Process error: {error_msg}")
+                if traceback_msg:
+                    print(f"[ModalAnalysis] Traceback:\n{traceback_msg}")
+                raise Exception(error_msg)
+
+            # Reconstruct mesh from data
+            nodes = result['nodes']
+            elements = result['elements']
+            n_nod = result['n_nod']
+            n_el = result['n_el']
+            mesh_quality = result['mesh_quality']
+
+            print(f"[ModalAnalysis] Reconstructing mesh: nodes.shape={nodes.shape}, elements.shape={elements.shape}")
+
+            # Create a new mesh object from the data using SFepy's Mesh API
+            from sfepy.discrete.fem import Mesh
+
+            # Keep connectivity in 2D format (n_el, 4) - SFepy expects this shape
+            connectivity = elements  # Already in correct shape from get_conn
+            mat_ids = np.zeros(n_el, dtype=np.int32)
+
+            mesh = Mesh.from_data(
+                'modal_mesh',
+                nodes,
+                None,
+                [connectivity],
+                [mat_ids],
+                ['3_4']  # 3D tetrahedra with 4 nodes
+            )
+
+            print(f"[ModalAnalysis] Mesh creation completed successfully ({mesh.n_nod} nodes, {mesh.n_el} elements)")
+            return mesh, mesh_quality
+
+        finally:
+            # Clean up temporary file
+            try:
+                if os.path.exists(result_path):
+                    os.unlink(result_path)
+            except:
+                pass  # Best effort cleanup
+
     def _create_fe_mesh(
         self,
         vertices: np.ndarray,
@@ -215,32 +526,39 @@ class ModalAnalysisService:
             result_container = {'nodes': None, 'elements': None, 'quality': None, 'error': None}
             
             def run_tetgen():
-                """Run TetGen in a thread"""
-                try:
-                    # First try: strict quality mesh
-                    tgen.tetrahedralize(
-                        switches='pq1.2',    # p=tetrahedralize, q=quality mesh
-                        minratio=1.2,        # Minimum radius-edge ratio
-                        mindihedral=10,      # Minimum dihedral angle (degrees)
-                        verbose=0
-                    )
-                    result_container['nodes'] = tgen.node
-                    result_container['elements'] = tgen.elem
-                    result_container['quality'] = "High quality"
-                except Exception as e1:
+                """Run TetGen in a thread with output suppression"""
+                import contextlib
+                import io
+
+                # Suppress TetGen stdout/stderr (including "Point #X is coincident" warnings)
+                # These are harmless warnings that TetGen handles correctly
+                with contextlib.redirect_stdout(io.StringIO()), \
+                     contextlib.redirect_stderr(io.StringIO()):
                     try:
-                        # Second try: relaxed quality for difficult meshes
-                        print(f"[ModalAnalysis] First attempt failed, trying relaxed settings...")
-                        tgen2 = tetgen.TetGen(vertices, faces)  # Recreate object
-                        tgen2.tetrahedralize(
-                            switches='p',     # Just tetrahedralize, no quality constraints
+                        # First try: strict quality mesh
+                        tgen.tetrahedralize(
+                            switches='pq1.2',    # p=tetrahedralize, q=quality mesh
+                            minratio=1.2,        # Minimum radius-edge ratio
+                            mindihedral=10,      # Minimum dihedral angle (degrees)
                             verbose=0
                         )
-                        result_container['nodes'] = tgen2.node
-                        result_container['elements'] = tgen2.elem
-                        result_container['quality'] = "Standard quality"
-                    except Exception as e2:
-                        result_container['error'] = f"Failed to tetrahedralize: {e2}"
+                        result_container['nodes'] = tgen.node
+                        result_container['elements'] = tgen.elem
+                        result_container['quality'] = "High quality"
+                    except Exception as e1:
+                        try:
+                            # Second try: relaxed quality for difficult meshes
+                            print(f"[ModalAnalysis] First attempt failed, trying relaxed settings...")
+                            tgen2 = tetgen.TetGen(vertices, faces)  # Recreate object
+                            tgen2.tetrahedralize(
+                                switches='p',     # Just tetrahedralize, no quality constraints
+                                verbose=0
+                            )
+                            result_container['nodes'] = tgen2.node
+                            result_container['elements'] = tgen2.elem
+                            result_container['quality'] = "Standard quality"
+                        except Exception as e2:
+                            result_container['error'] = f"Failed to tetrahedralize: {e2}"
             
             # Run TetGen with timeout
             thread = threading.Thread(target=run_tetgen, daemon=True)
