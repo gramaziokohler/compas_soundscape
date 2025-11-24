@@ -27,7 +27,12 @@ import { ModeVisualizer } from "@/lib/three/mode-visualizer";
 import { InputHandler } from "@/lib/three/input-handler";
 import { projectToScreen, isInViewport as isInViewportUtil } from "@/lib/three/projection-utils";
 import { getSoundState } from "@/lib/sound/state-utils";
-import { extractTimelineSounds, calculateTimelineDuration } from "@/lib/audio/timeline-utils";
+import {
+  extractTimelineSounds,
+  calculateTimelineDuration,
+  extractTimelineSoundsFromData,
+  calculateTimelineDurationFromData
+} from "@/lib/audio/timeline-utils";
 import { useTimelinePlayback } from "@/hooks/useTimelinePlayback";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
 import { apiService } from "@/services/api";
@@ -89,6 +94,8 @@ export function ThreeScene({
   onMute,
   onSolo,
   onDeleteSound,
+  onSelectSoundCard,
+  selectedCardIndex,
   onPlayAll,
   onPauseAll,
   onStopAll,
@@ -114,7 +121,7 @@ export function ThreeScene({
   onSetModeVisualization,
   onSelectMode,
   onReceiverModeChange,
-  audioRenderingMode = 'basic_mixer',
+  audioRenderingMode = 'anechoic',
   audioOrchestrator,
   audioContext,
   selectedIRId,
@@ -183,9 +190,12 @@ export function ThreeScene({
   const [entityOverlay, setEntityOverlay] = useState<EntityOverlay | null>(null);
   const [selectedEntity, setSelectedEntity] = useState<EntityData | null>(null);
   const [showSoundBoxes, setShowSoundBoxes] = useState<boolean>(true);
-  
+
   // Track user-hidden overlays separately (persists across animation updates)
   const hiddenOverlaysRef = useRef<Set<string>>(new Set());
+
+  // Track when sound spheres are updated (to trigger label updates)
+  const [sphereUpdateCounter, setSphereUpdateCounter] = useState<number>(0);
 
   // ============================================================================
   // State - Modal Impact Sound Synthesis
@@ -263,6 +273,83 @@ export function ThreeScene({
     sounds: timelineSounds,
     duration: timelineDuration
   });
+
+  // ============================================================================
+  // Helper - Calculate Entity Center and Bounds
+  // ============================================================================
+  const calculateEntityBounds = useCallback((
+    entityIndex: number,
+    geometryData: CompasGeometry | null
+  ): { center: THREE.Vector3; max: THREE.Vector3 } | null => {
+    if (!geometryData?.face_entity_map || !geometryData.vertices || !geometryData.faces) {
+      return null;
+    }
+
+    // Find all faces belonging to this entity
+    const entityFaces: number[][] = [];
+    geometryData.face_entity_map.forEach((entIdx, faceIndex) => {
+      if (entIdx === entityIndex) {
+        entityFaces.push(geometryData.faces[faceIndex]);
+      }
+    });
+
+    if (entityFaces.length === 0) return null;
+
+    // Calculate bounding box from all vertices in entity faces
+    const box = new THREE.Box3();
+    entityFaces.forEach(face => {
+      face.forEach(vertexIndex => {
+        const vertex = geometryData.vertices[vertexIndex];
+        box.expandByPoint(new THREE.Vector3(vertex[0], vertex[1], vertex[2]));
+      });
+    });
+
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+
+    return { center, max: box.max };
+  }, []);
+
+  // ============================================================================
+  // Helper - Create Number Label Sprite
+  // ============================================================================
+  const createNumberLabel = useCallback((number: number): THREE.Sprite => {
+    // Create canvas for text
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d')!;
+    canvas.width = 128;
+    canvas.height = 128;
+
+    // No background - transparent
+    context.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw number text
+    context.font = 'bold 80px Arial';
+    context.fillStyle = 'white';
+    context.strokeStyle = 'black';
+    context.lineWidth = 4;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    // Draw stroke first for outline
+    context.strokeText(number.toString(), 64, 64);
+    // Then fill
+    context.fillText(number.toString(), 64, 64);
+
+    // Create sprite
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: false, // Always render on top
+      depthWrite: false
+    });
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.set(0.3, 0.3, 1); // Smaller size to fit inside sphere
+    sprite.userData.isNumberLabel = true;
+    sprite.renderOrder = 999; // Render last (on top)
+
+    return sprite;
+  }, []);
 
   // ============================================================================
   // Effect - Sync Props to Refs (for event handlers)
@@ -358,6 +445,10 @@ export function ThreeScene({
     }
   }, []);
 
+  // ============================================================================
+  // Sound Overlay Handlers (DEPRECATED - controls now in sidebar)
+  // ============================================================================
+  /*
   // Toggle sound boxes visibility
   const handleToggleSoundBoxes = useCallback(() => {
     setShowSoundBoxes(prev => {
@@ -396,33 +487,48 @@ export function ThreeScene({
     // Convert screen delta to world space movement
     const camera = sceneCoordinator.camera;
     const spherePosition = sphere.position.clone();
-    
+
     // Project current position to screen space
     const vector = spherePosition.clone().project(camera);
-    
+
     // Apply screen space delta
     const canvas = sceneCoordinator.renderer.domElement;
     const widthHalf = canvas.width / 2;
     const heightHalf = canvas.height / 2;
-    
+
     vector.x += (deltaX / widthHalf);
     vector.y -= (deltaY / heightHalf);
-    
+
     // Unproject back to world space
     vector.unproject(camera);
-    
+
     // Calculate direction from camera
     const direction = vector.sub(camera.position).normalize();
-    
+
     // Calculate distance from camera to sphere
     const distance = camera.position.distanceTo(spherePosition);
-    
+
     // Calculate new position
     const newPosition = camera.position.clone().add(direction.multiplyScalar(distance));
-    
+
     // Update sphere position
     soundSphereManager.updateSpherePosition(promptKey, newPosition);
+
+    // Update label position to follow sphere
+    const soundEvent = sphere.userData.soundEvent;
+    if (soundEvent) {
+      const promptIndex = (soundEvent as any).prompt_index ?? 0;
+      // Find the label for this sound (labels are tagged with userData)
+      const labels = sceneCoordinator.contentGroup.children.filter(
+        child => child.userData.isNumberLabel &&
+                 child.userData.promptIndex === promptIndex
+      );
+      labels.forEach(label => {
+        label.position.copy(newPosition);
+      });
+    }
   }, []);
+  */
 
   // ============================================================================
   // Playback Control Handlers (controlling both audio and timeline)
@@ -447,8 +553,8 @@ export function ThreeScene({
     const soundSphereManager = soundSphereManagerRef.current;
     if (!playbackScheduler || !soundSphereManager) return;
 
-    // Get audio sources
-    const audioSources = soundSphereManager.getAllAudioSources();
+    // Get sound metadata
+    const soundMetadata = soundSphereManager.getAllAudioSources();
 
     // Update timeline cursor position
     seekTo(timeMs);
@@ -457,7 +563,7 @@ export function ThreeScene({
     // MUST await to ensure audio context is resumed before scheduling
     await playbackScheduler.seekToTime(
       timeMs,
-      audioSources,
+      soundMetadata,
       individualSoundStates,
       soundIntervals
     );
@@ -755,6 +861,26 @@ export function ThreeScene({
     return entityIndices;
   }, [soundscapeData, selectedVariants]);
 
+  // Memoize entity indices whose sound cards are selected
+  const selectedSoundEntityIndices = useMemo(() => {
+    const entityIndices = new Set<number>();
+
+    if (!soundscapeData || selectedCardIndex === null) return entityIndices;
+
+    // Find the sound for the selected card
+    const selectedSound = soundscapeData.find(sound => {
+      const promptIdx = (sound as any).prompt_index ?? 0;
+      return promptIdx === selectedCardIndex;
+    });
+
+    // If the selected sound has an entity link, add it
+    if (selectedSound && selectedSound.entity_index !== null && selectedSound.entity_index !== undefined) {
+      entityIndices.add(selectedSound.entity_index);
+    }
+
+    return entityIndices;
+  }, [soundscapeData, selectedCardIndex, selectedVariants]);
+
   // ============================================================================
   // Effect - Initialize Three.js Scene and Services (runs once)
   // ============================================================================
@@ -791,7 +917,7 @@ export function ThreeScene({
     receiverManagerRef.current = receiverManager;
 
     // Initialize Playback Scheduler Service
-    const playbackScheduler = new PlaybackSchedulerService(sceneCoordinator.listener, audioOrchestrator);
+    const playbackScheduler = new PlaybackSchedulerService(audioOrchestrator, audioContext);
     playbackSchedulerRef.current = playbackScheduler;
 
     // Initialize Audio Flow Debugger (for development/debugging)
@@ -822,6 +948,20 @@ export function ThreeScene({
       } else {
         // Normal entity selection behavior
         setSelectedEntity(entity);
+        
+        // If entity has a linked sound, select that sound card in sidebar
+        if (entity && soundscapeData && onSelectSoundCard) {
+          console.log('[ThreeScene] Entity clicked:', entity.index, 'Checking for linked sound...');
+          const linkedSound = soundscapeData.find(
+            (sound: any) => sound.entity_index === entity.index
+          );
+          console.log('[ThreeScene] Linked sound found:', linkedSound);
+          if (linkedSound) {
+            const promptIndex = (linkedSound as any).prompt_index ?? 0;
+            console.log('[ThreeScene] Selecting sound card with promptIndex:', promptIndex);
+            onSelectSoundCard(promptIndex);
+          }
+        }
       }
     });
     inputHandler.setOnReceiverPlaced((position) => onPlaceReceiver?.(position));
@@ -836,6 +976,21 @@ export function ThreeScene({
     });
     inputHandler.setOnSpherePositionUpdated((promptKey, position) => {
       soundSphereManager.updateSpherePosition(promptKey, position);
+
+      // Also update label position to follow sphere
+      const sphere = soundSphereManager.findSphereByPromptKey(promptKey);
+      if (sphere && sphere.userData.soundEvent) {
+        const promptIndex = (sphere.userData.soundEvent as any).prompt_index ?? 0;
+        // Find and update the label for this sound sphere
+        const labels = sceneCoordinator.contentGroup.children.filter(
+          child => child.userData.isNumberLabel &&
+                   child.userData.promptIndex === promptIndex &&
+                   child.userData.isEntityLinked === false
+        );
+        labels.forEach(label => {
+          label.position.copy(position);
+        });
+      }
     });
     inputHandler.setOnReceiverPositionUpdated((receiverId, position) => {
       onUpdateReceiverPosition?.(receiverId, position);
@@ -845,6 +1000,17 @@ export function ThreeScene({
       receiverManager.updatePreviewPosition(position);
     });
     inputHandler.setOnSphereClicked((promptKey) => {
+      // Extract promptIndex from promptKey (format: 'prompt_0', 'prompt_1', etc.)
+      const promptIndex = parseInt(promptKey.split('_')[1]);
+
+      // Clear entity selection (hide entity info overlay)
+      setSelectedEntity(null);
+
+      // Notify sidebar to select this sound card
+      if (!isNaN(promptIndex) && onSelectSoundCard) {
+        onSelectSoundCard(promptIndex);
+      }
+
       // Show overlay if it's hidden by user
       const hiddenOverlays = hiddenOverlaysRef.current;
       if (hiddenOverlays.has(promptKey)) {
@@ -908,9 +1074,11 @@ export function ThreeScene({
         sceneCoordinator.setAudioOrchestrator(audioOrchestrator);
       }
 
-      // Also update PlaybackSchedulerService
+      // Also update PlaybackSchedulerService (CRITICAL: Update BOTH orchestrator AND context)
       if (playbackScheduler) {
         (playbackScheduler as any).audioOrchestrator = audioOrchestrator;
+        (playbackScheduler as any).audioContext = audioContext;
+        console.log('[ThreeScene] ✅ Updated PlaybackScheduler with orchestrator and context');
       }
 
       // Update audio flow debugger
@@ -1020,6 +1188,77 @@ export function ThreeScene({
   }, [triangulatedGeometry]);
 
   // ============================================================================
+  // Effect - Update Selected Sound Visualization
+  // ============================================================================
+  useEffect(() => {
+    const soundSphereManager = soundSphereManagerRef.current;
+    const sceneCoordinator = sceneCoordinatorRef.current;
+    if (!soundSphereManager || !sceneCoordinator || !soundscapeData) return;
+
+    // Get all sphere meshes and reset their colors
+    const sphereMeshes = soundSphereManager.getSoundSphereMeshes();
+
+    // Remove all existing number labels
+    sceneCoordinator.contentGroup.children
+      .filter(child => child.userData.isNumberLabel)
+      .forEach(label => {
+        sceneCoordinator.contentGroup.remove(label);
+        if (label instanceof THREE.Sprite && label.material.map) {
+          label.material.map.dispose();
+          label.material.dispose();
+        }
+      });
+
+    // Reset sphere colors to primary
+    sphereMeshes.forEach(sphere => {
+      const material = sphere.material as THREE.MeshStandardMaterial;
+      material.color.setHex(UI_COLORS.PRIMARY_HEX);
+    });
+
+    // Add number labels to all sounds and highlight selected sound spheres
+    soundscapeData.forEach(sound => {
+      const promptIndex = (sound as any).prompt_index ?? 0;
+      const isSelected = selectedCardIndex === promptIndex;
+
+      // Find sphere for this sound
+      const sphere = sphereMeshes.find(s => s.userData.soundEvent?.id === sound.id);
+      if (sphere) {
+        // Highlight sphere if selected
+        if (isSelected) {
+          const material = sphere.material as THREE.MeshStandardMaterial;
+          material.color.setHex(parseInt(UI_COLORS.SECONDARY.replace('#', ''), 16));
+        }
+
+        // Add number label at sphere center
+        const label = createNumberLabel(promptIndex + 1);
+        label.position.copy(sphere.position);
+        label.userData.promptIndex = promptIndex; // Tag for drag updates
+        label.userData.isEntityLinked = false;
+        // No Y offset - place at center
+        sceneCoordinator.contentGroup.add(label);
+      }
+
+      // Handle entity-linked sounds: add label
+      if (sound.entity_index !== undefined) {
+        // Calculate entity bounds for label positioning
+        const bounds = calculateEntityBounds(sound.entity_index, geometryData);
+        if (bounds) {
+          // Add number label above entity
+          const label = createNumberLabel(promptIndex + 1);
+          label.position.copy(bounds.center);
+          label.position.y = bounds.max.y + 0.5; // Position above entity
+          label.userData.promptIndex = promptIndex; // Tag for identification
+          label.userData.isEntityLinked = true;
+          sceneCoordinator.contentGroup.add(label);
+        }
+      }
+    });
+
+    // Entity coloring for selected sound cards is now handled by GeometryRenderer.updateDiverseHighlights
+    // via the selectedSoundEntityIndices parameter
+  }, [selectedCardIndex, soundscapeData, selectedVariants, geometryData, createNumberLabel, calculateEntityBounds, sphereUpdateCounter]);
+
+  // ============================================================================
   // Effect - Update Entity Selection Callback (for linking mode & modal impact)
   // ============================================================================
   useEffect(() => {
@@ -1059,6 +1298,21 @@ export function ThreeScene({
 
       // Priority 3: Normal entity selection
       setSelectedEntity(entity);
+
+      // If entity has a linked sound, expand the corresponding sound card
+      if (entity && soundscapeData && onSelectSoundCard) {
+        // Find the sound linked to this entity
+        const linkedSound = soundscapeData.find(sound =>
+          sound.entity_index !== undefined &&
+          sound.entity_index === entity.index
+        );
+
+        if (linkedSound) {
+          const promptIndex = (linkedSound as any).prompt_index ?? 0;
+          console.log(`[ThreeScene] Entity ${entity.index} has linked sound, selecting card ${promptIndex}`);
+          onSelectSoundCard(promptIndex);
+        }
+      }
     });
   }, [
     isLinkingEntity,
@@ -1067,7 +1321,9 @@ export function ThreeScene({
     modalImpactEntity,
     geometryData,
     isPlayingImpact,
-    handleImpactPointClick
+    handleImpactPointClick,
+    soundscapeData,
+    onSelectSoundCard
   ]);
 
   // ============================================================================
@@ -1077,8 +1333,13 @@ export function ThreeScene({
     const geometryRenderer = geometryRendererRef.current;
     if (!geometryRenderer) return;
 
-    geometryRenderer.updateDiverseHighlights(geometryData, selectedDiverseEntities, entitiesWithLinkedSounds);
-  }, [selectedDiverseEntities, geometryData, entitiesWithLinkedSounds]);
+    geometryRenderer.updateDiverseHighlights(
+      geometryData,
+      selectedDiverseEntities,
+      entitiesWithLinkedSounds,
+      selectedSoundEntityIndices
+    );
+  }, [selectedDiverseEntities, geometryData, entitiesWithLinkedSounds, selectedSoundEntityIndices]);
 
   // ============================================================================
   // Effect - Entity Highlighting (Individual Selection)
@@ -1087,8 +1348,13 @@ export function ThreeScene({
     const geometryRenderer = geometryRendererRef.current;
     if (!geometryRenderer) return;
 
-    geometryRenderer.updateEntitySelection(geometryData, selectedEntity, selectedDiverseEntities);
-  }, [selectedEntity, selectedDiverseEntities, geometryData]);
+    geometryRenderer.updateEntitySelection(
+      geometryData,
+      selectedEntity,
+      selectedDiverseEntities,
+      entitiesWithLinkedSounds
+    );
+  }, [selectedEntity, selectedDiverseEntities, geometryData, entitiesWithLinkedSounds]);
 
   // ============================================================================
   // Effect - Mode Visualization (Nodal Lines)
@@ -1222,22 +1488,10 @@ export function ThreeScene({
         });
       }
 
-      // Position EntityInfoBox dynamically:
-      // - If sound overlay exists AND is visible (not hidden by user AND showSoundBoxes is true):
-      //   Position ABOVE the sound overlay by VERTICAL_STACK_OFFSET
-      // - Otherwise: Position directly at entity (no offset)
-      let entityBoxY = y; // Default: position at entity
-      if (soundOverlay !== undefined) {
-        const overlay = soundOverlay as UIOverlay;
-        const isSoundVisible = showSoundBoxes && !hiddenOverlaysRef.current.has(overlay.promptKey);
-        if (isSoundVisible) {
-          entityBoxY = y - UI_OVERLAY.VERTICAL_STACK_OFFSET; // Offset above sound overlay
-        }
-      }
-
+      // Position EntityInfoBox directly at entity position (no offset)
       setEntityOverlay({
         x,
-        y: entityBoxY,
+        y,
         visible: !isBehindCamera,
         entity: selectedEntity,
         soundOverlay,
@@ -1402,16 +1656,16 @@ export function ThreeScene({
     prevSoundscapeDataLengthRef.current = currentLength;
 
     // Get current audio sources before updating (to stop old variants)
-    const oldAudioSources = soundSphereManager.getAllAudioSources();
+    const oldSoundMetadata = soundSphereManager.getAllAudioSources();
     const playbackScheduler = playbackSchedulerRef.current;
 
     // Stop all schedulers for old audio sources ONLY if there are old sources
     // This prevents old variants from continuing to play after switching
     // Don't call onStopAll if there are no old sources (prevents spam on startup/generation)
-    if (oldAudioSources.size > 0 && playbackScheduler) {
+    if (oldSoundMetadata.size > 0 && playbackScheduler) {
       // Use async IIFE to properly await stopAllSounds
       (async () => {
-        await playbackScheduler.stopAllSounds(oldAudioSources);
+        await playbackScheduler.stopAllSounds();
         // Update UI state to reflect that all sounds are stopped after variant change
         onStopAll();
       })();
@@ -1425,6 +1679,12 @@ export function ThreeScene({
       scaleForSounds,
       auralizationConfigRef.current
     );
+
+    // Trigger label update after spheres are created
+    // Use setTimeout to ensure meshes are fully created before labels are added
+    setTimeout(() => {
+      setSphereUpdateCounter(prev => prev + 1);
+    }, 0);
   }, [soundscapeData, selectedVariants, scaleForSounds]);
 
   // ============================================================================
@@ -1493,16 +1753,21 @@ export function ThreeScene({
     const soundSphereManager = soundSphereManagerRef.current;
     if (!playbackScheduler || !soundSphereManager) return;
 
-    const audioSources = soundSphereManager.getAllAudioSources();
+    const soundMetadata = soundSphereManager.getAllAudioSources();
 
     // IMPORTANT: This runs AFTER updateSoundSpheres when variants change
-    // By that time, old variant audio sources have been removed
+    // By that time, old variant metadata have been removed
     // So we rely on updateSoundSpheres to stop any playing audio
-    playbackScheduler.updateSoundPlayback(
-      audioSources,
-      individualSoundStates,
-      soundIntervals
-    );
+
+    // CRITICAL: updateSoundPlayback is now async (for audio context resume)
+    // Must await to ensure context is resumed before sounds are scheduled
+    (async () => {
+      await playbackScheduler.updateSoundPlayback(
+        soundMetadata,
+        individualSoundStates,
+        soundIntervals
+      );
+    })();
   }, [individualSoundStates, soundIntervals]);
 
   // Helper: Calculate effective bounding box (from geometry or sound sources)
@@ -1838,24 +2103,28 @@ export function ThreeScene({
     const timeoutId = setTimeout(() => {
       const audioSchedulers = playbackScheduler.getAudioSchedulers();
 
-      // Update timeline data if schedulers exist, otherwise clear
-      if (audioSchedulers.size > 0) {
-        // Calculate duration FIRST, then extract sounds using that duration
-        const duration = calculateTimelineDuration(audioSchedulers);
-        const sounds = extractTimelineSounds(audioSchedulers, duration);
+      // Get current sound metadata from soundSphereManager
+      const soundMetadata = soundSphereManagerRef.current?.getAllAudioSources() || new Map();
+
+      // ROBUST STRATEGY: Always use soundMetadata as the source of truth
+      // Schedulers are transient (created when playing, destroyed when stopped)
+      // soundMetadata persists as long as the soundscape exists
+      // This prevents timeline from collapsing when Stop All is clicked (interval slider, individual play button, etc.)
+      if (soundMetadata.size > 0) {
+        const duration = calculateTimelineDurationFromData(soundMetadata, soundIntervals);
+        const sounds = extractTimelineSoundsFromData(soundMetadata, soundIntervals, duration);
 
         setTimelineSounds(sounds);
         setTimelineDuration(duration);
-      } else {
-        // No schedulers yet - clear timeline (will be populated when play starts)
-        setTimelineSounds([]);
+        console.log('[ThreeScene] Timeline updated from soundMetadata:', sounds.length, 'sounds');
       }
+      // Don't clear timeline when soundMetadata is empty temporarily
+      // It will be cleared by the first effect when soundscapeData is removed
     }, UI_TIMING.UPDATE_DEBOUNCE_MS);
 
     return () => clearTimeout(timeoutId);
-    // Timeline data represents "what is scheduled", not playback state
-    // Update when soundscape/variants change OR when intervals change
-    // Update when soundscape/variants change OR when intervals change
+    // Timeline data represents "what is configured", not playback state
+    // Update when soundscape/variants/intervals change
   }, [soundscapeData, selectedVariants, soundIntervals]);
 
   // ============================================================================
@@ -1934,41 +2203,9 @@ export function ThreeScene({
 
       {/* 3D UI Overlays */}
       <div className="absolute inset-0 pointer-events-none">
-        {uiOverlays.map((overlay) => {
-          const selectedSound = overlay.variants[overlay.selectedVariantIdx];
-
-          return (
-            <SoundUIOverlay
-              key={overlay.promptKey}
-              overlay={{
-                ...overlay,
-                userHidden: !showSoundBoxes || overlay.userHidden,
-                variants: overlay.variants.map(v => ({
-                  ...v,
-                  current_volume_db: soundVolumes[v.id] ?? v.volume_db,
-                  current_interval_seconds: soundIntervals[v.id] ?? v.interval_seconds
-                })),
-                distance: overlay.distance // Explicitly preserve distance
-              }}
-              soundState={getSoundState(overlay.soundId, individualSoundStates)}
-              onToggleSound={onToggleSound}
-              onVariantChange={onVariantChange}
-              onVolumeChange={onVolumeChange}
-              onIntervalChange={onIntervalChange}
-              onDelete={onDeleteSound}
-              onHideToggle={handleOverlayHideToggle}
-              onDragUpdate={handleOverlayDrag}
-              onMute={onMute}
-              onSolo={onSolo}
-              isMuted={mutedSounds.has(overlay.soundId)}
-              isSoloed={soloedSound === overlay.soundId}
-            />
-          );
-        })}
+        {/* Sound UI Overlays removed - controls now in sidebar */}
 
         {/* Entity data overlay (shown when user clicks on an entity) */}
-        {/* Entity-linked sound overlays are already rendered in the main uiOverlays array above */}
-        {/* Only show EntityInfoBox here, positioned ABOVE the sound overlay */}
         {/* Hide when in impact ready/playing mode */}
         {entityOverlay && entityOverlay.visible && modalImpactMode === 'inactive' && (
           <EntityInfoBox
@@ -1979,6 +2216,7 @@ export function ThreeScene({
             isAnalyzing={false}
             isAnalyzed={modalAnalysisCache.current.has(entityOverlay.entity.index)}
             linkedPromptIndex={entityOverlay.linkedPromptIndex}
+            linkedSoundName={entityOverlay.soundOverlay?.displayName}
             isDiverseSelected={selectedDiverseEntities.some(e => e.index === entityOverlay.entity.index)}
             onToggleDiverseSelection={onToggleDiverseSelection}
             onDetachSound={onDetachSound}
@@ -1995,6 +2233,7 @@ export function ThreeScene({
             isAnalyzing={true}
             isAnalyzed={false}
             linkedPromptIndex={entityOverlay.linkedPromptIndex}
+            linkedSoundName={entityOverlay.soundOverlay?.displayName}
             isDiverseSelected={selectedDiverseEntities.some(e => e.index === entityOverlay.entity.index)}
             onToggleDiverseSelection={onToggleDiverseSelection}
             onDetachSound={onDetachSound}
@@ -2151,23 +2390,7 @@ export function ThreeScene({
           }
         />
 
-        {/* Toggle Sound Boxes Button */}
-        <SceneControlButton
-          onClick={handleToggleSoundBoxes}
-          isActive={showSoundBoxes}
-          title={showSoundBoxes ? "Hide sound controls" : "Show sound controls"}
-          icon={showSoundBoxes ? (
-            <Icon>
-              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-              <circle cx="12" cy="12" r="3" />
-            </Icon>
-          ) : (
-            <Icon>
-              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
-              <line x1="1" y1="1" x2="23" y2="23" />
-            </Icon>
-          )}
-        />
+        {/* Toggle Sound Boxes Button - Removed, controls now in sidebar */}
 
         {/* Toggle Timeline Button */}
         <SceneControlButton

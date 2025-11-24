@@ -59,8 +59,8 @@ compas_soundscape/
 │   ├── postcss.config.mjs
 │   ├── public/
 │   │   ├── hrtf/                   # HRTF data files
-│   │   │   ├── HRTF_KEMAR_front.sofa         # KEMAR HRTF for binaural audio
-│   │   │   └── D1_48K_24bit_256tap_FIR_SOFA.sofa  # High-quality FIR HRTF
+│   │   │   ├── HRTF_KEMAR_front.json         # KEMAR HRTF (JSON from SOFA) - 828 positions, 44.1kHz
+│   │   │   └── D1_48K_24bit_256tap_FIR_SOFA.json  # High-quality FIR HRTF (JSON from SOFA)
 │   │   └── [SVG icons]             # UI icons (file.svg, globe.svg, etc.)
 │   └── src/
 │       ├── app/
@@ -89,7 +89,15 @@ compas_soundscape/
 │       │   ├── layout/
 │       │   │   ├── Sidebar.tsx
 │       │   │   └── sidebar/         # Sidebar sub-components
+│       │   │       ├── ModelLoadSection.tsx        # Model file upload & loading
+│       │   │       ├── TextGenerationSection.tsx   # LLM-based text generation
+│       │   │       ├── SoundGenerationSection.tsx  # Sound generation controls (vertical list)
+│       │   │       ├── SoundTab.tsx                # Individual sound card (NEW - collapsible)
+│       │   │       └── AcousticsTab.tsx            # Acoustics & IR controls
 │       │   ├── overlays/            # UI overlays
+│       │   │   ├── EntityInfoBox.tsx          # Entity information overlay
+│       │   │   ├── ImpactSoundPlayback.tsx    # Impact sound playback controls
+│       │   │   └── SoundUIOverlay.tsx         # DEPRECATED - Sound controls (moved to sidebar)
 │       │   ├── scene/               # 3D scene components
 │       │   │   ├── ThreeScene.tsx              # Main 3D scene component
 │       │   │   ├── SceneControlButton.tsx      # Reusable scene control button
@@ -143,9 +151,11 @@ compas_soundscape/
 │       │   │   │   ├── StereoIRMode.ts          # Stereo/binaural IR mode
 │       │   │   │   └── ThreeJSMode.ts           # Three.js PositionalAudio mode
 │       │   │   ├── decoders/                    # Audio decoders
-│       │   │   │   └── BinauralDecoder.ts       # Binaural output decoder
+│       │   │   │   └── BinauralDecoder.ts       # Binaural output decoder (auto-loads IRCAM HRTFs)
 │       │   │   ├── utils/                       # Audio utilities
 │       │   │   │   ├── error-handling.ts        # Error handling utilities
+│       │   │   │   ├── hrir-loader-ircam.ts     # IRCAM SOFA HRIR loader with virtual speaker selection (NEW)
+│       │   │   │   ├── hrtf-loader.ts           # Generic HRTF loader (legacy - not used)
 │       │   │   │   ├── mode-selector.ts         # Mode selection logic
 │       │   │   │   └── mode-transition.ts       # Mode transition handling
 │       │   │   └── debug/                       # Debug utilities

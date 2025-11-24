@@ -25,10 +25,10 @@ export function Sidebar(props: SidebarProps) {
 
         {/* Tab Buttons - Horizontally scrollable without scrollbar */}
         <div ref={mainTabsScrollRef} className="overflow-x-auto scrollbar-hide border-b border-gray-300 dark:border-gray-600">
-          <div className="flex gap-2 min-w-max">
+          <div className="flex gap-4 min-w-max">
             <button
               onClick={() => props.setActiveAiTab('text')}
-              className="px-3 py-2 font-medium transition-colors whitespace-nowrap text-sm"
+              className="px-4 py-2 font-medium transition-colors whitespace-nowrap text-sm"
               style={{
                 borderBottom: props.activeAiTab === 'text' ? `2px solid ${UI_COLORS.PRIMARY}` : 'none',
                 color: props.activeAiTab === 'text' ? UI_COLORS.PRIMARY : UI_COLORS.NEUTRAL_600
@@ -48,7 +48,7 @@ export function Sidebar(props: SidebarProps) {
             </button>
             <button
               onClick={() => props.setActiveAiTab('sound')}
-              className="px-3 py-2 font-medium transition-colors whitespace-nowrap text-sm"
+              className="px-4 py-2 font-medium transition-colors whitespace-nowrap text-sm"
               style={{
                 borderBottom: props.activeAiTab === 'sound' ? `2px solid ${UI_COLORS.PRIMARY}` : 'none',
                 color: props.activeAiTab === 'sound' ? UI_COLORS.PRIMARY : UI_COLORS.NEUTRAL_600
@@ -64,11 +64,11 @@ export function Sidebar(props: SidebarProps) {
                 }
               }}
             >
-              Sound Generation
+              Soundscape
             </button>
             <button
               onClick={() => props.setActiveAiTab('acoustics')}
-              className="px-3 py-2 font-medium transition-colors whitespace-nowrap text-sm"
+              className="px-4 py-2 font-medium transition-colors whitespace-nowrap text-sm"
               style={{
                 borderBottom: props.activeAiTab === 'acoustics' ? `2px solid ${UI_COLORS.PRIMARY}` : 'none',
                 color: props.activeAiTab === 'acoustics' ? UI_COLORS.PRIMARY : UI_COLORS.NEUTRAL_600
@@ -186,6 +186,24 @@ export function Sidebar(props: SidebarProps) {
               onCancelLinkingEntity={props.onCancelLinkingEntity}
               isLinkingEntity={props.isLinkingEntity}
               linkingConfigIndex={props.linkingConfigIndex}
+              individualSoundStates={props.individualSoundStates}
+              onToggleSound={props.onToggleSound}
+              onVolumeChange={props.onVolumeChange}
+              onIntervalChange={props.onIntervalChange}
+              onMute={props.onMute}
+              onSolo={props.onSolo}
+              onVariantChange={props.onVariantChange}
+              mutedSounds={props.mutedSounds}
+              soloedSound={props.soloedSound}
+              onResetSound={props.onResetSound}
+              onSelectSoundCard={props.onSelectSoundCard}
+              selectedCardIndex={props.selectedCardIndex}
+              soundVolumes={props.soundVolumes}
+              soundIntervals={props.soundIntervals}
+              selectedVariants={props.selectedVariants}
+              previewingSoundId={props.previewingSoundId}
+              onPreviewPlayPause={props.onPreviewPlayPause}
+              onPreviewStop={props.onPreviewStop}
             />
           </div>
         )}

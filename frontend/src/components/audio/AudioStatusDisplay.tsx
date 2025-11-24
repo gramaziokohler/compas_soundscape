@@ -17,7 +17,7 @@
  * ```tsx
  * <AudioStatusDisplay
  *   status={{
- *     currentMode: AudioMode.BASIC_MIXER,
+ *     currentMode: AudioMode.ANECHOIC,
  *     isReceiverModeActive: false,
  *     isIRActive: false,
  *     ambisonicOrder: 1,

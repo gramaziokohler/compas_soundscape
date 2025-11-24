@@ -1,5 +1,941 @@
 # CHANGELOG
 
+## [2025-11-23] - Keep Timeline Expanded When Sounds Stop
+### Fixed
+- **`frontend/src/lib/audio/timeline-utils.ts`** - Added functions to populate timeline from soundscape data
+  - **New Functions:**
+    - `extractTimelineSoundsFromData()` - Creates timeline visualization from configured sounds, independent of schedulers
+    - `calculateTimelineDurationFromData()` - Calculates timeline duration from soundscape data
+  - These functions extract timeline data from `soundMetadata` and `soundIntervals` instead of from schedulers
+  - Allows timeline to stay populated even when all sounds are stopped
+- **`frontend/src/components/scene/ThreeScene.tsx`** - Timeline persistence when sounds stop
+  - **Problem:** Timeline was cleared when Stop All was clicked because schedulers were disposed
+    - Previous code cleared timeline when `audioSchedulers.size === 0`
+    - This caused timeline to "collapse" or "get reduced" whenever interval slider was moved or individual sounds were stopped
+  - **Solution:** Always use soundMetadata as the source of truth (lines 2109-2122)
+    - Schedulers are transient (created when playing, destroyed when stopped)
+    - soundMetadata persists as long as the soundscape exists
+    - Timeline always extracts from soundMetadata + soundIntervals (never from schedulers)
+    - Timeline is never cleared when sounds stop, only when soundscape is removed
+  - **Benefits:**
+    - Timeline stays visible when moving interval slider (Stop All triggered on mouse release)
+    - Timeline stays visible when clicking play/pause on individual soundcards
+    - Timeline represents "what sounds are configured" not "what sounds are currently playing"
+    - Same behavior as clicking play on a soundcard (timeline doesn't collapse)
+    - Robust against race conditions between scheduler disposal and timeline updates
+
+## [2025-11-23] - Fix Interval Slider Issues (Stop All Workflow + Mouse Release Update)
+### Fixed
+- **`frontend/src/hooks/useAudioControls.ts`** + **`frontend/src/lib/audio-scheduler.ts`** - Robust interval change workflow
+  - **Previous Issues:**
+    1. Timeline took too long to load when pressing Play All after interval change
+    2. Moving interval slider stopped playing sounds mid-playback
+    3. Seek functionality had delays after interval changes
+    4. Overlapping sounds when dragging slider rapidly
+    5. Stop All triggered on every slider movement (even while dragging)
+  - **Root Cause:** Attempting to update intervals while sounds are playing caused complex state management:
+    - Stopping/restarting sounds during slider drag created race conditions
+    - Multiple buffer sources created but not properly tracked
+    - Scheduler state became inconsistent with actual playback
+    - handleIntervalChange called on every onChange event (rapid Stop All calls)
+  - **ROBUST SOLUTION - Stop All Workflow + Mouse Release Update:**
+    - **`handleIntervalChange` (useAudioControls.ts:281-292):** Now calls `stopAll()` BEFORE updating interval
+    - **`VerticalVolumeSlider` (VerticalVolumeSlider.tsx):** Added `onChangeCommitted` prop
+      - `onChange`: Updates visual feedback immediately (local state)
+      - `onChangeCommitted`: Fires only on mouse release (onMouseUp/onTouchEnd)
+    - **`SoundTab` (SoundTab.tsx:163-169, 460-464):** Uses temporary state for visual feedback
+      - While dragging: Shows updated value but doesn't trigger Stop All
+      - On mouse release: Calls `onIntervalChange` which triggers Stop All
+      - **Slider Stuck Bug Fix:** Replaced setState-in-render (lines 166-168) with useEffect
+        - Previous code set state during render phase, causing slider to reset immediately during drag
+        - Now uses `useEffect` to sync temp state with current interval when it changes externally
+        - Allows slider to move freely while dragging, stays in sync with external updates
+    - This gives a clean slate: all schedulers disposed, all sources stopped, state reset
+    - User sees timeline update with new interval spacing (visual feedback during drag)
+    - User manually clicks Play All to resume with new interval (explicit, predictable)
+    - **`updateInterval` (audio-scheduler.ts:125-141):** Reverted to simple implementation and marked as deprecated
+  - **Benefits:**
+    - Simple, bulletproof workflow: Drag → Release → Stop → Update → User plays
+    - No overlapping sounds, no race conditions, no scheduler bugs
+    - Timeline loads instantly (no complex state reconciliation)
+    - Seek works perfectly (clean state)
+    - Smooth slider interaction (no interruptions while dragging)
+    - Predictable behavior that user controls
+  - **Trade-off:** User must manually click Play All after changing interval (explicit action, but more reliable)
+
+## [2025-11-23] - Fix Timeline Not Starting + Play All Audio Not Playing
+### Fixed
+- **`frontend/src/lib/three/sound-sphere-manager.ts`** - Fixed timeline not starting by including required metadata properties
+  - **Root Cause:** After refactoring to remove PositionalAudio, the SoundMetadata only included minimal properties (id, display_name, color, prompt_index)
+  - Timeline component needs `url` property to load waveforms via WaveSurfer (line 85 in timeline-utils.ts, line 154 in WaveSurferTimeline.tsx)
+  - Missing `url` caused timeline to skip all sounds and not render
+  - **Fix:** Added critical metadata properties when creating SoundMetadata (lines 231-233):
+    - `url: soundEvent.url` - Required for timeline waveform visualization
+    - `isUploaded: soundEvent.isUploaded` - Needed for timeline color coding (uploaded vs generated vs library)
+    - `interval_seconds: soundEvent.interval_seconds` - Needed for accurate playback scheduling
+  - Timeline now displays correctly with waveforms and proper color coding
+
+- **`frontend/src/components/scene/ThreeScene.tsx`** + **`frontend/src/lib/audio/playback-scheduler-service.ts`** - **CRITICAL FIX:** Play All audio not playing on first click
+  - **Root Cause Chain:**
+    1. `useAudioOrchestrator` hook creates AudioContext **asynchronously** in a useEffect (line 33-85 in useAudioOrchestrator.ts)
+    2. On first render, `audioContextRef.current` is `null`, so hook returns `audioContext: null`
+    3. ThreeScene initialization effect (line 882-1048) runs with `audioContext = null` from props
+    4. PlaybackSchedulerService is constructed with `audioContext = null` (line 915)
+    5. When AudioScheduler instances are created, they receive `this.audioContext` which is `null` (line 122 in playback-scheduler-service.ts)
+    6. AudioScheduler.playOnce() checks for audio context and fails: "Cannot play - missing buffer or context" (line 245 in audio-scheduler.ts)
+    7. Console logs confirmed: `Has audioContext: false`, `Context state: undefined`
+
+  - **The Fix (ThreeScene.tsx lines 1072-1077):**
+    - ThreeScene already had a useEffect (lines 1053-1084) that updates manager references when orchestrator becomes available
+    - However, it was ONLY updating `audioOrchestrator` and **forgetting to update `audioContext`**
+    - **Added:** `(playbackScheduler as any).audioContext = audioContext;` to update the audio context reference
+    - Now when audioContext becomes available (async), it gets propagated to PlaybackSchedulerService
+    - PlaybackSchedulerService then creates AudioScheduler instances with valid audio context
+    - Added logging to confirm update: "Updated PlaybackScheduler with orchestrator and context"
+
+  - **Supporting Changes (playback-scheduler-service.ts):**
+    - Made `updateSoundPlayback()` async to properly await audio context resume (line 52)
+    - Added audio context state logging for debugging (line 62)
+    - Properly await `audioContext.resume()` with error handling (lines 64-83)
+    - Updated call site in ThreeScene.tsx to await async function (lines 1757-1763)
+
+  - **Result:** Play All now produces audio immediately on first click without requiring seek
+
+### Technical Details
+- **SoundMetadata interface** (`frontend/src/types/audio.ts`) uses `[key: string]: any` in soundEvent to allow flexible metadata
+- **Audio Context Lifecycle:** suspended → running (via resume()) → playing audio
+- **Timeline data flow:** AudioScheduler → ScheduledSound → extractTimelineSounds() → WaveSurferTimeline
+- **Play All staggered start:** Each sound gets random initial delay (0 to half its interval) for natural audio layering
+
+## [2025-11-21] - Fix React Render Error When Switching Sound Cards
+### Fixed
+- **`frontend/src/components/layout/sidebar/SoundGenerationSection.tsx`** - Fixed "Cannot update a component while rendering a different component" error
+  - **Root Cause:** `onPreviewStop` was being called inside the `setExpandedTabs` state setter callback (lines 88, 94)
+  - This violated React's rendering rules: updating parent state (`setPreviewingSoundId`) during child state update (`setExpandedTabs`)
+  - **Fix:** Moved `onPreviewStop` call BEFORE `setExpandedTabs` (line 84-86)
+  - Now parent state updates happen before child state updates, which is the correct React pattern
+  - Error no longer occurs when switching between sound cards or collapsing cards
+
+## [2025-11-21] - Fix AmbisonicIRMode Poor Localization (SN3D→N3D Conversion + Fixed Gain)
+### Fixed
+- **`frontend/src/lib/audio/ir-utils.ts`** - Added SN3D to N3D conversion + fixed gain multiplier
+  - **Issue 1:** Most ambisonic IRs are recorded in SN3D normalization, but JSAmbisonics expects N3D
+    - Without conversion, directional channels (X,Y,Z) were 1.73x (√3) weaker than they should be
+    - Now automatically detects ambisonic IRs (4/9/16 channels) and applies conversion factors
+    - Confirmed via RMS diagnostics: IR was SN3D format (directional ratio 0.534 vs expected 0.577)
+  - **Issue 2 (CRITICAL):** Normalization was destroying localization
+    - Global normalization (even with same scale on all channels) affected temporal dynamics
+    - Different channels peak at different times in the IR
+    - Normalizing to global peak compressed dynamic range in ways that hurt localization
+    - **Solution:** Use fixed gain multiplier (0.3) instead of normalization for ambisonic IRs
+    - This preserves both channel balance AND temporal characteristics
+  - Added `diagnoseAmbisonicNormalization()` to detect IR format (SN3D/N3D/FuMa) via RMS analysis
+  - Added `convertSN3DtoN3D` parameter (default: true) to allow disabling if IR is already N3D
+- **`frontend/src/lib/constants.ts`** - Added `IMPULSE_RESPONSE.AMBISONIC_IR_GAIN_MULTIPLIER`
+  - Fixed gain of 0.3 (-10.5dB) provides headroom without clipping
+  - Works with FOA gain compensation (0.5) for proper output levels
+- **`frontend/src/lib/constants.ts`** - Fixed FOA gain compensation
+  - Was 0.25, should be 0.5 (1/sqrt(4) = 0.5, not 0.25)
+  - This was making FOA IRs 6dB quieter than intended
+
+### Added
+- **`frontend/src/lib/constants.ts`** - Added `AMBISONIC.SN3D_TO_N3D` conversion factors
+  - FOA: W=1.0, X/Y/Z=√3 (1.732)
+  - SOA: W=1.0, 1st order=√3, 2nd order=√5 (2.236)
+  - TOA: W=1.0, 1st order=√3, 2nd order=√5, 3rd order=√7 (2.646)
+  - Reference: https://en.wikipedia.org/wiki/Ambisonic_data_exchange_formats
+
+### Technical Details
+**Root Causes:**
+1. **Normalization mismatch:** JSAmbisonics uses N3D internally, most IRs are SN3D
+2. **Per-channel normalization:** Destroyed the relative levels between W and directional channels
+
+**Why this caused poor localization:**
+- SN3D directional channels are 1/√3 ≈ 0.577 of W channel strength
+- N3D expects all channels at equal strength (1.0)
+- Per-channel normalization made all channels peak at 0.5, regardless of the conversion
+- Result: W channel dominated, directional cues were lost, rotation had minimal effect
+
+**Impact:**
+- **Before:** Camera rotation barely noticeable, no spatial localization
+- **After:** Full 3 DOF head tracking with accurate spatial localization in ReceiverMode
+
+## [2025-11-21] - Fix Double Playback When Seeking on Timeline (Nuclear Solution)
+### Fixed
+- **`frontend/src/lib/audio/playback-scheduler-service.ts`** - Nuclear approach + orchestrator source stopping
+  - **Seek operation:** Disposes ALL schedulers → Waits 50ms for event loop to clear → Creates fresh schedulers
+  - **Individual stop:** Added `orchestrator.stopSource()` + seek timer cleanup in `updateSoundPlayback()` when sounds stop/pause
+  - **KEY FIX:** Seek creates direct buffer sources via `orchestrator.playSource()` - these MUST be stopped
+  - This eliminates ALL race conditions (both seek-to-seek and soundcard preview scenarios)
+  - Timer callbacks simply check if scheduler still exists (disposed = skip)
+- **`frontend/src/lib/audio-scheduler.ts`** - Simplified timer callback checking
+  - Removed complex generation tracking (was insufficient)
+  - Timer callbacks now only check if sound is still scheduled before playing
+- **`frontend/src/types/audio.ts`** - Removed unused `generation` field from `ScheduledSound` interface
+- **`frontend/src/hooks/useAudioControls.ts`** - Updated `handlePreviewPlayPause` comment to note automatic cleanup
+
+### Technical Details
+**Root Causes:**
+1. **Seek-to-seek:** `clearTimeout()` doesn't prevent callbacks already queued in event loop
+   - When seeking multiple times, old timer callbacks execute after new seek starts
+   - Old callbacks would call `scheduleSound()` → immediate playback → double/triple audio
+2. **Soundcard preview:** When playing soundcard preview after seek, timeline seek timers weren't cleared
+   - Seek creates timers → User plays soundcard preview → Timeline stops → Seek timers fire later → Timeline restarts
+
+**Nuclear Solution (for seeking):**
+1. Clear all seek timers
+2. Stop all orchestrator sources
+3. Stop all THREE.PositionalAudio objects
+4. **DISPOSE all schedulers** (completely destroys them, not just unschedule)
+5. **Wait 50ms** for JavaScript event loop to clear all queued callbacks
+6. Create completely fresh schedulers for current seek position
+7. Old callbacks check if scheduler exists → NULL → return early (no playback)
+
+**Seek Timer Cleanup (for individual stops):**
+- When any sound transitions to 'stopped' or 'paused' in `updateSoundPlayback()`
+- Clear any seek timer associated with that sound
+- Prevents soundcard preview scenario where seek timers restart timeline sounds
+
+**Why this works:**
+- **Nuclear disposal** ensures seek-to-seek operations are bulletproof
+- **Individual cleanup** ensures other stop mechanisms (like soundcard preview) also clear seek timers
+- Simple, deterministic - no complex state tracking needed
+
+**Trade-off:**
+- 50ms delay when seeking (barely noticeable, acceptable per user)
+- Bulletproof prevention of double playback in all scenarios
+- Much simpler, more maintainable code than generation tracking approach
+
+## [2025-11-21] - Fix Gain Compensation Being Overwritten by setMasterVolume
+### Fixed
+- **`frontend/src/lib/audio/modes/MonoIRMode.ts`** - Added separate `boostGain` node for compensation
+  - `setMasterVolume()` was overwriting boost; now boost is on separate gain node in chain
+- **`frontend/src/lib/audio/modes/StereoIRMode.ts`** - Added separate `boostGain` node for compensation
+- **`frontend/src/lib/audio/modes/AmbisonicIRMode.ts`** - Added separate `boostGain` node for order-dependent gain compensation, added cleanup in `dispose()`
+
+## [2025-11-21] - Fix Timeline Seek with IR Convolution
+### Fixed
+- **`frontend/src/lib/audio/playback-scheduler-service.ts`** - `seekToTime()` now routes playback through AudioOrchestrator
+  - Previously called `audio.play()` directly, bypassing IR convolution processing
+  - Now calls `orchestrator.playSource(soundId, false, offsetSeconds)` to ensure convolution is applied
+  - Added `orchestrator.stopAllSources()` at start of seek to prevent double playback
+
+### Changed
+- **`frontend/src/lib/audio/core/interfaces/IAudioMode.ts`** - Added optional `offset` parameter to `playSource()`
+- **`frontend/src/lib/audio/AudioOrchestrator.ts`** - `playSource()` now accepts `offset` parameter
+- **`frontend/src/lib/audio/modes/MonoIRMode.ts`** - `playSource()` supports offset via `bufferSource.start(0, offset)`
+- **`frontend/src/lib/audio/modes/StereoIRMode.ts`** - `playSource()` supports offset
+- **`frontend/src/lib/audio/modes/AmbisonicIRMode.ts`** - `playSource()` supports offset
+- **`frontend/src/lib/audio/modes/AnechoicMode.ts`** - `playSource()` supports offset
+- **`frontend/src/lib/audio/modes/ResonanceMode.ts`** - `playSource()` supports offset
+
+## [2025-11-21] - Fix AmbisonicIRMode Head Rotation and Level Compensation
+### Fixed
+- **`frontend/src/lib/audio/decoders/BinauralDecoder.ts`** - `updateOrientation()` now actually applies rotation when enabled
+  - Added `rotationEnabled` flag to differentiate AmbisonicIRMode (rotation needed) from AnechoicMode (no rotation)
+  - Added `setRotationEnabled()` method
+  - Converts radians to degrees for JSAmbisonics sceneRotator
+  - Negated yaw/pitch for proper head tracking (scene rotates opposite to head)
+- **`frontend/src/lib/audio/modes/AmbisonicIRMode.ts`** - Enable rotation + order-dependent gain compensation
+  - FOA: -6dB, SOA: -9.5dB, TOA: -12dB for consistent loudness across orders
+- **`frontend/src/lib/audio/modes/MonoIRMode.ts`** - Added 2x boost to match compensated ambisonic levels
+- **`frontend/src/lib/audio/modes/StereoIRMode.ts`** - Added 2x boost to match compensated ambisonic levels
+- **`frontend/src/lib/constants.ts`** - Added `AMBISONIC.ORDER_GAIN_COMPENSATION`, `MONO_IR_BOOST`, `STEREO_IR_BOOST`
+- **`frontend/src/hooks/useAudioOrchestrator.ts`** - Exposed `updateListener` method for head tracking
+
+## [2025-11-21] - Auto-switch to Soundscape Tab on Sound Selection
+### Changed
+- **`frontend/src/app/page.tsx`** - `handleSelectSoundCard` now switches to Soundscape tab before expanding the card
+  - Clicking a sound sphere or sound-linked mesh from any tab (e.g., Acoustics) now auto-switches to Soundscape tab
+
+## [2025-11-21] - Fix Stop All Button Not Immediately Stopping Sounds
+### Added
+- **`frontend/src/lib/audio/core/interfaces/IAudioMode.ts`** - Added `stopAllSources()` method to interface
+- **`frontend/src/lib/audio/modes/MonoIRMode.ts`** - Implemented `stopAllSources()`
+- **`frontend/src/lib/audio/modes/StereoIRMode.ts`** - Implemented `stopAllSources()`
+- **`frontend/src/lib/audio/modes/AmbisonicIRMode.ts`** - Implemented `stopAllSources()`
+- **`frontend/src/lib/audio/modes/ResonanceMode.ts`** - Implemented `stopAllSources()`
+- **`frontend/src/lib/audio/modes/AnechoicMode.ts`** - Implemented `stopAllSources()`
+- **`frontend/src/lib/audio/AudioOrchestrator.ts`** - Added `stopAllSources()` method
+
+### Fixed
+- **`frontend/src/lib/audio/playback-scheduler-service.ts`** - `stopAllSounds()` now calls orchestrator's `stopAllSources()` first
+- **`frontend/src/lib/audio-scheduler.ts`** - `unscheduleAll()` now stops audio sources through orchestrator
+- Sounds now stop immediately when clicking "Stop All" instead of playing until end of cycle
+
+## [2025-11-21] - Audio Rendering Mode Refactor
+### Removed
+- **Flat Anechoic mode** - Removed `basic_mixer` mode entirely
+  - Deleted `frontend/src/lib/audio/modes/BasicMixerMode.ts`
+  - Removed from `AudioMode` enum in `frontend/src/types/audio.ts`
+  - Removed from AudioOrchestrator, mode-selector, and constants
+
+### Changed
+- **`frontend/src/components/audio/AudioRenderingModeSelector.tsx`** - Renamed modes
+  - 'Spatial Anechoic' → 'No Acoustics' (left position)
+  - 'ShoeBox Acoustics' (middle position, unchanged)
+  - New 'Precise Acoustics' mode (right position) for IR-based convolution
+- **`frontend/src/components/layout/sidebar/AcousticsTab.tsx`** - Conditional IR section visibility
+  - IR Library/Upload only visible in 'Precise Acoustics' mode
+  - Hidden in 'No Acoustics' and 'ShoeBox Acoustics' modes
+- **`frontend/src/app/page.tsx`** - Mode sync logic
+  - Sets 'precise' mode when IR is active
+  - Only calls setNoIRPreference for 'anechoic' and 'resonance' modes
+- **`frontend/src/lib/constants.ts`** - Updated mode descriptions
+- **`frontend/src/lib/audio/AudioOrchestrator.ts`** - Removed BasicMixerMode
+- **`frontend/src/lib/audio/utils/mode-selector.ts`** - Updated mode selection logic
+
+## [2025-11-21] - Sound Card WaveSurfer Preview Player
+### Added
+- **`frontend/src/components/audio/SoundCardWaveSurfer.tsx`** - New WaveSurfer-based audio preview component for sound cards
+  - Waveform visualization with play/pause/stop controls
+  - Volume control via volumeDb prop (0-100 range with exponential curve)
+  - Mute support - respects card mute state
+  - Proper abort handling to suppress React Strict Mode errors
+  - Auto-reset to beginning on playback finish
+
+### Changed
+- **`frontend/src/components/layout/sidebar/SoundTab.tsx`** - Updated generated sound UI
+  - Replaced horizontal sliders with vertical sliders for Interval and Volume
+  - Added WaveSurfer waveform display for sound preview
+  - Repositioned variant selector to left side below play/stop buttons
+  - Removed globalVolume dependency (soundcard preview is independent)
+- **`frontend/src/components/layout/sidebar/SoundGenerationSection.tsx`** - Fixed variant selection
+  - `getGeneratedSound()` now returns the currently selected variant, not just the first sound
+  - Properly passes preview state to SoundTab
+- **`frontend/src/hooks/useAudioControls.ts`** - Added soundcard preview state management
+  - New `previewingSoundId` state to track which soundcard is playing
+  - `handlePreviewPlayPause()` - Stops timeline if playing, toggles soundcard preview
+  - `handlePreviewStop()` - Stops soundcard preview
+  - `handleVariantChange()` - Now switches preview to new variant if preview was playing
+  - `playAll()` - Stops any soundcard preview before starting timeline
+- **`frontend/src/types/components.ts`** - Added preview-related props to SidebarProps and SoundGenerationSectionProps
+- **`frontend/src/components/layout/Sidebar.tsx`** - Pass preview props to SoundGenerationSection
+- **`frontend/src/app/page.tsx`** - Pass preview props from audioControls to Sidebar
+
+### Mutual Exclusion Logic
+- Soundcard preview and Timeline are mutually exclusive:
+  - Playing soundcard stops timeline
+  - Playing timeline (Play All) stops soundcard preview
+  - Collapsing a sound card stops its preview
+  - Switching variants while preview is playing switches to new variant's preview
+
+## [2025-11-21] - Entity-Linked Sound Prompt Guarantee
+### Changed
+- **`backend/services/llm_service.py`** - Updated `_create_base_sound_prompt()` (lines 287-321)
+  - LLM now guarantees entity-linked sounds when diverse entities are selected
+  - If num_sounds >= num_entities: ALL entities get a linked sound + remaining as context sounds
+  - If num_sounds < num_entities: LLM chooses most relevant entities for the context
+  - Example: 3 entities, 5 sounds → 3 entity-linked + 2 context sounds
+  - Example: 3 entities, 2 sounds → 2 entity-linked sounds (most relevant)
+
+## [2025-11-21] - Anechoic Mode Spatial Audio Fix
+### Fixed
+- **`frontend/src/lib/audio/modes/AnechoicMode.ts`** - Fixed sound scene rotating incorrectly when orbiting
+  - **Root cause**: sceneRotator is designed for VR head tracking, NOT camera orbit compensation
+  - **Impact**: When orbiting around a sound source, sound appeared to rotate instead of staying "in front"
+  - **Fix**: Encode sources in listener-local coordinates
+    - `updateSourcePosition()` rotates relative position by listener yaw before encoding
+    - `createSource()` also rotates by listener orientation for initial encoding
+  - **Result**: When orbiting around a sound source at the orbit target, sound stays "in front" as expected
+- **`frontend/src/lib/audio/decoders/BinauralDecoder.ts`** - Disabled sceneRotator for orbit compensation
+  - `updateOrientation()` now keeps sceneRotator at identity (yaw=0, pitch=0, roll=0)
+  - sceneRotator reserved for future VR head tracking use only
+
+## [2025-01-20] - Anechoic Mode Rotation Fix
+### Fixed
+- **`frontend/src/lib/audio/modes/AnechoicMode.ts`** - Fixed spatial audio rotating around origin instead of tracking with camera view
+  - Changed `rotatePosition()` method (lines 205-207) to use **right-handed rotation matrix** matching Three.js
+  - **Root cause**: Code used LEFT-HANDED Y-axis rotation matrix with incorrect signs:
+    - Was: `x1 = x*cos - z*sin`, `z1 = x*sin + z*cos`
+    - Should be: `x1 = x*cos + z*sin`, `z1 = -x*sin + z*cos`
+  - **Impact**: Rotations went in opposite direction, causing sounds to appear rotated around origin (0,0,0) instead of maintaining correct spatial relationship to camera
+  - **Fix**: Corrected rotation matrix to use standard right-handed formula
+  - Sounds now correctly track with camera orientation regardless of camera position
+- **`frontend/src/lib/three/scene-coordinator.ts`** - Restored proper orientation calculation from camera direction (lines 294-333)
+  - Reverted incorrect fix that set orientation to (0,0,0)
+  - Properly calculates yaw/pitch from `camera.getWorldDirection()` in orbit mode
+  - Listener faces their actual view direction, not fixed world -Z
+
+## [2025-11-20 IRCAM HRTF Auto-Loading] - Full HRTF Implementation with Virtual Speaker Selection
+
+### Added
+- **Complete IRCAM HRTF loader with automatic ambisonic decoding filter generation**
+  - `frontend/src/lib/audio/utils/hrir-loader-ircam.ts` - New IRCAM SOFA HRIR loader (454 lines)
+    - `loadIRCAMSOFA()` - Fetches IRCAM SOFA JSON files with timeout
+    - `parseIRCAMSOFA()` - Extracts HRIRs and source positions from IRCAM structure
+    - `angularDistance()` - Calculates great circle distance between spherical coordinates
+    - `findNearestHRTF()` - Finds nearest measured HRTF to virtual speaker position
+    - `generateAmbisonicFilters()` - Creates multi-channel AudioBuffer with (order+1)^2 * 2 channels
+    - `loadIRCAMHRIR()` - Main entry point for loading and processing
+    - `loadIRCAMHRIRWithRetry()` - Retry logic with exponential backoff
+  - Virtual speaker layouts for optimal ambisonic decoding:
+    - FOA (order 1): 4 speakers in tetrahedral arrangement
+    - SOA (order 2): 9 speakers (cube + center)
+    - TOA (order 3): 16 speakers (dodecahedron vertices)
+  - `frontend/public/hrtf/IRC_1076_C_HRIR_48000.sofa.json` - IRCAM subject 1076 HRTF dataset
+
+### Changed
+- **HRTF auto-loading now ENABLED by default**
+  - `frontend/src/lib/constants.ts:467` - Updated DEFAULT_HRTF_PATH to IRC_1076_C_HRIR_48000.sofa.json
+  - `frontend/src/lib/constants.ts:474` - Changed FORMAT from 'json' to 'ircam'
+  - `frontend/src/lib/constants.ts:477` - Added AUTO_LOAD: true
+  - `frontend/src/lib/audio/decoders/BinauralDecoder.ts:29` - Import loadIRCAMHRIRWithRetry instead of loadHRTFWithRetry
+  - `frontend/src/lib/audio/decoders/BinauralDecoder.ts:105-111` - Auto-load HRTFs if HRTF.AUTO_LOAD is enabled
+  - `frontend/src/lib/audio/decoders/BinauralDecoder.ts:118-130` - Added autoLoadHRTFs() private method
+  - `frontend/src/lib/audio/decoders/BinauralDecoder.ts:238-293` - Updated loadHRTFs() to use IRCAM loader
+  - System now automatically loads measured HRTFs on startup (falls back to cardioid if loading fails)
+
+### Technical Details
+- **Virtual speaker selection algorithm:**
+  - Optimal t-design layouts for spherical sampling
+  - Angular distance calculation using great circle formula
+  - Nearest-neighbor search in HRTF measurement grid
+  - Logs mapping: virtual speaker position → nearest measured HRTF position
+- **Channel layout:** Interleaved L/R pairs: [L0, R0, L1, R1, L2, R2, ...]
+  - FOA: 8 channels (4 virtual speakers × 2 ears)
+  - SOA: 18 channels (9 virtual speakers × 2 ears)
+  - TOA: 32 channels (16 virtual speakers × 2 ears)
+- **IRCAM SOFA format:** Hierarchical JSON with leaves structure
+  - Data.SamplingRate: Sample rate (Hz)
+  - Data.IR: 3D array [numPositions, 2 channels, irLength]
+  - SourcePosition: Spherical coordinates [azimuth, elevation, distance]
+- **Processing workflow:**
+  1. Load IRCAM SOFA JSON
+  2. Parse HRIR data and source positions
+  3. Select virtual speaker layout based on ambisonic order
+  4. Find nearest measured HRTF for each virtual speaker
+  5. Create multi-channel AudioBuffer with L/R pairs
+  6. Pass to JSAmbisonics binDecoder
+- **Performance:** Async loading with graceful fallback - no blocking, no crashes
+- **Future work:** Interpolation between nearest HRTFs for even better accuracy
+
+## [2025-11-20 Sample Rate & SSR Fixes] - Critical Bug Fixes
+
+### Fixed
+- **Sample rate mismatch causing IR convolution errors**
+  - `backend/config/constants.py:60` - Changed `AUDIO_SAMPLE_RATE` from 44100 Hz to 48000 Hz
+  - **Issue:** Backend resampled all IRs to 44100 Hz, but browser AudioContext defaults to 48000 Hz
+  - **Error:** `Failed to set the 'buffer' property on 'ConvolverNode': The buffer sample rate of 44100 does not match the context rate of 48000 Hz`
+  - **Fix:** Backend now resamples to 48000 Hz to match Web Audio API default
+  - **Impact:** All IR-based modes (MonoIRMode, StereoIRMode, AmbisonicIRMode) now work correctly
+  - **Backend resampling logic:** `backend/services/impulse_response_service.py:143-153` uses `scipy.signal.resample_poly`
+
+- **Server-side rendering (SSR) error with JSAmbisonics library**
+  - `frontend/src/lib/audio/modes/AnechoicMode.ts:34-41` - Added lazy loading for `ambisonics` import
+  - `frontend/src/lib/audio/modes/MonoIRMode.ts:38-45` - Added lazy loading for `ambisonics` import
+  - `frontend/src/lib/audio/modes/StereoIRMode.ts:49-56` - Added lazy loading for `ambisonics` import
+  - `frontend/src/lib/audio/modes/AmbisonicIRMode.ts:42-49` - Added lazy loading for `ambisonics` import
+  - **Issue:** JSAmbisonics library accesses `window` during module evaluation, causing "window is not defined" error during Next.js SSR
+  - **Error:** `window is not defined` in `src\lib\audio\modes\AnechoicMode.ts`
+  - **Fix:** Changed from `import * as ambisonics from 'ambisonics'` to dynamic import with SSR guard:
+    ```typescript
+    let ambisonics: any = null;
+    async function loadAmbisonics() {
+      if (!ambisonics && typeof window !== 'undefined') {
+        ambisonics = await import('ambisonics');
+      }
+      return ambisonics;
+    }
+    ```
+  - **Implementation:** Library loaded in `initialize()` method: `await loadAmbisonics()`
+  - **Impact:** All ambisonic modes now work with Next.js SSR without errors
+
+### Technical Details
+- **Sample rate standardization:** 48000 Hz is the Web Audio API default on most browsers/hardware
+- **Resampling quality:** Backend uses `scipy.signal.resample_poly` for high-quality resampling
+- **SSR compatibility:** Dynamic imports ensure code only runs in browser environment
+- **TypeScript compilation:** All changes verified with `npx tsc --noEmit` (no errors)
+
+## [2025-11-20 JSAmbisonics Integration & SOA Support] - Ambisonic Encoding Refactoring
+
+### Changed
+- **Refactored entire Ambisonics workflow to use JSAmbisonics built-in functions**
+  - `frontend/src/lib/audio/modes/AnechoicMode.ts` - Replaced custom encoding with `ambisonics.monoEncoder` for all sources
+    - Uses JSAmbisonics for accurate spherical harmonics calculation
+    - Simplified encoder creation: `new ambisonics.monoEncoder(audioContext, order)`
+    - Position updates via `encoder.azim`, `encoder.elev`, `encoder.updateGains()`
+    - Removed manual gain node approach (~30 lines simpler)
+  - `frontend/src/lib/audio/modes/MonoIRMode.ts` - Replaced custom encoding with `ambisonics.monoEncoder` for wet signal
+    - Convoluted signal now encoded using JSAmbisonics library
+    - Position-based encoding for proper spatial reverb placement
+    - Supports dynamic ambisonic order switching (FOA/SOA/TOA)
+  - `frontend/src/lib/audio/modes/StereoIRMode.ts` - Replaced custom encoding with dual `ambisonics.monoEncoder` (L/R channels)
+    - Left encoder: azimuth +30°, Right encoder: azimuth -30°
+    - Cleaner integration with JSAmbisonics ecosystem
+    - Updated SourceChain interface to use `any` type for encoders
+  - `frontend/src/lib/audio/modes/AmbisonicIRMode.ts` - Replaced manual multi-channel convolution with `ambisonics.convolver`
+    - Removed `createFOAConvolver()` and `createMultiMonoConvolvers()` helper functions (~160 lines removed)
+    - Uses JSAmbisonics convolver for all orders (FOA/SOA/TOA)
+    - Simplified IR update: `convolver.updateFilters(irBuffer)`
+    - Cleaner audio graph: `source → gainNode → convolver.in → convolver.out → ambisonicMerger`
+    - Handles multi-channel IR internally (no manual channel splitting needed)
+  - `frontend/src/lib/audio/ambisonic-core.ts` - Cleaned up from 259 to 41 lines
+    - Removed `calculateFOACoefficients()` (replaced by JSAmbisonics)
+    - Removed `calculateTOACoefficients()` (replaced by JSAmbisonics)
+    - Removed `encodeMonoToAmbisonic()` (no longer used)
+    - Removed `createAmbisonicEncoderNodes()` (replaced by `ambisonics.monoEncoder`)
+    - **Kept:** `cartesianToSpherical()` - Still used for coordinate conversion
+  - `frontend/src/lib/constants.ts:425-430` - Removed unused `AMBISONIC.WEIGHTS` object
+    - No longer needed since JSAmbisonics handles SN3D normalization internally
+  - **Benefits:**
+    - More accurate spherical harmonic calculations (library-optimized)
+    - Consistent API across all audio modes
+    - Easier to maintain and extend
+    - Reduced custom math code by ~360 lines total
+
+### Added
+- **Full Second-Order Ambisonics (SOA) support across all systems**
+  - `backend/config/constants.py:277-279` - Added `AMBISONIC_SOA_CHANNELS = 9`
+  - `backend/config/constants.py:292` - Added SOA to `SUPPORTED_IR_CHANNELS` list
+  - `backend/config/constants.py:299` - Added `IR_FORMAT_SOA = "soa"` constant
+  - `frontend/src/lib/constants.ts:433-437` - Added `SOA: 2` to AMBISONIC.ORDER
+  - `frontend/src/lib/constants.ts:440-444` - Added `SOA: 9` to AMBISONIC.CHANNELS
+  - `frontend/src/lib/constants.ts:455-460` - Added `SOA_CHANNEL_NAMES` (W, Y, Z, X, V, T, R, S, U)
+  - `frontend/src/lib/constants.ts:510-516` - Added `SOA: "soa"` to IR_FORMAT
+  - `frontend/src/types/ambisonics.d.ts` - **NEW FILE:** TypeScript declarations for JSAmbisonics library
+    - Defines types for `monoEncoder`, `convolver`, `binDecoder`, `sceneRotator`, and other JSAmbisonics classes
+    - Enables TypeScript compilation for JSAmbisonics imports
+  - **All audio modes now support 3 ambisonic orders:**
+    - FOA (First-Order): 4 channels, order = 1
+    - **SOA (Second-Order): 9 channels, order = 2** (newly supported)
+    - TOA (Third-Order): 16 channels, order = 3
+  - **Verified SOA support in:**
+    - `frontend/src/lib/audio/modes/AmbisonicIRMode.ts:121-122` - Already had SOA detection (9 channels)
+    - `frontend/src/lib/audio/decoders/BinauralDecoder.ts:109` - Already supported order 2
+
+### Technical Details
+- **JSAmbisonics integration:**
+  - Library: `ambisonics@0.4.0` (from package.json)
+  - Normalization: SN3D (Schmidt semi-normalized) - standard for ambisonics
+  - Channel ordering: ACN (Ambisonic Channel Number) - standard ordering
+  - Position format: Azimuth/elevation in degrees (not radians like custom code)
+- **Channel count calculation:** All modes now use `Math.pow(order + 1, 2)` for consistency
+  - FOA: (1+1)² = 4 channels
+  - SOA: (2+1)² = 9 channels
+  - TOA: (3+1)² = 16 channels
+- **TypeScript compilation:** All changes compile successfully with `npx tsc --noEmit`
+- **No breaking changes:** Public API remains the same (internal implementation updated)
+
+## [2025-11-19 HRTF Loading Infrastructure] - HRTF Loading Framework (Auto-loading Disabled)
+
+### Added
+- **HRTF loading infrastructure for future binaural spatial accuracy improvements**
+  - `frontend/src/lib/constants.ts:462-475` - Added HRTF configuration constants (DEFAULT_HRTF_PATH, FETCH_TIMEOUT_MS, RETRY_ATTEMPTS, FORMAT)
+  - `frontend/src/lib/audio/utils/hrtf-loader.ts` - New HRTF loader utility for JSON/SOFA format
+    - `loadHRTFJSON()` - Fetches and parses HRTF JSON files with timeout
+    - `parseSOFAData()` - Extracts IR data, sample rate, and source positions from SOFA structure
+    - `createHRTFAudioBuffer()` - Converts parsed HRTF to Web Audio AudioBuffer (currently 2-channel stereo)
+    - `loadHRTFAudioBuffer()` - Convenience function combining load and convert
+    - `loadHRTFWithRetry()` - Retry logic with exponential backoff (1s, 2s, 4s...)
+  - `frontend/src/lib/audio/decoders/BinauralDecoder.ts:29-30` - Imported HRTF loader and constants
+  - `frontend/src/lib/audio/decoders/BinauralDecoder.ts:192-240` - Added public `loadHRTFs()` method with channel count validation
+  - `frontend/src/lib/audio/decoders/BinauralDecoder.ts:242-246` - Added `hasHRTFs()` status check method
+  - `frontend/public/hrtf/HRTF_KEMAR_front.json` - KEMAR HRTF dataset (828 positions, 2 channels, 256 samples @ 44.1kHz)
+
+### Important Note - Auto-loading Disabled
+- **Auto-loading is currently DISABLED** - System uses default cardioid virtual microphone decoding
+- **Reason:** Format mismatch between raw SOFA HRTFs (2-channel stereo) and JSAmbisonics requirements
+- **JSAmbisonics expects:** Pre-processed ambisonic decoding filters with `(order+1)^2` channels
+  - FOA (order 1): 4 channels
+  - SOA (order 2): 9 channels
+  - TOA (order 3): 16 channels
+- **Missing processing steps:**
+  - Virtual speaker selection algorithm (choose optimal HRTF positions for ambisonic order)
+  - Ambisonic decoding matrix computation (map ambisonic channels to virtual speakers)
+  - HRTF interpolation for selected speaker positions
+- **Current decoder behavior:** Uses cardioid virtual microphones (works well for general spatial audio)
+- **Future work:** Implement missing processing or integrate JSAmbisonics HRIRloader utilities
+
+### Technical Details
+- **HRTF format:** JSON exported from SOFA (Spatially Oriented Format for Acoustics)
+- **SOFA structure:** Contains `Data.IR` (828 binaural impulse responses), `Data.SamplingRate`, `SourcePosition` (azimuth/elevation/distance)
+- **Validation:** BinauralDecoder validates channel count and provides clear error messages
+- **Error handling:** Helpful guidance pointing to JSAmbisonics documentation
+- **Alternative approach:** Use JSAmbisonics built-in utilities for proper filter generation:
+  - `HRIRloader_local` - Processes SOFA files with Python (requires h5py)
+  - `HRIRloader_ircam` - Loads pre-processed IRCAM SOFA files
+- **Reference:** https://github.com/polarch/JSAmbisonics#integration-with-sofa-hrtfs
+
+## [2025-11-19 Ambisonic IR Physical Accuracy Fix] - Critical Auralization Corrections
+
+### Fixed
+- **Ambisonic IR channel routing and level matching for physical accuracy**
+  - `frontend/src/lib/audio/modes/AmbisonicIRMode.ts:237-282` - Fixed FOA convolver channel routing with splitter/merger chain
+  - `frontend/src/lib/audio/modes/AmbisonicIRMode.ts:284-356` - Fixed SOA/TOA multi-mono convolver channel routing
+  - `frontend/src/lib/audio/modes/MonoIRMode.ts:220-247` - Fixed encoder output routing with channel splitter
+  - **Problem 1 - FOA routing bug:** 4-channel convolver output was incorrectly routed (all channels → merger ch 0) instead of proper channel mapping
+  - **Problem 2 - Missing W-channel boost:** Added √2 (+3dB) gain to W channel (ACN index 0) for proper ambisonic level matching
+  - **Problem 3 - Multi-channel node output bug:** ChannelMerger and GainNode only have 1 output, cannot directly access channels 1, 2, 3...
+  - **Solution:** Added ChannelSplitter after encoder/gain to split multi-channel signal before routing to ambisonic merger
+  - **Impact:** Mono IR (single channel) now has comparable loudness to 16-channel ambisonic IR as expected
+  - **Impact:** Auralization spatial distribution now matches professional convolution tools (proper L/R/center balance)
+
+### Technical Details
+- **FOA signal flow:** Convolver (4-ch) → Splitter → W-gain boost (√2) → Merger → Volume/Mute/Wet → Output Splitter → Ambisonic Merger
+- **SOA/TOA signal flow:** 16x Mono Convolvers → W-gain boost (√2) → Merger → Volume/Mute/Wet → Output Splitter → Ambisonic Merger
+- **MonoIR signal flow:** Convolver → Gain/Mute/Wet → Encoder (multi-ch) → Encoder Splitter → Ambisonic Merger
+- **Key insight:** Web Audio nodes (GainNode, ChannelMerger) output multi-channel as single stream - must use ChannelSplitter to route individual channels
+- **Web Audio API quirk:** `node.connect(dest, outputIndex, inputIndex)` - outputIndex refers to the source node's output channel, not the multi-channel stream's channels
+- **W-channel boost rationale:** Ambisonic W channel (omnidirectional) needs √2 scaling for proper level matching when decoded to binaural
+- **ACN channel ordering:** W (0), Y (1), Z (2), X (3), ... properly preserved through routing chain
+
+## [2025-11-19 Sound Sphere Spacing] - Unified Spacing for All Sound Generation Modes
+
+### Fixed
+- **Sound sphere spacing now works consistently across all 4 sound generation modes**
+  - `frontend/src/lib/constants.ts:283-289` - Added position generation constants (DEFAULT_POSITION_SPACING, DEFAULT_POSITION_OFFSET, DEFAULT_POSITION_Y, DEFAULT_POSITION_Z)
+  - `frontend/src/lib/sound/positioning.ts:9-14` - Imported position spacing constants
+  - `frontend/src/lib/sound/positioning.ts:87-128` - Created `calculateSoundPositionWithSpacing()` function that handles spacing for all modes
+  - `frontend/src/lib/sound/event-factory.ts:9` - Updated import to use `calculateSoundPositionWithSpacing`
+  - `frontend/src/lib/sound/event-factory.ts:32-33,41,45` - Updated `createSoundEventFromUpload()` to accept `totalSounds` parameter for proper spacing calculation
+  - `frontend/src/hooks/useSoundGeneration.ts:183-184` - Calculate total sounds count across all modes (text-to-audio, upload, sample-audio, library)
+  - `frontend/src/hooks/useSoundGeneration.ts:252-260` - Pass `totalSoundsCount` to uploaded sound event creation
+  - `frontend/src/hooks/useSoundGeneration.ts:294-301` - Pass `totalSoundsCount` to library sound event creation
+  - Previously: Upload, sample-audio, and library modes used simple geometry center, while text-to-audio had proper spacing
+  - Now: All 4 modes share the same spacing logic with 3 priority levels:
+    1. Entity position (if sound is linked to an entity)
+    2. Random position within bounding box (if model is loaded and no entity)
+    3. Linear spacing along X-axis with 5m intervals (default fallback)
+  - When mixing modes (e.g., 2 text-to-audio + 3 uploaded + 1 library), all 6 sounds are spaced evenly
+  - Spacing matches backend logic: `x = (index * 5) - (total * 1.5)`, `y = 1`, `z = 0`
+
+### Technical Details
+- **Unified position calculation:** Single function `calculateSoundPositionWithSpacing()` replaces per-mode logic
+- **Total sound count:** Calculated before generating any sounds to ensure consistent spacing across all modes
+- **Bounding box behavior:** When model is loaded, sounds are randomly placed within the geometry bounds
+- **No bounding box:** Sounds are evenly spaced along X-axis centered around origin
+- **Entity attachment:** Takes highest priority - sound stays at entity position regardless of bounding box
+
+## [2025-11-19 Sound Reset Fix] - Fix Reset Button Stale Closure Issue
+
+### Fixed
+- **Reset button stale closure bug causing labels to persist**
+  - `frontend/src/app/page.tsx:179-194` - Updated `handleResetSound` to use functional setState for soundscapeData
+  - `frontend/src/hooks/useSoundGeneration.ts:616-644` - Added `handleResetSoundConfig` with functional setState for soundConfigs
+  - Fixed issue where reset button would fail on 3rd+ sound due to stale closure capturing old soundscapeData
+  - Previously used direct state access which created race conditions with multiple sequential resets
+  - Now uses `prev =>` functional updates to always work with latest state
+  - Labels now properly disappear for all sounds regardless of reset order
+  - Sound configs properly revert to generation UI for all indices
+
+### Technical Details
+- **Root cause:** React closures captured stale state when callback dependencies didn't change
+- **Solution:** Functional setState pattern (`prev => ...`) ensures access to current state
+- **Affected operations:**
+  - Filtering soundscapeData to remove reset sound
+  - Clearing config fields (display_name, uploadedAudio*, selectedLibrarySound, librarySearchState)
+  - Memory cleanup (revoking object URLs)
+
+## [2025-11-19 Variant Selection UI] - Add Variant Selector to Sound Cards
+
+### Added
+- **Variant selector in sound cards** - Users can now select between multiple generated variants
+  - `frontend/src/components/layout/sidebar/SoundTab.tsx:38-39` - Added `variants` and `selectedVariantIdx` props
+  - `frontend/src/components/layout/sidebar/SoundTab.tsx:77-78` - Destructure variant props with defaults
+  - `frontend/src/components/layout/sidebar/SoundTab.tsx:432-458` - Implemented variant selector UI with horizontal numbered buttons
+  - Appears below volume/interval sliders when multiple variants exist (>1)
+  - Shows numbered buttons (1, 2, 3, etc.) for each variant
+  - Selected variant highlighted with primary color, unselected with neutral gray
+  - Displays "Variant X/N" text below buttons showing current selection
+  - Matches the same UI pattern as SoundUIOverlay.tsx for consistency
+
+- **Variant data passed through component hierarchy**
+  - `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx:63-70` - Added helper functions to get variants and selected index
+  - `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx:163-164` - Calculate variants for each prompt
+  - `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx:189-190` - Pass `variants` and `selectedVariantIdx` to SoundTab
+  - `frontend/src/components/layout/Sidebar.tsx:203` - Pass `selectedVariants` prop from parent
+  - `frontend/src/types/components.ts:251` - Added `selectedVariants` to SoundGenerationSectionProps type
+
+### Changed
+- **Sound card UI** - Enhanced with variant selection capability
+  - Variant selector only shows when sound is generated and expanded
+  - Automatically hides when only 1 variant exists
+  - Integrated seamlessly with existing volume/interval controls
+
+## [2025-11-19 Sound Card Reset Enhancement] - Proper Sound Config State Reset
+
+### Fixed
+- **Reset button race condition with multiple sounds**
+  - `frontend/src/hooks/useSoundGeneration.ts:616-639` - Added `handleResetSoundConfig` for atomic state updates
+  - `frontend/src/app/page.tsx:179-191` - Updated `handleResetSound` to use atomic reset function
+  - Fixed issue where resetting second sound would leave label visible and config not properly cleared
+  - Now uses functional setState to avoid race conditions from multiple sequential state updates
+  - All generated-state fields are cleared in a single atomic operation
+
+### Changed
+- **Reset button now properly reverts sound card to pre-generation state**
+  - Now clears: display_name, uploadedAudioBuffer, uploadedAudioInfo, uploadedAudioUrl, selectedLibrarySound, librarySearchState
+  - Revokes uploaded audio URL to free memory
+  - Keeps core config intact: prompt, entity, mode, duration, guidance_scale, etc.
+  - Sound card returns to generation UI with original settings
+  - Removes sound from scene and soundscape data
+  - Works correctly for all sound indices (first, second, nth sound)
+
+## [2025-11-19 Entity-Linked Sound Improvements] - Fix Entity Click Coloring and Sound Label Display
+
+### Fixed
+- **Entity info overlay not hiding on sound sphere click** - Clicking on a sound sphere now clears entity selection
+  - `frontend/src/components/scene/ThreeScene.tsx:1001-1002` - Added `setSelectedEntity(null)` to sound sphere click handler
+  - Entity information overlay now properly hides when switching from entity to sound sphere
+  - Consistent behavior: clicking anywhere (empty space, sound sphere, etc.) clears entity selection
+
+- **Double shade artifact on entity click** - Entity click no longer applies conflicting coloring for sound-linked entities
+  - `frontend/src/lib/three/geometry-renderer.ts:254-260` - Added `entitiesWithLinkedSounds` parameter to `updateEntitySelection`
+  - `frontend/src/lib/three/geometry-renderer.ts:280-297` - Skip creating highlight mesh when entity has a linked sound
+  - `frontend/src/components/scene/ThreeScene.tsx:1341-1346` - Pass `entitiesWithLinkedSounds` to `updateEntitySelection`
+  - Sound card selection coloring (via `updateDiverseHighlights`) now takes priority for sound-linked entities
+  - Entity click highlighting only applies to entities without linked sounds
+  - Prevents double shading artifact where both systems tried to color the same entity
+
+### Added
+- **Sound label in entity information overlay** - Entity overlay now displays linked sound information
+  - `frontend/src/components/overlays/EntityInfoBox.tsx:14` - Added `linkedSoundName` prop for sound display name
+  - `frontend/src/components/overlays/EntityInfoBox.tsx:218-231` - Added "Linked Sound" section with sound number and name
+  - `frontend/src/components/scene/ThreeScene.tsx:2200,2217` - Pass `soundOverlay.displayName` to EntityInfoBox
+  - Shows sound number (e.g., "#4") in green color and sound name
+  - Only displays when entity has a linked sound
+  - Separated by a border line for visual clarity
+
+### Changed
+- **Entity highlighting logic** - More intelligent handling of sound-linked entities
+  - Entity selection highlighting now checks if entity has linked sound before applying
+  - Sound card selection coloring remains active even when entity is selected
+  - Clearer visual feedback: green link button + sound info in overlay + sound card coloring
+
+## [2025-11-19 Sound Labels & Entity Interaction] - Fix Sound Sphere Labels, Drag, and Entity-Linked Sound Visualization
+
+### Fixed
+- **Sound sphere number labels** - Labels now appear immediately after sound generation without requiring a click
+  - `frontend/src/components/scene/ThreeScene.tsx:193` - Added `sphereUpdateCounter` state to trigger label updates
+  - `frontend/src/components/scene/ThreeScene.tsx:1630-1634` - Trigger label update after spheres are created using setTimeout
+  - `frontend/src/components/scene/ThreeScene.tsx:1217` - Added `sphereUpdateCounter` to label effect dependencies
+  - Labels are created in the effect that runs after `updateSoundSpheres` completes
+
+- **Entity-linked sound labels** - Labels now display correctly above entities with linked sounds
+  - `frontend/src/components/scene/ThreeScene.tsx:272-303` - Added `calculateEntityBounds` helper to compute entity bounding boxes from geometry data
+  - `frontend/src/components/scene/ThreeScene.tsx:1202-1212` - Use `calculateEntityBounds` to position labels above entity-linked sounds
+  - Previously tried to find entity meshes that don't exist individually (geometry is unified)
+  - Now properly calculates entity center and bounds from `geometryData.face_entity_map`
+
+- **Sound-linked object coloring** - Entities with linked sounds now get colored when their sound card is selected
+  - `frontend/src/components/scene/ThreeScene.tsx:845-863` - Added `selectedSoundEntityIndices` memoized value to track selected sound's entity
+  - `frontend/src/lib/three/geometry-renderer.ts:90-96` - Added `selectedSoundEntityIndices` parameter to `updateDiverseHighlights`
+  - `frontend/src/lib/three/geometry-renderer.ts:151-220` - Modified solid highlight rendering to separate selected vs unselected entity-linked sounds
+    - Selected sound entities → SECONDARY color (#ff6b9d)
+    - Unselected sound entities → PRIMARY color (pink)
+  - `frontend/src/components/scene/ThreeScene.tsx:1313-1318` - Pass `selectedSoundEntityIndices` to `updateDiverseHighlights`
+  - Removed manual color manipulation from sound visualization effect (now handled in GeometryRenderer)
+
+- **Entity click vs sound selection** - Entity left-click coloring no longer competes with sound card selection coloring
+  - Entity click highlighting uses `updateEntitySelection` which hides diverse highlights and shows individual entity
+  - Sound card selection uses `updateDiverseHighlights` with priority coloring (SECONDARY > PRIMARY)
+  - The two systems work in separate visual layers and don't conflict
+  - Individual entity selection (left-click) takes priority over diverse selection highlighting
+
+- **Labels not following sphere during drag** - Number labels now move with sound spheres when dragged
+  - `frontend/src/components/scene/ThreeScene.tsx:1210-1211` - Tag labels with `promptIndex` and `isEntityLinked` for identification
+  - `frontend/src/components/scene/ThreeScene.tsx:1225-1226` - Tag entity-linked labels with `promptIndex` and `isEntityLinked`
+  - `frontend/src/components/scene/ThreeScene.tsx:972-989` - Update label position during sphere drag via `setOnSpherePositionUpdated` callback
+  - Labels are filtered by `promptIndex` and `isEntityLinked` to ensure only sphere labels move (not entity labels)
+  - Drag system uses Three.js DragControls in InputHandler, which triggers `onSpherePositionUpdated`
+
+- **Entity click doesn't expand sound card** - Clicking on entity with linked sound now expands corresponding sound card
+  - `frontend/src/components/scene/ThreeScene.tsx:1292-1305` - Added logic to find linked sound and call `onSelectSoundCard`
+  - `frontend/src/components/scene/ThreeScene.tsx:1315-1316` - Added `soundscapeData` and `onSelectSoundCard` to effect dependencies
+  - When entity is clicked, searches `soundscapeData` for sound with matching `entity_index`
+  - Calls `onSelectSoundCard` with the sound's prompt index to expand the card in sidebar
+
+### Changed
+- **GeometryRenderer coloring logic** - Now handles sound selection coloring at the renderer level
+  - More efficient: colors are set during mesh creation, not manipulated after
+  - Cleaner separation: ThreeScene manages state, GeometryRenderer handles rendering
+  - Better organization: all entity coloring logic centralized in one place
+
+- **Label management** - Labels now tagged with metadata for better identification
+  - All labels have `promptIndex` to match with their sound
+  - All labels have `isEntityLinked` flag to distinguish sphere labels from entity labels
+  - Enables precise label updates during drag without affecting entity labels
+
+## [2025-11-19 Editable Sound Names] - Sound Card Names Editable with Timeline Sync
+
+### Added
+- **Editable sound card names** - Sound card names can now be edited inline and sync to timeline
+  - `frontend/src/components/layout/sidebar/SoundTab.tsx:100-137` - Added inline name editing state and handlers
+    - Double-click on sound card title to edit name
+    - Enter to save, Escape to cancel
+    - Shows pencil icon on hover to indicate editability
+    - Input field appears with focus when editing
+  - `frontend/src/components/layout/sidebar/SoundTab.tsx:203-236` - Updated header UI with conditional editing/display mode
+    - Replaced simple button with editable div that shows input on double-click
+    - Maintains expand/collapse functionality when clicking (not double-clicking)
+  - `frontend/src/hooks/useSoundGeneration.ts:704-733` - Added effect to propagate name changes to soundscape data
+    - Watches for display_name changes in soundConfigs
+    - Updates corresponding sounds in soundscapeData with matching prompt_index
+    - Updates generatedSounds to keep in sync
+    - Ensures timeline receives updated names via audio source userData
+
+### Changed
+- **Name propagation flow** - Display name changes now propagate through entire audio pipeline
+  - Config → SoundscapeData → Audio Sources → Timeline labels
+  - Timeline automatically updates when sound card name is edited
+
+## [2025-11-19 Receiver Fix] - Fix Receiver Numbering Issue
+
+### Fixed
+- **Receiver numbering** - Receivers now correctly number sequentially (Receiver 1, 2, 3...)
+  - `frontend/src/hooks/useReceivers.ts:44-54` - Fixed stale closure issue in placeReceiver callback
+    - Changed from using `receivers.length` (stale value from closure) to `prev.length` (current state)
+    - Used functional update pattern: `setReceivers(prev => ...)` instead of accessing external state
+    - Removed `receivers.length` from dependency array (no longer needed)
+  - Previously all receivers were named "Receiver 1" due to stale state in the callback
+  - Now receivers correctly increment: "Receiver 1", "Receiver 2", "Receiver 3", etc.
+
+### Verified
+- **Receiver names are editable** - Confirmed existing functionality in [ReceiversSection.tsx:115-143](frontend/src/components/layout/sidebar/ReceiversSection.tsx#L115-L143)
+  - Double-click on receiver name to edit
+  - Enter to save, Escape to cancel
+  - Name updates propagate through `onUpdateReceiverName` callback
+
+## [2025-11-18 Entity Display] - Unified Entity Information Positioning
+
+### Fixed
+- **Entity information overlay positioning** - All entities now display at same position
+  - `frontend/src/components/scene/ThreeScene.tsx` - Removed conditional offset logic for entity-linked sounds
+  - EntityInfoBox now always positioned directly at entity, regardless of link state
+  - Simplified code by removing unnecessary soundOverlay visibility checks and VERTICAL_STACK_OFFSET calculation
+
+## [2025-11-18 Final] - Sound Card Selection from 3D Scene
+
+### Added
+- **Click sound sphere or entity to select card** - Implemented full bidirectional selection
+  - `frontend/src/types/three-scene.ts` - Added onSelectSoundCard callback prop
+  - `frontend/src/components/scene/ThreeScene.tsx` - Wire sphere and entity clicks to callback
+    - Extract promptIndex from sphere promptKey and find entity-linked sounds
+    - Call onSelectSoundCard when clicking sound sphere or entity with linked sound
+  - `frontend/src/app/page.tsx` - Added selectedCardIndex state and handleSelectSoundCard
+  - `frontend/src/types/components.ts` - Added selectedCardIndex prop to SidebarProps and SoundGenerationSectionProps
+  - `frontend/src/components/layout/Sidebar.tsx` - Pass selectedCardIndex through
+  - `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx` - Watch selectedCardIndex and auto-expand card
+    - Scroll selected card into view with smooth animation
+    - Only one card expanded at a time
+
+### Fixed
+- **Sound card click expansion** - Fixed double-toggle bug preventing card from opening
+  - `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx` - Removed duplicate handleToggleExpand call in onSelectCard
+
+### Changed
+- **Add Sound button** - Moved next to Generate button as small green "+" icon
+  - `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx` - Changed from full-width button to compact icon button
+  - Only shows when not generating (replaced by Stop button during generation)
+
+## [2025-11-18 Latest] - Sound Card Bug Fixes and Enhancements
+
+### Fixed
+- **Slider responsiveness** - Volume and interval sliders now respond immediately to changes
+  - `frontend/src/types/components.ts` - Added soundVolumes and soundIntervals props to SidebarProps and SoundGenerationSectionProps
+  - `frontend/src/app/page.tsx` - Pass soundVolumes and soundIntervals from audioControls to Sidebar
+  - `frontend/src/components/layout/Sidebar.tsx` - Forward soundVolumes and soundIntervals to SoundGenerationSection
+  - `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx` - Pass soundVolumes and soundIntervals to each SoundTab
+  - `frontend/src/components/layout/sidebar/SoundTab.tsx` - Read live values from soundVolumes/soundIntervals instead of stale generatedSound object
+
+- **Deletion behavior** - Sound cards now properly remove on first click
+  - `frontend/src/hooks/useSoundGeneration.ts` - handleRemoveConfig now removes both config and generated sound atomically in one operation
+
+- **Add Sound creates fresh config** - No longer restores previous sound config
+  - `frontend/src/hooks/useSoundGeneration.ts` - Added librarySearchState: undefined to clear all library search state
+
+- **Sound count display** - Now shows actual generated sounds count instead of card count
+  - `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx` - Changed totalCards to totalSounds in status calculation
+
+### Added
+- **Reset button functionality** - Wire up to remove generated sound while keeping config
+  - `frontend/src/types/components.ts` - Added onResetSound callback prop
+  - `frontend/src/app/page.tsx` - Implemented handleResetSound to filter soundscapeData
+  - `frontend/src/components/layout/Sidebar.tsx` - Pass onResetSound through to SoundGenerationSection
+  - `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx` - Call onResetSound when reset button clicked
+
+- **Sound card selection from scene** - Placeholder for clicking sound sphere/entity to select card
+  - `frontend/src/types/components.ts` - Added onSelectSoundCard callback prop
+  - `frontend/src/app/page.tsx` - Implemented handleSelectSoundCard placeholder
+  - `frontend/src/components/layout/sidebar/SoundTab.tsx` - Added onSelectCard callback that triggers when title clicked
+
+### TODO
+- Wire ThreeScene click events to call onSelectSoundCard with promptIndex
+- Add visual pulse/highlight effect on sphere/entity when selecting corresponding card
+
+## [2025-11-18] - Sound Card Improvements and Bug Fixes
+
+### Changed
+- **Single-card expansion behavior** - Only one sound card can be expanded at a time
+  - `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx` - Modified handleToggleExpand to collapse other tabs when expanding one
+  - Auto-expand newly added sound cards and collapse others
+  
+- **Fixed slider responsiveness** - Volume and interval sliders now respond immediately to changes
+  - `frontend/src/components/layout/sidebar/SoundTab.tsx` - Added key props to RangeSlider components for proper reactivity
+  
+- **Improved deletion behavior** - Delete now properly removes sounds from scene and timeline
+  - `frontend/src/hooks/useSoundGeneration.ts` - Enhanced handleRemoveConfig to also remove generated sounds from soundscapeData
+  
+- **Fixed Add Sound behavior** - Now creates completely fresh config instead of restoring previous state
+  - `frontend/src/hooks/useSoundGeneration.ts` - Modified handleAddConfig to explicitly clear all optional fields
+  
+- **Visual feedback for mute/solo** - Cards grey out when muted
+  - `frontend/src/components/layout/sidebar/SoundTab.tsx` - Added opacity: 0.5 when isMuted is true
+
+### Added
+- **Sound status counter** - Shows total sounds and pending count below Generate button
+  - `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx` - Added useMemo calculation and display
+  
+### Removed
+- **Play button** - Removed from sound cards as sounds are now controlled via timeline
+  - `frontend/src/components/layout/sidebar/SoundTab.tsx` - Removed Play/Pause button section
+
+### TODO
+- Implement highlight/pulse effect on sphere/entity when selecting card
+- Wire up Reset button to properly remove generated sound while keeping config
+
+## [2025-11-18] - Refactored Sound Generation Tab to Vertical Card Layout
+
+### Changed
+- **Complete redesign of Sound Generation UI in sidebar**
+  - `frontend/src/components/layout/Sidebar.tsx` - Changed tab label from "Sound Generation" to "Soundscape"
+  - `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx` - Major refactor:
+    - Replaced horizontal tab navigation with vertical list of sound cards
+    - Added "Generate All Sounds" button at top instead of bottom
+    - Removed global generation controls (duration, steps, etc.)
+    - Each sound now displayed as collapsible card in vertical list
+  - `frontend/src/components/layout/sidebar/SoundTab.tsx` - New component:
+    - **Collapsed state**: Shows only title, link, reset, mute, solo, and close buttons
+    - **Expanded (not generated)**: Shows full generation UI (mode selector, prompt, duration, guidance, variants)
+    - **Expanded (generated)**: Shows playback controls (volume slider, interval slider, play/pause)
+    - Background color changes based on generation state (neutral for not generated, success-tint for generated)
+  - `frontend/src/components/scene/ThreeScene.tsx` - Removed SoundUIOverlay rendering:
+    - Commented out SoundUIOverlay import and rendering logic
+    - Removed "Toggle Sound Boxes" button from scene controls
+    - Deprecated overlay interaction handlers (drag, hide toggle)
+  - `frontend/src/types/components.ts` - Updated props:
+    - Added audio control props to SidebarProps and SoundGenerationSectionProps
+    - Added individualSoundStates, onToggleSound, onVolumeChange, onIntervalChange, onMute, onSolo
+  - `frontend/src/app/page.tsx` - Pass audio controls to Sidebar
+
+### Added
+- **Sound playback controls integrated into sidebar cards**
+  - Volume slider (40-100 dB SPL)
+  - Playback interval slider (0-120 seconds, 0 = loop)
+  - Mute button (compact icon)
+  - Solo button (compact icon with star)
+  - Play/Pause button
+- **Reset button** - Allows reverting generated sound back to generation UI
+- **Visual feedback** - Different backgrounds for generated vs non-generated sounds
+
+### Removed
+- Horizontal sound tabs navigation
+- Global generation settings UI
+- SoundUIOverlay from 3D scene (controls moved to sidebar)
+- "Toggle Sound Boxes" button from scene controls
+- Individual sound overlay dragging and hiding features
+
 ## [2025-11-18 21:30] - Cleaned Up Unused Timeline Constants
 
 ### Removed

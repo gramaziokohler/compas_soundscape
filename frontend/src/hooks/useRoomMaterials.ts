@@ -44,16 +44,17 @@ export function useRoomMaterials(audioOrchestrator: AudioOrchestrator | null) {
 
   /**
    * Apply a room preset (predefined material configurations)
+   * TODO: ROOM_PRESETS not defined in constants - feature incomplete
    */
   const applyRoomPreset = useCallback((presetName: string) => {
-    const preset = (RESONANCE_AUDIO.ROOM_PRESETS as any)[presetName];
-    if (!preset) {
-      console.warn('[useRoomMaterials] Unknown preset:', presetName);
-      return;
-    }
-
-    console.log('[useRoomMaterials] applyRoomPreset called:', presetName);
-    setRoomMaterials(preset);
+    console.warn('[useRoomMaterials] ROOM_PRESETS not implemented yet:', presetName);
+    // const preset = (RESONANCE_AUDIO.ROOM_PRESETS as any)[presetName];
+    // if (!preset) {
+    //   console.warn('[useRoomMaterials] Unknown preset:', presetName);
+    //   return;
+    // }
+    // console.log('[useRoomMaterials] applyRoomPreset called:', presetName);
+    // setRoomMaterials(preset);
   }, []);
 
   /**

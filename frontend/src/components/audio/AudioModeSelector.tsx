@@ -15,7 +15,7 @@
  * Usage:
  * ```tsx
  * <AudioModeSelector
- *   currentMode={AudioMode.BASIC_MIXER}
+ *   currentMode={AudioMode.ANECHOIC}
  *   onModeChange={(mode) => setMode({ mode, ambisonicOrder: 1 })}
  *   hasIR={false}
  *   hasReceiver={false}
@@ -77,9 +77,8 @@ export function AudioModeSelector({
 
   // Get all modes in order
   const allModes = [
-    AudioMode.BASIC_MIXER,
-    AudioMode.NO_IR_RESONANCE,
     AudioMode.ANECHOIC,
+    AudioMode.NO_IR_RESONANCE,
     AudioMode.MONO_IR,
     AudioMode.STEREO_IR,
     AudioMode.AMBISONIC_IR,

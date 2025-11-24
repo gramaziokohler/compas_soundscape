@@ -23,6 +23,9 @@ export function useAudioControls(generatedSounds: any[]) {
   const [mutedSounds, setMutedSounds] = useState<Set<string>>(new Set());
   const [soloedSound, setSoloedSound] = useState<string | null>(null);
 
+  // Soundcard preview state - which soundcard is playing its preview
+  const [previewingSoundId, setPreviewingSoundId] = useState<string | null>(null);
+
   /**
    * Toggle a single sound between playing and paused
    */
@@ -39,7 +42,7 @@ export function useAudioControls(generatedSounds: any[]) {
 
   /**
    * Change the selected variant for a prompt
-   * Stops the old variant and plays the new one if something was playing
+   * Stops the old variant and plays the new one if something was playing (timeline or preview)
    */
   const handleVariantChange = useCallback((promptIdx: number, variantIdx: number) => {
     // Group sounds by prompt index
@@ -55,44 +58,47 @@ export function useAudioControls(generatedSounds: any[]) {
     const sounds = soundsByPromptIndex[promptIdx];
     if (!sounds) return;
 
+    const oldVariantIdx = selectedVariants[promptIdx] || 0;
+    const oldSound = sounds[oldVariantIdx];
+    const newSound = sounds[variantIdx];
+
+    // Check if the old variant was playing in preview mode
+    const wasPreviewPlaying = oldSound && previewingSoundId === oldSound.id;
+
+    // Update timeline states
     setIndividualSoundStates(prev => {
       const newStates = { ...prev };
-      const oldVariantIdx = selectedVariants[promptIdx] || 0;
-      const oldSound = sounds[oldVariantIdx];
-      const newSound = sounds[variantIdx];
 
-      // Check if the old variant was playing
-      const wasPlaying = oldSound && newStates[oldSound.id] === 'playing';
+      // Check if the old variant was playing in timeline
+      const wasTimelinePlaying = oldSound && newStates[oldSound.id] === 'playing';
 
       // Stop all variants of this prompt
       sounds.forEach(sound => {
         newStates[sound.id] = 'stopped';
       });
 
-      // If old variant was playing, start the new variant
-      if (wasPlaying && newSound) {
+      // If old variant was playing in timeline, start the new variant
+      if (wasTimelinePlaying && newSound) {
         newStates[newSound.id] = 'playing';
       }
 
       return newStates;
     });
 
+    // If preview was playing, switch to new variant's preview
+    if (wasPreviewPlaying && newSound) {
+      setPreviewingSoundId(newSound.id);
+    }
+
     // Update selected variant
     setSelectedVariants(prev => ({ ...prev, [promptIdx]: variantIdx }));
-  }, [generatedSounds, selectedVariants]);
+  }, [generatedSounds, selectedVariants, previewingSoundId]);
 
   /**
    * Update volume for a specific sound
    */
   const handleVolumeChange = useCallback((soundId: string, volumeDb: number) => {
     setSoundVolumes(prev => ({ ...prev, [soundId]: volumeDb }));
-  }, []);
-
-  /**
-   * Update playback interval for a specific sound
-   */
-  const handleIntervalChange = useCallback((soundId: string, intervalSeconds: number) => {
-    setSoundIntervals(prev => ({ ...prev, [soundId]: intervalSeconds }));
   }, []);
 
   /**
@@ -132,9 +138,50 @@ export function useAudioControls(generatedSounds: any[]) {
   }, []);
 
   /**
+   * Handle soundcard preview play/pause toggle
+   * Stops timeline if playing, then toggles this soundcard's preview
+   * Note: Seek timer cleanup happens automatically in updateSoundPlayback()
+   */
+  const handlePreviewPlayPause = useCallback((soundId: string) => {
+    // If timeline is playing, stop it first
+    if (Object.values(individualSoundStates).some(state => state === 'playing')) {
+      console.log('[Audio Controls] Stopping timeline to play soundcard preview');
+      setIndividualSoundStates(prev => {
+        const newStates = { ...prev };
+        Object.keys(newStates).forEach(id => {
+          newStates[id] = 'stopped';
+        });
+        return newStates;
+      });
+    }
+
+    // Toggle preview state
+    setPreviewingSoundId(prev => prev === soundId ? null : soundId);
+  }, [individualSoundStates]);
+
+  /**
+   * Handle soundcard preview stop
+   */
+  const handlePreviewStop = useCallback((soundId: string) => {
+    if (previewingSoundId === soundId) {
+      setPreviewingSoundId(null);
+    }
+  }, [previewingSoundId]);
+
+  /**
+   * Stop soundcard preview (called when timeline plays or card collapses)
+   */
+  const stopSoundcardPreview = useCallback(() => {
+    setPreviewingSoundId(null);
+  }, []);
+
+  /**
    * Play all sounds (each maintains independent timing with initial random delay)
    */
   const playAll = useCallback(() => {
+    // Stop any soundcard preview first
+    setPreviewingSoundId(null);
+
     console.log('[Audio Controls] Play All requested');
     console.log(`[Audio Controls] Total sounds available: ${generatedSounds.length}`);
     setIndividualSoundStates(prev => {
@@ -227,6 +274,24 @@ export function useAudioControls(generatedSounds: any[]) {
   }, [generatedSounds, individualSoundStates]);
 
   /**
+   * Update playback interval for a specific sound
+   * ROBUST STRATEGY: Stop All sounds, update interval, user manually clicks Play All
+   * This prevents overlapping sounds and scheduler bugs when dragging the slider
+   */
+  const handleIntervalChange = useCallback((soundId: string, intervalSeconds: number) => {
+    // CRITICAL: Stop all sounds before changing interval
+    // This ensures clean state and prevents overlapping sounds when slider is dragged rapidly
+    stopAll();
+
+    // Update the interval in state
+    // Timeline will update to show new interval spacing
+    setSoundIntervals(prev => ({ ...prev, [soundId]: intervalSeconds }));
+
+    // Note: User must click Play All to resume playback with new interval
+    console.log(`[Audio Controls] Interval changed to ${intervalSeconds}s - sounds stopped. Click Play All to resume.`);
+  }, [stopAll]);
+
+  /**
    * Check if any sound is currently playing
    */
   const isAnyPlaying = useCallback(() => {
@@ -250,12 +315,16 @@ export function useAudioControls(generatedSounds: any[]) {
     soundIntervals,
     mutedSounds,
     soloedSound,
+    previewingSoundId,
     toggleSound,
     handleVariantChange,
     handleVolumeChange,
     handleIntervalChange,
     handleMute,
     handleSolo,
+    handlePreviewPlayPause,
+    handlePreviewStop,
+    stopSoundcardPreview,
     playAll,
     pauseAll,
     stopAll,

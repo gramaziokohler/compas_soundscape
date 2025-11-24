@@ -40,8 +40,9 @@ function HomeContent() {
   const modalImpact = useModalImpact();
   const [activeLoadTab, setActiveLoadTab] = useState<LoadTab>('upload');
   
-  // IR Library state
+  // IR Library state - store both ID and full metadata for reload capability
   const [selectedIRId, setSelectedIRId] = useState<string | null>(null);
+  const [selectedIRMetadata, setSelectedIRMetadata] = useState<any | null>(null);
   
   // Bounding box visualization state
   const [showBoundingBox, setShowBoundingBox] = useState(false);
@@ -50,30 +51,19 @@ function HomeContent() {
   // Audio rendering mode state (unified: threejs, resonance, anechoic)
   const [audioRenderingMode, setAudioRenderingMode] = useState<AudioRenderingMode>('anechoic');
   
-  // Sync audioRenderingMode with orchestrator's current mode
+  // Sync audioRenderingMode with orchestrator only when IR state changes
   useEffect(() => {
     if (!audioOrchestrator.status) return;
 
-    const currentMode = audioOrchestrator.status.currentMode;
     const isIRActive = audioOrchestrator.status.isIRActive;
 
-    // Only update if no IR is active (when IR is active, mode is determined by IR type)
-    if (!isIRActive) {
-      // Map AudioMode enum to AudioRenderingMode
-      let newMode: AudioRenderingMode = 'anechoic';
-      if (currentMode === 'basic_mixer') {
-        newMode = 'basic_mixer';
-      } else if (currentMode === 'no_ir_resonance') {
-        newMode = 'resonance';
-      } else if (currentMode === 'anechoic') {
-        newMode = 'anechoic';
-      }
-
-      if (newMode !== audioRenderingMode) {
-        setAudioRenderingMode(newMode);
-      }
+    // When IR becomes active, force to 'precise' mode
+    if (isIRActive && audioRenderingMode !== 'precise') {
+      setAudioRenderingMode('precise');
     }
-  }, [audioOrchestrator.status, audioOrchestrator.status?.currentMode, audioOrchestrator.status?.isIRActive]);
+    // Note: Don't override user's selection of 'precise' when no IR is loaded
+    // They may be about to upload an IR
+  }, [audioOrchestrator.status?.isIRActive]);
 
   // Auto-hide bounding box when not in ResonanceMode
   useEffect(() => {
@@ -90,6 +80,7 @@ function HomeContent() {
   // Entity linking state
   const [isLinkingEntity, setIsLinkingEntity] = useState(false);
   const [linkingConfigIndex, setLinkingConfigIndex] = useState<number | null>(null);
+  const [selectedCardIndex, setSelectedCardIndex] = useState<number | null>(null);
 
   // Clear analyzed entities when model changes
   useEffect(() => {
@@ -173,6 +164,35 @@ function HomeContent() {
 
     soundGen.setSoundscapeData(updatedSounds.length > 0 ? updatedSounds : null);
   }, [soundGen]);
+
+  // Handle sound reset (remove generated sound but keep config)
+  const handleResetSound = useCallback((soundId: string, promptIndex: number) => {
+
+    // Use functional setState to avoid stale closure issues
+    soundGen.setSoundscapeData(prev => {
+      if (!prev) {
+        return prev;
+      }
+
+      // Filter out sounds with this prompt index
+      const updatedSounds = prev.filter(
+        sound => (sound as any).prompt_index !== promptIndex
+      );
+
+      return updatedSounds.length > 0 ? updatedSounds : null;
+    });
+
+    // Reset the sound config atomically (clears display_name, uploaded audio, library search, etc.)
+    soundGen.handleResetSoundConfig(promptIndex);
+  }, [soundGen.setSoundscapeData, soundGen.handleResetSoundConfig]);
+
+  // Handle sound card selection from ThreeScene
+  const handleSelectSoundCard = useCallback((promptIndex: number) => {
+    // Switch to Soundscape tab if not already there
+    textGen.setActiveAiTab('sound');
+    // Trigger expansion of the corresponding sound card
+    setSelectedCardIndex(promptIndex);
+  }, [textGen.setActiveAiTab]);
 
   // Entity linking handlers
   const handleStartLinkingEntity = useCallback((configIndex: number) => {
@@ -321,8 +341,9 @@ function HomeContent() {
       // Select the IR to activate it (triggers mode switch)
       await audioOrchestrator.selectImpulseResponse();
 
-      // Update selected IR ID
+      // Update selected IR ID and store full metadata for reload
       setSelectedIRId(irMetadata.id);
+      setSelectedIRMetadata(irMetadata);
     } catch (error) {
       console.error('[Auralization Page] Error loading IR from library:', error);
       throw error;
@@ -335,6 +356,7 @@ function HomeContent() {
   const handleClearIR = useCallback(() => {
     audioOrchestrator.clearImpulseResponse();
     setSelectedIRId(null);
+    setSelectedIRMetadata(null);
   }, [audioOrchestrator]);
 
   /**
@@ -350,14 +372,36 @@ function HomeContent() {
   }, [soundGen.handleResetToDefaults, audioNormalization.reset]);
 
   // Handler: Audio Rendering Mode Change (unified handler for all 3 modes)
-  const handleAudioRenderingModeChange = useCallback((mode: AudioRenderingMode) => {
+  const handleAudioRenderingModeChange = useCallback(async (mode: AudioRenderingMode) => {
+    // Stop playback before switching modes to ensure clean state
+    if (audioControls.isAnyPlaying()) {
+      audioControls.stopAll();
+    }
+
     setAudioRenderingMode(mode);
     console.log('[Page] Audio rendering mode changed to:', mode);
 
-    // Update AudioOrchestrator's no-IR preference
-    // This will trigger the orchestrator to switch to the appropriate mode
-    audioOrchestrator.setNoIRPreference(mode);
-  }, [audioOrchestrator]);
+    // When switching away from 'precise' mode, clear the loaded IR (but keep metadata for reload)
+    if (mode !== 'precise' && audioOrchestrator.status?.isIRActive) {
+      audioOrchestrator.clearImpulseResponse();
+      // NOTE: We keep selectedIRId and selectedIRMetadata for reload when returning to precise mode
+    }
+
+    // Update AudioOrchestrator's no-IR preference (only for non-IR modes)
+    if (mode === 'anechoic' || mode === 'resonance') {
+      audioOrchestrator.setNoIRPreference(mode);
+    }
+
+    // When switching TO 'precise' mode with a previously selected IR, reload it
+    if (mode === 'precise' && selectedIRMetadata && !audioOrchestrator.status?.isIRActive) {
+      try {
+        console.log('[Page] Reloading previously selected IR:', selectedIRMetadata.name);
+        await handleSelectIRFromLibrary(selectedIRMetadata);
+      } catch (error) {
+        console.error('[Page] Failed to reload IR:', error);
+      }
+    }
+  }, [audioOrchestrator, audioControls, selectedIRMetadata, handleSelectIRFromLibrary]);
 
   // Handler: Update Output Decoder (Removed - binaural is default)
   const handleUpdateOutputDecoder = useCallback((decoder: 'binaural' | 'stereo') => {
@@ -521,6 +565,25 @@ function HomeContent() {
 
         // Audio controls props
         selectedVariants={audioControls.selectedVariants}
+        individualSoundStates={audioControls.individualSoundStates}
+        onToggleSound={audioControls.toggleSound}
+        onVolumeChange={audioControls.handleVolumeChange}
+        onIntervalChange={audioControls.handleIntervalChange}
+        onMute={audioControls.handleMute}
+        onSolo={audioControls.handleSolo}
+        onVariantChange={audioControls.handleVariantChange}
+        mutedSounds={audioControls.mutedSounds}
+        soloedSound={audioControls.soloedSound}
+        onResetSound={handleResetSound}
+        onSelectSoundCard={handleSelectSoundCard}
+        selectedCardIndex={selectedCardIndex}
+        soundVolumes={audioControls.soundVolumes}
+        soundIntervals={audioControls.soundIntervals}
+
+        // Soundcard preview playback props
+        previewingSoundId={audioControls.previewingSoundId}
+        onPreviewPlayPause={audioControls.handlePreviewPlayPause}
+        onPreviewStop={audioControls.handlePreviewStop}
 
         // AI tab props
         activeAiTab={textGen.activeAiTab}
@@ -581,6 +644,8 @@ function HomeContent() {
           onMute={audioControls.handleMute}
           onSolo={audioControls.handleSolo}
           onDeleteSound={handleDeleteSound}
+          onSelectSoundCard={handleSelectSoundCard}
+          selectedCardIndex={selectedCardIndex}
           onPlayAll={audioControls.playAll}
           onPauseAll={audioControls.pauseAll}
           onStopAll={audioControls.stopAll}

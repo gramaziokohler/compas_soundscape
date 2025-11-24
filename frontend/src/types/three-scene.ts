@@ -67,6 +67,12 @@ export interface ThreeSceneProps {
   /** Callback when a sound is deleted */
   onDeleteSound: (soundId: string, promptIdx: number) => void;
 
+  /** Callback when a sound card should be selected/expanded in sidebar */
+  onSelectSoundCard?: (promptIndex: number) => void;
+
+  /** Currently selected sound card index (for highlighting in scene) */
+  selectedCardIndex?: number | null;
+
   /** Callback to start playing all sounds */
   onPlayAll: () => void;
 

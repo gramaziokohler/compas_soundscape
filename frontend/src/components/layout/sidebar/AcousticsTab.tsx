@@ -1,20 +1,14 @@
 /**
  * AcousticsTab Component
  *
- * Combines Receivers, IR Library, Spatial Mode Selection, and Output Decoder sections.
- * This component organizes acoustic-related features in the sidebar.
+ * Combines Receivers, IR Library, and Spatial Mode Selection sections.
  *
- * Sections:
- * - Receivers: Create and manage receiver spheres
- * - IR Library: Upload, browse, and select impulse responses
- * - Spatial Mode Selector: Toggle between Flat Anechoic and ShoeBox Acoustics (No IR only)
+ * Modes:
+ * - No Acoustics: Dry signal only (no room acoustics)
  * - ShoeBox Acoustics: Real-time HRTF-based spatial audio with room acoustics
- * - Output Decoder: Choose between Binaural (HRTF) and Stereo Speakers
+ * - Precise Acoustics: User-uploaded impulse response convolution
  *
- * Architecture:
- * - Follows modular component pattern
- * - Delegates to specialized section components
- * - Maintains consistent styling with other tabs
+ * IR Library is only visible in Precise Acoustics mode.
  */
 
 import { ReceiversSection } from './ReceiversSection';
@@ -70,37 +64,14 @@ export function AcousticsTab({
   showBoundingBox,
   onToggleBoundingBox,
   onRefreshBoundingBox,
-  audioRenderingMode = 'basic_mixer',
+  audioRenderingMode = 'anechoic',
   onAudioRenderingModeChange
 }: AcousticsTabProps) {
-  const hasIR = auralizationConfig.impulseResponseBuffer !== null;
-
   return (
     <div className="flex flex-col gap-6">
-      {/* Receivers Section */}
-      <ReceiversSection
-        receivers={receivers}
-        isPlacingReceiver={isPlacingReceiver}
-        onStartPlacingReceiver={onStartPlacingReceiver}
-        onDeleteReceiver={onDeleteReceiver}
-        onUpdateReceiverName={onUpdateReceiverName}
-      />
 
-      {/* IR Library Management */}
-      <div className="flex flex-col gap-3">
-        <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-          IMPULSE RESPONSE LIBRARY
-        </h4>
-        <ImpulseResponseUpload
-          onSelectIR={onSelectIRFromLibrary}
-          onClearIR={onClearIR}
-          selectedIRId={selectedIRId}
-          auralizationConfig={auralizationConfig}
-        />
-      </div>
-
-      {/* Audio Rendering Mode Selector - Only show when no IR is loaded */}
-      {!hasIR && onAudioRenderingModeChange && (
+      {/* Audio Rendering Mode Selector */}
+      {onAudioRenderingModeChange && (
         <div className="flex flex-col gap-3">
           <AudioRenderingModeSelector
             currentMode={audioRenderingMode}
@@ -109,8 +80,8 @@ export function AcousticsTab({
         </div>
       )}
 
-      {/* Resonance Audio Controls - Only show when no IR is loaded AND Resonance mode is selected */}
-      {!hasIR && audioRenderingMode === 'resonance' && (
+      {/* Resonance Audio Controls - Only show in ShoeBox Acoustics mode */}
+      {audioRenderingMode === 'resonance' && (
         <ResonanceAudioControls
           config={resonanceAudioConfig}
           onToggle={onToggleResonanceAudio}
@@ -121,6 +92,31 @@ export function AcousticsTab({
           onRefreshBoundingBox={onRefreshBoundingBox}
         />
       )}
+
+      {/* IR Library Management - Only show in Precise Acoustics mode */}
+      {audioRenderingMode === 'precise' && (
+        <div className="flex flex-col gap-3">
+          <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
+            Impulse Response Library
+          </h4>
+          <ImpulseResponseUpload
+            onSelectIR={onSelectIRFromLibrary}
+            onClearIR={onClearIR}
+            selectedIRId={selectedIRId}
+            auralizationConfig={auralizationConfig}
+          />
+        </div>
+      )}
+
+      {/* Receivers Section */}
+      <ReceiversSection
+        receivers={receivers}
+        isPlacingReceiver={isPlacingReceiver}
+        onStartPlacingReceiver={onStartPlacingReceiver}
+        onDeleteReceiver={onDeleteReceiver}
+        onUpdateReceiverName={onUpdateReceiverName}
+      />
+
     </div>
   );
 }

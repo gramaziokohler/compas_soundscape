@@ -17,6 +17,7 @@ BACKEND_DIR = Path(__file__).parent.parent.resolve()
 
 # Model Configuration
 LLM_MODEL_NAME = "gemini-2.5-flash"
+# LLM_MODEL_NAME = "gemini-2.5-pro"
 
 # LLM Retry Configuration (for handling 503 overload errors)
 LLM_MAX_RETRIES = 5  # Maximum number of retry attempts
@@ -56,7 +57,7 @@ CLIPPING_THRESHOLD = 0.99  # Threshold to prevent clipping
 SPL_CLIPPING_THRESHOLD = 0.99  # Threshold for SPL calibration clipping prevention
 
 # Sample Rate
-AUDIO_SAMPLE_RATE = 44100  # Standard audio sample rate in Hz
+AUDIO_SAMPLE_RATE = 48000  # Browser default AudioContext sample rate in Hz (matches Web Audio API default)
 
 # Audio Processing Thresholds
 AUDIO_RMS_EPSILON = 1e-8  # Epsilon threshold for RMS calculation
@@ -271,10 +272,12 @@ AUDIO_CHANNEL_MONO = "Mono"  # Audio channel format description
 IR_FORMAT_MONO = "mono"
 IR_FORMAT_BINAURAL = "binaural"
 IR_FORMAT_FOA = "foa"  # First-Order Ambisonics (4 channels)
+IR_FORMAT_SOA = "soa"  # Second-Order Ambisonics (9 channels)
 IR_FORMAT_TOA = "toa"  # Third-Order Ambisonics (16 channels)
 
 # Ambisonic Channel Counts
 AMBISONIC_FOA_CHANNELS = 4
+AMBISONIC_SOA_CHANNELS = 9
 AMBISONIC_TOA_CHANNELS = 16
 
 # Ambisonic Channel Names (ACN ordering)
@@ -306,7 +309,7 @@ IMPULSE_RESPONSE_DIR = "./static/impulse_responses"
 IMPULSE_RESPONSE_URL_PREFIX = "/static/impulse_responses"
 
 # Supported IR Channel Counts
-SUPPORTED_IR_CHANNELS = [1, 2, 4, 16]  # Mono, Binaural, FOA, TOA
+SUPPORTED_IR_CHANNELS = [1, 2, 4, 9, 16]  # Mono, Binaural, FOA, SOA, TOA
 
 # Maximum IR channels to extract from files (e.g., from Odeon)
 MAX_IR_CHANNELS = 16

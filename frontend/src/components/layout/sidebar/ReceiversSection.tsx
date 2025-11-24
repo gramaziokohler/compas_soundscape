@@ -17,7 +17,7 @@
 
 import { useState } from 'react';
 import type { ReceiverData } from '@/types';
-import { UI_COLORS } from '@/lib/constants';
+import { UI_BUTTON, UI_COLORS } from '@/lib/constants';
 
 interface ReceiversSectionProps {
   receivers: ReceiverData[];
@@ -67,7 +67,7 @@ export function ReceiversSection({
   return (
     <div className="flex flex-col gap-3">
       <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-        RECEIVERS
+        Receivers
       </h4>
 
       {/* Create Receiver Button */}
@@ -88,6 +88,8 @@ export function ReceiversSection({
         style={{
           backgroundColor: isPlacingReceiver ? UI_COLORS.NEUTRAL_400 : UI_COLORS.PRIMARY,
           borderRadius: '8px',
+          fontSize: UI_BUTTON.FONT_SIZE,
+          fontWeight: UI_BUTTON.FONT_WEIGHT,
           opacity: isPlacingReceiver ? 0.4 : 1,
           cursor: isPlacingReceiver ? 'not-allowed' : 'pointer'
         }}
@@ -149,12 +151,12 @@ export function ReceiversSection({
                     e.currentTarget.style.backgroundColor = `${UI_COLORS.ERROR}10`;
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.color = UI_COLORS.ERROR;
+                    e.currentTarget.style.color = UI_COLORS.NEUTRAL_600;
                     e.currentTarget.style.backgroundColor = 'transparent';
                   }}
-                  className="w-6 h-6 flex items-center justify-center text-lg rounded-full transition-colors ml-2"
+                  className="w-5 h-5 flex items-center justify-center text-lg rounded-full transition-colors leading-none"
                   style={{
-                    color: UI_COLORS.ERROR
+                    color: UI_COLORS.NEUTRAL_600
                   }}
                   title="Delete receiver"
                 >
@@ -172,9 +174,9 @@ export function ReceiversSection({
       )}
 
       {/* Help Text */}
-      {receivers.length === 0 && !isPlacingReceiver && (
+      {receivers.length === 0 && isPlacingReceiver && (
         <p className="text-xs italic" style={{ color: UI_COLORS.NEUTRAL_500 }}>
-          No receivers created. Click the button above, then click in the 3D scene to place a blue receiver sphere. Double-click on it to reset the camera view.
+          Click in the 3D scene to place a blue receiver sphere. Double-click on it to reset the camera view.
         </p>
       )}
     </div>

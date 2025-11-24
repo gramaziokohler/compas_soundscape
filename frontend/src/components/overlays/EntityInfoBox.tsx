@@ -11,6 +11,7 @@ interface EntityInfoBoxProps {
   isAnalyzing?: boolean;
   isAnalyzed?: boolean;
   linkedPromptIndex?: number; // Optional prompt index for linked sounds
+  linkedSoundName?: string; // Optional sound display name for linked sounds
   isDiverseSelected?: boolean; // Is this entity selected for diverse LLM prompts
   onToggleDiverseSelection?: (entity: EntityData) => void; // Toggle diverse selection
   onDetachSound?: (entity: EntityData) => void; // Detach linked sound (green -> pink)
@@ -35,6 +36,7 @@ export function EntityInfoBox({
   isAnalyzing = false,
   isAnalyzed = false,
   linkedPromptIndex,
+  linkedSoundName,
   isDiverseSelected = false,
   onToggleDiverseSelection,
   onDetachSound
@@ -212,6 +214,21 @@ export function EntityInfoBox({
               ({entity.position[0]?.toFixed(1) ?? '0'}, {entity.position[1]?.toFixed(1) ?? '0'}, {entity.position[2]?.toFixed(1) ?? '0'})
             </span>
           </div>
+
+          {/* Linked Sound Information */}
+          {linkedSoundName && linkedPromptIndex !== undefined && (
+            <div className="pt-2 mt-2" style={{ borderTop: `1px solid ${UI_OVERLAY.BORDER_COLOR}` }}>
+              <div className="flex justify-between items-center">
+                <span style={{ color: UI_COLORS.NEUTRAL_400 }}>Linked Sound:</span>
+                <div className="flex items-center gap-1">
+                  <span className="font-medium" style={{ color: UI_COLORS.SUCCESS }}>
+                    #{linkedPromptIndex + 1}
+                  </span>
+                  <span style={{ color: 'white' }}>{linkedSoundName}</span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -21,18 +21,18 @@ interface ImpulseResponseUploadProps {
  * ImpulseResponseUpload Component
  *
  * Manages server-side impulse response library with upload capability.
+ * One IR must always be selected in Precise Acoustics mode.
  *
  * Features:
  * - List all IRs from server
  * - Upload new IR files (auto-processes multi-channel)
  * - Format detection and labeling (Mono, Binaural, FOA, TOA)
  * - Channel count display
- * - Selection and download
- * - Delete IRs
- * - Clear/deselect current IR
+ * - Selection (no deselection - one must always be active)
+ * - Delete IRs (auto-selects another if deleting current)
  *
  * @param onSelectIR - Callback when IR is selected (downloads and loads it)
- * @param onClearIR - Callback to clear/deselect current IR
+ * @param onClearIR - Callback to clear IR (only used internally when no IRs remain)
  * @param selectedIRId - Currently selected IR ID
  * @param auralizationConfig - Current auralization configuration (for visualization)
  */
@@ -104,9 +104,8 @@ export function ImpulseResponseUpload({
     try {
       setError(null);
 
-      // If clicking on already-selected IR, deselect it
+      // If clicking on already-selected IR, do nothing (no deselection allowed)
       if (selectedIRId === ir.id) {
-        onClearIR();
         return;
       }
 
@@ -122,13 +121,20 @@ export function ImpulseResponseUpload({
     try {
       setError(null);
 
-      // If deleting the currently selected IR, deselect it first
-      if (selectedIRId === irId) {
-        onClearIR();
-      }
+      const wasSelected = selectedIRId === irId;
 
       await apiService.deleteImpulseResponse(irId);
       await loadImpulseResponses();
+
+      // If we deleted the selected IR, auto-select another one if available
+      if (wasSelected) {
+        const remainingIRs = impulseResponses.filter(ir => ir.id !== irId);
+        if (remainingIRs.length > 0) {
+          await onSelectIR(remainingIRs[0]);
+        } else {
+          onClearIR(); // No IRs left, clear selection
+        }
+      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to delete IR';
       setError(errorMessage);
@@ -245,54 +251,6 @@ export function ImpulseResponseUpload({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Loaded IR Visualization */}
-      {auralizationConfig.impulseResponseBuffer && auralizationConfig.impulseResponseFilename && (
-        <div 
-          className="rounded-lg"
-          style={{
-            padding: `${UI_CARD.PADDING}px`,
-            backgroundColor: 'white',
-            borderColor: UI_COLORS.NEUTRAL_300,
-            borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
-            borderStyle: 'solid',
-            borderRadius: `${UI_CARD.BORDER_RADIUS}px`
-          }}
-        >
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex-1">
-              <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                Current IR: {auralizationConfig.impulseResponseFilename}
-              </h3>
-              {currentIRRT60 !== null && (
-                <p className="text-xs mt-1" style={{ color: UI_COLORS.SECONDARY }}>
-                  RT60: {formatRT60(currentIRRT60)}{currentIRRT60.isLowQuality && ' (not sure, low quality IR)'}
-                </p>
-              )}
-            </div>
-            <button
-              onClick={onClearIR}
-              className="text-xs transition-colors"
-              style={{ color: UI_COLORS.NEUTRAL_600 }}
-              onMouseEnter={(e) => e.currentTarget.style.color = UI_COLORS.ERROR}
-              onMouseLeave={(e) => e.currentTarget.style.color = UI_COLORS.NEUTRAL_600}
-              title="Clear/deselect IR (disable auralization)"
-            >
-              Clear
-            </button>
-          </div>
-          <AudioWaveformDisplay
-            audioBuffer={auralizationConfig.impulseResponseBuffer}
-            audioInfo={{
-              filename: auralizationConfig.impulseResponseFilename,
-              sample_rate: auralizationConfig.impulseResponseBuffer.sampleRate,
-              channels: formatChannelLabel(auralizationConfig.impulseResponseBuffer.numberOfChannels),
-              duration: auralizationConfig.impulseResponseBuffer.duration,
-              num_samples: auralizationConfig.impulseResponseBuffer.length
-            }}
-            enableWaveform={true}
-          />
-        </div>
-      )}
 
       {/* Upload Section - Only show when no IRs exist in library */}
       {impulseResponses.length === 0 && (
@@ -469,6 +427,44 @@ export function ImpulseResponseUpload({
             })
           )}
         </div>
+
+              {/* Loaded IR Visualization */}
+      {auralizationConfig.impulseResponseBuffer && auralizationConfig.impulseResponseFilename && (
+        <div 
+          className="rounded-lg"
+          style={{
+            padding: `${UI_CARD.PADDING}px`,
+            backgroundColor: 'white',
+            borderColor: UI_COLORS.NEUTRAL_300,
+            borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
+            borderStyle: 'solid',
+            borderRadius: `${UI_CARD.BORDER_RADIUS}px`
+          }}
+        >
+          <div className="mb-3">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+              Current IR: {auralizationConfig.impulseResponseFilename}
+            </h3>
+            {currentIRRT60 !== null && (
+              <p className="text-xs mt-1" style={{ color: UI_COLORS.SECONDARY }}>
+                RT60: {formatRT60(currentIRRT60)}{currentIRRT60.isLowQuality && ' (not sure, low quality IR)'}
+              </p>
+            )}
+          </div>
+          <AudioWaveformDisplay
+            audioBuffer={auralizationConfig.impulseResponseBuffer}
+            audioInfo={{
+              filename: auralizationConfig.impulseResponseFilename,
+              sample_rate: auralizationConfig.impulseResponseBuffer.sampleRate,
+              channels: formatChannelLabel(auralizationConfig.impulseResponseBuffer.numberOfChannels),
+              duration: auralizationConfig.impulseResponseBuffer.duration,
+              num_samples: auralizationConfig.impulseResponseBuffer.length
+            }}
+            enableWaveform={true}
+          />
+        </div>
+      )}
+      
       </div>
       )}
 

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { SoundGenerationConfig, SoundGenerationMode, LibrarySearchResult, LibrarySearchState } from "@/types";
 import {
   API_BASE_URL,
@@ -33,7 +33,24 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
 
   const handleAddConfig = useCallback(() => {
     setSoundConfigs(prev => {
-      const newConfig = { prompt: "", duration: globalDuration, guidance_scale: DEFAULT_GUIDANCE_SCALE, negative_prompt: "", seed_copies: DEFAULT_SEED_COPIES, steps: globalSteps, mode: 'text-to-audio' as const };
+      // Create a completely fresh config with default values
+      const newConfig: SoundGenerationConfig = { 
+        prompt: "", 
+        duration: globalDuration, 
+        guidance_scale: DEFAULT_GUIDANCE_SCALE, 
+        negative_prompt: "", 
+        seed_copies: DEFAULT_SEED_COPIES, 
+        steps: globalSteps, 
+        mode: 'text-to-audio',
+        // Ensure no leftover data
+        uploadedAudioBuffer: undefined,
+        uploadedAudioInfo: undefined,
+        uploadedAudioUrl: undefined,
+        selectedLibrarySound: undefined,
+        librarySearchState: undefined,
+        display_name: undefined,
+        entity: undefined
+      };
       const updated = [...prev, newConfig];
       setActiveSoundConfigTab(updated.length - 1);
       return updated;
@@ -41,7 +58,14 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
   }, [globalDuration, globalSteps]);
 
   const handleRemoveConfig = useCallback((index: number) => {
-    setSoundConfigs(soundConfigs.filter((_, i) => i !== index));
+    // Remove the config and any generated sounds atomically
+    setSoundConfigs(prev => prev.filter((_, i) => i !== index));
+    setSoundscapeData(prev => {
+      if (!prev) return prev;
+      return prev.filter((sound: any) => sound.prompt_index !== index);
+    });
+    
+    // Update active tab if needed
     if (activeSoundConfigTab >= soundConfigs.length - 1) {
       setActiveSoundConfigTab(Math.max(0, soundConfigs.length - 2));
     }
@@ -66,7 +90,16 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
         mode,
         uploadedAudioBuffer: undefined,
         uploadedAudioInfo: undefined,
-        uploadedAudioUrl: undefined
+        uploadedAudioUrl: undefined,
+        display_name: undefined // Clear display_name when switching away from upload/sample
+      };
+    } else if (mode === 'upload' || mode === 'sample-audio') {
+      // When switching TO upload or sample-audio mode, clear display_name
+      // This ensures the actual audio filename/source will be used, not the old prompt text
+      updated[index] = {
+        ...config,
+        mode,
+        display_name: undefined
       };
     } else {
       updated[index] = { ...config, mode };
@@ -99,8 +132,8 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
             ...updated[index],
             uploadedAudioBuffer: result.audioBuffer,
             uploadedAudioInfo: result.audioInfo,
-            uploadedAudioUrl: result.audioUrl,
-            display_name: updated[index].display_name || "Le Corbeau et le Renard"
+            uploadedAudioUrl: result.audioUrl
+            // Don't set display_name here - let createSoundEventFromUpload determine it from filename
           };
           return updated;
         });
@@ -155,6 +188,9 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
       setSoundGenError("Please enter at least one sound prompt or upload an audio file.");
       return;
     }
+
+    // Calculate total number of sounds across all modes for proper spacing
+    const totalSoundsCount = generationConfigsWithIndices.length + uploadedConfigsWithIndices.length + libraryConfigsWithIndices.length;
 
     setSoundGenError(null);
     setIsSoundGenerating(true);
@@ -226,6 +262,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
             config,
             config.uploadedAudioUrl!,
             originalIndex,
+            totalSoundsCount,
             geometryBounds as GeometryBounds | undefined,
             'uploaded'
           );
@@ -267,6 +304,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
               config,
               audioUrl,
               originalIndex,
+              totalSoundsCount,
               geometryBounds as GeometryBounds | undefined,
               'library'
             );
@@ -365,9 +403,8 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
           mode: 'upload' as SoundGenerationMode, // Set mode to upload when audio is uploaded
           uploadedAudioBuffer: result.audioBuffer,
           uploadedAudioInfo: result.audioInfo,
-          uploadedAudioUrl: result.audioUrl,
-          // Optionally update display name from filename if not set
-          display_name: updated[index].display_name || result.audioInfo.filename.replace(/\.[^/.]+$/, "")
+          uploadedAudioUrl: result.audioUrl
+          // Don't set display_name here - let createSoundEventFromUpload determine it from filename
         };
         return updated;
       });
@@ -585,6 +622,43 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
   }, []);
 
   /**
+   * Reset a sound config to pre-generation state
+   * Clears all generated-state fields while preserving core config (prompt, entity, mode, etc.)
+   * This is called when the reset button is clicked on a generated sound
+   */
+  const handleResetSoundConfig = useCallback((configIndex: number) => {
+
+    setSoundConfigs(prev => {
+
+      const updated = [...prev];
+      const config = updated[configIndex];
+
+      if (!config) {
+        console.error('[handleResetSoundConfig] No config found at index:', configIndex);
+        return prev;
+      }
+
+      // Revoke uploaded audio URL if it exists to free memory
+      if (config?.uploadedAudioUrl) {
+        URL.revokeObjectURL(config.uploadedAudioUrl);
+      }
+
+      // Reset config atomically - clear all generated-state fields
+      updated[configIndex] = {
+        ...config,
+        display_name: undefined,
+        uploadedAudioBuffer: undefined,
+        uploadedAudioInfo: undefined,
+        uploadedAudioUrl: undefined,
+        selectedLibrarySound: undefined,
+        librarySearchState: undefined
+      };
+
+      return updated;
+    });
+  }, []);
+
+  /**
    * Detach sound from entity - removes entity from config and updates soundscape data
    * This ensures both the config and the actual sound events are updated
    */
@@ -670,6 +744,47 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     }
   }, [soundConfigs, soundscapeData, generatedSounds]);
 
+  // Sync generatedSounds with soundscapeData when it changes externally (e.g., reset)
+  useEffect(() => {
+    // Handle both cases: soundscapeData becomes null OR its length changes
+    if (soundscapeData === null) {
+      setGeneratedSounds([]);
+    } else if (soundscapeData && soundscapeData.length !== generatedSounds.length) {
+      setGeneratedSounds(soundscapeData);
+    }
+  }, [soundscapeData, generatedSounds.length]);
+
+  /**
+   * Update soundscapeData when display_name changes in soundConfigs
+   * This ensures timeline receives updated names
+   */
+  useEffect(() => {
+    if (!soundscapeData || soundscapeData.length === 0) return;
+
+    // Check if any display_name changed and update soundscapeData
+    let hasChanges = false;
+    const updatedSoundscape = soundscapeData.map(sound => {
+      const configIndex = sound.prompt_index;
+      if (configIndex !== undefined && soundConfigs[configIndex]) {
+        const config = soundConfigs[configIndex];
+        const newDisplayName = config.display_name;
+
+        // Update display_name if it differs
+        if (newDisplayName && sound.display_name !== newDisplayName) {
+          hasChanges = true;
+          return { ...sound, display_name: newDisplayName };
+        }
+      }
+      return sound;
+    });
+
+    if (hasChanges) {
+      setSoundscapeData(updatedSoundscape);
+      setGeneratedSounds(updatedSoundscape);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [soundConfigs.map(c => c.display_name).join(',')]); // Watch display_name changes
+
   return {
     soundConfigs,
     activeSoundConfigTab,
@@ -703,6 +818,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     handleLibrarySearch,
     handleLibrarySoundSelect,
     handleResetToDefaults,
+    handleResetSoundConfig,
     handleDetachSoundFromEntity,
     handleAttachSoundToEntity
   };

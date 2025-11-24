@@ -42,15 +42,16 @@ export function useReceivers() {
    * Called when user clicks in 3D scene during placing mode
    */
   const placeReceiver = useCallback((position: [number, number, number]) => {
-    const newReceiver: ReceiverData = {
-      id: `receiver-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      name: `Receiver ${receivers.length + 1}`,
-      position,
-    };
-
-    setReceivers(prev => [...prev, newReceiver]);
+    setReceivers(prev => {
+      const newReceiver: ReceiverData = {
+        id: `receiver-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        name: `Receiver ${prev.length + 1}`,
+        position,
+      };
+      return [...prev, newReceiver];
+    });
     setIsPlacingReceiver(false);
-  }, [receivers.length]);
+  }, []);
 
   /**
    * Delete a receiver by ID

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect } from "react";
 import { UI_COLORS, UI_OVERLAY } from "@/lib/constants";
 
 interface PlaybackControlsProps {
@@ -27,6 +27,24 @@ export function PlaybackControls({
   isAnyPlaying,
   hasSounds
 }: PlaybackControlsProps) {
+  // Space key toggles play/pause
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.code === "Space" && hasSounds) {
+        e.preventDefault();
+        if (isAnyPlaying) {
+          onPauseAll();
+        } else {
+          onPlayAll();
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [hasSounds, isAnyPlaying, onPlayAll, onPauseAll]);
+
   // Don't show controls if there are no sounds
   if (!hasSounds) return null;
 

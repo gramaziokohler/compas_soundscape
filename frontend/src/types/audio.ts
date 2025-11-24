@@ -17,8 +17,26 @@ export type Position = THREE.Vector3;
 // Position tuple for interfaces that need array format
 export type PositionTuple = [number, number, number];
 
+/**
+ * Sound Metadata
+ * Lightweight metadata structure for sound tracking (replaces THREE.PositionalAudio)
+ * All actual audio processing is handled by AudioOrchestrator
+ */
+export interface SoundMetadata {
+  soundId: string;
+  buffer: AudioBuffer;
+  position: Position3D;
+  soundEvent: {
+    id: string;
+    display_name: string;
+    color?: string;
+    prompt_index?: number;
+    [key: string]: any; // Allow additional metadata
+  };
+}
+
 export interface ScheduledSound {
-  audio: THREE.PositionalAudio;
+  metadata: SoundMetadata;
   intervalMs: number;
   randomnessPercent: number;
   timerId: NodeJS.Timeout | null;
@@ -181,9 +199,8 @@ export interface ResonanceAudioConfig {
  */
 export enum AudioMode {
   // No IR modes (6 DOF)
-  BASIC_MIXER = 'basic_mixer',          // Flat Anechoic - Basic mono mixer (no spatial audio)
   NO_IR_RESONANCE = 'no_ir_resonance',  // ShoeBox Acoustics (synthetic room)
-  ANECHOIC = 'anechoic',                // Spatial Anechoic - Dry source → ambisonic encoder → binaural decoder
+  ANECHOIC = 'anechoic',                // No Acoustics - Dry source → ambisonic encoder → binaural decoder
 
   // IR modes (3 DOF rotation, static position)
   MONO_IR = 'mono_ir',                  // Mono IR → convolver → encoder → decoder

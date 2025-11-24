@@ -5,6 +5,7 @@ import { UI_COLORS } from "@/lib/constants";
 interface VerticalVolumeSliderProps {
   value: number; // 0 to 1
   onChange: (value: number) => void;
+  onChangeCommitted?: (value: number) => void; // Called when user releases the slider
   className?: string;
 }
 
@@ -37,10 +38,18 @@ interface VerticalVolumeSliderProps {
 export function VerticalVolumeSlider({
   value,
   onChange,
+  onChangeCommitted,
   className = ""
 }: VerticalVolumeSliderProps) {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onChange(parseFloat(e.target.value));
+  };
+
+  const handleChangeCommitted = (e: React.MouseEvent<HTMLInputElement> | React.TouchEvent<HTMLInputElement>) => {
+    if (onChangeCommitted) {
+      const target = e.currentTarget as HTMLInputElement;
+      onChangeCommitted(parseFloat(target.value));
+    }
   };
 
   // Calculate fill percentage (inverted for vertical slider)
@@ -88,6 +97,8 @@ export function VerticalVolumeSlider({
         step={0.01}
         value={value}
         onChange={handleChange}
+        onMouseUp={handleChangeCommitted}
+        onTouchEnd={handleChangeCommitted}
         className="vertical-slider cursor-pointer absolute"
         style={{
           width: '100px',

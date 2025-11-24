@@ -43,7 +43,7 @@ export function useAudioOrchestrator() {
           throw new Error('Web Audio API not supported');
         }
         
-        const audioContext = new AudioContext();
+        const audioContext = new AudioContext({ sampleRate: 48000 });
         audioContextRef.current = audioContext;
 
         // Create and initialize orchestrator
@@ -225,7 +225,7 @@ export function useAudioOrchestrator() {
   }, []);
 
   // Set no-IR preference
-  const setNoIRPreference = useCallback((mode: 'basic_mixer' | 'resonance' | 'anechoic') => {
+  const setNoIRPreference = useCallback((mode: 'resonance' | 'anechoic') => {
     if (!orchestratorRef.current) {
       throw new Error('Orchestrator not initialized');
     }
@@ -317,6 +317,12 @@ export function useAudioOrchestrator() {
     setStatus(newStatus);
   }, []);
 
+  // Update listener position and orientation (for head tracking in AmbisonicIR modes)
+  const updateListener = useCallback((position: { x: number; y: number; z: number }, orientation: { yaw: number; pitch: number; roll: number }) => {
+    if (!orchestratorRef.current) return;
+    orchestratorRef.current.updateListener(position as any, orientation);
+  }, []);
+
   return {
     orchestrator: orchestratorRef.current,
     audioContext: audioContextRef.current,
@@ -338,6 +344,7 @@ export function useAudioOrchestrator() {
     setNormalize,
     updateResonanceRoomMaterials,
     updateResonanceRoomDimensions,
-    setReceiverMode
+    setReceiverMode,
+    updateListener
   };
 }

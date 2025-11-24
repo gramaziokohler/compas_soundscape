@@ -286,20 +286,21 @@ Your sounds can be a MIX of:
 
 IMPORTANT GUIDELINES:
 - Generate EXACTLY {num_sounds} sounds total
-- You can generate MORE non-entity sounds than entity-linked sounds if it makes the soundscape more realistic
-- You can generate FEWER sounds than the number of entities (not every object needs a sound)
+- ENTITY-LINKED REQUIREMENT: You MUST generate at least {min(num_sounds, len(entities))} entity-linked sounds
+  - If {num_sounds} >= {len(entities)}: ALL {len(entities)} entities MUST have a linked sound, plus {max(0, num_sounds - len(entities))} additional context sounds
+  - If {num_sounds} < {len(entities)}: Choose the {num_sounds} MOST RELEVANT entities for the context "{context}" and link sounds to them
 - All sounds must make sense in the context of "{context}"
 - Think about what would create the most immersive, realistic soundscape for this context
 
-Examples for "busy restaurant at lunch time":
+Examples for "busy restaurant at lunch time" with 3 entities and 5 sounds requested:
 - Entity-linked to object #1 (door): kitchen swing door pushed by waitstaff
 - Entity-linked to object #2 (chair): chair scraping as guest sits down
-- Non-entity: clinking cutlery and plates
+- Entity-linked to object #3 (table): plates being set down on wooden table
 - Non-entity: background conversation chatter
 - Non-entity: coffee machine hissing
 
-When generating entity-linked sounds, you can link to ANY of the objects in the list (1 through {len(entities)}).
-Each entity can have 0 or 1 sounds linked to it (not every entity needs a sound).
+When generating entity-linked sounds, you MUST prioritize linking to the entities.
+Each entity should have exactly 1 sound linked to it (when num_sounds >= num_entities).
 
 Generate exactly {num_sounds} sounds total"""
             else:
@@ -312,6 +313,10 @@ Generate EXACTLY {num_sounds} sounds total for this soundscape.
 Your sounds can be a MIX of:
 1. ENTITY-LINKED SOUNDS: Sounds directly related to the objects listed above
 2. AMBIENT/CONTEXT SOUNDS: Generic ambient sounds that would occur in such a space (e.g., footsteps, HVAC, distant traffic)
+
+ENTITY-LINKED REQUIREMENT: You MUST generate at least {min(num_sounds, len(entities))} entity-linked sounds.
+- If {num_sounds} >= {len(entities)}: ALL {len(entities)} entities MUST have a linked sound
+- If {num_sounds} < {len(entities)}: Choose the {num_sounds} most sonically interesting entities
 
 Generate exactly {num_sounds} sounds total"""
         else:
