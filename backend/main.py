@@ -15,7 +15,7 @@ from services.impulse_response_service import ImpulseResponseService
 from services.modal_analysis_service import ModalAnalysisService
 
 # Import routers
-from routers import upload, analysis, generation, sounds, sed_analysis, library_search, reprocess, impulse_responses, modal_analysis
+from routers import upload, analysis, generation, sounds, sed_analysis, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics_router
 
 # Import utilities
 from utils.file_operations import cleanup_all_temp_directories
@@ -28,7 +28,8 @@ from config.constants import (
     CORS_ALLOW_ALL,
     STATIC_MOUNT_PATH,
     STATIC_FILES_DIRECTORY,
-    IMPULSE_RESPONSE_DIR
+    IMPULSE_RESPONSE_DIR,
+    BACKEND_DIR
 )
 
 # --- Initialization ---
@@ -88,6 +89,15 @@ app.mount(
     name="impulse_responses"
 )
 
+# Mount temp directory for Choras simulation results
+TEMP_DIR = BACKEND_DIR / "temp"
+TEMP_DIR.mkdir(exist_ok=True)
+app.mount(
+    "/static/temp",
+    StaticFiles(directory=str(TEMP_DIR)),
+    name="temp"
+)
+
 # --- CORS Middleware ---
 # Allow all origins for network access (development mode)
 # For production, restrict to specific origins: [CORS_ORIGIN_LOCALHOST, CORS_ORIGIN_FRONTEND, CORS_ORIGIN_NETWORK]
@@ -110,6 +120,11 @@ app.include_router(library_search.router)
 app.include_router(reprocess.router)
 app.include_router(impulse_responses.router)
 app.include_router(modal_analysis.router)
+app.include_router(choras.router)
+
+# Initialize and include pyroomacoustics router
+pyroomacoustics_router.init_pyroomacoustics_router()
+app.include_router(pyroomacoustics_router.router)
 
 
 @app.get("/")

@@ -15,6 +15,8 @@ interface ImpulseResponseUploadProps {
   onClearIR: () => void;
   selectedIRId: string | null;
   auralizationConfig: AuralizationConfig;
+  simulationResults?: string | null;
+  refreshTrigger?: number;
 }
 
 /**
@@ -40,7 +42,9 @@ export function ImpulseResponseUpload({
   onSelectIR,
   onClearIR,
   selectedIRId,
-  auralizationConfig
+  auralizationConfig,
+  simulationResults = null,
+  refreshTrigger = 0
 }: ImpulseResponseUploadProps) {
   const handleError = useApiErrorHandler();
   const [impulseResponses, setImpulseResponses] = useState<ImpulseResponseMetadata[]>([]);
@@ -80,10 +84,10 @@ export function ImpulseResponseUpload({
     }
   }, [auralizationConfig.impulseResponseBuffer, selectedIRId]);
 
-  // Load IR list on mount
+  // Load IR list on mount and when refreshTrigger changes
   useEffect(() => {
     loadImpulseResponses();
-  }, []);
+  }, [refreshTrigger]);
 
   const loadImpulseResponses = async () => {
     setIsLoading(true);
@@ -468,12 +472,33 @@ export function ImpulseResponseUpload({
       </div>
       )}
 
-      {/* Help Text */}
-      <div className="text-xs" style={{ color: UI_COLORS.NEUTRAL_500 }}>
-        <strong>Supported formats:</strong> Mono (1-ch), Binaural (2-ch), FOA (4-ch), TOA (16-ch)
-        <br />
-        Multi-channel files (8-32ch) are auto-extracted to FOA or TOA.
-      </div>
+      {/* Simulation Results or Help Text */}
+      {simulationResults ? (
+        <div
+          className="rounded-lg text-xs"
+          style={{
+            padding: `${UI_CARD.PADDING}px`,
+            backgroundColor: UI_COLORS.SUCCESS_LIGHT,
+            borderColor: UI_COLORS.SUCCESS,
+            borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
+            borderStyle: 'solid',
+            borderRadius: `${UI_CARD.BORDER_RADIUS}px`,
+            color: UI_COLORS.NEUTRAL_800,
+            whiteSpace: 'pre-line'
+          }}
+        >
+          <strong style={{ color: UI_COLORS.SUCCESS }}>Last Simulation Results:</strong>
+          <br />
+          <br />
+          {simulationResults}
+        </div>
+      ) : (
+        <div className="text-xs" style={{ color: UI_COLORS.NEUTRAL_500 }}>
+          <strong>Supported formats:</strong> Mono (1-ch), Binaural (2-ch), FOA (4-ch), TOA (16-ch)
+          <br />
+          Multi-channel files (8-32ch) are auto-extracted to FOA or TOA.
+        </div>
+      )}
     </div>
   );
 }

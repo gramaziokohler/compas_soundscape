@@ -10,6 +10,7 @@ from compas_ifc.model import Model
 import rhino3dm
 
 from utils.helpers import rotate_y_up_to_z_up
+from config.constants import OBJ_ROTATE_Y_TO_Z
 
 
 class GeometryService:
@@ -28,12 +29,89 @@ class GeometryService:
 
     @staticmethod
     def process_obj_file(file_path: str):
-        """Process OBJ file and return geometry"""
-        mesh = Mesh.from_obj(file_path)
-        vertices = list(mesh.vertices_attributes('xyz'))
-        vertices = [rotate_y_up_to_z_up(v) for v in vertices]
-        faces = [mesh.face_vertices(fkey) for fkey in mesh.faces()]
-        return {"vertices": vertices, "faces": faces}
+        """Process OBJ file and return geometry with face-to-entity mapping"""
+        # Parse OBJ file to extract groups
+        groups = []
+        current_group = None
+        vertices = []  # Global vertex list (1-indexed in OBJ)
+
+        with open(file_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+
+                parts = line.split()
+                if not parts:
+                    continue
+
+                # Vertex definition
+                if parts[0] == 'v':
+                    x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
+                    vertices.append([x, y, z])
+
+                # Object/Group definition
+                elif parts[0] in ('o', 'g'):
+                    # Save previous group if exists
+                    if current_group and current_group['faces']:
+                        groups.append(current_group)
+
+                    # Start new group
+                    name = ' '.join(parts[1:]) if len(parts) > 1 else f"Object_{len(groups)}"
+                    current_group = {
+                        'name': name,
+                        'faces': [],
+                        'index': len(groups)  # Group index for entity mapping
+                    }
+
+                # Face definition
+                elif parts[0] == 'f':
+                    # Initialize default group if no group was specified
+                    if current_group is None:
+                        current_group = {
+                            'name': 'default',
+                            'faces': [],
+                            'index': 0
+                        }
+
+                    # Parse face (format: f v1 v2 v3 or f v1/vt1/vn1 v2/vt2/vn2 v3/vt3/vn3)
+                    face_vertices = []
+                    for vertex_str in parts[1:]:
+                        # Get only the vertex index (ignore texture/normal)
+                        vertex_idx = int(vertex_str.split('/')[0]) - 1  # OBJ is 1-indexed
+                        face_vertices.append(vertex_idx)
+                    current_group['faces'].append(face_vertices)
+
+        # Add last group
+        if current_group and current_group['faces']:
+            groups.append(current_group)
+
+        # If no groups were defined, create one default group
+        if not groups:
+            groups.append({
+                'name': 'Mesh',
+                'faces': [],
+                'index': 0
+            })
+
+        # Build unified mesh with face_entity_map
+        all_vertices = []
+        all_faces = []
+        face_entity_map = []  # Maps face index to group/entity index
+
+        # Conditionally rotate vertices from Y-up to Z-up based on OBJ_ROTATE_Y_TO_Z constant
+        if OBJ_ROTATE_Y_TO_Z:
+            all_vertices = [rotate_y_up_to_z_up(v) for v in vertices]
+        else:
+            all_vertices = vertices
+
+        # Add all faces with entity mapping
+        for group in groups:
+            for face in group['faces']:
+                all_faces.append(face)
+                face_entity_map.append(group['index'])  # Map this face to its group
+
+        return {"vertices": all_vertices, "faces": all_faces, "face_entity_map": face_entity_map}
 
     @staticmethod
     def process_stl_file(file_path: str):

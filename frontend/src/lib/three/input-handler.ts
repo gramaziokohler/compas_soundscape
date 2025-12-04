@@ -36,6 +36,7 @@ export class InputHandler {
   
   // Callbacks
   private onEntitySelected: ((entity: EntityData | null) => void) | null = null;
+  private onFaceSelected: ((faceIndex: number, entityIndex: number) => void) | null = null;
   private onReceiverPlaced: ((position: [number, number, number]) => void) | null = null;
   private onFirstPersonModeEnabled: ((position: THREE.Vector3, yaw: number, pitch: number) => void) | null = null;
   private onFirstPersonModeDisabled: (() => void) | null = null;
@@ -57,6 +58,7 @@ export class InputHandler {
   private getFirstPersonMode: (() => boolean) | null = null;
   private getSoundSphereMeshes: (() => THREE.Mesh[]) | null = null;
   private getTriangleToFaceMap: (() => number[] | null) | null = null;
+  private getAudioRenderingMode: (() => string) | null = null;
 
   constructor(
     camera: THREE.PerspectiveCamera,
@@ -330,6 +332,7 @@ export class InputHandler {
     const geometryData = this.getGeometryData?.();
     const modelEntities = this.getModelEntities?.() || [];
     const contentGroup = this.getContentGroup?.();
+    const audioRenderingMode = this.getAudioRenderingMode?.() || 'anechoic';
 
     if (contentGroup && contentGroup.children.length > 0) {
       const geometryMesh = contentGroup.children.find(child =>
@@ -367,53 +370,72 @@ export class InputHandler {
               const entityIndex = geometryData.face_entity_map[faceIndex];
               const entity = modelEntities.find(e => e.index === entityIndex);
 
-              if (entity && this.onEntitySelected) {
-                console.log(`[InputHandler] Triangle ${triangleIndex} -> Face ${faceIndex} -> Entity ${entityIndex}`);
-                this.onEntitySelected(entity);
-                return;
+              // In precise mode, highlight face only (no entity UI)
+              if (audioRenderingMode === 'precise') {
+                if (this.onFaceSelected) {
+                  this.onFaceSelected(faceIndex, entityIndex);
+                  return;
+                }
+              } else {
+                // Normal mode: show entity UI
+                if (entity && this.onEntitySelected) {
+                  this.onEntitySelected(entity);
+                  return;
+                }
               }
             }
           }
 
-          // Fallback: use bounding box method
-          const clickPoint = intersection.point;
-          let closestEntity = null;
-          let minDistance = Infinity;
+          // Fallback: use bounding box method (only in non-precise mode)
+          if (audioRenderingMode !== 'precise') {
+            const clickPoint = intersection.point;
+            let closestEntity = null;
+            let minDistance = Infinity;
 
-          modelEntities.forEach(entity => {
-            const min = entity.bounds.min;
-            const max = entity.bounds.max;
-            const isInside =
-              clickPoint.x >= min[0] && clickPoint.x <= max[0] &&
-              clickPoint.y >= min[1] && clickPoint.y <= max[1] &&
-              clickPoint.z >= min[2] && clickPoint.z <= max[2];
+            modelEntities.forEach(entity => {
+              const min = entity.bounds.min;
+              const max = entity.bounds.max;
+              const isInside =
+                clickPoint.x >= min[0] && clickPoint.x <= max[0] &&
+                clickPoint.y >= min[1] && clickPoint.y <= max[1] &&
+                clickPoint.z >= min[2] && clickPoint.z <= max[2];
 
-            if (isInside) {
-              const entityPos = new THREE.Vector3(
-                entity.position[0],
-                entity.position[1],
-                entity.position[2]
-              );
-              const distance = clickPoint.distanceTo(entityPos);
+              if (isInside) {
+                const entityPos = new THREE.Vector3(
+                  entity.position[0],
+                  entity.position[1],
+                  entity.position[2]
+                );
+                const distance = clickPoint.distanceTo(entityPos);
 
-              if (distance < minDistance) {
-                minDistance = distance;
-                closestEntity = entity;
+                if (distance < minDistance) {
+                  minDistance = distance;
+                  closestEntity = entity;
+                }
               }
-            }
-          });
+            });
 
-          if (this.onEntitySelected) {
-            this.onEntitySelected(closestEntity);
+            if (this.onEntitySelected) {
+              this.onEntitySelected(closestEntity);
+            }
+            return;
           }
-          return;
         }
       }
     }
 
     // No geometry clicked - deselect
-    if (this.onEntitySelected) {
-      this.onEntitySelected(null);
+    if (audioRenderingMode === 'precise') {
+      // In precise mode, deselect face
+      if (this.onFaceSelected) {
+        // Signal deselection by calling with -1, -1
+        this.onFaceSelected(-1, -1);
+      }
+    } else {
+      // Normal mode: deselect entity
+      if (this.onEntitySelected) {
+        this.onEntitySelected(null);
+      }
     }
   };
 
@@ -498,6 +520,10 @@ export class InputHandler {
     this.onEntitySelected = callback;
   }
 
+  public setOnFaceSelected(callback: (faceIndex: number, entityIndex: number) => void): void {
+    this.onFaceSelected = callback;
+  }
+
   public setOnReceiverPlaced(callback: (position: [number, number, number]) => void): void {
     this.onReceiverPlaced = callback;
   }
@@ -576,6 +602,10 @@ export class InputHandler {
 
   public setTriangleToFaceMapGetter(getter: () => number[] | null): void {
     this.getTriangleToFaceMap = getter;
+  }
+
+  public setAudioRenderingModeGetter(getter: () => string): void {
+    this.getAudioRenderingMode = getter;
   }
 
   /**

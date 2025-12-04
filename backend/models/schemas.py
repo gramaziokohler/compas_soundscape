@@ -127,3 +127,55 @@ class ModalAnalysisResponse(BaseModel):
     mesh_info: dict  # Mesh statistics
     num_modes_computed: int
     frequency_response: Optional[dict] = None  # Optional frequency response data
+
+
+# ============================================================================
+# Pyroomacoustics Acoustic Simulation Schemas
+# ============================================================================
+
+class PyroomacousticsSettings(BaseModel):
+    """Settings for pyroomacoustics simulation"""
+    fs: int = 48000
+    max_order: Optional[int] = None  # Auto-calculate if None
+    use_ray_tracing: bool = False
+    rir_duration: float = 1.0
+
+
+class PyroomacousticsSimulationRequest(BaseModel):
+    """Request for pyroomacoustics acoustic simulation"""
+    room_dimensions: Optional[list[float]] = None  # [width, length, height]
+    materials: dict[str, float]  # {"north": 0.03, "south": 0.03, ...}
+    source_position: list[float]
+    receiver_position: list[float]
+    settings: PyroomacousticsSettings = PyroomacousticsSettings()
+
+
+class AcousticParameters(BaseModel):
+    """Acoustic parameters calculated from RIR"""
+    rt60: float  # Reverberation time (s)
+    edt: float  # Early decay time (s)
+    c50: float  # Speech clarity (dB)
+    c80: float  # Music clarity (dB)
+    d50: float  # Definition (0-1)
+    drr: float  # Direct-to-reverberant ratio (dB)
+
+
+class PyroomacousticsSimulationResponse(BaseModel):
+    """Response from pyroomacoustics simulation"""
+    rir_url: str
+    rir_path: str
+    acoustic_parameters: AcousticParameters
+    room_info: dict
+    computation_time: float
+
+
+class PyroomacousticsMaterial(BaseModel):
+    """Material properties for acoustic simulation"""
+    absorption: float
+    description: str
+    category: str
+
+
+class PyroomacousticsMaterialsResponse(BaseModel):
+    """Response containing material database"""
+    materials: dict[str, PyroomacousticsMaterial]

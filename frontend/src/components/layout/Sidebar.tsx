@@ -229,6 +229,16 @@ export function Sidebar(props: SidebarProps) {
             onRefreshBoundingBox={props.onRefreshBoundingBox}
             audioRenderingMode={props.audioRenderingMode}
             onAudioRenderingModeChange={props.onAudioRenderingModeChange}
+            modelEntities={props.modelEntities}
+            modelType={props.modelType}
+            geometryData={props.geometryData}
+            selectedGeometry={props.selectedGeometry}
+            onSelectGeometry={props.onSelectGeometry}
+            onAssignMaterial={props.onAssignMaterial}
+            modelFile={props.modelFile}
+            soundscapeData={props.soundscapeData}
+            onIRImported={props.onIRImported}
+            irRefreshTrigger={props.irRefreshTrigger}
           />
         )}
       </div>

@@ -10,6 +10,7 @@ import type { AuralizationConfig, ResonanceAudioConfig } from "./audio";
 import type { ModeVisualizationState } from "./modal";
 import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSelector";
 import type { AudioOrchestrator } from "@/lib/audio/AudioOrchestrator";
+import type { SelectedGeometry } from "./materials";
 
 /**
  * ThreeScene Component Props
@@ -202,4 +203,14 @@ export interface ThreeSceneProps {
 
   /** Callback to reset all advanced settings to defaults */
   onResetAdvancedSettings?: () => void;
+
+  // Material assignment (NEW - for precise acoustics mode)
+  /** Selected geometry for material assignment */
+  selectedGeometry?: SelectedGeometry | null;
+
+  /** Callback when face is selected in 3D scene */
+  onFaceSelected?: (faceIndex: number, entityIndex: number) => void;
+
+  /** Material assignments for geometry (stored in page.tsx) */
+  materialAssignments?: Map<string, { selection: SelectedGeometry, material: import('./materials').AcousticMaterial | null }>;
 }

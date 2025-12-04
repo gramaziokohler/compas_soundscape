@@ -1,5 +1,382 @@
 # CHANGELOG
 
+## [2025-12-04] - Global Volume Slider Hover Functionality
+### Changed
+- **`frontend/src/components/scene/ThreeScene.tsx`** - Volume slider now appears on hover instead of requiring a click
+
+## [2025-12-04 17:30] - Fixed Progress Freeze on Tab Navigation & Added Refresh Button
+### Added
+- **`frontend/src/hooks/useChorasSimulation.ts`** - Added `refreshProgress()` method to fetch live simulation status from backend
+- **`frontend/src/hooks/useChorasSimulation.ts`** - Added `irImported` flag to prevent duplicate IR imports when refreshing
+- **`frontend/src/hooks/useChorasSimulation.ts`** - Added success notification pop-up when simulation completes
+- **`frontend/src/components/acoustics/ChorasSimulationSection.tsx`** - Added refresh button next to "Simulation Settings" header
+### Changed
+- **`frontend/src/hooks/useChorasSimulation.ts`** - Store `currentSimulationRunId` in persistent state for progress tracking across tab changes
+- **`frontend/src/hooks/useChorasSimulation.ts`** - Centralized result loading into single `loadSimulationResults` function (eliminates duplicate IR imports)
+- **`frontend/src/hooks/useChoras.ts`** - Updated `onSimulationCreated` callback to pass both simulationId and simulationRunId
+- **`frontend/src/components/acoustics/ChorasSimulationSection.tsx`** - Display simulation results even when `isRunning=true` (fixes frozen progress after tab navigation)
+### Fixed
+- **`frontend/src/hooks/useChorasSimulation.ts`** - Fixed race condition causing duplicate IR imports (set `irImported` flag immediately, not after async completion)
+
+## [2025-12-04 11:50] - Enhanced Choras Error Handling & Backend Crash Detection
+### Added
+- **`frontend/src/hooks/useChoras.ts`** - Added `extractErrorMessage` helper to properly parse backend error responses (JSON/text)
+- **`frontend/src/hooks/useChoras.ts`** - Detect backend crashes (ERR_EMPTY_RESPONSE) and check simulation status for error details
+- **`frontend/src/hooks/useChoras.ts`** - Fetch detailed simulation status when error detected to find error messages
+### Changed
+- **`frontend/src/hooks/useChoras.ts`** - All fetch error handling now extracts and displays actual backend error messages
+- **`frontend/src/hooks/useChoras.ts`** - When simulation fails, tries multiple error fields (error, errorMessage, message)
+- **`frontend/src/hooks/useChoras.ts`** - Fallback error directs users to check backend logs with example errors
+- **`frontend/src/hooks/useChoras.ts`** - Better error propagation from status checks to avoid "Could not check status" errors
+
+## [2025-12-04 02:10] - Fixed Choras Simulation Settings & Results Display
+### Fixed
+- **`frontend/src/hooks/useChoras.ts`** - Simulation settings (IR length, characteristic length) now properly passed to Choras API
+- **`frontend/src/hooks/useChorasSimulation.ts`** - Fixed JSON parsing to extract frequency-band averages from `responses[0].parameters`
+- **`frontend/src/hooks/useChorasSimulation.ts`** - Display format: "T30: X.XXs, EDT: X.XXs, D50: XX.X, C80: XX.X dB" with frequency range
+
+## [2025-12-04 00:35] - Auto-Delete Old Simulations to Prevent Crashes
+### Added
+- **`frontend/src/hooks/useChoras.ts`** - Automatically delete all old simulations for a model before creating new one; prevents Choras from crashing when polling old broken simulations
+
+## [2025-12-04 00:30] - Restored Live Percentage Updates with Robust Error Handling
+### Changed
+- **`frontend/src/hooks/useChoras.ts`** - Back to using `/simulations/run` for live percentage; retry logic handles occasional crashes from old simulations
+
+## [2025-12-04 00:10] - Fixed Choras Polling Interval (8s delay on every poll)
+### Fixed
+- **`frontend/src/hooks/useChoras.ts`** - Fixed polling to only wait 8s on first poll, then 4s between subsequent polls (was waiting 8s every time due to pollAttempts being reset)
+- **`frontend/src/hooks/useChoras.ts`** - Removed cleanup step that was causing crashes
+- **`frontend/src/hooks/useChoras.ts`** - Added 8s initial delay before first poll to let Choras initialize files
+- **`frontend/src/lib/constants.ts`** - Added CHORAS_INITIAL_POLL_DELAY (8000ms)
+
+## [2025-12-03 23:55] - Fixed Choras Model Creation API Call
+### Fixed
+- **`frontend/src/hooks/useChoras.ts`** - Removed invalid `outputFileId` parameter; uses `.geo` file ID as `sourceFileId`
+
+## [2025-12-03 23:45] - Fixed Fast Simulation Polling Error (ERR_EMPTY_RESPONSE)
+### Fixed
+- **`frontend/src/hooks/useChoras.ts`** - Added timeout & retry logic for simulation polling
+  - 10s timeout per poll request, 30s timeout for simulation start
+  - Retry logic with 3 max attempts when Choras backend doesn't respond
+  - Immediate first poll (skip 2s wait) to catch fast simulations
+  - Direct status check fallback after max retries
+- **`frontend/src/lib/constants.ts`** - Added Choras timeout constants (CHORAS_POLL_TIMEOUT, CHORAS_RUN_TIMEOUT, CHORAS_MAX_POLL_RETRIES)
+
+## [2025-12-03 23:30] - Auto-Import IR & Display Simulation Results
+### Changed
+- **`frontend/src/components/audio/ImpulseResponseUpload.tsx`** - Added simulationResults & refreshTrigger props; displays acoustic metrics instead of help text
+- **`frontend/src/components/layout/sidebar/AcousticsTab.tsx`** - Passes simulation results to IR Library
+- **`frontend/src/app/page.tsx`** - Added irRefreshTrigger state to auto-refresh IR library after simulation
+- **`frontend/src/types/components.ts`** - Added irRefreshTrigger to SidebarProps
+- **`frontend/src/hooks/useChorasSimulation.ts`** - Fixed path access; replaced module-level callback with React ref; uses dedicated file endpoint
+- **`frontend/src/hooks/useChoras.ts`** - Moved save-results call outside polling loop to ensure it always executes
+- **`backend/routers/choras.py`** - Added GET /choras/get-result-file/{simulation_id}/{file_type} endpoint to serve WAV and JSON files
+### Fixed
+- IR library now automatically refreshes when Choras simulation completes
+- Simulation results (RT60, EDT, C80, D50, Ts) replace help text in IR Library section
+- Fixed live progress updates not displaying during simulation (replaced module-level state with React ref pattern)
+- **CRITICAL:** Fixed save-results never being called when simulation completes via fallback status check (moved outside polling loop)
+- **CRITICAL:** Fixed 404 errors when fetching result files (added dedicated endpoint instead of relying on static file server)
+
+## [2025-12-03 23:00] - Choras Simulation Integration Enhancement
+### Changed
+- **`frontend/src/components/acoustics/ChorasSimulationSection.tsx`** - Added receivers, soundscapeData props, validation
+- **`frontend/src/hooks/useChorasSimulation.ts`** - Auto-import IR, display RT60/EDT/C80/D50/Ts results
+- **`frontend/src/hooks/useChoras.ts`** - Use real receiver and sound source positions from scene
+- **`frontend/src/components/layout/sidebar/AcousticsTab.tsx`** - Pass soundscapeData and onIRImported callback
+- **`frontend/src/app/page.tsx`** - Added handleIRImported callback for library refresh
+- **`backend/main.py`** - Mounted /static/temp for serving simulation results
+### Fixed
+- Validation: Simulation cannot start without receivers or sound sources
+- Auto-imports impulse response to IR Library after simulation completes
+- Displays acoustic metrics (RT60, EDT, C80, D50, Ts) instead of generic status
+
+## [2025-12-03 22:45] - Geometry Transparency Enhancement
+### Changed
+- **`frontend/src/lib/constants.ts`** - Added GEOMETRY_OPACITY (0.9) to ARCTIC_THEME constants
+- **`frontend/src/lib/three/sceneSetup.ts`** - Applied 0.9 opacity to all geometry materials
+
+## [2025-12-03 22:30] - Fixed RT60 Calculation Accuracy
+### Fixed
+- **`backend/services/pyroomacoustics_service.py`** - RT60 improved from 89% error to 11% error
+  - Auto-calculates optimal max_order based on room size/materials (was fixed at 3)
+  - Uses Eyring formula for highly absorptive spaces (α > 0.3), Sabine otherwise
+
+## [2025-12-03 22:00] - Pyroomacoustics Integration (Phase 1 Backend)
+### Added
+- **`backend/services/pyroomacoustics_service.py`** - Acoustic simulation service (shoebox rooms, ISM, RT60/EDT/C50/C80/D50/DRR)
+- **`backend/routers/pyroomacoustics_router.py`** - Endpoints: POST /pyroomacoustics/simulate, GET /pyroomacoustics/materials
+- **`backend/config/constants.py`** - Pyroomacoustics constants (11 materials, defaults, RIR export)
+- **`backend/models/schemas.py`** - Pyroomacoustics schemas (simulation request/response, acoustic parameters)
+
+## [2025-12-03 21:30] - Fixed Global Material Inheritance Key Mismatch
+### Fixed
+- **`frontend/src/components/acoustics/MaterialAssignmentUI.tsx`** - Global key consistency
+  - Fixed global material key from `global--` to `global---` to match key construction format
+  - Global material assignments now properly inherited by all entities and faces
+  - Material cascading fully functional: global → layer → entity → face hierarchy
+
+## [2025-12-03 21:25] - Fixed Global Material Cascading for Models Without Layers
+### Fixed
+- **`frontend/src/components/acoustics/MaterialAssignmentUI.tsx`** - Global cascade handling
+  - Detected whether model has real layers or just grouped under 'Default'
+  - For models without layers, entities use empty layerId (e.g., `entity--0-`)
+  - Global cascading now deletes correct keys based on layer structure
+  - "All Entities" dropdown now properly cascades to entities without layers
+
+## [2025-12-03 21:20] - Fixed Material Cascading with Zero-Based Indices
+### Fixed
+- **`frontend/src/components/acoustics/MaterialAssignmentUI.tsx`** - Handle entityIndex=0 and faceIndex=0
+  - Changed from `||` to `??` operator in key construction to properly handle 0 values
+  - Previously `entityIndex: 0` was treated as falsy, creating wrong keys like `entity---` instead of `entity--0-`
+  - Material cascading now works correctly for entities and faces with index 0
+  - Inheritance lookup properly matches keys for all indices including 0
+
+## [2025-12-03 21:10] - Fixed Material Cascading Logic (Delete vs Set)
+### Fixed
+- **`frontend/src/components/acoustics/MaterialAssignmentUI.tsx`** - Proper inheritance cascading
+  - Changed cascading from explicitly setting child materials to deleting them
+  - Children now dynamically inherit from parents through getMaterialForSelection
+  - When parent material changes, all children without explicit assignments inherit the new value
+  - Fixes issue where cascading would set explicit values that prevented future inheritance
+
+## [2025-12-03 21:05] - Fixed Material Cascading Re-render & Progress Polling Persistence
+### Fixed
+- **`frontend/src/components/acoustics/MaterialAssignmentUI.tsx`** - Material cascading UI updates
+  - Added updateCounter state to force re-render when parent materials change
+  - Child dropdowns now immediately reflect inherited materials after parent assignment
+  - Material cascading now both assigns AND displays correctly
+- **`frontend/src/hooks/useChorasSimulation.ts`** - Progress polling across tab changes
+  - Implemented module-level updatePersistentState callback for async operations
+  - Progress updates now use persistent callback that survives component unmount/remount
+  - Simulation progress continues updating even when switching tabs and returning
+
+## [2025-12-03 20:50] - Fixed Material Cascading Display & Simulation State Persistence
+### Fixed
+- **`frontend/src/components/acoustics/MaterialAssignmentUI.tsx`** - Material inheritance
+  - getMaterialForSelection now checks parent hierarchy (entity → layer → global)
+  - Child dropdowns now properly show inherited materials from parents
+  - Material cascading visually works as expected
+- **`frontend/src/hooks/useChorasSimulation.ts`** - State persistence
+  - Added module-level singleton to persist state across tab changes
+  - Simulation progress preserved when switching between tabs
+  - Running simulations continue in background when user navigates away
+
+## [2025-12-03 20:40] - Fixed Simulation UI and Material Cascading
+### Fixed
+- **`frontend/src/components/layout/sidebar/AcousticsTab.tsx`** - Restored ChorasSimulationSection
+  - Simulation parameters and Start Simulation button now visible again
+  - Section order: IR Library → Surface Materials → Run Simulation → Receivers
+- **`frontend/src/components/acoustics/MaterialAssignmentUI.tsx`** - Fixed material cascading
+  - Entity material assignments now properly cascade to all child faces
+  - Force component re-render by creating new Map instance
+
+## [2025-12-03 20:30] - Integrated Choras with Material Assignment UI
+### Changed
+- **`frontend/src/components/acoustics/MaterialAssignmentUI.tsx`** - Now uses Choras materials
+  - Removed dummy materials, accepts availableMaterials prop from Choras library
+- **`frontend/src/components/layout/sidebar/AcousticsTab.tsx`** - Restored Material Assignment UI
+  - Integrated useChorasSimulation hook to load Choras materials
+  - Surface Materials section shows hierarchical material assignment with Choras library
+  - Materials populate from Choras backend automatically
+- **`frontend/src/components/acoustics/ChorasSimulationSection.tsx`** - Simplified UI
+  - Removed material dropdown (now in Surface Materials section)
+  - Removed Speed of Sound and Energy Decay Threshold parameters
+  - Only IR Length and Characteristic Length remain
+- **`frontend/src/services/api.ts`** - Fixed VITE_CHORAS_API_BASE error
+  - Replaced import.meta.env with dynamic import of CHORAS_API_BASE constant
+
+## [2025-12-03 20:00] - Integrated Choras Acoustic Simulation
+### Added
+- **`backend/config/constants.py`** - Added Choras simulation constants
+  - CHORAS_API_BASE, default simulation parameters (c0, IR length, EDT, etc.)
+  - Simulation parameter ranges for UI validation
+- **`frontend/src/lib/constants.ts`** - Added frontend Choras constants
+  - Mirrored backend constants for client-side validation
+- **`frontend/src/services/api.ts`** - Added Choras API methods
+  - getChorasMaterials(), runChorasSimulation(), getChorasSimulationStatus()
+  - cancelChorasSimulation(), saveChorasResults()
+- **`frontend/src/hooks/useChorasSimulation.ts`** - New hook for simulation state
+  - Material selection, parameter controls, progress tracking
+  - Typed state management following modular pattern
+- **`frontend/src/components/acoustics/ChorasSimulationSection.tsx`** - New UI component
+  - Material dropdown from Choras library, simulation parameter sliders
+  - Progress tracking, cancel capability, status display
+  - Uses RangeSlider and app color scheme
+- **`frontend/src/components/layout/sidebar/AcousticsTab.tsx`** - Integrated Choras
+  - Replaced Material Assignment UI with ChorasSimulationSection in Precise mode
+  - Added modelFile prop for geometry submission
+
+## [2025-12-03 19:20] - Fixed Face Selection in Precise Mode (Stale Closure Issue)
+### Fixed
+- **`frontend/src/components/scene/ThreeScene.tsx`** - Fixed audioRenderingMode stale closure preventing face selection
+  - Added `audioRenderingModeRef` to track current mode value (lines 187, 374)
+  - Updated `setAudioRenderingModeGetter` to use ref instead of captured value (line 1065)
+  - InputHandler now correctly detects precise mode and triggers face selection callback
+- **`frontend/src/components/acoustics/MaterialAssignmentUI.tsx`** - Fixed entity ID format in auto-expand logic
+  - Changed from `entity-${layerId}-${entity.index}` to `entity-${entity.index}` to match rendering
+- **`frontend/src/app/page.tsx`** - Added debug logging to track callback chain
+- Removed excessive console logs that were polluting the output
+
+## [2025-12-03 19:10] - Fixed Face Selection Auto-Expand in Material Assignment UI
+### Fixed
+- **`frontend/src/components/acoustics/MaterialAssignmentUI.tsx`** - Auto-expand tree when face is selected
+  - Added useEffect to automatically expand layer and entity nodes when a face is selected from 3D scene
+  - Face selection from 3D scene now properly highlights the corresponding row in sidebar
+  - Tree automatically expands to reveal selected face, entity, or layer
+
+## [2025-12-03 19:00] - Fixed Mode Switching and Face Selection Issues
+### Fixed
+- **`frontend/src/components/scene/ThreeScene.tsx`** - Clear entity UI overlays when switching to precise mode
+  - Added effect to clear all UI overlays and selected entity when entering precise mode (lines 1387-1396)
+  - Modified face highlighting effect to clear highlights when leaving precise mode (lines 1401-1405)
+  - Prevents entity UI from persisting when switching from other modes to precise mode
+  - Prevents face highlights from persisting when switching away from precise mode
+- **`frontend/src/app/page.tsx`** - Fixed face selection not updating sidebar
+  - Modified `handleFaceSelected` to call `handleSelectGeometry` instead of directly calling `setSelectedGeometry`
+  - Face clicks in 3D scene now properly select the corresponding row in material assignment sidebar
+
+## [2025-12-03 18:45] - Fixed Entity UI Still Appearing in Precise Mode
+### Fixed
+- **`frontend/src/components/scene/ThreeScene.tsx`** - Entity selection callback in effect was missing precise mode check
+  - Added `audioRenderingMode === 'precise'` check as Priority 2 in the effect's `setOnEntitySelected` callback (line 1316)
+  - Added `audioRenderingMode` to effect dependencies (line 1354)
+  - Entity UI overlay now correctly suppressed in precise acoustics mode
+  - Face selection now works properly when clicking geometry
+
+## [2025-12-03 18:30] - Fixed Material Assignment UI Behavior
+### Fixed
+- **`frontend/src/components/acoustics/MaterialAssignmentUI.tsx`** - Material assignments now cascade to children
+  - Assigning material at global level applies to all layers, entities, and faces
+  - Assigning at layer level applies to all entities and faces in that layer
+  - Assigning at entity level applies to all faces in that entity
+- **`frontend/src/lib/three/geometry-renderer.ts`** - New `highlightFaces()` method for multi-face highlighting
+  - Selecting entity highlights all its faces in 3D scene
+  - Selecting layer highlights all faces in that layer
+  - Selecting global highlights all faces in the model
+- **`frontend/src/components/scene/ThreeScene.tsx`** - Fixed entity UI overlay appearing in precise mode
+  - `setOnEntitySelected` callback now checks `audioRenderingMode` and exits early if 'precise'
+  - Entity UI overlay only appears in non-precise modes
+  - Face highlighting effect now supports entity, layer, and global selections
+
+## [2025-12-03 18:00] - Hierarchical Material Assignment UI for Precise Acoustics
+### Added
+- **`frontend/src/types/materials.ts`** - New type definitions for acoustic material assignment
+- **`frontend/src/components/acoustics/MaterialAssignmentUI.tsx`** - Hierarchical tree UI component
+  - Displays model structure: All Entities > Layers/Groups > Entities > Faces
+  - Material dropdown for each level (global, layer, entity, face)
+  - Handles 3dm (layers), obj (groups), and ifc (entities) differently
+  - Reciprocal selection with 3D scene (click face highlights row, click row highlights face)
+- **`frontend/src/lib/three/geometry-renderer.ts`** - `highlightFace()` method (lines 394-458)
+  - Highlights individual faces in secondary color (sky blue)
+- **`frontend/src/lib/three/input-handler.ts`** - Face selection in precise mode
+  - `setOnFaceSelected()` callback (line 523)
+  - `setAudioRenderingModeGetter()` for mode-aware input handling (line 609)
+  - Modified `handleClick()` to detect faces without showing entity UI in precise mode (lines 333-438)
+### Changed
+- **`frontend/src/components/layout/sidebar/AcousticsTab.tsx`** - Added MaterialAssignmentUI in precise mode (lines 106-119)
+- **`frontend/src/components/scene/ThreeScene.tsx`** - Integrated face selection callbacks (lines 1020-1031, 1375-1389)
+- **`frontend/src/app/page.tsx`** - Added state management for material assignments (lines 89-110, 407-430, 757-758)
+- **`frontend/src/types/components.ts`** - Extended SidebarProps with material assignment props (lines 166-170)
+- **`frontend/src/types/three-scene.ts`** - Extended ThreeSceneProps with face selection props (lines 203-207)
+
+## [2025-12-03 15:30] - Added Configurable OBJ Coordinate Rotation
+### Added
+- **`backend/config/constants.py`** - New `OBJ_ROTATE_Y_TO_Z` constant (line 205, default: False)
+  - Controls whether OBJ files are rotated from Y-up to Z-up coordinate system
+  - Disabled by default to preserve original OBJ orientation
+### Changed
+- **`backend/services/geometry_service.py`** - Conditionally apply rotation based on constant (lines 103-106)
+- **`backend/routers/analysis.py`** - Conditionally apply rotation to entity bounds (lines 343-350)
+
+## [2025-12-03 15:15] - Fixed OBJ Entity Clicking and Highlighting
+### Changed
+- **`backend/services/geometry_service.py`** - Updated `process_obj_file()` to include `face_entity_map` (lines 30-111)
+  - Parses OBJ groups inline during geometry processing
+  - Creates face-to-entity mapping for raycasting and entity selection
+  - Enables clicking on OBJ groups to display EntityUIOverlay (same as .3dm/.ifc)
+
+## [2025-12-03 15:00] - OBJ Files Now Support Entity Analysis Workflow
+### Added
+- **`backend/routers/analysis.py`** - New `/api/analyze-obj` endpoint (lines 293-371)
+- **`frontend/src/services/api.ts`** - New `analyzeObj()` method (lines 138-161)
+### Changed
+- **`frontend/src/hooks/useFileUpload.ts`** - Updated `analyzeModel()` to call backend for OBJ analysis (lines 134-148)
+  - Enables LLM context generation and entity linking for OBJ files
+
+## [2025-12-03 14:30] - Fixed Infinite Loop When Loading OBJ Files
+### Changed
+- **`frontend/src/app/page.tsx`** - Fixed auto-upload useEffect to check `geometryData` instead of `modelEntities.length` (line 151)
+
+## [2025-12-03 11:00] - Save Results to Backend & Fix Duplicate Upload Issue
+### Added
+- **`backend/routers/choras.py`** - New router for Choras integration
+  - `/choras/save-results` endpoint saves WAV and JSON to `backend/temp`
+### Changed
+- **`frontend/src/hooks/useChoras.ts`** - Unique filename on upload (lines 57-66)
+  - Appends timestamp to prevent file ID collision on duplicate uploads
+- **`frontend/src/hooks/useChoras.ts`** - Results saved to backend (lines 310-330)
+  - Calls `/choras/save-results` instead of browser downloads
+- **`frontend/src/app/Choras/page.tsx`** - Removed "View Results" link (port 5173)
+
+## [2025-12-03 10:15] - Added Stop Simulation Feature
+### Added
+- **`frontend/src/hooks/useChoras.ts`** - Added `stopSimulation()` function (lines 378-395)
+  - POSTs to `/simulations/cancel` endpoint with simulationId
+  - Enables users to cancel running simulations
+- **`frontend/src/app/Choras/page.tsx`** - Added stop simulation UI (lines 165-183)
+  - Red "Stop Simulation" button appears when simulation is running
+  - Tracks currentSimulationId state for cancellation support
+### Changed
+- **`frontend/src/hooks/useChoras.ts`** - Added `onSimulationCreated` callback parameter
+  - Allows parent component to receive simulationId immediately after creation (line 225)
+  - Enables cancellation before simulation completes
+
+## [2025-12-02 20:45] - Fixed Progress Polling & Direct Backend Downloads
+### Changed
+- **`frontend/src/hooks/useChoras.ts`** - Fixed progress polling to use correct endpoint (lines 247-292)
+  - Changed from `/simulations/{id}` to `/simulations/run` array endpoint
+  - Real-time percentage now updates correctly in UI
+- **`frontend/src/hooks/useChoras.ts`** - Changed to download files directly from backend (lines 301-340)
+  - Downloads WAV from `/auralizations/{id}/impulse/wav` endpoint
+  - Saves results as JSON file (no backend zip endpoint dependency)
+  - Files: `simulation_{id}_impulse_response.wav` and `simulation_{id}_results.json`
+
+## [2025-12-02 20:05] - Fixed Progress Display & Added Automatic Results Download
+### Changed
+- **`frontend/src/app/Choras/page.tsx`** - Fixed progress callback to always update status
+  - Status now updates during setup phase even when percentage is 0
+  - Progress bar still only appears when percentage > 0
+
+## [2025-12-02 18:45] - Choras Integration with Real-Time Simulation Progress
+### Added
+- **`frontend/src/hooks/useChoras.ts`** - Complete workflow for running acoustic simulations
+  - Parses .geo files to extract surface UUIDs (regex: `Physical Surface\("([a-f0-9-]+)"\)`)
+  - Polls backend every 2 seconds for real-time simulation progress
+  - Returns results with link to Choras frontend visualization
+- **`frontend/src/app/Choras/page.tsx`** - Simplified UI showing only actual simulation progress
+  - Progress bar appears only when backend reports progress > 0%
+  - Shows real-time percentage from solver
+  - "View Results" link when complete
+
+### Fixed
+- Surface UUID extraction: now parses .geo files instead of hardcoded references
+- Material assignments: all surfaces correctly mapped before simulation start
+- Quote handling in file URLs from backend API
+
+## [2025-11-27] - Integrate useFileUpload Hook with Choras Page
+### Changed
+- **`frontend/src/hooks/useFileUpload.ts`** - Added .obj file support and removed ErrorProvider dependency
+  - Added .obj file recognition to 3D model file types
+  - Replaced `useApiErrorHandler` with simple error logging to eliminate ErrorProvider dependency
+  - Removed unused `isDraggingAudio` state
+- **`frontend/src/app/Choras/page.tsx`** - Refactored to use centralized useFileUpload hook
+  - Replaced local file handling with useFileUpload hook
+  - Added drag-and-drop support for .obj files
+  - Added upload error display and file selection confirmation
+  - .obj files now properly connect to Choras workflow via runFullSimulation
+
 ## [2025-11-23] - Keep Timeline Expanded When Sounds Stop
 ### Fixed
 - **`frontend/src/lib/audio/timeline-utils.ts`** - Added functions to populate timeline from soundscape data

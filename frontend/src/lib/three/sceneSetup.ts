@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { ARCTIC_THEME } from "@/lib/constants";
 
 /**
  * Arctic Mode scene configuration
@@ -46,7 +47,9 @@ export function createArcticModeMaterial(): THREE.MeshStandardMaterial {
     color: 0xf0f4f8, // Arctic Mode geometry color
     roughness: 0.5,
     metalness: 0.0,
-    side: THREE.DoubleSide
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: ARCTIC_THEME.GEOMETRY_OPACITY
   });
 }
 

@@ -93,6 +93,10 @@ export const UI_COLORS = {
   DARK_BG: "#0a0a0a",
   DARK_FG: "#ededed",
   DARK_BORDER: "#262626",
+  
+  // Material Colors - Gradient from teal to orange
+  MATERIAL_GRADIENT_START: "#14b8a6", // Teal
+  MATERIAL_GRADIENT_END: "#f97316", // Orange
 } as const;
 
 // Legacy exports for backward compatibility (still in use)
@@ -792,7 +796,8 @@ export const SCENE_GRID = {
 export const ARCTIC_THEME = {
   BACKGROUND_COLOR: 0xe8edf2,
   GEOMETRY_COLOR: 0xf0f4f8,
-  MATERIAL_ROUGHNESS: 0.5
+  MATERIAL_ROUGHNESS: 0.5,
+  GEOMETRY_OPACITY: 0.8  // Slightly transparent geometry (90% opacity)
 } as const;
 
 // Camera
@@ -1298,6 +1303,50 @@ export const AUDIO_WARNINGS = {
   ORDER_UNSUPPORTED: '⚠️ Ambisonic order not supported by browser',
   MODE_INIT_FAILED: '⚠️ Audio mode initialization failed',
 } as const;
+
+// ============================================================================
+// Choras Acoustic Simulation Configuration
+// ============================================================================
+
+// Choras API Configuration
+export const CHORAS_API_BASE = 'http://localhost:5001';
+
+// Default Simulation Settings (DE - Diffusion Equation Method)
+export const CHORAS_DEFAULT_C0 = 343; // Speed of sound in m/s
+export const CHORAS_DEFAULT_IR_LENGTH = 0.2; // Impulse response length in seconds
+export const CHORAS_DEFAULT_LC = 1.0; // Characteristic length in meters
+export const CHORAS_DEFAULT_EDT = 35; // Energy decay threshold in dB
+export const CHORAS_DEFAULT_SIM_LEN_TYPE = 'ir_length'; // Simulation length type
+
+// Simulation Length Type Options
+export const CHORAS_SIM_LEN_TYPE_IR = 'ir_length';
+export const CHORAS_SIM_LEN_TYPE_EDT = 'edt';
+
+// Default Source/Receiver Positions (in meters)
+export const CHORAS_DEFAULT_SOURCE_X = 1.0;
+export const CHORAS_DEFAULT_SOURCE_Y = 1.0;
+export const CHORAS_DEFAULT_SOURCE_Z = 1.0;
+export const CHORAS_DEFAULT_RECEIVER_X = 3.0;
+export const CHORAS_DEFAULT_RECEIVER_Y = 3.0;
+export const CHORAS_DEFAULT_RECEIVER_Z = 1.0;
+
+// Simulation Parameter Ranges
+export const CHORAS_C0_MIN = 300; // Minimum speed of sound (m/s)
+export const CHORAS_C0_MAX = 400; // Maximum speed of sound (m/s)
+export const CHORAS_IR_LENGTH_MIN = 0.05; // Minimum IR length (seconds)
+export const CHORAS_IR_LENGTH_MAX = 5.0; // Maximum IR length (seconds)
+export const CHORAS_LC_MIN = 0.1; // Minimum characteristic length (meters)
+export const CHORAS_LC_MAX = 10.0; // Maximum characteristic length (meters)
+export const CHORAS_EDT_MIN = 20; // Minimum EDT (dB)
+export const CHORAS_EDT_MAX = 60; // Maximum EDT (dB)
+
+// Polling Configuration
+export const CHORAS_POLL_INTERVAL = 2000; // Milliseconds between status checks
+export const CHORAS_INITIAL_POLL_DELAY = 1000; // Wait 1s before first poll to let Choras initialize files
+export const CHORAS_TIMEOUT = 600000; // Maximum simulation time (10 minutes in ms)
+export const CHORAS_POLL_TIMEOUT = 30000; // Timeout for individual poll requests (30 seconds)
+export const CHORAS_RUN_TIMEOUT = 30000; // Timeout for simulation start request (30 seconds)
+export const CHORAS_MAX_POLL_RETRIES = 5; // Maximum retry attempts for failed polls
 
 // ============================================================================
 // RT60 (Reverberation Time) Analysis Configuration

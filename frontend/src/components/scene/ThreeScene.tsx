@@ -17,6 +17,7 @@ import { Icon } from "@/components/ui/Icon";
 import { VerticalVolumeSlider } from "@/components/ui/VerticalVolumeSlider";
 import { triangulateWithMapping, trimDisplayName } from "@/lib/utils";
 import { frameCameraToObject } from "@/lib/three/sceneSetup";
+import { generateMaterialColor } from "@/components/acoustics/MaterialAssignmentUI";
 import { SceneCoordinator } from "@/lib/three/scene-coordinator";
 import { GeometryRenderer } from "@/lib/three/geometry-renderer";
 import { SoundSphereManager } from "@/lib/three/sound-sphere-manager";
@@ -139,7 +140,10 @@ export function ThreeScene({
   onApplyDenoisingChange,
   onNormalizeImpulseResponsesChange,
   onAudioModelChange,
-  onResetAdvancedSettings
+  onResetAdvancedSettings,
+  selectedGeometry,
+  onFaceSelected,
+  materialAssignments
 }: ThreeSceneProps) {
   // Throttled logging to avoid spam (only log once per second)
   useEffect(() => {
@@ -182,6 +186,7 @@ export function ThreeScene({
   const modelEntitiesRef = useRef(modelEntities);
   const auralizationConfigRef = useRef(auralizationConfig);
   const prevSoundscapeDataLengthRef = useRef<number>(0);
+  const audioRenderingModeRef = useRef(audioRenderingMode);
 
   // ============================================================================
   // State - UI Overlays and Visibility
@@ -264,6 +269,7 @@ export function ThreeScene({
   // Global volume state
   const [globalVolume, setGlobalVolume] = useState<number>(1); // 0 to 1
   const [showVolumeSlider, setShowVolumeSlider] = useState<boolean>(false);
+  const [isHoveringVolume, setIsHoveringVolume] = useState<boolean>(false);
 
   // Settings panel state
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState<boolean>(false);
@@ -366,6 +372,10 @@ export function ThreeScene({
     auralizationConfigRef.current = auralizationConfig;
   }, [auralizationConfig]);
 
+  useEffect(() => {
+    audioRenderingModeRef.current = audioRenderingMode;
+  }, [audioRenderingMode]);
+
   // Keep callback refs up to date
   useEffect(() => {
     onStopAllRef.current = onStopAll;
@@ -429,6 +439,15 @@ export function ThreeScene({
   // Toggle global volume slider visibility
   const handleToggleVolumeSlider = useCallback(() => {
     setShowVolumeSlider(prev => !prev);
+  }, []);
+
+  // Handle volume control hover
+  const handleVolumeMouseEnter = useCallback(() => {
+    setIsHoveringVolume(true);
+  }, []);
+
+  const handleVolumeMouseLeave = useCallback(() => {
+    setIsHoveringVolume(false);
   }, []);
 
   // Handle global volume change
@@ -941,6 +960,11 @@ export function ThreeScene({
 
     // Setup Input Handler callbacks
     inputHandler.setOnEntitySelected((entity) => {
+      // In precise acoustics mode, don't show entity UI
+      if (audioRenderingMode === 'precise') {
+        return;
+      }
+      
       // If in linking mode, pass entity (or null) to linking handler
       // Clicking on empty space (entity === null) will unlink or exit linking mode
       if (isLinkingEntity && onEntityLinked) {
@@ -1019,6 +1043,23 @@ export function ThreeScene({
       }
     });
 
+    // NEW: Face selection callback for precise acoustics mode
+    inputHandler.setOnFaceSelected((faceIndex, entityIndex) => {
+      // Highlight face in 3D scene
+      if (faceIndex === -1) {
+        // Clear highlight
+        geometryRenderer.highlightFace(-1, null);
+      } else {
+        geometryRenderer.highlightFace(faceIndex, geometryDataRef.current);
+      }
+      // Notify page.tsx to update selectedGeometry state
+      if (onFaceSelected) {
+        onFaceSelected(faceIndex, entityIndex);
+      } else {
+        console.warn('[ThreeScene] onFaceSelected callback not provided!');
+      }
+    });
+
     // Setup Input Handler data getters
     inputHandler.setGeometryDataGetter(() => geometryDataRef.current);
     inputHandler.setModelEntitiesGetter(() => modelEntitiesRef.current);
@@ -1030,6 +1071,7 @@ export function ThreeScene({
     inputHandler.setFirstPersonModeGetter(() => sceneCoordinator.isFirstPersonMode());
     inputHandler.setSoundSphereMeshesGetter(() => soundSphereManager.getSoundSphereMeshes());
     inputHandler.setTriangleToFaceMapGetter(() => geometryRenderer.getTriangleToFaceMap());
+    inputHandler.setAudioRenderingModeGetter(() => audioRenderingModeRef.current);
 
     // Setup event listeners
     inputHandler.setupClickHandler();
@@ -1290,13 +1332,18 @@ export function ThreeScene({
         return; // Don't select entity in impact modes
       }
 
-      // Priority 2: Linking mode
+      // Priority 2: In precise acoustics mode, don't show entity UI
+      if (audioRenderingMode === 'precise') {
+        return;
+      }
+
+      // Priority 3: Linking mode
       if (isLinkingEntity && onEntityLinked && entity) {
         onEntityLinked(entity);
         return;
       }
 
-      // Priority 3: Normal entity selection
+      // Priority 4: Normal entity selection
       setSelectedEntity(entity);
 
       // If entity has a linked sound, expand the corresponding sound card
@@ -1323,7 +1370,8 @@ export function ThreeScene({
     isPlayingImpact,
     handleImpactPointClick,
     soundscapeData,
-    onSelectSoundCard
+    onSelectSoundCard,
+    audioRenderingMode
   ]);
 
   // ============================================================================
@@ -1355,6 +1403,233 @@ export function ThreeScene({
       entitiesWithLinkedSounds
     );
   }, [selectedEntity, selectedDiverseEntities, geometryData, entitiesWithLinkedSounds]);
+
+  // ============================================================================
+  // Effect - Clear Entity UI in Precise Mode
+  // ============================================================================
+  useEffect(() => {
+    if (audioRenderingMode === 'precise') {
+      // Clear all UI overlays when switching to precise mode
+      setUiOverlays([]);
+      // Also clear selected entity
+      setSelectedEntity(null);
+    }
+  }, [audioRenderingMode]);
+
+  // ============================================================================
+  // Effect - Face Highlighting (Precise Acoustics Mode)
+  // ============================================================================
+  useEffect(() => {
+    const geometryRenderer = geometryRendererRef.current;
+    if (!geometryRenderer) return;
+
+    // Clear highlights when not in precise mode
+    if (audioRenderingMode !== 'precise') {
+      geometryRenderer.highlightFace(-1, null);
+      return;
+    }
+
+    // Highlight faces when selectedGeometry changes from sidebar
+    if (selectedGeometry && geometryData?.face_entity_map) {
+      if (selectedGeometry.type === 'face' && selectedGeometry.faceIndex !== undefined) {
+        // Highlight single face
+        geometryRenderer.highlightFace(selectedGeometry.faceIndex, geometryData);
+      } else if (selectedGeometry.type === 'entity' && selectedGeometry.entityIndex !== undefined) {
+        // Highlight all faces of the entity
+        const facesToHighlight: number[] = [];
+        geometryData.face_entity_map.forEach((entIdx: number, faceIdx: number) => {
+          if (entIdx === selectedGeometry.entityIndex) {
+            facesToHighlight.push(faceIdx);
+          }
+        });
+        if (facesToHighlight.length > 0) {
+          geometryRenderer.highlightFaces(facesToHighlight, geometryData);
+        }
+      } else if (selectedGeometry.type === 'layer' && selectedGeometry.layerId) {
+        // Highlight all faces in entities belonging to this layer
+        const facesToHighlight: number[] = [];
+        const layerEntities = modelEntities.filter(e => e.layer === selectedGeometry.layerId);
+        const entityIndices = new Set(layerEntities.map(e => e.index));
+        
+        geometryData.face_entity_map.forEach((entIdx: number, faceIdx: number) => {
+          if (entityIndices.has(entIdx)) {
+            facesToHighlight.push(faceIdx);
+          }
+        });
+        if (facesToHighlight.length > 0) {
+          geometryRenderer.highlightFaces(facesToHighlight, geometryData);
+        }
+      } else if (selectedGeometry.type === 'global') {
+        // Highlight all faces
+        const allFaces = Array.from({ length: geometryData.faces.length }, (_, i) => i);
+        geometryRenderer.highlightFaces(allFaces, geometryData);
+      } else {
+        // Clear highlight
+        geometryRenderer.highlightFace(-1, null);
+      }
+    } else {
+      // Clear highlight if no selection
+      geometryRenderer.highlightFace(-1, null);
+    }
+  }, [selectedGeometry, geometryData, audioRenderingMode, modelEntities]);
+
+  // ============================================================================
+  // Effect - Material Coloring (Precise Acoustics Mode)
+  // ============================================================================
+  useEffect(() => {
+    console.log('ThreeScene: Material coloring effect triggered', {
+      hasGeometryRenderer: !!geometryRendererRef.current,
+      hasGeometryData: !!geometryData,
+      audioRenderingMode,
+      hasMaterialAssignments: !!materialAssignments,
+      materialAssignmentsSize: materialAssignments?.size
+    });
+
+    const geometryRenderer = geometryRendererRef.current;
+    if (!geometryRenderer || !geometryData || audioRenderingMode !== 'precise' || !materialAssignments) {
+      return;
+    }
+
+    // Get all materials to create color mapping
+    const materialsArray = Array.from(materialAssignments.values())
+      .map(a => a.material)
+      .filter((m, idx, arr) => m && arr.findIndex(mat => mat?.id === m.id) === idx) as any[];
+
+    if (materialsArray.length === 0) return;
+
+    // Create material color map
+    const materialColors = new Map<string, string>();
+    materialsArray.forEach((mat, idx) => {
+      materialColors.set(mat.id, generateMaterialColor(idx, materialsArray.length));
+    });
+
+    // Helper to find material for a face
+    const getMaterialForFace = (faceIndex: number): string | null => {
+      if (!geometryData.face_entity_map) return null;
+      
+      // face_entity_map is an array where index is faceIndex and value is entityIndex
+      const entityIndex = geometryData.face_entity_map[faceIndex];
+      if (entityIndex === undefined) return null;
+
+      // Check face-level assignment
+      for (const [key, assignment] of materialAssignments.entries()) {
+        if (assignment.selection.type === 'face' && 
+            assignment.selection.faceIndex === faceIndex &&
+            assignment.selection.entityIndex === entityIndex) {
+          return assignment.material ? materialColors.get(assignment.material.id) || null : null;
+        }
+      }
+
+      // Check entity-level assignment
+      for (const [key, assignment] of materialAssignments.entries()) {
+        if (assignment.selection.type === 'entity' && 
+            assignment.selection.entityIndex === entityIndex) {
+          return assignment.material ? materialColors.get(assignment.material.id) || null : null;
+        }
+      }
+
+      // Check layer-level assignment
+      const entity = modelEntities.find(e => e.index === entityIndex);
+      if (entity && entity.layer) {
+        for (const [key, assignment] of materialAssignments.entries()) {
+          if (assignment.selection.type === 'layer' && 
+              assignment.selection.layerId === entity.layer) {
+            return assignment.material ? materialColors.get(assignment.material.id) || null : null;
+          }
+        }
+      }
+
+      // Check global assignment
+      for (const [key, assignment] of materialAssignments.entries()) {
+        if (assignment.selection.type === 'global') {
+          return assignment.material ? materialColors.get(assignment.material.id) || null : null;
+        }
+      }
+
+      return null;
+    };
+
+    // Find the main geometry mesh
+    const mesh = geometryRenderer['contentGroup'].children.find(
+      child => child instanceof THREE.Mesh && child.userData.isGeometry === true
+    ) as THREE.Mesh | undefined;
+    
+    if (!mesh) {
+      console.log('ThreeScene: No geometry mesh found in contentGroup');
+      return;
+    }
+
+    console.log('ThreeScene: Applying material colors to', geometryData.faces.length, 'faces');
+
+    const geometry = mesh.geometry;
+    const positionCount = geometry.attributes.position.count;
+    const colors = new Float32Array(positionCount * 3);
+    
+    // Initialize all vertices with default color
+    for (let i = 0; i < positionCount; i++) {
+      colors[i * 3] = 0.9;
+      colors[i * 3 + 1] = 0.9;
+      colors[i * 3 + 2] = 0.9;
+    }
+    
+    let coloredFaces = 0;
+    const index = geometry.index;
+    
+    if (!index) {
+      console.warn('ThreeScene: Geometry has no index buffer');
+      return;
+    }
+    
+    // Iterate through faces and apply material colors
+    for (let faceIndex = 0; faceIndex < geometryData.faces.length; faceIndex++) {
+      const materialColor = getMaterialForFace(faceIndex);
+      
+      if (materialColor) {
+        coloredFaces++;
+        // Parse hex color to RGB
+        const color = new THREE.Color(materialColor);
+        
+        // Each face is a triangle with 3 vertex indices
+        const indexStart = faceIndex * 3;
+        
+        for (let v = 0; v < 3; v++) {
+          const vertexIndex = index.getX(indexStart + v);
+          colors[vertexIndex * 3] = color.r;
+          colors[vertexIndex * 3 + 1] = color.g;
+          colors[vertexIndex * 3 + 2] = color.b;
+        }
+      }
+    }
+
+    console.log('ThreeScene: Colored', coloredFaces, 'faces with materials');
+    
+    // Update geometry colors
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.attributes.color.needsUpdate = true;
+
+    // Ensure material uses vertex colors with flat shading for solid colors
+    if (mesh.material instanceof THREE.MeshStandardMaterial) {
+      mesh.material.vertexColors = true;
+      mesh.material.flatShading = true;
+      mesh.material.needsUpdate = true;
+      geometry.computeVertexNormals(); // Recompute normals for flat shading
+      console.log('ThreeScene: Material vertex colors enabled with flat shading');
+    } else if (Array.isArray(mesh.material)) {
+      // Handle multi-material case
+      mesh.material.forEach(mat => {
+        if (mat instanceof THREE.MeshStandardMaterial) {
+          mat.vertexColors = true;
+          mat.flatShading = true;
+          mat.needsUpdate = true;
+        }
+      });
+      geometry.computeVertexNormals();
+      console.log('ThreeScene: Multi-material vertex colors enabled with flat shading');
+    } else {
+      console.warn('ThreeScene: Material type not supported for vertex colors', mesh.material.type);
+    }
+
+  }, [materialAssignments, geometryData, audioRenderingMode, modelEntities]);
 
   // ============================================================================
   // Effect - Mode Visualization (Nodal Lines)
@@ -2346,37 +2621,44 @@ export function ThreeScene({
 
       {/* Bottom-right control buttons */}
       <div className="absolute bottom-6 right-6 flex flex-col items-center pointer-events-auto" style={{ gap: UI_SCENE_BUTTON.GAP }}>
-        {/* Global Volume Slider (appears above button when visible) */}
-        {showVolumeSlider && (
-          <div data-volume-slider className="mb-1 flex items-center justify-center">
-            <VerticalVolumeSlider
-              value={globalVolume}
-              onChange={handleGlobalVolumeChange}
+        {/* Global Volume Control with Hover Slider */}
+        <div
+          className="flex flex-col items-center"
+          onMouseEnter={handleVolumeMouseEnter}
+          onMouseLeave={handleVolumeMouseLeave}
+        >
+          {/* Global Volume Slider (appears above button on hover) */}
+          {isHoveringVolume && (
+            <div data-volume-slider className="mb-1 flex items-center justify-center">
+              <VerticalVolumeSlider
+                value={globalVolume}
+                onChange={handleGlobalVolumeChange}
+              />
+            </div>
+          )}
+
+          {/* Global Volume Button */}
+          <div data-volume-button>
+            <SceneControlButton
+              onClick={handleToggleVolumeSlider}
+              isActive={globalVolume === 0}
+              activeColor={UI_COLORS.WARNING}
+              title="Global Volume"
+              icon={globalVolume === 0 ? (
+                <Icon>
+                  <path d="M11 5L6 9H2v6h4l5 4V5z" />
+                  <line x1="23" y1="9" x2="17" y2="15" />
+                  <line x1="17" y1="9" x2="23" y2="15" />
+                </Icon>
+              ) : (
+                <Icon>
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                </Icon>
+              )}
             />
           </div>
-        )}
-
-        {/* Global Volume Button */}
-        <div data-volume-button>
-          <SceneControlButton
-            onClick={handleToggleVolumeSlider}
-            isActive={globalVolume === 0}
-            activeColor={UI_COLORS.WARNING}
-            title="Global Volume"
-            icon={globalVolume === 0 ? (
-              <Icon>
-                <path d="M11 5L6 9H2v6h4l5 4V5z" />
-                <line x1="23" y1="9" x2="17" y2="15" />
-                <line x1="17" y1="9" x2="23" y2="15" />
-              </Icon>
-            ) : (
-              <Icon>
-                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-                <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-              </Icon>
-            )}
-          />
         </div>
 
         {/* Reset Zoom Button */}

@@ -18,10 +18,12 @@ import type {
   DetectedSound,
   LibrarySearchResult,
   ReceiverData,
+  EntityData,
 } from "./index";
 import type { AuralizationConfig, ResonanceAudioConfig, ResonanceRoomDimensions, ResonanceRoomMaterial } from "./audio";
 import type { ModalAnalysisResult, ModeVisualizationState } from "./modal";
 import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSelector";
+import type { SelectedGeometry, AcousticMaterial } from "./materials";
 
 /**
  * Sidebar Component Props
@@ -153,6 +155,14 @@ export interface SidebarProps {
   // Audio Orchestrator props (NEW)
   audioRenderingMode?: AudioRenderingMode;
   onAudioRenderingModeChange?: (mode: AudioRenderingMode) => void;
+  // Material assignment props (NEW)
+  modelType?: '3dm' | 'obj' | 'ifc' | null;
+  selectedGeometry?: SelectedGeometry | null;
+  onSelectGeometry?: (selection: SelectedGeometry | null) => void;
+  onAssignMaterial?: (selection: SelectedGeometry, material: AcousticMaterial | null) => void;
+  // Choras Simulation props (NEW)
+  onIRImported?: () => void;
+  irRefreshTrigger?: number;
 }
 
 /**

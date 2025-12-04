@@ -29,6 +29,9 @@ export class GeometryRenderer {
   // Triangle to face mapping for click detection
   private triangleToFaceMap: number[] | null = null;
 
+  // Face highlight for precise acoustics mode
+  private faceHighlightMesh: THREE.Mesh | null = null;
+
   constructor(
     scene: THREE.Scene,
     contentGroup: THREE.Group,
@@ -391,6 +394,127 @@ export class GeometryRenderer {
   }
 
   /**
+   * Highlight a single face (for precise acoustics mode)
+   * @param faceIndex - Index of the face to highlight (-1 to clear)
+   * @param geometryData - Geometry data containing vertices and faces
+   */
+  public highlightFace(faceIndex: number, geometryData: CompasGeometry | null): void {
+    // Clear existing face highlight
+    if (this.faceHighlightMesh) {
+      disposeMesh(this.faceHighlightMesh);
+      this.scene.remove(this.faceHighlightMesh);
+      this.faceHighlightMesh = null;
+    }
+
+    // If faceIndex is -1 or no geometry data, just clear and return
+    if (faceIndex === -1 || !geometryData || !geometryData.faces || !geometryData.vertices) {
+      return;
+    }
+
+    // Get the face vertices
+    const face = geometryData.faces[faceIndex];
+    if (!face || face.length < 3) {
+      console.warn('[GeometryRenderer] Invalid face index or face data:', faceIndex);
+      return;
+    }
+
+    // Triangulate the face (it might be a polygon with more than 3 vertices)
+    const faceIndices = triangulate([face]);
+    
+    // Create geometry for the face
+    const faceGeom = new THREE.BufferGeometry();
+    const positions = new Float32Array(geometryData.vertices.flat());
+    faceGeom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    faceGeom.setIndex(faceIndices);
+    faceGeom.computeVertexNormals();
+
+    // Create material for face highlight (secondary color - sky blue)
+    const highlightMaterial = new THREE.MeshStandardMaterial({
+      color: 0x0ea5e9, // UI_COLORS.SECONDARY
+      roughness: 0.3,
+      metalness: 0.0,
+      transparent: true,
+      opacity: 0.7,
+      emissive: 0x0ea5e9,
+      emissiveIntensity: 0.6,
+      side: THREE.DoubleSide,
+      depthTest: true,
+      depthWrite: false
+    });
+
+    // Create mesh
+    this.faceHighlightMesh = new THREE.Mesh(faceGeom, highlightMaterial);
+    this.faceHighlightMesh.renderOrder = 1001; // Render on top of everything
+    this.scene.add(this.faceHighlightMesh);
+
+    console.log('[GeometryRenderer] Face highlighted:', faceIndex);
+  }
+
+  /**
+   * Highlight multiple faces (for entity/layer selection in precise acoustics mode)
+   * @param faceIndices - Array of face indices to highlight
+   * @param geometryData - Geometry data containing vertices and faces
+   */
+  public highlightFaces(faceIndices: number[], geometryData: CompasGeometry | null): void {
+    // Clear existing face highlight
+    if (this.faceHighlightMesh) {
+      disposeMesh(this.faceHighlightMesh);
+      this.scene.remove(this.faceHighlightMesh);
+      this.faceHighlightMesh = null;
+    }
+
+    // If no faces or no geometry data, just clear and return
+    if (!faceIndices || faceIndices.length === 0 || !geometryData || !geometryData.faces || !geometryData.vertices) {
+      return;
+    }
+
+    // Collect all faces to highlight
+    const facesToHighlight: number[][] = [];
+    faceIndices.forEach(faceIndex => {
+      if (faceIndex >= 0 && faceIndex < geometryData.faces.length) {
+        const face = geometryData.faces[faceIndex];
+        if (face && face.length >= 3) {
+          facesToHighlight.push(face);
+        }
+      }
+    });
+
+    if (facesToHighlight.length === 0) {
+      return;
+    }
+
+    // Triangulate all faces
+    const allIndices = triangulate(facesToHighlight);
+    
+    // Create geometry for all faces
+    const faceGeom = new THREE.BufferGeometry();
+    const positions = new Float32Array(geometryData.vertices.flat());
+    faceGeom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    faceGeom.setIndex(allIndices);
+    faceGeom.computeVertexNormals();
+
+    // Create material for face highlight (secondary color - sky blue)
+    const highlightMaterial = new THREE.MeshStandardMaterial({
+      color: 0x0ea5e9, // UI_COLORS.SECONDARY
+      roughness: 0.3,
+      metalness: 0.0,
+      transparent: true,
+      opacity: 0.7,
+      emissive: 0x0ea5e9,
+      emissiveIntensity: 0.6,
+      side: THREE.DoubleSide,
+      depthTest: true,
+      depthWrite: false
+    });
+
+    // Create mesh
+    this.faceHighlightMesh = new THREE.Mesh(faceGeom, highlightMaterial);
+    this.faceHighlightMesh.renderOrder = 1001; // Render on top of everything
+    this.scene.add(this.faceHighlightMesh);
+
+  }
+
+  /**
    * Dispose of all resources
    */
   public dispose(): void {
@@ -404,6 +528,12 @@ export class GeometryRenderer {
       disposeMesh(this.remainingMesh);
       this.scene.remove(this.remainingMesh);
       this.remainingMesh = null;
+    }
+
+    if (this.faceHighlightMesh) {
+      disposeMesh(this.faceHighlightMesh);
+      this.scene.remove(this.faceHighlightMesh);
+      this.faceHighlightMesh = null;
     }
 
     // Clear diverse highlights (meshes and line segments)

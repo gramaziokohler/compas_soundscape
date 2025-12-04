@@ -19,6 +19,7 @@ import { useModalImpact } from "@/hooks/useModalImpact";
 import { apiService } from "@/services/api";
 import { API_BASE_URL } from "@/lib/constants";
 import type { LoadTab, SoundGenerationConfig } from "@/types";
+import type { SelectedGeometry, AcousticMaterial } from "@/types/materials";
 import { AudioStatusDisplay } from "@/components/audio/AudioStatusDisplay";
 import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSelector";
 
@@ -43,7 +44,8 @@ function HomeContent() {
   // IR Library state - store both ID and full metadata for reload capability
   const [selectedIRId, setSelectedIRId] = useState<string | null>(null);
   const [selectedIRMetadata, setSelectedIRMetadata] = useState<any | null>(null);
-  
+  const [irRefreshTrigger, setIrRefreshTrigger] = useState(0);
+
   // Bounding box visualization state
   const [showBoundingBox, setShowBoundingBox] = useState(false);
   const [refreshBoundingBoxTrigger, setRefreshBoundingBoxTrigger] = useState(0);
@@ -81,6 +83,28 @@ function HomeContent() {
   const [isLinkingEntity, setIsLinkingEntity] = useState(false);
   const [linkingConfigIndex, setLinkingConfigIndex] = useState<number | null>(null);
   const [selectedCardIndex, setSelectedCardIndex] = useState<number | null>(null);
+
+  // Material assignment state (NEW)
+  const [selectedGeometry, setSelectedGeometry] = useState<SelectedGeometry | null>(null);
+  const [modelType, setModelType] = useState<'3dm' | 'obj' | 'ifc' | null>(null);
+
+  // Detect model type from file extension
+  useEffect(() => {
+    if (fileUpload.modelFile) {
+      const fileName = fileUpload.modelFile.name.toLowerCase();
+      if (fileName.endsWith('.3dm')) {
+        setModelType('3dm');
+      } else if (fileName.endsWith('.obj')) {
+        setModelType('obj');
+      } else if (fileName.endsWith('.ifc')) {
+        setModelType('ifc');
+      } else {
+        setModelType(null);
+      }
+    } else {
+      setModelType(null);
+    }
+  }, [fileUpload.modelFile]);
 
   // Clear analyzed entities when model changes
   useEffect(() => {
@@ -148,10 +172,10 @@ function HomeContent() {
 
   // Auto-load model when modelFile changes
   useEffect(() => {
-    if (fileUpload.modelFile && !fileUpload.isUploading && !fileUpload.isAnalyzingModel && fileUpload.modelEntities.length === 0) {
+    if (fileUpload.modelFile && !fileUpload.isUploading && !fileUpload.geometryData) {
       fileUpload.handleUploadModel();
     }
-  }, [fileUpload.modelFile, fileUpload.isUploading, fileUpload.isAnalyzingModel, fileUpload.modelEntities.length, fileUpload.handleUploadModel]);
+  }, [fileUpload.modelFile, fileUpload.isUploading, fileUpload.geometryData]);
 
   // Handle sound deletion
   const handleDeleteSound = useCallback((soundId: string, promptIdx: number) => {
@@ -351,6 +375,16 @@ function HomeContent() {
   }, [audioOrchestrator]);
 
   /**
+   * Handle IR imported from Choras simulation
+   * Triggers a refresh of the IR library list
+   */
+  const handleIRImported = useCallback(() => {
+    // Increment trigger to force ImpulseResponseUpload to reload its list
+    setIrRefreshTrigger(prev => prev + 1);
+    console.log('[Page] IR imported from Choras simulation, triggering IR library refresh');
+  }, []);
+
+  /**
    * Clear/deselect the current IR (disable auralization)
    */
   const handleClearIR = useCallback(() => {
@@ -370,6 +404,46 @@ function HomeContent() {
     soundGen.handleResetToDefaults();
     audioNormalization.reset();
   }, [soundGen.handleResetToDefaults, audioNormalization.reset]);
+
+  // Handler: Material assignment selection (NEW)
+  const handleSelectGeometry = useCallback((selection: SelectedGeometry | null) => {
+    setSelectedGeometry(selection);
+  }, []);
+
+  // Handler: Face selected in 3D scene (NEW)
+  const handleFaceSelected = useCallback((faceIndex: number, entityIndex: number) => {
+    if (faceIndex === -1) {
+      // Deselected
+      handleSelectGeometry(null);
+    } else {
+      // Face selected - find the layer if applicable
+      const entity = fileUpload.modelEntities.find(e => e.index === entityIndex);
+      const layerId = entity?.layer || undefined;
+
+      const selection: SelectedGeometry = {
+        type: 'face',
+        faceIndex,
+        entityIndex,
+        layerId
+      };
+      handleSelectGeometry(selection);
+    }
+  }, [fileUpload.modelEntities, handleSelectGeometry]);
+
+  // Handler: Material assignment (NEW)
+  const [materialAssignments, setMaterialAssignments] = useState<Map<string, { selection: SelectedGeometry, material: AcousticMaterial | null }>>(new Map());
+  
+  const handleAssignMaterial = useCallback((selection: SelectedGeometry, material: AcousticMaterial | null) => {
+    console.log('[Page] Material assigned:', { selection, material });
+    
+    // Store assignment with a unique key
+    const key = `${selection.type}-${selection.layerId ?? ''}-${selection.entityIndex ?? ''}-${selection.faceIndex ?? ''}`;
+    setMaterialAssignments(prev => {
+      const newMap = new Map(prev);
+      newMap.set(key, { selection, material });
+      return newMap;
+    });
+  }, []);
 
   // Handler: Audio Rendering Mode Change (unified handler for all 3 modes)
   const handleAudioRenderingModeChange = useCallback(async (mode: AudioRenderingMode) => {
@@ -617,6 +691,15 @@ function HomeContent() {
         // Audio Orchestrator props (TODO: Phase 1-6)
         audioRenderingMode={audioRenderingMode}
         onAudioRenderingModeChange={handleAudioRenderingModeChange}
+
+        // Material assignment props (NEW)
+        modelType={modelType}
+        geometryData={fileUpload.geometryData}
+        selectedGeometry={selectedGeometry}
+        onSelectGeometry={handleSelectGeometry}
+        onAssignMaterial={handleAssignMaterial}
+        onIRImported={handleIRImported}
+        irRefreshTrigger={irRefreshTrigger}
       />
 
       <main className="flex-1 overflow-hidden relative">
@@ -688,6 +771,9 @@ function HomeContent() {
           onNormalizeImpulseResponsesChange={handleToggleNormalize}
           onAudioModelChange={soundGen.setAudioModel}
           onResetAdvancedSettings={handleResetAdvancedSettings}
+          selectedGeometry={selectedGeometry}
+          onFaceSelected={handleFaceSelected}
+          materialAssignments={materialAssignments}
           className="w-full h-full"
         />
       </main>

@@ -135,6 +135,31 @@ export const apiService = {
     }
   },
 
+  // Analyze OBJ File
+  async analyzeObj(file: File): Promise<{ entities: any[] }> {
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/analyze-obj`,
+        {
+          method: 'POST',
+          body: formData
+        },
+        'Analyze OBJ file'
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to analyze OBJ file');
+      }
+
+      return await response.json();
+    } catch (error) {
+      handleApiError(error, 'Analyze OBJ file');
+    }
+  },
+
   // Generate Text/Prompts
   async generateText(data: {
     prompt?: string;
@@ -325,6 +350,175 @@ export const apiService = {
       return response.json();
     } catch (error) {
       handleApiError(error, 'Get modal materials');
+    }
+  },
+
+  // Choras Acoustic Simulation
+
+  /**
+   * Get available materials from Choras library
+   */
+  async getChorasMaterials(): Promise<Array<{ id: number; name: string; description?: string; category?: string }>> {
+    try {
+      // Import CHORAS_API_BASE from constants
+      const { CHORAS_API_BASE } = await import('@/lib/constants');
+      const response = await fetchWithErrorHandling(
+        `${CHORAS_API_BASE}/materials`,
+        undefined,
+        'Get Choras materials'
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch Choras materials');
+      }
+
+      return response.json();
+    } catch (error) {
+      handleApiError(error, 'Get Choras materials');
+    }
+  },
+
+  /**
+   * Run full Choras simulation workflow
+   * @param file - Geometry file (.obj)
+   * @param materialId - Material ID from Choras library
+   * @param simulationName - Name for the simulation
+   * @param simulationSettings - Simulation parameters
+   * @returns Simulation result data
+   */
+  async runChorasSimulation(
+    file: File,
+    materialId: number,
+    simulationName: string,
+    simulationSettings?: {
+      de_c0?: number;
+      de_ir_length?: number;
+      de_lc?: number;
+      edt?: number;
+      sim_len_type?: 'ir_length' | 'edt';
+    }
+  ): Promise<{
+    simulationId: number;
+    simulationRunId: number;
+    modelId: number;
+    percentage: number;
+    status: string;
+  }> {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('materialId', materialId.toString());
+      formData.append('simulationName', simulationName);
+      
+      if (simulationSettings) {
+        formData.append('simulationSettings', JSON.stringify(simulationSettings));
+      }
+
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/choras/run-simulation`,
+        {
+          method: 'POST',
+          body: formData
+        },
+        'Run Choras simulation'
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Simulation failed' }));
+        throw new Error(error.detail || 'Simulation failed');
+      }
+
+      return response.json();
+    } catch (error) {
+      handleApiError(error, 'Run Choras simulation');
+    }
+  },
+
+  /**
+   * Get Choras simulation status and progress
+   */
+  async getChorasSimulationStatus(simulationRunId: number): Promise<{
+    id: number;
+    status: string;
+    percentage: number;
+    completedAt: string | null;
+  }> {
+    try {
+      const { CHORAS_API_BASE } = await import('@/lib/constants');
+      const response = await fetchWithErrorHandling(
+        `${CHORAS_API_BASE}/simulations/run`,
+        undefined,
+        'Get Choras simulation status'
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch simulation status');
+      }
+
+      const allRuns = await response.json();
+      const runInfo = allRuns.find((run: any) => run.id === simulationRunId);
+
+      if (!runInfo) {
+        throw new Error('Simulation run not found');
+      }
+
+      return runInfo;
+    } catch (error) {
+      handleApiError(error, 'Get Choras simulation status');
+    }
+  },
+
+  /**
+   * Cancel a running Choras simulation
+   */
+  async cancelChorasSimulation(simulationId: number): Promise<void> {
+    try {
+      const { CHORAS_API_BASE } = await import('@/lib/constants');
+      const response = await fetchWithErrorHandling(
+        `${CHORAS_API_BASE}/simulations/cancel`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ simulationId })
+        },
+        'Cancel Choras simulation'
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to cancel simulation');
+      }
+    } catch (error) {
+      handleApiError(error, 'Cancel Choras simulation');
+    }
+  },
+
+  /**
+   * Save Choras simulation results to backend
+   */
+  async saveChorasResults(simulationId: number): Promise<{
+    wav_path: string;
+    json_path: string;
+    message: string;
+  }> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/choras/save-results`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ simulationId })
+        },
+        'Save Choras results'
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Failed to save results' }));
+        throw new Error(error.detail || 'Failed to save results');
+      }
+
+      return response.json();
+    } catch (error) {
+      handleApiError(error, 'Save Choras results');
     }
   }
 };

@@ -1,11 +1,14 @@
 import { useState, useCallback } from 'react';
 import { apiService } from '@/services/api';
 import { calculateGeometryBounds, calculateScaleForSounds } from '@/lib/utils';
-import { useApiErrorHandler } from '@/hooks/useApiErrorHandler';
 import type { CompasGeometry } from '@/types';
 
 export function useFileUpload() {
-  const handleError = useApiErrorHandler();
+  // Simple error handler that doesn't require ErrorProvider
+  const handleError = useCallback((err: any, message: string) => {
+    console.error(message, err);
+    // Error is also stored in uploadError state for UI display
+  }, []);
   // Separate states for 3D model and audio files
   const [modelFile, setModelFile] = useState<File | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
@@ -13,7 +16,6 @@ export function useFileUpload() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isDraggingModel, setIsDraggingModel] = useState(false);
-  const [isDraggingAudio, setIsDraggingAudio] = useState(false);
   const [modelEntities, setModelEntities] = useState<any[]>([]);
   const [isAnalyzingModel, setIsAnalyzingModel] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState('');
@@ -23,7 +25,7 @@ export function useFileUpload() {
 
   // Helper functions to check file types
   const is3DModelFile = (filename: string) => {
-    return /\.(ifc|3dm)$/i.test(filename);
+    return /\.(ifc|3dm|obj)$/i.test(filename);
   };
 
   const isAudioFile = (filename: string) => {
@@ -99,6 +101,7 @@ export function useFileUpload() {
   const analyzeModel = useCallback(async (uploadedFile: File) => {
     const is3dm = uploadedFile.name.toLowerCase().endsWith('.3dm');
     const isIfc = uploadedFile.name.toLowerCase().endsWith('.ifc');
+    const isObj = uploadedFile.name.toLowerCase().endsWith('.obj');
 
     if (is3dm) {
       setIsAnalyzingModel(true);
@@ -125,6 +128,20 @@ export function useFileUpload() {
       } catch (error) {
         console.error('IFC analysis error:', error);
         setAnalysisProgress('Failed to analyze IFC file');
+      } finally {
+        setIsAnalyzingModel(false);
+      }
+    } else if (isObj) {
+      setIsAnalyzingModel(true);
+      setAnalysisProgress('Analyzing OBJ groups...');
+      try {
+        const analyzed = await apiService.analyzeObj(uploadedFile);
+        setModelEntities(analyzed.entities);
+        setAnalysisProgress(`Found ${analyzed.entities.length} groups`);
+        console.log('OBJ analysis complete:', analyzed.entities.length, 'groups');
+      } catch (error) {
+        console.error('OBJ analysis error:', error);
+        setAnalysisProgress('Failed to analyze OBJ file');
       } finally {
         setIsAnalyzingModel(false);
       }

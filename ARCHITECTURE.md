@@ -19,10 +19,12 @@ compas_soundscape/
 │   ├── routers/
 │   │   ├── __init__.py
 │   │   ├── analysis.py              # 3D geometry analysis endpoints
+│   │   ├── choras.py                # Choras acoustic simulation integration
 │   │   ├── generation.py            # LLM text/prompt generation endpoints
 │   │   ├── impulse_responses.py     # IR upload/list/delete endpoints
 │   │   ├── library_search.py        # Sound library search (BBC, Freesound)
 │   │   ├── modal_analysis.py        # Modal analysis endpoints
+│   │   ├── pyroomacoustics_router.py # Pyroomacoustics acoustic simulation
 │   │   ├── reprocess.py             # Audio reprocessing (denoising)
 │   │   ├── sed_analysis.py          # Sound Event Detection endpoints
 │   │   ├── sounds.py                # Audio generation endpoints
@@ -36,6 +38,7 @@ compas_soundscape/
 │   │   ├── impulse_response_service.py  # IR processing & channel extraction
 │   │   ├── llm_service.py           # Google Gemini LLM
 │   │   ├── modal_analysis_service.py    # Modal analysis & mode shape visualization
+│   │   ├── pyroomacoustics_service.py   # Pyroomacoustics acoustic simulation (ISM, RT60, EDT, etc.)
 │   │   └── sed_service.py           # Sound Event Detection
 │   ├── utils/
 │   │   ├── __init__.py
@@ -46,7 +49,8 @@ compas_soundscape/
 │   ├── static/
 │   │   ├── sounds/
 │   │   │   └── generated/           # Generated audio files (served via /static/)
-│   │   └── impulse_responses/       # NEW - Uploaded IR files (1/2/4/16 channels)
+│   │   ├── impulse_responses/       # Uploaded IR files (1/2/4/16 channels)
+│   │   └── pyroomacoustics_rir/     # Pyroomacoustics generated RIR files
 │   ├── temp/                        # Temporary processing files
 │   ├── temp_uploads/                # Uploaded files staging area
 │   └── temp_library_downloads/      # Downloaded library audio files

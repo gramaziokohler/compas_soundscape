@@ -5,9 +5,77 @@ from compas.datastructures import Mesh
 import rhino3dm
 
 from utils.helpers import rotate_y_up_to_z_up
-from config.constants import SAMPLE_IFC_FILE_PATH, TEMP_UPLOADS_DIR
+from config.constants import SAMPLE_IFC_FILE_PATH, TEMP_UPLOADS_DIR, OBJ_ROTATE_Y_TO_Z
 
 router = APIRouter()
+
+
+def parse_obj_groups(file_path: str):
+    """
+    Parse OBJ file and extract named groups/objects with their geometry.
+    Returns list of groups with vertices, faces, and bounding boxes.
+    """
+    groups = []
+    current_group = None
+    vertices = []  # Global vertex list (1-indexed in OBJ)
+
+    with open(file_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+
+            parts = line.split()
+            if not parts:
+                continue
+
+            # Vertex definition
+            if parts[0] == 'v':
+                x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
+                vertices.append([x, y, z])
+
+            # Object/Group definition
+            elif parts[0] in ('o', 'g'):
+                # Save previous group if exists
+                if current_group and current_group['faces']:
+                    groups.append(current_group)
+
+                # Start new group
+                name = ' '.join(parts[1:]) if len(parts) > 1 else f"Object_{len(groups)}"
+                current_group = {
+                    'name': name,
+                    'faces': []
+                }
+
+            # Face definition
+            elif parts[0] == 'f':
+                # Initialize default group if no group was specified
+                if current_group is None:
+                    current_group = {
+                        'name': 'default',
+                        'faces': []
+                    }
+
+                # Parse face (format: f v1 v2 v3 or f v1/vt1/vn1 v2/vt2/vn2 v3/vt3/vn3)
+                face_vertices = []
+                for vertex_str in parts[1:]:
+                    # Get only the vertex index (ignore texture/normal)
+                    vertex_idx = int(vertex_str.split('/')[0]) - 1  # OBJ is 1-indexed
+                    face_vertices.append(vertex_idx)
+                current_group['faces'].append(face_vertices)
+
+    # Add last group
+    if current_group and current_group['faces']:
+        groups.append(current_group)
+
+    # If no groups were defined, treat entire mesh as one group
+    if not groups and vertices:
+        groups.append({
+            'name': 'Mesh',
+            'faces': []
+        })
+
+    return groups, vertices
 
 
 @router.get("/api/analyze-ifc")
@@ -216,6 +284,92 @@ async def analyze_3dm(file: UploadFile = File(...)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to analyze 3DM: {str(e)}")
+    finally:
+        # Cleanup
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+@router.post("/api/analyze-obj")
+async def analyze_obj(file: UploadFile = File(...)):
+    """
+    Analyzes an OBJ model and extracts groups/objects for sound generation.
+    Returns: list of groups with their name, position, and geometry bounds.
+    """
+    os.makedirs(TEMP_UPLOADS_DIR, exist_ok=True)
+    temp_path = os.path.join(TEMP_UPLOADS_DIR, file.filename)
+
+    try:
+        # Save uploaded file
+        with open(temp_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+
+        # Parse OBJ file to extract groups
+        groups, vertices = parse_obj_groups(temp_path)
+
+        if not vertices:
+            return {"entities": []}
+
+        analyzed_entities = []
+
+        print(f"Analyzing {len(groups)} groups from OBJ file...")
+
+        for i, group in enumerate(groups):
+            try:
+                # Get vertices used by this group
+                if not group['faces']:
+                    continue
+
+                # Find all unique vertex indices used in this group
+                vertex_indices = set()
+                for face in group['faces']:
+                    vertex_indices.update(face)
+
+                if not vertex_indices:
+                    continue
+
+                # Get the actual vertex coordinates for this group
+                group_vertices = [vertices[idx] for idx in vertex_indices]
+
+                # Calculate bounding box
+                min_coords = [min(v[j] for v in group_vertices) for j in range(3)]
+                max_coords = [max(v[j] for v in group_vertices) for j in range(3)]
+
+                # Calculate centroid (center of bounding box)
+                centroid = [(min_coords[j] + max_coords[j]) / 2 for j in range(3)]
+
+                # Conditionally rotate coordinates from Y-up to Z-up based on OBJ_ROTATE_Y_TO_Z constant
+                if OBJ_ROTATE_Y_TO_Z:
+                    rotated_centroid = rotate_y_up_to_z_up(centroid)
+                    rotated_min = rotate_y_up_to_z_up(min_coords)
+                    rotated_max = rotate_y_up_to_z_up(max_coords)
+                else:
+                    rotated_centroid = centroid
+                    rotated_min = min_coords
+                    rotated_max = max_coords
+
+                analyzed_entities.append({
+                    "index": i,
+                    "type": "OBJGroup",
+                    "name": group['name'],
+                    "position": rotated_centroid,
+                    "bounds": {
+                        "min": rotated_min,
+                        "max": rotated_max,
+                        "center": rotated_centroid
+                    }
+                })
+
+            except Exception as e:
+                print(f"Skipping group {i} during analysis: {e}")
+                continue
+
+        print(f"Analyzed {len(analyzed_entities)} groups with geometry")
+        return {"entities": analyzed_entities}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to analyze OBJ: {str(e)}")
     finally:
         # Cleanup
         if os.path.exists(temp_path):

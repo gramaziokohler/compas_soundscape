@@ -102,6 +102,52 @@ DISPLAY_NAME_WORD_COUNT = 3  # Number of words to extract for display name
 WINDOWS_ILLEGAL_FILENAME_CHARS = r'<>:"/\|?*'  # Windows illegal filename characters
 
 # ============================================================================
+# Pyroomacoustics Acoustic Simulation Configuration
+# ============================================================================
+
+# Default Simulation Settings
+PYROOMACOUSTICS_DEFAULT_FS = 48000  # Matches AUDIO_SAMPLE_RATE
+PYROOMACOUSTICS_DEFAULT_MAX_ORDER = None  # Auto-calculate based on room/materials (None = auto)
+PYROOMACOUSTICS_DEFAULT_RIR_DURATION = 1.0  # seconds
+PYROOMACOUSTICS_USE_RAY_TRACING = False
+
+# Default Room (classroom)
+PYROOMACOUSTICS_DEFAULT_WIDTH = 8.0  # meters
+PYROOMACOUSTICS_DEFAULT_LENGTH = 10.0
+PYROOMACOUSTICS_DEFAULT_HEIGHT = 3.0
+
+# Default Positions
+PYROOMACOUSTICS_DEFAULT_SOURCE_X = 2.0
+PYROOMACOUSTICS_DEFAULT_SOURCE_Y = 2.0
+PYROOMACOUSTICS_DEFAULT_SOURCE_Z = 1.5
+PYROOMACOUSTICS_DEFAULT_RECEIVER_X = 6.0
+PYROOMACOUSTICS_DEFAULT_RECEIVER_Y = 6.0
+PYROOMACOUSTICS_DEFAULT_RECEIVER_Z = 1.6  # Ear height
+
+# Parameter Ranges
+PYROOMACOUSTICS_MAX_ORDER_MIN = 0  # Direct path only
+PYROOMACOUSTICS_MAX_ORDER_MAX = 20
+
+# RIR Export
+PYROOMACOUSTICS_RIR_DIR = str(BACKEND_DIR / "static" / "pyroomacoustics_rir")
+PYROOMACOUSTICS_RIR_URL_PREFIX = "/static/pyroomacoustics_rir"
+
+# Material Database (11 materials)
+PYROOMACOUSTICS_MATERIALS = {
+    "brick_unglazed": {"absorption": 0.03, "description": "Brick, unglazed", "category": "Wall"},
+    "concrete_rough": {"absorption": 0.02, "description": "Concrete, rough", "category": "Wall"},
+    "plaster_smooth": {"absorption": 0.03, "description": "Plaster on concrete", "category": "Wall"},
+    "wood_panel": {"absorption": 0.15, "description": "Wood paneling", "category": "Wall"},
+    "glass_window": {"absorption": 0.18, "description": "Glass, large pane", "category": "Wall"},
+    "acoustic_tile": {"absorption": 0.70, "description": "Acoustic ceiling tiles", "category": "Ceiling"},
+    "carpet_heavy": {"absorption": 0.60, "description": "Carpet, heavy", "category": "Floor"},
+    "wood_floor": {"absorption": 0.10, "description": "Wood floor", "category": "Floor"},
+    "concrete_floor": {"absorption": 0.02, "description": "Concrete floor", "category": "Floor"},
+    "curtains_medium": {"absorption": 0.50, "description": "Medium curtains", "category": "Soft"},
+    "audience_seated": {"absorption": 0.80, "description": "Audience in seats", "category": "Soft"},
+}
+
+# ============================================================================
 # Directory Configuration - Audio
 # ============================================================================
 
@@ -200,6 +246,9 @@ MAX_EXTENSION_LENGTH = 5  # Maximum extension length validation
 # ============================================================================
 # Geometry Service Configuration
 # ============================================================================
+
+# Coordinate System Configuration
+OBJ_ROTATE_Y_TO_Z = False  # Apply Y-up to Z-up rotation for OBJ files (disabled by default)
 
 # Sphere Mesh Configuration
 SPHERE_MESH_RESOLUTION_U = 16  # Sphere mesh resolution (u parameter)
@@ -313,3 +362,43 @@ SUPPORTED_IR_CHANNELS = [1, 2, 4, 9, 16]  # Mono, Binaural, FOA, SOA, TOA
 
 # Maximum IR channels to extract from files (e.g., from Odeon)
 MAX_IR_CHANNELS = 16
+
+# ============================================================================
+# Choras Acoustic Simulation Configuration
+# ============================================================================
+
+# Choras API Configuration
+CHORAS_API_BASE = "http://localhost:5001"
+
+# Default Simulation Settings (DE - Diffusion Equation Method)
+CHORAS_DEFAULT_C0 = 343  # Speed of sound in m/s
+CHORAS_DEFAULT_IR_LENGTH = 0.2  # Impulse response length in seconds
+CHORAS_DEFAULT_LC = 1.0  # Characteristic length in meters
+CHORAS_DEFAULT_EDT = 35  # Energy decay threshold in dB
+CHORAS_DEFAULT_SIM_LEN_TYPE = "ir_length"  # Simulation length type: "ir_length" or "edt"
+
+# Simulation Length Type Options
+CHORAS_SIM_LEN_TYPE_IR = "ir_length"
+CHORAS_SIM_LEN_TYPE_EDT = "edt"
+
+# Default Source/Receiver Positions (in meters)
+CHORAS_DEFAULT_SOURCE_X = 1.0
+CHORAS_DEFAULT_SOURCE_Y = 1.0
+CHORAS_DEFAULT_SOURCE_Z = 1.0
+CHORAS_DEFAULT_RECEIVER_X = 3.0
+CHORAS_DEFAULT_RECEIVER_Y = 3.0
+CHORAS_DEFAULT_RECEIVER_Z = 1.0
+
+# Simulation Parameter Ranges
+CHORAS_C0_MIN = 300  # Minimum speed of sound (m/s)
+CHORAS_C0_MAX = 400  # Maximum speed of sound (m/s)
+CHORAS_IR_LENGTH_MIN = 0.05  # Minimum IR length (seconds)
+CHORAS_IR_LENGTH_MAX = 5.0  # Maximum IR length (seconds)
+CHORAS_LC_MIN = 0.1  # Minimum characteristic length (meters)
+CHORAS_LC_MAX = 10.0  # Maximum characteristic length (meters)
+CHORAS_EDT_MIN = 20  # Minimum EDT (dB)
+CHORAS_EDT_MAX = 60  # Maximum EDT (dB)
+
+# Polling Configuration
+CHORAS_POLL_INTERVAL = 2000  # Milliseconds between status checks
+CHORAS_TIMEOUT = 600000  # Maximum simulation time (10 minutes in ms)
