@@ -106,23 +106,23 @@ WINDOWS_ILLEGAL_FILENAME_CHARS = r'<>:"/\|?*'  # Windows illegal filename charac
 # ============================================================================
 
 # Default Simulation Settings
-PYROOMACOUSTICS_DEFAULT_FS = 48000  # Matches AUDIO_SAMPLE_RATE
-PYROOMACOUSTICS_DEFAULT_MAX_ORDER = None  # Auto-calculate based on room/materials (None = auto)
+PYROOMACOUSTICS_DEFAULT_MAX_ORDER = 15  # Default max_order for image source method
+PYROOMACOUSTICS_DEFAULT_RAY_TRACING = False  # Default ray tracing state
+PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION = False  # Default air absorption state
 PYROOMACOUSTICS_DEFAULT_RIR_DURATION = 1.0  # seconds
-PYROOMACOUSTICS_USE_RAY_TRACING = False
 
-# Default Room (classroom)
-PYROOMACOUSTICS_DEFAULT_WIDTH = 8.0  # meters
-PYROOMACOUSTICS_DEFAULT_LENGTH = 10.0
-PYROOMACOUSTICS_DEFAULT_HEIGHT = 3.0
-
-# Default Positions
-PYROOMACOUSTICS_DEFAULT_SOURCE_X = 2.0
-PYROOMACOUSTICS_DEFAULT_SOURCE_Y = 2.0
-PYROOMACOUSTICS_DEFAULT_SOURCE_Z = 1.5
-PYROOMACOUSTICS_DEFAULT_RECEIVER_X = 6.0
-PYROOMACOUSTICS_DEFAULT_RECEIVER_Y = 6.0
-PYROOMACOUSTICS_DEFAULT_RECEIVER_Z = 1.6  # Ear height
+# Ray Tracing Configuration (Hybrid ISM/Ray Tracing)
+PYROOMACOUSTICS_RAY_TRACING_N_RAYS = 10000  # Number of rays to shoot (default)
+PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MIN = 1000  # Minimum number of rays
+PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MAX = 50000  # Maximum number of rays
+PYROOMACOUSTICS_RAY_TRACING_RECEIVER_RADIUS = 0.5  # Sphere radius around microphone (meters)
+PYROOMACOUSTICS_RAY_TRACING_ENERGY_THRES = 1e-7  # Threshold for ray termination
+PYROOMACOUSTICS_RAY_TRACING_TIME_THRES = 10.0  # Maximum ray flight time (seconds)
+PYROOMACOUSTICS_RAY_TRACING_HIST_BIN_SIZE = 0.004  # Time granularity of energy bins (seconds)
+PYROOMACOUSTICS_RAY_TRACING_RECOMMENDED_MAX_ORDER = 3  # Recommended max_order for hybrid simulator
+PYROOMACOUSTICS_DEFAULT_SCATTERING = 0.1  # Default scattering coefficient (0-1)
+PYROOMACOUSTICS_SCATTERING_MIN = 0.0  # Minimum scattering coefficient (specular reflection)
+PYROOMACOUSTICS_SCATTERING_MAX = 1.0  # Maximum scattering coefficient (diffuse reflection)
 
 # Parameter Ranges
 PYROOMACOUSTICS_MAX_ORDER_MIN = 0  # Direct path only
@@ -133,6 +133,7 @@ PYROOMACOUSTICS_RIR_DIR = str(BACKEND_DIR / "static" / "pyroomacoustics_rir")
 PYROOMACOUSTICS_RIR_URL_PREFIX = "/static/pyroomacoustics_rir"
 
 # Material Database (11 materials)
+# Complete DataBase here: https://pyroomacoustics.readthedocs.io/en/pypi-release/pyroomacoustics.materials.database.html
 PYROOMACOUSTICS_MATERIALS = {
     "brick_unglazed": {"absorption": 0.03, "description": "Brick, unglazed", "category": "Wall"},
     "concrete_rough": {"absorption": 0.02, "description": "Concrete, rough", "category": "Wall"},

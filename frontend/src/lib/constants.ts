@@ -1370,4 +1370,26 @@ export const RT60_ANALYSIS = {
   // > 2.0s = Very Reverberant (cathedral, large spaces)
 } as const;
 
+// ============================================================================
+// Pyroomacoustics Acoustic Simulation Configuration
+// ============================================================================
+
+// Default Simulation Settings
+export const PYROOMACOUSTICS_DEFAULT_MAX_ORDER = 15; // Default max_order for image source method
+export const PYROOMACOUSTICS_DEFAULT_RAY_TRACING = false; // Default ray tracing state
+export const PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION = false; // Default air absorption state
+
+// Parameter Ranges
+export const PYROOMACOUSTICS_MAX_ORDER_MIN = 0; // Direct path only
+export const PYROOMACOUSTICS_MAX_ORDER_MAX = 20; // Maximum reflection order
+
+// Ray Tracing Configuration (displayed when enabled)
+export const PYROOMACOUSTICS_RAY_TRACING_RECOMMENDED_MAX_ORDER = 3; // Recommended when using ray tracing
+export const PYROOMACOUSTICS_RAY_TRACING_N_RAYS = 10000; // Default number of rays
+export const PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MIN = 1000; // Minimum number of rays
+export const PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MAX = 50000; // Maximum number of rays
+export const PYROOMACOUSTICS_DEFAULT_SCATTERING = 0.1; // Default scattering coefficient (0-1)
+export const PYROOMACOUSTICS_SCATTERING_MIN = 0.0; // Minimum scattering (specular reflection)
+export const PYROOMACOUSTICS_SCATTERING_MAX = 1.0; // Maximum scattering (diffuse reflection)
+
 

@@ -15,7 +15,7 @@ from services.impulse_response_service import ImpulseResponseService
 from services.modal_analysis_service import ModalAnalysisService
 
 # Import routers
-from routers import upload, analysis, generation, sounds, sed_analysis, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics_router
+from routers import upload, analysis, generation, sounds, sed_analysis, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics
 
 # Import utilities
 from utils.file_operations import cleanup_all_temp_directories
@@ -121,10 +121,7 @@ app.include_router(reprocess.router)
 app.include_router(impulse_responses.router)
 app.include_router(modal_analysis.router)
 app.include_router(choras.router)
-
-# Initialize and include pyroomacoustics router
-pyroomacoustics_router.init_pyroomacoustics_router()
-app.include_router(pyroomacoustics_router.router)
+app.include_router(pyroomacoustics.router)
 
 
 @app.get("/")

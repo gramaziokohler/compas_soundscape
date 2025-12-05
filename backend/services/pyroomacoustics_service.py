@@ -12,194 +12,154 @@ class PyroomacousticsService:
     """Service for acoustic simulation using pyroomacoustics library"""
 
     @staticmethod
-    def calculate_sabine_rt60(dimensions: list[float], materials: dict[str, float]) -> float:
+    def create_room_from_mesh(
+        vertices: list[list[float]],
+        faces: list[list[int]],
+        face_materials: dict[int, float] = None,
+        face_entity_map: list[int] = None,
+        entity_materials: dict[int, float] = None,
+        face_scattering: dict[int, float] = None,
+        entity_scattering: dict[int, float] = None,
+        fs: int = None,
+        max_order: int = 15,
+        ray_tracing: bool = False,
+        air_absorption: bool = False
+    ) -> pra.Room:
         """
-        Calculate theoretical RT60 using Sabine or Eyring formula.
+        Create a pyroomacoustics Room from a mesh with materials assigned per face or entity.
 
-        Uses Eyring formula for highly absorptive spaces (avg α > 0.3),
-        Sabine formula otherwise.
+        This method supports two material assignment modes:
+        1. Direct face materials: Pass face_materials dict
+        2. Entity-based materials: Pass face_entity_map + entity_materials dict
 
         Args:
-            dimensions: [width, length, height] in meters
-            materials: Dictionary mapping wall names to absorption coefficients
-
-        Returns:
-            float: Theoretical RT60 in seconds
-        """
-        width, length, height = dimensions
-
-        # Calculate surface areas
-        north_south_area = length * height
-        east_west_area = width * height
-        floor_ceiling_area = width * length
-
-        # Total surface area
-        total_surface_area = 2 * (north_south_area + east_west_area + floor_ceiling_area)
-
-        # Calculate total absorption (in sabins)
-        total_absorption = (
-            north_south_area * materials['north'] +
-            north_south_area * materials['south'] +
-            east_west_area * materials['east'] +
-            east_west_area * materials['west'] +
-            floor_ceiling_area * materials['floor'] +
-            floor_ceiling_area * materials['ceiling']
-        )
-
-        # Average absorption coefficient
-        avg_absorption = total_absorption / total_surface_area
-
-        # Volume
-        volume = width * length * height
-
-        # Choose formula based on average absorption
-        if avg_absorption > 0.3:
-            # Eyring formula for highly absorptive spaces
-            # RT60 = 0.161 * V / (-S * ln(1 - α_avg))
-            # More accurate for high absorption
-            rt60 = 0.161 * volume / (-total_surface_area * np.log(1 - avg_absorption + 1e-10))
-        else:
-            # Sabine formula for moderately absorptive spaces
-            # RT60 = 0.161 * V / A
-            rt60 = 0.161 * volume / (total_absorption + 1e-6)
-
-        return rt60
-
-    @staticmethod
-    def calculate_optimal_max_order(
-        dimensions: list[float],
-        materials: dict[str, float],
-        target_accuracy: float = 0.15
-    ) -> int:
-        """
-        Calculate optimal max_order for image source method based on room size and materials.
-
-        The max_order needs to be high enough to capture sufficient reflections for
-        accurate RT60 measurement. Larger rooms and lower absorption require higher orders.
-
-        Args:
-            dimensions: [width, length, height] in meters
-            materials: Dictionary mapping wall names to absorption coefficients
-            target_accuracy: Target accuracy for RT60 (default: 15% error)
-
-        Returns:
-            int: Recommended max_order (clamped between 3 and 50)
-        """
-        # Calculate theoretical RT60
-        rt60_theory = PyroomacousticsService.calculate_sabine_rt60(dimensions, materials)
-
-        # Calculate average absorption
-        absorptions = list(materials.values())
-        avg_absorption = sum(absorptions) / len(absorptions)
-
-        # Calculate room "size" (approximate mean free path)
-        width, length, height = dimensions
-        volume = width * length * height
-        surface_area = 2 * (width * length + width * height + length * height)
-        mean_free_path = 4 * volume / surface_area
-
-        # Heuristic: max_order should allow enough reflections to reach theoretical RT60
-        # Each reflection reduces sound pressure, and we need enough reflections
-        # to capture the -60dB decay
-        #
-        # Rule of thumb: max_order ≈ (RT60 * speed_of_sound) / (2 * mean_free_path)
-        # Adjusted for absorption: divide by (1 - avg_absorption) to get more reflections
-        # for less absorptive rooms
-
-        speed_of_sound = 343  # m/s
-        reflection_distance = 2 * mean_free_path  # Distance per reflection order
-
-        # Calculate how many reflections we need to cover RT60 time span
-        distance_in_rt60 = rt60_theory * speed_of_sound
-        estimated_max_order = distance_in_rt60 / reflection_distance
-
-        # Adjust for absorption - less absorption needs more orders
-        # Use a more conservative factor (0.3 instead of 0.5)
-        absorption_factor = (1 - avg_absorption) ** 0.3
-        estimated_max_order *= absorption_factor
-
-        # Add safety margin for target accuracy
-        # Reduced from 0.3 to 0.2 to be less aggressive
-        accuracy_factor = 1.0 / target_accuracy
-        estimated_max_order *= (accuracy_factor ** 0.2)
-
-        # Apply a damping factor to prevent overestimation
-        # ISM becomes less accurate at very high orders
-        estimated_max_order *= 0.6  # Damping factor
-
-        # Round up and clamp between reasonable bounds
-        max_order = int(np.ceil(estimated_max_order))
-        max_order = max(3, min(50, max_order))  # Clamp between 3 and 50 (increased for very reverberant spaces)
-
-        return max_order
-
-    @staticmethod
-    def create_shoebox_room(
-        dimensions: list[float],
-        materials: dict[str, float],
-        fs: int = 48000,
-        max_order: int = None
-    ) -> pra.ShoeBox:
-        """
-        Create a shoebox room with specified dimensions and wall materials.
-
-        Args:
-            dimensions: [width, length, height] in meters
-            materials: Dictionary mapping wall names to absorption coefficients
-                      Keys: 'north', 'south', 'east', 'west', 'floor', 'ceiling'
-            fs: Sample rate in Hz
+            vertices: List of [x, y, z] vertex coordinates
+            faces: List of face vertex indices (e.g., [[0,1,2], [1,2,3]])
+            face_materials: Dictionary mapping face index to absorption coefficient (0-1)
+                           If a face is not in the dict, default to 0.5 (moderate absorption)
+            face_entity_map: List mapping each face index to an entity index (for entity mode)
+            entity_materials: Dictionary mapping entity index to absorption coefficient (0-1)
+            face_scattering: Dictionary mapping face index to scattering coefficient (0-1)
+                            If None or face not in dict, uses default from constants
+                            Only used when ray_tracing=True
+            entity_scattering: Dictionary mapping entity index to scattering coefficient (0-1)
+                              Only used when ray_tracing=True and face_entity_map provided
+            fs: Sample rate in Hz (default: from constants.AUDIO_SAMPLE_RATE)
             max_order: Maximum reflection order for image source method
-                      If None or not specified, will be calculated automatically
-                      based on room dimensions and materials for optimal accuracy
+                      Note: Use max_order=3 when ray_tracing=True for optimal results
+            ray_tracing: Enable hybrid ISM and ray tracing simulator (default: False)
+            air_absorption: Enable frequency-dependent air absorption (default: False)
 
         Returns:
-            pra.ShoeBox: Configured shoebox room object
+            pra.Room: Configured room object with walls
 
         Raises:
-            HTTPException: If dimensions or materials are invalid
+            HTTPException: If mesh or materials are invalid
+
+        Note:
+            - When ray_tracing=True, call enable_ray_tracing() after adding sources/receivers
+            - Ray tracing provides better accuracy for late reverberation in complex geometries
+            - Scattering coefficients control how diffusely sound reflects off surfaces
         """
         try:
-            # Validate dimensions
-            if len(dimensions) != 3:
-                raise ValueError("Dimensions must be [width, length, height]")
-            if any(d <= 0 for d in dimensions):
-                raise ValueError("All dimensions must be positive")
+            # Import constants
+            from config.constants import PYROOMACOUSTICS_DEFAULT_SCATTERING, AUDIO_SAMPLE_RATE
 
-            width, length, height = dimensions
+            # Use default sample rate if not provided
+            if fs is None:
+                fs = AUDIO_SAMPLE_RATE
 
-            # Validate materials - must have all 6 walls
-            required_walls = {'north', 'south', 'east', 'west', 'floor', 'ceiling'}
-            if not all(wall in materials for wall in required_walls):
-                raise ValueError(f"Materials must include all walls: {required_walls}")
+            # Validate inputs
+            if not vertices or not faces:
+                raise ValueError("Vertices and faces cannot be empty")
 
-            # Validate absorption coefficients (0-1)
-            for wall, absorption in materials.items():
+            if len(vertices) < 3:
+                raise ValueError("Mesh must have at least 3 vertices")
+
+            if len(faces) < 4:
+                raise ValueError("Mesh must have at least 4 faces to form a closed space")
+
+            # Build face_materials dict based on input mode
+            if face_materials is None:
+                if face_entity_map is not None and entity_materials is not None:
+                    # Entity-based mode
+                    if len(faces) != len(face_entity_map):
+                        raise ValueError("face_entity_map must have same length as faces")
+
+                    face_materials = {}
+                    for face_idx, entity_idx in enumerate(face_entity_map):
+                        face_materials[face_idx] = entity_materials.get(entity_idx, 0.5)
+
+                    # Build face_scattering from entity_scattering if provided
+                    if entity_scattering is not None and ray_tracing:
+                        face_scattering = {}
+                        for face_idx, entity_idx in enumerate(face_entity_map):
+                            if entity_idx in entity_scattering:
+                                face_scattering[face_idx] = entity_scattering[entity_idx]
+                else:
+                    # No materials provided - use defaults
+                    face_materials = {}
+
+            # Convert vertices to numpy array for easier indexing
+            vertices_np = np.array(vertices)
+
+            # Create walls from faces
+            walls = []
+            for face_idx, face in enumerate(faces):
+                # Get absorption coefficient for this face (default: 0.5)
+                absorption = face_materials.get(face_idx, 0.5)
+
+                # Validate absorption
                 if not (0 <= absorption <= 1):
-                    raise ValueError(f"Absorption coefficient for {wall} must be between 0 and 1, got {absorption}")
+                    raise ValueError(f"Absorption for face {face_idx} must be between 0 and 1, got {absorption}")
 
-            # Auto-calculate optimal max_order if not specified
-            if max_order is None:
-                max_order = PyroomacousticsService.calculate_optimal_max_order(
-                    dimensions, materials
-                )
-                print(f"Auto-calculated optimal max_order: {max_order}")
+                # Get scattering coefficient for this face (only used if ray_tracing=True)
+                scattering = None
+                if ray_tracing:
+                    if face_scattering is None:
+                        scattering = PYROOMACOUSTICS_DEFAULT_SCATTERING
+                    else:
+                        scattering = face_scattering.get(face_idx, PYROOMACOUSTICS_DEFAULT_SCATTERING)
 
-            # Create material objects for each wall
-            # pyroomacoustics expects absorption coefficients per frequency band
-            # For simplicity, we use the same coefficient across all bands
-            material_objects = {}
-            for wall_name, absorption in materials.items():
-                # Create material with single absorption value across frequency bands
-                material_objects[wall_name] = pra.Material(absorption)
+                    # Validate scattering
+                    if not (0 <= scattering <= 1):
+                        raise ValueError(f"Scattering for face {face_idx} must be between 0 and 1, got {scattering}")
 
-            # Create shoebox room
-            # Note: ShoeBox constructor takes [length, width, height] (y, x, z)
-            # but our API uses [width, length, height] (x, y, z) for consistency
-            room = pra.ShoeBox(
-                p=[length, width, height],  # Swap width and length for pra convention
+                # Extract face vertices (corners of the wall)
+                # pyroomacoustics expects corners for walls in 3D form [3, n_corners]
+                face_vertices = vertices_np[face]  # Shape: [n_corners, 3]
+
+                # Create wall from corners
+                # Note: pra.Wall expects:
+                # - corners as array [3, n_corners]
+                # - absorption as numpy array [m, 1] where m is number of frequency bands
+                # - scattering as numpy array [m, 1] (optional, for ray tracing)
+                # For simplicity, use single frequency band with the given absorption value
+                absorption_array = np.array([[absorption]], dtype=np.float32)
+
+                # Create wall parameters
+                wall_params = {
+                    "corners": face_vertices.T.astype(np.float32),  # Transpose to [3, n_corners]
+                    "absorption": absorption_array,
+                    "name": f"face_{face_idx}"
+                }
+
+                # Add scattering if ray tracing is enabled
+                if ray_tracing and scattering is not None:
+                    scattering_array = np.array([[scattering]], dtype=np.float32)
+                    wall_params["scattering"] = scattering_array
+
+                wall = pra.Wall(**wall_params)
+                walls.append(wall)
+
+            # Create room from walls
+            # Use Room constructor with walls and ray tracing parameters
+            room = pra.Room(
+                walls=walls,
                 fs=fs,
-                materials=material_objects,
-                max_order=max_order
+                max_order=max_order,
+                ray_tracing=ray_tracing,
+                air_absorption=air_absorption
             )
 
             return room
@@ -207,57 +167,170 @@ class PyroomacousticsService:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to create room: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to create room from mesh: {str(e)}")
+
+    @staticmethod
+    def enable_ray_tracing(
+        room,  # pra.Room
+        n_rays: int = None,
+        receiver_radius: float = None,
+        energy_thres: float = None,
+        time_thres: float = None,
+        hist_bin_size: float = None
+    ):
+        """
+        Enable hybrid ISM and ray tracing simulator for more accurate late reverberation.
+
+        The hybrid approach combines Image Source Method (ISM) for early reflections
+        with ray tracing for late reverb, providing better accuracy especially for
+        complex geometries and longer reverberation times.
+
+        Args:
+            room: Room object (pra.Room) with ray_tracing=True
+            n_rays: Number of rays to shoot (default: from constants)
+            receiver_radius: Sphere radius around microphone in meters (default: from constants)
+            energy_thres: Threshold for ray termination (default: from constants)
+            time_thres: Maximum ray flight time in seconds (default: from constants)
+            hist_bin_size: Time granularity of energy bins in seconds (default: from constants)
+
+        Returns:
+            Room with ray tracing enabled
+
+        Raises:
+            HTTPException: If room was not created with ray_tracing=True or configuration fails
+
+        Note:
+            - The room must be created with ray_tracing=True parameter
+            - Use max_order=3 with hybrid simulator for optimal results
+            - Ray tracing is more computationally intensive than ISM alone
+        """
+        try:
+            # Import constants
+            from config.constants import (
+                PYROOMACOUSTICS_RAY_TRACING_N_RAYS,
+                PYROOMACOUSTICS_RAY_TRACING_RECEIVER_RADIUS,
+                PYROOMACOUSTICS_RAY_TRACING_ENERGY_THRES,
+                PYROOMACOUSTICS_RAY_TRACING_TIME_THRES,
+                PYROOMACOUSTICS_RAY_TRACING_HIST_BIN_SIZE
+            )
+
+            # Use defaults from constants if not provided
+            n_rays = n_rays or PYROOMACOUSTICS_RAY_TRACING_N_RAYS
+            receiver_radius = receiver_radius or PYROOMACOUSTICS_RAY_TRACING_RECEIVER_RADIUS
+            energy_thres = energy_thres or PYROOMACOUSTICS_RAY_TRACING_ENERGY_THRES
+            time_thres = time_thres or PYROOMACOUSTICS_RAY_TRACING_TIME_THRES
+            hist_bin_size = hist_bin_size or PYROOMACOUSTICS_RAY_TRACING_HIST_BIN_SIZE
+
+            # Validate parameters
+            if n_rays <= 0:
+                raise ValueError("n_rays must be positive")
+            if receiver_radius <= 0:
+                raise ValueError("receiver_radius must be positive")
+            if energy_thres <= 0:
+                raise ValueError("energy_thres must be positive")
+            if time_thres <= 0:
+                raise ValueError("time_thres must be positive")
+            if hist_bin_size <= 0:
+                raise ValueError("hist_bin_size must be positive")
+
+            # Enable ray tracing with specified parameters
+            # This will raise an error if room wasn't created with ray_tracing=True
+            room.set_ray_tracing(
+                n_rays=n_rays,
+                receiver_radius=receiver_radius,
+                energy_thres=energy_thres,
+                time_thres=time_thres,
+                hist_bin_size=hist_bin_size
+            )
+
+            print(f"Ray tracing enabled with {n_rays} rays, receiver_radius={receiver_radius}m")
+
+            return room
+
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to enable ray tracing: {str(e)}")
 
     @staticmethod
     def simulate_room_acoustics(
-        room: pra.ShoeBox,
+        room,  # pra.Room
         source_position: list[float],
-        receiver_position: list[float]
-    ) -> pra.ShoeBox:
+        receiver_position: list[float],
+        enable_ray_tracing: bool = True,
+        ray_tracing_params: dict = None
+    ):
         """
         Add source and receiver to room and compute room impulse response.
 
         Args:
-            room: Shoebox room object
+            room: Room object (pra.Room)
             source_position: [x, y, z] coordinates in meters
             receiver_position: [x, y, z] coordinates in meters
+            enable_ray_tracing: If True and room was created with ray_tracing=True,
+                              automatically enable ray tracing before computing RIR (default: True)
+            ray_tracing_params: Optional dict with ray tracing parameters:
+                              {n_rays, receiver_radius, energy_thres, time_thres, hist_bin_size}
+                              If None, uses defaults from constants
 
         Returns:
-            pra.ShoeBox: Room with computed RIR
+            Room with computed RIR
 
         Raises:
             HTTPException: If positions are invalid or simulation fails
+
+        Note:
+            - Ray tracing is automatically configured if the room was created with ray_tracing=True
+            - To disable automatic ray tracing setup, set enable_ray_tracing=False
         """
         try:
             # Validate positions
             if len(source_position) != 3 or len(receiver_position) != 3:
                 raise ValueError("Positions must be [x, y, z] coordinates")
 
-            # Convert positions to pyroomacoustics convention [y, x, z]
-            # Our API: [x, y, z], pra expects: [y, x, z]
-            source_pos_pra = [source_position[1], source_position[0], source_position[2]]
-            receiver_pos_pra = [receiver_position[1], receiver_position[0], receiver_position[2]]
-
-            # Validate positions are within room bounds
-            room_dims = room.shoebox_dim  # Returns [length, width, height] in pra convention
-            if not (0 <= source_pos_pra[0] <= room_dims[0] and
-                    0 <= source_pos_pra[1] <= room_dims[1] and
-                    0 <= source_pos_pra[2] <= room_dims[2]):
-                raise ValueError(f"Source position {source_position} is outside room bounds")
-
-            if not (0 <= receiver_pos_pra[0] <= room_dims[0] and
-                    0 <= receiver_pos_pra[1] <= room_dims[1] and
-                    0 <= receiver_pos_pra[2] <= room_dims[2]):
-                raise ValueError(f"Receiver position {receiver_position} is outside room bounds")
+            # Use positions as-is for mesh-based rooms (already in correct coordinate system)
+            source_pos = source_position
+            receiver_pos = receiver_position
 
             # Add source (omnidirectional point source)
-            room.add_source(source_pos_pra)
+            try:
+                room.add_source(source_pos)
+            except (ValueError, AssertionError) as e:
+                error_msg = str(e)
+                if "inside" in error_msg.lower() or "outside" in error_msg.lower():
+                    raise ValueError(f"Source position {source_pos} is not inside the room geometry. "
+                                   f"Please ensure sources are placed within the model bounds.")
+                raise ValueError(f"Failed to add source at {source_pos}: {error_msg}")
 
             # Add microphone (single receiver)
-            room.add_microphone(receiver_pos_pra)
+            try:
+                room.add_microphone(receiver_pos)
+            except (ValueError, AssertionError) as e:
+                error_msg = str(e)
+                if "inside" in error_msg.lower() or "outside" in error_msg.lower():
+                    raise ValueError(f"Receiver position {receiver_pos} is not inside the room geometry. "
+                                   f"Please ensure receivers are placed within the model bounds.")
+                raise ValueError(f"Failed to add receiver at {receiver_pos}: {error_msg}")
+
+            # Enable ray tracing if enabled and room supports it
+            # Try to enable ray tracing - it will only work if room was created with ray_tracing=True
+            if enable_ray_tracing:
+                try:
+                    if ray_tracing_params:
+                        PyroomacousticsService.enable_ray_tracing(room, **ray_tracing_params)
+                    else:
+                        PyroomacousticsService.enable_ray_tracing(room)
+                    print("Ray tracing enabled for hybrid ISM/ray tracing simulation")
+                except (ValueError, AttributeError) as e:
+                    # Room doesn't support ray tracing (wasn't created with ray_tracing=True)
+                    print(f"Ray tracing not available for this room (expected for ISM-only mode)")
+                except Exception as e:
+                    # Unexpected error
+                    print(f"Warning: Failed to enable ray tracing: {type(e).__name__}: {str(e)}")
+                    pass
 
             # Compute room impulse response using image source method
+            # (or hybrid ISM + ray tracing if enabled)
             room.compute_rir()
 
             return room
@@ -268,149 +341,15 @@ class PyroomacousticsService:
             raise HTTPException(status_code=500, detail=f"Failed to simulate acoustics: {str(e)}")
 
     @staticmethod
-    def calculate_acoustic_parameters(room: pra.ShoeBox) -> dict[str, float]:
-        """
-        Calculate acoustic parameters from room impulse response.
-
-        Args:
-            room: Room with computed RIR
-
-        Returns:
-            Dictionary with acoustic parameters:
-            - rt60: Reverberation time (T60) in seconds
-            - edt: Early decay time in seconds
-            - c50: Speech clarity in dB
-            - c80: Music clarity in dB
-            - d50: Definition (0-1)
-            - drr: Direct-to-reverberant ratio in dB
-
-        Raises:
-            HTTPException: If calculation fails
-        """
-        try:
-            # Get RIR (first source, first microphone)
-            rir = room.rir[0][0]
-            fs = room.fs
-
-            # RT60: Reverberation time using Schroeder integration
-            rt60 = pra.experimental.rt60.measure_rt60(rir, fs=fs, decay_db=60)
-            if rt60 is None or np.isnan(rt60):
-                # Fallback: estimate from energy decay
-                rt60 = PyroomacousticsService._estimate_rt60_from_energy(rir, fs)
-
-            # EDT: Early decay time (first 10 dB of decay)
-            edt = pra.experimental.rt60.measure_rt60(rir, fs=fs, decay_db=10)
-            if edt is None or np.isnan(edt):
-                edt = rt60 * 0.7  # Approximation: EDT ≈ 0.7 * RT60
-
-            # C50: Speech clarity (ratio of energy in first 50ms to rest)
-            c50 = PyroomacousticsService._calculate_clarity(rir, fs, split_time=0.05)
-
-            # C80: Music clarity (ratio of energy in first 80ms to rest)
-            c80 = PyroomacousticsService._calculate_clarity(rir, fs, split_time=0.08)
-
-            # D50: Definition (proportion of energy in first 50ms)
-            d50 = PyroomacousticsService._calculate_definition(rir, fs, split_time=0.05)
-
-            # DRR: Direct-to-reverberant ratio
-            drr = PyroomacousticsService._calculate_drr(rir, fs)
-
-            return {
-                "rt60": float(rt60),
-                "edt": float(edt),
-                "c50": float(c50),
-                "c80": float(c80),
-                "d50": float(d50),
-                "drr": float(drr)
-            }
-
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to calculate acoustic parameters: {str(e)}")
-
-    @staticmethod
-    def _estimate_rt60_from_energy(rir: np.ndarray, fs: int) -> float:
-        """Estimate RT60 from energy decay curve"""
-        # Calculate energy decay curve (Schroeder integration)
-        energy = rir ** 2
-        schroeder = np.cumsum(energy[::-1])[::-1]
-        schroeder_db = 10 * np.log10(schroeder / schroeder[0] + 1e-10)
-
-        # Find time when decay reaches -60 dB
-        try:
-            idx_60db = np.where(schroeder_db <= -60)[0][0]
-            rt60 = idx_60db / fs
-        except IndexError:
-            # If -60dB not reached, extrapolate from -5dB to -25dB
-            try:
-                idx_5db = np.where(schroeder_db <= -5)[0][0]
-                idx_25db = np.where(schroeder_db <= -25)[0][0]
-                time_20db = (idx_25db - idx_5db) / fs
-                rt60 = time_20db * 3  # Extrapolate to 60dB
-            except IndexError:
-                rt60 = 0.5  # Default fallback
-
-        return rt60
-
-    @staticmethod
-    def _calculate_clarity(rir: np.ndarray, fs: int, split_time: float) -> float:
-        """Calculate clarity index (C50 or C80) in dB"""
-        split_sample = int(split_time * fs)
-
-        if split_sample >= len(rir):
-            return 0.0
-
-        early_energy = np.sum(rir[:split_sample] ** 2)
-        late_energy = np.sum(rir[split_sample:] ** 2)
-
-        if late_energy == 0:
-            return 50.0  # Maximum clarity if no late reflections
-
-        clarity_db = 10 * np.log10((early_energy / late_energy) + 1e-10)
-        return clarity_db
-
-    @staticmethod
-    def _calculate_definition(rir: np.ndarray, fs: int, split_time: float) -> float:
-        """Calculate definition (D50) as proportion of early energy"""
-        split_sample = int(split_time * fs)
-
-        if split_sample >= len(rir):
-            return 1.0
-
-        early_energy = np.sum(rir[:split_sample] ** 2)
-        total_energy = np.sum(rir ** 2)
-
-        if total_energy == 0:
-            return 0.0
-
-        definition = early_energy / total_energy
-        return min(1.0, max(0.0, definition))  # Clamp to [0, 1]
-
-    @staticmethod
-    def _calculate_drr(rir: np.ndarray, fs: int) -> float:
-        """Calculate direct-to-reverberant ratio in dB"""
-        # Find direct sound peak (first 5ms)
-        direct_samples = int(0.005 * fs)
-        direct_energy = np.sum(rir[:direct_samples] ** 2)
-
-        # Reverberant energy (after first 5ms)
-        reverb_energy = np.sum(rir[direct_samples:] ** 2)
-
-        if reverb_energy == 0:
-            return 50.0  # Maximum DRR if no reverb
-
-        drr_db = 10 * np.log10((direct_energy / reverb_energy) + 1e-10)
-        return drr_db
-
-    @staticmethod
     def export_impulse_response(
-        room: pra.ShoeBox,
+        room,  # pra.Room
         output_path: str
     ) -> str:
         """
         Export room impulse response to WAV file.
 
         Args:
-            room: Room with computed RIR
+            room: Room with computed RIR (pra.Room)
             output_path: Path to save WAV file
 
         Returns:
@@ -424,11 +363,8 @@ class PyroomacousticsService:
             rir = room.rir[0][0]
             fs = room.fs
 
-            # Normalize to prevent clipping
-            rir_normalized = rir / np.max(np.abs(rir))
-
             # Convert to 16-bit PCM
-            rir_int16 = np.int16(rir_normalized * 32767)
+            rir_int16 = np.int16(rir * 32767)
 
             # Ensure output directory exists
             Path(output_path).parent.mkdir(parents=True, exist_ok=True)

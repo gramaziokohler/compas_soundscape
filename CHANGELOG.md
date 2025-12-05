@@ -1,5 +1,77 @@
 # CHANGELOG
 
+## [2025-12-05] - Ray Tracing Parameters & UI Improvements for Pyroomacoustics
+### Added
+- **`backend/config/constants.py`** - Ray tracing parameter ranges (n_rays: 1000-50000, scattering: 0.0-1.0)
+- **`frontend/src/lib/constants.ts`** - Frontend ray tracing constants (n_rays, scattering)
+### Changed
+- **`frontend/src/components/acoustics/PyroomAcousticsSimulationSection.tsx`** - Compact UI with CheckboxField component; 2-column grid for ray tracing params; shortened labels
+- **`frontend/src/hooks/usePyroomAcousticsSimulation.ts`** - Added n_rays and scattering to simulation settings
+- **`frontend/src/services/api.ts`** - Sends n_rays and scattering parameters
+- **`backend/routers/pyroomacoustics.py`** - Accepts and applies n_rays and scattering parameters; logs ray tracing settings
+
+## [2025-12-04] - Pyroomacoustics Per-Face Material Assignment
+### Changed
+- **`frontend/src/hooks/usePyroomAcousticsSimulation.ts`** - Changed from single material to per-face material assignments map
+- **`frontend/src/services/api.ts`** - Updated to send face_materials instead of selected_material_id
+- **`frontend/src/components/layout/sidebar/AcousticsTab.tsx`** - Material assignments now forwarded to Pyroomacoustics hook; materials memoized for stability
+- **`frontend/src/components/acoustics/PyroomAcousticsSimulationSection.tsx`** - Now receives state/methods as props to avoid duplicate hook instances
+- **`backend/routers/pyroomacoustics.py`** - Accepts face_materials JSON; added detailed logging of simulation parameters
+- **`backend/services/pyroomacoustics_service.py`** - Improved error messages for sources/receivers outside room geometry
+
+## [2025-12-04] - Pyroomacoustics Simulation Integration
+### Added
+- **`backend/routers/pyroomacoustics.py`** - Simulation endpoints with material selection and IR export
+- **`backend/config/constants.py`** - Pyroomacoustics UI defaults (max_order, ray_tracing, air_absorption)
+- **`frontend/src/hooks/usePyroomAcousticsSimulation.ts`** - State management hook for simulations
+- **`frontend/src/components/acoustics/PyroomAcousticsSimulationSection.tsx`** - UI with sliders and toggles
+- **`frontend/src/lib/constants.ts`** - Frontend constants for parameter ranges
+- **`frontend/src/services/api.ts`** - API methods for materials and simulation execution
+### Changed
+- **`frontend/src/components/layout/sidebar/AcousticsTab.tsx`** - Added mode dropdown to select between Choras and Pyroomacoustics
+- **`backend/main.py`** - Registered pyroomacoustics router
+
+## [2025-12-04] - Pyroomacoustics Service Simplification & Refactoring
+### Added
+- **`backend/utils/acoustic_measurement.py`** - New utility class for acoustic parameter calculations (RT60, EDT, C50, C80, D50, DRR)
+### Changed
+- **`backend/services/pyroomacoustics_service.py`** - Merged `create_room_from_mesh` and `create_room_from_mesh_with_entity_materials` into single method with optional parameters
+- **`backend/services/pyroomacoustics_service.py`** - Now uses `AUDIO_SAMPLE_RATE` from constants as default sample rate (48kHz)
+- **`backend/config/constants.py`** - Removed ShoeBox-specific constants (default room dimensions and positions)
+- **`backend/test_ray_tracing.py`** - Updated to use new `AcousticMeasurement` utility class
+### Removed
+- **`backend/services/pyroomacoustics_service.py`** - Removed `create_shoebox_room()` method (mesh-only workflow)
+- **`backend/services/pyroomacoustics_service.py`** - Removed `calculate_sabine_rt60()` method (unused)
+- **`backend/services/pyroomacoustics_service.py`** - Removed `calculate_optimal_max_order()` method (unused)
+- **`backend/services/pyroomacoustics_service.py`** - Removed `calculate_acoustic_parameters()` and helper methods (moved to utils)
+- **`backend/test_mesh_acoustics.py`** - Deleted (consolidated into test_ray_tracing.py)
+- **`backend/test_real_room_acoustics.py`** - Deleted (consolidated into test_ray_tracing.py)
+- **`backend/test_pyroomacoustics.py`** - Deleted (consolidated into test_ray_tracing.py)
+- **`backend/test_rt60_fix.py`** - Deleted (obsolete debug file)
+- **`backend/debug_rt60.py`** - Deleted (obsolete debug file)
+- **`backend/visualize_room_setup.py`** - Deleted (obsolete helper file)
+- **`backend/routers/pyroomacoustics_router.py`** - Deleted (used removed ShoeBox methods, not used by frontend)
+- **`backend/main.py`** - Removed pyroomacoustics_router import and initialization
+
+## [2025-12-04] - Hybrid ISM and Ray Tracing Simulator Support
+### Added
+- **`backend/config/constants.py`** - Ray tracing configuration constants (n_rays, receiver_radius, energy_thres, time_thres, hist_bin_size, default scattering)
+- **`backend/services/pyroomacoustics_service.py`** - `enable_ray_tracing()` method to configure hybrid ISM/ray tracing simulator
+### Changed
+- **`backend/services/pyroomacoustics_service.py`** - `create_room_from_mesh()` now supports ray_tracing, air_absorption, and face_scattering parameters
+- **`backend/services/pyroomacoustics_service.py`** - `simulate_room_acoustics()` automatically enables ray tracing if room was created with ray_tracing=True
+
+## [2025-12-04] - Pyroomacoustics Mesh-Based Room Support
+### Added
+- **`backend/services/pyroomacoustics_service.py`** - `create_room_from_mesh()` converts mesh faces to pra.Wall objects for arbitrary room geometries
+- **`backend/services/pyroomacoustics_service.py`** - `create_room_from_mesh_with_entity_materials()` for entity-based material assignment (IFC/OBJ groups)
+- **`backend/test_mesh_acoustics.py`** - Test suite with simple box mesh (all tests passed)
+- **`backend/test_real_room_acoustics.py`** - Real test using MeasurmentRoom_medium.obj (RT60=0.046s, C50=14.99dB)
+- **`backend/visualize_room_setup.py`** - ASCII visualization of source/receiver placement
+- **`backend/MESH_ACOUSTICS_GUIDE.md`** - Complete guide with examples and material database
+### Changed
+- **`backend/services/pyroomacoustics_service.py`** - Updated methods to support both pra.Room and pra.ShoeBox types
+
 ## [2025-12-04] - Global Volume Slider Hover Functionality
 ### Changed
 - **`frontend/src/components/scene/ThreeScene.tsx`** - Volume slider now appears on hover instead of requiring a click

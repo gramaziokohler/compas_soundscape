@@ -520,5 +520,98 @@ export const apiService = {
     } catch (error) {
       handleApiError(error, 'Save Choras results');
     }
+  },
+
+  // Pyroomacoustics Acoustic Simulation
+
+  /**
+   * Get available materials from Pyroomacoustics library
+   */
+  async getPyroomacousticsMaterials(): Promise<Array<{ 
+    id: string; 
+    name: string; 
+    description?: string; 
+    category?: string;
+    absorption: number;
+  }>> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/pyroomacoustics/materials`,
+        undefined,
+        'Get Pyroomacoustics materials'
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch Pyroomacoustics materials');
+      }
+
+      return response.json();
+    } catch (error) {
+      handleApiError(error, 'Get Pyroomacoustics materials');
+    }
+  },
+
+  /**
+   * Run Pyroomacoustics simulation
+   * 
+   * @param file - 3D model file (3dm, obj, or ifc)
+   * @param simulationName - Name for the simulation
+   * @param settings - Simulation settings (max_order, ray_tracing, air_absorption)
+   * @param sourceReceiverPairs - Array of source-receiver position pairs
+   * @param faceMaterialAssignments - Map of face index to material ID
+   */
+  async runPyroomacousticsSimulation(
+    file: File,
+    simulationName: string,
+    settings: {
+      max_order: number;
+      ray_tracing: boolean;
+      air_absorption: boolean;
+      n_rays: number;
+      scattering: number;
+    },
+    sourceReceiverPairs: Array<{
+      source_position: number[];
+      receiver_position: number[];
+      source_id: string;
+      receiver_id: string;
+    }>,
+    faceMaterialAssignments: Record<number, string>
+  ): Promise<{
+    simulation_id: string;
+    message: string;
+    ir_files: string[];
+    results_file: string;
+  }> {
+    try {
+      const formData = new FormData();
+      formData.append('model_file', file);
+      formData.append('simulation_name', simulationName);
+      formData.append('max_order', settings.max_order.toString());
+      formData.append('ray_tracing', settings.ray_tracing.toString());
+      formData.append('air_absorption', settings.air_absorption.toString());
+      formData.append('n_rays', settings.n_rays.toString());
+      formData.append('scattering', settings.scattering.toString());
+      formData.append('source_receiver_pairs', JSON.stringify(sourceReceiverPairs));
+      formData.append('face_materials', JSON.stringify(faceMaterialAssignments));
+
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/pyroomacoustics/run-simulation`,
+        {
+          method: 'POST',
+          body: formData
+        },
+        'Run Pyroomacoustics simulation'
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Simulation failed' }));
+        throw new Error(error.detail || 'Simulation failed');
+      }
+
+      return response.json();
+    } catch (error) {
+      handleApiError(error, 'Run Pyroomacoustics simulation');
+    }
   }
 };

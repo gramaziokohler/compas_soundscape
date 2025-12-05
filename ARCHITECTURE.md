@@ -24,7 +24,7 @@ compas_soundscape/
 │   │   ├── impulse_responses.py     # IR upload/list/delete endpoints
 │   │   ├── library_search.py        # Sound library search (BBC, Freesound)
 │   │   ├── modal_analysis.py        # Modal analysis endpoints
-│   │   ├── pyroomacoustics_router.py # Pyroomacoustics acoustic simulation
+│   │   ├── pyroomacoustics.py       # Pyroomacoustics acoustic simulation (NEW)
 │   │   ├── reprocess.py             # Audio reprocessing (denoising)
 │   │   ├── sed_analysis.py          # Sound Event Detection endpoints
 │   │   ├── sounds.py                # Audio generation endpoints
@@ -72,6 +72,10 @@ compas_soundscape/
 │       │   ├── page.tsx             # Main page (orchestration only)
 │       │   └── globals.css          # Tailwind + CSS variables
 │       ├── components/
+│       │   ├── acoustics/           # Acoustic simulation components (NEW)
+│       │   │   ├── ChorasSimulationSection.tsx      # Choras diffusion equation simulation UI
+│       │   │   ├── PyroomAcousticsSimulationSection.tsx # Pyroomacoustics ISM simulation UI (NEW)
+│       │   │   └── MaterialAssignmentUI.tsx         # Material assignment UI for surfaces
 │       │   ├── audio/               # Audio UI components
 │       │   │   ├── AudioWaveformDisplay.tsx     # Waveform display
 │       │   │   ├── WaveSurferTimeline.tsx       # Enhanced timeline (WaveSurfer.js)
@@ -114,6 +118,8 @@ compas_soundscape/
 │       │   ├── useAudioControls.ts       # Audio playback state & controls
 │       │   ├── useAudioOrchestrator.ts   # Audio orchestrator integration
 │       │   ├── useAudioNormalization.ts  # Audio normalization utilities
+│       │   ├── useChorasSimulation.ts    # Choras simulation state management
+│       │   ├── usePyroomAcousticsSimulation.ts # Pyroomacoustics simulation state management (NEW)
 │       │   ├── useRoomMaterials.ts       # Room material management
 │       │   ├── useFileUpload.ts          # File upload & processing (with error notifications)
 │       │   ├── useHorizontalScroll.ts    # Mouse wheel horizontal scrolling
