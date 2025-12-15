@@ -216,7 +216,7 @@ export class BinauralDecoder implements IBinauralDecoder {
       // Convert radians to degrees, apply rotation offset for scene alignment
       // NEGATE yaw/pitch for head tracking: when head looks left, scene rotates right
       const RAD_TO_DEG = 180 / Math.PI;
-      const yawDeg = -(orientation.yaw * RAD_TO_DEG + this.rotationOffset * RAD_TO_DEG);
+      const yawDeg = (orientation.yaw * RAD_TO_DEG + this.rotationOffset * RAD_TO_DEG);
       const pitchDeg = -(orientation.pitch * RAD_TO_DEG);
 
       this.sceneRotator.yaw = yawDeg;

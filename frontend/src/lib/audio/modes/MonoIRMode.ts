@@ -60,6 +60,7 @@ interface SourceChain {
   // Convolution chain
   convolver: ConvolverNode;
   wetGain: GainNode;
+  sourceIRBuffer: AudioBuffer | null; // Per-source IR buffer (for simulation mode)
 
   // JSAmbisonics encoder
   encoder: any; // ambisonics.monoEncoder
@@ -218,8 +219,8 @@ export class MonoIRMode implements IAudioMode {
    * Create a new audio source with convolution + JSAmbisonics encoding
    */
   createSource(sourceId: string, audioBuffer: AudioBuffer, position: Position): void {
-    if (!this.audioContext || !this.irBuffer) {
-      console.error('[MonoIRMode] Cannot create source - not initialized or no IR');
+    if (!this.audioContext) {
+      console.error('[MonoIRMode] Cannot create source - not initialized');
       return;
     }
 
@@ -231,7 +232,12 @@ export class MonoIRMode implements IAudioMode {
     // Create convolver node
     const convolver = this.audioContext.createConvolver();
     convolver.normalize = false;
-    convolver.buffer = this.irBuffer;
+    
+    // Set IR buffer if available (global IR mode)
+    // In simulation mode, IR will be set per-source via setSourceImpulseResponse()
+    if (this.irBuffer) {
+      convolver.buffer = this.irBuffer;
+    }
 
     // Create gain nodes for volume and mute control
     const gainNode = this.audioContext.createGain();
@@ -279,6 +285,7 @@ export class MonoIRMode implements IAudioMode {
       muteGainNode,
       convolver,
       wetGain,
+      sourceIRBuffer: null, // No per-source IR yet (will be set in simulation mode)
       encoder,
       position,
       isPlaying: false,
@@ -288,6 +295,45 @@ export class MonoIRMode implements IAudioMode {
     this.sourceChains.set(sourceId, chain);
 
     console.log(`[MonoIRMode] Created source "${sourceId}" with JSAmbisonics encoder at position (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`);
+  }
+
+  /**
+   * Set impulse response for a specific source (simulation mode)
+   * Allows per-source IR assignment for source-receiver pair workflows
+   */
+  setSourceImpulseResponse(sourceId: string, irBuffer: AudioBuffer): void {
+    const chain = this.sourceChains.get(sourceId);
+    if (!chain) {
+      console.warn(`[MonoIRMode] Source "${sourceId}" not found for IR update`);
+      return;
+    }
+
+    if (!this.audioContext) {
+      console.error('[MonoIRMode] Cannot set source IR - not initialized');
+      return;
+    }
+
+    // Validate channel count
+    if (irBuffer.numberOfChannels !== 1) {
+      console.error(`[MonoIRMode] Expected mono IR for source "${sourceId}", got ${irBuffer.numberOfChannels} channels`);
+      return;
+    }
+
+    // Process IR buffer (resample if needed, normalize)
+    const processedBuffer = processImpulseResponse(irBuffer, this.audioContext, true);
+
+    const oldBuffer = chain.convolver.buffer;
+    console.log(`[MonoIRMode] 🔄 Updating IR for source "${sourceId}"`, {
+      oldIR: oldBuffer ? `${oldBuffer.length} samples` : 'none',
+      newIR: `${processedBuffer.length} samples`,
+      isPlaying: chain.isPlaying
+    });
+
+    // Update convolver with new IR
+    chain.convolver.buffer = processedBuffer;
+    chain.sourceIRBuffer = processedBuffer;
+
+    console.log(`[MonoIRMode] ✅ IR updated for source "${sourceId}" (${processedBuffer.length} samples @ ${processedBuffer.sampleRate}Hz)`);
   }
 
   /**

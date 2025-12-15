@@ -1,7 +1,10 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import type { SoundGenerationSectionProps } from "@/types/components";
+import type { SoundGenerationMode, SoundGenerationConfig } from "@/types";
 import { SoundTab } from "./SoundTab";
+import { ReceiversSection } from "./ReceiversSection";
 import { UI_COLORS, UI_BUTTON } from "@/lib/constants";
+import { apiService } from "@/services/api";
 
 export function SoundGenerationSection({
   soundConfigs,
@@ -12,7 +15,6 @@ export function SoundGenerationSection({
   onBatchAddConfigs,
   onRemoveConfig,
   onUpdateConfig,
-  onModeChange,
   onSetActiveTab,
   onGenerate,
   onStopGeneration,
@@ -44,10 +46,21 @@ export function SoundGenerationSection({
   // Preview playback props
   previewingSoundId = null,
   onPreviewPlayPause,
-  onPreviewStop
+  onPreviewStop,
+  // Receiver props
+  receivers = [],
+  isPlacingReceiver = false,
+  onStartPlacingReceiver,
+  onDeleteReceiver,
+  onUpdateReceiverName,
+  onGoToReceiver
 }: SoundGenerationSectionProps) {
   // Track which sound tabs are expanded
-  const [expandedTabs, setExpandedTabs] = useState<Set<number>>(new Set([0]));
+  const [expandedTabs, setExpandedTabs] = useState<Set<number>>(new Set());
+
+  // Track mode selector dropdown visibility
+  const [showModeSelector, setShowModeSelector] = useState(false);
+  const modeSelectorRef = useRef<HTMLDivElement>(null);
   
   // Refs for scrolling
   const soundListRef = useRef<HTMLDivElement>(null);
@@ -123,6 +136,38 @@ export function SoundGenerationSection({
     return { totalSounds, totalCards, pendingCount };
   }, [soundConfigs.length, generatedSounds.length]);
 
+  // Validate if a sound config has valid settings for generation
+  const isConfigValid = (config: SoundGenerationConfig): boolean => {
+    switch (config.mode) {
+      case 'text-to-audio':
+        return config.prompt.trim().length > 0;
+      case 'upload':
+        return !!(config.uploadedAudioBuffer || config.uploadedAudioInfo);
+      case 'library':
+        return !!config.selectedLibrarySound;
+      case 'sample-audio':
+        return !!(config.uploadedAudioBuffer || config.uploadedAudioInfo);
+      default:
+        // If no mode specified, treat as text-to-audio
+        return config.prompt.trim().length > 0;
+    }
+  };
+
+  // Check if all pending configs have valid settings
+  const allPendingConfigsValid = useMemo(() => {
+    // Get pending configs (those not yet generated)
+    const pendingConfigs = soundConfigs.filter((_, index) => !isSoundGenerated(index));
+
+    // If no pending configs, return true (nothing to validate)
+    if (pendingConfigs.length === 0) return true;
+
+    // Check if all pending configs are valid
+    return pendingConfigs.every(isConfigValid);
+  }, [soundConfigs, generatedSounds]);
+
+  // Determine if generate button should be disabled
+  const shouldDisableGenerateButton = isSoundGenerating || soundConfigs.length === 0 || !allPendingConfigsValid;
+
   // When adding a new sound, expand it and collapse others
   useEffect(() => {
     // Expand the last added sound card
@@ -136,7 +181,7 @@ export function SoundGenerationSection({
   useEffect(() => {
     if (selectedCardIndex !== null && selectedCardIndex >= 0 && selectedCardIndex < soundConfigs.length) {
       setExpandedTabs(new Set([selectedCardIndex]));
-      
+
       // Scroll to the selected card
       setTimeout(() => {
         const tabElement = soundTabRefs.current.get(selectedCardIndex);
@@ -144,6 +189,43 @@ export function SoundGenerationSection({
       }, 100);
     }
   }, [selectedCardIndex, soundConfigs.length]);
+
+  // Close mode selector when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (modeSelectorRef.current && !modeSelectorRef.current.contains(event.target as Node)) {
+        setShowModeSelector(false);
+      }
+    };
+
+    if (showModeSelector) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showModeSelector]);
+
+  // Handle mode selection
+  const handleModeSelect = async (mode: SoundGenerationMode) => {
+    // Create the config first
+    onAddConfig(mode);
+    setShowModeSelector(false);
+
+    // If sample-audio mode, auto-load the sample file
+    if (mode === 'sample-audio') {
+      try {
+        // Get the index of the newly created config (will be last in array)
+        const newIndex = soundConfigs.length;
+
+        // Load sample audio from backend
+        const sampleFile = await apiService.loadSampleAudio();
+
+        // Upload it to the newly created config
+        await onUploadAudio(newIndex, sampleFile);
+      } catch (error) {
+        console.error('[SoundGenerationSection] Failed to load sample audio:', error);
+      }
+    }
+  };
 
   return (
     <div className="flex flex-col gap-3">
@@ -155,10 +237,11 @@ export function SoundGenerationSection({
           <span> ({soundStatus.pendingCount} pending)</span>
         )}
 
-        {/* Add Sound button - small icon button */}
+        {/* Add Sound button with mode selector dropdown */}
+        <div className="ml-auto relative" ref={modeSelectorRef}>
           <button
-            onClick={onAddConfig}
-            className="w-8 h-8 rounded text-white font-bold transition-colors flex items-center justify-center ml-auto"
+            onClick={() => setShowModeSelector(!showModeSelector)}
+            className="w-8 h-8 rounded text-white font-bold transition-colors flex items-center justify-center"
             style={{
               backgroundColor: UI_COLORS.PRIMARY,
               borderRadius: '8px'
@@ -170,6 +253,89 @@ export function SoundGenerationSection({
           >
             <span className="text-lg leading-none">+</span>
           </button>
+
+          {/* Mode selector dropdown */}
+          {showModeSelector && (
+            <div
+              className="absolute right-0 mt-1 z-10 rounded shadow-lg"
+              style={{
+                backgroundColor: 'white',
+                borderRadius: '8px',
+                borderWidth: '1px',
+                borderStyle: 'solid',
+                borderColor: UI_COLORS.NEUTRAL_300,
+                minWidth: '200px'
+              }}
+            >
+              <button
+                onClick={() => handleModeSelect('text-to-audio')}
+                className="w-full text-left px-3 py-2 text-xs transition-colors"
+                style={{
+                  borderRadius: '8px 8px 0 0',
+                  color: UI_COLORS.NEUTRAL_900
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY;
+                  e.currentTarget.style.color = 'white';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
+                }}
+              >
+                Text-to-Audio Generation
+              </button>
+              <button
+                onClick={() => handleModeSelect('upload')}
+                className="w-full text-left px-3 py-2 text-xs transition-colors"
+                style={{ color: UI_COLORS.NEUTRAL_900 }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY;
+                  e.currentTarget.style.color = 'white';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
+                }}
+              >
+                Upload File
+              </button>
+              <button
+                onClick={() => handleModeSelect('library')}
+                className="w-full text-left px-3 py-2 text-xs transition-colors"
+                style={{ color: UI_COLORS.NEUTRAL_900 }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY;
+                  e.currentTarget.style.color = 'white';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
+                }}
+              >
+                Sound Library Search
+              </button>
+              <button
+                onClick={() => handleModeSelect('sample-audio')}
+                className="w-full text-left px-3 py-2 text-xs transition-colors"
+                style={{
+                  borderRadius: '0 0 8px 8px',
+                  color: UI_COLORS.NEUTRAL_900
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY;
+                  e.currentTarget.style.color = 'white';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
+                }}
+              >
+                Sample Audio
+              </button>
+            </div>
+          )}
+        </div>
 
       </div>
 
@@ -207,7 +373,6 @@ export function SoundGenerationSection({
               selectedVariantIdx={selectedVariantIdx}
               onToggleExpand={handleToggleExpand}
               onUpdateConfig={onUpdateConfig}
-              onModeChange={onModeChange}
               onRemove={onRemoveConfig}
               onReset={handleReset}
               onStartLinkingEntity={onStartLinkingEntity}
@@ -242,24 +407,24 @@ export function SoundGenerationSection({
       <div className="flex gap-2">
         <button
           onClick={onGenerate}
-          disabled={isSoundGenerating}
+          disabled={shouldDisableGenerateButton}
           className="w-8 h-8 flex-1 text-white transition-colors"
           style={{
             borderRadius: UI_BUTTON.BORDER_RADIUS_MD,
             padding: UI_BUTTON.PADDING_MD,
             fontSize: UI_BUTTON.FONT_SIZE,
             fontWeight: UI_BUTTON.FONT_WEIGHT,
-            backgroundColor: isSoundGenerating ? UI_COLORS.NEUTRAL_400 : UI_COLORS.PRIMARY,
-            opacity: isSoundGenerating ? 0.4 : 1,
-            cursor: isSoundGenerating ? 'not-allowed' : 'pointer'
+            backgroundColor: shouldDisableGenerateButton ? UI_COLORS.NEUTRAL_400 : UI_COLORS.PRIMARY,
+            opacity: shouldDisableGenerateButton ? 0.4 : 1,
+            cursor: shouldDisableGenerateButton ? 'not-allowed' : 'pointer'
           }}
           onMouseEnter={(e) => {
-            if (!isSoundGenerating) {
+            if (!shouldDisableGenerateButton) {
               e.currentTarget.style.opacity = '0.8';
             }
           }}
           onMouseLeave={(e) => {
-            if (!isSoundGenerating) {
+            if (!shouldDisableGenerateButton) {
               e.currentTarget.style.opacity = '1';
             }
           }}
@@ -303,6 +468,7 @@ export function SoundGenerationSection({
           {soundGenError}
         </div>
       )}
+
     </div>
   );
 }

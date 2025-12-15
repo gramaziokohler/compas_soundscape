@@ -6,6 +6,28 @@ export type { SEDAudioInfo, DetectedSound, SEDAnalysisResult, SEDAnalysisOptions
 import type { ReceiverData, ReceiverOverlay } from './receiver';
 export type { ReceiverData, ReceiverOverlay };
 
+// Import and re-export Acoustics types
+import type {
+  AcousticSimulationMode,
+  SimulationState,
+  BaseSimulationConfig,
+  ResonanceSimulationConfig,
+  ChorasSimulationConfig,
+  PyroomAcousticsSimulationConfig,
+  SimulationConfig,
+  SimulationTabProps
+} from './acoustics';
+export type {
+  AcousticSimulationMode,
+  SimulationState,
+  BaseSimulationConfig,
+  ResonanceSimulationConfig,
+  ChorasSimulationConfig,
+  PyroomAcousticsSimulationConfig,
+  SimulationConfig,
+  SimulationTabProps
+};
+
 // Type Definitions
 export interface CompasGeometry {
   vertices: number[][];

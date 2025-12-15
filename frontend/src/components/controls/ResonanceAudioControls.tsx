@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import type { ResonanceAudioConfig, ResonanceRoomMaterial } from '@/types/audio';
-import { RESONANCE_AUDIO, UI_COLORS } from '@/lib/constants';
+import { UI_COLORS } from '@/lib/constants';
+import { ResonanceAudioMaterialUI } from '@/components/acoustics/ResonanceAudioMaterialUI';
 
 interface ResonanceAudioControlsProps {
   config: ResonanceAudioConfig | null;
@@ -13,108 +14,6 @@ interface ResonanceAudioControlsProps {
   onToggleBoundingBox: (show: boolean) => void;
   onRefreshBoundingBox?: () => void; // Refresh bounding box from sound sources
   className?: string;
-}
-
-/**
- * Get color based on absorption coefficient
- * 0 = transparent (white), 1 = primary color (cyan/blue)
- */
-const getAbsorptionColor = (absorption: number): string => {
-  // Interpolate from white (low absorption) to cyan (high absorption)
-  const r = Math.round(255 * (1 - absorption));
-  const g = Math.round(255 * (1 - absorption * 0.3));
-  const b = 255;
-  return `rgb(${r}, ${g}, ${b})`;
-};
-
-/**
- * Custom Material Dropdown Component
- * Native <select> doesn't support gradient backgrounds, so we build a custom one
- */
-interface MaterialDropdownProps {
-  value: string;
-  options: Array<{ value: string; label: string }>;
-  onChange: (value: string) => void;
-}
-
-function MaterialDropdown({ value, options, onChange }: MaterialDropdownProps) {
-  const [isOpen, setIsOpen] = useState(false);
-  const selectedOption = options.find(opt => opt.value === value);
-  const selectedAbsorption = RESONANCE_AUDIO.MATERIAL_ABSORPTION[value] || 0;
-  const selectedColor = getAbsorptionColor(selectedAbsorption);
-
-  return (
-    <div className="relative">
-      {/* Selected value display */}
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-full border rounded px-2 py-1.5 text-xs text-left flex items-center justify-between"
-        style={{
-          borderColor: UI_COLORS.NEUTRAL_300,
-          background: `linear-gradient(to right, ${selectedColor} 0%, ${selectedColor} ${selectedAbsorption * 100}%, white ${selectedAbsorption * 100}%)`,
-          color: UI_COLORS.NEUTRAL_900
-        }}
-      >
-        <span>{selectedOption?.label} ({(selectedAbsorption * 100).toFixed(0)}% abs)</span>
-        <svg 
-          width="12" 
-          height="12" 
-          viewBox="0 0 12 12" 
-          fill="none" 
-          style={{ transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}
-        >
-          <path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-      </button>
-
-      {/* Dropdown menu */}
-      {isOpen && (
-        <>
-          {/* Backdrop to close dropdown */}
-          <div 
-            className="fixed inset-0 z-10" 
-            onClick={() => setIsOpen(false)}
-          />
-          
-          {/* Options list */}
-          <div 
-            className="absolute z-20 w-full mt-1 border rounded shadow-lg max-h-60 overflow-y-auto"
-            style={{
-              backgroundColor: 'white',
-              borderColor: UI_COLORS.NEUTRAL_300
-            }}
-          >
-            {options.map(option => {
-              const absorption = RESONANCE_AUDIO.MATERIAL_ABSORPTION[option.value] || 0;
-              const color = getAbsorptionColor(absorption);
-              const isSelected = option.value === value;
-              
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => {
-                    onChange(option.value);
-                    setIsOpen(false);
-                  }}
-                  className="w-full px-2 py-1.5 text-xs text-left hover:opacity-80 transition-opacity"
-                  style={{
-                    background: `linear-gradient(to right, ${color} 0%, ${color} ${absorption * 100}%, white ${absorption * 100}%)`,
-                    color: UI_COLORS.NEUTRAL_900,
-                    fontWeight: isSelected ? 'bold' : 'normal'
-                  }}
-                >
-                  {option.label} ({(absorption * 100).toFixed(0)}% abs)
-                  {isSelected && ' ✓'}
-                </button>
-              );
-            })}
-          </div>
-        </>
-      )}
-    </div>
-  );
 }
 
 /**
@@ -138,50 +37,13 @@ export function ResonanceAudioControls({
   className = ''
 }: ResonanceAudioControlsProps) {
   const enabled = config?.enabled ?? false;
-  const materials = config?.roomMaterials ?? RESONANCE_AUDIO.DEFAULT_ROOM_MATERIALS;
-
-  // Sort materials by absorption coefficient (low to high)
-  const materialOptions = useMemo(() => {
-    const options = [
-      { value: 'transparent', label: 'Open (No Reflection)' },
-      { value: 'acoustic-ceiling-tiles', label: 'Acoustic Tiles' },
-      { value: 'brick-bare', label: 'Brick (Bare)' },
-      { value: 'brick-painted', label: 'Brick (Painted)' },
-      { value: 'concrete-block-coarse', label: 'Concrete (Coarse)' },
-      { value: 'concrete-block-painted', label: 'Concrete (Painted)' },
-      { value: 'curtain-heavy', label: 'Curtain (Heavy)' },
-      { value: 'fiber-glass-insulation', label: 'Fiberglass Insulation' },
-      { value: 'glass-thin', label: 'Glass (Thin)' },
-      { value: 'glass-thick', label: 'Glass (Thick)' },
-      { value: 'grass', label: 'Grass' },
-      { value: 'linoleum-on-concrete', label: 'Linoleum on Concrete' },
-      { value: 'marble', label: 'Marble' },
-      { value: 'metal', label: 'Metal' },
-      { value: 'parquet-on-concrete', label: 'Parquet on Concrete' },
-      { value: 'plaster-rough', label: 'Plaster (Rough)' },
-      { value: 'plaster-smooth', label: 'Plaster (Smooth)' },
-      { value: 'plywood-panel', label: 'Plywood Panel' },
-      { value: 'polished-concrete-or-tile', label: 'Polished Concrete/Tile' },
-      { value: 'sheet-rock', label: 'Sheet Rock' },
-      { value: 'water-or-ice-surface', label: 'Water/Ice Surface' },
-      { value: 'wood-ceiling', label: 'Wood Ceiling' },
-      { value: 'wood-panel', label: 'Wood Panel' },
-      { value: 'uniform', label: 'Uniform (0.5)' },
-    ];
-
-    // Sort by absorption coefficient (low to high)
-    return options.sort((a, b) => {
-      const absA = RESONANCE_AUDIO.MATERIAL_ABSORPTION[a.value] || 0;
-      const absB = RESONANCE_AUDIO.MATERIAL_ABSORPTION[b.value] || 0;
-      return absA - absB;
-    });
-  }, []);
-
-  const handleMaterialChange = (surface: keyof ResonanceRoomMaterial, value: string) => {
-    onUpdateRoomMaterials({
-      ...materials,
-      [surface]: value
-    });
+  const materials = config?.roomMaterials ?? {
+    left: 'transparent',
+    right: 'transparent',
+    front: 'transparent',
+    back: 'transparent',
+    down: 'transparent',
+    up: 'transparent'
   };
 
   const handleToggle = () => {
@@ -250,27 +112,14 @@ export function ResonanceAudioControls({
 
       {/* Surface Materials */}
       {enabled && (
-        <div className="space-y-2">
-          <label className="block text-xs font-medium" style={{ color: UI_COLORS.NEUTRAL_700 }}>
+        <div className="flex flex-col gap-2">
+          <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
             Surface Materials
-          </label>
-          <div className="space-y-2">
-            {(['left', 'right', 'front', 'back', 'down', 'up'] as const).map(surface => (
-              <div key={surface}>
-                <label 
-                  className="block text-xs mb-1 capitalize" 
-                  style={{ color: UI_COLORS.NEUTRAL_600 }}
-                >
-                  {surface === 'down' ? 'Floor' : surface === 'up' ? 'Ceiling' : surface}
-                </label>
-                <MaterialDropdown
-                  value={materials[surface]}
-                  options={materialOptions}
-                  onChange={(value) => handleMaterialChange(surface, value)}
-                />
-              </div>
-            ))}
-          </div>
+          </h4>
+          <ResonanceAudioMaterialUI
+            materials={materials}
+            onUpdateMaterials={onUpdateRoomMaterials}
+          />
         </div>
       )}
 

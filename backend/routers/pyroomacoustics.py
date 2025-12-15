@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Optional, List
 import uuid
 import json
+import numpy as np
+from scipy.io import wavfile
 
 from services.pyroomacoustics_service import PyroomacousticsService
 from services.geometry_service import GeometryService
@@ -18,7 +20,14 @@ from config.constants import (
     PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION,
     PYROOMACOUSTICS_RAY_TRACING_N_RAYS,
     PYROOMACOUSTICS_DEFAULT_SCATTERING,
-    AUDIO_SAMPLE_RATE
+    PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE,
+    PYROOMACOUSTICS_SIMULATION_MODE_MONO,
+    PYROOMACOUSTICS_SIMULATION_MODE_BINAURAL,
+    PYROOMACOUSTICS_SIMULATION_MODE_FOA,
+    PYROOMACOUSTICS_BINAURAL_EAR_SPACING,
+    PYROOMACOUSTICS_FOA_MIC_RADIUS,
+    AUDIO_SAMPLE_RATE,
+    TEMP_SIMULATIONS_DIR
 )
 
 router = APIRouter()
@@ -27,8 +36,8 @@ router = APIRouter()
 RIR_OUTPUT_DIR = Path(PYROOMACOUSTICS_RIR_DIR)
 RIR_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-TEMP_DIR = Path(__file__).parent.parent / "temp"
-TEMP_DIR.mkdir(exist_ok=True)
+TEMP_DIR = Path(TEMP_SIMULATIONS_DIR)
+TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class SimulationSettings(BaseModel):
@@ -93,6 +102,7 @@ async def run_simulation(
     air_absorption: bool = Form(PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION),
     n_rays: int = Form(PYROOMACOUSTICS_RAY_TRACING_N_RAYS),
     scattering: float = Form(PYROOMACOUSTICS_DEFAULT_SCATTERING),
+    simulation_mode: str = Form(PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE),  # "mono", "binaural", or "foa"
     source_receiver_pairs: str = Form(...),  # JSON string
     face_materials: Optional[str] = Form(None)  # JSON string: {face_index: material_id}
 ):
@@ -124,6 +134,7 @@ async def run_simulation(
         print(f"Model File: {model_file.filename}")
         print(f"Simulation Name: {simulation_name}")
         print(f"Settings:")
+        print(f"  - Simulation Mode: {simulation_mode}")
         print(f"  - Max Order: {max_order}")
         print(f"  - Ray Tracing: {ray_tracing}")
         print(f"  - Air Absorption: {air_absorption}")
@@ -190,7 +201,37 @@ async def run_simulation(
             face_scattering_map = {face_idx: scattering for face_idx in face_material_map.keys()}
             print(f"  Applying scattering coefficient: {scattering:.2f} to {len(face_scattering_map)} faces")
 
-        # Create room from mesh
+        # Extract unique sources and receivers from pairs
+        unique_sources = {}  # source_id -> (position, index)
+        unique_receivers = {}  # receiver_id -> (position, index)
+
+        for pair_dict in pairs_data:
+            pair = SourceReceiverPair(**pair_dict)
+
+            # Track unique sources
+            if pair.source_id not in unique_sources:
+                unique_sources[pair.source_id] = (pair.source_position, len(unique_sources))
+
+            # Track unique receivers
+            if pair.receiver_id not in unique_receivers:
+                unique_receivers[pair.receiver_id] = (pair.receiver_position, len(unique_receivers))
+
+        print(f"  Unique sources: {len(unique_sources)}, Unique receivers: {len(unique_receivers)}")
+        print(f"  Simulation mode: {simulation_mode}")
+
+        # Determine number of channels based on simulation mode
+        if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO:
+            num_channels = 1
+        elif simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_BINAURAL:
+            num_channels = 2
+        elif simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
+            num_channels = 4
+        else:
+            raise HTTPException(status_code=400, detail=f"Invalid simulation mode: {simulation_mode}")
+
+        print(f"  Number of channels per receiver: {num_channels}")
+
+        # Create ONE room for all sources and receivers
         room = PyroomacousticsService.create_room_from_mesh(
             vertices=vertices,
             faces=faces,
@@ -201,40 +242,195 @@ async def run_simulation(
             ray_tracing=settings.ray_tracing,
             air_absorption=settings.air_absorption
         )
-        
-        # Run simulation for each source-receiver pair
-        ir_files = []
-        results_data = []
-        
+
+        # Add all sources to the room
+        for source_id, (source_position, _) in unique_sources.items():
+            try:
+                room.add_source(source_position)
+                print(f"  Added source {source_id} at {source_position}")
+            except (ValueError, AssertionError) as e:
+                error_msg = str(e)
+                if "inside" in error_msg.lower() or "outside" in error_msg.lower():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Source '{source_id}' at position {source_position} is not inside the room geometry. "
+                               f"Please ensure sources are placed within the model bounds."
+                    )
+                raise HTTPException(status_code=400, detail=f"Failed to add source '{source_id}': {error_msg}")
+
+        # Add all receivers to the room (with appropriate microphone configuration)
+        for receiver_id, (receiver_position, _) in unique_receivers.items():
+            try:
+                if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO:
+                    # Single omnidirectional microphone
+                    room.add_microphone(receiver_position)
+                    print(f"  Added mono receiver {receiver_id} at {receiver_position}")
+
+                elif simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_BINAURAL:
+                    # Two microphones for binaural (left and right ears)
+                    half_spacing = PYROOMACOUSTICS_BINAURAL_EAR_SPACING / 2.0
+                    left_ear_pos = [receiver_position[0], receiver_position[1] - half_spacing, receiver_position[2]]
+                    right_ear_pos = [receiver_position[0], receiver_position[1] + half_spacing, receiver_position[2]]
+                    room.add_microphone(left_ear_pos)  # Left channel
+                    room.add_microphone(right_ear_pos)  # Right channel
+                    print(f"  Added binaural receiver {receiver_id}: L={left_ear_pos}, R={right_ear_pos}")
+
+                elif simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
+                    # Four microphones for FOA (W, X, Y, Z)
+                    r = PYROOMACOUSTICS_FOA_MIC_RADIUS
+                    w_pos = receiver_position
+                    x_pos = [receiver_position[0] + r, receiver_position[1], receiver_position[2]]
+                    y_pos = [receiver_position[0], receiver_position[1] + r, receiver_position[2]]
+                    z_pos = [receiver_position[0], receiver_position[1], receiver_position[2] + r]
+                    room.add_microphone(w_pos)  # W channel
+                    room.add_microphone(x_pos)  # X channel
+                    room.add_microphone(y_pos)  # Y channel
+                    room.add_microphone(z_pos)  # Z channel
+                    print(f"  Added FOA receiver {receiver_id}: W={w_pos}, X={x_pos}, Y={y_pos}, Z={z_pos}")
+
+            except (ValueError, AssertionError) as e:
+                error_msg = str(e)
+                if "inside" in error_msg.lower() or "outside" in error_msg.lower():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Receiver '{receiver_id}' at position {receiver_position} is not inside the room geometry. "
+                               f"Please ensure receivers are placed within the model bounds."
+                    )
+                raise HTTPException(status_code=400, detail=f"Failed to add receiver '{receiver_id}': {error_msg}")
+
+        # Enable ray tracing if needed
+        if ray_tracing:
+            try:
+                PyroomacousticsService.enable_ray_tracing(room, n_rays=n_rays)
+                print("Ray tracing enabled for hybrid ISM/ray tracing simulation")
+            except Exception as e:
+                print(f"Warning: Failed to enable ray tracing: {type(e).__name__}: {str(e)}")
+
+        # Compute RIR for all source-receiver pairs at once
+        print(f"  Computing RIRs...")
+        room.compute_rir()
+        print(f"  RIR computation complete!")
+
+        # Debug: Check RIR structure
+        print(f"  Total microphones in room.rir: {len(room.rir)}")
+        print(f"  Total sources in room.rir[0]: {len(room.rir[0]) if len(room.rir) > 0 else 0}")
+        for mic_idx in range(min(len(room.rir), 4)):  # Show first 4 mics
+            for src_idx in range(min(len(room.rir[mic_idx]), 2)):  # Show first 2 sources
+                rir_len = len(room.rir[mic_idx][src_idx]) if room.rir[mic_idx][src_idx] is not None else 0
+                print(f"    RIR[mic={mic_idx}][src={src_idx}]: length={rir_len}")
+
         # Import acoustic measurement utilities
         from utils.acoustic_measurement import AcousticMeasurement
-        
+
+        # Export IRs and collect results for each requested pair
+        ir_files = []
+        results_data = []
+
         for pair_dict in pairs_data:
             pair = SourceReceiverPair(**pair_dict)
-            
-            # Run simulation
-            ray_tracing_params = {'n_rays': n_rays} if ray_tracing else None
-            room_with_rir = PyroomacousticsService.simulate_room_acoustics(
-                room=room,
-                source_position=pair.source_position,
-                receiver_position=pair.receiver_position,
-                enable_ray_tracing=settings.ray_tracing,
-                ray_tracing_params=ray_tracing_params
-            )
-            
-            # Calculate acoustic parameters
+
+            # Get indices for this pair
+            source_idx = unique_sources[pair.source_id][1]
+            receiver_base_idx = unique_receivers[pair.receiver_id][1]
+
+            # Calculate the actual microphone index based on simulation mode
+            # Microphones are added in order for each receiver
+            mic_start_idx = receiver_base_idx * num_channels
+
+            # Extract RIR(s) from room.rir[mic_idx][source_idx]
+            if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO:
+                # Single channel
+                rir = room.rir[mic_start_idx][source_idx]
+
+                # Validate RIR is not empty
+                if rir is None or len(rir) == 0:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Empty RIR for source '{pair.source_id}' -> receiver '{pair.receiver_id}'. "
+                               f"This may indicate microphone positions are invalid or outside the room geometry."
+                    )
+
+                rir_data = rir  # 1D array
+            else:
+                # Multi-channel (binaural or FOA)
+                rir_channels = []
+                for ch in range(num_channels):
+                    mic_idx = mic_start_idx + ch
+
+                    # Validate microphone index
+                    if mic_idx >= len(room.rir):
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Microphone index {mic_idx} out of range (total mics: {len(room.rir)}). "
+                                   f"Expected {num_channels} channels for {simulation_mode} mode."
+                        )
+
+                    rir = room.rir[mic_idx][source_idx]
+
+                    # Validate RIR is not empty
+                    if rir is None or len(rir) == 0:
+                        channel_names = {
+                            PYROOMACOUSTICS_SIMULATION_MODE_BINAURAL: ['Left', 'Right'],
+                            PYROOMACOUSTICS_SIMULATION_MODE_FOA: ['W', 'X', 'Y', 'Z']
+                        }
+                        channel_name = channel_names[simulation_mode][ch] if ch < len(channel_names[simulation_mode]) else f"Channel {ch}"
+
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Empty RIR for {channel_name} channel (mic {mic_idx}) "
+                                   f"in {simulation_mode} mode for source '{pair.source_id}' -> receiver '{pair.receiver_id}'. "
+                                   f"This may indicate microphone positions are invalid or outside the room geometry."
+                        )
+
+                    rir_channels.append(rir)
+                    print(f"    Channel {ch} ({mic_idx}): RIR length = {len(rir)}")
+
+                # Validate we collected the expected number of channels
+                if len(rir_channels) != num_channels:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Expected {num_channels} channels for {simulation_mode} mode, but got {len(rir_channels)}"
+                    )
+
+                # Find maximum length among all channels (RIRs can have different lengths)
+                max_length = max(len(rir) for rir in rir_channels)
+                print(f"    Max RIR length across channels: {max_length}")
+
+                # Pad all channels to the same length with zeros
+                padded_channels = []
+                for rir in rir_channels:
+                    if len(rir) < max_length:
+                        # Pad with zeros at the end
+                        padded_rir = np.pad(rir, (0, max_length - len(rir)), mode='constant')
+                        padded_channels.append(padded_rir)
+                    else:
+                        padded_channels.append(rir)
+
+                # Stack channels into multi-channel array [n_samples, n_channels]
+                rir_data = np.column_stack(padded_channels)
+
+            # Calculate acoustic parameters from the first channel (W/mono/left)
             try:
-                acoustic_params = AcousticMeasurement.calculate_acoustic_parameters(room_with_rir)
+                first_channel_rir = room.rir[mic_start_idx][source_idx]
+                acoustic_params = AcousticMeasurement.calculate_acoustic_parameters_from_rir(
+                    first_channel_rir, AUDIO_SAMPLE_RATE
+                )
             except Exception as e:
-                print(f"Warning: Failed to calculate acoustic parameters: {e}")
+                print(f"Warning: Failed to calculate acoustic parameters for {pair.source_id}->{pair.receiver_id}: {e}")
                 acoustic_params = None
-            
+
             # Export impulse response
             ir_filename = f"sim_{simulation_id}_src_{pair.source_id}_rcv_{pair.receiver_id}.wav"
             ir_path = RIR_OUTPUT_DIR / ir_filename
-            PyroomacousticsService.export_impulse_response(room_with_rir, str(ir_path))
+
+            # Export RIR to WAV (mono or multi-channel)
+            rir_int16 = np.int16(rir_data * 32767)
+            wavfile.write(str(ir_path), AUDIO_SAMPLE_RATE, rir_int16)
+
+            print(f"  Exported {num_channels}-channel IR: {ir_filename}")
+
             ir_files.append(ir_filename)
-            
+
             # Collect results data
             result_entry = {
                 "source_id": pair.source_id,
@@ -245,7 +441,9 @@ async def run_simulation(
                 "sample_rate": AUDIO_SAMPLE_RATE,
                 "max_order": settings.max_order,
                 "ray_tracing": settings.ray_tracing,
-                "air_absorption": settings.air_absorption
+                "air_absorption": settings.air_absorption,
+                "simulation_mode": simulation_mode,
+                "num_channels": num_channels
             }
 
             # Add ray tracing parameters if enabled
@@ -256,7 +454,7 @@ async def run_simulation(
             # Add acoustic parameters if calculated successfully
             if acoustic_params:
                 result_entry["acoustic_parameters"] = acoustic_params
-            
+
             results_data.append(result_entry)
         
         # Save results JSON
@@ -273,7 +471,14 @@ async def run_simulation(
         
         # Cleanup temporary model file
         temp_model_path.unlink(missing_ok=True)
-        
+
+        print(f"\n{'='*60}")
+        print(f"Returning simulation result:")
+        print(f"  simulation_id: {simulation_id}")
+        print(f"  Number of IR files: {len(ir_files)}")
+        print(f"  IR files list: {ir_files}")
+        print(f"{'='*60}\n")
+
         return SimulationResult(
             simulation_id=simulation_id,
             message="Simulation completed successfully",
@@ -291,41 +496,51 @@ async def run_simulation(
 
 
 @router.get("/pyroomacoustics/get-result-file/{simulation_id}/{file_type}")
-async def get_result_file(simulation_id: str, file_type: str):
+async def get_result_file(simulation_id: str, file_type: str, ir_filename: Optional[str] = None):
     """
     Retrieve a simulation result file (wav or json).
-    
+
     Args:
         simulation_id: The simulation ID
         file_type: Either 'wav' or 'json'
-    
+        ir_filename: Optional specific IR filename (for wav files only)
+
     Returns:
         The file as a response
     """
     # Validate file_type
     if file_type not in ['wav', 'json']:
         raise HTTPException(status_code=400, detail="file_type must be 'wav' or 'json'")
-    
+
     if file_type == 'json':
         # Return results JSON from temp directory
         filename = f"simulation_{simulation_id}_results.json"
         file_path = TEMP_DIR / filename
         media_type = "application/json"
     else:
-        # For WAV files, we need to search for the first IR file
-        # (In multi-receiver scenario, this gets the first one)
-        ir_files = list(RIR_OUTPUT_DIR.glob(f"sim_{simulation_id}_*.wav"))
-        if not ir_files:
-            raise HTTPException(status_code=404, detail=f"No WAV files found for simulation {simulation_id}")
-        
-        file_path = ir_files[0]
-        filename = file_path.name
+        # For WAV files, support retrieving specific IR by filename
+        if ir_filename:
+            # Validate filename belongs to this simulation
+            if not ir_filename.startswith(f"sim_{simulation_id}_"):
+                raise HTTPException(status_code=400, detail="Invalid IR filename for this simulation")
+
+            file_path = RIR_OUTPUT_DIR / ir_filename
+            filename = ir_filename
+        else:
+            # Fallback: return first IR file if no specific filename given
+            ir_files = list(RIR_OUTPUT_DIR.glob(f"sim_{simulation_id}_*.wav"))
+            if not ir_files:
+                raise HTTPException(status_code=404, detail=f"No WAV files found for simulation {simulation_id}")
+
+            file_path = ir_files[0]
+            filename = file_path.name
+
         media_type = "audio/wav"
-    
+
     # Check if file exists
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {filename}")
-    
+
     # Return file
     return FileResponse(
         path=str(file_path),

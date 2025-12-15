@@ -217,12 +217,32 @@ export enum OutputDecoderType {
 }
 
 /**
+ * Source-Receiver IR Mapping
+ * Maps source IDs to receiver IDs to their corresponding IR metadata
+ * Used for simulation-based acoustics (PyroomAcoustics, Choras)
+ */
+export interface SourceReceiverIRMapping {
+  [sourceId: string]: {
+    [receiverId: string]: ImpulseResponseMetadata;
+  };
+}
+
+/**
+ * Acoustic simulation mode types
+ * Indicates which simulation engine generated the IRs
+ */
+export type AcousticSimulationMode = 'none' | 'pyroomacoustics' | 'choras';
+
+/**
  * Audio mode configuration
  */
 export interface AudioModeConfig {
   mode: AudioMode;
-  irMetadata?: ImpulseResponseMetadata;  // Required for IR modes
+  irMetadata?: ImpulseResponseMetadata;  // Required for IR modes (manual IR upload)
   ambisonicOrder: 1 | 2 | 3;             // FOA, SOA, or TOA
+  simulationMode?: AcousticSimulationMode; // Indicates simulation-based IR mode
+  sourceReceiverIRMapping?: SourceReceiverIRMapping; // Source-receiver IR mapping for simulations
+  activeReceiverId?: string; // Currently active receiver ID
 }
 
 /**

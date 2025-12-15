@@ -8,20 +8,29 @@
  * - Delete receivers by ID
  * - Update receiver positions
  * - Update receiver names
+ * - Receiver selection for simulation-based audio
  * - Unique ID generation using timestamp + random
  *
  * Architecture:
  * - Follows Single Responsibility Principle
  * - State management isolated in this hook
  * - Position updates use immutable patterns
+ * - Receiver selection triggers audio updates
  */
 
 import { useState, useCallback } from 'react';
 import type { ReceiverData } from '@/types';
 
-export function useReceivers() {
+export interface UseReceiversProps {
+  onReceiverSelected?: (receiverId: string) => void; // Callback when receiver is selected
+}
+
+export function useReceivers(props?: UseReceiversProps) {
+  const { onReceiverSelected } = props || {};
+
   const [receivers, setReceivers] = useState<ReceiverData[]>([]);
   const [isPlacingReceiver, setIsPlacingReceiver] = useState(false);
+  const [selectedReceiverId, setSelectedReceiverId] = useState<string | null>(null);
 
   /**
    * Start placing mode - user will click to place receiver
@@ -89,17 +98,44 @@ export function useReceivers() {
    */
   const clearReceivers = useCallback(() => {
     setReceivers([]);
+    setSelectedReceiverId(null);
+  }, []);
+
+  /**
+   * Select a receiver (for simulation-based audio)
+   * Triggers audio update via callback
+   */
+  const selectReceiver = useCallback((id: string) => {
+    setSelectedReceiverId(id);
+
+    // Notify parent component (e.g., ThreeScene) to update audio
+    if (onReceiverSelected) {
+      onReceiverSelected(id);
+    }
+
+    console.log('[useReceivers] Receiver selected:', id);
+  }, [onReceiverSelected]);
+
+  /**
+   * Deselect current receiver
+   */
+  const deselectReceiver = useCallback(() => {
+    setSelectedReceiverId(null);
+    console.log('[useReceivers] Receiver deselected');
   }, []);
 
   return {
     receivers,
     isPlacingReceiver,
+    selectedReceiverId,
     startPlacingReceiver,
     placeReceiver,
     cancelPlacingReceiver,
     deleteReceiver,
     updateReceiverPosition,
     updateReceiverName,
-    clearReceivers
+    clearReceivers,
+    selectReceiver,
+    deselectReceiver
   };
 }

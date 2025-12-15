@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { ThreeScene } from "@/components/scene/ThreeScene";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { IRStatusNotice } from "@/components/audio/IRStatusNotice";
@@ -16,6 +16,7 @@ import { useSED } from "@/hooks/useSED";
 import { useAudioOrchestrator } from "@/hooks/useAudioOrchestrator";
 import { useReceivers } from "@/hooks/useReceivers";
 import { useModalImpact } from "@/hooks/useModalImpact";
+import { useAcousticsSimulation } from "@/hooks/useAcousticsSimulation";
 import { apiService } from "@/services/api";
 import { API_BASE_URL } from "@/lib/constants";
 import type { LoadTab, SoundGenerationConfig } from "@/types";
@@ -33,12 +34,39 @@ function HomeContent() {
 
   // MAIN AUDIO SYSTEM: Handles all 6 audio modes (Flat Anechoic, ShoeBox Acoustics, Spatial Anechoic, Mono IR, Stereo IR, Ambisonic IR)
   const audioOrchestrator = useAudioOrchestrator();
+  
+  // Store orchestrator in ref for stable callback access
+  const orchestratorRef = useRef(audioOrchestrator.orchestrator);
+  useEffect(() => {
+    orchestratorRef.current = audioOrchestrator.orchestrator;
+  }, [audioOrchestrator.orchestrator]);
 
   // Audio feature hooks (modular, integrate with orchestrator)
   const audioNormalization = useAudioNormalization(audioOrchestrator.orchestrator);
   const roomMaterials = useRoomMaterials(audioOrchestrator.orchestrator);
-  const receivers = useReceivers();
+  
+  // Receiver selection callback - updates AudioOrchestrator with new receiver
+  // Use ref to access latest orchestrator without recreating callback
+  const handleReceiverSelected = useCallback(async (receiverId: string) => {
+    console.log('[Page] 🎯 Receiver selected:', receiverId);
+    console.log('[Page] Orchestrator exists?', !!orchestratorRef.current);
+    
+    if (orchestratorRef.current) {
+      console.log('[Page] ⚡ Calling updateActiveReceiver...');
+      try {
+        await orchestratorRef.current.updateActiveReceiver(receiverId);
+        console.log('[Page] ✅ Receiver audio updated:', receiverId);
+      } catch (error) {
+        console.error('[Page] ❌ Failed to update active receiver:', error);
+      }
+    } else {
+      console.warn('[Page] ❌ No orchestrator available');
+    }
+  }, []); // Empty deps - uses ref for orchestrator
+  
+  const receivers = useReceivers({ onReceiverSelected: handleReceiverSelected });
   const modalImpact = useModalImpact();
+  const acousticsSimulation = useAcousticsSimulation();
   const [activeLoadTab, setActiveLoadTab] = useState<LoadTab>('upload');
   
   // IR Library state - store both ID and full metadata for reload capability
@@ -78,6 +106,64 @@ function HomeContent() {
       setShowBoundingBox(false);
     }
   }, [audioOrchestrator.status?.currentMode, showBoundingBox]);
+
+  // Set source-receiver IR mapping when simulation completes (PyroomAcoustics)
+  useEffect(() => {
+    if (!audioOrchestrator.orchestrator) return;
+
+    // Check if active simulation is Pyroomacoustics and has source-receiver mapping
+    if (acousticsSimulation.activeSimulationIndex !== null) {
+      const activeConfig = acousticsSimulation.simulationConfigs[acousticsSimulation.activeSimulationIndex];
+      
+      if (activeConfig && activeConfig.mode === 'pyroomacoustics') {
+        const pyroomConfig = activeConfig as any;
+        
+        // If simulation has source-receiver IR mapping, pass it to AudioOrchestrator
+        if (pyroomConfig.sourceReceiverIRMapping) {
+          console.log('[Page] Setting source-receiver IR mapping from simulation', {
+            simulationId: activeConfig.id,
+            hasMapping: !!pyroomConfig.sourceReceiverIRMapping,
+            sourceCount: Object.keys(pyroomConfig.sourceReceiverIRMapping).length
+          });
+          
+          // Get first receiver ID as initial selection (if receivers exist)
+          const initialReceiverId = receivers.receivers.length > 0 ? receivers.receivers[0].id : undefined;
+          
+          audioOrchestrator.orchestrator.setSourceReceiverIRMapping(
+            pyroomConfig.sourceReceiverIRMapping,
+            'pyroomacoustics',
+            initialReceiverId
+          ).then(() => {
+            console.log('[Page] ✅ Source-receiver IR mapping applied successfully');
+          }).catch(error => {
+            console.error('[Page] ❌ Failed to set source-receiver IR mapping:', error);
+          });
+        }
+      }
+    }
+  }, [
+    audioOrchestrator.orchestrator,
+    acousticsSimulation.activeSimulationIndex,
+    acousticsSimulation.simulationConfigs,
+    receivers.receivers
+  ]);
+
+  // Stop timeline when switching between simulation tabs
+  const prevActiveIndexRef = useRef<number | null>(acousticsSimulation.activeSimulationIndex);
+  
+  useEffect(() => {
+    const prevIndex = prevActiveIndexRef.current;
+    const currentIndex = acousticsSimulation.activeSimulationIndex;
+    
+    // Only stop if we're actually switching between simulations (not on initial mount)
+    if (prevIndex !== null && prevIndex !== currentIndex) {
+      console.log(`[Page] Switching simulation tabs: ${prevIndex} → ${currentIndex}, stopping timeline`);
+      audioControls.stopAll();
+    }
+    
+    // Update ref for next comparison
+    prevActiveIndexRef.current = currentIndex;
+  }, [acousticsSimulation.activeSimulationIndex, audioControls.stopAll]);
   
   // Entity linking state
   const [isLinkingEntity, setIsLinkingEntity] = useState(false);
@@ -87,6 +173,9 @@ function HomeContent() {
   // Material assignment state (NEW)
   const [selectedGeometry, setSelectedGeometry] = useState<SelectedGeometry | null>(null);
   const [modelType, setModelType] = useState<'3dm' | 'obj' | 'ifc' | null>(null);
+
+  // Go to receiver state (triggers first-person view at specific receiver)
+  const [goToReceiverId, setGoToReceiverId] = useState<string | null>(null);
 
   // Detect model type from file extension
   useEffect(() => {
@@ -412,13 +501,16 @@ function HomeContent() {
 
   // Handler: Face selected in 3D scene (NEW)
   const handleFaceSelected = useCallback((faceIndex: number, entityIndex: number) => {
+    console.log('[Page] handleFaceSelected called:', { faceIndex, entityIndex });
     if (faceIndex === -1) {
       // Deselected
+      console.log('[Page] Deselecting face');
       handleSelectGeometry(null);
     } else {
       // Face selected - find the layer if applicable
       const entity = fileUpload.modelEntities.find(e => e.index === entityIndex);
-      const layerId = entity?.layer || undefined;
+      // Use 'Default' for entities without a layer (matches MaterialAssignmentUI grouping)
+      const layerId = entity?.layer || 'Default';
 
       const selection: SelectedGeometry = {
         type: 'face',
@@ -426,24 +518,99 @@ function HomeContent() {
         entityIndex,
         layerId
       };
+      console.log('[Page] Setting selectedGeometry:', selection);
       handleSelectGeometry(selection);
     }
   }, [fileUpload.modelEntities, handleSelectGeometry]);
 
   // Handler: Material assignment (NEW)
   const [materialAssignments, setMaterialAssignments] = useState<Map<string, { selection: SelectedGeometry, material: AcousticMaterial | null }>>(new Map());
-  
+
   const handleAssignMaterial = useCallback((selection: SelectedGeometry, material: AcousticMaterial | null) => {
     console.log('[Page] Material assigned:', { selection, material });
-    
-    // Store assignment with a unique key
+
+    // Store assignment with a unique key (legacy - kept for compatibility)
     const key = `${selection.type}-${selection.layerId ?? ''}-${selection.entityIndex ?? ''}-${selection.faceIndex ?? ''}`;
     setMaterialAssignments(prev => {
       const newMap = new Map(prev);
       newMap.set(key, { selection, material });
       return newMap;
     });
-  }, []);
+
+    // Update the active simulation's faceToMaterialMap for immediate 3D coloring
+    if (acousticsSimulation.activeSimulationIndex !== null) {
+      const activeConfig = acousticsSimulation.simulationConfigs[acousticsSimulation.activeSimulationIndex];
+
+      if (activeConfig && (activeConfig as any).faceToMaterialMap) {
+        const updatedMap = new Map((activeConfig as any).faceToMaterialMap);
+
+        // Get the geometry data to find all faces affected by this assignment
+        const geometryData = fileUpload.geometryData;
+
+        // Strip prefix from material ID (choras_/pyroom_) to match backend format
+        const materialId = material ? (
+          material.id.startsWith('choras_') ? material.id.substring(7) :
+          material.id.startsWith('pyroom_') ? material.id.substring(7) :
+          material.id
+        ) : null;
+
+        if (selection.type === 'face' && selection.faceIndex !== undefined) {
+          // Single face assignment
+          if (materialId) {
+            updatedMap.set(selection.faceIndex, materialId);
+          } else {
+            updatedMap.delete(selection.faceIndex);
+          }
+        } else if (selection.type === 'entity' && selection.entityIndex !== undefined && geometryData?.face_entity_map) {
+          // Entity-level assignment: update all faces of this entity
+          geometryData.face_entity_map.forEach((entityIndex, faceIndex) => {
+            if (entityIndex === selection.entityIndex) {
+              if (materialId) {
+                updatedMap.set(faceIndex, materialId);
+              } else {
+                updatedMap.delete(faceIndex);
+              }
+            }
+          });
+        } else if (selection.type === 'layer' && selection.layerId && geometryData?.face_entity_map) {
+          // Layer-level assignment: update all faces of entities in this layer
+          geometryData.face_entity_map.forEach((entityIndex, faceIndex) => {
+            const entity = fileUpload.modelEntities.find(e => e.index === entityIndex);
+            if (entity && entity.layer === selection.layerId) {
+              if (materialId) {
+                updatedMap.set(faceIndex, materialId);
+              } else {
+                updatedMap.delete(faceIndex);
+              }
+            }
+          });
+        } else if (selection.type === 'global' && geometryData?.faces) {
+          // Global assignment: update all faces
+          if (materialId) {
+            for (let i = 0; i < geometryData.faces.length; i++) {
+              updatedMap.set(i, materialId);
+            }
+          } else {
+            updatedMap.clear();
+          }
+        }
+
+        // Update the simulation config with the new faceToMaterialMap
+        acousticsSimulation.handleUpdateConfig(acousticsSimulation.activeSimulationIndex, {
+          faceToMaterialMap: updatedMap
+        } as any);
+
+        console.log('[Page] Updated active simulation faceToMaterialMap:', {
+          simulationIndex: acousticsSimulation.activeSimulationIndex,
+          mapSize: updatedMap.size,
+          selection,
+          material: material?.name,
+          materialId: materialId,
+          originalId: material?.id
+        });
+      }
+    }
+  }, [acousticsSimulation, fileUpload.geometryData, fileUpload.modelEntities]);
 
   // Handler: Audio Rendering Mode Change (unified handler for all 3 modes)
   const handleAudioRenderingModeChange = useCallback(async (mode: AudioRenderingMode) => {
@@ -512,6 +679,31 @@ function HomeContent() {
     console.log('[Page] Receiver mode changed:', { isActive, receiverId, hasReceivers });
     audioOrchestrator.setReceiverMode(isActive, receiverId || undefined, hasReceivers);
   }, [audioOrchestrator, receivers.receivers.length]);
+
+  // Handler: Go To Receiver (activates first-person view at receiver position)
+  const handleGoToReceiver = useCallback((receiverId: string) => {
+    const receiver = receivers.receivers.find(r => r.id === receiverId);
+    if (!receiver) {
+      console.warn('[Page] handleGoToReceiver: Receiver not found:', receiverId);
+      return;
+    }
+
+    console.log('[Page] Go to receiver:', { receiverId, position: receiver.position });
+
+    // Set the receiver ID to trigger the camera movement in ThreeScene
+    setGoToReceiverId(receiverId);
+
+    // Activate receiver mode for audio routing
+    audioOrchestrator.setReceiverMode(true, receiverId, true);
+  }, [receivers.receivers, audioOrchestrator]);
+
+  // Reset goToReceiverId after it's been processed (allows re-triggering same receiver)
+  useEffect(() => {
+    if (goToReceiverId) {
+      const timer = setTimeout(() => setGoToReceiverId(null), 100);
+      return () => clearTimeout(timer);
+    }
+  }, [goToReceiverId]);
 
   // Sync receiver count with AudioOrchestrator when receivers are added/removed
   useEffect(() => {
@@ -678,6 +870,7 @@ function HomeContent() {
         onStartPlacingReceiver={receivers.startPlacingReceiver}
         onDeleteReceiver={receivers.deleteReceiver}
         onUpdateReceiverName={receivers.updateReceiverName}
+        onGoToReceiver={handleGoToReceiver}
 
         // ShoeBox Acoustics props
         resonanceAudioConfig={resonanceAudioConfig}
@@ -694,12 +887,22 @@ function HomeContent() {
 
         // Material assignment props (NEW)
         modelType={modelType}
-        geometryData={fileUpload.geometryData}
         selectedGeometry={selectedGeometry}
         onSelectGeometry={handleSelectGeometry}
         onAssignMaterial={handleAssignMaterial}
         onIRImported={handleIRImported}
         irRefreshTrigger={irRefreshTrigger}
+
+        // Acoustics simulation state (passed down to avoid duplicate hook calls)
+        simulationConfigs={acousticsSimulation.simulationConfigs}
+        activeSimulationIndex={acousticsSimulation.activeSimulationIndex}
+        expandedTabIndex={acousticsSimulation.expandedTabIndex}
+        onAddSimulationConfig={acousticsSimulation.handleAddConfig}
+        onRemoveSimulationConfig={acousticsSimulation.handleRemoveConfig}
+        onUpdateSimulationConfig={acousticsSimulation.handleUpdateConfig}
+        onSetActiveSimulation={acousticsSimulation.handleSetActiveSimulation}
+        onUpdateSimulationName={acousticsSimulation.handleUpdateSimulationName}
+        onToggleExpandSimulation={acousticsSimulation.handleToggleExpand}
       />
 
       <main className="flex-1 overflow-hidden relative">
@@ -742,7 +945,10 @@ function HomeContent() {
           showBoundingBox={showBoundingBox}
           refreshBoundingBoxTrigger={refreshBoundingBoxTrigger}
           receivers={receivers.receivers}
+          selectedReceiverId={receivers.selectedReceiverId}
           onUpdateReceiverPosition={receivers.updateReceiverPosition}
+          onReceiverSelected={receivers.selectReceiver}
+          onUpdateSoundPosition={soundGen.updateSoundPosition}
           onPlaceReceiver={receivers.placeReceiver}
           isPlacingReceiver={receivers.isPlacingReceiver}
           onCancelPlacingReceiver={receivers.cancelPlacingReceiver}
@@ -754,6 +960,7 @@ function HomeContent() {
           onSetModeVisualization={modalImpact.setModeVisualization}
           onSelectMode={modalImpact.selectMode}
           onReceiverModeChange={handleReceiverModeChange}
+          goToReceiverId={goToReceiverId}
           audioRenderingMode={audioRenderingMode}
           audioOrchestrator={audioOrchestrator.orchestrator}
           audioContext={audioOrchestrator.audioContext}
@@ -774,6 +981,13 @@ function HomeContent() {
           selectedGeometry={selectedGeometry}
           onFaceSelected={handleFaceSelected}
           materialAssignments={materialAssignments}
+          activeSimulationIndex={acousticsSimulation.activeSimulationIndex}
+          activeSimulationConfig={
+            acousticsSimulation.activeSimulationIndex !== null
+              ? acousticsSimulation.simulationConfigs[acousticsSimulation.activeSimulationIndex]
+              : null
+          }
+          activeAiTab={textGen.activeAiTab}
           className="w-full h-full"
         />
       </main>

@@ -9,11 +9,11 @@ import os
 from pathlib import Path
 import json
 from typing import Optional
+from config.constants import CHORAS_API_BASE, TEMP_SIMULATIONS_DIR
 
 router = APIRouter()
 
-CHORAS_API_BASE = "http://localhost:5001"
-TEMP_DIR = Path(__file__).parent.parent / "temp"
+TEMP_DIR = Path(TEMP_SIMULATIONS_DIR)
 
 class SaveResultsRequest(BaseModel):
     simulationId: int

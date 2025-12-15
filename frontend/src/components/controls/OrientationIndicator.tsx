@@ -10,6 +10,8 @@ interface OrientationIndicatorProps {
   pitch: number;
   /** Optional className for positioning */
   className?: string;
+  /** Callback to exit first-person mode */
+  onExitFirstPersonMode?: () => void;
 }
 
 /**
@@ -23,7 +25,7 @@ interface OrientationIndicatorProps {
  * - Updates in real-time as user rotates with arrow keys
  * - Provides spatial awareness feedback
  */
-export function OrientationIndicator({ yaw, pitch, className = "" }: OrientationIndicatorProps) {
+export function OrientationIndicator({ yaw, pitch, className = "", onExitFirstPersonMode }: OrientationIndicatorProps) {
   // Convert radians to degrees
   const yawDeg = useMemo(() => {
     // Three.js: 0 = +Z axis (North), rotates CCW
@@ -139,9 +141,35 @@ export function OrientationIndicator({ yaw, pitch, className = "" }: Orientation
         </div>
       </div>
 
-      {/* Help text */}
-      <div className="mt-2 pt-2 text-xs text-center" style={{ borderTopColor: `${UI_OVERLAY.BORDER_COLOR}`, borderTopWidth: '1px', borderTopStyle: 'solid', color: UI_COLORS.NEUTRAL_400 }}>
-        Use arrow keys to rotate view
+      {/* Help text and Exit button */}
+      <div className="mt-2 pt-2 flex items-center justify-between gap-4" style={{ borderTopColor: `${UI_OVERLAY.BORDER_COLOR}`, borderTopWidth: '1px', borderTopStyle: 'solid' }}>
+        <div className="text-xs text-center flex-1" style={{ color: UI_COLORS.NEUTRAL_400 }}>
+          Use arrow keys for Head rotation
+          <br />
+          (Translation locked)
+        </div>
+
+        {/* Exit First-Person Mode button */}
+        {onExitFirstPersonMode && (
+          <button
+            onClick={onExitFirstPersonMode}
+            className="px-3 py-1.5 rounded text-xs font-semibold transition-colors"
+            style={{
+              backgroundColor: UI_COLORS.ERROR,
+              color: 'white',
+              borderRadius: '6px'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = '#dc2626';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = UI_COLORS.ERROR;
+            }}
+            title="Exit first-person mode (ESC)"
+          >
+            Exit
+          </button>
+        )}
       </div>
     </div>
   );

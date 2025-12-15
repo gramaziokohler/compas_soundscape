@@ -94,9 +94,9 @@ export const UI_COLORS = {
   DARK_FG: "#ededed",
   DARK_BORDER: "#262626",
   
-  // Material Colors - Gradient from teal to orange
-  MATERIAL_GRADIENT_START: "#14b8a6", // Teal
-  MATERIAL_GRADIENT_END: "#f97316", // Orange
+ //  Material Colors - Gradient from pink to teal (6-char hex for Three.js compatibility)
+  MATERIAL_GRADIENT_START: "#d0128d", // Pink
+  MATERIAL_GRADIENT_END: "#65c0b5", // Teal
 } as const;
 
 // Legacy exports for backward compatibility (still in use)
@@ -797,7 +797,7 @@ export const ARCTIC_THEME = {
   BACKGROUND_COLOR: 0xe8edf2,
   GEOMETRY_COLOR: 0xf0f4f8,
   MATERIAL_ROUGHNESS: 0.5,
-  GEOMETRY_OPACITY: 0.8  // Slightly transparent geometry (90% opacity)
+  GEOMETRY_OPACITY: 0.5  // Slightly transparent geometry (70% opacity)
 } as const;
 
 // Camera
@@ -1322,14 +1322,6 @@ export const CHORAS_DEFAULT_SIM_LEN_TYPE = 'ir_length'; // Simulation length typ
 export const CHORAS_SIM_LEN_TYPE_IR = 'ir_length';
 export const CHORAS_SIM_LEN_TYPE_EDT = 'edt';
 
-// Default Source/Receiver Positions (in meters)
-export const CHORAS_DEFAULT_SOURCE_X = 1.0;
-export const CHORAS_DEFAULT_SOURCE_Y = 1.0;
-export const CHORAS_DEFAULT_SOURCE_Z = 1.0;
-export const CHORAS_DEFAULT_RECEIVER_X = 3.0;
-export const CHORAS_DEFAULT_RECEIVER_Y = 3.0;
-export const CHORAS_DEFAULT_RECEIVER_Z = 1.0;
-
 // Simulation Parameter Ranges
 export const CHORAS_C0_MIN = 300; // Minimum speed of sound (m/s)
 export const CHORAS_C0_MAX = 400; // Maximum speed of sound (m/s)
@@ -1349,35 +1341,26 @@ export const CHORAS_RUN_TIMEOUT = 30000; // Timeout for simulation start request
 export const CHORAS_MAX_POLL_RETRIES = 5; // Maximum retry attempts for failed polls
 
 // ============================================================================
-// RT60 (Reverberation Time) Analysis Configuration
-// ============================================================================
-export const RT60_ANALYSIS = {
-  // Early decay time measurement range (for RT60 estimation)
-  EARLY_DECAY_START_DB: -5,   // Start of EDT measurement (dB)
-  EARLY_DECAY_END_DB: -35,    // End of EDT measurement (dB, 30 dB range)
-
-  // Minimum thresholds for valid calculation
-  MIN_PEAK_THRESHOLD: 0.001,      // Minimum peak amplitude (avoid silent IRs)
-  MIN_ENERGY_THRESHOLD: 1e-10,    // Minimum integrated energy
-
-  // Display formatting
-  DECIMAL_PLACES: 2,              // Display precision (e.g., "1.23s")
-
-  // RT60 category thresholds (for human-readable descriptions)
-  CATEGORY_DEAD_MAX: 0.5,         // < 0.5s = Dead/Dry (anechoic, studio)
-  CATEGORY_MODERATE_MAX: 1.0,     // 0.5-1.0s = Moderate (living room)
-  CATEGORY_REVERBERANT_MAX: 2.0,  // 1.0-2.0s = Reverberant (concert hall)
-  // > 2.0s = Very Reverberant (cathedral, large spaces)
-} as const;
-
-// ============================================================================
 // Pyroomacoustics Acoustic Simulation Configuration
 // ============================================================================
 
+// Simulation Modes
+export const PYROOMACOUSTICS_SIMULATION_MODE_MONO = "mono"; // Single microphone (1 channel)
+export const PYROOMACOUSTICS_SIMULATION_MODE_BINAURAL = "binaural"; // Two microphones for left/right ears (2 channels)
+export const PYROOMACOUSTICS_SIMULATION_MODE_FOA = "foa"; // First-Order Ambisonics (4 channels: W, X, Y, Z)
+
+// Simulation Mode Display Names
+export const PYROOMACOUSTICS_SIMULATION_MODE_NAMES = {
+  [PYROOMACOUSTICS_SIMULATION_MODE_MONO]: "Mono (1-ch)",
+  [PYROOMACOUSTICS_SIMULATION_MODE_BINAURAL]: "Binaural (2-ch)",
+  [PYROOMACOUSTICS_SIMULATION_MODE_FOA]: "FOA Ambisonics (4-ch)"
+} as const;
+
 // Default Simulation Settings
-export const PYROOMACOUSTICS_DEFAULT_MAX_ORDER = 15; // Default max_order for image source method
+export const PYROOMACOUSTICS_DEFAULT_MAX_ORDER = 5; // Default max_order for image source method
 export const PYROOMACOUSTICS_DEFAULT_RAY_TRACING = false; // Default ray tracing state
 export const PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION = false; // Default air absorption state
+export const PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE = PYROOMACOUSTICS_SIMULATION_MODE_MONO; // Default simulation mode
 
 // Parameter Ranges
 export const PYROOMACOUSTICS_MAX_ORDER_MIN = 0; // Direct path only

@@ -41,6 +41,70 @@ export function generateMaterialColor(index: number, total: number): string {
   return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
 }
 
+// Material Select Component for cleaner code
+interface MaterialSelectProps {
+  selection: SelectedGeometry;
+  materialColors: Map<string, string>;
+  availableMaterials: AcousticMaterial[];
+  getMaterialForSelection: (sel: SelectedGeometry) => AcousticMaterial | null;
+  getDisplayValue: (sel: SelectedGeometry) => { value: string; label: string; isVarious: boolean };
+  getSelectBackgroundColor: (matId: string | undefined) => string;
+  handleMaterialChange: (sel: SelectedGeometry, matId: string) => void;
+  updateCounter: number;
+}
+
+function MaterialSelect({
+  selection,
+  materialColors,
+  availableMaterials,
+  getMaterialForSelection,
+  getDisplayValue,
+  getSelectBackgroundColor,
+  handleMaterialChange,
+  updateCounter
+}: MaterialSelectProps) {
+  const display = getDisplayValue(selection);
+  const currentValue = display.isVarious ? 'various' : (display.value || 'none');
+
+  // Use display.value for background color to show inherited material color
+  const backgroundColor = display.isVarious
+    ? UI_COLORS.NEUTRAL_400
+    : getSelectBackgroundColor(display.value !== 'none' ? display.value : undefined);
+
+  return (
+    <select
+      key={`${selection.type}-${selection.layerId}-${selection.entityIndex}-${selection.faceIndex}-${updateCounter}`}
+      value={currentValue}
+      onChange={(e) => {
+        e.stopPropagation();
+        if (e.target.value !== 'various') {
+          handleMaterialChange(selection, e.target.value);
+        }
+      }}
+      className="flex-1 text-xs px-2 py-1 text-white rounded focus:outline-none focus:ring-1 focus:ring-white"
+      style={{
+        backgroundColor,
+        borderRadius: '8px',
+        maxWidth: '150px'
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {display.isVarious && (
+        <option value="various" style={{ backgroundColor: UI_COLORS.NEUTRAL_400 }}>{display.label}</option>
+      )}
+      <option value="none" style={{ backgroundColor: UI_COLORS.PRIMARY }}>{display.isVarious ? 'Select material' : display.label}</option>
+      {availableMaterials.map((mat) => {
+        // Check if this material is the selected one and needs the missing count
+        const isSelected = mat.id === currentValue;
+        const label = isSelected && !display.isVarious ? display.label : mat.name;
+        return (
+          <option key={mat.id} value={mat.id} style={{ backgroundColor: materialColors.get(mat.id) }}>{label}</option>
+        );
+      })}
+    </select>
+  );
+}
+
 interface MaterialAssignmentUIProps {
   modelEntities: EntityData[];
   modelType: '3dm' | 'obj' | 'ifc' | null;
@@ -49,6 +113,9 @@ interface MaterialAssignmentUIProps {
   onSelectGeometry: (selection: SelectedGeometry | null) => void;
   onAssignMaterial: (selection: SelectedGeometry, material: AcousticMaterial | null) => void;
   availableMaterials: AcousticMaterial[]; // Choras materials from library
+  expandedItems?: Set<string>; // Expanded tree items (persisted)
+  onExpandedItemsChange?: (items: Set<string>) => void; // Callback to persist expanded state
+  initialAssignments?: Map<number, string>; // faceIndex -> materialId from simulation config
 }
 
 export function MaterialAssignmentUI({
@@ -58,17 +125,150 @@ export function MaterialAssignmentUI({
   selectedGeometry,
   onSelectGeometry,
   onAssignMaterial,
-  availableMaterials
+  availableMaterials,
+  expandedItems: externalExpandedItems,
+  onExpandedItemsChange,
+  initialAssignments
 }: MaterialAssignmentUIProps) {
-  const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set(['all']));
-  const [materialAssignments, setMaterialAssignments] = useState<Map<string, AcousticMaterial | null>>(new Map());
+  // Use external expanded state if provided, otherwise use local state
+  const [localExpandedItems, setLocalExpandedItems] = useState<Set<string>>(new Set(['all']));
+  const expandedItems = externalExpandedItems || localExpandedItems;
+
+  // Wrapper to handle both local state setter (accepts callback) and external setter (accepts value)
+  const setExpandedItems = (updater: Set<string> | ((prev: Set<string>) => Set<string>)) => {
+    if (onExpandedItemsChange) {
+      // External setter - compute the new value and pass it directly
+      const newValue = typeof updater === 'function' ? updater(expandedItems) : updater;
+      onExpandedItemsChange(newValue);
+    } else {
+      // Local state setter - can handle both callback and direct value
+      setLocalExpandedItems(updater);
+    }
+  };
+
+  const [materialAssignments, setMaterialAssignments] = useState<Map<string, AcousticMaterial | null>>(() => {
+    // Initialize from initialAssignments on mount
+    if (!initialAssignments || initialAssignments.size === 0) return new Map();
+
+    const newAssignments = new Map<string, AcousticMaterial | null>();
+    const entityMaterialCounts = new Map<string, Map<string, number>>(); // entityKey -> materialId -> count
+    const layerMaterialCounts = new Map<string, Map<string, number>>(); // layerKey -> materialId -> count
+    
+    // First pass: Set face-level assignments and count materials per entity/layer
+    initialAssignments.forEach((materialId, faceIndex) => {
+      // Material ID is stored without prefix, but availableMaterials has prefixes
+      const material = availableMaterials.find(m => {
+        if (m.id === materialId) return true;
+        if (m.id.endsWith(`_${materialId}`)) return true;
+        return false;
+      });
+      
+      if (material) {
+        // Find the entity and layer for this face
+        const entityIndex = geometryData?.face_entity_map?.[faceIndex];
+        if (entityIndex !== undefined) {
+          const entity = modelEntities.find(e => e.index === entityIndex);
+          const layerId = entity?.layer || '';
+          const faceKey = `face-${layerId}-${entityIndex}-${faceIndex}`;
+          newAssignments.set(faceKey, material);
+          
+          // Track material counts for entity
+          const entityKey = `entity-${layerId}-${entityIndex}`;
+          if (!entityMaterialCounts.has(entityKey)) {
+            entityMaterialCounts.set(entityKey, new Map());
+          }
+          const entityCounts = entityMaterialCounts.get(entityKey)!;
+          entityCounts.set(material.id, (entityCounts.get(material.id) || 0) + 1);
+          
+          // Track material counts for layer
+          if (layerId) {
+            const layerKey = `layer-${layerId}`;
+            if (!layerMaterialCounts.has(layerKey)) {
+              layerMaterialCounts.set(layerKey, new Map());
+            }
+            const layerCounts = layerMaterialCounts.get(layerKey)!;
+            layerCounts.set(material.id, (layerCounts.get(material.id) || 0) + 1);
+          }
+        }
+      }
+    });
+    
+    // Second pass: If all faces in an entity have the same material, set entity-level assignment
+    entityMaterialCounts.forEach((materialCounts, entityKey) => {
+      if (materialCounts.size === 1) {
+        // Only one material used in this entity
+        const [materialId] = materialCounts.keys();
+        const material = availableMaterials.find(m => m.id === materialId);
+        if (material) {
+          // Count total faces in this entity
+          const match = entityKey.match(/^entity-(.*?)-(\d+)$/);
+          if (match) {
+            const layerId = match[1];
+            const entityIndex = parseInt(match[2]);
+            const entityFaceCount = geometryData?.face_entity_map?.filter((ei: number) => ei === entityIndex).length || 0;
+            const assignedCount = Array.from(materialCounts.values())[0];
+            
+            // If all faces are assigned, set entity-level assignment
+            if (entityFaceCount === assignedCount) {
+              newAssignments.set(`${entityKey}-`, material);
+            }
+          }
+        }
+      }
+    });
+    
+    // Third pass: If all faces in a layer have the same material, set layer-level assignment
+    layerMaterialCounts.forEach((materialCounts, layerKey) => {
+      if (materialCounts.size === 1) {
+        const [materialId] = materialCounts.keys();
+        const material = availableMaterials.find(m => m.id === materialId);
+        if (material) {
+          const layerId = layerKey.replace('layer-', '');
+          const layerFaceCount = modelEntities
+            .filter(e => (e.layer || '') === layerId)
+            .reduce((sum, entity) => {
+              return sum + (geometryData?.face_entity_map?.filter((ei: number) => ei === entity.index).length || 0);
+            }, 0);
+          const assignedCount = Array.from(materialCounts.values())[0];
+          
+          if (layerFaceCount === assignedCount) {
+            newAssignments.set(`${layerKey}--`, material);
+          }
+        }
+      }
+    });
+
+    return newAssignments;
+  });
   const [updateCounter, setUpdateCounter] = useState(0); // Force re-renders for cascading
 
-  // Generate material colors map
+  // Generate material colors map using hash-based approach (matches ThreeScene)
   const materialColors = useMemo(() => {
+    // Helper: Generate stable hash from string (same as ThreeScene)
+    const hashString = (str: string): number => {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash; // Convert to 32-bit integer
+      }
+      return Math.abs(hash);
+    };
+
     const colors = new Map<string, string>();
-    availableMaterials.forEach((mat, index) => {
-      colors.set(mat.id, generateMaterialColor(index, availableMaterials.length));
+    availableMaterials.forEach((mat) => {
+      // Strip prefix from material ID to match backend format (for consistent hashing)
+      const materialId = mat.id.startsWith('choras_') ? mat.id.substring(7) :
+                        mat.id.startsWith('pyroom_') ? mat.id.substring(7) :
+                        mat.id;
+
+      // Use hash to determine a stable position in the gradient (0-99) - same as ThreeScene
+      const hashValue = hashString(materialId);
+      const gradientPosition = hashValue % 100; // 0-99
+      const color = generateMaterialColor(100-gradientPosition, 100);
+
+      // Store with FULL material ID (with prefix) as key
+      colors.set(mat.id, color);
     });
     return colors;
   }, [availableMaterials]);
@@ -108,6 +308,8 @@ export function MaterialAssignmentUI({
   useEffect(() => {
     if (!selectedGeometry) return;
 
+    console.log('[MaterialAssignmentUI] Auto-expand effect triggered:', selectedGeometry);
+
     setExpandedItems(prev => {
       const newExpanded = new Set(prev);
       newExpanded.add('all'); // Always expand root
@@ -116,17 +318,40 @@ export function MaterialAssignmentUI({
         // Find the entity to get its layer
         const entity = modelEntities.find(e => e.index === selectedGeometry.entityIndex);
         if (entity) {
+          // Use 'Default' for entities without a layer (matches grouping logic)
           const layerId = entity.layer || 'Default';
-          newExpanded.add(`layer-${layerId}`); // Expand layer
-          newExpanded.add(`entity-${entity.index}`); // Expand entity (fixed format)
+          const layerKey = `layer-${layerId}`;
+          // FIX: Match the entityId format used in the render code (without layerId prefix)
+          const entityKey = `entity-${entity.index}`;
+
+          newExpanded.add(layerKey); // Expand layer
+          newExpanded.add(entityKey); // Expand entity
+
+          console.log('[MaterialAssignmentUI] Expanding:', { layerKey, entityKey, entity, newExpandedSize: newExpanded.size });
         }
       } else if (selectedGeometry.type === 'layer' && selectedGeometry.layerId) {
         newExpanded.add(`layer-${selectedGeometry.layerId}`); // Expand layer
       }
 
+      console.log('[MaterialAssignmentUI] New expanded items:', Array.from(newExpanded));
       return newExpanded;
     });
+
+    // Scroll to the selected face in the list after a short delay to allow for expansion
+    setTimeout(() => {
+      const faceId = selectedGeometry.type === 'face'
+        ? `face-row-${selectedGeometry.faceIndex}`
+        : null;
+      if (faceId) {
+        const element = document.getElementById(faceId);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          console.log('[MaterialAssignmentUI] Scrolled to face:', faceId);
+        }
+      }
+    }, 100); // Small delay to allow expansion animation
   }, [selectedGeometry, modelEntities]);
+  // Note: setExpandedItems is intentionally omitted from dependencies to avoid infinite loops
 
   const toggleExpand = (id: string) => {
     const newExpanded = new Set(expandedItems);
@@ -270,14 +495,123 @@ export function MaterialAssignmentUI({
     return null;
   };
 
+  // Helper to get display value for parent nodes (various, missing, etc.)
+  const getDisplayValue = (selection: SelectedGeometry): { value: string; label: string; isVarious: boolean } => {
+    let childMaterials: Set<string> = new Set();
+    let totalChildren = 0;
+    let assignedChildren = 0;
+
+    if (selection.type === 'global') {
+      // Check all entities/faces
+      if (hasLayers) {
+        Object.entries(groupedEntities).forEach(([layerName, entities]) => {
+          entities.forEach(entity => {
+            getEntityFaces(entity.index).forEach(faceIndex => {
+              totalChildren++;
+              const faceSelection: SelectedGeometry = {
+                type: 'face',
+                faceIndex,
+                entityIndex: entity.index,
+                layerId: layerName
+              };
+              const mat = getMaterialForSelection(faceSelection);
+              if (mat) {
+                assignedChildren++;
+                childMaterials.add(mat.id);
+              }
+            });
+          });
+        });
+      } else {
+        modelEntities.forEach(entity => {
+          getEntityFaces(entity.index).forEach(faceIndex => {
+            totalChildren++;
+            const faceSelection: SelectedGeometry = {
+              type: 'face',
+              faceIndex,
+              entityIndex: entity.index
+            };
+            const mat = getMaterialForSelection(faceSelection);
+            if (mat) {
+              assignedChildren++;
+              childMaterials.add(mat.id);
+            }
+          });
+        });
+      }
+    } else if (selection.type === 'layer' && selection.layerId) {
+      // Check all faces in this layer
+      const entities = groupedEntities[selection.layerId] || [];
+      entities.forEach(entity => {
+        getEntityFaces(entity.index).forEach(faceIndex => {
+          totalChildren++;
+          const faceSelection: SelectedGeometry = {
+            type: 'face',
+            faceIndex,
+            entityIndex: entity.index,
+            layerId: selection.layerId
+          };
+          const mat = getMaterialForSelection(faceSelection);
+          if (mat) {
+            assignedChildren++;
+            childMaterials.add(mat.id);
+          }
+        });
+      });
+    } else if (selection.type === 'entity' && selection.entityIndex !== undefined) {
+      // Check all faces in this entity
+      getEntityFaces(selection.entityIndex).forEach(faceIndex => {
+        totalChildren++;
+        const faceSelection: SelectedGeometry = {
+          type: 'face',
+          faceIndex,
+          entityIndex: selection.entityIndex,
+          layerId: selection.layerId
+        };
+        const mat = getMaterialForSelection(faceSelection);
+        if (mat) {
+          assignedChildren++;
+          childMaterials.add(mat.id);
+        }
+      });
+    }
+
+    // Determine display value
+    const missingCount = totalChildren - assignedChildren;
+    
+    if (childMaterials.size === 0) {
+      // No materials assigned to children
+      if (missingCount > 0) {
+        return { value: 'none', label: `Select material (${missingCount} faces missing)`, isVarious: false };
+      }
+      return { value: 'none', label: 'Select material', isVarious: false };
+    } else if (childMaterials.size === 1) {
+      // All children have the same material
+      const materialId = Array.from(childMaterials)[0];
+      const material = availableMaterials.find(m => m.id === materialId);
+      if (missingCount > 0) {
+        return { value: materialId, label: `${material?.name || 'Unknown'} (${missingCount} missing)`, isVarious: false };
+      }
+      return { value: materialId, label: material?.name || 'Unknown', isVarious: false };
+    } else {
+      // Multiple different materials
+      if (missingCount > 0) {
+        return { value: 'various', label: `various (${missingCount} missing)`, isVarious: true };
+      }
+      return { value: 'various', label: 'various', isVarious: true };
+    }
+  };
+
   const isSelected = (selection: SelectedGeometry): boolean => {
     if (!selectedGeometry) return false;
-    return (
+    const result = (
       selectedGeometry.type === selection.type &&
       selectedGeometry.faceIndex === selection.faceIndex &&
       selectedGeometry.entityIndex === selection.entityIndex &&
       selectedGeometry.layerId === selection.layerId
     );
+
+    return result;
   };
 
   if (!modelEntities || modelEntities.length === 0) {
@@ -288,7 +622,7 @@ export function MaterialAssignmentUI({
     );
   }
 
-  const hasLayers = Object.keys(groupedEntities).length > 1 || 
+  const hasLayers = Object.keys(groupedEntities).length > 1 ||
                     (Object.keys(groupedEntities).length === 1 && Object.keys(groupedEntities)[0] !== 'Default');
 
   return (
@@ -313,26 +647,16 @@ export function MaterialAssignmentUI({
               {expandedItems.has('all') ? '▼' : '▶'}
             </button>
             <span className="flex-1 font-medium">All Entities</span>
-            <select
-              key={`global-${updateCounter}`}
-              value={getMaterialForSelection({ type: 'global' })?.id || 'none'}
-              onChange={(e) => {
-                e.stopPropagation();
-                handleMaterialChange({ type: 'global' }, e.target.value);
-              }}
-              className="flex-1 text-xs px-2 py-1 text-white rounded focus:outline-none focus:ring-1 focus:ring-white truncate"
-              style={{
-                backgroundColor: getSelectBackgroundColor(getMaterialForSelection({ type: 'global' })?.id),
-                borderRadius: '8px',
-                maxWidth: '150px'
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <option value="none" style={{ backgroundColor: UI_COLORS.PRIMARY }}>Select material</option>
-              {availableMaterials.map((mat, idx) => (
-                <option key={mat.id} value={mat.id} style={{ backgroundColor: materialColors.get(mat.id) }}>{mat.name}</option>
-              ))}
-            </select>
+            <MaterialSelect
+              selection={{ type: 'global' }}
+              materialColors={materialColors}
+              availableMaterials={availableMaterials}
+              getMaterialForSelection={getMaterialForSelection}
+              getDisplayValue={getDisplayValue}
+              getSelectBackgroundColor={getSelectBackgroundColor}
+              handleMaterialChange={handleMaterialChange}
+              updateCounter={updateCounter}
+            />
           </div>
 
           {/* Layers/Groups or Direct Entities */}
@@ -453,6 +777,7 @@ export function MaterialAssignmentUI({
                                       return (
                                         <div
                                           key={`face-${faceIndex}`}
+                                          id={`face-row-${faceIndex}`}
                                           className="flex items-center gap-2 p-2 rounded cursor-pointer hover:bg-neutral-100"
                                           style={{
                                             backgroundColor: isSelected(faceSelection) ? UI_COLORS.PRIMARY_LIGHT : 'transparent'
@@ -497,7 +822,11 @@ export function MaterialAssignmentUI({
                 // No layers - show entities directly
                 modelEntities.map((entity) => {
                   const entityId = `entity-${entity.index}`;
-                  const entitySelection: SelectedGeometry = { type: 'entity', entityIndex: entity.index };
+                  const entitySelection: SelectedGeometry = {
+                    type: 'entity',
+                    entityIndex: entity.index,
+                    layerId: entity.layer || 'Default'
+                  };
 
                   return (
                     <div key={entityId} className="flex flex-col">
@@ -549,12 +878,14 @@ export function MaterialAssignmentUI({
                             const faceSelection: SelectedGeometry = {
                               type: 'face',
                               faceIndex,
-                              entityIndex: entity.index
+                              entityIndex: entity.index,
+                              layerId: entity.layer || 'Default'
                             };
 
                             return (
                               <div
                                 key={`face-${faceIndex}`}
+                                id={`face-row-${faceIndex}`}
                                 className="flex items-center gap-2 p-2 rounded cursor-pointer hover:bg-neutral-100"
                                 style={{
                                   backgroundColor: isSelected(faceSelection) ? UI_COLORS.PRIMARY_LIGHT : 'transparent'

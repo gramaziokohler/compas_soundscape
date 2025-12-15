@@ -38,10 +38,10 @@ import { useTimelinePlayback } from "@/hooks/useTimelinePlayback";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
 import { apiService } from "@/services/api";
 import { createImpactParameters } from "@/hooks/useModalImpact";
-import { 
-  TIMELINE_DEFAULTS, 
-  UI_TIMING, 
-  AUDIO_VOLUME, 
+import {
+  TIMELINE_DEFAULTS,
+  UI_TIMING,
+  AUDIO_VOLUME,
   SCREEN_PROJECTION,
   AUDIO_CONTEXT_STATE,
   UI_OVERLAY,
@@ -49,12 +49,15 @@ import {
   UI_SCENE_BUTTON,
   ENTITY_CONFIG,
   TIMELINE_LAYOUT,
-  RESONANCE_AUDIO
+  RESONANCE_AUDIO,
+  ARCTIC_THEME
 } from "@/lib/constants";
 import type { UIOverlay, EntityData, EntityOverlay, CompasGeometry } from "@/types";
 import type { ThreeSceneProps } from "@/types/three-scene";
 import type { TimelineSound } from "@/types/audio";
 import type { ModalAnalysisRequest } from "@/types/modal";
+import { ResonanceMode } from "@/lib/audio/modes/ResonanceMode";
+import { SimulationTab } from "../layout/sidebar/SimulationTab";
 
 /**
  * ThreeScene Component (Refactored)
@@ -110,7 +113,10 @@ export function ThreeScene({
   showBoundingBox = false,
   refreshBoundingBoxTrigger = 0,
   receivers = [],
+  selectedReceiverId = null,
   onUpdateReceiverPosition,
+  onReceiverSelected,
+  onUpdateSoundPosition,
   onPlaceReceiver,
   isPlacingReceiver = false,
   onCancelPlacingReceiver,
@@ -143,7 +149,11 @@ export function ThreeScene({
   onResetAdvancedSettings,
   selectedGeometry,
   onFaceSelected,
-  materialAssignments
+  materialAssignments,
+  activeSimulationIndex,
+  activeSimulationConfig,
+  goToReceiverId,
+  activeAiTab = 'text'
 }: ThreeSceneProps) {
   // Throttled logging to avoid spam (only log once per second)
   useEffect(() => {
@@ -187,6 +197,9 @@ export function ThreeScene({
   const auralizationConfigRef = useRef(auralizationConfig);
   const prevSoundscapeDataLengthRef = useRef<number>(0);
   const audioRenderingModeRef = useRef(audioRenderingMode);
+  const activeSimulationIndexRef = useRef(activeSimulationIndex);
+  const activeSimulationConfigRef = useRef(activeSimulationConfig);
+  const activeAiTabRef = useRef(activeAiTab);
 
   // ============================================================================
   // State - UI Overlays and Visibility
@@ -246,8 +259,10 @@ export function ThreeScene({
   useEffect(() => {
     if (!onReceiverModeChange) return;
 
-    // Determine receiver ID (use first receiver if available)
-    const receiverId = isFirstPersonMode && receivers.length > 0 ? receivers[0].id : null;
+    // Use the selected receiver ID from useReceivers hook, or fall back to first receiver if in first-person mode
+    const receiverId = isFirstPersonMode 
+      ? (selectedReceiverId || (receivers.length > 0 ? receivers[0].id : null))
+      : null;
 
     // Only notify if state actually changed
     const prev = prevReceiverModeRef.current;
@@ -257,7 +272,70 @@ export function ThreeScene({
       prevReceiverModeRef.current = { isActive: isFirstPersonMode, receiverId };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isFirstPersonMode, receivers[0]?.id]);
+  }, [isFirstPersonMode, selectedReceiverId, receivers[0]?.id]);
+
+  // ============================================================================
+  // Effect - Programmatically Go To Receiver (activate first-person view)
+  // ============================================================================
+  useEffect(() => {
+    if (!goToReceiverId || !sceneCoordinatorRef.current) return;
+
+    // Find the receiver
+    const receiver = receivers.find(r => r.id === goToReceiverId);
+    if (!receiver) {
+      console.warn('[ThreeScene] Go to receiver: Receiver not found:', goToReceiverId);
+      return;
+    }
+
+    console.log('[ThreeScene] Go to receiver:', { id: goToReceiverId, position: receiver.position });
+
+    const receiverPosition = new THREE.Vector3(...receiver.position);
+
+    // Calculate initial look-at target (same logic as InputHandler double-click)
+    // Try to look at the average of sound spheres, or default to looking forward
+    let initialTarget: THREE.Vector3;
+
+    // Get average position of sound spheres if any exist
+    const soundSpherePositions: THREE.Vector3[] = [];
+    if (soundscapeData) {
+      soundscapeData.forEach((sound) => {
+        if (sound.position) {
+          soundSpherePositions.push(new THREE.Vector3(...sound.position));
+        }
+      });
+    }
+
+    if (soundSpherePositions.length > 0) {
+      // Average of all sound sphere positions
+      const sum = soundSpherePositions.reduce(
+        (acc, pos) => acc.add(pos),
+        new THREE.Vector3(0, 0, 0)
+      );
+      initialTarget = sum.divideScalar(soundSpherePositions.length);
+    } else {
+      // Default: look forward (negative Z direction)
+      initialTarget = new THREE.Vector3(
+        receiverPosition.x,
+        receiverPosition.y,
+        receiverPosition.z - 5
+      );
+    }
+
+    // Calculate initial rotation angles
+    const direction = new THREE.Vector3().subVectors(initialTarget, receiverPosition).normalize();
+    const initialYaw = Math.atan2(direction.x, direction.z);
+    const initialPitch = Math.asin(direction.y);
+
+    // Enable first-person mode
+    sceneCoordinatorRef.current.enableFirstPersonMode(receiverPosition, initialYaw, initialPitch);
+    setIsFirstPersonMode(true);
+
+    console.log('[ThreeScene] First-person mode activated programmatically', {
+      receiverPos: receiverPosition.toArray(),
+      initialYaw,
+      initialPitch
+    });
+  }, [goToReceiverId, receivers, soundscapeData]);
 
   // ============================================================================
   // State - Audio Timeline
@@ -375,6 +453,18 @@ export function ThreeScene({
   useEffect(() => {
     audioRenderingModeRef.current = audioRenderingMode;
   }, [audioRenderingMode]);
+
+  useEffect(() => {
+    activeSimulationIndexRef.current = activeSimulationIndex;
+  }, [activeSimulationIndex]);
+
+  useEffect(() => {
+    activeSimulationConfigRef.current = activeSimulationConfig;
+  }, [activeSimulationConfig]);
+
+  useEffect(() => {
+    activeAiTabRef.current = activeAiTab;
+  }, [activeAiTab]);
 
   // Keep callback refs up to date
   useEffect(() => {
@@ -1001,7 +1091,7 @@ export function ThreeScene({
     inputHandler.setOnSpherePositionUpdated((promptKey, position) => {
       soundSphereManager.updateSpherePosition(promptKey, position);
 
-      // Also update label position to follow sphere
+      // Also update label position to follow sphere during drag
       const sphere = soundSphereManager.findSphereByPromptKey(promptKey);
       if (sphere && sphere.userData.soundEvent) {
         const promptIndex = (sphere.userData.soundEvent as any).prompt_index ?? 0;
@@ -1016,9 +1106,39 @@ export function ThreeScene({
         });
       }
     });
+
+    // Update soundscapeData only when drag ends (not during drag)
+    inputHandler.setOnSphereDragEnd((promptKey, position) => {
+      const sphere = soundSphereManager.findSphereByPromptKey(promptKey);
+      if (sphere && sphere.userData.soundEvent) {
+        const soundEvent = sphere.userData.soundEvent;
+        if (soundEvent?.id && onUpdateSoundPosition) {
+          const positionArray: [number, number, number] = [position.x, position.y, position.z];
+          console.log('[ThreeScene] Drag ended - updating sound position in data:', { soundId: soundEvent.id, position: positionArray });
+          onUpdateSoundPosition(soundEvent.id, positionArray);
+        }
+      }
+    });
+
     inputHandler.setOnReceiverPositionUpdated((receiverId, position) => {
       onUpdateReceiverPosition?.(receiverId, position);
     });
+
+    // Update receiver data only when drag ends (not during drag)
+    inputHandler.setOnReceiverDragEnd((receiverId, position) => {
+      console.log('[ThreeScene] Receiver drag ended - updating position in data:', { receiverId, position });
+      // Receivers can update during drag since they don't get recreated
+      // But we can also defer to dragend for consistency
+    });
+
+    // Receiver selection (double-click) - triggers audio update via callback
+    inputHandler.setOnReceiverSelected((receiverId) => {
+      if (onReceiverSelected) {
+        onReceiverSelected(receiverId);
+      }
+      console.log('[ThreeScene] Receiver selected:', receiverId);
+    });
+
     inputHandler.setOnPlacementCanceled(() => onCancelPlacingReceiver?.());
     inputHandler.setOnPreviewPositionUpdated((position) => {
       receiverManager.updatePreviewPosition(position);
@@ -1045,12 +1165,16 @@ export function ThreeScene({
 
     // NEW: Face selection callback for precise acoustics mode
     inputHandler.setOnFaceSelected((faceIndex, entityIndex) => {
+      // Determine if material coloring is active (use wireframe highlight)
+      const activeConfig = activeSimulationConfigRef.current;
+      const hasMaterialColoring = !!(activeConfig && (activeConfig as any)?.faceToMaterialMap?.size > 0);
+
       // Highlight face in 3D scene
       if (faceIndex === -1) {
         // Clear highlight
         geometryRenderer.highlightFace(-1, null);
       } else {
-        geometryRenderer.highlightFace(faceIndex, geometryDataRef.current);
+        geometryRenderer.highlightFace(faceIndex, geometryDataRef.current, hasMaterialColoring);
       }
       // Notify page.tsx to update selectedGeometry state
       if (onFaceSelected) {
@@ -1072,6 +1196,9 @@ export function ThreeScene({
     inputHandler.setSoundSphereMeshesGetter(() => soundSphereManager.getSoundSphereMeshes());
     inputHandler.setTriangleToFaceMapGetter(() => geometryRenderer.getTriangleToFaceMap());
     inputHandler.setAudioRenderingModeGetter(() => audioRenderingModeRef.current);
+    inputHandler.setActiveSimulationIndexGetter(() => activeSimulationIndexRef.current ?? null);
+    inputHandler.setActiveSimulationConfigGetter(() => activeSimulationConfigRef.current);
+    inputHandler.setActiveAiTabGetter(() => activeAiTabRef.current);
 
     // Setup event listeners
     inputHandler.setupClickHandler();
@@ -1417,23 +1544,63 @@ export function ThreeScene({
   }, [audioRenderingMode]);
 
   // ============================================================================
-  // Effect - Face Highlighting (Precise Acoustics Mode)
+  // Effect - Clear Entity UI When in Face Selection Mode (Mode 2)
+  // ============================================================================
+  useEffect(() => {
+    // Check if we're in face selection mode (must match InputHandler logic)
+    if (!activeSimulationConfig) return;
+
+    const isFaceSelectionMode =
+      activeAiTab === 'acoustics' &&
+      activeSimulationIndex !== null &&
+      (activeSimulationConfig.mode === 'pyroomacoustics' || activeSimulationConfig.mode === 'choras') &&
+      (activeSimulationConfig.state === 'before-simulation' || activeSimulationConfig.state === 'running');
+
+    if (isFaceSelectionMode) {
+      // Clear entity overlay when entering face selection mode
+      setSelectedEntity(null);
+    }
+  }, [activeAiTab, activeSimulationIndex, activeSimulationConfig]);
+
+  // ============================================================================
+  // Effect - Face Highlighting (Face Selection Mode / Mode 2)
   // ============================================================================
   useEffect(() => {
     const geometryRenderer = geometryRendererRef.current;
     if (!geometryRenderer) return;
 
-    // Clear highlights when not in precise mode
-    if (audioRenderingMode !== 'precise') {
+    // Check if we're in face selection mode (Mode 2)
+    const isFaceSelectionMode =
+      activeAiTab === 'acoustics' &&
+      activeSimulationIndex !== null &&
+      activeSimulationConfig &&
+      (activeSimulationConfig.mode === 'pyroomacoustics' || activeSimulationConfig.mode === 'choras') &&
+      (activeSimulationConfig.state === 'before-simulation' || activeSimulationConfig.state === 'running');
+
+    console.log('[ThreeScene] Face highlighting effect triggered:', {
+      isFaceSelectionMode,
+      selectedGeometry,
+      activeAiTab,
+      activeSimulationIndex,
+      activeSimulationConfig: activeSimulationConfig ? { mode: activeSimulationConfig.mode, state: activeSimulationConfig.state } : null
+    });
+
+    // Clear highlights when not in face selection mode
+    if (!isFaceSelectionMode) {
+      console.log('[ThreeScene] Not in face selection mode, clearing highlights');
       geometryRenderer.highlightFace(-1, null);
       return;
     }
 
+    // Determine if material coloring is active (use wireframe highlight to preserve material colors)
+    const hasMaterialColoring = !!(activeSimulationConfig && (activeSimulationConfig as any)?.faceToMaterialMap?.size > 0);
+
     // Highlight faces when selectedGeometry changes from sidebar
     if (selectedGeometry && geometryData?.face_entity_map) {
+      console.log('[ThreeScene] Highlighting face:', selectedGeometry, hasMaterialColoring ? '(wireframe)' : '(solid)');
       if (selectedGeometry.type === 'face' && selectedGeometry.faceIndex !== undefined) {
-        // Highlight single face
-        geometryRenderer.highlightFace(selectedGeometry.faceIndex, geometryData);
+        // Highlight single face (use wireframe if material coloring is active)
+        geometryRenderer.highlightFace(selectedGeometry.faceIndex, geometryData, hasMaterialColoring);
       } else if (selectedGeometry.type === 'entity' && selectedGeometry.entityIndex !== undefined) {
         // Highlight all faces of the entity
         const facesToHighlight: number[] = [];
@@ -1450,7 +1617,7 @@ export function ThreeScene({
         const facesToHighlight: number[] = [];
         const layerEntities = modelEntities.filter(e => e.layer === selectedGeometry.layerId);
         const entityIndices = new Set(layerEntities.map(e => e.index));
-        
+
         geometryData.face_entity_map.forEach((entIdx: number, faceIdx: number) => {
           if (entityIndices.has(entIdx)) {
             facesToHighlight.push(faceIdx);
@@ -1471,138 +1638,159 @@ export function ThreeScene({
       // Clear highlight if no selection
       geometryRenderer.highlightFace(-1, null);
     }
-  }, [selectedGeometry, geometryData, audioRenderingMode, modelEntities]);
+  }, [selectedGeometry, geometryData, activeAiTab, activeSimulationIndex, activeSimulationConfig, modelEntities]);
 
   // ============================================================================
-  // Effect - Material Coloring (Precise Acoustics Mode)
+  // Effect - Material Coloring (Active Simulation Tab)
   // ============================================================================
   useEffect(() => {
     console.log('ThreeScene: Material coloring effect triggered', {
       hasGeometryRenderer: !!geometryRendererRef.current,
       hasGeometryData: !!geometryData,
-      audioRenderingMode,
-      hasMaterialAssignments: !!materialAssignments,
-      materialAssignmentsSize: materialAssignments?.size
+      activeSimulationIndex,
+      hasActiveSimulationConfig: !!activeSimulationConfig,
+      faceToMaterialMapSize: (activeSimulationConfig as any)?.faceToMaterialMap?.size
     });
 
     const geometryRenderer = geometryRendererRef.current;
-    if (!geometryRenderer || !geometryData || audioRenderingMode !== 'precise' || !materialAssignments) {
+
+    // Enable coloring when a simulation tab is active (not just when simulation completes)
+    if (!geometryRenderer || !geometryData || !activeSimulationConfig) {
       return;
     }
 
-    // Get all materials to create color mapping
-    const materialsArray = Array.from(materialAssignments.values())
-      .map(a => a.material)
-      .filter((m, idx, arr) => m && arr.findIndex(mat => mat?.id === m.id) === idx) as any[];
+    const simConfig = activeSimulationConfig as any;
+    const faceToMaterialMap = simConfig.faceToMaterialMap as Map<number, string> | undefined;
 
-    if (materialsArray.length === 0) return;
+    if (!faceToMaterialMap || faceToMaterialMap.size === 0) {
+      console.log('ThreeScene: No material assignments in active simulation');
+      return;
+    }
 
-    // Create material color map
-    const materialColors = new Map<string, string>();
-    materialsArray.forEach((mat, idx) => {
-      materialColors.set(mat.id, generateMaterialColor(idx, materialsArray.length));
-    });
+    // Get unique materials from the faceToMaterialMap
+    const uniqueMaterialIds = Array.from(new Set(faceToMaterialMap.values()));
 
-    // Helper to find material for a face
-    const getMaterialForFace = (faceIndex: number): string | null => {
-      if (!geometryData.face_entity_map) return null;
-      
-      // face_entity_map is an array where index is faceIndex and value is entityIndex
-      const entityIndex = geometryData.face_entity_map[faceIndex];
-      if (entityIndex === undefined) return null;
+    if (uniqueMaterialIds.length === 0) {
+      console.log('ThreeScene: No unique materials found');
+      return;
+    }
 
-      // Check face-level assignment
-      for (const [key, assignment] of materialAssignments.entries()) {
-        if (assignment.selection.type === 'face' && 
-            assignment.selection.faceIndex === faceIndex &&
-            assignment.selection.entityIndex === entityIndex) {
-          return assignment.material ? materialColors.get(assignment.material.id) || null : null;
-        }
+    // Helper: Generate stable hash from string (for consistent colors per material ID)
+    const hashString = (str: string): number => {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash; // Convert to 32-bit integer
       }
-
-      // Check entity-level assignment
-      for (const [key, assignment] of materialAssignments.entries()) {
-        if (assignment.selection.type === 'entity' && 
-            assignment.selection.entityIndex === entityIndex) {
-          return assignment.material ? materialColors.get(assignment.material.id) || null : null;
-        }
-      }
-
-      // Check layer-level assignment
-      const entity = modelEntities.find(e => e.index === entityIndex);
-      if (entity && entity.layer) {
-        for (const [key, assignment] of materialAssignments.entries()) {
-          if (assignment.selection.type === 'layer' && 
-              assignment.selection.layerId === entity.layer) {
-            return assignment.material ? materialColors.get(assignment.material.id) || null : null;
-          }
-        }
-      }
-
-      // Check global assignment
-      for (const [key, assignment] of materialAssignments.entries()) {
-        if (assignment.selection.type === 'global') {
-          return assignment.material ? materialColors.get(assignment.material.id) || null : null;
-        }
-      }
-
-      return null;
+      return Math.abs(hash);
     };
+
+    // Create material color map with stable colors based on material ID
+    const materialColors = new Map<string, string>();
+    uniqueMaterialIds.forEach((materialId) => {
+      // Use hash to determine a stable position in the gradient (0-99)
+      const hashValue = hashString(materialId);
+      const gradientPosition = hashValue % 100; // 0-99
+      const color = generateMaterialColor(100-gradientPosition, 100);
+      materialColors.set(materialId, color);
+      console.log(`[ThreeScene] Material "${materialId}" -> hash=${hashValue}, position=${gradientPosition}, color=${color}`);
+    });
 
     // Find the main geometry mesh
     const mesh = geometryRenderer['contentGroup'].children.find(
       child => child instanceof THREE.Mesh && child.userData.isGeometry === true
     ) as THREE.Mesh | undefined;
-    
+
     if (!mesh) {
       console.log('ThreeScene: No geometry mesh found in contentGroup');
       return;
     }
 
-    console.log('ThreeScene: Applying material colors to', geometryData.faces.length, 'faces');
+    console.log('ThreeScene: Applying material colors to faces from active simulation');
 
     const geometry = mesh.geometry;
     const positionCount = geometry.attributes.position.count;
     const colors = new Float32Array(positionCount * 3);
-    
-    // Initialize all vertices with default color
+
+    // Initialize all vertices with default color (light gray)
     for (let i = 0; i < positionCount; i++) {
       colors[i * 3] = 0.9;
       colors[i * 3 + 1] = 0.9;
       colors[i * 3 + 2] = 0.9;
     }
-    
+
     let coloredFaces = 0;
     const index = geometry.index;
-    
+
     if (!index) {
       console.warn('ThreeScene: Geometry has no index buffer');
       return;
     }
-    
-    // Iterate through faces and apply material colors
+
+    // Get the triangle-to-face mapping to correctly map face indices to triangles
+    const triangleToFaceMap = geometryRenderer.getTriangleToFaceMap();
+    if (!triangleToFaceMap) {
+      console.warn('ThreeScene: No triangle-to-face mapping available');
+      return;
+    }
+
+    // Build face-to-triangles map (reverse of triangleToFaceMap)
+    // faceToTriangles[faceIndex] = [triangle0, triangle1, ...]
+    const faceToTriangles = new Map<number, number[]>();
+    triangleToFaceMap.forEach((faceIndex, triangleIndex) => {
+      if (!faceToTriangles.has(faceIndex)) {
+        faceToTriangles.set(faceIndex, []);
+      }
+      faceToTriangles.get(faceIndex)!.push(triangleIndex);
+    });
+
+    console.log('ThreeScene: Face-to-triangle mapping built', {
+      totalFaces: geometryData.faces.length,
+      totalTriangles: triangleToFaceMap.length,
+      sampleMapping: Array.from(faceToTriangles.entries()).slice(0, 5).map(([face, triangles]) =>
+        `Face ${face} -> Triangles [${triangles.join(', ')}]`
+      )
+    });
+
+    // Iterate through faces and apply material colors from the simulation's faceToMaterialMap
     for (let faceIndex = 0; faceIndex < geometryData.faces.length; faceIndex++) {
-      const materialColor = getMaterialForFace(faceIndex);
-      
-      if (materialColor) {
-        coloredFaces++;
-        // Parse hex color to RGB
-        const color = new THREE.Color(materialColor);
-        
-        // Each face is a triangle with 3 vertex indices
-        const indexStart = faceIndex * 3;
-        
-        for (let v = 0; v < 3; v++) {
-          const vertexIndex = index.getX(indexStart + v);
-          colors[vertexIndex * 3] = color.r;
-          colors[vertexIndex * 3 + 1] = color.g;
-          colors[vertexIndex * 3 + 2] = color.b;
+      const materialId = faceToMaterialMap.get(faceIndex);
+
+      if (materialId) {
+        const materialColor = materialColors.get(materialId);
+        if (materialColor) {
+          coloredFaces++;
+          // Parse hex color to RGB
+          const color = new THREE.Color(materialColor);
+
+          // Get all triangles for this face
+          const triangleIndices = faceToTriangles.get(faceIndex) || [];
+
+          // Debug: Log specific faces
+          if (faceIndex === 7 || faceIndex === 15) {
+            console.log(`[ThreeScene] Face ${faceIndex}: materialId="${materialId}", color=${materialColor}, triangles=[${triangleIndices.join(', ')}]`);
+          }
+
+          // Color all triangles belonging to this face
+          for (const triangleIndex of triangleIndices) {
+            const indexStart = triangleIndex * 3;
+
+            for (let v = 0; v < 3; v++) {
+              const vertexIndex = index.getX(indexStart + v);
+              colors[vertexIndex * 3] = color.r;
+              colors[vertexIndex * 3 + 1] = color.g;
+              colors[vertexIndex * 3 + 2] = color.b;
+            }
+          }
         }
       }
     }
 
-    console.log('ThreeScene: Colored', coloredFaces, 'faces with materials');
+    console.log('ThreeScene: Colored', coloredFaces, 'faces with materials from simulation', activeSimulationIndex);
+
     
+
     // Update geometry colors
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geometry.attributes.color.needsUpdate = true;
@@ -1611,25 +1799,77 @@ export function ThreeScene({
     if (mesh.material instanceof THREE.MeshStandardMaterial) {
       mesh.material.vertexColors = true;
       mesh.material.flatShading = true;
+      // FIX: Set base color to white to prevent mixing with vertex colors
+      mesh.material.color.setRGB(1, 1, 1);
       mesh.material.needsUpdate = true;
       geometry.computeVertexNormals(); // Recompute normals for flat shading
-      console.log('ThreeScene: Material vertex colors enabled with flat shading');
+      console.log('ThreeScene: Material vertex colors enabled with flat shading (base color: white)');
     } else if (Array.isArray(mesh.material)) {
       // Handle multi-material case
       mesh.material.forEach(mat => {
         if (mat instanceof THREE.MeshStandardMaterial) {
           mat.vertexColors = true;
           mat.flatShading = true;
+          // FIX: Set base color to white to prevent mixing with vertex colors
+          mat.color.setRGB(1, 1, 1);
           mat.needsUpdate = true;
         }
       });
       geometry.computeVertexNormals();
-      console.log('ThreeScene: Multi-material vertex colors enabled with flat shading');
+      console.log('ThreeScene: Multi-material vertex colors enabled with flat shading (base color: white)');
     } else {
       console.warn('ThreeScene: Material type not supported for vertex colors', mesh.material.type);
     }
 
-  }, [materialAssignments, geometryData, audioRenderingMode, modelEntities]);
+  }, [activeSimulationConfig, geometryData, activeSimulationIndex]);
+
+  // ============================================================================
+  // Effect - Reset Material Colors When Leaving Acoustics Tab
+  // ============================================================================
+  useEffect(() => {
+    const geometryRenderer = geometryRendererRef.current;
+
+    if (!geometryRenderer || !geometryData) {
+      return;
+    }
+
+    // Reset colors when NOT in acoustics tab or no active simulation
+    if (activeAiTab !== 'acoustics' || activeSimulationIndex === null) {
+      const mesh = geometryRenderer['contentGroup'].children.find(
+        child => child instanceof THREE.Mesh && child.userData.isGeometry === true
+      ) as THREE.Mesh | undefined;
+
+      if (mesh) {
+        const geometry = mesh.geometry;
+
+        // Remove vertex colors attribute
+        if (geometry.attributes.color) {
+          geometry.deleteAttribute('color');
+        }
+
+        // Disable vertex colors in material and restore original base color
+        if (mesh.material instanceof THREE.MeshStandardMaterial) {
+          mesh.material.vertexColors = false;
+          mesh.material.flatShading = false;
+          // Restore original geometry color from ARCTIC_THEME
+          mesh.material.color.setHex(ARCTIC_THEME.GEOMETRY_COLOR);
+          mesh.material.needsUpdate = true;
+          console.log('ThreeScene: Material colors reset (left Acoustics tab or no active simulation)');
+        } else if (Array.isArray(mesh.material)) {
+          mesh.material.forEach(mat => {
+            if (mat instanceof THREE.MeshStandardMaterial) {
+              mat.vertexColors = false;
+              mat.flatShading = false;
+              // Restore original geometry color from ARCTIC_THEME
+              mat.color.setHex(ARCTIC_THEME.GEOMETRY_COLOR);
+              mat.needsUpdate = true;
+            }
+          });
+          console.log('ThreeScene: Multi-material colors reset (left Acoustics tab or no active simulation)');
+        }
+      }
+    }
+  }, [activeAiTab, activeSimulationIndex, geometryData]);
 
   // ============================================================================
   // Effect - Mode Visualization (Nodal Lines)
@@ -1998,8 +2238,8 @@ export function ThreeScene({
     }
 
     // Update drag controls when sound spheres or receivers change
-    // NOTE: Use receivers.length instead of receivers to avoid recreating on position changes
-    // This allows smooth dragging (same pattern as sound spheres which don't trigger on position change)
+    // NOTE: Positions update on dragend (not during drag), so soundscapeData changes won't interrupt dragging
+    // Use receivers.length to avoid recreating on receiver position updates
     inputHandler.setupDragControls(allDraggableObjects, sceneCoordinator.controls);
   }, [soundscapeData, selectedVariants, scaleForSounds, receivers.length]);
 
@@ -2242,23 +2482,27 @@ export function ThreeScene({
       boxGeometry.dispose();
     }
 
-    // Update face colors based on materials
+    // Update face colors based on materials using gradient
     if (boundingBoxGroupRef.current && resonanceAudioConfig.roomMaterials) {
       const materials = resonanceAudioConfig.roomMaterials;
-      
+
+      // Gradient colors from constants:
+      const startColor = UI_COLORS.MATERIAL_GRADIENT_START.replace("#", "")
+      const endColor = UI_COLORS.MATERIAL_GRADIENT_END.replace("#", "")
+
       boundingBoxGroupRef.current.children.forEach(child => {
         if (child instanceof THREE.Mesh && child.userData.faceName) {
           const faceMaterial = materials[child.userData.faceName as keyof typeof materials];
           const absorption = RESONANCE_AUDIO.MATERIAL_ABSORPTION[faceMaterial] || 0;
-          
-          // Color from white (low absorption) to cyan (high absorption)
-          const r = 1 - absorption;
-          const g = 1 - absorption * 0.3;
-          const b = 1;
-          
+
+          // Interpolate between teal (low absorption) and orange (high absorption)
+          const r = (parseInt(startColor.slice(0, 2), 16) + (parseInt(endColor.slice(0, 2), 16) - parseInt(startColor.slice(0, 2), 16)) * absorption) / 255;
+          const g = (parseInt(startColor.slice(2, 4), 16) + (parseInt(endColor.slice(2, 4), 16) - parseInt(startColor.slice(2, 4), 16)) * absorption) / 255;
+          const b = (parseInt(startColor.slice(4, 6), 16) + (parseInt(endColor.slice(4, 6), 16) - parseInt(startColor.slice(4, 6), 16)) * absorption) / 255;
+
           (child.material as THREE.MeshBasicMaterial).color.setRGB(r, g, b);
-          (child.material as THREE.MeshBasicMaterial).opacity = 
-            RESONANCE_AUDIO.BOUNDING_BOX.FACE_BASE_OPACITY + 
+          (child.material as THREE.MeshBasicMaterial).opacity =
+            RESONANCE_AUDIO.BOUNDING_BOX.FACE_BASE_OPACITY +
             absorption * RESONANCE_AUDIO.BOUNDING_BOX.FACE_ABSORPTION_OPACITY_SCALE;
         }
       });
@@ -2536,11 +2780,18 @@ export function ThreeScene({
       </div>
 
       {/* Orientation Indicator - Top Left (First-Person Mode Only) */}
-      {isFirstPersonMode && auralizationConfig.enabled && auralizationConfig.impulseResponseBuffer && (
+      {isFirstPersonMode && (
         <OrientationIndicator
           yaw={currentOrientation.yaw}
           pitch={currentOrientation.pitch}
-          className="absolute top-6 left-6 pointer-events-none z-20"
+          className="absolute top-6 left-6 pointer-events-auto z-20"
+          onExitFirstPersonMode={() => {
+            const sceneCoordinator = sceneCoordinatorRef.current;
+            if (sceneCoordinator) {
+              sceneCoordinator.disableFirstPersonMode();
+              setIsFirstPersonMode(false);
+            }
+          }}
         />
       )}
 

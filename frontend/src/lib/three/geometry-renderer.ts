@@ -397,8 +397,9 @@ export class GeometryRenderer {
    * Highlight a single face (for precise acoustics mode)
    * @param faceIndex - Index of the face to highlight (-1 to clear)
    * @param geometryData - Geometry data containing vertices and faces
+   * @param useWireframe - Use wireframe outline instead of solid overlay (for material coloring mode)
    */
-  public highlightFace(faceIndex: number, geometryData: CompasGeometry | null): void {
+  public highlightFace(faceIndex: number, geometryData: CompasGeometry | null, useWireframe: boolean = false): void {
     // Clear existing face highlight
     if (this.faceHighlightMesh) {
       disposeMesh(this.faceHighlightMesh);
@@ -420,7 +421,7 @@ export class GeometryRenderer {
 
     // Triangulate the face (it might be a polygon with more than 3 vertices)
     const faceIndices = triangulate([face]);
-    
+
     // Create geometry for the face
     const faceGeom = new THREE.BufferGeometry();
     const positions = new Float32Array(geometryData.vertices.flat());
@@ -428,26 +429,47 @@ export class GeometryRenderer {
     faceGeom.setIndex(faceIndices);
     faceGeom.computeVertexNormals();
 
-    // Create material for face highlight (secondary color - sky blue)
-    const highlightMaterial = new THREE.MeshStandardMaterial({
-      color: 0x0ea5e9, // UI_COLORS.SECONDARY
-      roughness: 0.3,
-      metalness: 0.0,
-      transparent: true,
-      opacity: 0.7,
-      emissive: 0x0ea5e9,
-      emissiveIntensity: 0.6,
-      side: THREE.DoubleSide,
-      depthTest: true,
-      depthWrite: false
-    });
+    // Create material for face highlight
+    let highlightMaterial: THREE.Material;
 
-    // Create mesh
-    this.faceHighlightMesh = new THREE.Mesh(faceGeom, highlightMaterial);
+    if (useWireframe) {
+      // Wireframe mode: Use very subtle highlight to preserve material color visibility
+      highlightMaterial = new THREE.MeshStandardMaterial({
+        color: 0xFFFFFF, // White
+        roughness: 0.0,
+        metalness: 0.0,
+        transparent: true,
+        opacity: 0.15, // Very low opacity to let material color show through
+        emissive: 0xFFFFFF,
+        emissiveIntensity: 0.2, // Subtle glow
+        side: THREE.DoubleSide,
+        depthTest: true,
+        depthWrite: false
+      });
+
+      this.faceHighlightMesh = new THREE.Mesh(faceGeom, highlightMaterial);
+    } else {
+      // Solid overlay mode (original behavior)
+      highlightMaterial = new THREE.MeshStandardMaterial({
+        color: 0x0ea5e9, // UI_COLORS.SECONDARY
+        roughness: 0.3,
+        metalness: 0.0,
+        transparent: true,
+        opacity: 0.7,
+        emissive: 0x0ea5e9,
+        emissiveIntensity: 0.6,
+        side: THREE.DoubleSide,
+        depthTest: true,
+        depthWrite: false
+      });
+
+      this.faceHighlightMesh = new THREE.Mesh(faceGeom, highlightMaterial);
+    }
+
     this.faceHighlightMesh.renderOrder = 1001; // Render on top of everything
     this.scene.add(this.faceHighlightMesh);
 
-    console.log('[GeometryRenderer] Face highlighted:', faceIndex);
+    console.log('[GeometryRenderer] Face highlighted:', faceIndex, useWireframe ? '(wireframe)' : '(solid)');
   }
 
   /**

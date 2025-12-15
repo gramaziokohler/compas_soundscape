@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import type { SoundGenerationConfig, SoundGenerationMode, SoundEvent, LibrarySearchResult, SoundState } from '@/types';
+import type { SoundGenerationConfig, SoundEvent, LibrarySearchResult, SoundState } from '@/types';
 import { FileUploadArea } from '@/components/controls/FileUploadArea';
 import { AudioWaveformDisplay } from '@/components/audio/AudioWaveformDisplay';
 import { VerticalVolumeSlider } from '@/components/ui/VerticalVolumeSlider';
@@ -42,7 +42,6 @@ interface SoundTabProps {
   // Callbacks
   onToggleExpand: (index: number) => void;
   onUpdateConfig: (index: number, field: keyof SoundGenerationConfig, value: any) => void;
-  onModeChange: (index: number, mode: SoundGenerationMode) => void;
   onRemove: (index: number) => void;
   onReset: (index: number) => void;
   onStartLinkingEntity?: (index: number) => void;
@@ -83,7 +82,6 @@ export function SoundTab({
   selectedVariantIdx = 0,
   onToggleExpand,
   onUpdateConfig,
-  onModeChange,
   onRemove,
   onReset,
   onStartLinkingEntity,
@@ -489,24 +487,6 @@ export function SoundTab({
           ) : (
             <>
               {/* If not generated, show generation UI */}
-              {/* Mode selector */}
-              <div className="flex items-center gap-2">
-                <label className="text-xs" style={{ color: UI_COLORS.NEUTRAL_500 }}>Mode:</label>
-                <select
-                  value={currentMode}
-                  onChange={(e) => onModeChange(index, e.target.value as SoundGenerationMode)}
-                  className="flex-1 text-xs px-2 py-1 text-white rounded focus:outline-none focus:ring-1 focus:ring-white"
-                  style={{
-                    backgroundColor: UI_COLORS.PRIMARY
-                  }}
-                >
-                  <option value="text-to-audio">Text-to-Audio Generation</option>
-                  <option value="upload">Upload File</option>
-                  <option value="library">Sound Library Search</option>
-                  <option value="sample-audio">Sample Audio</option>
-                </select>
-              </div>
-
               {/* Entity linking status */}
               {isLinkingEntity && linkingConfigIndex === index && (
                 <div 

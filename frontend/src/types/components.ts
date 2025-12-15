@@ -24,6 +24,7 @@ import type { AuralizationConfig, ResonanceAudioConfig, ResonanceRoomDimensions,
 import type { ModalAnalysisResult, ModeVisualizationState } from "./modal";
 import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSelector";
 import type { SelectedGeometry, AcousticMaterial } from "./materials";
+import type { SimulationConfig, AcousticSimulationMode } from "./acoustics";
 
 /**
  * Sidebar Component Props
@@ -77,7 +78,7 @@ export interface SidebarProps {
   onStopGeneration: () => void;
   onLoadSoundsToGeneration: () => void;
   setActiveSoundConfigTab: (tab: number) => void;
-  onAddSoundConfig: () => void;
+  onAddSoundConfig: (mode?: SoundGenerationMode) => void;
   onBatchAddSoundConfigs: (count: number) => number;
   onRemoveSoundConfig: (index: number) => void;
   onUpdateSoundConfig: (index: number, field: keyof SoundGenerationConfig, value: string | number) => void;
@@ -144,6 +145,7 @@ export interface SidebarProps {
   onStartPlacingReceiver: () => void;
   onDeleteReceiver: (id: string) => void;
   onUpdateReceiverName: (id: string, name: string) => void;
+  onGoToReceiver: (id: string) => void;
   // ShoeBox Acoustics props
   resonanceAudioConfig: ResonanceAudioConfig;
   onToggleResonanceAudio: (enabled: boolean) => void;
@@ -163,6 +165,16 @@ export interface SidebarProps {
   // Choras Simulation props (NEW)
   onIRImported?: () => void;
   irRefreshTrigger?: number;
+  // Acoustics simulation state (NEW - passed from page.tsx to avoid duplicate hook calls)
+  simulationConfigs?: SimulationConfig[];
+  activeSimulationIndex?: number | null;
+  expandedTabIndex?: number | null;
+  onAddSimulationConfig?: (mode: AcousticSimulationMode) => void;
+  onRemoveSimulationConfig?: (index: number) => void;
+  onUpdateSimulationConfig?: (index: number, updates: Partial<SimulationConfig>) => void;
+  onSetActiveSimulation?: (index: number | null) => void;
+  onUpdateSimulationName?: (index: number, name: string) => void;
+  onToggleExpandSimulation?: (index: number) => void;
 }
 
 /**
@@ -217,11 +229,10 @@ export interface SoundGenerationSectionProps {
   activeSoundConfigTab: number;
   isSoundGenerating: boolean;
   soundGenError: string | null;
-  onAddConfig: () => void;
+  onAddConfig: (mode?: SoundGenerationMode) => void;
   onBatchAddConfigs: (count: number) => number;
   onRemoveConfig: (index: number) => void;
   onUpdateConfig: (index: number, field: keyof SoundGenerationConfig, value: string | number) => void;
-  onModeChange: (index: number, mode: SoundGenerationMode) => void;
   onSetActiveTab: (index: number) => void;
   onGenerate: () => void;
   onStopGeneration: () => void;
@@ -267,6 +278,13 @@ export interface SoundGenerationSectionProps {
   previewingSoundId?: string | null;
   onPreviewPlayPause?: (soundId: string) => void;
   onPreviewStop?: (soundId: string) => void;
+  // Receiver props
+  receivers?: ReceiverData[];
+  isPlacingReceiver?: boolean;
+  onStartPlacingReceiver?: () => void;
+  onDeleteReceiver?: (id: string) => void;
+  onUpdateReceiverName?: (id: string, name: string) => void;
+  onGoToReceiver?: (id: string) => void;
 }
 
 /**

@@ -69,24 +69,25 @@ interface SourceChain {
   sourceId: string;
   audioBuffer: AudioBuffer;
   bufferSource: AudioBufferSourceNode | null;
-  
+
   // Volume and mute control
   gainNode: GainNode;
   muteGainNode: GainNode;
-  
+
   // Convolution (shared between modes)
   convolver: ConvolverNode;
-  
+  sourceIRBuffer: AudioBuffer | null; // Per-source IR buffer (for simulation mode)
+
   // Binaural mode (direct stereo output)
   binauralGain?: GainNode;
-  
+
   // Speaker mode (L/R split + encoding)
   splitter?: ChannelSplitterNode;
   leftGain?: GainNode;
   rightGain?: GainNode;
   leftEncoder?: any; // ambisonics.monoEncoder
   rightEncoder?: any; // ambisonics.monoEncoder
-  
+
   // Source state
   position: Position;
   isPlaying: boolean;
@@ -331,27 +332,32 @@ export class StereoIRMode implements IAudioMode {
    * Create a new audio source with stereo convolution
    */
   createSource(sourceId: string, audioBuffer: AudioBuffer, position: Position): void {
-    if (!this.audioContext || !this.irBuffer) {
-      console.error('[StereoIRMode] Cannot create source - not initialized or no IR');
+    if (!this.audioContext) {
+      console.error('[StereoIRMode] Cannot create source - not initialized');
       return;
     }
-    
+
     // Remove existing chain if any
     if (this.sourceChains.has(sourceId)) {
       this.removeSource(sourceId);
     }
-    
+
     // Create volume and mute gain nodes
     const gainNode = this.audioContext.createGain();
     gainNode.gain.value = 1.0; // Unity gain for physically accurate convolution
-    
+
     const muteGainNode = this.audioContext.createGain();
     muteGainNode.gain.value = 1.0; // Unmuted by default
-    
+
     // Create convolver node (stereo)
     const convolver = this.audioContext.createConvolver();
     convolver.normalize = false;
-    convolver.buffer = this.irBuffer;
+
+    // Set IR buffer if available (global IR mode)
+    // In simulation mode, IR will be set per-source via setSourceImpulseResponse()
+    if (this.irBuffer) {
+      convolver.buffer = this.irBuffer;
+    }
     
     // Connect: Convolver → GainNode → MuteGainNode
     convolver.connect(gainNode);
@@ -364,6 +370,7 @@ export class StereoIRMode implements IAudioMode {
       gainNode,
       muteGainNode,
       convolver,
+      sourceIRBuffer: null, // No per-source IR yet (will be set in simulation mode)
       position,
       isPlaying: false,
       isMuted: false
@@ -432,6 +439,38 @@ export class StereoIRMode implements IAudioMode {
     this.sourceChains.set(sourceId, chain);
     
     console.log(`[StereoIRMode] Created source "${sourceId}" in ${this.interpretationMode} mode`);
+  }
+
+  /**
+   * Set impulse response for a specific source (simulation mode)
+   * Allows per-source IR assignment for source-receiver pair workflows
+   */
+  setSourceImpulseResponse(sourceId: string, irBuffer: AudioBuffer): void {
+    const chain = this.sourceChains.get(sourceId);
+    if (!chain) {
+      console.warn(`[StereoIRMode] Source "${sourceId}" not found for IR update`);
+      return;
+    }
+
+    if (!this.audioContext) {
+      console.error('[StereoIRMode] Cannot set source IR - not initialized');
+      return;
+    }
+
+    // Validate channel count
+    if (irBuffer.numberOfChannels !== 2) {
+      console.error(`[StereoIRMode] Expected stereo IR for source "${sourceId}", got ${irBuffer.numberOfChannels} channels`);
+      return;
+    }
+
+    // Process IR buffer (resample if needed, normalize)
+    const processedBuffer = processImpulseResponse(irBuffer, this.audioContext, true);
+
+    // Update convolver with new IR
+    chain.convolver.buffer = processedBuffer;
+    chain.sourceIRBuffer = processedBuffer;
+
+    console.log(`[StereoIRMode] ✅ Updated IR for source "${sourceId}" (${processedBuffer.length} samples @ ${processedBuffer.sampleRate}Hz)`);
   }
 
   /**

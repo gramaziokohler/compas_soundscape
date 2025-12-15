@@ -7,8 +7,7 @@ import { apiService } from "@/services/api";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
 import type { ImpulseResponseMetadata, AuralizationConfig } from "@/types/audio";
 import type { SEDAudioInfo } from "@/types";
-import { calculateRT60, formatRT60, type RT60Result } from "@/lib/audio/rt60-analysis";
-import { UI_COLORS, UI_CARD } from "@/lib/constants";
+import { UI_COLORS, UI_CARD, API_BASE_URL } from "@/lib/constants";
 
 interface ImpulseResponseUploadProps {
   onSelectIR: (irMetadata: ImpulseResponseMetadata) => Promise<void>;
@@ -17,6 +16,8 @@ interface ImpulseResponseUploadProps {
   auralizationConfig: AuralizationConfig;
   simulationResults?: string | null;
   refreshTrigger?: number;
+  simulationIRIds?: string[]; // If provided, only show IRs with these IDs in the library
+  isSimulationMode?: boolean; // NEW: Disable selection in simulation mode (source-receiver pairs)
 }
 
 /**
@@ -44,7 +45,9 @@ export function ImpulseResponseUpload({
   selectedIRId,
   auralizationConfig,
   simulationResults = null,
-  refreshTrigger = 0
+  refreshTrigger = 0,
+  simulationIRIds = undefined,
+  isSimulationMode = false
 }: ImpulseResponseUploadProps) {
   const handleError = useApiErrorHandler();
   const [impulseResponses, setImpulseResponses] = useState<ImpulseResponseMetadata[]>([]);
@@ -53,36 +56,21 @@ export function ImpulseResponseUpload({
   const [error, setError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<string>('');
 
-  // RT60 cache: Map from IR ID to RT60 result (calculated on-demand)
-  const [rt60Cache, setRt60Cache] = useState<Map<string, RT60Result | null>>(new Map());
-
-  // RT60 for currently loaded IR
-  const [currentIRRT60, setCurrentIRRT60] = useState<RT60Result | null>(null);
+  // Buffer cache: Map from IR ID to AudioBuffer (for waveform display on hover)
+  const [bufferCache, setBufferCache] = useState<Map<string, AudioBuffer>>(new Map());
 
   // File upload state for drag-and-drop area
   const [isDragging, setIsDragging] = useState(false);
 
   // Hidden file input ref for IR Library Upload button
   const irLibraryFileInputRef = useRef<HTMLInputElement>(null);
-  
-  // Calculate RT60 for currently loaded IR buffer
-  useEffect(() => {
-    if (auralizationConfig.impulseResponseBuffer && selectedIRId) {
-      const rt60 = calculateRT60(auralizationConfig.impulseResponseBuffer);
-      setCurrentIRRT60(rt60);
-      
-      // Cache the RT60 for this IR ID
-      setRt60Cache(prev => {
-        const newCache = new Map(prev);
-        newCache.set(selectedIRId, rt60);
-        return newCache;
-      });
-      
-      console.log('[RT60] Calculated for loaded IR:', formatRT60(rt60));
-    } else {
-      setCurrentIRRT60(null);
-    }
-  }, [auralizationConfig.impulseResponseBuffer, selectedIRId]);
+
+  // Hover state for waveform overlay
+  const [hoveredIRId, setHoveredIRId] = useState<string | null>(null);
+  const [hoveredIRBuffer, setHoveredIRBuffer] = useState<AudioBuffer | null>(null);
+  const [overlayPosition, setOverlayPosition] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [isOverlayHovered, setIsOverlayHovered] = useState(false);
+  const hideTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Load IR list on mount and when refreshTrigger changes
   useEffect(() => {
@@ -94,7 +82,12 @@ export function ImpulseResponseUpload({
     setError(null);
     try {
       const irs = await apiService.listImpulseResponses();
-      setImpulseResponses(irs);
+      // Filter to show only simulation's IRs if in simulation context
+      const filteredIRs = simulationIRIds
+        ? irs.filter(ir => simulationIRIds.includes(ir.id))
+        : irs;
+
+      setImpulseResponses(filteredIRs);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load impulse responses';
       setError(errorMessage);
@@ -105,6 +98,12 @@ export function ImpulseResponseUpload({
   };
 
   const handleSelectIR = async (ir: ImpulseResponseMetadata) => {
+    // Prevent selection in simulation mode
+    if (isSimulationMode) {
+      console.warn('[ImpulseResponseUpload] IR selection disabled in simulation mode');
+      return;
+    }
+
     try {
       setError(null);
 
@@ -118,6 +117,43 @@ export function ImpulseResponseUpload({
       const errorMessage = err instanceof Error ? err.message : 'Failed to load IR';
       setError(errorMessage);
       handleError(err, errorMessage);
+    }
+  };
+
+  // Load IR buffer for waveform display (on hover)
+  const loadIRBuffer = async (ir: ImpulseResponseMetadata): Promise<AudioBuffer | null> => {
+    // Check cache first
+    const cached = bufferCache.get(ir.id);
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      // Build full URL from IR metadata (url is relative like "/static/impulse_responses/file.wav")
+      const fullUrl = `${API_BASE_URL}${ir.url}`;
+
+      // Download the IR file
+      const response = await fetch(fullUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to download IR: ${response.statusText}`);
+      }
+
+      const audioBlob = await response.blob();
+      const arrayBuffer = await audioBlob.arrayBuffer();
+      const audioContext = new AudioContext();
+      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+      // Cache the buffer
+      setBufferCache(prev => {
+        const newCache = new Map(prev);
+        newCache.set(ir.id, audioBuffer);
+        return newCache;
+      });
+
+      return audioBuffer;
+    } catch (err) {
+      console.error(`Failed to load IR buffer for ${ir.name}:`, err);
+      return null;
     }
   };
 
@@ -314,19 +350,12 @@ export function ImpulseResponseUpload({
       {/* IR Library List - Only show when IRs exist */}
       {impulseResponses.length > 0 && (
         <div
-        className="rounded-lg"
-        style={{
-          padding: `${UI_CARD.PADDING}px`,
-          backgroundColor: 'white',
-          borderColor: UI_COLORS.NEUTRAL_300,
-          borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
-          borderStyle: 'solid',
-          borderRadius: `${UI_CARD.BORDER_RADIUS}px`
-        }}
+
       >
+
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-            IR Library ({impulseResponses.length})
+          <h3 className="text-sm font-semibold" style={{ color: simulationResults ? 'white' : undefined }}>
+            Impulse Responses ({impulseResponses.length})
           </h3>
           <button
             onClick={() => irLibraryFileInputRef.current?.click()}
@@ -349,7 +378,7 @@ export function ImpulseResponseUpload({
           />
         </div>
 
-        <div className="space-y-2 max-h-80 overflow-y-auto">
+        <div className="space-y-2 max-h-80 overflow-y-auto relative">
           {impulseResponses.length === 0 ? (
             <div className="text-xs text-center py-4" style={{ color: UI_COLORS.NEUTRAL_500 }}>
               No impulse responses yet. Click Upload to add one!
@@ -358,26 +387,63 @@ export function ImpulseResponseUpload({
             impulseResponses.map((ir) => {
               const badge = getFormatBadge(ir.format);
               const isSelected = selectedIRId === ir.id;
-              const rt60 = isSelected ? currentIRRT60 : rt60Cache.get(ir.id);
 
               return (
                 <div
                   key={ir.id}
-                  className={`p-3 rounded cursor-pointer transition-colors`}
+                  className={`p-3 rounded transition-colors relative ${isSimulationMode ? 'opacity-50' : 'cursor-pointer'}`}
                   style={{
-                    borderColor: isSelected ? UI_COLORS.PRIMARY : UI_COLORS.NEUTRAL_200,
+                    borderColor: isSelected ? UI_COLORS.PRIMARY : (simulationResults ? UI_COLORS.NEUTRAL_700 : UI_COLORS.NEUTRAL_200),
                     borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
                     borderStyle: 'solid',
                     backgroundColor: isSelected ? `${UI_COLORS.PRIMARY}10` : 'transparent',
-                    borderRadius: `${UI_CARD.BORDER_RADIUS}px`
+                    borderRadius: `${UI_CARD.BORDER_RADIUS}px`,
+                    cursor: isSimulationMode ? 'not-allowed' : 'pointer'
                   }}
-                  onClick={() => handleSelectIR(ir)}
-                  onMouseEnter={(e) => !isSelected && (e.currentTarget.style.borderColor = UI_COLORS.NEUTRAL_300)}
-                  onMouseLeave={(e) => !isSelected && (e.currentTarget.style.borderColor = UI_COLORS.NEUTRAL_200)}
+                  onClick={() => !isSimulationMode && handleSelectIR(ir)}
+                  onMouseEnter={async (e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.borderColor = simulationResults ? UI_COLORS.NEUTRAL_600 : UI_COLORS.NEUTRAL_300;
+                    }
+
+                    // Cancel any pending hide timeout
+                    if (hideTimeoutRef.current) {
+                      clearTimeout(hideTimeoutRef.current);
+                      hideTimeoutRef.current = null;
+                    }
+
+                    setHoveredIRId(ir.id);
+
+                    // Calculate position for fixed overlay - to the right and centered
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setOverlayPosition({
+                      top: rect.top + (rect.height / 2), // Center vertically
+                      left: rect.right + 16, // 16px gap to the right
+                      width: 0 // Will be auto-sized to content
+                    });
+
+                    // Load buffer for waveform display
+                    const buffer = await loadIRBuffer(ir);
+                    setHoveredIRBuffer(buffer);
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.borderColor = simulationResults ? UI_COLORS.NEUTRAL_700 : UI_COLORS.NEUTRAL_200;
+                    }
+                    // Only hide if not hovering over the overlay
+                    hideTimeoutRef.current = setTimeout(() => {
+                      if (!isOverlayHovered) {
+                        setHoveredIRId(null);
+                        setHoveredIRBuffer(null);
+                        setOverlayPosition(null);
+                      }
+                      hideTimeoutRef.current = null;
+                    }, 100);
+                  }}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+                      <div className="text-sm font-medium truncate" style={{ color: simulationResults ? 'white' : undefined }}>
                         {ir.name}
                       </div>
 
@@ -385,19 +451,14 @@ export function ImpulseResponseUpload({
                         <span className={`text-xs px-2 py-0.5 rounded ${badge.color}`}>
                           {badge.label}
                         </span>
-                        <span className="text-xs text-gray-600 dark:text-gray-400">
+                        <span className="text-xs" style={{ color: simulationResults ? UI_COLORS.NEUTRAL_400 : undefined }}>
                           {ir.sampleRate} Hz
                         </span>
-                        <span className="text-xs text-gray-600 dark:text-gray-400">
+                        <span className="text-xs" style={{ color: simulationResults ? UI_COLORS.NEUTRAL_400 : undefined }}>
                           {ir.duration.toFixed(2)}s
                         </span>
-                        {rt60 !== null && rt60 !== undefined && (
-                          <span className="text-xs font-medium" style={{ color: UI_COLORS.SECONDARY }}>
-                            RT60: {formatRT60(rt60)}
-                          </span>
-                        )}
                         {ir.originalChannels !== ir.channels && (
-                          <span className="text-xs" style={{ color: UI_COLORS.NEUTRAL_500 }}>
+                          <span className="text-xs" style={{ color: simulationResults ? UI_COLORS.NEUTRAL_400 : UI_COLORS.NEUTRAL_500 }}>
                             (from {ir.originalChannels}ch)
                           </span>
                         )}
@@ -426,73 +487,53 @@ export function ImpulseResponseUpload({
                       ✓ Currently loaded
                     </div>
                   )}
+
                 </div>
               );
             })
           )}
         </div>
 
-              {/* Loaded IR Visualization */}
-      {auralizationConfig.impulseResponseBuffer && auralizationConfig.impulseResponseFilename && (
-        <div 
-          className="rounded-lg"
-          style={{
-            padding: `${UI_CARD.PADDING}px`,
-            backgroundColor: 'white',
-            borderColor: UI_COLORS.NEUTRAL_300,
-            borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
-            borderStyle: 'solid',
-            borderRadius: `${UI_CARD.BORDER_RADIUS}px`
-          }}
-        >
-          <div className="mb-3">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-              Current IR: {auralizationConfig.impulseResponseFilename}
-            </h3>
-            {currentIRRT60 !== null && (
-              <p className="text-xs mt-1" style={{ color: UI_COLORS.SECONDARY }}>
-                RT60: {formatRT60(currentIRRT60)}{currentIRRT60.isLowQuality && ' (not sure, low quality IR)'}
-              </p>
-            )}
-          </div>
-          <AudioWaveformDisplay
-            audioBuffer={auralizationConfig.impulseResponseBuffer}
-            audioInfo={{
-              filename: auralizationConfig.impulseResponseFilename,
-              sample_rate: auralizationConfig.impulseResponseBuffer.sampleRate,
-              channels: formatChannelLabel(auralizationConfig.impulseResponseBuffer.numberOfChannels),
-              duration: auralizationConfig.impulseResponseBuffer.duration,
-              num_samples: auralizationConfig.impulseResponseBuffer.length
-            }}
-            enableWaveform={true}
-          />
-        </div>
-      )}
-      
       </div>
       )}
 
-      {/* Simulation Results or Help Text */}
-      {simulationResults ? (
+      {/* Waveform Overlay - Rendered as fixed position to the right of IR card */}
+      {hoveredIRId && hoveredIRBuffer && overlayPosition && (
         <div
-          className="rounded-lg text-xs"
+          className="fixed shadow-2xl"
           style={{
-            padding: `${UI_CARD.PADDING}px`,
-            backgroundColor: UI_COLORS.SUCCESS_LIGHT,
-            borderColor: UI_COLORS.SUCCESS,
-            borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
-            borderStyle: 'solid',
-            borderRadius: `${UI_CARD.BORDER_RADIUS}px`,
-            color: UI_COLORS.NEUTRAL_800,
-            whiteSpace: 'pre-line'
+            top: `${overlayPosition.top}px`,
+            left: `${overlayPosition.left}px`,
+            transform: 'translateY(-50%)', // Center vertically relative to the IR card
+            zIndex: 9999, // High z-index to appear above ThreeScene
+            width: 'fit-content',
+            maxWidth: '90vw' // Prevent overflow on small screens
+          }}
+          onMouseEnter={() => setIsOverlayHovered(true)}
+          onMouseLeave={() => {
+            setIsOverlayHovered(false);
+            setHoveredIRId(null);
+            setHoveredIRBuffer(null);
+            setOverlayPosition(null);
           }}
         >
-          <strong style={{ color: UI_COLORS.SUCCESS }}>Last Simulation Results:</strong>
-          <br />
-          <br />
-          {simulationResults}
+          <AudioWaveformDisplay
+            audioBuffer={hoveredIRBuffer}
+            audioInfo={{
+              filename: impulseResponses.find(ir => ir.id === hoveredIRId)?.name || 'Impulse Response',
+              sample_rate: hoveredIRBuffer.sampleRate,
+              channels: formatChannelLabel(hoveredIRBuffer.numberOfChannels),
+              duration: hoveredIRBuffer.duration,
+              num_samples: hoveredIRBuffer.length
+            }}
+            enableWaveform={true}
+            hideTextInfo={true}
+          />
         </div>
-      ) : (
+      )}
+
+      {/* Help Text - Only show when no simulation results */}
+      {!simulationResults && (
         <div className="text-xs" style={{ color: UI_COLORS.NEUTRAL_500 }}>
           <strong>Supported formats:</strong> Mono (1-ch), Binaural (2-ch), FOA (4-ch), TOA (16-ch)
           <br />

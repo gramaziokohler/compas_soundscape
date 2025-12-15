@@ -72,6 +72,10 @@ AUDIO_MODEL_TANGOFLUX = "tangoflux"
 AUDIO_MODEL_AUDIOLDM2 = "audioldm2"
 DEFAULT_AUDIO_MODEL = AUDIO_MODEL_TANGOFLUX  # Default model to use
 
+# Device Configuration
+# Set to True to force CPU mode (useful for systems with limited GPU memory)
+FORCE_CPU_MODE = os.environ.get("FORCE_CPU_MODE", "false").lower() == "true"
+
 # TangoFlux Model
 TANGOFLUX_MODEL_NAME = "declare-lab/TangoFlux"
 
@@ -105,11 +109,25 @@ WINDOWS_ILLEGAL_FILENAME_CHARS = r'<>:"/\|?*'  # Windows illegal filename charac
 # Pyroomacoustics Acoustic Simulation Configuration
 # ============================================================================
 
+# Simulation Modes
+PYROOMACOUSTICS_SIMULATION_MODE_MONO = "mono"  # Single microphone (1 channel)
+PYROOMACOUSTICS_SIMULATION_MODE_BINAURAL = "binaural"  # Two microphones for left/right ears (2 channels)
+PYROOMACOUSTICS_SIMULATION_MODE_FOA = "foa"  # First-Order Ambisonics (4 channels: W, X, Y, Z)
+
 # Default Simulation Settings
 PYROOMACOUSTICS_DEFAULT_MAX_ORDER = 15  # Default max_order for image source method
 PYROOMACOUSTICS_DEFAULT_RAY_TRACING = False  # Default ray tracing state
 PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION = False  # Default air absorption state
 PYROOMACOUSTICS_DEFAULT_RIR_DURATION = 1.0  # seconds
+PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE = PYROOMACOUSTICS_SIMULATION_MODE_MONO  # Default simulation mode
+
+# Binaural Configuration (for BINAURAL mode)
+PYROOMACOUSTICS_BINAURAL_EAR_SPACING = 0.215  # Inter-aural distance in meters (typical human head width ~21.5cm)
+
+# FOA Ambisonics Configuration (for FOA mode)
+# Microphone array configuration for capturing W, X, Y, Z components
+# Using a compact tetrahedral arrangement
+PYROOMACOUSTICS_FOA_MIC_RADIUS = 0.01  # Radius for FOA microphone array in meters (compact 1cm array)
 
 # Ray Tracing Configuration (Hybrid ISM/Ray Tracing)
 PYROOMACOUSTICS_RAY_TRACING_N_RAYS = 10000  # Number of rays to shoot (default)
@@ -129,7 +147,7 @@ PYROOMACOUSTICS_MAX_ORDER_MIN = 0  # Direct path only
 PYROOMACOUSTICS_MAX_ORDER_MAX = 20
 
 # RIR Export
-PYROOMACOUSTICS_RIR_DIR = str(BACKEND_DIR / "static" / "pyroomacoustics_rir")
+PYROOMACOUSTICS_RIR_DIR = str(BACKEND_DIR / "temp" / "static" / "pyroomacoustics_rir")
 PYROOMACOUSTICS_RIR_URL_PREFIX = "/static/pyroomacoustics_rir"
 
 # Material Database (11 materials)
@@ -149,11 +167,24 @@ PYROOMACOUSTICS_MATERIALS = {
 }
 
 # ============================================================================
+# Directory Configuration - Temporary Files
+# ============================================================================
+
+# Parent Temporary Directory (all temp files go here)
+TEMP_PARENT_DIR = str(BACKEND_DIR / "temp")
+
+# Temporary Subdirectories (using absolute paths from BACKEND_DIR)
+TEMP_UPLOADS_DIR = str(BACKEND_DIR / "temp" / "uploads")
+TEMP_LIBRARY_DIR = str(BACKEND_DIR / "temp" / "library_downloads")
+TEMP_SIMULATIONS_DIR = str(BACKEND_DIR / "temp" / "simulations")
+TEMP_STATIC_DIR = str(BACKEND_DIR / "temp" / "static")
+
+# ============================================================================
 # Directory Configuration - Audio
 # ============================================================================
 
 # Generated Sounds Directory
-GENERATED_SOUNDS_DIR = "./static/sounds/generated"
+GENERATED_SOUNDS_DIR = "./temp/static/sounds/generated"
 GENERATED_SOUND_URL_PREFIX = "/static/sounds/generated"  # URL path prefix for generated sounds
 
 # ============================================================================
@@ -198,13 +229,8 @@ MIN_MATCH_SCORE_THRESHOLD = 120  # Minimum score for a valid match
 MAX_FILENAME_LENGTH_SAFE = 100  # Maximum filename length limit for safety
 
 # ============================================================================
-# Directory Configuration
+# Directory Configuration - Data Files
 # ============================================================================
-
-# Temporary Directories (using absolute paths from BACKEND_DIR)
-TEMP_UPLOADS_DIR = str(BACKEND_DIR / "temp_uploads")
-TEMP_LIBRARY_DIR = str(BACKEND_DIR / "temp_library_downloads")
-TEMP_DIR = str(BACKEND_DIR / "temp")
 
 # Data Directories
 BBC_LIBRARY_CSV_PATH = './data/BBCSoundEffects.csv'
@@ -222,7 +248,7 @@ CORS_ALLOW_ALL = "*"  # Allow all origins (use for development with dynamic netw
 
 # Static Files
 STATIC_MOUNT_PATH = "/static"
-STATIC_FILES_DIRECTORY = "static"
+STATIC_FILES_DIRECTORY = "temp/static"
 
 # ============================================================================
 # Freesound API Configuration
@@ -355,7 +381,7 @@ AMBISONIC_TOA_CHANNEL_NAMES = [
 AMBISONIC_NORMALIZATION = "SN3D"  # Schmidt semi-normalized (standard)
 
 # IR File Storage
-IMPULSE_RESPONSE_DIR = "./static/impulse_responses"
+IMPULSE_RESPONSE_DIR = "./temp/static/impulse_responses"
 IMPULSE_RESPONSE_URL_PREFIX = "/static/impulse_responses"
 
 # Supported IR Channel Counts

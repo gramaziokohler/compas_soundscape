@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 from fastapi import UploadFile
-from config.constants import TEMP_UPLOADS_DIR, TEMP_LIBRARY_DIR, TEMP_DIR, IMPULSE_RESPONSE_DIR
+from config.constants import TEMP_UPLOADS_DIR, TEMP_PARENT_DIR
 
 
 def sanitize_filename(filename: str) -> str:
@@ -190,8 +190,8 @@ def cleanup_all_temp_directories() -> dict[str, int]:
     Clean up all temporary directories used by the application.
 
     This function should be called on application startup to ensure
-    a clean state. It removes all files from temporary directories
-    and the impulse response directory.
+    a clean state. It recursively removes all files from the parent
+    temporary directory and all its subdirectories.
 
     Returns:
         dict[str, int]: Dictionary mapping directory paths to number of files deleted
@@ -202,18 +202,31 @@ def cleanup_all_temp_directories() -> dict[str, int]:
         print(f"Cleaned up {sum(results.values())} total files")
         ```
     """
-    temp_directories = [TEMP_UPLOADS_DIR, TEMP_LIBRARY_DIR, TEMP_DIR, IMPULSE_RESPONSE_DIR]
+    parent_path = Path(TEMP_PARENT_DIR)
     results = {}
 
-    for temp_dir in temp_directories:
-        try:
-            deleted = cleanup_temp_directory(temp_dir)
-            results[temp_dir] = deleted
-            if deleted > 0:
-                print(f"Cleaned up {deleted} file(s) from {temp_dir}")
-        except Exception as e:
-            print(f"Warning: Failed to cleanup {temp_dir}: {e}")
-            results[temp_dir] = 0
+    # If parent directory doesn't exist, nothing to clean
+    if not parent_path.exists():
+        print("No temporary files to clean up (directory doesn't exist)")
+        return results
+
+    # Recursively clean all subdirectories and the parent directory
+    for dirpath, dirnames, filenames in os.walk(parent_path, topdown=False):
+        dir_path = Path(dirpath)
+        deleted_count = 0
+
+        # Delete all files in current directory
+        for filename in filenames:
+            file_path = dir_path / filename
+            try:
+                file_path.unlink()
+                deleted_count += 1
+            except OSError as e:
+                print(f"Warning: Failed to delete {file_path}: {e}")
+
+        if deleted_count > 0:
+            results[str(dir_path)] = deleted_count
+            print(f"Cleaned up {deleted_count} file(s) from {dir_path}")
 
     total_deleted = sum(results.values())
     if total_deleted > 0:

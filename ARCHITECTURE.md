@@ -42,18 +42,20 @@ compas_soundscape/
 │   │   └── sed_service.py           # Sound Event Detection
 │   ├── utils/
 │   │   ├── __init__.py
+│   │   ├── acoustic_measurement.py  # Acoustic measurement utilities
 │   │   ├── audio_processing.py      # Audio manipulation utilities
 │   │   ├── file_operations.py       # File I/O and cleanup
 │   │   ├── helpers.py               # General helpers
 │   │   └── sed_processing.py        # SED processing utilities
-│   ├── static/
-│   │   ├── sounds/
-│   │   │   └── generated/           # Generated audio files (served via /static/)
-│   │   ├── impulse_responses/       # Uploaded IR files (1/2/4/16 channels)
-│   │   └── pyroomacoustics_rir/     # Pyroomacoustics generated RIR files
-│   ├── temp/                        # Temporary processing files
-│   ├── temp_uploads/                # Uploaded files staging area
-│   └── temp_library_downloads/      # Downloaded library audio files
+│   └── temp/                        # Parent temporary directory (all temp files)
+│       ├── static/                  # Static files served via /static/
+│       │   ├── sounds/
+│       │   │   └── generated/       # Generated audio files
+│       │   ├── impulse_responses/   # Uploaded IR files (1/2/4/16 channels)
+│       │   └── pyroomacoustics_rir/ # Pyroomacoustics generated RIR files
+│       ├── uploads/                 # Uploaded files staging area (from temp_uploads)
+│       ├── library_downloads/       # Downloaded library audio files (from temp_library_downloads)
+│       └── simulations/             # Choras/Pyroomacoustics simulation results
 │
 ├── frontend/
 │   ├── package.json
@@ -72,10 +74,11 @@ compas_soundscape/
 │       │   ├── page.tsx             # Main page (orchestration only)
 │       │   └── globals.css          # Tailwind + CSS variables
 │       ├── components/
-│       │   ├── acoustics/           # Acoustic simulation components (NEW)
+│       │   ├── acoustics/           # Acoustic simulation components
 │       │   │   ├── ChorasSimulationSection.tsx      # Choras diffusion equation simulation UI
-│       │   │   ├── PyroomAcousticsSimulationSection.tsx # Pyroomacoustics ISM simulation UI (NEW)
-│       │   │   └── MaterialAssignmentUI.tsx         # Material assignment UI for surfaces
+│       │   │   ├── PyroomAcousticsSimulationSection.tsx # Pyroomacoustics ISM simulation UI
+│       │   │   ├── MaterialAssignmentUI.tsx         # Material assignment UI for surfaces
+│       │   │   └── SurfaceMaterialsSection.tsx      # Shared surface materials component (NEW)
 │       │   ├── audio/               # Audio UI components
 │       │   │   ├── AudioWaveformDisplay.tsx     # Waveform display
 │       │   │   ├── WaveSurferTimeline.tsx       # Enhanced timeline (WaveSurfer.js)
@@ -100,8 +103,13 @@ compas_soundscape/
 │       │   │       ├── ModelLoadSection.tsx        # Model file upload & loading
 │       │   │       ├── TextGenerationSection.tsx   # LLM-based text generation
 │       │   │       ├── SoundGenerationSection.tsx  # Sound generation controls (vertical list)
-│       │   │       ├── SoundTab.tsx                # Individual sound card (NEW - collapsible)
-│       │   │       └── AcousticsTab.tsx            # Acoustics & IR controls
+│       │   │       ├── SoundTab.tsx                # Individual sound card (collapsible)
+│       │   │       ├── AcousticsTab.tsx            # Acoustics orchestration (uses AcousticsSection)
+│       │   │       ├── AcousticsSection.tsx        # Acoustic simulations manager (vertical list)
+│       │   │       ├── SimulationTab.tsx           # Individual simulation config (collapsible)
+│       │   │       ├── ChorasSimulationSettings.tsx # Choras settings UI
+│       │   │       ├── PyroomAcousticsSimulationSettings.tsx # Pyroomacoustics settings UI
+│       │   │       └── ReceiversSection.tsx        # Audio receivers (in Soundscape tab)
 │       │   ├── overlays/            # UI overlays
 │       │   │   ├── EntityInfoBox.tsx          # Entity information overlay
 │       │   │   ├── ImpactSoundPlayback.tsx    # Impact sound playback controls
@@ -115,11 +123,12 @@ compas_soundscape/
 │       │       └── ErrorToast.tsx   # Toast notification component
 │       ├── hooks/
 │       │   ├── useApiErrorHandler.ts     # API error handling with toast notifications
+│       │   ├── useAcousticsSimulation.ts # Main acoustic simulation manager (NEW)
 │       │   ├── useAudioControls.ts       # Audio playback state & controls
 │       │   ├── useAudioOrchestrator.ts   # Audio orchestrator integration
 │       │   ├── useAudioNormalization.ts  # Audio normalization utilities
 │       │   ├── useChorasSimulation.ts    # Choras simulation state management
-│       │   ├── usePyroomAcousticsSimulation.ts # Pyroomacoustics simulation state management (NEW)
+│       │   ├── usePyroomAcousticsSimulation.ts # Pyroomacoustics simulation state management
 │       │   ├── useRoomMaterials.ts       # Room material management
 │       │   ├── useFileUpload.ts          # File upload & processing (with error notifications)
 │       │   ├── useHorizontalScroll.ts    # Mouse wheel horizontal scrolling

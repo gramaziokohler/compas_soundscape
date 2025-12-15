@@ -42,7 +42,10 @@ export class InputHandler {
   private onFirstPersonModeDisabled: (() => void) | null = null;
   private onFirstPersonRotate: ((deltaYaw: number, deltaPitch: number) => void) | null = null;
   private onSpherePositionUpdated: ((promptKey: string, position: THREE.Vector3) => void) | null = null;
+  private onSphereDragEnd: ((promptKey: string, position: THREE.Vector3) => void) | null = null;
   private onReceiverPositionUpdated: ((receiverId: string, position: [number, number, number]) => void) | null = null;
+  private onReceiverDragEnd: ((receiverId: string, position: [number, number, number]) => void) | null = null;
+  private onReceiverSelected: ((receiverId: string) => void) | null = null; // NEW: Receiver selection for audio
   private onPlacementCanceled: (() => void) | null = null;
   private onPreviewPositionUpdated: ((position: THREE.Vector3) => void) | null = null;
   private onSphereClicked: ((promptKey: string) => void) | null = null;
@@ -59,6 +62,9 @@ export class InputHandler {
   private getSoundSphereMeshes: (() => THREE.Mesh[]) | null = null;
   private getTriangleToFaceMap: (() => number[] | null) | null = null;
   private getAudioRenderingMode: (() => string) | null = null;
+  private getActiveSimulationIndex: (() => number | null) | null = null;
+  private getActiveSimulationConfig: (() => any | null) | null = null;
+  private getActiveAiTab: (() => 'text' | 'sound' | 'acoustics') | null = null;
 
   constructor(
     camera: THREE.PerspectiveCamera,
@@ -191,6 +197,19 @@ export class InputHandler {
         }
         if (event.object) {
           event.object.userData.isDragging = false;
+
+          // Call dragend callbacks to update data state
+          if (event.object.userData.promptKey && this.onSphereDragEnd) {
+            this.onSphereDragEnd(event.object.userData.promptKey, event.object.position.clone());
+          } else if (event.object.userData.receiverId && this.onReceiverDragEnd) {
+            const receiverId = event.object.userData.receiverId;
+            const position: [number, number, number] = [
+              event.object.position.x,
+              event.object.position.y,
+              event.object.position.z
+            ];
+            this.onReceiverDragEnd(receiverId, position);
+          }
         }
       });
 
@@ -294,8 +313,16 @@ export class InputHandler {
         if (this.clickTimeout) clearTimeout(this.clickTimeout);
         this.clickCount = 0;
 
-        // Enable first-person mode at receiver position
+        // Get receiver ID and trigger selection callback
         const receiverMesh = receiverIntersects[0].object as THREE.Mesh;
+        const receiverId = receiverMesh.userData.receiverId;
+        
+        // Trigger receiver selection (for audio system)
+        if (this.onReceiverSelected && receiverId) {
+          this.onReceiverSelected(receiverId);
+        }
+
+        // Enable first-person mode at receiver position
         const receiverPosition = receiverMesh.position.clone();
 
         // Calculate initial look-at target
@@ -315,7 +342,8 @@ export class InputHandler {
           this.onFirstPersonModeEnabled(receiverPosition, initialYaw, initialPitch);
         }
 
-        console.log('[InputHandler] First-person mode enabled', {
+        console.log('[InputHandler] Receiver double-clicked', {
+          receiverId,
           receiverPos: receiverPosition.toArray(),
           initialYaw,
           initialPitch
@@ -333,6 +361,24 @@ export class InputHandler {
     const modelEntities = this.getModelEntities?.() || [];
     const contentGroup = this.getContentGroup?.();
     const audioRenderingMode = this.getAudioRenderingMode?.() || 'anechoic';
+    const activeSimulationIndex = this.getActiveSimulationIndex?.() ?? null;
+    const activeSimulationConfig = this.getActiveSimulationConfig?.() ?? null;
+    const activeAiTab = this.getActiveAiTab?.() ?? 'text';
+
+    // Mode 2 (Face Selection): Enable when:
+    // - Sidebar is in "Acoustics" tab
+    // - A simulation tab is selected
+    // - Simulation type is PyroomAcoustics or Choras
+    // - Simulation is in setup phase (before-simulation) or running (not completed, idle, or error)
+    const isFaceSelectionMode =
+      activeAiTab === 'acoustics' &&
+      activeSimulationIndex !== null &&
+      activeSimulationConfig !== null &&
+      (activeSimulationConfig.mode === 'pyroomacoustics' || activeSimulationConfig.mode === 'choras') &&
+      (activeSimulationConfig.state === 'before-simulation' || activeSimulationConfig.state === 'running');
+
+    // Mode 1 (Entity Selection): Enabled when Mode 2 is not active
+    const isEntitySelectionMode = !isFaceSelectionMode;
 
     if (contentGroup && contentGroup.children.length > 0) {
       const geometryMesh = contentGroup.children.find(child =>
@@ -370,14 +416,14 @@ export class InputHandler {
               const entityIndex = geometryData.face_entity_map[faceIndex];
               const entity = modelEntities.find(e => e.index === entityIndex);
 
-              // In precise mode, highlight face only (no entity UI)
-              if (audioRenderingMode === 'precise') {
+              // Mode 2: Face selection for material assignment
+              if (isFaceSelectionMode) {
                 if (this.onFaceSelected) {
                   this.onFaceSelected(faceIndex, entityIndex);
                   return;
                 }
-              } else {
-                // Normal mode: show entity UI
+              } else if (isEntitySelectionMode) {
+                // Mode 1: Entity selection
                 if (entity && this.onEntitySelected) {
                   this.onEntitySelected(entity);
                   return;
@@ -386,8 +432,8 @@ export class InputHandler {
             }
           }
 
-          // Fallback: use bounding box method (only in non-precise mode)
-          if (audioRenderingMode !== 'precise') {
+          // Fallback: use bounding box method (only in entity selection mode)
+          if (isEntitySelectionMode) {
             const clickPoint = intersection.point;
             let closestEntity = null;
             let minDistance = Infinity;
@@ -425,14 +471,14 @@ export class InputHandler {
     }
 
     // No geometry clicked - deselect
-    if (audioRenderingMode === 'precise') {
-      // In precise mode, deselect face
+    if (isFaceSelectionMode) {
+      // Mode 2: Deselect face
       if (this.onFaceSelected) {
         // Signal deselection by calling with -1, -1
         this.onFaceSelected(-1, -1);
       }
-    } else {
-      // Normal mode: deselect entity
+    } else if (isEntitySelectionMode) {
+      // Mode 1: Deselect entity
       if (this.onEntitySelected) {
         this.onEntitySelected(null);
       }
@@ -544,8 +590,20 @@ export class InputHandler {
     this.onSpherePositionUpdated = callback;
   }
 
+  public setOnSphereDragEnd(callback: (promptKey: string, position: THREE.Vector3) => void): void {
+    this.onSphereDragEnd = callback;
+  }
+
   public setOnReceiverPositionUpdated(callback: (receiverId: string, position: [number, number, number]) => void): void {
     this.onReceiverPositionUpdated = callback;
+  }
+
+  public setOnReceiverDragEnd(callback: (receiverId: string, position: [number, number, number]) => void): void {
+    this.onReceiverDragEnd = callback;
+  }
+
+  public setOnReceiverSelected(callback: (receiverId: string) => void): void {
+    this.onReceiverSelected = callback;
   }
 
   public setOnPlacementCanceled(callback: () => void): void {
@@ -608,6 +666,18 @@ export class InputHandler {
     this.getAudioRenderingMode = getter;
   }
 
+  public setActiveSimulationIndexGetter(getter: () => number | null): void {
+    this.getActiveSimulationIndex = getter;
+  }
+
+  public setActiveSimulationConfigGetter(getter: () => any | null): void {
+    this.getActiveSimulationConfig = getter;
+  }
+
+  public setActiveAiTabGetter(getter: () => 'text' | 'sound' | 'acoustics'): void {
+    this.getActiveAiTab = getter;
+  }
+
   /**
    * Dispose of all resources
    */
@@ -638,7 +708,9 @@ export class InputHandler {
     this.onFirstPersonModeDisabled = null;
     this.onFirstPersonRotate = null;
     this.onSpherePositionUpdated = null;
+    this.onSphereDragEnd = null;
     this.onReceiverPositionUpdated = null;
+    this.onReceiverDragEnd = null;
     this.onPlacementCanceled = null;
     this.onPreviewPositionUpdated = null;
   }

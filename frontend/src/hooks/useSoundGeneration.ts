@@ -14,9 +14,7 @@ import { createSoundEventFromUpload } from "@/lib/sound/event-factory";
 import { trimDisplayName } from "@/lib/utils";
 
 export function useSoundGeneration(geometryBounds: {min: number[], max: number[]} | null) {
-  const [soundConfigs, setSoundConfigs] = useState<SoundGenerationConfig[]>([
-    { prompt: "", duration: DEFAULT_DURATION_SECONDS, guidance_scale: DEFAULT_GUIDANCE_SCALE, negative_prompt: "", seed_copies: DEFAULT_SEED_COPIES, steps: DEFAULT_DIFFUSION_STEPS, mode: 'text-to-audio' }
-  ]);
+  const [soundConfigs, setSoundConfigs] = useState<SoundGenerationConfig[]>([]);
   const [activeSoundConfigTab, setActiveSoundConfigTab] = useState<number>(0);
   const [isSoundGenerating, setIsSoundGenerating] = useState<boolean>(false);
   const [soundGenError, setSoundGenError] = useState<string | null>(null);
@@ -31,17 +29,17 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
   // AbortController for cancelling ongoing sound generation requests
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  const handleAddConfig = useCallback(() => {
+  const handleAddConfig = useCallback((mode: SoundGenerationMode = 'text-to-audio') => {
     setSoundConfigs(prev => {
       // Create a completely fresh config with default values
-      const newConfig: SoundGenerationConfig = { 
-        prompt: "", 
-        duration: globalDuration, 
-        guidance_scale: DEFAULT_GUIDANCE_SCALE, 
-        negative_prompt: "", 
-        seed_copies: DEFAULT_SEED_COPIES, 
-        steps: globalSteps, 
-        mode: 'text-to-audio',
+      const newConfig: SoundGenerationConfig = {
+        prompt: "",
+        duration: globalDuration,
+        guidance_scale: DEFAULT_GUIDANCE_SCALE,
+        negative_prompt: "",
+        seed_copies: DEFAULT_SEED_COPIES,
+        steps: globalSteps,
+        mode,
         // Ensure no leftover data
         uploadedAudioBuffer: undefined,
         uploadedAudioInfo: undefined,
@@ -755,6 +753,30 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
   }, [soundscapeData, generatedSounds.length]);
 
   /**
+   * Update sound position when dragged in 3D scene
+   * @param soundId - The ID of the sound to update
+   * @param position - The new position as [x, y, z]
+   */
+  const updateSoundPosition = useCallback((soundId: string, position: [number, number, number]) => {
+    console.log(`[useSoundGeneration] Updating sound position:`, { soundId, position });
+
+    // Update soundscapeData
+    setSoundscapeData(prev => {
+      if (!prev) return prev;
+      return prev.map(sound =>
+        sound.id === soundId ? { ...sound, position } : sound
+      );
+    });
+
+    // Update generatedSounds
+    setGeneratedSounds(prev =>
+      prev.map(sound =>
+        sound.id === soundId ? { ...sound, position } : sound
+      )
+    );
+  }, []);
+
+  /**
    * Update soundscapeData when display_name changes in soundConfigs
    * This ensures timeline receives updated names
    */
@@ -820,6 +842,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     handleResetToDefaults,
     handleResetSoundConfig,
     handleDetachSoundFromEntity,
-    handleAttachSoundToEntity
+    handleAttachSoundToEntity,
+    updateSoundPosition
   };
 }

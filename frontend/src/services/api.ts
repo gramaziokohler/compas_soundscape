@@ -91,6 +91,40 @@ export const apiService = {
     }
   },
 
+  // Load Sample Audio
+  async loadSampleAudio(): Promise<File> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/sample-audio`,
+        undefined,
+        'Load sample audio'
+      );
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: 'Failed to load sample audio' }));
+        throw new Error(err.detail || 'Failed to load sample audio');
+      }
+
+      // Get the blob from the response
+      const blob = await response.blob();
+
+      // Extract filename from Content-Disposition header or use default
+      const contentDisposition = response.headers.get('content-disposition');
+      let filename = 'sample-audio.wav';
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/i);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+
+      // Create a File object from the blob
+      return new File([blob], filename, { type: blob.type });
+    } catch (error) {
+      handleApiError(error, 'Load sample audio');
+    }
+  },
+
   // Analyze 3DM File
   async analyze3dm(file: File): Promise<{ entities: any[] }> {
     try {
@@ -569,6 +603,7 @@ export const apiService = {
       air_absorption: boolean;
       n_rays: number;
       scattering: number;
+      simulation_mode: string;
     },
     sourceReceiverPairs: Array<{
       source_position: number[];
@@ -592,6 +627,7 @@ export const apiService = {
       formData.append('air_absorption', settings.air_absorption.toString());
       formData.append('n_rays', settings.n_rays.toString());
       formData.append('scattering', settings.scattering.toString());
+      formData.append('simulation_mode', settings.simulation_mode);
       formData.append('source_receiver_pairs', JSON.stringify(sourceReceiverPairs));
       formData.append('face_materials', JSON.stringify(faceMaterialAssignments));
 
@@ -612,6 +648,38 @@ export const apiService = {
       return response.json();
     } catch (error) {
       handleApiError(error, 'Run Pyroomacoustics simulation');
+    }
+  },
+
+  /**
+   * Get a specific IR file from a Pyroomacoustics simulation
+   *
+   * @param simulationId - The simulation ID
+   * @param irFilename - The specific IR filename to retrieve
+   * @returns Blob containing the WAV file
+   */
+  async getPyroomacousticsIRFile(
+    simulationId: string,
+    irFilename: string
+  ): Promise<Blob> {
+    try {
+      const url = new URL(`${API_BASE_URL}/pyroomacoustics/get-result-file/${simulationId}/wav`);
+      url.searchParams.append('ir_filename', irFilename);
+
+      const response = await fetchWithErrorHandling(
+        url.toString(),
+        undefined,
+        'Get Pyroomacoustics IR file'
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Failed to retrieve IR file' }));
+        throw new Error(error.detail || 'Failed to retrieve IR file');
+      }
+
+      return response.blob();
+    } catch (error) {
+      handleApiError(error, 'Get Pyroomacoustics IR file');
     }
   }
 };

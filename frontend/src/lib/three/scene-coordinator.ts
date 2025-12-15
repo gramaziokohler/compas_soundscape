@@ -49,6 +49,10 @@ export class SceneCoordinator {
   private firstPersonRotation: { yaw: number; pitch: number } = { yaw: 0, pitch: 0 };
   private lockedPosition: THREE.Vector3 | null = null;
 
+  // Camera state before entering first-person mode (for restoration)
+  private savedCameraPosition: THREE.Vector3 | null = null;
+  private savedControlsTarget: THREE.Vector3 | null = null;
+
   // Custom animation callbacks
   private customAnimationCallbacks: Array<() => void> = [];
 
@@ -230,6 +234,10 @@ export class SceneCoordinator {
     initialYaw: number,
     initialPitch: number
   ): void {
+    // Save current camera state for restoration
+    this.savedCameraPosition = this.camera.position.clone();
+    this.savedControlsTarget = this.controls.target.clone();
+
     this.firstPersonMode = true;
     this.lockedPosition = position.clone();
     this.firstPersonRotation = { yaw: initialYaw, pitch: initialPitch };
@@ -243,7 +251,18 @@ export class SceneCoordinator {
   public disableFirstPersonMode(): void {
     this.firstPersonMode = false;
     this.lockedPosition = null;
-    
+
+    // Restore camera position and controls target
+    if (this.savedCameraPosition && this.savedControlsTarget) {
+      this.camera.position.copy(this.savedCameraPosition);
+      this.controls.target.copy(this.savedControlsTarget);
+      this.controls.update();
+
+      // Clear saved state
+      this.savedCameraPosition = null;
+      this.savedControlsTarget = null;
+    }
+
     // Reset controls
     this.controls.minDistance = 0;
     this.controls.maxDistance = Infinity;

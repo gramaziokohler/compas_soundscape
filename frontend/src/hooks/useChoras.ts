@@ -110,7 +110,7 @@ export async function runFullSimulation(
     console.log('=== Starting Choras Simulation ===');
     console.log('Receivers:', receivers);
     console.log('Sound sources:', soundscapeData);
-    
+
     // --- STEP 1: Upload File ---
     console.log("1. Uploading File...");
     const slotRes = await fetch(`${API_BASE}/files`);

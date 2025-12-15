@@ -36,7 +36,7 @@ export function ChorasSimulationSection({
   soundscapeData,
   onIRImported
 }: ChorasSimulationSectionProps) {
-  const { state, methods } = useChorasSimulation(onIRImported);
+  const { state, methods } = useChorasSimulation('choras_simulation', onIRImported);
   const { addError } = useErrorNotification();
 
   const handleRunSimulation = async () => {

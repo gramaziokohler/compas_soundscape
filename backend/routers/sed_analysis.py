@@ -79,9 +79,9 @@ async def analyze_sound_events(
         - File is saved temporarily then analyzed
         - Cleanup happens in finally block to ensure temp file removal
     """
-    temp_dir = "temp_uploads"
-    os.makedirs(temp_dir, exist_ok=True)
-    temp_path = os.path.join(temp_dir, file.filename)
+    from config.constants import TEMP_UPLOADS_DIR
+    os.makedirs(TEMP_UPLOADS_DIR, exist_ok=True)
+    temp_path = os.path.join(TEMP_UPLOADS_DIR, file.filename)
 
     try:
         # Save uploaded file to temporary location

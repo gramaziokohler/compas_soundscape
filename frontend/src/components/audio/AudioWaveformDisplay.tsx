@@ -15,6 +15,8 @@ interface AudioWaveformDisplayProps {
   enableWaveform?: boolean;
   /** Optional: Channel labels (e.g., ["L", "R"] for stereo) */
   channelLabels?: string[];
+  /** Optional: Hide the text info below the waveform */
+  hideTextInfo?: boolean;
 }
 
 /**
@@ -34,7 +36,8 @@ export function AudioWaveformDisplay({
   audioBuffer,
   audioInfo,
   enableWaveform = AUDIO_VISUALIZATION.ENABLE_WAVEFORM_DISPLAY,
-  channelLabels
+  channelLabels,
+  hideTextInfo = false
 }: AudioWaveformDisplayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -132,16 +135,18 @@ export function AudioWaveformDisplay({
         )}
       </div>
 
-      {/* Minimal text info - 2 lines */}
-      <div className="px-3 py-2 text-xs text-gray-700 dark:text-gray-400 space-y-0.5">
-        <div className="font-mono truncate" title={audioInfo.filename}>
-          {audioInfo.filename}
+      {/* Minimal text info - 2 lines (conditionally rendered) */}
+      {!hideTextInfo && (
+        <div className="px-3 py-2 text-xs text-gray-700 dark:text-gray-400 space-y-0.5">
+          <div className="font-mono truncate" title={audioInfo.filename}>
+            {audioInfo.filename}
+          </div>
+          <div className="flex gap-4 font-mono">
+            <span>{audioInfo.sample_rate} Hz</span>
+            <span>{audioInfo.duration.toFixed(2)}s</span>
+          </div>
         </div>
-        <div className="flex gap-4 font-mono">
-          <span>{audioInfo.sample_rate} Hz</span>
-          <span>{audioInfo.duration.toFixed(2)}s</span>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

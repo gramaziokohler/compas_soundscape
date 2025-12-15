@@ -3,7 +3,10 @@
  * 
  * Manages Choras acoustic simulation workflow with typed state.
  * Handles material selection, simulation execution, progress tracking, and result saving.
- * State persists across tab changes using a module-level singleton.
+ * State persists across tab changes using per-instance storage.
+ * 
+ * @param simulationInstanceId - Unique identifier for this simulation instance
+ * @param onIRImported - Callback when IR is imported to library
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -46,6 +49,7 @@ export interface ChorasSimulationState {
   error: string | null;
   simulationResults: string | null;
   irImported: boolean;
+  importedIRMetadata?: any; // Store IR metadata for filtering
 }
 
 export interface ChorasSimulationMethods {
@@ -57,32 +61,48 @@ export interface ChorasSimulationMethods {
   refreshProgress: () => Promise<void>;
 }
 
-// Module-level state singleton to persist across component unmounts/remounts
-let persistentState: ChorasSimulationState = {
-  materials: [],
-  selectedMaterialId: null,
-  simulationSettings: {
-    de_c0: CHORAS_DEFAULT_C0,
-    de_ir_length: CHORAS_DEFAULT_IR_LENGTH,
-    de_lc: CHORAS_DEFAULT_LC,
-    edt: CHORAS_DEFAULT_EDT,
-    sim_len_type: CHORAS_DEFAULT_SIM_LEN_TYPE as 'ir_length' | 'edt'
-  },
-  isRunning: false,
-  status: 'Idle',
-  progress: 0,
-  currentSimulationId: null,
-  currentSimulationRunId: null,
-  error: null,
-  simulationResults: null,
-  irImported: false
-};
+// Module-level Map to store state per simulation instance
+const persistentStates = new Map<string, ChorasSimulationState>();
+
+// Shared materials cache (same for all instances)
+let sharedMaterialsCache: ChorasMaterial[] = [];
+
+// Default state factory
+function createDefaultState(): ChorasSimulationState {
+  return {
+    materials: sharedMaterialsCache,
+    selectedMaterialId: sharedMaterialsCache.length > 0 ? sharedMaterialsCache[0].id : null,
+    simulationSettings: {
+      de_c0: CHORAS_DEFAULT_C0,
+      de_ir_length: CHORAS_DEFAULT_IR_LENGTH,
+      de_lc: CHORAS_DEFAULT_LC,
+      edt: CHORAS_DEFAULT_EDT,
+      sim_len_type: CHORAS_DEFAULT_SIM_LEN_TYPE as 'ir_length' | 'edt'
+    },
+    isRunning: false,
+    status: 'Idle',
+    progress: 0,
+    currentSimulationId: null,
+    currentSimulationRunId: null,
+    error: null,
+    simulationResults: null,
+    irImported: false,
+    importedIRMetadata: undefined
+  };
+}
 
 /**
  * Hook for managing Choras acoustic simulation workflow
  */
-export function useChorasSimulation(onIRImported?: () => void) {
-  const [state, setState] = useState<ChorasSimulationState>(persistentState);
+export function useChorasSimulation(simulationInstanceId: string, onIRImported?: () => void) {
+  // Get or create state for this instance
+  if (!persistentStates.has(simulationInstanceId)) {
+    persistentStates.set(simulationInstanceId, createDefaultState());
+  }
+
+  const [state, setState] = useState<ChorasSimulationState>(() => 
+    persistentStates.get(simulationInstanceId)!
+  );
   const isMounted = useRef(true);
   const { addError } = useErrorNotification();
 
@@ -94,10 +114,10 @@ export function useChorasSimulation(onIRImported?: () => void) {
     setStateRef.current = setState;
   }, [setState]);
 
-  // Sync state changes back to persistent storage
+  // Sync state changes back to persistent storage for this instance
   useEffect(() => {
-    persistentState = state;
-  }, [state]);
+    persistentStates.set(simulationInstanceId, state);
+  }, [state, simulationInstanceId]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -112,10 +132,23 @@ export function useChorasSimulation(onIRImported?: () => void) {
   const loadMaterials = useCallback(async () => {
     try {
       const materials = await apiService.getChorasMaterials();
+      
+      // Update shared cache
+      sharedMaterialsCache = materials;
+      
+      // Update all instances with new materials
+      persistentStates.forEach((instanceState, key) => {
+        persistentStates.set(key, {
+          ...instanceState,
+          materials,
+          selectedMaterialId: instanceState.selectedMaterialId || (materials.length > 0 ? materials[0].id : null)
+        });
+      });
+      
       setState(prev => ({
         ...prev,
         materials,
-        selectedMaterialId: materials.length > 0 ? materials[0].id : null,
+        selectedMaterialId: prev.selectedMaterialId || (materials.length > 0 ? materials[0].id : null),
         error: null
       }));
     } catch (error) {
@@ -148,6 +181,7 @@ export function useChorasSimulation(onIRImported?: () => void) {
    * Defined early so it can be used by both runSimulation and refreshProgress
    */
   const loadSimulationResults = async (simulationId: number) => {
+    const currentInstanceState = persistentStates.get(simulationInstanceId)!;
     let irImportStatus = '';
     let resultsText = 'Simulation Complete!\n\n';
 
@@ -155,10 +189,12 @@ export function useChorasSimulation(onIRImported?: () => void) {
     await new Promise(resolve => setTimeout(resolve, 1000));
 
     // Fetch and import the IR file - only if not already imported
-    // Use persistentState to avoid stale closure issues
-    if (!persistentState.irImported) {
+    if (!currentInstanceState.irImported) {
       // Set flag IMMEDIATELY to prevent race conditions from concurrent calls
-      persistentState.irImported = true;
+      persistentStates.set(simulationInstanceId, {
+        ...currentInstanceState,
+        irImported: true
+      });
 
       try {
         console.log('[loadSimulationResults] Fetching IR for simulation:', simulationId);
@@ -168,10 +204,17 @@ export function useChorasSimulation(onIRImported?: () => void) {
           const blob = await response.blob();
           const file = new File([blob], filename, { type: 'audio/wav' });
 
-          // Upload to IR library
+          // Upload to IR library and capture metadata
           const irName = `Choras_Sim${simulationId}_${Date.now()}`;
-          await apiService.uploadImpulseResponse(file, irName);
+          const irMetadata = await apiService.uploadImpulseResponse(file, irName);
           irImportStatus = '✓ Impulse response imported to library\n';
+
+          // Store the IR metadata in persistent state for this instance
+          const updatedState = persistentStates.get(simulationInstanceId)!;
+          persistentStates.set(simulationInstanceId, {
+            ...updatedState,
+            importedIRMetadata: irMetadata
+          });
 
           // Notify parent to refresh IR list
           if (onIRImported) {
@@ -227,15 +270,16 @@ export function useChorasSimulation(onIRImported?: () => void) {
 
     resultsText += '\n' + irImportStatus;
 
-    // Update state and persistent state (irImported already set above)
+    // Update state and persistent state for this instance
+    const currentState = persistentStates.get(simulationInstanceId)!;
     const newState = {
-      ...persistentState,
+      ...currentState,
       isRunning: false,
       status: 'Complete!',
       progress: 100,
       simulationResults: resultsText
     };
-    persistentState = newState;
+    persistentStates.set(simulationInstanceId, newState);
     setState(newState);
 
     // Show success notification
@@ -280,7 +324,7 @@ export function useChorasSimulation(onIRImported?: () => void) {
               progress: percentage,
               status: message
             };
-            persistentState = newState;
+            persistentStates.set(simulationInstanceId, newState);
             return newState;
           });
         },
@@ -292,7 +336,7 @@ export function useChorasSimulation(onIRImported?: () => void) {
               currentSimulationId: simulationId,
               currentSimulationRunId: simulationRunId
             };
-            persistentState = newState;
+            persistentStates.set(simulationInstanceId, newState);
             return newState;
           });
         },

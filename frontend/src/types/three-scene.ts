@@ -113,8 +113,17 @@ export interface ThreeSceneProps {
   /** Array of receiver positions for binaural audio */
   receivers?: ReceiverData[];
 
+  /** Currently selected receiver ID (for audio routing) */
+  selectedReceiverId?: string | null;
+
   /** Callback when a receiver position is updated */
   onUpdateReceiverPosition?: (id: string, position: [number, number, number]) => void;
+
+  /** Callback when a receiver is selected (double-click) for audio */
+  onReceiverSelected?: (id: string) => void;
+
+  /** Callback when a sound source position is updated (dragged in scene) */
+  onUpdateSoundPosition?: (soundId: string, position: [number, number, number]) => void;
 
   /** Callback when a new receiver is placed in the scene */
   onPlaceReceiver?: (position: [number, number, number]) => void;
@@ -148,6 +157,9 @@ export interface ThreeSceneProps {
 
   /** Callback when receiver mode (first-person view) changes */
   onReceiverModeChange?: (isActive: boolean, receiverId: string | null) => void;
+
+  /** Receiver ID to programmatically activate first-person view (set to trigger camera movement) */
+  goToReceiverId?: string | null;
 
   /** Current audio rendering mode (Flat Anechoic, ShoeBox Acoustics, Spatial Anechoic) */
   audioRenderingMode?: AudioRenderingMode;
@@ -213,4 +225,13 @@ export interface ThreeSceneProps {
 
   /** Material assignments for geometry (stored in page.tsx) */
   materialAssignments?: Map<string, { selection: SelectedGeometry, material: import('./materials').AcousticMaterial | null }>;
+
+  /** Active simulation index (null if no simulation is active) */
+  activeSimulationIndex?: number | null;
+
+  /** Active simulation configuration (contains faceToMaterialMap for dynamic coloring) */
+  activeSimulationConfig?: import('./acoustics').SimulationConfig | null;
+
+  /** Active sidebar tab (for determining input mode) */
+  activeAiTab?: 'text' | 'sound' | 'acoustics';
 }

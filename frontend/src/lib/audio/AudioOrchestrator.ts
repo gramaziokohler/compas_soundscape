@@ -14,7 +14,10 @@ import type {
   OrchestratorStatus,
   Position,
   Orientation,
-  AmbisonicOrder
+  AmbisonicOrder,
+  SourceReceiverIRMapping,
+  AcousticSimulationMode,
+  ImpulseResponseMetadata
 } from '@/types/audio';
 import { AudioMode } from '@/types/audio';
 
@@ -91,6 +94,11 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   private isReceiverModeActive: boolean = false;
   private receiverId: string | null = null;
   private hasReceiversInScene: boolean = false;
+
+  // Simulation-based acoustics state
+  private simulationMode: AcousticSimulationMode = 'none';
+  private sourceReceiverIRMapping: SourceReceiverIRMapping | null = null;
+  private activeReceiverId: string | null = null;
 
   // Source registry - tracks all sources for re-creation on mode switch
   private sourceRegistry: Map<string, { buffer: AudioBuffer; position: Position }> = new Map();
@@ -188,8 +196,22 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * Auto-select appropriate mode based on current IR state and preferences
    */
   private async autoSelectMode(): Promise<void> {
+    console.log('[AudioOrchestrator] autoSelectMode called with IR state:', {
+      isImported: this.irState.isImported,
+      isSelected: this.irState.isSelected,
+      channelCount: this.irState.channelCount,
+      filename: this.irState.filename
+    });
+
     const selection = selectAudioMode(this.irState, this.noIRPreferences);
     
+    console.log('[AudioOrchestrator] Mode selector result:', {
+      selectedMode: selection.mode,
+      ambisonicOrder: selection.ambisonicOrder,
+      requiresReceiver: selection.requiresReceiver,
+      dof: selection.dof
+    });
+
     // Store warnings
     this.warnings = selection.warnings;
     
@@ -385,6 +407,12 @@ export class AudioOrchestrator implements IAudioOrchestrator {
 
     const newMode = config.mode;
     
+    console.log('[AudioOrchestrator] setMode called:', {
+      requestedMode: newMode,
+      currentMode: this.currentMode,
+      ambisonicOrder: config.ambisonicOrder
+    });
+
     // Skip if already in this mode
     if (newMode === this.currentMode && !config.ambisonicOrder) {
       console.log(`[AudioOrchestrator] Already in ${newMode} mode`);
@@ -463,6 +491,178 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    */
   getCurrentMode(): AudioMode {
     return this.currentMode;
+  }
+
+  /**
+   * Set source-receiver IR mapping for simulation-based acoustics
+   * Enables per-source IR assignment based on active receiver
+   * @param mapping - Source-receiver IR mapping
+   * @param simulationMode - Type of simulation (pyroomacoustics, choras)
+   * @param initialReceiverId - Initial receiver to activate (optional)
+   */
+  async setSourceReceiverIRMapping(
+    mapping: SourceReceiverIRMapping,
+    simulationMode: AcousticSimulationMode,
+    initialReceiverId?: string
+  ): Promise<void> {
+    this.sourceReceiverIRMapping = mapping;
+    this.simulationMode = simulationMode;
+    this.activeReceiverId = initialReceiverId || null;
+
+    console.log('[AudioOrchestrator] Source-Receiver IR mapping set:', {
+      simulationMode,
+      sourceCount: Object.keys(mapping).length,
+      receiverCount: Object.keys(mapping[Object.keys(mapping)[0]] || {}).length,
+      activeReceiverId: this.activeReceiverId
+    });
+
+    // Get first IR to determine channel count for mode selection
+    const firstSourceId = Object.keys(mapping)[0];
+    const firstReceiverId = Object.keys(mapping[firstSourceId] || {})[0];
+    const firstIRMetadata = mapping[firstSourceId]?.[firstReceiverId];
+
+    if (firstIRMetadata) {
+      // Mark IR state as imported and selected (simulation-based)
+      this.irState = {
+        isImported: true,
+        isSelected: true,
+        channelCount: firstIRMetadata.channels,
+        buffer: null, // Will be loaded per-source
+        filename: `Simulation: ${simulationMode}`
+      };
+
+      console.log('[AudioOrchestrator] IR state updated for simulation:', {
+        channels: firstIRMetadata.channels,
+        filename: this.irState.filename,
+        isImported: this.irState.isImported,
+        isSelected: this.irState.isSelected
+      });
+
+      // Switch to appropriate IR mode based on channel count
+      console.log('[AudioOrchestrator] Calling autoSelectMode() to switch to IR mode...');
+      await this.autoSelectMode();
+      console.log('[AudioOrchestrator] Mode after autoSelectMode:', this.currentMode);
+    } else {
+      console.warn('[AudioOrchestrator] No IR metadata found in mapping - cannot determine channel count');
+    }
+
+    // Update all source IRs based on active receiver (if set)
+    if (this.activeReceiverId) {
+      await this.updateSourceIRsForReceiver(this.activeReceiverId);
+    }
+  }
+
+  /**
+   * Update active receiver (called when receiver selection changes)
+   * Loads corresponding IRs for all sources based on the new receiver
+   * @param receiverId - ID of the receiver to activate
+   */
+  async updateActiveReceiver(receiverId: string): Promise<void> {
+    console.log('[AudioOrchestrator] 🎯 updateActiveReceiver called:', receiverId);
+    
+    if (!this.sourceReceiverIRMapping) {
+      console.warn('[AudioOrchestrator] ❌ No source-receiver mapping available');
+      return;
+    }
+
+    console.log('[AudioOrchestrator] Source-receiver mapping exists:', {
+      sourceCount: Object.keys(this.sourceReceiverIRMapping).length,
+      sources: Object.keys(this.sourceReceiverIRMapping)
+    });
+
+    this.activeReceiverId = receiverId;
+    console.log('[AudioOrchestrator] 📍 Set active receiver to:', receiverId);
+
+    await this.updateSourceIRsForReceiver(receiverId);
+  }
+
+  /**
+   * Update all source IRs based on active receiver
+   * Downloads IR buffers and applies them to each source
+   * @param receiverId - ID of the receiver to use for IR selection
+   */
+  private async updateSourceIRsForReceiver(receiverId: string): Promise<void> {
+    if (!this.sourceReceiverIRMapping || !this.currentModeInstance) {
+      console.warn('[AudioOrchestrator] Cannot update source IRs - missing mapping or mode');
+      return;
+    }
+
+    console.log('[AudioOrchestrator] Updating source IRs for receiver:', receiverId);
+
+    // Check if current mode supports per-source IR setting
+    const supportsPerSourceIR = 'setSourceImpulseResponse' in this.currentModeInstance;
+    if (!supportsPerSourceIR) {
+      console.warn('[AudioOrchestrator] Current mode does not support per-source IR setting');
+      return;
+    }
+
+    // For each source in the registry
+    for (const [sourceId] of this.sourceRegistry) {
+      const irMetadata = this.sourceReceiverIRMapping[sourceId]?.[receiverId];
+
+      if (irMetadata) {
+        try {
+          // Download and decode IR buffer
+          const irBuffer = await this.downloadAndDecodeIR(irMetadata);
+
+          // Update mode with per-source IR
+          (this.currentModeInstance as any).setSourceImpulseResponse(sourceId, irBuffer);
+
+          console.log(`[AudioOrchestrator] ✅ Updated IR for source "${sourceId}" with receiver "${receiverId}"`);
+        } catch (error) {
+          console.error(`[AudioOrchestrator] ❌ Failed to update IR for source "${sourceId}":`, error);
+        }
+      } else {
+        console.warn(`[AudioOrchestrator] No IR found for source "${sourceId}" and receiver "${receiverId}"`);
+      }
+    }
+
+    console.log('[AudioOrchestrator] Finished updating source IRs');
+  }
+
+  /**
+   * Download and decode an IR from metadata
+   * @param irMetadata - IR metadata containing URL and file info
+   * @returns Decoded AudioBuffer
+   */
+  private async downloadAndDecodeIR(irMetadata: ImpulseResponseMetadata): Promise<AudioBuffer> {
+    if (!this.audioContext) {
+      throw new Error('[AudioOrchestrator] Not initialized');
+    }
+
+    try {
+      // Build full URL (metadata.url is relative like "/static/impulse_responses/file.wav")
+      const fullUrl = `http://localhost:8000${irMetadata.url}`;
+
+      // Download the IR file
+      const response = await fetch(fullUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to download IR: ${response.statusText}`);
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+
+      // Decode audio data
+      const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
+
+      console.log(`[AudioOrchestrator] Downloaded and decoded IR: ${irMetadata.name} (${audioBuffer.numberOfChannels}ch)`);
+
+      return audioBuffer;
+    } catch (error) {
+      console.error('[AudioOrchestrator] Failed to download/decode IR:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Clear source-receiver IR mapping (exit simulation mode)
+   */
+  clearSourceReceiverIRMapping(): void {
+    this.sourceReceiverIRMapping = null;
+    this.simulationMode = 'none';
+    this.activeReceiverId = null;
+
+    console.log('[AudioOrchestrator] Source-receiver IR mapping cleared');
   }
 
   /**
@@ -896,6 +1096,28 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     this.sourceRegistry.set(sourceId, { buffer: audioBuffer, position });
 
     this.currentModeInstance.createSource(sourceId, audioBuffer, position);
+
+    // If in simulation mode with active receiver, apply source-specific IR immediately
+    if (this.sourceReceiverIRMapping && this.activeReceiverId && this.simulationMode !== 'none') {
+      const irMetadata = this.sourceReceiverIRMapping[sourceId]?.[this.activeReceiverId];
+      
+      if (irMetadata) {
+        console.log(`[AudioOrchestrator] Applying simulation IR for newly created source: ${sourceId}`);
+        
+        // Apply IR asynchronously (don't block source creation)
+        this.downloadAndDecodeIR(irMetadata)
+          .then(irBuffer => {
+            // Check if mode supports per-source IR setting
+            if ('setSourceImpulseResponse' in this.currentModeInstance!) {
+              (this.currentModeInstance as any).setSourceImpulseResponse(sourceId, irBuffer);
+              console.log(`[AudioOrchestrator] ✅ Applied IR to new source: ${sourceId}`);
+            }
+          })
+          .catch(error => {
+            console.error(`[AudioOrchestrator] ❌ Failed to apply IR to new source ${sourceId}:`, error);
+          });
+      }
+    }
   }
 
   /**
@@ -914,6 +1136,14 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       } catch (error) {
         console.error(`[AudioOrchestrator] ❌ Failed to re-create source ${sourceId}:`, error);
       }
+    }
+
+    // If in simulation mode with active receiver, re-apply all source IRs
+    if (this.sourceReceiverIRMapping && this.activeReceiverId && this.simulationMode !== 'none') {
+      console.log('[AudioOrchestrator] Re-applying simulation IRs after mode switch');
+      this.updateSourceIRsForReceiver(this.activeReceiverId).catch(error => {
+        console.error('[AudioOrchestrator] Failed to re-apply simulation IRs:', error);
+      });
     }
   }
 

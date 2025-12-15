@@ -258,7 +258,8 @@ class PyroomacousticsService:
         source_position: list[float],
         receiver_position: list[float],
         enable_ray_tracing: bool = True,
-        ray_tracing_params: dict = None
+        ray_tracing_params: dict = None,
+        simulation_mode: str = None
     ):
         """
         Add source and receiver to room and compute room impulse response.
@@ -272,6 +273,8 @@ class PyroomacousticsService:
             ray_tracing_params: Optional dict with ray tracing parameters:
                               {n_rays, receiver_radius, energy_thres, time_thres, hist_bin_size}
                               If None, uses defaults from constants
+            simulation_mode: Simulation mode - "mono", "binaural", or "foa"
+                           If None, defaults to "mono"
 
         Returns:
             Room with computed RIR
@@ -282,8 +285,23 @@ class PyroomacousticsService:
         Note:
             - Ray tracing is automatically configured if the room was created with ray_tracing=True
             - To disable automatic ray tracing setup, set enable_ray_tracing=False
+            - Binaural mode adds two microphones (left/right ears)
+            - FOA mode adds four microphones for W, X, Y, Z ambisonics components
         """
         try:
+            # Import constants
+            from config.constants import (
+                PYROOMACOUSTICS_SIMULATION_MODE_MONO,
+                PYROOMACOUSTICS_SIMULATION_MODE_BINAURAL,
+                PYROOMACOUSTICS_SIMULATION_MODE_FOA,
+                PYROOMACOUSTICS_BINAURAL_EAR_SPACING,
+                PYROOMACOUSTICS_FOA_MIC_RADIUS
+            )
+
+            # Default to mono if not specified
+            if simulation_mode is None:
+                simulation_mode = PYROOMACOUSTICS_SIMULATION_MODE_MONO
+
             # Validate positions
             if len(source_position) != 3 or len(receiver_position) != 3:
                 raise ValueError("Positions must be [x, y, z] coordinates")
@@ -302,15 +320,64 @@ class PyroomacousticsService:
                                    f"Please ensure sources are placed within the model bounds.")
                 raise ValueError(f"Failed to add source at {source_pos}: {error_msg}")
 
-            # Add microphone (single receiver)
-            try:
-                room.add_microphone(receiver_pos)
-            except (ValueError, AssertionError) as e:
-                error_msg = str(e)
-                if "inside" in error_msg.lower() or "outside" in error_msg.lower():
-                    raise ValueError(f"Receiver position {receiver_pos} is not inside the room geometry. "
-                                   f"Please ensure receivers are placed within the model bounds.")
-                raise ValueError(f"Failed to add receiver at {receiver_pos}: {error_msg}")
+            # Add microphones based on simulation mode
+            if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO:
+                # Single omnidirectional microphone
+                try:
+                    room.add_microphone(receiver_pos)
+                except (ValueError, AssertionError) as e:
+                    error_msg = str(e)
+                    if "inside" in error_msg.lower() or "outside" in error_msg.lower():
+                        raise ValueError(f"Receiver position {receiver_pos} is not inside the room geometry. "
+                                       f"Please ensure receivers are placed within the model bounds.")
+                    raise ValueError(f"Failed to add receiver at {receiver_pos}: {error_msg}")
+                print(f"Added mono microphone at {receiver_pos}")
+
+            elif simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_BINAURAL:
+                # Two microphones for binaural recording (left and right ears)
+                # Place them horizontally separated (left-right axis)
+                half_spacing = PYROOMACOUSTICS_BINAURAL_EAR_SPACING / 2.0
+
+                # Assuming Y-axis is left-right
+                left_ear_pos = [receiver_pos[0], receiver_pos[1] - half_spacing, receiver_pos[2]]
+                right_ear_pos = [receiver_pos[0], receiver_pos[1] + half_spacing, receiver_pos[2]]
+
+                try:
+                    room.add_microphone(left_ear_pos)  # Left channel
+                    room.add_microphone(right_ear_pos)  # Right channel
+                    print(f"Added binaural microphones: left={left_ear_pos}, right={right_ear_pos}")
+                except (ValueError, AssertionError) as e:
+                    error_msg = str(e)
+                    raise ValueError(f"Failed to add binaural microphones: {error_msg}")
+
+            elif simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
+                # Four microphones for First-Order Ambisonics (W, X, Y, Z)
+                # W: omnidirectional at center
+                # X, Y, Z: figure-8 patterns along respective axes
+                # Using a compact tetrahedral arrangement
+
+                r = PYROOMACOUSTICS_FOA_MIC_RADIUS
+
+                # W component: center position (omnidirectional)
+                w_pos = receiver_pos
+
+                # X, Y, Z components: slightly offset along each axis
+                # For simplicity, place microphones in a small tetrahedral pattern
+                x_pos = [receiver_pos[0] + r, receiver_pos[1], receiver_pos[2]]
+                y_pos = [receiver_pos[0], receiver_pos[1] + r, receiver_pos[2]]
+                z_pos = [receiver_pos[0], receiver_pos[1], receiver_pos[2] + r]
+
+                try:
+                    room.add_microphone(w_pos)  # W channel (omnidirectional)
+                    room.add_microphone(x_pos)  # X channel (front-back)
+                    room.add_microphone(y_pos)  # Y channel (left-right)
+                    room.add_microphone(z_pos)  # Z channel (up-down)
+                    print(f"Added FOA microphones: W={w_pos}, X={x_pos}, Y={y_pos}, Z={z_pos}")
+                except (ValueError, AssertionError) as e:
+                    error_msg = str(e)
+                    raise ValueError(f"Failed to add FOA microphones: {error_msg}")
+            else:
+                raise ValueError(f"Unsupported simulation mode: {simulation_mode}")
 
             # Enable ray tracing if enabled and room supports it
             # Try to enable ray tracing - it will only work if room was created with ray_tracing=True
@@ -343,34 +410,91 @@ class PyroomacousticsService:
     @staticmethod
     def export_impulse_response(
         room,  # pra.Room
-        output_path: str
+        output_path: str,
+        source_idx: int = 0
     ) -> str:
         """
         Export room impulse response to WAV file.
+        Handles mono (1-ch), binaural (2-ch), and FOA ambisonics (4-ch) IRs.
 
         Args:
             room: Room with computed RIR (pra.Room)
             output_path: Path to save WAV file
+            source_idx: Index of the source to export (default: 0)
 
         Returns:
             str: Path to saved file
 
         Raises:
             HTTPException: If export fails
+
+        Note:
+            room.rir is indexed as [mic_idx][source_idx]
         """
         try:
-            # Get RIR (first source, first microphone)
-            rir = room.rir[0][0]
+            # Get number of microphones and sample rate
+            # room.rir[mic_idx][source_idx] for each microphone
+            num_mics = len(room.rir)
             fs = room.fs
 
-            # Convert to 16-bit PCM
-            rir_int16 = np.int16(rir * 32767)
+            # Validate we have microphones
+            if num_mics == 0:
+                raise ValueError("No microphones found in room")
+
+            # Validate source index
+            if source_idx >= len(room.rir[0]):
+                raise ValueError(f"Source index {source_idx} out of range (total sources: {len(room.rir[0])})")
+
+            if num_mics == 1:
+                # Mono: single channel
+                rir = room.rir[0][source_idx]
+
+                # Validate RIR is not empty
+                if rir is None or len(rir) == 0:
+                    raise ValueError(f"Empty RIR for source {source_idx}")
+
+                rir_int16 = np.int16(rir * 32767)
+            else:
+                # Multi-channel: binaural (2-ch) or FOA (4-ch)
+                # Stack all microphone channels into multi-channel array
+                rir_channels = []
+                for mic_idx in range(num_mics):
+                    rir = room.rir[mic_idx][source_idx]
+
+                    # Validate RIR is not empty
+                    if rir is None or len(rir) == 0:
+                        raise ValueError(f"Empty RIR for microphone {mic_idx}, source {source_idx}")
+
+                    rir_channels.append(rir)
+
+                # Validate we have channels
+                if len(rir_channels) == 0:
+                    raise ValueError("No RIR channels collected")
+
+                # Find maximum length among all channels (RIRs can have different lengths)
+                max_length = max(len(rir) for rir in rir_channels)
+
+                # Pad all channels to the same length with zeros
+                padded_channels = []
+                for rir in rir_channels:
+                    if len(rir) < max_length:
+                        # Pad with zeros at the end
+                        padded_rir = np.pad(rir, (0, max_length - len(rir)), mode='constant')
+                        padded_channels.append(padded_rir)
+                    else:
+                        padded_channels.append(rir)
+
+                # Convert to shape [n_samples, n_channels] for WAV export
+                rir = np.column_stack(padded_channels)
+                rir_int16 = np.int16(rir * 32767)
 
             # Ensure output directory exists
             Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
             # Save as WAV
             wavfile.write(output_path, fs, rir_int16)
+
+            print(f"Exported {num_mics}-channel IR to {output_path}")
 
             return output_path
 

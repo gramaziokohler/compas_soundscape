@@ -3,7 +3,10 @@
  * 
  * Manages Pyroomacoustics acoustic simulation workflow with typed state.
  * Handles material selection, simulation execution, and result management.
- * State persists across tab changes using a module-level singleton.
+ * State persists across tab changes using per-instance storage.
+ * 
+ * @param simulationInstanceId - Unique identifier for this simulation instance
+ * @param onIRImported - Callback when IR is imported to library
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -14,8 +17,10 @@ import {
   PYROOMACOUSTICS_DEFAULT_RAY_TRACING,
   PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION,
   PYROOMACOUSTICS_RAY_TRACING_N_RAYS,
-  PYROOMACOUSTICS_DEFAULT_SCATTERING
+  PYROOMACOUSTICS_DEFAULT_SCATTERING,
+  PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE
 } from '@/lib/constants';
+import type { SourceReceiverIRMapping } from '@/types/audio';
 
 // Types
 export interface PyroomAcousticsMaterial {
@@ -32,6 +37,7 @@ export interface PyroomAcousticsSimulationSettings {
   air_absorption: boolean;
   n_rays: number;
   scattering: number;
+  simulation_mode: string; // "mono", "binaural", or "foa"
 }
 
 export interface PyroomAcousticsSimulationState {
@@ -44,6 +50,8 @@ export interface PyroomAcousticsSimulationState {
   simulationResults: string | null;
   currentSimulationId: string | null;
   irImported: boolean;
+  importedIRIds?: string[]; // Array of imported IR IDs for filtering
+  sourceReceiverIRMapping?: SourceReceiverIRMapping; // Source-receiver IR mapping for audio integration
 }
 
 export interface PyroomAcousticsSimulationMethods {
@@ -54,37 +62,55 @@ export interface PyroomAcousticsSimulationMethods {
   runSimulation: (file: File, simulationName: string, receivers: any[], soundscapeData: any[]) => Promise<void>;
 }
 
-// Module-level state singleton to persist across component unmounts/remounts
-let persistentState: PyroomAcousticsSimulationState = {
-  materials: [],
-  faceMaterialAssignments: {},
-  simulationSettings: {
-    max_order: PYROOMACOUSTICS_DEFAULT_MAX_ORDER,
-    ray_tracing: PYROOMACOUSTICS_DEFAULT_RAY_TRACING,
-    air_absorption: PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION,
-    n_rays: PYROOMACOUSTICS_RAY_TRACING_N_RAYS,
-    scattering: PYROOMACOUSTICS_DEFAULT_SCATTERING
-  },
-  isRunning: false,
-  status: 'Idle',
-  error: null,
-  simulationResults: null,
-  currentSimulationId: null,
-  irImported: false
-};
+// Module-level Map to store state per simulation instance
+const persistentStates = new Map<string, PyroomAcousticsSimulationState>();
+
+// Shared materials cache (same for all instances)
+let sharedMaterialsCache: PyroomAcousticsMaterial[] = [];
+
+// Default state factory
+function createDefaultState(): PyroomAcousticsSimulationState {
+  return {
+    materials: sharedMaterialsCache,
+    faceMaterialAssignments: {},
+    simulationSettings: {
+      max_order: PYROOMACOUSTICS_DEFAULT_MAX_ORDER,
+      ray_tracing: PYROOMACOUSTICS_DEFAULT_RAY_TRACING,
+      air_absorption: PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION,
+      n_rays: PYROOMACOUSTICS_RAY_TRACING_N_RAYS,
+      scattering: PYROOMACOUSTICS_DEFAULT_SCATTERING,
+      simulation_mode: PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE
+    },
+    isRunning: false,
+    status: 'Idle',
+    error: null,
+    simulationResults: null,
+    currentSimulationId: null,
+    irImported: false,
+    importedIRIds: undefined,
+    sourceReceiverIRMapping: undefined
+  };
+}
 
 /**
  * Hook for managing Pyroomacoustics acoustic simulation workflow
  */
-export function usePyroomAcousticsSimulation(onIRImported?: () => void) {
-  const [state, setState] = useState<PyroomAcousticsSimulationState>(persistentState);
+export function usePyroomAcousticsSimulation(simulationInstanceId: string, onIRImported?: () => void) {
+  // Get or create state for this instance
+  if (!persistentStates.has(simulationInstanceId)) {
+    persistentStates.set(simulationInstanceId, createDefaultState());
+  }
+
+  const [state, setState] = useState<PyroomAcousticsSimulationState>(() => 
+    persistentStates.get(simulationInstanceId)!
+  );
   const isMounted = useRef(true);
   const { addError } = useErrorNotification();
 
-  // Sync state changes back to persistent storage
+  // Sync state changes back to persistent storage for this instance
   useEffect(() => {
-    persistentState = state;
-  }, [state]);
+    persistentStates.set(simulationInstanceId, state);
+  }, [state, simulationInstanceId]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -99,6 +125,18 @@ export function usePyroomAcousticsSimulation(onIRImported?: () => void) {
   const loadMaterials = useCallback(async () => {
     try {
       const materials = await apiService.getPyroomacousticsMaterials();
+      
+      // Update shared cache
+      sharedMaterialsCache = materials;
+      
+      // Update all instances with new materials
+      persistentStates.forEach((instanceState, key) => {
+        persistentStates.set(key, {
+          ...instanceState,
+          materials
+        });
+      });
+      
       setState(prev => ({
         ...prev,
         materials,
@@ -147,14 +185,17 @@ export function usePyroomAcousticsSimulation(onIRImported?: () => void) {
    * Run Pyroomacoustics simulation
    */
   const runSimulation = useCallback(async (
-    file: File, 
-    simulationName: string, 
-    receivers: any[], 
+    file: File,
+    simulationName: string,
+    receivers: any[],
     soundscapeData: any[]
   ) => {
-    // Get the current state directly from persistentState to avoid stale closure
-    const currentFaceMaterials = persistentState.faceMaterialAssignments;
-    const currentSettings = persistentState.simulationSettings;
+    console.log('🔴🔴🔴 PYROOMACOUSTICS SIMULATION STARTING - FILE LOADED! 🔴🔴🔴');
+
+    // Get the current state for this instance to avoid stale closure
+    const currentInstanceState = persistentStates.get(simulationInstanceId)!;
+    const currentFaceMaterials = currentInstanceState.faceMaterialAssignments;
+    const currentSettings = currentInstanceState.simulationSettings;
 
     console.log('[usePyroomAcousticsSimulation] Running simulation with:', {
       faceMaterialsCount: Object.keys(currentFaceMaterials).length,
@@ -174,7 +215,8 @@ export function usePyroomAcousticsSimulation(onIRImported?: () => void) {
       error: null,
       simulationResults: null,
       currentSimulationId: null,
-      irImported: false
+      irImported: false,
+      importedIRIds: undefined
     }));
 
     try {
@@ -237,37 +279,75 @@ export function usePyroomAcousticsSimulation(onIRImported?: () => void) {
       );
 
       console.log('Simulation completed:', result);
+      console.log('[Pyroomacoustics] IR files returned from backend:', result.ir_files);
+      console.log('[Pyroomacoustics] Number of IR files:', result.ir_files?.length);
 
-      // Import IR files to library
+      // Import ALL IR files to library AND build source-receiver mapping
       let irImportStatus = '';
       let importCount = 0;
+      const importedIRMetadataList = [];
+      const sourceReceiverMapping: SourceReceiverIRMapping = {};
 
-      // Import first IR file (or all if needed)
+      // Import each IR file
       if (result.ir_files && result.ir_files.length > 0) {
-        try {
-          const firstIRFile = result.ir_files[0];
-          const response = await fetch(
-            `http://localhost:8000/pyroomacoustics/get-result-file/${result.simulation_id}/wav`
-          );
-          
-          if (response.ok) {
-            const blob = await response.blob();
-            const file = new File([blob], firstIRFile, { type: 'audio/wav' });
+        console.log('[Pyroomacoustics] Starting import loop for', result.ir_files.length, 'IRs');
+        for (const irFilename of result.ir_files) {
+          console.log(`[Pyroomacoustics] Processing IR file: ${irFilename}`);
+          try {
+            // Fetch the specific IR file
+            console.log(`[Pyroomacoustics] Fetching IR from backend: ${irFilename}`);
+            const blob = await apiService.getPyroomacousticsIRFile(result.simulation_id, irFilename);
+            console.log(`[Pyroomacoustics] Received blob, size: ${blob.size} bytes`);
 
-            // Upload to IR library
-            const irName = `Pyroomacoustics_${simulationName}_${Date.now()}`;
-            await apiService.uploadImpulseResponse(file, irName);
+            // Create File object from blob
+            const file = new File([blob], irFilename, { type: 'audio/wav' });
+
+            // Extract source and receiver IDs from filename
+            // Format: sim_{simulation_id}_src_{source_id}_rcv_{receiver_id}.wav
+            const match = irFilename.match(/src_(.+?)_rcv_(.+?)\.wav$/);
+            const sourceId = match ? match[1] : 'unknown';
+            const receiverId = match ? match[2] : 'unknown';
+
+            // Upload to IR library with descriptive name
+            const irName = `Pyroom_${simulationName}_S${sourceId}_R${receiverId}`;
+            const irMetadata = await apiService.uploadImpulseResponse(file, irName);
+            importedIRMetadataList.push(irMetadata);
             importCount++;
-            irImportStatus = `✓ ${importCount} impulse response(s) imported to library\n`;
 
-            // Notify parent to refresh IR list
-            if (onIRImported) {
-              onIRImported();
+            // Build source-receiver IR mapping
+            if (!sourceReceiverMapping[sourceId]) {
+              sourceReceiverMapping[sourceId] = {};
             }
+            sourceReceiverMapping[sourceId][receiverId] = irMetadata;
+
+            console.log(`✓ Imported IR: ${irName} (source: ${sourceId}, receiver: ${receiverId})`);
+          } catch (error) {
+            console.error(`Failed to import IR ${irFilename}:`, error);
           }
-        } catch (error) {
-          console.error('Failed to import IR:', error);
-          irImportStatus = '⚠ Failed to import impulse response\n';
+        }
+
+        // Update import status
+        if (importCount > 0) {
+          irImportStatus = `✓ ${importCount} of ${result.ir_files.length} impulse response(s) imported to library\n`;
+
+          // Store ALL imported IR IDs and source-receiver mapping in persistent state
+          const importedIds = importedIRMetadataList.map(metadata => metadata.id);
+          const updatedState = persistentStates.get(simulationInstanceId)!;
+          persistentStates.set(simulationInstanceId, {
+            ...updatedState,
+            importedIRIds: importedIds,
+            sourceReceiverIRMapping: sourceReceiverMapping
+          });
+
+          console.log(`[Pyroomacoustics] Stored ${importedIds.length} IR IDs for filtering:`, importedIds);
+          console.log('[Pyroomacoustics] Source-Receiver IR Mapping:', sourceReceiverMapping);
+
+          // Notify parent to refresh IR list
+          if (onIRImported) {
+            onIRImported();
+          }
+        } else {
+          irImportStatus = '⚠ Failed to import impulse responses\n';
         }
       }
 
@@ -329,7 +409,12 @@ export function usePyroomAcousticsSimulation(onIRImported?: () => void) {
         irImported: importCount > 0
       }));
 
-      addError('🎉 Simulation completed successfully! Impulse response imported to library.', 'info');
+      // Success notification with proper pluralization
+      const irWord = importCount === 1 ? 'response' : 'responses';
+      addError(
+        `🎉 Simulation completed successfully! ${importCount} impulse ${irWord} imported to library.`,
+        'info'
+      );
 
     } catch (error) {
       setState(prev => ({

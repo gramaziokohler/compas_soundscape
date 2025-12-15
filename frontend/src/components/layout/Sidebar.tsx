@@ -90,132 +90,135 @@ export function Sidebar(props: SidebarProps) {
         </div>
 
         {/* Text Generation Tab */}
-        {props.activeAiTab === 'text' && (
-          <div className="flex flex-col gap-4">
-            <ModelLoadSection
-              modelEntities={props.modelEntities}
-              activeLoadTab={props.activeLoadTab}
-              modelFile={props.modelFile}
-              audioFile={props.audioFile}
-              isDragging={props.isDragging}
-              isUploading={props.isUploading}
-              isAnalyzingModel={props.isAnalyzingModel}
-              uploadError={props.uploadError}
-              analysisProgress={props.analysisProgress}
-              useModelAsContext={props.useModelAsContext}
-              onFileChange={props.onFileChange}
-              onDragOver={props.onDragOver}
-              onDragLeave={props.onDragLeave}
-              onDrop={props.onDrop}
-              onUploadModel={props.onUploadModel}
-              onLoadSampleIfc={props.onLoadSampleIfc}
-              setActiveLoadTab={props.setActiveLoadTab}
-              setUseModelAsContext={props.setUseModelAsContext}
-              isSEDAnalyzing={props.isSEDAnalyzing}
-              sedAudioInfo={props.sedAudioInfo}
-              sedAudioBuffer={props.sedAudioBuffer}
-              sedDetectedSounds={props.sedDetectedSounds}
-              sedError={props.sedError}
-              sedAnalysisOptions={props.sedAnalysisOptions}
-              onAnalyzeSoundEvents={props.onAnalyzeSoundEvents}
-              onToggleSEDOption={props.onToggleSEDOption}
-              onLoadSoundsFromSED={props.onLoadSoundsFromSED}
-              selectedDiverseEntities={props.selectedDiverseEntities}
-              isAnalyzingEntities={props.isAnalyzingEntities}
-              llmProgress={props.llmProgress}
-              numSounds={props.numSounds}
-              onAnalyzeModel={props.onAnalyzeModel}
-              onStopGeneration={props.onStopGeneration}
-            />
+        <div className="flex flex-col gap-4" style={{ display: props.activeAiTab === 'text' ? 'flex' : 'none' }}>
+          <ModelLoadSection
+            modelEntities={props.modelEntities}
+            activeLoadTab={props.activeLoadTab}
+            modelFile={props.modelFile}
+            audioFile={props.audioFile}
+            isDragging={props.isDragging}
+            isUploading={props.isUploading}
+            isAnalyzingModel={props.isAnalyzingModel}
+            uploadError={props.uploadError}
+            analysisProgress={props.analysisProgress}
+            useModelAsContext={props.useModelAsContext}
+            onFileChange={props.onFileChange}
+            onDragOver={props.onDragOver}
+            onDragLeave={props.onDragLeave}
+            onDrop={props.onDrop}
+            onUploadModel={props.onUploadModel}
+            onLoadSampleIfc={props.onLoadSampleIfc}
+            setActiveLoadTab={props.setActiveLoadTab}
+            setUseModelAsContext={props.setUseModelAsContext}
+            isSEDAnalyzing={props.isSEDAnalyzing}
+            sedAudioInfo={props.sedAudioInfo}
+            sedAudioBuffer={props.sedAudioBuffer}
+            sedDetectedSounds={props.sedDetectedSounds}
+            sedError={props.sedError}
+            sedAnalysisOptions={props.sedAnalysisOptions}
+            onAnalyzeSoundEvents={props.onAnalyzeSoundEvents}
+            onToggleSEDOption={props.onToggleSEDOption}
+            onLoadSoundsFromSED={props.onLoadSoundsFromSED}
+            selectedDiverseEntities={props.selectedDiverseEntities}
+            isAnalyzingEntities={props.isAnalyzingEntities}
+            llmProgress={props.llmProgress}
+            numSounds={props.numSounds}
+            onAnalyzeModel={props.onAnalyzeModel}
+            onStopGeneration={props.onStopGeneration}
+          />
 
-            <TextGenerationSection
-              modelEntities={props.modelEntities}
-              aiPrompt={props.aiPrompt}
-              numSounds={props.numSounds}
-              isGenerating={props.isGenerating}
-              isAnalyzingModel={props.isAnalyzingModel}
-              isAnalyzingEntities={props.isAnalyzingEntities}
-              llmProgress={props.llmProgress}
-              aiError={props.aiError}
-              aiResponse={props.aiResponse}
-              showConfirmLoadSounds={props.showConfirmLoadSounds}
-              analysisProgress={props.analysisProgress}
-              setAiPrompt={props.setAiPrompt}
-              setNumSounds={props.setNumSounds}
-              onGenerateText={props.onGenerateText}
-              onStopGeneration={props.onStopGeneration}
-              onLoadSoundsToGeneration={props.onLoadSoundsToGeneration}
-            />
-          </div>
-        )}
+          <TextGenerationSection
+            modelEntities={props.modelEntities}
+            aiPrompt={props.aiPrompt}
+            numSounds={props.numSounds}
+            isGenerating={props.isGenerating}
+            isAnalyzingModel={props.isAnalyzingModel}
+            isAnalyzingEntities={props.isAnalyzingEntities}
+            llmProgress={props.llmProgress}
+            aiError={props.aiError}
+            aiResponse={props.aiResponse}
+            showConfirmLoadSounds={props.showConfirmLoadSounds}
+            analysisProgress={props.analysisProgress}
+            setAiPrompt={props.setAiPrompt}
+            setNumSounds={props.setNumSounds}
+            onGenerateText={props.onGenerateText}
+            onStopGeneration={props.onStopGeneration}
+            onLoadSoundsToGeneration={props.onLoadSoundsToGeneration}
+          />
+        </div>
 
         {/* Sound Generation Tab */}
-        {props.activeAiTab === 'sound' && (
-          <div className="flex flex-col gap-4">
-            <SoundGenerationSection
-              soundConfigs={props.soundConfigs}
-              activeSoundConfigTab={props.activeSoundConfigTab}
-              isSoundGenerating={props.isSoundGenerating}
-              soundGenError={props.soundGenError}
-              generatedSounds={props.generatedSounds}
-              globalDuration={props.globalDuration}
-              globalSteps={props.globalSteps}
-              globalNegativePrompt={props.globalNegativePrompt}
-              applyDenoising={props.applyDenoising}
-              audioModel={props.audioModel}
-              onSetActiveTab={props.setActiveSoundConfigTab}
-              onAddConfig={props.onAddSoundConfig}
-              onBatchAddConfigs={props.onBatchAddSoundConfigs}
-              onRemoveConfig={props.onRemoveSoundConfig}
-              onUpdateConfig={props.onUpdateSoundConfig}
-              onModeChange={props.onSoundModeChange}
-              onGenerate={props.onGenerateSounds}
-              onStopGeneration={props.onStopSoundGeneration}
-              onGlobalDurationChange={props.onGlobalDurationChange}
-              onGlobalStepsChange={props.onGlobalStepsChange}
-              onGlobalNegativePromptChange={props.onGlobalNegativePromptChange}
-              onApplyDenoisingChange={props.onApplyDenoisingChange}
-              onAudioModelChange={props.onAudioModelChange}
-              onReprocessSounds={props.onReprocessSounds}
-              onUploadAudio={props.onUploadAudio}
-              onClearUploadedAudio={props.onClearUploadedAudio}
-              onLibrarySearch={props.onLibrarySearch}
-              onLibrarySoundSelect={props.onLibrarySoundSelect}
-              modelEntities={props.modelEntities}
-              onStartLinkingEntity={props.onStartLinkingEntity}
-              onCancelLinkingEntity={props.onCancelLinkingEntity}
-              isLinkingEntity={props.isLinkingEntity}
-              linkingConfigIndex={props.linkingConfigIndex}
-              individualSoundStates={props.individualSoundStates}
-              onToggleSound={props.onToggleSound}
-              onVolumeChange={props.onVolumeChange}
-              onIntervalChange={props.onIntervalChange}
-              onMute={props.onMute}
-              onSolo={props.onSolo}
-              onVariantChange={props.onVariantChange}
-              mutedSounds={props.mutedSounds}
-              soloedSound={props.soloedSound}
-              onResetSound={props.onResetSound}
-              onSelectSoundCard={props.onSelectSoundCard}
-              selectedCardIndex={props.selectedCardIndex}
-              soundVolumes={props.soundVolumes}
-              soundIntervals={props.soundIntervals}
-              selectedVariants={props.selectedVariants}
-              previewingSoundId={props.previewingSoundId}
-              onPreviewPlayPause={props.onPreviewPlayPause}
-              onPreviewStop={props.onPreviewStop}
-            />
-          </div>
-        )}
+        <div className="flex flex-col gap-4" style={{ display: props.activeAiTab === 'sound' ? 'flex' : 'none' }}>
+          <SoundGenerationSection
+            soundConfigs={props.soundConfigs}
+            activeSoundConfigTab={props.activeSoundConfigTab}
+            isSoundGenerating={props.isSoundGenerating}
+            soundGenError={props.soundGenError}
+            generatedSounds={props.generatedSounds}
+            globalDuration={props.globalDuration}
+            globalSteps={props.globalSteps}
+            globalNegativePrompt={props.globalNegativePrompt}
+            applyDenoising={props.applyDenoising}
+            audioModel={props.audioModel}
+            onSetActiveTab={props.setActiveSoundConfigTab}
+            onAddConfig={props.onAddSoundConfig}
+            onBatchAddConfigs={props.onBatchAddSoundConfigs}
+            onRemoveConfig={props.onRemoveSoundConfig}
+            onUpdateConfig={props.onUpdateSoundConfig}
+            onModeChange={props.onSoundModeChange}
+            onGenerate={props.onGenerateSounds}
+            onStopGeneration={props.onStopSoundGeneration}
+            onGlobalDurationChange={props.onGlobalDurationChange}
+            onGlobalStepsChange={props.onGlobalStepsChange}
+            onGlobalNegativePromptChange={props.onGlobalNegativePromptChange}
+            onApplyDenoisingChange={props.onApplyDenoisingChange}
+            onAudioModelChange={props.onAudioModelChange}
+            onReprocessSounds={props.onReprocessSounds}
+            onUploadAudio={props.onUploadAudio}
+            onClearUploadedAudio={props.onClearUploadedAudio}
+            onLibrarySearch={props.onLibrarySearch}
+            onLibrarySoundSelect={props.onLibrarySoundSelect}
+            modelEntities={props.modelEntities}
+            onStartLinkingEntity={props.onStartLinkingEntity}
+            onCancelLinkingEntity={props.onCancelLinkingEntity}
+            isLinkingEntity={props.isLinkingEntity}
+            linkingConfigIndex={props.linkingConfigIndex}
+            individualSoundStates={props.individualSoundStates}
+            onToggleSound={props.onToggleSound}
+            onVolumeChange={props.onVolumeChange}
+            onIntervalChange={props.onIntervalChange}
+            onMute={props.onMute}
+            onSolo={props.onSolo}
+            onVariantChange={props.onVariantChange}
+            mutedSounds={props.mutedSounds}
+            soloedSound={props.soloedSound}
+            onResetSound={props.onResetSound}
+            onSelectSoundCard={props.onSelectSoundCard}
+            selectedCardIndex={props.selectedCardIndex}
+            soundVolumes={props.soundVolumes}
+            soundIntervals={props.soundIntervals}
+            selectedVariants={props.selectedVariants}
+            previewingSoundId={props.previewingSoundId}
+            onPreviewPlayPause={props.onPreviewPlayPause}
+            onPreviewStop={props.onPreviewStop}
+            receivers={props.receivers}
+            isPlacingReceiver={props.isPlacingReceiver}
+            onStartPlacingReceiver={props.onStartPlacingReceiver}
+            onDeleteReceiver={props.onDeleteReceiver}
+            onUpdateReceiverName={props.onUpdateReceiverName}
+            onGoToReceiver={props.onGoToReceiver}
+          />
+        </div>
 
         {/* Acoustics Tab */}
-        {props.activeAiTab === 'acoustics' && (
+        <div style={{ display: props.activeAiTab === 'acoustics' ? 'block' : 'none' }}>
           <AcousticsTab
             receivers={props.receivers}
             isPlacingReceiver={props.isPlacingReceiver}
             onStartPlacingReceiver={props.onStartPlacingReceiver}
             onDeleteReceiver={props.onDeleteReceiver}
             onUpdateReceiverName={props.onUpdateReceiverName}
+            onGoToReceiver={props.onGoToReceiver}
             onSelectIRFromLibrary={props.onSelectIRFromLibrary}
             onClearIR={props.onClearIR}
             selectedIRId={props.selectedIRId}
@@ -239,8 +242,17 @@ export function Sidebar(props: SidebarProps) {
             soundscapeData={props.soundscapeData}
             onIRImported={props.onIRImported}
             irRefreshTrigger={props.irRefreshTrigger}
+            simulationConfigs={props.simulationConfigs}
+            activeSimulationIndex={props.activeSimulationIndex}
+            expandedTabIndex={props.expandedTabIndex}
+            onAddSimulationConfig={props.onAddSimulationConfig}
+            onRemoveSimulationConfig={props.onRemoveSimulationConfig}
+            onUpdateSimulationConfig={props.onUpdateSimulationConfig}
+            onSetActiveSimulation={props.onSetActiveSimulation}
+            onUpdateSimulationName={props.onUpdateSimulationName}
+            onToggleExpandSimulation={props.onToggleExpandSimulation}
           />
-        )}
+        </div>
       </div>
 
     </aside>

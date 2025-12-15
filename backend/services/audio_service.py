@@ -33,7 +33,8 @@ from config.constants import (
     AUDIO_SAMPLE_RATE,
     DEFAULT_SPL_DB,
     GENERATED_SOUNDS_DIR,
-    GENERATED_SOUND_URL_PREFIX
+    GENERATED_SOUND_URL_PREFIX,
+    FORCE_CPU_MODE
 )
 from services.audioldm2_service import AudioLDM2Service
 
@@ -42,7 +43,12 @@ class AudioService:
     """Service for generating audio from text prompts using multiple models"""
 
     def __init__(self):
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        # Respect FORCE_CPU_MODE setting, otherwise use CUDA if available
+        if FORCE_CPU_MODE:
+            self.device = 'cpu'
+            print("AudioService: Forced CPU mode (FORCE_CPU_MODE=true)")
+        else:
+            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         print(f"AudioService using device: {self.device}")
         self.tangoflux_model = None
         self.audioldm2_service = None
@@ -53,6 +59,12 @@ class AudioService:
             print("Initializing TangoFlux model...")
             self.tangoflux_model = TangoFluxInference(name=TANGOFLUX_MODEL_NAME, device=self.device)
         return self.tangoflux_model
+
+    def _clear_cuda_cache(self):
+        """Clear CUDA cache to free up GPU memory"""
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
 
     def _init_audioldm2_service(self):
         """Lazy initialization of the AudioLDM2 service"""
@@ -125,12 +137,44 @@ class AudioService:
             # Use TangoFlux (default)
             model = self._init_tangoflux_model()
 
-            audio = model.generate(
-                prompt,
-                steps=steps,
-                duration=duration,
-                guidance_scale=guidance_scale
-            )
+            try:
+                # Clear CUDA cache before generation
+                self._clear_cuda_cache()
+
+                audio = model.generate(
+                    prompt,
+                    steps=steps,
+                    duration=duration,
+                    guidance_scale=guidance_scale
+                )
+
+                # Clear CUDA cache after generation
+                self._clear_cuda_cache()
+
+            except RuntimeError as e:
+                if "out of memory" in str(e).lower():
+                    print(f"CUDA OOM error detected. Retrying on CPU...")
+                    # Free the GPU model
+                    self.tangoflux_model = None
+                    self._clear_cuda_cache()
+
+                    # Reinitialize on CPU
+                    original_device = self.device
+                    self.device = 'cpu'
+                    model = self._init_tangoflux_model()
+
+                    # Generate on CPU
+                    audio = model.generate(
+                        prompt,
+                        steps=steps,
+                        duration=duration,
+                        guidance_scale=guidance_scale
+                    )
+
+                    # Restore original device preference for next generation
+                    self.device = original_device
+                else:
+                    raise
 
             # Step 1: Normalize to base RMS level
             audio = normalize_audio_rms(audio, target_rms=TARGET_RMS)
@@ -256,6 +300,9 @@ class AudioService:
                 if entity_index is not None:
                     sound_data["entity_index"] = entity_index
                 generated_files.append(sound_data)
+
+        # Clear CUDA cache after all generations
+        self._clear_cuda_cache()
 
         return generated_files
 

@@ -1,5 +1,338 @@
 # CHANGELOG
 
+## [2025-12-12] - Fixed Material Coloring Visualization Issues
+### Fixed
+- **`frontend/src/components/scene/ThreeScene.tsx`** - Fixed face-to-triangle mapping to correctly color triangulated faces (quads/n-gons)
+- **`frontend/src/components/scene/ThreeScene.tsx`** - Set mesh base color to white during material coloring to prevent grey mixing with vertex colors
+- **`frontend/src/components/acoustics/MaterialAssignmentUI.tsx`** - Unified color generation using hash-based approach matching ThreeScene for consistent colors
+- **`frontend/src/components/scene/ThreeScene.tsx`** - Restored ARCTIC_THEME geometry color when leaving Acoustics tab
+- **`frontend/src/lib/three/geometry-renderer.ts`** - Added wireframe highlight mode to preserve material colors when faces are selected
+- **`frontend/src/components/scene/ThreeScene.tsx`** - Use wireframe highlighting when material coloring is active to avoid obscuring colors
+- Material assignment now correctly maps face indices to all triangles in triangulated geometry (fixes Face 15 → Face 7 mismapping)
+
+## [2025-12-12] - Fixed Missing simulation_mode Field in Pyroomacoustics Config
+### Fixed
+- **`frontend/src/hooks/useAcousticsSimulation.ts`** - Added missing `simulation_mode` field to Pyroomacoustics config initialization
+- Fixes "Invalid simulation mode: undefined" error for mono mode simulations
+
+## [2025-12-12] - Added Comprehensive RIR Validation and Error Handling
+### Added
+- **`backend/routers/pyroomacoustics.py`** - Added defensive checks for empty RIR arrays with detailed error messages
+- **`backend/routers/pyroomacoustics.py`** - Added debug logging showing RIR structure (total mics, sources, and lengths)
+- **`backend/services/pyroomacoustics_service.py`** - Added validation for empty RIRs in export_impulse_response method
+### Fixed
+- Prevents "zero-size array to reduction operation maximum" error with clear diagnostics
+- Error messages now identify which specific channel/microphone has invalid RIR data
+- Better debugging output to diagnose ray tracing and geometry issues
+
+## [2025-12-12] - Fixed Multi-Channel RIR Dimension Mismatch in Binaural and FOA Modes
+### Fixed
+- **`backend/routers/pyroomacoustics.py`** - Added RIR channel padding to handle different impulse response lengths before stacking
+- **`backend/services/pyroomacoustics_service.py`** - Fixed incorrect RIR indexing in export_impulse_response (was [source][mic], now [mic][source])
+- Multi-source/multi-receiver simulations now work correctly for Binaural (2-ch) and FOA (4-ch) modes
+- Fixes "dimension mismatch" error when RIRs have different lengths across channels
+
+## [2025-12-12] - Fixed Source Creation and Pipeline Initialization in IR Modes
+### Fixed
+- **`frontend/src/lib/audio/modes/StereoIRMode.ts`** - Removed `!this.irBuffer` check in `createSource()` to allow source creation without global IR
+- **`frontend/src/lib/audio/modes/AmbisonicIRMode.ts`** - Removed `!this.irBuffer` checks in `createSource()` and `initializePipeline()`
+- **`frontend/src/lib/audio/modes/AmbisonicIRMode.ts`** - Pipeline now initializes on mode creation (not just when IR is set) to ensure `ambisonicMixBus` exists for source connections
+- Sources can now be created in simulation mode before per-source IRs are applied via `setSourceImpulseResponse()`
+- Fixes "Source not found" error and no-audio bug when playing sounds with PyroomAcoustics stereo (2ch) and ambisonic (4ch) simulations
+
+## [2025-12-12] - Added Binaural and FOA Ambisonics Simulation Modes to Pyroomacoustics
+### Added
+- **`backend/config/constants.py`** - Added simulation mode constants (MONO, BINAURAL, FOA) and microphone array configuration parameters
+- **`frontend/src/lib/constants.ts`** - Added frontend simulation mode constants and display names
+- **`backend/services/pyroomacoustics_service.py`** - Added multi-channel microphone support (binaural: 2-ch, FOA: 4-ch)
+- **`backend/routers/pyroomacoustics.py`** - Added simulation_mode parameter and multi-channel IR export logic
+- **`frontend/src/components/acoustics/PyroomAcousticsSimulationSection.tsx`** - Added simulation mode dropdown UI
+### Changed
+- Multi-channel IRs are now properly exported and imported to the IR library
+- Binaural mode places two microphones at ear positions (±10.75cm from center)
+- FOA mode uses tetrahedral microphone array for W, X, Y, Z ambisonics components
+
+## [2025-12-12] - Removed RT60 Analysis Module
+### Removed
+- **`frontend/src/lib/audio/rt60-analysis.ts`** - Deleted unused RT60 calculation module
+- **`frontend/src/components/audio/ImpulseResponseUpload.tsx`** - Removed RT60 display from IR library
+- **`frontend/src/lib/constants.ts`** - Removed RT60_ANALYSIS constants
+- RT60 values are now shown from simulation results instead of client-side calculation
+
+## [2025-12-12] - Fixed Acoustic Metrics Not Displaying in Simulation Tab
+### Fixed
+- **`frontend/src/components/layout/sidebar/AcousticsTab.tsx`** - Added acoustic metrics fetching from JSON results file
+- `runPyroomSimulation()` now fetches and parses acoustic parameters (RT60, EDT, D50, C80) from simulation results
+- `runChorasSimulation()` now fetches and parses acoustic parameters (T30, EDT, D50, C80) with frequency range
+- Acoustic metrics now display correctly in completed Choras and PyroomAcoustics simulation tabs
+
+## [2025-12-11] - Fixed Audio Mode Not Switching to IR Mode in Simulation
+### Fixed
+- **`frontend/src/lib/audio/AudioOrchestrator.ts`** - Fixed audio staying in Anechoic mode even with completed simulation
+- `setSourceReceiverIRMapping()` now marks IR state as selected and triggers mode switch to appropriate IR mode
+- Detects channel count from first IR in simulation mapping to select correct mode (Mono/Stereo/Ambisonic)
+- Now properly switches to IR mode (with convolution) when simulation is activated
+
+## [2025-12-11] - Fixed Convolution Not Applied in Simulation Mode
+### Fixed
+- **`frontend/src/lib/audio/AudioOrchestrator.ts`** - Fixed convolution not happening in receiver mode with completed simulation
+- `createSource()` now applies source-specific IR immediately when source is created in simulation mode
+- `reCreateSourcesInCurrentMode()` now re-applies simulation IRs after mode switch
+- Sources are created asynchronously during audio loading, so IRs must be applied at source creation time, not just during initial mapping setup
+
+## [2025-12-11] - Integrated Source-Receiver IR Pairing with UI
+### Added
+- **`frontend/src/app/page.tsx`** - Added handleReceiverSelected callback to update AudioOrchestrator when receiver is selected
+- **`frontend/src/app/page.tsx`** - Added useEffect to set source-receiver IR mapping in AudioOrchestrator when Pyroomacoustics simulation completes
+- **`frontend/src/lib/three/input-handler.ts`** - Added onReceiverSelected callback triggered on double-click receiver
+- **`frontend/src/types/three-scene.ts`** - Added onReceiverSelected callback prop to ThreeSceneProps
+### Changed
+- **`frontend/src/components/layout/sidebar/SimulationTab.tsx`** - Added isSimulationMode={true} prop to ImpulseResponseUpload in Choras and PyroomAcoustics modes
+- **`frontend/src/components/scene/ThreeScene.tsx`** - Wire up receiver double-click to call onReceiverSelected callback
+- **`frontend/src/hooks/useReceivers.ts`** - Added UseReceiversProps with onReceiverSelected callback support
+- Double-clicking a receiver now automatically loads corresponding IRs for all sources
+- IR Library selection disabled in simulation mode with warning notice displayed
+
+## [2025-12-11] - Source-Receiver IR Pairing for Acoustic Simulations
+### Added
+- **`frontend/src/types/audio.ts`** - SourceReceiverIRMapping type, AcousticSimulationMode type, updated AudioModeConfig with simulation support
+- **`frontend/src/hooks/usePyroomAcousticsSimulation.ts`** - Builds source-receiver IR mapping during simulation import, stores mapping in state
+- **`frontend/src/hooks/useReceivers.ts`** - Added receiver selection (selectReceiver, deselectReceiver, selectedReceiverId), onReceiverSelected callback
+- **`frontend/src/lib/audio/AudioOrchestrator.ts`** - setSourceReceiverIRMapping(), updateActiveReceiver(), downloadAndDecodeIR() methods for simulation-based audio
+- **`frontend/src/lib/audio/modes/MonoIRMode.ts`** - setSourceImpulseResponse() method for per-source IR assignment
+- **`frontend/src/lib/audio/modes/StereoIRMode.ts`** - setSourceImpulseResponse() method for per-source stereo IR assignment
+- **`frontend/src/lib/audio/modes/AmbisonicIRMode.ts`** - setSourceImpulseResponse() method for per-source ambisonic IR assignment
+### Changed
+- **`frontend/src/components/audio/ImpulseResponseUpload.tsx`** - Added isSimulationMode prop to disable IR selection in simulation mode, shows warning notice
+- Precise Acoustics Mode now pairs each source with its corresponding receiver-specific IR
+- Selecting a receiver dynamically loads correct IRs for all sources based on source-receiver pairs
+- IR Library selection disabled when in simulation mode (source-receiver pairs take precedence)
+
+## [2025-12-11] - Face Selection Auto-Expand in Material Tree
+### Fixed
+- **`frontend/src/components/acoustics/MaterialAssignmentUI.tsx`** - Fixed entityKey format mismatch: auto-expand effect now uses `entity-${index}` format (was `entity-${layerId}-${index}`)
+- Added scroll-into-view for selected faces with ID attributes on face rows
+- Fixed infinite re-render by removing setExpandedItems from useEffect dependencies
+
+## [2025-12-11] - Consolidated Temporary Directories
+### Changed
+- **`backend/config/constants.py`** - Consolidated all temp folders into `backend/temp/` parent with subfolders: static/, uploads/, library_downloads/, simulations/
+- **`backend/utils/file_operations.py`** - Updated cleanup to recursively clean all subfolders in temp parent directory
+- **`backend/main.py`**, **`backend/routers/choras.py`**, **`backend/routers/pyroomacoustics.py`** - Updated to use new TEMP_SIMULATIONS_DIR constant
+
+## [2025-12-11] - Input Handler Mode Separation (Face vs Entity Selection)
+### Fixed
+- **`frontend/src/app/page.tsx`** - Fixed layerId normalization (use 'Default' for entities without a layer) to match MaterialAssignmentUI grouping logic
+- **`frontend/src/components/acoustics/MaterialAssignmentUI.tsx`** - Fixed auto-expand effect to use 'Default' for layerId (was using empty string, causing entity expansion to fail)
+### Changed
+- **`frontend/src/lib/three/input-handler.ts`** - Implemented Mode 1 (entity selection) and Mode 2 (face selection); Mode 2 only when state is 'before-simulation' or 'running'
+- **`frontend/src/types/three-scene.ts`** - Added activeAiTab prop to ThreeSceneProps
+- **`frontend/src/app/page.tsx`** - Pass activeAiTab to ThreeScene; added logging to handleFaceSelected
+- **`frontend/src/components/scene/ThreeScene.tsx`** - Face highlighting now triggers in Mode 2 instead of precise audio mode; clear entity overlay in Mode 2; reset colors when leaving Acoustics tab
+
+## [2025-12-11] - CUDA Memory Management and Auto CPU Fallback
+### Fixed
+- **`backend/services/audio_service.py`** - Added CUDA cache clearing before/after generation; auto-fallback to CPU on OOM errors
+- **`backend/config/constants.py`** - Added FORCE_CPU_MODE env variable to force CPU mode for low-memory systems
+### Changed
+- TangoFlux now clears CUDA cache between generations to prevent memory buildup
+- On CUDA out-of-memory, automatically retries on CPU instead of failing
+- Set `FORCE_CPU_MODE=true` in .env to always use CPU mode
+
+## [2025-12-06] - Sound Source Position Updates on Drag End
+### Fixed
+- **`frontend/src/hooks/useSoundGeneration.ts`** - Added `updateSoundPosition()` callback to update soundscapeData when sound sphere drag ends
+- **`frontend/src/types/three-scene.ts`** - Added `onUpdateSoundPosition` prop to ThreeSceneProps
+- **`frontend/src/lib/three/input-handler.ts`** - Added `onSphereDragEnd` and `onReceiverDragEnd` callbacks to update data state only when drag completes
+- **`frontend/src/components/scene/ThreeScene.tsx`** - Call `onUpdateSoundPosition` on drag end (not during drag) to prevent sound sphere recreation mid-drag
+- **`frontend/src/app/page.tsx`** - Wire `soundGen.updateSoundPosition` to ThreeScene component
+### Changed
+- Sound source positions now update in soundscapeData when drag **ends** (not during drag)
+- Visual position updates smoothly during drag without triggering data state changes
+- Pyroomacoustics and Choras simulations now receive current sound positions instead of stale initial positions
+- Dragging remains smooth and uninterrupted since spheres aren't recreated until drag completes
+
+## [2025-12-05] - Material Assignment Callback Updates Simulation FaceToMaterialMap
+### Fixed
+- **`frontend/src/app/page.tsx`** - handleAssignMaterial now updates active simulation's faceToMaterialMap; strips material ID prefix (choras_/pyroom_)
+- **`frontend/src/lib/constants.ts`** - Removed alpha channel from MATERIAL_GRADIENT colors (Three.js requires 6-char hex, not 8-char)
+- **`frontend/src/components/scene/ThreeScene.tsx`** - Material colors now generated deterministically from material ID hash (each material has stable unique color)
+### Changed
+- Material assignments now immediately reflect in 3D model coloring (face, entity, layer, and global assignments all supported)
+- Different materials now display different colors (hash-based gradient positioning instead of index-based)
+- Added comprehensive logging for material assignment and color generation debugging
+
+## [2025-12-05] - Multi-Source to Multi-Receiver IR Import (Efficient Array-Based)
+### Fixed
+- **`backend/routers/pyroomacoustics.py`** - Refactored to use pyroomacoustics' built-in multi-source/multi-receiver arrays; computes all RIRs in single call; added `ir_filename` query parameter
+- **`backend/utils/acoustic_measurement.py`** - Added `calculate_acoustic_parameters_from_rir()` method to compute metrics from raw RIR arrays
+- **`frontend/src/services/api.ts`** - Added `getPyroomacousticsIRFile()` method to fetch specific IR files by filename
+- **`frontend/src/hooks/usePyroomAcousticsSimulation.ts`** - Now imports ALL generated IRs to library; stores array of IR IDs for per-simulation filtering (currently unused - AcousticsTab runs simulation directly)
+- **`frontend/src/components/layout/sidebar/AcousticsTab.tsx`** - Fixed duplicate Pyroomacoustics simulation code to import ALL IRs instead of just first one
+- **`frontend/src/components/audio/ImpulseResponseUpload.tsx`** - Changed to accept array of IR IDs instead of single metadata object for filtering
+- **`frontend/src/components/layout/sidebar/SimulationTab.tsx`** - Updated to pass `importedIRIds` array instead of single metadata
+### Changed
+- Pyroomacoustics now creates ONE room with all sources/receivers, then computes all RIRs at once via `room.rir[receiver_idx][source_idx]` (much more efficient)
+- IR names in library include source and receiver IDs (e.g., "Pyroom_{name}_S{sourceId}_R{receiverId}")
+- Each simulation tab now correctly shows ALL its imported IRs instead of just the first one
+- IR library filtering now uses array-based ID matching to support multiple IRs per simulation
+
+## [2025-12-05] - Face Coloring and Clicking Active on Simulation Tab Selection
+### Changed
+- **`frontend/src/app/page.tsx`** - Lifted useAcousticsSimulation hook; passed simulation state to Sidebar (avoiding duplicate hook calls)
+- **`frontend/src/types/components.ts`** - Added simulation state props to SidebarProps
+- **`frontend/src/components/layout/Sidebar.tsx`** - Passes simulation state down to AcousticsTab
+- **`frontend/src/components/layout/sidebar/AcousticsTab.tsx`** - Receives simulation state as props instead of calling useAcousticsSimulation
+- **`frontend/src/types/three-scene.ts`** - Added activeSimulationIndex and activeSimulationConfig props
+- **`frontend/src/components/scene/ThreeScene.tsx`** - Material coloring uses active simulation's faceToMaterialMap; enabled when tab selected
+- **`frontend/src/lib/three/input-handler.ts`** - Face clicking enabled when simulation tab active; added setActiveSimulationIndexGetter
+### Fixed
+- Material assignments now immediately update 3D model face colors (eliminated duplicate hook calls)
+- Face colors update dynamically when switching between simulation tabs
+- Faces clickable for material assignment when simulation tab selected (even before running simulation)
+
+## [2025-12-05] - IR Waveform as Hover Overlay
+### Changed
+- **`frontend/src/components/audio/ImpulseResponseUpload.tsx`** - IR waveform appears as minimal interactive overlay to the right of selected IR when hovering; shows only waveform canvas without text or extra padding; uses z-index 9999 to appear above ThreeScene
+- **`frontend/src/components/audio/AudioWaveformDisplay.tsx`** - Added hideTextInfo prop to optionally hide filename and metadata text below waveform
+
+## [2025-12-05] - Sound Generation Button Validation
+### Changed
+- **`frontend/src/components/layout/sidebar/SoundGenerationSection.tsx`** - Generate button now grays out when no sounds exist or pending sounds have invalid settings (empty prompts, missing uploads, no library selection)
+
+## [2025-12-05] - Per-Instance Simulation State Management
+### Fixed
+- **`frontend/src/hooks/useChorasSimulation.ts`** - Refactored to use Map-based per-instance state instead of singleton
+- **`frontend/src/hooks/usePyroomAcousticsSimulation.ts`** - Refactored to use Map-based per-instance state instead of singleton
+- **`frontend/src/components/layout/sidebar/AcousticsTab.tsx`** - Updated to run simulations independently per tab using instance IDs; added missing imports; fixed state transition to 'completed' after simulation
+- **`frontend/src/components/layout/sidebar/SimulationTab.tsx`** - Fixed Choras IR library filtering to show only simulation-specific IR
+### Changed
+- Multiple Choras/Pyroomacoustics simulation tabs can now run independently without affecting each other
+- Each simulation maintains its own state (progress, status, results, materials) based on simulationInstanceId
+- Shared materials cache updated across all instances when materials are loaded
+- Material assignments now stored directly in config's faceToMaterialMap (no hook dependency)
+- Simulation state now explicitly set to 'completed' when simulation finishes and IR is imported
+
+## [2025-12-05] - Choras IR Library Filtering Fix
+### Fixed
+- **`frontend/src/components/layout/sidebar/SimulationTab.tsx`** - Choras now displays only its related IR in library (added simulationIRMetadata prop)
+
+## [2025-12-05] - Simulation Tab Improvements: IR Auto-Selection & Material Persistence
+### Changed
+- **`frontend/src/types/acoustics.ts`** - Added faceToMaterialMap to ChorasSimulationConfig; added simulationInstanceId to BaseSimulationConfig
+- **`frontend/src/hooks/useAcousticsSimulation.ts`** - Initialize faceToMaterialMap and unique simulationInstanceId for each simulation
+- **`frontend/src/hooks/useChorasSimulation.ts`** - Capture and store importedIRMetadata when importing IR to library
+- **`frontend/src/hooks/usePyroomAcousticsSimulation.ts`** - Capture and store importedIRMetadata when importing IR to library
+- **`frontend/src/components/layout/sidebar/AcousticsTab.tsx`** - Auto-select simulation's IR when activating completed tab; sync importedIRMetadata to configs
+- **`frontend/src/components/layout/sidebar/SimulationTab.tsx`** - Pass simulationIRMetadata and initialAssignments to child components
+- **`frontend/src/components/audio/ImpulseResponseUpload.tsx`** - Added simulationIRMetadata prop; filter IR library to show only simulation's IR
+- **`frontend/src/components/acoustics/MaterialAssignmentUI.tsx`** - Added initialAssignments prop; initialize material state from faceToMaterialMap
+- **`frontend/src/components/acoustics/SurfaceMaterialsSection.tsx`** - Pass initialAssignments through to MaterialAssignmentUI
+### Fixed
+- Switching to completed simulation tab now stops audio and applies its IR automatically
+- Material assignments now persist when switching between simulation tabs (stored in faceToMaterialMap, restored via initialAssignments)
+- Each simulation now has unique instance tracking for independence
+- IR Library in completed simulations shows only that simulation's IR (filtered by importedIRMetadata)
+
+## [2025-12-05] - Simulation Results Display Refinement
+### Changed
+- **`frontend/src/components/layout/sidebar/SimulationTab.tsx`** - Hide Surface Materials after simulation; show only acoustic metrics in white text; update IR Library text colors to white on dark background
+- **`frontend/src/components/audio/ImpulseResponseUpload.tsx`** - Removed "Last Simulation Results" section; adapted IR Library card backgrounds and text colors to match completed simulation dark theme
+
+## [2025-12-05] - Surface Materials State Persistence & Gradient
+### Changed
+- **`frontend/src/types/acoustics.ts`** - Added expandedMaterialItems to Choras and Pyroomacoustics configs for state persistence
+- **`frontend/src/components/acoustics/MaterialAssignmentUI.tsx`** - Added expandedItems prop; persists expanded state across tab switches
+- **`frontend/src/components/acoustics/SurfaceMaterialsSection.tsx`** - Added expandedItems props; passes state to MaterialAssignmentUI
+- **`frontend/src/components/layout/sidebar/SimulationTab.tsx`** - Connected expandedMaterialItems from config to SurfaceMaterialsSection
+- **`frontend/src/components/acoustics/ResonanceAudioMaterialUI.tsx`** - Updated gradient to use teal→orange from constants (MATERIAL_GRADIENT_START/END)
+- **`frontend/src/components/scene/ThreeScene.tsx`** - Updated bounding box face colors to use teal→orange gradient matching material absorption
+### Fixed
+- Material assignments and expanded state now preserved when switching between simulation tabs
+- Resonance Audio material colors now use consistent gradient (teal for reflective, orange for absorptive)
+- Bounding box faces visually reflect their acoustic properties with color-coded materials
+
+## [2025-12-05] - First-Person Mode Exit Button + Camera Restoration
+### Added
+- **`frontend/src/components/controls/OrientationIndicator.tsx`** - Exit button in orientation indicator; error-colored styling; ESC alternative
+- **`frontend/src/components/scene/ThreeScene.tsx`** - Wired onExitFirstPersonMode callback; pointer-events-auto for button interaction
+- **`frontend/src/lib/three/scene-coordinator.ts`** - Camera state restoration: saves position/target before entering first-person mode; restores on exit
+
+## [2025-12-05] - Surface Materials UI Improvements
+### Changed
+- **`frontend/src/components/acoustics/SurfaceMaterialsSection.tsx`** - Removed collapsible dropdown; now plain text header
+- **`frontend/src/components/acoustics/MaterialAssignmentUI.tsx`** - Fixed missing count display; removed truncate class; background color now shows inherited material color
+- **`frontend/src/components/acoustics/ResonanceAudioMaterialUI.tsx`** - New component with cascading inheritance (All faces → individual faces)
+- **`frontend/src/components/controls/ResonanceAudioControls.tsx`** - Replaced individual dropdowns with ResonanceAudioMaterialUI for consistent styling
+
+## [2025-12-05] - Receivers Section Moved to Soundscape Tab + Go To Receiver
+### Changed
+- **`frontend/src/components/layout/sidebar/ReceiversSection.tsx`** - Redesigned UI; compact layout; receiver count with + button; "Go to" button activates first-person view
+- **`frontend/src/components/layout/sidebar/SoundGenerationSection.tsx`** - Added ReceiversSection at bottom
+- **`frontend/src/types/three-scene.ts`** - Added goToReceiverId prop for programmatic first-person view trigger
+- **`frontend/src/components/scene/ThreeScene.tsx`** - Added effect to activate first-person mode when goToReceiverId changes
+- **`frontend/src/app/page.tsx`** - Added goToReceiverId state; updated handleGoToReceiver to trigger camera movement
+
+## [2025-12-05] - Acoustics Tab UX Polish and Real-Time State Sync
+### Changed
+- **`frontend/src/components/layout/sidebar/ChorasSimulationSettings.tsx`** - Added hover effects to Start Simulation button; changed loading text from "Running simulation..." to "Calculating..."
+- **`frontend/src/components/layout/sidebar/PyroomAcousticsSimulationSettings.tsx`** - Added hover effects to Start Simulation button; changed loading text to "Calculating..."
+- **`frontend/src/components/layout/sidebar/AcousticsTab.tsx`** - Added two useEffect hooks for real-time state synchronization; Choras and Pyroomacoustics hook states (isRunning, progress, status, simulationResults, error) now continuously sync to simulationConfigs; simplified handleRunSimulation to set initial state and let useEffect handle ongoing updates
+### Fixed
+- Start Simulation button now has visual hover feedback (color darkens on hover with smooth transition)
+- Simulation completion now properly updates UI to show IR Library section (fixed by continuous state sync)
+- Simulation state changes (progress, completion, errors) now update in real-time without requiring manual refresh
+
+## [2025-12-05] - Acoustics Tab UI Fixes and Improvements
+### Changed
+- **`frontend/src/components/layout/sidebar/SimulationTab.tsx`** - Removed duplicate Surface Materials section from Resonance Audio mode (kept only ResonanceAudioControls)
+- **`frontend/src/components/acoustics/SurfaceMaterialsSection.tsx`** - Added collapsible functionality with defaultCollapsed prop; clickable header with chevron icon
+- **`frontend/src/components/layout/sidebar/AcousticsTab.tsx`** - Connected simulation execution to backend via useChorasSimulation and usePyroomAcousticsSimulation hooks; added handleRunSimulation and handleCancelSimulation callbacks
+- **`frontend/src/components/acoustics/MaterialAssignmentUI.tsx`** - Added getDisplayValue helper to show "various" when children have different materials and "(n faces missing)" when faces aren't assigned; created MaterialSelect component for consistent dropdown rendering
+### Fixed
+- Choras and Pyroomacoustics simulations now properly execute when clicking "Start Simulation"
+- Surface Materials sections now start collapsed by default in Choras and Pyroomacoustics tabs
+- Material dropdowns show aggregated state for parent nodes (All Entities, Layers, Entities)
+
+## [2025-12-05] - Acoustics Tab Complete Refactor Implementation
+### Added
+- **`frontend/src/hooks/useAcousticsSimulation.ts`** - Main hook managing multiple simulation configs; handles add/remove/update/activate; auto-expands new simulations
+### Changed
+- **`frontend/src/components/layout/sidebar/AcousticsTab.tsx`** - Refactored to use AcousticsSection; integrated useAcousticsSimulation hook; materials loaded from Choras/Pyroomacoustics hooks; syncs active simulation with audio rendering mode
+- **`frontend/src/components/layout/Sidebar.tsx`** - Added onGoToReceiver prop to AcousticsTab
+- Architecture now complete: tab-based simulation management matching SoundGenerationSection pattern
+
+## [2025-12-05] - Acoustics Tab Refactor: Modular Simulation Pattern
+### Added
+- **`frontend/src/types/acoustics.ts`** - New types for simulation configs (ResonanceSimulationConfig, ChorasSimulationConfig, PyroomAcousticsSimulationConfig)
+- **`frontend/src/components/layout/sidebar/SimulationTab.tsx`** - Analogous to SoundTab; displays simulation configs with expand/collapse; supports before/after simulation states
+- **`frontend/src/components/layout/sidebar/AcousticsSection.tsx`** - Analogous to SoundGenerationSection; manages simulation tabs with mode selector dropdown
+- **`frontend/src/components/layout/sidebar/ChorasSimulationSettings.tsx`** - Extracted Choras settings UI for use in SimulationTab
+- **`frontend/src/components/layout/sidebar/PyroomAcousticsSimulationSettings.tsx`** - Extracted Pyroomacoustics settings UI for use in SimulationTab
+- **`frontend/src/components/acoustics/SurfaceMaterialsSection.tsx`** - Shared surface materials component for all simulation modes
+### Changed
+- **`frontend/src/types/index.ts`** - Export acoustics types for use across the app
+- Pattern follows modular-coding.md guidelines: each simulation is a tab with expand/collapse; active simulation applies to audio orchestrator
+
+## [2025-12-05] - Receivers Section Moved to Soundscape Tab
+### Changed
+- **`frontend/src/components/layout/sidebar/ReceiversSection.tsx`** - Redesigned UI to match SoundGenerationSection style; compact layout without position display; receiver count status with + button; "Go to" button to activate first-person view; both buttons styled with receiver color
+- **`frontend/src/components/layout/sidebar/SoundGenerationSection.tsx`** - Added ReceiversSection at bottom of Soundscape tab; added receiver props to component interface
+- **`frontend/src/components/layout/sidebar/AcousticsTab.tsx`** - Removed ReceiversSection from Acoustics tab; receivers prop now optional (only used for simulation sections)
+- **`frontend/src/components/layout/Sidebar.tsx`** - Pass receiver props (including onGoToReceiver) to SoundGenerationSection
+- **`frontend/src/types/components.ts`** - Added onGoToReceiver callback to SidebarProps and SoundGenerationSectionProps
+- **`frontend/src/app/page.tsx`** - Added handleGoToReceiver function that activates receiver mode for specific receiver
+- **`frontend/src/lib/constants.ts`** - Imported RECEIVER_CONFIG for receiver color styling
+
+## [2025-12-05] - Sound Tab Mode Selection Refactor
+### Added
+- **`frontend/src/services/api.ts`** - Added loadSampleAudio() method to fetch sample audio from backend
+### Changed
+- **`frontend/src/components/layout/sidebar/SoundGenerationSection.tsx`** - Added mode selector dropdown to + button (right-aligned, primary color on hover); auto-loads sample audio when "Sample Audio" selected; no default expanded tabs
+- **`frontend/src/components/layout/sidebar/SoundTab.tsx`** - Removed mode selector dropdown from all sound tabs
+- **`frontend/src/hooks/useSoundGeneration.ts`** - Updated handleAddConfig to accept optional mode parameter; removed default sound tab (starts with 0 tabs)
+- **`frontend/src/types/components.ts`** - Updated onAddConfig and onAddSoundConfig signatures to accept optional mode parameter; removed onModeChange prop
+
 ## [2025-12-05] - Ray Tracing Parameters & UI Improvements for Pyroomacoustics
 ### Added
 - **`backend/config/constants.py`** - Ray tracing parameter ranges (n_rays: 1000-50000, scattering: 0.0-1.0)

@@ -63,6 +63,7 @@ interface SourceChain {
 
   // JSAmbisonics convolver (handles all orders)
   convolver: any; // ambisonics.convolver
+  sourceIRBuffer: AudioBuffer | null; // Per-source IR buffer (for simulation mode)
 
   // Gain node for wet signal control
   wetGain: GainNode;
@@ -119,7 +120,10 @@ export class AmbisonicIRMode implements IAudioMode {
     this.masterGain.gain.value = 1.0;
     this.masterGain.connect(audioContext.destination);
 
-    console.log('[AmbisonicIRMode] Initialized (awaiting IR buffer)');
+    // Initialize pipeline (even without IR buffer for simulation mode)
+    await this.initializePipeline();
+
+    console.log('[AmbisonicIRMode] Initialized');
   }
 
   /**
@@ -206,7 +210,7 @@ export class AmbisonicIRMode implements IAudioMode {
    * Initialize the ambisonic processing pipeline
    */
   private async initializePipeline(): Promise<void> {
-    if (!this.audioContext || !this.irBuffer) {
+    if (!this.audioContext) {
       return;
     }
 
@@ -274,8 +278,8 @@ export class AmbisonicIRMode implements IAudioMode {
    * Create a new audio source with JSAmbisonics IR convolution
    */
   createSource(sourceId: string, audioBuffer: AudioBuffer, position: Position): void {
-    if (!this.audioContext || !this.irBuffer) {
-      console.error('[AmbisonicIRMode] Cannot create source - not initialized or no IR');
+    if (!this.audioContext) {
+      console.error('[AmbisonicIRMode] Cannot create source - not initialized');
       return;
     }
 
@@ -297,7 +301,12 @@ export class AmbisonicIRMode implements IAudioMode {
 
     // Create JSAmbisonics convolver for multi-channel IR
     const convolver = new ambisonics.convolver(this.audioContext, this.ambisonicOrder);
-    convolver.updateFilters(this.irBuffer);
+
+    // Set IR buffer if available (global IR mode)
+    // In simulation mode, IR will be set per-source via setSourceImpulseResponse()
+    if (this.irBuffer) {
+      convolver.updateFilters(this.irBuffer);
+    }
 
     // Connect: GainNode → MuteGain → WetGain → Convolver → AmbisonicMixBus
     gainNode.connect(muteGainNode);
@@ -320,6 +329,7 @@ export class AmbisonicIRMode implements IAudioMode {
       gainNode,
       muteGainNode,
       convolver,
+      sourceIRBuffer: null, // No per-source IR yet (will be set in simulation mode)
       wetGain,
       position,
       isPlaying: false,
@@ -332,6 +342,39 @@ export class AmbisonicIRMode implements IAudioMode {
     this.updateSceneAlignment();
 
     console.log(`[AmbisonicIRMode] Created source "${sourceId}" with JSAmbisonics convolver (order ${this.ambisonicOrder}, ${this.numAmbisonicChannels} channels)`);
+  }
+
+  /**
+   * Set impulse response for a specific source (simulation mode)
+   * Allows per-source IR assignment for source-receiver pair workflows
+   */
+  async setSourceImpulseResponse(sourceId: string, irBuffer: AudioBuffer): Promise<void> {
+    const chain = this.sourceChains.get(sourceId);
+    if (!chain) {
+      console.warn(`[AmbisonicIRMode] Source "${sourceId}" not found for IR update`);
+      return;
+    }
+
+    if (!this.audioContext) {
+      console.error('[AmbisonicIRMode] Cannot set source IR - not initialized');
+      return;
+    }
+
+    // Validate channel count (4, 9, or 16 for FOA, SOA, TOA)
+    const channels = irBuffer.numberOfChannels;
+    if (![4, 9, 16].includes(channels)) {
+      console.error(`[AmbisonicIRMode] Expected ambisonic IR (4/9/16 channels) for source "${sourceId}", got ${channels} channels`);
+      return;
+    }
+
+    // Process IR buffer (resample if needed, normalize)
+    const processedBuffer = processImpulseResponse(irBuffer, this.audioContext, true);
+
+    // Update JSAmbisonics convolver with new IR
+    chain.convolver.updateFilters(processedBuffer);
+    chain.sourceIRBuffer = processedBuffer;
+
+    console.log(`[AmbisonicIRMode] ✅ Updated IR for source "${sourceId}" (${channels}ch, ${processedBuffer.length} samples @ ${processedBuffer.sampleRate}Hz)`);
   }
 
   /**

@@ -29,7 +29,8 @@ from config.constants import (
     STATIC_MOUNT_PATH,
     STATIC_FILES_DIRECTORY,
     IMPULSE_RESPONSE_DIR,
-    BACKEND_DIR
+    TEMP_SIMULATIONS_DIR,
+    TEMP_PARENT_DIR
 )
 
 # --- Initialization ---
@@ -89,12 +90,12 @@ app.mount(
     name="impulse_responses"
 )
 
-# Mount temp directory for Choras simulation results
-TEMP_DIR = BACKEND_DIR / "temp"
-TEMP_DIR.mkdir(exist_ok=True)
+# Mount simulations directory for Choras/Pyroomacoustics results
+from pathlib import Path
+Path(TEMP_SIMULATIONS_DIR).mkdir(parents=True, exist_ok=True)
 app.mount(
     "/static/temp",
-    StaticFiles(directory=str(TEMP_DIR)),
+    StaticFiles(directory=TEMP_SIMULATIONS_DIR),
     name="temp"
 )
 
