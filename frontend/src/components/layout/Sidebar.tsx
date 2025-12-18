@@ -1,6 +1,5 @@
 import Image from "next/image";
-import { ModelLoadSection } from "./sidebar/ModelLoadSection";
-import { TextGenerationSection } from "./sidebar/TextGenerationSection";
+import { AnalysisSection } from "./sidebar/AnalysisSection";
 import { SoundGenerationSection } from "./sidebar/SoundGenerationSection";
 import { AcousticsTab } from "./sidebar/AcousticsTab";
 import { useHorizontalScroll } from "@/hooks/useHorizontalScroll";
@@ -89,61 +88,23 @@ export function Sidebar(props: SidebarProps) {
           </div>
         </div>
 
-        {/* Text Generation Tab */}
+        {/* Analysis Tab */}
         <div className="flex flex-col gap-4" style={{ display: props.activeAiTab === 'text' ? 'flex' : 'none' }}>
-          <ModelLoadSection
-            modelEntities={props.modelEntities}
-            activeLoadTab={props.activeLoadTab}
-            modelFile={props.modelFile}
-            audioFile={props.audioFile}
-            isDragging={props.isDragging}
-            isUploading={props.isUploading}
-            isAnalyzingModel={props.isAnalyzingModel}
-            uploadError={props.uploadError}
-            analysisProgress={props.analysisProgress}
-            useModelAsContext={props.useModelAsContext}
-            onFileChange={props.onFileChange}
-            onDragOver={props.onDragOver}
-            onDragLeave={props.onDragLeave}
-            onDrop={props.onDrop}
-            onUploadModel={props.onUploadModel}
-            onLoadSampleIfc={props.onLoadSampleIfc}
-            setActiveLoadTab={props.setActiveLoadTab}
-            setUseModelAsContext={props.setUseModelAsContext}
-            isSEDAnalyzing={props.isSEDAnalyzing}
-            sedAudioInfo={props.sedAudioInfo}
-            sedAudioBuffer={props.sedAudioBuffer}
-            sedDetectedSounds={props.sedDetectedSounds}
-            sedError={props.sedError}
-            sedAnalysisOptions={props.sedAnalysisOptions}
-            onAnalyzeSoundEvents={props.onAnalyzeSoundEvents}
-            onToggleSEDOption={props.onToggleSEDOption}
-            onLoadSoundsFromSED={props.onLoadSoundsFromSED}
-            selectedDiverseEntities={props.selectedDiverseEntities}
-            isAnalyzingEntities={props.isAnalyzingEntities}
-            llmProgress={props.llmProgress}
-            numSounds={props.numSounds}
-            onAnalyzeModel={props.onAnalyzeModel}
-            onStopGeneration={props.onStopGeneration}
-          />
-
-          <TextGenerationSection
-            modelEntities={props.modelEntities}
-            aiPrompt={props.aiPrompt}
-            numSounds={props.numSounds}
-            isGenerating={props.isGenerating}
-            isAnalyzingModel={props.isAnalyzingModel}
-            isAnalyzingEntities={props.isAnalyzingEntities}
-            llmProgress={props.llmProgress}
-            aiError={props.aiError}
-            aiResponse={props.aiResponse}
-            showConfirmLoadSounds={props.showConfirmLoadSounds}
-            analysisProgress={props.analysisProgress}
-            setAiPrompt={props.setAiPrompt}
-            setNumSounds={props.setNumSounds}
-            onGenerateText={props.onGenerateText}
-            onStopGeneration={props.onStopGeneration}
-            onLoadSoundsToGeneration={props.onLoadSoundsToGeneration}
+          <AnalysisSection
+            analysisConfigs={props.analysisConfigs}
+            activeAnalysisTab={props.activeAnalysisTab}
+            isAnalyzing={props.isAnalyzing}
+            analysisError={props.analysisError}
+            analysisResults={props.analysisResults}
+            onAddConfig={props.onAddAnalysisConfig}
+            onRemoveConfig={props.onRemoveAnalysisConfig}
+            onUpdateConfig={props.onUpdateAnalysisConfig}
+            onSetActiveTab={props.onSetActiveAnalysisTab}
+            onAnalyze={props.onAnalyze}
+            onStopAnalysis={props.onStopAnalysis}
+            onTogglePromptSelection={props.onTogglePromptSelection}
+            onSendToSoundGeneration={props.onSendToSoundGeneration}
+            onReset={props.onResetAnalysis}
           />
         </div>
 
@@ -165,7 +126,6 @@ export function Sidebar(props: SidebarProps) {
             onBatchAddConfigs={props.onBatchAddSoundConfigs}
             onRemoveConfig={props.onRemoveSoundConfig}
             onUpdateConfig={props.onUpdateSoundConfig}
-            onModeChange={props.onSoundModeChange}
             onGenerate={props.onGenerateSounds}
             onStopGeneration={props.onStopSoundGeneration}
             onGlobalDurationChange={props.onGlobalDurationChange}

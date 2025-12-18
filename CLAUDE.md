@@ -34,37 +34,6 @@ Use this tree to guide your actions.
       * Add a new method to `frontend/src/services/api.ts`.
       * **NEVER** use `fetch` directly in a component.
 
-### 2\. Required Documentation
-
-**After ANY change, you must update the following:**
-
-1.  **`CHANGELOG.md` (ALWAYS)**
-
-      * Log important changes with their file paths.
-      * Follow the existing format (see below).
-      * Be as synthetic as possible: 5 lines maximum
-
-2.  **`architecture.md` (WHEN STRUCTURE CHANGES)**
-
-      * **See `architecture.md` for the complete system architecture, data flows, and component hierarchy.**
-      * You **MUST** update this file if you:
-          * Add, rename, move, or delete files/directories.
-          * Change the data flow between components.
-          * Add a new service or architectural pattern.
-      * When updating, add the new file(s) to the directory tree with a brief comment.
-
-### 3\. Changelog Format
-
-Use this format in `CHANGELOG.md`:
-
-```markdown
-## [2025-10-21 14:30] - Feature Name
-### Added / Changed
-- `backend/routers/new.py` - New endpoint description
-- `frontend/src/hooks/useExample.ts` - What changed
-```
-
------
 
 ## 🏛️ Core Principles
 

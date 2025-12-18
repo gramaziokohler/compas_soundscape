@@ -28,6 +28,7 @@
  */
 
 import { HRTF } from '@/lib/constants';
+import { createResampledAudioBuffer } from './resample-buffer';
 
 /**
  * SOFA JSON structure (simplified)
@@ -157,16 +158,18 @@ function parseSOFAData(sofaData: SOFAData): ParsedHRTF {
  * A more sophisticated implementation would:
  * - Select optimal virtual speaker positions based on ambisonic order
  * - Interleave multiple HRTF positions for different ambisonic channels
- * - Handle re-sampling if needed
+ *
+ * Automatically resamples HRTF data to match the AudioContext sample rate,
+ * which is required for ConvolverNode compatibility.
  *
  * @param audioContext - Web Audio API context
  * @param hrtfData - Parsed HRTF dataset
- * @returns AudioBuffer containing HRTF data
+ * @returns Promise resolving to AudioBuffer containing HRTF data (resampled to context rate)
  */
-export function createHRTFAudioBuffer(
+export async function createHRTFAudioBuffer(
   audioContext: AudioContext,
   hrtfData: ParsedHRTF
-): AudioBuffer {
+): Promise<AudioBuffer> {
   const { sampleRate, irData, numChannels, irLength } = hrtfData;
 
   // For now, use the first position (front-facing, 0° azimuth, 0° elevation)
@@ -177,24 +180,29 @@ export function createHRTFAudioBuffer(
     throw new Error('Invalid IR data for first position');
   }
 
-  // Create AudioBuffer
-  const buffer = audioContext.createBuffer(
-    numChannels,
-    irLength,
-    sampleRate
-  );
-
-  // Copy IR data to AudioBuffer channels
+  // Create Float32Arrays for each channel
+  const channelData: Float32Array[] = [];
   for (let channel = 0; channel < numChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
     const irChannelData = firstPositionIR[channel];
+    const float32Data = new Float32Array(irLength);
 
     for (let sample = 0; sample < irLength; sample++) {
-      channelData[sample] = irChannelData[sample];
+      float32Data[sample] = irChannelData[sample];
     }
+    channelData.push(float32Data);
   }
 
-  console.log(`[HRTF Loader] Created AudioBuffer: ${numChannels} channels, ${irLength} samples`);
+  console.log(`[HRTF Loader] Creating AudioBuffer: ${numChannels} channels, ${irLength} samples @ ${sampleRate} Hz`);
+
+  // Use resampling utility to create buffer at correct sample rate
+  const buffer = await createResampledAudioBuffer(audioContext, channelData, sampleRate);
+
+  // Only mention resampling if it actually occurred
+  if (sampleRate !== audioContext.sampleRate) {
+    console.log(`[HRTF Loader] Resampled to ${buffer.sampleRate} Hz (${buffer.length} samples)`);
+  } else {
+    console.log(`[HRTF Loader] Created AudioBuffer: ${buffer.numberOfChannels} channels, ${buffer.length} samples @ ${buffer.sampleRate} Hz`);
+  }
 
   return buffer;
 }
@@ -213,7 +221,7 @@ export async function loadHRTFAudioBuffer(
   path: string = HRTF.DEFAULT_HRTF_PATH
 ): Promise<AudioBuffer> {
   const hrtfData = await loadHRTFJSON(path);
-  return createHRTFAudioBuffer(audioContext, hrtfData);
+  return await createHRTFAudioBuffer(audioContext, hrtfData);
 }
 
 /**

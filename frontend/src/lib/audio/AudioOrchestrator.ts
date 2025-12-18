@@ -23,10 +23,10 @@ import { AudioMode } from '@/types/audio';
 
 import { AnechoicMode } from './modes/AnechoicMode';
 import { ResonanceMode } from './modes/ResonanceMode';
-import { MonoIRMode } from './modes/MonoIRMode';
-import { StereoIRMode } from './modes/StereoIRMode';
 import { AmbisonicIRMode } from './modes/AmbisonicIRMode';
+import type { IBinauralDecoder } from './core/interfaces/IBinauralDecoder';
 import { BinauralDecoder } from './decoders/BinauralDecoder';
+import { OmnitoneFOADecoder } from './decoders/OmnitoneFOADecoder';
 
 // Utilities
 import {
@@ -56,7 +56,7 @@ import {
   getAudioBufferInfo,
   formatAudioBufferInfo
 } from './utils/audio-file-decoder';
-import { AUDIO_CONTROL } from '@/lib/constants';
+import { AUDIO_CONTROL, AMBISONIC } from '@/lib/constants';
 
 export class AudioOrchestrator implements IAudioOrchestrator {
   private audioContext: AudioContext | null = null;
@@ -67,12 +67,11 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   // Mode instances (lazy-loaded)
   private anechoicMode: AnechoicMode | null = null;
   private resonanceMode: ResonanceMode | null = null;
-  private monoIRMode: MonoIRMode | null = null;
-  private stereoIRMode: StereoIRMode | null = null;
   private ambisonicIRMode: AmbisonicIRMode | null = null;
 
   // Binaural decoder (shared by all ambisonic modes)
-  private binauralDecoder: BinauralDecoder | null = null;
+  // Uses either JSAmbisonics or Omnitone based on AMBISONIC.USE_OMNITONE_FOR_FOA constant
+  private binauralDecoder: IBinauralDecoder | null = null;
   private hrtfLoadFailed: boolean = false;
 
   // IR state
@@ -102,6 +101,9 @@ export class AudioOrchestrator implements IAudioOrchestrator {
 
   // Source registry - tracks all sources for re-creation on mode switch
   private sourceRegistry: Map<string, { buffer: AudioBuffer; position: Position }> = new Map();
+
+  // IR cache - prevents double downloads of same IR (keyed by IR metadata id)
+  private irCache: Map<string, AudioBuffer> = new Map();
 
   // Browser capabilities
   private browserCapabilities: {
@@ -170,7 +172,18 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       }
 
       // Create binaural decoder (shared by all ambisonic modes)
-      this.binauralDecoder = new BinauralDecoder();
+      // For FOA, use Omnitone if enabled in constants, otherwise use JSAmbisonics
+      // For SOA/TOA, always use JSAmbisonics (Omnitone doesn't support higher orders)
+      const useFOA = this.ambisonicOrder === 1;
+      const useOmnitone = useFOA && AMBISONIC.USE_OMNITONE_FOR_FOA;
+      
+      if (useOmnitone) {
+        console.log('[AudioOrchestrator] Using Omnitone FOA decoder (Google SADIE HRTFs)');
+        this.binauralDecoder = new OmnitoneFOADecoder();
+      } else {
+        console.log(`[AudioOrchestrator] Using JSAmbisonics decoder (order ${this.ambisonicOrder})`);
+        this.binauralDecoder = new BinauralDecoder();
+      }
       
       try {
         await this.binauralDecoder.initialize(audioContext, this.ambisonicOrder);
@@ -256,17 +269,11 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    */
   private updateModeIRBuffer(mode: IAudioMode, irBuffer: AudioBuffer): void {
     const channels = irBuffer.numberOfChannels;
-    
+
     // Type guard to check if mode has setImpulseResponse method
     if ('setImpulseResponse' in mode && typeof (mode as any).setImpulseResponse === 'function') {
-      // Check if buffer matches mode requirements
-      if (mode === this.monoIRMode && channels === 1) {
-        console.log('[AudioOrchestrator] Updating MonoIRMode with new IR buffer');
-        this.monoIRMode.setImpulseResponse(irBuffer);
-      } else if (mode === this.stereoIRMode && channels === 2) {
-        console.log('[AudioOrchestrator] Updating StereoIRMode with new IR buffer');
-        this.stereoIRMode.setImpulseResponse(irBuffer);
-      } else if (mode === this.ambisonicIRMode && [4, 9, 16].includes(channels)) {
+      // Check if buffer matches mode requirements (all supported channel counts)
+      if (mode === this.ambisonicIRMode && [1, 2, 4, 9, 16].includes(channels)) {
         console.log('[AudioOrchestrator] Updating AmbisonicIRMode with new IR buffer');
         this.ambisonicIRMode.setImpulseResponse(irBuffer);
       }
@@ -296,12 +303,9 @@ export class AudioOrchestrator implements IAudioOrchestrator {
           if (!this.anechoicMode) {
             this.anechoicMode = new AnechoicMode();
             await this.anechoicMode.initialize(this.audioContext, this.ambisonicOrder);
-            
+
             // Connect to binaural decoder, then to limiter
             if (this.binauralDecoder) {
-              // Reset rotation offset since AnechoicMode handles absolute positioning
-              this.binauralDecoder.setRotationOffset(0);
-              
               safeConnect(
                 this.anechoicMode.getOutputNode(),
                 this.binauralDecoder.getInputNode()
@@ -311,54 +315,11 @@ export class AudioOrchestrator implements IAudioOrchestrator {
                 this.limiter!
               );
             }
-          } else {
-            // If mode already exists but we are switching back to it, ensure offset is reset
-            if (this.binauralDecoder) {
-              this.binauralDecoder.setRotationOffset(0);
-            }
           }
           return this.anechoicMode;
 
-        case AudioMode.MONO_IR:
-          if (!this.monoIRMode) {
-            this.monoIRMode = new MonoIRMode();
-            await this.monoIRMode.initialize(this.audioContext);
-            this.connectModeToOutput(this.monoIRMode);
-            
-            // Set ambisonic order
-            await this.monoIRMode.setAmbisonicOrder(this.ambisonicOrder);
-          }
-          
-          // Always update IR buffer if available (handles IR switching)
-          if (this.irState.buffer && this.irState.buffer.numberOfChannels === 1) {
-            this.monoIRMode.setImpulseResponse(this.irState.buffer);
-          }
-          
-          return this.monoIRMode;
-
-        case AudioMode.STEREO_IR:
-          if (!this.stereoIRMode) {
-            this.stereoIRMode = new StereoIRMode();
-            await this.stereoIRMode.initialize(this.audioContext);
-            this.connectModeToOutput(this.stereoIRMode);
-            
-            // Set interpretation mode from preferences (default to 'binaural')
-            await this.stereoIRMode.setInterpretationMode(
-              this.noIRPreferences.stereoIRInterpretation || 'binaural'
-            );
-            
-            // Set ambisonic order (for speaker mode)
-            await this.stereoIRMode.setAmbisonicOrder(this.ambisonicOrder);
-          }
-          
-          // Always update IR buffer if available (handles IR switching)
-          if (this.irState.buffer && this.irState.buffer.numberOfChannels === 2) {
-            this.stereoIRMode.setImpulseResponse(this.irState.buffer);
-          }
-          
-          return this.stereoIRMode;
-
         case AudioMode.AMBISONIC_IR:
+          // Handles all IR types: Mono (1ch), Stereo (2ch), FOA (4ch), SOA (9ch), TOA (16ch)
           if (!this.ambisonicIRMode) {
             this.ambisonicIRMode = new AmbisonicIRMode();
             await this.ambisonicIRMode.initialize(this.audioContext);
@@ -366,14 +327,17 @@ export class AudioOrchestrator implements IAudioOrchestrator {
           }
           
           // Always update IR buffer if available (handles IR switching)
+          // Supports all IR types: mono (1ch), stereo (2ch), FOA (4ch), SOA (9ch), and TOA (16ch)
           const channels = this.irState.buffer?.numberOfChannels;
-          if (this.irState.buffer && channels && [4, 9, 16].includes(channels)) {
+          if (this.irState.buffer && channels && [1, 2, 4, 9, 16].includes(channels)) {
             await this.ambisonicIRMode.setImpulseResponse(this.irState.buffer);
-            
-            // Update ambisonic order from IR
-            const order = getAmbisonicOrderFromChannels(channels);
-            if (order) {
-              this.ambisonicOrder = order;
+
+            // Update ambisonic order from IR (for multi-channel IRs)
+            if (channels > 1) {
+              const order = getAmbisonicOrderFromChannels(channels);
+              if (order) {
+                this.ambisonicOrder = order;
+              }
             }
           }
           
@@ -413,9 +377,11 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       ambisonicOrder: config.ambisonicOrder
     });
 
-    // Skip if already in this mode
-    if (newMode === this.currentMode && !config.ambisonicOrder) {
-      console.log(`[AudioOrchestrator] Already in ${newMode} mode`);
+    // Skip if already in this mode with same ambisonic order AND mode instance exists
+    // Must check currentModeInstance to ensure mode is actually initialized
+    const sameOrder = !config.ambisonicOrder || config.ambisonicOrder === this.ambisonicOrder;
+    if (newMode === this.currentMode && sameOrder && this.currentModeInstance) {
+      console.log(`[AudioOrchestrator] Already in ${newMode} mode (order ${this.ambisonicOrder}), skipping switch`);
       return;
     }
 
@@ -538,10 +504,15 @@ export class AudioOrchestrator implements IAudioOrchestrator {
         isSelected: this.irState.isSelected
       });
 
-      // Switch to appropriate IR mode based on channel count
-      console.log('[AudioOrchestrator] Calling autoSelectMode() to switch to IR mode...');
-      await this.autoSelectMode();
-      console.log('[AudioOrchestrator] Mode after autoSelectMode:', this.currentMode);
+      // Only switch mode if not already in AMBISONIC_IR mode with initialized instance
+      // This prevents unnecessary mode switches when switching between simulation tabs
+      if (this.currentMode !== AudioMode.AMBISONIC_IR || !this.currentModeInstance) {
+        console.log('[AudioOrchestrator] Calling autoSelectMode() to switch to IR mode...');
+        await this.autoSelectMode();
+        console.log('[AudioOrchestrator] Mode after autoSelectMode:', this.currentMode);
+      } else {
+        console.log('[AudioOrchestrator] Already in AMBISONIC_IR mode, skipping mode switch');
+      }
     } else {
       console.warn('[AudioOrchestrator] No IR metadata found in mapping - cannot determine channel count');
     }
@@ -630,6 +601,14 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       throw new Error('[AudioOrchestrator] Not initialized');
     }
 
+    // Check cache first
+    const cacheKey = irMetadata.id;
+    const cached = this.irCache.get(cacheKey);
+    if (cached) {
+      console.log(`[AudioOrchestrator] Using cached IR: ${irMetadata.name}`);
+      return cached;
+    }
+
     try {
       // Build full URL (metadata.url is relative like "/static/impulse_responses/file.wav")
       const fullUrl = `http://localhost:8000${irMetadata.url}`;
@@ -645,6 +624,9 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       // Decode audio data
       const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
 
+      // Cache the decoded buffer
+      this.irCache.set(cacheKey, audioBuffer);
+
       console.log(`[AudioOrchestrator] Downloaded and decoded IR: ${irMetadata.name} (${audioBuffer.numberOfChannels}ch)`);
 
       return audioBuffer;
@@ -655,12 +637,21 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   }
 
   /**
+   * Clear IR cache (called when simulation changes)
+   */
+  private clearIRCache(): void {
+    this.irCache.clear();
+    console.log('[AudioOrchestrator] IR cache cleared');
+  }
+
+  /**
    * Clear source-receiver IR mapping (exit simulation mode)
    */
   clearSourceReceiverIRMapping(): void {
     this.sourceReceiverIRMapping = null;
     this.simulationMode = 'none';
     this.activeReceiverId = null;
+    this.clearIRCache();
 
     console.log('[AudioOrchestrator] Source-receiver IR mapping cleared');
   }
@@ -672,9 +663,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     const requiresReceiver = this.currentModeInstance?.requiresReceiverMode() || false;
     const isAmbisonic = [
       AudioMode.ANECHOIC,
-      AudioMode.AMBISONIC_IR,
-      AudioMode.MONO_IR,
-      AudioMode.STEREO_IR
+      AudioMode.AMBISONIC_IR
     ].includes(this.currentMode);
 
     // Determine DOF description
@@ -699,18 +688,8 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       }
     }
     
-    // Stereo IR interpretation mode info
-    if (this.currentMode === AudioMode.STEREO_IR && this.stereoIRMode) {
-      const interpretation = this.stereoIRMode.getInterpretationMode();
-      if (interpretation === 'binaural') {
-        notices.push('🎧 Binaural mode (direct stereo playback)');
-      } else {
-        notices.push(`🔊 Speaker mode (L/R at ±30°, ${this.ambisonicOrder === 1 ? 'FOA' : 'TOA'})`);
-      }
-    }
-    
-    // Ambisonic order info (for non-stereo modes or speaker mode)
-    if (isAmbisonic && this.currentMode !== AudioMode.STEREO_IR) {
+    // Ambisonic order info
+    if (isAmbisonic) {
       const orderNames = { 1: 'FOA (4ch)', 2: 'SOA (9ch)', 3: 'TOA (16ch)' };
       notices.push(`🎵 ${orderNames[this.ambisonicOrder]} ambisonic rendering`);
     }
@@ -937,13 +916,11 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     // Recreate current mode with new order (if ambisonic)
     const isAnechoic = this.currentMode === AudioMode.ANECHOIC;
     const isAmbisonicIR = this.currentMode === AudioMode.AMBISONIC_IR;
-    const isMonoIR = this.currentMode === AudioMode.MONO_IR;
-    const isStereoIR = this.currentMode === AudioMode.STEREO_IR;
 
     if (isAnechoic && this.anechoicMode) {
       // Save old mode
       const oldMode = this.anechoicMode;
-      
+
       // Create new mode with new order
       this.anechoicMode = new AnechoicMode();
       await this.anechoicMode.initialize(this.audioContext!, order);
@@ -955,29 +932,19 @@ export class AudioOrchestrator implements IAudioOrchestrator {
 
       // Smooth transition
       await smoothModeTransition(oldMode, this.anechoicMode, this.audioContext!);
-      
+
       // Cleanup old mode
       oldMode.dispose();
-      
+
       // Update current instance
       this.currentModeInstance = this.anechoicMode;
-    } else if (isMonoIR && this.monoIRMode) {
-      // Update ambisonic order in MonoIRMode
-      await this.monoIRMode.setAmbisonicOrder(order);
-      
-      console.log(`[AudioOrchestrator] MonoIRMode ambisonic order updated to ${order}`);
-    } else if (isStereoIR && this.stereoIRMode) {
-      // Update ambisonic order in StereoIRMode (speaker mode only)
-      await this.stereoIRMode.setAmbisonicOrder(order);
-      
-      console.log(`[AudioOrchestrator] StereoIRMode ambisonic order updated to ${order}`);
     } else if (isAmbisonicIR && this.ambisonicIRMode) {
       // AmbisonicIRMode order is determined by IR channel count, cannot be changed manually
       const currentOrder = this.ambisonicIRMode.getAmbisonicOrder();
       console.warn(
         `[AudioOrchestrator] Cannot change ambisonic order in AmbisonicIRMode - order is determined by IR channel count (current: ${currentOrder})`
       );
-      
+
       // Keep the current order from IR
       order = currentOrder;
     }
@@ -986,21 +953,6 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     console.log(`[AudioOrchestrator] Ambisonic order updated to ${order}`);
   }
 
-  /**
-   * Set stereo IR interpretation mode
-   * Only affects Stereo IR mode
-   */
-  async setStereoIRInterpretation(mode: 'binaural' | 'speaker'): Promise<void> {
-    this.noIRPreferences.stereoIRInterpretation = mode;
-
-    // If currently in stereo IR mode, apply the change immediately
-    if (this.currentMode === AudioMode.STEREO_IR && this.stereoIRMode) {
-      console.log(`[AudioOrchestrator] Applying stereo IR interpretation: ${mode}`);
-      await this.stereoIRMode.setInterpretationMode(mode);
-    } else {
-      console.log(`[AudioOrchestrator] Stereo IR interpretation preference set to: ${mode}`);
-    }
-  }
 
   /**
    * Set normalization for IR convolution
@@ -1297,14 +1249,6 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     if (this.resonanceMode) {
       this.resonanceMode.dispose();
       this.resonanceMode = null;
-    }
-    if (this.monoIRMode) {
-      this.monoIRMode.dispose();
-      this.monoIRMode = null;
-    }
-    if (this.stereoIRMode) {
-      this.stereoIRMode.dispose();
-      this.stereoIRMode = null;
     }
     if (this.ambisonicIRMode) {
       this.ambisonicIRMode.dispose();

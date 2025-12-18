@@ -79,9 +79,11 @@ export class JSAmbisonicDecoder {
    * Load HRTF filters for improved spatial accuracy
    *
    * @param hrtfBuffer - Multi-channel AudioBuffer containing HRTF data
-   *                     Format depends on ambisonic order:
-   *                     - FOA (order 1): 4-channel HRTFs
-   *                     - TOA (order 3): 16-channel HRTFs
+   *                     Format: VIRTUAL_SPEAKERS × 2 channels (L/R pairs)
+   *                     Configured via HRTF.VIRTUAL_SPEAKERS in constants.ts
+   *
+   * Note: JSAmbisonics binDecoder processes HRTFs based on the
+   * configured virtual speaker count, not the ambisonic order.
    */
   async loadHRTFs(hrtfBuffer: AudioBuffer): Promise<void> {
     try {

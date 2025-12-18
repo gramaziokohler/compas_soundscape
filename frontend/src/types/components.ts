@@ -19,6 +19,9 @@ import type {
   LibrarySearchResult,
   ReceiverData,
   EntityData,
+  AnalysisConfig,
+  AnalysisResult,
+  AnalysisType,
 } from "./index";
 import type { AuralizationConfig, ResonanceAudioConfig, ResonanceRoomDimensions, ResonanceRoomMaterial } from "./audio";
 import type { ModalAnalysisResult, ModeVisualizationState } from "./modal";
@@ -175,6 +178,21 @@ export interface SidebarProps {
   onSetActiveSimulation?: (index: number | null) => void;
   onUpdateSimulationName?: (index: number, name: string) => void;
   onToggleExpandSimulation?: (index: number) => void;
+  // Analysis props (NEW)
+  analysisConfigs: AnalysisConfig[];
+  activeAnalysisTab: number;
+  isAnalyzing: boolean;
+  analysisError: string | null;
+  analysisResults: AnalysisResult[];
+  onAddAnalysisConfig: (type: AnalysisType) => void;
+  onRemoveAnalysisConfig: (index: number) => void;
+  onUpdateAnalysisConfig: (index: number, updates: Partial<AnalysisConfig>) => void;
+  onSetActiveAnalysisTab: (index: number) => void;
+  onAnalyze: (index: number) => void;
+  onStopAnalysis: () => void;
+  onTogglePromptSelection: (configIndex: number, promptId: string) => void;
+  onSendToSoundGeneration: () => void;
+  onResetAnalysis: (index: number) => void;
 }
 
 /**

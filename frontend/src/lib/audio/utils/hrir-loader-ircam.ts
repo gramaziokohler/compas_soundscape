@@ -20,6 +20,15 @@
  */
 
 import { HRTF } from '@/lib/constants';
+import { resampleAudioBuffer } from './resample-buffer';
+
+// Type alias for virtual speaker count lookup
+type AmbisonicOrderKey = 'FOA' | 'SOA' | 'TOA';
+const ORDER_TO_KEY: Record<1 | 2 | 3, AmbisonicOrderKey> = {
+  1: 'FOA',
+  2: 'SOA',
+  3: 'TOA',
+};
 
 /**
  * IRCAM SOFA JSON structure
@@ -73,47 +82,83 @@ interface ParsedHRIR {
 /**
  * Virtual speaker layouts for different ambisonic orders
  * Based on optimal t-designs for spherical sampling
+ *
+ * Each layout contains positions ordered by importance - first positions are
+ * used when fewer speakers are configured. Layouts support up to:
+ * - FOA: 8 speakers (cube vertices)
+ * - SOA: 12 speakers (icosahedron-like)
+ * - TOA: 26 speakers (Lebedev grid)
  */
 const VIRTUAL_SPEAKER_LAYOUTS: Record<1 | 2 | 3, VirtualSpeaker[]> = {
-  // FOA: Tetrahedral arrangement (4 speakers)
+  // FOA: Up to 8 speakers (horizontal quad → cube)
   1: [
+    // Horizontal quad (minimum 4)
     { azimuth: 0, elevation: 0 },
     { azimuth: 90, elevation: 0 },
     { azimuth: 180, elevation: 0 },
     { azimuth: 270, elevation: 0 },
+    // Add top/bottom for cube (8 total)
+    { azimuth: 45, elevation: 35.264 },   // Cube vertex
+    { azimuth: 135, elevation: 35.264 },
+    { azimuth: 225, elevation: 35.264 },
+    { azimuth: 315, elevation: 35.264 },
   ],
 
-  // SOA: Cube + center (9 speakers)
+  // SOA: Up to 12 speakers (cube + zenith → extended)
   2: [
+    // Horizontal quad
     { azimuth: 0, elevation: 0 },
     { azimuth: 90, elevation: 0 },
     { azimuth: 180, elevation: 0 },
     { azimuth: 270, elevation: 0 },
+    // Upper hemisphere
     { azimuth: 45, elevation: 35 },
     { azimuth: 135, elevation: 35 },
     { azimuth: 225, elevation: 35 },
     { azimuth: 315, elevation: 35 },
+    // Zenith
     { azimuth: 0, elevation: 90 },
+    // Lower hemisphere (for 12 speakers)
+    { azimuth: 45, elevation: -35 },
+    { azimuth: 135, elevation: -35 },
+    { azimuth: 225, elevation: -35 },
   ],
 
-  // TOA: Dodecahedron vertices (16 speakers)
+  // TOA: Up to 26 speakers (Lebedev-like grid)
   3: [
+    // Horizontal quad
     { azimuth: 0, elevation: 0 },
     { azimuth: 90, elevation: 0 },
     { azimuth: 180, elevation: 0 },
     { azimuth: 270, elevation: 0 },
+    // Upper mid-elevation
     { azimuth: 45, elevation: 35 },
     { azimuth: 135, elevation: 35 },
     { azimuth: 225, elevation: 35 },
     { azimuth: 315, elevation: 35 },
+    // Lower mid-elevation
     { azimuth: 45, elevation: -35 },
     { azimuth: 135, elevation: -35 },
     { azimuth: 225, elevation: -35 },
     { azimuth: 315, elevation: -35 },
+    // Poles
     { azimuth: 0, elevation: 90 },
-    { azimuth: 90, elevation: 45 },
-    { azimuth: 180, elevation: 45 },
-    { azimuth: 270, elevation: 45 },
+    { azimuth: 0, elevation: -90 },
+    // High elevation ring
+    { azimuth: 0, elevation: 55 },
+    { azimuth: 90, elevation: 55 },
+    // Extended for Lebedev (up to 26)
+    { azimuth: 180, elevation: 55 },
+    { azimuth: 270, elevation: 55 },
+    { azimuth: 0, elevation: -55 },
+    { azimuth: 90, elevation: -55 },
+    { azimuth: 180, elevation: -55 },
+    { azimuth: 270, elevation: -55 },
+    // Additional diagonal positions
+    { azimuth: 45, elevation: 0 },
+    { azimuth: 135, elevation: 0 },
+    { azimuth: 225, elevation: 0 },
+    { azimuth: 315, elevation: 0 },
   ],
 };
 
@@ -272,36 +317,56 @@ function findNearestHRTF(
  * Each virtual speaker contributes 2 channels (left and right HRTFs).
  * The channel layout is: [L0, R0, L1, R1, L2, R2, ...]
  *
+ * Automatically resamples HRIR data to match the AudioContext sample rate,
+ * which is required for ConvolverNode compatibility.
+ *
  * @param audioContext - Web Audio API context
  * @param sofaData - Parsed IRCAM SOFA data
  * @param order - Ambisonic order (1=FOA, 2=SOA, 3=TOA)
- * @returns AudioBuffer with (order+1)^2 channels
+ * @returns Promise resolving to AudioBuffer with (order+1)^2 channels (resampled to context rate)
  */
-function generateAmbisonicFilters(
+async function generateAmbisonicFilters(
   audioContext: AudioContext,
   hrir: ParsedHRIR,
   order: 1 | 2 | 3
-): AudioBuffer {
-  const virtualSpeakers = VIRTUAL_SPEAKER_LAYOUTS[order];
-  const numSpeakers = virtualSpeakers.length;
-  const expectedChannels = Math.pow(order + 1, 2);
+): Promise<AudioBuffer> {
+  // Get configured number of virtual speakers from constants
+  const orderKey = ORDER_TO_KEY[order];
+  const configuredSpeakers = HRTF.VIRTUAL_SPEAKERS[orderKey];
+  const availableLayout = VIRTUAL_SPEAKER_LAYOUTS[order];
+  const minRequired = Math.pow(order + 1, 2);
 
-  if (numSpeakers !== expectedChannels) {
-    throw new Error(
-      `Virtual speaker layout mismatch: expected ${expectedChannels} speakers for order ${order}, got ${numSpeakers}`
+  // Validate configuration
+  if (configuredSpeakers < minRequired) {
+    console.warn(
+      `[HRIRloader_ircam] Configured ${configuredSpeakers} speakers for ${orderKey}, ` +
+      `but minimum ${minRequired} required. Using ${minRequired}.`
     );
   }
+
+  // Use configured count, but don't exceed available layout positions
+  const numSpeakers = Math.min(configuredSpeakers, availableLayout.length);
+  const virtualSpeakers = availableLayout.slice(0, numSpeakers);
 
   // Create multi-channel AudioBuffer: 2 channels per speaker (L/R)
   // Total channels = numSpeakers * 2
   const totalChannels = numSpeakers * 2;
-  const buffer = audioContext.createBuffer(
+
+  // Create buffer using OfflineAudioContext at source sample rate
+  // (we'll resample it later to match the AudioContext rate)
+  const tempContext = new OfflineAudioContext(
     totalChannels,
     hrir.irLength,
     hrir.sampleRate
   );
 
-  console.log(`[HRIRloader_ircam] Creating ${totalChannels}-channel decoding buffer (${numSpeakers} virtual speakers)`);
+  const buffer = tempContext.createBuffer(
+    totalChannels,
+    hrir.irLength,
+    hrir.sampleRate
+  );
+
+  console.log(`[HRIRloader_ircam] Creating ${totalChannels}-channel decoding buffer (${numSpeakers} virtual speakers) @ ${hrir.sampleRate} Hz`);
 
   // For each virtual speaker, find nearest HRTF and copy L/R channels
   for (let i = 0; i < numSpeakers; i++) {
@@ -316,9 +381,17 @@ function generateAmbisonicFilters(
     rightChannel.set(hrir.rightIRs[nearestIndex]);
   }
 
-  console.log(`[HRIRloader_ircam] Generated ambisonic decoding filters: ${totalChannels} channels, ${hrir.irLength} samples`);
+  console.log(`[HRIRloader_ircam] Generated ambisonic decoding filters: ${totalChannels} channels, ${hrir.irLength} samples @ ${hrir.sampleRate} Hz`);
 
-  return buffer;
+  // Resample to match the AudioContext sample rate (required for ConvolverNode)
+  const resampledBuffer = await resampleAudioBuffer(buffer, audioContext.sampleRate);
+
+  // Only log resampling if it actually occurred
+  if (hrir.sampleRate !== audioContext.sampleRate) {
+    console.log(`[HRIRloader_ircam] Resampled to ${resampledBuffer.sampleRate} Hz (${resampledBuffer.length} samples)`);
+  }
+
+  return resampledBuffer;
 }
 
 /**
@@ -345,8 +418,8 @@ export async function loadIRCAMHRIR(
   // Parse HRIR data
   const hrir = parseIRCAMSOFA(sofaData);
 
-  // Generate ambisonic decoding filters
-  const decodingBuffer = generateAmbisonicFilters(audioContext, hrir, order);
+  // Generate ambisonic decoding filters (includes resampling to context rate)
+  const decodingBuffer = await generateAmbisonicFilters(audioContext, hrir, order);
 
   console.log(`[HRIRloader_ircam] Successfully loaded IRCAM HRIRs`);
 

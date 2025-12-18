@@ -12,8 +12,10 @@ import { loadAudioFile, revokeAudioUrl } from "@/lib/audio/audio-upload";
 import { calculateSoundPosition, type GeometryBounds } from "@/lib/sound/positioning";
 import { createSoundEventFromUpload } from "@/lib/sound/event-factory";
 import { trimDisplayName } from "@/lib/utils";
+import { useErrorNotification } from "@/contexts/ErrorContext";
 
 export function useSoundGeneration(geometryBounds: {min: number[], max: number[]} | null) {
+  const { addError } = useErrorNotification();
   const [soundConfigs, setSoundConfigs] = useState<SoundGenerationConfig[]>([]);
   const [activeSoundConfigTab, setActiveSoundConfigTab] = useState<number>(0);
   const [isSoundGenerating, setIsSoundGenerating] = useState<boolean>(false);
@@ -327,15 +329,20 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     } catch (err: any) {
       // Don't show error if request was aborted intentionally
       if (err.name === 'AbortError') {
-        setSoundGenError('Sound generation stopped by user.');
+        const errorMsg = 'Sound generation stopped by user.';
+        setSoundGenError(errorMsg);
+        addError(errorMsg, 'info');
       } else {
+        const isQuotaError = err.message.includes('quota') || err.message.includes('429');
+        const errorType: 'error' | 'warning' = isQuotaError ? 'warning' : 'error';
         setSoundGenError(err.message);
+        addError(err.message, errorType);
       }
     } finally {
       setIsSoundGenerating(false);
       abortControllerRef.current = null;
     }
-  }, [soundConfigs, geometryBounds, globalNegativePrompt, applyDenoising]);
+  }, [soundConfigs, geometryBounds, globalNegativePrompt, applyDenoising, addError]);
 
   const setSoundConfigsFromPrompts = useCallback((prompts: any[]) => {
     setSoundConfigs(prev => {

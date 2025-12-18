@@ -256,6 +256,35 @@ export function SoundTab({
 
         {/* Action buttons */}
         <div className="flex items-center gap-1 flex-shrink-0">
+
+          {/* Reset button - only show if sound is generated */}
+          {isGenerated && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onReset(index);
+              }}
+              className="w-5 h-5 flex items-center justify-center rounded-full transition-colors"
+              style={{
+                color: UI_COLORS.NEUTRAL_600
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_200;
+                e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent';
+                e.currentTarget.style.color = UI_COLORS.NEUTRAL_600;
+              }}
+              title="Reset to generation UI"
+            >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={4} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+            </button>
+          )}
+
+
           {/* Link to entity button - only show if model has entities */}
           {modelEntities.length > 0 && (
             <button
@@ -289,32 +318,6 @@ export function SoundTab({
             </button>
           )}
 
-          {/* Reset button - only show if sound is generated */}
-          {isGenerated && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onReset(index);
-              }}
-              className="w-5 h-5 flex items-center justify-center rounded-full transition-colors"
-              style={{
-                color: UI_COLORS.NEUTRAL_600
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_200;
-                e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = 'transparent';
-                e.currentTarget.style.color = UI_COLORS.NEUTRAL_600;
-              }}
-              title="Reset to generation UI"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </button>
-          )}
 
           {/* Mute button - compact, only show if generated */}
           {isGenerated && onMute && generatedSound && (

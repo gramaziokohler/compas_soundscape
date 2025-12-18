@@ -213,7 +213,18 @@ export const apiService = {
 
       if (!response.ok) {
         const err = await response.json().catch(() => ({ detail: 'Failed to generate text' }));
-        throw new Error(err.detail || 'Failed to generate text');
+        const errorMessage = err.detail || 'Failed to generate text';
+        
+        // Format quota errors nicely
+        if (response.status === 429) {
+          if (errorMessage.includes('quota')) {
+            throw new Error(`⚠️ ${errorMessage}`);
+          } else {
+            throw new Error('⚠️ API quota exhausted. Please try again later.');
+          }
+        }
+        
+        throw new Error(errorMessage);
       }
 
       return await response.json();
@@ -240,7 +251,18 @@ export const apiService = {
 
       if (!response.ok) {
         const err = await response.json().catch(() => ({ detail: 'Failed to generate sounds' }));
-        throw new Error(err.detail || 'Failed to generate sounds');
+        const errorMessage = err.detail || 'Failed to generate sounds';
+        
+        // Format quota errors nicely
+        if (response.status === 429) {
+          if (errorMessage.includes('quota')) {
+            throw new Error(`⚠️ ${errorMessage}`);
+          } else {
+            throw new Error('⚠️ API quota exhausted. Please try again later.');
+          }
+        }
+        
+        throw new Error(errorMessage);
       }
 
       return await response.json();

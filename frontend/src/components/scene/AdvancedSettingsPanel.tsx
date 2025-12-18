@@ -19,6 +19,9 @@ interface AdvancedSettingsPanelProps {
   onNormalizeImpulseResponsesChange: (value: boolean) => void;
   onAudioModelChange: (value: string) => void;
   onResetToDefaults: () => void;
+  // 3D Scene props
+  showAxesHelper: boolean;
+  onShowAxesHelperChange: (value: boolean) => void;
 }
 
 /**
@@ -68,7 +71,9 @@ export function AdvancedSettingsPanel({
   onApplyDenoisingChange,
   onNormalizeImpulseResponsesChange,
   onAudioModelChange,
-  onResetToDefaults
+  onResetToDefaults,
+  showAxesHelper,
+  onShowAxesHelperChange
 }: AdvancedSettingsPanelProps) {
   if (!isOpen) return null;
 
@@ -257,6 +262,33 @@ export function AdvancedSettingsPanel({
         </label>
         <p className="text-white text-[10px] mt-1 ml-6 opacity-50">
           Scale impulse response to -6dB headroom
+        </p>
+
+      </div>
+
+      {/* Divider */}
+      <div className="border-t border-white/20 my-3" />
+
+      {/* Section: 3D Scene */}
+      <div className="mb-2">
+        <h4 className="text-white text-xs font-medium mb-2 opacity-70 uppercase tracking-wide">
+          3D Scene
+        </h4>
+
+        {/* Show Axes Helper Checkbox */}
+        <label className="flex items-center cursor-pointer group">
+          <input
+            type="checkbox"
+            checked={showAxesHelper}
+            onChange={(e) => onShowAxesHelperChange(e.target.checked)}
+            className="w-4 h-4 accent-[#F500B8] cursor-pointer"
+          />
+          <span className="ml-2 text-white text-xs group-hover:text-gray-300 transition-colors">
+            Show Axes Helper
+          </span>
+        </label>
+        <p className="text-white text-[10px] mt-1 ml-6 opacity-50">
+          Red (X), Green (Y), and Blue (Z)
         </p>
 
       </div>

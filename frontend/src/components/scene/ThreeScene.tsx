@@ -152,6 +152,8 @@ export function ThreeScene({
   materialAssignments,
   activeSimulationIndex,
   activeSimulationConfig,
+  expandedSimulationIndex,
+  expandedSimulationConfig,
   goToReceiverId,
   activeAiTab = 'text'
 }: ThreeSceneProps) {
@@ -183,6 +185,7 @@ export function ThreeScene({
   const previousModeRef = useRef<string | null>(null);
   const modeVisualizerRef = useRef<ModeVisualizer | null>(null);
   const boundingBoxGroupRef = useRef<THREE.Group | null>(null);
+  const axesHelperRef = useRef<THREE.AxesHelper | null>(null);
 
   // Refs for callbacks to avoid infinite loops in useEffect
   const onStopAllRef = useRef(onStopAll);
@@ -351,6 +354,7 @@ export function ThreeScene({
 
   // Settings panel state
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState<boolean>(false);
+  const [showAxesHelper, setShowAxesHelper] = useState<boolean>(false);
 
   // Timeline playback hook (synced with PlaybackControls)
   const { playbackState, play: playTimeline, pause: pauseTimeline, stop: stopTimeline, seekTo } = useTimelinePlayback({
@@ -479,6 +483,13 @@ export function ThreeScene({
     onPlayAllRef.current = onPlayAll;
   }, [onPlayAll]);
 
+  // Control axes helper visibility
+  useEffect(() => {
+    if (axesHelperRef.current) {
+      axesHelperRef.current.visible = showAxesHelper;
+    }
+  }, [showAxesHelper]);
+
   // Close volume slider when clicking outside
   useEffect(() => {
     if (!showVolumeSlider) return;
@@ -525,6 +536,14 @@ export function ThreeScene({
 
     sceneCoordinator.resetCamera(geometryData !== null);
   }, [geometryData]);
+
+  // Wrap reset advanced settings to also reset scene settings
+  const handleResetAdvancedSettingsLocal = useCallback(() => {
+    setShowAxesHelper(false); // Reset axes helper to default (hidden)
+    if (onResetAdvancedSettings) {
+      onResetAdvancedSettings();
+    }
+  }, [onResetAdvancedSettings]);
 
   // Toggle global volume slider visibility
   const handleToggleVolumeSlider = useCallback(() => {
@@ -1001,6 +1020,12 @@ export function ThreeScene({
     const sceneCoordinator = new SceneCoordinator(mountNode, audioOrchestrator);
     sceneCoordinatorRef.current = sceneCoordinator;
 
+    // Add axes helper for spatial orientation (X=red, Y=green, Z=blue)
+    const axesHelper = new THREE.AxesHelper(5);
+    axesHelper.visible = false; // Hidden by default
+    sceneCoordinator.scene.add(axesHelper);
+    axesHelperRef.current = axesHelper;
+
     // Initialize Geometry Renderer
     const geometryRenderer = new GeometryRenderer(
       sceneCoordinator.scene,
@@ -1114,7 +1139,6 @@ export function ThreeScene({
         const soundEvent = sphere.userData.soundEvent;
         if (soundEvent?.id && onUpdateSoundPosition) {
           const positionArray: [number, number, number] = [position.x, position.y, position.z];
-          console.log('[ThreeScene] Drag ended - updating sound position in data:', { soundId: soundEvent.id, position: positionArray });
           onUpdateSoundPosition(soundEvent.id, positionArray);
         }
       }
@@ -1122,13 +1146,6 @@ export function ThreeScene({
 
     inputHandler.setOnReceiverPositionUpdated((receiverId, position) => {
       onUpdateReceiverPosition?.(receiverId, position);
-    });
-
-    // Update receiver data only when drag ends (not during drag)
-    inputHandler.setOnReceiverDragEnd((receiverId, position) => {
-      console.log('[ThreeScene] Receiver drag ended - updating position in data:', { receiverId, position });
-      // Receivers can update during drag since they don't get recreated
-      // But we can also defer to dragend for consistency
     });
 
     // Receiver selection (double-click) - triggers audio update via callback
@@ -1577,17 +1594,9 @@ export function ThreeScene({
       (activeSimulationConfig.mode === 'pyroomacoustics' || activeSimulationConfig.mode === 'choras') &&
       (activeSimulationConfig.state === 'before-simulation' || activeSimulationConfig.state === 'running');
 
-    console.log('[ThreeScene] Face highlighting effect triggered:', {
-      isFaceSelectionMode,
-      selectedGeometry,
-      activeAiTab,
-      activeSimulationIndex,
-      activeSimulationConfig: activeSimulationConfig ? { mode: activeSimulationConfig.mode, state: activeSimulationConfig.state } : null
-    });
 
     // Clear highlights when not in face selection mode
     if (!isFaceSelectionMode) {
-      console.log('[ThreeScene] Not in face selection mode, clearing highlights');
       geometryRenderer.highlightFace(-1, null);
       return;
     }
@@ -1597,7 +1606,6 @@ export function ThreeScene({
 
     // Highlight faces when selectedGeometry changes from sidebar
     if (selectedGeometry && geometryData?.face_entity_map) {
-      console.log('[ThreeScene] Highlighting face:', selectedGeometry, hasMaterialColoring ? '(wireframe)' : '(solid)');
       if (selectedGeometry.type === 'face' && selectedGeometry.faceIndex !== undefined) {
         // Highlight single face (use wireframe if material coloring is active)
         geometryRenderer.highlightFace(selectedGeometry.faceIndex, geometryData, hasMaterialColoring);
@@ -1641,29 +1649,24 @@ export function ThreeScene({
   }, [selectedGeometry, geometryData, activeAiTab, activeSimulationIndex, activeSimulationConfig, modelEntities]);
 
   // ============================================================================
-  // Effect - Material Coloring (Active Simulation Tab)
+  // Effect - Material Coloring (Active or Expanded Simulation Tab)
   // ============================================================================
   useEffect(() => {
-    console.log('ThreeScene: Material coloring effect triggered', {
-      hasGeometryRenderer: !!geometryRendererRef.current,
-      hasGeometryData: !!geometryData,
-      activeSimulationIndex,
-      hasActiveSimulationConfig: !!activeSimulationConfig,
-      faceToMaterialMapSize: (activeSimulationConfig as any)?.faceToMaterialMap?.size
-    });
+    // Use active simulation if available, otherwise fall back to expanded simulation
+    const displayConfig = activeSimulationConfig || expandedSimulationConfig;
+    const displayIndex = activeSimulationIndex !== null ? activeSimulationIndex : expandedSimulationIndex;
 
     const geometryRenderer = geometryRendererRef.current;
 
-    // Enable coloring when a simulation tab is active (not just when simulation completes)
-    if (!geometryRenderer || !geometryData || !activeSimulationConfig) {
+    // Enable coloring when a simulation tab is active or expanded
+    if (!geometryRenderer || !geometryData || !displayConfig) {
       return;
     }
 
-    const simConfig = activeSimulationConfig as any;
+    const simConfig = displayConfig as any;
     const faceToMaterialMap = simConfig.faceToMaterialMap as Map<number, string> | undefined;
 
     if (!faceToMaterialMap || faceToMaterialMap.size === 0) {
-      console.log('ThreeScene: No material assignments in active simulation');
       return;
     }
 
@@ -1671,7 +1674,6 @@ export function ThreeScene({
     const uniqueMaterialIds = Array.from(new Set(faceToMaterialMap.values()));
 
     if (uniqueMaterialIds.length === 0) {
-      console.log('ThreeScene: No unique materials found');
       return;
     }
 
@@ -1694,7 +1696,6 @@ export function ThreeScene({
       const gradientPosition = hashValue % 100; // 0-99
       const color = generateMaterialColor(100-gradientPosition, 100);
       materialColors.set(materialId, color);
-      console.log(`[ThreeScene] Material "${materialId}" -> hash=${hashValue}, position=${gradientPosition}, color=${color}`);
     });
 
     // Find the main geometry mesh
@@ -1706,8 +1707,6 @@ export function ThreeScene({
       console.log('ThreeScene: No geometry mesh found in contentGroup');
       return;
     }
-
-    console.log('ThreeScene: Applying material colors to faces from active simulation');
 
     const geometry = mesh.geometry;
     const positionCount = geometry.attributes.position.count;
@@ -1767,11 +1766,6 @@ export function ThreeScene({
           // Get all triangles for this face
           const triangleIndices = faceToTriangles.get(faceIndex) || [];
 
-          // Debug: Log specific faces
-          if (faceIndex === 7 || faceIndex === 15) {
-            console.log(`[ThreeScene] Face ${faceIndex}: materialId="${materialId}", color=${materialColor}, triangles=[${triangleIndices.join(', ')}]`);
-          }
-
           // Color all triangles belonging to this face
           for (const triangleIndex of triangleIndices) {
             const indexStart = triangleIndex * 3;
@@ -1787,8 +1781,6 @@ export function ThreeScene({
       }
     }
 
-    console.log('ThreeScene: Colored', coloredFaces, 'faces with materials from simulation', activeSimulationIndex);
-
     
 
     // Update geometry colors
@@ -1803,7 +1795,6 @@ export function ThreeScene({
       mesh.material.color.setRGB(1, 1, 1);
       mesh.material.needsUpdate = true;
       geometry.computeVertexNormals(); // Recompute normals for flat shading
-      console.log('ThreeScene: Material vertex colors enabled with flat shading (base color: white)');
     } else if (Array.isArray(mesh.material)) {
       // Handle multi-material case
       mesh.material.forEach(mat => {
@@ -1816,12 +1807,11 @@ export function ThreeScene({
         }
       });
       geometry.computeVertexNormals();
-      console.log('ThreeScene: Multi-material vertex colors enabled with flat shading (base color: white)');
     } else {
       console.warn('ThreeScene: Material type not supported for vertex colors', mesh.material.type);
     }
 
-  }, [activeSimulationConfig, geometryData, activeSimulationIndex]);
+  }, [activeSimulationConfig, expandedSimulationConfig, geometryData, activeSimulationIndex, expandedSimulationIndex]);
 
   // ============================================================================
   // Effect - Reset Material Colors When Leaving Acoustics Tab
@@ -1854,7 +1844,6 @@ export function ThreeScene({
           // Restore original geometry color from ARCTIC_THEME
           mesh.material.color.setHex(ARCTIC_THEME.GEOMETRY_COLOR);
           mesh.material.needsUpdate = true;
-          console.log('ThreeScene: Material colors reset (left Acoustics tab or no active simulation)');
         } else if (Array.isArray(mesh.material)) {
           mesh.material.forEach(mat => {
             if (mat instanceof THREE.MeshStandardMaterial) {
@@ -1865,7 +1854,6 @@ export function ThreeScene({
               mat.needsUpdate = true;
             }
           });
-          console.log('ThreeScene: Multi-material colors reset (left Acoustics tab or no active simulation)');
         }
       }
     }
@@ -2832,7 +2820,9 @@ export function ThreeScene({
         onApplyDenoisingChange={onApplyDenoisingChange || (() => {})}
         onNormalizeImpulseResponsesChange={onNormalizeImpulseResponsesChange || (() => {})}
         onAudioModelChange={onAudioModelChange || (() => {})}
-        onResetToDefaults={onResetAdvancedSettings || (() => {})}
+        onResetToDefaults={handleResetAdvancedSettingsLocal}
+        showAxesHelper={showAxesHelper}
+        onShowAxesHelperChange={setShowAxesHelper}
       />
 
       {/* Playback Controls - Bottom Center */}

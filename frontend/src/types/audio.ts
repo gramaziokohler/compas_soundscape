@@ -100,6 +100,8 @@ export interface ImpulseResponseMetadata {
   sampleRate: number;
   duration: number; // Duration in seconds
   fileSize: number; // Size in bytes
+  normalizationConvention?: 'N3D' | 'SN3D'; // Ambisonic normalization scheme (simulation metadata)
+  channelOrdering?: 'AmbiX' | 'FuMa' | 'ACN'; // Ambisonic channel ordering (AmbiX=W,Y,Z,X, FuMa=W,X,Y,Z)
 }
 
 // Auralization Settings
@@ -202,10 +204,9 @@ export enum AudioMode {
   NO_IR_RESONANCE = 'no_ir_resonance',  // ShoeBox Acoustics (synthetic room)
   ANECHOIC = 'anechoic',                // No Acoustics - Dry source → ambisonic encoder → binaural decoder
 
-  // IR modes (3 DOF rotation, static position)
-  MONO_IR = 'mono_ir',                  // Mono IR → convolver → encoder → decoder
-  STEREO_IR = 'stereo_ir',              // Stereo IR → L/R split → encode → decoder
-  AMBISONIC_IR = 'ambisonic_ir'         // FOA/TOA IR → convolver → rotator → decoder
+  // IR mode (3 DOF rotation, static position)
+  // Handles all IR types: Mono (1ch), Stereo (2ch), FOA (4ch), SOA (9ch), TOA (16ch)
+  AMBISONIC_IR = 'ambisonic_ir'         // All IR convolution → rotator → binaural decoder
 }
 
 /**

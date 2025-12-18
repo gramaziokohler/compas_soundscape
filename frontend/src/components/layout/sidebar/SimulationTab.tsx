@@ -42,6 +42,7 @@ interface SimulationTabProps {
   onToggleExpand: (index: number) => void;
   onUpdateConfig: (index: number, updates: Partial<SimulationConfig>) => void;
   onRemove: (index: number) => void;
+  onReset: (index: number) => void;
   onActivate: (index: number) => void;
   onUpdateName: (index: number, name: string) => void;
   
@@ -126,6 +127,7 @@ export function SimulationTab({
   onToggleExpand,
   onUpdateConfig,
   onRemove,
+  onReset,
   onActivate,
   onUpdateName,
   onRunSimulation,
@@ -264,6 +266,33 @@ export function SimulationTab({
           </div>
         )}
 
+        {/* Reset button - only show if simulation is completed */}
+        {isCompleted && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onReset(index);
+            }}
+            className="w-5 h-5 flex items-center justify-center rounded-full transition-colors"
+            style={{
+              color: UI_COLORS.NEUTRAL_600
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_200;
+              e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent';
+              e.currentTarget.style.color = UI_COLORS.NEUTRAL_600;
+            }}
+            title="Reset to simulation setup"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={4} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+          </button>
+        )}
+
         {/* Close button */}
         <button
           onClick={(e) => {
@@ -307,10 +336,10 @@ export function SimulationTab({
           {/* Choras Mode */}
           {config.mode === 'choras' && (
             <>
-              {/* Surface Materials (only show before simulation) */}
+              {/* Surface Materials - always render when callbacks are available */}
               {!isCompleted && onSelectGeometry && onAssignMaterial && (
                 <SurfaceMaterialsSection
-                  key={config.id}
+                  key={`${config.id}-${(config as any).resetTimestamp || 0}`}
                   modelEntities={modelEntities}
                   modelType={modelType}
                   geometryData={geometryData || null}
@@ -321,6 +350,7 @@ export function SimulationTab({
                   expandedItems={(config as any).expandedMaterialItems ? new Set((config as any).expandedMaterialItems) : undefined}
                   onExpandedItemsChange={(items) => onUpdateConfig(index, { expandedMaterialItems: Array.from(items) } as any)}
                   initialAssignments={(config as any).faceToMaterialMap}
+                  resetTrigger={(config as any).resetTimestamp}
                 />
               )}
 
@@ -378,10 +408,10 @@ export function SimulationTab({
           {/* Pyroomacoustics Mode */}
           {config.mode === 'pyroomacoustics' && (
             <>
-              {/* Surface Materials (only show before simulation) */}
+              {/* Surface Materials - always render when callbacks are available */}
               {!isCompleted && onSelectGeometry && onAssignMaterial && (
                 <SurfaceMaterialsSection
-                  key={config.id}
+                  key={`${config.id}-${(config as any).resetTimestamp || 0}`}
                   modelEntities={modelEntities}
                   modelType={modelType}
                   geometryData={geometryData || null}
@@ -392,6 +422,7 @@ export function SimulationTab({
                   expandedItems={(config as any).expandedMaterialItems ? new Set((config as any).expandedMaterialItems) : undefined}
                   onExpandedItemsChange={(items) => onUpdateConfig(index, { expandedMaterialItems: Array.from(items) } as any)}
                   initialAssignments={(config as any).faceToMaterialMap}
+                  resetTrigger={(config as any).resetTimestamp}
                 />
               )}
 

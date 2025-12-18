@@ -25,6 +25,12 @@
  * - HRTF-based binaural decoding with head tracking
  * - Physically accurate: IR contains spatial information, rotation applied to ambisonic field
  *
+ * Format Specification:
+ * - Channel ordering: FuMa - FOA: W,X,Y,Z (pyroomacoustics output, no conversion)
+ * - Normalization: N3D (orthonormalized 3D)
+ * - Compatible with JSAmbisonics library (expects N3D by default)
+ * - FOA IRs from pyroomacoustics use near-coincident tetrahedral array (5mm radius)
+ *
  * Implementation:
  * - Uses JSAmbisonics convolver for multi-channel IR convolution
  * - Uses BinauralDecoder for HRTF convolution and rotation
@@ -35,8 +41,10 @@
 
 import type { IAudioMode } from '../core/interfaces/IAudioMode';
 import type { Position, Orientation, AmbisonicOrder } from '@/types/audio';
+import type { IBinauralDecoder } from '../core/interfaces/IBinauralDecoder';
 import { AudioMode } from '@/types/audio';
 import { BinauralDecoder } from '../decoders/BinauralDecoder';
+import { OmnitoneFOADecoder } from '../decoders/OmnitoneFOADecoder';
 import { AUDIO_CONTROL, AMBISONIC } from '@/lib/constants';
 import { processImpulseResponse } from '../ir-utils';
 
@@ -65,9 +73,6 @@ interface SourceChain {
   convolver: any; // ambisonics.convolver
   sourceIRBuffer: AudioBuffer | null; // Per-source IR buffer (for simulation mode)
 
-  // Gain node for wet signal control
-  wetGain: GainNode;
-
   // Source state
   position: Position;
   isPlaying: boolean;
@@ -84,7 +89,8 @@ export class AmbisonicIRMode implements IAudioMode {
   private numAmbisonicChannels: number = 4; // 4, 9, or 16
   
   // Binaural decoder (includes rotation via sceneRotator)
-  private binauralDecoder: BinauralDecoder | null = null;
+  // Uses either JSAmbisonics or Omnitone based on AMBISONIC.USE_OMNITONE_FOR_FOA constant
+  private binauralDecoder: IBinauralDecoder | null = null;
 
   // Pipeline initialization counter (for race condition handling)
   private pipelineInitCounter: number = 0;
@@ -139,8 +145,11 @@ export class AmbisonicIRMode implements IAudioMode {
     const previousOrder = this.ambisonicOrder;
 
     // Detect order from channel count
+    // Mono (1ch) and Stereo (2ch) use FOA order with conversion
     let order: AmbisonicOrder;
-    if (channels === 4) {
+    if (channels === 1 || channels === 2) {
+      order = 1; // Mono/Stereo IR - convert to FOA
+    } else if (channels === 4) {
       order = 1; // FOA
     } else if (channels === 9) {
       order = 2; // SOA
@@ -148,13 +157,25 @@ export class AmbisonicIRMode implements IAudioMode {
       order = 3; // TOA
     } else {
       throw new Error(
-        `[AmbisonicIRMode] Unsupported channel count: ${channels}. Expected 4 (FOA), 9 (SOA), or 16 (TOA).`
+        `[AmbisonicIRMode] Unsupported channel count: ${channels}. Expected 1 (Mono), 2 (Stereo), 4 (FOA), 9 (SOA), or 16 (TOA).`
       );
     }
 
-    // Process IR buffer (resample if needed, apply fixed gain, convert SN3D→N3D)
+    // Convert mono/stereo IR to FOA format BEFORE processing
+    // This ensures processImpulseResponse treats it as ambisonic (preserves gain balance)
+    let bufferToProcess = irBuffer;
+    if (channels === 1) {
+      bufferToProcess = this.convertMonoToFOA(irBuffer);
+      console.log(`[AmbisonicIRMode] Converted mono IR to FOA (W channel only)`);
+    } else if (channels === 2) {
+      bufferToProcess = this.convertStereoToFOA(irBuffer);
+      console.log(`[AmbisonicIRMode] Converted stereo IR to FOA (L/R at ±30°)`);
+    }
+
+    // Process IR buffer (resample if needed, apply fixed gain)
     // Note: Uses fixed gain multiplier instead of normalization to preserve localization
-    const processedBuffer = processImpulseResponse(irBuffer, this.audioContext, true, true);
+    // Assumes IR is in FuMa format (W,X,Y,Z) with N3D normalization (from pyroomacoustics)
+    const processedBuffer = processImpulseResponse(bufferToProcess, this.audioContext, true);
 
     // Check if order changed - need to recreate convolvers
     const orderChanged = previousOrder !== order;
@@ -162,9 +183,9 @@ export class AmbisonicIRMode implements IAudioMode {
     // Store IR and configuration
     this.irBuffer = processedBuffer;
     this.ambisonicOrder = order;
-    this.numAmbisonicChannels = channels;
+    this.numAmbisonicChannels = processedBuffer.numberOfChannels; // Use processed buffer channel count (mono→4ch)
 
-    console.log(`[AmbisonicIRMode] IR buffer set (order ${order}, ${channels} channels, ${processedBuffer.sampleRate}Hz, ${processedBuffer.length} samples)`);
+    console.log(`[AmbisonicIRMode] IR buffer set (order ${order}, ${channels}ch → ${processedBuffer.numberOfChannels}ch, ${processedBuffer.sampleRate}Hz, ${processedBuffer.length} samples)`);
 
     // Initialize pipeline with detected order
     await this.initializePipeline();
@@ -228,7 +249,19 @@ export class AmbisonicIRMode implements IAudioMode {
     }
 
     // Create binaural decoder with rotation support
-    this.binauralDecoder = new BinauralDecoder();
+    // For FOA, use Omnitone if enabled in constants, otherwise use JSAmbisonics
+    // For SOA/TOA, always use JSAmbisonics (Omnitone doesn't support higher orders)
+    const useFOA = this.ambisonicOrder === 1;
+    const useOmnitone = useFOA && AMBISONIC.USE_OMNITONE_FOR_FOA;
+    
+    if (useOmnitone) {
+      console.log('[AmbisonicIRMode] Using Omnitone FOA decoder (Google SADIE HRTFs)');
+      this.binauralDecoder = new OmnitoneFOADecoder();
+    } else {
+      console.log(`[AmbisonicIRMode] Using JSAmbisonics decoder (order ${this.ambisonicOrder})`);
+      this.binauralDecoder = new BinauralDecoder();
+    }
+    
     await this.binauralDecoder.initialize(this.audioContext, this.ambisonicOrder);
 
     // Enable rotation for AmbisonicIRMode (IR has fixed spatial encoding, need to rotate field)
@@ -295,10 +328,6 @@ export class AmbisonicIRMode implements IAudioMode {
     const muteGainNode = this.audioContext.createGain();
     muteGainNode.gain.value = 1.0; // Unmuted by default
 
-    // Create wet gain node
-    const wetGain = this.audioContext.createGain();
-    wetGain.gain.value = 1.0;
-
     // Create JSAmbisonics convolver for multi-channel IR
     const convolver = new ambisonics.convolver(this.audioContext, this.ambisonicOrder);
 
@@ -308,10 +337,9 @@ export class AmbisonicIRMode implements IAudioMode {
       convolver.updateFilters(this.irBuffer);
     }
 
-    // Connect: GainNode → MuteGain → WetGain → Convolver → AmbisonicMixBus
+    // Connect: GainNode → MuteGain → Convolver → AmbisonicMixBus
     gainNode.connect(muteGainNode);
-    muteGainNode.connect(wetGain);
-    wetGain.connect(convolver.in);
+    muteGainNode.connect(convolver.in);
     if (this.ambisonicMixBus) {
       try {
         convolver.out.connect(this.ambisonicMixBus);
@@ -330,7 +358,6 @@ export class AmbisonicIRMode implements IAudioMode {
       muteGainNode,
       convolver,
       sourceIRBuffer: null, // No per-source IR yet (will be set in simulation mode)
-      wetGain,
       position,
       isPlaying: false,
       isMuted: false
@@ -338,10 +365,72 @@ export class AmbisonicIRMode implements IAudioMode {
 
     this.sourceChains.set(sourceId, chain);
 
-    // Update scene alignment (in case this is the first/closest source)
-    this.updateSceneAlignment();
-
     console.log(`[AmbisonicIRMode] Created source "${sourceId}" with JSAmbisonics convolver (order ${this.ambisonicOrder}, ${this.numAmbisonicChannels} channels)`);
+  }
+
+  /**
+   * Convert mono IR to FOA (4-channel) format with signal in W channel only
+   */
+  private convertMonoToFOA(monoBuffer: AudioBuffer): AudioBuffer {
+    const foaBuffer = this.audioContext!.createBuffer(
+      4, // FOA = 4 channels (W, X, Y, Z)
+      monoBuffer.length,
+      monoBuffer.sampleRate
+    );
+
+    // Copy mono signal to W channel (omnidirectional)
+    const monoData = monoBuffer.getChannelData(0);
+    const wData = foaBuffer.getChannelData(0);
+    wData.set(monoData);
+
+    // X, Y, Z channels remain zeros (no directional encoding)
+    // This represents an omnidirectional room response
+
+    return foaBuffer;
+  }
+
+  /**
+   * Convert stereo IR to FOA (4-channel) format
+   * Encodes L/R channels at ±30° azimuth (standard stereo speaker layout)
+   */
+  private convertStereoToFOA(stereoBuffer: AudioBuffer): AudioBuffer {
+    const foaBuffer = this.audioContext!.createBuffer(
+      4, // FOA = 4 channels (W, X, Y, Z)
+      stereoBuffer.length,
+      stereoBuffer.sampleRate
+    );
+
+    const leftData = stereoBuffer.getChannelData(0);
+    const rightData = stereoBuffer.getChannelData(1);
+
+    const wData = foaBuffer.getChannelData(0);
+    const xData = foaBuffer.getChannelData(1);
+    const yData = foaBuffer.getChannelData(2);
+    // Z channel (up/down) remains zeros for horizontal stereo
+
+    // FOA encoding coefficients for ±30° azimuth (standard stereo)
+    // Left speaker at +30° (azimuth = π/6), Right speaker at -30° (azimuth = -π/6)
+    const azLeft = Math.PI / 6;  // 30 degrees
+    const azRight = -Math.PI / 6; // -30 degrees
+
+    // FOA encoding: W = 1/√2, X = cos(az), Y = sin(az) (for horizontal sources)
+    const wCoeff = 1 / Math.sqrt(2);
+    const xLeft = Math.cos(azLeft);
+    const yLeft = Math.sin(azLeft);
+    const xRight = Math.cos(azRight);
+    const yRight = Math.sin(azRight);
+
+    for (let i = 0; i < stereoBuffer.length; i++) {
+      const L = leftData[i];
+      const R = rightData[i];
+
+      // Sum contributions from both channels
+      wData[i] = wCoeff * (L + R);
+      xData[i] = xLeft * L + xRight * R;
+      yData[i] = yLeft * L + yRight * R;
+    }
+
+    return foaBuffer;
   }
 
   /**
@@ -360,59 +449,35 @@ export class AmbisonicIRMode implements IAudioMode {
       return;
     }
 
-    // Validate channel count (4, 9, or 16 for FOA, SOA, TOA)
+    // Validate channel count (1/2 for Mono/Stereo, 4/9/16 for FOA/SOA/TOA)
     const channels = irBuffer.numberOfChannels;
-    if (![4, 9, 16].includes(channels)) {
-      console.error(`[AmbisonicIRMode] Expected ambisonic IR (4/9/16 channels) for source "${sourceId}", got ${channels} channels`);
+    if (![1, 2, 4, 9, 16].includes(channels)) {
+      console.error(`[AmbisonicIRMode] Expected mono/stereo/ambisonic IR (1/2/4/9/16 channels) for source "${sourceId}", got ${channels} channels`);
       return;
     }
 
-    // Process IR buffer (resample if needed, normalize)
-    const processedBuffer = processImpulseResponse(irBuffer, this.audioContext, true);
+    // Convert mono/stereo IR to FOA format BEFORE processing
+    // This ensures processImpulseResponse treats it as ambisonic (preserves gain balance)
+    let bufferToProcess = irBuffer;
+    if (channels === 1) {
+      bufferToProcess = this.convertMonoToFOA(irBuffer);
+      console.log(`[AmbisonicIRMode] Converted mono IR to FOA (W channel only) for source "${sourceId}"`);
+    } else if (channels === 2) {
+      bufferToProcess = this.convertStereoToFOA(irBuffer);
+      console.log(`[AmbisonicIRMode] Converted stereo IR to FOA (L/R at ±30°) for source "${sourceId}"`);
+    }
+
+    // Process IR buffer (resample if needed, apply gain compensation)
+    // Assumes IR is in FuMa format (W,X,Y,Z) with N3D normalization (from pyroomacoustics)
+    // const processedBuffer = processImpulseResponse(bufferToProcess, this.audioContext, true);
 
     // Update JSAmbisonics convolver with new IR
-    chain.convolver.updateFilters(processedBuffer);
-    chain.sourceIRBuffer = processedBuffer;
+    chain.convolver.updateFilters(bufferToProcess);
+    chain.sourceIRBuffer = bufferToProcess;
 
-    console.log(`[AmbisonicIRMode] ✅ Updated IR for source "${sourceId}" (${channels}ch, ${processedBuffer.length} samples @ ${processedBuffer.sampleRate}Hz)`);
+    console.log(`[AmbisonicIRMode] ✅ Updated IR for source "${sourceId}" (${channels}ch → ${bufferToProcess.numberOfChannels}ch, ${bufferToProcess.length} samples @ ${bufferToProcess.sampleRate}Hz)`);
   }
 
-  /**
-   * Update scene alignment based on closest source
-   * Aligns the Ambisonic IR so that "Front" points to the closest source
-   */
-  private updateSceneAlignment(): void {
-    if (!this.receiverPosition || this.sourceChains.size === 0 || !this.binauralDecoder) return;
-
-    // Find closest source
-    let closestSource: SourceChain | null = null;
-    let minDistSq = Infinity;
-
-    this.sourceChains.forEach(chain => {
-      const distSq = chain.position.distanceToSquared(this.receiverPosition!);
-      if (distSq < minDistSq) {
-        minDistSq = distSq;
-        closestSource = chain;
-      }
-    });
-
-    if (closestSource) {
-      const source = closestSource as SourceChain;
-      const dx = source.position.x - this.receiverPosition.x;
-      const dz = source.position.z - this.receiverPosition.z;
-      
-      // Calculate azimuth from receiver to source (relative to -Z Front)
-      // +X is Right, -Z is Front
-      // atan2(-dx, -dz) gives angle from Front, with +Angle = Left
-      const sourceAzimuth = Math.atan2(-dx, -dz);
-      
-      // We want to rotate the scene such that the IR's Front aligns with this azimuth
-      // Offset = -SourceAngle
-      this.binauralDecoder.setRotationOffset(-sourceAzimuth);
-      
-      // console.log(`[AmbisonicIRMode] Aligned scene to source at azimuth ${(sourceAzimuth * 180 / Math.PI).toFixed(1)}°`);
-    }
-  }
 
   /**
    * Update chain IR buffer when IR changes (uses JSAmbisonics convolver)
@@ -437,13 +502,10 @@ export class AmbisonicIRMode implements IAudioMode {
       console.warn(`[AmbisonicIRMode] Source "${sourceId}" not found for position update`);
       return;
     }
-    
+
     // Update stored position (for reference, but doesn't affect audio)
     chain.position = position;
-    
-    // Update scene alignment if source moved
-    this.updateSceneAlignment();
-    
+
     // Note: IR already contains spatial encoding, no position updates needed
   }
 
@@ -455,7 +517,7 @@ export class AmbisonicIRMode implements IAudioMode {
     if (!chain) {
       return;
     }
-    
+
     // Stop if playing
     if (chain.bufferSource && chain.isPlaying) {
       try {
@@ -464,15 +526,12 @@ export class AmbisonicIRMode implements IAudioMode {
         // Already stopped
       }
     }
-    
+
     // Cleanup nodes
     this.cleanupSourceChain(chain);
-    
+
     // Remove from map
     this.sourceChains.delete(sourceId);
-
-    // Update scene alignment
-    this.updateSceneAlignment();
 
     console.log(`[AmbisonicIRMode] Removed source "${sourceId}"`);
   }
@@ -567,11 +626,8 @@ export class AmbisonicIRMode implements IAudioMode {
     if (!this.receiverPosition) {
       this.receiverPosition = position.clone();
       console.log(`[AmbisonicIRMode] Receiver position locked at (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`);
-      
-      // Initial alignment
-      this.updateSceneAlignment();
     }
-    
+
     // Update binaural decoder with camera orientation (head rotation via sceneRotator)
     // The ambisonic IR contains spatial information, so we rotate the field with head movement
     if (this.binauralDecoder) {
@@ -771,7 +827,6 @@ export class AmbisonicIRMode implements IAudioMode {
     try {
       chain.gainNode.disconnect();
       chain.muteGainNode.disconnect();
-      chain.wetGain.disconnect();
 
       // Disconnect JSAmbisonics convolver
       if (chain.convolver && chain.convolver.out) {

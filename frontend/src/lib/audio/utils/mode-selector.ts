@@ -5,16 +5,16 @@
  * Implements the Phase 3 mode selection rules:
  *
  * Rules:
- * 1. If IR imported && IR selected: Use IR mode (based on channels)
+ * 1. If IR imported && IR selected: Use AMBISONIC_IR (handles all channel counts)
  * 2. If IR imported && no IR selected: Use ANECHOIC
  * 3. If no IR imported: Use NO_IR_RESONANCE or ANECHOIC
  *
- * Channel detection:
- * - 1 channel → MONO_IR
- * - 2 channels → STEREO_IR
- * - 4 channels → AMBISONIC_IR (FOA)
- * - 9 channels → AMBISONIC_IR (SOA)
- * - 16 channels → AMBISONIC_IR (TOA)
+ * Channel handling (all routed to AMBISONIC_IR):
+ * - 1 channel → Mono IR (converted to FOA W-channel)
+ * - 2 channels → Stereo IR (converted to FOA)
+ * - 4 channels → FOA (First Order Ambisonics)
+ * - 9 channels → SOA (Second Order Ambisonics)
+ * - 16 channels → TOA (Third Order Ambisonics)
  */
 
 import { AudioMode } from '@/types/audio';
@@ -70,47 +70,53 @@ export function selectAudioMode(
       return createAnechoicResult(warnings);
     }
 
+    // All IR types route to AMBISONIC_IR (handles conversion internally)
     switch (irState.channelCount) {
       case 1:
+        // Mono IR → converted to FOA (W channel only)
         return {
-          mode: AudioMode.MONO_IR,
-          ambisonicOrder: 1, // Encoded to FOA after convolution
+          mode: AudioMode.AMBISONIC_IR,
+          ambisonicOrder: 1,
           requiresReceiver: true,
           dof: '3DOF',
           warnings
         };
 
       case 2:
+        // Stereo IR → converted to FOA (L/R encoded at ±30°)
         return {
-          mode: AudioMode.STEREO_IR,
-          ambisonicOrder: 1, // Encoded to FOA (L/R at ±30°)
+          mode: AudioMode.AMBISONIC_IR,
+          ambisonicOrder: 1,
           requiresReceiver: true,
           dof: '3DOF',
           warnings
         };
 
       case 4:
+        // FOA (First Order Ambisonics)
         return {
           mode: AudioMode.AMBISONIC_IR,
-          ambisonicOrder: 1, // FOA
+          ambisonicOrder: 1,
           requiresReceiver: true,
           dof: '3DOF',
           warnings
         };
 
       case 9:
+        // SOA (Second Order Ambisonics)
         return {
           mode: AudioMode.AMBISONIC_IR,
-          ambisonicOrder: 2, // SOA
+          ambisonicOrder: 2,
           requiresReceiver: true,
           dof: '3DOF',
           warnings
         };
 
       case 16:
+        // TOA (Third Order Ambisonics)
         return {
           mode: AudioMode.AMBISONIC_IR,
-          ambisonicOrder: 3, // TOA
+          ambisonicOrder: 3,
           requiresReceiver: true,
           dof: '3DOF',
           warnings
@@ -169,6 +175,7 @@ function selectNoIRMode(preferences: NoIRPreferences, warnings: string[]): ModeS
 
 /**
  * Validate channel count for IR modes
+ * Supports: Mono (1), Stereo (2), FOA (4), SOA (9), TOA (16)
  * @returns true if supported, false otherwise
  */
 export function isSupportedChannelCount(channels: number): boolean {
@@ -236,12 +243,8 @@ export function getModeDescription(mode: AudioMode): string {
       return 'ShoeBox Acoustics (6 DOF, synthetic room)';
     case AudioMode.ANECHOIC:
       return 'No Acoustics (6 DOF, ambisonic + HRTF)';
-    case AudioMode.MONO_IR:
-      return 'Mono IR (3 DOF, convolution + HRTF)';
-    case AudioMode.STEREO_IR:
-      return 'Stereo IR (3 DOF, L/R convolution + HRTF)';
     case AudioMode.AMBISONIC_IR:
-      return 'Ambisonic IR (3 DOF, multichannel convolution + HRTF)';
+      return 'IR Convolution (3 DOF, mono/stereo/ambisonic + HRTF)';
     default:
       return 'Unknown mode';
   }

@@ -12,6 +12,101 @@ class PyroomacousticsService:
     """Service for acoustic simulation using pyroomacoustics library"""
 
     @staticmethod
+    def add_receiver_to_room(
+        room,  # pra.Room
+        receiver_position: list[float],
+        simulation_mode: str = None
+    ):
+        """
+        Add receiver microphone(s) to room based on simulation mode.
+
+        Args:
+            room: Room object (pra.Room)
+            receiver_position: [x, y, z] coordinates in meters
+            simulation_mode: "mono" or "foa"
+                           If None, defaults to "mono"
+
+        Returns:
+            Room with added microphone(s)
+
+        Raises:
+            ValueError: If positions are invalid or microphone setup fails
+
+        Note:
+            - Mono mode: Single omnidirectional microphone
+            - FOA mode: 4 coincident microphones with proper B-format directivity (W=omni, X/Y/Z=fig-8)
+            - FOA directivity requires ISM and is not supported with ray tracing
+        """
+        from config.constants import (
+            PYROOMACOUSTICS_SIMULATION_MODE_MONO,
+            PYROOMACOUSTICS_SIMULATION_MODE_FOA
+        )
+
+        # Default to mono if not specified
+        if simulation_mode is None:
+            simulation_mode = PYROOMACOUSTICS_SIMULATION_MODE_MONO
+
+        # Validate position
+        if len(receiver_position) != 3:
+            raise ValueError("Receiver position must be [x, y, z] coordinates")
+
+        try:
+            if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO:
+                # Single omnidirectional microphone
+                room.add_microphone(receiver_position)
+                print(f"Added mono microphone at {receiver_position}")
+
+            elif simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
+                # B-format First Order Ambisonics using proper directivity patterns
+                from pyroomacoustics.directivities import CardioidFamily, DirectionVector
+
+                # W channel: Omnidirectional (p=1.0)
+                w_directivity = CardioidFamily(
+                    orientation=DirectionVector(azimuth=0, colatitude=0, degrees=True),
+                    p=1.0,  # p=1.0 for omnidirectional
+                    gain=1.0
+                )
+                # X channel: Figure-of-8 along +X axis
+                x_directivity = CardioidFamily(
+                    orientation=DirectionVector(azimuth=90, colatitude=90, degrees=True),
+                    p=0.0,  # p=0.0 for figure-of-8
+                    gain=1.0
+                )
+                # Y channel: Figure-of-8 along +Y axis
+                y_directivity = CardioidFamily(
+                    orientation=DirectionVector(azimuth=0, colatitude=90, degrees=True),
+                    p=0.0,  # p=0.0 for figure-of-8
+                    gain=1.0
+                )
+                # Z channel: Figure-of-8 along +Z axis
+                z_directivity = CardioidFamily(
+                    orientation=DirectionVector(azimuth=0, colatitude=0, degrees=True),
+                    p=0.0,  # p=0.0 for figure-of-8
+                    gain=1.0
+                )
+
+                # Add coincident B-format microphones (all at same position)
+                room.add_microphone(receiver_position, directivity=w_directivity)  # W
+                room.add_microphone(receiver_position, directivity=x_directivity)  # X
+                room.add_microphone(receiver_position, directivity=y_directivity)  # Y
+                room.add_microphone(receiver_position, directivity=z_directivity)  # Z
+
+                print(f"Added B-format FOA microphone at {receiver_position} with proper directivity (W=omni, X/Y/Z=fig-8)")
+                print("NOTE: Directivity only supported with ISM. Ray tracing should be disabled.")
+
+            else:
+                raise ValueError(f"Unsupported simulation mode: {simulation_mode}")
+
+            return room
+
+        except (ValueError, AssertionError) as e:
+            error_msg = str(e)
+            if "inside" in error_msg.lower() or "outside" in error_msg.lower():
+                raise ValueError(f"Receiver position {receiver_position} is not inside the room geometry. "
+                               f"Please ensure receivers are placed within the model bounds.")
+            raise ValueError(f"Failed to add receiver at {receiver_position}: {error_msg}")
+
+    @staticmethod
     def create_room_from_mesh(
         vertices: list[list[float]],
         faces: list[list[int]],
@@ -273,7 +368,7 @@ class PyroomacousticsService:
             ray_tracing_params: Optional dict with ray tracing parameters:
                               {n_rays, receiver_radius, energy_thres, time_thres, hist_bin_size}
                               If None, uses defaults from constants
-            simulation_mode: Simulation mode - "mono", "binaural", or "foa"
+            simulation_mode: Simulation mode - "mono" or "foa"
                            If None, defaults to "mono"
 
         Returns:
@@ -285,17 +380,13 @@ class PyroomacousticsService:
         Note:
             - Ray tracing is automatically configured if the room was created with ray_tracing=True
             - To disable automatic ray tracing setup, set enable_ray_tracing=False
-            - Binaural mode adds two microphones (left/right ears)
             - FOA mode adds four microphones for W, X, Y, Z ambisonics components
         """
         try:
             # Import constants
             from config.constants import (
                 PYROOMACOUSTICS_SIMULATION_MODE_MONO,
-                PYROOMACOUSTICS_SIMULATION_MODE_BINAURAL,
-                PYROOMACOUSTICS_SIMULATION_MODE_FOA,
-                PYROOMACOUSTICS_BINAURAL_EAR_SPACING,
-                PYROOMACOUSTICS_FOA_MIC_RADIUS
+                PYROOMACOUSTICS_SIMULATION_MODE_FOA
             )
 
             # Default to mono if not specified
@@ -320,64 +411,12 @@ class PyroomacousticsService:
                                    f"Please ensure sources are placed within the model bounds.")
                 raise ValueError(f"Failed to add source at {source_pos}: {error_msg}")
 
-            # Add microphones based on simulation mode
-            if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO:
-                # Single omnidirectional microphone
-                try:
-                    room.add_microphone(receiver_pos)
-                except (ValueError, AssertionError) as e:
-                    error_msg = str(e)
-                    if "inside" in error_msg.lower() or "outside" in error_msg.lower():
-                        raise ValueError(f"Receiver position {receiver_pos} is not inside the room geometry. "
-                                       f"Please ensure receivers are placed within the model bounds.")
-                    raise ValueError(f"Failed to add receiver at {receiver_pos}: {error_msg}")
-                print(f"Added mono microphone at {receiver_pos}")
+            # Add microphones using the helper method
+            PyroomacousticsService.add_receiver_to_room(room, receiver_pos, simulation_mode)
 
-            elif simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_BINAURAL:
-                # Two microphones for binaural recording (left and right ears)
-                # Place them horizontally separated (left-right axis)
-                half_spacing = PYROOMACOUSTICS_BINAURAL_EAR_SPACING / 2.0
-
-                # Assuming Y-axis is left-right
-                left_ear_pos = [receiver_pos[0], receiver_pos[1] - half_spacing, receiver_pos[2]]
-                right_ear_pos = [receiver_pos[0], receiver_pos[1] + half_spacing, receiver_pos[2]]
-
-                try:
-                    room.add_microphone(left_ear_pos)  # Left channel
-                    room.add_microphone(right_ear_pos)  # Right channel
-                    print(f"Added binaural microphones: left={left_ear_pos}, right={right_ear_pos}")
-                except (ValueError, AssertionError) as e:
-                    error_msg = str(e)
-                    raise ValueError(f"Failed to add binaural microphones: {error_msg}")
-
-            elif simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
-                # Four microphones for First-Order Ambisonics (W, X, Y, Z)
-                # W: omnidirectional at center
-                # X, Y, Z: figure-8 patterns along respective axes
-                # Using a compact tetrahedral arrangement
-
-                r = PYROOMACOUSTICS_FOA_MIC_RADIUS
-
-                # W component: center position (omnidirectional)
-                w_pos = receiver_pos
-
-                # X, Y, Z components: slightly offset along each axis
-                # For simplicity, place microphones in a small tetrahedral pattern
-                x_pos = [receiver_pos[0] + r, receiver_pos[1], receiver_pos[2]]
-                y_pos = [receiver_pos[0], receiver_pos[1] + r, receiver_pos[2]]
-                z_pos = [receiver_pos[0], receiver_pos[1], receiver_pos[2] + r]
-
-                try:
-                    room.add_microphone(w_pos)  # W channel (omnidirectional)
-                    room.add_microphone(x_pos)  # X channel (front-back)
-                    room.add_microphone(y_pos)  # Y channel (left-right)
-                    room.add_microphone(z_pos)  # Z channel (up-down)
-                    print(f"Added FOA microphones: W={w_pos}, X={x_pos}, Y={y_pos}, Z={z_pos}")
-                except (ValueError, AssertionError) as e:
-                    error_msg = str(e)
-                    raise ValueError(f"Failed to add FOA microphones: {error_msg}")
-            else:
-                raise ValueError(f"Unsupported simulation mode: {simulation_mode}")
+            # Disable ray tracing for FOA mode since directivity requires ISM
+            if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
+                enable_ray_tracing = False
 
             # Enable ray tracing if enabled and room supports it
             # Try to enable ray tracing - it will only work if room was created with ray_tracing=True
@@ -415,7 +454,7 @@ class PyroomacousticsService:
     ) -> str:
         """
         Export room impulse response to WAV file.
-        Handles mono (1-ch), binaural (2-ch), and FOA ambisonics (4-ch) IRs.
+        Handles mono (1-ch) and FOA ambisonics (4-ch) IRs.
 
         Args:
             room: Room with computed RIR (pra.Room)
@@ -455,7 +494,7 @@ class PyroomacousticsService:
 
                 rir_int16 = np.int16(rir * 32767)
             else:
-                # Multi-channel: binaural (2-ch) or FOA (4-ch)
+                # Multi-channel: FOA (4-ch)
                 # Stack all microphone channels into multi-channel array
                 rir_channels = []
                 for mic_idx in range(num_mics):

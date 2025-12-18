@@ -22,10 +22,7 @@ from config.constants import (
     PYROOMACOUSTICS_DEFAULT_SCATTERING,
     PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE,
     PYROOMACOUSTICS_SIMULATION_MODE_MONO,
-    PYROOMACOUSTICS_SIMULATION_MODE_BINAURAL,
     PYROOMACOUSTICS_SIMULATION_MODE_FOA,
-    PYROOMACOUSTICS_BINAURAL_EAR_SPACING,
-    PYROOMACOUSTICS_FOA_MIC_RADIUS,
     AUDIO_SAMPLE_RATE,
     TEMP_SIMULATIONS_DIR
 )
@@ -102,7 +99,7 @@ async def run_simulation(
     air_absorption: bool = Form(PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION),
     n_rays: int = Form(PYROOMACOUSTICS_RAY_TRACING_N_RAYS),
     scattering: float = Form(PYROOMACOUSTICS_DEFAULT_SCATTERING),
-    simulation_mode: str = Form(PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE),  # "mono", "binaural", or "foa"
+    simulation_mode: str = Form(PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE),  # "mono" or "foa"
     source_receiver_pairs: str = Form(...),  # JSON string
     face_materials: Optional[str] = Form(None)  # JSON string: {face_index: material_id}
 ):
@@ -222,8 +219,6 @@ async def run_simulation(
         # Determine number of channels based on simulation mode
         if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO:
             num_channels = 1
-        elif simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_BINAURAL:
-            num_channels = 2
         elif simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
             num_channels = 4
         else:
@@ -261,40 +256,21 @@ async def run_simulation(
         # Add all receivers to the room (with appropriate microphone configuration)
         for receiver_id, (receiver_position, _) in unique_receivers.items():
             try:
-                if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO:
-                    # Single omnidirectional microphone
-                    room.add_microphone(receiver_position)
-                    print(f"  Added mono receiver {receiver_id} at {receiver_position}")
+                # Use service helper method to add receiver with proper configuration
+                PyroomacousticsService.add_receiver_to_room(room, receiver_position, simulation_mode)
+                print(f"  Added {simulation_mode} receiver {receiver_id} at {receiver_position}")
 
-                elif simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_BINAURAL:
-                    # Two microphones for binaural (left and right ears)
-                    half_spacing = PYROOMACOUSTICS_BINAURAL_EAR_SPACING / 2.0
-                    left_ear_pos = [receiver_position[0], receiver_position[1] - half_spacing, receiver_position[2]]
-                    right_ear_pos = [receiver_position[0], receiver_position[1] + half_spacing, receiver_position[2]]
-                    room.add_microphone(left_ear_pos)  # Left channel
-                    room.add_microphone(right_ear_pos)  # Right channel
-                    print(f"  Added binaural receiver {receiver_id}: L={left_ear_pos}, R={right_ear_pos}")
+                # Disable ray tracing for FOA mode (directivity requires ISM only)
+                if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA and ray_tracing:
+                    print(f"  NOTE: Ray tracing disabled for FOA mode (directivity requires ISM)")
+                    ray_tracing = False
 
-                elif simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
-                    # Four microphones for FOA (W, X, Y, Z)
-                    r = PYROOMACOUSTICS_FOA_MIC_RADIUS
-                    w_pos = receiver_position
-                    x_pos = [receiver_position[0] + r, receiver_position[1], receiver_position[2]]
-                    y_pos = [receiver_position[0], receiver_position[1] + r, receiver_position[2]]
-                    z_pos = [receiver_position[0], receiver_position[1], receiver_position[2] + r]
-                    room.add_microphone(w_pos)  # W channel
-                    room.add_microphone(x_pos)  # X channel
-                    room.add_microphone(y_pos)  # Y channel
-                    room.add_microphone(z_pos)  # Z channel
-                    print(f"  Added FOA receiver {receiver_id}: W={w_pos}, X={x_pos}, Y={y_pos}, Z={z_pos}")
-
-            except (ValueError, AssertionError) as e:
+            except ValueError as e:
                 error_msg = str(e)
-                if "inside" in error_msg.lower() or "outside" in error_msg.lower():
+                if "inside" in error_msg.lower() or "outside" in error_msg.lower() or "room geometry" in error_msg.lower():
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Receiver '{receiver_id}' at position {receiver_position} is not inside the room geometry. "
-                               f"Please ensure receivers are placed within the model bounds."
+                        detail=f"Receiver '{receiver_id}': {error_msg}"
                     )
                 raise HTTPException(status_code=400, detail=f"Failed to add receiver '{receiver_id}': {error_msg}")
 
@@ -370,10 +346,9 @@ async def run_simulation(
                     # Validate RIR is not empty
                     if rir is None or len(rir) == 0:
                         channel_names = {
-                            PYROOMACOUSTICS_SIMULATION_MODE_BINAURAL: ['Left', 'Right'],
                             PYROOMACOUSTICS_SIMULATION_MODE_FOA: ['W', 'X', 'Y', 'Z']
                         }
-                        channel_name = channel_names[simulation_mode][ch] if ch < len(channel_names[simulation_mode]) else f"Channel {ch}"
+                        channel_name = channel_names.get(simulation_mode, [])[ch] if simulation_mode in channel_names and ch < len(channel_names[simulation_mode]) else f"Channel {ch}"
 
                         raise HTTPException(
                             status_code=500,
@@ -407,6 +382,7 @@ async def run_simulation(
                         padded_channels.append(rir)
 
                 # Stack channels into multi-channel array [n_samples, n_channels]
+                # Keep FuMa ordering (W,X,Y,Z) as output from pyroomacoustics
                 rir_data = np.column_stack(padded_channels)
 
             # Calculate acoustic parameters from the first channel (W/mono/left)
@@ -443,8 +419,13 @@ async def run_simulation(
                 "ray_tracing": settings.ray_tracing,
                 "air_absorption": settings.air_absorption,
                 "simulation_mode": simulation_mode,
-                "num_channels": num_channels
+                "num_channels": num_channels,
             }
+
+            # Add format and normalization metadata for ambisonic IRs
+            if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
+                result_entry["channel_ordering"] = "FuMa"  # FuMa ordering: W, X, Y, Z (pyroomacoustics output)
+                result_entry["normalization_convention"] = "N3D"  # N3D normalization (pyroomacoustics/JSAmbisonics default)
 
             # Add ray tracing parameters if enabled
             if ray_tracing:

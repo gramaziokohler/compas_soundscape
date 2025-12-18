@@ -55,6 +55,12 @@ export interface ChorasSimulationConfig extends BaseSimulationConfig {
   faceToMaterialMap: Map<number, string>; // faceIndex -> materialId
   // Material UI state (persisted across tab switches)
   expandedMaterialItems?: Set<string>; // Expanded tree items (e.g., 'all', 'layer-Default', 'entity-0')
+  // Saved settings for reset functionality (snapshot before simulation)
+  savedSettings?: {
+    settings: ChorasSimulationConfig['settings'];
+    faceToMaterialMap: Map<number, string>;
+    expandedMaterialItems?: Set<string>;
+  };
   // Runtime state
   isRunning: boolean;
   progress: number; // 0-100
@@ -83,6 +89,12 @@ export interface PyroomAcousticsSimulationConfig extends BaseSimulationConfig {
   faceToMaterialMap: Map<number, string>; // faceIndex -> materialId
   // Material UI state (persisted across tab switches)
   expandedMaterialItems?: Set<string>; // Expanded tree items (e.g., 'all', 'layer-Default', 'entity-0')
+  // Saved settings for reset functionality (snapshot before simulation)
+  savedSettings?: {
+    settings: PyroomAcousticsSimulationConfig['settings'];
+    faceToMaterialMap: Map<number, string>;
+    expandedMaterialItems?: Set<string>;
+  };
   // Runtime state
   isRunning: boolean;
   status: string;

@@ -247,6 +247,8 @@ export function useFileUpload() {
     clearAudio,
     setModelFile,
     setAudioFile,
-    setUseModelAsContext
+    setUseModelAsContext,
+    setModelEntities,
+    setGeometryData
   };
 }

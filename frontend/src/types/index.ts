@@ -6,6 +6,32 @@ export type { SEDAudioInfo, DetectedSound, SEDAnalysisResult, SEDAnalysisOptions
 import type { ReceiverData, ReceiverOverlay } from './receiver';
 export type { ReceiverData, ReceiverOverlay };
 
+// Import and re-export Analysis types
+import type {
+  AnalysisType,
+  BaseAnalysisConfig,
+  ModelAnalysisConfig,
+  AudioAnalysisConfig,
+  TextAnalysisConfig,
+  AnalysisConfig,
+  TextPromptResult,
+  AnalysisResult,
+  AnalysisTabState,
+  AnalysisSectionProps
+} from './analysis';
+export type {
+  AnalysisType,
+  BaseAnalysisConfig,
+  ModelAnalysisConfig,
+  AudioAnalysisConfig,
+  TextAnalysisConfig,
+  AnalysisConfig,
+  TextPromptResult,
+  AnalysisResult,
+  AnalysisTabState,
+  AnalysisSectionProps
+};
+
 // Import and re-export Acoustics types
 import type {
   AcousticSimulationMode,

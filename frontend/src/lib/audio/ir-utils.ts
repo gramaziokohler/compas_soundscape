@@ -103,77 +103,21 @@ export function getFormatDisplayName(format: IRFormat): string {
  * IR PROCESSING
  * ======================================== */
 
-/**
- * Diagnose ambisonic IR normalization scheme by analyzing channel RMS levels
- * Helps detect if IR is SN3D, N3D, or FuMa format
- */
-function diagnoseAmbisonicNormalization(buffer: AudioBuffer, numChannels: number): void {
-  // Calculate RMS for each channel
-  const rmsLevels: number[] = [];
-  for (let ch = 0; ch < numChannels; ch++) {
-    const data = buffer.getChannelData(ch);
-    let sumSquares = 0;
-    for (let i = 0; i < data.length; i++) {
-      sumSquares += data[i] * data[i];
-    }
-    rmsLevels[ch] = Math.sqrt(sumSquares / data.length);
-  }
-
-  // Calculate ratios relative to W channel
-  const wRMS = rmsLevels[0];
-  const ratios = rmsLevels.map(rms => wRMS > 0 ? rms / wRMS : 0);
-
-  console.log('[IR Diagnostics] Channel RMS levels:', rmsLevels.map(r => r.toFixed(6)));
-  console.log('[IR Diagnostics] Ratios (relative to W):', ratios.map(r => r.toFixed(3)));
-
-  // Expected ratios for different normalization schemes (FOA)
-  const expectedSN3D = 1 / Math.sqrt(3); // 0.577
-  const expectedN3D = 1.0; // 1.0
-  const expectedFuMa = Math.sqrt(2); // 1.414 (W is scaled by 1/√2)
-
-  if (numChannels === 4) {
-    // Average directional channel ratio
-    const avgDirectional = (ratios[1] + ratios[2] + ratios[3]) / 3;
-
-    console.log(`[IR Diagnostics] Average X/Y/Z ratio: ${avgDirectional.toFixed(3)}`);
-    console.log(`[IR Diagnostics] Expected for SN3D: ${expectedSN3D.toFixed(3)}`);
-    console.log(`[IR Diagnostics] Expected for N3D: ${expectedN3D.toFixed(3)}`);
-    console.log(`[IR Diagnostics] Expected for FuMa: ${expectedFuMa.toFixed(3)}`);
-
-    // Determine likely format
-    const distSN3D = Math.abs(avgDirectional - expectedSN3D);
-    const distN3D = Math.abs(avgDirectional - expectedN3D);
-    const distFuMa = Math.abs(avgDirectional - expectedFuMa);
-
-    if (distSN3D < 0.15) {
-      console.log('[IR Diagnostics] ✅ IR appears to be SN3D format (conversion needed)');
-    } else if (distN3D < 0.15) {
-      console.log('[IR Diagnostics] ⚠️ IR appears to be N3D format (conversion NOT needed!)');
-      console.log('[IR Diagnostics] ⚠️ Disable conversion by setting convertSN3DtoN3D=false');
-    } else if (distFuMa < 0.2) {
-      console.log('[IR Diagnostics] ⚠️ IR appears to be FuMa format (needs FuMa→N3D conversion)');
-    } else {
-      console.log('[IR Diagnostics] ⚠️ IR format unclear - directional channels may be very weak');
-      console.log('[IR Diagnostics] ⚠️ This IR may have poor spatial content for localization');
-    }
-  }
-}
 
 /**
  * Process impulse response buffer for convolution
- * Handles sample rate conversion, channel matching, and SN3D to N3D normalization
+ * Handles sample rate conversion and gain compensation
+ * Assumes ambisonic IRs are in FuMa format (W,X,Y,Z) with N3D normalization (from pyroomacoustics)
  *
  * @param irBuffer - Original impulse response buffer
  * @param audioContext - Target audio context
- * @param normalize - Whether to normalize the IR
- * @param convertSN3DtoN3D - Whether to convert from SN3D to N3D (default: true for ambisonic IRs)
+ * @param applyGainCompensation - Whether to apply fixed gain compensation (default: true)
  * @returns Processed audio buffer ready for convolution
  */
 export function processImpulseResponse(
   irBuffer: AudioBuffer,
   audioContext: AudioContext,
-  normalize: boolean = true,
-  convertSN3DtoN3D: boolean = true
+  applyGainCompensation: boolean = true
 ): AudioBuffer {
   const outputChannels = Math.min(irBuffer.numberOfChannels, IMPULSE_RESPONSE.MAX_CHANNELS);
   const targetSampleRate = audioContext.sampleRate;
@@ -196,28 +140,6 @@ export function processImpulseResponse(
     targetSampleRate
   );
 
-  // Diagnose IR channel balance to detect normalization scheme
-  if (isAmbisonicIR) {
-    diagnoseAmbisonicNormalization(irBuffer, outputChannels);
-  }
-
-  // Get SN3D to N3D conversion factors if needed
-  let sn3dToN3dFactors: readonly number[] | null = null;
-  if (isAmbisonicIR && convertSN3DtoN3D) {
-    if (outputChannels === 4) {
-      sn3dToN3dFactors = AMBISONIC.SN3D_TO_N3D.FOA;
-    } else if (outputChannels === 9) {
-      sn3dToN3dFactors = AMBISONIC.SN3D_TO_N3D.SOA;
-    } else if (outputChannels === 16) {
-      sn3dToN3dFactors = AMBISONIC.SN3D_TO_N3D.TOA;
-    }
-
-    if (sn3dToN3dFactors) {
-      console.log('[IR Processing] Applying SN3D to N3D normalization conversion (JSAmbisonics expects N3D)');
-      console.log(`[IR Processing] Conversion factors: W=1.0, directional=${sn3dToN3dFactors[1].toFixed(3)}`);
-    }
-  }
-
   // Copy and process channels
   for (let channel = 0; channel < outputChannels; channel++) {
     const inputData = irBuffer.getChannelData(channel);
@@ -230,22 +152,13 @@ export function processImpulseResponse(
       // Direct copy
       outputData.set(inputData);
     }
-
-    // Apply SN3D to N3D conversion BEFORE normalization (to preserve relative channel levels)
-    if (sn3dToN3dFactors) {
-      const conversionFactor = sn3dToN3dFactors[channel];
-      for (let i = 0; i < outputData.length; i++) {
-        outputData[i] *= conversionFactor;
-      }
-    }
   }
 
-  // Apply gain control (different strategies for ambisonic vs non-ambisonic IRs)
-  if (normalize) {
-    if (isAmbisonicIR && sn3dToN3dFactors) {
-      // For ambisonic IRs: Use fixed gain multiplier instead of normalization
-      // Normalization can affect localization by altering temporal dynamics
-      // Fixed gain preserves channel balance AND temporal characteristics
+  // Apply gain compensation
+  if (applyGainCompensation) {
+    if (isAmbisonicIR) {
+      // For ambisonic IRs: Use fixed gain multiplier
+      // Preserves channel balance and temporal characteristics
       const fixedGain = IMPULSE_RESPONSE.AMBISONIC_IR_GAIN_MULTIPLIER;
       for (let channel = 0; channel < outputChannels; channel++) {
         const channelData = processedBuffer.getChannelData(channel);
@@ -253,7 +166,6 @@ export function processImpulseResponse(
           channelData[i] *= fixedGain;
         }
       }
-      console.log(`[IR Processing] Applied fixed gain (${fixedGain.toFixed(2)}) - preserves channel balance and temporal dynamics`);
     } else {
       // Per-channel normalization for non-ambisonic IRs
       for (let channel = 0; channel < outputChannels; channel++) {

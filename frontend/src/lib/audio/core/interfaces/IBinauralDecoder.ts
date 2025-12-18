@@ -6,6 +6,7 @@
  *
  * Supports:
  * - FOA (First-Order Ambisonics, 4 channels)
+ * - SOA (Second-Order Ambisonics, 9 channels)
  * - TOA (Third-Order Ambisonics, 16 channels)
  */
 
@@ -32,7 +33,7 @@ export interface IBinauralDecoder {
 
   /**
    * Get input node for connecting ambisonic streams
-   * @returns AudioNode accepting ambisonic channels (4 or 16)
+   * @returns AudioNode accepting ambisonic channels (4 , 9 or 16)
    */
   getInputNode(): AudioNode;
 
@@ -41,6 +42,14 @@ export interface IBinauralDecoder {
    * @returns AudioNode outputting stereo (2ch)
    */
   getOutputNode(): AudioNode;
+
+  /**
+   * Enable or disable rotation tracking
+   * - Enable for AmbisonicIRMode (IR contains fixed spatial encoding, need to rotate field)
+   * - Disable for AnechoicMode (sources re-encoded in listener-local coordinates)
+   * @param enabled - true to enable rotation, false to disable
+   */
+  setRotationEnabled(enabled: boolean): void;
 
   /**
    * Update listener orientation for head rotation

@@ -146,8 +146,17 @@ async def generate_prompts(request: UnifiedPromptGenerationRequest):
         import traceback
         traceback.print_exc()
 
-        # Check if it's an LLM overload error
+        # Check the error type
         error_str = str(e)
+        
+        # Check if it's a quota exhausted error
+        if '429' in error_str or 'quota' in error_str.lower() or 'RESOURCE_EXHAUSTED' in error_str:
+            raise HTTPException(
+                status_code=429,
+                detail=error_str if 'quota' in error_str.lower() else "API quota exhausted. Please try again later."
+            )
+        
+        # Check if it's an LLM overload error
         if '503' in error_str or 'overloaded' in error_str.lower() or 'UNAVAILABLE' in error_str:
             raise HTTPException(
                 status_code=503,

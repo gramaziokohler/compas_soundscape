@@ -48,7 +48,6 @@ export class BinauralDecoder implements IBinauralDecoder {
   private order: 1 | 2 | 3 = 1; // Default to FOA
   private ready: boolean = false;
   private _rotationLogCounter: number = 0;
-  private rotationOffset: number = 0; // Yaw offset in radians
   private rotationEnabled: boolean = false; // Enable for AmbisonicIRMode, disable for AnechoicMode
 
   // Audio nodes
@@ -102,7 +101,7 @@ export class BinauralDecoder implements IBinauralDecoder {
       console.log('[BinauralDecoder] Initialized successfully with head tracking (using default cardioid HRTFs)');
       console.log(`[BinauralDecoder] Audio path: INPUT (sceneRotator.in) → sceneRotator → decoder → OUTPUT`);
 
-      // Auto-load HRTFs if enabled
+      // Auto-load HRTFs if enabled (only for JSAmbisonics, Omnitone has built-in HRTFs)
       if (HRTF.AUTO_LOAD) {
         console.info('[BinauralDecoder] Auto-loading IRCAM HRTFs...');
         this.autoLoadHRTFs();
@@ -174,13 +173,6 @@ export class BinauralDecoder implements IBinauralDecoder {
     return this.outputNode;
   }
 
-  /**
-   * Set rotation offset (yaw) to align the scene
-   * @param offsetRadians - Offset in radians
-   */
-  setRotationOffset(offsetRadians: number): void {
-    this.rotationOffset = offsetRadians;
-  }
 
   /**
    * Enable or disable rotation tracking
@@ -213,20 +205,17 @@ export class BinauralDecoder implements IBinauralDecoder {
       this.sceneRotator.roll = 0;
     } else {
       // AmbisonicIRMode: Apply rotation for head tracking
-      // Convert radians to degrees, apply rotation offset for scene alignment
-      // NEGATE yaw/pitch for head tracking: when head looks left, scene rotates right
+      // Convert radians to degrees
+      // NEGATE pitch for head tracking: when head looks up, scene rotates down
       const RAD_TO_DEG = 180 / Math.PI;
-      const yawDeg = (orientation.yaw * RAD_TO_DEG + this.rotationOffset * RAD_TO_DEG);
-      const pitchDeg = -(orientation.pitch * RAD_TO_DEG);
-
-      this.sceneRotator.yaw = yawDeg;
-      this.sceneRotator.pitch = pitchDeg;
+      this.sceneRotator.yaw = orientation.yaw * RAD_TO_DEG;
+      this.sceneRotator.pitch = -(orientation.pitch * RAD_TO_DEG);
       this.sceneRotator.roll = 0; // Roll typically not used for head tracking
 
-      // Debug logging (throttled)
-      if (this._rotationLogCounter++ % 60 === 0) {
-        console.log(`[BinauralDecoder] Rotation: yaw=${yawDeg.toFixed(1)}°, pitch=${pitchDeg.toFixed(1)}°`);
-      }
+      // // Debug logging (throttled)
+      // if (this._rotationLogCounter++ % 60 === 0) {
+      //   console.log(`[BinauralDecoder] Rotation: yaw=${this.sceneRotator.yaw.toFixed(1)}°, pitch=${this.sceneRotator.pitch.toFixed(1)}°`);
+      // }
     }
 
     this.sceneRotator.updateRotMtx();
@@ -279,14 +268,15 @@ export class BinauralDecoder implements IBinauralDecoder {
       );
 
       // Validate channel count
-      // IRCAM loader produces (order+1)^2 * 2 channels (L/R pairs for each virtual speaker)
-      const expectedSpeakers = Math.pow(this.order + 1, 2);
+      // IRCAM loader produces VIRTUAL_SPEAKERS * 2 channels (L/R pairs for each virtual speaker)
+      const orderKey = this.order === 1 ? 'FOA' : this.order === 2 ? 'SOA' : 'TOA';
+      const expectedSpeakers = HRTF.VIRTUAL_SPEAKERS[orderKey];
       const expectedChannels = expectedSpeakers * 2; // L/R pairs
 
       if (hrtfBuffer.numberOfChannels !== expectedChannels) {
         console.warn(
           `[BinauralDecoder] HRTF buffer has ${hrtfBuffer.numberOfChannels} channels, ` +
-          `expected ${expectedChannels} for order ${this.order}`
+          `expected ${expectedChannels} for order ${this.order} (${expectedSpeakers} virtual speakers)`
         );
       }
 
@@ -299,9 +289,10 @@ export class BinauralDecoder implements IBinauralDecoder {
       // Apply HRTFs to decoder
       await this.jsAmbisonicDecoder.loadHRTFs(hrtfBuffer);
 
+      const actualSpeakers = hrtfBuffer.numberOfChannels / 2;
       console.log(
         `[BinauralDecoder] HRTFs loaded successfully - now using measured IRCAM HRTFs for binaural decoding ` +
-        `(${expectedSpeakers} virtual speakers, ${hrtfBuffer.numberOfChannels} channels)`
+        `(${actualSpeakers} virtual speakers, ${hrtfBuffer.numberOfChannels} channels)`
       );
     } catch (error) {
       console.error('[BinauralDecoder] Failed to load HRTFs:', error);

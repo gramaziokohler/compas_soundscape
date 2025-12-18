@@ -24,6 +24,7 @@ interface SurfaceMaterialsSectionProps {
   expandedItems?: Set<string>; // Persisted expanded state
   onExpandedItemsChange?: (items: Set<string>) => void; // Callback to persist expanded state
   initialAssignments?: Map<number, string>; // faceIndex -> materialId from simulation config
+  resetTrigger?: number; // Timestamp to trigger reset
 }
 
 export function SurfaceMaterialsSection({
@@ -37,7 +38,8 @@ export function SurfaceMaterialsSection({
   className = '',
   expandedItems,
   onExpandedItemsChange,
-  initialAssignments
+  initialAssignments,
+  resetTrigger
 }: SurfaceMaterialsSectionProps) {
 
   return (
@@ -57,6 +59,7 @@ export function SurfaceMaterialsSection({
         expandedItems={expandedItems}
         onExpandedItemsChange={onExpandedItemsChange}
         initialAssignments={initialAssignments}
+        resetTrigger={resetTrigger}
       />
     </div>
   );

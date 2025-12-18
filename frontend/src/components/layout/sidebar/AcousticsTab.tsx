@@ -466,6 +466,22 @@ export function AcousticsTab({
 
     const instanceId = config.simulationInstanceId || config.id;
 
+    // Save current settings snapshot before simulation (for reset functionality)
+    // Only save if not already saved (allows re-running without losing original snapshot)
+    const simConfig = config as any;
+    if (!simConfig.savedSettings && config.mode !== 'resonance') {
+      const savedSettings = {
+        settings: JSON.parse(JSON.stringify(simConfig.settings)), // Deep clone
+        faceToMaterialMap: new Map(simConfig.faceToMaterialMap || new Map()),
+        expandedMaterialItems: simConfig.expandedMaterialItems ?
+          new Set(simConfig.expandedMaterialItems) : new Set()
+      };
+
+      handleUpdateConfig(index, {
+        savedSettings
+      } as any);
+    }
+
     // Set initial running state immediately for UI feedback
     handleUpdateConfig(index, {
       isRunning: true,
@@ -544,17 +560,20 @@ export function AcousticsTab({
     }).catch(console.error);
   }, []);
 
-  // Prepare materials based on active simulation mode
+  // Prepare materials based on expanded or active simulation mode
+  // Use expanded tab for materials so they're available even when simulation is not active
   const availableMaterials = useMemo(() => {
-    if (activeSimulationIndex === null) return [];
-    
-    const activeConfig = simulationConfigs[activeSimulationIndex];
-    if (!activeConfig) return [];
-    
-    if (activeConfig.mode === 'resonance') {
+    // Try expanded tab first, then active tab, then first config
+    const configIndex = expandedTabIndex !== null ? expandedTabIndex :
+                       activeSimulationIndex !== null ? activeSimulationIndex : 0;
+
+    const config = simulationConfigs[configIndex];
+    if (!config) return [];
+
+    if (config.mode === 'resonance') {
       // Return empty for now - Resonance uses its own material system
       return [];
-    } else if (activeConfig.mode === 'choras') {
+    } else if (config.mode === 'choras') {
       return chorasMaterials.map(mat => ({
         id: `choras_${mat.id}`,
         name: mat.name
@@ -565,7 +584,7 @@ export function AcousticsTab({
         name: mat.name
       }));
     }
-  }, [activeSimulationIndex, simulationConfigs, chorasMaterials, pyroomMaterials]);
+  }, [expandedTabIndex, activeSimulationIndex, simulationConfigs, chorasMaterials, pyroomMaterials]);
 
   // Handle material assignments independently per simulation
   const handleMaterialAssignment = useCallback((selection: SelectedGeometry, material: AcousticMaterial | null) => {
@@ -683,6 +702,71 @@ export function AcousticsTab({
     }
   }, [activeSimulationIndex, simulationConfigs, audioRenderingMode, onAudioRenderingModeChange, onSelectIRFromLibrary, selectedIRId]);
 
+  // Handle simulation reset (restore to pre-simulation state)
+  const handleResetSimulation = useCallback((index: number) => {
+    const config = simulationConfigs[index];
+    if (!config || config.mode === 'resonance') return;
+
+    const simConfig = config as any;
+    const resetTimestamp = Date.now();
+
+    // Ensure tab stays expanded after reset
+    if (handleToggleExpand && expandedTabIndex !== index) {
+      handleToggleExpand(index);
+    }
+
+    // Check if we have saved settings
+    if (simConfig.savedSettings) {
+      // Restore saved settings
+      handleUpdateConfig(index, {
+        settings: simConfig.savedSettings.settings,
+        faceToMaterialMap: new Map(simConfig.savedSettings.faceToMaterialMap),
+        expandedMaterialItems: simConfig.savedSettings.expandedMaterialItems ?
+          Array.from(simConfig.savedSettings.expandedMaterialItems) : undefined,
+        savedSettings: undefined, // Clear saved settings after restoration
+        resetTimestamp, // Trigger reset effect in MaterialAssignmentUI
+        state: 'before-simulation',
+        isRunning: false,
+        status: '',
+        error: null,
+        progress: 0,
+        simulationResults: null,
+        importedIRMetadata: undefined,
+        currentSimulationId: null,
+        currentSimulationRunId: null,
+        importedIRIds: undefined,
+        sourceReceiverIRMapping: undefined
+      } as any);
+    } else {
+      // No saved settings, just clear simulation results
+      handleUpdateConfig(index, {
+        resetTimestamp, // Trigger reset effect
+        state: 'before-simulation',
+        isRunning: false,
+        status: '',
+        error: null,
+        progress: 0,
+        simulationResults: null,
+        importedIRMetadata: undefined,
+        currentSimulationId: null,
+        currentSimulationRunId: null,
+        importedIRIds: undefined,
+        sourceReceiverIRMapping: undefined
+      } as any);
+    }
+
+    // Clear audio rendering mode and IR selection immediately
+    // (no need to deactivate since state='before-simulation' will prevent auto-select)
+    if (activeSimulationIndex === index) {
+      if (onAudioRenderingModeChange) {
+        onAudioRenderingModeChange('anechoic');
+      }
+      if (onClearIR) {
+        onClearIR();
+      }
+    }
+  }, [simulationConfigs, activeSimulationIndex, expandedTabIndex, handleUpdateConfig, handleToggleExpand, onAudioRenderingModeChange, onClearIR]);
+
   return (
     <AcousticsSection
       simulationConfigs={simulationConfigs}
@@ -690,6 +774,7 @@ export function AcousticsTab({
       onAddConfig={handleAddConfig}
       onRemoveConfig={handleRemoveConfig}
       onUpdateConfig={handleUpdateConfig}
+      onResetSimulation={handleResetSimulation}
       onSetActiveSimulation={handleSetActiveSimulation}
       onUpdateSimulationName={handleUpdateSimulationName}
       onRunSimulation={handleRunSimulation}

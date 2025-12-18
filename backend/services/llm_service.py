@@ -5,7 +5,7 @@ import json
 import re
 import time
 import google.genai as genai
-from google.genai.errors import ServerError
+from google.genai.errors import ServerError, ClientError
 from config.constants import (
     LLM_MODEL_NAME,
     DEFAULT_SPL_DB,
@@ -66,6 +66,36 @@ class LLMService:
             except Exception as e:
                 error_str = str(e)
                 last_error = e
+
+                # Check if it's a quota exhausted error (429)
+                is_quota_error = (
+                    '429' in error_str or
+                    'RESOURCE_EXHAUSTED' in error_str or
+                    'quota' in error_str.lower() or
+                    isinstance(e, ClientError) and hasattr(e, 'status_code') and e.status_code == 429
+                )
+
+                if is_quota_error:
+                    # Extract retry delay if available
+                    retry_match = re.search(r'retry in (\d+(?:\.\d+)?)s', error_str)
+                    retry_delay = float(retry_match.group(1)) if retry_match else None
+                    
+                    # Format a user-friendly error message
+                    error_msg = "Google Gemini API quota exhausted. "
+                    if 'free_tier' in error_str.lower():
+                        error_msg += "You've reached the free tier limit (20 requests/day). "
+                    if retry_delay:
+                        retry_hours = retry_delay / 3600
+                        if retry_hours >= 1:
+                            error_msg += f"Please retry in {retry_hours:.1f} hours."
+                        else:
+                            retry_minutes = retry_delay / 60
+                            error_msg += f"Please retry in {retry_minutes:.1f} minutes."
+                    else:
+                        error_msg += "Please check your plan and billing details."
+                    
+                    # Raise with clean message
+                    raise Exception(error_msg)
 
                 # Check if it's a retryable error (503 overload)
                 is_retryable = (

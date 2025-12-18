@@ -408,7 +408,7 @@ export const AURALIZATION_LIMITER = {
 // Impulse Response Processing Constants
 export const IMPULSE_RESPONSE = {
   // Normalization scale factor (0.5 = -6dB headroom for convolution)
-  NORMALIZATION_SCALE: 0.5,
+  NORMALIZATION_SCALE: 1,
 
   // Minimum amplitude threshold for normalization (avoid amplifying silence)
   MIN_AMPLITUDE_THRESHOLD: 0.001,
@@ -421,14 +421,45 @@ export const IMPULSE_RESPONSE = {
 
   // Fixed gain multiplier for ambisonic IRs (instead of normalization)
   // This preserves channel balance and temporal dynamics for proper localization
-  // Tuned to give reasonable levels without clipping after SN3D→N3D conversion
-  AMBISONIC_IR_GAIN_MULTIPLIER: 0.3  // -10.5dB for headroom with FOA gain compensation
+  // IRs are in FuMa/N3D format from pyroomacoustics (JSAmbisonics default)
+  AMBISONIC_IR_GAIN_MULTIPLIER: 1  // -10.5dB for headroom with FOA gain compensation
 } as const;
+
+// ============================================================================
+// Web Audio Engine Configuration
+// ============================================================================
+
+/**
+ * Global audio sample rate for the entire application.
+ *
+ * This value controls the AudioContext sample rate and ensures consistent
+ * audio processing throughout the app. All audio buffers, HRTF data, and
+ * impulse responses will be resampled to match this rate.
+ *
+ * Common values:
+ * - 44100 Hz: CD quality, widely compatible
+ * - 48000 Hz: Professional audio, video sync, modern browser default
+ *
+ * Note: Most modern browsers default to 48000 Hz. Using a different rate
+ * may require resampling of audio resources.
+ */
+export const AUDIO_SAMPLE_RATE = 44100
 
 // ============================================================================
 // Ambisonic Audio Configuration
 // ============================================================================
 export const AMBISONIC = {
+  /**
+   * FOA Decoder Implementation
+   * 
+   * Controls which library is used for First Order Ambisonics decoding:
+   * - 'jsambisonic': JSAmbisonics library (supports FOA/SOA/TOA, custom HRTF loading)
+   * - 'omnitone': Google Omnitone library (FOA only, built-in SADIE HRTFs, optimized)
+   * 
+   * Note: For SOA/TOA, JSAmbisonics is always used regardless of this setting.
+   */
+  USE_OMNITONE_FOR_FOA: false as const,
+
   // Ambisonic orders
   ORDER: {
     FOA: 1,  // First Order Ambisonics (4 channels)
@@ -438,19 +469,19 @@ export const AMBISONIC = {
 
   // Channel counts
   CHANNELS: {
-    FOA: 4,   // 1st order: W, X, Y, Z
+    FOA: 4,   // 1st order: W, X, Y, Z (FuMa ordering from pyroomacoustics)
     SOA: 9,   // 2nd order: (order+1)^2 channels
     TOA: 16   // 3rd order: (order+1)^2 channels
   } as const,
 
-  // ACN channel ordering (standard for ambisonics)
+  // ACN channel ordering (JSAmbisonics default)
   ACN_ORDERING: true as const,
 
-  // Normalization scheme (JSAmbisonics uses N3D internally)
+  // Normalization scheme (N3D - JSAmbisonics and pyroomacoustics default)
   NORMALIZATION: 'N3D' as const,
 
-  // SN3D to N3D conversion factors (multiply SN3D channel by these to get N3D)
-  // Most ambisonic IRs are recorded in SN3D, but JSAmbisonics expects N3D
+  // SN3D to N3D conversion factors (for reference - not used with N3D IRs from pyroomacoustics)
+  // JSAmbisonics uses N3D internally by default, matching pyroomacoustics output
   // Reference: https://en.wikipedia.org/wiki/Ambisonic_data_exchange_formats
   SN3D_TO_N3D: {
     // FOA (First Order) - ACN channels 0-3
@@ -498,9 +529,9 @@ export const AMBISONIC = {
   // Formula: 1 / sqrt(numChannels) to maintain consistent perceived loudness
   ORDER_GAIN_COMPENSATION: {
     MONO: 1.0,           // 1 channel: no compensation (for AmbisonicIRMode reference)
-    FOA: 0.5,            // 4 channels: 1/sqrt(4) = 0.5 (-6dB)
-    SOA: 0.333,          // 9 channels: 1/sqrt(9) ≈ 0.333 (-9.5dB)
-    TOA: 0.25            // 16 channels: 1/sqrt(16) = 0.25 (-12dB)
+    FOA: 1.0,            // 4 channels: 1/sqrt(4) = 0.5 (-6dB)
+    SOA: 1.0,          // 9 channels: 1/sqrt(9) ≈ 0.333 (-9.5dB)
+    TOA: 1.0            // 16 channels: 1/sqrt(16) = 0.25 (-12dB)
   } as const,
 
   // Mono IR boost to match compensated ambisonic IR levels
@@ -511,7 +542,7 @@ export const AMBISONIC = {
   // Stereo IR boost (same as mono for consistency)
   STEREO_IR_BOOST: 1.0 as const,
 
-  // Channel names for FOA (ACN ordering)
+  // Channel names for FOA (FuMa ordering: W, X, Y, Z)
   FOA_CHANNEL_NAMES: ['W', 'X', 'Y', 'Z'] as const,
 
   // Channel names for SOA (ACN ordering, 9 channels)
@@ -527,7 +558,18 @@ export const AMBISONIC = {
     'Y', 'Z', 'X',                               // 1st order
     'V', 'T', 'R', 'S', 'U',                    // 2nd order
     'Q', 'O', 'M', 'K', 'L', 'N', 'P'          // 3rd order
-  ] as const
+  ] as const,
+
+  // Front direction for ambisonic decoding (constant -Z axis in Three.js)
+  // Replaces dynamic scene alignment - IRs always assume front is -Z
+  FRONT_DIRECTION: { x: 0, y: 0, z: -1 } as const,
+
+  // Normalization conventions (for reference/documentation)
+  // IRs from simulations are assumed to be N3D (JSAmbisonics expects N3D)
+  NORMALIZATION_CONVENTIONS: {
+    N3D: 'N3D',
+    SN3D: 'SN3D',
+  } as const
 } as const;
 
 // ============================================================================
@@ -535,7 +577,7 @@ export const AMBISONIC = {
 // ============================================================================
 export const HRTF = {
   // Default HRTF dataset path (IRCAM subject 1076)
-  DEFAULT_HRTF_PATH: '/hrtf/IRC_1076_C_HRIR_48000.sofa.json',
+  DEFAULT_HRTF_PATH: '/hrtf/HRTF_KEMAR_front.json',
 
   // HRTF loading configuration
   FETCH_TIMEOUT_MS: 10000,  // 10 second timeout for loading HRTF
@@ -545,7 +587,31 @@ export const HRTF = {
   FORMAT: 'ircam' as const,  // IRCAM SOFA JSON format
 
   // Enable auto-loading on decoder initialization
-  AUTO_LOAD: true            // Automatically load HRTFs on startup
+  AUTO_LOAD: true,           // Automatically load HRTFs on startup
+
+  /**
+   * Virtual speaker count for binaural decoding per ambisonic order.
+   *
+   * These determine how many virtual speakers are used to decode
+   * ambisonic signals to binaural (headphone) output via HRTF convolution.
+   *
+   * Guidelines:
+   * - Minimum: (order+1)² channels for proper reproduction
+   * - More speakers = better spatial accuracy, higher CPU usage
+   * - Common configurations:
+   *   - FOA: 4-8 speakers (4 = minimum, 8 = cube)
+   *   - SOA: 9-12 speakers
+   *   - TOA: 16-26 speakers (16 = minimum, 26 = Lebedev grid)
+   *
+   * Note: JSAmbisonics binDecoder works best with standard counts.
+   * Non-standard values may cause HRTF loading warnings but will
+   * fall back to cardioid virtual microphone decoding.
+   */
+  VIRTUAL_SPEAKERS: {
+    FOA: 4,   // First Order: tetrahedral (4) or cube (8)
+    SOA: 9,   // Second Order: 9 speakers (cube + zenith)
+    TOA: 16,  // Third Order: 16 speakers (dodecahedron)
+  } as const,
 } as const;
 
 // ============================================================================
@@ -821,6 +887,10 @@ export const SOUND_SPHERE = {
   METALNESS: 0.1,
   OPACITY: 0.5,
   TRANSPARENT: true,
+  // Rendering order (always on top, same as receivers)
+  RENDER_ORDER: 999,
+  DEPTH_TEST: false,
+  DEPTH_WRITE: false,
 } as const;
 
 // Receiver Configuration
@@ -1034,7 +1104,7 @@ export const IMPACT_SOUND = {
   POSITION_INFLUENCE_STRENGTH: 0.5, // How much impact position affects mode amplitudes (0-1)
   
   // Synthesis
-  SAMPLE_RATE: 44100,              // Audio sample rate (Hz)
+  SAMPLE_RATE: AUDIO_SAMPLE_RATE,  // Uses global audio sample rate
   MAX_MODES_TO_SYNTHESIZE: 20,     // Maximum number of modes to include in synthesis
   MIN_MODE_AMPLITUDE: 0.01,        // Minimum mode amplitude to include (1%)
   
@@ -1197,31 +1267,11 @@ export const AUDIO_MODE_DESCRIPTIONS = {
     requiresIR: false,
     icon: '🎵',
   },
-  mono_ir: {
-    name: 'Mono IR',
-    shortName: 'Mono IR',
-    description: 'Mono impulse response convolution',
-    details: 'Single-channel IR convolved with source, then encoded to ambisonics.',
-    dof: '3 DOF',
-    requiresReceiver: true,
-    requiresIR: true,
-    icon: '🔊',
-  },
-  stereo_ir: {
-    name: 'Stereo IR',
-    shortName: 'Stereo IR',
-    description: 'Stereo impulse response (binaural or speaker)',
-    details: 'Dual-channel IR with interpretation toggle (binaural/speaker mode).',
-    dof: '3 DOF',
-    requiresReceiver: true,
-    requiresIR: true,
-    icon: '🎧',
-  },
   ambisonic_ir: {
-    name: 'Ambisonic IR',
-    shortName: 'Ambisonic IR',
-    description: 'Multi-channel ambisonic impulse response',
-    details: 'FOA/SOA/TOA IR convolution with rotation and binaural decoding.',
+    name: 'IR Convolution',
+    shortName: 'IR Mode',
+    description: 'Impulse response convolution with binaural decoding',
+    details: 'Supports Mono (1ch), Stereo (2ch), FOA (4ch), SOA (9ch), and TOA (16ch) IRs.',
     dof: '3 DOF',
     requiresReceiver: true,
     requiresIR: true,
@@ -1236,9 +1286,7 @@ export const AUDIO_MODE_DESCRIPTIONS = {
 export const AUDIO_MODE_COLORS = {
   no_ir_resonance: UI_COLORS.SECONDARY,
   anechoic: UI_COLORS.PRIMARY,
-  mono_ir: UI_COLORS.SUCCESS,
-  stereo_ir: UI_COLORS.WARNING,
-  ambisonic_ir: UI_COLORS.PRIMARY,
+  ambisonic_ir: UI_COLORS.SUCCESS,
 } as const;
 
 /**
@@ -1346,18 +1394,16 @@ export const CHORAS_MAX_POLL_RETRIES = 5; // Maximum retry attempts for failed p
 
 // Simulation Modes
 export const PYROOMACOUSTICS_SIMULATION_MODE_MONO = "mono"; // Single microphone (1 channel)
-export const PYROOMACOUSTICS_SIMULATION_MODE_BINAURAL = "binaural"; // Two microphones for left/right ears (2 channels)
-export const PYROOMACOUSTICS_SIMULATION_MODE_FOA = "foa"; // First-Order Ambisonics (4 channels: W, X, Y, Z)
+export const PYROOMACOUSTICS_SIMULATION_MODE_FOA = "foa"; // First-Order Ambisonics (4 channels: W, X, Y, Z - FuMa/N3D)
 
 // Simulation Mode Display Names
 export const PYROOMACOUSTICS_SIMULATION_MODE_NAMES = {
   [PYROOMACOUSTICS_SIMULATION_MODE_MONO]: "Mono (1-ch)",
-  [PYROOMACOUSTICS_SIMULATION_MODE_BINAURAL]: "Binaural (2-ch)",
   [PYROOMACOUSTICS_SIMULATION_MODE_FOA]: "FOA Ambisonics (4-ch)"
 } as const;
 
 // Default Simulation Settings
-export const PYROOMACOUSTICS_DEFAULT_MAX_ORDER = 5; // Default max_order for image source method
+export const PYROOMACOUSTICS_DEFAULT_MAX_ORDER = 3; // Default max_order for image source method
 export const PYROOMACOUSTICS_DEFAULT_RAY_TRACING = false; // Default ray tracing state
 export const PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION = false; // Default air absorption state
 export const PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE = PYROOMACOUSTICS_SIMULATION_MODE_MONO; // Default simulation mode

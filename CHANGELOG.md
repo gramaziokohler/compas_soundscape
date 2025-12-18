@@ -1,5 +1,107 @@
 # CHANGELOG
 
+## [2025-12-16 20:40] - Frontend: Disable Ray Tracing for FOA Mode
+### Changed
+- **`frontend/src/components/layout/sidebar/PyroomAcousticsSimulationSettings.tsx`** - Disable "Ray tracing" checkbox when FOA mode is selected
+- **`frontend/src/components/layout/sidebar/PyroomAcousticsSimulationSettings.tsx`** - Automatically turn off ray tracing when switching to FOA mode
+- **`frontend/src/components/layout/sidebar/PyroomAcousticsSimulationSettings.tsx`** - Added info icon (ℹ️) with hover tooltip explaining ray tracing limitation in FOA mode
+- **`frontend/src/components/ui/CheckboxField.tsx`** - Enhanced disabled state visual feedback with opacity (0.6) and cursor-not-allowed
+
+### Rationale
+FOA directivity patterns require Image Source Method (ISM) and are not compatible with ray tracing. The UI now prevents users from enabling an incompatible configuration, with a clean tooltip on hover for explanation.
+
+## [2025-12-16 20:35] - Fix: Correct CardioidFamily Parameter Name
+### Fixed
+- **`backend/services/pyroomacoustics_service.py`** - Changed `pattern_enum` to `p` parameter in `CardioidFamily` constructor (correct API)
+
+### Rationale
+The pyroomacoustics `CardioidFamily` constructor expects parameter `p` (not `pattern_enum`) to specify the pattern type (0=figure-8, 1=omnidirectional).
+
+## [2025-12-16 20:30] - Refactor: Extract Receiver Setup to Single Method
+### Changed
+- **`backend/services/pyroomacoustics_service.py`** - Created `add_receiver_to_room()` helper method to centralize receiver setup logic
+- **`backend/services/pyroomacoustics_service.py`** - Updated `simulate_room_acoustics()` to use new helper method
+- **`backend/routers/pyroomacoustics.py`** - Updated batch simulation endpoint to use service helper method instead of duplicating logic
+
+### Rationale
+Eliminated code duplication by consolidating FOA directivity pattern creation into a single reusable service method. The FOA microphone setup logic is now defined once and used by both the service and router.
+
+## [2025-12-16 20:00] - Proper B-format FOA Directivity Patterns
+### Fixed
+- **`backend/services/pyroomacoustics_service.py`** - Implemented proper B-format directivity using `pyroomacoustics.directivities.CardioidFamily`
+  - W channel: Omnidirectional (p=1.0)
+  - X channel: Figure-of-8 pointing forward/+X axis (p=0.0)
+  - Y channel: Figure-of-8 pointing left/+Y axis (p=0.0)
+  - Z channel: Figure-of-8 pointing up/+Z axis (p=0.0)
+  - All capsules are coincident at receiver position (true B-format)
+- **`backend/routers/pyroomacoustics.py`** - Updated batch simulation endpoint to use proper directivity patterns
+- **`backend/routers/pyroomacoustics.py`** - Removed import of obsolete `PYROOMACOUSTICS_FOA_MIC_RADIUS` constant
+- **`backend/config/constants.py`** - Removed obsolete `PYROOMACOUSTICS_FOA_MIC_RADIUS` constant (no longer using near-coincident array)
+- **`backend/config/constants.py`** - Updated comments to reflect proper directivity implementation
+
+### Changed
+- FOA simulation now uses Image Source Method (ISM) exclusively, as directivity patterns are not supported with ray tracing
+- Ray tracing is automatically disabled when FOA mode is selected
+
+### Rationale
+Previous implementation used 4 coincident omnidirectional microphones, which does not produce proper B-format. The new implementation uses the correct directivity patterns as per pyroomacoustics documentation.
+
+## [2025-12-16 19:00] - Sound Spheres Always Render on Top
+### Changed
+- **`frontend/src/lib/constants.ts`** - Added rendering order constants (RENDER_ORDER: 999, DEPTH_TEST: false, DEPTH_WRITE: false) to SOUND_SPHERE
+- **`frontend/src/lib/three/sound-sphere-manager.ts`** - Applied depth and render order properties to sound sphere material and mesh
+### Fixed
+- Sound spheres now always render on top of 3D geometry, preventing occlusion when inside transparent models
+
+## [2025-12-16 18:00] - Removed Binaural Simulation Mode
+### Removed
+- **`backend/services/pyroomacoustics_service.py`** - Removed binaural simulation (2-mic) mode from service
+- **`backend/routers/pyroomacoustics.py`** - Removed binaural mode from API endpoint
+- **`backend/config/constants.py`** - Removed `PYROOMACOUSTICS_SIMULATION_MODE_BINAURAL` and `PYROOMACOUSTICS_BINAURAL_EAR_SPACING`
+- **`frontend/src/lib/constants.ts`** - Removed binaural mode constant and display name
+- **`frontend/src/components/layout/sidebar/PyroomAcousticsSimulationSettings.tsx`** - Removed binaural option from UI
+
+### Rationale
+Binaural rendering should be handled by frontend's BinauralDecoder, not backend simulation. Backend now produces mono or ambisonic IRs only.
+
+## [2025-12-16] - FOA Simulation with FuMa/N3D Format
+### Changed
+- **`backend/config/constants.py`** - Updated `PYROOMACOUSTICS_FOA_MIC_RADIUS` to 0.005m (5mm) for near-coincident array
+- **`backend/services/pyroomacoustics_service.py`** - Implemented tetrahedral microphone array for B-format approximation with finite differences
+- **`backend/routers/pyroomacoustics.py`** - Keep FuMa ordering (W,X,Y,Z) as direct pyroomacoustics output (no conversion)
+- **`backend/routers/pyroomacoustics.py`** - Updated metadata to indicate FuMa ordering and N3D normalization
+- **`frontend/src/lib/audio/ir-utils.ts`** - Updated docs to reflect FuMa/N3D format (JSAmbisonics default)
+- **`frontend/src/lib/audio/modes/AmbisonicIRMode.ts`** - Updated header docs with FuMa format specification
+- **`frontend/src/lib/audio/modes/AmbisonicIRMode.ts`** - Fixed bug: use processedBuffer instead of bufferToProcess in setSourceImpulseResponse
+- **`frontend/src/lib/constants.ts`** - `FOA_CHANNEL_NAMES` uses FuMa [W,X,Y,Z] ordering (pyroomacoustics output)
+- **`frontend/src/lib/constants.ts`** - `NORMALIZATION` constant set to 'N3D' (JSAmbisonics and pyroomacoustics default)
+- **`frontend/src/types/audio.ts`** - Added `channelOrdering` field to ImpulseResponseMetadata interface
+
+## [2025-12-15 16:00] - Fixed Mono IR Support in AmbisonicIRMode
+### Fixed
+- **`frontend/src/lib/audio/modes/AmbisonicIRMode.ts`** - Added `convertMonoToFOA()` to convert 1-channel IRs to 4-channel FOA format
+- Mono IRs now placed in W channel (omnidirectional) with X/Y/Z channels zeroed (no directional encoding)
+- Conversion happens BEFORE `processImpulseResponse()` to ensure proper ambisonic gain compensation
+- Updated validation in `setImpulseResponse()` and `setSourceImpulseResponse()` to accept [1, 4, 9, 16] channels
+- Fixed "getChannelData channel index exceeds number of channels" error when using mono IRs
+
+## [2025-12-15] - Simplified Ambisonics Audio Workflow
+### Removed
+- **`frontend/src/lib/audio/ir-utils.ts`** - Removed SN3D→N3D conversion and RMS diagnostics (IRs assumed N3D from simulations)
+- **`frontend/src/lib/audio/decoders/BinauralDecoder.ts`** - Removed dynamic scene alignment and rotation offset
+- **`frontend/src/lib/audio/modes/AmbisonicIRMode.ts`** - Removed wetGain nodes and updateSceneAlignment() method
+- **`frontend/src/lib/audio/modes/StereoIRMode.ts`** - Deleted entire file (~900 lines)
+- **`frontend/src/lib/audio/modes/MonoIRMode.ts`** - Deleted entire file (~700 lines)
+### Added
+- **`frontend/src/lib/audio/AudioOrchestrator.ts`** - Added IR cache to prevent duplicate downloads
+- **`frontend/src/lib/constants.ts`** - Added FRONT_DIRECTION constant (-Z axis) and NORMALIZATION_CONVENTIONS
+- **`frontend/src/types/audio.ts`** - Added normalizationConvention field to ImpulseResponseMetadata
+- **`backend/routers/pyroomacoustics.py`** - Added normalization_convention: "N3D" to simulation results JSON
+### Changed
+- **Total lines removed:** ~1,850 lines of code
+- Simplified audio chain: Source → Gain → Mute → Convolver → MixBus → Decoder → Output
+- Front direction now constant (-Z) instead of dynamically aligned to closest source
+
 ## [2025-12-12] - Fixed Material Coloring Visualization Issues
 ### Fixed
 - **`frontend/src/components/scene/ThreeScene.tsx`** - Fixed face-to-triangle mapping to correctly color triangulated faces (quads/n-gons)

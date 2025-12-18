@@ -20,7 +20,7 @@ LLM_MODEL_NAME = "gemini-2.5-flash"
 # LLM_MODEL_NAME = "gemini-2.5-pro"
 
 # LLM Retry Configuration (for handling 503 overload errors)
-LLM_MAX_RETRIES = 5  # Maximum number of retry attempts
+LLM_MAX_RETRIES = 4  # Maximum number of retry attempts
 LLM_INITIAL_RETRY_DELAY = 2.0  # Initial delay in seconds before first retry
 LLM_MAX_RETRY_DELAY = 30.0  # Maximum delay in seconds between retries
 LLM_BACKOFF_MULTIPLIER = 2.0  # Exponential backoff multiplier
@@ -57,7 +57,7 @@ CLIPPING_THRESHOLD = 0.99  # Threshold to prevent clipping
 SPL_CLIPPING_THRESHOLD = 0.99  # Threshold for SPL calibration clipping prevention
 
 # Sample Rate
-AUDIO_SAMPLE_RATE = 48000  # Browser default AudioContext sample rate in Hz (matches Web Audio API default)
+AUDIO_SAMPLE_RATE = 44100  # Browser default AudioContext sample rate in Hz (matches Web Audio API default)
 
 # Audio Processing Thresholds
 AUDIO_RMS_EPSILON = 1e-8  # Epsilon threshold for RMS calculation
@@ -111,7 +111,6 @@ WINDOWS_ILLEGAL_FILENAME_CHARS = r'<>:"/\|?*'  # Windows illegal filename charac
 
 # Simulation Modes
 PYROOMACOUSTICS_SIMULATION_MODE_MONO = "mono"  # Single microphone (1 channel)
-PYROOMACOUSTICS_SIMULATION_MODE_BINAURAL = "binaural"  # Two microphones for left/right ears (2 channels)
 PYROOMACOUSTICS_SIMULATION_MODE_FOA = "foa"  # First-Order Ambisonics (4 channels: W, X, Y, Z)
 
 # Default Simulation Settings
@@ -121,13 +120,9 @@ PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION = False  # Default air absorption state
 PYROOMACOUSTICS_DEFAULT_RIR_DURATION = 1.0  # seconds
 PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE = PYROOMACOUSTICS_SIMULATION_MODE_MONO  # Default simulation mode
 
-# Binaural Configuration (for BINAURAL mode)
-PYROOMACOUSTICS_BINAURAL_EAR_SPACING = 0.215  # Inter-aural distance in meters (typical human head width ~21.5cm)
-
 # FOA Ambisonics Configuration (for FOA mode)
-# Microphone array configuration for capturing W, X, Y, Z components
-# Using a compact tetrahedral arrangement
-PYROOMACOUSTICS_FOA_MIC_RADIUS = 0.01  # Radius for FOA microphone array in meters (compact 1cm array)
+# B-format microphone: Uses proper directivity patterns (W=omni, X/Y/Z=figure-8)
+# Directivity is only supported with Image Source Method (ISM), not ray tracing
 
 # Ray Tracing Configuration (Hybrid ISM/Ray Tracing)
 PYROOMACOUSTICS_RAY_TRACING_N_RAYS = 10000  # Number of rays to shoot (default)

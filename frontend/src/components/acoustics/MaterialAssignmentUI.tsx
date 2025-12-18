@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { UI_COLORS } from '@/lib/constants';
 import type { EntityData } from '@/types';
 import type { AcousticMaterial, SelectedGeometry } from '@/types/materials';
@@ -63,6 +63,7 @@ function MaterialSelect({
   handleMaterialChange,
   updateCounter
 }: MaterialSelectProps) {
+  const material = getMaterialForSelection(selection);
   const display = getDisplayValue(selection);
   const currentValue = display.isVarious ? 'various' : (display.value || 'none');
 
@@ -116,6 +117,7 @@ interface MaterialAssignmentUIProps {
   expandedItems?: Set<string>; // Expanded tree items (persisted)
   onExpandedItemsChange?: (items: Set<string>) => void; // Callback to persist expanded state
   initialAssignments?: Map<number, string>; // faceIndex -> materialId from simulation config
+  resetTrigger?: number; // Timestamp to trigger reset
 }
 
 export function MaterialAssignmentUI({
@@ -128,7 +130,8 @@ export function MaterialAssignmentUI({
   availableMaterials,
   expandedItems: externalExpandedItems,
   onExpandedItemsChange,
-  initialAssignments
+  initialAssignments,
+  resetTrigger
 }: MaterialAssignmentUIProps) {
   // Use external expanded state if provided, otherwise use local state
   const [localExpandedItems, setLocalExpandedItems] = useState<Set<string>>(new Set(['all']));
@@ -146,14 +149,19 @@ export function MaterialAssignmentUI({
     }
   };
 
+  // Track previous resetTrigger to detect changes
+  const prevResetTrigger = useRef<number | undefined>(undefined);
+
   const [materialAssignments, setMaterialAssignments] = useState<Map<string, AcousticMaterial | null>>(() => {
     // Initialize from initialAssignments on mount
-    if (!initialAssignments || initialAssignments.size === 0) return new Map();
+    if (!initialAssignments || initialAssignments.size === 0) {
+      return new Map();
+    }
 
     const newAssignments = new Map<string, AcousticMaterial | null>();
     const entityMaterialCounts = new Map<string, Map<string, number>>(); // entityKey -> materialId -> count
     const layerMaterialCounts = new Map<string, Map<string, number>>(); // layerKey -> materialId -> count
-    
+
     // First pass: Set face-level assignments and count materials per entity/layer
     initialAssignments.forEach((materialId, faceIndex) => {
       // Material ID is stored without prefix, but availableMaterials has prefixes
@@ -162,13 +170,14 @@ export function MaterialAssignmentUI({
         if (m.id.endsWith(`_${materialId}`)) return true;
         return false;
       });
-      
+
       if (material) {
         // Find the entity and layer for this face
         const entityIndex = geometryData?.face_entity_map?.[faceIndex];
         if (entityIndex !== undefined) {
           const entity = modelEntities.find(e => e.index === entityIndex);
-          const layerId = entity?.layer || '';
+          // Use 'Default' for entities without a layer (matches rendering logic)
+          const layerId = entity?.layer || 'Default';
           const faceKey = `face-${layerId}-${entityIndex}-${faceIndex}`;
           newAssignments.set(faceKey, material);
           
@@ -304,11 +313,113 @@ export function MaterialAssignmentUI({
     return faceIndices;
   };
 
+  // Re-initialize material assignments when reset is triggered
+  useEffect(() => {
+    // Only run when resetTrigger actually changes (not on initial mount or other prop changes)
+    if (!resetTrigger || resetTrigger === prevResetTrigger.current) {
+      return;
+    }
+
+    // Update the ref to track this trigger
+    prevResetTrigger.current = resetTrigger;
+
+    // Re-initialize from initialAssignments
+    if (!initialAssignments || initialAssignments.size === 0) {
+      setMaterialAssignments(new Map());
+      setUpdateCounter(prev => prev + 1);
+      return;
+    }
+
+    const newAssignments = new Map<string, AcousticMaterial | null>();
+    const entityMaterialCounts = new Map<string, Map<string, number>>();
+    const layerMaterialCounts = new Map<string, Map<string, number>>();
+
+    // First pass: Set face-level assignments
+    initialAssignments.forEach((materialId, faceIndex) => {
+      const material = availableMaterials.find(m => {
+        if (m.id === materialId) return true;
+        if (m.id.endsWith(`_${materialId}`)) return true;
+        return false;
+      });
+
+      if (material) {
+        const entityIndex = geometryData?.face_entity_map?.[faceIndex];
+        if (entityIndex !== undefined) {
+          const entity = modelEntities.find(e => e.index === entityIndex);
+          // Use 'Default' for entities without a layer (matches rendering logic)
+          const layerId = entity?.layer || 'Default';
+          const faceKey = `face-${layerId}-${entityIndex}-${faceIndex}`;
+          newAssignments.set(faceKey, material);
+
+          // Track material counts for entity
+          const entityKey = `entity-${layerId}-${entityIndex}`;
+          if (!entityMaterialCounts.has(entityKey)) {
+            entityMaterialCounts.set(entityKey, new Map());
+          }
+          const entityCounts = entityMaterialCounts.get(entityKey)!;
+          entityCounts.set(material.id, (entityCounts.get(material.id) || 0) + 1);
+
+          // Track material counts for layer
+          if (layerId) {
+            const layerKey = `layer-${layerId}`;
+            if (!layerMaterialCounts.has(layerKey)) {
+              layerMaterialCounts.set(layerKey, new Map());
+            }
+            const layerCounts = layerMaterialCounts.get(layerKey)!;
+            layerCounts.set(material.id, (layerCounts.get(material.id) || 0) + 1);
+          }
+        }
+      }
+    });
+
+    // Second pass: Set entity-level assignments
+    entityMaterialCounts.forEach((materialCounts, entityKey) => {
+      if (materialCounts.size === 1) {
+        const [materialId] = materialCounts.keys();
+        const material = availableMaterials.find(m => m.id === materialId);
+        if (material) {
+          const match = entityKey.match(/^entity-(.*?)-(\d+)$/);
+          if (match) {
+            const entityIndex = parseInt(match[2]);
+            const entityFaceCount = geometryData?.face_entity_map?.filter((ei: number) => ei === entityIndex).length || 0;
+            const assignedCount = Array.from(materialCounts.values())[0];
+
+            if (entityFaceCount === assignedCount) {
+              newAssignments.set(`${entityKey}-`, material);
+            }
+          }
+        }
+      }
+    });
+
+    // Third pass: Set layer-level assignments
+    layerMaterialCounts.forEach((materialCounts, layerKey) => {
+      if (materialCounts.size === 1) {
+        const [materialId] = materialCounts.keys();
+        const material = availableMaterials.find(m => m.id === materialId);
+        if (material) {
+          const layerId = layerKey.replace('layer-', '');
+          const layerFaceCount = modelEntities
+            .filter(e => (e.layer || '') === layerId)
+            .reduce((sum, entity) => {
+              return sum + (geometryData?.face_entity_map?.filter((ei: number) => ei === entity.index).length || 0);
+            }, 0);
+          const assignedCount = Array.from(materialCounts.values())[0];
+
+          if (layerFaceCount === assignedCount) {
+            newAssignments.set(`${layerKey}--`, material);
+          }
+        }
+      }
+    });
+
+    setMaterialAssignments(newAssignments);
+    setUpdateCounter(prev => prev + 1);
+  }, [resetTrigger, initialAssignments, availableMaterials, geometryData, modelEntities]);
+
   // Auto-expand tree to show selected geometry
   useEffect(() => {
     if (!selectedGeometry) return;
-
-    console.log('[MaterialAssignmentUI] Auto-expand effect triggered:', selectedGeometry);
 
     setExpandedItems(prev => {
       const newExpanded = new Set(prev);
@@ -326,14 +437,11 @@ export function MaterialAssignmentUI({
 
           newExpanded.add(layerKey); // Expand layer
           newExpanded.add(entityKey); // Expand entity
-
-          console.log('[MaterialAssignmentUI] Expanding:', { layerKey, entityKey, entity, newExpandedSize: newExpanded.size });
         }
       } else if (selectedGeometry.type === 'layer' && selectedGeometry.layerId) {
         newExpanded.add(`layer-${selectedGeometry.layerId}`); // Expand layer
       }
 
-      console.log('[MaterialAssignmentUI] New expanded items:', Array.from(newExpanded));
       return newExpanded;
     });
 
@@ -346,7 +454,6 @@ export function MaterialAssignmentUI({
         const element = document.getElementById(faceId);
         if (element) {
           element.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-          console.log('[MaterialAssignmentUI] Scrolled to face:', faceId);
         }
       }
     }, 100); // Small delay to allow expansion animation
@@ -461,19 +568,19 @@ export function MaterialAssignmentUI({
     // Use ?? instead of || to handle 0 values correctly
     const key = `${selection.type}-${selection.layerId ?? ''}-${selection.entityIndex ?? ''}-${selection.faceIndex ?? ''}`;
     const directMaterial = materialAssignments.get(key);
-    
+
     // If there's a direct assignment, return it
     if (directMaterial !== undefined) {
       return directMaterial;
     }
-    
+
     // Otherwise, inherit from parent hierarchy
     if (selection.type === 'face' && selection.entityIndex !== undefined) {
       // Check entity level
       const entityKey = `entity-${selection.layerId ?? ''}-${selection.entityIndex}-`;
       const entityMaterial = materialAssignments.get(entityKey);
       if (entityMaterial !== undefined) return entityMaterial;
-      
+
       // Check layer level
       if (selection.layerId) {
         const layerKey = `layer-${selection.layerId}--`;
@@ -486,12 +593,12 @@ export function MaterialAssignmentUI({
       const layerMaterial = materialAssignments.get(layerKey);
       if (layerMaterial !== undefined) return layerMaterial;
     }
-    
+
     // Check global level
     const globalKey = 'global---';
     const globalMaterial = materialAssignments.get(globalKey);
     if (globalMaterial !== undefined) return globalMaterial;
-    
+
     return null;
   };
 

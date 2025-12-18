@@ -232,6 +232,12 @@ export interface ThreeSceneProps {
   /** Active simulation configuration (contains faceToMaterialMap for dynamic coloring) */
   activeSimulationConfig?: import('./acoustics').SimulationConfig | null;
 
+  /** Expanded simulation index (for showing materials even when simulation is not active) */
+  expandedSimulationIndex?: number | null;
+
+  /** Expanded simulation configuration (fallback for material coloring when no active simulation) */
+  expandedSimulationConfig?: import('./acoustics').SimulationConfig | null;
+
   /** Active sidebar tab (for determining input mode) */
   activeAiTab?: 'text' | 'sound' | 'acoustics';
 }

@@ -12,8 +12,10 @@ import {
   LLM_RETRY
 } from "@/lib/constants";
 import { ActiveTab } from "@/types";
+import { useErrorNotification } from "@/contexts/ErrorContext";
 
 export function useTextGeneration(modelEntities: any[], useModelAsContext: boolean) {
+  const { addError } = useErrorNotification();
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiResponse, setAiResponse] = useState<string | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -297,18 +299,30 @@ export function useTextGeneration(modelEntities: any[], useModelAsContext: boole
     } catch (err: any) {
       // Don't show error if request was aborted intentionally
       if (err.name === 'AbortError') {
-        setAiError('Generation stopped by user.');
+        const errorMsg = 'Generation stopped by user.';
+        setAiError(errorMsg);
+        addError(errorMsg, 'info');
       } else {
         // Show graceful error message for API overload
         const isOverloaded = err.message.includes('overloaded') || err.message.includes('503') || err.message.includes('UNAVAILABLE');
-        if (isOverloaded) {
-          setAiError(
-            `⏳ LLM service is overloaded even after ${LLM_RETRY.MAX_ATTEMPTS} retry attempts. ` +
-            `The system automatically retried with exponential backoff. Please try again in a moment.`
-          );
+        const isQuotaError = err.message.includes('quota') || err.message.includes('429');
+        
+        let errorMsg: string;
+        let errorType: 'error' | 'warning' = 'error';
+        
+        if (isQuotaError) {
+          errorMsg = err.message;
+          errorType = 'warning';
+        } else if (isOverloaded) {
+          errorMsg = `⏳ LLM service is overloaded even after ${LLM_RETRY.MAX_ATTEMPTS} retry attempts. ` +
+            `The system automatically retried with exponential backoff. Please try again in a moment.`;
+          errorType = 'warning';
         } else {
-          setAiError(err.message);
+          errorMsg = err.message;
         }
+        
+        setAiError(errorMsg);
+        addError(errorMsg, errorType);
       }
       setLlmProgress('');
     } finally {

@@ -32,9 +32,10 @@ interface AcousticsSectionProps {
   onAddConfig: (mode: AcousticSimulationMode) => void;
   onRemoveConfig: (index: number) => void;
   onUpdateConfig: (index: number, updates: Partial<SimulationConfig>) => void;
+  onResetSimulation: (index: number) => void;
   onSetActiveSimulation: (index: number | null) => void;
   onUpdateSimulationName: (index: number, name: string) => void;
-  
+
   // Simulation execution
   onRunSimulation?: (index: number) => Promise<void>;
   onCancelSimulation?: (index: number) => void;
@@ -84,6 +85,7 @@ export function AcousticsSection({
   onAddConfig,
   onRemoveConfig,
   onUpdateConfig,
+  onResetSimulation,
   onSetActiveSimulation,
   onUpdateSimulationName,
   onRunSimulation,
@@ -335,6 +337,7 @@ export function AcousticsSection({
               onToggleExpand={handleToggleExpand}
               onUpdateConfig={onUpdateConfig}
               onRemove={onRemoveConfig}
+              onReset={onResetSimulation}
               onActivate={handleActivate}
               onUpdateName={onUpdateSimulationName}
               onRunSimulation={onRunSimulation}

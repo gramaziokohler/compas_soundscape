@@ -14,11 +14,12 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
-import type { 
-  AudioMode, 
-  AudioModeConfig, 
-  OrchestratorStatus, 
-  AmbisonicOrder 
+import { AUDIO_SAMPLE_RATE } from '@/lib/constants';
+import type {
+  AudioMode,
+  AudioModeConfig,
+  OrchestratorStatus,
+  AmbisonicOrder
 } from '@/types/audio';
 
 export function useAudioOrchestrator() {
@@ -43,7 +44,7 @@ export function useAudioOrchestrator() {
           throw new Error('Web Audio API not supported');
         }
         
-        const audioContext = new AudioContext({ sampleRate: 48000 });
+        const audioContext = new AudioContext({ sampleRate: AUDIO_SAMPLE_RATE });
         audioContextRef.current = audioContext;
 
         // Create and initialize orchestrator
@@ -236,15 +237,6 @@ export function useAudioOrchestrator() {
     setStatus(newStatus);
   }, []);
 
-  // Set stereo IR interpretation
-  const setStereoIRInterpretation = useCallback((mode: 'binaural' | 'speaker') => {
-    if (!orchestratorRef.current) {
-      throw new Error('Orchestrator not initialized');
-    }
-
-    orchestratorRef.current.setStereoIRInterpretation(mode);
-  }, []);
-
   // Get IR state
   const getIRState = useCallback(() => {
     if (!orchestratorRef.current) {
@@ -336,7 +328,6 @@ export function useAudioOrchestrator() {
     clearImpulseResponse,
     setAmbisonicOrder,
     setNoIRPreference,
-    setStereoIRInterpretation,
     getIRState,
     getSupportedOrders,
     getWarnings,

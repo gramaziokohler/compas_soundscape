@@ -75,12 +75,10 @@ export function AudioModeSelector({
     return true;
   };
 
-  // Get all modes in order
+  // Get all modes in order (simplified: removed mono_ir and stereo_ir)
   const allModes = [
     AudioMode.ANECHOIC,
     AudioMode.NO_IR_RESONANCE,
-    AudioMode.MONO_IR,
-    AudioMode.STEREO_IR,
     AudioMode.AMBISONIC_IR,
   ];
 

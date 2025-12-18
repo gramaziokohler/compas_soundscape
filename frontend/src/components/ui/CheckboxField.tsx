@@ -41,7 +41,10 @@ export function CheckboxField({
   className = ""
 }: CheckboxFieldProps) {
   return (
-    <label className={`flex items-center gap-2 ${TAILWIND_PADDING.SM} cursor-pointer ${className}`}>
+    <label
+      className={`flex items-center gap-2 ${TAILWIND_PADDING.SM} ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'} ${className}`}
+      style={{ opacity: disabled ? 0.6 : 1 }}
+    >
       <input
         type="checkbox"
         checked={checked}
@@ -50,13 +53,14 @@ export function CheckboxField({
         className="w-4 h-4 rounded focus:ring-2 accent-primary"
         style={{
           borderRadius: `${UI_CHECKBOX.BORDER_RADIUS}px`,
-          accentColor: UI_COLORS.PRIMARY
+          accentColor: UI_COLORS.PRIMARY,
+          cursor: disabled ? 'not-allowed' : 'pointer'
         }}
       />
-      <span 
+      <span
         className={TAILWIND_TEXT_SIZE.XS}
-        style={{ 
-          color: disabled ? UI_COLORS.NEUTRAL_400 : UI_COLORS.NEUTRAL_700 
+        style={{
+          color: disabled ? UI_COLORS.NEUTRAL_400 : UI_COLORS.NEUTRAL_700
         }}
       >
         {label}

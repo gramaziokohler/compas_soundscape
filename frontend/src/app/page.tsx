@@ -17,6 +17,7 @@ import { useAudioOrchestrator } from "@/hooks/useAudioOrchestrator";
 import { useReceivers } from "@/hooks/useReceivers";
 import { useModalImpact } from "@/hooks/useModalImpact";
 import { useAcousticsSimulation } from "@/hooks/useAcousticsSimulation";
+import { useAnalysis } from "@/hooks/useAnalysis";
 import { apiService } from "@/services/api";
 import { API_BASE_URL } from "@/lib/constants";
 import type { LoadTab, SoundGenerationConfig } from "@/types";
@@ -29,6 +30,7 @@ function HomeContent() {
   const textGen = useTextGeneration(fileUpload.modelEntities, fileUpload.useModelAsContext);
   const soundGen = useSoundGeneration(fileUpload.geometryBounds);
   const audioControls = useAudioControls(soundGen.generatedSounds);
+  const analysis = useAnalysis();
 
   const sed = useSED();
 
@@ -216,6 +218,36 @@ function HomeContent() {
     }
   }, [textGen.pendingSoundConfigs, soundGen, textGen]);
 
+  // Handler: Send analysis prompts to sound generation
+  const handleSendAnalysisToGeneration = useCallback(() => {
+    analysis.handleSendToSoundGeneration((prompts) => {
+      // Convert text prompts to sound configs
+      const newConfigs = prompts.map(p => ({
+        prompt: p.text,
+        duration: p.metadata?.duration_seconds ?? 10, // Use duration from metadata
+        guidance_scale: 4.5,
+        negative_prompt: '',
+        seed_copies: 1,
+        steps: 100,
+        spl_db: p.metadata?.spl_db ?? 60, // Default SPL if not provided
+        interval_seconds: p.metadata?.interval_seconds ?? 5, // Default interval if not provided
+        display_name: p.text.length > 50 ? p.text.substring(0, 47) + '...' : p.text,
+        entity: p.entity || undefined // Preserve entity association for 3D model sounds
+      }));
+
+      console.log('[Analysis→SoundGen] Converted configs with metadata:', 
+        newConfigs.map(c => ({ prompt: c.prompt.substring(0, 30), duration: c.duration, spl_db: c.spl_db, interval_seconds: c.interval_seconds, hasEntity: !!c.entity })));
+
+      // Add to sound generation
+      soundGen.setSoundConfigsFromPrompts(newConfigs);
+      
+      // Switch to sound generation tab
+      textGen.setActiveAiTab('sound');
+
+      console.log(`Loaded ${newConfigs.length} prompts from analysis to sound generation`);
+    });
+  }, [analysis, soundGen, textGen]);
+
   // Handler: Analyze sound events when audio file is uploaded
   const handleAnalyzeSoundEvents = useCallback(async () => {
     if (!fileUpload.audioFile) return;
@@ -266,6 +298,49 @@ function HomeContent() {
     }
   }, [fileUpload.modelFile, fileUpload.isUploading, fileUpload.geometryData]);
 
+  // Auto-upload files when added to analysis configs
+  useEffect(() => {
+    analysis.analysisConfigs.forEach((config, index) => {
+      if (config.type === '3d-model' && config.modelFile && config.modelEntities.length === 0) {
+        // Upload 3D model file
+        analysis.handleModelFileUpload(index, config.modelFile);
+      } else if (config.type === 'audio' && config.audioFile && !config.audioBuffer) {
+        // Load audio file and buffer
+        analysis.handleAudioFileUpload(index, config.audioFile);
+      }
+    });
+  }, [analysis.analysisConfigs]);
+
+  // Sync analysis model to main fileUpload state (for ThreeScene)
+  useEffect(() => {
+    const modelConfigs = analysis.analysisConfigs.filter(c => c.type === '3d-model');
+    if (modelConfigs.length > 0) {
+      const latestConfig = modelConfigs[modelConfigs.length - 1] as import('@/types/analysis').ModelAnalysisConfig;
+      
+      // Only sync if we have geometry data and it's different from current
+      if (latestConfig.geometryData && latestConfig.geometryData !== fileUpload.geometryData) {
+        fileUpload.setGeometryData(latestConfig.geometryData);
+      }
+      
+      // Sync model file if different
+      if (latestConfig.modelFile && latestConfig.modelFile !== fileUpload.modelFile) {
+        fileUpload.setModelFile(latestConfig.modelFile);
+      }
+      
+      // Sync entities if available and different
+      if (latestConfig.modelEntities.length > 0 && 
+          JSON.stringify(latestConfig.modelEntities) !== JSON.stringify(fileUpload.modelEntities)) {
+        fileUpload.setModelEntities(latestConfig.modelEntities);
+      }
+      
+      // Sync selectedDiverseEntities to textGen for ThreeScene highlighting
+      if (latestConfig.selectedDiverseEntities.length > 0 &&
+          JSON.stringify(latestConfig.selectedDiverseEntities) !== JSON.stringify(textGen.selectedDiverseEntities)) {
+        textGen.setSelectedDiverseEntities(latestConfig.selectedDiverseEntities);
+      }
+    }
+  }, [analysis.analysisConfigs, fileUpload, textGen]);
+
   // Handle sound deletion
   const handleDeleteSound = useCallback((soundId: string, promptIdx: number) => {
     if (!soundGen.soundscapeData) return;
@@ -307,6 +382,24 @@ function HomeContent() {
     setSelectedCardIndex(promptIndex);
   }, [textGen.setActiveAiTab]);
 
+  /**
+   * Helper: Get current selectedDiverseEntities from analysis config
+   */
+  const getSelectedDiverseEntities = useCallback(() => {
+    const modelConfig = analysis.analysisConfigs.find(c => c.type === '3d-model');
+    return modelConfig?.type === '3d-model' ? modelConfig.selectedDiverseEntities : [];
+  }, [analysis.analysisConfigs]);
+
+  /**
+   * Helper: Update selectedDiverseEntities in analysis config
+   */
+  const updateSelectedDiverseEntities = useCallback((entities: any[]) => {
+    const modelConfigIndex = analysis.analysisConfigs.findIndex(c => c.type === '3d-model');
+    if (modelConfigIndex !== -1) {
+      analysis.handleUpdateConfig(modelConfigIndex, { selectedDiverseEntities: entities });
+    }
+  }, [analysis]);
+
   // Entity linking handlers
   const handleStartLinkingEntity = useCallback((configIndex: number) => {
     setIsLinkingEntity(true);
@@ -331,10 +424,11 @@ function HomeContent() {
           soundGen.handleDetachSoundFromEntity(linkingConfigIndex);
 
           // Remove the previous entity from highlights
-          const updatedEntities = textGen.selectedDiverseEntities.filter(
+          const selectedEntities = getSelectedDiverseEntities();
+          const updatedEntities = selectedEntities.filter(
             e => e.index !== previousEntity.index
           );
-          textGen.setSelectedDiverseEntities(updatedEntities);
+          updateSelectedDiverseEntities(updatedEntities);
         }
 
         // Exit linking mode (whether we unlinked or not)
@@ -348,7 +442,7 @@ function HomeContent() {
       soundGen.handleAttachSoundToEntity(linkingConfigIndex, entity);
 
       // Update diverse selection to highlight the new entity
-      let updatedEntities = [...textGen.selectedDiverseEntities];
+      let updatedEntities = [...getSelectedDiverseEntities()];
 
       // Remove the previous entity from highlights if it exists
       if (previousEntity) {
@@ -360,29 +454,30 @@ function HomeContent() {
         updatedEntities.push(entity);
       }
 
-      textGen.setSelectedDiverseEntities(updatedEntities);
+      updateSelectedDiverseEntities(updatedEntities);
 
       setIsLinkingEntity(false);
       setLinkingConfigIndex(null);
     }
-  }, [linkingConfigIndex, soundGen, textGen]);
+  }, [linkingConfigIndex, soundGen, getSelectedDiverseEntities, updateSelectedDiverseEntities]);
 
   /**
    * Toggle entity in diverse selection (for LLM prompts)
    * Used from entity overlay link button: grey <-> pink
    */
   const handleToggleDiverseSelection = useCallback((entity: any) => {
-    const isCurrentlySelected = textGen.selectedDiverseEntities.some(e => e.index === entity.index);
+    const selectedEntities = getSelectedDiverseEntities();
+    const isCurrentlySelected = selectedEntities.some(e => e.index === entity.index);
 
     if (isCurrentlySelected) {
       // Remove from selection
-      const updatedEntities = textGen.selectedDiverseEntities.filter(e => e.index !== entity.index);
-      textGen.setSelectedDiverseEntities(updatedEntities);
+      const updatedEntities = selectedEntities.filter(e => e.index !== entity.index);
+      updateSelectedDiverseEntities(updatedEntities);
     } else {
       // Add to selection
-      textGen.setSelectedDiverseEntities([...textGen.selectedDiverseEntities, entity]);
+      updateSelectedDiverseEntities([...selectedEntities, entity]);
     }
-  }, [textGen]);
+  }, [getSelectedDiverseEntities, updateSelectedDiverseEntities]);
 
   /**
    * Detach sound from entity and create sound sphere
@@ -402,10 +497,11 @@ function HomeContent() {
     soundGen.handleDetachSoundFromEntity(configIndex);
 
     // Add entity to diverse selection (pink highlight)
-    if (!textGen.selectedDiverseEntities.some(e => e.index === entity.index)) {
-      textGen.setSelectedDiverseEntities([...textGen.selectedDiverseEntities, entity]);
+    const selectedEntities = getSelectedDiverseEntities();
+    if (!selectedEntities.some(e => e.index === entity.index)) {
+      updateSelectedDiverseEntities([...selectedEntities, entity]);
     }
-  }, [soundGen, textGen]);
+  }, [soundGen, getSelectedDiverseEntities, updateSelectedDiverseEntities]);
 
   /**
    * Wrapper for handleUpdateConfig that handles entity unlinking
@@ -419,16 +515,17 @@ function HomeContent() {
 
       // If there was a previous entity, remove it from highlights
       if (previousEntity) {
-        const updatedEntities = textGen.selectedDiverseEntities.filter(
+        const selectedEntities = getSelectedDiverseEntities();
+        const updatedEntities = selectedEntities.filter(
           e => e.index !== previousEntity.index
         );
-        textGen.setSelectedDiverseEntities(updatedEntities);
+        updateSelectedDiverseEntities(updatedEntities);
       }
     }
 
     // Call the original handler
     soundGen.handleUpdateConfig(index, field, value);
-  }, [soundGen, textGen]);
+  }, [soundGen, getSelectedDiverseEntities, updateSelectedDiverseEntities]);
 
   /**
    * Handle selection of IR from server library
@@ -903,6 +1000,22 @@ function HomeContent() {
         onSetActiveSimulation={acousticsSimulation.handleSetActiveSimulation}
         onUpdateSimulationName={acousticsSimulation.handleUpdateSimulationName}
         onToggleExpandSimulation={acousticsSimulation.handleToggleExpand}
+
+        // Analysis props
+        analysisConfigs={analysis.analysisConfigs}
+        activeAnalysisTab={analysis.activeAnalysisTab}
+        isAnalyzing={analysis.isAnalyzing}
+        analysisError={analysis.analysisError}
+        analysisResults={analysis.analysisResults}
+        onAddAnalysisConfig={analysis.handleAddConfig}
+        onRemoveAnalysisConfig={analysis.handleRemoveConfig}
+        onUpdateAnalysisConfig={analysis.handleUpdateConfig}
+        onSetActiveAnalysisTab={analysis.setActiveAnalysisTab}
+        onAnalyze={analysis.handleAnalyze}
+        onStopAnalysis={analysis.handleStopAnalysis}
+        onTogglePromptSelection={analysis.handleTogglePromptSelection}
+        onSendToSoundGeneration={handleSendAnalysisToGeneration}
+        onResetAnalysis={analysis.handleReset}
       />
 
       <main className="flex-1 overflow-hidden relative">
@@ -938,7 +1051,7 @@ function HomeContent() {
           isAnyPlaying={audioControls.isAnyPlaying()}
           scaleForSounds={fileUpload.scaleForSounds}
           modelEntities={fileUpload.modelEntities}
-          selectedDiverseEntities={textGen.selectedDiverseEntities}
+          selectedDiverseEntities={getSelectedDiverseEntities()}
           auralizationConfig={auralizationConfig}
           resonanceAudioConfig={resonanceAudioConfig}
           geometryBounds={fileUpload.geometryBounds}
@@ -985,6 +1098,12 @@ function HomeContent() {
           activeSimulationConfig={
             acousticsSimulation.activeSimulationIndex !== null
               ? acousticsSimulation.simulationConfigs[acousticsSimulation.activeSimulationIndex]
+              : null
+          }
+          expandedSimulationIndex={acousticsSimulation.expandedTabIndex}
+          expandedSimulationConfig={
+            acousticsSimulation.expandedTabIndex !== null
+              ? acousticsSimulation.simulationConfigs[acousticsSimulation.expandedTabIndex]
               : null
           }
           activeAiTab={textGen.activeAiTab}

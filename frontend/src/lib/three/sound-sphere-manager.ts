@@ -163,10 +163,13 @@ export class SoundSphereManager {
         metalness: SOUND_SPHERE.METALNESS,
         opacity: SOUND_SPHERE.OPACITY,
         transparent: SOUND_SPHERE.TRANSPARENT,
+        depthTest: SOUND_SPHERE.DEPTH_TEST,
+        depthWrite: SOUND_SPHERE.DEPTH_WRITE,
       });
 
       // Create sphere mesh
       sphereMesh = new THREE.Mesh(sphereGeom, material);
+      sphereMesh.renderOrder = SOUND_SPHERE.RENDER_ORDER;
 
       // Position the sphere (use stored position or event position)
       if (this.spherePositions[promptKey]) {

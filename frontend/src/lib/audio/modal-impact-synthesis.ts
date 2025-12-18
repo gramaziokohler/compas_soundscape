@@ -5,7 +5,7 @@
  * Generates realistic impact sounds based on resonant frequencies and damping.
  */
 
-import { IMPACT_SOUND } from '@/lib/constants';
+import { AUDIO_SAMPLE_RATE, IMPACT_SOUND } from '@/lib/constants';
 import type {
   ImpactParameters,
   ModalAnalysisResult,
@@ -23,7 +23,7 @@ export class ModalImpactSynthesizer {
   private audioContext: AudioContext;
 
   constructor(audioContext?: AudioContext) {
-    this.audioContext = audioContext || new AudioContext();
+    this.audioContext = audioContext || new AudioContext({ sampleRate: AUDIO_SAMPLE_RATE });
   }
 
   /**
