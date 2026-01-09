@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { UI_COLORS } from '@/lib/constants';
+import { UI_COLORS, MAX_FACES_FOR_EXPANSION } from '@/lib/constants';
 import type { EntityData } from '@/types';
 import type { AcousticMaterial, SelectedGeometry } from '@/types/materials';
 
@@ -112,12 +112,15 @@ interface MaterialAssignmentUIProps {
   geometryData: any;
   selectedGeometry: SelectedGeometry | null;
   onSelectGeometry: (selection: SelectedGeometry | null) => void;
+  onHoverGeometry?: (selection: SelectedGeometry | null) => void; // Callback for hover highlighting
   onAssignMaterial: (selection: SelectedGeometry, material: AcousticMaterial | null) => void;
   availableMaterials: AcousticMaterial[]; // Choras materials from library
   expandedItems?: Set<string>; // Expanded tree items (persisted)
   onExpandedItemsChange?: (items: Set<string>) => void; // Callback to persist expanded state
   initialAssignments?: Map<number, string>; // faceIndex -> materialId from simulation config
   resetTrigger?: number; // Timestamp to trigger reset
+  excludedLayers?: Set<string>; // Layers excluded from simulation and selection
+  onExcludedLayersChange?: (layers: Set<string>) => void; // Callback to update excluded layers
 }
 
 export function MaterialAssignmentUI({
@@ -126,16 +129,23 @@ export function MaterialAssignmentUI({
   geometryData,
   selectedGeometry,
   onSelectGeometry,
+  onHoverGeometry,
   onAssignMaterial,
   availableMaterials,
   expandedItems: externalExpandedItems,
   onExpandedItemsChange,
   initialAssignments,
-  resetTrigger
+  resetTrigger,
+  excludedLayers: externalExcludedLayers,
+  onExcludedLayersChange
 }: MaterialAssignmentUIProps) {
   // Use external expanded state if provided, otherwise use local state
   const [localExpandedItems, setLocalExpandedItems] = useState<Set<string>>(new Set(['all']));
   const expandedItems = externalExpandedItems || localExpandedItems;
+
+  // Use external excluded layers state if provided, otherwise use local state
+  const [localExcludedLayers, setLocalExcludedLayers] = useState<Set<string>>(new Set());
+  const excludedLayers = externalExcludedLayers || localExcludedLayers;
 
   // Wrapper to handle both local state setter (accepts callback) and external setter (accepts value)
   const setExpandedItems = (updater: Set<string> | ((prev: Set<string>) => Set<string>)) => {
@@ -146,6 +156,16 @@ export function MaterialAssignmentUI({
     } else {
       // Local state setter - can handle both callback and direct value
       setLocalExpandedItems(updater);
+    }
+  };
+
+  // Wrapper to handle excluded layers updates
+  const setExcludedLayers = (updater: Set<string> | ((prev: Set<string>) => Set<string>)) => {
+    if (onExcludedLayersChange) {
+      const newValue = typeof updater === 'function' ? updater(excludedLayers) : updater;
+      onExcludedLayersChange(newValue);
+    } else {
+      setLocalExcludedLayers(updater);
     }
   };
 
@@ -609,9 +629,14 @@ export function MaterialAssignmentUI({
     let assignedChildren = 0;
 
     if (selection.type === 'global') {
-      // Check all entities/faces
+      // Check all entities/faces (excluding excluded layers)
       if (hasLayers) {
         Object.entries(groupedEntities).forEach(([layerName, entities]) => {
+          // Skip excluded layers
+          if (excludedLayers.has(layerName)) {
+            return;
+          }
+          
           entities.forEach(entity => {
             getEntityFaces(entity.index).forEach(faceIndex => {
               totalChildren++;
@@ -631,6 +656,12 @@ export function MaterialAssignmentUI({
         });
       } else {
         modelEntities.forEach(entity => {
+          // Skip entities in excluded layers
+          const entityLayer = entity.layer || 'Default';
+          if (excludedLayers.has(entityLayer)) {
+            return;
+          }
+          
           getEntityFaces(entity.index).forEach(faceIndex => {
             totalChildren++;
             const faceSelection: SelectedGeometry = {
@@ -647,15 +678,40 @@ export function MaterialAssignmentUI({
         });
       }
     } else if (selection.type === 'layer' && selection.layerId) {
-      // Check all faces in this layer
-      const entities = groupedEntities[selection.layerId] || [];
-      entities.forEach(entity => {
-        getEntityFaces(entity.index).forEach(faceIndex => {
+      // Skip if this layer is excluded
+      if (!excludedLayers.has(selection.layerId)) {
+        // Check all faces in this layer
+        const entities = groupedEntities[selection.layerId] || [];
+        entities.forEach(entity => {
+          getEntityFaces(entity.index).forEach(faceIndex => {
+            totalChildren++;
+            const faceSelection: SelectedGeometry = {
+              type: 'face',
+              faceIndex,
+              entityIndex: entity.index,
+              layerId: selection.layerId
+            };
+            const mat = getMaterialForSelection(faceSelection);
+            if (mat) {
+              assignedChildren++;
+              childMaterials.add(mat.id);
+            }
+          });
+        });
+      }
+    } else if (selection.type === 'entity' && selection.entityIndex !== undefined) {
+      // Check if entity's layer is excluded
+      const entity = modelEntities.find(e => e.index === selection.entityIndex);
+      const entityLayer = entity?.layer || 'Default';
+      
+      if (!excludedLayers.has(entityLayer)) {
+        // Check all faces in this entity
+        getEntityFaces(selection.entityIndex).forEach(faceIndex => {
           totalChildren++;
           const faceSelection: SelectedGeometry = {
             type: 'face',
             faceIndex,
-            entityIndex: entity.index,
+            entityIndex: selection.entityIndex,
             layerId: selection.layerId
           };
           const mat = getMaterialForSelection(faceSelection);
@@ -664,23 +720,7 @@ export function MaterialAssignmentUI({
             childMaterials.add(mat.id);
           }
         });
-      });
-    } else if (selection.type === 'entity' && selection.entityIndex !== undefined) {
-      // Check all faces in this entity
-      getEntityFaces(selection.entityIndex).forEach(faceIndex => {
-        totalChildren++;
-        const faceSelection: SelectedGeometry = {
-          type: 'face',
-          faceIndex,
-          entityIndex: selection.entityIndex,
-          layerId: selection.layerId
-        };
-        const mat = getMaterialForSelection(faceSelection);
-        if (mat) {
-          assignedChildren++;
-          childMaterials.add(mat.id);
-        }
-      });
+      }
     }
 
     // Determine display value
@@ -743,6 +783,8 @@ export function MaterialAssignmentUI({
               backgroundColor: isSelected({ type: 'global' }) ? UI_COLORS.PRIMARY_LIGHT : 'transparent'
             }}
             onClick={() => handleSelectRow({ type: 'global' })}
+            onMouseEnter={() => onHoverGeometry?.({ type: 'global' })}
+            onMouseLeave={() => onHoverGeometry?.(null)}
           >
             <button
               onClick={(e) => {
@@ -783,37 +825,66 @@ export function MaterialAssignmentUI({
                           backgroundColor: isSelected(layerSelection) ? UI_COLORS.PRIMARY_LIGHT : 'transparent'
                         }}
                         onClick={() => handleSelectRow(layerSelection)}
+                        onMouseEnter={() => onHoverGeometry?.(layerSelection)}
+                        onMouseLeave={() => onHoverGeometry?.(null)}
                       >
+                        {/* Include/Exclude button - moved to the left */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const newExcludedLayers = new Set(excludedLayers);
+                            if (newExcludedLayers.has(layerName)) {
+                              newExcludedLayers.delete(layerName);
+                            } else {
+                              newExcludedLayers.add(layerName);
+                            }
+                            setExcludedLayers(newExcludedLayers);
+                          }}
+                          className="w-5 h-5 flex items-center justify-center rounded-full transition-colors flex-shrink-0"
+                          style={{
+                            backgroundColor: excludedLayers.has(layerName) ? `${UI_COLORS.ERROR}20` : `${UI_COLORS.SUCCESS}20`,
+                            color: excludedLayers.has(layerName) ? UI_COLORS.ERROR : UI_COLORS.SUCCESS
+                          }}
+                          onMouseEnter={(e) => {
+                            const isExcluded = excludedLayers.has(layerName);
+                            e.currentTarget.style.backgroundColor = isExcluded ? `${UI_COLORS.ERROR}30` : `${UI_COLORS.SUCCESS}30`;
+                          }}
+                          onMouseLeave={(e) => {
+                            const isExcluded = excludedLayers.has(layerName);
+                            e.currentTarget.style.backgroundColor = isExcluded ? `${UI_COLORS.ERROR}20` : `${UI_COLORS.SUCCESS}20`;
+                          }}
+                          title={excludedLayers.has(layerName) ? "Layer excluded from simulation - click to include" : "Layer included in simulation - click to exclude"}
+                        >
+                          {excludedLayers.has(layerName) ? '✕' : '✓'}
+                        </button>
+
+                        {/* Expand/collapse arrow */}
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             toggleExpand(layerId);
                           }}
-                          className="flex items-center justify-center w-4 h-4"
+                          className="flex items-center justify-center w-4 h-4 flex-shrink-0"
                         >
                           {expandedItems.has(layerId) ? '▼' : '▶'}
                         </button>
-                        <span className="flex-1">{modelType === '3dm' ? 'Layer' : 'Group'}: {layerName}</span>
-                        <select
-                          key={`layer-${layerName}-${updateCounter}`}
-                          value={getMaterialForSelection(layerSelection)?.id || 'none'}
-                          onChange={(e) => {
-                            e.stopPropagation();
-                            handleMaterialChange(layerSelection, e.target.value);
-                          }}
-                          className="flex-1 text-xs px-2 py-1 text-white rounded focus:outline-none focus:ring-1 focus:ring-white truncate"
-                          style={{
-                            backgroundColor: getSelectBackgroundColor(getMaterialForSelection(layerSelection)?.id),
-                            borderRadius: '8px',
-                            maxWidth: '150px'
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <option value="none" style={{ backgroundColor: UI_COLORS.PRIMARY }}>Select material</option>
-                          {availableMaterials.map((mat, idx) => (
-                            <option key={mat.id} value={mat.id} style={{ backgroundColor: materialColors.get(mat.id) }}>{mat.name}</option>
-                          ))}
-                        </select>
+
+                        {/* Layer name with truncation */}
+                        <span className="flex-1 truncate" title={`${modelType === '3dm' ? 'Layer' : 'Group'}: ${layerName}`}>
+                          {modelType === '3dm' ? 'Layer' : 'Group'}: {layerName}
+                        </span>
+
+                        {/* Material select */}
+                        <MaterialSelect
+                          selection={layerSelection}
+                          materialColors={materialColors}
+                          availableMaterials={availableMaterials}
+                          getMaterialForSelection={getMaterialForSelection}
+                          getDisplayValue={getDisplayValue}
+                          getSelectBackgroundColor={getSelectBackgroundColor}
+                          handleMaterialChange={handleMaterialChange}
+                          updateCounter={updateCounter}
+                        />
                       </div>
 
                       {/* Entities in this layer */}
@@ -826,6 +897,8 @@ export function MaterialAssignmentUI({
                               entityIndex: entity.index, 
                               layerId: layerName 
                             };
+                            const entityFaceCount = getEntityFaces(entity.index).length;
+                            const hasTooManyFaces = entityFaceCount > MAX_FACES_FOR_EXPANSION;
 
                             return (
                               <div key={entityId} className="flex flex-col">
@@ -835,18 +908,28 @@ export function MaterialAssignmentUI({
                                     backgroundColor: isSelected(entitySelection) ? UI_COLORS.PRIMARY_LIGHT : 'transparent'
                                   }}
                                   onClick={() => handleSelectRow(entitySelection)}
+                                  onMouseEnter={() => onHoverGeometry?.(entitySelection)}
+                                  onMouseLeave={() => onHoverGeometry?.(null)}
                                 >
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      toggleExpand(entityId);
+                                      if (!hasTooManyFaces) {
+                                        toggleExpand(entityId);
+                                      }
                                     }}
                                     className="flex items-center justify-center w-4 h-4"
+                                    style={{
+                                      opacity: hasTooManyFaces ? 0.3 : 1,
+                                      cursor: hasTooManyFaces ? 'not-allowed' : 'pointer'
+                                    }}
+                                    title={hasTooManyFaces ? `Entity has ${entityFaceCount} faces (max ${MAX_FACES_FOR_EXPANSION} for expansion)` : ''}
                                   >
                                     {expandedItems.has(entityId) ? '▼' : '▶'}
                                   </button>
                                   <span className="flex-1">
                                     {entity.name || `Entity ${entity.index}`}
+                                    {hasTooManyFaces && <span className="text-neutral-500 ml-1">({entityFaceCount} faces)</span>}
                                   </span>
                                   <select
                                     key={`entity-${layerName}-${entity.index}-${updateCounter}`}
@@ -870,8 +953,8 @@ export function MaterialAssignmentUI({
                                   </select>
                                 </div>
 
-                                {/* Faces of this entity */}
-                                {expandedItems.has(entityId) && (
+                                {/* Faces of this entity - only show if not too many */}
+                                {expandedItems.has(entityId) && !hasTooManyFaces && (
                                   <div className="ml-6 flex flex-col gap-1">
                                     {getEntityFaces(entity.index).map((faceIndex) => {
                                       const faceSelection: SelectedGeometry = {
@@ -890,6 +973,8 @@ export function MaterialAssignmentUI({
                                             backgroundColor: isSelected(faceSelection) ? UI_COLORS.PRIMARY_LIGHT : 'transparent'
                                           }}
                                           onClick={() => handleSelectRow(faceSelection)}
+                                          onMouseEnter={() => onHoverGeometry?.(faceSelection)}
+                                          onMouseLeave={() => onHoverGeometry?.(null)}
                                         >
                                           <span className="flex-1 ml-4">Face {faceIndex}</span>
                                           <select
@@ -935,6 +1020,9 @@ export function MaterialAssignmentUI({
                     layerId: entity.layer || 'Default'
                   };
 
+                  const entityFaceCount = getEntityFaces(entity.index).length;
+                  const hasTooManyFaces = entityFaceCount > MAX_FACES_FOR_EXPANSION;
+
                   return (
                     <div key={entityId} className="flex flex-col">
                       <div
@@ -943,18 +1031,28 @@ export function MaterialAssignmentUI({
                           backgroundColor: isSelected(entitySelection) ? UI_COLORS.PRIMARY_LIGHT : 'transparent'
                         }}
                         onClick={() => handleSelectRow(entitySelection)}
+                        onMouseEnter={() => onHoverGeometry?.(entitySelection)}
+                        onMouseLeave={() => onHoverGeometry?.(null)}
                       >
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            toggleExpand(entityId);
+                            if (!hasTooManyFaces) {
+                              toggleExpand(entityId);
+                            }
                           }}
                           className="flex items-center justify-center w-4 h-4"
+                          style={{
+                            opacity: hasTooManyFaces ? 0.3 : 1,
+                            cursor: hasTooManyFaces ? 'not-allowed' : 'pointer'
+                          }}
+                          title={hasTooManyFaces ? `Entity has ${entityFaceCount} faces (max ${MAX_FACES_FOR_EXPANSION} for expansion)` : ''}
                         >
                           {expandedItems.has(entityId) ? '▼' : '▶'}
                         </button>
                         <span className="flex-1">
                           {entity.name || `Entity ${entity.index}`}
+                          {hasTooManyFaces && <span className="text-neutral-500 ml-1">({entityFaceCount} faces)</span>}
                         </span>
                         <select
                           key={`entity-${entity.index}-${updateCounter}`}
@@ -979,7 +1077,7 @@ export function MaterialAssignmentUI({
                       </div>
 
                       {/* Faces of this entity */}
-                      {expandedItems.has(entityId) && (
+                      {expandedItems.has(entityId) && !hasTooManyFaces && (
                         <div className="ml-6 flex flex-col gap-1">
                           {getEntityFaces(entity.index).map((faceIndex) => {
                             const faceSelection: SelectedGeometry = {
@@ -998,6 +1096,8 @@ export function MaterialAssignmentUI({
                                   backgroundColor: isSelected(faceSelection) ? UI_COLORS.PRIMARY_LIGHT : 'transparent'
                                 }}
                                 onClick={() => handleSelectRow(faceSelection)}
+                                onMouseEnter={() => onHoverGeometry?.(faceSelection)}
+                                onMouseLeave={() => onHoverGeometry?.(null)}
                               >
                                 <span className="flex-1 ml-4">Face {faceIndex}</span>
                                 <select

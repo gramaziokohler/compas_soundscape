@@ -293,3 +293,42 @@ class GeometryService:
             raise HTTPException(status_code=400, detail="No geometry found in 3DM file.")
 
         return {"vertices": all_vertices, "faces": all_faces, "face_entity_map": face_entity_map}
+
+    @staticmethod
+    def extract_entity_layers_from_3dm(file_path: str):
+        """Extract entity-to-layer mapping from 3DM file"""
+        try:
+            file3dm = rhino3dm.File3dm.Read(file_path)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to load 3DM file: {str(e)}")
+
+        entities = []
+        entity_index = 0
+
+        for i, obj in enumerate(file3dm.Objects):
+            try:
+                geom = obj.Geometry
+                if geom is None:
+                    continue
+
+                if isinstance(geom, rhino3dm.InstanceReference):
+                    continue
+
+                mesh = GeometryService.rhino_geom_to_mesh(geom)
+
+                if mesh and mesh.number_of_vertices() > 0:
+                    # Get layer information
+                    layer_index = obj.Attributes.LayerIndex
+                    layer = file3dm.Layers[layer_index] if layer_index < len(file3dm.Layers) else None
+                    layer_name = layer.Name if layer else "Default"
+
+                    entities.append({
+                        "index": entity_index,
+                        "layer": layer_name
+                    })
+                    entity_index += 1
+
+            except Exception as e:
+                continue
+
+        return entities

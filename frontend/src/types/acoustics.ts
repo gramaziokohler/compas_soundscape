@@ -55,11 +55,14 @@ export interface ChorasSimulationConfig extends BaseSimulationConfig {
   faceToMaterialMap: Map<number, string>; // faceIndex -> materialId
   // Material UI state (persisted across tab switches)
   expandedMaterialItems?: Set<string>; // Expanded tree items (e.g., 'all', 'layer-Default', 'entity-0')
+  // Excluded layers (layers not included in simulation or selection)
+  excludedLayers?: Set<string>; // Set of layer IDs to exclude from simulation and selection
   // Saved settings for reset functionality (snapshot before simulation)
   savedSettings?: {
     settings: ChorasSimulationConfig['settings'];
     faceToMaterialMap: Map<number, string>;
     expandedMaterialItems?: Set<string>;
+    excludedLayers?: Set<string>;
   };
   // Runtime state
   isRunning: boolean;
@@ -83,17 +86,20 @@ export interface PyroomAcousticsSimulationConfig extends BaseSimulationConfig {
     air_absorption: boolean;
     n_rays: number;
     scattering: number;
-    simulation_mode: string; // "mono", "binaural", or "foa"
+    simulation_mode: string; // "mono", "foa" (ISM only), or "foa_raytracing" (A-format tetrahedral array)
   };
   // Material assignments per face
   faceToMaterialMap: Map<number, string>; // faceIndex -> materialId
   // Material UI state (persisted across tab switches)
   expandedMaterialItems?: Set<string>; // Expanded tree items (e.g., 'all', 'layer-Default', 'entity-0')
+  // Excluded layers (layers not included in simulation or selection)
+  excludedLayers?: Set<string>; // Set of layer IDs to exclude from simulation and selection
   // Saved settings for reset functionality (snapshot before simulation)
   savedSettings?: {
     settings: PyroomAcousticsSimulationConfig['settings'];
     faceToMaterialMap: Map<number, string>;
     expandedMaterialItems?: Set<string>;
+    excludedLayers?: Set<string>;
   };
   // Runtime state
   isRunning: boolean;

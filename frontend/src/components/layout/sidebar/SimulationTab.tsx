@@ -62,8 +62,9 @@ interface SimulationTabProps {
   modelType?: '3dm' | 'obj' | 'ifc' | null;
   selectedGeometry?: SelectedGeometry | null;
   onSelectGeometry?: (selection: SelectedGeometry | null) => void;
+  onHoverGeometry?: (selection: SelectedGeometry | null) => void;
   onAssignMaterial?: (selection: SelectedGeometry, material: AcousticMaterial | null) => void;
-  
+
   // Resonance Audio specific
   resonanceAudioConfig?: any;
   onToggleResonanceAudio?: (enabled: boolean) => void;
@@ -141,6 +142,7 @@ export function SimulationTab({
   modelType = null,
   selectedGeometry = null,
   onSelectGeometry,
+  onHoverGeometry,
   onAssignMaterial,
   resonanceAudioConfig,
   onToggleResonanceAudio,
@@ -345,12 +347,15 @@ export function SimulationTab({
                   geometryData={geometryData || null}
                   selectedGeometry={selectedGeometry || null}
                   onSelectGeometry={onSelectGeometry}
+                  onHoverGeometry={onHoverGeometry}
                   onAssignMaterial={onAssignMaterial}
                   availableMaterials={availableMaterials}
                   expandedItems={(config as any).expandedMaterialItems ? new Set((config as any).expandedMaterialItems) : undefined}
                   onExpandedItemsChange={(items) => onUpdateConfig(index, { expandedMaterialItems: Array.from(items) } as any)}
                   initialAssignments={(config as any).faceToMaterialMap}
                   resetTrigger={(config as any).resetTimestamp}
+                  excludedLayers={(config as any).excludedLayers ? new Set((config as any).excludedLayers) : undefined}
+                  onExcludedLayersChange={(layers) => onUpdateConfig(index, { excludedLayers: Array.from(layers) } as any)}
                 />
               )}
 
@@ -417,12 +422,15 @@ export function SimulationTab({
                   geometryData={geometryData || null}
                   selectedGeometry={selectedGeometry || null}
                   onSelectGeometry={onSelectGeometry}
+                  onHoverGeometry={onHoverGeometry}
                   onAssignMaterial={onAssignMaterial}
                   availableMaterials={availableMaterials}
                   expandedItems={(config as any).expandedMaterialItems ? new Set((config as any).expandedMaterialItems) : undefined}
                   onExpandedItemsChange={(items) => onUpdateConfig(index, { expandedMaterialItems: Array.from(items) } as any)}
                   initialAssignments={(config as any).faceToMaterialMap}
                   resetTrigger={(config as any).resetTimestamp}
+                  excludedLayers={(config as any).excludedLayers ? new Set((config as any).excludedLayers) : undefined}
+                  onExcludedLayersChange={(layers) => onUpdateConfig(index, { excludedLayers: Array.from(layers) } as any)}
                 />
               )}
 

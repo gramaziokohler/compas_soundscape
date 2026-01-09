@@ -104,12 +104,14 @@ export async function runFullSimulation(
     de_lc: number;
     edt: number;
     sim_len_type: 'ir_length' | 'edt';
-  }
+  },
+  excludedLayers?: string[]
 ): Promise<any> {
   try {
     console.log('=== Starting Choras Simulation ===');
     console.log('Receivers:', receivers);
     console.log('Sound sources:', soundscapeData);
+    console.log('Excluded layers:', excludedLayers);
 
     // --- STEP 1: Upload File ---
     console.log("1. Uploading File...");
@@ -296,7 +298,9 @@ export async function runFullSimulation(
     const initialPayload: SimulationCreatePayload = {
       modelId: modelId,
       name: simulationName,
-      description: "Created via Next.js API",
+      description: excludedLayers && excludedLayers.length > 0 
+        ? `Created via Next.js API. Excluded layers: ${excludedLayers.join(', ')}`
+        : "Created via Next.js API",
       taskType: "DE",
       layerIdByMaterialId: layerIdByMaterialId, // Pre-populated with surfaces from .geo file
 

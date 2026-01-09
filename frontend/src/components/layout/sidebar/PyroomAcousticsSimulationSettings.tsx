@@ -83,21 +83,7 @@ export function PyroomAcousticsSimulationSettings({
 
   <select
     value={config.settings.simulation_mode}
-    onChange={(e) => {
-      const newMode = e.target.value;
-      // Disable ray tracing when switching to FOA mode (directivity requires ISM)
-      if (newMode !== PYROOMACOUSTICS_SIMULATION_MODE_MONO) {
-        onUpdateConfig({
-          settings: {
-            ...config.settings,
-            simulation_mode: newMode,
-            ray_tracing: false
-          }
-        } as Partial<PyroomAcousticsSimulationConfig>);
-      } else {
-        handleSettingChange('simulation_mode', newMode);
-      }
-    }}
+    onChange={(e) => handleSettingChange('simulation_mode', e.target.value)}
     className="
       w-full px-3 py-2 text-xs rounded border transition-colors
       hover:bg-opacity-90 focus:outline-none
@@ -146,75 +132,12 @@ export function PyroomAcousticsSimulationSettings({
 
       {/* Toggles */}
       <div className="flex flex-col">
-        <div className="flex items-center gap-1 px-0 py-1">
-          <CheckboxField
-            checked={config.settings.ray_tracing}
-            onChange={(checked) => handleSettingChange('ray_tracing', checked)}
-            label="Ray tracing (hybrid)"
-            disabled={config.isRunning || config.settings.simulation_mode !== PYROOMACOUSTICS_SIMULATION_MODE_MONO}
-            className="flex-1"
-          />
-          {config.settings.simulation_mode !== PYROOMACOUSTICS_SIMULATION_MODE_MONO && (
-            <div
-              className="relative group"
-              style={{ cursor: 'help' }}
-            >
-              {/* Info icon */}
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{ color: UI_COLORS.NEUTRAL_500 }}
-              >
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="16" x2="12" y2="12" />
-                <line x1="12" y1="8" x2="12.01" y2="8" />
-              </svg>
-
-              {/* Tooltip on hover */}
-              <div
-                className="absolute left-1/2 bottom-full mb-2 hidden group-hover:block z-50"
-                style={{
-                  transform: 'translateX(-50%)',
-                  whiteSpace: 'nowrap',
-                  pointerEvents: 'none'
-                }}
-              >
-                <div
-                  className="px-3 py-2 text-xs rounded shadow-lg"
-                  style={{
-                    backgroundColor: UI_COLORS.NEUTRAL_800,
-                    color: 'white',
-                    borderRadius: '6px'
-                  }}
-                >
-                  Ray tracing only available in Mono mode
-                  <br />
-                  (directivity requires ISM)
-                </div>
-                {/* Arrow pointing down */}
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: '50%',
-                    top: '100%',
-                    transform: 'translateX(-50%)',
-                    width: 0,
-                    height: 0,
-                    borderLeft: '6px solid transparent',
-                    borderRight: '6px solid transparent',
-                    borderTop: `6px solid ${UI_COLORS.NEUTRAL_800}`
-                  }}
-                />
-              </div>
-            </div>
-          )}
-        </div>
+        <CheckboxField
+          checked={config.settings.ray_tracing}
+          onChange={(checked) => handleSettingChange('ray_tracing', checked)}
+          label="Ray tracing (hybrid)"
+          disabled={config.isRunning}
+        />
         <CheckboxField
           checked={config.settings.air_absorption}
           onChange={(checked) => handleSettingChange('air_absorption', checked)}

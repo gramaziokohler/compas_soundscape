@@ -12,7 +12,6 @@ import { OrientationIndicator } from "@/components/controls/OrientationIndicator
 import { WaveSurferTimeline } from "@/components/audio/WaveSurferTimeline";
 import { ControlsInfo } from "@/components/layout/sidebar/ControlsInfo";
 import { SceneControlButton } from "@/components/scene/SceneControlButton";
-import { AdvancedSettingsPanel } from "@/components/scene/AdvancedSettingsPanel";
 import { Icon } from "@/components/ui/Icon";
 import { VerticalVolumeSlider } from "@/components/ui/VerticalVolumeSlider";
 import { triangulateWithMapping, trimDisplayName } from "@/lib/utils";
@@ -133,21 +132,10 @@ export function ThreeScene({
   audioContext,
   selectedIRId,
   className,
-  // Sound generation advanced settings
-  globalDuration = 5,
-  globalSteps = 25,
-  globalNegativePrompt = '',
-  applyDenoising = false,
-  normalizeImpulseResponses = false,
-  audioModel = 'tangoflux',
-  onGlobalDurationChange,
-  onGlobalStepsChange,
-  onGlobalNegativePromptChange,
-  onApplyDenoisingChange,
-  onNormalizeImpulseResponsesChange,
-  onAudioModelChange,
-  onResetAdvancedSettings,
+  // 3D Scene settings
+  showAxesHelper,
   selectedGeometry,
+  hoveredGeometry,
   onFaceSelected,
   materialAssignments,
   activeSimulationIndex,
@@ -352,9 +340,6 @@ export function ThreeScene({
   const [showVolumeSlider, setShowVolumeSlider] = useState<boolean>(false);
   const [isHoveringVolume, setIsHoveringVolume] = useState<boolean>(false);
 
-  // Settings panel state
-  const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState<boolean>(false);
-  const [showAxesHelper, setShowAxesHelper] = useState<boolean>(false);
 
   // Timeline playback hook (synced with PlaybackControls)
   const { playbackState, play: playTimeline, pause: pauseTimeline, stop: stopTimeline, seekTo } = useTimelinePlayback({
@@ -486,7 +471,7 @@ export function ThreeScene({
   // Control axes helper visibility
   useEffect(() => {
     if (axesHelperRef.current) {
-      axesHelperRef.current.visible = showAxesHelper;
+      axesHelperRef.current.visible = showAxesHelper || false;
     }
   }, [showAxesHelper]);
 
@@ -537,13 +522,6 @@ export function ThreeScene({
     sceneCoordinator.resetCamera(geometryData !== null);
   }, [geometryData]);
 
-  // Wrap reset advanced settings to also reset scene settings
-  const handleResetAdvancedSettingsLocal = useCallback(() => {
-    setShowAxesHelper(false); // Reset axes helper to default (hidden)
-    if (onResetAdvancedSettings) {
-      onResetAdvancedSettings();
-    }
-  }, [onResetAdvancedSettings]);
 
   // Toggle global volume slider visibility
   const handleToggleVolumeSlider = useCallback(() => {
@@ -1180,6 +1158,21 @@ export function ThreeScene({
       }
     });
 
+    // NEW: Deselection callback for Escape key
+    inputHandler.setOnDeselect(() => {
+      // Clear entity selection
+      setSelectedEntity(null);
+
+      // Clear face selection (highlight + notify parent)
+      geometryRenderer.highlightFace(-1, null);
+      if (onFaceSelected) {
+        onFaceSelected(-1, -1);
+      }
+
+      // Clear UI overlays
+      setUiOverlays([]);
+    });
+
     // NEW: Face selection callback for precise acoustics mode
     inputHandler.setOnFaceSelected((faceIndex, entityIndex) => {
       // Determine if material coloring is active (use wireframe highlight)
@@ -1647,6 +1640,73 @@ export function ThreeScene({
       geometryRenderer.highlightFace(-1, null);
     }
   }, [selectedGeometry, geometryData, activeAiTab, activeSimulationIndex, activeSimulationConfig, modelEntities]);
+
+  // ============================================================================
+  // Effect - Hover Highlighting from Sidebar (Mode 2)
+  // ============================================================================
+  useEffect(() => {
+    const geometryRenderer = geometryRendererRef.current;
+    if (!geometryRenderer) return;
+
+    // Check if we're in face selection mode (Mode 2)
+    const isFaceSelectionMode =
+      activeAiTab === 'acoustics' &&
+      activeSimulationIndex !== null &&
+      activeSimulationConfig &&
+      (activeSimulationConfig.mode === 'pyroomacoustics' || activeSimulationConfig.mode === 'choras') &&
+      (activeSimulationConfig.state === 'before-simulation' || activeSimulationConfig.state === 'running');
+
+    // Only apply hover highlighting if we're in face selection mode and there's no clicked selection
+    if (!isFaceSelectionMode || selectedGeometry) {
+      return; // Don't override click selection with hover
+    }
+
+    // Determine if material coloring is active (use wireframe highlight to preserve material colors)
+    const hasMaterialColoring = !!(activeSimulationConfig && (activeSimulationConfig as any)?.faceToMaterialMap?.size > 0);
+
+    // Highlight faces when hoveredGeometry changes from sidebar
+    if (hoveredGeometry && geometryData?.face_entity_map) {
+      if (hoveredGeometry.type === 'face' && hoveredGeometry.faceIndex !== undefined) {
+        // Highlight single face (use wireframe if material coloring is active)
+        geometryRenderer.highlightFace(hoveredGeometry.faceIndex, geometryData, hasMaterialColoring);
+      } else if (hoveredGeometry.type === 'entity' && hoveredGeometry.entityIndex !== undefined) {
+        // Highlight all faces of the entity
+        const facesToHighlight: number[] = [];
+        geometryData.face_entity_map.forEach((entIdx: number, faceIdx: number) => {
+          if (entIdx === hoveredGeometry.entityIndex) {
+            facesToHighlight.push(faceIdx);
+          }
+        });
+        if (facesToHighlight.length > 0) {
+          geometryRenderer.highlightFaces(facesToHighlight, geometryData);
+        }
+      } else if (hoveredGeometry.type === 'layer' && hoveredGeometry.layerId) {
+        // Highlight all faces in entities belonging to this layer
+        const facesToHighlight: number[] = [];
+        const layerEntities = modelEntities.filter(e => e.layer === hoveredGeometry.layerId);
+        const entityIndices = new Set(layerEntities.map(e => e.index));
+
+        geometryData.face_entity_map.forEach((entIdx: number, faceIdx: number) => {
+          if (entityIndices.has(entIdx)) {
+            facesToHighlight.push(faceIdx);
+          }
+        });
+        if (facesToHighlight.length > 0) {
+          geometryRenderer.highlightFaces(facesToHighlight, geometryData);
+        }
+      } else if (hoveredGeometry.type === 'global') {
+        // Highlight all faces
+        const allFaces = Array.from({ length: geometryData.faces.length }, (_, i) => i);
+        geometryRenderer.highlightFaces(allFaces, geometryData);
+      } else {
+        // Clear highlight
+        geometryRenderer.highlightFace(-1, null);
+      }
+    } else {
+      // Clear highlight if no hover
+      geometryRenderer.highlightFace(-1, null);
+    }
+  }, [hoveredGeometry, selectedGeometry, geometryData, activeAiTab, activeSimulationIndex, activeSimulationConfig, modelEntities]);
 
   // ============================================================================
   // Effect - Material Coloring (Active or Expanded Simulation Tab)
@@ -2783,47 +2843,6 @@ export function ThreeScene({
         />
       )}
 
-      {/* Settings Button - Top Right */}
-      <div className="absolute top-6 right-6 pointer-events-auto z-40">
-        <SceneControlButton
-          onClick={() => setIsSettingsPanelOpen(!isSettingsPanelOpen)}
-          isActive={isSettingsPanelOpen}
-          title="Advanced Settings"
-          icon={
-          <Icon className="transition-transform duration-200 group-hover:rotate-70">
-            <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
-            <path
-              d="M19.4 12.97c.04-.32.06-.65.06-.97s-.02-.65-.06-.97l2.11-1.65a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.49 1
-                a7.2 7.2 0 0 0-1.7-.97l-.38-2.65A.5.5 0 0 0 14.8 2h-3.6a.5.5 0 0 0-.5.42l-.38 2.65c-.6.23-1.17.55-1.7.97l-2.49-1a.5.5
-                0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64L4.6 11.03c-.04.32-.06.65-.06.97s.02.65.06.97L2.49 14.62a.5.5 0 0 0-.12.64l2
-                3.46a.5.5 0 0 0 .6.22l2.49-1c.53.42 1.1.74 1.7.97l.38 2.65a.5.5 0 0 0 .5.42h3.6a.5.5 0 0 0 .5-.42l.38-2.65c.6-.23
-                1.17-.55 1.7-.97l2.49 1a.5.5 0 0 0 .6-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.11-1.65Z"
-            />
-          </Icon>
-          }
-        />
-      </div>
-
-      {/* Advanced Settings Panel - Top Right (below button) */}
-      <AdvancedSettingsPanel
-        isOpen={isSettingsPanelOpen}
-        onClose={() => setIsSettingsPanelOpen(false)}
-        globalDuration={globalDuration}
-        globalSteps={globalSteps}
-        globalNegativePrompt={globalNegativePrompt}
-        applyDenoising={applyDenoising}
-        normalizeImpulseResponses={normalizeImpulseResponses}
-        audioModel={audioModel}
-        onGlobalDurationChange={onGlobalDurationChange || (() => {})}
-        onGlobalStepsChange={onGlobalStepsChange || (() => {})}
-        onGlobalNegativePromptChange={onGlobalNegativePromptChange || (() => {})}
-        onApplyDenoisingChange={onApplyDenoisingChange || (() => {})}
-        onNormalizeImpulseResponsesChange={onNormalizeImpulseResponsesChange || (() => {})}
-        onAudioModelChange={onAudioModelChange || (() => {})}
-        onResetToDefaults={handleResetAdvancedSettingsLocal}
-        showAxesHelper={showAxesHelper}
-        onShowAxesHelperChange={setShowAxesHelper}
-      />
 
       {/* Playback Controls - Bottom Center */}
       <PlaybackControls

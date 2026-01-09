@@ -101,7 +101,7 @@ export class AnechoicMode implements IAudioMode {
     this.ambisonicMixBus = audioContext.createGain();
     this.ambisonicMixBus.channelCount = this.numChannels;
     this.ambisonicMixBus.channelCountMode = 'explicit';
-    this.ambisonicMixBus.channelInterpretation = 'speakers';
+    this.ambisonicMixBus.channelInterpretation = 'discrete'; // Critical: preserve ambisonic channels
 
     // Create master gain for global volume control
     this.masterGain = audioContext.createGain();
@@ -160,27 +160,35 @@ export class AnechoicMode implements IAudioMode {
     distanceGainNode.gain.value = 1.0;
 
     // Create JSAmbisonics monoEncoder
+    // Note: monoEncoder uses GainNode matrix, not ConvolverNode, so no normalize property to set
     const encoder = new ambisonics.monoEncoder(this.audioContext, this.ambisonicOrder);
 
-    // Calculate initial position and set encoder
+    // Calculate initial position using the same yaw+pitch rotation as updateSourcePosition
     // Three.js: +X=Right, +Y=Up, +Z=Back
     const relativeX = position.x - this.listenerPosition.x;
     const relativeY = position.y - this.listenerPosition.y;
     const relativeZ = position.z - this.listenerPosition.z;
 
-    // Rotate by listener orientation to get listener-local coordinates
-    // Use +yaw to transform world coords into listener's local frame
-    const cos = Math.cos(this.listenerOrientation.yaw);
-    const sin = Math.sin(this.listenerOrientation.yaw);
-    const rotatedX = relativeX * cos - relativeZ * sin;
-    const rotatedZ = relativeX * sin + relativeZ * cos;
+    // Step 1: Apply YAW rotation around Y axis (horizontal head turn)
+    const cosYaw = Math.cos(this.listenerOrientation.yaw);
+    const sinYaw = Math.sin(this.listenerOrientation.yaw);
+    const yawRotatedX = relativeX * cosYaw - relativeZ * sinYaw;
+    const yawRotatedZ = relativeX * sinYaw + relativeZ * cosYaw;
+    const yawRotatedY = relativeY;
+
+    // Step 2: Apply PITCH rotation around X axis (vertical head tilt)
+    const cosPitch = Math.cos(-this.listenerOrientation.pitch);
+    const sinPitch = Math.sin(-this.listenerOrientation.pitch);
+    const finalX = yawRotatedX;
+    const finalY = yawRotatedY * cosPitch - yawRotatedZ * sinPitch;
+    const finalZ = yawRotatedY * sinPitch + yawRotatedZ * cosPitch;
 
     // Convert rotated Three.js coords to Ambisonic coordinates
     // Ambisonic: +X=Front, +Y=Left, +Z=Up
     const spherical = cartesianToSpherical({
-      x: -rotatedZ, // Front = -Z
-      y: -rotatedX, // Left = -X
-      z: relativeY  // Up = +Y
+      x: -finalZ, // Front = -Z in listener's local frame
+      y: -finalX, // Left = -X in listener's local frame
+      z: finalY   // Up = +Y in listener's local frame
     });
 
     // Set azimuth and elevation in degrees (JSAmbisonics uses degrees)
@@ -247,27 +255,36 @@ export class AnechoicMode implements IAudioMode {
     const relativeY = position.y - this.listenerPosition.y;
     const relativeZ = position.z - this.listenerPosition.z;
 
-    // Rotate the relative position by the listener's yaw to get listener-local coordinates
-    // This way, encoding is done in the listener's frame, not world frame.
-    // sceneRotator in BinauralDecoder is for additional head tracking only.
-    // Use +yaw to transform world coords into listener's local frame
-    const cos = Math.cos(this.listenerOrientation.yaw);
-    const sin = Math.sin(this.listenerOrientation.yaw);
-    const rotatedX = relativeX * cos - relativeZ * sin;
-    const rotatedZ = relativeX * sin + relativeZ * cos;
+    // Step 1: Apply YAW rotation around Y axis (horizontal head turn)
+    // Transforms world coordinates into listener's horizontal frame
+    // +yaw = looking left, so world rotates right relative to listener
+    const cosYaw = Math.cos(this.listenerOrientation.yaw);
+    const sinYaw = Math.sin(this.listenerOrientation.yaw);
+    const yawRotatedX = relativeX * cosYaw - relativeZ * sinYaw;
+    const yawRotatedZ = relativeX * sinYaw + relativeZ * cosYaw;
+    const yawRotatedY = relativeY; // Y is unchanged by yaw
+
+    // Step 2: Apply PITCH rotation around X axis (vertical head tilt)
+    // When looking UP (+pitch), the world rotates DOWN relative to listener
+    // Use -pitch to properly transform world coords to listener-local coords
+    const cosPitch = Math.cos(-this.listenerOrientation.pitch);
+    const sinPitch = Math.sin(-this.listenerOrientation.pitch);
+    const finalX = yawRotatedX; // X is unchanged by pitch
+    const finalY = yawRotatedY * cosPitch - yawRotatedZ * sinPitch;
+    const finalZ = yawRotatedY * sinPitch + yawRotatedZ * cosPitch;
 
     // Convert rotated Three.js coords to Ambisonic coordinates
     // Three.js: +X=Right, +Y=Up, +Z=Back (camera looks at -Z)
     // Ambisonic: +X=Front, +Y=Left, +Z=Up
     //
-    // Mapping (in listener's local frame):
-    // - Ambisonic Front (+X) = Listener Forward (-Z) = -rotatedZ
-    // - Ambisonic Left (+Y) = Listener Left (-X) = -rotatedX
-    // - Ambisonic Up (+Z) = World Up (+Y) = relativeY
+    // Mapping (in listener's local frame after yaw+pitch rotation):
+    // - Ambisonic Front (+X) = Listener Forward (-Z) = -finalZ
+    // - Ambisonic Left (+Y) = Listener Left (-X) = -finalX
+    // - Ambisonic Up (+Z) = Listener Up (+Y) = finalY
     const spherical = cartesianToSpherical({
-      x: -rotatedZ,
-      y: -rotatedX,
-      z: relativeY
+      x: -finalZ,
+      y: -finalX,
+      z: finalY
     });
 
     // Apply distance attenuation (Inverse Square Law)

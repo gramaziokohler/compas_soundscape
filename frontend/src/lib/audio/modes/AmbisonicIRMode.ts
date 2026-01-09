@@ -273,13 +273,11 @@ export class AmbisonicIRMode implements IAudioMode {
       return;
     }
 
-    // Create ambisonic mix bus (sums all convolved sources)
-    // Use GainNode to mix multi-channel signals (ChannelMerger would downmix to mono)
-    this.ambisonicMixBus = this.audioContext.createGain();
-    this.ambisonicMixBus.channelCount = this.numAmbisonicChannels;
-    this.ambisonicMixBus.channelCountMode = 'explicit';
-    this.ambisonicMixBus.channelInterpretation = 'speakers';
-    this.ambisonicMixBus.gain.value = 1.0; // Unity gain for proper mixing
+    // Remove GainNode mix bus - connect convolvers DIRECTLY to decoder
+    // Web Audio automatically sums multi-channel sources at the destination
+    // GainNode with explicit channel count causes channel routing issues
+    // JSAmbisonics approach: Each convolver.out connects to same destination
+    this.ambisonicMixBus = null; // Deprecated - using direct connections
 
     // Create boost gain for order-dependent compensation (separate from master)
     const gainCompensation = this.ambisonicOrder === 1
@@ -291,13 +289,13 @@ export class AmbisonicIRMode implements IAudioMode {
     this.boostGain = this.audioContext.createGain();
     this.boostGain.gain.value = gainCompensation;
 
-    // Connect pipeline: MixBus → Decoder → Boost Gain → Master Gain → Destination
-    this.ambisonicMixBus.connect(this.binauralDecoder.getInputNode());
+    // Connect pipeline: Convolvers → Decoder → Boost Gain → Master Gain → Destination
+    // Note: Each convolver will connect directly to decoder input (no mix bus)
     this.binauralDecoder.getOutputNode().connect(this.boostGain);
     this.boostGain.connect(this.masterGain!);
 
     console.log(`[AmbisonicIRMode] Pipeline initialized (order ${this.ambisonicOrder}, ${this.numAmbisonicChannels} channels, gain compensation: ${gainCompensation.toFixed(2)})`);
-    console.log(`[AmbisonicIRMode] Audio graph: Convolver → AmbisonicMixBus → SceneRotator → Decoder → MasterGain → Destination`);
+    console.log(`[AmbisonicIRMode] Audio graph: Convolver → SceneRotator → BinDecoder → BoostGain → MasterGain → Destination`);
   }
 
   /**
@@ -337,17 +335,20 @@ export class AmbisonicIRMode implements IAudioMode {
       convolver.updateFilters(this.irBuffer);
     }
 
-    // Connect: GainNode → MuteGain → Convolver → AmbisonicMixBus
+    // Connect: GainNode → MuteGain → Convolver → Decoder (direct connection, no mix bus)
     gainNode.connect(muteGainNode);
     muteGainNode.connect(convolver.in);
-    if (this.ambisonicMixBus) {
+    
+    // Connect convolver directly to decoder input (Web Audio automatically sums)
+    // This matches JSAmbisonics approach and avoids GainNode channel routing issues
+    if (this.binauralDecoder) {
       try {
-        convolver.out.connect(this.ambisonicMixBus);
+        convolver.out.connect(this.binauralDecoder.getInputNode());
       } catch (e) {
-        console.warn('[AmbisonicIRMode] Error connecting convolver to mix bus:', e);
+        console.warn('[AmbisonicIRMode] Error connecting convolver to decoder:', e);
       }
     } else {
-      console.warn('[AmbisonicIRMode] Cannot connect convolver - ambisonicMixBus is null (pipeline reinitializing)');
+      console.warn('[AmbisonicIRMode] Cannot connect convolver - decoder not initialized');
     }
 
     const chain: SourceChain = {
@@ -706,11 +707,6 @@ export class AmbisonicIRMode implements IAudioMode {
     this.sourceChains.clear();
     
     // Disconnect and cleanup nodes
-    if (this.ambisonicMixBus) {
-      this.ambisonicMixBus.disconnect();
-      this.ambisonicMixBus = null;
-    }
-    
     if (this.binauralDecoder) {
       this.binauralDecoder.dispose();
       this.binauralDecoder = null;

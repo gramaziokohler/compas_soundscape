@@ -452,7 +452,8 @@ export const apiService = {
       de_lc?: number;
       edt?: number;
       sim_len_type?: 'ir_length' | 'edt';
-    }
+    },
+    excludedLayers?: string[]
   ): Promise<{
     simulationId: number;
     simulationRunId: number;
@@ -468,6 +469,10 @@ export const apiService = {
       
       if (simulationSettings) {
         formData.append('simulationSettings', JSON.stringify(simulationSettings));
+      }
+
+      if (excludedLayers && excludedLayers.length > 0) {
+        formData.append('excludedLayers', JSON.stringify(excludedLayers));
       }
 
       const response = await fetchWithErrorHandling(
@@ -633,7 +638,8 @@ export const apiService = {
       source_id: string;
       receiver_id: string;
     }>,
-    faceMaterialAssignments: Record<number, string>
+    faceMaterialAssignments: Record<number, string>,
+    excludedLayers?: string[]
   ): Promise<{
     simulation_id: string;
     message: string;
@@ -649,9 +655,23 @@ export const apiService = {
       formData.append('air_absorption', settings.air_absorption.toString());
       formData.append('n_rays', settings.n_rays.toString());
       formData.append('scattering', settings.scattering.toString());
-      formData.append('simulation_mode', settings.simulation_mode);
+
+      // Determine the actual backend simulation mode:
+      // - FOA + ray_tracing=true → 'foa_raytracing' (uses A-format tetrahedral array)
+      // - FOA + ray_tracing=false → 'foa' (uses directivity patterns, ISM only)
+      // - Mono → 'mono' (works with both ISM and ray tracing)
+      let backendSimulationMode = settings.simulation_mode;
+      if (settings.simulation_mode === 'foa' && settings.ray_tracing) {
+        backendSimulationMode = 'foa_raytracing';
+      }
+      formData.append('simulation_mode', backendSimulationMode);
+
       formData.append('source_receiver_pairs', JSON.stringify(sourceReceiverPairs));
       formData.append('face_materials', JSON.stringify(faceMaterialAssignments));
+
+      if (excludedLayers && excludedLayers.length > 0) {
+        formData.append('excludedLayers', JSON.stringify(excludedLayers));
+      }
 
       const response = await fetchWithErrorHandling(
         `${API_BASE_URL}/pyroomacoustics/run-simulation`,

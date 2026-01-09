@@ -25,30 +25,25 @@
 
 import type { IBinauralDecoder } from '../core/interfaces/IBinauralDecoder';
 import type { Orientation } from '@/types/audio';
-import { JSAmbisonicDecoder } from '../jsambisonic-decoder';
-import { loadIRCAMHRIRWithRetry } from '../utils/hrir-loader-ircam';
 import { HRTF } from '@/lib/constants';
 
-// JSAmbisonics type declarations
-interface AmbisonicsLibrary {
-  sceneRotator: new (audioContext: AudioContext, order: number) => {
-    in: AudioNode;
-    out: AudioNode;
-    yaw: number;
-    pitch: number;
-    roll: number;
-    updateRotMtx(): void;
-  };
+// JSAmbisonics binDecoder type
+interface BinDecoder {
+  in: AudioNode;
+  out: AudioNode;
+  updateFilters(buffer: AudioBuffer): void;
 }
 
 export class BinauralDecoder implements IBinauralDecoder {
   private audioContext: AudioContext | null = null;
-  private jsAmbisonicDecoder: JSAmbisonicDecoder | null = null;
+  private binDecoder: BinDecoder | null = null;
   private sceneRotator: any = null;
+  private hrirLoader: any = null; // JSAmbisonics HRIRloader_ircam
   private order: 1 | 2 | 3 = 1; // Default to FOA
   private ready: boolean = false;
   private _rotationLogCounter: number = 0;
   private rotationEnabled: boolean = false; // Enable for AmbisonicIRMode, disable for AnechoicMode
+  private hrtfsLoaded: boolean = false;
 
   // Audio nodes
   private inputNode: AudioNode | null = null; // Rotator input
@@ -67,9 +62,10 @@ export class BinauralDecoder implements IBinauralDecoder {
     try {
       console.log(`[BinauralDecoder] Initializing (order ${order})`);
 
-      // Create JSAmbisonics scene rotator for head tracking
-      // Use dynamic import to match AmbisonicIRMode and avoid SSR/module mismatch issues
+      // Dynamic import JSAmbisonics to avoid SSR issues
       const ambisonics = await import('ambisonics');
+
+      // Create JSAmbisonics scene rotator for head tracking
       // @ts-ignore - Type definition mismatch for dynamic import
       this.sceneRotator = new ambisonics.sceneRotator(audioContext, order);
 
@@ -86,20 +82,20 @@ export class BinauralDecoder implements IBinauralDecoder {
       this.sceneRotator.roll = 0;
       this.sceneRotator.updateRotMtx();
 
-      // Create JSAmbisonics binaural decoder (uses default cardioid HRTFs)
-      // Pass the loaded ambisonics library to ensure consistency
-      this.jsAmbisonicDecoder = new JSAmbisonicDecoder(audioContext, order, ambisonics);
+      // Create JSAmbisonics binaural decoder directly (uses default cardioid decoding)
+      // @ts-ignore - Type definition mismatch for dynamic import
+      this.binDecoder = new ambisonics.binDecoder(audioContext, order);
 
       // Connect: Rotator → Decoder
-      this.sceneRotator.out.connect(this.jsAmbisonicDecoder.input);
+      this.sceneRotator.out.connect(this.binDecoder.in);
 
       // Set input/output nodes
       this.inputNode = this.sceneRotator.in; // Input goes to rotator
-      this.outputNode = this.jsAmbisonicDecoder.output; // Output comes from decoder
+      this.outputNode = this.binDecoder.out; // Output comes from decoder
 
       this.ready = true;
-      console.log('[BinauralDecoder] Initialized successfully with head tracking (using default cardioid HRTFs)');
-      console.log(`[BinauralDecoder] Audio path: INPUT (sceneRotator.in) → sceneRotator → decoder → OUTPUT`);
+      console.log('[BinauralDecoder] Initialized successfully with head tracking (using default cardioid decoding)');
+      console.log(`[BinauralDecoder] Audio path: INPUT (sceneRotator.in) → sceneRotator → binDecoder → OUTPUT`);
 
       // Auto-load HRTFs if enabled (only for JSAmbisonics, Omnitone has built-in HRTFs)
       if (HRTF.AUTO_LOAD) {
@@ -144,9 +140,16 @@ export class BinauralDecoder implements IBinauralDecoder {
     if (this.sceneRotator) {
       this.sceneRotator.out.disconnect();
     }
-    if (this.jsAmbisonicDecoder) {
-      this.jsAmbisonicDecoder.disconnect();
+    if (this.binDecoder) {
+      try {
+        this.binDecoder.out.disconnect();
+      } catch (e) {
+        // Ignore disconnect errors
+      }
     }
+
+    // Reset HRTF state for new order
+    this.hrtfsLoaded = false;
 
     // Create new decoder and rotator with new order
     this.order = order;
@@ -209,13 +212,13 @@ export class BinauralDecoder implements IBinauralDecoder {
       // NEGATE pitch for head tracking: when head looks up, scene rotates down
       const RAD_TO_DEG = 180 / Math.PI;
       this.sceneRotator.yaw = orientation.yaw * RAD_TO_DEG;
-      this.sceneRotator.pitch = -(orientation.pitch * RAD_TO_DEG);
+      this.sceneRotator.pitch = (orientation.pitch * RAD_TO_DEG);
       this.sceneRotator.roll = 0; // Roll typically not used for head tracking
 
-      // // Debug logging (throttled)
-      // if (this._rotationLogCounter++ % 60 === 0) {
-      //   console.log(`[BinauralDecoder] Rotation: yaw=${this.sceneRotator.yaw.toFixed(1)}°, pitch=${this.sceneRotator.pitch.toFixed(1)}°`);
-      // }
+      // Debug logging (throttled)
+      if (this._rotationLogCounter++ % 60 === 0) {
+        console.log(`[BinauralDecoder] Rotation: yaw=${this.sceneRotator.yaw.toFixed(1)}°, pitch=${this.sceneRotator.pitch.toFixed(1)}° (input: ${orientation.pitch.toFixed(3)} rad)`);
+      }
     }
 
     this.sceneRotator.updateRotMtx();
@@ -238,73 +241,68 @@ export class BinauralDecoder implements IBinauralDecoder {
   /**
    * Load HRTF data for improved spatial accuracy
    *
-   * Loads IRCAM-formatted SOFA HRTFs and generates ambisonic decoding filters.
-   * The HRIR loader automatically:
-   * - Selects optimal virtual speaker positions based on ambisonic order
-   * - Finds nearest measured HRTFs to each virtual speaker
-   * - Generates multi-channel AudioBuffer with (order+1)^2 * 2 channels
-   *
-   * Channel layout: [L0, R0, L1, R1, L2, R2, ...]
-   * - FOA (order 1): 8 channels (4 virtual speakers × 2 ears)
-   * - SOA (order 2): 18 channels (9 virtual speakers × 2 ears)
-   * - TOA (order 3): 32 channels (16 virtual speakers × 2 ears)
+   * Uses JSAmbisonics' HRIRloader_ircam to load IRCAM SOFA HRTFs.
+   * The loader automatically:
+   * - Loads SOFA file and extracts HRIRs
+   * - Generates proper ambisonic decoding filters for the order
+   * - Updates the binDecoder with the new filters
    *
    * @param path - Optional custom HRTF path (defaults to HRTF.DEFAULT_HRTF_PATH)
    */
   async loadHRTFs(path?: string): Promise<void> {
-    if (!this.audioContext || !this.jsAmbisonicDecoder) {
+    if (!this.audioContext || !this.binDecoder) {
       throw new Error('[BinauralDecoder] Cannot load HRTFs - decoder not initialized');
     }
 
-    try {
-      console.log('[BinauralDecoder] Loading IRCAM HRTF data...');
-      const hrtfPath = path || HRTF.DEFAULT_HRTF_PATH;
+    const hrtfPath = path || HRTF.DEFAULT_HRTF_PATH;
+    console.log(`[BinauralDecoder] Loading IRCAM HRTFs from: ${hrtfPath}`);
 
-      // Load IRCAM HRIR and generate ambisonic decoding filters
-      const hrtfBuffer = await loadIRCAMHRIRWithRetry(
-        this.audioContext,
-        hrtfPath,
-        this.order
-      );
+    return new Promise(async (resolve, reject) => {
+      try {
+        // Dynamic import JSAmbisonics
+        const ambisonics = await import('ambisonics');
 
-      // Validate channel count
-      // IRCAM loader produces VIRTUAL_SPEAKERS * 2 channels (L/R pairs for each virtual speaker)
-      const orderKey = this.order === 1 ? 'FOA' : this.order === 2 ? 'SOA' : 'TOA';
-      const expectedSpeakers = HRTF.VIRTUAL_SPEAKERS[orderKey];
-      const expectedChannels = expectedSpeakers * 2; // L/R pairs
+        // Create IRCAM HRIR loader - it handles SOFA parsing and filter generation
+        // JSAmbisonics HRIRloader_ircam passes the decoded HRIR buffer to the callback
+        // @ts-ignore - Type definitions missing for ambisonics library
+        this.hrirLoader = new ambisonics.HRIRloader_ircam(
+          this.audioContext!,  // Non-null assertion - guard check at line 253 ensures this
+          this.order,
+          // @ts-ignore - Callback receives hoaBuffer but types are missing
+          (hoaBuffer: AudioBuffer) => {
+            // Callback when HRIRs are loaded
+            if (!this.binDecoder) {
+              console.warn('[BinauralDecoder] Decoder was disposed during HRTF loading');
+              reject(new Error('Decoder disposed'));
+              return;
+            }
 
-      if (hrtfBuffer.numberOfChannels !== expectedChannels) {
-        console.warn(
-          `[BinauralDecoder] HRTF buffer has ${hrtfBuffer.numberOfChannels} channels, ` +
-          `expected ${expectedChannels} for order ${this.order} (${expectedSpeakers} virtual speakers)`
+            // Update decoder with the loaded HRIR filters
+            this.binDecoder.updateFilters(hoaBuffer);
+            this.hrtfsLoaded = true;
+
+            console.log(
+              `[BinauralDecoder] HRTFs loaded successfully - using IRCAM HRTFs ` +
+              `(order ${this.order}, ${hoaBuffer.numberOfChannels} channels)`
+            );
+            resolve();
+          }
         );
+
+        // Start loading the SOFA file
+        this.hrirLoader.load(hrtfPath);
+      } catch (error) {
+        console.error('[BinauralDecoder] Failed to load HRTFs:', error);
+        reject(error);
       }
-
-      // Re-check after async operation (decoder may have been disposed during loading)
-      if (!this.jsAmbisonicDecoder) {
-        console.warn('[BinauralDecoder] Decoder was disposed during HRTF loading, aborting');
-        return;
-      }
-
-      // Apply HRTFs to decoder
-      await this.jsAmbisonicDecoder.loadHRTFs(hrtfBuffer);
-
-      const actualSpeakers = hrtfBuffer.numberOfChannels / 2;
-      console.log(
-        `[BinauralDecoder] HRTFs loaded successfully - now using measured IRCAM HRTFs for binaural decoding ` +
-        `(${actualSpeakers} virtual speakers, ${hrtfBuffer.numberOfChannels} channels)`
-      );
-    } catch (error) {
-      console.error('[BinauralDecoder] Failed to load HRTFs:', error);
-      throw error;
-    }
+    });
   }
 
   /**
    * Check if custom HRTFs are loaded
    */
   hasHRTFs(): boolean {
-    return this.jsAmbisonicDecoder?.hasHRTFs() ?? false;
+    return this.hrtfsLoaded;
   }
 
   /**
@@ -324,14 +322,20 @@ export class BinauralDecoder implements IBinauralDecoder {
     }
 
     // Disconnect decoder
-    if (this.jsAmbisonicDecoder) {
-      this.jsAmbisonicDecoder.disconnect();
-      this.jsAmbisonicDecoder = null;
+    if (this.binDecoder) {
+      try {
+        this.binDecoder.out.disconnect();
+      } catch (error) {
+        console.warn('[BinauralDecoder] Error disconnecting binDecoder:', error);
+      }
+      this.binDecoder = null;
     }
 
+    this.hrirLoader = null;
     this.inputNode = null;
     this.outputNode = null;
     this.audioContext = null;
     this.ready = false;
+    this.hrtfsLoaded = false;
   }
 }

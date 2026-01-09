@@ -124,6 +124,22 @@ PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE = PYROOMACOUSTICS_SIMULATION_MODE_MONO  
 # B-format microphone: Uses proper directivity patterns (W=omni, X/Y/Z=figure-8)
 # Directivity is only supported with Image Source Method (ISM), not ray tracing
 
+# A-Format Tetrahedral Array Configuration (for FOA with Ray Tracing)
+# Virtual A-format array simulates physical capsule arrangement of Ambisonics mics
+# (e.g., Sennheiser Ambeo, Røde NT-SF1) using 4 omnidirectional mics in a tetrahedron
+PYROOMACOUSTICS_A_FORMAT_ARRAY_RADIUS = 0.10  # Tetrahedron radius in meters (10cm for better spatial encoding in simulation)
+PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING = "foa_raytracing"  # FOA with ray tracing via A-format
+
+# Tetrahedral vertex coordinates (normalized, on unit sphere)
+# Standard A-format orientation: FLU, BRU, FRD, BLD
+# These get scaled by radius and translated to mic center position
+PYROOMACOUSTICS_TETRAHEDRAL_COORDS = [
+    [1, 1, 1],    # FLU (Front Left Up)
+    [-1, -1, 1],  # BRU (Back Right Up)
+    [ 1, -1, -1],  # FRD (Front Right Down) - adjusted for symmetry
+    [-1,  1, -1]   # BLD (Back Left Down)
+]
+
 # Ray Tracing Configuration (Hybrid ISM/Ray Tracing)
 PYROOMACOUSTICS_RAY_TRACING_N_RAYS = 10000  # Number of rays to shoot (default)
 PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MIN = 1000  # Minimum number of rays

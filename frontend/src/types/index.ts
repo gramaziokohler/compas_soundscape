@@ -139,7 +139,7 @@ export interface SoundGenerationConfig {
 
 export type SoundState = 'playing' | 'paused' | 'stopped';
 
-export type ActiveTab = 'text' | 'sound' | 'acoustics';
+export type ActiveTab = 'text' | 'sound' | 'acoustics' | 'settings';
 export type LoadTab = 'sample' | 'upload';
 
 // Sound generation mode types

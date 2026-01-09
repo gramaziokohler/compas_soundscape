@@ -174,6 +174,7 @@ function HomeContent() {
 
   // Material assignment state (NEW)
   const [selectedGeometry, setSelectedGeometry] = useState<SelectedGeometry | null>(null);
+  const [hoveredGeometry, setHoveredGeometry] = useState<SelectedGeometry | null>(null);
   const [modelType, setModelType] = useState<'3dm' | 'obj' | 'ifc' | null>(null);
 
   // Go to receiver state (triggers first-person view at specific receiver)
@@ -596,6 +597,11 @@ function HomeContent() {
     setSelectedGeometry(selection);
   }, []);
 
+  // Handler: Geometry hover (NEW - for hover highlighting)
+  const handleHoverGeometry = useCallback((selection: SelectedGeometry | null) => {
+    setHoveredGeometry(selection);
+  }, []);
+
   // Handler: Face selected in 3D scene (NEW)
   const handleFaceSelected = useCallback((faceIndex: number, entityIndex: number) => {
     console.log('[Page] handleFaceSelected called:', { faceIndex, entityIndex });
@@ -603,6 +609,18 @@ function HomeContent() {
       // Deselected
       console.log('[Page] Deselecting face');
       handleSelectGeometry(null);
+    } else if (faceIndex === -2) {
+      // Special signal: select entity instead of face (for large entities)
+      const entity = fileUpload.modelEntities.find(e => e.index === entityIndex);
+      const layerId = entity?.layer || 'Default';
+
+      const selection: SelectedGeometry = {
+        type: 'entity',
+        entityIndex,
+        layerId
+      };
+      console.log('[Page] Setting selectedGeometry (entity):', selection);
+      handleSelectGeometry(selection);
     } else {
       // Face selected - find the layer if applicable
       const entity = fileUpload.modelEntities.find(e => e.index === entityIndex);
@@ -986,6 +1004,7 @@ function HomeContent() {
         modelType={modelType}
         selectedGeometry={selectedGeometry}
         onSelectGeometry={handleSelectGeometry}
+        onHoverGeometry={handleHoverGeometry}
         onAssignMaterial={handleAssignMaterial}
         onIRImported={handleIRImported}
         irRefreshTrigger={irRefreshTrigger}
@@ -1092,6 +1111,7 @@ function HomeContent() {
           onAudioModelChange={soundGen.setAudioModel}
           onResetAdvancedSettings={handleResetAdvancedSettings}
           selectedGeometry={selectedGeometry}
+          hoveredGeometry={hoveredGeometry}
           onFaceSelected={handleFaceSelected}
           materialAssignments={materialAssignments}
           activeSimulationIndex={acousticsSimulation.activeSimulationIndex}

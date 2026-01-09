@@ -21,7 +21,8 @@ import {
   CHORAS_DEFAULT_IR_LENGTH,
   CHORAS_DEFAULT_LC,
   CHORAS_DEFAULT_EDT,
-  CHORAS_DEFAULT_SIM_LEN_TYPE
+  CHORAS_DEFAULT_SIM_LEN_TYPE,
+  MAX_FACES_FOR_LAYER_AUTO_EXCLUDE
 } from '@/lib/constants';
 
 
@@ -51,6 +52,7 @@ interface AcousticsTabProps {
   geometryData?: CompasGeometry | null;
   selectedGeometry?: SelectedGeometry | null;
   onSelectGeometry?: (selection: SelectedGeometry | null) => void;
+  onHoverGeometry?: (selection: SelectedGeometry | null) => void;
   onAssignMaterial?: (selection: SelectedGeometry, material: AcousticMaterial | null) => void;
 
   // Simulation props
@@ -100,6 +102,7 @@ export function AcousticsTab({
   geometryData = null,
   selectedGeometry = null,
   onSelectGeometry,
+  onHoverGeometry,
   onAssignMaterial,
   modelFile = null,
   soundscapeData = null,
@@ -121,7 +124,44 @@ export function AcousticsTab({
   onToggleExpandSimulation
 }: AcousticsTabProps) {
   // Use simulation state from props (passed from page.tsx)
-  const handleAddConfig = onAddSimulationConfig || (() => {});
+  // Wrap handleAddConfig to auto-exclude large layers
+  const handleAddConfig = useCallback((mode: AcousticSimulationMode) => {
+    if (!onAddSimulationConfig) return;
+    
+    // First, add the config normally
+    onAddSimulationConfig(mode);
+    
+    // Then, immediately check if we need to auto-exclude large layers
+    if (geometryData && (mode === 'choras' || mode === 'pyroomacoustics')) {
+      // Count faces per layer
+      const layerFaceCounts = new Map<string, number>();
+      
+      geometryData.face_entity_map.forEach((entityIndex, faceIndex) => {
+        const entity = modelEntities.find(e => e.index === entityIndex);
+        const layerName = entity?.layer || 'Default';
+        layerFaceCounts.set(layerName, (layerFaceCounts.get(layerName) || 0) + 1);
+      });
+      
+      // Find layers that exceed the threshold
+      const layersToExclude = new Set<string>();
+      layerFaceCounts.forEach((count, layerName) => {
+        if (count > MAX_FACES_FOR_LAYER_AUTO_EXCLUDE) {
+          layersToExclude.add(layerName);
+        }
+      });
+      
+      // If there are layers to exclude, update the newly created config
+      if (layersToExclude.size > 0 && onUpdateSimulationConfig) {
+        // The new config will be at the end of the array
+        const newIndex = simulationConfigs.length;
+        // Use setTimeout to ensure the config exists before updating
+        setTimeout(() => {
+          onUpdateSimulationConfig(newIndex, { excludedLayers: layersToExclude } as any);
+        }, 0);
+      }
+    }
+  }, [onAddSimulationConfig, geometryData, modelEntities, simulationConfigs.length, onUpdateSimulationConfig]);
+  
   const handleRemoveConfig = onRemoveSimulationConfig || (() => {});
   const handleUpdateConfig = onUpdateSimulationConfig || (() => {});
   const handleSetActiveSimulation = onSetActiveSimulation || (() => {});
@@ -165,6 +205,11 @@ export function AcousticsTab({
     // Extract only simulation settings for Choras backend (exclude selectedMaterialId)
     const { selectedMaterialId: _, ...chorasSettings } = settings;
     
+    // Get excluded layers from config
+    const excludedLayersArray: string[] = (config as any)?.excludedLayers 
+      ? Array.from((config as any).excludedLayers as Set<string>) 
+      : [];
+    
     try {
       const result = await runFullSimulation(
         file,
@@ -184,7 +229,8 @@ export function AcousticsTab({
         },
         receiversList,
         soundscape,
-        chorasSettings
+        chorasSettings,
+        excludedLayersArray
       );
       
       // Import IR and get metadata
@@ -301,6 +347,11 @@ export function AcousticsTab({
       return;
     }
     
+    // Get excluded layers from config
+    const excludedLayersArray: string[] = (config as any)?.excludedLayers 
+      ? Array.from((config as any).excludedLayers as Set<string>) 
+      : [];
+    
     try {
       // Build source-receiver pairs
       const sourceReceiverPairs = [];
@@ -326,7 +377,8 @@ export function AcousticsTab({
         name,
         settings,
         sourceReceiverPairs,
-        faceMaterialsObj
+        faceMaterialsObj,
+        excludedLayersArray
       );
       
       // Import ALL IRs
@@ -474,7 +526,9 @@ export function AcousticsTab({
         settings: JSON.parse(JSON.stringify(simConfig.settings)), // Deep clone
         faceToMaterialMap: new Map(simConfig.faceToMaterialMap || new Map()),
         expandedMaterialItems: simConfig.expandedMaterialItems ?
-          new Set(simConfig.expandedMaterialItems) : new Set()
+          new Set(simConfig.expandedMaterialItems) : new Set(),
+        excludedLayers: simConfig.excludedLayers ?
+          new Set(simConfig.excludedLayers) : new Set()
       };
 
       handleUpdateConfig(index, {
@@ -723,6 +777,8 @@ export function AcousticsTab({
         faceToMaterialMap: new Map(simConfig.savedSettings.faceToMaterialMap),
         expandedMaterialItems: simConfig.savedSettings.expandedMaterialItems ?
           Array.from(simConfig.savedSettings.expandedMaterialItems) : undefined,
+        excludedLayers: simConfig.savedSettings.excludedLayers ?
+          Array.from(simConfig.savedSettings.excludedLayers) : undefined,
         savedSettings: undefined, // Clear saved settings after restoration
         resetTimestamp, // Trigger reset effect in MaterialAssignmentUI
         state: 'before-simulation',
@@ -788,6 +844,7 @@ export function AcousticsTab({
       modelType={modelType}
       selectedGeometry={selectedGeometry}
       onSelectGeometry={onSelectGeometry}
+      onHoverGeometry={onHoverGeometry}
       onAssignMaterial={handleMaterialAssignment}
       resonanceAudioConfig={resonanceAudioConfig}
       onToggleResonanceAudio={onToggleResonanceAudio}

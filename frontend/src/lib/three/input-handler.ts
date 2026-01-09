@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { DragControls } from "three/examples/jsm/controls/DragControls.js";
 import type { CompasGeometry, EntityData } from "@/types";
+import { MAX_FACES_FOR_EXPANSION } from "@/lib/constants";
 
 /**
  * InputHandler
@@ -49,6 +50,7 @@ export class InputHandler {
   private onPlacementCanceled: (() => void) | null = null;
   private onPreviewPositionUpdated: ((position: THREE.Vector3) => void) | null = null;
   private onSphereClicked: ((promptKey: string) => void) | null = null;
+  private onDeselect: (() => void) | null = null; // NEW: Deselect all selections
   
   // Refs for data access
   private getGeometryData: (() => CompasGeometry | null) | null = null;
@@ -416,8 +418,33 @@ export class InputHandler {
               const entityIndex = geometryData.face_entity_map[faceIndex];
               const entity = modelEntities.find(e => e.index === entityIndex);
 
+              // Check if entity's layer is excluded from simulation
+              const excludedLayers = activeSimulationConfig?.excludedLayers 
+                ? new Set(activeSimulationConfig.excludedLayers) 
+                : new Set<string>();
+              const entityLayer = entity?.layer || 'Default';
+              const isLayerExcluded = excludedLayers.has(entityLayer);
+
+              // Skip selection if layer is excluded
+              if (isLayerExcluded) {
+                return;
+              }
+
+              // Count faces for this entity (reuse existing geometryData variable)
+              let entityFaceCount = 0;
+              if (geometryData) {
+                entityFaceCount = geometryData.face_entity_map.filter(ei => ei === entityIndex).length;
+              }
+
               // Mode 2: Face selection for material assignment
               if (isFaceSelectionMode) {
+                // If entity has too many faces, select entire entity instead of individual face
+                // Use faceIndex = -2 as special signal for entity selection
+                if (entityFaceCount > MAX_FACES_FOR_EXPANSION && this.onFaceSelected) {
+                  this.onFaceSelected(-2, entityIndex);
+                  return;
+                }
+                
                 if (this.onFaceSelected) {
                   this.onFaceSelected(faceIndex, entityIndex);
                   return;
@@ -438,7 +465,18 @@ export class InputHandler {
             let closestEntity = null;
             let minDistance = Infinity;
 
+            // Get excluded layers for filtering
+            const excludedLayers = activeSimulationConfig?.excludedLayers 
+              ? new Set(activeSimulationConfig.excludedLayers) 
+              : new Set<string>();
+
             modelEntities.forEach(entity => {
+              // Skip entities in excluded layers
+              const entityLayer = entity.layer || 'Default';
+              if (excludedLayers.has(entityLayer)) {
+                return;
+              }
+
               const min = entity.bounds.min;
               const max = entity.bounds.max;
               const isInside =
@@ -547,13 +585,20 @@ export class InputHandler {
       }
     }
 
-    // Escape key - cancel placement or exit first-person mode
+    // Escape key - cancel placement, exit first-person mode, or deselect
     if (event.key === 'Escape') {
-      if (this.onPlacementCanceled) {
+      const previewReceiver = this.getPreviewReceiver?.();
+      const isInPlacementMode = previewReceiver !== null && previewReceiver !== undefined;
+
+      if (isInPlacementMode && this.onPlacementCanceled) {
+        // Priority 1: Cancel placement mode
         this.onPlacementCanceled();
-      }
-      if (this.onFirstPersonModeDisabled) {
+      } else if (isFirstPersonMode && this.onFirstPersonModeDisabled) {
+        // Priority 2: Exit first-person mode
         this.onFirstPersonModeDisabled();
+      } else if (this.onDeselect) {
+        // Priority 3: Deselect current selections
+        this.onDeselect();
       }
     }
   };
@@ -616,6 +661,10 @@ export class InputHandler {
 
   public setOnSphereClicked(callback: (promptKey: string) => void): void {
     this.onSphereClicked = callback;
+  }
+
+  public setOnDeselect(callback: () => void): void {
+    this.onDeselect = callback;
   }
 
   // ============================================================================
@@ -703,6 +752,7 @@ export class InputHandler {
 
     // Clear callbacks
     this.onEntitySelected = null;
+    this.onFaceSelected = null;
     this.onReceiverPlaced = null;
     this.onFirstPersonModeEnabled = null;
     this.onFirstPersonModeDisabled = null;
@@ -711,7 +761,10 @@ export class InputHandler {
     this.onSphereDragEnd = null;
     this.onReceiverPositionUpdated = null;
     this.onReceiverDragEnd = null;
+    this.onReceiverSelected = null;
     this.onPlacementCanceled = null;
     this.onPreviewPositionUpdated = null;
+    this.onSphereClicked = null;
+    this.onDeselect = null;
   }
 }

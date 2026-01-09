@@ -51,7 +51,9 @@ export interface SidebarProps {
   globalSteps: number;
   globalNegativePrompt: string;
   applyDenoising: boolean;
+  normalizeImpulseResponses: boolean;
   audioModel: string;
+  showAxesHelper: boolean;
   isUploading: boolean;
   isAnalyzingModel: boolean;
   isGenerating: boolean;
@@ -92,7 +94,10 @@ export interface SidebarProps {
   onGlobalStepsChange: (steps: number) => void;
   onGlobalNegativePromptChange: (prompt: string) => void;
   onApplyDenoisingChange: (apply: boolean) => void;
+  onNormalizeImpulseResponsesChange: (normalize: boolean) => void;
   onAudioModelChange: (model: string) => void;
+  onShowAxesHelperChange: (show: boolean) => void;
+  onResetAdvancedSettings: () => void;
   onReprocessSounds?: (applyDenoising: boolean) => Promise<void>;
   setUseModelAsContext: (value: boolean) => void;
   onUploadAudio: (index: number, file: File) => Promise<void>;
@@ -164,6 +169,7 @@ export interface SidebarProps {
   modelType?: '3dm' | 'obj' | 'ifc' | null;
   selectedGeometry?: SelectedGeometry | null;
   onSelectGeometry?: (selection: SelectedGeometry | null) => void;
+  onHoverGeometry?: (selection: SelectedGeometry | null) => void;
   onAssignMaterial?: (selection: SelectedGeometry, material: AcousticMaterial | null) => void;
   // Choras Simulation props (NEW)
   onIRImported?: () => void;

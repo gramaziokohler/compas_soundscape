@@ -211,6 +211,23 @@ export function AcousticsSection({
 
   return (
     <div className="flex flex-col gap-3">
+      {/* Current mode indicator */}
+      <div className="text-xs" style={{ color: UI_COLORS.NEUTRAL_600 }}>
+        Current mode: {activeSimulationIndex === null ? 'No Acoustics (Anechoic)' : `Simulation ${activeSimulationIndex + 1}`}
+      </div>
+
+      {/* Receivers Section */}
+      {onStartPlacingReceiver && onDeleteReceiver && onUpdateReceiverName && onGoToReceiver && (
+        <ReceiversSection
+          receivers={receivers}
+          isPlacingReceiver={isPlacingReceiver}
+          onStartPlacingReceiver={onStartPlacingReceiver}
+          onDeleteReceiver={onDeleteReceiver}
+          onUpdateReceiverName={onUpdateReceiverName}
+          onGoToReceiver={onGoToReceiver}
+        />
+      )}
+
       {/* Simulation status */}
       <div className="flex items-center text-xs w-full gap-1" style={{ color: UI_COLORS.NEUTRAL_600 }}>
         {simulationStatus.totalSimulations} simulation{simulationStatus.totalSimulations !== 1 ? 's' : ''}
@@ -311,11 +328,6 @@ export function AcousticsSection({
         </div>
       </div>
 
-      {/* Current mode indicator */}
-      <div className="text-xs" style={{ color: UI_COLORS.NEUTRAL_600 }}>
-        Current mode: {activeSimulationIndex === null ? 'No Acoustics (Anechoic)' : `Simulation ${activeSimulationIndex + 1}`}
-      </div>
-
       {/* Vertical list of simulation tabs */}
       <div ref={simulationListRef} className="flex flex-col gap-2">
         {simulationConfigs.map((config, index) => (
@@ -369,17 +381,6 @@ export function AcousticsSection({
           </div>
         ))}
       </div>
-      {/* Receivers Section */}
-      {onStartPlacingReceiver && onDeleteReceiver && onUpdateReceiverName && onGoToReceiver && (
-        <ReceiversSection
-          receivers={receivers}
-          isPlacingReceiver={isPlacingReceiver}
-          onStartPlacingReceiver={onStartPlacingReceiver}
-          onDeleteReceiver={onDeleteReceiver}
-          onUpdateReceiverName={onUpdateReceiverName}
-          onGoToReceiver={onGoToReceiver}
-        />
-      )}
     </div>
   );
 }

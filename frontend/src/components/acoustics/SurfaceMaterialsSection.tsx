@@ -18,6 +18,7 @@ interface SurfaceMaterialsSectionProps {
   geometryData: CompasGeometry | null;
   selectedGeometry: SelectedGeometry | null;
   onSelectGeometry: (selection: SelectedGeometry | null) => void;
+  onHoverGeometry?: (selection: SelectedGeometry | null) => void; // Callback for hover highlighting
   onAssignMaterial: (selection: SelectedGeometry, material: AcousticMaterial | null) => void;
   availableMaterials: AcousticMaterial[];
   className?: string;
@@ -25,6 +26,8 @@ interface SurfaceMaterialsSectionProps {
   onExpandedItemsChange?: (items: Set<string>) => void; // Callback to persist expanded state
   initialAssignments?: Map<number, string>; // faceIndex -> materialId from simulation config
   resetTrigger?: number; // Timestamp to trigger reset
+  excludedLayers?: Set<string>; // Layers excluded from simulation and selection
+  onExcludedLayersChange?: (layers: Set<string>) => void; // Callback to update excluded layers
 }
 
 export function SurfaceMaterialsSection({
@@ -33,13 +36,16 @@ export function SurfaceMaterialsSection({
   geometryData,
   selectedGeometry,
   onSelectGeometry,
+  onHoverGeometry,
   onAssignMaterial,
   availableMaterials,
   className = '',
   expandedItems,
   onExpandedItemsChange,
   initialAssignments,
-  resetTrigger
+  resetTrigger,
+  excludedLayers,
+  onExcludedLayersChange
 }: SurfaceMaterialsSectionProps) {
 
   return (
@@ -54,12 +60,15 @@ export function SurfaceMaterialsSection({
         geometryData={geometryData}
         selectedGeometry={selectedGeometry}
         onSelectGeometry={onSelectGeometry}
+        onHoverGeometry={onHoverGeometry}
         onAssignMaterial={onAssignMaterial}
         availableMaterials={availableMaterials}
         expandedItems={expandedItems}
         onExpandedItemsChange={onExpandedItemsChange}
         initialAssignments={initialAssignments}
         resetTrigger={resetTrigger}
+        excludedLayers={excludedLayers}
+        onExcludedLayersChange={onExcludedLayersChange}
       />
     </div>
   );

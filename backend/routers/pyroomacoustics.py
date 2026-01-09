@@ -23,6 +23,7 @@ from config.constants import (
     PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE,
     PYROOMACOUSTICS_SIMULATION_MODE_MONO,
     PYROOMACOUSTICS_SIMULATION_MODE_FOA,
+    PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING,
     AUDIO_SAMPLE_RATE,
     TEMP_SIMULATIONS_DIR
 )
@@ -101,7 +102,8 @@ async def run_simulation(
     scattering: float = Form(PYROOMACOUSTICS_DEFAULT_SCATTERING),
     simulation_mode: str = Form(PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE),  # "mono" or "foa"
     source_receiver_pairs: str = Form(...),  # JSON string
-    face_materials: Optional[str] = Form(None)  # JSON string: {face_index: material_id}
+    face_materials: Optional[str] = Form(None),  # JSON string: {face_index: material_id}
+    excludedLayers: Optional[str] = Form(None)  # JSON string: list of layer names to exclude
 ):
     """
     Run pyroomacoustics simulation with the uploaded 3D model and settings.
@@ -123,6 +125,9 @@ async def run_simulation(
         # Parse face materials
         face_materials_dict = json.loads(face_materials) if face_materials else {}
         
+        # Parse excluded layers
+        excluded_layers_list = json.loads(excludedLayers) if excludedLayers else []
+        
         # Log simulation parameters
         print(f"\n{'='*60}")
         print(f"Pyroomacoustics Simulation Request")
@@ -142,6 +147,7 @@ async def run_simulation(
         print(f"Face Materials: {len(face_materials_dict)} faces assigned")
         if face_materials_dict:
             print(f"  Material IDs: {set(face_materials_dict.values())}")
+        print(f"Excluded Layers: {excluded_layers_list}")
         print(f"{'='*60}\n")
         
         # Build settings object
@@ -162,19 +168,85 @@ async def run_simulation(
         
         if file_ext == '.3dm':
             geometry_data = GeometryService.process_3dm_file(str(temp_model_path))
+            # Extract entity-layer mapping if we need to filter by excluded layers
+            if excluded_layers_list:
+                entities = GeometryService.extract_entity_layers_from_3dm(str(temp_model_path))
+            else:
+                entities = []
         elif file_ext == '.obj':
             geometry_data = GeometryService.process_obj_file(str(temp_model_path))
+            entities = []  # OBJ files don't have layer information
         elif file_ext == '.ifc':
             geometry_data = GeometryService.process_ifc_file(str(temp_model_path))
+            entities = []  # TODO: Add IFC layer extraction if needed
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_ext}")
         
         # Extract mesh data
         vertices = geometry_data.get("vertices", [])
         faces = geometry_data.get("faces", [])
+        face_entity_map = geometry_data.get("face_entity_map", [])
+        # entities variable was already set above based on file type
         
         if not vertices or not faces:
             raise HTTPException(status_code=400, detail="No valid geometry found in model")
+        
+        # Filter out faces belonging to excluded layers
+        if excluded_layers_list and face_entity_map and entities:
+            print(f"Filtering geometry: {len(excluded_layers_list)} layers excluded")
+            
+            # Build entity index to layer map
+            entity_to_layer = {}
+            for entity_idx, entity in enumerate(entities):
+                layer_name = entity.get("layer", "Default")
+                entity_to_layer[entity_idx] = layer_name
+            
+            # Find faces to keep (not in excluded layers)
+            faces_to_keep = []
+            face_materials_filtered = {}
+            used_vertices = set()
+            
+            for face_idx, face in enumerate(faces):
+                if face_idx < len(face_entity_map):
+                    entity_idx = face_entity_map[face_idx]
+                    layer_name = entity_to_layer.get(entity_idx, "Default")
+                    
+                    if layer_name not in excluded_layers_list:
+                        faces_to_keep.append(face)
+                        # Track which vertices are used
+                        for vertex_idx in face:
+                            used_vertices.add(vertex_idx)
+                        
+                        # Remap face materials
+                        if str(face_idx) in face_materials_dict:
+                            face_materials_filtered[len(faces_to_keep) - 1] = face_materials_dict[str(face_idx)]
+                else:
+                    # No entity mapping, keep the face
+                    faces_to_keep.append(face)
+                    for vertex_idx in face:
+                        used_vertices.add(vertex_idx)
+                    if str(face_idx) in face_materials_dict:
+                        face_materials_filtered[len(faces_to_keep) - 1] = face_materials_dict[str(face_idx)]
+            
+            # Rebuild vertices list and remap face indices
+            old_to_new_vertex = {}
+            vertices_filtered = []
+            for old_idx in sorted(used_vertices):
+                old_to_new_vertex[old_idx] = len(vertices_filtered)
+                vertices_filtered.append(vertices[old_idx])
+            
+            # Remap face vertex indices
+            faces_filtered = []
+            for face in faces_to_keep:
+                remapped_face = [old_to_new_vertex[v_idx] for v_idx in face]
+                faces_filtered.append(remapped_face)
+            
+            print(f"Filtered: {len(faces)} -> {len(faces_filtered)} faces, {len(vertices)} -> {len(vertices_filtered)} vertices")
+            
+            # Replace original data with filtered data
+            vertices = vertices_filtered
+            faces = faces_filtered
+            face_materials_dict = face_materials_filtered
         
         # Convert face materials to absorption values
         face_material_map = {}
@@ -219,8 +291,8 @@ async def run_simulation(
         # Determine number of channels based on simulation mode
         if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO:
             num_channels = 1
-        elif simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
-            num_channels = 4
+        elif simulation_mode in [PYROOMACOUSTICS_SIMULATION_MODE_FOA, PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING]:
+            num_channels = 4  # Both FOA modes produce 4-channel B-format output
         else:
             raise HTTPException(status_code=400, detail=f"Invalid simulation mode: {simulation_mode}")
 
@@ -260,7 +332,8 @@ async def run_simulation(
                 PyroomacousticsService.add_receiver_to_room(room, receiver_position, simulation_mode)
                 print(f"  Added {simulation_mode} receiver {receiver_id} at {receiver_position}")
 
-                # Disable ray tracing for FOA mode (directivity requires ISM only)
+                # Disable ray tracing for standard FOA mode (directivity requires ISM only)
+                # Note: foa_raytracing mode uses tetrahedral array and DOES support ray tracing
                 if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA and ray_tracing:
                     print(f"  NOTE: Ray tracing disabled for FOA mode (directivity requires ISM)")
                     ray_tracing = False
@@ -328,8 +401,17 @@ async def run_simulation(
 
                 rir_data = rir  # 1D array
             else:
-                # Multi-channel (binaural or FOA)
+                # Multi-channel (FOA or FOA with ray tracing)
                 rir_channels = []
+
+                # Determine channel names for error messages
+                if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
+                    channel_names_list = ['W', 'X', 'Y', 'Z']  # B-format (directivity-based)
+                elif simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING:
+                    channel_names_list = ['FLU', 'BRU', 'FRD', 'BLD']  # A-format (tetrahedral array)
+                else:
+                    channel_names_list = [f'Ch{i}' for i in range(num_channels)]
+
                 for ch in range(num_channels):
                     mic_idx = mic_start_idx + ch
 
@@ -345,10 +427,7 @@ async def run_simulation(
 
                     # Validate RIR is not empty
                     if rir is None or len(rir) == 0:
-                        channel_names = {
-                            PYROOMACOUSTICS_SIMULATION_MODE_FOA: ['W', 'X', 'Y', 'Z']
-                        }
-                        channel_name = channel_names.get(simulation_mode, [])[ch] if simulation_mode in channel_names and ch < len(channel_names[simulation_mode]) else f"Channel {ch}"
+                        channel_name = channel_names_list[ch] if ch < len(channel_names_list) else f"Channel {ch}"
 
                         raise HTTPException(
                             status_code=500,
@@ -358,7 +437,7 @@ async def run_simulation(
                         )
 
                     rir_channels.append(rir)
-                    print(f"    Channel {ch} ({mic_idx}): RIR length = {len(rir)}")
+                    print(f"    Channel {ch} ({channel_names_list[ch]}, mic {mic_idx}): RIR length = {len(rir)}")
 
                 # Validate we collected the expected number of channels
                 if len(rir_channels) != num_channels:
@@ -381,9 +460,34 @@ async def run_simulation(
                     else:
                         padded_channels.append(rir)
 
-                # Stack channels into multi-channel array [n_samples, n_channels]
-                # Keep FuMa ordering (W,X,Y,Z) as output from pyroomacoustics
-                rir_data = np.column_stack(padded_channels)
+                # Convert A-format to B-format for FOA + Ray Tracing mode
+                if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING:
+                    # A-format IRs [4, n_samples] -> B-format [4, n_samples]
+                    a_format = np.array(padded_channels)  # Shape: [4, n_samples]
+                    b_format = PyroomacousticsService.convert_a_format_to_b_format(a_format)
+                    print(f"    Converted A-format to B-format: {a_format.shape} -> {b_format.shape}")
+
+                    # Stack channels into multi-channel array [n_samples, n_channels]
+                    rir_data = b_format.T  # Transpose from [4, n_samples] to [n_samples, 4]
+                else:
+                    # Standard FOA: Already in B-format (W,X,Y,Z from directivity patterns)
+                    # Stack channels into multi-channel array [n_samples, n_channels]
+                    rir_data = np.column_stack(padded_channels)
+
+                    # Apply Three.js → Ambisonic coordinate transformation for standard FOA
+                    # The directivity-based mics capture in Three.js coordinates, but
+                    # JSAmbisonics expects Ambisonic B-format coordinates.
+                    # Mapping:
+                    #   X_amb (Front-Back) = -Z_threejs (ch3)
+                    #   Y_amb (Left-Right) = X_threejs (ch1) - sign empirically determined
+                    #   Z_amb (Up-Down) = Y_threejs (ch2)
+                    rir_transformed = np.zeros_like(rir_data)
+                    rir_transformed[:, 0] = rir_data[:, 0]    # W unchanged
+                    rir_transformed[:, 1] = -rir_data[:, 3]   # Ambisonic X = -Three.js Z
+                    rir_transformed[:, 2] = rir_data[:, 1]    # Ambisonic Y = Three.js X
+                    rir_transformed[:, 3] = rir_data[:, 2]    # Ambisonic Z = Three.js Y
+                    rir_data = rir_transformed
+                    print("    Applied Three.js → Ambisonic coordinate transformation for FOA IR")
 
             # Calculate acoustic parameters from the first channel (W/mono/left)
             try:
@@ -423,9 +527,16 @@ async def run_simulation(
             }
 
             # Add format and normalization metadata for ambisonic IRs
-            if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
-                result_entry["channel_ordering"] = "FuMa"  # FuMa ordering: W, X, Y, Z (pyroomacoustics output)
+            if simulation_mode in [PYROOMACOUSTICS_SIMULATION_MODE_FOA, PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING]:
+                result_entry["channel_ordering"] = "FuMa"  # FuMa ordering: W, X, Y, Z (output is always B-format)
                 result_entry["normalization_convention"] = "N3D"  # N3D normalization (pyroomacoustics/JSAmbisonics default)
+
+                # Add metadata for FOA + Ray Tracing mode
+                if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING:
+                    result_entry["encoding_method"] = "a_format_tetrahedral"  # A-format -> B-format conversion
+                    result_entry["original_format"] = "A-format"  # Source was tetrahedral array
+                else:
+                    result_entry["encoding_method"] = "directivity"  # Direct B-format from directivity patterns
 
             # Add ray tracing parameters if enabled
             if ray_tracing:

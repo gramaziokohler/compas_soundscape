@@ -246,6 +246,10 @@ export const UI_SCENE_BUTTON = {
   GAP: "8px",                // gap-2 between buttons
 } as const;
 
+// Material Assignment UI
+export const MAX_FACES_FOR_EXPANSION = 10; // Maximum number of faces before disabling entity expansion
+export const MAX_FACES_FOR_LAYER_AUTO_EXCLUDE = 1000; // Auto-exclude layers with more than this many faces in new simulations
+
 // Entity Overlays (Light background)
 export const UI_ENTITY_OVERLAY = {
   BACKGROUND: `rgba(255, 255, 255, ${UI_OPACITY.BACKDROP_LIGHT})`, // white/95
@@ -273,6 +277,16 @@ export const UI_TABS = {
   BORDER_RADIUS_TOP: "8px 8px 0 0", // rounded-t
   FONT_SIZE: UI_FONT_SIZE.XS,
   TRANSITION: UI_TRANSITIONS.COLORS,
+} as const;
+
+// Vertical Tabs (Icon-based sidebar navigation)
+export const UI_VERTICAL_TABS = {
+  WIDTH: 40,                 // w-12 - tab button width
+  HEIGHT: 40,                // h-8 - tab button height
+  ICON_SIZE: 20,             // w-6 h-6 - icon dimensions
+  INDICATOR_WIDTH: 3,        // w-1 - active indicator bar width
+  INDICATOR_HEIGHT: 32,      // h-8 - active indicator bar height
+  BORDER_RADIUS: UI_BORDER_RADIUS.FULL, // Rounded indicator
 } as const;
 
 // ============================================================================
@@ -577,7 +591,7 @@ export const AMBISONIC = {
 // ============================================================================
 export const HRTF = {
   // Default HRTF dataset path (IRCAM subject 1076)
-  DEFAULT_HRTF_PATH: '/hrtf/HRTF_KEMAR_front.json',
+  DEFAULT_HRTF_PATH: '/hrtf/HRTF_KEMAR_front_transformed.sofa.json',
 
   // HRTF loading configuration
   FETCH_TIMEOUT_MS: 10000,  // 10 second timeout for loading HRTF
@@ -1394,12 +1408,21 @@ export const CHORAS_MAX_POLL_RETRIES = 5; // Maximum retry attempts for failed p
 
 // Simulation Modes
 export const PYROOMACOUSTICS_SIMULATION_MODE_MONO = "mono"; // Single microphone (1 channel)
-export const PYROOMACOUSTICS_SIMULATION_MODE_FOA = "foa"; // First-Order Ambisonics (4 channels: W, X, Y, Z - FuMa/N3D)
+export const PYROOMACOUSTICS_SIMULATION_MODE_FOA = "foa"; // First-Order Ambisonics (4 channels: W, X, Y, Z - FuMa/N3D) - ISM only
+export const PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING = "foa_raytracing"; // FOA with ray tracing via A-format tetrahedral array
 
 // Simulation Mode Display Names
 export const PYROOMACOUSTICS_SIMULATION_MODE_NAMES = {
   [PYROOMACOUSTICS_SIMULATION_MODE_MONO]: "Mono (1-ch)",
-  [PYROOMACOUSTICS_SIMULATION_MODE_FOA]: "FOA Ambisonics (4-ch)"
+  [PYROOMACOUSTICS_SIMULATION_MODE_FOA]: "FOA Ambisonics (4-ch)",
+  [PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING]: "FOA + Ray Tracing (4-ch)"
+} as const;
+
+// Simulation Mode Descriptions (for tooltips/UI help)
+export const PYROOMACOUSTICS_SIMULATION_MODE_DESCRIPTIONS = {
+  [PYROOMACOUSTICS_SIMULATION_MODE_MONO]: "Single omnidirectional microphone. Supports both ISM and ray tracing.",
+  [PYROOMACOUSTICS_SIMULATION_MODE_FOA]: "B-format Ambisonics using directivity patterns (W=omni, X/Y/Z=fig-8). ISM only - ray tracing disabled.",
+  [PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING]: "FOA via virtual A-format tetrahedral array. Enables ray tracing for accurate late reverb."
 } as const;
 
 // Default Simulation Settings

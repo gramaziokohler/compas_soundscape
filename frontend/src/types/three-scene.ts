@@ -216,9 +216,18 @@ export interface ThreeSceneProps {
   /** Callback to reset all advanced settings to defaults */
   onResetAdvancedSettings?: () => void;
 
+  /** Whether to show axes helper in 3D scene */
+  showAxesHelper?: boolean;
+
+  /** Callback when axes helper visibility changes */
+  onShowAxesHelperChange?: (value: boolean) => void;
+
   // Material assignment (NEW - for precise acoustics mode)
   /** Selected geometry for material assignment */
   selectedGeometry?: SelectedGeometry | null;
+
+  /** Hovered geometry for material assignment (for hover highlighting) */
+  hoveredGeometry?: SelectedGeometry | null;
 
   /** Callback when face is selected in 3D scene */
   onFaceSelected?: (faceIndex: number, entityIndex: number) => void;
@@ -239,5 +248,5 @@ export interface ThreeSceneProps {
   expandedSimulationConfig?: import('./acoustics').SimulationConfig | null;
 
   /** Active sidebar tab (for determining input mode) */
-  activeAiTab?: 'text' | 'sound' | 'acoustics';
+  activeAiTab?: 'text' | 'sound' | 'acoustics' | 'settings';
 }

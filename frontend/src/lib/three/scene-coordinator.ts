@@ -139,13 +139,15 @@ export class SceneCoordinator {
         this.camera.position.copy(this.lockedPosition);
 
         // Calculate look-at target based on rotation
+        // Convention: yaw=0 → looking at -Z (forward in Three.js), +yaw → looking left
+        // This matches orbit mode and AnechoicMode's expected coordinate system
         const yaw = this.firstPersonRotation.yaw;
         const pitch = this.firstPersonRotation.pitch;
 
         const direction = new THREE.Vector3(
-          Math.sin(yaw) * Math.cos(pitch),
+          -Math.sin(yaw) * Math.cos(pitch),  // Negated: yaw=0 → x=0, +yaw → look left (-X)
           Math.sin(pitch),
-          Math.cos(yaw) * Math.cos(pitch)
+          -Math.cos(yaw) * Math.cos(pitch)   // Negated: yaw=0 → -Z (forward)
         );
 
         const target = new THREE.Vector3().addVectors(

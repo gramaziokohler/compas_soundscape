@@ -140,6 +140,10 @@ import { UI_COLORS, SVG_ICON_PROPS } from '@/lib/constants';
       * Initialize services in `main.py` and inject into routers via `init_*_router()` functions.
       * This ensures easy testing and loose coupling.
 
+  * **If you fail solving a problem use a consol log based approach**
+
+      * When implementing logs, always use change-detection logging to not flood the console
+
 -----
 
 ## 🎨 Styling Consistency
