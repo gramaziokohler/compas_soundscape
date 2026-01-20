@@ -21,6 +21,7 @@ export interface ReceiverData {
   name: string;
   position: [number, number, number];
   mesh?: THREE.Mesh; // Populated by ThreeScene, not serializable
+
 }
 
 /**

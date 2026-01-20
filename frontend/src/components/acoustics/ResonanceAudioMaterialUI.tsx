@@ -166,17 +166,17 @@ export function ResonanceAudioMaterialUI({
     : UI_COLORS.NEUTRAL_400;
 
   return (
-    <div className="flex flex-col gap-1 text-xs">
+    <div className="flex flex-col gap-1 text-xs w-full overflow-hidden">
       {/* All Faces Root */}
-      <div className="flex flex-col">
-        <div className="flex items-center gap-2 p-2 rounded">
+      <div className="flex flex-col w-full">
+        <div className="flex items-center gap-1 p-0 rounded w-full min-w-0">
           <button
             onClick={() => setExpandedAll(!expandedAll)}
-            className="flex items-center justify-center w-4 h-4"
+            className="flex items-center justify-center w-4 h-4 shrink-0"
           >
             {expandedAll ? '▼' : '▶'}
           </button>
-          <span className="flex-1 font-medium">All faces</span>
+          <span className="font-medium shrink-0 w-16">All faces</span>
           <select
             value={allFacesMaterial || 'various'}
             onChange={(e) => {
@@ -184,11 +184,10 @@ export function ResonanceAudioMaterialUI({
                 handleAllFacesChange(e.target.value);
               }
             }}
-            className="flex-1 text-xs px-2 py-1 text-white rounded focus:outline-none focus:ring-1 focus:ring-white"
+            className="flex-1 min-w-0 text-xs px-2 py-1 text-white rounded focus:outline-none focus:ring-1 focus:ring-white"
             style={{
               backgroundColor: allFacesColor,
-              borderRadius: '8px',
-              maxWidth: '200px'
+              borderRadius: '8px'
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -212,7 +211,7 @@ export function ResonanceAudioMaterialUI({
 
         {/* Individual Faces */}
         {expandedAll && (
-          <div className="ml-6 flex flex-col gap-1">
+          <div className="ml-0 flex flex-col gap-1 w-full">
             {FACE_ORDER.map((face) => {
               const faceLabel = FACE_LABELS[face];
               const faceMaterial = materials[face];
@@ -221,17 +220,16 @@ export function ResonanceAudioMaterialUI({
               return (
                 <div
                   key={face}
-                  className="flex items-center gap-2 p-2 rounded"
+                  className="flex items-center gap-2 p-2 rounded w-full min-w-0"
                 >
-                  <span className="flex-1 ml-4">{faceLabel}</span>
+                  <span className="shrink-0 w-16 ml-2">{faceLabel}</span>
                   <select
                     value={faceMaterial}
                     onChange={(e) => handleFaceChange(face, e.target.value)}
-                    className="flex-1 text-xs px-2 py-1 text-white rounded focus:outline-none focus:ring-1 focus:ring-white"
+                    className="flex-1 min-w-0 text-xs px-2 py-1 text-white rounded focus:outline-none focus:ring-1 focus:ring-white"
                     style={{
                       backgroundColor: display.color,
-                      borderRadius: '8px',
-                      maxWidth: '200px'
+                      borderRadius: '8px'
                     }}
                     onClick={(e) => e.stopPropagation()}
                   >

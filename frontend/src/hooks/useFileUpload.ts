@@ -22,6 +22,10 @@ export function useFileUpload() {
   const [geometryBounds, setGeometryBounds] = useState<{min: [number, number, number], max: [number, number, number]} | null>(null);
   const [scaleForSounds, setScaleForSounds] = useState(1.0);
   const [useModelAsContext, setUseModelAsContext] = useState(true);
+  
+  // Speckle-specific state
+  const [speckleModelUrl, setSpeckleModelUrl] = useState<string | null>(null);
+  const [speckleObjectId, setSpeckleObjectId] = useState<string | null>(null);
 
   // Helper functions to check file types
   const is3DModelFile = (filename: string) => {
@@ -160,8 +164,24 @@ export function useFileUpload() {
     setModelEntities([]);
 
     try {
-      const geometry = await apiService.uploadFile(modelFile);
-      processGeometry(geometry);
+      const response = await apiService.uploadFile(modelFile);
+      
+      // Check if response has Speckle data
+      const hasSpeckle = 'speckle' in response;
+      const hasGeometry = 'geometry' in response;
+      
+      // Store Speckle data if available
+      if (hasSpeckle && response.speckle) {
+        setSpeckleModelUrl(response.speckle.url);
+        setSpeckleObjectId(response.speckle.object_id);
+      }
+      
+      // Process geometry for legacy compatibility
+      // If response has geometry field, use it; otherwise treat entire response as geometry
+      const geometry = hasGeometry ? response.geometry : response;
+      if (geometry && 'vertices' in geometry && 'faces' in geometry) {
+        processGeometry(geometry);
+      }
 
       // Only analyze model if useModelAsContext is true
       if (useModelAsContext) {
@@ -235,6 +255,9 @@ export function useFileUpload() {
     geometryBounds,
     scaleForSounds,
     useModelAsContext,
+    // Speckle state
+    speckleModelUrl,
+    speckleObjectId,
     // File handlers (single upload area)
     handleFileChange,
     handleDragOver,

@@ -1,5 +1,10 @@
 import { useEffect } from "react";
-import { UI_COLORS, UI_OVERLAY } from "@/lib/constants";
+import { UI_COLORS, UI_OVERLAY, UI_VERTICAL_TABS, UI_RIGHT_SIDEBAR } from "@/lib/constants";
+
+// Left sidebar content width when expanded (matches Sidebar.tsx: 20rem = 320px)
+const LEFT_SIDEBAR_CONTENT_WIDTH = 320;
+// Right sidebar collapsed width
+const RIGHT_SIDEBAR_COLLAPSED_WIDTH = 40;
 
 interface PlaybackControlsProps {
   onPlayAll: () => void;
@@ -7,6 +12,9 @@ interface PlaybackControlsProps {
   onStopAll: () => void;
   isAnyPlaying: boolean;
   hasSounds: boolean;
+  // Sidebar states for dynamic centering
+  isLeftSidebarExpanded?: boolean;
+  isRightSidebarExpanded?: boolean;
 }
 
 /**
@@ -25,8 +33,17 @@ export function PlaybackControls({
   onPauseAll,
   onStopAll,
   isAnyPlaying,
-  hasSounds
+  hasSounds,
+  isLeftSidebarExpanded = true,
+  isRightSidebarExpanded = true
 }: PlaybackControlsProps) {
+  // Calculate left sidebar total width
+  const leftSidebarWidth = UI_VERTICAL_TABS.WIDTH + (isLeftSidebarExpanded ? LEFT_SIDEBAR_CONTENT_WIDTH : 0);
+  // Calculate right sidebar width
+  const rightSidebarWidth = isRightSidebarExpanded ? UI_RIGHT_SIDEBAR.WIDTH : RIGHT_SIDEBAR_COLLAPSED_WIDTH;
+  // Calculate center offset: positive = shift right, negative = shift left
+  // Center should be in the middle of the visible area between the two sidebars
+  const centerOffset = (leftSidebarWidth - rightSidebarWidth) / 2;
   // Space key toggles play/pause
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -58,7 +75,10 @@ export function PlaybackControls({
   };
 
   return (
-    <div className="fixed bottom-6 pointer-events-auto z-50" style={{ left: "calc(50% + 192px)", transform: "translateX(-50%)" }}>
+    <div
+      className="fixed bottom-6 pointer-events-auto z-50 transition-all duration-300"
+      style={{ left: `calc(50% + ${centerOffset}px)`, transform: "translateX(-50%)" }}
+    >
       <div 
         className="rounded-lg px-4 py-2 shadow-xl flex items-center gap-3"
         style={{

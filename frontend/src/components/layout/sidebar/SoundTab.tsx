@@ -34,6 +34,7 @@ interface SoundTabProps {
   modelEntities?: any[];
   isLinkingEntity?: boolean;
   linkingConfigIndex?: number | null;
+  useSpeckleViewer?: boolean; // Whether Speckle viewer is active (enables entity linking)
   isMuted?: boolean;
   isSoloed?: boolean;
   variants?: SoundEvent[]; // All variants for this prompt
@@ -76,6 +77,7 @@ export function SoundTab({
   modelEntities = [],
   isLinkingEntity = false,
   linkingConfigIndex = null,
+  useSpeckleViewer = false,
   isMuted = false,
   isSoloed = false,
   variants = [],
@@ -285,8 +287,8 @@ export function SoundTab({
           )}
 
 
-          {/* Link to entity button - only show if model has entities */}
-          {modelEntities.length > 0 && (
+          {/* Link to entity button - show if model has entities OR if Speckle viewer is active */}
+          {(modelEntities.length > 0 || useSpeckleViewer) && (
             <button
               onClick={() => {
                 if (isLinkingEntity && linkingConfigIndex === index) {

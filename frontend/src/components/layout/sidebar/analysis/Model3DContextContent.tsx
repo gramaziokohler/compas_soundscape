@@ -1,9 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import type { ModelAnalysisConfig } from '@/types/analysis';
-import { FileUploadArea } from '@/components/controls/FileUploadArea';
-import { UI_COLORS, UI_BUTTON, UI_CARD, MODEL_FILE_EXTENSIONS } from '@/lib/constants';
+import { useSpeckleViewerContext } from '@/contexts/SpeckleViewerContext';
+import { useSpeckleSelectionMode } from '@/contexts/SpeckleSelectionModeContext';
+import { getRootNodesForModel } from '@/hooks/useSpeckleTree';
+import type { Viewer } from '@speckle/viewer';
+import { UI_COLORS, UI_BUTTON } from '@/lib/constants';
 
 /**
  * Model3DContextContent Component
@@ -27,70 +30,153 @@ export function Model3DContextContent({
   onUpdateConfig,
   onAnalyze
 }: Model3DContextContentProps) {
-  // File upload state
-  const [isDragging, setIsDragging] = useState(false);
+  // Get viewer ref from context
+  const { viewerRef } = useSpeckleViewerContext();
+  
+  // Get selection mode context
+  const { diverseSelectedObjectIds } = useSpeckleSelectionMode();
 
-  const hasModelLoaded = config.modelEntities.length > 0;
+  // World tree state (for entity population only)
+  const [worldTree, setWorldTree] = useState<any>(null);
+  const worldTreeRef = useRef<any>(null);
+  const hasLoadedTreeRef = useRef<boolean>(false);
+
+  // Trigger tree fetch when viewer becomes available or speckleData changes
+  useEffect(() => {
+    if (!viewerRef?.current || !config.speckleData) return;
+
+    const attemptTreeLoad = () => {
+      if (!viewerRef.current) return false;
+
+      const tree = viewerRef.current.getWorldTree();
+      if (tree) {
+        const rootNodes = getRootNodesForModel(tree);
+        
+        if (rootNodes && rootNodes.length > 0) {
+          hasLoadedTreeRef.current = true;
+          worldTreeRef.current = tree;
+          setWorldTree(tree);
+          return true;
+        }
+      }
+      return false;
+    };
+
+    if (attemptTreeLoad()) return;
+
+    const timeouts: NodeJS.Timeout[] = [];
+    const delays = [500, 1000, 1500, 2000, 2500, 3000];
+    
+    delays.forEach(delay => {
+      const timeout = setTimeout(() => {
+        if (!hasLoadedTreeRef.current) {
+          attemptTreeLoad();
+        }
+      }, delay);
+      timeouts.push(timeout);
+    });
+
+    return () => {
+      timeouts.forEach(timeout => clearTimeout(timeout));
+    };
+  }, [viewerRef?.current, config.speckleData]);
+  
+  // Sync diverse selections from context to config
+  useEffect(() => {
+    const diverseIds = Array.from(diverseSelectedObjectIds);
+    const diverseEntities = config.modelEntities.filter(entity => 
+      diverseIds.includes(entity.nodeId || entity.id)
+    );
+    
+    // Only update if different to avoid infinite loops
+    const currentIds = config.selectedDiverseEntities.map(e => e.nodeId || e.id).sort();
+    const newIds = diverseEntities.map(e => e.nodeId || e.id).sort();
+    
+    if (JSON.stringify(currentIds) !== JSON.stringify(newIds)) {
+      onUpdateConfig(index, { selectedDiverseEntities: diverseEntities });
+    }
+  }, [diverseSelectedObjectIds, config.modelEntities, index, onUpdateConfig]);
+
+  // Auto-populate entities from worldTree (recursively traverse children)
+  useEffect(() => {
+    // Only populate if we have worldTree and speckleData
+    if (!worldTree || !config.speckleData) {
+      return;
+    }
+    
+    // Debounce: Wait 500ms for tree to stabilize
+    const timeout = setTimeout(() => {
+      
+      // Extract entities by recursively walking the tree
+      const entities: any[] = [];
+      let entityIndex = 0;
+      
+      const processNode = (node: any) => {
+        if (!node) return;
+        
+        const hasRenderView = node.model?.renderView || node.renderView;
+        const raw = node.raw || node.model?.raw || {};
+        const id = raw.id || node.model?.id || node.id || `node-${entityIndex}`;
+        const speckleType = raw.speckle_type || raw.speckle?.type || 'Object';
+        const name = raw.name || node.model?.name || speckleType.split('.').pop() || 'Object';
+        
+        // Include nodes that have a render view or speckle_type
+        if (hasRenderView || raw.speckle_type) {
+          entities.push({
+            id,
+            index: entityIndex++,
+            type: speckleType,
+            name,
+            speckle_type: speckleType,
+            raw,
+            nodeId: id,
+          });
+        }
+        
+        // Recursively process children
+        const nodeChildren = node.model?.children || node.children;
+        if (nodeChildren && Array.isArray(nodeChildren)) {
+          nodeChildren.forEach(processNode);
+        }
+      };
+      
+      // Start from root children using the helper function
+      const rootNodes = getRootNodesForModel(worldTree);
+      
+      if (rootNodes && Array.isArray(rootNodes)) {
+        rootNodes.forEach(processNode);
+      }
+      
+      if (entities.length > 0 && entities.length !== config.modelEntities.length) {
+        onUpdateConfig(index, { modelEntities: entities });
+      }
+    }, 500);
+
+    return () => clearTimeout(timeout);
+  }, [worldTree, config.speckleData, config.modelEntities.length, index, onUpdateConfig]);
+
+  // Model is loaded if we have a file OR speckleData (new Speckle workflow)
+  const hasModelLoaded = config.modelFile !== null || config.speckleData !== undefined;
   const hasSelectedEntities = config.selectedDiverseEntities.length > 0;
-
-  // Drag and drop handlers
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragging(false);
-  };
-
-  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragging(false);
-
-    const files = Array.from(e.dataTransfer.files);
-    if (files.length === 0) return;
-
-    const file = files[0];
-    // Update config with the file - useEffect in page.tsx will handle upload
-    onUpdateConfig(index, { modelFile: file });
-  };
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    const file = files[0];
-    onUpdateConfig(index, { modelFile: file });
-    
-    // Trigger file upload via parent - will be handled by page.tsx
-    // File upload will update the config with modelEntities
-    
-    // Reset input
-    e.target.value = "";
-  };
 
   return (
     <div className="space-y-3">
-      {/* File upload area - only show if no model loaded */}
+      {/* Model not loaded message */}
       {!hasModelLoaded && (
-        <FileUploadArea
-          file={config.modelFile}
-          isDragging={isDragging}
-          acceptedFormats={MODEL_FILE_EXTENSIONS.join(',')}
-          acceptedExtensions={MODEL_FILE_EXTENSIONS.join(', ')}
-          onFileChange={handleFileChange}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          inputId={`model-upload-${index}`}
-          multiple={false}
-        />
+        <div
+          className="rounded p-3 text-xs text-center"
+          style={{
+            backgroundColor: UI_COLORS.NEUTRAL_100,
+            color: UI_COLORS.NEUTRAL_600,
+          }}
+        >
+          No model loaded. Import a 3D model from the right sidebar.
+        </div>
       )}
 
       {/* Model loaded UI */}
       {hasModelLoaded && (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {/* Model info */}
           <div
             className="rounded p-2 text-xs"
@@ -103,15 +189,12 @@ export function Model3DContextContent({
               color: UI_COLORS.SUCCESS
             }}
           >
-            ✓ Model loaded: {config.modelFile?.name || 'Unknown'}
+            ✓ Model: {config.modelFile?.name || 'Unknown'}
             <div style={{ color: UI_COLORS.SUCCESS_HOVER }}>
-              {config.modelEntities.length} objects
+              {config.modelEntities.length > 0 
+                ? `${config.modelEntities.length} objects` 
+                : 'Loading objects...'}
             </div>
-          </div>
-
-          {/* Hide import UI and show model name */}
-          <div className="text-sm font-medium" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-            {config.modelFile?.name || '3D Model'}
           </div>
 
           {/* Number of sounds slider */}
@@ -137,14 +220,15 @@ export function Model3DContextContent({
           {/* Analyze 3D Model button */}
           <button
             onClick={() => onAnalyze(index)}
-            disabled={isAnalyzing}
+            disabled={isAnalyzing || config.modelEntities.length === 0}
             className="w-full text-white flex items-center justify-center gap-2 transition-colors disabled:opacity-40"
             style={{
               borderRadius: UI_BUTTON.BORDER_RADIUS_MD,
               padding: UI_BUTTON.PADDING_MD,
               fontSize: UI_BUTTON.FONT_SIZE,
               fontWeight: UI_BUTTON.FONT_WEIGHT,
-              backgroundColor: UI_COLORS.PRIMARY
+              backgroundColor: UI_COLORS.PRIMARY,
+              cursor: (isAnalyzing || config.modelEntities.length === 0) ? 'not-allowed' : 'pointer'
             }}
             onMouseEnter={(e) => !e.currentTarget.disabled && (e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY_HOVER)}
             onMouseLeave={(e) => !e.currentTarget.disabled && (e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY)}
@@ -157,6 +241,8 @@ export function Model3DContextContent({
                 </svg>
                 Analyzing...
               </>
+            ) : config.modelEntities.length === 0 ? (
+              'Loading objects...'
             ) : (
               'Analyze 3D Model'
             )}

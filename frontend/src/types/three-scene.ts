@@ -11,6 +11,7 @@ import type { ModeVisualizationState } from "./modal";
 import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSelector";
 import type { AudioOrchestrator } from "@/lib/audio/AudioOrchestrator";
 import type { SelectedGeometry } from "./materials";
+import type { SidebarTabValue } from "@/lib/constants";
 
 /**
  * ThreeScene Component Props
@@ -248,5 +249,5 @@ export interface ThreeSceneProps {
   expandedSimulationConfig?: import('./acoustics').SimulationConfig | null;
 
   /** Active sidebar tab (for determining input mode) */
-  activeAiTab?: 'text' | 'sound' | 'acoustics' | 'settings';
+  activeAiTab?: SidebarTabValue;
 }

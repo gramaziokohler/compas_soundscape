@@ -17,11 +17,10 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { UI_COLORS, UI_BUTTON } from '@/lib/constants';
 import type { SimulationConfig, AcousticSimulationMode } from '@/types/acoustics';
-import type { ReceiverData, SoundEvent, CompasGeometry, EntityData } from '@/types';
+import type { SoundEvent, CompasGeometry, EntityData, ReceiverData } from '@/types';
 import type { ImpulseResponseMetadata, ResonanceAudioConfig, AuralizationConfig } from '@/types/audio';
 import type { AcousticMaterial, SelectedGeometry } from '@/types/materials';
 import { SimulationTab } from './SimulationTab';
-import { ReceiversSection } from './ReceiversSection';
 
 interface AcousticsSectionProps {
   // Simulation configs
@@ -42,6 +41,7 @@ interface AcousticsSectionProps {
   
   // Shared props
   modelFile?: File | null;
+  speckleData?: { model_id: string; version_id: string; object_id: string; url: string; auth_token?: string } | null;
   geometryData?: CompasGeometry | null;
   receivers?: ReceiverData[];
   soundscapeData?: SoundEvent[] | null;
@@ -52,6 +52,7 @@ interface AcousticsSectionProps {
   modelType?: '3dm' | 'obj' | 'ifc' | null;
   selectedGeometry?: SelectedGeometry | null;
   onSelectGeometry?: (selection: SelectedGeometry | null) => void;
+  onHoverGeometry?: (selection: SelectedGeometry | null) => void;
   onAssignMaterial?: (selection: SelectedGeometry, material: AcousticMaterial | null) => void;
   
   // Resonance Audio specific
@@ -70,13 +71,7 @@ interface AcousticsSectionProps {
   onClearIR?: () => void;
   selectedIRId?: string | null;
   auralizationConfig?: AuralizationConfig;
-  
-  // Receiver management
-  isPlacingReceiver?: boolean;
-  onStartPlacingReceiver?: () => void;
-  onDeleteReceiver?: (id: string) => void;
-  onUpdateReceiverName?: (id: string, name: string) => void;
-  onGoToReceiver?: (id: string) => void;
+
 }
 
 export function AcousticsSection({
@@ -91,6 +86,7 @@ export function AcousticsSection({
   onRunSimulation,
   onCancelSimulation,
   modelFile,
+  speckleData = null,
   geometryData,
   receivers = [],
   soundscapeData = [],
@@ -99,6 +95,7 @@ export function AcousticsSection({
   modelType = null,
   selectedGeometry = null,
   onSelectGeometry,
+  onHoverGeometry,
   onAssignMaterial,
   resonanceAudioConfig,
   onToggleResonanceAudio,
@@ -112,12 +109,7 @@ export function AcousticsSection({
   onSelectIRFromLibrary,
   onClearIR,
   selectedIRId = null,
-  auralizationConfig,
-  isPlacingReceiver = false,
-  onStartPlacingReceiver,
-  onDeleteReceiver,
-  onUpdateReceiverName,
-  onGoToReceiver
+  auralizationConfig
 }: AcousticsSectionProps) {
   // Track which simulation tabs are expanded
   const [expandedTabs, setExpandedTabs] = useState<Set<number>>(new Set());
@@ -215,18 +207,6 @@ export function AcousticsSection({
       <div className="text-xs" style={{ color: UI_COLORS.NEUTRAL_600 }}>
         Current mode: {activeSimulationIndex === null ? 'No Acoustics (Anechoic)' : `Simulation ${activeSimulationIndex + 1}`}
       </div>
-
-      {/* Receivers Section */}
-      {onStartPlacingReceiver && onDeleteReceiver && onUpdateReceiverName && onGoToReceiver && (
-        <ReceiversSection
-          receivers={receivers}
-          isPlacingReceiver={isPlacingReceiver}
-          onStartPlacingReceiver={onStartPlacingReceiver}
-          onDeleteReceiver={onDeleteReceiver}
-          onUpdateReceiverName={onUpdateReceiverName}
-          onGoToReceiver={onGoToReceiver}
-        />
-      )}
 
       {/* Simulation status */}
       <div className="flex items-center text-xs w-full gap-1" style={{ color: UI_COLORS.NEUTRAL_600 }}>
@@ -355,6 +335,7 @@ export function AcousticsSection({
               onRunSimulation={onRunSimulation}
               onCancelSimulation={onCancelSimulation}
               modelFile={modelFile}
+              speckleData={speckleData}
               geometryData={geometryData}
               receivers={receivers}
               soundscapeData={soundscapeData}
@@ -363,6 +344,7 @@ export function AcousticsSection({
               modelType={modelType}
               selectedGeometry={selectedGeometry}
               onSelectGeometry={onSelectGeometry}
+              onHoverGeometry={onHoverGeometry}
               onAssignMaterial={onAssignMaterial}
               resonanceAudioConfig={resonanceAudioConfig}
               onToggleResonanceAudio={onToggleResonanceAudio}

@@ -221,7 +221,11 @@ class LLMService:
         return None
 
     def select_diverse_entities(self, entities: list, max_sounds: int, entity_type: str = "objects") -> list:
-        """Select most diverse entities using LLM"""
+        """Select most diverse entities using LLM
+        
+        Supports both traditional entities and Speckle objects.
+        Speckle objects use 'speckle_type' instead of 'type'.
+        """
         if len(entities) <= max_sounds:
             return entities
 
@@ -229,7 +233,9 @@ class LLMService:
 
         entity_summaries = []
         for i, entity in enumerate(entities):
-            summary = f"{i}. {entity.get('type', 'Unknown')}"
+            # Support both traditional 'type' and Speckle 'speckle_type'
+            entity_type_name = entity.get('speckle_type') or entity.get('type', 'Unknown')
+            summary = f"{i}. {entity_type_name}"
             if entity.get('name'):
                 summary += f" ('{entity['name']}')"
             if entity.get('layer'):
@@ -288,9 +294,11 @@ No explanation, just the JSON array."""
             # Mixed entity-based and context-based generation
 
             # Build entity descriptions
+            # Support both traditional 'type' and Speckle 'speckle_type'
             entity_descriptions = []
             for i, entity in enumerate(entities):
-                desc = f"{i+1}. {entity.get('type', 'object')}"
+                entity_type_name = entity.get('speckle_type') or entity.get('type', 'object')
+                desc = f"{i+1}. {entity_type_name}"
                 if entity.get('name'):
                     desc += f" named '{entity['name']}'"
                 if entity.get('layer'):

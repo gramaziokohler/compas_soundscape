@@ -1,3 +1,7 @@
+// Import and re-export Speckle Scene types
+import type { SpeckleSceneProps, SpeckleGeometryNode } from './speckle-scene';
+export type { SpeckleSceneProps, SpeckleGeometryNode };
+
 // Import and re-export SED types
 import type { SEDAudioInfo, DetectedSound, SEDAnalysisResult, SEDAnalysisOptions, SEDUIState, UseSEDReturn } from './sed';
 export type { SEDAudioInfo, DetectedSound, SEDAnalysisResult, SEDAnalysisOptions, SEDUIState, UseSEDReturn };
@@ -59,6 +63,22 @@ export interface CompasGeometry {
   vertices: number[][];
   faces: number[][];
   face_entity_map?: number[];  // Maps face index to entity index
+}
+
+// Speckle upload response
+export interface SpeckleUploadData {
+  model_id: string;
+  version_id: string;
+  file_id: string;
+  url: string;
+  object_id: string;
+  auth_token?: string;
+}
+
+// File upload response (supports both legacy and Speckle)
+export interface FileUploadResponse {
+  geometry?: CompasGeometry;
+  speckle?: SpeckleUploadData;
 }
 
 export interface SoundEvent {
@@ -139,7 +159,11 @@ export interface SoundGenerationConfig {
 
 export type SoundState = 'playing' | 'paused' | 'stopped';
 
-export type ActiveTab = 'text' | 'sound' | 'acoustics' | 'settings';
+// Import SidebarTabValue from constants for single source of truth
+import type { SidebarTabValue } from '@/lib/constants';
+
+/** Active sidebar tab - uses SidebarTabValue from constants */
+export type ActiveTab = SidebarTabValue;
 export type LoadTab = 'sample' | 'upload';
 
 // Sound generation mode types

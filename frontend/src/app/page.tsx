@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { ThreeScene } from "@/components/scene/ThreeScene";
+import { SpeckleScene } from "@/components/scene/SpeckleScene";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { RightSidebar } from "@/components/layout/RightSidebar";
 import { IRStatusNotice } from "@/components/audio/IRStatusNotice";
 import { ErrorProvider } from "@/contexts/ErrorContext";
 import { ErrorToast } from "@/components/ui/ErrorToast";
+import { SpeckleViewerProvider, useSpeckleViewerContext } from "@/contexts/SpeckleViewerContext";
+import { SpeckleSelectionModeProvider, useSpeckleSelectionMode } from "@/contexts/SpeckleSelectionModeContext";
 import { useFileUpload } from "@/hooks/useFileUpload";
 import { useTextGeneration } from "@/hooks/useTextGeneration";
 import { useSoundGeneration } from "@/hooks/useSoundGeneration";
@@ -31,6 +34,12 @@ function HomeContent() {
   const soundGen = useSoundGeneration(fileUpload.geometryBounds);
   const audioControls = useAudioControls(soundGen.generatedSounds);
   const analysis = useAnalysis();
+  
+  // Get Speckle viewer context
+  const { viewerRef, setModelFileName } = useSpeckleViewerContext();
+  
+  // Get Speckle selection mode context
+  const { linkObjectToSound, unlinkObjectFromSound } = useSpeckleSelectionMode();
 
   const sed = useSED();
 
@@ -82,6 +91,23 @@ function HomeContent() {
   
   // Audio rendering mode state (unified: threejs, resonance, anechoic)
   const [audioRenderingMode, setAudioRenderingMode] = useState<AudioRenderingMode>('anechoic');
+  
+  // Speckle viewer state
+  const [useSpeckleViewer, setUseSpeckleViewer] = useState(true);
+  const [speckleModelUrl, setSpeckleModelUrl] = useState<string | undefined>(undefined);
+  const speckleViewerRef = useRef<import('@/components/scene/SpeckleViewer_Deprecated').SpeckleViewerHandle>(null);
+
+  // Sidebar expanded states (for adjusting SpeckleScene control button and timeline positions)
+  const [isLeftSidebarExpanded, setIsLeftSidebarExpanded] = useState(true);
+  const [isRightSidebarExpanded, setIsRightSidebarExpanded] = useState(true);
+
+  // Callback when Speckle viewer is loaded
+  const handleSpeckleViewerLoaded = useCallback((viewer: import('@speckle/viewer').Viewer) => {
+    console.log('Speckle viewer loaded:', viewer);
+  }, []);
+  
+  // Scene visualization state
+  const [showAxesHelper, setShowAxesHelper] = useState(false);
   
   // Sync audioRenderingMode with orchestrator only when IR state changes
   useEffect(() => {
@@ -180,10 +206,12 @@ function HomeContent() {
   // Go to receiver state (triggers first-person view at specific receiver)
   const [goToReceiverId, setGoToReceiverId] = useState<string | null>(null);
 
-  // Detect model type from file extension
+  // Detect model type from file extension and set model filename in context
   useEffect(() => {
-    if (fileUpload.modelFile) {
-      const fileName = fileUpload.modelFile.name.toLowerCase();
+    const modelFile = fileUpload.modelFile || analysis.loadedModelFile;
+    if (modelFile) {
+      const fileName = modelFile.name.toLowerCase();
+      console.log('[page.tsx] Setting model filename in context:', modelFile.name);
       if (fileName.endsWith('.3dm')) {
         setModelType('3dm');
       } else if (fileName.endsWith('.obj')) {
@@ -193,10 +221,14 @@ function HomeContent() {
       } else {
         setModelType(null);
       }
+      // Update model filename in Speckle viewer context
+      setModelFileName(modelFile.name);
     } else {
+      console.log('[page.tsx] Clearing model filename from context');
       setModelType(null);
+      setModelFileName(null);
     }
-  }, [fileUpload.modelFile]);
+  }, [fileUpload.modelFile, analysis.loadedModelFile, setModelFileName]);
 
   // Clear analyzed entities when model changes
   useEffect(() => {
@@ -276,6 +308,15 @@ function HomeContent() {
     console.log(`Loaded ${newConfigs.length} sounds from SED analysis`);
   }, [sed, soundGen, textGen]);
 
+  // Handler: Upload model file from right sidebar
+  const handleRightSidebarModelUpload = useCallback((file: File) => {
+    console.log('[page.tsx] Model file dropped in right sidebar:', file.name);
+    
+    // Store the model file globally in useAnalysis
+    // User will manually create a 3D Model Context tab via '+' menu
+    analysis.setLoadedModelFile(file);
+  }, [analysis]);
+
   // Wrapped file change handler to clear SED results and load audio info
   const handleFileChangeWithSEDClear = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     fileUpload.handleFileChange(e);
@@ -292,25 +333,106 @@ function HomeContent() {
     }
   }, [fileUpload, sed]);
 
-  // Auto-load model when modelFile changes
-  useEffect(() => {
-    if (fileUpload.modelFile && !fileUpload.isUploading && !fileUpload.geometryData) {
-      fileUpload.handleUploadModel();
-    }
-  }, [fileUpload.modelFile, fileUpload.isUploading, fileUpload.geometryData]);
+  // Note: Auto-upload is handled by the analysis.handleModelFileUpload in the effect below
+  // This prevents duplicate uploads
 
   // Auto-upload files when added to analysis configs
   useEffect(() => {
     analysis.analysisConfigs.forEach((config, index) => {
-      if (config.type === '3d-model' && config.modelFile && config.modelEntities.length === 0) {
-        // Upload 3D model file
-        analysis.handleModelFileUpload(index, config.modelFile);
+      if (config.type === '3d-model' && config.modelFile && !config.speckleData) {
+        // Only upload if not already uploaded (check speckleData instead of modelEntities)
+        // Get worldTree from viewer for Speckle objects
+        const worldTree = viewerRef?.current?.getWorldTree();
+        
+        console.log('[page.tsx] Auto-uploading model file for config', index);
+        // Upload 3D model file with worldTree for Speckle object extraction
+        analysis.handleModelFileUpload(index, config.modelFile, worldTree);
       } else if (config.type === 'audio' && config.audioFile && !config.audioBuffer) {
         // Load audio file and buffer
         analysis.handleAudioFileUpload(index, config.audioFile);
       }
     });
-  }, [analysis.analysisConfigs]);
+  }, [analysis.analysisConfigs, viewerRef]);
+
+  // Auto-upload globally loaded model from right sidebar
+  useEffect(() => {
+    if (!analysis.loadedModelFile || analysis.isUploadingGlobalModel || analysis.loadedModelSpeckleData) {
+      return; // Already uploaded or uploading
+    }
+
+    console.log('[page.tsx] Triggering global model upload for:', analysis.loadedModelFile.name);
+    
+    // Get worldTree from viewer for Speckle objects
+    const worldTree = viewerRef?.current?.getWorldTree();
+    
+    // Upload the global model
+    analysis.handleGlobalModelUpload(analysis.loadedModelFile, worldTree);
+  }, [analysis.loadedModelFile, analysis.isUploadingGlobalModel, analysis.loadedModelSpeckleData, viewerRef]);
+
+  // Populate entities from worldTree when it becomes available
+  // Poll for worldTree readiness
+  const [worldTreeReady, setWorldTreeReady] = useState(false);
+  
+  useEffect(() => {
+    if (!viewerRef?.current) return;
+
+    const checkInterval = setInterval(() => {
+      const worldTree = viewerRef.current?.getWorldTree();
+      // Use type casting to access internal tree structure (private in TypeScript but accessible at runtime)
+      const worldTreeAny = worldTree as any;
+      const children = worldTreeAny?.tree?._root?.children ||
+                      worldTreeAny?._root?.children ||
+                      worldTreeAny?.root?.children ||
+                      worldTreeAny?.children;
+      
+      if (children && children.length > 0) {
+        console.log('[page.tsx] ✅ WorldTree ready with', children.length, 'root nodes');
+        setWorldTreeReady(true);
+        clearInterval(checkInterval);
+      }
+    }, 500);
+
+    return () => clearInterval(checkInterval);
+  }, [viewerRef?.current]);
+  
+  useEffect(() => {
+    if (!viewerRef?.current || !worldTreeReady) {
+      console.log('[page.tsx] Waiting for worldTree...', { hasViewer: !!viewerRef?.current, worldTreeReady });
+      return;
+    }
+
+    const worldTree = viewerRef.current.getWorldTree();
+    if (!worldTree) {
+      console.log('[page.tsx] WorldTree not yet available');
+      return;
+    }
+
+    console.log('[page.tsx] WorldTree available, checking configs...');
+    
+    // Check analysis configs
+    analysis.analysisConfigs.forEach((config, index) => {
+      if (config.type === '3d-model' && config.speckleData && config.modelEntities.length === 0) {
+        console.log('[page.tsx] WorldTree available, populating entities for config', index);
+        analysis.handleUpdateEntitiesFromWorldTree(index, worldTree);
+      } else if (config.type === '3d-model') {
+        console.log(`[page.tsx] Config ${index} status:`, {
+          hasSpeckleData: !!config.speckleData,
+          entitiesCount: config.modelEntities.length
+        });
+      }
+    });
+    
+    // Check globally loaded model
+    if (analysis.loadedModelSpeckleData && analysis.loadedModelEntities.length === 0) {
+      console.log('[page.tsx] WorldTree available, populating entities for global model');
+      // Re-trigger global upload with worldTree
+      if (analysis.loadedModelFile) {
+        analysis.handleGlobalModelUpload(analysis.loadedModelFile, worldTree);
+      }
+    }
+  }, [analysis.analysisConfigs, worldTreeReady, analysis.handleUpdateEntitiesFromWorldTree, 
+      analysis.loadedModelSpeckleData, analysis.loadedModelEntities.length, 
+      analysis.loadedModelFile, analysis.handleGlobalModelUpload]);
 
   // Sync analysis model to main fileUpload state (for ThreeScene)
   useEffect(() => {
@@ -334,13 +456,19 @@ function HomeContent() {
         fileUpload.setModelEntities(latestConfig.modelEntities);
       }
       
+      // Sync speckle data for Speckle viewer
+      if (latestConfig.speckleData && latestConfig.speckleData.url !== speckleModelUrl) {
+        console.log('[page.tsx] Setting Speckle model URL:', latestConfig.speckleData.url);
+        setSpeckleModelUrl(latestConfig.speckleData.url);
+      }
+      
       // Sync selectedDiverseEntities to textGen for ThreeScene highlighting
       if (latestConfig.selectedDiverseEntities.length > 0 &&
           JSON.stringify(latestConfig.selectedDiverseEntities) !== JSON.stringify(textGen.selectedDiverseEntities)) {
         textGen.setSelectedDiverseEntities(latestConfig.selectedDiverseEntities);
       }
     }
-  }, [analysis.analysisConfigs, fileUpload, textGen]);
+  }, [analysis.analysisConfigs, fileUpload, textGen, speckleModelUrl]);
 
   // Handle sound deletion
   const handleDeleteSound = useCallback((soundId: string, promptIdx: number) => {
@@ -423,6 +551,12 @@ function HomeContent() {
         if (previousEntity) {
           // Detach sound from entity (creates sound sphere, updates soundscapeData)
           soundGen.handleDetachSoundFromEntity(linkingConfigIndex);
+          
+          // Unlink from Speckle context if it's a Speckle object
+          const objectId = previousEntity.nodeId || previousEntity.id;
+          if (objectId) {
+            unlinkObjectFromSound(objectId);
+          }
 
           // Remove the previous entity from highlights
           const selectedEntities = getSelectedDiverseEntities();
@@ -441,6 +575,12 @@ function HomeContent() {
       // Entity is not null - link the new entity
       // This will destroy sound sphere (if exists) and move overlay to entity
       soundGen.handleAttachSoundToEntity(linkingConfigIndex, entity);
+      
+      // Link in Speckle context if it's a Speckle object
+      const objectId = entity.nodeId || entity.id;
+      if (objectId) {
+        linkObjectToSound(objectId, linkingConfigIndex);
+      }
 
       // Update diverse selection to highlight the new entity
       let updatedEntities = [...getSelectedDiverseEntities()];
@@ -448,6 +588,12 @@ function HomeContent() {
       // Remove the previous entity from highlights if it exists
       if (previousEntity) {
         updatedEntities = updatedEntities.filter(e => e.index !== previousEntity.index);
+        
+        // Unlink previous Speckle object
+        const prevObjectId = previousEntity.nodeId || previousEntity.id;
+        if (prevObjectId) {
+          unlinkObjectFromSound(prevObjectId);
+        }
       }
 
       // Add the new entity to highlights if not already present
@@ -460,19 +606,39 @@ function HomeContent() {
       setIsLinkingEntity(false);
       setLinkingConfigIndex(null);
     }
-  }, [linkingConfigIndex, soundGen, getSelectedDiverseEntities, updateSelectedDiverseEntities]);
+  }, [linkingConfigIndex, soundGen, getSelectedDiverseEntities, updateSelectedDiverseEntities, linkObjectToSound, unlinkObjectFromSound]);
 
   /**
    * Toggle entity in diverse selection (for LLM prompts)
    * Used from entity overlay link button: grey <-> pink
+   * Works with both Three.js entities (index) and Speckle objects (nodeId/id)
    */
   const handleToggleDiverseSelection = useCallback((entity: any) => {
     const selectedEntities = getSelectedDiverseEntities();
-    const isCurrentlySelected = selectedEntities.some(e => e.index === entity.index);
+    
+    // Check if entity is already selected
+    // Support both Three.js entities (using index) and Speckle objects (using nodeId/id)
+    const isCurrentlySelected = selectedEntities.some(e => {
+      // For Speckle objects, match by nodeId or id
+      if (entity.nodeId || entity.id) {
+        const entityId = entity.nodeId || entity.id;
+        return (e.nodeId === entityId) || (e.id === entityId);
+      }
+      // For Three.js entities, match by index
+      return e.index === entity.index;
+    });
 
     if (isCurrentlySelected) {
       // Remove from selection
-      const updatedEntities = selectedEntities.filter(e => e.index !== entity.index);
+      const updatedEntities = selectedEntities.filter(e => {
+        // For Speckle objects
+        if (entity.nodeId || entity.id) {
+          const entityId = entity.nodeId || entity.id;
+          return !((e.nodeId === entityId) || (e.id === entityId));
+        }
+        // For Three.js entities
+        return e.index !== entity.index;
+      });
       updateSelectedDiverseEntities(updatedEntities);
     } else {
       // Add to selection
@@ -590,6 +756,7 @@ function HomeContent() {
   const handleResetAdvancedSettings = useCallback(() => {
     soundGen.handleResetToDefaults();
     audioNormalization.reset();
+    setShowAxesHelper(false);
   }, [soundGen.handleResetToDefaults, audioNormalization.reset]);
 
   // Handler: Material assignment selection (NEW)
@@ -858,10 +1025,123 @@ function HomeContent() {
   }, []);
 
   return (
-    <div className="flex w-screen h-screen overflow-hidden bg-gray-100 dark:bg-gray-900">
+    <div className="relative w-screen h-screen overflow-hidden bg-gray-100 dark:bg-gray-900">
+      {/* Main 3D Scene - Fixed at screen center, full size, lowest z-index */}
+      <main className="absolute inset-0 z-0">
+        {/* Viewer Toggle Button - Top Left */}
+        <div className="absolute top-4 left-4 z-50">
+          {/* <button
+            onClick={() => setUseSpeckleViewer(!useSpeckleViewer)}
+            className="bg-gray-800/90 hover:bg-gray-700 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 transition-colors"
+            title={useSpeckleViewer ? "Switch to Three.js Viewer" : "Switch to Speckle Viewer"}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            <span className="font-medium">
+              {useSpeckleViewer ? "Speckle" : "Three.js"}
+            </span>
+          </button> */}
+        </div>
+
+        {/* Toggle between Speckle Scene and Three.js Scene */}
+        {useSpeckleViewer ? (
+          <SpeckleScene
+            speckleData={(() => {
+              const modelConfigs = analysis.analysisConfigs.filter(c => c.type === '3d-model');
+              if (modelConfigs.length > 0) {
+                const latestConfig = modelConfigs[modelConfigs.length - 1] as import('@/types/analysis').ModelAnalysisConfig;
+                return latestConfig.speckleData;
+              }
+              // Use globally loaded model if no configs exist yet
+              return analysis.loadedModelSpeckleData;
+            })()}
+            onViewerLoaded={handleSpeckleViewerLoaded}
+            // Audio system props
+            audioOrchestrator={audioOrchestrator.orchestrator}
+            audioContext={audioOrchestrator.audioContext}
+            audioRenderingMode={audioRenderingMode}
+            selectedIRId={selectedIRId}
+            auralizationConfig={auralizationConfig}
+            // Soundscape data
+            soundscapeData={soundGen.soundscapeData}
+            selectedVariants={audioControls.selectedVariants}
+            individualSoundStates={audioControls.individualSoundStates}
+            soundVolumes={audioControls.soundVolumes}
+            soundIntervals={audioControls.soundIntervals}
+            mutedSounds={audioControls.mutedSounds}
+            soloedSound={audioControls.soloedSound}
+            scaleForSounds={fileUpload.scaleForSounds}
+            // Receivers
+            receivers={receivers.receivers}
+            selectedReceiverId={receivers.selectedReceiverId}
+            onUpdateReceiverPosition={receivers.updateReceiverPosition}
+            onReceiverSelected={receivers.selectReceiver}
+            onReceiverModeChange={handleReceiverModeChange}
+            goToReceiverId={goToReceiverId}
+            // Sound sphere position update (for simulation sync when dragging)
+            onUpdateSoundPosition={soundGen.updateSoundPosition}
+            // Sound Linking (entity linking from SoundCard to Speckle object)
+            entitiesWithLinkedSounds={(() => {
+              // Build map of entity IDs to linked sound config indices
+              const linked: { [entityId: string]: number[] } = {};
+              soundGen.soundConfigs.forEach((config, index) => {
+                if (config.linkedEntityId) {
+                  if (!linked[config.linkedEntityId]) {
+                    linked[config.linkedEntityId] = [];
+                  }
+                  linked[config.linkedEntityId].push(index);
+                }
+              });
+              return linked;
+            })()}
+            onToggleDiverseSelection={handleToggleDiverseSelection}
+            // Sound card selection (for expand/highlight logic)
+            selectedCardIndex={selectedCardIndex}
+            onSelectSoundCard={handleSelectSoundCard}
+            // Entity linking (sound-to-Speckle-object linking)
+            isLinkingEntity={isLinkingEntity}
+            linkingConfigIndex={linkingConfigIndex}
+            onEntityLinked={handleEntityLinked}
+            // Playback controls
+            onPlayAll={audioControls.playAll}
+            onPauseAll={audioControls.pauseAll}
+            onStopAll={audioControls.stopAll}
+            isAnyPlaying={audioControls.isAnyPlaying()}
+            // Resonance Audio (ShoeBox Acoustics)
+            resonanceAudioConfig={resonanceAudioConfig}
+            geometryBounds={fileUpload.geometryBounds}
+            showBoundingBox={showBoundingBox}
+            refreshBoundingBoxTrigger={refreshBoundingBoxTrigger}
+            // Sidebar states for control button and timeline positioning
+            isLeftSidebarExpanded={isLeftSidebarExpanded}
+            isRightSidebarExpanded={isRightSidebarExpanded}
+            className="w-full h-full"
+          />
+        ) : (
+          /* ThreeScene is deprecated - SpeckleScene is the default viewer */
+          <div className="w-full h-full flex items-center justify-center bg-gray-900 text-gray-400">
+            <div className="text-center">
+              <p className="text-lg mb-2">Three.js Viewer (Deprecated)</p>
+              <p className="text-sm">Please use SpeckleScene viewer instead.</p>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* Left Sidebar - Overlays on top of scene */}
       <Sidebar
         // File upload props
         modelFile={fileUpload.modelFile}
+        speckleData={(() => {
+          // Get speckleData from latest 3D model analysis config or global loaded model
+          const modelConfigs = analysis.analysisConfigs.filter(c => c.type === '3d-model');
+          if (modelConfigs.length > 0) {
+            const latestConfig = modelConfigs[modelConfigs.length - 1] as import('@/types/analysis').ModelAnalysisConfig;
+            return latestConfig.speckleData || null;
+          }
+          return analysis.loadedModelSpeckleData;
+        })()}
         audioFile={fileUpload.audioFile}
         geometryData={fileUpload.geometryData}
         uploadError={fileUpload.uploadError}
@@ -943,6 +1223,7 @@ function HomeContent() {
         onCancelLinkingEntity={handleCancelLinkingEntity}
         isLinkingEntity={isLinkingEntity}
         linkingConfigIndex={linkingConfigIndex}
+        useSpeckleViewer={useSpeckleViewer}
 
         // Audio controls props
         selectedVariants={audioControls.selectedVariants}
@@ -981,11 +1262,11 @@ function HomeContent() {
 
         // Receiver props
         receivers={receivers.receivers}
-        isPlacingReceiver={receivers.isPlacingReceiver}
-        onStartPlacingReceiver={receivers.startPlacingReceiver}
+        onAddReceiver={receivers.addReceiver}
         onDeleteReceiver={receivers.deleteReceiver}
         onUpdateReceiverName={receivers.updateReceiverName}
         onGoToReceiver={handleGoToReceiver}
+        onAddGridReceiver={receivers.addGridReceiver}
 
         // ShoeBox Acoustics props
         resonanceAudioConfig={resonanceAudioConfig}
@@ -1026,6 +1307,7 @@ function HomeContent() {
         isAnalyzing={analysis.isAnalyzing}
         analysisError={analysis.analysisError}
         analysisResults={analysis.analysisResults}
+        hasGlobalModelLoaded={analysis.loadedModelSpeckleData !== null}
         onAddAnalysisConfig={analysis.handleAddConfig}
         onRemoveAnalysisConfig={analysis.handleRemoveConfig}
         onUpdateAnalysisConfig={analysis.handleUpdateConfig}
@@ -1035,101 +1317,32 @@ function HomeContent() {
         onTogglePromptSelection={analysis.handleTogglePromptSelection}
         onSendToSoundGeneration={handleSendAnalysisToGeneration}
         onResetAnalysis={analysis.handleReset}
+        
+        // Advanced settings props
+        normalizeImpulseResponses={auralizationConfig.normalize}
+        showAxesHelper={showAxesHelper}
+        onNormalizeImpulseResponsesChange={handleToggleNormalize}
+        onShowAxesHelperChange={setShowAxesHelper}
+        onResetAdvancedSettings={handleResetAdvancedSettings}
+        // Sidebar expanded state callback
+        onExpandedChange={setIsLeftSidebarExpanded}
       />
 
-      <main className="flex-1 overflow-hidden relative">
-        {/* Audio Status Display - Top Right Overlay
-        <AudioStatusDisplay
-          status={audioOrchestrator.status}
-          warnings={audioOrchestrator.getWarnings()}
-          onClearWarnings={audioOrchestrator.clearWarnings}
-        /> */}
-
-
-        <ThreeScene
-          geometryData={fileUpload.geometryData}
-          soundscapeData={soundGen.soundscapeData}
-          individualSoundStates={audioControls.individualSoundStates}
-          selectedVariants={audioControls.selectedVariants}
-          soundVolumes={audioControls.soundVolumes}
-          soundIntervals={audioControls.soundIntervals}
-          mutedSounds={audioControls.mutedSounds}
-          soloedSound={audioControls.soloedSound}
-          onToggleSound={audioControls.toggleSound}
-          onVariantChange={audioControls.handleVariantChange}
-          onVolumeChange={audioControls.handleVolumeChange}
-          onIntervalChange={audioControls.handleIntervalChange}
-          onMute={audioControls.handleMute}
-          onSolo={audioControls.handleSolo}
-          onDeleteSound={handleDeleteSound}
-          onSelectSoundCard={handleSelectSoundCard}
-          selectedCardIndex={selectedCardIndex}
-          onPlayAll={audioControls.playAll}
-          onPauseAll={audioControls.pauseAll}
-          onStopAll={audioControls.stopAll}
-          isAnyPlaying={audioControls.isAnyPlaying()}
-          scaleForSounds={fileUpload.scaleForSounds}
-          modelEntities={fileUpload.modelEntities}
-          selectedDiverseEntities={getSelectedDiverseEntities()}
-          auralizationConfig={auralizationConfig}
-          resonanceAudioConfig={resonanceAudioConfig}
-          geometryBounds={fileUpload.geometryBounds}
-          showBoundingBox={showBoundingBox}
-          refreshBoundingBoxTrigger={refreshBoundingBoxTrigger}
-          receivers={receivers.receivers}
-          selectedReceiverId={receivers.selectedReceiverId}
-          onUpdateReceiverPosition={receivers.updateReceiverPosition}
-          onReceiverSelected={receivers.selectReceiver}
-          onUpdateSoundPosition={soundGen.updateSoundPosition}
-          onPlaceReceiver={receivers.placeReceiver}
-          isPlacingReceiver={receivers.isPlacingReceiver}
-          onCancelPlacingReceiver={receivers.cancelPlacingReceiver}
-          isLinkingEntity={isLinkingEntity}
-          onEntityLinked={handleEntityLinked}
-          onToggleDiverseSelection={handleToggleDiverseSelection}
-          onDetachSound={handleDetachSound}
-          modeVisualizationState={modalImpact.visualizationState}
-          onSetModeVisualization={modalImpact.setModeVisualization}
-          onSelectMode={modalImpact.selectMode}
-          onReceiverModeChange={handleReceiverModeChange}
-          goToReceiverId={goToReceiverId}
-          audioRenderingMode={audioRenderingMode}
-          audioOrchestrator={audioOrchestrator.orchestrator}
-          audioContext={audioOrchestrator.audioContext}
-          selectedIRId={selectedIRId}
-          globalDuration={soundGen.globalDuration}
-          globalSteps={soundGen.globalSteps}
-          globalNegativePrompt={soundGen.globalNegativePrompt}
-          applyDenoising={soundGen.applyDenoising}
-          normalizeImpulseResponses={auralizationConfig.normalize}
-          audioModel={soundGen.audioModel}
-          onGlobalDurationChange={soundGen.handleGlobalDurationChange}
-          onGlobalStepsChange={soundGen.handleGlobalStepsChange}
-          onGlobalNegativePromptChange={soundGen.setGlobalNegativePrompt}
-          onApplyDenoisingChange={soundGen.setApplyDenoising}
-          onNormalizeImpulseResponsesChange={handleToggleNormalize}
-          onAudioModelChange={soundGen.setAudioModel}
-          onResetAdvancedSettings={handleResetAdvancedSettings}
-          selectedGeometry={selectedGeometry}
-          hoveredGeometry={hoveredGeometry}
-          onFaceSelected={handleFaceSelected}
-          materialAssignments={materialAssignments}
-          activeSimulationIndex={acousticsSimulation.activeSimulationIndex}
-          activeSimulationConfig={
-            acousticsSimulation.activeSimulationIndex !== null
-              ? acousticsSimulation.simulationConfigs[acousticsSimulation.activeSimulationIndex]
-              : null
-          }
-          expandedSimulationIndex={acousticsSimulation.expandedTabIndex}
-          expandedSimulationConfig={
-            acousticsSimulation.expandedTabIndex !== null
-              ? acousticsSimulation.simulationConfigs[acousticsSimulation.expandedTabIndex]
-              : null
-          }
-          activeAiTab={textGen.activeAiTab}
-          className="w-full h-full"
-        />
-      </main>
+      {/* Right Sidebar - 3D Model Import / Object Explorer */}
+      <RightSidebar
+        isVisible={useSpeckleViewer}
+        hasModelLoaded={(() => {
+          // Check if there's a loaded model OR if any 3D Model Context has speckleData
+          const hasGlobalModel = analysis.loadedModelFile !== null;
+          const hasConfigWithSpeckle = analysis.analysisConfigs.some(c =>
+            c.type === '3d-model' && c.speckleData !== undefined
+          );
+          return hasGlobalModel || hasConfigWithSpeckle;
+        })()}
+        modelFile={analysis.loadedModelFile}
+        onModelFileChange={handleRightSidebarModelUpload}
+        onExpandedChange={setIsRightSidebarExpanded}
+      />
     </div>
   );
 }
@@ -1137,8 +1350,12 @@ function HomeContent() {
 export default function Home() {
   return (
     <ErrorProvider>
-      <ErrorToast />
-      <HomeContent />
+      <SpeckleViewerProvider>
+        <SpeckleSelectionModeProvider>
+          <ErrorToast />
+          <HomeContent />
+        </SpeckleSelectionModeProvider>
+      </SpeckleViewerProvider>
     </ErrorProvider>
   );
 }

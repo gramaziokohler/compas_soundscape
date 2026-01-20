@@ -86,3 +86,47 @@ declare module 'omnitone' {
     config?: RendererConfig
   ): HOARenderer;
 }
+
+/**
+ * ESM build of Omnitone
+ */
+declare module 'omnitone/build/omnitone.esm.js' {
+  export interface FOARenderer {
+    input: GainNode;
+    output: GainNode;
+    initialize(): Promise<void>;
+    setRotationMatrix3(matrix: number[]): void;
+    setRotationMatrix4(matrix: number[]): void;
+    setRenderingMode(mode: 'ambisonic' | 'bypass' | 'off'): void;
+  }
+
+  export interface HOARenderer {
+    input: GainNode;
+    output: GainNode;
+    initialize(): Promise<void>;
+    setRotationMatrix3(matrix: number[]): void;
+    setRotationMatrix4(matrix: number[]): void;
+    setRenderingMode(mode: 'ambisonic' | 'bypass' | 'off'): void;
+  }
+
+  export interface RendererConfig {
+    hrirPathList?: string[];
+    ambisonicOrder?: 2 | 3;
+  }
+
+  export function createFOARenderer(
+    audioContext: AudioContext,
+    config?: RendererConfig
+  ): FOARenderer;
+
+  export function createHOARenderer(
+    audioContext: AudioContext,
+    config?: RendererConfig
+  ): HOARenderer;
+
+  const _default: {
+    createFOARenderer: typeof createFOARenderer;
+    createHOARenderer: typeof createHOARenderer;
+  };
+  export default _default;
+}

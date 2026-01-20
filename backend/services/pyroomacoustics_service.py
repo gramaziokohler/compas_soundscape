@@ -7,6 +7,14 @@ from scipy.io import wavfile
 from pathlib import Path
 from fastapi import HTTPException
 
+from config.constants import (
+    PYROOMACOUSTICS_SIMULATION_MODE_MONO,
+    PYROOMACOUSTICS_SIMULATION_MODE_FOA,
+    PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING,
+    PYROOMACOUSTICS_MAX_ORDER_MAX,
+    PYROOMACOUSTICS_DEFAULT_ABSORPTION
+)
+
 
 class PyroomacousticsService:
     """Service for acoustic simulation using pyroomacoustics library"""
@@ -40,11 +48,6 @@ class PyroomacousticsService:
             - FOA directivity requires ISM and is not supported with ray tracing
             - FOA Raytracing mode: 4 omnidirectional mics in tetrahedral arrangement (for ray tracing)
         """
-        from config.constants import (
-            PYROOMACOUSTICS_SIMULATION_MODE_MONO,
-            PYROOMACOUSTICS_SIMULATION_MODE_FOA,
-            PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING
-        )
 
         # Default to mono if not specified
         if simulation_mode is None:
@@ -132,7 +135,7 @@ class PyroomacousticsService:
         face_scattering: dict[int, float] = None,
         entity_scattering: dict[int, float] = None,
         fs: int = None,
-        max_order: int = 15,
+        max_order: int = PYROOMACOUSTICS_MAX_ORDER_MAX,
         ray_tracing: bool = False,
         air_absorption: bool = False
     ) -> pra.Room:
@@ -174,11 +177,16 @@ class PyroomacousticsService:
         """
         try:
             # Import constants
-            from config.constants import PYROOMACOUSTICS_DEFAULT_SCATTERING, AUDIO_SAMPLE_RATE
+            from config.constants import PYROOMACOUSTICS_DEFAULT_SCATTERING, AUDIO_SAMPLE_RATE, PYROOMACOUSTICS_BASE_FREQUENCY
 
             # Use default sample rate if not provided
             if fs is None:
                 fs = AUDIO_SAMPLE_RATE
+
+            # Define Frequency bands for absorption/scattering
+            pra.constants.set("octave_bands_base_freq", PYROOMACOUSTICS_BASE_FREQUENCY)
+            factory = pra.acoustics.OctaveBandsFactory(fs=fs, base_frequency=PYROOMACOUSTICS_BASE_FREQUENCY)
+            print(f"  Number of frequency bands: {factory.n_bands}")
 
             # Validate inputs
             if not vertices or not faces:
@@ -199,7 +207,7 @@ class PyroomacousticsService:
 
                     face_materials = {}
                     for face_idx, entity_idx in enumerate(face_entity_map):
-                        face_materials[face_idx] = entity_materials.get(entity_idx, 0.5)
+                        face_materials[face_idx] = entity_materials.get(entity_idx, PYROOMACOUSTICS_DEFAULT_ABSORPTION)
 
                     # Build face_scattering from entity_scattering if provided
                     if entity_scattering is not None and ray_tracing:
@@ -219,11 +227,11 @@ class PyroomacousticsService:
             for face_idx, face in enumerate(faces):
                 # Get absorption coefficient for this face
                 # Use 1.0 (full absorption) for faces without assigned materials
-                absorption = face_materials.get(face_idx, 1.0)
+                absorption = face_materials.get(face_idx, PYROOMACOUSTICS_DEFAULT_ABSORPTION)
 
-                # Validate absorption
-                if not (0 <= absorption <= 1):
-                    raise ValueError(f"Absorption for face {face_idx} must be between 0 and 1, got {absorption}")
+                # # Validate absorption
+                # if not (0 <= absorption <= 1):
+                #     raise ValueError(f"Absorption for face {face_idx} must be between 0 and 1, got {absorption}")
 
                 # Get scattering coefficient for this face (only used if ray_tracing=True)
                 scattering = None
@@ -234,8 +242,8 @@ class PyroomacousticsService:
                         scattering = face_scattering.get(face_idx, PYROOMACOUSTICS_DEFAULT_SCATTERING)
 
                     # Validate scattering
-                    if not (0 <= scattering <= 1):
-                        raise ValueError(f"Scattering for face {face_idx} must be between 0 and 1, got {scattering}")
+                    # if not (0 <= scattering <= 1):
+                    #     raise ValueError(f"Scattering for face {face_idx} must be between 0 and 1, got {scattering}")
 
                 # Extract face vertices (corners of the wall)
                 # pyroomacoustics expects corners for walls in 3D form [3, n_corners]
@@ -243,11 +251,12 @@ class PyroomacousticsService:
 
                 # Create wall from corners
                 # Note: pra.Wall expects:
-                # - corners as array [3, n_corners]
-                # - absorption as numpy array [m, 1] where m is number of frequency bands
-                # - scattering as numpy array [m, 1] (optional, for ray tracing)
-                # For simplicity, use single frequency band with the given absorption value
-                absorption_array = np.array([[absorption]], dtype=np.float32)
+                # - corners as array [3, n_walls]
+                # - absorption as numpy array [m, n_walls] where m is number of frequency bands
+                # - scattering as numpy array [m, n_walls] (optional, for ray tracing)
+
+                absorption_array = np.array(absorption, dtype=np.float32).reshape(-1, 1)
+                # absorption_array = np.array([absorption], dtype=np.float32).T.astype(np.float32)
 
                 # Create wall parameters
                 wall_params = {
@@ -257,9 +266,10 @@ class PyroomacousticsService:
                 }
 
                 # Add scattering if ray tracing is enabled
-                if ray_tracing and scattering is not None:
-                    scattering_array = np.array([[scattering]], dtype=np.float32)
-                    wall_params["scattering"] = scattering_array
+                # if ray_tracing and scattering is not None:
+                    # scattering_array = np.array(scattering, dtype=np.float32).reshape(-1, 1)
+                scattering_array = np.full(factory.n_bands, scattering)
+                wall_params["scattering"] = scattering_array
 
                 wall = pra.Wall(**wall_params)
                 walls.append(wall)
@@ -593,9 +603,9 @@ class PyroomacousticsService:
             - category: Material category (Wall, Floor, Ceiling, Soft)
         """
         # Material database from constants (will be imported from constants.py)
-        from config.constants import PYROOMACOUSTICS_MATERIALS
+        from config.constants import PYROOMACOUSTICS_DATASET
 
-        return PYROOMACOUSTICS_MATERIALS
+        return PYROOMACOUSTICS_DATASET
 
     @staticmethod
     def create_tetrahedral_array(

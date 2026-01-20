@@ -18,6 +18,7 @@ export function AnalysisSection({
   isAnalyzing,
   analysisError,
   analysisResults,
+  hasGlobalModelLoaded = false,
   onAddConfig,
   onRemoveConfig,
   onUpdateConfig,
@@ -120,6 +121,17 @@ export function AnalysisSection({
     setShowTypeSelector(false);
   };
 
+  // Check if a 3D model is loaded (either globally or in any config)
+  const hasModelLoaded = useMemo(() => {
+    // Check global model first
+    if (hasGlobalModelLoaded) return true;
+    
+    // Check configs
+    return analysisConfigs.some(config => 
+      config.type === '3d-model' && (config.modelFile !== null || config.speckleData !== undefined)
+    );
+  }, [analysisConfigs, hasGlobalModelLoaded]);
+
   return (
     <div className="flex flex-col gap-3">
 
@@ -161,20 +173,28 @@ export function AnalysisSection({
               }}
             >
               <button
-                onClick={() => handleTypeSelect('3d-model')}
+                onClick={() => !hasModelLoaded ? null : handleTypeSelect('3d-model')}
+                disabled={!hasModelLoaded}
                 className="w-full text-left px-3 py-2 text-xs transition-colors"
                 style={{
                   borderRadius: '8px 8px 0 0',
-                  color: UI_COLORS.NEUTRAL_900
+                  color: hasModelLoaded ? UI_COLORS.NEUTRAL_900 : UI_COLORS.NEUTRAL_400,
+                  cursor: hasModelLoaded ? 'pointer' : 'not-allowed',
+                  opacity: hasModelLoaded ? 1 : 0.6
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY;
-                  e.currentTarget.style.color = 'white';
+                  if (hasModelLoaded) {
+                    e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY;
+                    e.currentTarget.style.color = 'white';
+                  }
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                  e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
+                  if (hasModelLoaded) {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                    e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
+                  }
                 }}
+                title={hasModelLoaded ? "Add 3D Model analysis context" : "Import a 3D model first (right sidebar)"}
               >
                 3D Model Context
               </button>
@@ -219,35 +239,50 @@ export function AnalysisSection({
 
       {/* Vertical list of analysis tabs */}
       <div ref={analysisListRef} className="flex flex-col gap-2">
-        {analysisConfigs.map((config, index) => {
-          const result = getResult(index);
-          return (
+        {analysisConfigs.length === 0 ? (
           <div
-            key={index}
-            ref={(el) => {
-              if (el) {
-                analysisTabRefs.current.set(index, el);
-              } else {
-                analysisTabRefs.current.delete(index);
-              }
+            className="rounded p-4 text-xs text-center"
+            style={{
+              backgroundColor: UI_COLORS.NEUTRAL_100,
+              color: UI_COLORS.NEUTRAL_600,
+              borderRadius: '8px'
             }}
           >
-            <AnalysisTab
-              config={config}
-              index={index}
-              isExpanded={expandedTabs.has(index)}
-              hasResult={hasResult(index)}
-              result={result}
-              isAnalyzing={isAnalyzing}
-              onToggleExpand={handleToggleExpand}
-              onUpdateConfig={onUpdateConfig}
-              onRemove={onRemoveConfig}
-              onReset={handleReset}
-              onAnalyze={onAnalyze}
-              onTogglePromptSelection={onTogglePromptSelection}
-            />
+            No analysis contexts yet.
+            <br />
+            Import a 3D model from the right sidebar to get started.
           </div>
-        )})}
+        ) : (
+          analysisConfigs.map((config, index) => {
+            const result = getResult(index);
+            return (
+            <div
+              key={index}
+              ref={(el) => {
+                if (el) {
+                  analysisTabRefs.current.set(index, el);
+                } else {
+                  analysisTabRefs.current.delete(index);
+                }
+              }}
+            >
+              <AnalysisTab
+                config={config}
+                index={index}
+                isExpanded={expandedTabs.has(index)}
+                hasResult={hasResult(index)}
+                result={result}
+                isAnalyzing={isAnalyzing}
+                onToggleExpand={handleToggleExpand}
+                onUpdateConfig={onUpdateConfig}
+                onRemove={onRemoveConfig}
+                onReset={handleReset}
+                onAnalyze={onAnalyze}
+                onTogglePromptSelection={onTogglePromptSelection}
+              />
+            </div>
+          )})
+        )}
       </div>
 
       {/* Error display */}

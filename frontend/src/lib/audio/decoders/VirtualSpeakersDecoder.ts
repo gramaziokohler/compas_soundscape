@@ -32,8 +32,13 @@ const CH_MAP = {
 // 2. THE ENGINE
 // ==========================================
 
-class AmbisonicVirtualRoom {
-    constructor(audioCtx) {
+export class AmbisonicVirtualRoom {
+    private ctx: AudioContext;
+    private ambisonicBus: GainNode;
+    private busSplitter: ChannelSplitterNode;
+    private speakers: PannerNode[];
+
+    constructor(audioCtx: AudioContext) {
         this.ctx = audioCtx;
         
         // --- A. The Master Bus ---
@@ -98,7 +103,7 @@ class AmbisonicVirtualRoom {
         });
     }
 
-    connectDecoderMatrix(destinationNode, positionVector) {
+    connectDecoderMatrix(destinationNode: AudioNode, positionVector: number[]): void {
         const [x, y, z] = positionVector;
         const magnitude = Math.sqrt(x*x + y*y + z*z);
         
@@ -139,7 +144,7 @@ class AmbisonicVirtualRoom {
         gZ.connect(destinationNode);
     }
 
-    addSource(monoBuffer, bFormatIRBuffer) {
+    addSource(monoBuffer: AudioBuffer, bFormatIRBuffer: AudioBuffer): AudioBufferSourceNode {
         const source = this.ctx.createBufferSource();
         source.buffer = monoBuffer;
 
@@ -171,7 +176,7 @@ class AmbisonicVirtualRoom {
         }
     }
 
-    updateHeadOrientation(forward, up) {
+    updateHeadOrientation(forward: { x: number; y: number; z: number }, up: { x: number; y: number; z: number }): void {
         const listener = this.ctx.listener;
         if(listener.forwardX) {
             const t = this.ctx.currentTime;

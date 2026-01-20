@@ -35,6 +35,7 @@ import type { SimulationConfig, AcousticSimulationMode } from "./acoustics";
 export interface SidebarProps {
   // Separate model and audio file states
   modelFile: File | null;
+  speckleData?: { model_id: string; version_id: string; object_id: string; url: string; auth_token?: string } | null;
   audioFile: File | null;
   geometryData: CompasGeometry | null;
   soundscapeData: SoundEvent[] | null;
@@ -109,6 +110,8 @@ export interface SidebarProps {
   onCancelLinkingEntity?: () => void;
   isLinkingEntity?: boolean;
   linkingConfigIndex?: number | null;
+  // Speckle viewer mode - enables entity linking for Speckle objects
+  useSpeckleViewer?: boolean;
   // Audio controls props
   individualSoundStates?: { [soundId: string]: SoundState };
   onToggleSound?: (soundId: string) => void;
@@ -149,11 +152,11 @@ export interface SidebarProps {
   auralizationConfig: AuralizationConfig;
   // Receiver props
   receivers: ReceiverData[];
-  isPlacingReceiver: boolean;
-  onStartPlacingReceiver: () => void;
+  onAddReceiver: (type: string) => void;
   onDeleteReceiver: (id: string) => void;
   onUpdateReceiverName: (id: string, name: string) => void;
   onGoToReceiver: (id: string) => void;
+  onAddGridReceiver: (type: string, n: number) => void;
   // ShoeBox Acoustics props
   resonanceAudioConfig: ResonanceAudioConfig;
   onToggleResonanceAudio: (enabled: boolean) => void;
@@ -190,6 +193,7 @@ export interface SidebarProps {
   isAnalyzing: boolean;
   analysisError: string | null;
   analysisResults: AnalysisResult[];
+  hasGlobalModelLoaded?: boolean; // Global model loaded from right sidebar
   onAddAnalysisConfig: (type: AnalysisType) => void;
   onRemoveAnalysisConfig: (index: number) => void;
   onUpdateAnalysisConfig: (index: number, updates: Partial<AnalysisConfig>) => void;
@@ -199,6 +203,8 @@ export interface SidebarProps {
   onTogglePromptSelection: (configIndex: number, promptId: string) => void;
   onSendToSoundGeneration: () => void;
   onResetAnalysis: (index: number) => void;
+  // Sidebar expanded state callback
+  onExpandedChange?: (isExpanded: boolean) => void;
 }
 
 /**
@@ -282,6 +288,8 @@ export interface SoundGenerationSectionProps {
   onCancelLinkingEntity?: () => void;
   isLinkingEntity?: boolean;
   linkingConfigIndex?: number | null;
+  // Speckle viewer mode - enables entity linking for Speckle objects
+  useSpeckleViewer?: boolean;
   // Audio controls props
   individualSoundStates?: { [soundId: string]: SoundState };
   onToggleSound?: (soundId: string) => void;
@@ -304,8 +312,7 @@ export interface SoundGenerationSectionProps {
   onPreviewStop?: (soundId: string) => void;
   // Receiver props
   receivers?: ReceiverData[];
-  isPlacingReceiver?: boolean;
-  onStartPlacingReceiver?: () => void;
+  onAddReceiver?: () => void;
   onDeleteReceiver?: (id: string) => void;
   onUpdateReceiverName?: (id: string, name: string) => void;
   onGoToReceiver?: (id: string) => void;

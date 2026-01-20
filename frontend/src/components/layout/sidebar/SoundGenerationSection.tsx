@@ -2,7 +2,6 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import type { SoundGenerationSectionProps } from "@/types/components";
 import type { SoundGenerationMode, SoundGenerationConfig } from "@/types";
 import { SoundTab } from "./SoundTab";
-import { ReceiversSection } from "./ReceiversSection";
 import { UI_COLORS, UI_BUTTON } from "@/lib/constants";
 import { apiService } from "@/services/api";
 
@@ -28,6 +27,7 @@ export function SoundGenerationSection({
   onCancelLinkingEntity,
   isLinkingEntity = false,
   linkingConfigIndex = null,
+  useSpeckleViewer = false,
   individualSoundStates = {},
   onToggleSound,
   onVolumeChange,
@@ -47,13 +47,6 @@ export function SoundGenerationSection({
   previewingSoundId = null,
   onPreviewPlayPause,
   onPreviewStop,
-  // Receiver props
-  receivers = [],
-  isPlacingReceiver = false,
-  onStartPlacingReceiver,
-  onDeleteReceiver,
-  onUpdateReceiverName,
-  onGoToReceiver
 }: SoundGenerationSectionProps) {
   // Track which sound tabs are expanded
   const [expandedTabs, setExpandedTabs] = useState<Set<number>>(new Set());
@@ -367,6 +360,7 @@ export function SoundGenerationSection({
               modelEntities={modelEntities}
               isLinkingEntity={isLinkingEntity}
               linkingConfigIndex={linkingConfigIndex}
+              useSpeckleViewer={useSpeckleViewer}
               isMuted={generatedSound ? mutedSounds.has(generatedSound.id) : false}
               isSoloed={generatedSound ? soloedSound === generatedSound.id : false}
               variants={variants}

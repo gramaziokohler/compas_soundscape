@@ -41,6 +41,25 @@ export const API_BASE_URL = getApiBaseUrl();
 export const SED_ANALYZE_ENDPOINT = `${API_BASE_URL}/api/analyze-sound-events`;
 
 // ============================================================================
+// Sidebar Tab Configuration
+// ============================================================================
+
+/**
+ * Available sidebar tabs - used throughout the application
+ * Keep in sync with ActiveTab type in types/index.ts
+ */
+export const SIDEBAR_TABS = {
+  TEXT: 'text',
+  SOUND: 'sound',
+  ACOUSTICS: 'acoustics',
+  RECEIVERS: 'receivers',
+  SETTINGS: 'settings',
+} as const;
+
+/** Type for sidebar tab values */
+export type SidebarTabValue = typeof SIDEBAR_TABS[keyof typeof SIDEBAR_TABS];
+
+// ============================================================================
 // UI Design System - Unified Color Palette
 // ============================================================================
 // Note: CSS custom properties are defined in globals.css for Tailwind usage.
@@ -52,7 +71,7 @@ export const UI_COLORS = {
   // Primary Brand Color (Pink) - Main accent color
   PRIMARY: "#F500B8",
   PRIMARY_HEX: 0xF500B8, // For Three.js materials
-  PRIMARY_HOVER: "#e061c0",
+  PRIMARY_HOVER: "#e53cbb",
   PRIMARY_LIGHT: "#fce7f6",
   
   // Secondary Color (Sky Blue) - Secondary accent
@@ -95,13 +114,29 @@ export const UI_COLORS = {
   DARK_BORDER: "#262626",
   
  //  Material Colors - Gradient from pink to teal (6-char hex for Three.js compatibility)
-  MATERIAL_GRADIENT_START: "#d0128d", // Pink
-  MATERIAL_GRADIENT_END: "#65c0b5", // Teal
+  MATERIAL_GRADIENT_START: "#67bfb4", // Blue
+  MATERIAL_GRADIENT_END: "#cd827c", // Red
 } as const;
 
 // Legacy exports for backward compatibility (still in use)
 export const PRIMARY_COLOR = UI_COLORS.PRIMARY;
 export const PRIMARY_COLOR_HEX = UI_COLORS.PRIMARY_HEX;
+
+// ============================================================================
+// Speckle Object Filtering Colors
+// ============================================================================
+// Colors used with Speckle FilteringExtension's setUserObjectColors()
+// These colors visually distinguish objects by their state in the scene
+
+export const SPECKLE_FILTER_COLORS = {
+  // Green - Objects linked to sounds
+  // Shows which Speckle objects have been associated with a sound source
+  SOUND_LINKED: UI_COLORS.PRIMARY, // Same as UI_COLORS.SUCCESS
+
+  // Pink - Objects selected for diverse analysis (context generation)
+  // Shows which objects were selected/generated for sound idea analysis
+  DIVERSE_SELECTION: UI_COLORS.SECONDARY, // Same as UI_COLORS.SECONDARY
+} as const;
 
 // ============================================================================
 // UI Design System - Spacing, Borders, Shadows
@@ -289,6 +324,18 @@ export const UI_VERTICAL_TABS = {
   BORDER_RADIUS: UI_BORDER_RADIUS.FULL, // Rounded indicator
 } as const;
 
+// Right Sidebar (Object Explorer)
+export const UI_RIGHT_SIDEBAR = {
+  WIDTH: 320,                // Width in pixels (w-80)
+  HEADER_HEIGHT: 48,         // Header height in pixels
+  PADDING: UI_SPACING.MD,    // Internal padding
+  TREE_ITEM_HEIGHT: 40,      // Height of each tree item in pixels
+  TREE_MAX_HEIGHT: 300,      // Maximum height of scrolling tree view
+  BACKGROUND: 'white',       // Background color
+  BORDER_COLOR: UI_COLORS.NEUTRAL_200,
+  BORDER_WIDTH: UI_LINE_THICKNESS.THIN,
+} as const;
+
 // ============================================================================
 // Default Sound Generation Values (Consolidated)
 // ============================================================================
@@ -305,6 +352,14 @@ export const DEFAULT_POSITION_SPACING = 5;    // Spacing multiplier for x-axis
 export const DEFAULT_POSITION_OFFSET = 1.5;   // Offset multiplier for x-axis
 export const DEFAULT_POSITION_Y = 1;          // Default Y position
 export const DEFAULT_POSITION_Z = 0;          // Default Z position
+
+// Spiral Placement (for sound spheres and receivers within bounding box)
+export const SPIRAL_PLACEMENT = {
+  ANGLE_INCREMENT: Math.PI / 4,  // 45 degrees between elements in radians
+  RADIUS_INCREMENT: 0.5,         // How much the radius grows per spiral turn
+  INITIAL_RADIUS: 1,             // Starting radius for first element
+  MIN_SPACING: 0.3,              // Minimum distance between elements
+} as const;
 
 // Audio Generation Models
 export const AUDIO_MODEL_TANGOFLUX = "tangoflux";
@@ -368,6 +423,12 @@ export const LLM_RETRY = {
   INITIAL_DELAY: 2.0,           // Initial delay in seconds (matches backend LLM_INITIAL_RETRY_DELAY)
   MAX_DELAY: 30.0,              // Maximum delay in seconds (matches backend LLM_MAX_RETRY_DELAY)
   BACKOFF_MULTIPLIER: 2.0,      // Exponential backoff multiplier (matches backend LLM_BACKOFF_MULTIPLIER)
+} as const;
+
+// Speckle Viewer Retry Configuration
+export const SPECKLE_VIEWER_RETRY = {
+  MAX_ATTEMPTS: 15,             // Maximum retry attempts (30 seconds total)
+  RETRY_DELAY_MS: 2000,         // Delay between retries in milliseconds (2 seconds)
 } as const;
 
 // ============================================================================
@@ -880,6 +941,41 @@ export const ARCTIC_THEME = {
   GEOMETRY_OPACITY: 0.5  // Slightly transparent geometry (70% opacity)
 } as const;
 
+// Scene Fog Configuration (atmospheric depth effect)
+export const SCENE_FOG = {
+  // Fog colors (gradient from near to far)
+  COLOR: 0x1a1a2e,           // Dark blue-purple fog (matches dark theme)
+  COLOR_LIGHT: 0xe8edf2,     // Light arctic fog (for light theme)
+
+  // Exponential fog density (lower = less dense, more gradual)
+  DENSITY: 0.015,            // Subtle atmospheric effect
+  DENSITY_STRONG: 0.03,      // More pronounced fog
+
+  // Linear fog parameters (alternative to exponential)
+  NEAR: 10,                  // Distance where fog starts
+  FAR: 100,                  // Distance where fog is fully opaque
+
+  // Enabled by default
+  ENABLED: true,
+} as const;
+
+// Scene Environment Configuration (for textured materials)
+export const SCENE_ENVIRONMENT = {
+  // Ambient occlusion intensity
+  AO_INTENSITY: 0.5,
+
+  // Environment map intensity (for reflective materials)
+  ENV_MAP_INTENSITY: 0.8,
+
+  // Tone mapping exposure
+  TONE_MAPPING_EXPOSURE: 1.2,
+
+  // Ground plane
+  GROUND_COLOR: 0x0a0a0f,    // Very dark blue-black
+  GROUND_ROUGHNESS: 0.9,
+  GROUND_METALNESS: 0.1,
+} as const;
+
 // Camera
 export const CAMERA_CONFIG = {
   FOV_DEGREES: 75,
@@ -917,6 +1013,20 @@ export const RECEIVER_CONFIG = {
   METALNESS: 0.7,
   PREVIEW_OPACITY: 0.5,
   COLOR: 0x0ea5e9 // Sky-500
+} as const;
+
+// Receiver positioning (for direct creation like sound spheres)
+export const RECEIVER = {
+  DEFAULT_POSITION: [0, RECEIVER_CONFIG.DEFAULT_EAR_HEIGHT_METERS, 0] as [number, number, number],
+  RENDER_ORDER: 999,
+} as const;
+
+export const GRID_RECEIVERS = {
+  DEFAULT_GRID_SPACING: 0.5, // Meters between receivers
+  MIN_GRID_SPACING: 0.1,  
+  MAX_GRID_SPACING: 5,    
+  DEFAULT_GRID_SIZE: 9,
+    
 } as const;
 
 // ============================================================================
@@ -1148,9 +1258,10 @@ export const SOUND_STATE_DEFAULT = 'stopped' as const;
 // Timeline Layout
 export const TIMELINE_LAYOUT = {
   BOTTOM_OFFSET_PX: 20,
+  SIDEBAR_HORIZONTAL_OFFSET_PX: 150, // Horizontal gap between timeline edges and sidebars
   SIDEBAR_WIDTH_PX: 48,
   CONTENT_WIDTH_PX: 400,
-  MAX_WIDTH_PX: 1500,
+  MAX_WIDTH_PX: 1000,
 } as const;
 
 // Button Sizes (Tailwind)
@@ -1302,6 +1413,51 @@ export const AUDIO_MODE_COLORS = {
   anechoic: UI_COLORS.PRIMARY,
   ambisonic_ir: UI_COLORS.SUCCESS,
 } as const;
+
+/**
+ * Default color for unassigned materials
+ */
+export const MATERIAL_DEFAULT_COLOR = '#808080';
+
+/**
+ * Generate a gradient color for acoustic materials based on absorption coefficient.
+ * Uses the MATERIAL_GRADIENT_START (pink) to MATERIAL_GRADIENT_END (teal) gradient.
+ * Low absorption = pink (reflective), High absorption = teal (absorptive)
+ *
+ * @param absorption - Absorption coefficient (0-1)
+ * @returns Hex color string
+ */
+export function getMaterialColorByAbsorption(absorption: number): string {
+  // Validate absorption value
+  if (typeof absorption !== 'number' || isNaN(absorption)) {
+    console.warn('[getMaterialColorByAbsorption] Invalid absorption value:', absorption, 'Using default color');
+    return MATERIAL_DEFAULT_COLOR;
+  }
+
+  // Clamp absorption to 0-1 range
+  const ratio = Math.max(0, Math.min(1, absorption));
+
+  // Parse gradient start (pink) and end (teal) colors
+  const start = UI_COLORS.MATERIAL_GRADIENT_START.replace('#', '');
+  const end = UI_COLORS.MATERIAL_GRADIENT_END.replace('#', '');
+
+  const r1 = parseInt(start.substring(0, 2), 16);
+  const g1 = parseInt(start.substring(2, 4), 16);
+  const b1 = parseInt(start.substring(4, 6), 16);
+
+  const r2 = parseInt(end.substring(0, 2), 16);
+  const g2 = parseInt(end.substring(2, 4), 16);
+  const b2 = parseInt(end.substring(4, 6), 16);
+
+  // Interpolate between colors based on absorption
+  const r = Math.round(r1 + (r2 - r1) * ratio);
+  const g = Math.round(g1 + (g2 - g1) * ratio);
+  const b = Math.round(b1 + (b2 - b1) * ratio);
+
+  const color = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+
+  return color;
+}
 
 /**
  * Ambisonic order configuration

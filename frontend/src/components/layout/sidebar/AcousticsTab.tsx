@@ -27,6 +27,9 @@ import {
 
 
 interface AcousticsTabProps {
+  // Receiver props (needed for simulations)
+  receivers?: ReceiverData[];
+
   // IR Library props
   onSelectIRFromLibrary: (irMetadata: ImpulseResponseMetadata) => Promise<void>;
   onClearIR: () => void;
@@ -57,17 +60,10 @@ interface AcousticsTabProps {
 
   // Simulation props
   modelFile?: File | null;
+  speckleData?: { model_id: string; version_id: string; object_id: string; url: string; auth_token?: string } | null;
   soundscapeData?: SoundEvent[] | null;
   onIRImported?: () => void;
   irRefreshTrigger?: number;
-
-  // Receivers
-  receivers?: ReceiverData[];
-  isPlacingReceiver?: boolean;
-  onStartPlacingReceiver?: () => void;
-  onDeleteReceiver?: (id: string) => void;
-  onUpdateReceiverName?: (id: string, name: string) => void;
-  onGoToReceiver?: (id: string) => void;
 
   // Simulation state (NEW - passed from page.tsx)
   simulationConfigs?: SimulationConfig[];
@@ -105,14 +101,10 @@ export function AcousticsTab({
   onHoverGeometry,
   onAssignMaterial,
   modelFile = null,
+  speckleData = null,
   soundscapeData = null,
   onIRImported,
   irRefreshTrigger = 0,
-  isPlacingReceiver = false,
-  onStartPlacingReceiver,
-  onDeleteReceiver,
-  onUpdateReceiverName,
-  onGoToReceiver,
   simulationConfigs = [],
   activeSimulationIndex = null,
   expandedTabIndex = null,
@@ -132,10 +124,10 @@ export function AcousticsTab({
     onAddSimulationConfig(mode);
     
     // Then, immediately check if we need to auto-exclude large layers
-    if (geometryData && (mode === 'choras' || mode === 'pyroomacoustics')) {
+    if (geometryData && geometryData.face_entity_map && (mode === 'choras' || mode === 'pyroomacoustics')) {
       // Count faces per layer
       const layerFaceCounts = new Map<string, number>();
-      
+
       geometryData.face_entity_map.forEach((entityIndex, faceIndex) => {
         const entity = modelEntities.find(e => e.index === entityIndex);
         const layerName = entity?.layer || 'Default';
@@ -322,6 +314,200 @@ export function AcousticsTab({
       });
     }
   }, [simulationConfigs, onIRImported]);
+
+  const runPyroomSimulationSpeckle = useCallback(async (
+    instanceId: string,
+    name: string,
+    receiversList: any[],
+    soundscape: any[],
+    onProgress: (updates: any) => void
+  ) => {
+    if (!speckleData) {
+      onProgress({ error: 'No Speckle data available' });
+      return;
+    }
+
+    // Get settings from the simulation config
+    const config = simulationConfigs.find(c => (c.simulationInstanceId || c.id) === instanceId);
+    const settings = (config as any)?.settings || {
+      max_order: 3,
+      ray_tracing: false,
+      air_absorption: false,
+      n_rays: 5000,
+      scattering: 0.1,
+      simulation_mode: 'mono'
+    };
+    const speckleMaterialAssignments = (config as any)?.speckleMaterialAssignments || {};
+    
+    if (Object.keys(speckleMaterialAssignments).length === 0) {
+      onProgress({ error: 'Please assign materials to at least one object' });
+      return;
+    }
+    
+    try {
+      // Build source-receiver pairs
+      const sourceReceiverPairs = [];
+      for (const sound of soundscape) {
+        for (const receiver of receiversList) {
+          sourceReceiverPairs.push({
+            source_position: sound.position,
+            receiver_position: receiver.position,
+            source_id: sound.id || sound.name,
+            receiver_id: receiver.id
+          });
+          console.log(sourceReceiverPairs);
+
+        }
+      }
+
+      // Convert material IDs from "pyroom_XXX" format to just "XXX"
+      const objectMaterials: Record<string, string> = {};
+      Object.entries(speckleMaterialAssignments).forEach(([objectId, materialId]) => {
+        const cleanMaterialId = (materialId as string).replace(/^pyroom_/, '');
+        objectMaterials[objectId] = cleanMaterialId;
+      });
+
+      // Extract project_id and model_id from Speckle URL
+      // URL format: https://app.speckle.systems/projects/{projectId}/models/{modelId}
+      const urlMatch = speckleData.url.match(/\/projects\/([^\/]+)\/models\/([^\/\?#]+)/);
+      if (!urlMatch) {
+        throw new Error('Invalid Speckle URL format. Expected: /projects/{projectId}/models/{modelId}');
+      }
+      const projectId = urlMatch[1];
+      const modelId = urlMatch[2];
+
+      console.log('[AcousticsTab] Running Pyroomacoustics Speckle simulation:', {
+        projectId,
+        modelId,
+        speckleUrl: speckleData.url,
+        objectCount: Object.keys(objectMaterials).length,
+        sourceReceiverPairs: sourceReceiverPairs.length,
+        layerName: (config as any)?.speckleLayerName || null
+      });
+
+      const result = await apiService.runPyroomacousticsSimulationSpeckle(
+        projectId,
+        modelId, // Send model ID - backend will get latest version
+        objectMaterials,
+        (config as any)?.speckleLayerName || null, // Use selected layer name from config
+        name,
+        settings,
+        sourceReceiverPairs
+      );
+      
+      // Import ALL IRs (same logic as file-based version)
+      if (result.ir_files && result.ir_files.length > 0) {
+        const importedIRMetadataList = [];
+        const sourceReceiverMapping: Record<string, Record<string, ImpulseResponseMetadata>> = {};
+
+        for (const irFilename of result.ir_files) {
+          try {
+            const blob = await apiService.getPyroomacousticsIRFile(result.simulation_id, irFilename);
+            const file = new File([blob], irFilename, { type: 'audio/wav' });
+
+            const match = irFilename.match(/src_(.+?)_rcv_(.+?)\.wav$/);
+            const sourceId = match ? match[1] : 'unknown';
+            const receiverId = match ? match[2] : 'unknown';
+
+            const irName = `Pyroom_${name}_S${sourceId}_R${receiverId}`;
+            const irMetadata = await apiService.uploadImpulseResponse(file, irName);
+            importedIRMetadataList.push(irMetadata);
+
+            if (!sourceReceiverMapping[sourceId]) {
+              sourceReceiverMapping[sourceId] = {};
+            }
+            sourceReceiverMapping[sourceId][receiverId] = irMetadata;
+
+            console.log(`✓ Imported IR: ${irName} (source: ${sourceId}, receiver: ${receiverId})`);
+          } catch (error) {
+            console.error(`Failed to import IR ${irFilename}:`, error);
+          }
+        }
+
+        if (importedIRMetadataList.length > 0) {
+          const importedIds = importedIRMetadataList.map(metadata => metadata.id);
+          console.log('[AcousticsTab] Built source-receiver IR mapping:', sourceReceiverMapping);
+
+          let resultsText = 'Simulation Complete!\n\n';
+          resultsText += `Generated ${result.ir_files.length} impulse response(s)\n`;
+
+          try {
+            const jsonResponse = await fetch(
+              `http://localhost:8000/pyroomacoustics/get-result-file/${result.simulation_id}/json`
+            );
+
+            if (jsonResponse.ok) {
+              const jsonData = await jsonResponse.json();
+
+              if (jsonData.results && Array.isArray(jsonData.results) && jsonData.results.length > 0) {
+                const allParams = jsonData.results
+                  .filter((r: any) => r.acoustic_parameters)
+                  .map((r: any) => r.acoustic_parameters);
+
+                if (allParams.length > 0) {
+                  const average = (key: string) => {
+                    const values = allParams.map((p: any) => p[key]).filter((v: any) => v !== undefined && !isNaN(v));
+                    return values.length > 0 ? values.reduce((a: number, b: number) => a + b, 0) / values.length : null;
+                  };
+
+                  const rt60 = average('rt60');
+                  const edt = average('edt');
+                  const d50 = average('d50');
+                  const c80 = average('c80');
+
+                  resultsText += '\nAcoustic Metrics:\n';
+                  const metrics = [];
+                  if (rt60 !== null) metrics.push(`RT60: ${rt60.toFixed(2)}s`);
+                  if (edt !== null) metrics.push(`EDT: ${edt.toFixed(2)}s`);
+                  if (d50 !== null) metrics.push(`D50: ${d50.toFixed(1)}`);
+                  if (c80 !== null) metrics.push(`C80: ${c80.toFixed(1)} dB`);
+                  resultsText += metrics.join(', ');
+                }
+              }
+            }
+          } catch (error) {
+            console.warn('Failed to fetch acoustic metrics:', error);
+          }
+
+          onProgress({
+            isRunning: false,
+            status: 'Complete!',
+            progress: 100,
+            state: 'completed',
+            simulationResults: resultsText,
+            importedIRIds: importedIds,
+            sourceReceiverIRMapping: sourceReceiverMapping
+          });
+
+          if (onIRImported) {
+            onIRImported();
+          }
+        } else {
+          onProgress({
+            isRunning: false,
+            status: 'Complete!',
+            progress: 100,
+            state: 'completed',
+            simulationResults: 'Simulation Complete!\n\n⚠ Failed to import impulse responses\n'
+          });
+        }
+      } else {
+        onProgress({
+          isRunning: false,
+          status: 'Complete!',
+          progress: 100,
+          state: 'completed',
+          simulationResults: 'Simulation completed but no impulse responses generated.'
+        });
+      }
+    } catch (error) {
+      console.error('[AcousticsTab] Speckle simulation error:', error);
+      onProgress({
+        isRunning: false,
+        error: error instanceof Error ? error.message : 'Simulation failed'
+      });
+    }
+  }, [speckleData, simulationConfigs, onIRImported]);
 
   const runPyroomSimulation = useCallback(async (
     instanceId: string,
@@ -511,7 +697,12 @@ export function AcousticsTab({
 
   // Handle simulation execution
   const handleRunSimulation = useCallback(async (index: number) => {
-    if (!modelFile || !receivers || !soundscapeData) return;
+    // Check for valid geometry data (either file or Speckle)
+    const hasValidGeometry = !!modelFile || !!(speckleData?.model_id && speckleData?.version_id && speckleData?.object_id);
+    if (!hasValidGeometry || !receivers || !soundscapeData) {
+      console.error('[AcousticsTab] Missing required data:', { hasValidGeometry, receivers: !!receivers, soundscapeData: !!soundscapeData });
+      return;
+    }
 
     const config = simulationConfigs[index];
     if (!config) return;
@@ -525,6 +716,7 @@ export function AcousticsTab({
       const savedSettings = {
         settings: JSON.parse(JSON.stringify(simConfig.settings)), // Deep clone
         faceToMaterialMap: new Map(simConfig.faceToMaterialMap || new Map()),
+        speckleMaterialAssignments: simConfig.speckleMaterialAssignments ? { ...simConfig.speckleMaterialAssignments } : {},
         expandedMaterialItems: simConfig.expandedMaterialItems ?
           new Set(simConfig.expandedMaterialItems) : new Set(),
         excludedLayers: simConfig.excludedLayers ?
@@ -550,6 +742,11 @@ export function AcousticsTab({
     };
 
     if (config.mode === 'choras') {
+      // Choras currently only supports file-based workflow
+      if (!modelFile) {
+        updateProgress({ error: 'Choras simulation requires a 3D model file. Speckle support coming soon.' });
+        return;
+      }
       await runChorasSimulation(
         instanceId,
         modelFile,
@@ -559,16 +756,29 @@ export function AcousticsTab({
         updateProgress
       );
     } else if (config.mode === 'pyroomacoustics') {
-      await runPyroomSimulation(
-        instanceId,
-        modelFile,
-        config.name,
-        receivers,
-        soundscapeData,
-        updateProgress
-      );
+      // Use Speckle or file-based workflow
+      if (speckleData && speckleData.model_id && speckleData.version_id && speckleData.object_id) {
+        await runPyroomSimulationSpeckle(
+          instanceId,
+          config.name,
+          receivers,
+          soundscapeData,
+          updateProgress
+        );
+      } else if (modelFile) {
+        await runPyroomSimulation(
+          instanceId,
+          modelFile,
+          config.name,
+          receivers,
+          soundscapeData,
+          updateProgress
+        );
+      } else {
+        updateProgress({ error: 'No geometry data available' });
+      }
     }
-  }, [modelFile, receivers, soundscapeData, simulationConfigs, handleUpdateConfig, runChorasSimulation, runPyroomSimulation]);
+  }, [modelFile, speckleData, receivers, soundscapeData, simulationConfigs, handleUpdateConfig, runChorasSimulation, runPyroomSimulation, runPyroomSimulationSpeckle]);
 
   // Handle simulation cancellation
   const handleCancelSimulation = useCallback(async (index: number) => {
@@ -630,12 +840,18 @@ export function AcousticsTab({
     } else if (config.mode === 'choras') {
       return chorasMaterials.map(mat => ({
         id: `choras_${mat.id}`,
-        name: mat.name
+        name: mat.name,
+        absorption: 0.5, // Choras materials don't provide absorption values
+        category: mat.category as 'Wall' | 'Floor' | 'Ceiling' | 'Soft' || 'Wall',
+        description: mat.description
       }));
     } else {
       return pyroomMaterials.map(mat => ({
         id: `pyroom_${mat.id}`,
-        name: mat.name
+        name: mat.name,
+        absorption: mat.absorption ?? 0.5, // Fallback to 0.5 if undefined
+        category: mat.category as 'Wall' | 'Floor' | 'Ceiling' | 'Soft' || 'Wall',
+        description: mat.description
       }));
     }
   }, [expandedTabIndex, activeSimulationIndex, simulationConfigs, chorasMaterials, pyroomMaterials]);
@@ -836,6 +1052,7 @@ export function AcousticsTab({
       onRunSimulation={handleRunSimulation}
       onCancelSimulation={handleCancelSimulation}
       modelFile={modelFile}
+      speckleData={speckleData}
       geometryData={geometryData}
       receivers={receivers}
       soundscapeData={soundscapeData}
@@ -859,11 +1076,6 @@ export function AcousticsTab({
       onClearIR={onClearIR}
       selectedIRId={selectedIRId}
       auralizationConfig={auralizationConfig}
-      isPlacingReceiver={isPlacingReceiver}
-      onStartPlacingReceiver={onStartPlacingReceiver}
-      onDeleteReceiver={onDeleteReceiver}
-      onUpdateReceiverName={onUpdateReceiverName}
-      onGoToReceiver={onGoToReceiver}
     />
   );
 }

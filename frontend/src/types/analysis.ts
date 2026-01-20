@@ -33,6 +33,14 @@ export interface ModelAnalysisConfig extends BaseAnalysisConfig {
   selectedDiverseEntities: any[];
   useModelAsContext: boolean;
   geometryData?: any; // Loaded geometry data for ThreeScene
+  speckleData?: {
+    model_id: string;
+    version_id: string;
+    file_id: string;
+    url: string;
+    object_id: string;
+    auth_token?: string;
+  };
 }
 
 /**
@@ -104,6 +112,7 @@ export interface AnalysisSectionProps {
   isAnalyzing: boolean;
   analysisError: string | null;
   analysisResults: AnalysisResult[];
+  hasGlobalModelLoaded?: boolean; // Global model loaded from right sidebar
   onAddConfig: (type: AnalysisType) => void;
   onRemoveConfig: (index: number) => void;
   onUpdateConfig: (index: number, updates: Partial<AnalysisConfig>) => void;

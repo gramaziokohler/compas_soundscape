@@ -57,7 +57,7 @@ export function ResonanceAudioControls({
         SHOEBOX ACOUSTICS SETTINGS
       </h4>
 
-      {/* Info when no geometry */}
+      {/* Info when no geometry
       {!hasGeometry && (
         <div className="text-xs p-2 rounded" style={{
           backgroundColor: '#EFF6FF',
@@ -66,7 +66,7 @@ export function ResonanceAudioControls({
         }}>
           ℹ️ No 3D model loaded. Room will be auto-calculated from sound source positions.
         </div>
-      )}
+      )} */}
 
       {/* Bounding Box Visualization Toggle */}
       {enabled && (

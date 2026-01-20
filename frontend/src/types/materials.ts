@@ -6,12 +6,19 @@
  */
 
 /**
- * Acoustic material definition (placeholder for now)
+ * Acoustic material definition with absorption coefficient
+ * Materials are fetched from backend API (single source of truth in backend/config/constants.py)
+ * @see backend/config/constants.py PYROOMACOUSTICS_MATERIALS
  */
 export interface AcousticMaterial {
   id: string;
   name: string;
-  // Future properties: absorption coefficients, scattering, etc.
+  /** Absorption coefficient (0-1, higher = more absorption) */
+  absorption: number;
+  /** Material category (Wall, Floor, Ceiling, Soft) */
+  category: 'Wall' | 'Floor' | 'Ceiling' | 'Soft';
+  /** Optional description */
+  description?: string;
 }
 
 /**

@@ -1,16 +1,45 @@
+"use client";
+
+import { useState, useCallback, useEffect } from "react";
 import Image from "next/image";
 import { AnalysisSection } from "./sidebar/AnalysisSection";
 import { SoundGenerationSection } from "./sidebar/SoundGenerationSection";
 import { AcousticsTab } from "./sidebar/AcousticsTab";
+import { ReceiversTab } from "./sidebar/ReceiversTab";
 import { AdvancedSettingsSection } from "./sidebar/AdvancedSettingsSection";
 import { VerticalTabButton } from "@/components/ui/VerticalTabButton";
 import { Icon } from "@/components/ui/Icon";
 import { UI_VERTICAL_TABS } from "@/lib/constants";
 import type { SidebarProps } from "@/types/components";
+import type { ActiveTab } from "@/types";
 
 export function Sidebar(props: SidebarProps) {
+  const [isExpanded, setIsExpanded] = useState(true);
+
+  // Notify parent when expanded state changes
+  useEffect(() => {
+    props.onExpandedChange?.(isExpanded);
+  }, [isExpanded, props.onExpandedChange]);
+
+  // Note: FilteringExtension colors are now auto-applied by the context
+  // whenever linked objects or diverse selection changes - no tab dependency
+
+  // Handle tab clicks: toggle collapse/expand when clicking active tab, or switch tabs
+  const handleTabClick = useCallback((tab: ActiveTab) => {
+    if (props.activeAiTab === tab) {
+      // Clicking the same tab - toggle collapsed state
+      setIsExpanded(prev => !prev);
+    } else {
+      // Clicking a different tab - switch to it and expand if collapsed
+      props.setActiveAiTab(tab);
+      if (!isExpanded) {
+        setIsExpanded(true);
+      }
+    }
+  }, [props.activeAiTab, props.setActiveAiTab, isExpanded]);
+
   return (
-    <div className="flex flex-row h-full border-r border-gray-200 dark:border-gray-700 shadow-lg">
+    <div className="fixed left-0 top-0 h-screen flex flex-row border-r border-gray-200 dark:border-gray-700 shadow-lg transition-all duration-300 ease-in-out z-10">
       {/* Vertical Tab Navigation */}
       <div
         className="flex-shrink-0 bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-700 flex flex-col items-center pt-6 gap-1"
@@ -30,7 +59,7 @@ export function Sidebar(props: SidebarProps) {
           }
           label="Context"
           isActive={props.activeAiTab === 'text'}
-          onClick={() => props.setActiveAiTab('text')}
+          onClick={() => handleTabClick('text')}
         />
 
         {/* Sounds Tab */}
@@ -45,7 +74,23 @@ export function Sidebar(props: SidebarProps) {
           }
           label="Sounds"
           isActive={props.activeAiTab === 'sound'}
-          onClick={() => props.setActiveAiTab('sound')}
+          onClick={() => handleTabClick('sound')}
+        />
+
+        {/* Receivers Tab */}
+        <VerticalTabButton
+          icon={
+            <Icon size={`${UI_VERTICAL_TABS.ICON_SIZE}px`} color="currentColor">
+              {/* Box/Cube Icon for 3D */}
+              <path d="M12 2l9 4.5v9L12 20l-9-4.5v-9L12 2z" />
+              <path d="M12 2v20" />
+              <path d="M21 6.5l-9 4.5" />
+              <path d="M3 6.5l9 4.5" />
+            </Icon>
+          }
+          label="Receivers"
+          isActive={props.activeAiTab === 'receivers'}
+          onClick={() => handleTabClick('receivers')}
         />
 
         {/* Acoustics Tab */}
@@ -62,7 +107,7 @@ export function Sidebar(props: SidebarProps) {
           }
           label="Acoustics"
           isActive={props.activeAiTab === 'acoustics'}
-          onClick={() => props.setActiveAiTab('acoustics')}
+          onClick={() => handleTabClick('acoustics')}
         />
 
         {/* Spacer - pushes settings to bottom */}
@@ -86,16 +131,24 @@ export function Sidebar(props: SidebarProps) {
           }
           label="Settings"
           isActive={props.activeAiTab === 'settings'}
-          onClick={() => props.setActiveAiTab('settings')}
+          onClick={() => handleTabClick('settings')}
         />
       </div>
 
       {/* Main Content Area */}
-      <aside className="w-96 flex-shrink-0 px-6 py-8 flex flex-col gap-8 bg-white dark:bg-gray-800 overflow-y-auto">
+      <aside
+        className="flex-shrink-0 px-6 py-8 flex flex-col gap-8 bg-white dark:bg-gray-800 overflow-y-auto transition-all duration-300 ease-in-out"
+        style={{
+          width: isExpanded ? '20rem' : '0',
+          padding: isExpanded ? '2rem 1.5rem' : '0',
+          overflow: isExpanded ? 'auto' : 'hidden',
+          opacity: isExpanded ? 1 : 0
+        }}
+      >
         {/* Fixed header - prevents wrapping issues */}
         <div className="flex items-center gap-4 flex-shrink-0 min-h-[50px]">
           <Image className="dark:invert flex-shrink-0" src="/compas_icon_white.png" alt="compas logo" width={50} height={50} priority />
-          <h1 className="text-2xl font-bold whitespace-nowrap">COMPAS Soundscape</h1>
+          <h1 className="text-2xl font-bold whitespace-nowrap">CS</h1>
         </div>
 
         {/* Generative AI Section with Tabs */}
@@ -110,6 +163,7 @@ export function Sidebar(props: SidebarProps) {
             isAnalyzing={props.isAnalyzing}
             analysisError={props.analysisError}
             analysisResults={props.analysisResults}
+            hasGlobalModelLoaded={props.hasGlobalModelLoaded}
             onAddConfig={props.onAddAnalysisConfig}
             onRemoveConfig={props.onRemoveAnalysisConfig}
             onUpdateConfig={props.onUpdateAnalysisConfig}
@@ -157,6 +211,7 @@ export function Sidebar(props: SidebarProps) {
             onCancelLinkingEntity={props.onCancelLinkingEntity}
             isLinkingEntity={props.isLinkingEntity}
             linkingConfigIndex={props.linkingConfigIndex}
+            useSpeckleViewer={props.useSpeckleViewer}
             individualSoundStates={props.individualSoundStates}
             onToggleSound={props.onToggleSound}
             onVolumeChange={props.onVolumeChange}
@@ -175,12 +230,18 @@ export function Sidebar(props: SidebarProps) {
             previewingSoundId={props.previewingSoundId}
             onPreviewPlayPause={props.onPreviewPlayPause}
             onPreviewStop={props.onPreviewStop}
+          />
+        </div>
+
+        {/* Receivers Tab */}
+        <div style={{ display: props.activeAiTab === 'receivers' ? 'block' : 'none' }}>
+          <ReceiversTab
             receivers={props.receivers}
-            isPlacingReceiver={props.isPlacingReceiver}
-            onStartPlacingReceiver={props.onStartPlacingReceiver}
+            onAddReceiver={props.onAddReceiver}
             onDeleteReceiver={props.onDeleteReceiver}
             onUpdateReceiverName={props.onUpdateReceiverName}
             onGoToReceiver={props.onGoToReceiver}
+            onAddGridReceiver={props.onAddGridReceiver}
           />
         </div>
 
@@ -188,11 +249,6 @@ export function Sidebar(props: SidebarProps) {
         <div style={{ display: props.activeAiTab === 'acoustics' ? 'block' : 'none' }}>
           <AcousticsTab
             receivers={props.receivers}
-            isPlacingReceiver={props.isPlacingReceiver}
-            onStartPlacingReceiver={props.onStartPlacingReceiver}
-            onDeleteReceiver={props.onDeleteReceiver}
-            onUpdateReceiverName={props.onUpdateReceiverName}
-            onGoToReceiver={props.onGoToReceiver}
             onSelectIRFromLibrary={props.onSelectIRFromLibrary}
             onClearIR={props.onClearIR}
             selectedIRId={props.selectedIRId}
@@ -214,6 +270,7 @@ export function Sidebar(props: SidebarProps) {
             onHoverGeometry={props.onHoverGeometry}
             onAssignMaterial={props.onAssignMaterial}
             modelFile={props.modelFile}
+            speckleData={props.speckleData}
             soundscapeData={props.soundscapeData}
             onIRImported={props.onIRImported}
             irRefreshTrigger={props.irRefreshTrigger}

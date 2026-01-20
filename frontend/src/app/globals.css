@@ -111,3 +111,19 @@ select:focus-visible {
   outline: none;
   box-shadow: none;
 }
+
+/* Speckle Viewer Canvas Styling */
+/* Ensure Speckle viewer canvas is properly positioned and visible */
+#renderer canvas {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Also target any canvas in the speckle viewer container */
+canvas {
+  pointer-events: auto !important;
+  z-index: 1 !important;
+}

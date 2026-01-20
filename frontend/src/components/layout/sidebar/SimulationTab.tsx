@@ -16,21 +16,24 @@
 
 'use client';
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { UI_COLORS } from '@/lib/constants';
 import type { SimulationConfig, AcousticSimulationMode } from '@/types/acoustics';
 import type { ReceiverData, SoundEvent, CompasGeometry } from '@/types';
 import type { ImpulseResponseMetadata } from '@/types/audio';
 import type { AcousticMaterial, SelectedGeometry } from '@/types/materials';
+import { useSpeckleViewerContext } from '@/contexts/SpeckleViewerContext';
 
 // Import simulation-specific components
 import { ResonanceAudioControls } from '@/components/controls/ResonanceAudioControls';
-import { SurfaceMaterialsSection } from '@/components/acoustics/SurfaceMaterialsSection';
+import { SpeckleSurfaceMaterialsSection } from '@/components/acoustics/SpeckleSurfaceMaterialsSection';
 import { ImpulseResponseUpload } from '@/components/audio/ImpulseResponseUpload';
 
 // Import simulation settings components
 import { ChorasSimulationSettings } from './ChorasSimulationSettings';
 import { PyroomAcousticsSimulationSettings } from './PyroomAcousticsSimulationSettings';
+import { GridReceiversTab } from './GridReceiversTab';
+
 
 interface SimulationTabProps {
   config: SimulationConfig;
@@ -52,6 +55,7 @@ interface SimulationTabProps {
   
   // Shared props
   modelFile?: File | null;
+  speckleData?: { model_id: string; version_id: string; object_id: string; url: string; auth_token?: string } | null;
   geometryData?: CompasGeometry | null;
   receivers?: ReceiverData[];
   soundscapeData?: SoundEvent[] | null;
@@ -64,6 +68,9 @@ interface SimulationTabProps {
   onSelectGeometry?: (selection: SelectedGeometry | null) => void;
   onHoverGeometry?: (selection: SelectedGeometry | null) => void;
   onAssignMaterial?: (selection: SelectedGeometry, material: AcousticMaterial | null) => void;
+
+  // Speckle integration (NEW)
+  worldTree?: any; // Speckle world tree for material assignment
 
   // Resonance Audio specific
   resonanceAudioConfig?: any;
@@ -134,6 +141,7 @@ export function SimulationTab({
   onRunSimulation,
   onCancelSimulation,
   modelFile,
+  speckleData = null,
   geometryData,
   receivers = [],
   soundscapeData = [],
@@ -144,6 +152,7 @@ export function SimulationTab({
   onSelectGeometry,
   onHoverGeometry,
   onAssignMaterial,
+  worldTree, // NEW: Speckle world tree
   resonanceAudioConfig,
   onToggleResonanceAudio,
   onUpdateRoomMaterials,
@@ -158,9 +167,58 @@ export function SimulationTab({
   selectedIRId = null,
   auralizationConfig
 }: SimulationTabProps) {
+  // Get Speckle viewer context
+  const { viewerRef } = useSpeckleViewerContext();
+
+  // Fetch worldTree from viewer if not provided via props
+  const [localWorldTree, setLocalWorldTree] = useState(worldTree);
+
+  useEffect(() => {
+    if (worldTree) {
+      setLocalWorldTree(worldTree);
+      return;
+    }
+
+    // Poll for worldTree from viewer
+    const checkWorldTree = () => {
+      if (!viewerRef?.current) return;
+
+      const tree = viewerRef.current.getWorldTree?.();
+      if (tree) {
+        // Check if tree has content
+        const treeAny = tree as any;
+        const children = treeAny?.tree?._root?.children ||
+                        treeAny?._root?.children ||
+                        treeAny?.root?.children ||
+                        treeAny?.children;
+
+        if (children && children.length > 0) {
+          setLocalWorldTree(tree);
+        }
+      }
+    };
+
+    // Check immediately
+    checkWorldTree();
+
+    // Poll every 500ms until we have worldTree
+    const interval = setInterval(checkWorldTree, 500);
+
+    return () => clearInterval(interval);
+  }, [worldTree, viewerRef]);
+
   // Name editing state
   const [isEditingName, setIsEditingName] = useState(false);
   const [editingValue, setEditingValue] = useState('');
+
+  // Handler for Speckle material assignments
+  const handleSpeckleMaterialAssignments = useCallback((assignments: Record<string, string>, layerName: string | null) => {
+    console.log('[SimulationTab] Speckle material assignments updated:', { assignments, layerName });
+    onUpdateConfig(index, { 
+      speckleMaterialAssignments: assignments,
+      speckleLayerName: layerName 
+    } as any);
+  }, [index, onUpdateConfig]);
 
   // Display name
   const displayName = `${index + 1}. ${config.name}`;
@@ -338,24 +396,13 @@ export function SimulationTab({
           {/* Choras Mode */}
           {config.mode === 'choras' && (
             <>
-              {/* Surface Materials - always render when callbacks are available */}
-              {!isCompleted && onSelectGeometry && onAssignMaterial && (
-                <SurfaceMaterialsSection
-                  key={`${config.id}-${(config as any).resetTimestamp || 0}`}
-                  modelEntities={modelEntities}
-                  modelType={modelType}
-                  geometryData={geometryData || null}
-                  selectedGeometry={selectedGeometry || null}
-                  onSelectGeometry={onSelectGeometry}
-                  onHoverGeometry={onHoverGeometry}
-                  onAssignMaterial={onAssignMaterial}
+              {/* Surface Materials - use Speckle version */}
+              {!isCompleted && availableMaterials && (
+                <SpeckleSurfaceMaterialsSection
+                  viewerRef={viewerRef}
+                  worldTree={localWorldTree}
                   availableMaterials={availableMaterials}
-                  expandedItems={(config as any).expandedMaterialItems ? new Set((config as any).expandedMaterialItems) : undefined}
-                  onExpandedItemsChange={(items) => onUpdateConfig(index, { expandedMaterialItems: Array.from(items) } as any)}
-                  initialAssignments={(config as any).faceToMaterialMap}
-                  resetTrigger={(config as any).resetTimestamp}
-                  excludedLayers={(config as any).excludedLayers ? new Set((config as any).excludedLayers) : undefined}
-                  onExcludedLayersChange={(layers) => onUpdateConfig(index, { excludedLayers: Array.from(layers) } as any)}
+                  onMaterialAssignmentsChange={handleSpeckleMaterialAssignments}
                 />
               )}
 
@@ -364,6 +411,7 @@ export function SimulationTab({
                 <ChorasSimulationSettings
                   config={config as any}
                   modelFile={modelFile || null}
+                  speckleData={speckleData}
                   receivers={receivers}
                   soundscapeData={soundscapeData || []}
                   onUpdateConfig={(updates: Partial<SimulationConfig>) => onUpdateConfig(index, updates)}
@@ -413,24 +461,13 @@ export function SimulationTab({
           {/* Pyroomacoustics Mode */}
           {config.mode === 'pyroomacoustics' && (
             <>
-              {/* Surface Materials - always render when callbacks are available */}
-              {!isCompleted && onSelectGeometry && onAssignMaterial && (
-                <SurfaceMaterialsSection
-                  key={`${config.id}-${(config as any).resetTimestamp || 0}`}
-                  modelEntities={modelEntities}
-                  modelType={modelType}
-                  geometryData={geometryData || null}
-                  selectedGeometry={selectedGeometry || null}
-                  onSelectGeometry={onSelectGeometry}
-                  onHoverGeometry={onHoverGeometry}
-                  onAssignMaterial={onAssignMaterial}
+              {/* Surface Materials - use Speckle version */}
+              {!isCompleted && availableMaterials && (
+                <SpeckleSurfaceMaterialsSection
+                  viewerRef={viewerRef}
+                  worldTree={localWorldTree}
                   availableMaterials={availableMaterials}
-                  expandedItems={(config as any).expandedMaterialItems ? new Set((config as any).expandedMaterialItems) : undefined}
-                  onExpandedItemsChange={(items) => onUpdateConfig(index, { expandedMaterialItems: Array.from(items) } as any)}
-                  initialAssignments={(config as any).faceToMaterialMap}
-                  resetTrigger={(config as any).resetTimestamp}
-                  excludedLayers={(config as any).excludedLayers ? new Set((config as any).excludedLayers) : undefined}
-                  onExcludedLayersChange={(layers) => onUpdateConfig(index, { excludedLayers: Array.from(layers) } as any)}
+                  onMaterialAssignmentsChange={handleSpeckleMaterialAssignments}
                 />
               )}
 
@@ -439,6 +476,7 @@ export function SimulationTab({
                 <PyroomAcousticsSimulationSettings
                   config={config as any}
                   modelFile={modelFile || null}
+                  speckleData={speckleData}
                   receivers={receivers}
                   soundscapeData={soundscapeData || []}
                   onUpdateConfig={(updates: Partial<SimulationConfig>) => onUpdateConfig(index, updates)}

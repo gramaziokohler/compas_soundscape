@@ -27,6 +27,7 @@ import { CheckboxField } from '@/components/ui/CheckboxField';
 interface PyroomAcousticsSimulationSettingsProps {
   config: PyroomAcousticsSimulationConfig;
   modelFile: File | null;
+  speckleData?: { model_id: string; version_id: string; object_id: string; url: string; auth_token?: string } | null;
   receivers: ReceiverData[];
   soundscapeData: SoundEvent[] | null;
   onUpdateConfig: (updates: Partial<PyroomAcousticsSimulationConfig>) => void;
@@ -37,12 +38,17 @@ interface PyroomAcousticsSimulationSettingsProps {
 export function PyroomAcousticsSimulationSettings({
   config,
   modelFile,
+  speckleData = null,
   receivers,
   soundscapeData,
   onUpdateConfig,
   onRunSimulation,
   onCancelSimulation
 }: PyroomAcousticsSimulationSettingsProps) {
+  
+  // Check if we have valid geometry data (either modelFile or Speckle)
+  // const hasValidGeometry = !!modelFile || !!(speckleData?.model_id && speckleData?.version_id && speckleData?.object_id);
+  const hasValidGeometry = true; 
   
   const handleSettingChange = (field: keyof PyroomAcousticsSimulationConfig['settings'], value: any) => {
     onUpdateConfig({
@@ -191,27 +197,28 @@ export function PyroomAcousticsSimulationSettings({
       {!config.isRunning && (
         <button
           onClick={onRunSimulation}
-          disabled={!modelFile || !receivers?.length || !soundscapeData?.length}
+          disabled={!hasValidGeometry || !receivers?.length || !soundscapeData?.length}
           className="w-full py-2 px-4 rounded text-xs font-medium transition-all"
           style={{
-            backgroundColor: (!modelFile || !receivers?.length || !soundscapeData?.length) ? UI_COLORS.NEUTRAL_400 : UI_COLORS.PRIMARY,
+            backgroundColor: (!hasValidGeometry || !receivers?.length || !soundscapeData?.length) ? UI_COLORS.NEUTRAL_400 : UI_COLORS.PRIMARY,
             color: 'white',
-            cursor: (!modelFile || !receivers?.length || !soundscapeData?.length) ? 'not-allowed' : 'pointer',
+            cursor: (!hasValidGeometry || !receivers?.length || !soundscapeData?.length) ? 'not-allowed' : 'pointer',
             borderRadius: '8px',
-            opacity: (!modelFile || !receivers?.length || !soundscapeData?.length) ? 0.4 : 1
+            opacity: (!hasValidGeometry || !receivers?.length || !soundscapeData?.length) ? 0.4 : 1
           }}
           onMouseEnter={(e) => {
-            if (modelFile && receivers?.length && soundscapeData?.length) {
+            if (hasValidGeometry && receivers?.length && soundscapeData?.length) {
               e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_400;
             }
           }}
           onMouseLeave={(e) => {
-            if (modelFile && receivers?.length && soundscapeData?.length) {
+            if (hasValidGeometry && receivers?.length && soundscapeData?.length) {
               e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY;
             }
           }}
         >
-          Start Simulation
+          {(!hasValidGeometry || !receivers?.length || !soundscapeData?.length) ? "Sound, receiver, or geometry missing" :  "Start Simulation"}
+
         </button>
       )}
 

@@ -72,6 +72,11 @@ export function updateDraggableMeshes<T extends MeshData>(
       // Create new mesh
       const newMesh = meshFactory(data);
       scene.add(newMesh);
+      
+      // CRITICAL: Force matrix update after adding to scene
+      // This ensures the object is immediately ready for rendering
+      newMesh.updateMatrixWorld(true);
+      
       updatedMeshes.push(newMesh);
       updatedDraggableObjects.push(newMesh);
     }

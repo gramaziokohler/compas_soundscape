@@ -1,0 +1,199 @@
+# Speckle Docs
+
+## Docs
+
+- [Compare Versions](https://docs.speckle.systems/3d-viewer/compare-versions.md): Compare two versions of a model to see the differences.
+- [Exploration](https://docs.speckle.systems/3d-viewer/exploration.md): The full hierarchy of your model is available for inspection and exploration.
+- [Model Federation](https://docs.speckle.systems/3d-viewer/federation.md): Assemble models from different software into one cohesive view.
+- [Interface and Navigation](https://docs.speckle.systems/3d-viewer/interface-nav.md): Finding your way around the 3D viewer and the tools available to you.
+- [Issues](https://docs.speckle.systems/3d-viewer/issues.md): Track problems and manage feedback directly on your 3D models.
+- [Markups](https://docs.speckle.systems/3d-viewer/markups.md): Draw and annotate your models to give clear, contextual feedback.
+- [Presentation](https://docs.speckle.systems/3d-viewer/presentation.md): View your 3D Model anywhere
+- [Saved views](https://docs.speckle.systems/3d-viewer/saved-views.md): Save views, organize them into groups, and share them with others.
+- [Share your Models](https://docs.speckle.systems/3d-viewer/sharing.md): View your 3D Model anywhere
+- [Dashboards](https://docs.speckle.systems/analytics/intelligence-dashboards.md): Create interactive dashboards to analyze and visualize your model data.
+- [Model Checker](https://docs.speckle.systems/analytics/model-checker/overview.md): Validate your models against custom rules and track quality metrics with automated model checking.
+- [Rules and Rulesets](https://docs.speckle.systems/analytics/model-checker/rules-and-rulesets.md): Learn how to create validation rules and use rulesets in automations.
+- [Viewing Results](https://docs.speckle.systems/analytics/model-checker/viewing-results.md): Learn how to view and analyze Model Checker validation results.
+- [GraphQL Endpoint](https://docs.speckle.systems/api-reference/graphql/graphql-endpoint.md): Execute GraphQL queries, mutations, and subscriptions. The complete GraphQL schema with all available types, queries, mutations, and subscriptions is documented in [Apollo Studio](https://studio.apollographql.com/public/Speckle-Server/variant/app-speckle-systems).
+- [Download a Single Object](https://docs.speckle.systems/api-reference/objects/download-a-single-object.md): Download a single object by its ID. Returns only the specified object without its children.
+- [Download an Object and All its Children](https://docs.speckle.systems/api-reference/objects/download-an-object-and-all-its-children.md): Download an object and all of its children recursively. The response format depends on the Accept header.
+- [How to use Speckle for Archicad](https://docs.speckle.systems/connectors/archicad.md): Step-by-step guide for using the Archicad connector
+- [Connector Assets & Templates](https://docs.speckle.systems/connectors/assets.md): Download templates, sample files, and resources for Speckle connectors
+- [How to use Speckle for AutoCAD](https://docs.speckle.systems/connectors/autocad.md): Step-by-step guide for using the AutoCAD connector
+- [How to use Speckle for Blender](https://docs.speckle.systems/connectors/blender.md): Step-by-step guide for using the Blender connector
+- [How to use Speckle for Civil 3D](https://docs.speckle.systems/connectors/civil3d.md): Step-by-step guide for using the Civil 3D connector
+- [Autodesk Construction Cloud](https://docs.speckle.systems/connectors/cloud-integrations/acc.md): Connect and sync your Autodesk Construction Cloud models with Speckle for analytics, dashboards, and automation workflows.
+- [File uploads](https://docs.speckle.systems/connectors/direct-uploads/file-uploads.md): Upload files directly to your Speckle projects and view them in your browser—no desktop software or connector needed.
+- [How to use Speckle for ETABS](https://docs.speckle.systems/connectors/etabs.md): Step-by-step guide for using the ETABS connector
+- [How to use Speckle for Grasshopper](https://docs.speckle.systems/connectors/grasshopper/grasshopper.md): Step-by-step guide for using the Grasshopper connector
+- [Collections](https://docs.speckle.systems/connectors/grasshopper/grasshopper-collections.md): Working with Speckle Collections in Grasshopper.
+- [Developer Nodes](https://docs.speckle.systems/connectors/grasshopper/grasshopper-developer.md): Working with Speckle developer nodes
+- [Integrations](https://docs.speckle.systems/connectors/grasshopper/grasshopper-integrations.md): Third-party integrations with Grasshopper and Speckle.
+- [Models](https://docs.speckle.systems/connectors/grasshopper/grasshopper-models.md): Working with Speckle Models in Grasshopper.
+- [Objects](https://docs.speckle.systems/connectors/grasshopper/grasshopper-objects.md): Working with Speckle Objects in Grasshopper.
+- [Properties](https://docs.speckle.systems/connectors/grasshopper/grasshopper-properties.md): Working with Speckle Object Properties in Grasshopper.
+- [Recommendations](https://docs.speckle.systems/connectors/grasshopper/grasshopper-recommendations.md): Best practices for using Speckle for Grasshopper
+- [Installing Connectors](https://docs.speckle.systems/connectors/installation.md): Follow these steps to download and install a Speckle connector
+- [How to use Speckle for Navisworks](https://docs.speckle.systems/connectors/navisworks.md): Step-by-step guide for using the Navisworks connector
+- [Connectors Overview](https://docs.speckle.systems/connectors/overview.md): Learn how to get your 3D models into Speckle using connectors, cloud integrations, or direct file uploads. Connectors provide maximum control, cloud integrations enable automated sync, and file uploads offer quick access when connectors aren't available.
+- [Power BI Data Gateway](https://docs.speckle.systems/connectors/power-bi/gateway.md): Setting up data gateways for Power BI scheduled refresh
+- [How to use Speckle for Power BI](https://docs.speckle.systems/connectors/power-bi/power-bi.md): Step-by-step guide for using the Power BI connector and 3D visual
+- [How to use Speckle for Revit](https://docs.speckle.systems/connectors/revit.md): Step-by-step guide for using the Revit connector
+- [How to use Speckle for Rhino](https://docs.speckle.systems/connectors/rhino/rhino.md): Step-by-step guide for using the Rhino connector
+- [Revit Categorization](https://docs.speckle.systems/connectors/rhino/rhino-revit.md): Using Speckle for Rhino and Revit.
+- [How to use Speckle for SketchUp](https://docs.speckle.systems/connectors/sketchup.md): Step-by-step guide for using the SketchUp connector
+- [How to use Speckle for Tekla Structures](https://docs.speckle.systems/connectors/tekla.md): Step-by-step guide for using the Tekla Structures connector
+- [GraphQL API](https://docs.speckle.systems/developers/api/graphql.md): Access the complete GraphQL schema and API documentation for the Speckle Server
+- [Uploading IFC and Other Files](https://docs.speckle.systems/developers/api/guides/file-uploads.md): Guide to uploading IFC, DWG, OBJ, and other file types using GraphQL mutations
+- [Webhooks to Slack](https://docs.speckle.systems/developers/api/guides/slack-notifications.md): Set up webhooks to post Slack messages whenever a model is updated in Speckle
+- [Preview Service](https://docs.speckle.systems/developers/api/previews/preview-service.md): Generate preview images for Speckle models and versions
+- [REST API](https://docs.speckle.systems/developers/api/rest.md): REST API reference for Speckle Server
+- [Subscriptions](https://docs.speckle.systems/developers/api/subscriptions.md): Real-time event notifications using GraphQL subscriptions
+- [Webhooks](https://docs.speckle.systems/developers/api/webhooks.md): Subscribe to events and get notified in real time. Use webhooks to trigger CI apps, automation workflows, and more.
+- [Events and Payloads](https://docs.speckle.systems/developers/api/webhooks/events.md): Complete list of webhook events you can subscribe to with payload examples
+- [Creating and Managing Webhooks](https://docs.speckle.systems/developers/api/webhooks/management.md): How to create, update, test, and troubleshoot webhooks
+- [Webhook Security](https://docs.speckle.systems/developers/api/webhooks/security.md): Securing your webhook endpoints and best practices
+- [Authentication](https://docs.speckle.systems/developers/authentication.md): Learn how to authenticate applications with Speckle using Personal Access Tokens and OAuth2
+- [API Reference](https://docs.speckle.systems/developers/automate/api-reference.md): Complete API reference for Speckle Automate functions and interfaces
+- [Creating Automations](https://docs.speckle.systems/developers/automate/create-automation.md): Guide to creating automations that apply functions to Speckle models. Learn how to select functions, configure parameters and inputs, choose trigger models, and set up automated workflows that run whenever your models are updated.
+- [Creating Functions](https://docs.speckle.systems/developers/automate/create-function.md): Step-by-step guide to creating Speckle Automate functions using the function creation wizard. Learn how to authorize GitHub, choose templates, define function metadata, and set up your development environment for building custom automation workflows.
+- [Frequently Asked Questions](https://docs.speckle.systems/developers/automate/faq.md): Frequently asked questions about Speckle Automate covering pricing, performance, supported languages, installation, comparisons with other platforms, function creation, and automation workflows.
+- [Function Artefacts](https://docs.speckle.systems/developers/automate/function-artefacts.md): Guide to creating and managing function outputs in Speckle Automate. Learn when to create new model versions versus storing file artifacts, how to generate reports, and best practices for handling different output types.
+- [AutomationContext](https://docs.speckle.systems/developers/automate/function-context.md): Complete reference for the AutomationContext interface in Speckle Automate. Learn about properties, methods for data access, result reporting, status management, artifact creation, and context views for custom UI states.
+- [Handling Data in Functions](https://docs.speckle.systems/developers/automate/function-data.md): Comprehensive guide to working with Speckle data structures in Automate functions. Learn data handling strategies including flattening, filtering, hierarchical analysis, and model augmentation with practical examples in Python and C#.
+- [Function Inputs](https://docs.speckle.systems/developers/automate/function-inputs.md): Complete guide to defining user inputs for Speckle Automate functions. Learn how to create text fields, numbers, dropdowns using enums, secret fields for sensitive data, and validation rules in both Python and C#.
+- [Annotating Function Results](https://docs.speckle.systems/developers/automate/function-results.md): Guide to annotating objects with structured results in Speckle Automate. Learn how to attach errors, warnings, info, and success messages to specific objects, use metadata for richer annotations, and enable gradient visualizations.
+- [Function Specification](https://docs.speckle.systems/developers/automate/function-specification.md): Technical specification defining the API contract that Speckle Automate functions must comply with. Covers OCI image requirements, runtime constraints, security limitations, and the JSON schema for automation run metadata.
+- [Reporting Success](https://docs.speckle.systems/developers/automate/function-success.md): Guide to reporting function execution status in Speckle Automate. Learn when to use mark_run_success, mark_run_failed, and mark_run_exception, with best practices for meaningful status messages and error handling.
+- [Testing Your Functions](https://docs.speckle.systems/developers/automate/function-testing.md): Guide to testing Speckle Automate functions using test automations. Learn how to create sandbox environments, configure local testing with environment variables, run test cases, and validate function results against real project data.
+- [Considerations & Limitations](https://docs.speckle.systems/developers/automate/important-considerations.md): Important considerations and limitations for Speckle Automate including data handling during beta, access policies, infrastructure constraints, ethical use policies, and privacy commitments.
+- [Introduction](https://docs.speckle.systems/developers/automate/introduction.md): Speckle Automate is a fully fledged CI/CD platform designed to run custom code on Speckle models whenever a new version is available.
+- [Making Your Function](https://docs.speckle.systems/developers/automate/making-your-function.md): Guide to developing and structuring Speckle Automate function code. Learn about function inputs, run entry points for Python and C#, secrets management, project structure, and testing strategies.
+- [Quickstart Guide](https://docs.speckle.systems/developers/automate/quickstart.md): Get started with Speckle Automate in just a few steps. This guide will walk you through creating your first function and automation.
+- [Releasing a New Version](https://docs.speckle.systems/developers/automate/release-function-version.md): Guide to releasing new versions of functions in Speckle Automate via GitHub releases. Learn about semantic versioning, the deployment process, monitoring release actions, and customizing workflows and Dockerfiles.
+- [Troubleshooting Automations](https://docs.speckle.systems/developers/automate/troubleshooting.md): Troubleshooting guide for Speckle Automate failures. Learn to identify and resolve three types of failures: by design (failed), code errors (exceptions), and platform errors (infrastructure issues).
+- [Update an Automation](https://docs.speckle.systems/developers/automate/update-automation.md): Step-by-step guide to updating existing automations in Speckle Automate. Learn how to change function versions, modify configuration values, and update automation settings without recreating the automation.
+- [Viewing Automation Results](https://docs.speckle.systems/developers/automate/viewing-results.md): Learn how to view and interpret automation results in Speckle Automate. Discover how to access results from the model scene view and project dashboard, understand status messages, view artifacts, and interact with result reports.
+- [Building Custom Apps](https://docs.speckle.systems/developers/building-apps.md): Learn how to build custom applications using Speckle's APIs and SDKs
+- [Building a Speckle Connector](https://docs.speckle.systems/developers/building-connectors.md): Learn how to build connectors for new applications and tools
+- [Core Concepts](https://docs.speckle.systems/developers/data-schema/concepts.md): Understanding Models, Collections, Objects, Proxies, and Info
+- [Connector Index](https://docs.speckle.systems/developers/data-schema/connector-index.md): Overview of connector-specific behaviors and data models
+- [ArchiCAD Schema](https://docs.speckle.systems/developers/data-schema/connectors/archicad-schema.md): Data schema and structure for ArchiCAD models
+- [AutoCAD Schema](https://docs.speckle.systems/developers/data-schema/connectors/autocad-schema.md): Data schema and structure for AutoCAD models
+- [Civil 3D Schema](https://docs.speckle.systems/developers/data-schema/connectors/civil3d-schema.md): Data schema and structure for Civil 3D models
+- [ETABS Schema](https://docs.speckle.systems/developers/data-schema/connectors/etabs-schema.md): Data schema and structure for ETABS models
+- [IFC Schema](https://docs.speckle.systems/developers/data-schema/connectors/ifc-schema.md): Data schema and structure for IFC models
+- [Navisworks Schema](https://docs.speckle.systems/developers/data-schema/connectors/navisworks-schema.md): Data schema and structure for Navisworks models
+- [Revit Schema](https://docs.speckle.systems/developers/data-schema/connectors/revit-schema.md): Data schema and structure for Revit models
+- [Rhino Schema](https://docs.speckle.systems/developers/data-schema/connectors/rhino-schema.md): Data schema and structure for Rhino models
+- [Tekla Schema](https://docs.speckle.systems/developers/data-schema/connectors/tekla-schema.md): Data schema and structure for Tekla models
+- [Geometry Schema](https://docs.speckle.systems/developers/data-schema/geometry-schema.md): How geometry is stored and organized in Speckle
+- [Object Schema](https://docs.speckle.systems/developers/data-schema/object-schema.md): The structure and fields of Speckle objects
+- [Overview](https://docs.speckle.systems/developers/data-schema/overview.md): Introduction to Speckle's Data Schema and how models are organized
+- [Proxy Schemas](https://docs.speckle.systems/developers/data-schema/proxy-schema.md): How proxies encode relationships between objects and shared resources
+- [Getting Started](https://docs.speckle.systems/developers/getting-started.md): Your learning path to building with Speckle
+- [Introduction](https://docs.speckle.systems/developers/introduction.md): Build powerful applications, integrations, and automations with Speckle's developer platform
+- [Key Concepts](https://docs.speckle.systems/developers/key-concepts.md): Understand the fundamental concepts behind Speckle's developer platform
+- [Developer Resources](https://docs.speckle.systems/developers/resources.md): All the tools, APIs, and packages available for building with Speckle
+- [specklesharp](https://docs.speckle.systems/developers/sdks/dotnet/introduction.md): The C# .NET SDK for Speckle - Build powerful AEC data workflows
+- [SpeckleClient](https://docs.speckle.systems/developers/sdks/python/api-reference/client.md): API reference for the SpeckleClient class
+- [Exceptions](https://docs.speckle.systems/developers/sdks/python/api-reference/exceptions.md): Exception types in SpecklePy
+- [Operations](https://docs.speckle.systems/developers/sdks/python/api-reference/operations.md): API reference for send, receive, serialize, and deserialize operations
+- [ActiveUserResource](https://docs.speckle.systems/developers/sdks/python/api-reference/resources/active-user.md): Complete API reference for active user operations in SpecklePy
+- [ModelResource](https://docs.speckle.systems/developers/sdks/python/api-reference/resources/model.md): Complete API reference for model operations in SpecklePy
+- [OtherUserResource](https://docs.speckle.systems/developers/sdks/python/api-reference/resources/other-user.md): Complete API reference for other user lookup operations in SpecklePy
+- [ProjectResource](https://docs.speckle.systems/developers/sdks/python/api-reference/resources/project.md): Complete API reference for project operations in SpecklePy
+- [ServerResource](https://docs.speckle.systems/developers/sdks/python/api-reference/resources/server.md): API reference for server information and token operations in SpecklePy
+- [VersionResource](https://docs.speckle.systems/developers/sdks/python/api-reference/resources/version.md): Complete API reference for version operations in SpecklePy
+- [WorkspaceResource](https://docs.speckle.systems/developers/sdks/python/api-reference/resources/workspace.md): API reference for workspace operations in SpecklePy
+- [Transports](https://docs.speckle.systems/developers/sdks/python/api-reference/transports.md): Storage backends for sending and receiving Speckle objects
+- [Data Traversal](https://docs.speckle.systems/developers/sdks/python/concepts/data-traversal.md): Understanding how to navigate and extract data from Speckle's object graphs
+- [Data Types in Speckle](https://docs.speckle.systems/developers/sdks/python/concepts/data-types.md): Understanding the three types of data you'll encounter in Speckle
+- [Display Values](https://docs.speckle.systems/developers/sdks/python/concepts/display-values.md): The foundation of 3D viewer interoperability - how any connector makes objects visible
+- [Objects & Base Class](https://docs.speckle.systems/developers/sdks/python/concepts/objects.md): Deep dive into Speckle's object system and the Base class
+- [Overview](https://docs.speckle.systems/developers/sdks/python/concepts/overview.md): Understand the fundamental concepts of specklepy and Speckle
+- [Proxification](https://docs.speckle.systems/developers/sdks/python/concepts/proxification.md): Understanding proxy references and resolution strategies in Speckle data
+- [Authentication](https://docs.speckle.systems/developers/sdks/python/getting-started/authentication.md): Learn how to authenticate with Speckle Server using tokens
+- [Installation](https://docs.speckle.systems/developers/sdks/python/getting-started/installation.md): Install specklepy and set up your Python environment
+- [Quickstart](https://docs.speckle.systems/developers/sdks/python/getting-started/quickstart.md): Build your first Speckle integration in 5 minutes
+- [BIM Data Patterns](https://docs.speckle.systems/developers/sdks/python/guides/bim-data-patterns.md): Working with complex BIM and connector data from authoring tools
+- [Finding and Extracting Data](https://docs.speckle.systems/developers/sdks/python/guides/how-to-find-and-extract-data.md): Learn to traverse, filter, and extract data from nested Speckle structures
+- [Performance and Complex Patterns](https://docs.speckle.systems/developers/sdks/python/guides/how-to-optimize-and-handle-complexity.md): Learn to optimize searches, build indexes, and handle complex BIM scenarios
+- [Working with Speckle Objects](https://docs.speckle.systems/developers/sdks/python/guides/how-to-work-with-objects.md): Learn how to create, structure, and work with Speckle Base objects
+- [Simple Data Patterns](https://docs.speckle.systems/developers/sdks/python/guides/simple-data-patterns.md): Working with custom data and simple model data in Speckle
+- [Understanding Speckle Mesh](https://docs.speckle.systems/developers/sdks/python/guides/understanding-speckle-mesh.md): How Speckle's Mesh format works - vertices, faces, nGons, normals, and colors explained
+- [Working with Geometry](https://docs.speckle.systems/developers/sdks/python/guides/working-with-geometry.md): Complete guide to creating and manipulating geometric objects in specklepy
+- [Extracting Display Values and Transform Instances](https://docs.speckle.systems/developers/sdks/python/guides/working-with-proxies.md): Learn how to extract geometry from display values and resolve instance definition references in Speckle objects.
+- [specklepy](https://docs.speckle.systems/developers/sdks/python/introduction.md): The Python SDK for Speckle - Build powerful AEC data workflows
+- [speckle.js](https://docs.speckle.systems/developers/sdks/typescript/introduction.md): The Javascript/TypeScript SDK for Speckle - Build powerful AEC data workflows
+- [Server Architecture](https://docs.speckle.systems/developers/server/architecture.md): The Speckle server is designed as a modular, scalable system that can handle everything from small team deployments to enterprise-scale installations. This page provides a high-level overview of the server architecture and its components.
+- [Deployment Options](https://docs.speckle.systems/developers/server/deployment-options.md): This page provides a comprehensive overview of all available deployment methods for the Speckle server, helping you choose the right approach for your specific needs and requirements.
+- [Server Maintenance](https://docs.speckle.systems/developers/server/deployment/backup-upgrade-restore.md): Complete guide to backing up, upgrading, and restoring Speckle server databases. Learn how to set up pgAdmin, create backups, perform upgrades, and restore data using Docker Compose.
+- [Deploy to Kubernetes](https://docs.speckle.systems/developers/server/deployment/kubernetes.md): Deploy Speckle server to Kubernetes for enterprise and production environments
+- [Environment Setup](https://docs.speckle.systems/developers/server/development/setup.md): Complete guide to get Speckle server running locally for development, testing, and contribution
+- [Getting Started](https://docs.speckle.systems/developers/server/getting-started.md): Quick start guide to deploy a Speckle server using Docker Compose. Learn the minimal steps to get a server running, including prerequisites, Docker Compose setup, and initial configuration for local or production use.
+- [Introduction](https://docs.speckle.systems/developers/server/introduction.md): The Speckle Server is the core backend that powers all Speckle functionality. This section focuses on hosting and deploying your own Speckle server instance, giving you complete control over your data and infrastructure.
+- [AccelerationStructure](https://docs.speckle.systems/developers/viewer/acceleration-structure-api.md): Thin wrapper around the three-mesh-bvh library's MeshBVH class with some additional specific functionality.
+- [Advanced Setup](https://docs.speckle.systems/developers/viewer/advanced-setup.md)
+- [Basic Setup](https://docs.speckle.systems/developers/viewer/basic-setup.md)
+- [Batch](https://docs.speckle.systems/developers/viewer/batch-api.md): The structural component of the viewer's scenegraph. All loaded objects are split and organized into batches.
+- [BatchObject](https://docs.speckle.systems/developers/viewer/batch-object-api.md)
+- [Basic Example](https://docs.speckle.systems/developers/viewer/examples/basic-example.md)
+- [Box Selection](https://docs.speckle.systems/developers/viewer/examples/box-selection-example.md)
+- [Animation & Custom Text](https://docs.speckle.systems/developers/viewer/examples/categorize-example.md): This examples provides the previous [move gizmo](/developers/viewer/object-manipulation-example) working together with the [box selection](/developers/viewer/box-selection-example) extension from before and an additional extension that animates and categorizes objects based on their properties.
+- [Filtering](https://docs.speckle.systems/developers/viewer/examples/filtering-example.md): All filtering functionality in the viewer is handled by the [`FilteringExtension`](/developers/viewer/extensions/filtering-extension-api).
+- [Loading Data](https://docs.speckle.systems/developers/viewer/examples/loading-example.md)
+- [More Extensions](https://docs.speckle.systems/developers/viewer/examples/more-extensions-example.md)
+- [Object Manipulation](https://docs.speckle.systems/developers/viewer/examples/object-manipulation-example.md)
+- [CameraController](https://docs.speckle.systems/developers/viewer/extensions/camera-controller-api.md): The default camera controller extension that comes with the viewer package. Includes toggleable perspective and orthographic camera projections.
+- [DifExtension](https://docs.speckle.systems/developers/viewer/extensions/diff-extension-api.md): The default diffing functionality expose as an extension.
+- [Extension](https://docs.speckle.systems/developers/viewer/extensions/extension-api.md): Base class for all extensions. Extensions are created via [_createExtension_](/developers/viewer/viewer-api#createextension) method from the viewer instance.
+- [FilteringExtension](https://docs.speckle.systems/developers/viewer/extensions/filtering-extension-api.md): The default filtering functionality is exposed as an extension. The current filtering implementation works by providing an updated [_FilteringState_](/developers/viewer/extensions/filtering-extension-api#filteringstate) after each call to its functions. You can use this filtering state to keep track of filtering state.
+- [MeasurementsTool](https://docs.speckle.systems/developers/viewer/extensions/measurements-tool-api.md): This extension provides basic configurable measurement capabilities. The tool is autonomous, and is able to create measurements on it's own.
+- [SectionTool](https://docs.speckle.systems/developers/viewer/extensions/section-tool-api.md): Default section tool implementation.
+- [SectionToolOutlines](https://docs.speckle.systems/developers/viewer/extensions/section-tool-outlines-api.md): This extension adds outlines to the section tool's sectioned geometry edges.
+- [SelectionExtension](https://docs.speckle.systems/developers/viewer/extensions/selection-extension-api.md): Defalt selection helper extension. Handles object selection automatically, both visually and data wise. Optionally can highlight on hover.
+- [SmoothOrbitControls](https://docs.speckle.systems/developers/viewer/extensions/smooth-orbit-controls-api.md): Orbit camera controls based on Google's model-viewer implementation. Input are the angles and radius of a spherical coordinate system with a configurable origin.
+- [SpeckleControls](https://docs.speckle.systems/developers/viewer/extensions/speckle-controls-api.md): Abstract base class for all camera controls implementations
+- [ViewModes](https://docs.speckle.systems/developers/viewer/extensions/view-modes-api.md): This extension simplifies working with stock [rendering pipelines](/developers/viewer/rendering-pipeline-api/pipeline-api)
+- [GeometryConverter](https://docs.speckle.systems/developers/viewer/geometry-converter-api.md): Abstract class that is the base for all concrete geometry converter implementations.
+- [Input](https://docs.speckle.systems/developers/viewer/input-api.md): Basic, viewer-core defined input event manager. Accessible from [_SpeckleRenderer_](/developers/viewer/speckle-renderer-api)
+- [Installation](https://docs.speckle.systems/developers/viewer/installation.md)
+- [Intersections](https://docs.speckle.systems/developers/viewer/intersections-api.md): Entry point for intersecting and obtaining intersection data from the scene. Accessible from [_SpeckleRenderer_](/developers/viewer/speckle-renderer-api)
+- [Introduction](https://docs.speckle.systems/developers/viewer/introduction.md): Introduction to the Speckle Viewer, an open-source 3D model viewer that renders large models in web browsers. Learn how to use the viewer in your own projects, explore the documentation, and access live code examples.
+- [Loader](https://docs.speckle.systems/developers/viewer/loader-api.md): Abstract class that is the base for all concrete loader implementations.
+- [Loaders](https://docs.speckle.systems/developers/viewer/loaders.md): The viewer provides a loader system which allows for virtually any data to be loaded in.
+- [Migration Guide](https://docs.speckle.systems/developers/viewer/migration-guide.md)
+- [Backwards Compatibility](https://docs.speckle.systems/developers/viewer/migration-guide-compatibility.md): For **backwards compatibility** reasons we provide a built-in legacy implementation that emulates the old API precisely. Please note that this is meant as a temporary measure which will eventually become naturally obsolete. For this purpose, this migration guide entry will describe moving from any older viewer version to 2.18 *while using the legacy implementation*
+- [API 1.0 Full Migration](https://docs.speckle.systems/developers/viewer/migration-guide-v1.md): The encouraged way, is to conform to the new API as soon as possible. The following guide will attempt to help with the initial migration from the old API to the new one.
+- [Overview](https://docs.speckle.systems/developers/viewer/overview.md): Introduction to the Speckle Viewer architecture built on three.js. Learn about viewer-core features like automatic batching, BVH acceleration, and instanced rendering, plus the extensible extension system for custom functionality.
+- [Queries](https://docs.speckle.systems/developers/viewer/queries-api.md): Queries are a simple mechanism that allows the user to perform several operations in a contained way.
+- [RenderTree](https://docs.speckle.systems/developers/viewer/render-tree-api.md): The render tree is the core data structure that the viewer uses to render geometry.
+- [NodeRenderView](https://docs.speckle.systems/developers/viewer/render-view-api.md): The render view is the core data structure that the viewer uses to render geometry.
+- [BaseGPass](https://docs.speckle.systems/developers/viewer/rendering-pipeline-api/base-g-pass-api.md): Abstract base class which contains most of the basic common implementation for most passes.
+- [GPass](https://docs.speckle.systems/developers/viewer/rendering-pipeline-api/g-pass-api.md): Contract for all rendering pass implementations in the speckle viewer.
+- [Pipeline](https://docs.speckle.systems/developers/viewer/rendering-pipeline-api/pipeline-api.md): Abstract class that is the base for all concrete rendering pipeline implementations.
+- [ProgressiveGPass](https://docs.speckle.systems/developers/viewer/rendering-pipeline-api/progressive-g-pass-api.md): Base abstract class for all passes that need to converge/accumulate over more than one frame.
+- [ProgressivePipeline](https://docs.speckle.systems/developers/viewer/rendering-pipeline-api/progressive-pipeline-api.md): Abstract class that extends the abstract Pipeline and provides builtin functionality for progressive rendering.
+- [SpeckleMaterial](https://docs.speckle.systems/developers/viewer/speckle-material-api.md): All speckle-derived materials inherit this class. Internally, all speckle materials are mixins between three materials and this class.
+- [SpeckleRenderer](https://docs.speckle.systems/developers/viewer/speckle-renderer-api.md)
+- [TopLevelAccelerationStructure](https://docs.speckle.systems/developers/viewer/top-level-acceleration-structure-api.md): The viewer is using three-mesh-bvh as the backbone for it's BVH implementation.
+- [Viewer](https://docs.speckle.systems/developers/viewer/viewer-api.md): The Speckle Viewer API
+- [Data Tree](https://docs.speckle.systems/developers/viewer/viewer-data.md)
+- [Rendering](https://docs.speckle.systems/developers/viewer/viewer-rendering.md): With the introduction of custom loaders, we've potentially broadened the scope of what the viewer could be used for, however our goal and purpose is still focusing on AEC related visualisation, with a strong bias towards Speckle data. Because Speckle data is organized in a certain way, the viewer creates some concepts and abstractions around it so that clients can use it efficiently.
+- [WorldTree](https://docs.speckle.systems/developers/viewer/world-tree-api.md): The WorldTree is a tree data structure that is used to store the scene graph.
+- [Frequently Asked Questions](https://docs.speckle.systems/quickstart/faq.md): We've collected commonly asked questions that you might have as you get started.
+- [Quickstart Guide](https://docs.speckle.systems/quickstart/quickstart.md): Get up and running with Speckle in no time!
+- [Welcome to Speckle](https://docs.speckle.systems/quickstart/welcome.md): This documentation is your go-to resource for basic understanding of Speckle's platform and terminology, getting started guides to set up workspaces, projects, and connectors, and common answers to FAQs and troubleshooting tips.
+- [Billing](https://docs.speckle.systems/workspaces/billing.md): Information about managing your paid subscription
+- [Data Residency](https://docs.speckle.systems/workspaces/data-residency.md): Choose where your data is stored for compliance
+- [Domain Protection](https://docs.speckle.systems/workspaces/domain-protection.md): Secure who can access your workspace
+- [Invite to Workspace](https://docs.speckle.systems/workspaces/inviting.md): Information about workspace and project invites
+- [Models](https://docs.speckle.systems/workspaces/models.md): Organising your data in Speckle
+- [Projects](https://docs.speckle.systems/workspaces/projects.md): Organising your data in Speckle
+- [Roles and Seats](https://docs.speckle.systems/workspaces/roles-and-seats.md): Understand the key concepts for managing permissions
+- [Single Sign-On (SSO)](https://docs.speckle.systems/workspaces/sso.md): Secure who can access your workspace
+- [Version Control](https://docs.speckle.systems/workspaces/versions.md): Keep track of every model
+- [Workspace Discoverability](https://docs.speckle.systems/workspaces/workspace-discoverability.md): Make it easy for your coworkers to join
+- [Overview](https://docs.speckle.systems/workspaces/workspaces.md): Workspaces act as a secure hub for your team and projects using Speckle.

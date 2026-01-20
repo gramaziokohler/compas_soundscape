@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import { DragControls } from "three/examples/jsm/controls/DragControls.js";
 import type { CompasGeometry, EntityData } from "@/types";
-import { MAX_FACES_FOR_EXPANSION } from "@/lib/constants";
+import { MAX_FACES_FOR_EXPANSION, SIDEBAR_TABS } from "@/lib/constants";
+import type { SidebarTabValue } from "@/lib/constants";
 
 /**
  * InputHandler
@@ -66,7 +67,7 @@ export class InputHandler {
   private getAudioRenderingMode: (() => string) | null = null;
   private getActiveSimulationIndex: (() => number | null) | null = null;
   private getActiveSimulationConfig: (() => any | null) | null = null;
-  private getActiveAiTab: (() => 'text' | 'sound' | 'acoustics') | null = null;
+  private getActiveAiTab: (() => SidebarTabValue) | null = null;
 
   constructor(
     camera: THREE.PerspectiveCamera,
@@ -365,7 +366,7 @@ export class InputHandler {
     const audioRenderingMode = this.getAudioRenderingMode?.() || 'anechoic';
     const activeSimulationIndex = this.getActiveSimulationIndex?.() ?? null;
     const activeSimulationConfig = this.getActiveSimulationConfig?.() ?? null;
-    const activeAiTab = this.getActiveAiTab?.() ?? 'text';
+    const activeAiTab = this.getActiveAiTab?.() ?? SIDEBAR_TABS.TEXT;
 
     // Mode 2 (Face Selection): Enable when:
     // - Sidebar is in "Acoustics" tab
@@ -373,7 +374,7 @@ export class InputHandler {
     // - Simulation type is PyroomAcoustics or Choras
     // - Simulation is in setup phase (before-simulation) or running (not completed, idle, or error)
     const isFaceSelectionMode =
-      activeAiTab === 'acoustics' &&
+      activeAiTab === SIDEBAR_TABS.ACOUSTICS &&
       activeSimulationIndex !== null &&
       activeSimulationConfig !== null &&
       (activeSimulationConfig.mode === 'pyroomacoustics' || activeSimulationConfig.mode === 'choras') &&
@@ -723,7 +724,7 @@ export class InputHandler {
     this.getActiveSimulationConfig = getter;
   }
 
-  public setActiveAiTabGetter(getter: () => 'text' | 'sound' | 'acoustics'): void {
+  public setActiveAiTabGetter(getter: () => SidebarTabValue): void {
     this.getActiveAiTab = getter;
   }
 

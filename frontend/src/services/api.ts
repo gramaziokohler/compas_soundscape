@@ -1,5 +1,5 @@
 import { API_BASE_URL } from '@/lib/constants';
-import type { CompasGeometry, SoundEvent, SoundGenerationConfig } from '@/types';
+import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse } from '@/types';
 import type { ImpulseResponseMetadata } from '@/types/audio';
 import type { ModalAnalysisRequest, ModalAnalysisResult } from '@/types/modal';
 
@@ -46,7 +46,7 @@ async function fetchWithErrorHandling(
 // API Service Layer
 export const apiService = {
   // File Upload
-  async uploadFile(file: File): Promise<CompasGeometry> {
+  async uploadFile(file: File): Promise<FileUploadResponse | CompasGeometry> {
     try {
       const formData = new FormData();
       formData.append("file", file);
@@ -694,6 +694,85 @@ export const apiService = {
   },
 
   /**
+   * Run Pyroomacoustics simulation with Speckle geometry
+   *
+   * @param speckleProjectId - Speckle project ID
+   * @param speckleVersionId - Speckle version/commit ID
+   * @param objectMaterials - Map of Speckle object ID to material ID
+   * @param layerName - Name of the layer to extract geometry from (e.g., "Acoustics")
+   * @param simulationName - Name for the simulation
+   * @param settings - Simulation settings
+   * @param sourceReceiverPairs - Array of source-receiver position pairs
+   */
+  async runPyroomacousticsSimulationSpeckle(
+    speckleProjectId: string,
+    speckleVersionId: string,
+    objectMaterials: Record<string, string>,
+    layerName: string,
+    simulationName: string,
+    settings: {
+      max_order: number;
+      ray_tracing: boolean;
+      air_absorption: boolean;
+      n_rays: number;
+      scattering: number;
+      simulation_mode: string;
+    },
+    sourceReceiverPairs: Array<{
+      source_position: number[];
+      receiver_position: number[];
+      source_id: string;
+      receiver_id: string;
+    }>
+  ): Promise<{
+    simulation_id: string;
+    message: string;
+    ir_files: string[];
+    results_file: string;
+  }> {
+    try {
+      const formData = new FormData();
+      formData.append('simulation_name', simulationName);
+      formData.append('speckle_project_id', speckleProjectId);
+      formData.append('speckle_version_id', speckleVersionId);
+      formData.append('object_materials', JSON.stringify(objectMaterials));
+      formData.append('layer_name', layerName);
+      formData.append('max_order', settings.max_order.toString());
+      formData.append('ray_tracing', settings.ray_tracing.toString());
+      formData.append('air_absorption', settings.air_absorption.toString());
+      formData.append('n_rays', settings.n_rays.toString());
+      formData.append('scattering', settings.scattering.toString());
+
+      // Determine backend simulation mode (same logic as file-based version)
+      let backendSimulationMode = settings.simulation_mode;
+      if (settings.simulation_mode === 'foa' && settings.ray_tracing) {
+        backendSimulationMode = 'foa_raytracing';
+      }
+      formData.append('simulation_mode', backendSimulationMode);
+
+      formData.append('source_receiver_pairs', JSON.stringify(sourceReceiverPairs));
+
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/pyroomacoustics/run-simulation-speckle`,
+        {
+          method: 'POST',
+          body: formData
+        },
+        'Run Pyroomacoustics Speckle simulation'
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Speckle simulation failed' }));
+        throw new Error(error.detail || 'Speckle simulation failed');
+      }
+
+      return response.json();
+    } catch (error) {
+      handleApiError(error, 'Run Pyroomacoustics Speckle simulation');
+    }
+  },
+
+  /**
    * Get a specific IR file from a Pyroomacoustics simulation
    *
    * @param simulationId - The simulation ID
@@ -722,6 +801,55 @@ export const apiService = {
       return response.blob();
     } catch (error) {
       handleApiError(error, 'Get Pyroomacoustics IR file');
+    }
+  },
+
+  // Speckle API Methods
+
+  /**
+   * Get all Speckle models
+   * @returns Array of Speckle model objects
+   */
+  async getSpeckleModels(): Promise<any[]> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/speckle/models`,
+        undefined,
+        'Get Speckle models'
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Failed to get Speckle models' }));
+        throw new Error(error.detail || 'Failed to get Speckle models');
+      }
+
+      return response.json();
+    } catch (error) {
+      handleApiError(error, 'Get Speckle models');
+    }
+  },
+
+  /**
+   * Load a specific Speckle model by object ID
+   * @param objectId - The Speckle object ID to load
+   * @returns Speckle model data
+   */
+  async loadSpeckleModel(objectId: string): Promise<any> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/speckle/models/${objectId}`,
+        undefined,
+        'Load Speckle model'
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Failed to load Speckle model' }));
+        throw new Error(error.detail || 'Failed to load Speckle model');
+      }
+
+      return response.json();
+    } catch (error) {
+      handleApiError(error, 'Load Speckle model');
     }
   }
 };
