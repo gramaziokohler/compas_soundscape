@@ -10,66 +10,6 @@ class AcousticMeasurement:
     """Utility class for calculating acoustic parameters from room impulse responses"""
 
     @staticmethod
-    def calculate_acoustic_parameters(room) -> dict[str, float]:
-        """
-        Calculate acoustic parameters from room impulse response.
-
-        Args:
-            room: Room with computed RIR (pra.Room or pra.ShoeBox)
-
-        Returns:
-            Dictionary with acoustic parameters:
-            - rt60: Reverberation time (T60) in seconds
-            - edt: Early decay time in seconds
-            - c50: Speech clarity in dB
-            - c80: Music clarity in dB
-            - d50: Definition (0-1)
-            - drr: Direct-to-reverberant ratio in dB
-
-        Raises:
-            HTTPException: If calculation fails
-        """
-        try:
-            # Get RIR (first source, first microphone)
-            rir = room.rir[0][0]
-            fs = room.fs
-
-            # RT60: Reverberation time using Schroeder integration
-            rt60 = pra.experimental.rt60.measure_rt60(rir, fs=fs, decay_db=60)
-            if rt60 is None or np.isnan(rt60):
-                # Fallback: estimate from energy decay
-                rt60 = AcousticMeasurement._estimate_rt60_from_energy(rir, fs)
-
-            # EDT: Early decay time (first 10 dB of decay)
-            edt = pra.experimental.rt60.measure_rt60(rir, fs=fs, decay_db=10)
-            if edt is None or np.isnan(edt):
-                edt = rt60 * 0.7  # Approximation: EDT ≈ 0.7 * RT60
-
-            # C50: Speech clarity (ratio of energy in first 50ms to rest)
-            c50 = AcousticMeasurement._calculate_clarity(rir, fs, split_time=0.05)
-
-            # C80: Music clarity (ratio of energy in first 80ms to rest)
-            c80 = AcousticMeasurement._calculate_clarity(rir, fs, split_time=0.08)
-
-            # D50: Definition (proportion of energy in first 50ms)
-            d50 = AcousticMeasurement._calculate_definition(rir, fs, split_time=0.05)
-
-            # DRR: Direct-to-reverberant ratio
-            drr = AcousticMeasurement._calculate_drr(rir, fs)
-
-            return {
-                "rt60": float(rt60),
-                "edt": float(edt),
-                "c50": float(c50),
-                "c80": float(c80),
-                "d50": float(d50),
-                "drr": float(drr)
-            }
-
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to calculate acoustic parameters: {str(e)}")
-
-    @staticmethod
     def calculate_acoustic_parameters_from_rir(rir: np.ndarray, fs: int) -> dict[str, float]:
         """
         Calculate acoustic parameters from a raw RIR array.
@@ -92,9 +32,11 @@ class AcousticMeasurement:
         """
         try:
             # RT60: Reverberation time using Schroeder integration
-            rt60 = pra.experimental.rt60.measure_rt60(rir, fs=fs, decay_db=60)
+            rt60 = pra.experimental.rt60.measure_rt60(rir, fs=fs)
+            print(f"Calculated RT60: {rt60} seconds")
             if rt60 is None or np.isnan(rt60):
                 # Fallback: estimate from energy decay
+                print("Fallback: estimating RT60 from energy decay")
                 rt60 = AcousticMeasurement._estimate_rt60_from_energy(rir, fs)
 
             # EDT: Early decay time (first 10 dB of decay)

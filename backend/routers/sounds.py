@@ -31,7 +31,7 @@ async def generate_sounds(request: SoundGenerationRequest):
             GENERATED_SOUNDS_DIR,
             request.bounding_box,
             request.apply_denoising,
-            request.audio_model.value  # Convert enum to string
+            request.audio_model 
         )
 
         return {"sounds": generated_files}

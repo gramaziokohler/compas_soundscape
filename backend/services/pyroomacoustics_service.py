@@ -158,7 +158,7 @@ class PyroomacousticsService:
                             Only used when ray_tracing=True
             entity_scattering: Dictionary mapping entity index to scattering coefficient (0-1)
                               Only used when ray_tracing=True and face_entity_map provided
-            fs: Sample rate in Hz (default: from constants.AUDIO_SAMPLE_RATE)
+            fs: Sample rate in Hz (default: from constants.PYROOMACOUSTICS_SAMPLE_RATE)
             max_order: Maximum reflection order for image source method
                       Note: Use max_order=3 when ray_tracing=True for optimal results
             ray_tracing: Enable hybrid ISM and ray tracing simulator (default: False)
@@ -177,26 +177,15 @@ class PyroomacousticsService:
         """
         try:
             # Import constants
-            from config.constants import PYROOMACOUSTICS_DEFAULT_SCATTERING, AUDIO_SAMPLE_RATE, PYROOMACOUSTICS_BASE_FREQUENCY
+            from config.constants import PYROOMACOUSTICS_DEFAULT_SCATTERING, PYROOMACOUSTICS_SAMPLE_RATE, PYROOMACOUSTICS_USE_RAND_ISM
 
-            # Use default sample rate if not provided
-            if fs is None:
-                fs = AUDIO_SAMPLE_RATE
+            fs = PYROOMACOUSTICS_SAMPLE_RATE
+            # Number of frequency bands for absorption/scattering
+            n_bands = 7
 
             # Define Frequency bands for absorption/scattering
-            pra.constants.set("octave_bands_base_freq", PYROOMACOUSTICS_BASE_FREQUENCY)
-            factory = pra.acoustics.OctaveBandsFactory(fs=fs, base_frequency=PYROOMACOUSTICS_BASE_FREQUENCY)
-            print(f"  Number of frequency bands: {factory.n_bands}")
-
-            # Validate inputs
-            if not vertices or not faces:
-                raise ValueError("Vertices and faces cannot be empty")
-
-            if len(vertices) < 3:
-                raise ValueError("Mesh must have at least 3 vertices")
-
-            if len(faces) < 4:
-                raise ValueError("Mesh must have at least 4 faces to form a closed space")
+            # factory = pra.acoustics.OctaveBandsFactory(fs=fs, base_frequency=PYROOMACOUSTICS_BASE_FREQUENCY)
+            # print(f"  Number of frequency bands: {factory.n_bands}")
 
             # Build face_materials dict based on input mode
             if face_materials is None:
@@ -226,24 +215,20 @@ class PyroomacousticsService:
             walls = []
             for face_idx, face in enumerate(faces):
                 # Get absorption coefficient for this face
-                # Use 1.0 (full absorption) for faces without assigned materials
-                absorption = face_materials.get(face_idx, PYROOMACOUSTICS_DEFAULT_ABSORPTION)
-
-                # # Validate absorption
-                # if not (0 <= absorption <= 1):
-                #     raise ValueError(f"Absorption for face {face_idx} must be between 0 and 1, got {absorption}")
+                material = pra.Material(energy_absorption = face_materials.get(face_idx,"rough_concrete"))
+                absorption = material.energy_absorption["coeffs"]
+                # print(f"Face {face_idx}: absorption = {absorption}")
 
                 # Get scattering coefficient for this face (only used if ray_tracing=True)
-                scattering = None
+                scattering = material.scattering["coeffs"]  # Default scattering
                 if ray_tracing:
+                    if len(absorption) != n_bands:
+                        absorption = absorption + [absorption[-1]] * (n_bands - len(absorption))
                     if face_scattering is None:
-                        scattering = PYROOMACOUSTICS_DEFAULT_SCATTERING
+                        scattering = [PYROOMACOUSTICS_DEFAULT_SCATTERING]*n_bands
                     else:
-                        scattering = face_scattering.get(face_idx, PYROOMACOUSTICS_DEFAULT_SCATTERING)
-
-                    # Validate scattering
-                    # if not (0 <= scattering <= 1):
-                    #     raise ValueError(f"Scattering for face {face_idx} must be between 0 and 1, got {scattering}")
+                        scattering = [face_scattering.get(face_idx, PYROOMACOUSTICS_DEFAULT_SCATTERING)]*n_bands
+                        print(f"Face {face_idx}: scattering = {scattering}")
 
                 # Extract face vertices (corners of the wall)
                 # pyroomacoustics expects corners for walls in 3D form [3, n_corners]
@@ -255,21 +240,15 @@ class PyroomacousticsService:
                 # - absorption as numpy array [m, n_walls] where m is number of frequency bands
                 # - scattering as numpy array [m, n_walls] (optional, for ray tracing)
 
-                absorption_array = np.array(absorption, dtype=np.float32).reshape(-1, 1)
-                # absorption_array = np.array([absorption], dtype=np.float32).T.astype(np.float32)
-
-                # Create wall parameters
                 wall_params = {
                     "corners": face_vertices.T.astype(np.float32),  # Transpose to [3, n_corners]
-                    "absorption": absorption_array,
+                    "absorption": absorption,
                     "name": f"face_{face_idx}"
                 }
 
+
                 # Add scattering if ray tracing is enabled
-                # if ray_tracing and scattering is not None:
-                    # scattering_array = np.array(scattering, dtype=np.float32).reshape(-1, 1)
-                scattering_array = np.full(factory.n_bands, scattering)
-                wall_params["scattering"] = scattering_array
+                wall_params["scattering"] = scattering
 
                 wall = pra.Wall(**wall_params)
                 walls.append(wall)
@@ -281,8 +260,10 @@ class PyroomacousticsService:
                 fs=fs,
                 max_order=max_order,
                 ray_tracing=ray_tracing,
-                air_absorption=air_absorption
-            )
+                air_absorption=air_absorption,
+                use_rand_ism = PYROOMACOUSTICS_USE_RAND_ISM,
+                max_rand_disp = 0.05
+                )
 
             return room
 
@@ -375,237 +356,26 @@ class PyroomacousticsService:
             raise HTTPException(status_code=500, detail=f"Failed to enable ray tracing: {str(e)}")
 
     @staticmethod
-    def simulate_room_acoustics(
-        room,  # pra.Room
-        source_position: list[float],
-        receiver_position: list[float],
-        enable_ray_tracing: bool = True,
-        ray_tracing_params: dict = None,
-        simulation_mode: str = None
-    ):
-        """
-        Add source and receiver to room and compute room impulse response.
-
-        Args:
-            room: Room object (pra.Room)
-            source_position: [x, y, z] coordinates in meters
-            receiver_position: [x, y, z] coordinates in meters
-            enable_ray_tracing: If True and room was created with ray_tracing=True,
-                              automatically enable ray tracing before computing RIR (default: True)
-            ray_tracing_params: Optional dict with ray tracing parameters:
-                              {n_rays, receiver_radius, energy_thres, time_thres, hist_bin_size}
-                              If None, uses defaults from constants
-            simulation_mode: Simulation mode - "mono", "foa", or "foa_raytracing"
-                           If None, defaults to "mono"
-
-        Returns:
-            Room with computed RIR (for foa_raytracing, use simulate_foa_with_ray_tracing instead)
-
-        Raises:
-            HTTPException: If positions are invalid or simulation fails
-
-        Note:
-            - Ray tracing is automatically configured if the room was created with ray_tracing=True
-            - To disable automatic ray tracing setup, set enable_ray_tracing=False
-            - FOA mode adds four microphones for W, X, Y, Z ambisonics components (ISM only)
-            - FOA Raytracing mode uses tetrahedral array; requires A-to-B conversion post-simulation
-        """
-        try:
-            # Import constants
-            from config.constants import (
-                PYROOMACOUSTICS_SIMULATION_MODE_MONO,
-                PYROOMACOUSTICS_SIMULATION_MODE_FOA,
-                PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING
-            )
-
-            # Default to mono if not specified
-            if simulation_mode is None:
-                simulation_mode = PYROOMACOUSTICS_SIMULATION_MODE_MONO
-
-            # Validate positions
-            if len(source_position) != 3 or len(receiver_position) != 3:
-                raise ValueError("Positions must be [x, y, z] coordinates")
-
-            # Use positions as-is for mesh-based rooms (already in correct coordinate system)
-            source_pos = source_position
-            receiver_pos = receiver_position
-
-            # Add source (omnidirectional point source)
-            try:
-                room.add_source(source_pos)
-            except (ValueError, AssertionError) as e:
-                error_msg = str(e)
-                if "inside" in error_msg.lower() or "outside" in error_msg.lower():
-                    raise ValueError(f"Source position {source_pos} is not inside the room geometry. "
-                                   f"Please ensure sources are placed within the model bounds.")
-                raise ValueError(f"Failed to add source at {source_pos}: {error_msg}")
-
-            # Add microphones using the helper method
-            PyroomacousticsService.add_receiver_to_room(room, receiver_pos, simulation_mode)
-
-            # Disable ray tracing for FOA mode since directivity requires ISM
-            # Note: foa_raytracing mode uses tetrahedral array and DOES support ray tracing
-            if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
-                enable_ray_tracing = False
-                print("Ray tracing disabled for FOA mode (directivity requires ISM only)")
-                print("TIP: Use 'foa_raytracing' mode for FOA with ray tracing via A-format array")
-
-            # Enable ray tracing if enabled and room supports it
-            # Try to enable ray tracing - it will only work if room was created with ray_tracing=True
-            if enable_ray_tracing:
-                try:
-                    if ray_tracing_params:
-                        PyroomacousticsService.enable_ray_tracing(room, **ray_tracing_params)
-                    else:
-                        PyroomacousticsService.enable_ray_tracing(room)
-                    print("Ray tracing enabled for hybrid ISM/ray tracing simulation")
-                except (ValueError, AttributeError) as e:
-                    # Room doesn't support ray tracing (wasn't created with ray_tracing=True)
-                    print(f"Ray tracing not available for this room (expected for ISM-only mode)")
-                except Exception as e:
-                    # Unexpected error
-                    print(f"Warning: Failed to enable ray tracing: {type(e).__name__}: {str(e)}")
-                    pass
-
-            # Compute room impulse response using image source method
-            # (or hybrid ISM + ray tracing if enabled)
-            room.compute_rir()
-
-            return room
-
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to simulate acoustics: {str(e)}")
-
-    @staticmethod
-    def export_impulse_response(
-        room,  # pra.Room
-        output_path: str,
-        source_idx: int = 0
-    ) -> str:
-        """
-        Export room impulse response to WAV file.
-        Handles mono (1-ch) and FOA ambisonics (4-ch) IRs.
-
-        Args:
-            room: Room with computed RIR (pra.Room)
-            output_path: Path to save WAV file
-            source_idx: Index of the source to export (default: 0)
-
-        Returns:
-            str: Path to saved file
-
-        Raises:
-            HTTPException: If export fails
-
-        Note:
-            room.rir is indexed as [mic_idx][source_idx]
-        """
-        try:
-            # Get number of microphones and sample rate
-            # room.rir[mic_idx][source_idx] for each microphone
-            num_mics = len(room.rir)
-            fs = room.fs
-
-            # Validate we have microphones
-            if num_mics == 0:
-                raise ValueError("No microphones found in room")
-
-            # Validate source index
-            if source_idx >= len(room.rir[0]):
-                raise ValueError(f"Source index {source_idx} out of range (total sources: {len(room.rir[0])})")
-
-            if num_mics == 1:
-                # Mono: single channel
-                rir = room.rir[0][source_idx]
-
-                # Validate RIR is not empty
-                if rir is None or len(rir) == 0:
-                    raise ValueError(f"Empty RIR for source {source_idx}")
-
-                rir_int16 = np.int16(rir * 32767)
-            else:
-                # Multi-channel: FOA (4-ch)
-                # Stack all microphone channels into multi-channel array
-                rir_channels = []
-                for mic_idx in range(num_mics):
-                    rir = room.rir[mic_idx][source_idx]
-
-                    # Validate RIR is not empty
-                    if rir is None or len(rir) == 0:
-                        raise ValueError(f"Empty RIR for microphone {mic_idx}, source {source_idx}")
-
-                    rir_channels.append(rir)
-
-                # Validate we have channels
-                if len(rir_channels) == 0:
-                    raise ValueError("No RIR channels collected")
-
-                # Find maximum length among all channels (RIRs can have different lengths)
-                max_length = max(len(rir) for rir in rir_channels)
-
-                # Pad all channels to the same length with zeros
-                padded_channels = []
-                for rir in rir_channels:
-                    if len(rir) < max_length:
-                        # Pad with zeros at the end
-                        padded_rir = np.pad(rir, (0, max_length - len(rir)), mode='constant')
-                        padded_channels.append(padded_rir)
-                    else:
-                        padded_channels.append(rir)
-
-                # Convert to shape [n_samples, n_channels] for WAV export
-                rir = np.column_stack(padded_channels)
-
-                # For FOA (4-channel): Transform from Three.js to Ambisonic coordinates
-                # Three.js: +X=Right, +Y=Up, +Z=Backward
-                # Ambisonic: +X=Front, +Y=Left, +Z=Up
-                # Channel order after stacking: [W, X_threejs, Y_threejs, Z_threejs]
-                # Target: [W, X_ambisonic, Y_ambisonic, Z_ambisonic]
-                # Mapping:
-                #   X_ambisonic (Front-Back) = -Z_threejs (Forward = -Backward)
-                #   Y_ambisonic (Left-Right) = -X_threejs (Left = -Right)
-                #   Z_ambisonic (Up-Down) = Y_threejs (same)
-                if num_mics == 4:
-                    rir_transformed = np.zeros_like(rir)
-                    rir_transformed[:, 0] = rir[:, 0]    # W unchanged
-                    rir_transformed[:, 1] = -rir[:, 3]   # Ambisonic X = -Three.js Z
-                    rir_transformed[:, 2] = -rir[:, 1]   # Ambisonic Y = -Three.js X
-                    rir_transformed[:, 3] = rir[:, 2]    # Ambisonic Z = Three.js Y
-                    rir = rir_transformed
-                    print("Applied Three.js → Ambisonic coordinate transformation for FOA IR")
-
-                rir_int16 = np.int16(rir * 32767)
-
-            # Ensure output directory exists
-            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-
-            # Save as WAV
-            wavfile.write(output_path, fs, rir_int16)
-
-            print(f"Exported {num_mics}-channel IR to {output_path}")
-
-            return output_path
-
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to export impulse response: {str(e)}")
-
-    @staticmethod
     def get_material_database() -> dict[str, dict]:
         """
         Get database of material absorption presets.
 
         Returns:
             Dictionary mapping material names to their properties:
-            - absorption: Absorption coefficient (0-1)
+            - coeffs: Absorption coefficient (0-1)
             - description: Human-readable description
-            - category: Material category (Wall, Floor, Ceiling, Soft)
         """
-        # Material database from constants (will be imported from constants.py)
-        from config.constants import PYROOMACOUSTICS_DATASET
+        import json
+        import pkg_resources
 
-        return PYROOMACOUSTICS_DATASET
+        # Load the materials.json file included in the package
+        json_str = pkg_resources.resource_string('pyroomacoustics', 'data/materials.json')
+        material_db = json.loads(json_str)
+
+        # Access the 'absorption' dictionary
+        absoprtion_db = material_db["absorption"]
+
+        return absoprtion_db
 
     @staticmethod
     def create_tetrahedral_array(
@@ -939,10 +709,10 @@ class PyroomacousticsService:
             HTTPException: If export fails
         """
         try:
-            from config.constants import AUDIO_SAMPLE_RATE
+            from config.constants import PYROOMACOUSTICS_SAMPLE_RATE
 
             if fs is None:
-                fs = AUDIO_SAMPLE_RATE
+                fs = PYROOMACOUSTICS_SAMPLE_RATE
 
             # Validate B-format shape
             if b_format_ir.shape[0] != 4:

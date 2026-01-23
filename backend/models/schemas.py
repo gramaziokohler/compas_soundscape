@@ -4,12 +4,7 @@
 from pydantic import BaseModel
 from enum import Enum
 from typing import Optional
-
-
-class AudioModel(str, Enum):
-    """Audio generation model enumeration"""
-    TANGOFLUX = "tangoflux"
-    AUDIOLDM2 = "audioldm2"
+from config.constants import DEFAULT_AUDIO_MODEL
 
 
 class PromptRequest(BaseModel):
@@ -22,7 +17,7 @@ class SoundGenerationRequest(BaseModel):
     sounds: list[dict]
     bounding_box: dict | None = None
     apply_denoising: bool = False
-    audio_model: AudioModel = AudioModel.TANGOFLUX  # Model to use for generation
+    audio_model: str = DEFAULT_AUDIO_MODEL  # Model to use for generation
 
 
 class IFCEntityInfo(BaseModel):

@@ -148,6 +148,19 @@ export function EntityInfoPanel() {
           </div>
         )}
 
+        {selectedEntity.objectId && (
+          <div className="flex justify-between">
+            <span style={{ color: UI_COLORS.NEUTRAL_500 }}>Object ID:</span>
+            <span
+              className="text-right max-w-[180px] truncate"
+              style={{ color: UI_COLORS.NEUTRAL_700 }}
+              title={selectedEntity.objectId}
+            >
+              {selectedEntity.objectId}
+            </span>
+          </div>
+        )}
+
         {/* Linked Sound Information */}
         {isLinked && linkedSoundIndex !== undefined && (
           <div className="pt-2 mt-2" style={{ borderTop: `1px solid ${UI_COLORS.NEUTRAL_200}` }}>

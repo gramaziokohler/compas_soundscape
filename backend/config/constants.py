@@ -73,7 +73,7 @@ AUDIO_MODEL_AUDIOLDM2 = "audioldm2"
 DEFAULT_AUDIO_MODEL = AUDIO_MODEL_TANGOFLUX  # Default model to use
 
 # Device Configuration
-# Set to True to force CPU mode (useful for systems with limited GPU memory)
+# Set to false to force CPU mode (useful for systems with limited GPU memory)
 FORCE_CPU_MODE = os.environ.get("FORCE_CPU_MODE", "false").lower() == "true"
 
 # TangoFlux Model
@@ -153,7 +153,8 @@ PYROOMACOUSTICS_DEFAULT_SCATTERING = 0.1  # Default scattering coefficient (0-1)
 PYROOMACOUSTICS_SCATTERING_MIN = 0.0  # Minimum scattering coefficient (specular reflection)
 PYROOMACOUSTICS_SCATTERING_MAX = 1.0  # Maximum scattering coefficient (diffuse reflection)
 PYROOMACOUSTICS_DEFAULT_ABSORPTION =  1.0  # Default surface absorption coefficient (0-1)
-PYROOMACOUSTICS_BASE_FREQUENCY = 250.0  # Base frequency for octave bands (Hz) - Set 125 Hz for 8 bands, 250 Hz for 7 bands, ...
+PYROOMACOUSTICS_SAMPLE_RATE = 16000  # Sample rate -- uses n_bands = math.floor(np.log2(SAMPLE_RATE / BASE_FREQUENCY))
+PYROOMACOUSTICS_USE_RAND_ISM = False  # Use randomized ISM for better realism
 
 # Parameter Ranges
 PYROOMACOUSTICS_MAX_ORDER_MIN = 0  # Direct path only
@@ -162,145 +163,6 @@ PYROOMACOUSTICS_MAX_ORDER_MAX = 20
 # RIR Export
 PYROOMACOUSTICS_RIR_DIR = str(BACKEND_DIR / "temp" / "static" / "pyroomacoustics_rir")
 PYROOMACOUSTICS_RIR_URL_PREFIX = "/static/pyroomacoustics_rir"
-
-# Material Database (11 materials)
-# Complete DataBase here: https://pyroomacoustics.readthedocs.io/en/pypi-release/pyroomacoustics.materials.database.html
-PYROOMACOUSTICS_MATERIALS = {
-    "brick_unglazed": {"absorption": 0.03, "description": "Brick, unglazed", "category": "Wall"},
-    "concrete_rough": {"absorption": 0.02, "description": "Concrete, rough", "category": "Wall"},
-    "plaster_smooth": {"absorption": 0.03, "description": "Plaster on concrete", "category": "Wall"},
-    "wood_panel": {"absorption": 0.15, "description": "Wood paneling", "category": "Wall"},
-    "glass_window": {"absorption": 0.18, "description": "Glass, large pane", "category": "Wall"},
-    "acoustic_tile": {"absorption": 0.70, "description": "Acoustic ceiling tiles", "category": "Ceiling"},
-    "carpet_heavy": {"absorption": 0.60, "description": "Carpet, heavy", "category": "Floor"},
-    "wood_floor": {"absorption": 0.10, "description": "Wood floor", "category": "Floor"},
-    "concrete_floor": {"absorption": 0.02, "description": "Concrete floor", "category": "Floor"},
-    "curtains_medium": {"absorption": 0.50, "description": "Medium curtains", "category": "Soft"},
-    "audience_seated": {"absorption": 0.80, "description": "Audience in seats", "category": "Soft"},
-}
-
-PYROOMACOUSTICS_DATASET = {
-    "brickwork": {
-        "description": "Walls, rendered brickwork",
-        "absorption": [0.01, 0.02, 0.02, 0.03, 0.03, 0.04, 0.04],
-        "center_freqs": [125, 250, 500, 1000, 2000, 4000, 8000],
-        "category": "Massive constructions"
-    },
-    "rough_concrete": {
-        "description": "Rough concrete",
-        "absorption": [0.02, 0.03, 0.03, 0.03, 0.04, 0.07, 0.07],
-        "center_freqs": [125, 250, 500, 1000, 2000, 4000, 8000],
-        "category": "Massive constructions"
-    },
-    "plasterboard": {
-        "description": "2 * 13 mm plasterboard on steel frame, 50 mm mineral wool in cavity, surface painted",
-        "absorption": [0.15, 0.10, 0.06, 0.04, 0.04, 0.05, 0.05],
-        "center_freqs": [125, 250, 500, 1000, 2000, 4000, 8000],
-        "category": "Lightweight constructions"
-    },
-    "wooden_lining": {
-        "description": "Wooden lining, 12 mm fixed on frame",
-        "absorption": [0.27, 0.23, 0.22, 0.15, 0.10, 0.07, 0.06],
-        "center_freqs": [125, 250, 500, 1000, 2000, 4000, 8000],
-        "category": "Lightweight constructions"
-    },
-    "glass_window": {
-        "description": "Glass window, 0.68 kg/m2",
-        "absorption": [0.10, 0.05, 0.04, 0.03, 0.03, 0.03, 0.03],
-        "center_freqs": [125, 250, 500, 1000, 2000, 4000, 8000],
-        "category": "Glazing"
-    },
-    "double_glazing_30mm": {
-        "description": "Double glazing, 2–3 mm glass, > 30 mm gap",
-        "absorption": [0.15, 0.05, 0.03, 0.03, 0.02, 0.02, 0.02],
-        "center_freqs": [125, 250, 500, 1000, 2000, 4000, 8000],
-        "category": "Glazing"
-    },
-    "wood_16mm": {
-        "description": "16 mm wood on 40 mm studs",
-        "absorption": [0.18, 0.12, 0.10, 0.09, 0.08, 0.07, 0.07],
-        "center_freqs": [125, 250, 500, 1000, 2000, 4000, 8000],
-        "category": "Wood"
-    },
-    "wooden_door": {
-        "description": "Solid wooden door",
-        "absorption": [0.14, 0.10, 0.06, 0.08, 0.10, 0.10, 0.10],
-        "center_freqs": [125, 250, 500, 1000, 2000, 4000, 8000],
-        "category": "Wood"
-    },
-    "linoleum_on_concrete": {
-        "description": "Linoleum, asphalt, rubber, or cork tile on concrete",
-        "absorption": [0.02, 0.03, 0.03, 0.03, 0.03, 0.02],
-        "center_freqs": [125, 250, 500, 1000, 2000, 4000],
-        "category": "Floor coverings"
-    },
-    "carpet_tufted_9m": {
-        "description": "9 mm tufted pile carpet on felt underlay",
-        "absorption": [0.08, 0.08, 0.30, 0.60, 0.75, 0.80, 0.80],
-        "center_freqs": [125, 250, 500, 1000, 2000, 4000, 8000],
-        "category": "Floor coverings"
-    },
-    "curtains_cotton_0.5": {
-        "description": "Cotton curtains (0.5 kg/m2) draped to 3/4 area approx. 130 mm from wall",
-        "absorption": [0.30, 0.45, 0.65, 0.56, 0.59, 0.71, 0.71],
-        "center_freqs": [125, 250, 500, 1000, 2000, 4000, 8000],
-        "category": "Curtains"
-    },
-    "curtains_velvet": {
-        "description": "Tight velvet curtains",
-        "absorption": [0.05, 0.12, 0.35, 0.45, 0.38, 0.36, 0.36],
-        "center_freqs": [125, 250, 500, 1000, 2000, 4000, 8000],
-        "category": "Curtains"
-    },
-    "chairs_medium_upholstered": {
-        "description": "Medium upholstered concert chairs, empty",
-        "absorption": [0.49, 0.66, 0.80, 0.88, 0.82, 0.70],
-        "center_freqs": [125, 250, 500, 1000, 2000, 4000],
-        "category": "Seating"
-    },
-    "chairs_upholstered_cloth": {
-        "description": "Empty chairs, upholstered with cloth cover",
-        "absorption": [0.44, 0.60, 0.77, 0.89, 0.82, 0.70, 0.70],
-        "center_freqs": [125, 250, 500, 1000, 2000, 4000, 8000],
-        "category": "Seating"
-    },
-    "audience_orchestra_choir": {
-        "description": "Areas with audience, orchestra or choir including narrow aisles",
-        "absorption": [0.60, 0.74, 0.88, 0.96, 0.93, 0.85, 0.85],
-        "center_freqs": [125, 250, 500, 1000, 2000, 4000, 8000],
-        "category": "Audience"
-    },
-    "audience_1_m2": {
-        "description": "Audience area, 1 person / m2",
-        "absorption": [0.16, 0.29, 0.55, 0.80, 0.92, 0.90],
-        "center_freqs": [125, 250, 500, 1000, 2000, 4000],
-        "category": "Audience"
-    },
-    "rockwool_50mm_80kgm3": {
-        "description": "Rockwool thickness = 50 mm, 80 kg/m3",
-        "absorption": [0.22, 0.60, 0.92, 0.90, 0.88, 0.88, 0.88],
-        "center_freqs": [125, 250, 500, 1000, 2000, 4000, 8000],
-        "category": "Wall absorbers"
-    },
-    "panel_fabric_covered_6pcf": {
-        "description": "Fabric-covered panel, 6 pcf rockwool core",
-        "absorption": [0.46, 0.93, 1.00, 1.00, 1.00, 1.00, 1.00],
-        "center_freqs": [125, 250, 500, 1000, 2000, 4000, 8000],
-        "category": "Wall absorbers"
-    },
-    "ceiling_fissured_tile": {
-        "description": "Fissured ceiling tile",
-        "absorption": [0.49, 0.53, 0.53, 0.75, 0.92, 0.99],
-        "center_freqs": [125, 250, 500, 1000, 2000, 4000],
-        "category": "Ceiling absorbers"
-    },
-    "ceiling_plasterboard": {
-        "description": "Plasterboard ceiling on battens with large air-space above",
-        "absorption": [0.20, 0.15, 0.10, 0.08, 0.04, 0.02],
-        "center_freqs": [125, 250, 500, 1000, 2000, 4000],
-        "category": "Ceiling absorbers"
-    }
-}
 
 # ============================================================================
 # Directory Configuration - Temporary Files

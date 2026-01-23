@@ -25,7 +25,7 @@ from config.constants import (
     PYROOMACOUSTICS_SIMULATION_MODE_MONO,
     PYROOMACOUSTICS_SIMULATION_MODE_FOA,
     PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING,
-    AUDIO_SAMPLE_RATE,
+    PYROOMACOUSTICS_SAMPLE_RATE,
     TEMP_SIMULATIONS_DIR,
     PYROOMACOUSTICS_DEFAULT_ABSORPTION
 )
@@ -75,17 +75,21 @@ async def get_materials():
     """
     try:
         materials_db = PyroomacousticsService.get_material_database()
-        
-        # Convert to format expected by frontend
+
         materials = [
             {
                 "id": material_id,
                 "name": material_id.replace("_", " ").title(),
                 "description": props.get("description", ""),
-                "category": props.get("category", "General"),
-                "absorption": sum(props.get("absorption", [])) / len(props.get("absorption", [])) if props.get("absorption") else PYROOMACOUSTICS_DEFAULT_ABSORPTION
+                "absorption": (
+                    sum(props["coeffs"]) / len(props["coeffs"]) 
+                    if props.get("coeffs") else PYROOMACOUSTICS_DEFAULT_ABSORPTION
+                )
             }
-            for material_id, props in materials_db.items()
+            # 1. Outer loop: Extract the dictionary of materials for each category
+            for category_materials in materials_db.values()
+            # 2. Inner loop: Extract the ID and Props for each material
+            for material_id, props in category_materials.items()
         ]
         
         return materials
@@ -174,6 +178,7 @@ async def run_simulation_speckle(
     6. Exports impulse responses and results
     """
     simulation_id = str(uuid.uuid4())
+
     
     try:
         # Parse JSON inputs
@@ -202,6 +207,7 @@ async def run_simulation_speckle(
         print(f"Object Materials: {len(object_materials_dict)} objects assigned")
         if object_materials_dict:
             print(f"  Material IDs: {set(object_materials_dict.values())}")
+            
         print(f"{'='*60}\n")
         
         # Initialize Speckle service and authenticate
@@ -255,27 +261,18 @@ async def run_simulation_speckle(
         
         # Map object materials to face materials
         face_material_map = {}
-        materials_db = PyroomacousticsService.get_material_database()
         
         for obj_id, material_id in object_materials_dict.items():
             if obj_id not in object_face_ranges:
                 print(f"  Warning: Object ID '{obj_id}' not found in geometry")
                 continue
-            
-            if material_id not in materials_db:
-                print(f"  Warning: Material ID '{material_id}' not found in database")
-                continue
-            
-            # Get face range for this object
+
             start_face, end_face = object_face_ranges[obj_id]
-            absorption = materials_db[material_id]["absorption"]
-            
+      
             # Assign material to all faces in this object
             for face_idx in range(start_face, end_face + 1):
-                face_material_map[face_idx] = absorption
+                face_material_map[face_idx] = material_id
             
-            # print(f"  Object {obj_id}: {material_id} (α={absorption:.3f}) -> faces {start_face}-{end_face}")
-        
         print(f"Mapped materials to {len(face_material_map)} faces")
         
         # Create scattering map (only if ray tracing is enabled)
@@ -323,7 +320,7 @@ async def run_simulation_speckle(
             faces=faces,
             face_materials=face_material_map if face_material_map else None,
             face_scattering=face_scattering_map,
-            fs=AUDIO_SAMPLE_RATE,
+            fs=PYROOMACOUSTICS_SAMPLE_RATE,
             max_order=settings.max_order,
             ray_tracing=settings.ray_tracing,
             air_absorption=settings.air_absorption
@@ -342,7 +339,7 @@ async def run_simulation_speckle(
                 #         # detail=f"Source '{source_id}' at position {source_position} is not inside the room geometry. "
                 #         #        f"Please ensure sources are placed within the model bounds."
                 #     )
-                raise HTTPException(status_code=400, detail=f"Failed to add source '{source_id}': {error_msg}")
+                raise HTTPException(status_code=400, detail=f"Failed to add source '{source_id}' at position {source_position} : {error_msg}")
         
         # Add all receivers
         for receiver_id, (receiver_position, _) in unique_receivers.items():
@@ -449,7 +446,7 @@ async def run_simulation_speckle(
             try:
                 first_channel_rir = room.rir[mic_start_idx][source_idx]
                 acoustic_params = AcousticMeasurement.calculate_acoustic_parameters_from_rir(
-                    first_channel_rir, AUDIO_SAMPLE_RATE
+                    first_channel_rir, PYROOMACOUSTICS_SAMPLE_RATE
                 )
             except Exception as e:
                 print(f"Warning: Failed to calculate acoustic parameters: {e}")
@@ -460,7 +457,7 @@ async def run_simulation_speckle(
             ir_path = RIR_OUTPUT_DIR / ir_filename
             
             rir_int16 = np.int16(rir_data * 32767)
-            wavfile.write(str(ir_path), AUDIO_SAMPLE_RATE, rir_int16)
+            wavfile.write(str(ir_path), PYROOMACOUSTICS_SAMPLE_RATE, rir_int16)
             
             print(f"  Exported {num_channels}-channel IR: {ir_filename}")
             ir_files.append(ir_filename)
@@ -472,7 +469,7 @@ async def run_simulation_speckle(
                 "source_position": pair.source_position,
                 "receiver_position": pair.receiver_position,
                 "ir_file": ir_filename,
-                "sample_rate": AUDIO_SAMPLE_RATE,
+                "sample_rate": PYROOMACOUSTICS_SAMPLE_RATE,
                 "max_order": settings.max_order,
                 "ray_tracing": settings.ray_tracing,
                 "air_absorption": settings.air_absorption,

@@ -65,7 +65,6 @@ async def upload_and_process_file(file: UploadFile = File(...)):
         #     geometry = GeometryService.process_stl_file(temp_path)
 
         # Upload to Speckle (required now - not optional)
-        # Upload to Speckle (required now - not optional)
         speckle_data = None
         try:
             # Authenticate if not already authenticated
@@ -118,17 +117,3 @@ async def upload_and_process_file(file: UploadFile = File(...)):
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
-
-@router.get("/load-sample-ifc")
-async def load_sample_ifc():
-    """Load the sample IFC model (Duplex_A_20110907.ifc)"""
-    if not os.path.exists(SAMPLE_IFC_FILE_PATH):
-        raise HTTPException(
-            status_code=404,
-            detail=f"Sample IFC file not found at {SAMPLE_IFC_FILE_PATH}"
-        )
-
-    try:
-        return GeometryService.process_ifc_file(SAMPLE_IFC_FILE_PATH)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to process sample IFC: {str(e)}")
