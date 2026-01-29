@@ -1,3 +1,7 @@
+//Import card types
+import type { CardType, TabBaseConfig, TabState, TabResult, TabProps } from './card';
+export type { CardType, TabBaseConfig, TabState, TabResult, TabProps };
+
 // Import and re-export Speckle Scene types
 import type { SpeckleSceneProps, SpeckleGeometryNode } from './speckle-scene';
 export type { SpeckleSceneProps, SpeckleGeometryNode };
@@ -12,27 +16,21 @@ export type { ReceiverData, ReceiverOverlay };
 
 // Import and re-export Analysis types
 import type {
-  AnalysisType,
-  BaseAnalysisConfig,
   ModelAnalysisConfig,
   AudioAnalysisConfig,
   TextAnalysisConfig,
   AnalysisConfig,
   TextPromptResult,
   AnalysisResult,
-  AnalysisTabState,
   AnalysisSectionProps
 } from './analysis';
 export type {
-  AnalysisType,
-  BaseAnalysisConfig,
   ModelAnalysisConfig,
   AudioAnalysisConfig,
   TextAnalysisConfig,
   AnalysisConfig,
   TextPromptResult,
   AnalysisResult,
-  AnalysisTabState,
   AnalysisSectionProps
 };
 

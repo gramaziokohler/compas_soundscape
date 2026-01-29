@@ -159,17 +159,17 @@ export function Sidebar(props: SidebarProps) {
         <div className="flex flex-col gap-4" style={{ display: props.activeAiTab === 'text' ? 'flex' : 'none' }}>
           <AnalysisSection
             analysisConfigs={props.analysisConfigs}
-            activeAnalysisTab={props.activeAnalysisTab}
-            isAnalyzing={props.isAnalyzing}
-            analysisError={props.analysisError}
-            analysisResults={props.analysisResults}
+            activeTab={props.activeTab}
+            isRunning={props.isRunning}
+            error={props.error}
+            analysisResult={props.analysisResult}
             hasGlobalModelLoaded={props.hasGlobalModelLoaded}
             onAddConfig={props.onAddAnalysisConfig}
             onRemoveConfig={props.onRemoveAnalysisConfig}
             onUpdateConfig={props.onUpdateAnalysisConfig}
             onSetActiveTab={props.onSetActiveAnalysisTab}
-            onAnalyze={props.onAnalyze}
-            onStopAnalysis={props.onStopAnalysis}
+            onRun={props.onRun}
+            onStop={props.onStop}
             onTogglePromptSelection={props.onTogglePromptSelection}
             onSendToSoundGeneration={props.onSendToSoundGeneration}
             onReset={props.onResetAnalysis}

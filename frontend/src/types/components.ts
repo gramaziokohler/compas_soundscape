@@ -192,14 +192,14 @@ export interface SidebarProps {
   activeAnalysisTab: number;
   isAnalyzing: boolean;
   analysisError: string | null;
-  analysisResults: AnalysisResult[];
+  analysisResult: AnalysisResult[];
   hasGlobalModelLoaded?: boolean; // Global model loaded from right sidebar
   onAddAnalysisConfig: (type: AnalysisType) => void;
   onRemoveAnalysisConfig: (index: number) => void;
   onUpdateAnalysisConfig: (index: number, updates: Partial<AnalysisConfig>) => void;
   onSetActiveAnalysisTab: (index: number) => void;
   onAnalyze: (index: number) => void;
-  onStopAnalysis: () => void;
+  onStop: () => void;
   onTogglePromptSelection: (configIndex: number, promptId: string) => void;
   onSendToSoundGeneration: () => void;
   onResetAnalysis: (index: number) => void;

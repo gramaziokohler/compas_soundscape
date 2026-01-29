@@ -6,7 +6,8 @@ import { useSpeckleViewerContext } from '@/contexts/SpeckleViewerContext';
 import { useSpeckleSelectionMode } from '@/contexts/SpeckleSelectionModeContext';
 import { getRootNodesForModel } from '@/hooks/useSpeckleTree';
 import type { Viewer } from '@speckle/viewer';
-import { UI_COLORS, UI_BUTTON } from '@/lib/constants';
+import { UI_COLORS, UI_BUTTON, NUM_SOUNDS_MIN, NUM_SOUNDS_MAX } from '@/lib/constants';
+import { RangeSlider } from '@/components/ui/RangeSlider';
 
 /**
  * Model3DContextContent Component
@@ -197,25 +198,15 @@ export function Model3DContextContent({
             </div>
           </div>
 
-          {/* Number of sounds slider */}
-          <div>
-            <label className="text-xs mb-2 block" style={{ color: UI_COLORS.NEUTRAL_500 }}>
-              Number of sounds: <span style={{ color: UI_COLORS.PRIMARY, fontWeight: 'bold' }}>{config.numSounds}</span>
-            </label>
-            <input
-              type="range"
-              value={config.numSounds}
-              onChange={(e) => onUpdateConfig(index, { numSounds: parseInt(e.target.value) })}
-              min="1"
-              max="30"
-              className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary"
-              style={{ backgroundColor: UI_COLORS.NEUTRAL_200 }}
-            />
-            <div className="flex justify-between text-xs mt-1" style={{ color: UI_COLORS.NEUTRAL_500 }}>
-              <span>1</span>
-              <span>30</span>
-            </div>
-          </div>
+          {/* Number of sounds */}
+          <RangeSlider
+            label="Number of sounds: "
+            value={config.numSounds}
+            min={NUM_SOUNDS_MIN}
+            max={NUM_SOUNDS_MAX}
+            step={1}
+            onChange={(value) => onUpdateConfig(index, { numSounds: value })}
+          />
 
           {/* Analyze 3D Model button */}
           <button

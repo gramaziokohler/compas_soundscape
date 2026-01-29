@@ -1,5 +1,6 @@
 "use client";
 
+import { RangeSlider } from "@/components/ui/RangeSlider";
 import { UI_COLORS, UI_BORDER_RADIUS, AUDIO_MODEL_TANGOFLUX, AUDIO_MODEL_AUDIOLDM2, AUDIO_MODEL_NAMES } from "@/lib/constants";
 
 interface AdvancedSettingsSectionProps {
@@ -96,51 +97,27 @@ export function AdvancedSettingsSection({
       {/* Text-to-Audio Parameters */}
       <div>
         {/* Global Duration */}
-        <div className="mb-3">
-          <label className="flex items-center justify-between text-sm mb-1 text-gray-700 dark:text-gray-300">
-            <span>Global Duration</span>
-            <span className="font-medium">{globalDuration}s</span>
-          </label>
-          <input
-            type="range"
-            min="1"
-            max="30"
-            step="1"
-            value={globalDuration}
-            onChange={(e) => onGlobalDurationChange(parseInt(e.target.value))}
-            className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full appearance-none cursor-pointer"
-            style={{
-              accentColor: UI_COLORS.PRIMARY
-            }}
-          />
-          <p className="text-xs mt-1 text-gray-500 dark:text-gray-400">
-            Applies to all sound tabs
-          </p>
-        </div>
+        <RangeSlider
+          label="Global Duration (s): "
+          value={globalDuration}
+          min={1}
+          max={30}
+          step={1}
+          onChange={(value) => onGlobalDurationChange(value)}
+          hoverText="Applies to all sound tabs"
+        />
 
         {/* Diffusion Steps */}
-        <div className="mb-3">
-          <label className="flex items-center justify-between text-sm mb-1 text-gray-700 dark:text-gray-300">
-            <span>Diffusion Steps</span>
-            <span className="font-medium">{globalSteps}</span>
-          </label>
-          <input
-            type="range"
-            min="10"
-            max="100"
-            step="5"
-            value={globalSteps}
-            onChange={(e) => onGlobalStepsChange(parseInt(e.target.value))}
-            className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full appearance-none cursor-pointer"
-            style={{
-              accentColor: UI_COLORS.PRIMARY
-            }}
-          />
-          <p className="text-xs mt-1 text-gray-500 dark:text-gray-400">
-            Higher steps = better quality but slower
-          </p>
-        </div>
-
+        <RangeSlider
+          label="Diffusion Steps: "
+          value={globalSteps}
+          min={10}
+          max={100}
+          step={5}
+          onChange={(value) => onGlobalStepsChange(value)}
+          hoverText="Higher steps = better quality but slower"
+        />
+        
         {/* Global Negative Prompt */}
         <div>
           <label className="block text-sm mb-1 text-gray-700 dark:text-gray-300">

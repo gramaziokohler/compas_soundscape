@@ -23,6 +23,7 @@ import {
 import type { PyroomAcousticsSimulationConfig } from '@/types/acoustics';
 import type { ReceiverData, SoundEvent } from '@/types';
 import { CheckboxField } from '@/components/ui/CheckboxField';
+import { RangeSlider } from '@/components/ui/RangeSlider';
 
 interface PyroomAcousticsSimulationSettingsProps {
   config: PyroomAcousticsSimulationConfig;
@@ -113,28 +114,14 @@ export function PyroomAcousticsSimulationSettings({
 </div>
 
       {/* Max Order Slider */}
-      <div>
-        <label className="text-xs block mb-1" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-          Image-Source order: {config.settings.max_order}
-          {config.settings.ray_tracing &&
-           config.settings.max_order > PYROOMACOUSTICS_RAY_TRACING_RECOMMENDED_MAX_ORDER && (
-            <span style={{ color: UI_COLORS.WARNING, marginLeft: '4px' }}>
-              (≤{PYROOMACOUSTICS_RAY_TRACING_RECOMMENDED_MAX_ORDER} recommended for ray tracing)
-            </span>
-          )}
-        </label>
-        <input
-          type="range"
-          value={config.settings.max_order}
-          onChange={(e) => handleSettingChange('max_order', parseInt(e.target.value))}
-          className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary"
-          style={{ backgroundColor: UI_COLORS.NEUTRAL_200 }}
-          min={PYROOMACOUSTICS_MAX_ORDER_MIN}
-          max={PYROOMACOUSTICS_MAX_ORDER_MAX}
-          step="1"
-          disabled={config.isRunning}
-        />
-      </div>
+      <RangeSlider
+        label="Image-Source order: "
+        value={config.settings.max_order}
+        min={PYROOMACOUSTICS_MAX_ORDER_MIN}
+        max={PYROOMACOUSTICS_MAX_ORDER_MAX}
+        step={1}
+        onChange={(value) => handleSettingChange('max_order', value)}
+      />
 
       {/* Toggles */}
       <div className="flex flex-col">

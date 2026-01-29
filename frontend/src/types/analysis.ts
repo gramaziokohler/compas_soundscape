@@ -8,26 +8,14 @@
  */
 
 import type { SEDAudioInfo, DetectedSound, SEDAnalysisOptions } from './sed';
+import type { TabBaseConfig , CardType, TabResult, TabProps } from './card';
 
-/**
- * Analysis tab types
- */
-export type AnalysisType = '3d-model' | 'audio' | 'text';
-
-/**
- * Base analysis configuration (before generation)
- */
-export interface BaseAnalysisConfig {
-  type: AnalysisType;
-  display_name?: string;
-  numSounds: number; // Number of sound prompts to generate
-}
 
 /**
  * 3D Model Analysis Config
  */
-export interface ModelAnalysisConfig extends BaseAnalysisConfig {
-  type: '3d-model';
+export interface ModelAnalysisConfig extends TabBaseConfig {
+  CardType: '3d-model';
   modelFile: File | null;
   modelEntities: any[];
   selectedDiverseEntities: any[];
@@ -46,8 +34,8 @@ export interface ModelAnalysisConfig extends BaseAnalysisConfig {
 /**
  * Audio Analysis Config
  */
-export interface AudioAnalysisConfig extends BaseAnalysisConfig {
-  type: 'audio';
+export interface AudioAnalysisConfig extends TabBaseConfig {
+  CardType: 'audio';
   audioFile: File | null;
   audioInfo: SEDAudioInfo | null;
   audioBuffer: AudioBuffer | null;
@@ -57,8 +45,8 @@ export interface AudioAnalysisConfig extends BaseAnalysisConfig {
 /**
  * Text Analysis Config
  */
-export interface TextAnalysisConfig extends BaseAnalysisConfig {
-  type: 'text';
+export interface TextAnalysisConfig extends TabBaseConfig {
+  CardType: 'text';
   textInput: string;
   useModelAsContext: boolean;
 }
@@ -69,9 +57,9 @@ export interface TextAnalysisConfig extends BaseAnalysisConfig {
 export type AnalysisConfig = ModelAnalysisConfig | AudioAnalysisConfig | TextAnalysisConfig;
 
 /**
- * Generated text prompt result
+ * Generated text prompt result (after generation)
  */
-export interface TextPromptResult {
+export interface TextPromptResult extends TabResult{
   id: string;
   text: string;
   selected: boolean;
@@ -87,39 +75,19 @@ export interface TextPromptResult {
 /**
  * Analysis result (after generation)
  */
-export interface AnalysisResult {
+export interface AnalysisResult extends TabResult{
   configIndex: number;
   prompts: TextPromptResult[];
-  generatedAt: Date;
-}
-
-/**
- * Analysis tab state
- */
-export interface AnalysisTabState {
-  config: AnalysisConfig;
-  isAnalyzing: boolean;
-  result: AnalysisResult | null;
-  error: string | null;
 }
 
 /**
  * Analysis Section Props
  */
-export interface AnalysisSectionProps {
+export interface AnalysisSectionProps extends TabProps {
   analysisConfigs: AnalysisConfig[];
-  activeAnalysisTab: number;
-  isAnalyzing: boolean;
-  analysisError: string | null;
-  analysisResults: AnalysisResult[];
+  analysisResult: AnalysisResult[];
   hasGlobalModelLoaded?: boolean; // Global model loaded from right sidebar
-  onAddConfig: (type: AnalysisType) => void;
-  onRemoveConfig: (index: number) => void;
-  onUpdateConfig: (index: number, updates: Partial<AnalysisConfig>) => void;
-  onSetActiveTab: (index: number) => void;
-  onAnalyze: (index: number) => void;
   onStopAnalysis: () => void;
   onTogglePromptSelection: (configIndex: number, promptId: string) => void;
   onSendToSoundGeneration: () => void;
-  onReset: (index: number) => void;
 }

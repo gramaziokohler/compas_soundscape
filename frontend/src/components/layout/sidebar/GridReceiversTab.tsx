@@ -13,6 +13,7 @@ GRID_RECEIVERS
 } from '@/lib/constants';
 import type { ReceiverData } from '@/types';
 import { CheckboxField } from '@/components/ui/CheckboxField';
+import { RangeSlider } from '@/components/ui/RangeSlider';
 
 interface GridReceiversTab {
   config: GridReceiversTab;
@@ -60,7 +61,7 @@ export function GridReceiversTab({
         </label>
         <input
           type="range"
-          value={GRID_RECEIVERS.DEFAULT_GRID_SPACING}
+          value={gridResolution}
           // onChange={(e) => handleSettingChange('max_order', parseInt(e.target.value))}
           className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary"
           style={{ backgroundColor: UI_COLORS.NEUTRAL_200 }}
@@ -69,6 +70,17 @@ export function GridReceiversTab({
           step="0.05"
         />
       </div>
+
+      {/* Grid resolution slider */}
+      <RangeSlider
+        label="Grid resolution (m): "
+        value={gridResolution}
+        min={GRID_RECEIVERS.MIN_GRID_SPACING}
+        max={GRID_RECEIVERS.MAX_GRID_SPACING}
+        step={1}
+        onChange={(value) => onUpdateConfig(index, { gridResolution: value })}
+      />
+
 
       {/* Toggles
       <div className="flex flex-col">

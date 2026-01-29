@@ -16,7 +16,7 @@ except ImportError as err:
     )
     raise err
 
-stl_path = Path("G:/My Drive/03_ETH Acoustic/02_Work/00_Case studies/HIL D24-1/HIL_D24-1_acoustic_mesh.stl")
+stl_path = Path("G:/My Drive/03_ETH Acoustic/02_Work/00_Case studies/HIL D24-1/HIL_D24-1_acoustic_mesh_no_furniture.stl")
 
 # from pyroomacoustics.parameters import materials
 # count = len(materials)
@@ -47,10 +47,16 @@ ntriang, nvec, npts = the_mesh.vectors.shape
 
 z_values = the_mesh.vectors[:,:,2]  # Extract Z-coordinates
 mean_z = np.mean(z_values, axis=1)  # Mean Z for each triangle face
-sorted_indices = np.argsort(mean_z)
 
-lowest_indices = sorted_indices[:2]
-faces = the_mesh.vectors[lowest_indices]
+# 2. Create a boolean mask where mean_z is less than 0.2
+mask = mean_z < 0.2
+
+# 4. Now the masking will work perfectly
+faces = the_mesh.vectors[mask]
+
+# Optional: If you specifically need the indices of these faces
+
+print(f"Found {len(faces)} faces with Z < 0.2")
 
 # print(f"Using faces : {faces}")
 
@@ -183,37 +189,62 @@ for w in range(ntriang):
     walls.append(
         pra.wall_factory(
             the_mesh.vectors[w].T / size_reduc_factor,
-            material.energy_absorption["coeffs"],
+            # material.energy_absorption["coeffs"],
+            [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],            
             # material.scattering["coeffs"],
-            [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1] 
+            [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05] 
         )
     )
+# material = pra.Material(energy_absorption = "rough_concrete")
+
+# for w in range(ntriang):
+#     walls.append(
+#         pra.wall_factory(
+#             the_mesh.vectors[w].T / size_reduc_factor,
+#             material.energy_absorption["coeffs"],         
+#             material.scattering["coeffs"],
+#         )
+#     )
 
 room = pra.Room(
             walls,
             fs=freq_s,
-            max_order=2,
+            max_order=1,
             ray_tracing=True,
-            air_absorption=True,
+            air_absorption=False,
             use_rand_ism = False,
             max_rand_disp = 0.05
         )
 
 mask = [room.is_inside(p) for p in points.T]
 filtered_points = points[:, mask]
+print(f"Generated {points.shape[1]} points, {filtered_points.shape[1]} are inside the room.")
 
-source_pos = [1.5, 1.0, 1.5]
+
+
+source_pos = [2.0, 5.0, 1.0]
 room.add_source(source_pos)
-# .add_microphone([1.0, 4.6, 1.5])
+# room.add_microphone(filtered_points[:,0])
 mic_array = pra.MicrophoneArray(filtered_points, fs=freq_s)
 room.add_microphone_array(mic_array)
-
-room.image_source_model()
-room.ray_tracing()
+room.set_ray_tracing(receiver_radius=0.5, hist_bin_size=0.004)
+# room.image_source_model()
+# room.ray_tracing()
 room.compute_rir()
-# room.plot_rir(FD=True)
-signal = room.rir[0][0]
-sample_count = len(signal)
+# room.plot_rir()
+
+# for i in range(35):
+#     room.add_microphone(filtered_points[:,i])
+#     room.compute_rir()
+#     room.plot_rir()
+#     rt60 = pra.experimental.rt60.measure_rt60(room.rir[i][0], fs=freq_s)
+#     print(f"Mic {i} at {filtered_points[:,i]}: RT60 = {rt60} seconds")
+#     plt.show()
+
+
+
+# signal = room.rir[0][0]
+# sample_count = len(signal)
 
 rt60 = np.zeros((len(room.rir), len(room.rir[0])))
 db_levels = np.zeros((len(room.rir), len(room.rir[0])))
@@ -222,19 +253,19 @@ for i in range(len(room.rir)):
     for j in range(len(room.rir[i])):
         rt60[i][j] = pra.experimental.rt60.measure_rt60(room.rir[i][j], fs=freq_s)
         # 3. Calculate RMS (Root Mean Square) Amplitude
-        # rms_amplitude = np.sqrt(np.mean(room.rir[i][j]**2))
-        rms_amplitude = np.sum(room.rir[i][j]**2)
+        rms_amplitude = np.sqrt(np.mean(room.rir[i][j]**2))
+        # rms_amplitude = np.sum(room.rir[i][j]**2)
         # 4. Convert to dB
         # Note: This is dB relative to the digital scale (dBFS-like), not physical SPL
-        # db_level = 20 * np.log10(rms_amplitude)
-        db_level = 10 * np.log10(rms_amplitude)
+        db_level = 20 * np.log10(rms_amplitude)
+        #db_level = 10 * np.log10(rms_amplitude)
         db_levels[i][j] = db_level
         print(f"RMS Amplitude: {rms_amplitude}")
         print(f"Digital Level: {db_level:.2f} dB")
         #rt60 = room.measure_rt60()
         print(f"Calculated RT60: {rt60[i][j]} seconds")
 
-plot_rt60_2d(source_pos, filtered_points, rt60, title="Gain (dB)")
+plot_rt60_2d(source_pos, filtered_points, rt60, title="RT60 Distribution")
 
 # plt.figure()
 # room.plot(img_order=0)

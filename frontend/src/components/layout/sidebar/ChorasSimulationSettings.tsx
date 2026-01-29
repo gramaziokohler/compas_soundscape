@@ -10,6 +10,7 @@
 import { UI_COLORS, CHORAS_IR_LENGTH_MIN, CHORAS_IR_LENGTH_MAX, CHORAS_LC_MIN, CHORAS_LC_MAX } from '@/lib/constants';
 import type { ChorasSimulationConfig } from '@/types/acoustics';
 import type { ReceiverData, SoundEvent } from '@/types';
+import { RangeSlider } from '@/components/ui/RangeSlider';
 
 interface ChorasSimulationSettingsProps {
   config: ChorasSimulationConfig;
@@ -65,43 +66,19 @@ export function ChorasSimulationSettings({
       )}
 
       {/* Simulation Parameters */}
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid flex gap-2">
         {/* Impulse Length */}
-        <div>
-          <label className="text-xs block mb-1" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-            Impulse length: {config.settings.de_ir_length.toFixed(2)}s
-          </label>
-          <input
-            type="range"
-            value={config.settings.de_ir_length}
-            onChange={(e) => handleSettingChange('de_ir_length', parseFloat(e.target.value))}
-            className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary"
-            style={{ backgroundColor: UI_COLORS.NEUTRAL_200 }}
-            min={CHORAS_IR_LENGTH_MIN}
-            max={CHORAS_IR_LENGTH_MAX}
-            step="0.05"
-            disabled={config.isRunning}
-          />
-        </div>
-
-        {/* Characteristic Length */}
-        <div>
-          <label className="text-xs block mb-1" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-            Characteristic length: {config.settings.de_lc.toFixed(1)}m
-          </label>
-          <input
-            type="range"
-            value={config.settings.de_lc}
-            onChange={(e) => handleSettingChange('de_lc', parseFloat(e.target.value))}
-            className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary"
-            style={{ backgroundColor: UI_COLORS.NEUTRAL_200 }}
-            min={CHORAS_LC_MIN}
-            max={CHORAS_LC_MAX}
-            step="0.1"
-            disabled={config.isRunning}
-          />
-        </div>
+        <RangeSlider
+          label="IR length (s): "
+          value={config.settings.de_ir_length}
+          min={CHORAS_IR_LENGTH_MIN}
+          max={CHORAS_IR_LENGTH_MAX}
+          step={0.1}
+          onChange={(value) => handleSettingChange('de_ir_length', value)}
+          showLabels={false}
+        />
       </div>
+
 
       {/* Action Buttons */}
       {!config.isRunning && (

@@ -1543,7 +1543,7 @@ export const CHORAS_SIM_LEN_TYPE_EDT = 'edt';
 // Simulation Parameter Ranges
 export const CHORAS_C0_MIN = 300; // Minimum speed of sound (m/s)
 export const CHORAS_C0_MAX = 400; // Maximum speed of sound (m/s)
-export const CHORAS_IR_LENGTH_MIN = 0.05; // Minimum IR length (seconds)
+export const CHORAS_IR_LENGTH_MIN = 0.1; // Minimum IR length (seconds)
 export const CHORAS_IR_LENGTH_MAX = 5.0; // Maximum IR length (seconds)
 export const CHORAS_LC_MIN = 0.1; // Minimum characteristic length (meters)
 export const CHORAS_LC_MAX = 10.0; // Maximum characteristic length (meters)

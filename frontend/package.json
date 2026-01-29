@@ -26,7 +26,8 @@
     "serve-sofa-hrir": "github:Ircam-RnD/serveSofaHrir",
     "three": "^0.140.2",
     "wav-decoder": "^1.3.0",
-    "wavesurfer.js": "^7.11.0"
+    "wavesurfer.js": "^7.11.0",
+    "zustand": "^5.0.10"
   },
   "devDependencies": {
     "@playwright/test": "^1.57.0",

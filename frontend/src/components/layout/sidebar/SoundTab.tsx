@@ -7,6 +7,7 @@ import { AudioWaveformDisplay } from '@/components/audio/AudioWaveformDisplay';
 import { VerticalVolumeSlider } from '@/components/ui/VerticalVolumeSlider';
 import { SoundCardWaveSurfer } from '@/components/audio/SoundCardWaveSurfer';
 import { UI_COLORS, UI_VOLUME_SLIDER, UI_INTERVAL_SLIDER } from '@/lib/constants';
+import { RangeSlider } from '@/components/ui/RangeSlider';
 
 /**
  * SoundTab Component
@@ -568,45 +569,39 @@ export function SoundTab({
                   />
 
                   <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-xs block mb-1" style={{ color: UI_COLORS.NEUTRAL_700 }}>Duration: {config.duration}s</label>
-                      <input
-                        type="range"
-                        value={config.duration}
-                        onChange={(e) => onUpdateConfig(index, 'duration', parseInt(e.target.value))}
-                        className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary"
-                        style={{ backgroundColor: UI_COLORS.NEUTRAL_200 }}
-                        min="1"
-                        max="30"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs block mb-1" style={{ color: UI_COLORS.NEUTRAL_700 }}>Guidance: {((config.guidance_scale ?? 4.5) / 10).toFixed(1)}</label>
-                      <input
-                        type="range"
-                        value={config.guidance_scale ?? 4.5}
-                        onChange={(e) => onUpdateConfig(index, 'guidance_scale', parseFloat(e.target.value))}
-                        className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary"
-                        style={{ backgroundColor: UI_COLORS.NEUTRAL_200 }}
-                        min="0"
-                        max="10"
-                        step="0.5"
-                      />
-                    </div>
-                  </div>
 
-                  <div>
-                    <label className="text-xs block mb-1" style={{ color: UI_COLORS.NEUTRAL_700 }}>Number of variants: {config.seed_copies}</label>
-                    <input
-                      type="range"
-                      value={config.seed_copies}
-                      onChange={(e) => onUpdateConfig(index, 'seed_copies', parseInt(e.target.value))}
-                      className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary"
-                      style={{ backgroundColor: UI_COLORS.NEUTRAL_200 }}
-                      min="1"
-                      max="5"
+                    <RangeSlider
+                      label="Duration (s): "
+                      value={config.duration}
+                      min={1}
+                      max={30}
+                      step={1}
+                      onChange={(value) => onUpdateConfig(index,'duration', value)}
+                      showLabels={false}
+                    />
+                    
+                    <RangeSlider
+                      label="Guidance: "
+                      value={config.guidance_scale ?? 4.5}
+                      min={0}
+                      max={10}
+                      step={0.5}
+                      onChange={(value) => onUpdateConfig(index,'guidance_scale', value)}
+                      showLabels={false}
+                      hoverText='Low guidance = AI model can get creative, but follows less your prompts'
                     />
                   </div>
+
+                  <RangeSlider
+                      label="Number of variants: "
+                      value={config.seed_copies}
+                      min={1}
+                      max={5}
+                      step={1}
+                      onChange={(value) => onUpdateConfig(index,'seed_copies', value)}
+                      showLabels={false}
+                      hoverText='This will generate multiple variants of sounds from your prompt'
+                    />
                 </>
               )}
 

@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useRef, useEffect, useMemo } from "react";
-import type { AnalysisSectionProps, AnalysisType } from "@/types/analysis";
+import type { AnalysisSectionProps } from "@/types/analysis";
+import type { CardType } from "@/types/card";
 import { AnalysisTab } from "./AnalysisTab";
 import { UI_COLORS, UI_BUTTON } from "@/lib/constants";
 
@@ -13,18 +14,18 @@ import { UI_COLORS, UI_BUTTON } from "@/lib/constants";
  * Selected prompts from all tabs are sent to sound generation
  */
 export function AnalysisSection({
-  analysisConfigs,
-  activeAnalysisTab,
-  isAnalyzing,
-  analysisError,
-  analysisResults,
+  analysisConfigs = [],
+  activeTab,
+  isRunning,
+  error,
+  analysisResult = [],
   hasGlobalModelLoaded = false,
   onAddConfig,
   onRemoveConfig,
   onUpdateConfig,
   onSetActiveTab,
-  onAnalyze,
-  onStopAnalysis,
+  onRun,
+  onStop,
   onTogglePromptSelection,
   onSendToSoundGeneration,
   onReset
@@ -42,12 +43,12 @@ export function AnalysisSection({
 
   // Helper to check if an analysis has generated results
   const hasResult = (index: number): boolean => {
-    return analysisResults.some(r => r.configIndex === index);
+    return analysisResult.some(r => r.configIndex === index);
   };
 
   // Helper to get result for a config index
   const getResult = (index: number) => {
-    return analysisResults.find(r => r.configIndex === index);
+    return analysisResult.find(r => r.configIndex === index);
   };
 
   // Toggle expansion of an analysis tab (only one can be expanded at a time)
@@ -77,18 +78,18 @@ export function AnalysisSection({
   // Calculate analysis status
   const analysisStatus = useMemo(() => {
     const totalContexts = analysisConfigs.length;
-    const completedCount = analysisResults.length;
+    const completedCount = analysisResult.length;
     const pendingCount = totalContexts - completedCount;
     return { totalContexts, completedCount, pendingCount };
-  }, [analysisConfigs.length, analysisResults.length]);
+  }, [analysisConfigs.length, analysisResult.length]);
 
   // Calculate total selected prompts across all tabs
   const totalSelectedPrompts = useMemo(() => {
-    return analysisResults.reduce((total, result) => {
+    return analysisResult.reduce((total, result) => {
       const selectedCount = result.prompts.filter(p => p.selected).length;
       return total + selectedCount;
     }, 0);
-  }, [analysisResults]);
+  }, [analysisResult]);
 
   // Determine if "Send to sound generation" button should be enabled
   const canSendToGeneration = totalSelectedPrompts > 0;
@@ -116,7 +117,7 @@ export function AnalysisSection({
   }, [showTypeSelector]);
 
   // Handle type selection
-  const handleTypeSelect = (type: AnalysisType) => {
+  const handleTypeSelect = (type: CardType) => {
     onAddConfig(type);
     setShowTypeSelector(false);
   };
@@ -271,13 +272,13 @@ export function AnalysisSection({
                 index={index}
                 isExpanded={expandedTabs.has(index)}
                 hasResult={hasResult(index)}
-                result={result}
-                isAnalyzing={isAnalyzing}
+                analysisResult={analysisResult}
+                isRunning={isRunning}
                 onToggleExpand={handleToggleExpand}
                 onUpdateConfig={onUpdateConfig}
                 onRemove={onRemoveConfig}
                 onReset={handleReset}
-                onAnalyze={onAnalyze}
+                onRun={onRun}
                 onTogglePromptSelection={onTogglePromptSelection}
               />
             </div>
@@ -286,7 +287,7 @@ export function AnalysisSection({
       </div>
 
       {/* Error display */}
-      {analysisError && (
+      {error && (
         <div
           className="p-3 text-sm rounded"
           style={{
@@ -298,7 +299,7 @@ export function AnalysisSection({
             color: UI_COLORS.ERROR
           }}
         >
-          {analysisError}
+          {error}
         </div>
       )}
 

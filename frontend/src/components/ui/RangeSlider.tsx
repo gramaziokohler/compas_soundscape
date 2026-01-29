@@ -1,7 +1,5 @@
 "use client";
 
-import { UI_COLORS, TAILWIND_TEXT_SIZE } from "@/lib/constants";
-
 interface RangeSliderProps {
   label: string;
   value: number;
@@ -12,35 +10,33 @@ interface RangeSliderProps {
   minLabel?: string;
   maxLabel?: string;
   formatValue?: (value: number) => string;
-  valueColor?: string;
   className?: string;
+  showLabels?: boolean;
+  hoverText?: string; 
 }
 
 /**
  * RangeSlider Component
- * 
- * Reusable range slider with label, value display, and min/max labels.
+ * * Reusable range slider with label, value display, and min/max labels.
  * Used in SoundUIOverlay and EntityUIOverlay for volume/interval controls.
- * 
- * Features:
+ * * Features:
  * - Label with current value display
- * - Min/max labels below slider
+ * - Min/max labels below slider (defaults to numeric min/max if not provided)
  * - Custom value formatting (e.g., "Loop" for 0, dB suffix)
  * - Primary accent color
  * - Consistent styling
- * 
- * Usage:
+ * - Optional hover text tooltip
+ * * Usage:
  * ```tsx
  * <RangeSlider
- *   label="Volume (dB SPL)"
- *   value={volume}
- *   min={30}
- *   max={120}
- *   step={1}
- *   onChange={setVolume}
- *   minLabel="30"
- *   maxLabel="120"
- *   formatValue={(v) => v.toFixed(0)}
+ * label="Volume (dB SPL)"
+ * value={volume}
+ * min={30}
+ * max={120}
+ * step={1}
+ * onChange={setVolume}
+ * formatValue={(v) => v.toFixed(0)}
+ * hoverText="Adjusts the master volume output" // Optional
  * />
  * ```
  */
@@ -54,19 +50,27 @@ export function RangeSlider({
   minLabel,
   maxLabel,
   formatValue = (v) => v.toString(),
-  valueColor = UI_COLORS.PRIMARY,
-  className = ""
+  className = "",
+  showLabels = true,
+  hoverText, 
 }: RangeSliderProps) {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onChange(parseFloat(e.target.value));
   };
 
+  // Determine display labels: use provided prop, or fallback to the numeric value
+  const displayMin = minLabel ?? min.toString();
+  const displayMax = maxLabel ?? max.toString();
+
   return (
-    <div className={`${className}`}>
+    <div 
+      className={`${className}`} 
+      title={hoverText} 
+    >
       {/* Label and Value */}
-      <div className={`flex items-center justify-between ${TAILWIND_TEXT_SIZE.XS} text-gray-300 mb-1`}>
+      <div className={`flex items-center gap-1 text-xs text-secondary-hover mb-1`}>
         <span>{label}</span>
-        <span className="font-mono" style={{ color: valueColor }}>
+        <span className="text-xs font-bold text-primary">
           {formatValue(value)}
         </span>
       </div>
@@ -79,15 +83,14 @@ export function RangeSlider({
         step={step}
         value={value}
         onChange={handleChange}
-        className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary"
-        style={{ backgroundColor: UI_COLORS.NEUTRAL_700 }}
+        className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary bg-secondary-light"
       />
 
       {/* Min/Max Labels */}
-      {(minLabel || maxLabel) && (
-        <div className={`flex justify-between ${TAILWIND_TEXT_SIZE.XS} text-gray-400 mt-1`}>
-          <span>{minLabel}</span>
-          <span>{maxLabel}</span>
+      {showLabels && (
+        <div className={`flex justify-between text-xs text-secondary-hover mt-1`}>
+          <span>{displayMin}</span>
+          <span>{displayMax}</span>
         </div>
       )}
     </div>

@@ -10,9 +10,9 @@
   --color-primary-light: #fce7f6;
   
   /* Secondary color */
-  --color-secondary: #0ea5e9;
-  --color-secondary-hover: #0284c7;
-  --color-secondary-light: #e0f2fe;
+  --color-secondary: #1f1f1f;
+  --color-secondary-hover: #787878;
+  --color-secondary-light: #dbdbdb;
   
   /* Semantic colors */
   --color-success: #10B981;
@@ -55,6 +55,7 @@
   --color-info-light: var(--color-info-light);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
 }
 
 @media (prefers-color-scheme: dark) {

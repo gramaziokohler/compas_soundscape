@@ -11,16 +11,16 @@ import { UI_COLORS } from '@/lib/constants';
  */
 
 interface AnalysisResultContentProps {
-  result: AnalysisResult;
+  analysisResult: AnalysisResult;
   onTogglePromptSelection: (configIndex: number, promptId: string) => void;
 }
 
 export function AnalysisResultContent({
-  result,
+  analysisResult,
   onTogglePromptSelection
 }: AnalysisResultContentProps) {
   
-  const selectedCount = result.prompts.filter(p => p.selected).length;
+  const selectedCount = analysisResult.prompts.filter(p => p.selected).length;
 
   return (
     <div className="space-y-2">
@@ -30,7 +30,7 @@ export function AnalysisResultContent({
           ✨ Generated Prompts
         </div>
         <div className="text-xs" style={{ color: UI_COLORS.NEUTRAL_600 }}>
-          {selectedCount} / {result.prompts.length} selected
+          {selectedCount} / {analysisResult.prompts.length} selected
         </div>
       </div>
 
@@ -45,7 +45,7 @@ export function AnalysisResultContent({
           borderColor: UI_COLORS.NEUTRAL_300
         }}
       >
-        {result.prompts.map((prompt) => (
+        {analysisResult.prompts.map((prompt) => (
           <label
             key={prompt.id}
             className="flex items-start gap-2 p-2 rounded cursor-pointer transition-colors"
@@ -67,7 +67,7 @@ export function AnalysisResultContent({
             <input
               type="checkbox"
               checked={prompt.selected}
-              onChange={() => onTogglePromptSelection(result.configIndex, prompt.id)}
+              onChange={() => onTogglePromptSelection(analysisResult.configIndex, prompt.id)}
               className="mt-0.5 w-4 h-4 rounded focus:ring-2 accent-primary flex-shrink-0"
             />
             <div className="flex-1 text-xs" style={{ color: UI_COLORS.NEUTRAL_900 }}>

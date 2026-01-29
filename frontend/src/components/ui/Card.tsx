@@ -1,11 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { AnalysisConfig, AnalysisResult, ModelAnalysisConfig, AudioAnalysisConfig, TextAnalysisConfig } from '@/types/analysis';
-import { Model3DContextContent } from '@/components/layout/sidebar/analysis/Model3DContextContent';
-import { AudioContextContent } from '@/components/layout/sidebar/analysis/AudioContextContent';
-import { TextContextContent } from '@/components/layout/sidebar/analysis/TextContextContent';
-import { AnalysisResultContent } from '@/components/layout/sidebar/analysis/AnalysisResultContent';
+import type { CardType, TabState, TabBaseConfig, TabResult, TabProps } from '@/types/card';
 import { UI_COLORS } from '@/lib/constants';
 
 /**
@@ -23,24 +19,24 @@ import { UI_COLORS } from '@/lib/constants';
  * - Has result: Success-tinted background
  */
 
-interface AnalysisTabProps {
-  config: AnalysisConfig;
+interface CardProps {
+  config: TabState;
   index: number;
   isExpanded: boolean;
   hasResult: boolean;
-  analysisResult?: AnalysisResult;
+  analysisResult?: TabResult;
   isRunning?: boolean;
 
   // Callbacks
   onToggleExpand: (index: number) => void;
-  onUpdateConfig: (index: number, updates: Partial<AnalysisConfig>) => void;
+  onUpdateConfig: (index: number, updates: Partial<TabState>) => void;
   onRemove: (index: number) => void;
   onReset: (index: number) => void;
   onAnalyze: (index: number) => void;
   onTogglePromptSelection: (configIndex: number, promptId: string) => void;
 }
 
-export function AnalysisTab({
+export function Card({
   config,
   index,
   isExpanded,
@@ -53,7 +49,7 @@ export function AnalysisTab({
   onReset,
   onAnalyze,
   onTogglePromptSelection
-}: AnalysisTabProps) {
+}: CardProps) {
   // Name editing state
   const [isEditingName, setIsEditingName] = useState(false);
   const [editingValue, setEditingValue] = useState('');
@@ -62,13 +58,13 @@ export function AnalysisTab({
   const getDefaultName = () => {
     switch (config.type) {
       case '3d-model':
-        if ((config as ModelAnalysisConfig).modelFile) {
-          return (config as ModelAnalysisConfig).modelFile!.name;
+        if ((config as TabProps).modelFile) {
+          return (config as TabProps).modelFile!.name;
         }
         return '3D Model Context';
       case 'audio':
-        if ((config as AudioAnalysisConfig).audioFile) {
-          return (config as AudioAnalysisConfig).audioFile!.name;
+        if ((config as TabProps).audioFile) {
+          return (config as TabProps).audioFile!.name;
         }
         return 'Audio Context';
       case 'text':
@@ -90,7 +86,7 @@ export function AnalysisTab({
     
     // Before generation, show different info based on type
     if (config.type === '3d-model') {
-      const modelConfig = config as ModelAnalysisConfig;
+      const modelConfig = config as TabProps;
       if (modelConfig.selectedDiverseEntities.length > 0) {
         return `(${modelConfig.selectedDiverseEntities.length} selected entities)`;
       }
