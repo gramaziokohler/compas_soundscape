@@ -343,13 +343,16 @@ async def run_simulation_speckle(
         
         # Add all receivers
         for receiver_id, (receiver_position, _) in unique_receivers.items():
-            try:
-                PyroomacousticsService.add_receiver_to_room(room, receiver_position, simulation_mode)
-                print(f"  Added {simulation_mode} receiver {receiver_id} at {receiver_position}")
-                
+            try:                
                 if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA and ray_tracing:
-                    print(f"  NOTE: Ray tracing disabled for FOA mode (directivity requires ISM)")
-                    ray_tracing = False
+                    simulation_mode = PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING
+                    print(f"  Updated simulation mode to {simulation_mode} due to ray tracing requirement")
+
+                PyroomacousticsService.add_receiver_to_room(room, receiver_position, simulation_mode)
+                print(f"  Added {simulation_mode} receiver {receiver_id} at {receiver_position}")     
+
+                #     print(f"  NOTE: Ray tracing disabled for FOA mode (directivity requires ISM)")
+                #     ray_tracing = False
             except ValueError as e:
                 error_msg = str(e)
                 if "inside" in error_msg.lower() or "outside" in error_msg.lower() or "room geometry" in error_msg.lower():
@@ -433,6 +436,7 @@ async def run_simulation_speckle(
                     a_format = np.array(padded_channels)
                     b_format = PyroomacousticsService.convert_a_format_to_b_format(a_format)
                     rir_data = b_format.T
+                    print(f"    Converted A-format to B-format for FOA Ray Tracing")
                 else:
                     rir_data = np.column_stack(padded_channels)
                     rir_transformed = np.zeros_like(rir_data)

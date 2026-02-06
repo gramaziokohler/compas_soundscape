@@ -220,10 +220,25 @@ export class AmbisonicIRMode implements IAudioMode {
         }
       });
     } else {
-      // Same order - just update IR buffers
+      // Same order - update IR buffers AND reconnect to new decoder
+      // (initializePipeline disposed the old decoder, so we must reconnect)
       this.sourceChains.forEach((chain) => {
         this.updateChainIR(chain);
+        
+        // Reconnect convolver to new decoder
+        if (this.binauralDecoder && chain.convolver) {
+          try {
+            // Disconnect purely to be safe (though old destination is dead)
+            try { chain.convolver.out.disconnect(); } catch (e) {} 
+            
+            chain.convolver.out.connect(this.binauralDecoder.getInputNode());
+          } catch (e) {
+            console.warn('[AmbisonicIRMode] Failed to reconnect convolver:', e);
+          }
+        }
       });
+      
+      console.log(`[AmbisonicIRMode] Updated IR and reconnected ${this.sourceChains.size} sources`);
     }
   }
 

@@ -1,177 +1,193 @@
 'use client';
 
-import { useState } from 'react';
-import type { CardType, TabState, TabBaseConfig, TabResult, TabProps } from '@/types/card';
-import { UI_COLORS } from '@/lib/constants';
+import { useCallback, type ReactNode } from 'react';
+import type { CardProps, CardBaseConfig } from '@/types/card';
+import { CARD_TYPE_LABELS } from '@/types/card';
+import { useNameEditing } from '@/lib/utils/useNameEditing';
 
 /**
- * AnalysisTab Component
- * 
- * Displays a single analysis configuration in the sidebar.
- * 
- * **States:**
- * - Collapsed: Shows only title and action buttons (delete, reset)
- * - Expanded (no result): Shows full analysis UI with controls
- * - Expanded (has result): Shows selectable text prompts
- * 
- * **Background Colors:**
- * - No result: Lighter neutral background
- * - Has result: Success-tinted background
+ * Card Component
+ *
+ * A unified, reusable card UI component for Analysis and Sound generation tabs.
+ *
+ * **Features:**
+ * - Collapse/expanded states with smooth transitions
+ * - Editable name (double-click to edit)
+ * - Common action buttons (close, reset, custom)
+ * - Before/after generation content slots
+ * - Loading and error states
+ * - Automatic default name generation based on card type
+ *
+ * **Usage:**
+ * ```tsx
+ * <Card
+ *   config={analysisConfig}
+ *   index={0}
+ *   isExpanded={true}
+ *   hasResult={false}
+ *   canRemove={true}
+ *   onToggleExpand={handleToggle}
+ *   onUpdateConfig={handleUpdate}
+ *   onRemove={handleRemove}
+ *   onReset={handleReset}
+ *   beforeContent={<Model3DContextContent ... />}
+ *   afterContent={<AnalysisResultContent ... />}
+ * />
+ * ```
  */
 
-interface CardProps {
-  config: TabState;
-  index: number;
-  isExpanded: boolean;
-  hasResult: boolean;
-  analysisResult?: TabResult;
-  isRunning?: boolean;
+// ============================================================================
+// Default Name Generation
+// ============================================================================
 
-  // Callbacks
-  onToggleExpand: (index: number) => void;
-  onUpdateConfig: (index: number, updates: Partial<TabState>) => void;
-  onRemove: (index: number) => void;
-  onReset: (index: number) => void;
-  onAnalyze: (index: number) => void;
-  onTogglePromptSelection: (configIndex: number, promptId: string) => void;
+/**
+ * Get default name for a card based on its type and config
+ */
+export function getCardDefaultName<TConfig extends CardBaseConfig>(
+  config: TConfig,
+  index: number
+): string {
+  // Check for file-based names first
+  if ('modelFile' in config && config.modelFile) {
+    return (config.modelFile as File).name;
+  }
+  if ('audioFile' in config && config.audioFile) {
+    return (config.audioFile as File).name;
+  }
+
+  // Use CARD_TYPE_LABELS as single source of truth
+  const baseName = CARD_TYPE_LABELS[config.type] || 'Item';
+  return config.type === 'text' ? `${baseName} ${index + 1}` : baseName;
 }
 
-export function Card({
+// ============================================================================
+// Card Component
+// ============================================================================
+
+export function Card<TConfig extends CardBaseConfig>({
   config,
   index,
   isExpanded,
   hasResult,
-  analysisResult,
-  isRunning,
+  result,
+  isRunning = false,
+  progress = 0,
+  status,
+  error,
+  defaultName,
+  collapsedInfo,
+  showIndex = true,
+  canRemove = true,
+  closeButtonTitle = 'Remove',
+  resetButtonTitle = 'Reset to configuration',
+  customButtons,
+  // Simulation action button props
+  onRun,
+  onCancel,
+  actionButtonLabel = 'Start Simulation',
+  actionButtonDisabled = false,
+  actionButtonColor = 'primary',
+  actionButtonDisabledReason,
   onToggleExpand,
   onUpdateConfig,
   onRemove,
   onReset,
-  onAnalyze,
-  onTogglePromptSelection
-}: CardProps) {
-  // Name editing state
-  const [isEditingName, setIsEditingName] = useState(false);
-  const [editingValue, setEditingValue] = useState('');
+  beforeContent,
+  afterContent,
+  loadingContent,
+}: CardProps<TConfig>) {
+  // Compute default name if not provided
+  const computedDefaultName = defaultName || getCardDefaultName(config, index);
+  const baseName = config.display_name || computedDefaultName;
+  const displayName = showIndex ? `${index + 1}. ${baseName}` : baseName;
 
-  // Display name based on type and custom name
-  const getDefaultName = () => {
-    switch (config.type) {
-      case '3d-model':
-        if ((config as TabProps).modelFile) {
-          return (config as TabProps).modelFile!.name;
-        }
-        return '3D Model Context';
-      case 'audio':
-        if ((config as TabProps).audioFile) {
-          return (config as TabProps).audioFile!.name;
-        }
-        return 'Audio Context';
-      case 'text':
-        return `Text Context ${index + 1}`;
-      default:
-        return `Context ${index + 1}`;
+  // Name editing hook
+  const handleSaveName = useCallback((newName: string) => {
+    onUpdateConfig(index, { display_name: newName } as Partial<TConfig>);
+  }, [index, onUpdateConfig]);
+
+  const {
+    isEditing: isEditingName,
+    startEdit,
+    inputProps,
+  } = useNameEditing({
+    initialValue: baseName,
+    onSave: handleSaveName,
+  });
+
+  // Build Tailwind class names
+  const cardClassName = [
+    'rounded-lg border transition-all duration-200',
+    isExpanded ? 'p-3' : 'p-2',
+    hasResult
+      ? 'bg-secondary border-secondary-hover'
+      : 'bg-background border-secondary-light',
+    error ? 'border-error bg-error-light' : '',
+  ].filter(Boolean).join(' ');
+
+  const titleClassName = [
+    'flex-1 text-left text-sm font-medium cursor-pointer transition-opacity group',
+    hasResult ? 'text-background' : 'text-foreground',
+  ].filter(Boolean).join(' ');
+
+  // Button handlers
+  const handleToggleClick = useCallback(() => {
+    onToggleExpand(index);
+  }, [index, onToggleExpand]);
+
+  const handleRemoveClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    onRemove(index);
+  }, [index, onRemove]);
+
+  const handleResetClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    onReset(index);
+  }, [index, onReset]);
+
+  // Render content based on state
+  // Note: Error display is handled at the Card level (shown before content)
+  // to keep all configuration visible when errors occur.
+  const renderContent = () => {
+    if (isRunning && loadingContent) {
+      return (
+        <div className="flex items-center justify-center p-4 text-secondary-hover text-sm">
+          {loadingContent}
+        </div>
+      );
     }
-  };
 
-  const baseName = config.display_name || getDefaultName();
-  const displayName = `${index + 1}. ${baseName}`;
-
-  // Additional info for collapsed state
-  const getCollapsedInfo = () => {
-    if (hasResult && analysisResult) {
-      const selectedCount = analysisResult.prompts.filter(p => p.selected).length;
-      return `(${selectedCount} selected prompt${selectedCount !== 1 ? 's' : ''})`;
+    if (hasResult && afterContent) {
+      return afterContent;
     }
-    
-    // Before generation, show different info based on type
-    if (config.type === '3d-model') {
-      const modelConfig = config as TabProps;
-      if (modelConfig.selectedDiverseEntities.length > 0) {
-        return `(${modelConfig.selectedDiverseEntities.length} selected entities)`;
-      }
-    }
-    
-    return '';
-  };
 
-  // Name editing handlers
-  const handleDoubleClickName = () => {
-    setIsEditingName(true);
-    setEditingValue(baseName);
+    return beforeContent;
   };
-
-  const handleSaveName = () => {
-    if (editingValue.trim()) {
-      onUpdateConfig(index, { display_name: editingValue.trim() });
-    }
-    setIsEditingName(false);
-  };
-
-  const handleCancelEdit = () => {
-    setIsEditingName(false);
-  };
-
-  const handleEditKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleSaveName();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      handleCancelEdit();
-    }
-  };
-
-  // Background color based on result state
-  const backgroundColor = hasResult ? UI_COLORS.DARK_BG : UI_COLORS.NEUTRAL_100;
-  const textColor = hasResult ? UI_COLORS.NEUTRAL_200 : UI_COLORS.NEUTRAL_900;
 
   return (
-    <div
-      className="rounded transition-all"
-      style={{
-        backgroundColor,
-        padding: isExpanded ? '12px' : '8px',
-        borderRadius: '8px',
-        borderWidth: '1px',
-        borderStyle: 'solid',
-        borderColor: isExpanded ? UI_COLORS.NEUTRAL_300 : UI_COLORS.NEUTRAL_200,
-      }}
-    >
+    <div className={cardClassName}>
       {/* Header - Always visible */}
       <div className="flex items-center justify-between gap-2">
         {/* Title - editable on double-click */}
         {isEditingName ? (
           <input
-            type="text"
-            value={editingValue}
-            onChange={(e) => setEditingValue(e.target.value)}
-            onBlur={handleSaveName}
-            onKeyDown={handleEditKeyDown}
-            autoFocus
-            className="flex-1 text-sm font-medium px-2 py-1 rounded outline-none focus:ring-1"
-            style={{
-              backgroundColor: UI_COLORS.NEUTRAL_100,
-              borderColor: UI_COLORS.PRIMARY,
-              borderRadius: '8px',
-              color: textColor
-            }}
+            {...inputProps}
+            className="flex-1 text-sm font-medium px-2 py-1 rounded-lg border border-primary bg-background text-foreground outline-none focus:ring-1 focus:ring-primary"
           />
         ) : (
           <div
-            onDoubleClick={handleDoubleClickName}
-            onClick={() => onToggleExpand(index)}
-            className="flex-1 text-left text-sm font-medium cursor-pointer transition-opacity group"
-            style={{ color: textColor }}
+            onDoubleClick={startEdit}
+            onClick={handleToggleClick}
+            className={`${titleClassName} min-w-0 overflow-hidden`}
             title="Double-click to edit name"
           >
             <div className="truncate">
               {displayName}
               <span className="text-[10px] ml-1 opacity-0 group-hover:opacity-50 transition-opacity">✏️</span>
             </div>
-            {!isExpanded && getCollapsedInfo() && (
-              <div className="text-xs mt-0.5" style={{ color: UI_COLORS.NEUTRAL_500 }}>
-                {getCollapsedInfo()}
+            {!isExpanded && collapsedInfo && (
+              <div className="text-xs mt-0.5 text-secondary-hover">
+                {collapsedInfo}
               </div>
             )}
           </div>
@@ -179,57 +195,29 @@ export function Card({
 
         {/* Action buttons */}
         <div className="flex items-center gap-1 flex-shrink-0">
+          {/* Custom buttons (if provided) */}
+          {customButtons && customButtons.map((button, idx) => (
+            <span key={idx}>{button}</span>
+          ))}
 
           {/* Reset button - only show if result exists */}
           {hasResult && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onReset(index);
-              }}
-              className="w-5 h-5 flex items-center justify-center rounded-full transition-colors"
-              style={{
-                color: UI_COLORS.NEUTRAL_600
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_200;
-                e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = 'transparent';
-                e.currentTarget.style.color = UI_COLORS.NEUTRAL_600;
-              }}
-              title="Reset to configuration UI"
-            >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={4} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-            </svg>
-            </button>
+            <CardButton
+              icon={<ResetIcon />}
+              title={resetButtonTitle}
+              onClick={handleResetClick}
+              variant="default"
+            />
           )}
 
-          {/* Close button - don't allow deleting 3D model context (first tab) */}
-          {!(config.type === '3d-model' && index === 0) && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onRemove(index);
-              }}
-              className="w-5 h-5 flex items-center justify-center text-lg rounded-full transition-colors leading-none"
-              style={{
-                color: UI_COLORS.NEUTRAL_600
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.color = UI_COLORS.ERROR;
-                e.currentTarget.style.backgroundColor = `${UI_COLORS.ERROR}10`;
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.color = UI_COLORS.NEUTRAL_600;
-                e.currentTarget.style.backgroundColor = 'transparent';
-              }}
-              title="Remove analysis"
-            >
-              ×
-            </button>
+          {/* Close button */}
+          {canRemove && (
+            <CardButton
+              icon={<CloseIcon />}
+              title={closeButtonTitle}
+              onClick={handleRemoveClick}
+              variant="close"
+            />
           )}
         </div>
       </div>
@@ -237,48 +225,133 @@ export function Card({
       {/* Expanded content */}
       {isExpanded && (
         <div className="mt-3 space-y-3">
-          {/* If result exists, show prompt selection UI */}
-          {hasResult && analysisResult ? (
-            <AnalysisResultContent
-              analysisResult={analysisResult}
-              onTogglePromptSelection={onTogglePromptSelection}
-            />
-          ) : (
+
+          {renderContent()}
+                    
+          {/* Error display - shown before content but keeps configuration visible */}
+          {error && (
+            <div className="p-2 text-xs rounded-lg bg-error-hover border border-error text-white">
+              {error}
+            </div>
+          )}
+
+          {/* Action Button / Progress Bar Section (for simulation cards) */}
+          {onRun && !hasResult && (
             <>
-              {/* If no result, show type-specific analysis UI */}
-              {config.type === '3d-model' && (
-                <Model3DContextContent
-                  config={config as ModelAnalysisConfig}
-                  index={index}
-                  isRunning={isRunning || false}
-                  onUpdateConfig={onUpdateConfig}
-                  onAnalyze={onAnalyze}
-                />
+              {/* Action Button - Show when not running */}
+              {!isRunning && (
+                <button
+                  onClick={onRun}
+                  disabled={actionButtonDisabled}
+                  className="w-full py-2 px-4 rounded-lg text-xs font-medium transition-all text-white"
+                  style={{
+                    backgroundColor: actionButtonDisabled ? 'var(--color-secondary-hover)' : `var(--color-${actionButtonColor})`,
+                    cursor: actionButtonDisabled ? 'not-allowed' : 'pointer',
+                    opacity: actionButtonDisabled ? 0.4 : 1
+                  }}
+                  title={actionButtonDisabled ? actionButtonDisabledReason : undefined}
+                >
+                  {actionButtonLabel}
+                </button>
               )}
 
-              {config.type === 'audio' && (
-                <AudioContextContent
-                  config={config as AudioAnalysisConfig}
-                  index={index}
-                  isRunning={isRunning || false}
-                  onUpdateConfig={onUpdateConfig}
-                  onAnalyze={onAnalyze}
-                />
-              )}
-
-              {config.type === 'text' && (
-                <TextContextContent
-                  config={config as TextAnalysisConfig}
-                  index={index}
-                  isRunning={isRunning || false}
-                  onUpdateConfig={onUpdateConfig}
-                  onAnalyze={onAnalyze}
-                />
+              {/* Progress Bar with Stop Button - Show when running */}
+              {isRunning && (
+                <div className="flex gap-2 items-center">
+                  <div
+                    className="flex-1 px-3 py-2 rounded-lg text-xs"
+                    style={{
+                      backgroundColor: 'var(--color-secondary-hover)',
+                      color: 'white',
+                      backgroundImage: `linear-gradient(to right, var(--color-primary) ${progress}%, var(--color-secondary-hover) ${progress}%)`,
+                      transition: 'background-image 0.3s ease'
+                    }}
+                  >
+                    <div className="flex justify-between items-center">
+                      <span className="font-medium">{status || 'Calculating...'}</span>
+                      <span className="font-bold">{progress}%</span>
+                    </div>
+                  </div>
+                  
+                  {/* Stop button */}
+                  {onCancel && (
+                    <button
+                      onClick={onCancel}
+                      className="w-8 h-8 rounded-lg text-white font-bold transition-colors flex items-center justify-center flex-shrink-0 bg-error hover:bg-error-hover"
+                      title="Stop"
+                      aria-label="Stop"
+                    >
+                      <span className="text-lg leading-none">■</span>
+                    </button>
+                  )}
+                </div>
               )}
             </>
           )}
         </div>
       )}
     </div>
+  );
+}
+
+// ============================================================================
+// Sub-components
+// ============================================================================
+
+interface CardButtonProps {
+  icon: ReactNode;
+  title: string;
+  onClick: (e: React.MouseEvent) => void;
+  disabled?: boolean;
+  variant?: 'default' | 'close' | 'primary';
+}
+
+function CardButton({ icon, title, onClick, disabled = false, variant = 'default' }: CardButtonProps) {
+  const variantClasses = {
+    default: 'text-secondary-hover hover:bg-secondary-light hover:text-foreground',
+    close: 'text-secondary-hover hover:bg-error-light hover:text-error',
+    primary: 'text-secondary-hover hover:bg-primary-light hover:text-primary',
+  };
+
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`w-5 h-5 flex items-center justify-center rounded-full transition-colors ${variantClasses[variant]} ${
+        disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
+      }`}
+      title={title}
+    >
+      {icon}
+    </button>
+  );
+}
+
+// ============================================================================
+// Icons
+// ============================================================================
+
+function ResetIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      className="w-3 h-3"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={4}
+        d="M10 19l-7-7m0 0l7-7m-7 7h18"
+      />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <span className="text-lg leading-none">×</span>
   );
 }

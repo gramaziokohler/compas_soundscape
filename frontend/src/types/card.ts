@@ -1,57 +1,231 @@
 /**
- * Parent Types for Card UI Components
- * 
+ * Card UI Component Types
+ *
+ * Generic types for the unified Card component that handles
+ * both Analysis and Sound generation tabs.
  */
 
+import type { ReactNode } from 'react';
+
+// ============================================================================
+// Card Type Identifiers
+// ============================================================================
 
 /**
- * Card types
+ * Card types - identifies the category of card (single source of truth)
+ *
+ * Analysis types: '3d-model', 'audio', 'text'
+ * Sound types: 'text-to-audio', 'upload', 'library', 'sample-audio'
+ * Acoustics types: 'resonance', 'choras', 'pyroomacoustics'
  */
-export type CardType = '3d-model' | 'audio' | 'text';
+export type CardType =
+  | '3d-model'
+  | 'audio'
+  | 'text'
+  | 'text-to-audio'
+  | 'upload'
+  | 'library'
+  | 'sample-audio'
+  | 'resonance'
+  | 'choras'
+  | 'pyroomacoustics';
 
 /**
- * Base configuration (before generation)
+ * Default display names for each card type
  */
-export interface TabBaseConfig {
+export const CARD_TYPE_LABELS: Record<CardType, string> = {
+  '3d-model': '3D Model Context',
+  'audio': 'Audio Context',
+  'text': 'Text Context',
+  'text-to-audio': 'Text-to-Audio',
+  'upload': 'Uploaded Audio',
+  'library': 'Library Sound',
+  'sample-audio': 'Sample Audio',
+  'resonance': 'Resonance Audio',
+  'choras': 'Wave-based Simulation',
+  'pyroomacoustics': 'Pyroomacoustics',
+};
+
+// ============================================================================
+// Card State Types
+// ============================================================================
+
+/**
+ * Card visual states
+ */
+export type CardState = 'pending' | 'running' | 'completed' | 'error';
+
+/**
+ * Standard execution state for any card that runs a process.
+ * Use this mixin to ensure consistency for simulation/generation cards.
+ */
+export interface CardExecutionState {
+  /** Whether the process is currently active */
+  isRunning: boolean;
+  /** Progress percentage (0-100) */
+  progress: number;
+  /** Current status message */
+  status: string;
+  /** Error message if failed */
+  error: string | null;
+}
+
+/**
+ * Base configuration shared by all cards
+ */
+export interface CardBaseConfig {
+  /** Card type identifier */
   type: CardType;
+  /** Custom display name (optional) */
   display_name?: string;
-  numSounds?: number; // Number of sound prompts to generate
+  /** Number of sounds/prompts to generate */
+  numSounds?: number;
 }
 
-/**
- * Tab state
- */
-export interface TabState {
-  config: TabBaseConfig;
-  isRunning: boolean;
-  result: TabResult | null;
-  error: string | null;
-}
+// ============================================================================
+// Card Props Interface
+// ============================================================================
 
 /**
- * Result (after generation)
+ * Main Card component props
  */
-export interface TabResult {
-  config: TabBaseConfig[];
-//   result: TabBaseConfig[];
-  generatedAt: Date;
-}
+export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TResult = unknown> extends Partial<CardExecutionState> {
+  /** Card configuration data */
+  config: TConfig;
+  /** Index in the parent list */
+  index: number;
+  /** Whether the card is expanded */
+  isExpanded: boolean;
+  /** Whether the card has completed generation */
+  hasResult: boolean;
 
-/**
- * Sidebar Props
- */
-export interface TabProps {
-  baseConfigs: TabBaseConfig[];
-  activeTab: number;
-  isRunning: boolean;
-  error: string | null;
-//   result: TabResult[];
-  onAddConfig: (type: CardType) => void;
-  onRemoveConfig: (index: number) => void;
-  onUpdateConfig: (index: number, updates: Partial<TabBaseConfig>) => void;
-  onSetActiveTab: (index: number) => void;
-  onRun: (index: number) => void;
-  onStop: () => void;
+  // ============================================================================
+  // Simulation Action Button Props (for acoustics cards)
+  // ============================================================================
+  /**
+   * Called when the action button (e.g., "Start Simulation") is clicked.
+   * When provided, displays an action button in expanded mode (not running).
+   */
+  onRun?: () => Promise<void>;
+  /**
+   * Called when the stop button is clicked during running state.
+   * When provided along with isRunning=true, displays stop button.
+   */
+  onCancel?: () => void;
+  /**
+   * Button label for the action button (default: "Start Simulation")
+   */
+  actionButtonLabel?: string;
+
+  actionButtonColor?: string;
+  /**
+   * Whether the action button should be disabled
+   */
+  actionButtonDisabled?: boolean;
+  /**
+   * Tooltip text when action button is disabled
+   */
+  actionButtonDisabledReason?: string;
+  /** Result data (when hasResult is true) */
+  result?: TResult;
+
+  // Header Configuration
+  /** Default name to show when display_name is not set */
+  defaultName?: string;
+  /** Info text shown in collapsed state (e.g., "3 selected prompts") */
+  collapsedInfo?: string;
+  /** Whether to show the index number prefix */
+  showIndex?: boolean;
+
+  // Button Configuration
+  /** Whether the card can be removed (shows close button) */
+  canRemove?: boolean;
+  /** Custom title for the close button */
+  closeButtonTitle?: string;
+  /** Custom title for the reset button */
+  resetButtonTitle?: string;
+  /** Array of custom button elements to render before reset/close buttons */
+  customButtons?: ReactNode[];
+
+  // Callbacks
+  /** Called when card expand/collapse is toggled */
+  onToggleExpand: (index: number) => void;
+  /** Called when config is updated (e.g., name change) */
+  onUpdateConfig: (index: number, updates: Partial<TConfig>) => void;
+  /** Called when card is removed */
+  onRemove: (index: number) => void;
+  /** Called when card is reset (result cleared) */
   onReset: (index: number) => void;
-  onCopy: (index: number) => void;
+
+  // Content Slots
+  /** Content to show when card has no result (before generation) */
+  beforeContent?: ReactNode;
+  /** Content to show when card has result (after generation) */
+  afterContent?: ReactNode;
+  /** Content to show while generation is running (optional loading state) */
+  loadingContent?: ReactNode;
 }
+
+
+// ============================================================================
+// Card Header Props (for sub-component)
+// ============================================================================
+
+/**
+ * Props for the CardHeader sub-component
+ */
+export interface CardHeaderProps {
+  /** Display name (with index if showIndex is true) */
+  displayName: string;
+  /** Whether the name is currently being edited */
+  isEditingName: boolean;
+  /** Current editing value */
+  editingValue: string;
+  /** Collapsed info text */
+  collapsedInfo?: string;
+  /** Whether card is expanded */
+  isExpanded: boolean;
+  /** Whether card has result */
+  hasResult: boolean;
+
+  // Callbacks
+  onStartEdit: () => void;
+  onSaveEdit: () => void;
+  onCancelEdit: () => void;
+  onEditChange: (value: string) => void;
+  onToggleExpand: () => void;
+}
+
+// ============================================================================
+// Card Button Bar Props (for sub-component)
+// ============================================================================
+
+/**
+ * Props for the CardButtonBar sub-component
+ */
+export interface CardButtonBarProps {
+  /** Whether to show reset button */
+  showReset: boolean;
+  /** Whether to show close button */
+  showClose: boolean;
+  /** Custom buttons to render */
+  customButtons?: ReactNode[];
+
+  // Callbacks
+  onReset: () => void;
+  onClose: () => void;
+}
+
+// ============================================================================
+// Utility Types
+// ============================================================================
+
+/**
+ * Extract the result type from a CardProps type
+ */
+export type CardResultType<T extends CardProps> = T extends CardProps<infer C, infer R> ? R : never;
+
+/**
+ * Extract the config type from a CardProps type
+ */
+export type CardConfigType<T extends CardProps> = T extends CardProps<infer C, infer R> ? C : never;

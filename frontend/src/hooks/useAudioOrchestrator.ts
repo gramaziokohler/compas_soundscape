@@ -91,7 +91,13 @@ export function useAudioOrchestrator() {
     
     const updateStatus = () => {
       const currentStatus = orchestratorRef.current!.getStatus();
-      setStatus(currentStatus);
+      setStatus(prev => {
+        // Deep comparison to allow React to bail out of updates
+        if (JSON.stringify(prev) === JSON.stringify(currentStatus)) {
+          return prev;
+        }
+        return currentStatus;
+      });
     };
     
     const intervalId = setInterval(updateStatus, 100);

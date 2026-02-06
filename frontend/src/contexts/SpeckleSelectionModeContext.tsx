@@ -15,12 +15,21 @@ export interface SelectedEntityInfo {
 }
 
 /**
+ * Color group for material assignment or other custom coloring
+ */
+export interface ColorGroup {
+  objectIds: string[];
+  color: string;
+}
+
+/**
  * Context value interface
  *
  * Manages object-to-sound linking and diverse selection for Speckle objects.
  * Uses FilteringExtension to color objects based on their state:
  * - Green: Objects linked to sounds
  * - Pink: Objects selected for diverse analysis
+ * - Custom: Material assignment colors (registered externally)
  */
 interface SpeckleSelectionModeContextType {
   // Objects with linked sounds (objectId -> soundTabIndex)
@@ -62,6 +71,11 @@ interface SpeckleSelectionModeContextType {
 
   // Clear all filter colors
   clearFilterColors: () => void;
+
+  // Material colors registration (for acoustic simulation material assignment)
+  // These colors are merged with diverse/linked colors in applyFilterColors
+  registerMaterialColors: (colors: ColorGroup[]) => void;
+  clearMaterialColors: () => void;
 }
 
 const SpeckleSelectionModeContext = createContext<SpeckleSelectionModeContextType | null>(null);
@@ -101,12 +115,16 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
   const objectSoundLinksRef = useRef(objectSoundLinks);
   const diverseSelectedObjectIdsRef = useRef(diverseSelectedObjectIds);
 
+  // Material colors registered by SpeckleSurfaceMaterialsSection
+  const materialColorsRef = useRef<ColorGroup[]>([]);
+
   const setViewer = useCallback((viewer: Viewer | null) => {
     viewerRef.current = viewer;
   }, []);
 
   // Apply filter colors using FilteringExtension.setUserObjectColors
   // Uses refs to avoid recreating this function when state changes
+  // Merges diverse/linked colors with registered material colors
   const applyFilterColors = useCallback(() => {
     if (!viewerRef.current) return;
 
@@ -119,20 +137,17 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
     // Read from refs to get current state
     const currentLinks = objectSoundLinksRef.current;
     const currentDiverse = diverseSelectedObjectIdsRef.current;
+    const materialColors = materialColorsRef.current;
 
     // Build color groups for FilteringExtension
     const colorGroups: { objectIds: string[]; color: string }[] = [];
 
-    // Green for sound-linked objects
-    const linkedIds = Array.from(currentLinks.keys());
-    if (linkedIds.length > 0) {
-      colorGroups.push({
-        objectIds: linkedIds,
-        color: SPECKLE_FILTER_COLORS.SOUND_LINKED
-      });
+    // First: Material colors (lowest priority - can be overridden by diverse/linked)
+    if (materialColors.length > 0) {
+      colorGroups.push(...materialColors);
     }
 
-    // Pink for diverse-selected objects (exclude those that are already linked)
+    // Second: Pink for diverse-selected objects (exclude those that are already linked)
     const diverseOnlyIds = Array.from(currentDiverse).filter(
       id => !currentLinks.has(id)
     );
@@ -143,10 +158,19 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
       });
     }
 
+    // Third: Green for sound-linked objects (highest priority)
+    const linkedIds = Array.from(currentLinks.keys());
+    if (linkedIds.length > 0) {
+      colorGroups.push({
+        objectIds: linkedIds,
+        color: SPECKLE_FILTER_COLORS.SOUND_LINKED
+      });
+    }
+
     // Apply colors
     if (colorGroups.length > 0) {
       filteringExt.setUserObjectColors(colorGroups);
-      console.log('[Context] Applied colors - linked:', linkedIds.length, 'diverse:', diverseOnlyIds.length);
+      console.log('[Context] Applied colors - material:', materialColors.length, 'groups, diverse:', diverseOnlyIds.length, 'linked:', linkedIds.length);
     } else {
       // Clear colors if no objects to color
       filteringExt.removeUserObjectColors();
@@ -167,6 +191,23 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
       viewerRef.current.requestRender();
     }
   }, []);
+
+  // Register material colors (from SpeckleSurfaceMaterialsSection)
+  // These will be merged with diverse/linked colors in applyFilterColors
+  const registerMaterialColors = useCallback((colors: ColorGroup[]) => {
+    materialColorsRef.current = colors;
+    console.log('[Context] Registered material colors:', colors.length, 'groups');
+    // Re-apply all colors to merge
+    applyFilterColors();
+  }, [applyFilterColors]);
+
+  // Clear registered material colors
+  const clearMaterialColors = useCallback(() => {
+    materialColorsRef.current = [];
+    console.log('[Context] Cleared material colors');
+    // Re-apply remaining colors
+    applyFilterColors();
+  }, [applyFilterColors]);
 
   // Auto-apply colors when links or diverse selection changes
   // Use a version counter to trigger re-application
@@ -319,7 +360,9 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
     getObjectLinkState,
     setViewer,
     applyFilterColors,
-    clearFilterColors
+    clearFilterColors,
+    registerMaterialColors,
+    clearMaterialColors
   }), [
     linkedObjectIds,
     diverseSelectedObjectIds,
@@ -334,7 +377,9 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
     getObjectLinkState,
     setViewer,
     applyFilterColors,
-    clearFilterColors
+    clearFilterColors,
+    registerMaterialColors,
+    clearMaterialColors
   ]);
 
   return (

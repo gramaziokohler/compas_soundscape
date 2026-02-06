@@ -1,6 +1,7 @@
-//Import card types
-import type { CardType, TabBaseConfig, TabState, TabResult, TabProps } from './card';
-export type { CardType, TabBaseConfig, TabState, TabResult, TabProps };
+// Import card types
+import type { CardType, CardBaseConfig, CardState, CardProps, CardHeaderProps, CardButtonBarProps, CardExecutionState } from './card';
+export type { CardType, CardBaseConfig, CardState, CardProps, CardHeaderProps, CardButtonBarProps, CardExecutionState };
+export { CARD_TYPE_LABELS } from './card';
 
 // Import and re-export Speckle Scene types
 import type { SpeckleSceneProps, SpeckleGeometryNode } from './speckle-scene';
@@ -145,7 +146,7 @@ export interface SoundGenerationConfig {
   display_name?: string;
   spl_db?: number; // SPL level from LLM estimation
   interval_seconds?: number; // Playback interval from LLM estimation
-  mode?: SoundGenerationMode; // Generation mode: text-to-audio, upload, or library
+  type?: CardType; // Card type from CardType (single source of truth)
   // Uploaded audio fields (when bypassing generation)
   uploadedAudioBuffer?: AudioBuffer; // Audio buffer for playback
   uploadedAudioInfo?: SEDAudioInfo; // Audio metadata for display
@@ -164,7 +165,8 @@ import type { SidebarTabValue } from '@/lib/constants';
 export type ActiveTab = SidebarTabValue;
 export type LoadTab = 'sample' | 'upload';
 
-// Sound generation mode types
+// Sound generation mode types - deprecated, use CardType instead
+/** @deprecated Use CardType instead */
 export type SoundGenerationMode = 'text-to-audio' | 'upload' | 'library' | 'sample-audio';
 
 // Library search types

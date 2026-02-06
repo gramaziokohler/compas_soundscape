@@ -12,7 +12,8 @@ interface RangeSliderProps {
   formatValue?: (value: number) => string;
   className?: string;
   showLabels?: boolean;
-  hoverText?: string; 
+  hoverText?: string;
+  disabled?: boolean;
 }
 
 /**
@@ -52,7 +53,8 @@ export function RangeSlider({
   formatValue = (v) => v.toString(),
   className = "",
   showLabels = true,
-  hoverText, 
+  hoverText,
+  disabled = false,
 }: RangeSliderProps) {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onChange(parseFloat(e.target.value));
@@ -83,7 +85,8 @@ export function RangeSlider({
         step={step}
         value={value}
         onChange={handleChange}
-        className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary bg-secondary-light"
+        disabled={disabled}
+        className={`w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary bg-secondary-light ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
       />
 
       {/* Min/Max Labels */}

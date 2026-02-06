@@ -1,12 +1,11 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { ModelAnalysisConfig } from '@/types/analysis';
 import { useSpeckleViewerContext } from '@/contexts/SpeckleViewerContext';
 import { useSpeckleSelectionMode } from '@/contexts/SpeckleSelectionModeContext';
 import { getRootNodesForModel } from '@/hooks/useSpeckleTree';
-import type { Viewer } from '@speckle/viewer';
-import { UI_COLORS, UI_BUTTON, NUM_SOUNDS_MIN, NUM_SOUNDS_MAX } from '@/lib/constants';
+import { UI_COLORS, NUM_SOUNDS_MIN, NUM_SOUNDS_MAX } from '@/lib/constants';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 
 /**
@@ -21,26 +20,33 @@ interface Model3DContextContentProps {
   index: number;
   isAnalyzing: boolean;
   onUpdateConfig: (index: number, updates: Partial<ModelAnalysisConfig>) => void;
-  onAnalyze: (index: number) => void;
 }
 
 export function Model3DContextContent({
   config,
   index,
   isAnalyzing,
-  onUpdateConfig,
-  onAnalyze
+  onUpdateConfig
 }: Model3DContextContentProps) {
   // Get viewer ref from context
   const { viewerRef } = useSpeckleViewerContext();
   
   // Get selection mode context
-  const { diverseSelectedObjectIds } = useSpeckleSelectionMode();
+  const { diverseSelectedObjectIds, setDiverseSelection } = useSpeckleSelectionMode();
 
   // World tree state (for entity population only)
   const [worldTree, setWorldTree] = useState<any>(null);
   const worldTreeRef = useRef<any>(null);
   const hasLoadedTreeRef = useRef<boolean>(false);
+
+  // Track the source of diverse selection updates to prevent infinite loops
+  // 'backend' = update came from backend API (should sync config → context)
+  // 'context' = update came from manual user action (should sync context → config)
+  // null = no pending sync
+  const syncSourceRef = useRef<'backend' | 'context' | null>(null);
+
+  // Track previous config entity count to detect backend updates
+  const prevConfigEntityCountRef = useRef<number>(0);
 
   // Trigger tree fetch when viewer becomes available or speckleData changes
   useEffect(() => {
@@ -82,21 +88,70 @@ export function Model3DContextContent({
     };
   }, [viewerRef?.current, config.speckleData]);
   
-  // Sync diverse selections from context to config
+  // Detect backend updates to config.selectedDiverseEntities
+  // This runs when the backend returns selected entities (count changes significantly)
   useEffect(() => {
+    const currentCount = config.selectedDiverseEntities.length;
+    const prevCount = prevConfigEntityCountRef.current;
+
+    // Detect if this is a backend update (count changed and we have entities)
+    // Backend updates typically set a specific number of entities all at once
+    if (currentCount > 0 && currentCount !== prevCount) {
+      // Extract nodeIds from config.selectedDiverseEntities
+      const configNodeIds = config.selectedDiverseEntities
+        .map(entity => entity.nodeId || entity.id)
+        .filter(Boolean);
+
+      // Get current context IDs for comparison
+      const contextIds = Array.from(diverseSelectedObjectIds);
+
+      // Only sync if this looks like a backend update (not a context-driven update)
+      // Backend updates: config has entities that context doesn't know about
+      const configHasNewEntities = configNodeIds.some(id => !contextIds.includes(id));
+
+      if (configHasNewEntities) {
+        console.log('[Model3DContextContent] Backend update detected, syncing config -> context:', {
+          configCount: configNodeIds.length,
+          contextCount: contextIds.length
+        });
+        syncSourceRef.current = 'backend';
+        setDiverseSelection(configNodeIds);
+      }
+    }
+
+    prevConfigEntityCountRef.current = currentCount;
+  }, [config.selectedDiverseEntities, diverseSelectedObjectIds, setDiverseSelection]);
+
+  // Sync FROM context TO config (for manual selections via EntityInfoPanel)
+  // This handles when user manually adds/removes entities from diverse selection
+  useEffect(() => {
+    // Skip if this update came from a backend sync (prevents infinite loop)
+    if (syncSourceRef.current === 'backend') {
+      syncSourceRef.current = null;
+      return;
+    }
+
     const diverseIds = Array.from(diverseSelectedObjectIds);
-    const diverseEntities = config.modelEntities.filter(entity => 
+    const diverseEntities = config.modelEntities.filter(entity =>
       diverseIds.includes(entity.nodeId || entity.id)
     );
-    
-    // Only update if different to avoid infinite loops
+
+    // Compare IDs to check if update is needed
     const currentIds = config.selectedDiverseEntities.map(e => e.nodeId || e.id).sort();
     const newIds = diverseEntities.map(e => e.nodeId || e.id).sort();
-    
-    if (JSON.stringify(currentIds) !== JSON.stringify(newIds)) {
+
+    const isDifferent = currentIds.length !== newIds.length ||
+      !currentIds.every((id, i) => id === newIds[i]);
+
+    if (isDifferent) {
+      console.log('[Model3DContextContent] Manual selection, syncing context -> config:', {
+        contextCount: diverseIds.length,
+        configCount: currentIds.length,
+        newConfigCount: newIds.length
+      });
       onUpdateConfig(index, { selectedDiverseEntities: diverseEntities });
     }
-  }, [diverseSelectedObjectIds, config.modelEntities, index, onUpdateConfig]);
+  }, [diverseSelectedObjectIds, config.modelEntities, config.selectedDiverseEntities, index, onUpdateConfig]);
 
   // Auto-populate entities from worldTree (recursively traverse children)
   useEffect(() => {
@@ -190,10 +245,10 @@ export function Model3DContextContent({
               color: UI_COLORS.SUCCESS
             }}
           >
-            ✓ Model: {config.modelFile?.name || 'Unknown'}
             <div style={{ color: UI_COLORS.SUCCESS_HOVER }}>
               {config.modelEntities.length > 0 
-                ? `${config.modelEntities.length} objects` 
+                // ? `${config.modelEntities.length} objects`
+                ? 'Select diverse objects from the model or auto-select below.' 
                 : 'Loading objects...'}
             </div>
           </div>
@@ -208,38 +263,7 @@ export function Model3DContextContent({
             onChange={(value) => onUpdateConfig(index, { numSounds: value })}
           />
 
-          {/* Analyze 3D Model button */}
-          <button
-            onClick={() => onAnalyze(index)}
-            disabled={isAnalyzing || config.modelEntities.length === 0}
-            className="w-full text-white flex items-center justify-center gap-2 transition-colors disabled:opacity-40"
-            style={{
-              borderRadius: UI_BUTTON.BORDER_RADIUS_MD,
-              padding: UI_BUTTON.PADDING_MD,
-              fontSize: UI_BUTTON.FONT_SIZE,
-              fontWeight: UI_BUTTON.FONT_WEIGHT,
-              backgroundColor: UI_COLORS.PRIMARY,
-              cursor: (isAnalyzing || config.modelEntities.length === 0) ? 'not-allowed' : 'pointer'
-            }}
-            onMouseEnter={(e) => !e.currentTarget.disabled && (e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY_HOVER)}
-            onMouseLeave={(e) => !e.currentTarget.disabled && (e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY)}
-          >
-            {isAnalyzing ? (
-              <>
-                <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                Analyzing...
-              </>
-            ) : config.modelEntities.length === 0 ? (
-              'Loading objects...'
-            ) : (
-              'Analyze 3D Model'
-            )}
-          </button>
-
-          {/* Show selected entities count below button */}
+          {/* Show selected entities count */}
           {hasSelectedEntities && !isAnalyzing && (
             <div
               className="rounded p-2 text-xs"
@@ -256,35 +280,7 @@ export function Model3DContextContent({
             </div>
           )}
 
-          {/* Generate Sound Ideas button */}
-          {hasSelectedEntities && (
-            <button
-              onClick={() => onAnalyze(index)}
-              disabled={isAnalyzing}
-              className="w-full text-white transition-colors"
-              style={{
-                borderRadius: UI_BUTTON.BORDER_RADIUS_MD,
-                padding: UI_BUTTON.PADDING_MD,
-                fontSize: UI_BUTTON.FONT_SIZE,
-                fontWeight: UI_BUTTON.FONT_WEIGHT,
-                backgroundColor: isAnalyzing ? UI_COLORS.NEUTRAL_400 : UI_COLORS.PRIMARY,
-                opacity: isAnalyzing ? 0.4 : 1,
-                cursor: isAnalyzing ? 'not-allowed' : 'pointer'
-              }}
-              onMouseEnter={(e) => {
-                if (!isAnalyzing) {
-                  e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY_HOVER;
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!isAnalyzing) {
-                  e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY;
-                }
-              }}
-            >
-              Generate Sound Ideas
-            </button>
-          )}
+          {/* Note: Action button is rendered by Card component */}
         </div>
       )}
     </div>

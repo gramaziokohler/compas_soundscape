@@ -131,13 +131,13 @@ PYROOMACOUSTICS_A_FORMAT_ARRAY_RADIUS = 0.10  # Tetrahedron radius in meters (10
 PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING = "foa_raytracing"  # FOA with ray tracing via A-format
 
 # Tetrahedral vertex coordinates (normalized, on unit sphere)
-# Standard A-format orientation: FLU, BRU, FRD, BLD
+# Z-up coordinate system: +X=Right, +Y=Forward, +Z=Up
 # These get scaled by radius and translated to mic center position
 PYROOMACOUSTICS_TETRAHEDRAL_COORDS = [
-    [1, 1, 1],    # FLU (Front Left Up)
-    [-1, -1, 1],  # BRU (Back Right Up)
-    [ 1, -1, -1],  # FRD (Front Right Down) - adjusted for symmetry
-    [-1,  1, -1]   # BLD (Back Left Down)
+    [1, 1, 1],     # RFU (Right Forward Up)
+    [-1, -1, 1],   # LBU (Left Back Up)
+    [1, -1, -1],   # RBD (Right Back Down)
+    [-1, 1, -1]    # LFD (Left Forward Down)
 ]
 
 # Ray Tracing Configuration (Hybrid ISM/Ray Tracing)

@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { SoundGenerationConfig, SoundGenerationMode, LibrarySearchResult, LibrarySearchState } from "@/types";
+import { SoundGenerationConfig, CardType, LibrarySearchResult, LibrarySearchState } from "@/types";
 import {
   API_BASE_URL,
   DEFAULT_DURATION_SECONDS,
@@ -31,7 +31,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
   // AbortController for cancelling ongoing sound generation requests
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  const handleAddConfig = useCallback((mode: SoundGenerationMode = 'text-to-audio') => {
+  const handleAddConfig = useCallback((type: CardType = 'text-to-audio') => {
     setSoundConfigs(prev => {
       // Create a completely fresh config with default values
       const newConfig: SoundGenerationConfig = {
@@ -41,7 +41,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
         negative_prompt: "",
         seed_copies: DEFAULT_SEED_COPIES,
         steps: globalSteps,
-        mode,
+        type,
         // Ensure no leftover data
         uploadedAudioBuffer: undefined,
         uploadedAudioInfo: undefined,
@@ -71,44 +71,44 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     }
   }, [soundConfigs, activeSoundConfigTab]);
 
-  const handleUpdateConfig = useCallback((index: number, field: keyof SoundGenerationConfig, value: string | number | SoundGenerationMode) => {
+  const handleUpdateConfig = useCallback((index: number, field: keyof SoundGenerationConfig, value: string | number | CardType) => {
     const updated = [...soundConfigs];
     updated[index] = { ...updated[index], [field]: value };
     setSoundConfigs(updated);
   }, [soundConfigs]);
 
-  const handleModeChange = useCallback(async (index: number, mode: SoundGenerationMode) => {
+  const handleTypeChange = useCallback(async (index: number, type: CardType) => {
     const updated = [...soundConfigs];
     const config = updated[index];
 
-    // Clear uploaded audio data when switching away from upload or sample-audio mode
+    // Clear uploaded audio data when switching away from upload or sample-audio type
     // This prevents confusion and ensures clean state transitions
-    if ((config.mode === 'upload' || config.mode === 'sample-audio') && mode !== 'upload' && mode !== 'sample-audio' && config.uploadedAudioUrl) {
+    if ((config.type === 'upload' || config.type === 'sample-audio') && type !== 'upload' && type !== 'sample-audio' && config.uploadedAudioUrl) {
       revokeAudioUrl(config.uploadedAudioUrl);
       updated[index] = {
         ...config,
-        mode,
+        type,
         uploadedAudioBuffer: undefined,
         uploadedAudioInfo: undefined,
         uploadedAudioUrl: undefined,
         display_name: undefined // Clear display_name when switching away from upload/sample
       };
-    } else if (mode === 'upload' || mode === 'sample-audio') {
-      // When switching TO upload or sample-audio mode, clear display_name
+    } else if (type === 'upload' || type === 'sample-audio') {
+      // When switching TO upload or sample-audio type, clear display_name
       // This ensures the actual audio filename/source will be used, not the old prompt text
       updated[index] = {
         ...config,
-        mode,
+        type,
         display_name: undefined
       };
     } else {
-      updated[index] = { ...config, mode };
+      updated[index] = { ...config, type };
     }
 
     setSoundConfigs(updated);
 
-    // If switching to sample-audio mode, automatically load the sample audio
-    if (mode === 'sample-audio') {
+    // If switching to sample-audio type, automatically load the sample audio
+    if (type === 'sample-audio') {
       try {
         console.log(`[Sound Generation] Auto-loading sample audio for sound ${index + 1}`);
 
@@ -167,19 +167,19 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
   }, [soundConfigs]);
 
   const handleGenerate = useCallback(async () => {
-    // Separate configs by mode and track their original indices
+    // Separate configs by type and track their original indices
     const uploadedConfigsWithIndices = soundConfigs
       .map((config, idx) => ({ config, originalIndex: idx }))
-      .filter(({ config }) => (config.mode === 'upload' || config.mode === 'sample-audio') && config.uploadedAudioUrl);
+      .filter(({ config }) => (config.type === 'upload' || config.type === 'sample-audio') && config.uploadedAudioUrl);
 
     const libraryConfigsWithIndices = soundConfigs
       .map((config, idx) => ({ config, originalIndex: idx }))
-      .filter(({ config }) => config.mode === 'library' && config.selectedLibrarySound);
+      .filter(({ config }) => config.type === 'library' && config.selectedLibrarySound);
 
     const generationConfigsWithIndices = soundConfigs
       .map((config, idx) => ({ config, originalIndex: idx }))
       .filter(({ config }) =>
-        (config.mode === 'text-to-audio' || !config.mode) &&
+        (config.type === 'text-to-audio' || !config.type) &&
         !config.uploadedAudioUrl &&
         config.prompt.trim() !== ""
       );
@@ -234,23 +234,43 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
 
         const result = await response.json();
 
-        // Map backend response to correct original indices
+        // Map backend response to correct original indices and enrich with entity data
         generatedEvents = result.sounds.map((sound: any) => {
           // Backend returns prompt_index based on the array we sent (0-indexed)
           // We need to map it back to the original soundConfigs index
           const backendIndex = sound.prompt_index;
           const actualOriginalIndex = generationConfigsWithIndices[backendIndex]?.originalIndex ?? backendIndex;
 
+          // Get the original config to check for entity data
+          const originalConfig = generationConfigsWithIndices[backendIndex]?.config;
+          const hasEntityInConfig = originalConfig?.entity !== undefined;
+
+          // Determine entity_index: from backend (if present) or from config's entity
+          let entityIndex = sound.entity_index;
+          if (entityIndex === undefined && hasEntityInConfig && originalConfig.entity?.index !== undefined) {
+            entityIndex = originalConfig.entity.index;
+          }
+
+          // Determine position: use entity's center if entity-linked, otherwise backend position
+          let position = sound.position;
+          if (hasEntityInConfig && originalConfig.entity?.bounds?.center) {
+            // Use entity's bounding box center as the sound source position
+            position = originalConfig.entity.bounds.center;
+          } else if (hasEntityInConfig && originalConfig.entity?.position) {
+            // Fallback to entity's position if no bounds
+            position = originalConfig.entity.position;
+          }
+
           return {
             ...sound,
             prompt_index: actualOriginalIndex, // Use the ACTUAL original index
-            position: sound.position,
+            position: position,
             geometry: sound.geometry || {
               vertices: [],
               faces: []
             },
-            // Preserve entity_index if present
-            ...(sound.entity_index !== undefined && { entity_index: sound.entity_index })
+            // Set entity_index from config if entity-linked (tells sound-sphere-manager to NOT create a sphere)
+            ...(entityIndex !== undefined && { entity_index: entityIndex })
           };
         });
       }
@@ -405,7 +425,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
         const updated = [...prev];
         updated[index] = {
           ...updated[index],
-          mode: 'upload' as SoundGenerationMode, // Set mode to upload when audio is uploaded
+          type: 'upload' as CardType, // Set type to upload when audio is uploaded
           uploadedAudioBuffer: result.audioBuffer,
           uploadedAudioInfo: result.audioInfo,
           uploadedAudioUrl: result.audioUrl
@@ -610,7 +630,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
         negative_prompt: "",
         seed_copies: DEFAULT_SEED_COPIES,
         steps: globalSteps,
-        mode: 'text-to-audio' as SoundGenerationMode
+        type: 'text-to-audio' as CardType
       }));
       return [...prev, ...newConfigs];
     });
@@ -830,7 +850,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     handleBatchAddConfigs,
     handleRemoveConfig,
     handleUpdateConfig,
-    handleModeChange,
+    handleTypeChange,
     handleGenerate,
     handleStopGeneration,
     handleGlobalDurationChange,

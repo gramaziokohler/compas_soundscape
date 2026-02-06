@@ -19,7 +19,7 @@ import { UI_COLORS, UI_RIGHT_SIDEBAR } from '@/lib/constants';
  */
 
 export function ObjectExplorer() {
-  const { viewerRef, modelFileName } = useSpeckleViewerContext();
+  const { viewerRef, modelFileName, worldTreeVersion } = useSpeckleViewerContext();
   
   // World tree state
   const [worldTree, setWorldTree] = useState<any>(null);
@@ -31,6 +31,7 @@ export function ObjectExplorer() {
   const [disableScrollOnNextSelection, setDisableScrollOnNextSelection] = useState(false);
   const treeContainerRef = useRef<HTMLDivElement>(null);
   const previousSelectionRef = useRef<string[]>([]);
+  const hasHiddenAcousticsLayerRef = useRef<boolean>(false);
   
   // Initialize tree management hooks
   const {
@@ -79,8 +80,47 @@ export function ObjectExplorer() {
   } = useSpeckleInteractions(viewerRef);
   
   const hasIsolatedObjectsInGeneral = isolatedObjects.size > 0;
+
+  /**
+   * Find a node by name in the tree (searches recursively)
+   */
+  const findNodeByName = useCallback((nodes: typeof rootNodes, name: string): typeof rootNodes[0] | null => {
+    for (const node of nodes) {
+      const nodeName = node.raw?.name || node.model?.raw?.name || node.model?.name;
+      if (nodeName === name) {
+        return node;
+      }
+      // Search children
+      const children = node.model?.children || node.children;
+      if (children && children.length > 0) {
+        const found = findNodeByName(children as typeof rootNodes, name);
+        if (found) return found;
+      }
+    }
+    return null;
+  }, []);
+
+  // Auto-hide 'Acoustics' layer on initial load
+  useEffect(() => {
+    // Only run once when rootNodes become available
+    if (hasHiddenAcousticsLayerRef.current || rootNodes.length === 0) return;
+
+    const acousticsNode = findNodeByName(rootNodes, 'Acoustics');
+    if (acousticsNode) {
+      const objectIds = getTargetObjectIds(acousticsNode.raw || {});
+      if (objectIds.length > 0) {
+        console.log('[ObjectExplorer] Auto-hiding Acoustics layer on load:', objectIds.length, 'objects');
+        // Small delay to ensure FilteringExtension is ready
+        setTimeout(() => {
+          hideObjects(objectIds);
+        }, 100);
+        hasHiddenAcousticsLayerRef.current = true;
+      }
+    }
+  }, [rootNodes, findNodeByName, hideObjects]);
   
-  // Trigger tree fetch when viewer becomes available
+  // Trigger tree fetch when viewer/world tree becomes available
+  // worldTreeVersion is a proper reactive dependency that changes when the tree loads
   useEffect(() => {
     if (!viewerRef?.current) return;
 
@@ -90,7 +130,7 @@ export function ObjectExplorer() {
       const tree = viewerRef.current.getWorldTree();
       if (tree) {
         const rootNodes = getRootNodesForModel(tree, modelFileName);
-        
+
         if (rootNodes && rootNodes.length > 0) {
           hasLoadedTreeRef.current = true;
           worldTreeRef.current = tree;
@@ -102,11 +142,13 @@ export function ObjectExplorer() {
       return false;
     };
 
+    // Try immediately (worldTreeVersion change means tree should be ready)
     if (attemptTreeLoad()) return;
 
+    // Fallback: retry with delays if immediate load fails
     const timeouts: NodeJS.Timeout[] = [];
     const delays = [500, 1000, 1500, 2000, 2500, 3000];
-    
+
     delays.forEach(delay => {
       const timeout = setTimeout(() => {
         if (!hasLoadedTreeRef.current) {
@@ -119,7 +161,7 @@ export function ObjectExplorer() {
     return () => {
       timeouts.forEach(timeout => clearTimeout(timeout));
     };
-  }, [viewerRef?.current]);
+  }, [viewerRef, worldTreeVersion, modelFileName]);
   
   // Poll for world tree updates from viewer
   useEffect(() => {

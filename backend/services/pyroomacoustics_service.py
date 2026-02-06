@@ -29,9 +29,13 @@ class PyroomacousticsService:
         """
         Add receiver microphone(s) to room based on simulation mode.
 
+        Coordinate systems:
+        - Room/Mesh (Z-up): +X=Right, +Y=Forward, +Z=Up
+        - FuMa B-format:    +X=Front, +Y=Left, +Z=Up
+
         Args:
             room: Room object (pra.Room)
-            receiver_position: [x, y, z] coordinates in meters
+            receiver_position: [x, y, z] coordinates in meters (Z-up)
             simulation_mode: "mono", "foa", or "foa_raytracing"
                            If None, defaults to "mono"
             array_radius: Radius of tetrahedral array in meters (only for foa_raytracing)
@@ -44,9 +48,11 @@ class PyroomacousticsService:
 
         Note:
             - Mono mode: Single omnidirectional microphone
-            - FOA mode: 4 coincident microphones with proper B-format directivity (W=omni, X/Y/Z=fig-8)
+            - FOA mode: 4 coincident microphones with proper B-format directivity (W=omni, Y/Z/X=fig-8)
+                       ACN channel ordering (W, Y, Z, X) with N3D normalization
             - FOA directivity requires ISM and is not supported with ray tracing
             - FOA Raytracing mode: 4 omnidirectional mics in tetrahedral arrangement (for ray tracing)
+                       A-format to B-format conversion handles Z-up coord transform with ACN order and N3D normalization
         """
 
         # Default to mono if not specified
@@ -65,41 +71,53 @@ class PyroomacousticsService:
 
             elif simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
                 # B-format First Order Ambisonics using proper directivity patterns
+                # Uses ACN channel ordering with N3D normalization (AmbiX) and Z-up coordinate system:
+                #   Room coords (Z-up): +X=Right, +Y=Forward, +Z=Up
+                #   AmbiX B-format:     +X=Front, +Y=Left, +Z=Up
+                #
+                # ACN Channel Order: W (0), Y (1), Z (2), X (3)
+                # N3D Normalization: W=1.0, Y/Z/X=sqrt(3)
+                #
+                # DirectionVector uses spherical coords: azimuth from +X in XY plane, colatitude from +Z
                 from pyroomacoustics.directivities import CardioidFamily, DirectionVector
 
-                # W channel: Omnidirectional (p=1.0)
+                N3D_GAIN = np.sqrt(3)  # N3D normalization for first-order channels
+
+                # ACN 0 - W channel: Omnidirectional (p=1.0), N3D gain=1.0
                 w_directivity = CardioidFamily(
                     orientation=DirectionVector(azimuth=0, colatitude=0, degrees=True),
                     p=1.0,  # p=1.0 for omnidirectional
-                    gain=1.0
+                    gain=1.0  # N3D: W channel has unity gain
                 )
-                # X channel: Figure-of-8 along +X axis
-                x_directivity = CardioidFamily(
-                    orientation=DirectionVector(azimuth=0, colatitude=90, degrees=True),
-                    p=0.0,  # p=0.0 for figure-of-8
-                    gain=1.0
-                )
-                # Y channel: Figure-of-8 along +Y axis
-                # azimuth=90° points at +Y (left in ambisonic coordinates)
+                # ACN 1 - Y channel (AmbiX Left): Figure-of-8 along mesh -X axis (Left)
+                # azimuth=180° points at mesh -X (Left)
                 y_directivity = CardioidFamily(
+                    orientation=DirectionVector(azimuth=180, colatitude=90, degrees=True),
+                    p=0.0,  # p=0.0 for figure-of-8
+                    gain=N3D_GAIN  # N3D normalization
+                )
+                # ACN 2 - Z channel (AmbiX Up): Figure-of-8 along mesh +Z axis (Up)
+                # colatitude=0° points at +Z
+                z_directivity = CardioidFamily(
+                    orientation=DirectionVector(azimuth=0, colatitude=0, degrees=True),
+                    p=0.0,  # p=0.0 for figure-of-8
+                    gain=N3D_GAIN  # N3D normalization
+                )
+                # ACN 3 - X channel (AmbiX Front): Figure-of-8 along mesh +Y axis (Forward)
+                # azimuth=90° points at mesh +Y (which becomes AmbiX +X = Front)
+                x_directivity = CardioidFamily(
                     orientation=DirectionVector(azimuth=90, colatitude=90, degrees=True),
                     p=0.0,  # p=0.0 for figure-of-8
-                    gain=1.0
-                )
-                # Z channel: Figure-of-8 along +Z axis
-                z_directivity = CardioidFamily(
-                    orientation=DirectionVector(azimuth=90, colatitude=0, degrees=True),
-                    p=0.0,  # p=0.0 for figure-of-8
-                    gain=1.0
+                    gain=N3D_GAIN  # N3D normalization
                 )
 
-                # Add coincident B-format microphones (all at same position)
-                room.add_microphone(receiver_position, directivity=w_directivity)  # W
-                room.add_microphone(receiver_position, directivity=x_directivity)  # X
-                room.add_microphone(receiver_position, directivity=y_directivity)  # Y
-                room.add_microphone(receiver_position, directivity=z_directivity)  # Z
+                # Add coincident B-format microphones in ACN order: W, Y, Z, X
+                room.add_microphone(receiver_position, directivity=w_directivity)  # ACN 0: W
+                room.add_microphone(receiver_position, directivity=y_directivity)  # ACN 1: Y
+                room.add_microphone(receiver_position, directivity=z_directivity)  # ACN 2: Z
+                room.add_microphone(receiver_position, directivity=x_directivity)  # ACN 3: X
 
-                print(f"Added B-format FOA microphone at {receiver_position} with proper directivity (W=omni, X/Y/Z=fig-8)")
+                print(f"Added AmbiX FOA microphone at {receiver_position} (ACN order: W,Y,Z,X with N3D normalization)")
                 print("NOTE: Directivity only supported with ISM. Ray tracing should be disabled.")
 
             elif simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING:
@@ -228,7 +246,7 @@ class PyroomacousticsService:
                         scattering = [PYROOMACOUSTICS_DEFAULT_SCATTERING]*n_bands
                     else:
                         scattering = [face_scattering.get(face_idx, PYROOMACOUSTICS_DEFAULT_SCATTERING)]*n_bands
-                        print(f"Face {face_idx}: scattering = {scattering}")
+                        # print(f"Face {face_idx}: scattering = {scattering}")
 
                 # Extract face vertices (corners of the wall)
                 # pyroomacoustics expects corners for walls in 3D form [3, n_corners]
@@ -388,6 +406,11 @@ class PyroomacousticsService:
         This simulates a physical Ambisonics microphone (like Sennheiser Ambeo or
         Røde NT-SF1) with 4 omnidirectional capsules arranged in a tetrahedron.
 
+        Coordinate system: Z-up (room/mesh coordinates)
+        - +X = Right
+        - +Y = Forward
+        - +Z = Up
+
         Args:
             center: [x, y, z] coordinates of array center in meters
             radius: Radius of tetrahedron in meters (default: from constants, ~2cm)
@@ -397,11 +420,11 @@ class PyroomacousticsService:
                        Format: [[x0,x1,x2,x3], [y0,y1,y2,y3], [z0,z1,z2,z3]]
 
         Note:
-            The 4 microphones are arranged as:
-            - Mic 0: FLU (Front Left Up)   → +X +Y +Z
-            - Mic 1: BRU (Back Right Up)   → -X -Y +Z
-            - Mic 2: FRD (Front Right Down) → -X +Y -Z
-            - Mic 3: BLD (Back Left Down)  → +X -Y -Z
+            The 4 microphones are arranged as (Z-up convention):
+            - Mic 0: RFU (Right Forward Up)    → [+1, +1, +1]
+            - Mic 1: LBU (Left Back Up)        → [-1, -1, +1]
+            - Mic 2: RBD (Right Back Down)     → [+1, -1, -1]
+            - Mic 3: LFD (Left Forward Down)   → [-1, +1, -1]
         """
         from config.constants import (
             PYROOMACOUSTICS_A_FORMAT_ARRAY_RADIUS,
@@ -426,89 +449,100 @@ class PyroomacousticsService:
     @staticmethod
     def convert_a_format_to_b_format(a_format_irs: np.ndarray) -> np.ndarray:
         """
-        Convert A-format impulse responses to B-format (W, X, Y, Z).
+        Convert A-format impulse responses to B-format in ACN channel order with N3D normalization.
 
         A-format is the raw output from a tetrahedral microphone array.
-        B-format is the standard Ambisonics representation with:
-        - W: Omnidirectional (pressure)
-        - X: Front-Back dipole (velocity X)
-        - Y: Left-Right dipole (velocity Y)
-        - Z: Up-Down dipole (velocity Z)
+        B-format is the standard Ambisonics representation (AmbiX/ACN+N3D) with:
+        - Channel 0 (W): Omnidirectional (pressure)
+        - Channel 1 (Y): Left-Right dipole (+Y = Left in room coords)
+        - Channel 2 (Z): Up-Down dipole (+Z = Up)
+        - Channel 3 (X): Front-Back dipole (+X = Front in room coords)
+
+        Coordinate systems:
+        - Room/Mesh (Z-up): +X=Right, +Y=Forward, +Z=Up
+        - AmbiX B-format (Z-up): +X=Front, +Y=Left, +Z=Up
+
+        Normalization: N3D (full 3D normalization)
+        - W: normalized to 1.0
+        - X, Y, Z: normalized to sqrt(3) ≈ 1.732
 
         Args:
             a_format_irs: A-format IRs as [4, n_samples] array
-                         Order: [FLU, BRU, FRD, BLD]
+                         Order: [RFU, LBU, RBD, LFD] (see tetrahedral coords)
 
         Returns:
             np.ndarray: B-format IRs as [4, n_samples] array
-                       Order: [W, X, Y, Z] (FuMa channel ordering)
+                       Order: [W, Y, Z, X] (ACN channel ordering with N3D normalization)
 
         Note:
-            The conversion matrix is derived from the tetrahedral geometry:
-            - Mic 0 (FLU): +X +Y +Z
-            - Mic 1 (BRU): -X -Y +Z
-            - Mic 2 (FRD): -X +Y -Z
-            - Mic 3 (BLD): +X -Y -Z
+            Tetrahedral mic positions in Z-up room coordinates:
+            - Mic 0 (RFU): [+1, +1, +1] = Right, Forward, Up
+            - Mic 1 (LBU): [-1, -1, +1] = Left, Back, Up
+            - Mic 2 (RBD): [+1, -1, -1] = Right, Back, Down
+            - Mic 3 (LFD): [-1, +1, -1] = Left, Forward, Down
 
-            Encoding equations:
-            W = FLU + BRU + FRD + BLD (sum = omnidirectional)
-            X = (FLU + BLD) - (BRU + FRD) (front - back)
-            Y = (FLU + FRD) - (BRU + BLD) (left - right)
-            Z = (FLU + BRU) - (FRD + BLD) (up - down)
+            B-format encoding (in room coordinates):
+            W = sum of all mics (omnidirectional)
+            mesh_X = (RFU + RBD) - (LBU + LFD)  [Right-Left axis]
+            mesh_Y = (RFU + LFD) - (LBU + RBD)  [Forward-Back axis]
+            mesh_Z = (RFU + LBU) - (RBD + LFD)  [Up-Down axis]
+
+            Transform to AmbiX (ACN order, Z-up):
+            ACN 0 (W) = W (omnidirectional)
+            ACN 1 (Y) = -mesh_X (Left = -Right)
+            ACN 2 (Z) = mesh_Z (Up)
+            ACN 3 (X) = mesh_Y (Front = Forward)
         """
         if a_format_irs.shape[0] != 4:
             raise ValueError(f"A-format must have 4 channels, got {a_format_irs.shape[0]}")
 
-        # Extract individual channels
-        flu = a_format_irs[0]  # Front Left Up
-        bru = a_format_irs[1]  # Back Right Up
-        frd = a_format_irs[2]  # Front Right Down
-        bld = a_format_irs[3]  # Back Left Down
+        # Extract individual channels (Z-up naming convention)
+        rfu = a_format_irs[0]  # Right Forward Up   [+1, +1, +1]
+        lbu = a_format_irs[1]  # Left Back Up       [-1, -1, +1]
+        rbd = a_format_irs[2]  # Right Back Down    [+1, -1, -1]
+        lfd = a_format_irs[3]  # Left Forward Down  [-1, +1, -1]
 
-        # Convert to B-format
+        # Convert to B-format in room coordinates
         # W: Omnidirectional (pressure) - sum of all mics
-        W = flu + bru + frd + bld
+        W = rfu + lbu + rbd + lfd
 
-        # X: Front-Back (velocity X) - based on mic X positions
-        # Mics with +X: FLU, FRD | Mics with -X: BRU, BLD
-        X = (flu + frd) - (bru + bld)
+        # mesh_X: Right-Left axis (room +X direction)
+        # Mics with +X (Right): RFU, RBD | Mics with -X (Left): LBU, LFD
+        mesh_X = (rfu + rbd) - (lbu + lfd)
 
-        # Y: Left-Right (velocity Y) - based on mic Y positions
-        # Mics with +Y: FLU, BLD | Mics with -Y: BRU, FRD
-        Y = (flu + bld) - (bru + frd)
+        # mesh_Y: Forward-Back axis (room +Y direction)
+        # Mics with +Y (Forward): RFU, LFD | Mics with -Y (Back): LBU, RBD
+        mesh_Y = (rfu + lfd) - (lbu + rbd)
 
-        # Z: Up-Down (velocity Z) - based on mic Z positions
-        # Mics with +Z: FLU, BRU | Mics with -Z: FRD, BLD
-        Z = (flu + bru) - (frd + bld)
+        # mesh_Z: Up-Down axis (room +Z direction)
+        # Mics with +Z (Up): RFU, LBU | Mics with -Z (Down): RBD, LFD
+        mesh_Z = (rfu + lbu) - (rbd + lfd)
 
-        # Normalize: W by 1/4 (sum), XYZ by 1/2 (difference pairs)
-        # This ensures proper gain structure for Ambisonics
-        W = W * 0.5 * 0.7071  # 0.5 averages pairs, 0.7071 is FuMa W-attenuation
-        X = X * 0.5   # 1/2 for figure-8
-        Y = Y * 0.5
-        Z = Z * 0.5
+        # N3D normalization factors:
+        # W (ACN 0): normalized to 1.0
+        # Y, Z, X (ACN 1, 2, 3): normalized to sqrt(3) ≈ 1.732
+        # The 0.5 factor averages the tetrahedral pairs
+        N3D_FACTOR = np.sqrt(3)  # N3D normalization for first-order channels
 
-        # Transform from Three.js to Ambisonic coordinates
-        # The tetrahedral array is placed in Three.js mesh coordinates:
-        #   Three.js: +X=Right, +Y=Up, +Z=Backward
-        # But B-format expects Ambisonic coordinates:
-        #   Ambisonic: +X=Front, +Y=Left, +Z=Up
+        W = W * 0.5  # W channel: N3D normalization is 1.0
+        mesh_X = mesh_X * 0.5 * N3D_FACTOR  # Apply N3D normalization
+        mesh_Y = mesh_Y * 0.5 * N3D_FACTOR
+        mesh_Z = mesh_Z * 0.5 * N3D_FACTOR
+
+        # Transform from room coordinates (Z-up) to AmbiX B-format (ACN order, Z-up)
+        # Room coords (Z-up): +X=Right, +Y=Forward, +Z=Up
+        # AmbiX B-format:     +X=Front, +Y=Left, +Z=Up
         #
-        # The X, Y, Z computed above capture sounds along Three.js axes:
-        #   X (computed) = Right-Left (Three.js ±X)
-        #   Y (computed) = Up-Down (Three.js ±Y)
-        #   Z (computed) = Backward-Forward (Three.js ±Z)
-        #
-        # Transform to Ambisonic:
-        #   X_ambisonic (Front-Back) = -Z (Forward = -Backward)
-        #   Y_ambisonic (Left-Right) = -X (Left = -Right)
-        #   Z_ambisonic (Up-Down) = Y (same)
-        X_ambisonic = -Z
-        Y_ambisonic = -X
-        Z_ambisonic = Y
+        # ACN 0 (W) = W (omnidirectional)
+        # ACN 1 (Y) = -mesh_X (Left = -Right)
+        # ACN 2 (Z) = mesh_Z (Up)
+        # ACN 3 (X) = mesh_Y (Front = Forward)
+        Y_ambix = -mesh_X    # Left = -Right
+        Z_ambix = mesh_Z     # Up = Up
+        X_ambix = mesh_Y     # Front = Forward
 
-        # Stack into B-format array [4, n_samples] in Ambisonic coordinates
-        b_format_ir = np.array([W, X_ambisonic, Y_ambisonic, Z_ambisonic])
+        # Stack into B-format array [4, n_samples] in ACN order: W, Y, Z, X
+        b_format_ir = np.array([W, Y_ambix, Z_ambix, X_ambix])
 
         return b_format_ir
 
@@ -525,9 +559,11 @@ class PyroomacousticsService:
         patterns are not supported. Instead, we use 4 omnidirectional mics
         in a tight tetrahedron and convert to B-format post-simulation.
 
+        Coordinate system: Z-up (+X=Right, +Y=Forward, +Z=Up)
+
         Args:
             room: Room object (pra.Room)
-            center_position: [x, y, z] center of the array in meters
+            center_position: [x, y, z] center of the array in meters (Z-up)
             radius: Tetrahedron radius in meters (default: from constants)
 
         Returns:
@@ -535,6 +571,10 @@ class PyroomacousticsService:
 
         Raises:
             ValueError: If position is invalid or outside room geometry
+
+        Note:
+            Mic arrangement (Z-up): RFU, LBU, RBD, LFD
+            After simulation, use convert_a_format_to_b_format() to get AmbiX B-format (ACN+N3D).
         """
         from config.constants import PYROOMACOUSTICS_A_FORMAT_ARRAY_RADIUS
 
@@ -557,7 +597,7 @@ class PyroomacousticsService:
             room.add_microphone_array(mic_locs)
 
             print(f"Added tetrahedral A-format array at {center_position} (radius={radius*100:.1f}cm)")
-            print(f"  Mic positions: FLU, BRU, FRD, BLD")
+            print(f"  Mic positions (Z-up): RFU, LBU, RBD, LFD")
 
             return room
 
@@ -584,22 +624,28 @@ class PyroomacousticsService:
         This method enables FOA ambisonics simulation with ray tracing by:
         1. Creating a tetrahedral array of 4 omnidirectional microphones
         2. Running hybrid ISM + ray tracing simulation
-        3. Converting A-format output to B-format (W, X, Y, Z)
+        3. Converting A-format output to B-format (W, Y, Z, X) in AmbiX format (ACN+N3D)
 
         This approach works around the limitation that pyroomacoustics directivity
         patterns (required for direct B-format capture) don't work with ray tracing.
 
+        Coordinate systems:
+        - Room/Mesh (Z-up): +X=Right, +Y=Forward, +Z=Up
+        - AmbiX B-format output (Z-up): +X=Front, +Y=Left, +Z=Up
+        - ACN channel order: W (0), Y (1), Z (2), X (3)
+        - N3D normalization: W=1.0, Y/Z/X=sqrt(3)
+
         Args:
             room: Room object (pra.Room) created with ray_tracing=True
-            source_position: [x, y, z] coordinates of sound source in meters
-            receiver_position: [x, y, z] center of tetrahedral array in meters
-            array_radius: Tetrahedron radius in meters (default: 2cm from constants)
+            source_position: [x, y, z] coordinates of sound source in meters (Z-up)
+            receiver_position: [x, y, z] center of tetrahedral array in meters (Z-up)
+            array_radius: Tetrahedron radius in meters (default from constants)
             ray_tracing_params: Optional dict with ray tracing parameters
 
         Returns:
             tuple: (room, b_format_ir)
                 - room: Room with computed RIRs
-                - b_format_ir: B-format IR as [4, n_samples] array [W, X, Y, Z]
+                - b_format_ir: B-format IR as [4, n_samples] array [W, Y, Z, X] (ACN order, N3D normalized)
 
         Raises:
             HTTPException: If simulation fails
@@ -698,7 +744,9 @@ class PyroomacousticsService:
         Export B-format impulse response to WAV file.
 
         Args:
-            b_format_ir: B-format IR as [4, n_samples] array [W, X, Y, Z]
+            b_format_ir: B-format IR as [4, n_samples] array [W, Y, Z, X] (AmbiX format)
+                        AmbiX convention (Z-up): +X=Front, +Y=Left, +Z=Up
+                        ACN channel order with N3D normalization
             output_path: Path to save WAV file
             fs: Sample rate in Hz (default: from constants)
 
@@ -707,6 +755,10 @@ class PyroomacousticsService:
 
         Raises:
             HTTPException: If export fails
+
+        Note:
+            Output is 4-channel WAV in ACN channel order: W, Y, Z, X
+            N3D normalization: W=1.0, Y/Z/X=sqrt(3)
         """
         try:
             from config.constants import PYROOMACOUSTICS_SAMPLE_RATE

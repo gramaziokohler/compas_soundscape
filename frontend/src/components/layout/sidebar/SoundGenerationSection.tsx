@@ -1,9 +1,33 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+'use client';
+
+import { useMemo, useCallback, useEffect, useState, useRef } from "react";
 import type { SoundGenerationSectionProps } from "@/types/components";
-import type { SoundGenerationMode, SoundGenerationConfig } from "@/types";
-import { SoundTab } from "./SoundTab";
-import { UI_COLORS, UI_BUTTON } from "@/lib/constants";
+import type { SoundGenerationConfig, SoundEvent, CardType, CardBaseConfig } from "@/types";
+import { CARD_TYPE_LABELS } from "@/types";
+import type { CardTypeOption } from "@/components/ui/CardSection";
+import { CardSection } from "@/components/ui/CardSection";
+import { Card } from "@/components/ui/Card";
+import { SoundConfigContent, SoundResultContent } from "./sound";
+import { CardTypeSwitcher } from "./sound/CardTypeSwitcher";
 import { apiService } from "@/services/api";
+
+/**
+ * SoundGenerationSection Component
+ *
+ * Manages multiple sound generation cards (text-to-audio, upload, library, sample-audio).
+ * Each card can be configured and generates audio files.
+ *
+ * **Architecture:**
+ * - Uses CardSection for expand/collapse and add button logic
+ * - Uses Card component for each sound item
+ * - Content components passed as beforeContent/afterContent props
+ */
+
+// Extend CardBaseConfig for sound configs
+interface SoundCardConfig extends CardBaseConfig {
+  type: CardType;
+  originalConfig: SoundGenerationConfig;
+}
 
 export function SoundGenerationSection({
   soundConfigs,
@@ -14,6 +38,7 @@ export function SoundGenerationSection({
   onBatchAddConfigs,
   onRemoveConfig,
   onUpdateConfig,
+  onTypeChange,
   onSetActiveTab,
   onGenerate,
   onStopGeneration,
@@ -43,95 +68,50 @@ export function SoundGenerationSection({
   soundVolumes = {},
   soundIntervals = {},
   selectedVariants = {},
-  // Preview playback props
   previewingSoundId = null,
   onPreviewPlayPause,
   onPreviewStop,
 }: SoundGenerationSectionProps) {
-  // Track which sound tabs are expanded
-  const [expandedTabs, setExpandedTabs] = useState<Set<number>>(new Set());
-
-  // Track mode selector dropdown visibility
-  const [showModeSelector, setShowModeSelector] = useState(false);
-  const modeSelectorRef = useRef<HTMLDivElement>(null);
-  
-  // Refs for scrolling
-  const soundListRef = useRef<HTMLDivElement>(null);
-  const soundTabRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  // Track expanded index for controlled mode (CardSection)
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(
+    soundConfigs.length > 0 ? 0 : null
+  );
 
   // Helper to check if a sound is generated
-  const isSoundGenerated = (index: number): boolean => {
+  const isSoundGenerated = useCallback((index: number): boolean => {
     return generatedSounds.some(s => s.prompt_index === index);
-  };
+  }, [generatedSounds]);
 
   // Helper to get generated sound for a config index (returns selected variant)
-  const getGeneratedSound = (index: number) => {
+  const getGeneratedSound = useCallback((index: number): SoundEvent | undefined => {
     const variants = generatedSounds.filter(s => s.prompt_index === index);
     if (variants.length === 0) return undefined;
     const selectedIdx = selectedVariants[index] ?? 0;
     return variants[selectedIdx] || variants[0];
-  };
+  }, [generatedSounds, selectedVariants]);
 
   // Helper to get all variants for a prompt index
-  const getVariantsForPrompt = (index: number) => {
+  const getVariantsForPrompt = useCallback((index: number): SoundEvent[] => {
     return generatedSounds.filter(s => s.prompt_index === index);
-  };
+  }, [generatedSounds]);
 
   // Helper to get selected variant index for a prompt
-  const getSelectedVariantIdx = (index: number): number => {
+  const getSelectedVariantIdx = useCallback((index: number): number => {
     return selectedVariants[index] ?? 0;
-  };
-
-  // Toggle expansion of a sound tab (only one can be expanded at a time)
-  const handleToggleExpand = (index: number) => {
-    // CRITICAL: Stop preview BEFORE setting state
-    // Calling onPreviewStop inside the setState callback causes React error:
-    // "Cannot update a component while rendering a different component"
-    if (previewingSoundId) {
-      onPreviewStop?.(previewingSoundId);
-    }
-
-    setExpandedTabs(prev => {
-      const wasExpanded = prev.has(index);
-
-      if (wasExpanded) {
-        return new Set(); // Collapse if already expanded
-      }
-
-      // Expand this tab and scroll to it
-      setTimeout(() => {
-        const tabElement = soundTabRefs.current.get(index);
-        tabElement?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }, 100);
-
-      return new Set([index]); // Expand only this tab
-    });
-  };
+  }, [selectedVariants]);
 
   // Handle reset (convert generated sound back to generation UI)
-  const handleReset = (index: number) => {
-
+  const handleReset = useCallback((index: number) => {
     const sound = getGeneratedSound(index);
-
     if (sound && onResetSound) {
-      // Remove the generated sound but keep the config
       onResetSound(sound.id, index);
-    } else {
-      console.warn('[SoundGenerationSection.handleReset] NOT calling onResetSound. Reason:', !sound ? 'No sound found' : 'No onResetSound handler');
     }
-  };
-
-  // Calculate sound status - count actual generated sounds, not cards
-  const soundStatus = useMemo(() => {
-    const totalSounds = generatedSounds.length;
-    const totalCards = soundConfigs.length;
-    const pendingCount = totalCards - totalSounds;
-    return { totalSounds, totalCards, pendingCount };
-  }, [soundConfigs.length, generatedSounds.length]);
+  }, [getGeneratedSound, onResetSound]);
 
   // Validate if a sound config has valid settings for generation
-  const isConfigValid = (config: SoundGenerationConfig): boolean => {
-    switch (config.mode) {
+  const isConfigValid = useCallback((config: SoundGenerationConfig): boolean => {
+    const cardType = config.type || 'text-to-audio';
+    switch (cardType) {
       case 'text-to-audio':
         return config.prompt.trim().length > 0;
       case 'upload':
@@ -141,328 +121,369 @@ export function SoundGenerationSection({
       case 'sample-audio':
         return !!(config.uploadedAudioBuffer || config.uploadedAudioInfo);
       default:
-        // If no mode specified, treat as text-to-audio
         return config.prompt.trim().length > 0;
     }
-  };
+  }, []);
 
   // Check if all pending configs have valid settings
   const allPendingConfigsValid = useMemo(() => {
-    // Get pending configs (those not yet generated)
     const pendingConfigs = soundConfigs.filter((_, index) => !isSoundGenerated(index));
-
-    // If no pending configs, return true (nothing to validate)
     if (pendingConfigs.length === 0) return true;
-
-    // Check if all pending configs are valid
     return pendingConfigs.every(isConfigValid);
-  }, [soundConfigs, generatedSounds]);
+  }, [soundConfigs, isSoundGenerated, isConfigValid]);
 
   // Determine if generate button should be disabled
   const shouldDisableGenerateButton = isSoundGenerating || soundConfigs.length === 0 || !allPendingConfigsValid;
 
-  // When adding a new sound, expand it and collapse others
-  useEffect(() => {
-    // Expand the last added sound card
-    const lastIndex = soundConfigs.length - 1;
-    if (lastIndex >= 0) {
-      setExpandedTabs(new Set([lastIndex]));
-    }
-  }, [soundConfigs.length]);
+  // Handle type selection from dropdown
+  const handleTypeSelect = useCallback(async (type: CardType) => {
+    onAddConfig(type);
 
-  // When a card is selected externally (from ThreeScene), expand it
-  useEffect(() => {
-    if (selectedCardIndex !== null && selectedCardIndex >= 0 && selectedCardIndex < soundConfigs.length) {
-      setExpandedTabs(new Set([selectedCardIndex]));
-
-      // Scroll to the selected card
-      setTimeout(() => {
-        const tabElement = soundTabRefs.current.get(selectedCardIndex);
-        tabElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }, 100);
-    }
-  }, [selectedCardIndex, soundConfigs.length]);
-
-  // Close mode selector when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (modeSelectorRef.current && !modeSelectorRef.current.contains(event.target as Node)) {
-        setShowModeSelector(false);
-      }
-    };
-
-    if (showModeSelector) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
-    }
-  }, [showModeSelector]);
-
-  // Handle mode selection
-  const handleModeSelect = async (mode: SoundGenerationMode) => {
-    // Create the config first
-    onAddConfig(mode);
-    setShowModeSelector(false);
-
-    // If sample-audio mode, auto-load the sample file
-    if (mode === 'sample-audio') {
+    // If sample-audio type, auto-load the sample file
+    if (type === 'sample-audio') {
       try {
-        // Get the index of the newly created config (will be last in array)
         const newIndex = soundConfigs.length;
-
-        // Load sample audio from backend
         const sampleFile = await apiService.loadSampleAudio();
-
-        // Upload it to the newly created config
         await onUploadAudio(newIndex, sampleFile);
       } catch (error) {
         console.error('[SoundGenerationSection] Failed to load sample audio:', error);
       }
     }
-  };
+  }, [soundConfigs.length, onAddConfig, onUploadAudio]);
 
-  return (
-    <div className="flex flex-col gap-3">
+  // Handle card type switching - uses the hook's handleTypeChange for proper state management
+  const handleSwitchCardType = useCallback(async (index: number, newType: CardType) => {
+    const currentConfig = soundConfigs[index];
+    if (!currentConfig || currentConfig.type === newType) return;
 
-      {/* Sound status */}
-      <div className="flex items-center text-xs w-full gap-1" style={{ color: UI_COLORS.NEUTRAL_600 }}>
-        {soundStatus.totalSounds} sound{soundStatus.totalSounds !== 1 ? 's' : ''}
-        {soundStatus.pendingCount > 0 && (
-          <span> ({soundStatus.pendingCount} pending)</span>
-        )}
+    // Use the hook's type change handler which properly manages state transitions
+    if (onTypeChange) {
+      await onTypeChange(index, newType);
+    }
+  }, [soundConfigs, onTypeChange]);
 
-        {/* Add Sound button with mode selector dropdown */}
-        <div className="ml-auto relative" ref={modeSelectorRef}>
-          <button
-            onClick={() => setShowModeSelector(!showModeSelector)}
-            className="w-8 h-8 rounded text-white font-bold transition-colors flex items-center justify-center"
-            style={{
-              backgroundColor: UI_COLORS.PRIMARY,
-              borderRadius: '8px'
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_400}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY}
-            title="Add sound"
-            aria-label="Add sound"
-          >
-            <span className="text-lg leading-none">+</span>
-          </button>
+  // Auto-expand newly added items (controlled mode)
+  const prevConfigsLength = useRef(soundConfigs.length);
+  useEffect(() => {
+    if (soundConfigs.length > prevConfigsLength.current) {
+      // New item was added, expand it
+      setExpandedIndex(soundConfigs.length - 1);
+    }
+    prevConfigsLength.current = soundConfigs.length;
+  }, [soundConfigs.length]);
 
-          {/* Mode selector dropdown */}
-          {showModeSelector && (
-            <div
-              className="absolute right-0 mt-1 z-10 rounded shadow-lg"
-              style={{
-                backgroundColor: 'white',
-                borderRadius: '8px',
-                borderWidth: '1px',
-                borderStyle: 'solid',
-                borderColor: UI_COLORS.NEUTRAL_300,
-                minWidth: '200px'
-              }}
-            >
-              <button
-                onClick={() => handleModeSelect('text-to-audio')}
-                className="w-full text-left px-3 py-2 text-xs transition-colors"
-                style={{
-                  borderRadius: '8px 8px 0 0',
-                  color: UI_COLORS.NEUTRAL_900
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY;
-                  e.currentTarget.style.color = 'white';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                  e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
-                }}
-              >
-                Text-to-Audio Generation
-              </button>
-              <button
-                onClick={() => handleModeSelect('upload')}
-                className="w-full text-left px-3 py-2 text-xs transition-colors"
-                style={{ color: UI_COLORS.NEUTRAL_900 }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY;
-                  e.currentTarget.style.color = 'white';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                  e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
-                }}
-              >
-                Upload File
-              </button>
-              <button
-                onClick={() => handleModeSelect('library')}
-                className="w-full text-left px-3 py-2 text-xs transition-colors"
-                style={{ color: UI_COLORS.NEUTRAL_900 }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY;
-                  e.currentTarget.style.color = 'white';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                  e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
-                }}
-              >
-                Sound Library Search
-              </button>
-              <button
-                onClick={() => handleModeSelect('sample-audio')}
-                className="w-full text-left px-3 py-2 text-xs transition-colors"
-                style={{
-                  borderRadius: '0 0 8px 8px',
-                  color: UI_COLORS.NEUTRAL_900
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY;
-                  e.currentTarget.style.color = 'white';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                  e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
-                }}
-              >
-                Sample Audio
-              </button>
-            </div>
-          )}
-        </div>
+  // When a card is selected externally (from ThreeScene), expand it
+  useEffect(() => {
+    if (selectedCardIndex !== null && selectedCardIndex >= 0 && selectedCardIndex < soundConfigs.length) {
+      setExpandedIndex(selectedCardIndex);
+    }
+  }, [selectedCardIndex, soundConfigs.length]);
 
-      </div>
+  // Handle expansion change from CardSection (controlled mode callback)
+  const handleExpandedIndexChange = useCallback((newIndex: number | null) => {
+    // Stop preview when collapsing or switching cards
+    if (previewingSoundId) {
+      onPreviewStop?.(previewingSoundId);
+    }
+    setExpandedIndex(newIndex);
+    // Also notify parent if needed
+    if (newIndex !== null) {
+      onSelectSoundCard?.(newIndex);
+    }
+  }, [previewingSoundId, onPreviewStop, onSelectSoundCard]);
 
-      {/* Vertical list of sound tabs */}
-      <div ref={soundListRef} className="flex flex-col gap-2">
-        {soundConfigs.map((config, index) => {
-          const generatedSound = getGeneratedSound(index);
-          const variants = getVariantsForPrompt(index);
-          const selectedVariantIdx = getSelectedVariantIdx(index);
-          return (
-          <div
-            key={index}
-            ref={(el) => {
-              if (el) {
-                soundTabRefs.current.set(index, el);
-              } else {
-                soundTabRefs.current.delete(index);
-              }
-            }}
-          >
-            <SoundTab
-              config={config}
-              index={index}
-              isExpanded={expandedTabs.has(index)}
-              isGenerated={isSoundGenerated(index)}
+  // Available card types for add button dropdown (sound types only)
+  const availableTypes: CardTypeOption[] = useMemo(() => [
+    { type: 'text-to-audio', label: CARD_TYPE_LABELS['text-to-audio'], enabled: true },
+    { type: 'upload', label: CARD_TYPE_LABELS['upload'], enabled: true },
+    { type: 'library', label: CARD_TYPE_LABELS['library'], enabled: true },
+    { type: 'sample-audio', label: CARD_TYPE_LABELS['sample-audio'], enabled: true },
+  ], []);
+
+  // Calculate pending count
+  const getPendingCount = useCallback((items: SoundCardConfig[]) => {
+    return items.filter((_, index) => !isSoundGenerated(index)).length;
+  }, [isSoundGenerated]);
+
+  // Get collapsed info for a config
+  const getCollapsedInfo = useCallback((config: SoundGenerationConfig, index: number): string => {
+    if (isSoundGenerated(index)) {
+      const variants = getVariantsForPrompt(index);
+      if (variants.length > 1) {
+        return `(${variants.length} variants)`;
+      }
+      return '(generated)';
+    }
+    return '';
+  }, [isSoundGenerated, getVariantsForPrompt]);
+
+  // Convert SoundGenerationConfig to SoundCardConfig for CardSection
+  const cardItems: SoundCardConfig[] = useMemo(() => {
+    return soundConfigs.map((config) => ({
+      type: config.type || 'text-to-audio',
+      display_name: config.display_name,
+      originalConfig: config,
+    }));
+  }, [soundConfigs]);
+
+  // Handle config update (bridge between Card's partial update and original update signature)
+  const handleUpdateConfig = useCallback((index: number, updates: Partial<SoundCardConfig>) => {
+    if (updates.display_name !== undefined) {
+      onUpdateConfig(index, 'display_name', updates.display_name);
+    }
+  }, [onUpdateConfig]);
+
+  // Render card function
+  const renderCard = useCallback((
+    item: SoundCardConfig,
+    index: number,
+    isExpanded: boolean,
+    onToggleExpandFn: (index: number) => void
+  ) => {
+    const config = item.originalConfig;
+    const isGenerated = isSoundGenerated(index);
+    const generatedSound = getGeneratedSound(index);
+    const variants = getVariantsForPrompt(index);
+    const selectedVariantIdx = getSelectedVariantIdx(index);
+    const isMuted = generatedSound ? mutedSounds.has(generatedSound.id) : false;
+    const isSoloed = generatedSound ? soloedSound === generatedSound.id : false;
+
+    // Build custom buttons array
+    const customButtons: React.ReactNode[] = [];
+
+    // Card type switch button (only when not generated)
+    if (!isGenerated) {
+      customButtons.push(
+        <CardTypeSwitcher
+          key="switch"
+          currentType={item.type}
+          availableTypes={availableTypes}
+          onSwitchType={(newType) => handleSwitchCardType(index, newType)}
+        />
+      );
+    }
+
+    // Link button (if entities available or Speckle viewer active)
+    if (modelEntities.length > 0 || useSpeckleViewer) {
+      const isCurrentlyLinking = isLinkingEntity && linkingConfigIndex === index;
+      customButtons.push(
+        <button
+          key="link"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (isCurrentlyLinking) {
+              onCancelLinkingEntity?.();
+            } else {
+              onStartLinkingEntity?.(index);
+            }
+          }}
+          className={`w-5 h-5 flex items-center justify-center rounded-full transition-colors ${
+            isCurrentlyLinking
+              ? 'bg-primary text-white'
+              : config.entity
+                ? 'text-success hover:bg-success-light'
+                : 'text-secondary-hover hover:bg-secondary-light hover:text-foreground'
+          }`}
+          title={
+            isCurrentlyLinking
+              ? 'Cancel linking'
+              : config.entity
+                ? `Linked to entity ${config.entity.index}`
+                : 'Link to entity'
+          }
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+          </svg>
+        </button>
+      );
+    }
+
+    // Mute button (only if generated)
+    if (isGenerated && onMute && generatedSound) {
+      customButtons.push(
+        <button
+          key="mute"
+          onClick={(e) => {
+            e.stopPropagation();
+            onMute(generatedSound.id);
+          }}
+          className={`w-5 h-5 flex items-center justify-center rounded-full transition-colors ${
+            isMuted
+              ? 'bg-warning-light text-warning'
+              : 'text-secondary-hover hover:bg-secondary-light hover:text-foreground'
+          }`}
+          title={isMuted ? 'Unmute' : 'Mute'}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            {isMuted ? (
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" clipRule="evenodd" />
+            ) : (
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+            )}
+          </svg>
+        </button>
+      );
+    }
+
+    // Solo button (only if generated)
+    if (isGenerated && onSolo && generatedSound) {
+      customButtons.push(
+        <button
+          key="solo"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSolo(generatedSound.id);
+          }}
+          className={`w-5 h-5 flex items-center justify-center rounded-full transition-colors ${
+            isSoloed
+              ? 'bg-primary-light text-primary'
+              : 'text-secondary-hover hover:bg-secondary-light hover:text-foreground'
+          }`}
+          title={isSoloed ? 'Unsolo' : 'Solo'}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill={isSoloed ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+          </svg>
+        </button>
+      );
+    }
+
+    return (
+      <Card
+        config={item}
+        index={index}
+        isExpanded={isExpanded}
+        hasResult={isGenerated}
+        result={generatedSound}
+        isRunning={isSoundGenerating}
+        defaultName={CARD_TYPE_LABELS[item.type]}
+        collapsedInfo={getCollapsedInfo(config, index)}
+        showIndex={true}
+        canRemove={true}
+        closeButtonTitle="Remove sound"
+        resetButtonTitle="Reset to configuration UI"
+        customButtons={customButtons.length > 0 ? customButtons : undefined}
+        onToggleExpand={onToggleExpandFn}
+        onUpdateConfig={handleUpdateConfig}
+        onRemove={onRemoveConfig}
+        onReset={handleReset}
+        beforeContent={
+          <SoundConfigContent
+            config={config}
+            index={index}
+            isSoundGenerating={isSoundGenerating}
+            isLinkingEntity={isLinkingEntity}
+            linkingConfigIndex={linkingConfigIndex}
+            onUpdateConfig={onUpdateConfig}
+            onUploadAudio={onUploadAudio}
+            onClearUploadedAudio={onClearUploadedAudio}
+            onLibrarySearch={onLibrarySearch}
+            onLibrarySoundSelect={onLibrarySoundSelect}
+          />
+        }
+        afterContent={
+          generatedSound ? (
+            <SoundResultContent
               generatedSound={generatedSound}
-              soundState={generatedSound ? individualSoundStates[generatedSound.id] : undefined}
-              isSoundGenerating={isSoundGenerating}
-              modelEntities={modelEntities}
-              isLinkingEntity={isLinkingEntity}
-              linkingConfigIndex={linkingConfigIndex}
-              useSpeckleViewer={useSpeckleViewer}
-              isMuted={generatedSound ? mutedSounds.has(generatedSound.id) : false}
-              isSoloed={generatedSound ? soloedSound === generatedSound.id : false}
+              index={index}
               variants={variants}
               selectedVariantIdx={selectedVariantIdx}
-              onToggleExpand={handleToggleExpand}
-              onUpdateConfig={onUpdateConfig}
-              onRemove={onRemoveConfig}
-              onReset={handleReset}
-              onStartLinkingEntity={onStartLinkingEntity}
-              onCancelLinkingEntity={onCancelLinkingEntity}
-              onUploadAudio={onUploadAudio}
-              onClearUploadedAudio={onClearUploadedAudio}
-              onLibrarySearch={onLibrarySearch}
-              onLibrarySoundSelect={onLibrarySoundSelect}
-              onToggleSound={onToggleSound}
-              onVolumeChange={onVolumeChange}
-              onIntervalChange={onIntervalChange}
-              onMute={onMute}
-              onSolo={onSolo}
-              onVariantChange={onVariantChange}
+              isPreviewPlaying={previewingSoundId === generatedSound.id}
+              isMuted={isMuted}
               soundVolumes={soundVolumes}
               soundIntervals={soundIntervals}
-              onSelectCard={() => {
-                // Just notify parent about selection, don't toggle again
-                // (onToggleExpand is already called in SoundTab title button)
-                onSelectSoundCard?.(index);
-              }}
-              isPreviewPlaying={generatedSound ? previewingSoundId === generatedSound.id : false}
               onPreviewPlayPause={onPreviewPlayPause}
               onPreviewStop={onPreviewStop}
+              onVolumeChange={onVolumeChange}
+              onIntervalChange={onIntervalChange}
+              onVariantChange={onVariantChange}
             />
-          </div>
-        )})}
-      </div>
+          ) : null
+        }
+      />
+    );
+  }, [
+    isSoundGenerated,
+    getGeneratedSound,
+    getVariantsForPrompt,
+    getSelectedVariantIdx,
+    getCollapsedInfo,
+    mutedSounds,
+    soloedSound,
+    modelEntities.length,
+    useSpeckleViewer,
+    isLinkingEntity,
+    linkingConfigIndex,
+    isSoundGenerating,
+    soundVolumes,
+    soundIntervals,
+    previewingSoundId,
+    availableTypes,
+    handleUpdateConfig,
+    onRemoveConfig,
+    handleReset,
+    handleSwitchCardType,
+    onUpdateConfig,
+    onUploadAudio,
+    onClearUploadedAudio,
+    onLibrarySearch,
+    onLibrarySoundSelect,
+    onStartLinkingEntity,
+    onCancelLinkingEntity,
+    onMute,
+    onSolo,
+    onPreviewPlayPause,
+    onPreviewStop,
+    onVolumeChange,
+    onIntervalChange,
+    onVariantChange,
+  ]);
 
+  // Footer with generate button
+  const footer = (
+    <div className="flex gap-2">
+      <button
+        onClick={onGenerate}
+        disabled={shouldDisableGenerateButton}
+        className={`flex-1 py-2 px-4 rounded-lg text-white text-xs font-medium transition-colors ${
+          shouldDisableGenerateButton
+            ? 'bg-secondary-hover opacity-40 cursor-not-allowed'
+            : 'bg-primary hover:opacity-80 cursor-pointer'
+        }`}
+      >
+        {isSoundGenerating ? 'Generating Sounds...' : 'Generate Sounds'}
+      </button>
 
-      {/* Generate all sounds button */}
-      <div className="flex gap-2">
+      {/* Stop button - only visible when generating */}
+      {isSoundGenerating && (
         <button
-          onClick={onGenerate}
-          disabled={shouldDisableGenerateButton}
-          className="w-8 h-8 flex-1 text-white transition-colors"
-          style={{
-            borderRadius: UI_BUTTON.BORDER_RADIUS_MD,
-            padding: UI_BUTTON.PADDING_MD,
-            fontSize: UI_BUTTON.FONT_SIZE,
-            fontWeight: UI_BUTTON.FONT_WEIGHT,
-            backgroundColor: shouldDisableGenerateButton ? UI_COLORS.NEUTRAL_400 : UI_COLORS.PRIMARY,
-            opacity: shouldDisableGenerateButton ? 0.4 : 1,
-            cursor: shouldDisableGenerateButton ? 'not-allowed' : 'pointer'
-          }}
-          onMouseEnter={(e) => {
-            if (!shouldDisableGenerateButton) {
-              e.currentTarget.style.opacity = '0.8';
-            }
-          }}
-          onMouseLeave={(e) => {
-            if (!shouldDisableGenerateButton) {
-              e.currentTarget.style.opacity = '1';
-            }
-          }}
+          onClick={onStopGeneration}
+          className="w-8 h-8 rounded-lg text-white font-bold bg-error hover:bg-error-hover transition-colors flex items-center justify-center"
+          title="Stop generation"
+          aria-label="Stop generation"
         >
-          {isSoundGenerating ? 'Generating Sounds...' : 'Generate Sounds'}
+          <span className="text-lg leading-none">&#9632;</span>
         </button>
-
-
-        {/* Stop button - only visible when generating */}
-        {isSoundGenerating && (
-          <button
-            onClick={onStopGeneration}
-            className="w-8 h-8 rounded text-white font-bold transition-colors flex items-center justify-center"
-            style={{
-              backgroundColor: UI_COLORS.ERROR,
-              borderRadius: '8px'
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#dc2626'}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.ERROR}
-            title="Stop generation"
-            aria-label="Stop generation"
-          >
-            <span className="text-lg leading-none">■</span>
-          </button>
-        )}
-      </div>
-
-      {/* Error display */}
-      {soundGenError && (
-        <div
-          className="p-3 text-sm rounded"
-          style={{
-            backgroundColor: UI_COLORS.ERROR_LIGHT,
-            borderColor: UI_COLORS.ERROR,
-            borderWidth: '1px',
-            borderStyle: 'solid',
-            borderRadius: '8px',
-            color: UI_COLORS.ERROR
-          }}
-        >
-          {soundGenError}
-        </div>
       )}
-
     </div>
+  );
+
+  return (
+    <CardSection
+      items={cardItems}
+      availableTypes={availableTypes}
+      emptyMessage="No sounds yet. Click + to add a sound configuration."
+      statusLabel="sound"
+      addButtonTitle="Add sound"
+      onAddItem={handleTypeSelect}
+      renderCard={renderCard}
+      footer={footer}
+      getPendingCount={getPendingCount}
+      isRunning={isSoundGenerating}
+      error={soundGenError}
+      expandedIndex={expandedIndex}
+      onExpandedIndexChange={handleExpandedIndexChange}
+    />
   );
 }

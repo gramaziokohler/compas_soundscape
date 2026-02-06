@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import Image from "next/image";
 import { AnalysisSection } from "./sidebar/AnalysisSection";
 import { SoundGenerationSection } from "./sidebar/SoundGenerationSection";
-import { AcousticsTab } from "./sidebar/AcousticsTab";
+import { AcousticsSection } from "./sidebar/AcousticsSection";
 import { ReceiversTab } from "./sidebar/ReceiversTab";
 import { AdvancedSettingsSection } from "./sidebar/AdvancedSettingsSection";
 import { VerticalTabButton } from "@/components/ui/VerticalTabButton";
@@ -159,16 +159,16 @@ export function Sidebar(props: SidebarProps) {
         <div className="flex flex-col gap-4" style={{ display: props.activeAiTab === 'text' ? 'flex' : 'none' }}>
           <AnalysisSection
             analysisConfigs={props.analysisConfigs}
-            activeTab={props.activeTab}
-            isRunning={props.isRunning}
-            error={props.error}
+            activeTab={props.activeAnalysisTab}
+            isRunning={props.isAnalyzing}
+            error={props.analysisError}
             analysisResult={props.analysisResult}
             hasGlobalModelLoaded={props.hasGlobalModelLoaded}
             onAddConfig={props.onAddAnalysisConfig}
             onRemoveConfig={props.onRemoveAnalysisConfig}
             onUpdateConfig={props.onUpdateAnalysisConfig}
             onSetActiveTab={props.onSetActiveAnalysisTab}
-            onRun={props.onRun}
+            onRun={props.onAnalyze}
             onStop={props.onStop}
             onTogglePromptSelection={props.onTogglePromptSelection}
             onSendToSoundGeneration={props.onSendToSoundGeneration}
@@ -194,6 +194,7 @@ export function Sidebar(props: SidebarProps) {
             onBatchAddConfigs={props.onBatchAddSoundConfigs}
             onRemoveConfig={props.onRemoveSoundConfig}
             onUpdateConfig={props.onUpdateSoundConfig}
+            onTypeChange={props.onSoundTypeChange}
             onGenerate={props.onGenerateSounds}
             onStopGeneration={props.onStopSoundGeneration}
             onGlobalDurationChange={props.onGlobalDurationChange}
@@ -233,21 +234,9 @@ export function Sidebar(props: SidebarProps) {
           />
         </div>
 
-        {/* Receivers Tab */}
-        <div style={{ display: props.activeAiTab === 'receivers' ? 'block' : 'none' }}>
-          <ReceiversTab
-            receivers={props.receivers}
-            onAddReceiver={props.onAddReceiver}
-            onDeleteReceiver={props.onDeleteReceiver}
-            onUpdateReceiverName={props.onUpdateReceiverName}
-            onGoToReceiver={props.onGoToReceiver}
-            onAddGridReceiver={props.onAddGridReceiver}
-          />
-        </div>
-
         {/* Acoustics Tab */}
         <div style={{ display: props.activeAiTab === 'acoustics' ? 'block' : 'none' }}>
-          <AcousticsTab
+          <AcousticsSection
             receivers={props.receivers}
             onSelectIRFromLibrary={props.onSelectIRFromLibrary}
             onClearIR={props.onClearIR}
@@ -276,13 +265,23 @@ export function Sidebar(props: SidebarProps) {
             irRefreshTrigger={props.irRefreshTrigger}
             simulationConfigs={props.simulationConfigs}
             activeSimulationIndex={props.activeSimulationIndex}
-            expandedTabIndex={props.expandedTabIndex}
             onAddSimulationConfig={props.onAddSimulationConfig}
             onRemoveSimulationConfig={props.onRemoveSimulationConfig}
             onUpdateSimulationConfig={props.onUpdateSimulationConfig}
             onSetActiveSimulation={props.onSetActiveSimulation}
             onUpdateSimulationName={props.onUpdateSimulationName}
-            onToggleExpandSimulation={props.onToggleExpandSimulation}
+          />
+        </div>
+
+        {/* Receivers Tab */}
+        <div style={{ display: props.activeAiTab === 'receivers' ? 'block' : 'none' }}>
+          <ReceiversTab
+            receivers={props.receivers}
+            onAddReceiver={props.onAddReceiver}
+            onDeleteReceiver={props.onDeleteReceiver}
+            onUpdateReceiverName={props.onUpdateReceiverName}
+            onGoToReceiver={props.onGoToReceiver}
+            onAddGridReceiver={props.onAddGridReceiver}
           />
         </div>
 

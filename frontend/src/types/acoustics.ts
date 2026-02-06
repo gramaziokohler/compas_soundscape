@@ -7,6 +7,7 @@
 import type { ReceiverData, SoundEvent, CompasGeometry } from './index';
 import type { ImpulseResponseMetadata } from './audio';
 import type { AcousticMaterial } from './materials';
+import type { CardBaseConfig, CardType, CardExecutionState } from './card';
 
 /**
  * Acoustic simulation modes
@@ -21,10 +22,9 @@ export type SimulationState = 'idle' | 'before-simulation' | 'running' | 'comple
 /**
  * Base configuration for all acoustic simulations
  */
-export interface BaseSimulationConfig {
+export interface BaseSimulationConfig extends CardBaseConfig {
   id: string;
-  name: string; // User-editable name (e.g., "Simulation 1")
-  mode: AcousticSimulationMode;
+  type: AcousticSimulationMode;
   state: SimulationState;
   createdAt: number; // Timestamp
   simulationInstanceId?: string; // Unique ID to track which hook instance this config is bound to
@@ -34,15 +34,15 @@ export interface BaseSimulationConfig {
  * Resonance Audio configuration
  */
 export interface ResonanceSimulationConfig extends BaseSimulationConfig {
-  mode: 'resonance';
+  type: 'resonance';
   // Settings stored in resonanceAudioConfig (passed separately)
 }
 
 /**
  * Choras simulation configuration
  */
-export interface ChorasSimulationConfig extends BaseSimulationConfig {
-  mode: 'choras';
+export interface ChorasSimulationConfig extends BaseSimulationConfig, CardExecutionState {
+  type: 'choras';
   settings: {
     de_c0: number; // Speed of sound in m/s
     de_ir_length: number; // Impulse response length in seconds
@@ -64,11 +64,7 @@ export interface ChorasSimulationConfig extends BaseSimulationConfig {
     expandedMaterialItems?: Set<string>;
     excludedLayers?: Set<string>;
   };
-  // Runtime state
-  isRunning: boolean;
-  progress: number; // 0-100
-  status: string;
-  error: string | null;
+  // Runtime state (inherited from CardExecutionState)
   currentSimulationId: string | null;
   currentSimulationRunId: string | null;
   simulationResults: string | null;
@@ -78,8 +74,8 @@ export interface ChorasSimulationConfig extends BaseSimulationConfig {
 /**
  * Pyroomacoustics simulation configuration
  */
-export interface PyroomAcousticsSimulationConfig extends BaseSimulationConfig {
-  mode: 'pyroomacoustics';
+export interface PyroomAcousticsSimulationConfig extends BaseSimulationConfig, CardExecutionState {
+  type: 'pyroomacoustics';
   settings: {
     max_order: number;
     ray_tracing: boolean;
@@ -101,10 +97,7 @@ export interface PyroomAcousticsSimulationConfig extends BaseSimulationConfig {
     expandedMaterialItems?: Set<string>;
     excludedLayers?: Set<string>;
   };
-  // Runtime state
-  isRunning: boolean;
-  status: string;
-  error: string | null;
+  // Runtime state (inherited)
   simulationResults: string | null;
   importedIRMetadata?: ImpulseResponseMetadata;
   // Source-receiver IR mapping (for audio integration)

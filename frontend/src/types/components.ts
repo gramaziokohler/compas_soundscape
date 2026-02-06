@@ -9,7 +9,6 @@ import type {
   CompasGeometry,
   SoundEvent,
   SoundGenerationConfig,
-  SoundGenerationMode,
   ActiveTab,
   LoadTab,
   SoundState,
@@ -21,7 +20,7 @@ import type {
   EntityData,
   AnalysisConfig,
   AnalysisResult,
-  AnalysisType,
+  CardType,
 } from "./index";
 import type { AuralizationConfig, ResonanceAudioConfig, ResonanceRoomDimensions, ResonanceRoomMaterial } from "./audio";
 import type { ModalAnalysisResult, ModeVisualizationState } from "./modal";
@@ -84,11 +83,11 @@ export interface SidebarProps {
   onStopGeneration: () => void;
   onLoadSoundsToGeneration: () => void;
   setActiveSoundConfigTab: (tab: number) => void;
-  onAddSoundConfig: (mode?: SoundGenerationMode) => void;
+  onAddSoundConfig: (type?: CardType) => void;
   onBatchAddSoundConfigs: (count: number) => number;
   onRemoveSoundConfig: (index: number) => void;
   onUpdateSoundConfig: (index: number, field: keyof SoundGenerationConfig, value: string | number) => void;
-  onSoundModeChange: (index: number, mode: SoundGenerationMode) => void;
+  onSoundTypeChange: (index: number, type: CardType) => void;
   onGenerateSounds: () => void;
   onStopSoundGeneration: () => void;
   onGlobalDurationChange: (duration: number) => void;
@@ -194,7 +193,7 @@ export interface SidebarProps {
   analysisError: string | null;
   analysisResult: AnalysisResult[];
   hasGlobalModelLoaded?: boolean; // Global model loaded from right sidebar
-  onAddAnalysisConfig: (type: AnalysisType) => void;
+  onAddAnalysisConfig: (type: CardType) => void;
   onRemoveAnalysisConfig: (index: number) => void;
   onUpdateAnalysisConfig: (index: number, updates: Partial<AnalysisConfig>) => void;
   onSetActiveAnalysisTab: (index: number) => void;
@@ -259,10 +258,11 @@ export interface SoundGenerationSectionProps {
   activeSoundConfigTab: number;
   isSoundGenerating: boolean;
   soundGenError: string | null;
-  onAddConfig: (mode?: SoundGenerationMode) => void;
+  onAddConfig: (type?: CardType) => void;
   onBatchAddConfigs: (count: number) => number;
   onRemoveConfig: (index: number) => void;
   onUpdateConfig: (index: number, field: keyof SoundGenerationConfig, value: string | number) => void;
+  onTypeChange?: (index: number, type: CardType) => Promise<void>;
   onSetActiveTab: (index: number) => void;
   onGenerate: () => void;
   onStopGeneration: () => void;

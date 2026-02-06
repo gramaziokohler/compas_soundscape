@@ -216,9 +216,9 @@ export class BinauralDecoder implements IBinauralDecoder {
       this.sceneRotator.roll = 0; // Roll typically not used for head tracking
 
       // Debug logging (throttled)
-      if (this._rotationLogCounter++ % 60 === 0) {
-        console.log(`[BinauralDecoder] Rotation: yaw=${this.sceneRotator.yaw.toFixed(1)}°, pitch=${this.sceneRotator.pitch.toFixed(1)}° (input: ${orientation.pitch.toFixed(3)} rad)`);
-      }
+      // if (this._rotationLogCounter++ % 60 === 0) {
+      //   console.log(`[BinauralDecoder] Rotation: yaw=${this.sceneRotator.yaw.toFixed(1)}°, pitch=${this.sceneRotator.pitch.toFixed(1)}° (input: ${orientation.pitch.toFixed(3)} rad)`);
+      // }
     }
 
     this.sceneRotator.updateRotMtx();

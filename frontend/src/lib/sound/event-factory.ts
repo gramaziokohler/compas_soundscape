@@ -42,7 +42,18 @@ export function createSoundEventFromUpload(
   geometryBounds?: GeometryBounds,
   idPrefix: string = 'uploaded'
 ): SoundEvent {
-  const position = calculateSoundPositionWithSpacing(config, originalIndex, totalSounds, geometryBounds);
+  // Determine position: use entity's center if entity-linked, otherwise calculate from bounds
+  let position: [number, number, number];
+  if (config.entity?.bounds?.center) {
+    // Use entity's bounding box center as the sound source position
+    position = config.entity.bounds.center as [number, number, number];
+  } else if (config.entity?.position) {
+    // Fallback to entity's position if no bounds
+    position = config.entity.position as [number, number, number];
+  } else {
+    // No entity, calculate position based on geometry bounds
+    position = calculateSoundPositionWithSpacing(config, originalIndex, totalSounds, geometryBounds);
+  }
 
   // Determine display name
   // IMPORTANT: Prioritize actual audio source over config.display_name

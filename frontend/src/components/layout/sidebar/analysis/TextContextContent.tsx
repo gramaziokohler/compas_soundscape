@@ -1,7 +1,7 @@
 'use client';
 
 import type { TextAnalysisConfig } from '@/types/analysis';
-import { UI_COLORS, UI_BUTTON, NUM_SOUNDS_MAX, NUM_SOUNDS_MIN } from '@/lib/constants';
+import { UI_COLORS, NUM_SOUNDS_MAX, NUM_SOUNDS_MIN } from '@/lib/constants';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 
 /**
@@ -16,15 +16,13 @@ interface TextContextContentProps {
   index: number;
   isAnalyzing: boolean;
   onUpdateConfig: (index: number, updates: Partial<TextAnalysisConfig>) => void;
-  onAnalyze: (index: number) => void;
 }
 
 export function TextContextContent({
   config,
   index,
   isAnalyzing,
-  onUpdateConfig,
-  onAnalyze
+  onUpdateConfig
 }: TextContextContentProps) {
   
   const canAnalyze = config.textInput.trim().length > 0;
@@ -77,33 +75,7 @@ export function TextContextContent({
         </span>
       </label>
 
-      {/* Generate Sound Ideas button */}
-      <button
-        onClick={() => onAnalyze(index)}
-        disabled={isAnalyzing || !canAnalyze}
-        className="w-full text-white transition-colors"
-        style={{
-          borderRadius: UI_BUTTON.BORDER_RADIUS_MD,
-          padding: UI_BUTTON.PADDING_MD,
-          fontSize: UI_BUTTON.FONT_SIZE,
-          fontWeight: UI_BUTTON.FONT_WEIGHT,
-          backgroundColor: isAnalyzing || !canAnalyze ? UI_COLORS.NEUTRAL_400 : UI_COLORS.PRIMARY,
-          opacity: isAnalyzing || !canAnalyze ? 0.4 : 1,
-          cursor: isAnalyzing || !canAnalyze ? 'not-allowed' : 'pointer'
-        }}
-        onMouseEnter={(e) => {
-          if (!isAnalyzing && canAnalyze) {
-            e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY_HOVER;
-          }
-        }}
-        onMouseLeave={(e) => {
-          if (!isAnalyzing && canAnalyze) {
-            e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY;
-          }
-        }}
-      >
-        {isAnalyzing ? 'Generating...' : 'Generate Sound Ideas'}
-      </button>
+      {/* Note: Action button is rendered by Card component */}
     </div>
   );
 }

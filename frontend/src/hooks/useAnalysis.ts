@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
-import type { AnalysisConfig, AnalysisResult, AnalysisType, TextPromptResult, ModelAnalysisConfig, AudioAnalysisConfig, TextAnalysisConfig } from '@/types/analysis';
+import type { AnalysisConfig, AnalysisResult, TextPromptResult, ModelAnalysisConfig, AudioAnalysisConfig, TextAnalysisConfig } from '@/types/analysis';
+import type { CardType } from '@/types/card';
 import { API_BASE_URL, DEFAULT_NUM_SOUNDS, DEFAULT_SPL_DB, LLM_SUGGESTED_INTERVAL_SECONDS } from '@/lib/constants';
 import { loadAudioFileWithBuffer } from '@/lib/audio/audio-info';
 import { apiService } from '@/services/api';
@@ -23,26 +24,20 @@ export function useAnalysis() {
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [analysisResults, setAnalysisResults] = useState<AnalysisResult[]>([]);
   const [uploadingConfigs, setUploadingConfigs] = useState<Set<number>>(new Set());
-  
-  // Global loaded model state (from right sidebar import)
-  const [loadedModelFile, setLoadedModelFile] = useState<File | null>(null);
-  const [loadedModelSpeckleData, setLoadedModelSpeckleData] = useState<any>(null);
-  const [loadedModelGeometryData, setLoadedModelGeometryData] = useState<any>(null);
-  const [loadedModelEntities, setLoadedModelEntities] = useState<any[]>([]);
-  const [isUploadingGlobalModel, setIsUploadingGlobalModel] = useState(false);
 
   // Add a new analysis config
-  const handleAddConfig = useCallback((type: AnalysisType) => {
+  // For 3D model configs, initialSpeckleData can be passed to inherit from global model
+  const handleAddConfig = useCallback((type: CardType, initialSpeckleData?: any) => {
     const newConfig: AnalysisConfig = type === '3d-model'
       ? {
           type: '3d-model',
           numSounds: 5,
-          modelFile: loadedModelFile, // Use globally loaded model if available
-          modelEntities: loadedModelEntities, // Use globally loaded entities if available
+          modelFile: null,
+          modelEntities: [],
           selectedDiverseEntities: [],
           useModelAsContext: true,
-          speckleData: loadedModelSpeckleData, // Use globally loaded speckle data
-          geometryData: loadedModelGeometryData // Use globally loaded geometry data
+          speckleData: initialSpeckleData, // Inherit from global model if provided
+          geometryData: undefined
         }
       : type === 'audio'
       ? {
@@ -62,15 +57,7 @@ export function useAnalysis() {
 
     setAnalysisConfigs(prev => [...prev, newConfig]);
     setActiveAnalysisTab(analysisConfigs.length);
-    
-    // Clear global loaded model after using it (optional - allows reusing same model)
-    // if (type === '3d-model') {
-    //   setLoadedModelFile(null);
-    //   setLoadedModelSpeckleData(null);
-    //   setLoadedModelGeometryData(null);
-    //   setLoadedModelEntities([]);
-    // }
-  }, [analysisConfigs.length, loadedModelFile, loadedModelSpeckleData, loadedModelGeometryData, loadedModelEntities]);
+  }, [analysisConfigs.length]);
 
   // Remove an analysis config
   const handleRemoveConfig = useCallback((index: number) => {
@@ -129,33 +116,6 @@ export function useAnalysis() {
         console.log('[useAnalysis] Speckle data uploaded, worldTree will be populated when viewer loads');
         entities = []; // Will be populated when worldTree becomes available
       }
-      // OLD WORKFLOW COMMENTED OUT - Only using Speckle now
-      // else {
-      //   // OLD WORKFLOW: Analyze file to get proper entities with position and bounds
-      //   const fileName = file.name.toLowerCase();
-      //   
-      //   if (fileName.endsWith('.3dm')) {
-      //     const analyzed = await apiService.analyze3dm(file);
-      //     entities = analyzed.entities;
-      //   } else if (fileName.endsWith('.ifc')) {
-      //     const analyzed = await apiService.analyzeIfc();
-      //     entities = analyzed.entities;
-      //   } else if (fileName.endsWith('.obj')) {
-      //     const analyzed = await apiService.analyzeObj(file);
-      //     entities = analyzed.entities;
-      //   } else {
-      //     // Fallback to face_entity_map extraction (less complete)
-      //     entities = geometryData.face_entity_map
-      //       ? Array.from(new Set(geometryData.face_entity_map)).map((entityIdx) => ({
-      //           index: entityIdx,
-      //           type: 'Unknown',
-      //           name: `Entity ${entityIdx}`,
-      //           position: [0, 0, 0],
-      //           bounds: { min: [0, 0, 0], max: [0, 0, 0], center: [0, 0, 0] }
-      //         }))
-      //       : [];
-      //   }
-      // }
 
       // Update config with loaded data including geometryData and speckleData
       handleUpdateConfig(index, {
@@ -177,59 +137,7 @@ export function useAnalysis() {
       });
     }
   }, [analysisConfigs, handleUpdateConfig, uploadingConfigs]);
-  
-  // Handle global model file upload (from right sidebar)
-  const handleGlobalModelUpload = useCallback(async (file: File, worldTree?: any) => {
-    if (isUploadingGlobalModel) {
-      console.log('[useAnalysis] Global upload already in progress');
-      return;
-    }
 
-    setIsUploadingGlobalModel(true);
-
-    try {
-      console.log('[useAnalysis] Uploading global model:', file.name);
-      
-      // Upload file using existing API service to get geometry data
-      const uploadResponse = await apiService.uploadFile(file);
-      
-      // Extract geometry data and speckle data from response
-      const geometryData = 'geometry' in uploadResponse ? uploadResponse.geometry : uploadResponse;
-      const speckleData = 'speckle' in uploadResponse ? uploadResponse.speckle : undefined;
-      
-      console.log('[useAnalysis] Global model upload complete:', { 
-        hasGeometry: !!geometryData, 
-        hasSpeckle: !!speckleData 
-      });
-      
-      let entities: any[] = [];
-      
-      // If Speckle data is available and worldTree is provided, extract entities
-      if (speckleData && worldTree) {
-        console.log('[useAnalysis] Extracting entities from Speckle WorldTree for global model...');
-        entities = extractSpeckleEntities(worldTree);
-        console.log(`[useAnalysis] Extracted ${entities.length} entities from WorldTree`);
-      } else if (speckleData) {
-        console.log('[useAnalysis] Speckle data uploaded, entities will be populated when viewer loads');
-        entities = [];
-      }
-      
-      // Store in global state
-      setLoadedModelSpeckleData(speckleData);
-      setLoadedModelGeometryData(geometryData);
-      setLoadedModelEntities(entities);
-      
-    } catch (error) {
-      console.error('[useAnalysis] Failed to upload global model:', error);
-      addError(error instanceof Error ? error.message : 'Failed to upload model');
-      
-      // Clear the file on error
-      setLoadedModelFile(null);
-    } finally {
-      setIsUploadingGlobalModel(false);
-    }
-  }, [isUploadingGlobalModel, addError]);
-  
   /**
    * Extract entities from Speckle WorldTree
    * Converts Speckle objects to entity format compatible with LLM service
@@ -264,6 +172,28 @@ export function useAnalysis() {
       
       // Only include objects that have render data or are meaningful objects
       if (hasRenderView || raw.speckle_type) {
+        // Extract bounds from various possible sources
+        const nodeBounds = raw.bounds || node.model?.bounds || raw.bbox ||
+                          node.model?.renderView?.aabb || hasRenderView?.aabb;
+
+        // Calculate center position from bounds if available
+        let boundsData: { min: number[], max: number[], center: number[] } | undefined;
+        if (nodeBounds) {
+          // Handle different bounds formats (Box3-like or array-based)
+          const min = nodeBounds.min
+            ? [nodeBounds.min.x ?? nodeBounds.min[0], nodeBounds.min.y ?? nodeBounds.min[1], nodeBounds.min.z ?? nodeBounds.min[2]]
+            : [0, 0, 0];
+          const max = nodeBounds.max
+            ? [nodeBounds.max.x ?? nodeBounds.max[0], nodeBounds.max.y ?? nodeBounds.max[1], nodeBounds.max.z ?? nodeBounds.max[2]]
+            : [0, 0, 0];
+          const center = [
+            (min[0] + max[0]) / 2,
+            (min[1] + max[1]) / 2,
+            (min[2] + max[2]) / 2
+          ];
+          boundsData = { min, max, center };
+        }
+
         entities.push({
           id: id,
           index: nodeIndex++,
@@ -274,6 +204,8 @@ export function useAnalysis() {
           raw: raw,
           // Store node reference for highlighting later
           nodeId: id,
+          // Include bounds for sound source positioning
+          bounds: boundsData,
         });
       }
       
@@ -376,6 +308,7 @@ export function useAnalysis() {
               max_sounds: config.numSounds
             })
           });
+          console.log('Request body:', {selectionResponse});
 
           if (!selectionResponse.ok) {
             throw new Error('Failed to select diverse entities');
@@ -668,14 +601,7 @@ export function useAnalysis() {
     handleSendToSoundGeneration,
     handleReset,
     handleModelFileUpload,
-    handleGlobalModelUpload,
     handleAudioFileUpload,
     handleUpdateEntitiesFromWorldTree,
-    loadedModelFile,
-    setLoadedModelFile,
-    loadedModelSpeckleData,
-    loadedModelGeometryData,
-    loadedModelEntities,
-    isUploadingGlobalModel
   };
 }

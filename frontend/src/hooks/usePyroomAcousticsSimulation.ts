@@ -13,6 +13,11 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiService } from '@/services/api';
 import { useErrorNotification } from '@/contexts/ErrorContext';
 import {
+  importPyroomIRFiles,
+  buildSimulationResultsText,
+  type IRImportResult
+} from '@/utils/acousticMetrics';
+import {
   PYROOMACOUSTICS_DEFAULT_MAX_ORDER,
   PYROOMACOUSTICS_DEFAULT_RAY_TRACING,
   PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION,
@@ -54,12 +59,27 @@ export interface PyroomAcousticsSimulationState {
   sourceReceiverIRMapping?: SourceReceiverIRMapping; // Source-receiver IR mapping for audio integration
 }
 
+export interface SpeckleData {
+  model_id: string;
+  version_id: string;
+  object_id: string;
+  url: string;
+  auth_token?: string;
+}
+
 export interface PyroomAcousticsSimulationMethods {
   loadMaterials: () => Promise<void>;
   assignMaterialToFace: (faceIndex: number, materialId: string) => void;
   clearFaceMaterialAssignments: () => void;
   updateSimulationSettings: (settings: Partial<PyroomAcousticsSimulationSettings>) => void;
-  runSimulation: (file: File, simulationName: string, receivers: any[], soundscapeData: any[]) => Promise<void>;
+  runSpeckleSimulation: (
+    speckleData: SpeckleData,
+    simulationName: string,
+    receivers: any[],
+    soundscapeData: any[],
+    materialAssignments: Record<string, string>,
+    layerName?: string | null
+  ) => Promise<void>;
 }
 
 // Module-level Map to store state per simulation instance
@@ -182,29 +202,129 @@ export function usePyroomAcousticsSimulation(simulationInstanceId: string, onIRI
   }, []);
 
   /**
-   * Run Pyroomacoustics simulation
+   * Shared post-simulation handler: imports IRs, builds results, updates state
    */
-  const runSimulation = useCallback(async (
-    file: File,
-    simulationName: string,
+  const handleSimulationComplete = useCallback(async (
+    result: { simulation_id: string; ir_files?: string[] }
+  ) => {
+    console.log('Simulation completed:', result);
+    console.log('[Pyroomacoustics] IR files returned from backend:', result.ir_files);
+
+    // Import all IR files using shared utility
+    let irImportResult: IRImportResult = { 
+      importedCount: 0, 
+      totalCount: 0, 
+      importedIRIds: [], 
+      importedIRMetadataList: [], 
+      sourceReceiverMapping: {} 
+    };
+
+    if (result.ir_files && result.ir_files.length > 0) {
+      irImportResult = await importPyroomIRFiles(
+        result.simulation_id,
+        result.ir_files
+      );
+
+      if (irImportResult.importedCount > 0) {
+        // Store imported IR IDs and mapping in persistent state
+        const updatedState = persistentStates.get(simulationInstanceId)!;
+        persistentStates.set(simulationInstanceId, {
+          ...updatedState,
+          importedIRIds: irImportResult.importedIRIds,
+          sourceReceiverIRMapping: irImportResult.sourceReceiverMapping
+        });
+
+        console.log(`[Pyroomacoustics] Stored ${irImportResult.importedIRIds.length} IR IDs for filtering`);
+
+        // Notify parent to refresh IR list
+        if (onIRImported) {
+          onIRImported();
+        }
+      }
+    }
+
+    // Build results text using shared utility
+    const resultsText = await buildSimulationResultsText(result.simulation_id, irImportResult);
+
+    setState(prev => ({
+      ...prev,
+      isRunning: false,
+      status: 'Complete!',
+      simulationResults: resultsText,
+      currentSimulationId: result.simulation_id,
+      irImported: irImportResult.importedCount > 0
+    }));
+
+    // Success notification with proper pluralization
+    const irWord = irImportResult.importedCount === 1 ? 'response' : 'responses';
+    addError(
+      `🎉 Simulation completed! ${irImportResult.importedCount} impulse ${irWord} imported to library.`,
+      'info'
+    );
+  }, [simulationInstanceId, onIRImported, addError]);
+
+  /**
+   * Build and validate source-receiver pairs from receivers and soundscape data
+   */
+  const buildSourceReceiverPairs = useCallback((
     receivers: any[],
     soundscapeData: any[]
-  ) => {
-    console.log('🔴🔴🔴 PYROOMACOUSTICS SIMULATION STARTING - FILE LOADED! 🔴🔴🔴');
+  ): { pairs: any[]; error: string | null } => {
+    const sourceReceiverPairs = [];
 
-    // Get the current state for this instance to avoid stale closure
+    for (const sound of soundscapeData) {
+      if (!sound.position || !Array.isArray(sound.position) || sound.position.length !== 3) {
+        return { pairs: [], error: `Sound "${sound.display_name || sound.id}" has invalid position.` };
+      }
+
+      for (const receiver of receivers) {
+        if (!receiver.position || !Array.isArray(receiver.position) || receiver.position.length !== 3) {
+          return { pairs: [], error: `Receiver "${receiver.name || receiver.id}" has invalid position.` };
+        }
+
+        sourceReceiverPairs.push({
+          source_position: sound.position,
+          receiver_position: receiver.position,
+          source_id: sound.id || sound.name,
+          receiver_id: receiver.id
+        });
+      }
+    }
+
+    if (sourceReceiverPairs.length === 0) {
+      return { pairs: [], error: 'No source-receiver pairs could be created' };
+    }
+
+    return { pairs: sourceReceiverPairs, error: null };
+  }, []);
+
+  /**
+   * Run Pyroomacoustics simulation via Speckle
+   * This method uses Speckle geometry instead of a local file
+   */
+  const runSpeckleSimulation = useCallback(async (
+    speckleData: SpeckleData,
+    simulationName: string,
+    receivers: any[],
+    soundscapeData: any[],
+    materialAssignments: Record<string, string>,
+    layerName?: string | null
+  ) => {
+    console.log('[usePyroomAcousticsSimulation] Running Speckle simulation');
+
     const currentInstanceState = persistentStates.get(simulationInstanceId)!;
-    const currentFaceMaterials = currentInstanceState.faceMaterialAssignments;
     const currentSettings = currentInstanceState.simulationSettings;
 
-    console.log('[usePyroomAcousticsSimulation] Running simulation with:', {
-      faceMaterialsCount: Object.keys(currentFaceMaterials).length,
-      faceMaterials: currentFaceMaterials,
-      settings: currentSettings
-    });
+    if (Object.keys(materialAssignments).length === 0) {
+      setState(prev => ({ ...prev, error: 'Assign materials first' }));
+      return;
+    }
 
-    if (Object.keys(currentFaceMaterials).length === 0) {
-      setState(prev => ({ ...prev, error: 'Please assign materials to at least one face' }));
+    // Validate and build source-receiver pairs
+    const { pairs: sourceReceiverPairs, error: pairsError } = buildSourceReceiverPairs(receivers, soundscapeData);
+    if (pairsError) {
+      addError(pairsError);
+      setState(prev => ({ ...prev, error: pairsError }));
       return;
     }
 
@@ -220,201 +340,30 @@ export function usePyroomAcousticsSimulation(simulationInstanceId: string, onIRI
     }));
 
     try {
-      // Build source-receiver pairs from receivers and soundscape data
-      const sourceReceiverPairs = [];
-      
-      for (const sound of soundscapeData) {
-        // Validate sound position
-        if (!sound.position || !Array.isArray(sound.position) || sound.position.length !== 3) {
-          console.warn('[usePyroomAcousticsSimulation] Invalid sound position:', sound);
-          addError(`Sound "${sound.display_name || sound.id}" has invalid position. Please recreate it.`);
-          setState(prev => ({ 
-            ...prev, 
-            isRunning: false,
-            error: `Sound "${sound.display_name || sound.id}" has invalid position. Please delete and recreate it.`
-          }));
-          return;
-        }
+      // Prepare object materials (strip pyroom_ prefix)
+      const objectMaterials: Record<string, string> = {};
+      Object.entries(materialAssignments).forEach(([objectId, materialId]) => {
+        objectMaterials[objectId] = materialId.replace(/^pyroom_/, '');
+      });
 
-        for (const receiver of receivers) {
-          // Validate receiver position
-          if (!receiver.position || !Array.isArray(receiver.position) || receiver.position.length !== 3) {
-            console.warn('[usePyroomAcousticsSimulation] Invalid receiver position:', receiver);
-            addError(`Receiver "${receiver.name || receiver.id}" has invalid position.`);
-            setState(prev => ({ 
-              ...prev, 
-              isRunning: false,
-              error: `Receiver "${receiver.name || receiver.id}" has invalid position.`
-            }));
-            return;
-          }
+      // Parse Speckle URL for project/model IDs
+      const urlMatch = speckleData.url.match(/\/projects\/([^\/]+)\/models\/([^\/\?#]+)/);
+      if (!urlMatch) throw new Error('Invalid Speckle URL');
+      const projectId = urlMatch[1];
+      const modelId = urlMatch[2];
 
-          sourceReceiverPairs.push({
-            source_position: sound.position,
-            receiver_position: receiver.position,
-            source_id: sound.id || sound.name,
-            receiver_id: receiver.id
-          });
-
-          console.log('[usePyroomAcousticsSimulation] Created pair:', {
-            source: sound.display_name || sound.id,
-            source_position: sound.position,
-            receiver: receiver.name || receiver.id,
-            receiver_position: receiver.position
-          });
-        }
-      }
-
-      if (sourceReceiverPairs.length === 0) {
-        throw new Error('No source-receiver pairs could be created');
-      }
-
-      // Run simulation (synchronous, no polling needed)
-      const result = await apiService.runPyroomacousticsSimulation(
-        file,
+      const result = await apiService.runPyroomacousticsSimulationSpeckle(
+        projectId,
+        modelId,
+        objectMaterials,
+        layerName || '',
         simulationName,
         currentSettings,
-        sourceReceiverPairs,
-        currentFaceMaterials
+        sourceReceiverPairs
       );
 
-      console.log('Simulation completed:', result);
-      console.log('[Pyroomacoustics] IR files returned from backend:', result.ir_files);
-      console.log('[Pyroomacoustics] Number of IR files:', result.ir_files?.length);
-
-      // Import ALL IR files to library AND build source-receiver mapping
-      let irImportStatus = '';
-      let importCount = 0;
-      const importedIRMetadataList = [];
-      const sourceReceiverMapping: SourceReceiverIRMapping = {};
-
-      // Import each IR file
-      if (result.ir_files && result.ir_files.length > 0) {
-        console.log('[Pyroomacoustics] Starting import loop for', result.ir_files.length, 'IRs');
-        for (const irFilename of result.ir_files) {
-          console.log(`[Pyroomacoustics] Processing IR file: ${irFilename}`);
-          try {
-            // Fetch the specific IR file
-            console.log(`[Pyroomacoustics] Fetching IR from backend: ${irFilename}`);
-            const blob = await apiService.getPyroomacousticsIRFile(result.simulation_id, irFilename);
-            console.log(`[Pyroomacoustics] Received blob, size: ${blob.size} bytes`);
-
-            // Create File object from blob
-            const file = new File([blob], irFilename, { type: 'audio/wav' });
-
-            // Extract source and receiver IDs from filename
-            // Format: sim_{simulation_id}_src_{source_id}_rcv_{receiver_id}.wav
-            const match = irFilename.match(/src_(.+?)_rcv_(.+?)\.wav$/);
-            const sourceId = match ? match[1] : 'unknown';
-            const receiverId = match ? match[2] : 'unknown';
-
-            // Upload to IR library with descriptive name
-            const irName = `Pyroom_${simulationName}_S${sourceId}_R${receiverId}`;
-            const irMetadata = await apiService.uploadImpulseResponse(file, irName);
-            importedIRMetadataList.push(irMetadata);
-            importCount++;
-
-            // Build source-receiver IR mapping
-            if (!sourceReceiverMapping[sourceId]) {
-              sourceReceiverMapping[sourceId] = {};
-            }
-            sourceReceiverMapping[sourceId][receiverId] = irMetadata;
-
-            console.log(`✓ Imported IR: ${irName} (source: ${sourceId}, receiver: ${receiverId})`);
-          } catch (error) {
-            console.error(`Failed to import IR ${irFilename}:`, error);
-          }
-        }
-
-        // Update import status
-        if (importCount > 0) {
-          irImportStatus = `✓ ${importCount} of ${result.ir_files.length} impulse response(s) imported to library\n`;
-
-          // Store ALL imported IR IDs and source-receiver mapping in persistent state
-          const importedIds = importedIRMetadataList.map(metadata => metadata.id);
-          const updatedState = persistentStates.get(simulationInstanceId)!;
-          persistentStates.set(simulationInstanceId, {
-            ...updatedState,
-            importedIRIds: importedIds,
-            sourceReceiverIRMapping: sourceReceiverMapping
-          });
-
-          console.log(`[Pyroomacoustics] Stored ${importedIds.length} IR IDs for filtering:`, importedIds);
-          console.log('[Pyroomacoustics] Source-Receiver IR Mapping:', sourceReceiverMapping);
-
-          // Notify parent to refresh IR list
-          if (onIRImported) {
-            onIRImported();
-          }
-        } else {
-          irImportStatus = '⚠ Failed to import impulse responses\n';
-        }
-      }
-
-      // Format results message
-      let resultsText = 'Simulation Complete!\n\n';
-      resultsText += `Generated ${result.ir_files.length} impulse response(s)\n`;
-      
-      // Fetch and display acoustic metrics from results JSON
-      try {
-        const jsonResponse = await fetch(
-          `http://localhost:8000/pyroomacoustics/get-result-file/${result.simulation_id}/json`
-        );
-        
-        if (jsonResponse.ok) {
-          const jsonData = await jsonResponse.json();
-          
-          if (jsonData.results && Array.isArray(jsonData.results) && jsonData.results.length > 0) {
-            // Calculate average acoustic parameters across all source-receiver pairs
-            const allParams = jsonData.results
-              .filter((r: any) => r.acoustic_parameters)
-              .map((r: any) => r.acoustic_parameters);
-            
-            if (allParams.length > 0) {
-              const average = (key: string) => {
-                const values = allParams.map((p: any) => p[key]).filter((v: any) => v !== undefined && !isNaN(v));
-                return values.length > 0 ? values.reduce((a: number, b: number) => a + b, 0) / values.length : null;
-              };
-              
-              const rt60 = average('rt60');
-              const edt = average('edt');
-              const d50 = average('d50');
-              const c80 = average('c80');
-              
-              resultsText += 'Acoustic Metrics:\n';
-              const metrics = [];
-              if (rt60 !== null) metrics.push(`RT60: ${rt60.toFixed(2)}s`);
-              if (edt !== null) metrics.push(`EDT: ${edt.toFixed(2)}s`);
-              if (d50 !== null) metrics.push(`D50: ${(d50 * 100).toFixed(1)}%`);
-              if (c80 !== null) metrics.push(`C80: ${c80.toFixed(1)} dB`);
-              
-              if (metrics.length > 0) {
-                resultsText += metrics.join(', ') + '\n';
-              }
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Failed to fetch acoustic metrics:', error);
-      }
-      
-      resultsText += '\n' + irImportStatus;
-
-      setState(prev => ({
-        ...prev,
-        isRunning: false,
-        status: 'Complete!',
-        simulationResults: resultsText,
-        currentSimulationId: result.simulation_id,
-        irImported: importCount > 0
-      }));
-
-      // Success notification with proper pluralization
-      const irWord = importCount === 1 ? 'response' : 'responses';
-      addError(
-        `🎉 Simulation completed successfully! ${importCount} impulse ${irWord} imported to library.`,
-        'info'
-      );
+      // Handle post-simulation (IR import, results, state update)
+      await handleSimulationComplete(result);
 
     } catch (error) {
       setState(prev => ({
@@ -424,7 +373,7 @@ export function usePyroomAcousticsSimulation(simulationInstanceId: string, onIRI
         error: error instanceof Error ? error.message : 'Simulation failed'
       }));
     }
-  }, [onIRImported, addError]);
+  }, [simulationInstanceId, buildSourceReceiverPairs, handleSimulationComplete, addError]);
 
   // Auto-load materials on mount
   useEffect(() => {
@@ -438,7 +387,7 @@ export function usePyroomAcousticsSimulation(simulationInstanceId: string, onIRI
       assignMaterialToFace,
       clearFaceMaterialAssignments,
       updateSimulationSettings,
-      runSimulation
+      runSpeckleSimulation
     }
   };
 }

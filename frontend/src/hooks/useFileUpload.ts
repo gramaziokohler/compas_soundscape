@@ -102,54 +102,11 @@ export function useFileUpload() {
     }
   }, []);
 
-  const analyzeModel = useCallback(async (uploadedFile: File) => {
-    const is3dm = uploadedFile.name.toLowerCase().endsWith('.3dm');
-    const isIfc = uploadedFile.name.toLowerCase().endsWith('.ifc');
-    const isObj = uploadedFile.name.toLowerCase().endsWith('.obj');
-
-    if (is3dm) {
-      setIsAnalyzingModel(true);
-      setAnalysisProgress('Analyzing 3DM entities...');
-      try {
-        const analyzed = await apiService.analyze3dm(uploadedFile);
-        setModelEntities(analyzed.entities);
-        setAnalysisProgress(`Found ${analyzed.entities.length} entities`);
-        console.log('3DM analysis complete:', analyzed.entities.length, 'entities');
-      } catch (error) {
-        console.error('3DM analysis error:', error);
-        setAnalysisProgress('Failed to analyze 3DM file');
-      } finally {
-        setIsAnalyzingModel(false);
-      }
-    } else if (isIfc) {
-      setIsAnalyzingModel(true);
-      setAnalysisProgress('Analyzing IFC entities...');
-      try {
-        const analyzed = await apiService.analyzeIfc();
-        setModelEntities(analyzed.entities);
-        setAnalysisProgress(`Found ${analyzed.entities.length} entities`);
-        console.log('IFC analysis complete:', analyzed.entities.length, 'entities');
-      } catch (error) {
-        console.error('IFC analysis error:', error);
-        setAnalysisProgress('Failed to analyze IFC file');
-      } finally {
-        setIsAnalyzingModel(false);
-      }
-    } else if (isObj) {
-      setIsAnalyzingModel(true);
-      setAnalysisProgress('Analyzing OBJ groups...');
-      try {
-        const analyzed = await apiService.analyzeObj(uploadedFile);
-        setModelEntities(analyzed.entities);
-        setAnalysisProgress(`Found ${analyzed.entities.length} groups`);
-        console.log('OBJ analysis complete:', analyzed.entities.length, 'groups');
-      } catch (error) {
-        console.error('OBJ analysis error:', error);
-        setAnalysisProgress('Failed to analyze OBJ file');
-      } finally {
-        setIsAnalyzingModel(false);
-      }
-    }
+  // DEPRECATED: Legacy model analysis removed - Speckle workflow is now the primary path
+  // Entities are extracted from Speckle WorldTree instead of backend analysis
+  const analyzeModel = useCallback(async (_uploadedFile: File) => {
+    console.warn('[useFileUpload] analyzeModel is deprecated - use Speckle workflow instead');
+    setAnalysisProgress('Model analysis via Speckle workflow');
   }, []);
 
   const handleUploadModel = useCallback(async () => {
@@ -199,36 +156,11 @@ export function useFileUpload() {
     }
   }, [modelFile, processGeometry, analyzeModel, useModelAsContext, handleError]);
 
+  // DEPRECATED: Legacy sample IFC loading removed - use file upload with Speckle workflow instead
   const handleLoadSampleIfc = useCallback(async () => {
-    setIsUploading(true);
-    setIsAnalyzingModel(false);
-    setAnalysisProgress('');
-    setUploadError(null);
-    setModelEntities([]);
-
-    try {
-      const geometry = await apiService.loadSampleIfc();
-      processGeometry(geometry);
-
-      // Only analyze model if useModelAsContext is true
-      if (useModelAsContext) {
-        setIsAnalyzingModel(true);
-        setAnalysisProgress('Analyzing IFC entities...');
-        const analyzed = await apiService.analyzeIfc();
-        setModelEntities(analyzed.entities);
-        setAnalysisProgress(`Found ${analyzed.entities.length} entities`);
-      } else {
-        setAnalysisProgress('Model loaded for positioning only');
-      }
-    } catch (err: any) {
-      const errorMessage = err.message || 'Failed to load sample IFC';
-      setUploadError(errorMessage);
-      handleError(err, errorMessage);
-    } finally {
-      setIsUploading(false);
-      setIsAnalyzingModel(false);
-    }
-  }, [processGeometry, useModelAsContext, handleError]);
+    console.warn('[useFileUpload] handleLoadSampleIfc is deprecated - use file upload with Speckle workflow');
+    setUploadError('Sample IFC loading is deprecated. Please upload a file directly via the right sidebar.');
+  }, []);
 
   const clearModel = useCallback(() => {
     setModelEntities([]);

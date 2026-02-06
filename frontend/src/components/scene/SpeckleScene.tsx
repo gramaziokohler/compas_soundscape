@@ -120,12 +120,14 @@ interface SpeckleSceneProps {
 
   // Resonance Audio (ShoeBox Acoustics) - NEW
   resonanceAudioConfig?: import('@/types/audio').ResonanceAudioConfig;
-  geometryBounds?: { min: [number, number, number]; max: [number, number, number] } | null;
   showBoundingBox?: boolean;
   refreshBoundingBoxTrigger?: number;
 
   // Callback when viewer is loaded
   onViewerLoaded?: (viewer: Viewer) => void;
+
+  // Callback when bounds are computed from Speckle viewer (for sound sphere placement during generation)
+  onBoundsComputed?: (bounds: { min: [number, number, number]; max: [number, number, number] }) => void;
 
   // Sidebar expanded states - adjusts timeline and control positions
   isLeftSidebarExpanded?: boolean;
@@ -176,10 +178,10 @@ export function SpeckleScene({
   onStopAll,
   isAnyPlaying = false,
   resonanceAudioConfig,
-  geometryBounds = null,
   showBoundingBox = false,
   refreshBoundingBoxTrigger = 0,
   onViewerLoaded,
+  onBoundsComputed,
   isLeftSidebarExpanded = true,
   isRightSidebarExpanded = true,
   className,
@@ -188,12 +190,12 @@ export function SpeckleScene({
   const containerRef = useRef<HTMLDivElement>(null);
   
   // Use context viewer ref if available, otherwise use local ref
-  const { viewerRef: contextViewerRef } = useSpeckleViewerContext();
+  const { viewerRef: contextViewerRef, incrementWorldTreeVersion } = useSpeckleViewerContext();
   const localViewerRef = useRef<Viewer | null>(null);
   const viewerRef = contextViewerRef || localViewerRef;
   
   // Get selection mode context - colors are auto-applied via FilteringExtension
-  const { setViewer, setSelectedEntity } = useSpeckleSelectionMode();
+  const { setViewer, setSelectedEntity, applyFilterColors } = useSpeckleSelectionMode();
   
   const coordinatorRef = useRef<SpeckleAudioCoordinator | null>(null);
   const playbackSchedulerRef = useRef<PlaybackSchedulerService | null>(null);
@@ -381,6 +383,8 @@ export function SpeckleScene({
             if (tree) {
               console.log('[SpeckleScene] World tree loaded');
               setWorldTree(tree);
+              // Signal to ObjectExplorer that the tree is ready
+              incrementWorldTreeVersion();
             }
 
             // Notify parent
@@ -438,6 +442,24 @@ export function SpeckleScene({
       coordinatorRef.current.setAudioOrchestrator(audioOrchestrator);
     }
   }, [audioOrchestrator]);
+
+  // ============================================================================
+  // Effect - Compute and Report Bounds When Viewer Ready
+  // This ensures bounds are available for sound generation before any sounds exist
+  // ============================================================================
+  useEffect(() => {
+    if (!isViewerReady || !viewerRef.current || !boundingBoxManagerRef.current) {
+      return;
+    }
+
+    // Compute bounds from Speckle viewer
+    const bounds = boundingBoxManagerRef.current.calculateBoundsFromSpeckleBatches(viewerRef.current);
+
+    if (bounds && onBoundsComputed) {
+      console.log('[SpeckleScene] ✅ Reporting initial bounds to parent:', bounds);
+      onBoundsComputed(bounds);
+    }
+  }, [isViewerReady, onBoundsComputed]);
 
   // ============================================================================
   // Effect - Setup Speckle Object Selection Callback
@@ -598,8 +620,15 @@ export function SpeckleScene({
             onSelectSoundCard(promptIndex);
           }
         }
-        // Note: FilteringExtension colors are auto-applied by the context,
-        // no need to manually restore highlights after click
+      }
+
+      // Re-apply filter colors ONLY when deselecting (clicking on empty space)
+      // When selecting an object, SelectionExtension handles the highlight
+      // and we don't want to override it with our colors
+      if (objectIds.length === 0) {
+        setTimeout(() => {
+          applyFilterColors();
+        }, 50);
       }
     });
 
@@ -626,7 +655,7 @@ export function SpeckleScene({
     if (onUpdateSoundPosition) {
       coordinatorRef.current.setOnSoundPositionUpdated(onUpdateSoundPosition);
     }
-  }, [coordinatorRef.current, soundscapeData, onSelectSoundCard, isLinkingEntity, onEntityLinked, worldTree, selectedDiverseEntities, onUpdateReceiverPosition, onUpdateSoundPosition]);
+  }, [coordinatorRef.current, soundscapeData, onSelectSoundCard, isLinkingEntity, onEntityLinked, worldTree, selectedDiverseEntities, onUpdateReceiverPosition, onUpdateSoundPosition, applyFilterColors]);
 
   // ============================================================================
   // Effect - Update Sound Spheres
@@ -644,7 +673,7 @@ export function SpeckleScene({
 
     // Calculate bounds for spiral placement (without triggering visualization)
     let effectiveBounds = boundingBoxManagerRef.current.calculateBoundsFromSpeckleBatches(viewerRef.current);
-    
+
     if (!effectiveBounds) {
       const soundPositions: THREE.Vector3[] = [];
       if (soundscapeData) {
@@ -655,7 +684,7 @@ export function SpeckleScene({
         });
       }
       effectiveBounds = boundingBoxManagerRef.current.calculateEffectiveBounds(
-        geometryBounds,
+        null, // Legacy geometryBounds removed - Speckle viewer computes bounds
         soundPositions
       );
     }
@@ -668,7 +697,7 @@ export function SpeckleScene({
       auralizationConfigRef.current,
       effectiveBounds
     );
-  }, [isViewerReady, soundscapeData, selectedVariants, scaleForSounds, geometryBounds]);
+  }, [isViewerReady, soundscapeData, selectedVariants, scaleForSounds]);
 
   // ============================================================================
   // Effect - Update Receivers
@@ -683,7 +712,7 @@ export function SpeckleScene({
 
     // Calculate bounds for spiral placement (same as sound spheres)
     let effectiveBounds = boundingBoxManagerRef.current.calculateBoundsFromSpeckleBatches(viewerRef.current);
-    
+
     if (!effectiveBounds) {
       const soundPositions: THREE.Vector3[] = [];
       if (soundscapeData) {
@@ -694,14 +723,14 @@ export function SpeckleScene({
         });
       }
       effectiveBounds = boundingBoxManagerRef.current.calculateEffectiveBounds(
-        geometryBounds,
+        null, // Legacy geometryBounds removed - Speckle viewer computes bounds
         soundPositions
       );
     }
 
     // Pass bounds and enable spiral placement when bounds are available
     coordinatorRef.current.updateReceivers(receivers, effectiveBounds, !!effectiveBounds);
-  }, [isViewerReady, receivers, geometryBounds, soundscapeData]);
+  }, [isViewerReady, receivers, soundscapeData]);
 
   // ============================================================================
   // Effect - Highlight Selected Sound Sphere
@@ -931,13 +960,12 @@ export function SpeckleScene({
 
     console.log('[SpeckleScene] Updating bounding box. showBoundingBox:', showBoundingBox);
 
-    // Calculate effective bounds
-    // Priority: 1) Speckle batch bounds, 2) geometryBounds, 3) auto-calculate from sound positions
+    // Calculate effective bounds from Speckle viewer (primary method)
     let effectiveBounds = boundingBoxManager.calculateBoundsFromSpeckleBatches(viewer);
 
-    // Fallback to geometry bounds or sound positions
+    // Fallback to auto-calculate from sound positions
     if (!effectiveBounds) {
-      console.log('[SpeckleScene] No Speckle bounds, trying fallback methods');
+      console.log('[SpeckleScene] No Speckle bounds, trying fallback from sound positions');
       const soundPositions: THREE.Vector3[] = [];
       if (soundscapeData) {
         soundscapeData.forEach(sound => {
@@ -948,12 +976,17 @@ export function SpeckleScene({
       }
 
       effectiveBounds = boundingBoxManager.calculateEffectiveBounds(
-        geometryBounds,
+        null, // Legacy geometryBounds removed - Speckle viewer computes bounds
         soundPositions
       );
     }
 
     console.log('[SpeckleScene] Effective bounds:', effectiveBounds);
+
+    // Notify parent of computed bounds (for sound generation bounding box)
+    if (effectiveBounds && onBoundsComputed) {
+      onBoundsComputed(effectiveBounds);
+    }
 
     // Update bounding box with calculated bounds
     const config = {
@@ -977,11 +1010,11 @@ export function SpeckleScene({
     }
   }, [
     isViewerReady,
-    geometryBounds,
     soundscapeData,
     showBoundingBox,
     resonanceAudioConfig?.roomMaterials,
-    refreshBoundingBoxTrigger
+    refreshBoundingBoxTrigger,
+    onBoundsComputed
   ]);
 
   // ============================================================================

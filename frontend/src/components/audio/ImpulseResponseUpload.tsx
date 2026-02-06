@@ -1,53 +1,38 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { FileUploadArea } from "@/components/controls/FileUploadArea";
 import { AudioWaveformDisplay } from "@/components/audio/AudioWaveformDisplay";
 import { apiService } from "@/services/api";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
-import type { ImpulseResponseMetadata, AuralizationConfig } from "@/types/audio";
-import type { SEDAudioInfo } from "@/types";
-import { UI_COLORS, UI_CARD, API_BASE_URL } from "@/lib/constants";
+import type { ImpulseResponseMetadata } from "@/types/audio";
+import { API_BASE_URL } from "@/lib/constants";
 
 interface ImpulseResponseUploadProps {
-  onSelectIR: (irMetadata: ImpulseResponseMetadata) => Promise<void>;
   onClearIR: () => void;
-  selectedIRId: string | null;
-  auralizationConfig: AuralizationConfig;
   simulationResults?: string | null;
   refreshTrigger?: number;
   simulationIRIds?: string[]; // If provided, only show IRs with these IDs in the library
-  isSimulationMode?: boolean; // NEW: Disable selection in simulation mode (source-receiver pairs)
 }
 
 /**
  * ImpulseResponseUpload Component
  *
  * Manages server-side impulse response library with upload capability.
- * One IR must always be selected in Precise Acoustics mode.
  *
  * Features:
  * - List all IRs from server
  * - Upload new IR files (auto-processes multi-channel)
  * - Format detection and labeling (Mono, Binaural, FOA, TOA)
  * - Channel count display
- * - Selection (no deselection - one must always be active)
- * - Delete IRs (auto-selects another if deleting current)
+ * - Delete IRs
  *
- * @param onSelectIR - Callback when IR is selected (downloads and loads it)
  * @param onClearIR - Callback to clear IR (only used internally when no IRs remain)
- * @param selectedIRId - Currently selected IR ID
- * @param auralizationConfig - Current auralization configuration (for visualization)
  */
 export function ImpulseResponseUpload({
-  onSelectIR,
   onClearIR,
-  selectedIRId,
-  auralizationConfig,
   simulationResults = null,
   refreshTrigger = 0,
-  simulationIRIds = undefined,
-  isSimulationMode = false
+  simulationIRIds = undefined
 }: ImpulseResponseUploadProps) {
   const handleError = useApiErrorHandler();
   const [impulseResponses, setImpulseResponses] = useState<ImpulseResponseMetadata[]>([]);
@@ -97,29 +82,6 @@ export function ImpulseResponseUpload({
     }
   };
 
-  const handleSelectIR = async (ir: ImpulseResponseMetadata) => {
-    // Prevent selection in simulation mode
-    if (isSimulationMode) {
-      console.warn('[ImpulseResponseUpload] IR selection disabled in simulation mode');
-      return;
-    }
-
-    try {
-      setError(null);
-
-      // If clicking on already-selected IR, do nothing (no deselection allowed)
-      if (selectedIRId === ir.id) {
-        return;
-      }
-
-      await onSelectIR(ir);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to load IR';
-      setError(errorMessage);
-      handleError(err, errorMessage);
-    }
-  };
-
   // Load IR buffer for waveform display (on hover)
   const loadIRBuffer = async (ir: ImpulseResponseMetadata): Promise<AudioBuffer | null> => {
     // Check cache first
@@ -161,20 +123,8 @@ export function ImpulseResponseUpload({
     try {
       setError(null);
 
-      const wasSelected = selectedIRId === irId;
-
       await apiService.deleteImpulseResponse(irId);
       await loadImpulseResponses();
-
-      // If we deleted the selected IR, auto-select another one if available
-      if (wasSelected) {
-        const remainingIRs = impulseResponses.filter(ir => ir.id !== irId);
-        if (remainingIRs.length > 0) {
-          await onSelectIR(remainingIRs[0]);
-        } else {
-          onClearIR(); // No IRs left, clear selection
-        }
-      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to delete IR';
       setError(errorMessage);
@@ -208,11 +158,6 @@ export function ImpulseResponseUpload({
 
       // Reload list
       await loadImpulseResponses();
-
-      // Auto-select the last uploaded IR
-      if (lastMetadata) {
-        await handleSelectIR(lastMetadata);
-      }
 
       // Clear progress message after a delay
       setTimeout(() => setUploadProgress(''), 2000);
@@ -292,57 +237,9 @@ export function ImpulseResponseUpload({
   return (
     <div className="flex flex-col gap-4">
 
-      {/* Upload Section - Only show when no IRs exist in library */}
-      {impulseResponses.length === 0 && (
-        <div
-          className="rounded-lg"
-          style={{
-            padding: `${UI_CARD.PADDING}px`,
-            backgroundColor: 'white',
-            borderColor: UI_COLORS.NEUTRAL_300,
-            borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
-            borderStyle: 'solid',
-            borderRadius: `${UI_CARD.BORDER_RADIUS}px`
-          }}
-        >
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">
-            Upload New IR
-          </h3>
-
-          <FileUploadArea
-            file={null}
-            isDragging={isDragging}
-            acceptedFormats="audio/wav,.wav"
-            acceptedExtensions=".wav"
-            onFileChange={handleFileChange}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            inputId="ir-file-upload"
-            multiple={true}
-          />
-
-          {isUploading && (
-            <div className="mt-3 text-xs text-center" style={{ color: UI_COLORS.PRIMARY }}>
-              {uploadProgress}
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Error Display */}
       {error && (
-        <div
-          className="text-xs rounded"
-          style={{
-            padding: `${UI_CARD.PADDING - 4}px`,
-            backgroundColor: UI_COLORS.ERROR_LIGHT,
-            borderColor: UI_COLORS.ERROR,
-            borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
-            borderStyle: 'solid',
-            color: UI_COLORS.ERROR
-          }}
-        >
+        <div className="text-xs rounded p-2 bg-red-100 dark:bg-red-900/30 border border-red-500 text-red-500">
           {error}
         </div>
       )}
@@ -354,58 +251,29 @@ export function ImpulseResponseUpload({
       >
 
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold" style={{ color: simulationResults ? 'white' : undefined }}>
+          <h3 className={`text-sm font-semibold ${simulationResults ? 'text-white' : ''}`}>
             Impulse Responses ({impulseResponses.length})
           </h3>
-          <button
-            onClick={() => irLibraryFileInputRef.current?.click()}
-            disabled={isUploading}
-            className="text-xs transition-colors disabled:opacity-40"
-            style={{ color: UI_COLORS.PRIMARY }}
-            onMouseEnter={(e) => !e.currentTarget.disabled && (e.currentTarget.style.color = UI_COLORS.PRIMARY_HOVER)}
-            onMouseLeave={(e) => !e.currentTarget.disabled && (e.currentTarget.style.color = UI_COLORS.PRIMARY)}
-          >
-            {isUploading ? uploadProgress : 'Upload'}
-          </button>
-          {/* Hidden file input for IR Library Upload button */}
-          <input
-            ref={irLibraryFileInputRef}
-            type="file"
-            accept="audio/wav,.wav"
-            multiple
-            onChange={handleIRLibraryUpload}
-            style={{ display: 'none' }}
-          />
         </div>
 
         <div className="space-y-2 max-h-80 overflow-y-auto relative">
           {impulseResponses.length === 0 ? (
-            <div className="text-xs text-center py-4" style={{ color: UI_COLORS.NEUTRAL_500 }}>
-              No impulse responses yet. Click Upload to add one!
+            <div className="text-xs text-center py-4 text-neutral-500">
+              No impulse responses yet.
             </div>
           ) : (
             impulseResponses.map((ir) => {
               const badge = getFormatBadge(ir.format);
-              const isSelected = selectedIRId === ir.id;
 
               return (
                 <div
                   key={ir.id}
-                  className={`p-3 rounded transition-colors relative ${isSimulationMode ? 'opacity-50' : 'cursor-pointer'}`}
-                  style={{
-                    borderColor: isSelected ? UI_COLORS.PRIMARY : (simulationResults ? UI_COLORS.NEUTRAL_700 : UI_COLORS.NEUTRAL_200),
-                    borderWidth: `${UI_CARD.BORDER_WIDTH}px`,
-                    borderStyle: 'solid',
-                    backgroundColor: isSelected ? `${UI_COLORS.PRIMARY}10` : 'transparent',
-                    borderRadius: `${UI_CARD.BORDER_RADIUS}px`,
-                    cursor: isSimulationMode ? 'not-allowed' : 'pointer'
-                  }}
-                  onClick={() => !isSimulationMode && handleSelectIR(ir)}
+                  className={`p-3 rounded-lg transition-colors relative border ${
+                    simulationResults 
+                      ? 'border-neutral-700 hover:border-neutral-600' 
+                      : 'border-neutral-200 dark:border-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-600'
+                  }`}
                   onMouseEnter={async (e) => {
-                    if (!isSelected) {
-                      e.currentTarget.style.borderColor = simulationResults ? UI_COLORS.NEUTRAL_600 : UI_COLORS.NEUTRAL_300;
-                    }
-
                     // Cancel any pending hide timeout
                     if (hideTimeoutRef.current) {
                       clearTimeout(hideTimeoutRef.current);
@@ -426,10 +294,7 @@ export function ImpulseResponseUpload({
                     const buffer = await loadIRBuffer(ir);
                     setHoveredIRBuffer(buffer);
                   }}
-                  onMouseLeave={(e) => {
-                    if (!isSelected) {
-                      e.currentTarget.style.borderColor = simulationResults ? UI_COLORS.NEUTRAL_700 : UI_COLORS.NEUTRAL_200;
-                    }
+                  onMouseLeave={() => {
                     // Only hide if not hovering over the overlay
                     hideTimeoutRef.current = setTimeout(() => {
                       if (!isOverlayHovered) {
@@ -443,7 +308,7 @@ export function ImpulseResponseUpload({
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium truncate" style={{ color: simulationResults ? 'white' : undefined }}>
+                      <div className={`text-sm font-medium truncate ${simulationResults ? 'text-white' : ''}`}>
                         {ir.name}
                       </div>
 
@@ -451,17 +316,9 @@ export function ImpulseResponseUpload({
                         <span className={`text-xs px-2 py-0.5 rounded ${badge.color}`}>
                           {badge.label}
                         </span>
-                        <span className="text-xs" style={{ color: simulationResults ? UI_COLORS.NEUTRAL_400 : undefined }}>
-                          {ir.sampleRate} Hz
+                        <span className={`text-xs ${simulationResults ? 'text-neutral-400' : 'text-neutral-600 dark:text-neutral-400'}`}>
+                          Length={ir.duration.toFixed(2)}s
                         </span>
-                        <span className="text-xs" style={{ color: simulationResults ? UI_COLORS.NEUTRAL_400 : undefined }}>
-                          {ir.duration.toFixed(2)}s
-                        </span>
-                        {ir.originalChannels !== ir.channels && (
-                          <span className="text-xs" style={{ color: simulationResults ? UI_COLORS.NEUTRAL_400 : UI_COLORS.NEUTRAL_500 }}>
-                            (from {ir.originalChannels}ch)
-                          </span>
-                        )}
                       </div>
                     </div>
 
@@ -470,10 +327,7 @@ export function ImpulseResponseUpload({
                         e.stopPropagation();
                         handleDeleteIR(ir.id, ir.name);
                       }}
-                      className="transition-colors"
-                      style={{ color: UI_COLORS.NEUTRAL_400 }}
-                      onMouseEnter={(e) => e.currentTarget.style.color = UI_COLORS.ERROR}
-                      onMouseLeave={(e) => e.currentTarget.style.color = UI_COLORS.NEUTRAL_400}
+                      className="text-neutral-400 hover:text-red-500 transition-colors"
                       title="Delete IR"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -481,13 +335,6 @@ export function ImpulseResponseUpload({
                       </svg>
                     </button>
                   </div>
-
-                  {isSelected && (
-                    <div className="mt-2 text-xs" style={{ color: UI_COLORS.PRIMARY }}>
-                      ✓ Currently loaded
-                    </div>
-                  )}
-
                 </div>
               );
             })
@@ -500,14 +347,10 @@ export function ImpulseResponseUpload({
       {/* Waveform Overlay - Rendered as fixed position to the right of IR card */}
       {hoveredIRId && hoveredIRBuffer && overlayPosition && (
         <div
-          className="fixed shadow-2xl"
+          className="fixed shadow-2xl -translate-y-1/2 z-[9999] w-fit max-w-[90vw]"
           style={{
             top: `${overlayPosition.top}px`,
-            left: `${overlayPosition.left}px`,
-            transform: 'translateY(-50%)', // Center vertically relative to the IR card
-            zIndex: 9999, // High z-index to appear above ThreeScene
-            width: 'fit-content',
-            maxWidth: '90vw' // Prevent overflow on small screens
+            left: `${overlayPosition.left}px`
           }}
           onMouseEnter={() => setIsOverlayHovered(true)}
           onMouseLeave={() => {
@@ -534,7 +377,7 @@ export function ImpulseResponseUpload({
 
       {/* Help Text - Only show when no simulation results */}
       {!simulationResults && (
-        <div className="text-xs" style={{ color: UI_COLORS.NEUTRAL_500 }}>
+        <div className="text-xs text-neutral-500">
           <strong>Supported formats:</strong> Mono (1-ch), Binaural (2-ch), FOA (4-ch), TOA (16-ch)
           <br />
           Multi-channel files (8-32ch) are auto-extracted to FOA or TOA.

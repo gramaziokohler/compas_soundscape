@@ -14,6 +14,10 @@ interface SpeckleViewerContextType {
   viewerRef: React.RefObject<Viewer | null>;
   modelFileName: string | null;
   setModelFileName: (fileName: string | null) => void;
+  /** Counter that increments when world tree is loaded/updated - use as useEffect dependency */
+  worldTreeVersion: number;
+  /** Call this when world tree becomes available */
+  incrementWorldTreeVersion: () => void;
 }
 
 const SpeckleViewerContext = createContext<SpeckleViewerContextType | null>(null);
@@ -21,9 +25,20 @@ const SpeckleViewerContext = createContext<SpeckleViewerContextType | null>(null
 export function SpeckleViewerProvider({ children }: { children: ReactNode }) {
   const viewerRef = useRef<Viewer | null>(null);
   const [modelFileName, setModelFileName] = useState<string | null>(null);
+  const [worldTreeVersion, setWorldTreeVersion] = useState(0);
+
+  const incrementWorldTreeVersion = () => {
+    setWorldTreeVersion(prev => prev + 1);
+  };
 
   return (
-    <SpeckleViewerContext.Provider value={{ viewerRef, modelFileName, setModelFileName }}>
+    <SpeckleViewerContext.Provider value={{
+      viewerRef,
+      modelFileName,
+      setModelFileName,
+      worldTreeVersion,
+      incrementWorldTreeVersion
+    }}>
       {children}
     </SpeckleViewerContext.Provider>
   );
@@ -34,10 +49,12 @@ export function useSpeckleViewerContext() {
   if (!context) {
     // Return a fallback ref if context is not available
     // This makes the hook work even outside the provider
-    return { 
+    return {
       viewerRef: { current: null } as React.RefObject<Viewer | null>,
       modelFileName: null,
-      setModelFileName: () => {}
+      setModelFileName: () => {},
+      worldTreeVersion: 0,
+      incrementWorldTreeVersion: () => {}
     };
   }
   return context;

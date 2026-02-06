@@ -227,15 +227,36 @@ function collectAllObjectIds(objects: HierarchicalMeshObject[]): string[] {
 }
 
 /**
+ * Options for initializing the hook with persisted state
+ */
+interface UseSpeckleSurfaceMaterialsOptions {
+  initialAssignments?: Record<string, string>; // objectId -> materialId (from config)
+  initialLayerName?: string | null; // Previously selected layer name (resolved to ID internally)
+}
+
+/**
  * Hook for managing Speckle surface materials
  */
 export function useSpeckleSurfaceMaterials(
   viewerRef: React.RefObject<Viewer | null>,
   worldTree: any,
-  availableMaterials: AcousticMaterial[]
+  availableMaterials: AcousticMaterial[],
+  options?: UseSpeckleSurfaceMaterialsOptions
 ): UseSpeckleSurfaceMaterialsReturn {
+  // Initialize from persisted state if provided
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
-  const [materialAssignments, setMaterialAssignments] = useState<Map<string, string>>(new Map());
+  const [materialAssignments, setMaterialAssignments] = useState<Map<string, string>>(() => {
+    if (options?.initialAssignments && Object.keys(options.initialAssignments).length > 0) {
+      return new Map(Object.entries(options.initialAssignments));
+    }
+    return new Map();
+  });
+
+  // Track if we've already initialized the layer selection
+  const [hasInitializedLayer, setHasInitializedLayer] = useState(false);
+
+  // Store initial layer name for resolution when layers become available
+  const initialLayerName = options?.initialLayerName;
 
   // Extract layers from world tree (one level deeper)
   const layerOptions = useMemo(() => {
@@ -265,14 +286,35 @@ export function useSpeckleSurfaceMaterials(
     return hierarchicalObjects;
   }, [selectedLayerId, worldTree]);
 
-  // Auto-select "Acoustics" layer or first layer with meshes
+  // Auto-select layer: prioritize persisted layer name, then "Acoustics", then first layer
   useEffect(() => {
     if (layerOptions.length === 0) {
       setSelectedLayerId(null);
       return;
     }
 
-    // Try to find "Acoustics" layer
+    // Skip if we've already initialized
+    if (hasInitializedLayer && selectedLayerId) {
+      // Verify the current layer still exists
+      const layerExists = layerOptions.some(l => l.id === selectedLayerId);
+      if (layerExists) {
+        return;
+      }
+      // If current layer doesn't exist, fall through to re-selection
+    }
+
+    // First priority: try to restore from persisted layer name
+    if (initialLayerName) {
+      const persistedLayer = layerOptions.find(l => l.name === initialLayerName);
+      if (persistedLayer) {
+        console.log('[useSpeckleSurfaceMaterials] Restoring persisted layer:', initialLayerName, '->', persistedLayer.id);
+        setSelectedLayerId(persistedLayer.id);
+        setHasInitializedLayer(true);
+        return;
+      }
+    }
+
+    // Second priority: try to find "Acoustics" layer
     const acousticsLayer = layerOptions.find(
       l => l.name.toLowerCase() === 'acoustics'
     );
@@ -284,7 +326,10 @@ export function useSpeckleSurfaceMaterials(
       console.log('[useSpeckleSurfaceMaterials] No "Acoustics" layer found, using first layer:', layerOptions[0]);
       setSelectedLayerId(layerOptions[0].id);
     }
-  }, [layerOptions]);
+
+    // Mark as initialized after first selection
+    setHasInitializedLayer(true);
+  }, [layerOptions, hasInitializedLayer, selectedLayerId, initialLayerName]);
 
   /**
    * Select a layer by ID

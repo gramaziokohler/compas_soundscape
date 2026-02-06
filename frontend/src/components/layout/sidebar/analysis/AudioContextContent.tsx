@@ -4,7 +4,7 @@ import { useState } from 'react';
 import type { AudioAnalysisConfig } from '@/types/analysis';
 import { FileUploadArea } from '@/components/controls/FileUploadArea';
 import { AudioWaveformDisplay } from '@/components/audio/AudioWaveformDisplay';
-import { UI_COLORS, UI_BUTTON, AUDIO_FILE_EXTENSIONS, AUDIO_VISUALIZATION, NUM_SOUNDS_MAX, NUM_SOUNDS_MIN } from '@/lib/constants';
+import { UI_COLORS, AUDIO_FILE_EXTENSIONS, AUDIO_VISUALIZATION, NUM_SOUNDS_MAX, NUM_SOUNDS_MIN } from '@/lib/constants';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 
 /**
@@ -19,15 +19,13 @@ interface AudioContextContentProps {
   index: number;
   isAnalyzing: boolean;
   onUpdateConfig: (index: number, updates: Partial<AudioAnalysisConfig>) => void;
-  onAnalyze: (index: number) => void;
 }
 
 export function AudioContextContent({
   config,
   index,
   isAnalyzing,
-  onUpdateConfig,
-  onAnalyze
+  onUpdateConfig
 }: AudioContextContentProps) {
   // File upload state
   const [isDragging, setIsDragging] = useState(false);
@@ -113,33 +111,7 @@ export function AudioContextContent({
             onChange={(value) => onUpdateConfig(index, { numSounds: value })}
           />
 
-          {/* Analyze Sound Events button */}
-          <button
-            onClick={() => onAnalyze(index)}
-            disabled={isAnalyzing}
-            className="w-full text-white flex items-center justify-center gap-2 transition-colors disabled:opacity-40"
-            style={{
-              borderRadius: UI_BUTTON.BORDER_RADIUS_MD,
-              padding: UI_BUTTON.PADDING_MD,
-              fontSize: UI_BUTTON.FONT_SIZE,
-              fontWeight: UI_BUTTON.FONT_WEIGHT,
-              backgroundColor: UI_COLORS.PRIMARY
-            }}
-            onMouseEnter={(e) => !e.currentTarget.disabled && (e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY_HOVER)}
-            onMouseLeave={(e) => !e.currentTarget.disabled && (e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY)}
-          >
-            {isAnalyzing ? (
-              <>
-                <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                Analyzing...
-              </>
-            ) : (
-              'Analyze Sound Events'
-            )}
-          </button>
+          {/* Note: Action button is rendered by Card component */}
         </div>
       )}
     </div>

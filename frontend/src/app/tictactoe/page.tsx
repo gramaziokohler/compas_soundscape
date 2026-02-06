@@ -3,10 +3,13 @@
 import { create } from 'zustand'
 import { combine } from 'zustand/middleware'
 
+type SquareValue = 'X' | 'O' | null;
+type Squares = SquareValue[];
+
 const useGameStore = create(
-  combine({ squares: Array(9).fill(null), xIsNext: true }, (set) => {
+  combine({ squares: Array(9).fill(null) as Squares, xIsNext: true }, (set) => {
     return {
-      setSquares: (nextSquares) => {
+      setSquares: (nextSquares: Squares | ((prev: Squares) => Squares)) => {
         set((state) => ({
           squares:
             typeof nextSquares === 'function'
@@ -14,7 +17,7 @@ const useGameStore = create(
               : nextSquares,
         }))
       },
-      setXIsNext: (nextXIsNext) => {
+      setXIsNext: (nextXIsNext: boolean | ((prev: boolean) => boolean)) => {
         set((state) => ({
           xIsNext:
             typeof nextXIsNext === 'function'
@@ -26,8 +29,12 @@ const useGameStore = create(
   }),
 )
 
+interface SquareProps {
+  value: SquareValue;
+  onSquareClick: () => void;
+}
 
-function Square({ value, onSquareClick }) {
+function Square({ value, onSquareClick }: SquareProps) {
   return (
     <button
       style={{
@@ -54,21 +61,21 @@ export default function Board() {
   const setXIsNext = useGameStore((state) => state.setXIsNext)
   const squares = useGameStore((state) => state.squares)
   const setSquares = useGameStore((state) => state.setSquares)
-  const player = xIsNext ? 'X' : 'O'
+  const player: SquareValue = xIsNext ? 'X' : 'O'
   const winner = calculateWinner(squares)
   const turns = calculateTurns(squares)
   const status = calculateStatus(winner, turns, player)
 
 
 
-  function handleClick(i) {
+  function handleClick(i: number) {
     if (squares[i] || winner) return
     const nextSquares = squares.slice()
     nextSquares[i] = player
     setSquares(nextSquares)
     setXIsNext(!xIsNext)
 
-  }  
+  }
 
   return (
     <>
@@ -95,7 +102,7 @@ export default function Board() {
   )
 }
 
-function calculateWinner(squares) {
+function calculateWinner(squares: Squares): SquareValue {
   const lines = [
     [0, 1, 2],
     [3, 4, 5],
@@ -117,11 +124,11 @@ function calculateWinner(squares) {
   return null
 }
 
-function calculateTurns(squares) {
+function calculateTurns(squares: Squares): number {
   return squares.filter((square) => !square).length
 }
 
-function calculateStatus(winner, turns, player) {
+function calculateStatus(winner: SquareValue, turns: number, player: SquareValue): string {
   if (!winner && !turns) return 'Draw'
   if (winner) return `Winner ${winner}`
   return `Next player: ${player}`

@@ -71,26 +71,6 @@ export const apiService = {
     }
   },
 
-  // Load Sample IFC
-  async loadSampleIfc(): Promise<CompasGeometry> {
-    try {
-      const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/load-sample-ifc`,
-        undefined,
-        'Load sample IFC'
-      );
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({ detail: 'Failed to load sample IFC' }));
-        throw new Error(err.detail || 'Failed to load sample IFC');
-      }
-
-      return await response.json();
-    } catch (error) {
-      handleApiError(error, 'Load sample IFC');
-    }
-  },
-
   // Load Sample Audio
   async loadSampleAudio(): Promise<File> {
     try {
@@ -122,75 +102,6 @@ export const apiService = {
       return new File([blob], filename, { type: blob.type });
     } catch (error) {
       handleApiError(error, 'Load sample audio');
-    }
-  },
-
-  // Analyze 3DM File
-  async analyze3dm(file: File): Promise<{ entities: any[] }> {
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/analyze-3dm`,
-        {
-          method: 'POST',
-          body: formData
-        },
-        'Analyze 3DM file'
-      );
-
-      if (!response.ok) {
-        throw new Error('Failed to analyze 3DM file');
-      }
-
-      return await response.json();
-    } catch (error) {
-      handleApiError(error, 'Analyze 3DM file');
-    }
-  },
-
-  // Analyze IFC File
-  async analyzeIfc(): Promise<{ entities: any[] }> {
-    try {
-      const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/analyze-ifc`,
-        undefined,
-        'Analyze IFC file'
-      );
-
-      if (!response.ok) {
-        throw new Error('Failed to analyze IFC file');
-      }
-
-      return await response.json();
-    } catch (error) {
-      handleApiError(error, 'Analyze IFC file');
-    }
-  },
-
-  // Analyze OBJ File
-  async analyzeObj(file: File): Promise<{ entities: any[] }> {
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/analyze-obj`,
-        {
-          method: 'POST',
-          body: formData
-        },
-        'Analyze OBJ file'
-      );
-
-      if (!response.ok) {
-        throw new Error('Failed to analyze OBJ file');
-      }
-
-      return await response.json();
-    } catch (error) {
-      handleApiError(error, 'Analyze OBJ file');
     }
   },
 

@@ -39,6 +39,8 @@ export const API_BASE_URL = getApiBaseUrl();
 
 // API Endpoints
 export const SED_ANALYZE_ENDPOINT = `${API_BASE_URL}/api/analyze-sound-events`;
+export const CHORAS_API_URL = `${API_BASE_URL}/choras`;
+export const PYROOMACOUSTICS_API_URL = `${API_BASE_URL}/pyroomacoustics`;
 
 // ============================================================================
 // Sidebar Tab Configuration
@@ -330,7 +332,7 @@ export const UI_RIGHT_SIDEBAR = {
   HEADER_HEIGHT: 48,         // Header height in pixels
   PADDING: UI_SPACING.MD,    // Internal padding
   TREE_ITEM_HEIGHT: 40,      // Height of each tree item in pixels
-  TREE_MAX_HEIGHT: 300,      // Maximum height of scrolling tree view
+  TREE_MAX_HEIGHT: 700,      // Maximum height of scrolling tree view
   BACKGROUND: 'white',       // Background color
   BORDER_COLOR: UI_COLORS.NEUTRAL_200,
   BORDER_WIDTH: UI_LINE_THICKNESS.THIN,
@@ -533,7 +535,7 @@ export const AMBISONIC = {
    * 
    * Note: For SOA/TOA, JSAmbisonics is always used regardless of this setting.
    */
-  USE_OMNITONE_FOR_FOA: false as const,
+  USE_OMNITONE_FOR_FOA: true as const,
 
   // Ambisonic orders
   ORDER: {
@@ -662,7 +664,7 @@ export const HRTF = {
   FORMAT: 'ircam' as const,  // IRCAM SOFA JSON format
 
   // Enable auto-loading on decoder initialization
-  AUTO_LOAD: true,           // Automatically load HRTFs on startup
+  AUTO_LOAD: false,           // Automatically load HRTFs on startup
 
   /**
    * Virtual speaker count for binaural decoding per ambisonic order.

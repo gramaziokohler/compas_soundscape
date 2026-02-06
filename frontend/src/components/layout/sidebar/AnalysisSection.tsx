@@ -1,17 +1,27 @@
 'use client';
 
-import { useState, useRef, useEffect, useMemo } from "react";
-import type { AnalysisSectionProps } from "@/types/analysis";
-import type { CardType } from "@/types/card";
-import { AnalysisTab } from "./AnalysisTab";
-import { UI_COLORS, UI_BUTTON } from "@/lib/constants";
+import { useMemo, useCallback } from "react";
+import type { AnalysisSectionProps, AnalysisConfig, AnalysisResult, ModelAnalysisConfig, AudioAnalysisConfig, TextAnalysisConfig } from "@/types/analysis";
+import type { CardTypeOption } from "@/components/ui/CardSection";
+import { CARD_TYPE_LABELS } from '@/types/card';
+import { CardSection } from "@/components/ui/CardSection";
+import { Card } from "@/components/ui/Card";
+import { Model3DContextContent } from "@/components/layout/sidebar/analysis/Model3DContextContent";
+import { AudioContextContent } from "@/components/layout/sidebar/analysis/AudioContextContent";
+import { TextContextContent } from "@/components/layout/sidebar/analysis/TextContextContent";
+import { AnalysisResultContent } from "@/components/layout/sidebar/analysis/AnalysisResultContent";
 
 /**
  * AnalysisSection Component
- * 
- * Manages multiple analysis tabs (3D Model, Audio, Text contexts)
- * Each tab can generate text prompts that users can select
- * Selected prompts from all tabs are sent to sound generation
+ *
+ * Manages multiple analysis cards (3D Model, Audio, Text contexts).
+ * Each card can generate text prompts that users can select.
+ * Selected prompts from all cards are sent to sound generation.
+ *
+ * **Architecture:**
+ * - Uses CardSection for expand/collapse and add button logic
+ * - Uses Card component for each analysis item
+ * - Content components passed as beforeContent/afterContent props
  */
 export function AnalysisSection({
   analysisConfigs = [],
@@ -24,66 +34,117 @@ export function AnalysisSection({
   onRemoveConfig,
   onUpdateConfig,
   onSetActiveTab,
-  onRun,
+  onRun, // Generic action callback - passed to content components as onAnalyze
   onStop,
+  onReset,
   onTogglePromptSelection,
-  onSendToSoundGeneration,
-  onReset
+  onSendToSoundGeneration
 }: AnalysisSectionProps) {
-  // Track which analysis tabs are expanded
-  const [expandedTabs, setExpandedTabs] = useState<Set<number>>(new Set([0])); // Default first tab expanded
-
-  // Track analysis type selector dropdown visibility
-  const [showTypeSelector, setShowTypeSelector] = useState(false);
-  const typeSelectorRef = useRef<HTMLDivElement>(null);
-  
-  // Refs for scrolling
-  const analysisListRef = useRef<HTMLDivElement>(null);
-  const analysisTabRefs = useRef<Map<number, HTMLDivElement>>(new Map());
-
   // Helper to check if an analysis has generated results
-  const hasResult = (index: number): boolean => {
+  const hasResult = useCallback((index: number): boolean => {
     return analysisResult.some(r => r.configIndex === index);
-  };
+  }, [analysisResult]);
 
   // Helper to get result for a config index
-  const getResult = (index: number) => {
+  const getResult = useCallback((index: number): AnalysisResult | undefined => {
     return analysisResult.find(r => r.configIndex === index);
-  };
+  }, [analysisResult]);
 
-  // Toggle expansion of an analysis tab (only one can be expanded at a time)
-  const handleToggleExpand = (index: number) => {
-    setExpandedTabs(prev => {
-      const wasExpanded = prev.has(index);
+  // Get collapsed info for a config
+  const getCollapsedInfo = useCallback((config: AnalysisConfig, index: number): string => {
+    const result = getResult(index);
+    if (result) {
+      const selectedCount = result.prompts.filter(p => p.selected).length;
+      return `(${selectedCount} selected prompt${selectedCount !== 1 ? 's' : ''})`;
+    }
 
-      if (wasExpanded) {
-        return new Set(); // Collapse if already expanded
+    if (config.type === '3d-model') {
+      const modelConfig = config as ModelAnalysisConfig;
+      if (modelConfig.selectedDiverseEntities.length > 0) {
+        return `(${modelConfig.selectedDiverseEntities.length} selected entities)`;
       }
+    }
 
-      // Expand this tab and scroll to it
-      setTimeout(() => {
-        const tabElement = analysisTabRefs.current.get(index);
-        tabElement?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }, 100);
+    return '';
+  }, [getResult]);
 
-      return new Set([index]); // Expand only this tab
-    });
-  };
+  // Get before content (configuration UI) for a config
+  const getBeforeContent = useCallback((config: AnalysisConfig, index: number) => {
+    switch (config.type) {
+      case '3d-model':
+        return (
+          <Model3DContextContent
+            config={config as ModelAnalysisConfig}
+            index={index}
+            isAnalyzing={isRunning}
+            onUpdateConfig={onUpdateConfig}
+          />
+        );
+      case 'audio':
+        return (
+          <AudioContextContent
+            config={config as AudioAnalysisConfig}
+            index={index}
+            isAnalyzing={isRunning}
+            onUpdateConfig={onUpdateConfig}
+          />
+        );
+      case 'text':
+        return (
+          <TextContextContent
+            config={config as TextAnalysisConfig}
+            index={index}
+            isAnalyzing={isRunning}
+            onUpdateConfig={onUpdateConfig}
+          />
+        );
+      default:
+        return null;
+    }
+  }, [isRunning, onUpdateConfig]);
 
-  // Handle reset (convert generated result back to configuration UI)
-  const handleReset = (index: number) => {
-    onReset(index);
-  };
+  // Get after content (result UI) for a config
+  const getAfterContent = useCallback((config: AnalysisConfig, index: number) => {
+    const result = getResult(index);
+    if (!result) return null;
 
-  // Calculate analysis status
-  const analysisStatus = useMemo(() => {
-    const totalContexts = analysisConfigs.length;
-    const completedCount = analysisResult.length;
-    const pendingCount = totalContexts - completedCount;
-    return { totalContexts, completedCount, pendingCount };
-  }, [analysisConfigs.length, analysisResult.length]);
+    return (
+      <AnalysisResultContent
+        analysisResult={result}
+        onTogglePromptSelection={onTogglePromptSelection}
+      />
+    );
+  }, [getResult, onTogglePromptSelection]);
 
-  // Calculate total selected prompts across all tabs
+  // Check if a 3D model is loaded
+  const hasModelLoaded = useMemo(() => {
+    if (hasGlobalModelLoaded) return true;
+    return analysisConfigs.some(config =>
+      config.type === '3d-model' && ((config as ModelAnalysisConfig).modelFile !== null || (config as ModelAnalysisConfig).speckleData !== undefined)
+    );
+  }, [analysisConfigs, hasGlobalModelLoaded]);
+
+  // Available card types for add button
+  const availableTypes: CardTypeOption[] = useMemo(() => [
+    {
+      type: '3d-model',
+      label: CARD_TYPE_LABELS['3d-model'],
+      enabled: hasModelLoaded,
+      disabledTooltip: 'Import a 3D model first (right sidebar)'
+    },
+    {
+      type: 'audio',
+      label: CARD_TYPE_LABELS['audio'],
+      enabled: true
+    },
+    {
+      type: 'text',
+      label: CARD_TYPE_LABELS['text'],
+      enabled: true
+    }
+  ], [hasModelLoaded]);
+
+  // Calculate total selected prompts
   const totalSelectedPrompts = useMemo(() => {
     return analysisResult.reduce((total, result) => {
       const selectedCount = result.prompts.filter(p => p.selected).length;
@@ -91,252 +152,117 @@ export function AnalysisSection({
     }, 0);
   }, [analysisResult]);
 
-  // Determine if "Send to sound generation" button should be enabled
   const canSendToGeneration = totalSelectedPrompts > 0;
 
-  // When adding a new analysis, expand it and collapse others
-  useEffect(() => {
-    const lastIndex = analysisConfigs.length - 1;
-    if (lastIndex >= 0) {
-      setExpandedTabs(new Set([lastIndex]));
-    }
-  }, [analysisConfigs.length]);
+  // Pending count calculation
+  const getPendingCount = useCallback((items: AnalysisConfig[]) => {
+    return items.length - analysisResult.length;
+  }, [analysisResult.length]);
 
-  // Close type selector when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (typeSelectorRef.current && !typeSelectorRef.current.contains(event.target as Node)) {
-        setShowTypeSelector(false);
+  // Render card function
+  const renderCard = useCallback((
+    config: AnalysisConfig,
+    index: number,
+    isExpanded: boolean,
+    onToggleExpand: (index: number) => void
+  ) => {
+    const configHasResult = hasResult(index);
+
+    // Compute action button state based on card type
+    let actionButtonLabel = 'Generate Sound Ideas';
+    let actionButtonDisabled = false;
+    let actionButtonDisabledReason: string | undefined;
+    let actionButtonColor = 'primary';
+
+    switch (config.type) {
+      case '3d-model': {
+        const modelConfig = config as ModelAnalysisConfig;
+        actionButtonLabel = modelConfig.selectedDiverseEntities.length === 0? 'Auto-select diverse entities' : 'Generate Sound Ideas';
+        actionButtonDisabled = modelConfig.modelEntities.length === 0;
+        actionButtonDisabledReason = actionButtonDisabled ? 'Loading objects...' : undefined;
+        actionButtonColor = modelConfig.selectedDiverseEntities.length === 0 ? 'primary' : 'success';
+        break;
       }
-    };
-
-    if (showTypeSelector) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
+      case 'audio': {
+        const audioConfig = config as AudioAnalysisConfig;
+        actionButtonLabel = 'Analyze Sound Events';
+        actionButtonDisabled = audioConfig.audioFile === null;
+        actionButtonDisabledReason = actionButtonDisabled ? 'No audio file loaded' : undefined;
+        break;
+      }
+      case 'text': {
+        const textConfig = config as TextAnalysisConfig;
+        actionButtonLabel = 'Generate Sound Ideas';
+        actionButtonDisabled = textConfig.textInput.trim().length === 0;
+        actionButtonDisabledReason = actionButtonDisabled ? 'Enter a text description' : undefined;
+        break;
+      }
     }
-  }, [showTypeSelector]);
 
-  // Handle type selection
-  const handleTypeSelect = (type: CardType) => {
-    onAddConfig(type);
-    setShowTypeSelector(false);
-  };
-
-  // Check if a 3D model is loaded (either globally or in any config)
-  const hasModelLoaded = useMemo(() => {
-    // Check global model first
-    if (hasGlobalModelLoaded) return true;
-    
-    // Check configs
-    return analysisConfigs.some(config => 
-      config.type === '3d-model' && (config.modelFile !== null || config.speckleData !== undefined)
+    return (
+      <Card
+        config={config}
+        index={index}
+        isExpanded={isExpanded}
+        hasResult={configHasResult}
+        result={getResult(index)}
+        isRunning={isRunning}
+        collapsedInfo={getCollapsedInfo(config, index)}
+        showIndex={true}
+        canRemove={true}
+        closeButtonTitle="Remove analysis"
+        resetButtonTitle="Reset to configuration UI"
+        onToggleExpand={onToggleExpand}
+        onUpdateConfig={onUpdateConfig}
+        onRemove={onRemoveConfig}
+        onReset={onReset}
+        beforeContent={getBeforeContent(config, index)}
+        afterContent={getAfterContent(config, index)}
+        // Action button props
+        onRun={onRun ? async () => onRun(index) : undefined}
+        onCancel={onStop ? () => onStop() : undefined}
+        actionButtonLabel={actionButtonLabel}
+        actionButtonDisabled={actionButtonDisabled}
+        actionButtonDisabledReason={actionButtonDisabledReason}
+        actionButtonColor={actionButtonColor}
+      />
     );
-  }, [analysisConfigs, hasGlobalModelLoaded]);
+  }, [hasResult, getResult, isRunning, getCollapsedInfo, onUpdateConfig, onRemoveConfig, onReset, getBeforeContent, getAfterContent, onRun, onStop]);
+
+  // Footer with send button
+  const footer = (
+    <div className="flex flex-col gap-2">
+      <div className="text-xs text-center text-secondary-hover">
+        ({totalSelectedPrompts} sound prompt{totalSelectedPrompts !== 1 ? 's' : ''})
+      </div>
+
+      <button
+        onClick={onSendToSoundGeneration}
+        disabled={!canSendToGeneration}
+        className={`w-full py-2 px-4 rounded-md text-white text-xs font-medium transition-colors ${
+          canSendToGeneration
+            ? 'bg-success hover:bg-success-hover cursor-pointer'
+            : 'bg-secondary-hover opacity-40 cursor-not-allowed'
+        }`}
+      >
+        Send to Sound Generation
+      </button>
+    </div>
+  );
 
   return (
-    <div className="flex flex-col gap-3">
-
-      {/* Analysis status */}
-      <div className="flex items-center text-xs w-full gap-1" style={{ color: UI_COLORS.NEUTRAL_600 }}>
-        {analysisStatus.totalContexts} context{analysisStatus.totalContexts !== 1 ? 's' : ''}
-        {analysisStatus.pendingCount > 0 && (
-          <span> ({analysisStatus.pendingCount} pending)</span>
-        )}
-
-        {/* Add Analysis button with type selector dropdown */}
-        <div className="ml-auto relative" ref={typeSelectorRef}>
-          <button
-            onClick={() => setShowTypeSelector(!showTypeSelector)}
-            className="w-8 h-8 rounded text-white font-bold transition-colors flex items-center justify-center"
-            style={{
-              backgroundColor: UI_COLORS.PRIMARY,
-              borderRadius: '8px'
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_400}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY}
-            title="Add context analysis"
-            aria-label="Add context analysis"
-          >
-            <span className="text-lg leading-none">+</span>
-          </button>
-
-          {/* Type selector dropdown */}
-          {showTypeSelector && (
-            <div
-              className="absolute right-0 mt-1 z-10 rounded shadow-lg"
-              style={{
-                backgroundColor: 'white',
-                borderRadius: '8px',
-                borderWidth: '1px',
-                borderStyle: 'solid',
-                borderColor: UI_COLORS.NEUTRAL_300,
-                minWidth: '200px'
-              }}
-            >
-              <button
-                onClick={() => !hasModelLoaded ? null : handleTypeSelect('3d-model')}
-                disabled={!hasModelLoaded}
-                className="w-full text-left px-3 py-2 text-xs transition-colors"
-                style={{
-                  borderRadius: '8px 8px 0 0',
-                  color: hasModelLoaded ? UI_COLORS.NEUTRAL_900 : UI_COLORS.NEUTRAL_400,
-                  cursor: hasModelLoaded ? 'pointer' : 'not-allowed',
-                  opacity: hasModelLoaded ? 1 : 0.6
-                }}
-                onMouseEnter={(e) => {
-                  if (hasModelLoaded) {
-                    e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY;
-                    e.currentTarget.style.color = 'white';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (hasModelLoaded) {
-                    e.currentTarget.style.backgroundColor = 'transparent';
-                    e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
-                  }
-                }}
-                title={hasModelLoaded ? "Add 3D Model analysis context" : "Import a 3D model first (right sidebar)"}
-              >
-                3D Model Context
-              </button>
-              <button
-                onClick={() => handleTypeSelect('audio')}
-                className="w-full text-left px-3 py-2 text-xs transition-colors"
-                style={{ color: UI_COLORS.NEUTRAL_900 }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY;
-                  e.currentTarget.style.color = 'white';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                  e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
-                }}
-              >
-                Audio Context
-              </button>
-              <button
-                onClick={() => handleTypeSelect('text')}
-                className="w-full text-left px-3 py-2 text-xs transition-colors"
-                style={{
-                  borderRadius: '0 0 8px 8px',
-                  color: UI_COLORS.NEUTRAL_900
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY;
-                  e.currentTarget.style.color = 'white';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                  e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
-                }}
-              >
-                Text Context
-              </button>
-            </div>
-          )}
-        </div>
-
-      </div>
-
-      {/* Vertical list of analysis tabs */}
-      <div ref={analysisListRef} className="flex flex-col gap-2">
-        {analysisConfigs.length === 0 ? (
-          <div
-            className="rounded p-4 text-xs text-center"
-            style={{
-              backgroundColor: UI_COLORS.NEUTRAL_100,
-              color: UI_COLORS.NEUTRAL_600,
-              borderRadius: '8px'
-            }}
-          >
-            No analysis contexts yet.
-            <br />
-            Import a 3D model from the right sidebar to get started.
-          </div>
-        ) : (
-          analysisConfigs.map((config, index) => {
-            const result = getResult(index);
-            return (
-            <div
-              key={index}
-              ref={(el) => {
-                if (el) {
-                  analysisTabRefs.current.set(index, el);
-                } else {
-                  analysisTabRefs.current.delete(index);
-                }
-              }}
-            >
-              <AnalysisTab
-                config={config}
-                index={index}
-                isExpanded={expandedTabs.has(index)}
-                hasResult={hasResult(index)}
-                analysisResult={analysisResult}
-                isRunning={isRunning}
-                onToggleExpand={handleToggleExpand}
-                onUpdateConfig={onUpdateConfig}
-                onRemove={onRemoveConfig}
-                onReset={handleReset}
-                onRun={onRun}
-                onTogglePromptSelection={onTogglePromptSelection}
-              />
-            </div>
-          )})
-        )}
-      </div>
-
-      {/* Error display */}
-      {error && (
-        <div
-          className="p-3 text-sm rounded"
-          style={{
-            backgroundColor: UI_COLORS.ERROR_LIGHT,
-            borderColor: UI_COLORS.ERROR,
-            borderWidth: '1px',
-            borderStyle: 'solid',
-            borderRadius: '8px',
-            color: UI_COLORS.ERROR
-          }}
-        >
-          {error}
-        </div>
-      )}
-
-      {/* Selected prompts count and Send button */}
-      <div className="flex flex-col gap-2">
-        <div className="text-xs text-center" style={{ color: UI_COLORS.NEUTRAL_600 }}>
-          ({totalSelectedPrompts} sound prompt{totalSelectedPrompts !== 1 ? 's' : ''})
-        </div>
-
-        <button
-          onClick={onSendToSoundGeneration}
-          disabled={!canSendToGeneration}
-          className="w-full text-white transition-colors"
-          style={{
-            borderRadius: UI_BUTTON.BORDER_RADIUS_MD,
-            padding: UI_BUTTON.PADDING_MD,
-            fontSize: UI_BUTTON.FONT_SIZE,
-            fontWeight: UI_BUTTON.FONT_WEIGHT,
-            backgroundColor: !canSendToGeneration ? UI_COLORS.NEUTRAL_400 : UI_COLORS.SUCCESS,
-            opacity: !canSendToGeneration ? 0.4 : 1,
-            cursor: !canSendToGeneration ? 'not-allowed' : 'pointer'
-          }}
-          onMouseEnter={(e) => {
-            if (canSendToGeneration) {
-              e.currentTarget.style.backgroundColor = UI_COLORS.SUCCESS_HOVER;
-            }
-          }}
-          onMouseLeave={(e) => {
-            if (canSendToGeneration) {
-              e.currentTarget.style.backgroundColor = UI_COLORS.SUCCESS;
-            }
-          }}
-        >
-          Send to Sound Generation
-        </button>
-      </div>
-
-    </div>
+    <CardSection
+      items={analysisConfigs}
+      availableTypes={availableTypes}
+      emptyMessage="No analysis contexts yet. Import a 3D model from the right sidebar to get started."
+      statusLabel="context"
+      addButtonTitle="Add context analysis"
+      onAddItem={onAddConfig}
+      renderCard={renderCard}
+      footer={footer}
+      getPendingCount={getPendingCount}
+      isRunning={isRunning}
+      error={error}
+    />
   );
 }

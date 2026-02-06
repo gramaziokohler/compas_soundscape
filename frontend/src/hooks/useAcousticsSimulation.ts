@@ -27,6 +27,7 @@ import {
   PYROOMACOUSTICS_DEFAULT_SCATTERING,
   PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE
 } from '@/lib/constants';
+import { CARD_TYPE_LABELS } from '@/types/card';
 
 export interface UseAcousticsSimulationReturn {
   // State
@@ -84,7 +85,7 @@ export function useAcousticsSimulation(): UseAcousticsSimulationReturn {
   const handleAddConfig = useCallback((mode: AcousticSimulationMode) => {
     const timestamp = Date.now();
     const id = `sim_${timestamp}`;
-    const name = `Simulation ${simulationCounter}`;
+    const name = `${CARD_TYPE_LABELS[mode]} ${simulationCounter}`;
     
     let newConfig: SimulationConfig;
     
@@ -92,8 +93,8 @@ export function useAcousticsSimulation(): UseAcousticsSimulationReturn {
       case 'resonance':
         newConfig = {
           id,
-          name,
-          mode: 'resonance',
+          display_name: name,
+          type: 'resonance',
           state: 'idle',
           createdAt: timestamp
         } as ResonanceSimulationConfig;
@@ -102,8 +103,8 @@ export function useAcousticsSimulation(): UseAcousticsSimulationReturn {
       case 'choras':
         newConfig = {
           id,
-          name,
-          mode: 'choras',
+          display_name: name,
+          type: 'choras',
           state: 'before-simulation',
           createdAt: timestamp,
           simulationInstanceId: `choras_${timestamp}`, // Unique instance ID
@@ -129,8 +130,8 @@ export function useAcousticsSimulation(): UseAcousticsSimulationReturn {
       case 'pyroomacoustics':
         newConfig = {
           id,
-          name,
-          mode: 'pyroomacoustics',
+          display_name: name,
+          type: 'pyroomacoustics',
           state: 'before-simulation',
           createdAt: timestamp,
           simulationInstanceId: `pyroom_${timestamp}`, // Unique instance ID
@@ -144,6 +145,7 @@ export function useAcousticsSimulation(): UseAcousticsSimulationReturn {
           },
           faceToMaterialMap: new Map(),
           isRunning: false,
+          progress: 0,
           status: 'Idle',
           error: null,
           simulationResults: null
@@ -185,18 +187,33 @@ export function useAcousticsSimulation(): UseAcousticsSimulationReturn {
    * Update a simulation configuration
    */
   const handleUpdateConfig = useCallback((index: number, updates: Partial<SimulationConfig>) => {
-    setSimulationConfigs(prev => prev.map((config, i) => {
-      if (i !== index) return config;
-      
-      // Deep merge to preserve Map instances
-      const updated = { ...config };
-      Object.keys(updates).forEach(key => {
-        const updateKey = key as keyof SimulationConfig;
-        (updated as any)[updateKey] = (updates as any)[updateKey];
+    setSimulationConfigs(prev => {
+      // Optimization: Check if updates actually change anything to avoid re-renders
+      const currentConfig = prev[index];
+      if (!currentConfig) return prev;
+
+      const hasChanges = Object.entries(updates).some(([key, value]) => {
+        const currentValue = (currentConfig as any)[key];
+        // Weak check sufficient to stop trivial loops (primitive values same)
+        // We do NOT want to block object updates (like sourceReceiverIRMapping) even if they look similar
+        return currentValue !== value;
       });
-      
-      return updated as SimulationConfig;
-    }));
+
+      if (!hasChanges) return prev;
+
+      return prev.map((config, i) => {
+        if (i !== index) return config;
+        
+        // Deep merge to preserve Map instances
+        const updated = { ...config };
+        Object.keys(updates).forEach(key => {
+          const updateKey = key as keyof SimulationConfig;
+          (updated as any)[updateKey] = (updates as any)[updateKey];
+        });
+        
+        return updated as SimulationConfig;
+      });
+    });
   }, []);
 
   /**
@@ -216,7 +233,7 @@ export function useAcousticsSimulation(): UseAcousticsSimulationReturn {
    */
   const handleUpdateSimulationName = useCallback((index: number, name: string) => {
     setSimulationConfigs(prev => prev.map((config, i) => 
-      i === index ? { ...config, name } : config
+      i === index ? { ...config, display_name: name } : config
     ));
   }, []);
 
