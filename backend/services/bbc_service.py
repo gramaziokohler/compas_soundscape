@@ -1,286 +1,191 @@
 """
 BBC Sound Effects Library Search Service
 
-Provides API methods for searching and retrieving sounds from the BBC Sound Effects library.
-Optimized for web API usage with minimal dependencies.
+Searches the BBC Sound Effects API directly (no local CSV required).
+Downloads sounds as WAV files from the BBC media server.
 """
 
-import csv
-import os
+import re
+import requests
+import shutil
 import urllib.request
 import zipfile
-import shutil
 from pathlib import Path
 from typing import List, Dict, Optional
-from thefuzz import fuzz
 from config.constants import (
+    BBC_API_URL,
+    BBC_API_HEADERS,
+    BBC_API_BATCH_SIZE,
+    BBC_API_MAX_OFFSET,
+    BBC_API_REQUEST_DELAY,
+    BBC_DOWNLOAD_URL_TEMPLATE,
+    MACOSX_SYSTEM_FOLDER,
     MAX_SEARCH_RESULTS,
-    CATEGORY_WEIGHT,
-    DESCRIPTION_WEIGHT,
-    MIN_MATCH_SCORE_THRESHOLD,
-    BBC_LIBRARY_CSV_PATH,
+    MAX_FILENAME_LENGTH_SAFE,
 )
 
+import time
 
-def format_duration(seconds_str: str) -> str:
-    """
-    Format duration from seconds to min'sec" format.
 
-    Args:
-        seconds_str: Duration in seconds as string (e.g., "125.5")
+def _clean_filename(text: str) -> str:
+    """Sanitize text for use in filenames."""
+    return re.sub(r'[^a-zA-Z0-9_\-]', '_', text)[:MAX_FILENAME_LENGTH_SAFE]
 
-    Returns:
-        Formatted duration string (e.g., "2'05\"")
-    """
+
+def _get_download_url(file_id: str) -> str:
+    """Build the BBC download URL for a sound file."""
+    return BBC_DOWNLOAD_URL_TEMPLATE.format(location=file_id)
+
+
+def _format_duration(milliseconds: float) -> str:
+    """Format duration from milliseconds to min'sec\" format."""
     try:
-        total_seconds = float(seconds_str)
+        total_seconds = float(milliseconds) / 1000.0
         minutes = int(total_seconds // 60)
-        seconds = int(total_seconds % 60)
-        return f"{minutes}'{seconds:02d}\""
+        secs = int(total_seconds % 60)
+        return f"{minutes}'{secs:02d}\""
     except (ValueError, TypeError):
         return "Unknown"
 
 
-class BBCSoundLibrary:
-    """
-    BBC Sound Effects Library interface for searching and downloading sounds.
-
-    Methods:
-        search(prompt: str) -> List[Dict]: Search for sounds matching the prompt
-        download_sound(location: str, output_path: Path) -> bool: Download a specific sound
-    """
-
-    def __init__(self, csv_path: str = BBC_LIBRARY_CSV_PATH):
-        """
-        Initialize the BBC Sound Library service.
-
-        Args:
-            csv_path: Path to the BBCSoundEffects.csv metadata file
-        """
-        self.csv_path = csv_path
-        self.all_data = self._load_data()
-
-    def _load_data(self) -> List[Dict[str, str]]:
-        """
-        Load sound effect metadata from CSV file.
-
-        Returns:
-            List of dictionaries containing sound metadata
-
-        Raises:
-            FileNotFoundError: If CSV file cannot be found
-            ValueError: If CSV is missing required columns
-        """
-        data = []
-        full_csv_path = None
-
-        # Try multiple possible locations for the CSV
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        possible_paths = [
-            os.path.join(script_dir, self.csv_path),
-            os.path.abspath(self.csv_path),
-            os.path.join(script_dir, '..', self.csv_path),  # One level up
-        ]
-
-        for path in possible_paths:
-            if os.path.exists(path):
-                full_csv_path = path
-                break
-
-        if not full_csv_path:
-            raise FileNotFoundError(
-                f"CSV file '{self.csv_path}' not found. Searched locations:\n" +
-                "\n".join(f"  - {p}" for p in possible_paths)
-            )
-
-        # Load CSV data
-        with open(full_csv_path, encoding='utf8', newline='') as f:
-            reader = csv.DictReader(f)
-            reader.fieldnames = [name.strip() for name in reader.fieldnames]
-
-            # Validate required columns
-            required_cols = {'location', 'description', 'category'}
-            if not required_cols.issubset(reader.fieldnames):
-                missing = required_cols - set(reader.fieldnames)
-                raise ValueError(f"CSV is missing required columns: {missing}")
-
-            # Load valid rows
-            for row in reader:
-                if not all([row.get('location'), row.get('description'), row.get('category')]):
-                    continue
-                row = {k.strip(): v.strip() for k, v in row.items()}
-                data.append(row)
-
-        if not data:
-            raise ValueError("No valid data loaded from CSV file")
-
-        print(f"[BBC Library] Loaded {len(data)} sound effects from {self.csv_path}")
-        return data
-
-    def search(self, prompt: str, max_results: int = MAX_SEARCH_RESULTS) -> List[Dict[str, str]]:
-        """
-        Search for sounds matching the given prompt using fuzzy matching.
-
-        Args:
-            prompt: Text query describing the desired sound
-            max_results: Maximum number of results to return (default: 5)
-
-        Returns:
-            List of dictionaries with keys: location, description, category, duration, score
-            Sorted by relevance (highest score first)
-        """
-        if not prompt or not prompt.strip():
-            return []
-
-        matches = []
-        prompt_lower = prompt.lower()
-
-        # Score each sound based on category and description match
-        for item in self.all_data:
-            category_lower = item.get('category', '').lower()
-            description_lower = item.get('description', '').lower()
-
-            # Calculate fuzzy match scores
-            category_score = fuzz.token_set_ratio(prompt_lower, category_lower)
-            description_score = fuzz.token_set_ratio(prompt_lower, description_lower)
-
-            # Weighted total score
-            total_score = (CATEGORY_WEIGHT * category_score) + (DESCRIPTION_WEIGHT * description_score)
-
-            # Only include results above threshold
-            if total_score >= MIN_MATCH_SCORE_THRESHOLD:
-                # Format duration from 'secs' column
-                raw_duration = item.get('secs', '')
-                formatted_duration = format_duration(raw_duration) if raw_duration else 'Unknown'
-
-                matches.append({
-                    'location': item['location'],
-                    'description': item['description'],
-                    'category': item['category'],
-                    'duration': formatted_duration,
-                    'score': int(total_score)
-                })
-
-        # Sort by score (descending) and limit results
-        matches.sort(key=lambda x: x['score'], reverse=True)
-        return matches[:max_results]
-
-    def download_sound(self, location: str, output_path: Path) -> bool:
-        """
-        Download a specific sound file from the BBC library.
-
-        Args:
-            location: The unique location identifier for the sound
-            output_path: Path where the WAV file should be saved
-
-        Returns:
-            True if download successful, False otherwise
-        """
-        url = f'https://sound-effects-media.bbcrewind.co.uk/zip/{location}.zip'
-        temp_zip_path = output_path.parent / f"{location}.zip.temp"
-
-        try:
-            # Ensure output directory exists
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-
-            # Download ZIP file
-            temp_path, _ = urllib.request.urlretrieve(url)
-            shutil.move(temp_path, temp_zip_path)
-
-            # Extract WAV file from ZIP
-            with zipfile.ZipFile(temp_zip_path, 'r') as zip_ref:
-                extracted = False
-                for member in zip_ref.infolist():
-                    # Skip directories and system files
-                    if member.is_dir() or member.filename.startswith('__MACOSX'):
-                        continue
-
-                    # Extract to output path
-                    with zip_ref.open(member) as source, open(output_path, 'wb') as target:
-                        shutil.copyfileobj(source, target)
-                    extracted = True
-                    break  # Only extract first audio file
-
-                if not extracted:
-                    print(f"[BBC Library] Warning: No audio file found in ZIP for {location}")
-                    return False
-
-            print(f"[BBC Library] Downloaded: {location} -> {output_path}")
-            return True
-
-        except zipfile.BadZipFile:
-            print(f"[BBC Library] Error: Invalid ZIP file for {location}")
-            return False
-        except urllib.error.URLError as e:
-            print(f"[BBC Library] Error: Failed to download {url}: {e}")
-            return False
-        except Exception as e:
-            print(f"[BBC Library] Error: Failed to process {location}: {e}")
-            return False
-        finally:
-            # Clean up temporary ZIP file
-            if temp_zip_path.exists():
-                try:
-                    temp_zip_path.unlink()
-                except OSError:
-                    pass
-
-    def get_sound_url(self, location: str) -> str:
-        """
-        Get the direct download URL for a sound.
-
-        Args:
-            location: The unique location identifier for the sound
-
-        Returns:
-            URL string for the sound's ZIP file
-        """
-        return f'https://sound-effects-media.bbcrewind.co.uk/zip/{location}.zip'
+def _extract_category(item: dict) -> str:
+    """Extract the primary category name from the API response."""
+    categories = item.get('categories', [])
+    if categories and isinstance(categories, list) and len(categories) > 0:
+        return categories[0].get('className', 'Uncategorized').replace('_', ' ')
+    return 'Uncategorized'
 
 
-# Singleton instance for API usage
-_library_instance: Optional[BBCSoundLibrary] = None
-
-
-def get_library() -> BBCSoundLibrary:
-    """
-    Get the singleton BBC Sound Library instance.
-
-    Returns:
-        BBCSoundLibrary instance
-    """
-    global _library_instance
-    if _library_instance is None:
-        _library_instance = BBCSoundLibrary()
-    return _library_instance
-
-
-# API-friendly functions
 def search_sounds(prompt: str, max_results: int = MAX_SEARCH_RESULTS) -> List[Dict[str, str]]:
     """
-    API function: Search for sounds matching the prompt.
+    Search the BBC Sound Effects API for sounds matching the prompt.
 
     Args:
         prompt: Text query describing the desired sound
-        max_results: Maximum number of results (default: 5)
+        max_results: Maximum number of results to return
 
     Returns:
-        List of sound metadata dictionaries
+        List of dicts with keys: location, description, category, duration, score
     """
-    library = get_library()
-    return library.search(prompt, max_results)
+    if not prompt or not prompt.strip():
+        return []
+
+    results: List[Dict[str, str]] = []
+    offset = 0
+
+    print(f"[BBC Library] Searching API for: {prompt}")
+
+    while len(results) < max_results:
+        remaining = max_results - len(results)
+        current_size = min(BBC_API_BATCH_SIZE, remaining)
+
+        payload = {
+            "criteria": {
+                "query": prompt,
+                "from": offset,
+                "size": current_size,
+                "tags": None,
+                "categories": None,
+                "durations": None,
+                "continents": None,
+                "sortBy": None,
+                "source": None,
+                "habitat": None,
+                "recordist": None,
+            }
+        }
+
+        try:
+            response = requests.post(BBC_API_URL, json=payload, headers=BBC_API_HEADERS)
+
+            if response.status_code != 200:
+                print(f"[BBC Library] API error: status {response.status_code}")
+                break
+
+            data = response.json()
+            items = data.get('results', [])
+
+            if not items:
+                break
+
+            for item in items:
+                results.append({
+                    'location': item.get('id', ''),
+                    'description': item.get('description', 'No Description'),
+                    'category': _extract_category(item),
+                    'duration': _format_duration(item.get('duration', 0)),
+                    'score': 100 - len(results),  # Rank by API order
+                })
+
+            print(f"[BBC Library] Fetched {len(items)} items (total: {len(results)})")
+
+            if offset >= BBC_API_MAX_OFFSET:
+                break
+
+            offset += len(items)
+            time.sleep(BBC_API_REQUEST_DELAY)
+
+        except Exception as e:
+            print(f"[BBC Library] Search error: {e}")
+            break
+
+    return results[:max_results]
 
 
-def download_sound_file(location: str, output_path: Path) -> bool:
+def download_sound(location: str, output_path: Path) -> bool:
     """
-    API function: Download a sound file.
+    Download a sound file from the BBC library.
 
     Args:
-        location: BBC library location identifier
-        output_path: Where to save the WAV file
+        location: The BBC sound ID
+        output_path: Path where the WAV file should be saved
 
     Returns:
-        True if successful, False otherwise
+        True if download successful, False otherwise
     """
-    library = get_library()
-    return library.download_sound(location, output_path)
+    # Skip download if file already exists
+    if output_path.exists() and output_path.stat().st_size > 0:
+        print(f"[BBC Library] Already downloaded: {output_path}")
+        return True
+
+    url = _get_download_url(location)
+    temp_zip_path = output_path.parent / f"{location}.zip.temp"
+
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        temp_path, _ = urllib.request.urlretrieve(url)
+        shutil.move(temp_path, temp_zip_path)
+
+        with zipfile.ZipFile(temp_zip_path, 'r') as zip_ref:
+            extracted = False
+            for member in zip_ref.infolist():
+                if member.is_dir() or member.filename.startswith(MACOSX_SYSTEM_FOLDER):
+                    continue
+                with zip_ref.open(member) as source, open(output_path, 'wb') as target:
+                    shutil.copyfileobj(source, target)
+                extracted = True
+                break
+
+            if not extracted:
+                print(f"[BBC Library] No audio file found in ZIP for {location}")
+                return False
+
+        print(f"[BBC Library] Downloaded: {location} -> {output_path}")
+        return True
+
+    except zipfile.BadZipFile:
+        print(f"[BBC Library] Invalid ZIP file for {location}")
+        return False
+    except urllib.error.URLError as e:
+        print(f"[BBC Library] Download failed for {url}: {e}")
+        return False
+    except Exception as e:
+        print(f"[BBC Library] Error processing {location}: {e}")
+        return False
+    finally:
+        if temp_zip_path.exists():
+            try:
+                temp_zip_path.unlink()
+            except OSError:
+                pass

@@ -71,6 +71,9 @@ export class SpeckleAudioCoordinator {
   // Callback when sound sphere position is updated via drag (for React state sync)
   private onSoundPositionUpdatedCallback: ((soundId: string, position: [number, number, number]) => void) | null = null;
 
+  // Callback when custom object (sound/receiver) is deselected (clicking empty space)
+  private onCustomObjectDeselectedCallback: (() => void) | null = null;
+
   constructor(
     viewer: Viewer,
     cameraController: CameraController,
@@ -134,6 +137,9 @@ export class SpeckleAudioCoordinator {
       if (this.dragHandler) {
         this.dragHandler.deselectObjects();
       }
+      if (this.onCustomObjectDeselectedCallback) {
+        this.onCustomObjectDeselectedCallback();
+      }
     });
 
     this.eventBridge.setOnReceiverDoubleClicked((receiverId: string) => {
@@ -175,13 +181,14 @@ export class SpeckleAudioCoordinator {
         const objectType = object.userData.customObjectType;
         if (objectType === 'sound') {
           const promptKey = object.userData.promptKey;
-          const soundEvent = object.userData.soundEvent;
-          const soundId = soundEvent?.id;
 
-          // Update internal position map
+          // Update internal position map + orchestrator source position.
           this.soundSphereManager!.updateSpherePosition(promptKey, object.position);
 
-          // Sync to React state via callback (so simulation gets updated positions)
+          // Also sync to React state so simulations (pyroomacoustics) use updated positions.
+          // This is safe because SoundSphereManager.updateSoundSpheres has an early-return
+          // that skips teardown when the same sound IDs are present (no audio interruption).
+          const soundId = object.userData.soundEvent?.id || object.userData.positionKey;
           if (soundId && this.onSoundPositionUpdatedCallback) {
             const pos: [number, number, number] = [object.position.x, object.position.y, object.position.z];
             this.onSoundPositionUpdatedCallback(soundId, pos);
@@ -298,12 +305,7 @@ export class SpeckleAudioCoordinator {
     this.simulationMode = simulationMode;
     this.activeReceiverId = initialReceiverId || null;
 
-    console.log('[SpeckleAudioCoordinator] Source-Receiver IR mapping set:', {
-      simulationMode,
-      sourceCount: Object.keys(mapping).length,
-      receiverCount: Object.keys(mapping[Object.keys(mapping)[0]] || {}).length,
-      activeReceiverId: this.activeReceiverId
-    });
+    console.log('[SpeckleAudioCoordinator] IR mapping set:', { simulationMode, activeReceiverId: this.activeReceiverId });
 
     // Forward to AudioOrchestrator
     if (this.audioOrchestrator) {
@@ -317,16 +319,10 @@ export class SpeckleAudioCoordinator {
    * @param receiverId - ID of the receiver to activate
    */
   public async updateActiveReceiver(receiverId: string): Promise<void> {
-    console.log('[SpeckleAudioCoordinator] 🎯 updateActiveReceiver called:', receiverId);
-
     this.activeReceiverId = receiverId;
 
-    // Forward to AudioOrchestrator
     if (this.audioOrchestrator) {
-      console.log('[SpeckleAudioCoordinator] ⚡ Forwarding to AudioOrchestrator...');
       await this.audioOrchestrator.updateActiveReceiver(receiverId);
-    } else {
-      console.warn('[SpeckleAudioCoordinator] ❌ No AudioOrchestrator available');
     }
 
     // Notify callback (for parent component integration)
@@ -426,6 +422,15 @@ export class SpeckleAudioCoordinator {
   public setOnSoundSphereClicked(callback: (promptKey: string) => void): void {
     if (!this.eventBridge) return;
     this.eventBridge.setOnSoundSphereClicked(callback);
+  }
+
+  public setOnReceiverSingleClicked(callback: (receiverId: string) => void): void {
+    if (!this.eventBridge) return;
+    this.eventBridge.setOnReceiverSingleClicked(callback);
+  }
+
+  public setOnCustomObjectDeselected(callback: () => void): void {
+    this.onCustomObjectDeselectedCallback = callback;
   }
 
   public getAdapter(): SpeckleSceneAdapter | null {

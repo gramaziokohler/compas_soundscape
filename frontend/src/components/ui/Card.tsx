@@ -3,6 +3,7 @@
 import { useCallback, type ReactNode } from 'react';
 import type { CardProps, CardBaseConfig } from '@/types/card';
 import { CARD_TYPE_LABELS } from '@/types/card';
+import { CARD_COLOR_DEFAULT } from '@/lib/constants';
 import { useNameEditing } from '@/lib/utils/useNameEditing';
 
 /**
@@ -74,6 +75,7 @@ export function Card<TConfig extends CardBaseConfig>({
   progress = 0,
   status,
   error,
+  color = CARD_COLOR_DEFAULT,
   defaultName,
   collapsedInfo,
   showIndex = true,
@@ -86,7 +88,7 @@ export function Card<TConfig extends CardBaseConfig>({
   onCancel,
   actionButtonLabel = 'Start Simulation',
   actionButtonDisabled = false,
-  actionButtonColor = 'primary',
+  actionButtonColor,
   actionButtonDisabledReason,
   onToggleExpand,
   onUpdateConfig,
@@ -96,6 +98,8 @@ export function Card<TConfig extends CardBaseConfig>({
   afterContent,
   loadingContent,
 }: CardProps<TConfig>) {
+  // Resolve action button color: explicit prop overrides card color
+  const resolvedActionColor = actionButtonColor || color;
   // Compute default name if not provided
   const computedDefaultName = defaultName || getCardDefaultName(config, index);
   const baseName = config.display_name || computedDefaultName;
@@ -115,19 +119,31 @@ export function Card<TConfig extends CardBaseConfig>({
     onSave: handleSaveName,
   });
 
+  // CSS custom properties scoped to this card for child theming
+  const cardColorStyle = {
+    '--card-color': `var(--color-${color})`,
+    '--card-color-hover': `var(--color-${color}-hover)`,
+    '--card-color-light': `var(--color-${color}-light)`,
+    '--card-color-lighter': `var(--color-${color}-lighter)`,
+    
+    accentColor: `var(--color-${color})`,
+  } as React.CSSProperties;
+
   // Build Tailwind class names
   const cardClassName = [
-    'rounded-lg border transition-all duration-200',
-    isExpanded ? 'p-3' : 'p-2',
-    hasResult
-      ? 'bg-secondary border-secondary-hover'
-      : 'bg-background border-secondary-light',
+    'rounded-lg border-0 transition-all duration-200',
+    // isExpanded ? `p-2 bg-${color}-light border-0` : hasResult ? `p-1.5 bg-${color}-light` : 'p-1.5 bg-secondary-lighter',
+    isExpanded && hasResult ? `p-2 bg-secondary` : '',
+    isExpanded && !hasResult ? `p-2 bg-${color}-light border-0` : '',
+    !isExpanded && hasResult ? `p-2 bg-secondary` : '',
+    !isExpanded && !hasResult ? `p-2 bg-secondary-lighter` : '',        
+
     error ? 'border-error bg-error-light' : '',
   ].filter(Boolean).join(' ');
 
   const titleClassName = [
-    'flex-1 text-left text-sm font-medium cursor-pointer transition-opacity group',
-    hasResult ? 'text-background' : 'text-foreground',
+    `flex-1 text-left text-xs font-sans font-medium cursor-pointer transition-opacity group text-secondary`,
+    hasResult ? 'text-white' : 'text-foreground',
   ].filter(Boolean).join(' ');
 
   // Button handlers
@@ -151,7 +167,7 @@ export function Card<TConfig extends CardBaseConfig>({
   const renderContent = () => {
     if (isRunning && loadingContent) {
       return (
-        <div className="flex items-center justify-center p-4 text-secondary-hover text-sm">
+        <div className="flex items-center justify-center p-4 text-secondary-light text-xs">
           {loadingContent}
         </div>
       );
@@ -165,14 +181,25 @@ export function Card<TConfig extends CardBaseConfig>({
   };
 
   return (
-    <div className={cardClassName}>
+    <div
+      className={cardClassName}
+      style={{
+        ...cardColorStyle,
+        ...(isExpanded && !hasResult && !error ? { borderColor: `var(--color-${color})` } : {}),
+      }}
+    >
       {/* Header - Always visible */}
       <div className="flex items-center justify-between gap-2">
         {/* Title - editable on double-click */}
         {isEditingName ? (
           <input
             {...inputProps}
-            className="flex-1 text-sm font-medium px-2 py-1 rounded-lg border border-primary bg-background text-foreground outline-none focus:ring-1 focus:ring-primary"
+            className="flex-1 text-xs font-medium px-2 py-1 rounded-lg border bg-background text-foreground outline-none focus:ring-1"
+            style={{
+              borderColor: 'var(--card-color)',
+              // @ts-expect-error -- CSS custom property for focus ring
+              '--tw-ring-color': 'var(--card-color)',
+            }}
           />
         ) : (
           <div
@@ -243,9 +270,9 @@ export function Card<TConfig extends CardBaseConfig>({
                 <button
                   onClick={onRun}
                   disabled={actionButtonDisabled}
-                  className="w-full py-2 px-4 rounded-lg text-xs font-medium transition-all text-white"
+                  className="block mx-auto py-2 px-4 rounded-lg text-xs font-medium transition-all text-white"
                   style={{
-                    backgroundColor: actionButtonDisabled ? 'var(--color-secondary-hover)' : `var(--color-${actionButtonColor})`,
+                    backgroundColor: actionButtonDisabled ? 'var(--color-secondary-hover)' : `var(--color-${resolvedActionColor})`,
                     cursor: actionButtonDisabled ? 'not-allowed' : 'pointer',
                     opacity: actionButtonDisabled ? 0.4 : 1
                   }}
@@ -263,7 +290,7 @@ export function Card<TConfig extends CardBaseConfig>({
                     style={{
                       backgroundColor: 'var(--color-secondary-hover)',
                       color: 'white',
-                      backgroundImage: `linear-gradient(to right, var(--color-primary) ${progress}%, var(--color-secondary-hover) ${progress}%)`,
+                      backgroundImage: `linear-gradient(to right, var(--card-color) ${progress}%, var(--color-secondary-hover) ${progress}%)`,
                       transition: 'background-image 0.3s ease'
                     }}
                   >

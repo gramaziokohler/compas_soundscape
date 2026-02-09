@@ -1,14 +1,11 @@
 import { useState, useCallback } from 'react';
 import { apiService } from '@/services/api';
 import { calculateGeometryBounds, calculateScaleForSounds } from '@/lib/utils';
+import { useApiErrorHandler } from '@/hooks/useApiErrorHandler';
 import type { CompasGeometry } from '@/types';
 
 export function useFileUpload() {
-  // Simple error handler that doesn't require ErrorProvider
-  const handleError = useCallback((err: any, message: string) => {
-    console.error(message, err);
-    // Error is also stored in uploadError state for UI display
-  }, []);
+  const handleError = useApiErrorHandler();
   // Separate states for 3D model and audio files
   const [modelFile, setModelFile] = useState<File | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);

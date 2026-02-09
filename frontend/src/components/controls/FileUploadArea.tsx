@@ -10,33 +10,9 @@ interface FileUploadAreaProps {
   onDragLeave: (e: React.DragEvent<HTMLDivElement>) => void;
   onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
   inputId?: string;
-  multiple?: boolean; // New: Allow multiple file selection
+  multiple?: boolean;
 }
 
-/**
- * Reusable file upload component with drag-and-drop support
- *
- * Features:
- * - Drag and drop file upload
- * - Click to browse files
- * - Visual feedback for dragging state
- * - Shows selected file name
- * - Configurable accepted file types
- *
- * Usage:
- * ```tsx
- * <FileUploadArea
- *   file={file}
- *   isDragging={isDragging}
- *   acceptedFormats="audio/*"
- *   acceptedExtensions=".wav, .mp3, .ogg"
- *   onFileChange={handleFileChange}
- *   onDragOver={handleDragOver}
- *   onDragLeave={handleDragLeave}
- *   onDrop={handleDrop}
- * />
- * ```
- */
 export function FileUploadArea({
   file,
   isDragging,
@@ -54,15 +30,18 @@ export function FileUploadArea({
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
-      className={`border-2 border-dashed rounded-lg p-4 text-center transition-colors ${
+      className={`relative border-2 border-dashed rounded-lg p-4 text-center transition-colors ${
         isDragging
-          ? 'border-primary'
-          : 'border-gray-300 dark:border-gray-600 hover:border-primary'
+          ? ''
+          : 'border-gray-300 dark:border-gray-600'
       }`}
       style={{
-        backgroundColor: isDragging ? `${UI_COLORS.PRIMARY}10` : 'transparent',
+        borderColor: isDragging ? 'var(--card-color, var(--color-primary))' : undefined,
+        backgroundColor: isDragging ? 'var(--card-color-light, var(--color-primary-light))' : 'transparent',
         borderRadius: '8px'
       }}
+      onMouseEnter={(e) => { if (!isDragging) e.currentTarget.style.borderColor = 'var(--card-color, var(--color-primary))'; }}
+      onMouseLeave={(e) => { if (!isDragging) e.currentTarget.style.borderColor = ''; }}
     >
       <div className="flex flex-col items-center gap-1">
         {file ? (
@@ -79,7 +58,7 @@ export function FileUploadArea({
             <label
               htmlFor={inputId}
               className="cursor-pointer font-medium text-xs hover:opacity-80 transition-opacity"
-              style={{ color: UI_COLORS.PRIMARY }}
+              style={{ color: 'var(--card-color, var(--color-primary))' }}
             >
               Choose different file
             </label>
@@ -95,7 +74,7 @@ export function FileUploadArea({
             <label
               htmlFor={inputId}
               className="cursor-pointer font-medium text-xs hover:opacity-80 transition-opacity"
-              style={{ color: UI_COLORS.PRIMARY }}
+              style={{ color: 'var(--card-color, var(--color-primary))' }}
             >
               Browse ({acceptedExtensions})
             </label>
@@ -107,7 +86,7 @@ export function FileUploadArea({
           onChange={onFileChange}
           accept={acceptedFormats}
           multiple={multiple}
-          className="hidden"
+          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
         />
       </div>
     </div>

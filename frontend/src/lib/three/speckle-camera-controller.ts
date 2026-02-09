@@ -232,18 +232,17 @@ export class SpeckleCameraController {
       camera.getWorldDirection(direction);
       direction.normalize();
 
-      // Calculate yaw (horizontal rotation around Y axis)
-      // Three.js: +X=Right, +Z=Back, -Z=Forward
-      // Yaw=0 when looking -Z (forward), +Yaw rotates left (-X), -Yaw rotates right (+X)
-      // atan2(-x, -z) gives us: -Z→0, -X→+PI/2, +Z→PI, +X→-PI/2
-      const yaw = Math.atan2(-direction.x, -direction.z);
+      // Calculate yaw (horizontal rotation around Z axis) — Speckle Z-UP
+      // Speckle Z-UP: +X=Right, -Y=Forward, +Z=Up
+      // Yaw=0 when looking -Y (forward), +Yaw rotates left (-X), -Yaw rotates right (+X)
+      // atan2(-x, -y) gives us: -Y→0, -X→+PI/2, +Y→PI, +X→-PI/2
+      const yaw = Math.atan2(-direction.x, -direction.y);
 
-      // Calculate pitch (vertical rotation around X axis)
-      // Pitch=0 when looking horizontally, +Pitch looks up, -Pitch looks down
-      // asin(y) gives us the pitch angle from the normalized direction
-      const pitch = Math.asin(direction.y);
+      // Calculate pitch (elevation angle from horizontal plane)
+      // Pitch=0 when looking horizontally, +Pitch looks up (+Z), -Pitch looks down (-Z)
+      const pitch = Math.asin(direction.z);
 
-      // Roll (head tilt around Z axis)
+      // Roll (head tilt)
       // Speckle's CameraController doesn't support roll, so it's always 0
       const roll = 0;
 

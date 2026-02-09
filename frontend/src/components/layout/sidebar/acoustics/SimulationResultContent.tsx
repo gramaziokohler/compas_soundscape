@@ -26,12 +26,11 @@ export function SimulationResultContent({
   const results = simulationConfig.simulationResults;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
        {/* Metrics Display */}
        {results && (
          <div className="bg-slate-800 text-white p-3 rounded text-xs overflow-x-auto">
-            <div className="font-medium mb-1 text-slate-300">Acoustic Metrics:</div>
-            <pre className="whitespace-pre-wrap font-mono text-xs">{results}</pre>
+            <pre className="whitespace-pre-wrap font-sans text-xs">{results}</pre>
          </div>
        )}
        

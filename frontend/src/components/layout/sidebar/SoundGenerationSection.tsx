@@ -23,6 +23,46 @@ import { apiService } from "@/services/api";
  * - Content components passed as beforeContent/afterContent props
  */
 
+// ============================================================================
+// Helpers
+// ============================================================================
+
+const STOP_WORDS = new Set([
+  'a', 'an', 'the', 'of', 'in', 'on', 'at', 'to', 'for', 'with', 'and', 'or',
+  'is', 'are', 'was', 'were', 'be', 'been', 'by', 'from', 'that', 'this',
+  'it', 'its', 'as', 'but', 'not', 'no', 'so', 'if', 'up', 'out',
+]);
+
+/** Extract 2-3 important words from a text string */
+function shortenToKeyWords(text: string, maxWords = 3): string {
+  // Remove file extension if present
+  const withoutExt = text.replace(/\.[^.]+$/, '');
+  // Split on whitespace, hyphens, underscores
+  const words = withoutExt
+    .split(/[\s_\-,]+/)
+    .map(w => w.replace(/[^a-zA-Z0-9]/g, ''))
+    .filter(w => w.length > 0);
+
+  // Filter out stop words, keep important ones
+  const important = words.filter(w => !STOP_WORDS.has(w.toLowerCase()));
+  // Fall back to original words if all were stop words
+  const selected = (important.length > 0 ? important : words).slice(0, maxWords);
+
+  // Capitalize first letter of each word
+  return selected
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+}
+
+/** Get the source name from a generated sound event or config fallback */
+function getSoundSourceName(sound: SoundEvent | undefined, config: SoundGenerationConfig): string {
+  // Prefer the resolved display_name from the SoundEvent (set by backend or event-factory)
+  if (sound?.display_name) return sound.display_name;
+  // Fallback: derive from config
+  if (sound?.prompt) return sound.prompt;
+  return config.prompt || config.uploadedAudioInfo?.filename || config.selectedLibrarySound?.description || '';
+}
+
 // Extend CardBaseConfig for sound configs
 interface SoundCardConfig extends CardBaseConfig {
   type: CardType;
@@ -179,18 +219,38 @@ export function SoundGenerationSection({
     }
   }, [selectedCardIndex, soundConfigs.length]);
 
+  // Auto-name cards when sounds are generated (shorten source name to 2-3 key words)
+  const autoNamedIndices = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    soundConfigs.forEach((config, index) => {
+      if (
+        isSoundGenerated(index) &&
+        !autoNamedIndices.current.has(index) &&
+        !config.display_name // Only auto-name if user hasn't set a custom name
+      ) {
+        const generatedSound = getGeneratedSound(index);
+        const sourceName = getSoundSourceName(generatedSound, config);
+        if (sourceName) {
+          const shortName = shortenToKeyWords(sourceName);
+          if (shortName) {
+            onUpdateConfig(index, 'display_name', shortName);
+            autoNamedIndices.current.add(index);
+          }
+        }
+      }
+    });
+  }, [soundConfigs, isSoundGenerated, getGeneratedSound, onUpdateConfig]);
+
   // Handle expansion change from CardSection (controlled mode callback)
+  // Note: does NOT call onSelectSoundCard — that callback is only for scene-to-sidebar
+  // communication (sound sphere / linked object click) and would trigger right sidebar expansion
   const handleExpandedIndexChange = useCallback((newIndex: number | null) => {
     // Stop preview when collapsing or switching cards
     if (previewingSoundId) {
       onPreviewStop?.(previewingSoundId);
     }
     setExpandedIndex(newIndex);
-    // Also notify parent if needed
-    if (newIndex !== null) {
-      onSelectSoundCard?.(newIndex);
-    }
-  }, [previewingSoundId, onPreviewStop, onSelectSoundCard]);
+  }, [previewingSoundId, onPreviewStop]);
 
   // Available card types for add button dropdown (sound types only)
   const availableTypes: CardTypeOption[] = useMemo(() => [
@@ -279,11 +339,12 @@ export function SoundGenerationSection({
           }}
           className={`w-5 h-5 flex items-center justify-center rounded-full transition-colors ${
             isCurrentlyLinking
-              ? 'bg-primary text-white'
+              ? 'text-white'
               : config.entity
                 ? 'text-success hover:bg-success-light'
                 : 'text-secondary-hover hover:bg-secondary-light hover:text-foreground'
           }`}
+          style={isCurrentlyLinking ? { backgroundColor: 'var(--card-color, var(--color-primary))' } : undefined}
           title={
             isCurrentlyLinking
               ? 'Cancel linking'
@@ -337,9 +398,10 @@ export function SoundGenerationSection({
           }}
           className={`w-5 h-5 flex items-center justify-center rounded-full transition-colors ${
             isSoloed
-              ? 'bg-primary-light text-primary'
+              ? ''
               : 'text-secondary-hover hover:bg-secondary-light hover:text-foreground'
           }`}
+          style={isSoloed ? { backgroundColor: 'var(--card-color-light, var(--color-primary-light))', color: 'var(--card-color, var(--color-primary))' } : undefined}
           title={isSoloed ? 'Unsolo' : 'Solo'}
         >
           <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill={isSoloed ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor">
@@ -449,8 +511,9 @@ export function SoundGenerationSection({
         className={`flex-1 py-2 px-4 rounded-lg text-white text-xs font-medium transition-colors ${
           shouldDisableGenerateButton
             ? 'bg-secondary-hover opacity-40 cursor-not-allowed'
-            : 'bg-primary hover:opacity-80 cursor-pointer'
+            : 'hover:opacity-80 cursor-pointer'
         }`}
+        style={!shouldDisableGenerateButton ? { backgroundColor: 'var(--card-color, var(--color-primary))' } : undefined}
       >
         {isSoundGenerating ? 'Generating Sounds...' : 'Generate Sounds'}
       </button>

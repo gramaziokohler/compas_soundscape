@@ -54,7 +54,6 @@ export const SIDEBAR_TABS = {
   TEXT: 'text',
   SOUND: 'sound',
   ACOUSTICS: 'acoustics',
-  RECEIVERS: 'receivers',
   SETTINGS: 'settings',
 } as const;
 
@@ -131,13 +130,17 @@ export const PRIMARY_COLOR_HEX = UI_COLORS.PRIMARY_HEX;
 // These colors visually distinguish objects by their state in the scene
 
 export const SPECKLE_FILTER_COLORS = {
-  // Green - Objects linked to sounds
-  // Shows which Speckle objects have been associated with a sound source
-  SOUND_LINKED: UI_COLORS.PRIMARY, // Same as UI_COLORS.SUCCESS
+  // Full pink - Objects linked to sounds WITH generated audio
+  // Shows which Speckle objects have a completed sound source
+  SOUND_LINKED: UI_COLORS.PRIMARY,
 
-  // Pink - Objects selected for diverse analysis (context generation)
+  // Light pink - Objects linked to sounds still in config state (no audio yet)
+  // Visual cue that the object is linked but awaiting sound generation
+  SOUND_LINKED_PENDING: '#F9A8D4',
+
+  // Green - Objects selected for diverse analysis (context generation)
   // Shows which objects were selected/generated for sound idea analysis
-  DIVERSE_SELECTION: UI_COLORS.SECONDARY, // Same as UI_COLORS.SECONDARY
+  DIVERSE_SELECTION: UI_COLORS.SUCCESS,
 } as const;
 
 // ============================================================================
@@ -283,6 +286,10 @@ export const UI_SCENE_BUTTON = {
   GAP: "8px",                // gap-2 between buttons
 } as const;
 
+// Card Color Defaults
+/** Default theme color for Card and CardSection components */
+export const CARD_COLOR_DEFAULT = 'primary' as const;
+
 // Material Assignment UI
 export const MAX_FACES_FOR_EXPANSION = 10; // Maximum number of faces before disabling entity expansion
 export const MAX_FACES_FOR_LAYER_AUTO_EXCLUDE = 1000; // Auto-exclude layers with more than this many faces in new simulations
@@ -318,9 +325,9 @@ export const UI_TABS = {
 
 // Vertical Tabs (Icon-based sidebar navigation)
 export const UI_VERTICAL_TABS = {
-  WIDTH: 40,                 // w-12 - tab button width
+  WIDTH: 30,                 // w-12 - tab button width
   HEIGHT: 40,                // h-8 - tab button height
-  ICON_SIZE: 20,             // w-6 h-6 - icon dimensions
+  ICON_SIZE: 17,             // w-6 h-6 - icon dimensions
   INDICATOR_WIDTH: 3,        // w-1 - active indicator bar width
   INDICATOR_HEIGHT: 32,      // h-8 - active indicator bar height
   BORDER_RADIUS: UI_BORDER_RADIUS.FULL, // Rounded indicator
@@ -328,7 +335,7 @@ export const UI_VERTICAL_TABS = {
 
 // Right Sidebar (Object Explorer)
 export const UI_RIGHT_SIDEBAR = {
-  WIDTH: 320,                // Width in pixels (w-80)
+  WIDTH: 260,                // Width in pixels (w-80)
   HEADER_HEIGHT: 48,         // Header height in pixels
   PADDING: UI_SPACING.MD,    // Internal padding
   TREE_ITEM_HEIGHT: 40,      // Height of each tree item in pixels
@@ -416,6 +423,7 @@ export const BROWSE_FILE_TYPE_HINT = '(.obj, .stl, .ifc, .3dm, .wav, .mp3)';
 export const DEFAULT_NUM_SOUNDS = 5;
 export const NUM_SOUNDS_MIN = 1;
 export const NUM_SOUNDS_MAX = 30;
+export const LIBRARY_MAX_SEARCH_RESULTS = 10; // Max results for BBC/Freesound library search
 // ENTITY_HIGHLIGHT_DELAY_MS moved to UI_TIMING section
 export const LLM_SUGGESTED_INTERVAL_SECONDS = 0;
 
@@ -1014,7 +1022,7 @@ export const RECEIVER_CONFIG = {
   ROUGHNESS: 0.3,
   METALNESS: 0.7,
   PREVIEW_OPACITY: 0.5,
-  COLOR: 0x0ea5e9 // Sky-500
+  COLOR: 0xf0a938
 } as const;
 
 // Receiver positioning (for direct creation like sound spheres)
@@ -1584,9 +1592,9 @@ export const PYROOMACOUSTICS_SIMULATION_MODE_DESCRIPTIONS = {
 } as const;
 
 // Default Simulation Settings
-export const PYROOMACOUSTICS_DEFAULT_MAX_ORDER = 3; // Default max_order for image source method
-export const PYROOMACOUSTICS_DEFAULT_RAY_TRACING = false; // Default ray tracing state
-export const PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION = false; // Default air absorption state
+export const PYROOMACOUSTICS_DEFAULT_MAX_ORDER = 2; // Default max_order for image source method
+export const PYROOMACOUSTICS_DEFAULT_RAY_TRACING = true; // Default ray tracing state
+export const PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION = true; // Default air absorption state
 export const PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE = PYROOMACOUSTICS_SIMULATION_MODE_MONO; // Default simulation mode
 
 // Parameter Ranges

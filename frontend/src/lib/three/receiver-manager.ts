@@ -5,6 +5,7 @@ import { updateDraggableMeshes, disposeMeshes } from "@/lib/three/draggable-mesh
 import { calculateSpiralPositions } from "@/lib/three/spiral-placement";
 import type { ReceiverData } from "@/types";
 import type { BoundingBoxBounds } from "@/lib/three/BoundingBoxManager";
+import { RECEIVER_CONFIG } from "@/lib/constants";
 
 /**
  * ReceiverManager
@@ -85,8 +86,8 @@ export class ReceiverManager {
 
     if (useSpiralPlacement && this.boundingBox && hasNewReceivers) {
       const earHeight = 1.6;
-      const boxCenterY = (this.boundingBox.min[1] + this.boundingBox.max[1]) / 2;
-      const heightOffset = earHeight - boxCenterY;
+      const boxCenterZ = (this.boundingBox.min[2] + this.boundingBox.max[2]) / 2;
+      const heightOffset = earHeight - boxCenterZ;
       const allSpiralPositions = calculateSpiralPositions(this.boundingBox, receivers.length, heightOffset);
 
       // Map spiral positions only to new receivers
@@ -139,10 +140,10 @@ export class ReceiverManager {
     const cubeSize = 0.3 * this.scaleForSounds;
     const cubeGeom = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
 
-    // Blue color for receivers (sky-500: #0ea5e9)
+  
     const material = new SpeckleStandardMaterial({
-      color: 0x0ea5e9,
-      emissive: 0x0ea5e9,
+      color: RECEIVER_CONFIG.COLOR,
+      emissive: RECEIVER_CONFIG.COLOR,
       emissiveIntensity: 0.3,
       roughness: 0.3,
       metalness: 0.7,
@@ -203,8 +204,8 @@ export class ReceiverManager {
     const cubeGeom = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
 
     const material = new SpeckleStandardMaterial({
-      color: 0x0ea5e9,
-      emissive: 0x0ea5e9,
+      color: RECEIVER_CONFIG.COLOR,
+      emissive: RECEIVER_CONFIG.COLOR,
       emissiveIntensity: 0.3,
       roughness: 0.3,
       metalness: 0.7,

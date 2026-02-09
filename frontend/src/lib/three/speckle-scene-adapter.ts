@@ -192,9 +192,9 @@ export class SpeckleSceneAdapter {
           camera.getWorldDirection(direction);
           direction.normalize();
 
-          // Calculate basic orientation
-          const yaw = Math.atan2(-direction.x, -direction.z);
-          const pitch = Math.asin(direction.y);
+          // Calculate basic orientation — Speckle Z-UP: +X=Right, -Y=Forward, +Z=Up
+          const yaw = Math.atan2(-direction.x, -direction.y);
+          const pitch = Math.asin(direction.z);
           const orientation = { yaw, pitch, roll: 0 };
 
           this.audioOrchestrator.updateListener(position, orientation);

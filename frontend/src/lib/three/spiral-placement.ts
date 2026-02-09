@@ -41,7 +41,7 @@ export function calculateSpiralPositions(
   const positions: THREE.Vector3[] = [];
 
   // First element at center (with optional height offset)
-  positions.push(new THREE.Vector3(centerX, centerY + heightOffset, centerZ));
+  positions.push(new THREE.Vector3(centerX, centerY , centerZ + heightOffset));
 
   // Early return if only one position needed
   if (count === 1) {
@@ -53,10 +53,10 @@ export function calculateSpiralPositions(
   let radius = SPIRAL_PLACEMENT.INITIAL_RADIUS;
 
   for (let i = 1; i < count; i++) {
-    // Calculate position in spiral pattern (XZ plane)
+    // Calculate position in spiral pattern (XY plane)
     const x = centerX + Math.cos(angle) * radius;
-    const z = centerZ + Math.sin(angle) * radius;
-    const y = centerY + heightOffset;
+    const z = centerZ ;
+    const y = centerY + Math.sin(angle) * radius;
 
     positions.push(new THREE.Vector3(x, y, z));
 

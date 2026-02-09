@@ -98,15 +98,15 @@ export function AudioWaveformDisplay({
         <div className="text-xs text-gray-700 dark:text-gray-400 space-y-1">
           <div className="flex justify-between">
             <span>File:</span>
-            <span className="font-mono">{audioInfo.filename}</span>
+            <span className="text-xs">{audioInfo.filename}</span>
           </div>
           <div className="flex justify-between">
             <span>Sample Rate:</span>
-            <span className="font-mono">{audioInfo.sample_rate} Hz</span>
+            <span className="text-xs">{audioInfo.sample_rate} Hz</span>
           </div>
           <div className="flex justify-between">
             <span>Channels:</span>
-            <span className="font-mono">{audioInfo.channels}</span>
+            <span className="text-xs">{audioInfo.channels}</span>
           </div>
         </div>
       </div>
@@ -127,7 +127,7 @@ export function AudioWaveformDisplay({
         {viewport.zoom > 1 && (
           <button
             onClick={resetViewport}
-            className="absolute top-2 right-2 bg-black/70 hover:bg-black/90 text-white p-1.5 rounded text-xs font-mono transition-colors"
+            className="absolute top-2 right-2 bg-black/70 hover:bg-black/90 text-white p-1.5 rounded text-xs transition-colors"
             title="Reset zoom (or double-click)"
           >
             Reset
@@ -138,10 +138,10 @@ export function AudioWaveformDisplay({
       {/* Minimal text info - 2 lines (conditionally rendered) */}
       {!hideTextInfo && (
         <div className="px-3 py-2 text-xs text-gray-700 dark:text-gray-400 space-y-0.5">
-          <div className="font-mono truncate" title={audioInfo.filename}>
+          <div className="truncate" title={audioInfo.filename}>
             {audioInfo.filename}
           </div>
-          <div className="flex gap-4 font-mono">
+          <div className="flex gap-4">
             <span>{audioInfo.sample_rate} Hz</span>
             <span>{audioInfo.duration.toFixed(2)}s</span>
           </div>

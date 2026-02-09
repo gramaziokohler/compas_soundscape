@@ -10,6 +10,7 @@ import { Model3DContextContent } from "@/components/layout/sidebar/analysis/Mode
 import { AudioContextContent } from "@/components/layout/sidebar/analysis/AudioContextContent";
 import { TextContextContent } from "@/components/layout/sidebar/analysis/TextContextContent";
 import { AnalysisResultContent } from "@/components/layout/sidebar/analysis/AnalysisResultContent";
+import { useSpeckleSelectionMode } from "@/contexts/SpeckleSelectionModeContext";
 
 /**
  * AnalysisSection Component
@@ -40,6 +41,10 @@ export function AnalysisSection({
   onTogglePromptSelection,
   onSendToSoundGeneration
 }: AnalysisSectionProps) {
+  // Get diverse selection from context (works even without a 3D model card)
+  const { diverseSelectedObjectIds, clearDiverseSelection } = useSpeckleSelectionMode();
+  const diverseCount = diverseSelectedObjectIds.size;
+
   // Helper to check if an analysis has generated results
   const hasResult = useCallback((index: number): boolean => {
     return analysisResult.some(r => r.configIndex === index);
@@ -169,10 +174,10 @@ export function AnalysisSection({
     const configHasResult = hasResult(index);
 
     // Compute action button state based on card type
-    let actionButtonLabel = 'Generate Sound Ideas';
+    let actionButtonLabel = 'Generate Sound Prompts';
     let actionButtonDisabled = false;
     let actionButtonDisabledReason: string | undefined;
-    let actionButtonColor = 'primary';
+    let actionButtonColor = "success";
 
     switch (config.type) {
       case '3d-model': {
@@ -180,7 +185,7 @@ export function AnalysisSection({
         actionButtonLabel = modelConfig.selectedDiverseEntities.length === 0? 'Auto-select diverse entities' : 'Generate Sound Ideas';
         actionButtonDisabled = modelConfig.modelEntities.length === 0;
         actionButtonDisabledReason = actionButtonDisabled ? 'Loading objects...' : undefined;
-        actionButtonColor = modelConfig.selectedDiverseEntities.length === 0 ? 'primary' : 'success';
+        actionButtonColor = modelConfig.selectedDiverseEntities.length === 0 ? 'success' : 'success-hover';
         break;
       }
       case 'audio': {
@@ -192,7 +197,7 @@ export function AnalysisSection({
       }
       case 'text': {
         const textConfig = config as TextAnalysisConfig;
-        actionButtonLabel = 'Generate Sound Ideas';
+        actionButtonLabel = 'Generate Sound Prompts';
         actionButtonDisabled = textConfig.textInput.trim().length === 0;
         actionButtonDisabledReason = actionButtonDisabled ? 'Enter a text description' : undefined;
         break;
@@ -225,6 +230,7 @@ export function AnalysisSection({
         actionButtonDisabled={actionButtonDisabled}
         actionButtonDisabledReason={actionButtonDisabledReason}
         actionButtonColor={actionButtonColor}
+        color="success"
       />
     );
   }, [hasResult, getResult, isRunning, getCollapsedInfo, onUpdateConfig, onRemoveConfig, onReset, getBeforeContent, getAfterContent, onRun, onStop]);
@@ -241,9 +247,10 @@ export function AnalysisSection({
         disabled={!canSendToGeneration}
         className={`w-full py-2 px-4 rounded-md text-white text-xs font-medium transition-colors ${
           canSendToGeneration
-            ? 'bg-success hover:bg-success-hover cursor-pointer'
+            ? 'hover:opacity-80 cursor-pointer'
             : 'bg-secondary-hover opacity-40 cursor-not-allowed'
         }`}
+        style={canSendToGeneration ? { backgroundColor: 'var(--card-color, var(--color-primary))' } : undefined}
       >
         Send to Sound Generation
       </button>
@@ -251,18 +258,39 @@ export function AnalysisSection({
   );
 
   return (
-    <CardSection
-      items={analysisConfigs}
-      availableTypes={availableTypes}
-      emptyMessage="No analysis contexts yet. Import a 3D model from the right sidebar to get started."
-      statusLabel="context"
-      addButtonTitle="Add context analysis"
-      onAddItem={onAddConfig}
-      renderCard={renderCard}
-      footer={footer}
-      getPendingCount={getPendingCount}
-      isRunning={isRunning}
-      error={error}
-    />
+    <div className="flex flex-col min-h-[calc(100vh-8rem)]">
+      <div className="flex-1">
+        <CardSection
+          items={analysisConfigs}
+          availableTypes={availableTypes}
+          emptyMessage="No analysis contexts yet. Import a 3D model from the right sidebar to get started."
+          statusLabel="context"
+          addButtonTitle="Add context analysis"
+          onAddItem={onAddConfig}
+          renderCard={renderCard}
+          footer={footer}
+          getPendingCount={getPendingCount}
+          isRunning={isRunning}
+          error={error}
+          color="success"
+        />
+      </div>
+
+      {/* Diverse selection indicator — anchored at bottom of analysis section */}
+      {diverseCount > 0 && (
+        <div className="sticky bottom-0 z-20 flex items-center justify-between py-2 bg-background">
+          <span className="text-xs text-success">
+            {diverseCount} object{diverseCount !== 1 ? 's' : ''} selected
+          </span>
+          <button
+            onClick={clearDiverseSelection}
+            className="w-5 h-5 flex items-center justify-center rounded-full transition-colors text-secondary-hover hover:bg-secondary-light hover:text-foreground cursor-pointer"
+            title="Clear diverse selection"
+          >
+            <span className="text-lg leading-none">×</span>
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

@@ -97,7 +97,7 @@ export function AudioContextContent({
           )}
 
           {/* Audio file info */}
-          <div className="text-sm font-medium" style={{ color: UI_COLORS.NEUTRAL_700 }}>
+          <div className="text-xs font-medium" style={{ color: UI_COLORS.NEUTRAL_700 }}>
             {config.audioFile?.name || 'Audio File'}
           </div>
 

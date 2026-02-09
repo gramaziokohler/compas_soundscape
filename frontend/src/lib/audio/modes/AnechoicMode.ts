@@ -25,6 +25,7 @@
  * - All encoder outputs are mixed (W+W, X+X, Y+Y, Z+Z, etc.)
  * - Mixed ambisonic stream → binaural decoder
  * - Source positions are encoded in listener-local coordinates (rotation applied before encoding)
+ * - Coordinate system: Speckle Z-UP (+X=Right, -Y=Forward, +Z=Up)
  */
 
 import type { IAudioMode } from '../core/interfaces/IAudioMode';
@@ -164,35 +165,40 @@ export class AnechoicMode implements IAudioMode {
     const encoder = new ambisonics.monoEncoder(this.audioContext, this.ambisonicOrder);
 
     // Calculate initial position using the same yaw+pitch rotation as updateSourcePosition
-    // Three.js: +X=Right, +Y=Up, +Z=Back
+    // Speckle Z-UP: +X=Right, -Y=Forward, +Z=Up
     const relativeX = position.x - this.listenerPosition.x;
     const relativeY = position.y - this.listenerPosition.y;
     const relativeZ = position.z - this.listenerPosition.z;
-
-    // Step 1: Apply YAW rotation around Y axis (horizontal head turn)
+    // Step 1: Apply YAW rotation around Z axis (horizontal head turn)
+    // Project relative world position onto listener's local basis:
+    //   Right   = ( cos(yaw), -sin(yaw), 0)
+    //   Forward = (-sin(yaw), -cos(yaw), 0)
+    //   Up      = (0, 0, 1)
     const cosYaw = Math.cos(this.listenerOrientation.yaw);
     const sinYaw = Math.sin(this.listenerOrientation.yaw);
-    const yawRotatedX = relativeX * cosYaw - relativeZ * sinYaw;
-    const yawRotatedZ = relativeX * sinYaw + relativeZ * cosYaw;
-    const yawRotatedY = relativeY;
+    const localRight   =  relativeX * cosYaw - relativeY * sinYaw;
+    const localForward = -relativeX * sinYaw - relativeY * cosYaw;
+    const localUp      =  relativeZ; // Z unchanged by yaw
 
-    // Step 2: Apply PITCH rotation around X axis (vertical head tilt)
-    const cosPitch = Math.cos(-this.listenerOrientation.pitch);
-    const sinPitch = Math.sin(-this.listenerOrientation.pitch);
-    const finalX = yawRotatedX;
-    const finalY = yawRotatedY * cosPitch - yawRotatedZ * sinPitch;
-    const finalZ = yawRotatedY * sinPitch + yawRotatedZ * cosPitch;
+    // Step 2: Apply PITCH rotation around local Right axis (vertical head tilt)
+    // When looking UP (+pitch), objects at the horizon appear below
+    const cosPitch = Math.cos(this.listenerOrientation.pitch);
+    const sinPitch = Math.sin(this.listenerOrientation.pitch);
+    const headRight   = localRight; // Right unchanged by pitch
+    const headForward = localForward * cosPitch + localUp * sinPitch;
+    const headUp      = -localForward * sinPitch + localUp * cosPitch;
 
-    // Convert rotated Three.js coords to Ambisonic coordinates
+    // Convert listener-local coords to Ambisonic coordinates
     // Ambisonic: +X=Front, +Y=Left, +Z=Up
     const spherical = cartesianToSpherical({
-      x: -finalZ, // Front = -Z in listener's local frame
-      y: -finalX, // Left = -X in listener's local frame
-      z: finalY   // Up = +Y in listener's local frame
+      x: headForward,  // Front = listener's forward direction
+      y: -headRight,   // Left  = negative of listener's right direction
+      z: headUp        // Up    = listener's up direction
     });
 
     // Set azimuth and elevation in degrees (JSAmbisonics uses degrees)
-    encoder.azim = spherical.azimuth * (180 / Math.PI);
+    // Negate azimuth: Omnitone FOA decoder has opposite Y-channel convention to JSAmbisonics
+    encoder.azim = -spherical.azimuth * (180 / Math.PI);
     encoder.elev = spherical.elevation * (180 / Math.PI);
     encoder.updateGains();
 
@@ -235,10 +241,12 @@ export class AnechoicMode implements IAudioMode {
   /**
    * Update source position using JSAmbisonics encoder
    *
+   * Speckle Z-UP coordinate system: +X=Right, -Y=Forward, +Z=Up
+   *
    * Source positions are encoded in listener-local coordinates:
-   * 1. Calculate relative position (source - listener) in world coords
-   * 2. Rotate by listener yaw to get listener-local coords
-   * 3. Convert to ambisonic coordinates and encode
+   * 1. Calculate relative position (source - listener) in Z-UP world coords
+   * 2. Apply yaw (around Z axis) + pitch (around local Right axis) to get head-local coords
+   * 3. Map head-local to ambisonic coords (+X=Front, +Y=Left, +Z=Up) and encode
    */
   updateSourcePosition(sourceId: string, position: Position): void {
     const source = this.sources.get(sourceId);
@@ -249,42 +257,43 @@ export class AnechoicMode implements IAudioMode {
 
     source.position = position;
 
-    // Calculate relative position (source - listener) in Three.js world coordinates
-    // Three.js: +X=Right, +Y=Up, +Z=Back
+    // Calculate relative position (source - listener) in Speckle Z-UP world coordinates
+    // Speckle Z-UP: +X=Right, -Y=Forward, +Z=Up
     const relativeX = position.x - this.listenerPosition.x;
     const relativeY = position.y - this.listenerPosition.y;
     const relativeZ = position.z - this.listenerPosition.z;
 
-    // Step 1: Apply YAW rotation around Y axis (horizontal head turn)
-    // Transforms world coordinates into listener's horizontal frame
+    // Step 1: Apply YAW rotation around Z axis (horizontal head turn)
+    // Project relative world position onto listener's local basis:
+    //   Right   = ( cos(yaw), -sin(yaw), 0)
+    //   Forward = (-sin(yaw), -cos(yaw), 0)
+    //   Up      = (0, 0, 1)
     // +yaw = looking left, so world rotates right relative to listener
     const cosYaw = Math.cos(this.listenerOrientation.yaw);
     const sinYaw = Math.sin(this.listenerOrientation.yaw);
-    const yawRotatedX = relativeX * cosYaw - relativeZ * sinYaw;
-    const yawRotatedZ = relativeX * sinYaw + relativeZ * cosYaw;
-    const yawRotatedY = relativeY; // Y is unchanged by yaw
+    const localRight   =  relativeX * cosYaw - relativeY * sinYaw;
+    const localForward = -relativeX * sinYaw - relativeY * cosYaw;
+    const localUp      =  relativeZ; // Z unchanged by yaw
 
-    // Step 2: Apply PITCH rotation around X axis (vertical head tilt)
-    // When looking UP (+pitch), the world rotates DOWN relative to listener
-    // Use -pitch to properly transform world coords to listener-local coords
-    const cosPitch = Math.cos(-this.listenerOrientation.pitch);
-    const sinPitch = Math.sin(-this.listenerOrientation.pitch);
-    const finalX = yawRotatedX; // X is unchanged by pitch
-    const finalY = yawRotatedY * cosPitch - yawRotatedZ * sinPitch;
-    const finalZ = yawRotatedY * sinPitch + yawRotatedZ * cosPitch;
+    // Step 2: Apply PITCH rotation around local Right axis (vertical head tilt)
+    // When looking UP (+pitch), objects at the horizon appear below
+    const cosPitch = Math.cos(this.listenerOrientation.pitch);
+    const sinPitch = Math.sin(this.listenerOrientation.pitch);
+    const headRight   = localRight; // Right unchanged by pitch
+    const headForward = localForward * cosPitch + localUp * sinPitch;
+    const headUp      = -localForward * sinPitch + localUp * cosPitch;
 
-    // Convert rotated Three.js coords to Ambisonic coordinates
-    // Three.js: +X=Right, +Y=Up, +Z=Back (camera looks at -Z)
+    // Convert listener-local coords to Ambisonic coordinates
     // Ambisonic: +X=Front, +Y=Left, +Z=Up
     //
     // Mapping (in listener's local frame after yaw+pitch rotation):
-    // - Ambisonic Front (+X) = Listener Forward (-Z) = -finalZ
-    // - Ambisonic Left (+Y) = Listener Left (-X) = -finalX
-    // - Ambisonic Up (+Z) = Listener Up (+Y) = finalY
+    // - Ambisonic Front (+X) = headForward (listener's forward direction)
+    // - Ambisonic Left  (+Y) = -headRight  (negative of listener's right)
+    // - Ambisonic Up    (+Z) = headUp      (listener's up direction)
     const spherical = cartesianToSpherical({
-      x: -finalZ,
-      y: -finalX,
-      z: finalY
+      x: headForward,
+      y: -headRight,
+      z: headUp
     });
 
     // Apply distance attenuation (Inverse Square Law)
@@ -302,7 +311,8 @@ export class AnechoicMode implements IAudioMode {
     // Actually, let's add a distanceGainNode to the chain.
     
     // Update JSAmbisonics encoder (degrees)
-    source.encoder.azim = spherical.azimuth * (180 / Math.PI);
+    // Negate azimuth: Omnitone FOA decoder has opposite Y-channel convention to JSAmbisonics
+    source.encoder.azim = -spherical.azimuth * (180 / Math.PI);
     source.encoder.elev = spherical.elevation * (180 / Math.PI);
     source.encoder.updateGains();
     

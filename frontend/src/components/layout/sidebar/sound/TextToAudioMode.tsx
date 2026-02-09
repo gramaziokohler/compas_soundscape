@@ -23,7 +23,7 @@ export function TextToAudioMode({ config, index, onUpdateConfig }: TextToAudioMo
         value={config.prompt}
         onChange={(e) => onUpdateConfig(index, 'prompt', e.target.value)}
         placeholder="e.g., Hammer hitting wooden table"
-        className="w-full h-16 p-2 text-sm rounded-lg bg-white border border-secondary-light focus:border-primary focus:ring-1 focus:ring-primary outline-none"
+        className="w-full h-16 p-2 text-xs rounded-lg bg-white border border-secondary-light focus:border-primary focus:ring-1 focus:ring-primary outline-none"
         rows={2}
       />
 

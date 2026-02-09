@@ -22,6 +22,7 @@ export class SpeckleEventBridge {
   private onSpeckleObjectSelected: ((objectIds: string[], intersectionPoint?: THREE.Vector3) => void) | null = null;
   private lastIntersectionPoint: THREE.Vector3 | null = null;
   private onSoundSphereClicked: ((promptKey: string) => void) | null = null;
+  private onReceiverSingleClicked: ((receiverId: string) => void) | null = null;
   private lastClickTime: number = 0;
   private lastClickedObject: THREE.Object3D | null = null;
   private doubleClickDelay: number = 300;
@@ -94,6 +95,14 @@ export class SpeckleEventBridge {
         const promptKey = customHit.object.userData.promptKey;
         if (promptKey) {
           this.onSoundSphereClicked(promptKey);
+        }
+      }
+
+      // If receiver clicked, notify callback for entity info panel
+      if (customHit.type === 'receiver' && this.onReceiverSingleClicked) {
+        const receiverId = customHit.object.userData.receiverId;
+        if (receiverId) {
+          this.onReceiverSingleClicked(receiverId);
         }
       }
 
@@ -252,6 +261,10 @@ export class SpeckleEventBridge {
     this.onSpeckleObjectSelected = callback;
   }
 
+  public setOnReceiverSingleClicked(callback: (receiverId: string) => void): void {
+    this.onReceiverSingleClicked = callback;
+  }
+
   public dispose(): void {
     const canvas = this.viewer.getRenderer().renderer.domElement;
     canvas.removeEventListener('click', this.handleCanvasClick, true);
@@ -259,6 +272,7 @@ export class SpeckleEventBridge {
     this.onCustomObjectSelected = null;
     this.onSelectionCleared = null;
     this.onReceiverDoubleClicked = null;
+    this.onReceiverSingleClicked = null;
     this.onSpeckleObjectSelected = null;
     this.lastClickedObject = null;
   }

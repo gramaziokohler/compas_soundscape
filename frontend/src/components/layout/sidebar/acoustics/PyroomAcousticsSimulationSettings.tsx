@@ -72,7 +72,7 @@ export function PyroomAcousticsSimulationSettings({
       hover:bg-opacity-90 focus:outline-none
     "
     style={{
-      backgroundColor: UI_COLORS.PRIMARY,
+      backgroundColor: 'var(--card-color, var(--color-primary))',
       color: 'white',
       borderColor: UI_COLORS.NEUTRAL_300,
       borderRadius: '8px',
@@ -128,8 +128,8 @@ export function PyroomAcousticsSimulationSettings({
               type="range"
               value={config.settings.n_rays}
               onChange={(e) => handleSettingChange('n_rays', parseInt(e.target.value))}
-              className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary"
-              style={{ backgroundColor: UI_COLORS.NEUTRAL_200 }}
+              className="w-full h-2 rounded-lg appearance-none cursor-pointer"
+              style={{ backgroundColor: UI_COLORS.NEUTRAL_200, accentColor: 'var(--card-color, var(--color-primary))' }}
               min={PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MIN}
               max={PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MAX}
               step="1000"
@@ -146,8 +146,8 @@ export function PyroomAcousticsSimulationSettings({
               type="range"
               value={config.settings.scattering}
               onChange={(e) => handleSettingChange('scattering', parseFloat(e.target.value))}
-              className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary"
-              style={{ backgroundColor: UI_COLORS.NEUTRAL_200 }}
+              className="w-full h-2 rounded-lg appearance-none cursor-pointer"
+              style={{ backgroundColor: UI_COLORS.NEUTRAL_200, accentColor: 'var(--card-color, var(--color-primary))' }}
               min={PYROOMACOUSTICS_SCATTERING_MIN}
               max={PYROOMACOUSTICS_SCATTERING_MAX}
               step="0.01"

@@ -2,6 +2,7 @@
 
 import type { AnalysisResult } from '@/types/analysis';
 import { UI_COLORS } from '@/lib/constants';
+import { CheckboxField } from '@/components/ui/CheckboxField';
 
 /**
  * AnalysisResultContent Component
@@ -27,35 +28,28 @@ export function AnalysisResultContent({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="text-xs font-semibold" style={{ color: UI_COLORS.SUCCESS }}>
-          ✨ Generated Prompts
+        Generated Prompts
         </div>
-        <div className="text-xs" style={{ color: UI_COLORS.NEUTRAL_600 }}>
+        <div className="text-xs" style={{ color: UI_COLORS.NEUTRAL_300 }}>
           {selectedCount} / {analysisResult.prompts.length} selected
         </div>
       </div>
 
       {/* Prompt list */}
       <div
-        className="rounded p-2 max-h-64 overflow-y-auto space-y-1"
-        style={{
-          backgroundColor: 'white',
-          borderRadius: '8px',
-          borderWidth: '1px',
-          borderStyle: 'solid',
-          borderColor: UI_COLORS.NEUTRAL_300
-        }}
+        className="max-h-64 overflow-y-auto space-y-1"
       >
         {analysisResult.prompts.map((prompt) => (
           <label
             key={prompt.id}
-            className="flex items-start gap-2 p-2 rounded cursor-pointer transition-colors"
+            className="flex items-start gap-0 p-1 rounded cursor-pointer transition-colors"
             style={{
-              backgroundColor: prompt.selected ? `${UI_COLORS.PRIMARY}10` : 'transparent',
+              backgroundColor: prompt.selected ? `${UI_COLORS.SUCCESS_HOVER}50` : 'transparent',
               borderRadius: '6px'
             }}
             onMouseEnter={(e) => {
               if (!prompt.selected) {
-                e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_100;
+                e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_500;
               }
             }}
             onMouseLeave={(e) => {
@@ -64,18 +58,17 @@ export function AnalysisResultContent({
               }
             }}
           >
-            <input
-              type="checkbox"
+            <CheckboxField
               checked={prompt.selected}
               onChange={() => onTogglePromptSelection(analysisResult.configIndex, prompt.id)}
-              className="mt-0.5 w-4 h-4 rounded focus:ring-2 accent-primary flex-shrink-0"
+              label=""
             />
-            <div className="flex-1 text-xs" style={{ color: UI_COLORS.NEUTRAL_900 }}>
+            <div className="flex-1 text-xs" style={{ color: UI_COLORS.NEUTRAL_200 }}>
               {prompt.text}
               
               {/* Metadata display (if available) */}
               {prompt.metadata && (
-                <div className="flex gap-3 mt-1 text-[10px]" style={{ color: UI_COLORS.NEUTRAL_500 }}>
+                <div className="flex gap-3 mt-1 text-[10px]" style={{ color: UI_COLORS.NEUTRAL_400 }}>
                   {prompt.metadata.spl_db !== undefined && (
                     <span>SPL: {prompt.metadata.spl_db}dB</span>
                   )}

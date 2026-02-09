@@ -5,7 +5,6 @@ import Image from "next/image";
 import { AnalysisSection } from "./sidebar/AnalysisSection";
 import { SoundGenerationSection } from "./sidebar/SoundGenerationSection";
 import { AcousticsSection } from "./sidebar/AcousticsSection";
-import { ReceiversTab } from "./sidebar/ReceiversTab";
 import { AdvancedSettingsSection } from "./sidebar/AdvancedSettingsSection";
 import { VerticalTabButton } from "@/components/ui/VerticalTabButton";
 import { Icon } from "@/components/ui/Icon";
@@ -14,7 +13,7 @@ import type { SidebarProps } from "@/types/components";
 import type { ActiveTab } from "@/types";
 
 export function Sidebar(props: SidebarProps) {
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
 
   // Notify parent when expanded state changes
   useEffect(() => {
@@ -60,6 +59,7 @@ export function Sidebar(props: SidebarProps) {
           label="Context"
           isActive={props.activeAiTab === 'text'}
           onClick={() => handleTabClick('text')}
+          buttonColor="var(--color-success)"
         />
 
         {/* Sounds Tab */}
@@ -77,22 +77,6 @@ export function Sidebar(props: SidebarProps) {
           onClick={() => handleTabClick('sound')}
         />
 
-        {/* Receivers Tab */}
-        <VerticalTabButton
-          icon={
-            <Icon size={`${UI_VERTICAL_TABS.ICON_SIZE}px`} color="currentColor">
-              {/* Box/Cube Icon for 3D */}
-              <path d="M12 2l9 4.5v9L12 20l-9-4.5v-9L12 2z" />
-              <path d="M12 2v20" />
-              <path d="M21 6.5l-9 4.5" />
-              <path d="M3 6.5l9 4.5" />
-            </Icon>
-          }
-          label="Receivers"
-          isActive={props.activeAiTab === 'receivers'}
-          onClick={() => handleTabClick('receivers')}
-        />
-
         {/* Acoustics Tab */}
         <VerticalTabButton
           icon={
@@ -108,6 +92,7 @@ export function Sidebar(props: SidebarProps) {
           label="Acoustics"
           isActive={props.activeAiTab === 'acoustics'}
           onClick={() => handleTabClick('acoustics')}
+          buttonColor='var(--color-info)'
         />
 
         {/* Spacer - pushes settings to bottom */}
@@ -137,23 +122,21 @@ export function Sidebar(props: SidebarProps) {
 
       {/* Main Content Area */}
       <aside
-        className="flex-shrink-0 px-6 py-8 flex flex-col gap-8 bg-white dark:bg-gray-800 overflow-y-auto transition-all duration-300 ease-in-out"
+        className="flex-shrink-0 px-6 py-8 flex flex-col gap-4 bg-white dark:bg-gray-800 overflow-y-auto transition-all duration-300 ease-in-out"
         style={{
-          width: isExpanded ? '20rem' : '0',
-          padding: isExpanded ? '2rem 1.5rem' : '0',
+          width: isExpanded ? '18rem' : '0',
+          padding: isExpanded ? '1.5rem 1rem' : '0',
           overflow: isExpanded ? 'auto' : 'hidden',
-          opacity: isExpanded ? 1 : 0
+          opacity: isExpanded ? 0.95 : 0
         }}
       >
-        {/* Fixed header - prevents wrapping issues */}
+        {/* Fixed header - prevents wrapping issues
         <div className="flex items-center gap-4 flex-shrink-0 min-h-[50px]">
           <Image className="dark:invert flex-shrink-0" src="/compas_icon_white.png" alt="compas logo" width={50} height={50} priority />
-          <h1 className="text-2xl font-bold whitespace-nowrap">CS</h1>
-        </div>
+        </div> */}
 
         {/* Generative AI Section with Tabs */}
-        <div className="flex flex-col gap-4 w-full">
-
+        <div className="flex flex-col gap-4 w-full my-4">
 
         {/* Analysis Tab */}
         <div className="flex flex-col gap-4" style={{ display: props.activeAiTab === 'text' ? 'flex' : 'none' }}>
@@ -238,6 +221,10 @@ export function Sidebar(props: SidebarProps) {
         <div style={{ display: props.activeAiTab === 'acoustics' ? 'block' : 'none' }}>
           <AcousticsSection
             receivers={props.receivers}
+            onAddReceiver={props.onAddReceiver}
+            onDeleteReceiver={props.onDeleteReceiver}
+            onUpdateReceiverName={props.onUpdateReceiverName}
+            onGoToReceiver={props.onGoToReceiver}
             onSelectIRFromLibrary={props.onSelectIRFromLibrary}
             onClearIR={props.onClearIR}
             selectedIRId={props.selectedIRId}
@@ -270,18 +257,6 @@ export function Sidebar(props: SidebarProps) {
             onUpdateSimulationConfig={props.onUpdateSimulationConfig}
             onSetActiveSimulation={props.onSetActiveSimulation}
             onUpdateSimulationName={props.onUpdateSimulationName}
-          />
-        </div>
-
-        {/* Receivers Tab */}
-        <div style={{ display: props.activeAiTab === 'receivers' ? 'block' : 'none' }}>
-          <ReceiversTab
-            receivers={props.receivers}
-            onAddReceiver={props.onAddReceiver}
-            onDeleteReceiver={props.onDeleteReceiver}
-            onUpdateReceiverName={props.onUpdateReceiverName}
-            onGoToReceiver={props.onGoToReceiver}
-            onAddGridReceiver={props.onAddGridReceiver}
           />
         </div>
 

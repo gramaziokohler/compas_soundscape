@@ -35,6 +35,7 @@ import { useSpeckleViewerContext } from '@/contexts/SpeckleViewerContext';
 import { ResonanceContent } from '@/components/layout/sidebar/acoustics/ResonanceContent';
 import { SimulationResultContent } from '@/components/layout/sidebar/acoustics/SimulationResultContent';
 import { SimulationSetupContent } from '@/components/layout/sidebar/acoustics/SimulationSetupContent';
+import { ReceiversSection } from '@/components/layout/sidebar/ReceiversSection';
 
 // Hooks
 import { useAcousticsMaterials } from '@/hooks/useAcousticsMaterials';
@@ -73,12 +74,17 @@ import type { AudioRenderingMode } from '@/components/audio/AudioRenderingModeSe
 
 // Constants
 import {
-  MAX_FACES_FOR_LAYER_AUTO_EXCLUDE
+  MAX_FACES_FOR_LAYER_AUTO_EXCLUDE,
+  UI_COLORS
 } from '@/lib/constants';
 
 interface AcousticsSectionProps {
   // Receiver props
   receivers?: ReceiverData[];
+  onAddReceiver?: (type: string) => void;
+  onDeleteReceiver?: (id: string) => void;
+  onUpdateReceiverName?: (id: string, name: string) => void;
+  onGoToReceiver?: (id: string) => void;
 
   // IR Library props
   onSelectIRFromLibrary: (irMetadata: ImpulseResponseMetadata) => Promise<void>;
@@ -131,6 +137,10 @@ interface AcousticsSectionProps {
 export function AcousticsSection(props: AcousticsSectionProps) {
   const {
     receivers = [],
+    onAddReceiver,
+    onDeleteReceiver,
+    onUpdateReceiverName,
+    onGoToReceiver,
     onSelectIRFromLibrary,
     onClearIR,
     selectedIRId,
@@ -167,15 +177,20 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
   const { viewerRef } = useSpeckleViewerContext();
 
-  // Load materials using the generic hook
+  // Only fetch materials when a card of that type exists
+  const hasChorasCard = simulationConfigs.some(c => c.type === 'choras');
+  const hasPyroomCard = simulationConfigs.some(c => c.type === 'pyroomacoustics');
+
   const { materials: chorasMaterials } = useAcousticsMaterials({
     fetchMaterials: () => apiService.getChorasMaterials(),
-    idPrefix: 'choras'
+    idPrefix: 'choras',
+    enabled: hasChorasCard
   });
 
   const { materials: pyroomMaterials } = useAcousticsMaterials({
     fetchMaterials: () => apiService.getPyroomacousticsMaterials(),
-    idPrefix: 'pyroom'
+    idPrefix: 'pyroom',
+    enabled: hasPyroomCard
   });
 
   // World Tree state (for Speckle material assignment)
@@ -622,16 +637,21 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       <button
         onClick={(e) => {
           e.stopPropagation();
-          if (onSetActiveSimulation) onSetActiveSimulation(index);
+          if (onSetActiveSimulation) onSetActiveSimulation(isActive ? null : index);
         }}
         className={`p-1.5 rounded-full transition-colors flex items-center justify-center ${
           isActive
-            ? 'text-white bg-primary ring-1 ring-primary'
+            ? 'text-white ring-1'
             : 'text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100'
         }`}
-        title={isActive ? "Simulation Active" : "Activate Simulation"}
+        style={isActive ? {
+          backgroundColor: 'var(--card-color, var(--color-primary))',
+          // @ts-expect-error -- ring-color CSS custom property
+          '--tw-ring-color': 'var(--card-color, var(--color-primary))',
+        } : undefined}
+        title={isActive ? "Disable Simulation" : "Activate Simulation"}
       >
-        <Power size={12} />
+        <Power size={11} />
       </button>
     );
 
@@ -695,19 +715,44 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             actionButtonLabel="Start Simulation"
             actionButtonDisabled={actionButtonDisabled}
             actionButtonDisabledReason={actionButtonDisabledReason}
+            actionButtonColor='info'
+            color="info"
         />
     );
   };
 
   return (
-    <CardSection
-      items={simulationConfigs}
-      availableTypes={AVAILABLE_TYPES}
-      emptyMessage="No acoustic simulation configured."
-      statusLabel="simulation"
-      addButtonTitle="Add acoustics"
-      onAddItem={handleAddItem}
-      renderCard={renderCard}
-    />
+    <div className="flex flex-col min-h-0 overflow-hidden gap-4">
+      <div className="flex-1">
+        <CardSection
+          items={simulationConfigs}
+          availableTypes={AVAILABLE_TYPES}
+          emptyMessage="No acoustic simulation configured."
+          statusLabel="simulation"
+          addButtonTitle="Add acoustics"
+          onAddItem={handleAddItem}
+          renderCard={renderCard}
+          color="info"
+        />
+     </div>
+
+     <div className="flex-1" />
+
+      {/* Receivers Section */}
+      {onAddReceiver && onDeleteReceiver && onUpdateReceiverName && onGoToReceiver && (
+        <>
+          <div className="flex-shrink-0 mt-5" >
+            <ReceiversSection
+              receivers={receivers}
+              onAddReceiver={onAddReceiver}
+              onDeleteReceiver={onDeleteReceiver}
+              onUpdateReceiverName={onUpdateReceiverName}
+              onGoToReceiver={onGoToReceiver}
+            />
+          </div>
+        </>
+      )}
+
+    </div>
   );
 }

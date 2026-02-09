@@ -20,6 +20,7 @@ import { useEffect, useCallback, useState, useRef } from 'react';
 import { useSpeckleSurfaceMaterials } from '@/hooks/useSpeckleSurfaceMaterials';
 import { useSpeckleFiltering } from '@/hooks/useSpeckleFiltering';
 import { useSpeckleSelectionMode } from '@/contexts/SpeckleSelectionModeContext';
+import { useAcousticMaterial } from '@/contexts/AcousticMaterialContext';
 import { SpeckleMaterialAssignmentUI } from './SpeckleMaterialAssignmentUI';
 import { UI_COLORS } from '@/lib/constants';
 import type { AcousticMaterial } from '@/types/materials';
@@ -92,6 +93,7 @@ export function SpeckleSurfaceMaterialsSection({
     materialAssignments,
     selectLayer,
     assignMaterial,
+    assignMaterialToAll,
     getMaterialColor,
     getColorGroups,
     clearMaterialAssignments,
@@ -100,6 +102,29 @@ export function SpeckleSurfaceMaterialsSection({
     initialAssignments,
     initialLayerName
   });
+
+  // Publish material state to AcousticMaterialContext for right sidebar consumers
+  const { publishMaterialState, clearMaterialState } = useAcousticMaterial();
+
+  useEffect(() => {
+    publishMaterialState({
+      meshObjects,
+      materialAssignments,
+      availableMaterials,
+      selectedLayerId,
+      layerOptions,
+      assignMaterial,
+      assignMaterialToAll,
+      getMaterialColor
+    });
+  }, [meshObjects, materialAssignments, availableMaterials, selectedLayerId, layerOptions, assignMaterial, assignMaterialToAll, getMaterialColor, publishMaterialState]);
+
+  // Clear context state on unmount
+  useEffect(() => {
+    return () => {
+      clearMaterialState();
+    };
+  }, [clearMaterialState]);
 
   // Track previous layer to detect changes
   const previousLayerIdRef = useRef<string | null>(null);
@@ -132,6 +157,13 @@ export function SpeckleSurfaceMaterialsSection({
         });
       }
 
+      // Un-isolate the previous layer before isolating the new one
+      // (Speckle's isolateObjects is additive, so old objects would stay isolated)
+      if (isolatedByUsRef.current.length > 0) {
+        console.log('[SpeckleSurfaceMaterialsSection] Un-isolating previous layer:', isolatedByUsRef.current.length, 'objects');
+        unIsolateObjects(isolatedByUsRef.current);
+      }
+
       // Include parent layer ID + all children in isolation
       const objectIdsToIsolate = [selectedLayerId, ...childObjectIds];
 
@@ -142,7 +174,7 @@ export function SpeckleSurfaceMaterialsSection({
       isolateObjects(objectIdsToIsolate);
       previousLayerIdRef.current = selectedLayerId;
     }
-  }, [selectedLayerId, getAllObjectIds, isolateObjects, hiddenObjects, isolatedObjects]);
+  }, [selectedLayerId, getAllObjectIds, isolateObjects, unIsolateObjects, hiddenObjects, isolatedObjects]);
 
   /**
    * Restore previous visibility state when component unmounts (card collapsed or switched)
@@ -239,7 +271,7 @@ export function SpeckleSurfaceMaterialsSection({
     return (
       <div className={`flex flex-col gap-2 ${className}`}>
         <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-          Surface Materials
+          Acoustic Layer
         </h4>
         <div
           className="px-3 py-4 text-xs text-center"
@@ -259,18 +291,14 @@ export function SpeckleSurfaceMaterialsSection({
   return (
     <div className={`flex flex-col gap-2 ${className}`}>
       <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-        Surface Materials
+        Acoustic Layer
       </h4>
 
       <SpeckleMaterialAssignmentUI
         layerOptions={layerOptions}
         selectedLayerId={selectedLayerId}
-        meshObjects={meshObjects}
-        materialAssignments={materialAssignments}
         availableMaterials={availableMaterials}
         onSelectLayer={selectLayer}
-        onAssignMaterial={assignMaterial}
-        getMaterialColor={getMaterialColor}
       />
     </div>
   );

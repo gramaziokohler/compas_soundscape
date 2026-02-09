@@ -23,6 +23,8 @@ interface WaveSurferTimelineProps {
   mutedSounds?: Set<string>;
   /** ID of the soloed sound */
   soloedSound?: string | null;
+  /** Callback to reload all available sounds into the timeline */
+  onRefresh?: () => void;
 }
 
 interface WaveSurferInstance {
@@ -54,6 +56,7 @@ export function WaveSurferTimeline({
   individualSoundStates = {},
   mutedSounds = new Set(),
   soloedSound = null,
+  onRefresh,
 }: WaveSurferTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -639,7 +642,7 @@ export function WaveSurferTimeline({
           />
           <span className="text-xs text-gray-400 min-w-[3rem]">{zoom.toFixed(1)}x</span>
           <button
-            onClick={() => handleZoomChange(WAVESURFER_TIMELINE.DEFAULT_ZOOM)}
+            onClick={() => onRefresh?.()}
             className="text-xs px-2 py-1 rounded transition-colors"
             style={{
               color: '#F500B8',
@@ -648,8 +651,9 @@ export function WaveSurferTimeline({
             }}
             onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(245, 0, 184, 0.2)'}
             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'rgba(245, 0, 184, 0.1)'}
+            title="Reload all available sounds into the timeline"
           >
-            Reset
+            Reload
           </button>
         </div>
       </div>

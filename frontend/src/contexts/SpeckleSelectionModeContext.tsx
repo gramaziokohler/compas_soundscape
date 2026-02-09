@@ -12,6 +12,14 @@ export interface SelectedEntityInfo {
   objectName: string;
   objectType: string;
   parentName?: string;
+  /** Present when a receiver sphere is selected */
+  receiverData?: {
+    position: [number, number, number];
+  };
+  /** Present when a sound sphere is selected */
+  soundData?: {
+    promptIndex: number;
+  };
 }
 
 /**
@@ -27,8 +35,9 @@ export interface ColorGroup {
  *
  * Manages object-to-sound linking and diverse selection for Speckle objects.
  * Uses FilteringExtension to color objects based on their state:
- * - Green: Objects linked to sounds
- * - Pink: Objects selected for diverse analysis
+ * - Light pink: Objects linked to sounds (config state, no audio generated yet)
+ * - Full pink: Objects linked to sounds WITH generated audio
+ * - Green: Objects selected for diverse analysis
  * - Custom: Material assignment colors (registered externally)
  */
 interface SpeckleSelectionModeContextType {
@@ -46,7 +55,7 @@ interface SpeckleSelectionModeContextType {
   setSelectedEntity: (entity: SelectedEntityInfo | null) => void;
 
   // Link management
-  linkObjectToSound: (objectId: string, soundTabIndex: number) => void;
+  linkObjectToSound: (objectId: string, soundTabIndex: number, hasGeneratedSound?: boolean) => void;
   unlinkObjectFromSound: (objectId: string) => void;
 
   // Diverse selection management
@@ -98,6 +107,9 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
   // Track which objects are linked to which sound tabs (objectId -> soundTabIndex)
   const [objectSoundLinks, setObjectSoundLinks] = useState<Map<string, number>>(new Map());
 
+  // Track which linked objects have generated sound (full pink vs light pink)
+  const [generatedSoundObjectIds, setGeneratedSoundObjectIds] = useState<Set<string>>(new Set());
+
   // Track which objects are selected for diverse analysis
   const [diverseSelectedObjectIds, setDiverseSelectedObjectIds] = useState<Set<string>>(new Set());
 
@@ -113,6 +125,7 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
   // Refs to track current state for applyFilterColors (avoids stale closure)
   // These are updated synchronously in the setter functions, not via effects
   const objectSoundLinksRef = useRef(objectSoundLinks);
+  const generatedSoundObjectIdsRef = useRef(generatedSoundObjectIds);
   const diverseSelectedObjectIdsRef = useRef(diverseSelectedObjectIds);
 
   // Material colors registered by SpeckleSurfaceMaterialsSection
@@ -136,6 +149,7 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
 
     // Read from refs to get current state
     const currentLinks = objectSoundLinksRef.current;
+    const currentGenerated = generatedSoundObjectIdsRef.current;
     const currentDiverse = diverseSelectedObjectIdsRef.current;
     const materialColors = materialColorsRef.current;
 
@@ -147,7 +161,7 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
       colorGroups.push(...materialColors);
     }
 
-    // Second: Pink for diverse-selected objects (exclude those that are already linked)
+    // Second: Green for diverse-selected objects (exclude those that are already linked)
     const diverseOnlyIds = Array.from(currentDiverse).filter(
       id => !currentLinks.has(id)
     );
@@ -158,11 +172,24 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
       });
     }
 
-    // Third: Green for sound-linked objects (highest priority)
-    const linkedIds = Array.from(currentLinks.keys());
-    if (linkedIds.length > 0) {
+    // Third: Light pink for sound-linked objects WITHOUT generated sound (pending/config state)
+    const pendingLinkedIds = Array.from(currentLinks.keys()).filter(
+      id => !currentGenerated.has(id)
+    );
+    if (pendingLinkedIds.length > 0) {
       colorGroups.push({
-        objectIds: linkedIds,
+        objectIds: pendingLinkedIds,
+        color: SPECKLE_FILTER_COLORS.SOUND_LINKED_PENDING
+      });
+    }
+
+    // Fourth: Full pink for sound-linked objects WITH generated sound (highest priority)
+    const generatedLinkedIds = Array.from(currentLinks.keys()).filter(
+      id => currentGenerated.has(id)
+    );
+    if (generatedLinkedIds.length > 0) {
+      colorGroups.push({
+        objectIds: generatedLinkedIds,
         color: SPECKLE_FILTER_COLORS.SOUND_LINKED
       });
     }
@@ -170,7 +197,7 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
     // Apply colors
     if (colorGroups.length > 0) {
       filteringExt.setUserObjectColors(colorGroups);
-      console.log('[Context] Applied colors - material:', materialColors.length, 'groups, diverse:', diverseOnlyIds.length, 'linked:', linkedIds.length);
+      console.log('[Context] Applied colors - material:', materialColors.length, 'groups, diverse:', diverseOnlyIds.length, 'pending:', pendingLinkedIds.length, 'generated:', generatedLinkedIds.length);
     } else {
       // Clear colors if no objects to color
       filteringExt.removeUserObjectColors();
@@ -216,7 +243,7 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
   useEffect(() => {
     // Increment color version when state changes to trigger re-apply
     setColorVersion(v => v + 1);
-  }, [objectSoundLinks, diverseSelectedObjectIds]);
+  }, [objectSoundLinks, generatedSoundObjectIds, diverseSelectedObjectIds]);
 
   useEffect(() => {
     if (colorVersion === 0) return; // Skip initial render
@@ -230,7 +257,7 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
   }, [colorVersion, applyFilterColors]);
 
   // Link management
-  const linkObjectToSound = useCallback((objectId: string, soundTabIndex: number) => {
+  const linkObjectToSound = useCallback((objectId: string, soundTabIndex: number, hasGeneratedSound = false) => {
     setObjectSoundLinks(prev => {
       // Check if already linked to same index
       if (prev.get(objectId) === soundTabIndex) return prev;
@@ -240,6 +267,25 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
       objectSoundLinksRef.current = next;
       return next;
     });
+
+    // Track generated sound state (upgrade to full pink or downgrade to light pink)
+    if (hasGeneratedSound) {
+      setGeneratedSoundObjectIds(prev => {
+        if (prev.has(objectId)) return prev;
+        const next = new Set(prev).add(objectId);
+        generatedSoundObjectIdsRef.current = next;
+        return next;
+      });
+    } else {
+      // Downgrade: remove from generated set if present (e.g. reset to config)
+      setGeneratedSoundObjectIds(prev => {
+        if (!prev.has(objectId)) return prev;
+        const next = new Set(prev);
+        next.delete(objectId);
+        generatedSoundObjectIdsRef.current = next;
+        return next;
+      });
+    }
 
     // Remove from diverse selection if linked (linked takes priority)
     setDiverseSelectedObjectIds(prev => {
@@ -262,6 +308,15 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
       next.delete(objectId);
       // Update ref synchronously
       objectSoundLinksRef.current = next;
+      return next;
+    });
+
+    // Also remove from generated sound tracking
+    setGeneratedSoundObjectIds(prev => {
+      if (!prev.has(objectId)) return prev;
+      const next = new Set(prev);
+      next.delete(objectId);
+      generatedSoundObjectIdsRef.current = next;
       return next;
     });
 
@@ -322,11 +377,12 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
   const getObjectLinkState = useCallback((objectId: string) => {
     const isLinked = objectSoundLinks.has(objectId);
     const isDiverse = diverseSelectedObjectIds.has(objectId);
+    const hasGenerated = generatedSoundObjectIds.has(objectId);
     const linkedSoundIndex = objectSoundLinks.get(objectId);
 
-    // Determine color: green (linked) > pink (diverse) > grey (none)
+    // Determine color: full pink (linked+generated) > light pink (linked+pending) > green (diverse) > grey (none)
     const linkColor = isLinked
-      ? SPECKLE_FILTER_COLORS.SOUND_LINKED
+      ? (hasGenerated ? SPECKLE_FILTER_COLORS.SOUND_LINKED : SPECKLE_FILTER_COLORS.SOUND_LINKED_PENDING)
       : isDiverse
         ? SPECKLE_FILTER_COLORS.DIVERSE_SELECTION
         : '#6b7280';
@@ -337,7 +393,7 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
       linkColor,
       linkedSoundIndex
     };
-  }, [objectSoundLinks, diverseSelectedObjectIds]);
+  }, [objectSoundLinks, diverseSelectedObjectIds, generatedSoundObjectIds]);
 
   // Memoize linkedObjectIds to avoid creating new Set on every render
   const linkedObjectIds = useMemo(

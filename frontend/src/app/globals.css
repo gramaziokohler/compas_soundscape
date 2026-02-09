@@ -8,11 +8,13 @@
   --color-primary: #F500B8;
   --color-primary-hover: #e061c0;
   --color-primary-light: #fce7f6;
+  --color-primary-lighter: #fdf2fa;
   
   /* Secondary color */
   --color-secondary: #1f1f1f;
   --color-secondary-hover: #787878;
   --color-secondary-light: #dbdbdb;
+  --color-secondary-lighter: #f3f3f3;
   
   /* Semantic colors */
   --color-success: #10B981;
@@ -38,9 +40,11 @@
   --color-primary: var(--color-primary);
   --color-primary-hover: var(--color-primary-hover);
   --color-primary-light: var(--color-primary-light);
+  --color-primary-lighter: var(--color-primary-lighter);
   --color-secondary: var(--color-secondary);
   --color-secondary-hover: var(--color-secondary-hover);
   --color-secondary-light: var(--color-secondary-light);
+  --color-secondary-lighter: var(--color-secondary-lighter);
   --color-success: var(--color-success);
   --color-success-hover: var(--color-success-hover);
   --color-success-light: var(--color-success-light);

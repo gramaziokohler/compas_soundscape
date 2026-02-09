@@ -12,6 +12,27 @@ import type { ReactNode } from 'react';
 // ============================================================================
 
 /**
+ * Available theme colors for Card and CardSection components.
+ *
+ * Maps to CSS custom properties defined in globals.css:
+ * - `--color-{name}` (base), `--color-{name}-hover`, `--color-{name}-light`
+ *
+ * Used to theme all interactive "infills": sliders, dropdowns, borders,
+ * action buttons, the '+' add button, progress bars, checkboxes, etc.
+ *
+ * The Card/CardSection wrapper sets scoped CSS custom properties:
+ * - `--card-color`, `--card-color-hover`, `--card-color-light`
+ * so any child component can reference `var(--card-color)` to match the theme.
+ */
+export type CardColor =
+  | 'primary'
+  | 'secondary'
+  | 'success'
+  | 'error'
+  | 'warning'
+  | 'info';
+
+/**
  * Card types - identifies the category of card (single source of truth)
  *
  * Analysis types: '3d-model', 'audio', 'text'
@@ -98,6 +119,17 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   isExpanded: boolean;
   /** Whether the card has completed generation */
   hasResult: boolean;
+
+  /**
+   * Theme color for all interactive elements inside this card.
+   *
+   * Applies to: action button, progress bar, borders, input focus ring,
+   * and sets `accent-color` for native inputs (sliders, checkboxes).
+   * Also sets `--card-color` CSS custom property for child components.
+   *
+   * @default 'primary'
+   */
+  color?: CardColor;
 
   // ============================================================================
   // Simulation Action Button Props (for acoustics cards)

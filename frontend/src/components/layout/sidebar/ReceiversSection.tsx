@@ -17,10 +17,9 @@
  * - Direct receiver creation (like sound spheres) - no click-to-place required
  */
 
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
 import type { ReceiverData } from '@/types';
-import { UI_COLORS, RECEIVER_CONFIG, GRID_RECEIVERS } from '@/lib/constants';
-import { RangeSlider } from '@/components/ui/RangeSlider';
+import { UI_COLORS, RECEIVER_CONFIG } from '@/lib/constants';
 
 interface ReceiversSectionProps {
   receivers: ReceiverData[];
@@ -28,7 +27,6 @@ interface ReceiversSectionProps {
   onDeleteReceiver: (id: string) => void;
   onUpdateReceiverName: (id: string, name: string) => void;
   onGoToReceiver: (id: string) => void;
-  onAddGridReceiver: (type: string, n: number) => void;
 }
 
 export function ReceiversSection({
@@ -36,40 +34,16 @@ export function ReceiversSection({
   onAddReceiver,
   onDeleteReceiver,
   onUpdateReceiverName,
-  onGoToReceiver,
-  onAddGridReceiver
+  onGoToReceiver
 }: ReceiversSectionProps) {
   const [editingReceiverId, setEditingReceiverId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState('');
-
-  // Track mode selector dropdown visibility
-  const [showModeSelector, setShowModeSelector] = useState(false);
-  const modeSelectorRef = useRef<HTMLDivElement>(null);
-
-  // Grid configuration state
-  const [config, setConfig] = useState({
-    gridResolution: 9
-  });
 
   // Inline name editing handlers
   const handleDoubleClick = (receiver: ReceiverData) => {
     setEditingReceiverId(receiver.id);
     setEditingValue(receiver.name);
   };
-
-  // Close mode selector when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (modeSelectorRef.current && !modeSelectorRef.current.contains(event.target as Node)) {
-        setShowModeSelector(false);
-      }
-    };
-
-    if (showModeSelector) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
-    }
-  }, [showModeSelector]);
 
   const handleEditSave = () => {
     if (editingReceiverId && editingValue.trim()) {
@@ -98,12 +72,12 @@ export function ReceiversSection({
   return (
     <div className="flex flex-col gap-3">
       {/* Receiver status and + button */}
-      <div className="flex items-center text-xs w-full gap-1" style={{ color: UI_COLORS.NEUTRAL_600 }}>
+      <div className="flex items-center text-xs text-secondary-hover w-full gap-1">
         {receivers.length} receiver{receivers.length !== 1 ? 's' : ''}
 
-        {/* Add Receiver button with + icon */}
+        {/* Add Receiver button - directly adds a single receiver */}
         <button
-          onClick={() => setShowModeSelector(!showModeSelector)}
+          onClick={() => onAddReceiver('single')}
           className="ml-auto w-8 h-8 rounded text-white font-bold transition-colors flex items-center justify-center"
           style={{
             backgroundColor: receiverColor,
@@ -121,71 +95,12 @@ export function ReceiversSection({
         >
           <span className="text-lg leading-none">+</span>
         </button>
-
-          {/* Mode selector dropdown */}
-          {showModeSelector && (
-            <div
-              className="absolute right-0 mt-1 z-10 rounded shadow-lg"
-              style={{
-                backgroundColor: 'white',
-                borderRadius: '8px',
-                borderWidth: '1px',
-                borderStyle: 'solid',
-                borderColor: UI_COLORS.NEUTRAL_300,
-                minWidth: '200px'
-              }}
-            >
-              <button
-                onClick={() => {
-                  onAddReceiver('single');
-                  setShowModeSelector(false);
-                }}
-                className="w-full text-left px-3 py-2 text-xs transition-colors"
-                style={{
-                  borderRadius: '8px 8px 0 0',
-                  color: UI_COLORS.NEUTRAL_900
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY;
-                  e.currentTarget.style.color = 'white';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                  e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
-                }}
-              >
-                Add single receiver
-              </button>
-              <button
-                onClick={() => {
-                  onAddGridReceiver('multiple', config.gridResolution);
-                  setShowModeSelector(false);
-                }}
-                className="w-full text-left px-3 py-2 text-xs transition-colors"
-                style={{
-                  borderRadius: '0 0 8px 8px',
-                  color: UI_COLORS.NEUTRAL_900
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY;
-                  e.currentTarget.style.color = 'white';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                  e.currentTarget.style.color = UI_COLORS.NEUTRAL_900;
-                }}
-              >
-                Add grid of receivers
-              </button>
-            </div>
-          )}
       </div>
 
       {/* Receivers List */}
       {receivers.length > 0 && (
         <div className="space-y-0">
           {receivers.map((receiver) => (
-            receiver.type === "single" && (
             <div
               key={receiver.id}
               className="flex items-center justify-between gap-0 p-0"
@@ -199,7 +114,7 @@ export function ReceiversSection({
                   onBlur={handleEditSave}
                   onKeyDown={handleEditKeyDown}
                   autoFocus
-                  className="flex-1 text-sm font-medium px-2 py-1 rounded outline-none focus:ring-1"
+                  className="flex-1 text-xs text-primary font-medium px-2 py-1 rounded outline-none focus:ring-1"
                   style={{
                     backgroundColor: UI_COLORS.NEUTRAL_100,
                     borderColor: receiverColor,
@@ -211,17 +126,17 @@ export function ReceiversSection({
                   onDoubleClick={() => handleDoubleClick(receiver)}
                   onMouseEnter={(e) => e.currentTarget.style.color = receiverColor}
                   onMouseLeave={(e) => e.currentTarget.style.color = UI_COLORS.NEUTRAL_800}
-                  className="flex-1 text-sm font-medium cursor-pointer transition-colors group"
+                  className="px-2 flex-1 text-xs text-primary font-medium cursor-pointer transition-colors group"
                   style={{ color: UI_COLORS.NEUTRAL_800 }}
                   title="Double-click to edit name"
                 >
-                  {receiver.name}
+                  {receiver.name} - ({receiver.position.map(coord => coord.toFixed(2)).join(', ')})
                   <span className="text-[10px] ml-1 opacity-0 group-hover:opacity-50 transition-opacity">✏️</span>
                 </div>
               )}
 
               {/* Button group */}
-              <div className="flex gap-1">
+              <div className="flex gap-0">
                 {/* Go To button */}
                 <button
                   onClick={() => onGoToReceiver(receiver.id)}
@@ -277,7 +192,6 @@ export function ReceiversSection({
                 </button>
               </div>
             </div>
-            )
           ))}
         </div>
       )}

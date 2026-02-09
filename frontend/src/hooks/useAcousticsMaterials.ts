@@ -28,6 +28,8 @@ interface UseAcousticsMaterialsProps {
   idPrefix: string;
   /** Default absorption value if not provided by API */
   defaultAbsorption?: number;
+  /** Whether to enable fetching (defaults to true for backward compat) */
+  enabled?: boolean;
 }
 
 export interface UseAcousticsMaterialsReturn {
@@ -49,11 +51,13 @@ export interface UseAcousticsMaterialsReturn {
 export function useAcousticsMaterials({
   fetchMaterials,
   idPrefix,
-  defaultAbsorption = 0.5
+  defaultAbsorption = 0.5,
+  enabled = true
 }: UseAcousticsMaterialsProps): UseAcousticsMaterialsReturn {
   const [rawMaterials, setRawMaterials] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hasLoaded, setHasLoaded] = useState(false);
 
   const loadMaterials = async () => {
     setIsLoading(true);
@@ -62,6 +66,7 @@ export function useAcousticsMaterials({
     try {
       const materials = await fetchMaterials();
       setRawMaterials(materials);
+      setHasLoaded(true);
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : 'Failed to load materials';
       console.error(`[useAcousticsMaterials] ${idPrefix}:`, e);
@@ -71,10 +76,12 @@ export function useAcousticsMaterials({
     }
   };
 
-  // Load materials on mount
+  // Load materials only when enabled and not yet loaded
   useEffect(() => {
-    loadMaterials();
-  }, []);
+    if (enabled && !hasLoaded) {
+      loadMaterials();
+    }
+  }, [enabled]);
 
   /**
    * Map raw materials to common AcousticMaterial format

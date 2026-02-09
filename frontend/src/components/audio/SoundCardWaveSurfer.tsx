@@ -13,6 +13,8 @@ interface SoundCardWaveSurferProps {
   isPlaying: boolean;
   /** Whether this soundcard is muted */
   isMuted?: boolean;
+  /** Silent mode: renders waveform visually but produces no audio (prevents double playback) */
+  silent?: boolean;
   /** Callback when play/pause is clicked */
   onPlayPause: () => void;
   /** Callback when stop is clicked */
@@ -32,6 +34,7 @@ export function SoundCardWaveSurfer({
   volumeDb,
   isPlaying,
   isMuted = false,
+  silent = false,
   onPlayPause,
   onStop,
   color = UI_COLORS.PRIMARY
@@ -153,7 +156,7 @@ export function SoundCardWaveSurfer({
   useEffect(() => {
     if (!wavesurferRef.current) return;
 
-    if (isMuted) {
+    if (silent || isMuted) {
       wavesurferRef.current.setVolume(0);
       return;
     }
@@ -163,7 +166,7 @@ export function SoundCardWaveSurfer({
     const normalizedDb = volumeDb / 100;
     const linearVolume = Math.pow(normalizedDb, 2); // Quadratic curve for better low-end control
     wavesurferRef.current.setVolume(Math.min(1, Math.max(0, linearVolume)));
-  }, [volumeDb, isMuted]);
+  }, [volumeDb, isMuted, silent]);
 
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);

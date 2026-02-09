@@ -35,13 +35,13 @@ export function LibraryMode({
           value={config.prompt}
           onChange={(e) => onUpdateConfig(index, 'prompt', e.target.value)}
           placeholder="e.g., Urban traffic, birds chirping, footsteps"
-          className="flex-1 h-12 p-2 text-sm rounded-lg bg-white border border-secondary-light focus:border-primary focus:ring-1 focus:ring-primary outline-none"
+          className="flex-1 h-12 p-2 text-xs rounded-lg bg-white border border-secondary-light focus:border-primary focus:ring-1 focus:ring-primary outline-none"
           rows={2}
         />
         <button
           onClick={() => onLibrarySearch?.(index)}
           disabled={!config.prompt.trim() || isSearching}
-          className="px-4 py-2 text-xs font-medium text-white rounded-lg bg-primary disabled:bg-secondary-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          className="px-2 py-2 text-xs font-medium text-white rounded-lg bg-primary disabled:bg-secondary-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           {isSearching ? 'Searching...' : 'Search'}
         </button>
@@ -49,8 +49,8 @@ export function LibraryMode({
 
       {/* Search results */}
       {results && results.length > 0 && (
-        <div className="rounded-lg p-2 max-h-64 overflow-y-auto bg-white">
-          <p className="text-xs font-medium mb-2 text-secondary-hover">
+        <div className="rounded-lg max-h-50 overflow-y-auto bg-white">
+          <p className="text-xs font-medium text-secondary-hover">
             Found {results.length} results:
           </p>
           <div className="space-y-1">
@@ -61,7 +61,7 @@ export function LibraryMode({
                 className={`w-full text-left p-2 rounded-lg text-xs transition-colors ${
                   config.selectedLibrarySound?.location === result.location
                     ? 'bg-primary text-white'
-                    : 'bg-secondary-light text-foreground hover:bg-secondary'
+                    : 'bg-secondary-lighter text-foreground hover:bg-secondary-light'
                 }`}
               >
                 <div className="font-medium truncate">{result.description}</div>
@@ -89,12 +89,12 @@ export function LibraryMode({
         </p>
       )}
 
-      {/* Initial help text */}
+      {/* Initial help text
       {!results && !isSearching && (
         <p className="text-xs italic text-secondary-hover">
           Enter search terms and click "Search" to find sounds from the BBC Sound Effects library
         </p>
-      )}
+      )} */}
     </div>
   );
 }

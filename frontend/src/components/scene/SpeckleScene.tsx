@@ -15,6 +15,7 @@ import { WaveSurferTimeline } from '@/components/audio/WaveSurferTimeline';
 import { PlaybackControls } from '@/components/controls/PlaybackControls';
 import { ControlsInfo } from '@/components/layout/sidebar/ControlsInfo';
 import { SceneControlButton } from '@/components/scene/SceneControlButton';
+import { FileUploadArea } from '@/components/controls/FileUploadArea';
 import { Icon } from '@/components/ui/Icon';
 import { VerticalVolumeSlider } from '@/components/ui/VerticalVolumeSlider';
 import { SpeckleAudioCoordinator } from '@/lib/three/speckle-audio-coordinator';
@@ -38,6 +39,7 @@ import {
   UI_SCENE_BUTTON,
   UI_RIGHT_SIDEBAR,
   UI_VERTICAL_TABS,
+  MODEL_FILE_EXTENSIONS,
 } from '@/lib/constants';
 
 // Left sidebar content width when expanded (matches Sidebar.tsx: 20rem = 320px)
@@ -48,6 +50,7 @@ import type { SoundEvent, ReceiverData } from '@/types';
 import type { AuralizationConfig } from '@/types/audio';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 import type { TimelineSound } from '@/types/audio';
+import Image from "next/image";
 
 /**
  * Props for SpeckleScene component
@@ -133,6 +136,10 @@ interface SpeckleSceneProps {
   isLeftSidebarExpanded?: boolean;
   isRightSidebarExpanded?: boolean;
 
+  // Model file upload (for empty state)
+  modelFile?: File | null;
+  onModelFileChange?: (file: File) => void;
+
   className?: string;
 }
 
@@ -184,6 +191,8 @@ export function SpeckleScene({
   onBoundsComputed,
   isLeftSidebarExpanded = true,
   isRightSidebarExpanded = true,
+  modelFile = null,
+  onModelFileChange,
   className,
 }: SpeckleSceneProps) {
   // Refs
@@ -195,7 +204,7 @@ export function SpeckleScene({
   const viewerRef = contextViewerRef || localViewerRef;
   
   // Get selection mode context - colors are auto-applied via FilteringExtension
-  const { setViewer, setSelectedEntity, applyFilterColors } = useSpeckleSelectionMode();
+  const { setViewer, selectedEntity, setSelectedEntity, applyFilterColors, getObjectLinkState } = useSpeckleSelectionMode();
   
   const coordinatorRef = useRef<SpeckleAudioCoordinator | null>(null);
   const playbackSchedulerRef = useRef<PlaybackSchedulerService | null>(null);
@@ -217,7 +226,7 @@ export function SpeckleScene({
   const [soundMetadataReady, setSoundMetadataReady] = useState(false);
 
   // Global volume state
-  const [globalVolume, setGlobalVolume] = useState(1);
+  const [globalVolume, setGlobalVolume] = useState(0.8);
   const [isHoveringVolume, setIsHoveringVolume] = useState(false);
 
   // Selected object overlay state
@@ -231,6 +240,13 @@ export function SpeckleScene({
   const prevOverlayRef = useRef<{ x: number; y: number; visible: boolean } | null>(null);
   const [worldTree, setWorldTree] = useState<any>(null);
   const [selectedSpeckleObjectIds, setSelectedSpeckleObjectIds] = useState<string[]>([]);
+  const prevSpeckleObjectIdsRef = useRef<string[]>([]);
+  // Flag to skip the deselection effect when a sound sphere click clears Speckle selection
+  // in the same render cycle (clearAllSelections → selectedSpeckleObjectIds=[])
+  const skipDeselectionRef = useRef(false);
+
+  // File upload drag state (for empty state)
+  const [isDragging, setIsDragging] = useState(false);
 
   const modelUrl = viewer_url || speckleData?.url;
 
@@ -259,6 +275,36 @@ export function SpeckleScene({
       auralizationConfigRef.current = auralizationConfig;
     }
   }, [auralizationConfig]);
+
+  // ============================================================================
+  // File upload handlers (for empty state)
+  // ============================================================================
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length === 0) return;
+    onModelFileChange?.(files[0]);
+    setIsLoading(true);
+  }, [onModelFileChange]);
+
+  const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    onModelFileChange?.(files[0]);
+    e.target.value = "";
+    setIsLoading(true);
+  }, [onModelFileChange]);
 
   // ============================================================================
   // Effect - Initialize Speckle Viewer
@@ -599,26 +645,16 @@ export function SpeckleScene({
       }
 
       // NORMAL SELECTION: When a Speckle object is clicked, check if it has a linked sound
-      // and expand the corresponding sound card
-      if (objectIds.length > 0 && soundscapeData && onSelectSoundCard && selectedDiverseEntities) {
+      // and expand the corresponding sound card (same flow as sound sphere click)
+      if (objectIds.length > 0 && onSelectSoundCard) {
         const selectedId = objectIds[0];
 
-        // Find the entity that corresponds to this Speckle object
-        const linkedEntity = selectedDiverseEntities.find(
-          (entity: any) => (entity.nodeId === selectedId) || (entity.id === selectedId)
-        );
+        // Use SpeckleSelectionModeContext to check if this object is linked to a sound
+        const linkState = getObjectLinkState(selectedId);
 
-        if (linkedEntity && linkedEntity.index !== undefined) {
-          // Find the sound linked to this entity
-          const linkedSound = soundscapeData.find((sound: any) =>
-            sound.entity_index === linkedEntity.index
-          );
-
-          if (linkedSound) {
-            const promptIndex = (linkedSound as any).prompt_index ?? 0;
-            console.log('[SpeckleScene] Speckle object clicked with linked sound, selecting card:', promptIndex);
-            onSelectSoundCard(promptIndex);
-          }
+        if (linkState.isLinked && linkState.linkedSoundIndex !== undefined) {
+          console.log('[SpeckleScene] Speckle object clicked with linked sound, selecting card:', linkState.linkedSoundIndex);
+          onSelectSoundCard(linkState.linkedSoundIndex);
         }
       }
 
@@ -640,8 +676,30 @@ export function SpeckleScene({
       const promptIndex = parseInt(promptKey.split('_')[1]);
       if (!isNaN(promptIndex)) {
         console.log('[SpeckleScene] Sound sphere clicked, selecting card:', promptIndex);
+        // Skip the deselection effect — clearAllSelections sets selectedSpeckleObjectIds=[]
+        // which would otherwise clear the selectedEntity we're about to set
+        skipDeselectionRef.current = true;
         onSelectSoundCard(promptIndex);
       }
+    });
+
+    // Set up callback for receiver single-click to show info in EntityInfoPanel
+    coordinatorRef.current.setOnReceiverSingleClicked((receiverId: string) => {
+      const receiver = receivers.find(r => r.id === receiverId);
+      if (receiver) {
+        skipDeselectionRef.current = true;
+        setSelectedEntity({
+          objectId: receiver.id,
+          objectName: receiver.name,
+          objectType: 'Receiver',
+          receiverData: { position: receiver.position },
+        });
+      }
+    });
+
+    // Set up callback for custom object deselection (clicking empty space after receiver/sound)
+    coordinatorRef.current.setOnCustomObjectDeselected(() => {
+      setSelectedEntity(null);
     });
 
     // Set up callback for receiver position updates (from drag)
@@ -655,7 +713,7 @@ export function SpeckleScene({
     if (onUpdateSoundPosition) {
       coordinatorRef.current.setOnSoundPositionUpdated(onUpdateSoundPosition);
     }
-  }, [coordinatorRef.current, soundscapeData, onSelectSoundCard, isLinkingEntity, onEntityLinked, worldTree, selectedDiverseEntities, onUpdateReceiverPosition, onUpdateSoundPosition, applyFilterColors]);
+  }, [coordinatorRef.current, soundscapeData, onSelectSoundCard, isLinkingEntity, onEntityLinked, worldTree, getObjectLinkState, onUpdateReceiverPosition, onUpdateSoundPosition, applyFilterColors, receivers, setSelectedEntity]);
 
   // ============================================================================
   // Effect - Update Sound Spheres
@@ -791,8 +849,8 @@ export function SpeckleScene({
   // NOTE: Diverse selection is managed by SpeckleSelectionModeContext
   // ============================================================================
   // The context's FilteringExtension automatically colors:
-  // - Pink: Objects in diverseSelectedObjectIds (diverse selection)
-  // - Green: Objects in linkedObjectIds (sound-linked)
+  // - Green: Objects in diverseSelectedObjectIds (diverse selection)
+  // - Pink: Objects in linkedObjectIds (sound-linked)
   //
   // User interactions (EntityInfoBox link button) update context directly.
   // Model3DContextContent syncs context state to config for analysis.
@@ -868,6 +926,24 @@ export function SpeckleScene({
     // Cleanup
     return () => clearInterval(intervalId);
   }, [isViewerReady, soundscapeData]);
+
+  // ============================================================================
+  // Callback - Refresh Timeline (reload all available sounds)
+  // ============================================================================
+  const handleRefreshTimeline = useCallback(() => {
+    const soundSphereManager = coordinatorRef.current?.getSoundSphereManager();
+    if (!soundSphereManager) return;
+
+    const soundMetadata = soundSphereManager.getAllAudioSources();
+    if (soundMetadata && soundMetadata.size > 0) {
+      const duration = calculateTimelineDurationFromData(soundMetadata, soundIntervals);
+      const sounds = extractTimelineSoundsFromData(soundMetadata, soundIntervals, duration);
+
+      setTimelineSounds(sounds);
+      setTimelineDuration(duration);
+      console.log('[SpeckleScene] 🔄 Timeline refreshed:', sounds.length, 'sounds, duration:', duration);
+    }
+  }, [soundIntervals]);
 
   // ============================================================================
   // Timeline Playback Hook
@@ -1033,7 +1109,7 @@ export function SpeckleScene({
     if (globalVolume > 0) {
       handleGlobalVolumeChange(0);
     } else {
-      handleGlobalVolumeChange(1);
+      handleGlobalVolumeChange(0.8);
     }
   }, [globalVolume, handleGlobalVolumeChange]);
 
@@ -1283,12 +1359,41 @@ export function SpeckleScene({
   // Effect - Update Selected Entity in Context (for RightSidebar display)
   // ============================================================================
   useEffect(() => {
+    const prevIds = prevSpeckleObjectIdsRef.current;
+    prevSpeckleObjectIdsRef.current = selectedSpeckleObjectIds || [];
+
     if (!selectedSpeckleObjectIds || selectedSpeckleObjectIds.length === 0) {
-      setSelectedEntity(null);
+      // A custom object click (sound sphere / receiver) in the same cycle cleared
+      // Speckle selection via clearAllSelections — don't interfere with the entity
+      // it already set via its own callback
+      if (skipDeselectionRef.current) {
+        skipDeselectionRef.current = false;
+        return;
+      }
+
+      // If we're deselecting FROM a Speckle object (prev was non-empty),
+      // always clear — even if selectedEntity has soundData (linked object case)
+      const wasSpeckleSelected = prevIds.length > 0;
+      if (wasSpeckleSelected) {
+        setSelectedEntity(null);
+      } else {
+        // Prev was already empty — this is a custom object (receiver/sound sphere)
+        // whose selection is managed by its own click callbacks, not Speckle
+        if (!selectedEntity?.receiverData && !selectedEntity?.soundData) {
+          setSelectedEntity(null);
+        }
+      }
       return;
     }
 
     const selectedId = selectedSpeckleObjectIds[0];
+
+    // If this object is linked to a sound, skip — the click callback already set
+    // selectedEntity with objectType 'Sound' via onSelectSoundCard/handleSelectSoundCard
+    const linkState = getObjectLinkState(selectedId);
+    if (linkState.isLinked && linkState.linkedSoundIndex !== undefined) {
+      return;
+    }
 
     // Helper to find object in tree
     const findObjectInTree = (tree: any, id: string): any => {
@@ -1365,7 +1470,7 @@ export function SpeckleScene({
       objectType,
       parentName
     });
-  }, [selectedSpeckleObjectIds, worldTree, setSelectedEntity]);
+  }, [selectedSpeckleObjectIds, worldTree, setSelectedEntity, selectedEntity?.receiverData, getObjectLinkState]);
 
   // ============================================================================  // Keyboard Controls - First-Person Mode
   // ============================================================================
@@ -1552,8 +1657,7 @@ export function SpeckleScene({
       {/* Loading overlay */}
       {isLoading && (
         <div
-          className="absolute inset-0 flex items-center justify-center pointer-events-none"
-          style={{ backgroundColor: UI_COLORS.DARK_BG }}
+          className="absolute inset-0 flex items-center justify-center pointer-events-none bg-white bg-opacity-50"
         >
           <div className="flex flex-col items-center gap-3">
             <div
@@ -1575,8 +1679,7 @@ export function SpeckleScene({
       {/* Error overlay */}
       {error && (
         <div
-          className="absolute inset-0 flex items-center justify-center"
-          style={{ backgroundColor: UI_COLORS.DARK_BG }}
+          className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-50"
         >
           <div className="text-center p-8">
             <div className="text-6xl mb-4">⚠️</div>
@@ -1590,20 +1693,46 @@ export function SpeckleScene({
         </div>
       )}
 
-      {/* Empty state */}
+      {/* Empty state - File upload */}
       {!modelUrl && !isLoading && !error && (
         <div
-          className="absolute inset-0 flex items-center justify-center"
-          style={{ backgroundColor: UI_COLORS.DARK_BG }}
+          className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-50"
         >
-          <div className="text-center p-8">
-            <div className="text-6xl mb-4">📦</div>
-            <h3 className="text-xl font-semibold mb-2" style={{ color: UI_COLORS.NEUTRAL_400 }}>
-              No Model Loaded
-            </h3>
-            <p className="text-sm" style={{ color: UI_COLORS.NEUTRAL_500 }}>
-              Upload a 3D model to view it here
-            </p>
+          <div className="flex flex-col items-center gap-6 p-8" style={{ maxWidth: '400px' }}>
+            <div className="text-center">
+              {/* Fixed header - prevents wrapping issues */}
+            <div className="flex items-center gap-4 flex-shrink-0 mb-4 justify-center">
+              <Image className="dark:invert flex-shrink-0" src="/compas_icon_white.png" alt="compas logo" width={100} height={100} priority />
+            </div>
+              <h3 className="text-xl font-semibold mb-2">
+                Compas Soundscape
+              </h3>
+              <p className="text-xs" style={{ color: UI_COLORS.NEUTRAL_500 }}>
+                Upload a 3D model to start
+              </p>
+            </div>
+
+            {/* File Upload Area */}
+            <div className="w-full">
+              <FileUploadArea
+                file={modelFile}
+                isDragging={isDragging}
+                acceptedFormats={MODEL_FILE_EXTENSIONS.join(',')}
+                acceptedExtensions={MODEL_FILE_EXTENSIONS.join(', ')}
+                onFileChange={handleFileChange}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                inputId="scene-model-upload"
+                multiple={false}
+              />
+            </div>
+
+            {/* Supported formats */}
+            <div className="text-xs space-y-2 text-center" style={{ color: UI_COLORS.NEUTRAL_500 }}>
+              <p className="font-medium" style={{ color: UI_COLORS.NEUTRAL_400 }}>Supported Formats:</p>
+              <p>.3dm (Rhino) &middot; .ifc (IFC) &middot; .obj (Wavefront)</p>
+            </div>
           </div>
         </div>
       )}
@@ -1638,6 +1767,7 @@ export function SpeckleScene({
             individualSoundStates={individualSoundStates}
             mutedSounds={mutedSounds}
             soloedSound={soloedSound}
+            onRefresh={handleRefreshTimeline}
           />
           </div>
         );
@@ -1660,54 +1790,56 @@ export function SpeckleScene({
       {isViewerReady && <ControlsInfo />}
 
       {/* Bottom-right control buttons */}
-      <div
-        className="absolute bottom-6 flex flex-col items-center pointer-events-auto z-20 transition-all duration-300"
-        style={{
-          gap: UI_SCENE_BUTTON.GAP,
-          // When expanded: offset by full sidebar width + 24px margin
-          // When collapsed: offset by collapsed width (40px) + 24px margin
-          right: isRightSidebarExpanded ? `${UI_RIGHT_SIDEBAR.WIDTH + 24}px` : '64px'
-        }}
-      >
-        {/* Global Volume Control with Hover Slider */}
+      {isViewerReady && (
         <div
-          className="flex flex-col items-center"
-          onMouseEnter={handleVolumeMouseEnter}
-          onMouseLeave={handleVolumeMouseLeave}
+          className="absolute bottom-6 flex flex-col items-center pointer-events-auto z-20 transition-all duration-300"
+          style={{
+            gap: UI_SCENE_BUTTON.GAP,
+            // When expanded: offset by full sidebar width + 24px margin
+            // When collapsed: offset by collapsed width (40px) + 24px margin
+            right: isRightSidebarExpanded ? `${UI_RIGHT_SIDEBAR.WIDTH + 20}px` : '20px'
+          }}
         >
-          {/* Global Volume Slider (appears above button on hover) */}
-          {isHoveringVolume && (
-            <div data-volume-slider className="mb-1 flex items-center justify-center">
-              <VerticalVolumeSlider
-                value={globalVolume}
-                onChange={handleGlobalVolumeChange}
+          {/* Global Volume Control with Hover Slider */}
+          <div
+            className="flex flex-col items-center"
+            onMouseEnter={handleVolumeMouseEnter}
+            onMouseLeave={handleVolumeMouseLeave}
+          >
+            {/* Global Volume Slider (appears above button on hover) */}
+            {isHoveringVolume && (
+              <div data-volume-slider className="mb-1 flex items-center justify-center">
+                <VerticalVolumeSlider
+                  value={globalVolume}
+                  onChange={handleGlobalVolumeChange}
+                />
+              </div>
+            )}
+
+            {/* Global Volume Button */}
+            <div data-volume-button>
+              <SceneControlButton
+                onClick={handleToggleVolumeSlider}
+                isActive={globalVolume === 0}
+                activeColor={UI_COLORS.WARNING}
+                title="Global Volume"
+                icon={globalVolume === 0 ? (
+                  <Icon>
+                    <path d="M11 5L6 9H2v6h4l5 4V5z" />
+                    <line x1="23" y1="9" x2="17" y2="15" />
+                    <line x1="17" y1="9" x2="23" y2="15" />
+                  </Icon>
+                ) : (
+                  <Icon>
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                  </Icon>
+                )}
               />
             </div>
-          )}
-
-          {/* Global Volume Button */}
-          <div data-volume-button>
-            <SceneControlButton
-              onClick={handleToggleVolumeSlider}
-              isActive={globalVolume === 0}
-              activeColor={UI_COLORS.WARNING}
-              title="Global Volume"
-              icon={globalVolume === 0 ? (
-                <Icon>
-                  <path d="M11 5L6 9H2v6h4l5 4V5z" />
-                  <line x1="23" y1="9" x2="17" y2="15" />
-                  <line x1="17" y1="9" x2="23" y2="15" />
-                </Icon>
-              ) : (
-                <Icon>
-                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-                </Icon>
-              )}
-            />
           </div>
-        </div>
+
 
         {/* Reset Zoom Button */}
         <SceneControlButton
@@ -1741,6 +1873,8 @@ export function SpeckleScene({
           }
         />
       </div>
+      
+        )}
     </div>
   );
 }

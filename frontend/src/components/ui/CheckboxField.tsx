@@ -1,6 +1,6 @@
 "use client";
 
-import { UI_CHECKBOX, UI_COLORS, TAILWIND_TEXT_SIZE, TAILWIND_PADDING } from "@/lib/constants";
+import { UI_CHECKBOX, TAILWIND_TEXT_SIZE, TAILWIND_PADDING, UI_COLORS } from "@/lib/constants";
 
 interface CheckboxFieldProps {
   checked: boolean;
@@ -42,7 +42,7 @@ export function CheckboxField({
 }: CheckboxFieldProps) {
   return (
     <label
-      className={`flex items-center gap-2 ${TAILWIND_PADDING.SM} ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'} ${className}`}
+      className={`flex items-center gap-1 ${TAILWIND_PADDING.SM} ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'} ${className}`}
       style={{ opacity: disabled ? 0.6 : 1 }}
     >
       <input
@@ -50,18 +50,15 @@ export function CheckboxField({
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
         disabled={disabled}
-        className="w-4 h-4 rounded focus:ring-2 accent-primary"
+        className="w-3.5 h-3.5 rounded focus:ring-2"
         style={{
           borderRadius: `${UI_CHECKBOX.BORDER_RADIUS}px`,
-          accentColor: UI_COLORS.PRIMARY,
+          accentColor: 'var(--card-color, var(--color-primary))',
           cursor: disabled ? 'not-allowed' : 'pointer'
         }}
       />
       <span
-        className={TAILWIND_TEXT_SIZE.XS}
-        style={{
-          color: disabled ? UI_COLORS.NEUTRAL_400 : UI_COLORS.NEUTRAL_700
-        }}
+        className="text-xs text-secondary-hover"
       >
         {label}
       </span>

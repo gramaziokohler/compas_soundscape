@@ -3,6 +3,7 @@
 import type { TextAnalysisConfig } from '@/types/analysis';
 import { UI_COLORS, NUM_SOUNDS_MAX, NUM_SOUNDS_MIN } from '@/lib/constants';
 import { RangeSlider } from '@/components/ui/RangeSlider';
+import { CheckboxField } from '@/components/ui/CheckboxField';
 
 /**
  * TextContextContent Component
@@ -10,7 +11,6 @@ import { RangeSlider } from '@/components/ui/RangeSlider';
  * UI for text-based analysis configuration (before generation)
  * Uses llm_service.py backend to generate sound ideas
  */
-
 interface TextContextContentProps {
   config: TextAnalysisConfig;
   index: number;
@@ -28,7 +28,7 @@ export function TextContextContent({
   const canAnalyze = config.textInput.trim().length > 0;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-0.5">
       {/* Text input field */}
       <div>
         <label htmlFor={`text-input-${index}`} className="text-xs font-medium block mb-2" style={{ color: UI_COLORS.NEUTRAL_500 }}>
@@ -39,7 +39,7 @@ export function TextContextContent({
           value={config.textInput}
           onChange={(e) => onUpdateConfig(index, { textInput: e.target.value })}
           placeholder="e.g., a busy coffee shop with espresso machine and conversations"
-          className="w-full h-20 p-2 text-sm rounded"
+          className="w-full h-15 p-2 text-xs rounded"
           style={{
             backgroundColor: UI_COLORS.NEUTRAL_50,
             borderColor: UI_COLORS.NEUTRAL_300,
@@ -63,17 +63,12 @@ export function TextContextContent({
       />
 
       {/* Use model as context checkbox */}
-      <label className="flex items-center gap-2 px-2 py-1 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={config.useModelAsContext}
-          onChange={(e) => onUpdateConfig(index, { useModelAsContext: e.target.checked })}
-          className="w-4 h-4 rounded focus:ring-2 accent-primary"
-        />
-        <span className="text-xs" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-          Use model as context for sound generation
-        </span>
-      </label>
+      <CheckboxField
+        checked={config.useModelAsContext}
+        onChange={(checked) => onUpdateConfig(index, { useModelAsContext: checked })}
+        label="Combine with objects selection"
+      />
+
 
       {/* Note: Action button is rendered by Card component */}
     </div>

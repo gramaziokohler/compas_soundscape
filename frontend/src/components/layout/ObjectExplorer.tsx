@@ -8,6 +8,7 @@ import { useSpeckleInteractions } from '@/hooks/useSpeckleInteractions';
 import { useSpeckleViewerContext } from '@/contexts/SpeckleViewerContext';
 import { SelectionExtension } from '@speckle/viewer';
 import type { VirtualTreeItem as TreeItem } from '@/hooks/useSpeckleTree';
+import { useAcousticMaterial } from '@/contexts/AcousticMaterialContext';
 import { UI_COLORS, UI_RIGHT_SIDEBAR } from '@/lib/constants';
 
 /**
@@ -294,6 +295,30 @@ export function ObjectExplorer() {
     return () => clearInterval(interval);
   }, [viewerRef, disableScrollOnNextSelection, expandToShowObject, selectObject, clearSelection, scrollToSelectedItem]);
   
+  // ===== Auto-expand/scroll to acoustic layer =====
+  const { expandToLayerId, isActive: isAcousticMaterialActive } = useAcousticMaterial();
+  const lastProcessedLayerIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!expandToLayerId || !isAcousticMaterialActive) {
+      lastProcessedLayerIdRef.current = null;
+      return;
+    }
+
+    // Skip if already processed this layer
+    if (lastProcessedLayerIdRef.current === expandToLayerId) return;
+    lastProcessedLayerIdRef.current = expandToLayerId;
+
+    // Expand ancestors to reveal the layer node
+    expandToShowObject(expandToLayerId);
+
+    // After a short delay, expand the layer node itself and scroll to it
+    setTimeout(() => {
+      toggleNodeExpansion(expandToLayerId);
+      scrollToSelectedItem(expandToLayerId);
+    }, 150);
+  }, [expandToLayerId, isAcousticMaterialActive, expandToShowObject, toggleNodeExpansion, scrollToSelectedItem]);
+
   // Tree item callbacks
   const handleItemClick = useCallback((item: TreeItem, event: React.MouseEvent) => {
     const objectId = item.data.raw?.id;

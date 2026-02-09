@@ -8,7 +8,8 @@ interface VerticalTabButtonProps {
   label: string;
   isActive: boolean;
   onClick: () => void;
-}
+  buttonColor?: string;
+}   
 
 /**
  * VerticalTabButton Component
@@ -20,8 +21,9 @@ interface VerticalTabButtonProps {
  * @param label - Accessible label for screen readers
  * @param isActive - Whether this tab is currently active
  * @param onClick - Click handler
+ * @param buttonColor - Optional color for active state (defaults to primary)
  */
-export function VerticalTabButton({ icon, label, isActive, onClick }: VerticalTabButtonProps) {
+export function VerticalTabButton({ icon, label, buttonColor = UI_COLORS.PRIMARY, isActive, onClick }: VerticalTabButtonProps) {
   return (
     <button
       onClick={onClick}
@@ -30,7 +32,7 @@ export function VerticalTabButton({ icon, label, isActive, onClick }: VerticalTa
       className="relative flex items-center justify-center w-full transition-all group"
       style={{
         height: `${UI_VERTICAL_TABS.HEIGHT}px`,
-        color: isActive ? UI_COLORS.PRIMARY : UI_COLORS.NEUTRAL_500
+        color: isActive ? buttonColor : UI_COLORS.NEUTRAL_500
       }}
       onMouseEnter={(e) => {
         if (!isActive) {
@@ -48,7 +50,7 @@ export function VerticalTabButton({ icon, label, isActive, onClick }: VerticalTa
         <div
           className="absolute left-0 rounded-r"
           style={{
-            backgroundColor: UI_COLORS.PRIMARY,
+            backgroundColor: buttonColor,
             width: `${UI_VERTICAL_TABS.INDICATOR_WIDTH}px`,
             height: `${UI_VERTICAL_TABS.INDICATOR_HEIGHT}px`
           }}

@@ -155,7 +155,6 @@ export interface SidebarProps {
   onDeleteReceiver: (id: string) => void;
   onUpdateReceiverName: (id: string, name: string) => void;
   onGoToReceiver: (id: string) => void;
-  onAddGridReceiver: (type: string, n: number) => void;
   // ShoeBox Acoustics props
   resonanceAudioConfig: ResonanceAudioConfig;
   onToggleResonanceAudio: (enabled: boolean) => void;

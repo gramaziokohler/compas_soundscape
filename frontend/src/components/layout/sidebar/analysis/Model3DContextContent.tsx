@@ -234,24 +234,12 @@ export function Model3DContextContent({
       {hasModelLoaded && (
         <div className="space-y-3">
           {/* Model info */}
-          <div
-            className="rounded p-2 text-xs"
-            style={{
-              backgroundColor: UI_COLORS.SUCCESS_LIGHT,
-              borderColor: UI_COLORS.SUCCESS,
-              borderWidth: '1px',
-              borderStyle: 'solid',
-              borderRadius: '8px',
-              color: UI_COLORS.SUCCESS
-            }}
-          >
-            <div style={{ color: UI_COLORS.SUCCESS_HOVER }}>
-              {config.modelEntities.length > 0 
+            <div className="mx-4 text-xs text-secondary-hover">
+              {!(config.selectedDiverseEntities.length > 0)
                 // ? `${config.modelEntities.length} objects`
                 ? 'Select diverse objects from the model or auto-select below.' 
-                : 'Loading objects...'}
+                : ''}
             </div>
-          </div>
 
           {/* Number of sounds */}
           <RangeSlider
@@ -262,23 +250,6 @@ export function Model3DContextContent({
             step={1}
             onChange={(value) => onUpdateConfig(index, { numSounds: value })}
           />
-
-          {/* Show selected entities count */}
-          {hasSelectedEntities && !isAnalyzing && (
-            <div
-              className="rounded p-2 text-xs"
-              style={{
-                backgroundColor: UI_COLORS.SUCCESS_LIGHT,
-                borderColor: UI_COLORS.SUCCESS,
-                borderWidth: '1px',
-                borderStyle: 'solid',
-                borderRadius: '8px',
-                color: UI_COLORS.SUCCESS
-              }}
-            >
-              ✨ {config.selectedDiverseEntities.length} diverse objects selected
-            </div>
-          )}
 
           {/* Note: Action button is rendered by Card component */}
         </div>

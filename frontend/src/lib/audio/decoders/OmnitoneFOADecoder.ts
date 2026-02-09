@@ -196,7 +196,7 @@ export class OmnitoneFOADecoder implements IBinauralDecoder {
     // AmbisonicIRMode: Apply rotation for head tracking
     // Negate pitch for head tracking: when head looks up, scene rotates down
     const yaw = orientation.yaw;
-    const pitch = -orientation.pitch;
+    const pitch = orientation.pitch;
     const roll = orientation.roll;
 
     // Compute rotation matrix (column-major, 3x3)

@@ -43,8 +43,8 @@ INTERVAL_MAX = 300.0
 INTERVAL_RANGE = (INTERVAL_MIN, INTERVAL_MAX)
 
 # Duration Range (seconds)
-DURATION_MIN = 0.5
-DURATION_MAX = 30.0
+DURATION_MIN = 5.0
+DURATION_MAX = 25.0
 DURATION_RANGE = (DURATION_MIN, DURATION_MAX)
 
 # ============================================================================
@@ -214,16 +214,24 @@ CSV_HEADER_SKIP_ROWS = 1  # Number of header rows to skip in CSV files
 # BBC Sound Library Configuration
 # ============================================================================
 
-# BBC API
-BBC_DOWNLOAD_URL_TEMPLATE = 'https://sound-effects-media.bbcrewind.co.uk/zip/{location}.zip'
+# BBC Search API (public web API)
+BBC_API_URL = "https://sound-effects-api.bbcrewind.co.uk/api/sfx/search"
+BBC_API_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    "Content-Type": "application/json",
+    "Origin": "https://sound-effects.bbcrewind.co.uk",
+    "Referer": "https://sound-effects.bbcrewind.co.uk/",
+}
+BBC_API_BATCH_SIZE = 20  # Items per API request (matches website default)
+BBC_API_MAX_OFFSET = 900  # Maximum pagination offset (API depth limit)
+BBC_API_REQUEST_DELAY = 0.2  # Delay between paginated requests (seconds)
+
+# BBC Download
+BBC_DOWNLOAD_URL_TEMPLATE = 'https://sound-effects-media.bbcrewind.co.uk/zip/{location}.wav.zip'
 MACOSX_SYSTEM_FOLDER = '__MACOSX'  # macOS system folder to skip during extraction
 
 # Search Parameters
-MAX_SEARCH_RESULTS = 5  # Maximum number of search results to return
-DEFAULT_LIBRARY_MAX_RESULTS = 5  # Default max search results for library
-CATEGORY_WEIGHT = 2.0  # Weight for category matching in search
-DESCRIPTION_WEIGHT = 1.0  # Weight for description matching in search
-MIN_MATCH_SCORE_THRESHOLD = 120  # Minimum score for a valid match
+MAX_SEARCH_RESULTS = 10  # Maximum number of search results to return
 MAX_FILENAME_LENGTH_SAFE = 100  # Maximum filename length limit for safety
 
 # ============================================================================
@@ -231,7 +239,6 @@ MAX_FILENAME_LENGTH_SAFE = 100  # Maximum filename length limit for safety
 # ============================================================================
 
 # Data Directories
-BBC_LIBRARY_CSV_PATH = './data/BBCSoundEffects.csv'
 SAMPLE_IFC_FILE_PATH = "data/Duplex_A_20110907.ifc"  # Sample IFC file for testing
 
 # ============================================================================

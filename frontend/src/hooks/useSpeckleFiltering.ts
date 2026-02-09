@@ -149,7 +149,7 @@ export function useSpeckleFiltering(viewerRef: React.RefObject<Viewer | null>) {
         objectIds,
         undefined, // stateKey
         true,      // includeDescendants - include child objects
-        false      // ghost - don't ghost other objects, hide them completely
+        true      // ghost - don't ghost other objects, hide them completely
       );
 
       // Trigger re-render to read fresh state from extension

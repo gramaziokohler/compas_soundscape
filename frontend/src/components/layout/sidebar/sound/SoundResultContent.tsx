@@ -22,6 +22,8 @@ export interface SoundResultContentProps {
   selectedVariantIdx: number;
   isPreviewPlaying: boolean;
   isMuted: boolean;
+  /** Silent mode: waveform renders visually but produces no audio (prevents double playback) */
+  silent?: boolean;
   soundVolumes: { [soundId: string]: number };
   soundIntervals: { [soundId: string]: number };
   onPreviewPlayPause?: (soundId: string) => void;
@@ -38,6 +40,7 @@ export function SoundResultContent({
   selectedVariantIdx,
   isPreviewPlaying,
   isMuted,
+  silent = false,
   soundVolumes,
   soundIntervals,
   onPreviewPlayPause,
@@ -67,6 +70,7 @@ export function SoundResultContent({
           volumeDb={currentVolumeDb}
           isPlaying={isPreviewPlaying}
           isMuted={isMuted}
+          silent={silent}
           onPlayPause={() => onPreviewPlayPause?.(generatedSound.id)}
           onStop={() => onPreviewStop?.(generatedSound.id)}
         />
@@ -80,9 +84,10 @@ export function SoundResultContent({
                 onClick={() => onVariantChange(index, idx)}
                 className={`w-5 h-5 text-[10px] rounded transition-colors ${
                   idx === selectedVariantIdx
-                    ? 'bg-primary text-white'
+                    ? 'text-white'
                     : 'bg-secondary text-secondary-light'
                 }`}
+                style={idx === selectedVariantIdx ? { backgroundColor: 'var(--card-color, var(--color-primary))' } : undefined}
               >
                 {idx + 1}
               </button>

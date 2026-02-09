@@ -6,7 +6,8 @@ import {
   DEFAULT_GUIDANCE_SCALE,
   DEFAULT_DIFFUSION_STEPS,
   DEFAULT_SEED_COPIES,
-  DEFAULT_AUDIO_MODEL
+  DEFAULT_AUDIO_MODEL,
+  LIBRARY_MAX_SEARCH_RESULTS
 } from "@/lib/constants";
 import { loadAudioFile, revokeAudioUrl } from "@/lib/audio/audio-upload";
 import { calculateSoundPosition, type GeometryBounds } from "@/lib/sound/positioning";
@@ -496,7 +497,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
       const response = await fetch(`${API_BASE_URL}/api/library/search`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, max_results: 5 })
+        body: JSON.stringify({ prompt, max_results: LIBRARY_MAX_SEARCH_RESULTS })
       });
 
       if (!response.ok) {

@@ -13,12 +13,6 @@ export class AudioScheduler {
   constructor(audioOrchestrator?: AudioOrchestrator | null, audioContext?: AudioContext | null) {
     this.audioOrchestrator = audioOrchestrator || null;
     this.audioContext = audioContext || null;
-
-    console.log('[AudioScheduler] 🎬 Constructed with:', {
-      hasOrchestrator: !!audioOrchestrator,
-      hasContext: !!audioContext,
-      orchestratorType: audioOrchestrator?.constructor.name
-    });
   }
 
   /**
@@ -198,26 +192,16 @@ export class AudioScheduler {
    * Routes playback through AudioOrchestrator
    */
   private playOnce(metadata: SoundMetadata, soundId: string): void {
-    const displayName = metadata.soundEvent.display_name || soundId;
-    console.log(`[AudioScheduler] 📢 playOnce called for "${displayName}"`);
-    console.log(`  - Has buffer:`, !!metadata.buffer);
-    console.log(`  - Has audioContext:`, !!this.audioContext);
-    console.log(`  - Context state:`, this.audioContext?.state);
-
     if (!metadata.buffer || !this.audioContext) {
-      console.error(`[AudioScheduler] ❌ Cannot play "${displayName}" - missing buffer or context`);
       return;
     }
 
     // Resume audio context if suspended
     if (this.audioContext.state === 'suspended') {
-      console.log(`[AudioScheduler] ⏸️ Context suspended for "${displayName}" - resuming...`);
       this.audioContext.resume().then(() => {
-        console.log(`[AudioScheduler] ✅ Context resumed for "${displayName}"`);
         this.triggerPlayback(metadata, soundId);
       });
     } else {
-      console.log(`[AudioScheduler] ▶️ Context ready for "${displayName}" - triggering playback`);
       this.triggerPlayback(metadata, soundId);
     }
   }
@@ -226,37 +210,18 @@ export class AudioScheduler {
    * Trigger actual playback through orchestrator
    */
   private triggerPlayback(metadata: SoundMetadata, soundId: string): void {
-    // CRITICAL: Check if sound is still scheduled
-    // This prevents race condition where timer callback executes AFTER unscheduleSound
+    // Check if sound is still scheduled (prevents race with unscheduleSound)
     if (!this.scheduledSounds.has(soundId)) {
-      const displayName = metadata.soundEvent.display_name || soundId;
-      console.log(`[AudioScheduler] ⏹️ Skipping playback for "${displayName}" - no longer scheduled`);
-      console.log(`  - Sound ID: ${soundId}`);
-      console.log(`  - Reason: Unscheduled during timer callback execution (race condition prevented)`);
       return;
     }
 
-    // Get display name for logging
-    const displayName = metadata.soundEvent.display_name || soundId;
-
     if (this.audioOrchestrator) {
-      // Play through orchestrator
-      // This ensures mode-specific processing (IR convolution, spatial audio, etc.)
-      console.log(`[AudioScheduler] 🎵 Playing "${displayName}" via ORCHESTRATOR`);
-      console.log(`  - Sound ID: ${soundId}`);
-      console.log(`  - Orchestrator mode:`, this.audioOrchestrator.getStatus().currentMode);
-
       try {
-        this.audioOrchestrator.stopSource(soundId); // Stop if currently playing
-        this.audioOrchestrator.playSource(soundId, false); // Non-looping for interval playback
-        console.log(`  ✅ Orchestrator playback initiated`);
+        this.audioOrchestrator.stopSource(soundId);
+        this.audioOrchestrator.playSource(soundId, false);
       } catch (error) {
-        console.warn(`[AudioScheduler] ❌ Failed to play via orchestrator:`, error);
+        console.warn(`[AudioScheduler] Failed to play via orchestrator:`, error);
       }
-    } else {
-      console.error('[AudioScheduler] ❌ No orchestrator available');
-      console.error(`  - Sound ID: ${soundId}`);
-      console.error(`  - Display name: ${displayName}`);
     }
   }
 

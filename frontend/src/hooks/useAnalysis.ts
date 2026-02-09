@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, type RefObject } from 'react';
 import type { AnalysisConfig, AnalysisResult, TextPromptResult, ModelAnalysisConfig, AudioAnalysisConfig, TextAnalysisConfig } from '@/types/analysis';
 import type { CardType } from '@/types/card';
 import { API_BASE_URL, DEFAULT_NUM_SOUNDS, DEFAULT_SPL_DB, LLM_SUGGESTED_INTERVAL_SECONDS } from '@/lib/constants';
@@ -280,7 +280,12 @@ export function useAnalysis() {
   }, [analysisConfigs, handleUpdateConfig]);
 
   // Execute analysis for a specific config
-  const handleAnalyze = useCallback(async (index: number) => {
+  // contextData: optional diverse selection from SpeckleSelectionModeContext + viewerRef
+  // This allows text cards to use diverse selection without requiring a 3D model card
+  const handleAnalyze = useCallback(async (
+    index: number,
+    contextData?: { diverseObjectIds?: Set<string>; viewerRef?: RefObject<any> }
+  ) => {
     const config = analysisConfigs[index];
     if (!config) return;
 
@@ -434,14 +439,43 @@ export function useAnalysis() {
         // Get model entities if "use model as context" is checked
         let entitiesToUse: any[] = [];
         if (textConfig.useModelAsContext) {
-          // Find the latest 3D model config with entities
-          const modelConfigs = analysisConfigs.filter(c => c.type === '3d-model') as ModelAnalysisConfig[];
-          if (modelConfigs.length > 0) {
-            const latestModelConfig = modelConfigs[modelConfigs.length - 1];
-            // Use selectedDiverseEntities if available, otherwise all entities
-            entitiesToUse = latestModelConfig.selectedDiverseEntities.length > 0 
-              ? latestModelConfig.selectedDiverseEntities 
-              : latestModelConfig.modelEntities;
+          // Get diverse IDs from context (works even without a 3D model card)
+          const diverseIds = contextData?.diverseObjectIds;
+
+          if (diverseIds && diverseIds.size > 0) {
+            // Resolve diverse IDs to full entity objects
+            // First: check all 3D model configs' modelEntities
+            const modelConfigs = analysisConfigs.filter(c => c.type === '3d-model') as ModelAnalysisConfig[];
+            const allModelEntities = modelConfigs.flatMap(c => c.modelEntities);
+
+            // Filter entities by diverse IDs
+            entitiesToUse = allModelEntities.filter(entity => {
+              const entityId = entity.nodeId || entity.id;
+              return diverseIds.has(entityId);
+            });
+
+            // Fall back: if no entities found in configs, extract from worldTree
+            if (entitiesToUse.length === 0 && contextData?.viewerRef?.current) {
+              const worldTree = contextData.viewerRef.current.getWorldTree();
+              if (worldTree) {
+                const allEntities = extractSpeckleEntities(worldTree);
+                entitiesToUse = allEntities.filter(entity => {
+                  const entityId = entity.nodeId || entity.id;
+                  return diverseIds.has(entityId);
+                });
+              }
+            }
+
+            console.log(`[useAnalysis] Text card: resolved ${entitiesToUse.length} entities from ${diverseIds.size} diverse IDs`);
+          } else {
+            // Fallback: try 3D model config (backward compatibility)
+            const modelConfigs = analysisConfigs.filter(c => c.type === '3d-model') as ModelAnalysisConfig[];
+            if (modelConfigs.length > 0) {
+              const latestModelConfig = modelConfigs[modelConfigs.length - 1];
+              entitiesToUse = latestModelConfig.selectedDiverseEntities.length > 0
+                ? latestModelConfig.selectedDiverseEntities
+                : latestModelConfig.modelEntities;
+            }
           }
         }
 

@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback, type ReactNode } from 'react';
-import type { CardType, CardBaseConfig } from '@/types/card';
+import type { CardType, CardBaseConfig, CardColor } from '@/types/card';
+import { CARD_COLOR_DEFAULT } from '@/lib/constants';
 
 /**
  * CardSection Component
@@ -88,6 +89,15 @@ export interface CardSectionProps<TItem extends CardBaseConfig> {
    * Required when using controlled mode (expandedIndex prop).
    */
   onExpandedIndexChange?: (index: number | null) => void;
+  /**
+   * Theme color for the section's interactive elements.
+   *
+   * Applies to: '+' add button, dropdown hover, and sets
+   * `--card-color` CSS custom property for child components.
+   *
+   * @default 'primary'
+   */
+  color?: CardColor;
 }
 
 // ============================================================================
@@ -108,6 +118,7 @@ export function CardSection<TItem extends CardBaseConfig>({
   error,
   expandedIndex: controlledExpandedIndex,
   onExpandedIndexChange,
+  color = CARD_COLOR_DEFAULT,
 }: CardSectionProps<TItem>) {
   // Determine if we're in controlled mode
   const isControlled = controlledExpandedIndex !== undefined;
@@ -149,12 +160,23 @@ export function CardSection<TItem extends CardBaseConfig>({
     }
   }, [expandedIndex, isControlled, onExpandedIndexChange]);
 
-  // Auto-expand newly added item (only in uncontrolled mode)
+  // Track previous item count to detect additions vs removals
+  const prevItemCount = useRef(items.length);
+
+  // Auto-expand newly added item and scroll to it (only in uncontrolled mode)
   useEffect(() => {
-    if (!isControlled && items.length > 0) {
+    if (!isControlled && items.length > prevItemCount.current) {
+      // A new item was added — expand it (collapses all others)
       const lastIndex = items.length - 1;
       setInternalExpandedIndex(lastIndex);
+
+      // Scroll to the new card after DOM update
+      setTimeout(() => {
+        const cardElement = cardRefs.current.get(lastIndex);
+        cardElement?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 100);
     }
+    prevItemCount.current = items.length;
   }, [items.length, isControlled]);
 
   // Close type selector when clicking outside
@@ -181,8 +203,16 @@ export function CardSection<TItem extends CardBaseConfig>({
   const totalCount = items.length;
   const pendingCount = getPendingCount ? getPendingCount(items) : 0;
 
+  // CSS custom properties scoped to this section for child theming
+  const sectionColorStyle = {
+    '--card-color': `var(--color-${color})`,
+    '--card-color-hover': `var(--color-${color}-hover)`,
+    '--card-color-light': `var(--color-${color}-light)`,
+    accentColor: `var(--color-${color})`,
+  } as React.CSSProperties;
+
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3" style={sectionColorStyle}>
       {/* Status bar with add button */}
       <div className="flex items-center text-xs w-full gap-1 text-secondary-hover">
         {totalCount} {statusLabel}{totalCount !== 1 ? 's' : ''}
@@ -194,7 +224,10 @@ export function CardSection<TItem extends CardBaseConfig>({
         <div className="ml-auto relative" ref={typeSelectorRef}>
           <button
             onClick={() => setShowTypeSelector(!showTypeSelector)}
-            className="w-8 h-8 rounded-lg text-white font-bold transition-colors flex items-center justify-center bg-primary hover:bg-secondary-hover"
+            className="w-8 h-8 rounded-lg text-white font-bold transition-colors flex items-center justify-center"
+            style={{ backgroundColor: 'var(--card-color)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--card-color-hover)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--card-color)'; }}
             title={addButtonTitle}
             aria-label={addButtonTitle}
           >
@@ -222,9 +255,11 @@ export function CardSection<TItem extends CardBaseConfig>({
                     disabled={!option.enabled}
                     className={`w-full text-left px-3 py-2 text-xs transition-colors ${roundedClass} ${
                       option.enabled
-                        ? 'text-foreground cursor-pointer hover:bg-primary hover:text-white'
+                        ? 'text-foreground cursor-pointer hover:text-white'
                         : 'text-secondary-hover cursor-not-allowed opacity-60'
                     }`}
+                    onMouseEnter={(e) => { if (option.enabled) e.currentTarget.style.backgroundColor = 'var(--card-color)'; }}
+                    onMouseLeave={(e) => { if (option.enabled) e.currentTarget.style.backgroundColor = ''; }}
                     title={option.enabled ? option.label : option.disabledTooltip}
                   >
                     {option.label}

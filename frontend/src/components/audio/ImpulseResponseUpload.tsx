@@ -250,8 +250,8 @@ export function ImpulseResponseUpload({
 
       >
 
-        <div className="flex items-center justify-between mb-3">
-          <h3 className={`text-sm font-semibold ${simulationResults ? 'text-white' : ''}`}>
+        <div className="flex items-center justify-between mb-1">
+          <h3 className={`text-xs font-semibold ${simulationResults ? 'text-white' : ''}`}>
             Impulse Responses ({impulseResponses.length})
           </h3>
         </div>
@@ -308,7 +308,7 @@ export function ImpulseResponseUpload({
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
-                      <div className={`text-sm font-medium truncate ${simulationResults ? 'text-white' : ''}`}>
+                      <div className={`text-xs font-medium truncate ${simulationResults ? 'text-white' : ''}`}>
                         {ir.name}
                       </div>
 

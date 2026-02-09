@@ -70,9 +70,9 @@ export function RangeSlider({
       title={hoverText} 
     >
       {/* Label and Value */}
-      <div className={`flex items-center gap-1 text-xs text-secondary-hover mb-1`}>
+      <div className={`flex items-center gap-1 text-xs text-secondary-hover`}>
         <span>{label}</span>
-        <span className="text-xs font-bold text-primary">
+        <span className="text-xs font-bold" style={{ color: 'var(--card-color, var(--color-primary))' }}>
           {formatValue(value)}
         </span>
       </div>
@@ -86,12 +86,13 @@ export function RangeSlider({
         value={value}
         onChange={handleChange}
         disabled={disabled}
-        className={`w-full h-2 rounded-lg appearance-none cursor-pointer accent-primary bg-secondary-light ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+        className={`w-full h-2 rounded-lg appearance-none cursor-pointer bg-secondary-light ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+        style={{ accentColor: 'var(--card-color, var(--color-primary))' }}
       />
 
       {/* Min/Max Labels */}
       {showLabels && (
-        <div className={`flex justify-between text-xs text-secondary-hover mt-1`}>
+        <div className={`flex justify-between text-xs text-secondary-hover`}>
           <span>{displayMin}</span>
           <span>{displayMax}</span>
         </div>
