@@ -114,8 +114,8 @@ ENV/
 
 #other
 static/
-.bmad-core/
-.playwright-mcp/
+bmad-core/
+playwright-mcp/
 mightbeusefullater/
 
 
@@ -145,7 +145,7 @@ src/.build/**
 *.DS_Store
 
 .vscode
-.vs
+vs
 
 docs/api/generated/
 

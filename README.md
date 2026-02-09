@@ -28,7 +28,7 @@ A full-stack web application for 3D architectural acoustic simulation and spatia
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/bouiz/compas_soundscape.git
+git clone https://https://github.com/gramaziokohler/compas_soundscape.git
 cd compas_soundscape
 ```
 
