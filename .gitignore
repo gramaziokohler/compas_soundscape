@@ -5,7 +5,7 @@ __pycache__/
 
 # C extensions
 *.so
-
+nul
 # Distribution / packaging
 .Python
 env/
@@ -145,7 +145,7 @@ src/.build/**
 *.DS_Store
 
 .vscode
-vs
+vs/
 
 docs/api/generated/
 

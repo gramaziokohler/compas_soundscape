@@ -1,6 +1,6 @@
 # COMPAS Soundscape
 
-A full-stack web application for 3D architectural acoustic simulation and spatial audio rendering. Load 3D models via Speckle, assign acoustic materials, simulate room acoustics, and generate immersive soundscapes with AI-powered audio.
+A web application for populating architectural models with contextualized sounds, enabling acoustic simulation and spatial audio rendering. Load 3D models via Speckle, assign acoustic materials, simulate room acoustics, and generate immersive soundscapes with AI-powered audio.
 
 ## Prerequisites
 
