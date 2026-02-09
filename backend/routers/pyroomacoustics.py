@@ -12,7 +12,6 @@ import numpy as np
 from scipy.io import wavfile
 
 from services.pyroomacoustics_service import PyroomacousticsService
-from services.geometry_service import GeometryService
 from services.speckle_service import SpeckleService
 from config.constants import (
     PYROOMACOUSTICS_RIR_DIR,

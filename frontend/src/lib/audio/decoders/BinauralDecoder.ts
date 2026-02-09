@@ -25,7 +25,7 @@
 
 import type { IBinauralDecoder } from '../core/interfaces/IBinauralDecoder';
 import type { Orientation } from '@/types/audio';
-import { HRTF } from '@/lib/constants';
+import { HRTF } from '@/utils/constants';
 
 // JSAmbisonics binDecoder type
 interface BinDecoder {

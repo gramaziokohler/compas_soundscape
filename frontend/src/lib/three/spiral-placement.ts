@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SPIRAL_PLACEMENT } from '@/lib/constants';
+import { SPIRAL_PLACEMENT, EAR_HEIGHT } from '@/utils/constants';
 import type { BoundingBoxBounds } from './BoundingBoxManager';
 
 /**
@@ -25,7 +25,6 @@ import type { BoundingBoxBounds } from './BoundingBoxManager';
 export function calculateSpiralPositions(
   bounds: BoundingBoxBounds,
   count: number,
-  heightOffset: number = 0
 ): THREE.Vector3[] {
   if (count === 0) {
     return [];
@@ -41,7 +40,7 @@ export function calculateSpiralPositions(
   const positions: THREE.Vector3[] = [];
 
   // First element at center (with optional height offset)
-  positions.push(new THREE.Vector3(centerX, centerY , centerZ + heightOffset));
+  positions.push(new THREE.Vector3(centerX, centerY , minZ + EAR_HEIGHT));
 
   // Early return if only one position needed
   if (count === 1) {
@@ -55,7 +54,7 @@ export function calculateSpiralPositions(
   for (let i = 1; i < count; i++) {
     // Calculate position in spiral pattern (XY plane)
     const x = centerX + Math.cos(angle) * radius;
-    const z = centerZ ;
+    const z = minZ + EAR_HEIGHT; // Keep Z constant at ear height + offset
     const y = centerY + Math.sin(angle) * radius;
 
     positions.push(new THREE.Vector3(x, y, z));

@@ -1,7 +1,7 @@
 "use client";
 
 import { ReactNode } from "react";
-import { UI_COLORS, UI_VERTICAL_TABS } from "@/lib/constants";
+import { UI_COLORS, UI_VERTICAL_TABS } from "@/utils/constants";
 
 interface VerticalTabButtonProps {
   icon: ReactNode;

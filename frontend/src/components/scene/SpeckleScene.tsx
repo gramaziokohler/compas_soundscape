@@ -14,7 +14,7 @@ import {
 import { WaveSurferTimeline } from '@/components/audio/WaveSurferTimeline';
 import { PlaybackControls } from '@/components/controls/PlaybackControls';
 import { ControlsInfo } from '@/components/layout/sidebar/ControlsInfo';
-import { SceneControlButton } from '@/components/scene/SceneControlButton';
+import { SceneControlButton } from '@/components/ui/SceneControlButton';
 import { FileUploadArea } from '@/components/controls/FileUploadArea';
 import { Icon } from '@/components/ui/Icon';
 import { VerticalVolumeSlider } from '@/components/ui/VerticalVolumeSlider';
@@ -28,7 +28,7 @@ import { useSpeckleTree, getHeaderAndSubheader } from '@/hooks/useSpeckleTree';
 import {
   extractTimelineSoundsFromData,
   calculateTimelineDurationFromData,
-} from '@/lib/audio/timeline-utils';
+} from '@/lib/audio/utils/timeline-utils';
 import {
   SPECKLE_VIEWER_RETRY,
   UI_COLORS,
@@ -40,7 +40,7 @@ import {
   UI_RIGHT_SIDEBAR,
   UI_VERTICAL_TABS,
   MODEL_FILE_EXTENSIONS,
-} from '@/lib/constants';
+} from '@/utils/constants';
 
 // Left sidebar content width when expanded (matches Sidebar.tsx: 20rem = 320px)
 const LEFT_SIDEBAR_CONTENT_WIDTH = 320;
@@ -1728,11 +1728,11 @@ export function SpeckleScene({
               />
             </div>
 
-            {/* Supported formats */}
+            {/* Supported formats
             <div className="text-xs space-y-2 text-center" style={{ color: UI_COLORS.NEUTRAL_500 }}>
               <p className="font-medium" style={{ color: UI_COLORS.NEUTRAL_400 }}>Supported Formats:</p>
               <p>.3dm (Rhino) &middot; .ifc (IFC) &middot; .obj (Wavefront)</p>
-            </div>
+            </div> */}
           </div>
         </div>
       )}

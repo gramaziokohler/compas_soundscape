@@ -24,7 +24,7 @@
 import type { IAudioMode } from '../core/interfaces/IAudioMode';
 import type { Position, Orientation } from '@/types/audio';
 import { AudioMode } from '@/types/audio';
-import { AUDIO_CONTROL } from '@/lib/constants';
+import { AUDIO_CONTROL } from '@/utils/constants';
 
 // Dynamic import type
 type ResonanceAudioClass = any;

@@ -8,11 +8,11 @@ import {
   DEFAULT_SEED_COPIES,
   DEFAULT_AUDIO_MODEL,
   LIBRARY_MAX_SEARCH_RESULTS
-} from "@/lib/constants";
-import { loadAudioFile, revokeAudioUrl } from "@/lib/audio/audio-upload";
-import { calculateSoundPosition, type GeometryBounds } from "@/lib/sound/positioning";
-import { createSoundEventFromUpload } from "@/lib/sound/event-factory";
-import { trimDisplayName } from "@/lib/utils";
+} from "@/utils/constants";
+import { loadAudioFile, revokeAudioUrl } from "@/lib/audio/utils/audio-upload";
+import { calculateSoundPosition, type GeometryBounds } from "@/utils/positioning";
+import { createSoundEventFromUpload } from "@/utils/event-factory";
+import { trimDisplayName } from "@/utils/utils";
 import { useErrorNotification } from "@/contexts/ErrorContext";
 
 export function useSoundGeneration(geometryBounds: {min: number[], max: number[]} | null) {

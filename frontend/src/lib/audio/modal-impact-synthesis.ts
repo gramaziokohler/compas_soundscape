@@ -5,7 +5,7 @@
  * Generates realistic impact sounds based on resonant frequencies and damping.
  */
 
-import { AUDIO_SAMPLE_RATE, IMPACT_SOUND } from '@/lib/constants';
+import { AUDIO_SAMPLE_RATE, IMPACT_SOUND } from '@/utils/constants';
 import type {
   ImpactParameters,
   ModalAnalysisResult,

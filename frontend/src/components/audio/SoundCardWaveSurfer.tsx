@@ -2,7 +2,7 @@
 
 import { useRef, useEffect, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
-import { API_BASE_URL, UI_COLORS } from '@/lib/constants';
+import { API_BASE_URL, UI_COLORS } from '@/utils/constants';
 
 interface SoundCardWaveSurferProps {
   /** Audio URL for the sound */

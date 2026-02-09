@@ -1,4 +1,4 @@
-import { UI_COLORS } from "@/lib/constants";
+import { UI_COLORS } from "@/utils/constants";
 
 interface FileUploadAreaProps {
   file: File | null;

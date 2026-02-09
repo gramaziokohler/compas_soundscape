@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import { UI_RIGHT_SIDEBAR, UI_COLORS } from '@/lib/constants';
+import { UI_RIGHT_SIDEBAR, UI_COLORS } from '@/utils/constants';
 import { ObjectExplorer } from '@/components/layout/ObjectExplorer';
 import { EntityInfoPanel } from '@/components/layout/sidebar/EntityInfoPanel';
 import { useRightSidebar } from '@/contexts/RightSidebarContext';

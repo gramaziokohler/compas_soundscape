@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useCallback, ReactNode, useRef, useEffect, useMemo } from 'react';
 import { FilteringExtension, type Viewer } from '@speckle/viewer';
-import { SPECKLE_FILTER_COLORS } from '@/lib/constants';
+import { SPECKLE_FILTER_COLORS } from '@/utils/constants';
 
 /**
  * Selected entity data for display in RightSidebar

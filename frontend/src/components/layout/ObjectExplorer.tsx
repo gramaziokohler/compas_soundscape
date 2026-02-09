@@ -9,7 +9,7 @@ import { useSpeckleViewerContext } from '@/contexts/SpeckleViewerContext';
 import { SelectionExtension } from '@speckle/viewer';
 import type { VirtualTreeItem as TreeItem } from '@/hooks/useSpeckleTree';
 import { useAcousticMaterial } from '@/contexts/AcousticMaterialContext';
-import { UI_COLORS, UI_RIGHT_SIDEBAR } from '@/lib/constants';
+import { UI_COLORS, UI_RIGHT_SIDEBAR } from '@/utils/constants';
 
 /**
  * ObjectExplorer Component

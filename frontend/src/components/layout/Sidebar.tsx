@@ -8,7 +8,7 @@ import { AcousticsSection } from "./sidebar/AcousticsSection";
 import { AdvancedSettingsSection } from "./sidebar/AdvancedSettingsSection";
 import { VerticalTabButton } from "@/components/ui/VerticalTabButton";
 import { Icon } from "@/components/ui/Icon";
-import { UI_VERTICAL_TABS } from "@/lib/constants";
+import { UI_VERTICAL_TABS } from "@/utils/constants";
 import type { SidebarProps } from "@/types/components";
 import type { ActiveTab } from "@/types";
 

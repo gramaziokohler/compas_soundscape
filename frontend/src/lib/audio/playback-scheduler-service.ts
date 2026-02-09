@@ -1,7 +1,7 @@
 import type { AudioOrchestrator } from "@/lib/audio/AudioOrchestrator";
 import { AudioScheduler } from "@/lib/audio-scheduler";
-import { AUDIO_PLAYBACK } from "@/lib/constants";
-import { emergencyKillAllAudio, restoreAudioAfterKill } from "@/lib/audio/emergency-audio-kill";
+import { AUDIO_PLAYBACK } from "@/utils/constants";
+import { emergencyKillAllAudio, restoreAudioAfterKill } from "@/lib/audio/utils/emergency-audio-kill";
 import type { SoundState } from "@/types";
 import type { SoundMetadata } from "@/types/audio";
 

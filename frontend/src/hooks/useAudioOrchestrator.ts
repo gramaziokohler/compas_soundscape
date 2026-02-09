@@ -14,7 +14,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
-import { AUDIO_SAMPLE_RATE } from '@/lib/constants';
+import { AUDIO_SAMPLE_RATE } from '@/utils/constants';
 import type {
   AudioMode,
   AudioModeConfig,

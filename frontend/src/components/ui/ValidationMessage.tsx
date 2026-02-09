@@ -1,7 +1,7 @@
 "use client";
 
 import { ReactNode } from "react";
-import { UI_COLORS, UI_VALIDATION, TAILWIND_TEXT_SIZE } from "@/lib/constants";
+import { UI_COLORS, UI_VALIDATION, TAILWIND_TEXT_SIZE } from "@/utils/constants";
 
 type MessageType = "error" | "success" | "info" | "warning";
 

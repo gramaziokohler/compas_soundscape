@@ -159,7 +159,7 @@ export interface SoundGenerationConfig {
 export type SoundState = 'playing' | 'paused' | 'stopped';
 
 // Import SidebarTabValue from constants for single source of truth
-import type { SidebarTabValue } from '@/lib/constants';
+import type { SidebarTabValue } from '@/utils/constants';
 
 /** Active sidebar tab - uses SidebarTabValue from constants */
 export type ActiveTab = SidebarTabValue;

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import type { SoundEvent } from '@/types';
 import { SoundCardWaveSurfer } from '@/components/audio/SoundCardWaveSurfer';
 import { VerticalVolumeSlider } from '@/components/ui/VerticalVolumeSlider';
-import { UI_VOLUME_SLIDER, UI_INTERVAL_SLIDER } from '@/lib/constants';
+import { UI_VOLUME_SLIDER, UI_INTERVAL_SLIDER } from '@/utils/constants';
 
 /**
  * SoundResultContent Component

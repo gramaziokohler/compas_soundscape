@@ -7,8 +7,8 @@
 
 import { useState, useCallback } from 'react';
 import type { SEDAudioInfo, DetectedSound, SoundGenerationConfig, SEDAnalysisOptions, UseSEDReturn } from '@/types';
-import { loadAudioFileWithBuffer } from '@/lib/audio/audio-info';
-import { API_BASE_URL, DEFAULT_SPL_DB, DEFAULT_DIFFUSION_STEPS, LLM_SUGGESTED_INTERVAL_SECONDS, DEFAULT_DURATION_SECONDS } from '@/lib/constants';
+import { loadAudioFileWithBuffer } from '@/lib/audio/utils/audio-info';
+import { API_BASE_URL, DEFAULT_SPL_DB, DEFAULT_DIFFUSION_STEPS, LLM_SUGGESTED_INTERVAL_SECONDS, DEFAULT_DURATION_SECONDS } from '@/utils/constants';
 
 /**
  * Custom hook for Sound Event Detection

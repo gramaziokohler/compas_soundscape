@@ -22,7 +22,7 @@ import { useSpeckleFiltering } from '@/hooks/useSpeckleFiltering';
 import { useSpeckleSelectionMode } from '@/contexts/SpeckleSelectionModeContext';
 import { useAcousticMaterial } from '@/contexts/AcousticMaterialContext';
 import { SpeckleMaterialAssignmentUI } from './SpeckleMaterialAssignmentUI';
-import { UI_COLORS } from '@/lib/constants';
+import { UI_COLORS } from '@/utils/constants';
 import type { AcousticMaterial } from '@/types/materials';
 import type { Viewer } from '@speckle/viewer';
 

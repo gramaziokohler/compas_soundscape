@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { extractWaveformData, renderWaveform } from '@/lib/audio/waveform-utils';
-import { AUDIO_VISUALIZATION } from '@/lib/constants';
+import { extractWaveformData, renderWaveform } from '@/lib/audio/utils/waveform-utils';
+import { AUDIO_VISUALIZATION } from '@/utils/constants';
 import { useWaveformInteraction } from '@/hooks/useWaveformInteraction';
 import type { SEDAudioInfo } from '@/types';
 

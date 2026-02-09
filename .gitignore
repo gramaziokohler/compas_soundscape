@@ -13,6 +13,7 @@ build/
 develop-eggs/
 dist/
 downloads/
+web-bundles/
 eggs/
 .eggs/
 parts/
@@ -111,6 +112,13 @@ ENV/
 # mypy
 .mypy_cache/
 
+#other
+static/
+.bmad-core/
+.playwright-mcp/
+mightbeusefullater/
+
+
 # ------------------------------------------------------------------------------
 # compas
 # ------------------------------------------------------------------------------
@@ -137,9 +145,17 @@ src/.build/**
 *.DS_Store
 
 .vscode
+.vs
 
 docs/api/generated/
 
 scripts/
 
 .ruff_cache
+
+#frontend
+node_modules/
+dist/
+.next/
+.env.local
+.env.example

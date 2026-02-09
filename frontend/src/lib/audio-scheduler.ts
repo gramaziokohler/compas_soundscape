@@ -3,7 +3,7 @@
 
 import type { ScheduledSound, SoundMetadata } from '@/types/audio';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
-import { scheduledSoundsLogger } from '@/lib/audio/scheduled-sounds-logger';
+import { scheduledSoundsLogger } from '@/lib/audio/utils/scheduled-sounds-logger';
 
 export class AudioScheduler {
   private scheduledSounds: Map<string, ScheduledSound> = new Map();

@@ -19,7 +19,7 @@
 
 import { useState } from 'react';
 import type { ReceiverData } from '@/types';
-import { UI_COLORS, RECEIVER_CONFIG } from '@/lib/constants';
+import { UI_COLORS, RECEIVER_CONFIG } from '@/utils/constants';
 
 interface ReceiversSectionProps {
   receivers: ReceiverData[];

@@ -56,7 +56,7 @@ import {
   getAudioBufferInfo,
   formatAudioBufferInfo
 } from './utils/audio-file-decoder';
-import { AUDIO_CONTROL, AMBISONIC } from '@/lib/constants';
+import { AUDIO_CONTROL, AMBISONIC } from '@/utils/constants';
 
 export class AudioOrchestrator implements IAudioOrchestrator {
   private audioContext: AudioContext | null = null;

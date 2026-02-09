@@ -1,8 +1,8 @@
 import { useState, useCallback, useRef, type RefObject } from 'react';
 import type { AnalysisConfig, AnalysisResult, TextPromptResult, ModelAnalysisConfig, AudioAnalysisConfig, TextAnalysisConfig } from '@/types/analysis';
 import type { CardType } from '@/types/card';
-import { API_BASE_URL, DEFAULT_NUM_SOUNDS, DEFAULT_SPL_DB, LLM_SUGGESTED_INTERVAL_SECONDS } from '@/lib/constants';
-import { loadAudioFileWithBuffer } from '@/lib/audio/audio-info';
+import { API_BASE_URL, DEFAULT_NUM_SOUNDS, DEFAULT_SPL_DB, LLM_SUGGESTED_INTERVAL_SECONDS } from '@/utils/constants';
+import { loadAudioFileWithBuffer } from '@/lib/audio/utils/audio-info';
 import { apiService } from '@/services/api';
 import { useErrorNotification } from '@/contexts/ErrorContext';
 

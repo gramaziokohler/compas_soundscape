@@ -6,7 +6,6 @@ import shutil
 import logging
 from fastapi import APIRouter, File, UploadFile, HTTPException
 
-from services.geometry_service import GeometryService
 from services.speckle_service import SpeckleService
 from config.constants import TEMP_UPLOADS_DIR, SAMPLE_IFC_FILE_PATH
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useErrorNotification } from '@/contexts/ErrorContext';
-import { UI_COLORS, UI_CARD, UI_SPACING, UI_SHADOWS, UI_TRANSITIONS } from '@/lib/constants';
+import { UI_COLORS, UI_CARD, UI_SPACING, UI_SHADOWS, UI_TRANSITIONS } from '@/utils/constants';
 
 export function ErrorToast() {
   const { errors, removeError } = useErrorNotification();

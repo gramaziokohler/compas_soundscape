@@ -7,7 +7,7 @@
 
 'use client';
 
-import { UI_COLORS, UI_BORDER_RADIUS } from '@/lib/constants';
+import { UI_COLORS, UI_BORDER_RADIUS } from '@/utils/constants';
 import type { SpeckleLayerInfo } from '@/types/speckle-materials';
 import type { AcousticMaterial } from '@/types/materials';
 

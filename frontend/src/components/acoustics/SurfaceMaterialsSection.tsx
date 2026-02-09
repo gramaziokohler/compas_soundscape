@@ -8,7 +8,7 @@
 'use client';
 
 import { MaterialAssignmentUI } from './MaterialAssignmentUI';
-import { UI_COLORS } from '@/lib/constants';
+import { UI_COLORS } from '@/utils/constants';
 import type { EntityData, CompasGeometry } from '@/types';
 import type { AcousticMaterial, SelectedGeometry } from '@/types/materials';
 

@@ -15,7 +15,6 @@
 import * as THREE from 'three';
 import type { Viewer } from '@speckle/viewer';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
-import type { SpeckleCameraController } from './speckle-camera-controller';
 
 /**
  * Custom object types that can be added to the Speckle scene

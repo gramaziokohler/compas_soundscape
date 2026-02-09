@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { apiService } from '@/services/api';
-import { calculateGeometryBounds, calculateScaleForSounds } from '@/lib/utils';
+import { calculateGeometryBounds, calculateScaleForSounds } from '@/utils/utils';
 import { useApiErrorHandler } from '@/hooks/useApiErrorHandler';
 import type { CompasGeometry } from '@/types';
 

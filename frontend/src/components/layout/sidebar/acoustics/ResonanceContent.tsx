@@ -6,7 +6,7 @@
 
 'use client';
 
-import { ResonanceAudioControls } from '@/components/controls/ResonanceAudioControls';
+import { ResonanceAudioControls } from '@/components/layout/sidebar/acoustics/ResonanceAudioControls';
 import type { ResonanceSimulationConfig } from '@/types/acoustics';
 import type { ResonanceAudioConfig } from '@/types/audio';
 

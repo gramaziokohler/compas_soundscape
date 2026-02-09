@@ -12,7 +12,7 @@
 'use client';
 
 import React from 'react';
-import { UI_COLORS } from '@/lib/constants';
+import { UI_COLORS } from '@/utils/constants';
 
 export type AudioRenderingMode = 'anechoic' | 'resonance' | 'precise';
 

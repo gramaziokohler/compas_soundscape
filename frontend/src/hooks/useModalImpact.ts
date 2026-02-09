@@ -7,7 +7,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { apiService } from '@/services/api';
 import { ModalImpactSynthesizer } from '@/lib/audio/modal-impact-synthesis';
-import { IMPACT_SOUND } from '@/lib/constants';
+import { IMPACT_SOUND } from '@/utils/constants';
 import type {
   ModalAnalysisRequest,
   ModalAnalysisResult,

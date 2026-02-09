@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 import type { ResonanceRoomMaterial, ResonanceRoomDimensions } from '@/types/audio';
-import { RESONANCE_AUDIO } from '@/lib/constants';
+import { RESONANCE_AUDIO } from '@/utils/constants';
 
 /**
  * Room Materials Hook

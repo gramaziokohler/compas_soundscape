@@ -12,7 +12,7 @@ import {
   CHORAS_RUN_TIMEOUT,
   CHORAS_MAX_POLL_RETRIES,
   CHORAS_TIMEOUT
-} from '../lib/constants';
+} from '../utils/constants';
 
 const API_BASE = CHORAS_API_BASE;
 

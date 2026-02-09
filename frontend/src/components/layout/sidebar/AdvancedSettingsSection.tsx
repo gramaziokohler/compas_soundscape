@@ -1,7 +1,7 @@
 "use client";
 
 import { RangeSlider } from "@/components/ui/RangeSlider";
-import { UI_COLORS, UI_BORDER_RADIUS, AUDIO_MODEL_TANGOFLUX, AUDIO_MODEL_AUDIOLDM2, AUDIO_MODEL_NAMES } from "@/lib/constants";
+import { UI_COLORS, UI_BORDER_RADIUS, AUDIO_MODEL_TANGOFLUX, AUDIO_MODEL_AUDIOLDM2, AUDIO_MODEL_NAMES } from "@/utils/constants";
 
 interface AdvancedSettingsSectionProps {
   globalDuration: number;
@@ -158,8 +158,8 @@ export function AdvancedSettingsSection({
         </div>
       </div>
 
-      <div className="border-t border-gray-200 dark:border-gray-700 my-0.5" />
-
+      {/* <div className="border-t border-gray-200 dark:border-gray-700 my-0.5" /> */}
+{/* 
       <div>
         <h4 className="text-[10px] font-bold mb-1.5 text-gray-500 dark:text-gray-400 uppercase tracking-wider">
           3D Scene
@@ -181,7 +181,7 @@ export function AdvancedSettingsSection({
             </p>
           </div>
         </label>
-      </div>
+      </div> */}
     </div>
   );
 }

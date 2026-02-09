@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, type ReactNode } from 'react';
 import type { CardType, CardBaseConfig, CardColor } from '@/types/card';
-import { CARD_COLOR_DEFAULT } from '@/lib/constants';
+import { CARD_COLOR_DEFAULT } from '@/utils/constants';
 
 /**
  * CardSection Component
@@ -73,6 +73,8 @@ export interface CardSectionProps<TItem extends CardBaseConfig> {
   ) => ReactNode;
   /** Optional footer content (e.g., submit button) */
   footer?: ReactNode;
+  /** Optional header content */
+  header?: ReactNode;
   /** Calculate pending count (items without results) */
   getPendingCount?: (items: TItem[]) => number;
   /** Whether the section is currently running an operation */
@@ -113,6 +115,7 @@ export function CardSection<TItem extends CardBaseConfig>({
   onAddItem,
   renderCard,
   footer,
+  header,
   getPendingCount,
   isRunning = false,
   error,
@@ -214,6 +217,8 @@ export function CardSection<TItem extends CardBaseConfig>({
   return (
     <div className="flex flex-col gap-3" style={sectionColorStyle}>
       {/* Status bar with add button */}
+      {/* Header (optional) */}
+      {header}
       <div className="flex items-center text-xs w-full gap-1 text-secondary-hover">
         {totalCount} {statusLabel}{totalCount !== 1 ? 's' : ''}
         {pendingCount > 0 && (

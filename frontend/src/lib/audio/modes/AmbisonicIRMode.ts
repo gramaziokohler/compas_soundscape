@@ -1,6 +1,4 @@
 /**
- * AmbisonicIRMode - Phase 5 Implementation (2.3)
- *
  * Ambisonic impulse response convolution with rotation and binaural decoding.
  *
  * SPARTA MultiConv Approach:
@@ -45,8 +43,8 @@ import type { IBinauralDecoder } from '../core/interfaces/IBinauralDecoder';
 import { AudioMode } from '@/types/audio';
 import { BinauralDecoder } from '../decoders/BinauralDecoder';
 import { OmnitoneFOADecoder } from '../decoders/OmnitoneFOADecoder';
-import { AUDIO_CONTROL, AMBISONIC } from '@/lib/constants';
-import { processImpulseResponse } from '../ir-utils';
+import { AUDIO_CONTROL, AMBISONIC } from '@/utils/constants';
+import { processImpulseResponse } from '../utils/ir-utils';
 
 // Lazy load ambisonics to avoid SSR issues (window is not defined)
 let ambisonics: any = null;

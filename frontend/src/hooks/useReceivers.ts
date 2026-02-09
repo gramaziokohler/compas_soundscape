@@ -21,7 +21,7 @@
 
 import { useState, useCallback } from 'react';
 import type { ReceiverData } from '@/types';
-import { RECEIVER } from '@/lib/constants';
+import { RECEIVER } from '@/utils/constants';
 
 export interface UseReceiversProps {
   onReceiverSelected?: (receiverId: string) => void; // Callback when receiver is selected

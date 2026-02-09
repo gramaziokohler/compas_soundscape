@@ -1,4 +1,4 @@
-import { API_BASE_URL } from '@/lib/constants';
+import { API_BASE_URL } from '@/utils/constants';
 import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse } from '@/types';
 import type { ImpulseResponseMetadata } from '@/types/audio';
 import type { ModalAnalysisRequest, ModalAnalysisResult } from '@/types/modal';
@@ -328,7 +328,7 @@ export const apiService = {
   async getChorasMaterials(): Promise<Array<{ id: number; name: string; description?: string; category?: string }>> {
     try {
       // Import CHORAS_API_BASE from constants
-      const { CHORAS_API_BASE } = await import('@/lib/constants');
+      const { CHORAS_API_BASE } = await import('@/utils/constants');
       const response = await fetchWithErrorHandling(
         `${CHORAS_API_BASE}/materials`,
         undefined,
@@ -416,7 +416,7 @@ export const apiService = {
     completedAt: string | null;
   }> {
     try {
-      const { CHORAS_API_BASE } = await import('@/lib/constants');
+      const { CHORAS_API_BASE } = await import('@/utils/constants');
       const response = await fetchWithErrorHandling(
         `${CHORAS_API_BASE}/simulations/run`,
         undefined,
@@ -445,7 +445,7 @@ export const apiService = {
    */
   async cancelChorasSimulation(simulationId: number): Promise<void> {
     try {
-      const { CHORAS_API_BASE } = await import('@/lib/constants');
+      const { CHORAS_API_BASE } = await import('@/utils/constants');
       const response = await fetchWithErrorHandling(
         `${CHORAS_API_BASE}/simulations/cancel`,
         {

@@ -1,7 +1,7 @@
 "use client";
 
 import { ReactNode } from "react";
-import { SVG_ICON_PROPS, UI_SCENE_BUTTON } from "@/lib/constants";
+import { SVG_ICON_PROPS, UI_SCENE_BUTTON } from "@/utils/constants";
 
 interface IconProps {
   children: ReactNode;

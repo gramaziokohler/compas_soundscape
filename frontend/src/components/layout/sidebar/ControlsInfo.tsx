@@ -1,4 +1,4 @@
-import { UI_COLORS } from "@/lib/constants";
+import { UI_COLORS } from "@/utils/constants";
 
 /**
  * Minimalistic 3D controls info overlay

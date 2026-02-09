@@ -3,8 +3,8 @@
 import { useCallback, type ReactNode } from 'react';
 import type { CardProps, CardBaseConfig } from '@/types/card';
 import { CARD_TYPE_LABELS } from '@/types/card';
-import { CARD_COLOR_DEFAULT } from '@/lib/constants';
-import { useNameEditing } from '@/lib/utils/useNameEditing';
+import { CARD_COLOR_DEFAULT } from '@/utils/constants';
+import { useNameEditing } from '@/utils/useNameEditing';
 
 /**
  * Card Component

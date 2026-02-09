@@ -5,7 +5,7 @@ import { AudioWaveformDisplay } from "@/components/audio/AudioWaveformDisplay";
 import { apiService } from "@/services/api";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
 import type { ImpulseResponseMetadata } from "@/types/audio";
-import { API_BASE_URL } from "@/lib/constants";
+import { API_BASE_URL } from "@/utils/constants";
 
 interface ImpulseResponseUploadProps {
   onClearIR: () => void;

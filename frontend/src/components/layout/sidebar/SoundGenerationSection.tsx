@@ -532,6 +532,14 @@ export function SoundGenerationSection({
     </div>
   );
 
+    const header = (
+    <div className="flex flex-col gap-2">
+      <div className="text-xs font-medium text-primary">
+        Sound cards
+      </div>
+    </div>
+  );
+
   return (
     <CardSection
       items={cardItems}
@@ -542,6 +550,7 @@ export function SoundGenerationSection({
       onAddItem={handleTypeSelect}
       renderCard={renderCard}
       footer={footer}
+      header={header}
       getPendingCount={getPendingCount}
       isRunning={isSoundGenerating}
       error={soundGenError}

@@ -9,7 +9,7 @@
 
 'use client';
 
-import { UI_COLORS, CHORAS_IR_LENGTH_MIN, CHORAS_IR_LENGTH_MAX, CHORAS_LC_MIN, CHORAS_LC_MAX } from '@/lib/constants';
+import { UI_COLORS, CHORAS_IR_LENGTH_MIN, CHORAS_IR_LENGTH_MAX, CHORAS_LC_MIN, CHORAS_LC_MAX } from '@/utils/constants';
 import type { ChorasSimulationConfig } from '@/types/acoustics';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 

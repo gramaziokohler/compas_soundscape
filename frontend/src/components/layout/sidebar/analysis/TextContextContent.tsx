@@ -1,7 +1,7 @@
 'use client';
 
 import type { TextAnalysisConfig } from '@/types/analysis';
-import { UI_COLORS, NUM_SOUNDS_MAX, NUM_SOUNDS_MIN } from '@/lib/constants';
+import { UI_COLORS, NUM_SOUNDS_MAX, NUM_SOUNDS_MIN } from '@/utils/constants';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { CheckboxField } from '@/components/ui/CheckboxField';
 

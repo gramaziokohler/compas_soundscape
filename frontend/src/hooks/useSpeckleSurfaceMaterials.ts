@@ -17,7 +17,7 @@ import type {
 } from '@/types/speckle-materials';
 import type { ExplorerNode } from './useSpeckleTree';
 import type { AcousticMaterial } from '@/types/materials';
-import { getMaterialColorByAbsorption, MATERIAL_DEFAULT_COLOR } from '@/lib/constants';
+import { getMaterialColorByAbsorption, MATERIAL_DEFAULT_COLOR } from '@/utils/constants';
 
 /**
  * Hierarchical mesh object with children

@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { UI_COLORS, UI_OVERLAY, UI_VERTICAL_TABS, UI_RIGHT_SIDEBAR } from "@/lib/constants";
+import { UI_COLORS, UI_OVERLAY, UI_VERTICAL_TABS, UI_RIGHT_SIDEBAR } from "@/utils/constants";
 
 const LEFT_SIDEBAR_CONTENT_WIDTH = 240;
 const RIGHT_SIDEBAR_COLLAPSED_WIDTH = 30;

@@ -10,7 +10,7 @@ import {
   DEFAULT_SPL_DB,
   LLM_SUGGESTED_INTERVAL_SECONDS,
   LLM_RETRY
-} from "@/lib/constants";
+} from "@/utils/constants";
 import { ActiveTab } from "@/types";
 import { useErrorNotification } from "@/contexts/ErrorContext";
 

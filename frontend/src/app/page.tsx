@@ -25,7 +25,7 @@ import { useModalImpact } from "@/hooks/useModalImpact";
 import { useAcousticsSimulation } from "@/hooks/useAcousticsSimulation";
 import { useAnalysis } from "@/hooks/useAnalysis";
 import { apiService } from "@/services/api";
-import { API_BASE_URL } from "@/lib/constants";
+import { API_BASE_URL } from "@/utils/constants";
 import type { LoadTab, SoundGenerationConfig } from "@/types";
 import type { SelectedGeometry, AcousticMaterial } from "@/types/materials";
 import { AudioStatusDisplay } from "@/components/audio/AudioStatusDisplay";

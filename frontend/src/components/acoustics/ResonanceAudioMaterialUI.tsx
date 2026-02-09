@@ -17,7 +17,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { UI_COLORS, RESONANCE_AUDIO } from '@/lib/constants';
+import { UI_COLORS, RESONANCE_AUDIO } from '@/utils/constants';
 import type { ResonanceRoomMaterial } from '@/types/audio';
 
 interface ResonanceAudioMaterialUIProps {

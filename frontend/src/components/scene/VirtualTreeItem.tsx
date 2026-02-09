@@ -17,7 +17,7 @@
 import React, { CSSProperties } from 'react';
 import { VirtualTreeItem as TreeItem, getHeaderAndSubheader, getTargetObjectIds, containsAll } from '@/hooks/useSpeckleTree';
 import { useSpeckleViewerContext } from '@/contexts/SpeckleViewerContext';
-import { UI_COLORS } from '@/lib/constants';
+import { UI_COLORS } from '@/utils/constants';
 
 interface VirtualTreeItemProps {
   item: TreeItem;

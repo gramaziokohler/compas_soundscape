@@ -1,7 +1,7 @@
 "use client";
 
 import { ReactNode } from "react";
-import { UI_COLORS, TAILWIND_TEXT_SIZE, TAILWIND_ROUNDED, TAILWIND_TRANSITION } from "@/lib/constants";
+import { UI_COLORS, TAILWIND_TEXT_SIZE, TAILWIND_ROUNDED, TAILWIND_TRANSITION } from "@/utils/constants";
 
 interface ButtonGroupItem {
   label: string;

@@ -5,7 +5,7 @@ import { updateDraggableMeshes, disposeMeshes } from "@/lib/three/draggable-mesh
 import { calculateSpiralPositions } from "@/lib/three/spiral-placement";
 import type { ReceiverData } from "@/types";
 import type { BoundingBoxBounds } from "@/lib/three/BoundingBoxManager";
-import { RECEIVER_CONFIG } from "@/lib/constants";
+import { RECEIVER_CONFIG } from "@/utils/constants";
 
 /**
  * ReceiverManager
@@ -85,10 +85,7 @@ export class ReceiverManager {
     const hasNewReceivers = receivers.some(r => !this.receiverPositions.has(r.id));
 
     if (useSpiralPlacement && this.boundingBox && hasNewReceivers) {
-      const earHeight = 1.6;
-      const boxCenterZ = (this.boundingBox.min[2] + this.boundingBox.max[2]) / 2;
-      const heightOffset = earHeight - boxCenterZ;
-      const allSpiralPositions = calculateSpiralPositions(this.boundingBox, receivers.length, heightOffset);
+      const allSpiralPositions = calculateSpiralPositions(this.boundingBox, receivers.length);
 
       // Map spiral positions only to new receivers
       receivers.forEach((receiver, index) => {

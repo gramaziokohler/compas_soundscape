@@ -1,8 +1,7 @@
 import * as THREE from "three";
-import { SpeckleBasicMaterial } from "@speckle/viewer";
-import { triangulate } from "@/lib/utils";
-import { API_BASE_URL, PRIMARY_COLOR_HEX, SOUND_SPHERE, RESONANCE_AUDIO } from "@/lib/constants";
-import { disposeMesh } from "@/lib/three/mesh-cleanup";
+import { triangulate } from "@/utils/utils";
+import { API_BASE_URL, PRIMARY_COLOR_HEX, SOUND_SPHERE } from "@/utils/constants";
+import { updateDraggableMeshes, disposeMeshes } from "@/lib/three/draggable-mesh-manager";
 import { calculateSpiralPositions } from "@/lib/three/spiral-placement";
 import type { SoundEvent } from "@/types";
 import type { AuralizationConfig, SoundMetadata } from "@/types/audio";
@@ -10,16 +9,32 @@ import type { AudioOrchestrator } from "@/lib/audio/AudioOrchestrator";
 import type { BoundingBoxBounds } from "@/lib/three/BoundingBoxManager";
 
 /**
+ * Data shape expected by updateDraggableMeshes for sound spheres.
+ * Extends the generic MeshData interface with sound-specific fields.
+ */
+interface SoundMeshData {
+  id: string;
+  position: [number, number, number];
+  soundEvent: SoundEvent;
+  promptKey: string;
+}
+
+/**
  * SoundSphereManager
  *
  * Manages sound sphere creation, updates, animations, and sound event visualization.
  *
  * Responsibilities:
- * - Sound sphere mesh creation and updates
+ * - Sound sphere mesh creation and updates (via DraggableMeshManager utility)
  * - Spatial audio source management via AudioOrchestrator
  * - Sound variant switching
  * - Position tracking and persistence
  * - Resource cleanup
+ *
+ * Architecture:
+ * - Uses DraggableMeshManager utility for efficient mesh updates (same as ReceiverManager)
+ * - Audio source lifecycle is decoupled from mesh lifecycle
+ * - Preserves mesh references for DragControls compatibility
  */
 export class SoundSphereManager {
   private scene: THREE.Scene;
@@ -29,15 +44,21 @@ export class SoundSphereManager {
   // Audio Orchestrator integration
   private audioOrchestrator: AudioOrchestrator | null;
 
-  // Sound sphere tracking
+  // Sound sphere tracking — managed by updateDraggableMeshes utility
+  private soundMeshes: THREE.Mesh[] = [];
   private draggableObjects: THREE.Object3D[] = [];
-  private spherePositions: { [key: string]: THREE.Vector3 } = {};
+
+  // Position tracking — Map<soundId, [x, y, z]> for consistency with ReceiverManager
+  private spherePositions: Map<string, [number, number, number]> = new Map();
 
   // Sound metadata tracking (replaces legacy PositionalAudio)
   private soundMetadata: Map<string, SoundMetadata> = new Map();
   // Track which sounds are entity-linked (for change detection in updateSounds)
   private entityLinkedIds: Set<string> = new Set();
   private audioLoader: THREE.AudioLoader;
+
+  // Cached scale for mesh factory (set before calling updateDraggableMeshes)
+  private scaleForSounds: number = 1.0;
 
   constructor(
     scene: THREE.Scene,
@@ -81,7 +102,14 @@ export class SoundSphereManager {
 
   /**
    * Update sound spheres based on soundscape data and selected variants
-   * 
+   *
+   * Uses updateDraggableMeshes for efficient incremental mesh updates:
+   * - Existing meshes are reused (preserving DragControls references)
+   * - Only new meshes are created, only removed meshes are disposed
+   * - Dragged meshes keep their position (isDragging guard)
+   *
+   * Audio sources are synced separately from mesh lifecycle.
+   *
    * @param soundscapeData - Sound events to visualize
    * @param selectedVariants - Map of prompt index to variant index
    * @param scaleForSounds - Scale multiplier for sphere size
@@ -95,6 +123,9 @@ export class SoundSphereManager {
     auralizationConfig: AuralizationConfig,
     bounds?: BoundingBoxBounds | null
   ): void {
+    // Store scale for mesh factory
+    this.scaleForSounds = scaleForSounds;
+
     // Handle empty case — clear everything
     if (!soundscapeData || soundscapeData.length === 0) {
       this.removeAllAudioSources();
@@ -143,193 +174,121 @@ export class SoundSphereManager {
       return;
     }
 
-    // Sound set or entity linking state changed — full teardown and recreation
-    this.removeAllAudioSources();
-    this.removeAllSoundMeshes();
     this.entityLinkedIds = newEntityLinkedIds;
 
-    // Calculate spiral positions ONLY for sounds that don't already have stored positions
-    const hasExplicitPositions = visibleSounds.some(s => s.entity_index !== undefined);
-    const hasNewSounds = visibleSounds.some(s => !this.spherePositions[s.id] && s.entity_index === undefined);
+    // Split visible sounds into mesh sounds (non-entity) and entity sounds
+    const meshSounds = visibleSounds.filter(s => s.entity_index === undefined);
+    const entitySounds = visibleSounds.filter(s => s.entity_index !== undefined);
 
-    let spiralPositionMap: Map<string, THREE.Vector3> = new Map();
-    if (bounds && !hasExplicitPositions && hasNewSounds) {
-      const allSpiralPositions = calculateSpiralPositions(bounds, visibleSounds.length);
-      visibleSounds.forEach((soundEvent, index) => {
-        if (!this.spherePositions[soundEvent.id] && soundEvent.entity_index === undefined) {
-          spiralPositionMap.set(soundEvent.id, allSpiralPositions[index]);
+    // Calculate spiral positions for non-entity-linked sounds that don't have stored positions.
+    // Entity-linked sounds use their entity's position (set via linkSoundToEntity).
+    const hasNewMeshSounds = meshSounds.some(s => !this.spherePositions.has(s.id));
+
+    let spiralPositionMap: Map<string, [number, number, number]> = new Map();
+    if (bounds && hasNewMeshSounds) {
+      // Calculate spiral for all non-entity sounds to maintain consistent pattern
+      const allSpiralPositions = calculateSpiralPositions(bounds, meshSounds.length);
+      meshSounds.forEach((soundEvent, index) => {
+        if (!this.spherePositions.has(soundEvent.id)) {
+          const v = allSpiralPositions[index];
+          spiralPositionMap.set(soundEvent.id, [v.x, v.y, v.z]);
         }
       });
     }
 
-    // Create sound spheres and audio sources
-    visibleSounds.forEach((soundEvent, index) => {
-      const spiralPosition = spiralPositionMap.get(soundEvent.id) || null;
-      this.createSoundSphere(soundEvent, scaleForSounds, auralizationConfig, spiralPosition);
-    });
-  }
+    // Prepare mesh data with resolved positions (priority: stored > spiral > event position)
+    const meshSoundData: SoundMeshData[] = meshSounds.map(soundEvent => {
+      const promptIdx = (soundEvent as any).prompt_index ?? 0;
+      const promptKey = `prompt_${promptIdx}`;
 
-  /** Remove all audio sources from orchestrator and clear metadata */
-  private removeAllAudioSources(): void {
-    this.soundMetadata.forEach((_, soundId) => {
-      if (this.audioOrchestrator) {
-        this.audioOrchestrator.removeSource(soundId);
+      let position: [number, number, number];
+
+      const storedPosition = this.spherePositions.get(soundEvent.id);
+      if (storedPosition) {
+        // Use stored position (from previous drag) — preserves dragged positions
+        position = storedPosition;
+      } else {
+        const spiralPosition = spiralPositionMap.get(soundEvent.id);
+        if (spiralPosition) {
+          // Use spiral position from bounding box placement (only for new sounds)
+          position = spiralPosition;
+          this.spherePositions.set(soundEvent.id, position);
+        } else {
+          // Use event position (from backend or default)
+          position = soundEvent.position as [number, number, number];
+          this.spherePositions.set(soundEvent.id, position);
+        }
       }
+
+      return { id: soundEvent.id, position, soundEvent, promptKey };
     });
-    this.soundMetadata.clear();
+
+    // Use updateDraggableMeshes for efficient incremental mesh updates
+    const result = updateDraggableMeshes(
+      this.soundSpheresGroup,
+      this.soundMeshes,
+      meshSoundData,
+      (data) => this.createSoundSphereMesh(data),
+      (mesh) => mesh.userData.soundEvent?.id || ''
+    );
+
+    this.soundMeshes = result.meshes;
+    this.draggableObjects = result.draggableObjects;
+
+    // Force group matrix update after mesh changes
+    this.soundSpheresGroup.updateMatrixWorld(true);
+
+    // Handle entity-linked sounds: store positions (no mesh)
+    entitySounds.forEach(soundEvent => {
+      // ALWAYS use soundEvent.position for entity-linked sounds — it contains
+      // the entity's bounding box center (set by useSoundGeneration.linkSoundToEntity)
+      this.spherePositions.set(soundEvent.id, soundEvent.position as [number, number, number]);
+    });
+
+    // Sync audio sources: create new, remove stale
+    this.syncAudioSources(visibleSounds);
   }
 
-  /** Remove all sound sphere meshes (not receivers or other custom objects) */
-  private removeAllSoundMeshes(): void {
-    this.draggableObjects = [];
-    const soundMeshes = this.soundSpheresGroup.children.filter(child =>
-      child instanceof THREE.Mesh &&
-      child.userData.isGeometry !== true &&
-      child.userData.customObjectType === 'sound'
-    );
-    soundMeshes.forEach(mesh => {
-      disposeMesh(mesh as THREE.Mesh);
-      this.soundSpheresGroup.remove(mesh);
+  /**
+   * Sync audio sources with the current set of visible sounds.
+   * Creates audio sources for new sounds, removes sources for sounds no longer visible.
+   * Audio lifecycle is decoupled from mesh lifecycle.
+   */
+  private syncAudioSources(visibleSounds: SoundEvent[]): void {
+    const visibleSoundIds = new Set(visibleSounds.map(s => s.id));
+
+    // Remove audio sources for sounds no longer visible
+    for (const [soundId] of this.soundMetadata) {
+      if (!visibleSoundIds.has(soundId)) {
+        if (this.audioOrchestrator) {
+          this.audioOrchestrator.removeSource(soundId);
+        }
+        this.soundMetadata.delete(soundId);
+      }
+    }
+
+    // Create audio sources for new sounds (not already in metadata)
+    visibleSounds.forEach(soundEvent => {
+      if (this.soundMetadata.has(soundEvent.id)) {
+        return; // Audio already loaded for this sound
+      }
+
+      this.loadAudioForSound(soundEvent);
     });
   }
 
   /**
-   * Create a single sound sphere with audio source
-   * If the sound is entity-linked (has entity_index), only creates the audio source without a visible sphere
-   * 
-   * @param soundEvent - Sound event data
-   * @param scaleForSounds - Scale multiplier for sphere size
-   * @param auralizationConfig - Auralization configuration
-   * @param spiralPosition - Optional position from spiral placement (overrides default position)
+   * Load audio buffer and create an audio source for a single sound event.
+   * Called by syncAudioSources for new sounds only.
    */
-  private createSoundSphere(
-    soundEvent: SoundEvent,
-    scaleForSounds: number,
-    auralizationConfig: AuralizationConfig,
-    spiralPosition?: THREE.Vector3 | null
-  ): void {
-    const isEntityLinked = soundEvent.entity_index !== undefined;
-    const promptIdx = (soundEvent as any).prompt_index ?? 0;
-    const promptKey = `prompt_${promptIdx}`;
-    // Use sound ID as stable position key (IDs don't change when new sounds are added)
-    const positionKey = soundEvent.id;
-
-    let sphereMesh: THREE.Mesh | null = null;
-
-    // Only create visual sphere if NOT entity-linked
-    if (!isEntityLinked) {
-      // Create sphere geometry (custom or standard sphere)
-      let sphereGeom: THREE.BufferGeometry;
-      if (soundEvent.geometry.vertices.length > 0) {
-        sphereGeom = new THREE.BufferGeometry();
-        const positions = new Float32Array(soundEvent.geometry.vertices.flat());
-        const indices = triangulate(soundEvent.geometry.faces);
-        sphereGeom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-        sphereGeom.setIndex(indices);
-        sphereGeom.computeVertexNormals();
-      } else {
-        const sphereRadius = 0.3 * scaleForSounds;
-        sphereGeom = new THREE.SphereGeometry(sphereRadius, 32, 32);
-      }
-
-      // // Create sphere material using Speckle's material system
-      // const material = new SpeckleBasicMaterial({
-      //   color: PRIMARY_COLOR_HEX, // Bright red for visibility testing
-      //   transparent: true,
-      //   opacity: 0.7,
-      //   fog: true,
-      //   depthWrite: true,
-      //   depthTest: true,
-      //   side: THREE.FrontSide,
-      //   metalness: 0.2,           
-      //   roughness: 0.3,           
-      //   emissive: PRIMARY_COLOR_HEX
-      // });
-
-      const material = new THREE.MeshBasicMaterial({
-        color: PRIMARY_COLOR_HEX,
-        transparent: true,
-        opacity: 0.7,
-        fog: true,
-        depthWrite: true,
-        depthTest: true,
-        side: THREE.FrontSide
-      });
-
-
-      // Configure material to skip problematic MRT render passes
-      // This prevents WebGL errors about missing fragment shader outputs
-      // const originalOnBeforeRender = material.onBeforeRender.bind(material);
-      // material.onBeforeRender = (renderer: any, scene: any, camera: any, geometry: any, object: any) => {
-      //   // Skip rendering in depth-normal or multi-target passes
-      //   const renderTarget = renderer.getRenderTarget();
-      //   if (renderTarget && renderTarget.texture && Array.isArray(renderTarget.texture)) {
-      //     // Multiple render targets detected - skip to avoid shader output mismatch
-      //     return;
-      //   }
-      //   // Call original onBeforeRender for normal passes
-      //   if (originalOnBeforeRender) {
-      //     originalOnBeforeRender(renderer, scene, camera, geometry, object);
-      //   }
-      // };
-
-      // Create sphere mesh
-      sphereMesh = new THREE.Mesh(sphereGeom, material);
-      sphereMesh.renderOrder = SOUND_SPHERE.RENDER_ORDER;
-
-      // Set specific layers for Speckle compatibility
-      // Use OVERLAY layer (4) to avoid problematic render passes that expect specific shader outputs
-      // sphereMesh.layers.disableAll();
-      // sphereMesh.layers.enable(0); // Default layer for basic rendering
-      sphereMesh.layers.enable(4); // OVERLAY layer for custom objects
-
-      // sphereMesh.frustumCulled = false; // Disable frustum culling for debugging
-      sphereMesh.visible = true; // Force visibility
-
-      // Store Speckle-specific metadata
-      sphereMesh.userData.speckleType = 'SoundSphere'; // Mark as custom Speckle object
-
-      // Position the sphere (priority: spiral > stored > event position)
-      // CRITICAL: spiralPosition is only passed for NEW sounds (no stored position)
-      // so existing dragged positions are always preserved
-      if (spiralPosition) {
-        // Use spiral position from bounding box placement (only for new sounds)
-        sphereMesh.position.copy(spiralPosition);
-        this.spherePositions[positionKey] = sphereMesh.position.clone();
-      } else if (this.spherePositions[positionKey]) {
-        // Use stored position (from previous drag) - THIS IS THE KEY PATH FOR PRESERVING POSITIONS
-        sphereMesh.position.copy(this.spherePositions[positionKey]);
-      } else {
-        // Use event position (from backend or default)
-        sphereMesh.position.fromArray(soundEvent.position);
-        this.spherePositions[positionKey] = sphereMesh.position.clone();
-      }
-
-      // Store metadata
-      sphereMesh.userData.soundEvent = soundEvent;
-      sphereMesh.userData.promptKey = promptKey;
-      sphereMesh.userData.positionKey = positionKey; // Sound ID for position storage
-      sphereMesh.userData.customObjectType = 'sound'; // CRITICAL: Required for drag handler and event bridge
-
-      // Add to sound spheres group and draggable objects
-      this.soundSpheresGroup.add(sphereMesh);
-      this.draggableObjects.push(sphereMesh);
-      
-      // CRITICAL: Force update matrix after adding to group
-      sphereMesh.updateMatrix();
-      sphereMesh.updateMatrixWorld(true);
-      this.soundSpheresGroup.updateMatrixWorld(true);
-
-      console.log(`[SoundSphereManager] Created sound sphere: ${promptKey}`);
-    } else {
-      // Entity-linked sound: Store position for audio source but don't create sphere
-      // ALWAYS use soundEvent.position for entity-linked sounds — it contains
-      // the entity's bounding box center (set by useSoundGeneration.linkSoundToEntity)
-      this.spherePositions[positionKey] = new THREE.Vector3().fromArray(soundEvent.position);
+  private loadAudioForSound(soundEvent: SoundEvent): void {
+    const audioPosition = this.spherePositions.get(soundEvent.id);
+    if (!audioPosition) {
+      console.warn(`[SoundSphereManager] No position for sound ${soundEvent.id}, skipping audio load`);
+      return;
     }
 
-    // Load audio and create source via AudioOrchestrator
-    const audioPosition = this.spherePositions[positionKey];
+    const isEntityLinked = soundEvent.entity_index !== undefined;
 
     // Determine full URL (blob for uploads, backend for generated)
     const isUploadedSound = soundEvent.url.startsWith('blob:') || soundEvent.url.startsWith('http');
@@ -339,19 +298,24 @@ export class SoundSphereManager {
     this.audioLoader.load(
       fullUrl,
       (buffer) => {
-        // For entity-linked sounds, check if audio context is still valid
         // For sphere-linked sounds, check if sphere still exists
-        if (!isEntityLinked && sphereMesh && !sphereMesh.parent) {
-          console.warn(`[SoundSphereManager] Sphere removed before audio loaded: ${soundEvent.id}`);
-          return;
+        if (!isEntityLinked) {
+          const meshStillExists = this.soundMeshes.some(
+            m => m.userData.soundEvent?.id === soundEvent.id
+          );
+          if (!meshStillExists) {
+            console.warn(`[SoundSphereManager] Sphere removed before audio loaded: ${soundEvent.id}`);
+            return;
+          }
         }
 
         // Create source via orchestrator
+        const posVec = new THREE.Vector3(...audioPosition);
         if (this.audioOrchestrator) {
           this.audioOrchestrator.createSource(
             soundEvent.id,
             buffer,
-            audioPosition
+            posVec
           );
         } else {
           console.warn('[SoundSphereManager] Cannot create audio source - AudioOrchestrator not available');
@@ -361,15 +325,15 @@ export class SoundSphereManager {
         const metadata: SoundMetadata = {
           soundId: soundEvent.id,
           buffer: buffer,
-          position: { x: audioPosition.x, y: audioPosition.y, z: audioPosition.z },
+          position: { x: audioPosition[0], y: audioPosition[1], z: audioPosition[2] },
           soundEvent: {
             id: soundEvent.id,
-            display_name: soundEvent.display_name || soundEvent.id, // Fallback to ID if no display name
-            color: (soundEvent as any).color, // Color is added dynamically during processing
+            display_name: soundEvent.display_name || soundEvent.id,
+            color: (soundEvent as any).color,
             prompt_index: (soundEvent as any).prompt_index,
-            url: soundEvent.url, // CRITICAL: Needed for timeline waveform visualization
-            isUploaded: soundEvent.isUploaded, // Needed for timeline color coding
-            interval_seconds: soundEvent.interval_seconds // Needed for playback scheduling
+            url: soundEvent.url,
+            isUploaded: soundEvent.isUploaded,
+            interval_seconds: soundEvent.interval_seconds
           }
         };
 
@@ -382,6 +346,88 @@ export class SoundSphereManager {
     );
   }
 
+  /** Remove all audio sources from orchestrator and clear metadata */
+  private removeAllAudioSources(): void {
+    this.soundMetadata.forEach((_, soundId) => {
+      if (this.audioOrchestrator) {
+        this.audioOrchestrator.removeSource(soundId);
+      }
+    });
+    this.soundMetadata.clear();
+  }
+
+  /** Remove all sound sphere meshes using disposeMeshes utility */
+  private removeAllSoundMeshes(): void {
+    disposeMeshes(this.soundSpheresGroup, this.soundMeshes);
+    this.soundMeshes = [];
+    this.draggableObjects = [];
+  }
+
+  /**
+   * Create a single sound sphere mesh (visual only, no audio).
+   * Used as the mesh factory for updateDraggableMeshes.
+   *
+   * Note: Scene.add() is handled by updateDraggableMeshes utility.
+   * This factory only creates the mesh.
+   *
+   * @param data - Sound mesh data with position, soundEvent, and promptKey
+   * @returns Configured THREE.Mesh ready for scene insertion
+   */
+  private createSoundSphereMesh(data: SoundMeshData): THREE.Mesh {
+    const { soundEvent, promptKey } = data;
+
+    // Create sphere geometry (custom or standard sphere)
+    let sphereGeom: THREE.BufferGeometry;
+    if (soundEvent.geometry.vertices.length > 0) {
+      sphereGeom = new THREE.BufferGeometry();
+      const positions = new Float32Array(soundEvent.geometry.vertices.flat());
+      const indices = triangulate(soundEvent.geometry.faces);
+      sphereGeom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      sphereGeom.setIndex(indices);
+      sphereGeom.computeVertexNormals();
+    } else {
+      const sphereRadius = 0.3 * this.scaleForSounds;
+      sphereGeom = new THREE.SphereGeometry(sphereRadius, 32, 32);
+    }
+
+    const material = new THREE.MeshBasicMaterial({
+      color: PRIMARY_COLOR_HEX,
+      transparent: true,
+      opacity: 0.7,
+      fog: true,
+      depthWrite: true,
+      depthTest: true,
+      side: THREE.FrontSide
+    });
+
+    // Create sphere mesh
+    const sphereMesh = new THREE.Mesh(sphereGeom, material);
+    sphereMesh.renderOrder = SOUND_SPHERE.RENDER_ORDER;
+
+    // Set specific layers for Speckle compatibility
+    // Use OVERLAY layer (4) to avoid problematic render passes
+    sphereMesh.layers.enable(4);
+    sphereMesh.visible = true;
+
+    // Position from data (already resolved: stored > spiral > event)
+    sphereMesh.position.fromArray(data.position);
+
+    // Store metadata for drag handler and event bridge
+    sphereMesh.userData.speckleType = 'SoundSphere';
+    sphereMesh.userData.soundEvent = soundEvent;
+    sphereMesh.userData.promptKey = promptKey;
+    sphereMesh.userData.positionKey = soundEvent.id;
+    sphereMesh.userData.customObjectType = 'sound'; // CRITICAL: Required for drag handler and event bridge
+
+    // Force matrix update
+    sphereMesh.updateMatrix();
+
+    console.log(`[SoundSphereManager] Created sound sphere: ${promptKey}`);
+
+    // Note: Scene.add() is handled by updateDraggableMeshes utility
+    return sphereMesh;
+  }
+
   /**
    * Update sphere positions (called during drag)
    * Accepts promptKey for backward compatibility with drag handlers
@@ -389,13 +435,13 @@ export class SoundSphereManager {
    */
   public updateSpherePosition(promptKey: string, position: THREE.Vector3): void {
     // Find sphere by promptKey (how drag handlers identify spheres)
-    const sphere = this.draggableObjects.find(obj => obj.userData.promptKey === promptKey);
+    const sphere = this.soundMeshes.find(obj => obj.userData.promptKey === promptKey);
     if (sphere) {
       sphere.position.copy(position);
 
       // Use positionKey (sound ID) for storage - this is the new stable key
       const positionKey = sphere.userData.positionKey || sphere.userData.soundEvent?.id || promptKey;
-      this.spherePositions[positionKey] = position.clone();
+      this.spherePositions.set(positionKey, [position.x, position.y, position.z]);
 
       // Update the audio source position if it exists
       const soundEvent = sphere.userData.soundEvent;
@@ -414,7 +460,7 @@ export class SoundSphereManager {
       }
     } else {
       // Fallback: store by promptKey if sphere not found (shouldn't happen)
-      this.spherePositions[promptKey] = position.clone();
+      this.spherePositions.set(promptKey, [position.x, position.y, position.z]);
     }
   }
 
@@ -429,14 +475,14 @@ export class SoundSphereManager {
    * Get all sound sphere meshes (for raycasting/click detection)
    */
   public getSoundSphereMeshes(): THREE.Mesh[] {
-    return this.draggableObjects.filter(obj => obj instanceof THREE.Mesh) as THREE.Mesh[];
+    return this.soundMeshes;
   }
 
   /**
    * Get all current sphere positions
    */
   public getAllSpherePositions(): Array<[number, number, number]> {
-    return Object.values(this.spherePositions).map(pos => [pos.x, pos.y, pos.z]);
+    return Array.from(this.spherePositions.values());
   }
 
   /**
@@ -458,7 +504,7 @@ export class SoundSphereManager {
    * Find sound sphere by prompt key
    */
   public findSphereByPromptKey(promptKey: string): THREE.Object3D | undefined {
-    return this.draggableObjects.find(obj => obj.userData.promptKey === promptKey);
+    return this.soundMeshes.find(obj => obj.userData.promptKey === promptKey);
   }
 
   /**
@@ -500,27 +546,18 @@ export class SoundSphereManager {
    */
   public dispose(): void {
     // Remove all sources from AudioOrchestrator
-    if (this.audioOrchestrator) {
-      this.soundMetadata.forEach((metadata, soundId) => {
-        this.audioOrchestrator!.removeSource(soundId);
-      });
-    }
-    this.soundMetadata.clear();
+    this.removeAllAudioSources();
 
-    // Remove and dispose all sound meshes
-    const soundMeshes = this.soundSpheresGroup.children.filter(child =>
-      child instanceof THREE.Mesh && child.userData.isGeometry !== true
-    );
-    soundMeshes.forEach(mesh => {
-      disposeMesh(mesh as THREE.Mesh);
-      this.soundSpheresGroup.remove(mesh);
-    });
+    // Remove and dispose all sound meshes using utility
+    disposeMeshes(this.soundSpheresGroup, this.soundMeshes);
+    this.soundMeshes = [];
+    this.draggableObjects = [];
 
     // Remove sound spheres group from scene
     this.scene.remove(this.soundSpheresGroup);
 
     // Clear tracking
-    this.draggableObjects = [];
-    this.spherePositions = {};
+    this.spherePositions.clear();
+    this.entityLinkedIds.clear();
   }
 }

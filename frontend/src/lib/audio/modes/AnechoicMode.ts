@@ -30,8 +30,8 @@
 
 import type { IAudioMode } from '../core/interfaces/IAudioMode';
 import type { AudioMode, Position, Orientation, AmbisonicOrder } from '@/types/audio';
-import { cartesianToSpherical } from '../ambisonic-core';
-import { AUDIO_CONTROL } from '@/lib/constants';
+import { cartesianToSpherical } from '../utils/ambisonic-utils';
+import { AUDIO_CONTROL } from '@/utils/constants';
 
 // Lazy load ambisonics to avoid SSR issues (window is not defined)
 let ambisonics: any = null;

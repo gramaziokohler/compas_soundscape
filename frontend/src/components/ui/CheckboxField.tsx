@@ -1,6 +1,6 @@
 "use client";
 
-import { UI_CHECKBOX, TAILWIND_TEXT_SIZE, TAILWIND_PADDING, UI_COLORS } from "@/lib/constants";
+import { UI_CHECKBOX, TAILWIND_TEXT_SIZE, TAILWIND_PADDING, UI_COLORS } from "@/utils/constants";
 
 interface CheckboxFieldProps {
   checked: boolean;

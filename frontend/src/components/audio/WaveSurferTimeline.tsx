@@ -3,7 +3,7 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import TimelinePlugin from 'wavesurfer.js/dist/plugins/timeline.js';
-import { WAVESURFER_TIMELINE, API_BASE_URL } from '@/lib/constants';
+import { WAVESURFER_TIMELINE, API_BASE_URL } from '@/utils/constants';
 import type { TimelineSound } from '@/types/audio';
 
 interface WaveSurferTimelineProps {

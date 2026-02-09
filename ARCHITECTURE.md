@@ -5,26 +5,25 @@ System architecture of [the repository](https://github.com/bouiz/compas_soundsca
 ```
 compas_soundscape/
 ├── backend/
-│   ├── main.py                      # FastAPI app initialization (updated)
+│   ├── main.py                      # FastAPI app initialization
 │   ├── tasks.py                     # Background tasks
 │   ├── config/
 │   │   ├── __init__.py
-│   │   └── constants.py             # All backend constants (updated - IR formats, ambisonic channels)
+│   │   └── constants.py             # All backend constants (IR formats, ambisonic channels, etc.)
 │   ├── data/
 │   │   ├── AudioSet_classes.py      # AudioSet class definitions
 │   │   ├── BBCSoundEffects.csv      # BBC sound effects database
-│   │   └── [3D model samples]       # IFC, 3DM test files
+│   │   └── [3D model samples]       # IFC, OBJ test files
 │   ├── models/
-│   │   └── schemas.py               # Pydantic request/response models (updated - IR schemas)
+│   │   └── schemas.py               # Pydantic request/response models
 │   ├── routers/
 │   │   ├── __init__.py
-│   │   ├── analysis.py              # 3D geometry analysis endpoints
 │   │   ├── choras.py                # Choras acoustic simulation integration
 │   │   ├── generation.py            # LLM text/prompt generation endpoints
 │   │   ├── impulse_responses.py     # IR upload/list/delete endpoints
 │   │   ├── library_search.py        # Sound library search (BBC, Freesound)
 │   │   ├── modal_analysis.py        # Modal analysis endpoints
-│   │   ├── pyroomacoustics.py       # Pyroomacoustics acoustic simulation (NEW)
+│   │   ├── pyroomacoustics.py       # Pyroomacoustics acoustic simulation (ISM, RT60)
 │   │   ├── reprocess.py             # Audio reprocessing (denoising)
 │   │   ├── sed_analysis.py          # Sound Event Detection endpoints
 │   │   ├── sounds.py                # Audio generation endpoints
@@ -33,13 +32,15 @@ compas_soundscape/
 │   │   ├── audio_service.py         # Multi-model audio generation (TangoFlux + AudioLDM2)
 │   │   ├── audioldm2_service.py     # AudioLDM2 audio generation service
 │   │   ├── bbc_service.py           # BBC Sound Effects API
+│   │   ├── choras_openapi.json      # Choras API OpenAPI spec
 │   │   ├── freesound_service.py     # Freesound API integration
-│   │   ├── geometry_service.py      # 3D file processing (COMPAS, rhino3dm)
 │   │   ├── impulse_response_service.py  # IR processing & channel extraction
 │   │   ├── llm_service.py           # Google Gemini LLM
 │   │   ├── modal_analysis_service.py    # Modal analysis & mode shape visualization
-│   │   ├── pyroomacoustics_service.py   # Pyroomacoustics acoustic simulation (ISM, RT60, EDT, etc.)
-│   │   └── sed_service.py           # Sound Event Detection
+│   │   ├── pyroomacoustics_service.py   # Pyroomacoustics simulation (ISM, RT60, EDT)
+│   │   ├── sed_service.py           # Sound Event Detection
+│   │   ├── speckle_demo.py          # Speckle demo/testing
+│   │   └── speckle_service.py       # Speckle integration service
 │   ├── utils/
 │   │   ├── __init__.py
 │   │   ├── acoustic_measurement.py  # Acoustic measurement utilities
@@ -53,20 +54,22 @@ compas_soundscape/
 │       │   │   └── generated/       # Generated audio files
 │       │   ├── impulse_responses/   # Uploaded IR files (1/2/4/16 channels)
 │       │   └── pyroomacoustics_rir/ # Pyroomacoustics generated RIR files
-│       ├── uploads/                 # Uploaded files staging area (from temp_uploads)
-│       ├── library_downloads/       # Downloaded library audio files (from temp_library_downloads)
+│       ├── uploads/                 # Uploaded files staging area
+│       ├── library_downloads/       # Downloaded library audio files
 │       └── simulations/             # Choras/Pyroomacoustics simulation results
 │
 ├── frontend/
 │   ├── package.json
+│   ├── package-lock.json
 │   ├── pnpm-lock.yaml
 │   ├── next.config.ts
 │   ├── tsconfig.json
 │   ├── postcss.config.mjs
 │   ├── public/
 │   │   ├── hrtf/                   # HRTF data files
-│   │   │   ├── HRTF_KEMAR_front.json         # KEMAR HRTF (JSON from SOFA) - 828 positions, 44.1kHz
-│   │   │   └── D1_48K_24bit_256tap_FIR_SOFA.json  # High-quality FIR HRTF (JSON from SOFA)
+│   │   │   ├── HRTF_KEMAR_front.json           # KEMAR HRTF (JSON from SOFA)
+│   │   │   ├── D1_48K_24bit_256tap_FIR_SOFA.json  # High-quality FIR HRTF
+│   │   │   └── IRC_1076_C_HRIR_48000.sofa.json # IRCAM HRIR dataset
 │   │   └── [SVG icons]             # UI icons (file.svg, globe.svg, etc.)
 │   └── src/
 │       ├── app/
@@ -75,172 +78,234 @@ compas_soundscape/
 │       │   └── globals.css          # Tailwind + CSS variables
 │       ├── components/
 │       │   ├── acoustics/           # Acoustic simulation components
-│       │   │   ├── ChorasSimulationSection.tsx      # Choras diffusion equation simulation UI
-│       │   │   ├── PyroomAcousticsSimulationSection.tsx # Pyroomacoustics ISM simulation UI
-│       │   │   ├── MaterialAssignmentUI.tsx         # Material assignment UI for surfaces
-│       │   │   └── SurfaceMaterialsSection.tsx      # Shared surface materials component (NEW)
+│       │   │   ├── ResonanceAudioMaterialUI.tsx      # Resonance Audio material config
+│       │   │   ├── SpeckleMaterialAssignmentUI.tsx   # Speckle-based material assignment
+│       │   │   ├── SpeckleSurfaceMaterialsSection.tsx # Speckle surface materials section
+│       │   │   └── SurfaceMaterialsSection.tsx       # Shared surface materials component
 │       │   ├── audio/               # Audio UI components
-│       │   │   ├── AudioWaveformDisplay.tsx     # Waveform display
-│       │   │   ├── WaveSurferTimeline.tsx       # Enhanced timeline (WaveSurfer.js)
-│       │   │   ├── ImpulseResponseUpload.tsx    # IR file upload UI
-│       │   │   ├── IRManagementPanel.tsx        # IR file management UI
-│       │   │   ├── IRStatusNotice.tsx           # IR status notifications
-│       │   │   ├── SpatialModeSelector.tsx      # Spatial audio mode selector
-│       │   │   ├── AudioModeSelector.tsx        # Audio rendering mode selector
-│       │   │   ├── AudioRenderingModeSelector.tsx  # Rendering mode UI
-│       │   │   ├── AmbisonicOrderSelector.tsx   # FOA/TOA order selector
-│       │   │   ├── AnechoicModeToggle.tsx       # Anechoic mode toggle
-│       │   │   ├── AudioStatusDisplay.tsx       # Audio status display
-│       │   │   └── OutputDecoderToggle.tsx      # Output decoder controls
+│       │   │   ├── AudioRenderingModeSelector.tsx  # Rendering mode selector UI
+│       │   │   ├── AudioWaveformDisplay.tsx        # Waveform display
+│       │   │   ├── ImpulseResponseUpload.tsx       # IR file upload UI
+│       │   │   ├── SoundCardWaveSurfer.tsx         # Sound card with WaveSurfer
+│       │   │   └── WaveSurferTimeline.tsx          # Enhanced timeline (WaveSurfer.js)
 │       │   ├── controls/            # Reusable UI controls
 │       │   │   ├── FileUploadArea.tsx
-│       │   │   ├── PlaybackControls.tsx
 │       │   │   ├── OrientationIndicator.tsx
-│       │   │   └── ResonanceAudioControls.tsx
+│       │   │   └── PlaybackControls.tsx
 │       │   ├── layout/
-│       │   │   ├── Sidebar.tsx
-│       │   │   └── sidebar/         # Sidebar sub-components
-│       │   │       ├── ModelLoadSection.tsx        # Model file upload & loading
-│       │   │       ├── TextGenerationSection.tsx   # LLM-based text generation
-│       │   │       ├── SoundGenerationSection.tsx  # Sound generation controls (vertical list)
-│       │   │       ├── SoundTab.tsx                # Individual sound card (collapsible)
-│       │   │       ├── AcousticsTab.tsx            # Acoustics orchestration (uses AcousticsSection)
-│       │   │       ├── AcousticsSection.tsx        # Acoustic simulations manager (vertical list)
-│       │   │       ├── SimulationTab.tsx           # Individual simulation config (collapsible)
-│       │   │       ├── ChorasSimulationSettings.tsx # Choras settings UI
-│       │   │       ├── PyroomAcousticsSimulationSettings.tsx # Pyroomacoustics settings UI
-│       │   │       └── ReceiversSection.tsx        # Audio receivers (in Soundscape tab)
-│       │   ├── overlays/            # UI overlays
-│       │   │   ├── EntityInfoBox.tsx          # Entity information overlay
-│       │   │   ├── ImpactSoundPlayback.tsx    # Impact sound playback controls
-│       │   │   └── SoundUIOverlay.tsx         # DEPRECATED - Sound controls (moved to sidebar)
+│       │   │   ├── ObjectExplorer.tsx      # Object explorer tree (right sidebar)
+│       │   │   ├── RightSidebar.tsx        # Right sidebar container
+│       │   │   ├── Sidebar.tsx             # Left sidebar (main navigation)
+│       │   │   └── sidebar/               # Sidebar sub-components
+│       │   │       ├── acoustics/          # Acoustics tab sub-components
+│       │   │       │   ├── index.ts
+│       │   │       │   ├── ChorasSimulationSettings.tsx       # Choras settings UI
+│       │   │       │   ├── PyroomAcousticsSimulationSettings.tsx # Pyroomacoustics settings
+│       │   │       │   ├── ResonanceAudioControls.tsx         # Resonance Audio controls
+│       │   │       │   ├── ResonanceContent.tsx               # Resonance mode content
+│       │   │       │   ├── SimulationResultContent.tsx        # Simulation results display
+│       │   │       │   └── SimulationSetupContent.tsx         # Simulation setup form
+│       │   │       ├── analysis/           # Analysis tab sub-components
+│       │   │       │   ├── index.ts
+│       │   │       │   ├── AnalysisResultContent.tsx          # Analysis results display
+│       │   │       │   ├── AudioContextContent.tsx            # Audio context analysis
+│       │   │       │   ├── Model3DContextContent.tsx          # 3D model context analysis
+│       │   │       │   └── TextContextContent.tsx             # Text context analysis
+│       │   │       ├── sound/              # Sound tab sub-components
+│       │   │       │   ├── index.ts
+│       │   │       │   ├── CardTypeSwitcher.tsx               # Sound card type selector
+│       │   │       │   ├── LibraryMode.tsx                    # Library search mode
+│       │   │       │   ├── SampleAudioMode.tsx                # Sample audio mode
+│       │   │       │   ├── SoundConfigContent.tsx             # Sound configuration
+│       │   │       │   ├── SoundResultContent.tsx             # Sound result display
+│       │   │       │   ├── TextToAudioMode.tsx                # Text-to-audio generation
+│       │   │       │   └── UploadMode.tsx                     # Audio file upload mode
+│       │   │       ├── AcousticsSection.tsx        # Acoustic simulations manager
+│       │   │       ├── AdvancedSettingsSection.tsx  # Advanced settings panel
+│       │   │       ├── AnalysisSection.tsx          # Analysis section manager
+│       │   │       ├── ControlsInfo.tsx             # Controls information
+│       │   │       ├── EntityInfoPanel.tsx          # Entity info (bottom right sidebar)
+│       │   │       ├── ReceiversSection.tsx         # Audio receivers section
+│       │   │       └── SoundGenerationSection.tsx   # Sound generation controls
 │       │   ├── scene/               # 3D scene components
-│       │   │   ├── ThreeScene.tsx              # Main 3D scene component
-│       │   │   ├── SceneControlButton.tsx      # Reusable scene control button
-│       │   │   ├── SettingsButton.tsx          # Settings button (top-right)
-│       │   │   └── AdvancedSettingsPanel.tsx   # Advanced settings panel UI
+│       │   │   ├── SpeckleScene.tsx          # Main Speckle 3D scene component
+│       │   │   └── VirtualTreeItem.tsx       # Virtual tree item for object explorer
 │       │   └── ui/                  # Reusable UI components
-│       │       └── ErrorToast.tsx   # Toast notification component
+│       │       ├── ButtonGroup.tsx           # Grouped button component
+│       │       ├── Card.tsx                  # Card container component
+│       │       ├── CardSection.tsx           # Card section layout
+│       │       ├── CheckboxField.tsx         # Checkbox with label
+│       │       ├── ErrorToast.tsx            # Toast notification component
+│       │       ├── Icon.tsx                  # Icon component
+│       │       ├── RangeSlider.tsx           # Range slider input
+│       │       ├── SceneControlButton.tsx    # Scene control button
+│       │       ├── ValidationMessage.tsx     # Validation message display
+│       │       ├── VerticalTabButton.tsx     # Vertical tab button
+│       │       └── VerticalVolumeSlider.tsx  # Volume slider (vertical)
+│       ├── contexts/
+│       │   ├── AcousticMaterialContext.tsx   # Acoustic material state (ref-based bridge)
+│       │   ├── ErrorContext.tsx              # Global error notification context
+│       │   ├── RightSidebarContext.tsx       # Right sidebar state management
+│       │   ├── SpeckleSelectionModeContext.tsx # Speckle selection mode state
+│       │   └── SpeckleViewerContext.tsx      # Speckle viewer instance context
+│       ├── Documentation/
+│       │   ├── FilteringExtension-doc.md    # Speckle filtering extension docs
+│       │   ├── SelectionExtension-doc.md    # Speckle selection extension docs
+│       │   ├── WorldTree-doc.md             # Speckle world tree docs
+│       │   └── speckle_docs.md              # General Speckle documentation
 │       ├── hooks/
-│       │   ├── useApiErrorHandler.ts     # API error handling with toast notifications
-│       │   ├── useAcousticsSimulation.ts # Main acoustic simulation manager (NEW)
-│       │   ├── useAudioControls.ts       # Audio playback state & controls
-│       │   ├── useAudioOrchestrator.ts   # Audio orchestrator integration
-│       │   ├── useAudioNormalization.ts  # Audio normalization utilities
-│       │   ├── useChorasSimulation.ts    # Choras simulation state management
-│       │   ├── usePyroomAcousticsSimulation.ts # Pyroomacoustics simulation state management
-│       │   ├── useRoomMaterials.ts       # Room material management
-│       │   ├── useFileUpload.ts          # File upload & processing (with error notifications)
-│       │   ├── useHorizontalScroll.ts    # Mouse wheel horizontal scrolling
-│       │   ├── useModalImpact.ts         # Modal analysis & impact sound synthesis
-│       │   ├── useReceivers.ts           # Audio receiver management
-│       │   ├── useSED.ts                 # Sound Event Detection
-│       │   ├── useSoundGeneration.ts     # Sound generation workflow
-│       │   ├── useTextGeneration.ts      # Text/prompt generation
-│       │   ├── useTimelinePlayback.ts    # Timeline playback state management
-│       │   └── useWaveformInteraction.ts # Waveform zoom/pan interaction
+│       │   ├── useAcousticsMaterials.ts     # Acoustic material management
+│       │   ├── useAcousticsSimulation.ts    # Main acoustic simulation manager
+│       │   ├── useAnalysis.ts               # Analysis state management
+│       │   ├── useApiErrorHandler.ts        # API error handling with toast
+│       │   ├── useAudioControls.ts          # Audio playback state & controls
+│       │   ├── useAudioNormalization.ts     # Audio normalization utilities
+│       │   ├── useAudioOrchestrator.ts      # Audio orchestrator integration
+│       │   ├── useChoras.ts                 # Choras simulation state management
+│       │   ├── useFileUpload.ts             # File upload & processing
+│       │   ├── useHorizontalScroll.ts       # Mouse wheel horizontal scrolling
+│       │   ├── useModalImpact.ts            # Modal analysis & impact sound synthesis
+│       │   ├── usePyroomAcousticsSimulation.ts # Pyroomacoustics simulation state
+│       │   ├── useReceivers.ts              # Audio receiver management
+│       │   ├── useRoomMaterials.ts          # Room material management
+│       │   ├── useSED.ts                    # Sound Event Detection
+│       │   ├── useSoundGeneration.ts        # Sound generation workflow
+│       │   ├── useSpeckleFiltering.ts       # Speckle object filtering
+│       │   ├── useSpeckleInteractions.ts    # Speckle user interactions (click, hover)
+│       │   ├── useSpeckleSurfaceMaterials.ts # Speckle surface material management
+│       │   ├── useSpeckleTree.ts            # Speckle world tree navigation
+│       │   ├── useTextGeneration.ts         # Text/prompt generation
+│       │   ├── useTimelinePlayback.ts       # Timeline playback state management
+│       │   └── useWaveformInteraction.ts    # Waveform zoom/pan interaction
 │       ├── lib/
-│       │   ├── constants.ts         # All constants (AMBISONIC, IR_FORMAT, AUDIO_MODES, etc.)
 │       │   ├── audio/               # Audio processing architecture
 │       │   │   ├── AudioOrchestrator.ts         # Main orchestrator (audio graph management)
-│       │   │   ├── ambisonic-core.ts            # Core ambisonic utilities
-│       │   │   ├── jsambisonic-decoder.ts       # JSAmbisonics HRTF decoder integration
-│       │   │   ├── audio-info.ts                # Audio file loading & metadata
-│       │   │   ├── audio-upload.ts              # Audio upload utilities
-│       │   │   ├── ir-utils.ts                  # IR processing utilities
+│       │   │   ├── audio-scheduler.ts           # Audio scheduling utilities
 │       │   │   ├── modal-impact-synthesis.ts    # Impact sound synthesis
-│       │   │   ├── rt60-analysis.ts             # RT60 reverb time analysis
-│       │   │   ├── waveform-utils.ts            # Waveform visualization
-│       │   │   ├── timeline-utils.ts            # Timeline data extraction
 │       │   │   ├── playback-scheduler-service.ts # Audio playback scheduling
-│       │   │   ├── scheduled-sounds-logger.ts    # Debug logging for scheduled sounds
-│       │   │   ├── emergency-audio-kill.ts       # Emergency audio shutdown
-│       │   │   ├── wav-parser.ts                # WAV file parser
 │       │   │   ├── core/                        # Core interfaces & abstractions
 │       │   │   │   └── interfaces/
 │       │   │   │       ├── IAudioMode.ts        # Audio mode interface
 │       │   │   │       ├── IAudioOrchestrator.ts # Orchestrator interface
-│       │   │   │       ├── IBinauralDecoder.ts  # Binaural decoder interface
-│       │   │   │       └── IOutputDecoder.ts    # Output decoder interface
+│       │   │   │       └── IBinauralDecoder.ts  # Binaural decoder interface
 │       │   │   ├── modes/                       # Audio rendering modes
 │       │   │   │   ├── AmbisonicIRMode.ts       # Ambisonic IR convolution mode
 │       │   │   │   ├── AnechoicMode.ts          # Anechoic (dry) mode
-│       │   │   │   ├── MonoIRMode.ts            # Mono IR convolution mode
-│       │   │   │   ├── ResonanceMode.ts         # Resonance Audio mode
-│       │   │   │   ├── StereoIRMode.ts          # Stereo/binaural IR mode
-│       │   │   │   └── ThreeJSMode.ts           # Three.js PositionalAudio mode
+│       │   │   │   └── ResonanceMode.ts         # Resonance Audio mode
 │       │   │   ├── decoders/                    # Audio decoders
-│       │   │   │   └── BinauralDecoder.ts       # Binaural output decoder (auto-loads IRCAM HRTFs)
-│       │   │   ├── utils/                       # Audio utilities
-│       │   │   │   ├── error-handling.ts        # Error handling utilities
-│       │   │   │   ├── hrir-loader-ircam.ts     # IRCAM SOFA HRIR loader with virtual speaker selection (NEW)
-│       │   │   │   ├── hrtf-loader.ts           # Generic HRTF loader (legacy - not used)
-│       │   │   │   ├── mode-selector.ts         # Mode selection logic
-│       │   │   │   └── mode-transition.ts       # Mode transition handling
-│       │   │   └── debug/                       # Debug utilities
-│       │   │       └── audio-flow-debugger.ts   # Audio graph flow debugging
-│       │   ├── sound/               # Sound system utilities
-│       │   ├── three/               # Three.js utilities (Service-Oriented Architecture)
-│       │   │   ├── scene-coordinator.ts      # Scene init, camera, animation loop
-│       │   │   ├── geometry-renderer.ts      # Geometry mesh rendering & highlighting
-│       │   │   ├── sound-sphere-manager.ts   # Sound sphere creation & audio sources
-│       │   │   ├── receiver-manager.ts       # Receiver cube management
-│       │   │   ├── mode-visualizer.ts        # Mode shape visualization on meshes
-│       │   │   ├── input-handler.ts          # User input (click, drag, keyboard)
-│       │   │   ├── draggable-mesh-manager.ts # Shared mesh update utilities
-│       │   │   ├── sceneSetup.ts             # Scene setup helpers
-│       │   │   ├── materials.ts              # Material definitions
-│       │   │   ├── mesh-cleanup.ts           # Resource disposal utilities
-│       │   │   ├── entityMeshes.ts           # Entity mesh management
-│       │   │   └── projection-utils.ts       # 3D projection utilities
-│       │   └── utils.ts             # General utilities
-│       ├── contexts/
-│       │   └── ErrorContext.tsx     # Global error notification context provider
+│       │   │   │   ├── index.ts                 # Decoder exports
+│       │   │   │   ├── BinauralDecoder.ts       # Binaural output decoder (IRCAM HRTFs)
+│       │   │   │   ├── OmnitoneFOADecoder.ts    # Omnitone FOA binaural decoder
+│       │   │   │   └── VirtualSpeakersDecoder.ts # Virtual speaker binaural decoder
+│       │   │   └── utils/                       # Audio utilities
+│       │   │       ├── ambisonic-utils.ts       # Ambisonic encoding/decoding utilities
+│       │   │       ├── audio-file-decoder.ts    # Audio file decoding
+│       │   │       ├── audio-info.ts            # Audio file loading & metadata
+│       │   │       ├── audio-upload.ts          # Audio upload utilities
+│       │   │       ├── emergency-audio-kill.ts  # Emergency audio shutdown
+│       │   │       ├── error-handling.ts        # Error handling utilities
+│       │   │       ├── ir-utils.ts              # IR processing utilities
+│       │   │       ├── mode-selector.ts         # Mode selection logic
+│       │   │       ├── mode-transition.ts       # Mode transition handling
+│       │   │       ├── scheduled-sounds-logger.ts # Debug logging for scheduled sounds
+│       │   │       ├── timeline-utils.ts        # Timeline data extraction
+│       │   │       └── waveform-utils.ts        # Waveform visualization
+│       │   └── three/               # Three.js / Speckle utilities
+│       │       ├── BoundingBoxManager.ts        # Bounding box management
+│       │       ├── draggable-mesh-manager.ts    # Shared mesh update utilities
+│       │       ├── mesh-cleanup.ts              # Resource disposal utilities
+│       │       ├── receiver-manager.ts          # Receiver cube management
+│       │       ├── sound-sphere-manager.ts      # Sound sphere creation & audio sources
+│       │       ├── speckle-audio-coordinator.ts # Speckle + audio coordination
+│       │       ├── speckle-camera-controller.ts # Speckle camera controls
+│       │       ├── speckle-drag-handler.ts      # Speckle drag interaction handler
+│       │       ├── speckle-event-bridge.ts      # Speckle event bridge (click, hover)
+│       │       ├── speckle-scene-adapter.ts     # Speckle scene adapter (Three.js bridge)
+│       │       └── spiral-placement.ts          # Spiral placement algorithm
 │       ├── services/
-│       │   └── api.ts               # API client (all backend HTTP calls with error handling)
-│       └── types/
-│           ├── audio.ts             # Audio type definitions (modes, IR, ambisonic, etc.)
-│           ├── components.ts        # Component prop types
-│           ├── index.ts             # Type exports
-│           ├── modal.ts             # Modal analysis & mode visualization types
-│           ├── receiver.ts          # Receiver types
-│           ├── resonance-audio.d.ts # Resonance Audio library type declarations
-│           ├── sed.ts               # SED types
-│           └── three-scene.ts       # Three.js scene types
+│       │   └── api.ts               # API client (all backend HTTP calls)
+│       ├── types/
+│       │   ├── acoustics.ts         # Acoustic simulation types
+│       │   ├── ambisonics.d.ts      # Ambisonics library type declarations
+│       │   ├── analysis.ts          # Analysis types
+│       │   ├── audio.ts             # Audio type definitions (modes, IR, etc.)
+│       │   ├── card.ts              # Sound card types
+│       │   ├── Choras.ts            # Choras simulation types
+│       │   ├── components.ts        # Component prop types
+│       │   ├── index.ts             # Type exports
+│       │   ├── materials.ts         # Acoustic material types
+│       │   ├── modal.ts             # Modal analysis & mode visualization types
+│       │   ├── omnitone.d.ts        # Omnitone library type declarations
+│       │   ├── omnitone-module.d.ts # Omnitone module type declarations
+│       │   ├── receiver.ts          # Receiver types
+│       │   ├── resonance-audio.d.ts # Resonance Audio library type declarations
+│       │   ├── sed.ts               # SED types
+│       │   ├── speckle-materials.ts # Speckle material types
+│       │   ├── speckle-scene.ts     # Speckle scene types
+│       │   ├── three-scene.ts       # Three.js scene types
+│       │   └── wav-decoder.d.ts     # WAV decoder type declarations
+│       └── utils/
+│           ├── acousticMetrics.ts   # Acoustic metrics calculations
+│           ├── constants.ts         # All frontend constants (colors, sizes, config)
+│           ├── event-factory.ts     # Sound event factory
+│           ├── positioning.ts       # Sound positioning utilities
+│           ├── state-utils.ts       # State management utilities
+│           ├── useNameEditing.ts    # Name editing hook utility
+│           └── utils.ts             # General utilities
+│
+├── .bmad-core/                      # BMAD framework configuration
+│   ├── agents/                      # Agent definitions (analyst, architect, dev, etc.)
+│   ├── agent-teams/                 # Team configurations
+│   ├── checklists/                  # QA and review checklists
+│   ├── data/                        # Knowledge base and reference data
+│   ├── tasks/                       # Task definitions
+│   ├── templates/                   # Document templates
+│   ├── workflows/                   # Development workflows
+│   └── core-config.yaml            # Core BMAD configuration
 │
 ├── .claude/                         # Claude AI configuration
-│   └── output-styles/
-│       └── modular-coding.md        # Development guidelines (this file)
+│   ├── commands/BMad/              # BMAD slash commands
+│   └── settings.local.json         # Local Claude settings
 │
-├── architecture.md                  # System architecture (this file)
+├── .github/
+│   ├── ISSUE_TEMPLATE/             # Bug report / feature request templates
+│   └── workflows/                  # CI/CD (build, docs, pr-checks, release)
+│
+├── ARCHITECTURE.md                  # System architecture (this file)
 ├── CHANGELOG.md                     # Change log
 ├── README.md                        # Project overview
 ├── pyproject.toml                   # Python project configuration
-├── requirements.txt                 # Python dependencies
-└── requirements-dev.txt             # Python dev dependencies
+└── requirements.txt                 # Python dependencies
 ```
 
 ### Architecture Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         FRONTEND (Next.js)                       │
+│                         FRONTEND (Next.js 15)                    │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                   │
 │  ┌─────────────┐      ┌──────────────┐      ┌───────────────┐  │
 │  │   page.tsx  │─────▶│ Components   │◀─────│  Custom Hooks │  │
 │  │  (Minimal)  │      │              │      │               │  │
 │  └─────────────┘      │ - Sidebar    │      │ - useFile     │  │
-│                       │ - ThreeScene │      │ - useSound    │  │
+│                       │ - Speckle    │      │ - useSound    │  │
 │                       │ - Overlays   │      │ - useAudio    │  │
-│                       └──────┬───────┘      └───────┬───────┘  │
+│                       └──────┬───────┘      │ - useSpeckle* │  │
+│                              │              └───────┬───────┘  │
 │                              │                      │           │
 │                              └──────────┬───────────┘           │
+│                                         │                       │
+│  ┌──────────────────────────────────────┼────────────────────┐ │
+│  │              Context Providers        │                    │ │
+│  │  ErrorProvider > SpeckleViewerProvider >                   │ │
+│  │  SpeckleSelectionModeProvider > AcousticMaterialProvider   │ │
+│  └──────────────────────────────────────┼────────────────────┘ │
 │                                         │                       │
 │                                         ▼                       │
 │                              ┌──────────────────┐               │
 │                              │  Services/API    │               │
-│                              │  (Fetch Layer)   │               │
+│                              │  (api.ts)        │               │
 │                              └────────┬─────────┘               │
 │                                       │                         │
 └───────────────────────────────────────┼─────────────────────────┘
@@ -259,19 +324,19 @@ compas_soundscape/
 │              │                        │                        │ │
 │    ┌─────────▼─────────┐   ┌─────────▼─────────┐   ┌─────────▼─────┐
 │    │  Routers/         │   │  Routers/         │   │  Routers/      │
-│    │  upload.py        │   │  analysis.py      │   │  generation.py │
-│    │                   │   │                   │   │                │
-│    │ - /api/upload     │   │ - /api/analyze    │   │ - /api/gen-    │
-│    │ - /api/load-ifc   │   │    -3dm/-ifc      │   │    -text       │
+│    │  upload.py        │   │  pyroomacoustics  │   │  generation.py │
+│    │                   │   │  choras.py        │   │                │
+│    │ - /api/upload     │   │ - /api/simulate   │   │ - /api/gen-    │
+│    │                   │   │                   │   │    -text       │
 │    └─────────┬─────────┘   └─────────┬─────────┘   └─────────┬──────┘
 │              │                       │                       │      │
 │    ┌─────────▼─────────┐             │                       │      │
 │    │  Routers/         │             │                       │      │
 │    │  sounds.py        │             │                       │      │
+│    │  library_search   │             │                       │      │
 │    │                   │             │                       │      │
 │    │ - /api/generate   │             │                       │      │
 │    │    -sounds        │             │                       │      │
-│    │ - /api/cleanup    │             │                       │      │
 │    └─────────┬─────────┘             │                       │      │
 │              │                       │                       │      │
 │              └───────────┬───────────┴───────────┬───────────┘      │
@@ -282,10 +347,9 @@ compas_soundscape/
 │                ├───────────────────────────────────────────┤     │
 │                │                                           │     │
 │                │  ┌─────────────────────────────────────┐ │     │
-│                │  │    GeometryService                  │ │     │
-│                │  │  - Process OBJ/STL/IFC/3DM         │ │     │
-│                │  │  - Extract meshes                   │ │     │
-│                │  │  - Transform coordinates            │ │     │
+│                │  │    SpeckleService                   │ │     │
+│                │  │  - Speckle model integration        │ │     │
+│                │  │  - Object traversal & filtering     │ │     │
 │                │  └─────────────────────────────────────┘ │     │
 │                │                                           │     │
 │                │  ┌─────────────────────────────────────┐ │     │
@@ -300,8 +364,19 @@ compas_soundscape/
 │                │  │  - Generate audio from text         │ │     │
 │                │  │  - Manage multiple models           │ │     │
 │                │  │    (TangoFlux + AudioLDM2)         │ │     │
-│                │  │  - Route to selected model          │ │     │
-│                │  │  - Position sound sources           │ │     │
+│                │  └─────────────────────────────────────┘ │     │
+│                │                                           │     │
+│                │  ┌─────────────────────────────────────┐ │     │
+│                │  │    PyroomAcousticsService           │ │     │
+│                │  │  - ISM simulation                   │ │     │
+│                │  │  - RT60, EDT, C80 computation       │ │     │
+│                │  │  - RIR generation                   │ │     │
+│                │  └─────────────────────────────────────┘ │     │
+│                │                                           │     │
+│                │  ┌─────────────────────────────────────┐ │     │
+│                │  │    ImpulseResponseService           │ │     │
+│                │  │  - IR upload & validation           │ │     │
+│                │  │  - Channel extraction               │ │     │
 │                │  └─────────────────────────────────────┘ │     │
 │                │                                           │     │
 │                └───────────────────────────────────────────┘     │
@@ -315,9 +390,62 @@ compas_soundscape/
 └──────────────────────────────────────────────────────────────────┘
 ```
 
+### Frontend Context Provider Nesting
+
+```
+ErrorProvider
+  └── SpeckleViewerProvider
+        └── SpeckleSelectionModeProvider
+              └── AcousticMaterialProvider
+                    └── RightSidebarContext (implicit)
+                          └── App Components
+```
+
+### Speckle Integration Architecture
+
+```
+┌────────────────────────────────────────────────────────────┐
+│ SpeckleViewerContext (viewer instance)                      │
+│   ↓                                                         │
+│ SpeckleScene.tsx (viewer mount, extensions setup)           │
+│   ├── useSpeckleTree         → Object tree navigation      │
+│   ├── useSpeckleFiltering    → Object visibility filtering │
+│   ├── useSpeckleInteractions → Click/hover handling        │
+│   └── useSpeckleSurfaceMaterials → Material assignment     │
+│   ↓                                                         │
+│ Three.js Bridge (speckle-scene-adapter.ts)                 │
+│   ├── speckle-camera-controller.ts  → Camera sync          │
+│   ├── speckle-drag-handler.ts       → Drag interactions    │
+│   ├── speckle-event-bridge.ts       → Event forwarding     │
+│   ├── speckle-audio-coordinator.ts  → Audio source sync    │
+│   ├── sound-sphere-manager.ts       → Sound visualization  │
+│   └── receiver-manager.ts           → Receiver management  │
+└────────────────────────────────────────────────────────────┘
+```
+
+### Audio Pipeline Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ AudioOrchestrator (main entry point)                        │
+│   ↓                                                         │
+│ Mode Selection (mode-selector.ts)                           │
+│   ├── AnechoicMode        → Direct audio, no reverb        │
+│   ├── ResonanceMode       → Google Resonance Audio          │
+│   └── AmbisonicIRMode     → Ambisonic IR convolution        │
+│   ↓                                                         │
+│ Binaural Decoders                                           │
+│   ├── BinauralDecoder.ts         → IRCAM HRTF decoder      │
+│   ├── OmnitoneFOADecoder.ts      → Omnitone FOA decoder    │
+│   └── VirtualSpeakersDecoder.ts  → Virtual speaker layout   │
+│   ↓                                                         │
+│ Playback Scheduling (playback-scheduler-service.ts)         │
+│   ↓                                                         │
+│ Stereo Output (L/R) for headphones                          │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ### Ambisonic IR Mode Pipeline
-
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -334,46 +462,10 @@ compas_soundscape/
 │   • W channel unchanged (omnidirectional)                  │
 │   • X, Y, Z rotated via matrix multiplication              │
 │   ↓                                                         │
-│ JSAmbisonics HRTF-based Binaural Decoder                   │
+│ Binaural Decoder (HRTF-based)                              │
 │   • Proper HRTF convolution per ambisonic channel          │
 │   • Accurate spatial localization                          │
 │   ↓                                                         │
 │ Limiter (safety) → Stereo Output (L/R)                     │
-└─────────────────────────────────────────────────────────────┘
-```
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Mono Source → Ambisonic Encoder (position-based)            │
-│   ↓                                                         │
-│ 4-ch (FOA) or 16-ch (TOA) Ambisonic Signal                 │
-│   ↓                                                         │
-│ Convolution with IR                                         │
-│   • FOA: Single 4-ch ConvolverNode                         │
-│   • TOA: 16 parallel mono ConvolverNodes (Web Audio limit) │
-│   ↓                                                         │
-│ Binaural Decoding (virtual speakers)                       │
-│   • FOA: 8 virtual speakers (cube layout)                  │
-│   • TOA: 12 virtual speakers (8 horizontal + 4 elevated)   │
-│   • Speaker compensation: 1/√N gain (energy conservation)  │
-│   • Equal-power panning to L/R channels                    │
-│   ↓                                                         │
-│ Stereo Output (L/R) for headphones                         │
-└─────────────────────────────────────────────────────────────┘
-```
-
-┌─────────────────────────────────────────────────────────────┐
-│ Mono Source (44.1kHz)                                       │
-│   ↓                                                         │
-│ Convolve with IR (1-ch or 2-ch)                            │
-│   • ConvolverNode in Web Audio API                         │
-│   • Mono IR → Mono output                                  │
-│   • Binaural IR → Stereo output                            │
-│   ↓                                                         │
-│ Three.js Spatial Audio (distance + panning)                │
-│   • PositionalAudio for 3D positioning                     │
-│   • Distance attenuation                                   │
-│   ↓                                                         │
-│ Stereo Output (L/R)                                         │
 └─────────────────────────────────────────────────────────────┘
 ```

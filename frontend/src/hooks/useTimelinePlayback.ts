@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { TimelinePlaybackState, TimelineSound } from '@/types/audio';
-import { AUDIO_TIMELINE } from '@/lib/constants';
+import { AUDIO_TIMELINE } from '@/utils/constants';
 
 interface UseTimelinePlaybackProps {
   sounds: TimelineSound[];

@@ -11,7 +11,7 @@ import type { ModeVisualizationState } from "./modal";
 import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSelector";
 import type { AudioOrchestrator } from "@/lib/audio/AudioOrchestrator";
 import type { SelectedGeometry } from "./materials";
-import type { SidebarTabValue } from "@/lib/constants";
+import type { SidebarTabValue } from "@/utils/constants";
 
 /**
  * ThreeScene Component Props

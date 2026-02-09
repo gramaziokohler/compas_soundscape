@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { UI_COLORS, UI_OVERLAY } from "@/lib/constants";
+import { UI_COLORS, UI_OVERLAY } from "@/utils/constants";
 
 interface OrientationIndicatorProps {
   /** Yaw angle in radians (horizontal rotation) */

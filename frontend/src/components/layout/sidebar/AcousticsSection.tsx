@@ -76,7 +76,7 @@ import type { AudioRenderingMode } from '@/components/audio/AudioRenderingModeSe
 import {
   MAX_FACES_FOR_LAYER_AUTO_EXCLUDE,
   UI_COLORS
-} from '@/lib/constants';
+} from '@/utils/constants';
 
 interface AcousticsSectionProps {
   // Receiver props
@@ -605,6 +605,14 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     { type: 'pyroomacoustics', label: CARD_TYPE_LABELS['pyroomacoustics'], enabled: true },
   ];
 
+  const header = (
+  <div className="flex flex-col gap-2">
+    <div className="text-xs font-medium text-info">
+      Acoustic cards
+    </div>
+  </div>
+    );
+
   const renderCard = (config: SimulationConfig, index: number, isExpanded: boolean, onToggleExpand: (index: number) => void) => {
     const isCompleted = config.state === 'completed';
     const isRunning = config.type !== 'resonance' && (config as any).isRunning;
@@ -733,6 +741,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
           onAddItem={handleAddItem}
           renderCard={renderCard}
           color="info"
+          header={header}
         />
      </div>
 

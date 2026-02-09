@@ -5,7 +5,7 @@ import type { ModelAnalysisConfig } from '@/types/analysis';
 import { useSpeckleViewerContext } from '@/contexts/SpeckleViewerContext';
 import { useSpeckleSelectionMode } from '@/contexts/SpeckleSelectionModeContext';
 import { getRootNodesForModel } from '@/hooks/useSpeckleTree';
-import { UI_COLORS, NUM_SOUNDS_MIN, NUM_SOUNDS_MAX } from '@/lib/constants';
+import { UI_COLORS, NUM_SOUNDS_MIN, NUM_SOUNDS_MAX } from '@/utils/constants';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 
 /**

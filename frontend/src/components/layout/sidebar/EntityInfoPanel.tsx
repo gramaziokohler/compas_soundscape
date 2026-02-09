@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState, useCallback } from 'react';
-import { UI_COLORS, UI_BORDER_RADIUS, SPECKLE_FILTER_COLORS, RECEIVER_CONFIG, getMaterialColorByAbsorption } from '@/lib/constants';
+import { UI_COLORS, UI_BORDER_RADIUS, SPECKLE_FILTER_COLORS, RECEIVER_CONFIG, getMaterialColorByAbsorption } from '@/utils/constants';
 import { useSpeckleSelectionMode } from '@/contexts/SpeckleSelectionModeContext';
 import { useAcousticMaterial } from '@/contexts/AcousticMaterialContext';
 import { SoundResultContent } from '@/components/layout/sidebar/sound/SoundResultContent';

@@ -13,7 +13,7 @@
 
 import * as THREE from 'three';
 import { SpeckleBasicMaterial } from '@speckle/viewer';
-import { RESONANCE_AUDIO, UI_COLORS } from '@/lib/constants';
+import { RESONANCE_AUDIO, UI_COLORS } from '@/utils/constants';
 import type { ResonanceRoomMaterial } from '@/types/audio';
 
 export interface BoundingBoxBounds {

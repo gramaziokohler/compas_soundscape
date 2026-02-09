@@ -24,7 +24,7 @@ import {
   PYROOMACOUSTICS_RAY_TRACING_N_RAYS,
   PYROOMACOUSTICS_DEFAULT_SCATTERING,
   PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE
-} from '@/lib/constants';
+} from '@/utils/constants';
 import type { SourceReceiverIRMapping } from '@/types/audio';
 
 // Types

@@ -12,26 +12,22 @@ import google.genai as genai
 from services.llm_service import LLMService
 from services.audio_service import AudioService
 from services.impulse_response_service import ImpulseResponseService
-from services.modal_analysis_service import ModalAnalysisService
+# from services.modal_analysis_service import ModalAnalysisService
 
 # Import routers
-from routers import upload, analysis, generation, sounds, sed_analysis, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics
+from routers import upload, generation, sounds, sed_analysis, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics
 
 # Import utilities
 from utils.file_operations import cleanup_all_temp_directories
 
 # Import constants
 from config.constants import (
-    CORS_ORIGIN_LOCALHOST,
-    CORS_ORIGIN_FRONTEND,
-    CORS_ORIGIN_NETWORK,
     CORS_ALLOW_ALL,
     STATIC_MOUNT_PATH,
     STATIC_FILES_DIRECTORY,
     IMPULSE_RESPONSE_DIR,
-    TEMP_SIMULATIONS_DIR,
-    TEMP_PARENT_DIR
-)
+    TEMP_SIMULATIONS_DIR
+    )
 
 # --- Initialization ---
 
@@ -49,14 +45,14 @@ if not client:
 llm_service = LLMService(client)
 audio_service = AudioService()
 ir_service = ImpulseResponseService()
-modal_service = ModalAnalysisService()
+# modal_service = ModalAnalysisService()
 
 # Initialize routers with services
 generation.init_generation_router(llm_service)
 sounds.init_sounds_router(audio_service)
 reprocess.init_reprocess_router(audio_service)
 impulse_responses.init_impulse_response_router(ir_service)
-modal_analysis.init_modal_analysis_router(modal_service)
+# modal_analysis.init_modal_analysis_router(modal_service)
 
 
 # --- Application Lifespan ---
@@ -113,14 +109,14 @@ app.add_middleware(
 
 # --- Include Routers ---
 app.include_router(upload.router)
-app.include_router(analysis.router)
+# app.include_router(analysis.router)
 app.include_router(generation.router)
 app.include_router(sounds.router)
 app.include_router(sed_analysis.router)
 app.include_router(library_search.router)
 app.include_router(reprocess.router)
 app.include_router(impulse_responses.router)
-app.include_router(modal_analysis.router)
+# app.include_router(modal_analysis.router)
 app.include_router(choras.router)
 app.include_router(pyroomacoustics.router)
 

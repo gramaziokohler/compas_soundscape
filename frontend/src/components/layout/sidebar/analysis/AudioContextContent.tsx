@@ -4,7 +4,7 @@ import { useState } from 'react';
 import type { AudioAnalysisConfig } from '@/types/analysis';
 import { FileUploadArea } from '@/components/controls/FileUploadArea';
 import { AudioWaveformDisplay } from '@/components/audio/AudioWaveformDisplay';
-import { UI_COLORS, AUDIO_FILE_EXTENSIONS, AUDIO_VISUALIZATION, NUM_SOUNDS_MAX, NUM_SOUNDS_MIN } from '@/lib/constants';
+import { UI_COLORS, AUDIO_FILE_EXTENSIONS, AUDIO_VISUALIZATION, NUM_SOUNDS_MAX, NUM_SOUNDS_MIN } from '@/utils/constants';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 
 /**

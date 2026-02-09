@@ -21,7 +21,7 @@ import {
   PYROOMACOUSTICS_SIMULATION_MODE_MONO,
   PYROOMACOUSTICS_SIMULATION_MODE_FOA,
   PYROOMACOUSTICS_SIMULATION_MODE_NAMES
-} from '@/lib/constants';
+} from '@/utils/constants';
 import type { PyroomAcousticsSimulationConfig } from '@/types/acoustics';
 import { CheckboxField } from '@/components/ui/CheckboxField';
 import { RangeSlider } from '@/components/ui/RangeSlider';

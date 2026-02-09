@@ -257,6 +257,14 @@ export function AnalysisSection({
     </div>
   );
 
+  const header = (
+    <div className="flex flex-col gap-2">
+      <div className="text-xs font-medium text-success">
+        Context cards
+      </div>
+    </div>
+  );
+
   return (
     <div className="flex flex-col min-h-[calc(100vh-8rem)]">
       <div className="flex-1">
@@ -269,6 +277,7 @@ export function AnalysisSection({
           onAddItem={onAddConfig}
           renderCard={renderCard}
           footer={footer}
+          header={header}
           getPendingCount={getPendingCount}
           isRunning={isRunning}
           error={error}

@@ -1,7 +1,7 @@
 'use client';
 
 import type { AnalysisResult } from '@/types/analysis';
-import { UI_COLORS } from '@/lib/constants';
+import { UI_COLORS } from '@/utils/constants';
 import { CheckboxField } from '@/components/ui/CheckboxField';
 
 /**

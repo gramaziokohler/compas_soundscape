@@ -1,6 +1,6 @@
 "use client";
 
-import { UI_COLORS } from "@/lib/constants";
+import { UI_COLORS } from "@/utils/constants";
 
 interface VerticalVolumeSliderProps {
   value: number; // 0 to 1
