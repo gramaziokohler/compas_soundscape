@@ -236,6 +236,8 @@ export function Sidebar(props: SidebarProps) {
             showBoundingBox={props.showBoundingBox}
             onToggleBoundingBox={props.onToggleBoundingBox}
             onRefreshBoundingBox={props.onRefreshBoundingBox}
+            roomScale={props.roomScale}
+            onRoomScaleChange={props.onRoomScaleChange}
             audioRenderingMode={props.audioRenderingMode}
             onAudioRenderingModeChange={props.onAudioRenderingModeChange}
             modelEntities={props.modelEntities}

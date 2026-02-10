@@ -296,6 +296,15 @@ export class AudioOrchestrator implements IAudioOrchestrator {
             this.resonanceMode = new ResonanceMode();
             await this.resonanceMode.initialize(this.audioContext);
             this.connectModeToOutput(this.resonanceMode);
+
+            // Apply pending room bounds if available
+            if (this._pendingRoomBounds) {
+              this.resonanceMode.setRoomBounds(
+                this._pendingRoomBounds.min,
+                this._pendingRoomBounds.max
+              );
+              this._pendingRoomBounds = null;
+            }
           }
           return this.resonanceMode;
 
@@ -990,18 +999,39 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    */
   updateResonanceRoomDimensions(dimensions: any): void {
     console.log('[AudioOrchestrator] Updating Resonance room dimensions:', dimensions);
-    
+
     if (this.currentMode === AudioMode.NO_IR_RESONANCE && this.resonanceMode) {
       console.log('[AudioOrchestrator] Applying room dimensions to active Resonance mode');
-      
+
       // Get current materials from the mode
       const materials = this.resonanceMode.getRoomMaterials();
-      
+
       this.resonanceMode.setRoomProperties(dimensions, materials);
     } else {
       console.warn('[AudioOrchestrator] Cannot apply dimensions - Resonance mode not active');
     }
   }
+
+  /**
+   * Set Resonance Audio room bounds from model bounding box.
+   * Computes room dimensions and center offset so sources sit inside the room.
+   * @param min - Bounding box min corner [x, y, z]
+   * @param max - Bounding box max corner [x, y, z]
+   */
+  updateResonanceRoomBounds(
+    min: [number, number, number],
+    max: [number, number, number]
+  ): void {
+    if (this.resonanceMode) {
+      this.resonanceMode.setRoomBounds(min, max);
+    } else {
+      // Store for later application when mode is initialized
+      this._pendingRoomBounds = { min, max };
+    }
+  }
+
+  /** Pending room bounds to apply once ResonanceMode is initialized */
+  private _pendingRoomBounds: { min: [number, number, number]; max: [number, number, number] } | null = null;
 
   /**
    * Get current warnings

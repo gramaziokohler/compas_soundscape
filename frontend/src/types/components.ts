@@ -163,6 +163,8 @@ export interface SidebarProps {
   showBoundingBox: boolean;
   onToggleBoundingBox: (show: boolean) => void;
   onRefreshBoundingBox?: () => void;
+  roomScale?: { x: number; y: number; z: number };
+  onRoomScaleChange?: (scale: { x: number; y: number; z: number }) => void;
   // Audio Orchestrator props (NEW)
   audioRenderingMode?: AudioRenderingMode;
   onAudioRenderingModeChange?: (mode: AudioRenderingMode) => void;

@@ -877,11 +877,11 @@ export const RESONANCE_AUDIO = {
   BOUNDING_BOX: {
     // Wireframe color (cyan)
     WIREFRAME_COLOR: 0x00ffff,
-    WIREFRAME_WIDTH: 2,
+    WIREFRAME_WIDTH: 8,
     
     // Face plane opacity
-    FACE_BASE_OPACITY: 0.15,
-    FACE_ABSORPTION_OPACITY_SCALE: 0.8, // Additional opacity based on absorption
+    FACE_BASE_OPACITY: 0.4,
+    FACE_ABSORPTION_OPACITY_SCALE: 0, // Additional opacity based on absorption
     
     // Label sprite sizing (relative to bounding box dimensions)
     LABEL_SCALE_FACTOR: 0.2, // Label width = max(bbox dimensions) * this factor
@@ -895,9 +895,9 @@ export const RESONANCE_AUDIO = {
     LABEL_TEXT_COLOR: 'black',
     
     // Render order (higher = rendered later/on top)
-    WIREFRAME_RENDER_ORDER: 999,
-    FACE_RENDER_ORDER: 998,
-    LABEL_RENDER_ORDER: 1000,
+    WIREFRAME_RENDER_ORDER: 5,
+    FACE_RENDER_ORDER: 2,
+    LABEL_RENDER_ORDER: 5,
     
     // Auto bounding box from sound sources (when no geometry)
     AUTO_BBOX_THRESHOLD: 2.0, // Meters to add on each side of sound sources

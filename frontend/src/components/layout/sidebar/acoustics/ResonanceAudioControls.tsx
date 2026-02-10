@@ -1,9 +1,17 @@
 'use client';
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import type { ResonanceAudioConfig, ResonanceRoomMaterial } from '@/types/audio';
 import { UI_COLORS } from '@/utils/constants';
 import { ResonanceAudioMaterialUI } from '@/components/acoustics/ResonanceAudioMaterialUI';
+import { RangeSlider } from '@/components/ui/RangeSlider';
+import { CheckboxField } from '@/components/ui/CheckboxField';
+
+export interface RoomScale {
+  x: number;
+  y: number;
+  z: number;
+}
 
 interface ResonanceAudioControlsProps {
   config: ResonanceAudioConfig | null;
@@ -13,6 +21,8 @@ interface ResonanceAudioControlsProps {
   showBoundingBox: boolean;
   onToggleBoundingBox: (show: boolean) => void;
   onRefreshBoundingBox?: () => void; // Refresh bounding box from sound sources
+  roomScale?: RoomScale;
+  onRoomScaleChange?: (scale: RoomScale) => void;
   className?: string;
 }
 
@@ -34,9 +44,12 @@ export function ResonanceAudioControls({
   showBoundingBox,
   onToggleBoundingBox,
   onRefreshBoundingBox,
+  roomScale = { x: 1, y: 1, z: 1 },
+  onRoomScaleChange,
   className = ''
 }: ResonanceAudioControlsProps) {
   const enabled = config?.enabled ?? false;
+  const [isRoomScaleExpanded, setIsRoomScaleExpanded] = useState(false);
   const materials = config?.roomMaterials ?? {
     left: 'transparent',
     right: 'transparent',
@@ -52,10 +65,10 @@ export function ResonanceAudioControls({
 
   return (
     <div className={`flex flex-col gap-3 ${className}`}>
-      {/* Header with Title */}
+      {/* Header with Title
       <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
         SHOEBOX ACOUSTICS SETTINGS
-      </h4>
+      </h4> */}
 
       {/* Info when no geometry
       {!hasGeometry && (
@@ -70,22 +83,12 @@ export function ResonanceAudioControls({
 
       {/* Bounding Box Visualization Toggle */}
       {enabled && (
-        <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            id="show-bbox"
-            checked={showBoundingBox}
-            onChange={(e) => onToggleBoundingBox(e.target.checked)}
-            className="w-4 h-4 rounded border-gray-300"
-            style={{ accentColor: UI_COLORS.PRIMARY }}
-          />
-          <label 
-            htmlFor="show-bbox" 
-            className="text-xs cursor-pointer flex-1"
-            style={{ color: UI_COLORS.NEUTRAL_700 }}
-          >
-            Show Room Bounding Box
-          </label>
+        <div className="flex items-center justify-between gap-2">
+           <CheckboxField
+              checked={showBoundingBox}
+              onChange={onToggleBoundingBox}
+              label="Show Room Bounding Box"
+            />
           {!hasGeometry && onRefreshBoundingBox && (
             <button
               onClick={onRefreshBoundingBox}
@@ -110,12 +113,13 @@ export function ResonanceAudioControls({
         </div>
       )}
 
+
       {/* Surface Materials */}
       {enabled && (
         <div className="flex flex-col gap-2">
-          <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
+          {/* <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
             Surface Materials
-          </h4>
+          </h4> */}
           <ResonanceAudioMaterialUI
             materials={materials}
             onUpdateMaterials={onUpdateRoomMaterials}
@@ -123,8 +127,62 @@ export function ResonanceAudioControls({
         </div>
       )}
 
-      {/* Info Note */}
+
+      {/* Room Scale */}
       {enabled && (
+        <div className="flex flex-col gap-1">
+          <button
+            onClick={() => setIsRoomScaleExpanded(!isRoomScaleExpanded)}
+            className="flex items-center gap-1 text-xs cursor-pointer hover:opacity-80"
+            style={{ color: UI_COLORS.NEUTRAL_700 }}
+          >
+            <span className="text-[10px]">{isRoomScaleExpanded ? '▼' : '▶'}</span>
+            Room Scale
+          </button>
+          {isRoomScaleExpanded && onRoomScaleChange && (
+            <div className="flex flex-col gap-2 pl-3">
+              <RangeSlider
+                label="X"
+                value={roomScale.x}
+                min={0.1}
+                max={2}
+                step={0.01}
+                onChange={(v) => onRoomScaleChange({ ...roomScale, x: v })}
+                formatValue={(v) => `${v.toFixed(2)}x`}
+                defaultValue={1}
+                showLabels={false}
+              />
+              <RangeSlider
+                label="Y"
+                value={roomScale.y}
+                min={0.1}
+                max={2}
+                step={0.01}
+                onChange={(v) => onRoomScaleChange({ ...roomScale, y: v })}
+                formatValue={(v) => `${v.toFixed(2)}x`}
+                defaultValue={1}
+                showLabels={false}
+              />
+              <RangeSlider
+                label="Z"
+                value={roomScale.z}
+                min={0.1}
+                max={2}
+                step={0.01}
+                onChange={(v) => onRoomScaleChange({ ...roomScale, z: v })}
+                formatValue={(v) => `${v.toFixed(2)}x`}
+                defaultValue={1}
+                showLabels={false}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+
+
+
+      {/* {enabled && (
         <div 
           className="text-xs p-2 rounded" 
           style={{ 
@@ -134,7 +192,7 @@ export function ResonanceAudioControls({
         >
           💡 Room dimensions are automatically calculated from your 3D model's bounding box.
         </div>
-      )}
+      )} */}
     </div>
   );
 }

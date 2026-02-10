@@ -98,6 +98,7 @@ export function PyroomAcousticsSimulationSettings({
         step={1}
         onChange={(value) => handleSettingChange('max_order', value)}
         disabled={config.isRunning}
+        defaultValue={2}
       />
 
       {/* Toggles */}
@@ -120,39 +121,31 @@ export function PyroomAcousticsSimulationSettings({
       {config.settings.ray_tracing && (
         <div className="grid grid-cols-2 gap-2">
           {/* Number of Rays */}
-          <div>
-            <label className="text-xs block mb-1" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-              Rays: {(config.settings.n_rays / 1000).toFixed(0)}k
-            </label>
-            <input
-              type="range"
-              value={config.settings.n_rays}
-              onChange={(e) => handleSettingChange('n_rays', parseInt(e.target.value))}
-              className="w-full h-2 rounded-lg appearance-none cursor-pointer"
-              style={{ backgroundColor: UI_COLORS.NEUTRAL_200, accentColor: 'var(--card-color, var(--color-primary))' }}
-              min={PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MIN}
-              max={PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MAX}
-              step="1000"
-              disabled={config.isRunning}
-            />
-          </div>
+          <RangeSlider
+          label="Rays: "
+          value={config.settings.n_rays}
+          min={PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MIN}
+          max={PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MAX}
+          step={1000}
+          onChange={(value) => handleSettingChange('n_rays', value)}
+          disabled={config.isRunning}
+          defaultValue={10000}
+          showLabels={false}
+          />        
 
           {/* Scattering */}
           <div>
-            <label className="text-xs block mb-1" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-              Scattering: {config.settings.scattering.toFixed(2)}
-            </label>
-            <input
-              type="range"
-              value={config.settings.scattering}
-              onChange={(e) => handleSettingChange('scattering', parseFloat(e.target.value))}
-              className="w-full h-2 rounded-lg appearance-none cursor-pointer"
-              style={{ backgroundColor: UI_COLORS.NEUTRAL_200, accentColor: 'var(--card-color, var(--color-primary))' }}
-              min={PYROOMACOUSTICS_SCATTERING_MIN}
-              max={PYROOMACOUSTICS_SCATTERING_MAX}
-              step="0.01"
-              disabled={config.isRunning}
-            />
+            <RangeSlider
+            label="Scattering: "
+            value={config.settings.scattering}
+            min={PYROOMACOUSTICS_SCATTERING_MIN}
+            max={PYROOMACOUSTICS_SCATTERING_MAX}
+            step={0.01}
+            onChange={(value) => handleSettingChange('scattering', value)}
+            disabled={config.isRunning}
+            defaultValue={0.05}
+            showLabels={false}
+            />              
           </div>
         </div>
       )}

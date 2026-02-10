@@ -30,10 +30,10 @@ type RoomFace = 'left' | 'right' | 'front' | 'back' | 'down' | 'up';
 const FACE_LABELS: Record<RoomFace, string> = {
   left: 'Left',
   right: 'Right',
-  front: 'Front',
+  front: 'Ceiling',
   back: 'Back',
   down: 'Floor',
-  up: 'Ceiling'
+  up: 'Front'
 };
 
 const FACE_ORDER: RoomFace[] = ['left', 'right', 'front', 'back', 'down', 'up'];
@@ -172,11 +172,11 @@ export function ResonanceAudioMaterialUI({
         <div className="flex items-center gap-1 p-0 rounded w-full min-w-0">
           <button
             onClick={() => setExpandedAll(!expandedAll)}
-            className="flex items-center justify-center w-4 h-4 shrink-0"
+            className="flex items-center justify-center  h-4 shrink-0 "
           >
             {expandedAll ? '▼' : '▶'}
           </button>
-          <span className="font-medium shrink-0 w-16">All faces</span>
+          <span className="font-medium shrink-0 w-16 ">Materials</span>
           <select
             value={allFacesMaterial || 'various'}
             onChange={(e) => {

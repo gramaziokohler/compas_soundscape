@@ -14,6 +14,8 @@ interface RangeSliderProps {
   showLabels?: boolean;
   hoverText?: string;
   disabled?: boolean;
+  /** Default value to reset to on double-click. If omitted, double-click reset is disabled. */
+  defaultValue?: number;
 }
 
 /**
@@ -27,6 +29,7 @@ interface RangeSliderProps {
  * - Primary accent color
  * - Consistent styling
  * - Optional hover text tooltip
+ * - Double-click on slider thumb to reset to default value
  * * Usage:
  * ```tsx
  * <RangeSlider
@@ -55,9 +58,16 @@ export function RangeSlider({
   showLabels = true,
   hoverText,
   disabled = false,
+  defaultValue,
 }: RangeSliderProps) {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onChange(parseFloat(e.target.value));
+  };
+
+  const handleDoubleClick = () => {
+    if (!disabled && defaultValue !== undefined) {
+      onChange(defaultValue);
+    }
   };
 
   // Determine display labels: use provided prop, or fallback to the numeric value
@@ -85,9 +95,11 @@ export function RangeSlider({
         step={step}
         value={value}
         onChange={handleChange}
+        onDoubleClick={handleDoubleClick}
         disabled={disabled}
         className={`w-full h-2 rounded-lg appearance-none cursor-pointer bg-secondary-light ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
         style={{ accentColor: 'var(--card-color, var(--color-primary))' }}
+        title={defaultValue !== undefined ? `Double-click to reset (${formatValue(defaultValue)})` : hoverText}
       />
 
       {/* Min/Max Labels */}

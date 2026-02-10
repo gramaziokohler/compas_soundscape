@@ -32,17 +32,24 @@ type ResonanceAudioClass = any;
 // Default configuration
 const DEFAULT_ROOM_DIMENSIONS = { width: 10, height: 3, depth: 10 };
 const DEFAULT_ROOM_MATERIALS = {
-  left: 'brick-bare',
+  left: 'acoustic-ceiling-tiles',
   right: 'brick-bare',
   front: 'brick-bare',
   back: 'brick-bare',
   down: 'parquet-on-concrete',
-  up: 'acoustic-ceiling-tiles'
+  up: 'brick-bare'
 };
 const DEFAULT_AMBISONIC_ORDER = 3;
 const DEFAULT_ROLLOFF = 'logarithmic';
 const DEFAULT_MIN_DISTANCE = 1;
 const DEFAULT_MAX_DISTANCE = 10000;
+
+/**
+ * Padding added to each side of the bounding box when computing room dimensions.
+ * Ensures sources near the edges are still inside the Resonance Audio room
+ * (the library silences room effects when sources are >1m outside).
+ */
+const ROOM_BOUNDS_PADDING = 2.0;
 
 export class ResonanceMode implements IAudioMode {
   private audioContext: AudioContext | null = null;
@@ -54,6 +61,13 @@ export class ResonanceMode implements IAudioMode {
   // Track current room properties
   private currentRoomDimensions: any = DEFAULT_ROOM_DIMENSIONS;
   private currentRoomMaterials: any = DEFAULT_ROOM_MATERIALS;
+
+  /**
+   * Offset applied to all positions so that the bounding box center maps to the
+   * Resonance Audio room origin.  Resonance Audio always centers its room at (0,0,0),
+   * so we translate every world-space position by subtracting this offset.
+   */
+  private roomCenterOffset: { x: number; y: number; z: number } = { x: 0, y: 0, z: 0 };
 
   // Track Resonance Audio sources
   private resonanceSources: Map<string, {
@@ -175,8 +189,12 @@ export class ResonanceMode implements IAudioMode {
       resonanceSource.setMaxDistance(DEFAULT_MAX_DISTANCE);
       resonanceSource.setGain(1.0);
 
-      // Set initial position
-      resonanceSource.setPosition(position.x, position.y, position.z);
+      // Set initial position (offset by room center so it's relative to room origin)
+      resonanceSource.setPosition(
+        position.x - this.roomCenterOffset.x,
+        position.y - this.roomCenterOffset.y,
+        position.z - this.roomCenterOffset.z
+      );
 
       // Store source info
       this.resonanceSources.set(sourceId, {
@@ -282,7 +300,11 @@ export class ResonanceMode implements IAudioMode {
       return;
     }
 
-    source.source.setPosition(position.x, position.y, position.z);
+    source.source.setPosition(
+      position.x - this.roomCenterOffset.x,
+      position.y - this.roomCenterOffset.y,
+      position.z - this.roomCenterOffset.z
+    );
     source.position = { x: position.x, y: position.y, z: position.z };
   }
 
@@ -313,27 +335,27 @@ export class ResonanceMode implements IAudioMode {
     }
 
     try {
-      // Set listener position
-      this.resonanceAudioScene.setListenerPosition(position.x, position.y, position.z);
+      // Offset by room center so the listener is relative to the room origin
+      this.resonanceAudioScene.setListenerPosition(
+        position.x - this.roomCenterOffset.x,
+        position.y - this.roomCenterOffset.y,
+        position.z - this.roomCenterOffset.z
+      );
 
       // Convert Euler angles to forward and up vectors
       // Use positive yaw (matching AnechoicMode's coordinate transformation)
       const forward = {
         x: Math.sin(orientation.yaw) * Math.cos(orientation.pitch),
-        y: Math.sin(orientation.pitch),
-        z: -Math.cos(orientation.yaw) * Math.cos(orientation.pitch)
+        y: -Math.cos(orientation.yaw) * Math.cos(orientation.pitch),
+        z: Math.sin(orientation.pitch)
       };
 
       const up = {
         x: Math.sin(orientation.roll),
-        y: Math.cos(orientation.roll),
-        z: 0
+        y: 0,
+        z: Math.cos(orientation.roll)
       };
 
-      // Set listener position
-      this.resonanceAudioScene.setListenerPosition(position.x, position.y, position.z);
-
-      // Set listener orientation
       this.resonanceAudioScene.setListenerOrientation(
         forward.x, forward.y, forward.z,
         up.x, up.y, up.z
@@ -443,6 +465,59 @@ export class ResonanceMode implements IAudioMode {
     } catch (error) {
       console.error('[ResonanceMode] Error setting room properties:', error);
     }
+  }
+
+  /**
+   * Set room bounds from the model bounding box.
+   *
+   * Computes room dimensions (with padding) and a center offset so that all
+   * world-space positions are translated to be relative to the Resonance Audio
+   * room origin.  Existing sources are repositioned accordingly.
+   *
+   * @param min - Bounding box min corner [x, y, z]
+   * @param max - Bounding box max corner [x, y, z]
+   */
+  setRoomBounds(
+    min: [number, number, number],
+    max: [number, number, number]
+  ): void {
+    if (!this.resonanceAudioScene) {
+      console.warn('[ResonanceMode] Cannot set room bounds - not initialized');
+      return;
+    }
+
+    // Compute center offset
+    this.roomCenterOffset = {
+      x: (min[0] + max[0]) / 2,
+      y: (min[1] + max[1]) / 2,
+      z: (min[2] + max[2]) / 2
+    };
+
+    // Compute dimensions with padding on each side
+    const dimensions = {
+      width:  (max[0] - min[0]) + ROOM_BOUNDS_PADDING * 2,
+      height: (max[1] - min[1]) + ROOM_BOUNDS_PADDING * 2,
+      depth:  (max[2] - min[2]) + ROOM_BOUNDS_PADDING * 2
+    };
+
+    // Apply to Resonance Audio scene
+    this.currentRoomDimensions = dimensions;
+    this.resonanceAudioScene.setRoomProperties(dimensions, this.currentRoomMaterials);
+
+    console.log('[ResonanceMode] Room bounds updated from model bounding box:', {
+      min, max,
+      center: this.roomCenterOffset,
+      dimensions
+    });
+
+    // Re-position all existing sources using the new offset
+    this.resonanceSources.forEach((source, sourceId) => {
+      source.source.setPosition(
+        source.position.x - this.roomCenterOffset.x,
+        source.position.y - this.roomCenterOffset.y,
+        source.position.z - this.roomCenterOffset.z
+      );
+    });
   }
 
   /**

@@ -125,6 +125,7 @@ interface SpeckleSceneProps {
   resonanceAudioConfig?: import('@/types/audio').ResonanceAudioConfig;
   showBoundingBox?: boolean;
   refreshBoundingBoxTrigger?: number;
+  roomScale?: { x: number; y: number; z: number };
 
   // Callback when viewer is loaded
   onViewerLoaded?: (viewer: Viewer) => void;
@@ -187,6 +188,7 @@ export function SpeckleScene({
   resonanceAudioConfig,
   showBoundingBox = false,
   refreshBoundingBoxTrigger = 0,
+  roomScale = { x: 1, y: 1, z: 1 },
   onViewerLoaded,
   onBoundsComputed,
   isLeftSidebarExpanded = true,
@@ -1059,20 +1061,38 @@ export function SpeckleScene({
 
     console.log('[SpeckleScene] Effective bounds:', effectiveBounds);
 
-    // Notify parent of computed bounds (for sound generation bounding box)
-    if (effectiveBounds && onBoundsComputed) {
-      onBoundsComputed(effectiveBounds);
+    // Apply room scale around center of bounds
+    let scaledBounds = effectiveBounds;
+    if (effectiveBounds && (roomScale.x !== 1 || roomScale.y !== 1 || roomScale.z !== 1)) {
+      const [minX, minY, minZ] = effectiveBounds.min;
+      const [maxX, maxY, maxZ] = effectiveBounds.max;
+      const cx = (minX + maxX) / 2;
+      const cy = (minY + maxY) / 2;
+      const cz = (minZ + maxZ) / 2;
+      const halfW = ((maxX - minX) / 2) * roomScale.x;
+      const halfH = ((maxY - minY) / 2) * roomScale.y;
+      const halfD = ((maxZ - minZ) / 2) * roomScale.z;
+      scaledBounds = {
+        min: [cx - halfW, cy - halfH, cz - halfD],
+        max: [cx + halfW, cy + halfH, cz + halfD]
+      };
+      console.log('[SpeckleScene] Applied room scale:', roomScale, '→ scaled bounds:', scaledBounds);
     }
 
-    // Update bounding box with calculated bounds
+    // Notify parent of computed bounds (scaled - for Resonance Audio room dimensions)
+    if (scaledBounds && onBoundsComputed) {
+      onBoundsComputed(scaledBounds);
+    }
+
+    // Update bounding box with scaled bounds
     const config = {
       roomMaterials: resonanceAudioConfig?.roomMaterials,
-      visible: showBoundingBox && !!effectiveBounds
+      visible: showBoundingBox && !!scaledBounds
     };
 
     console.log('[SpeckleScene] Bounding box config:', config);
 
-    boundingBoxManager.updateBoundingBox(effectiveBounds, config);
+    boundingBoxManager.updateBoundingBox(scaledBounds, config);
 
     // Request render update to show changes - use multiple frames and RENDER_RESET flag
     if (viewerRef.current) {
@@ -1090,7 +1110,8 @@ export function SpeckleScene({
     showBoundingBox,
     resonanceAudioConfig?.roomMaterials,
     refreshBoundingBoxTrigger,
-    onBoundsComputed
+    onBoundsComputed,
+    roomScale
   ]);
 
   // ============================================================================

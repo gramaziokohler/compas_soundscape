@@ -48,6 +48,7 @@ interface FaceConfig {
 export class BoundingBoxManager {
   private boundingBoxGroup: THREE.Group | null = null;
   private scene: THREE.Scene;
+  private currentBounds: BoundingBoxBounds | null = null;
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -188,32 +189,39 @@ export class BoundingBoxManager {
       return;
     }
 
+    // Check if bounds changed (requires geometry recreation)
+    const boundsChanged = this.currentBounds !== null && (
+      this.currentBounds.min[0] !== bounds.min[0] ||
+      this.currentBounds.min[1] !== bounds.min[1] ||
+      this.currentBounds.min[2] !== bounds.min[2] ||
+      this.currentBounds.max[0] !== bounds.max[0] ||
+      this.currentBounds.max[1] !== bounds.max[1] ||
+      this.currentBounds.max[2] !== bounds.max[2]
+    );
+
+    if (boundsChanged && this.boundingBoxGroup) {
+      console.log('[BoundingBoxManager] Bounds changed, recreating bounding box');
+      this.disposeBoundingBox();
+    }
+
+    // Store current bounds
+    this.currentBounds = { min: [...bounds.min], max: [...bounds.max] };
+
     // Create new bounding box if it doesn't exist
     if (!this.boundingBoxGroup) {
       console.log('[BoundingBoxManager] Creating new bounding box');
       this.createBoundingBox(bounds, config);
     } else {
       console.log('[BoundingBoxManager] Updating existing bounding box');
-      console.log('[BoundingBoxManager] Bounding box group state:', {
-        uuid: this.boundingBoxGroup.uuid,
-        visible: this.boundingBoxGroup.visible,
-        parent: this.boundingBoxGroup.parent?.uuid,
-        children: this.boundingBoxGroup.children.length,
-        position: this.boundingBoxGroup.position.toArray(),
-        inScene: this.scene.children.includes(this.boundingBoxGroup)
-      });
       // Update existing bounding box (materials, visibility)
       this.updateMaterials(config.roomMaterials);
       if (config.visible !== undefined) {
         this.boundingBoxGroup.visible = config.visible;
-        console.log('[BoundingBoxManager] Set visibility to:', config.visible);
-        console.log('[BoundingBoxManager] Verified visibility is now:', this.boundingBoxGroup.visible);
-        
+
         // Also set visibility on all children to ensure they render
         this.boundingBoxGroup.traverse((child) => {
           child.visible = config.visible ?? true;
         });
-        console.log('[BoundingBoxManager] Set visibility on all children as well');
       }
     }
   }
@@ -267,12 +275,12 @@ export class BoundingBoxManager {
 
     // 2. Create face planes with materials
     const faceConfigs: FaceConfig[] = [
-      { name: 'Right', normal: new THREE.Vector3(-1, 0, 0), position: new THREE.Vector3(-width/2, 0, 0), rotation: [0, Math.PI/2, 0], material: 'left', size: [depth, height] },
-      { name: 'Left', normal: new THREE.Vector3(1, 0, 0), position: new THREE.Vector3(width/2, 0, 0), rotation: [0, -Math.PI/2, 0], material: 'right', size: [depth, height] },
+      { name: 'Right', normal: new THREE.Vector3(-1, 0, 0), position: new THREE.Vector3(-width/2, 0, 0), rotation: [0, Math.PI/2, 0], material: 'right', size: [depth, height] },
+      { name: 'Left', normal: new THREE.Vector3(1, 0, 0), position: new THREE.Vector3(width/2, 0, 0), rotation: [0, -Math.PI/2, 0], material: 'left', size: [depth, height] },
       { name: 'Ceiling', normal: new THREE.Vector3(0, 0, 1), position: new THREE.Vector3(0, 0, depth/2), rotation: [0, 0, 0], material: 'front', size: [width, height] },
-      { name: 'Floor', normal: new THREE.Vector3(0, 0, -1), position: new THREE.Vector3(0, 0, -depth/2), rotation: [0, Math.PI, 0], material: 'back', size: [width, height] },
-      { name: 'Front', normal: new THREE.Vector3(0, -1, 0), position: new THREE.Vector3(0, -height/2, 0), rotation: [Math.PI/2, 0, 0], material: 'down', size: [width, depth] },
-      { name: 'Back', normal: new THREE.Vector3(0, 1, 0), position: new THREE.Vector3(0, height/2, 0), rotation: [-Math.PI/2, 0, 0], material: 'up', size: [width, depth] },
+      { name: 'Floor', normal: new THREE.Vector3(0, 0, -1), position: new THREE.Vector3(0, 0, -depth/2), rotation: [0, Math.PI, 0], material: 'down', size: [width, height] },
+      { name: 'Front', normal: new THREE.Vector3(0, -1, 0), position: new THREE.Vector3(0, -height/2, 0), rotation: [Math.PI/2, 0, 0], material: 'up', size: [width, depth] },
+      { name: 'Back', normal: new THREE.Vector3(0, 1, 0), position: new THREE.Vector3(0, height/2, 0), rotation: [-Math.PI/2, 0, 0], material: 'back', size: [width, depth] },
     ];
 
     faceConfigs.forEach(faceConfig => {

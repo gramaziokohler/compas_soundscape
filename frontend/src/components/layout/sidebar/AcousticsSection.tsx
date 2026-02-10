@@ -71,6 +71,7 @@ import type {
   AcousticMaterial
 } from '@/types/materials';
 import type { AudioRenderingMode } from '@/components/audio/AudioRenderingModeSelector';
+import type { RoomScale } from '@/components/layout/sidebar/acoustics/ResonanceAudioControls';
 
 // Constants
 import {
@@ -100,6 +101,8 @@ interface AcousticsSectionProps {
   showBoundingBox: boolean;
   onToggleBoundingBox: (show: boolean) => void;
   onRefreshBoundingBox?: () => void;
+  roomScale?: RoomScale;
+  onRoomScaleChange?: (scale: RoomScale) => void;
 
   // Audio Orchestrator props
   audioRenderingMode?: AudioRenderingMode;
@@ -152,6 +155,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     showBoundingBox,
     onToggleBoundingBox,
     onRefreshBoundingBox,
+    roomScale,
+    onRoomScaleChange,
     audioRenderingMode = 'anechoic',
     onAudioRenderingModeChange,
     modelEntities = [],
@@ -674,6 +679,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             showBoundingBox={showBoundingBox}
             onToggleBoundingBox={onToggleBoundingBox}
             onRefreshBoundingBox={onRefreshBoundingBox}
+            roomScale={roomScale}
+            onRoomScaleChange={onRoomScaleChange}
         />
     ) : !isCompleted ? (
         <SimulationSetupContent

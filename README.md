@@ -4,7 +4,7 @@ A web application for populating architectural models with contextualized sounds
 
 ## Prerequisites
 
-- **Python 3.10+** (recommend using [Mamba](https://mamba.readthedocs.io/) or Conda)
+- **Python 3.11+** (recommend using [Mamba](https://mamba.readthedocs.io/) or Conda)
 - **CUDA 12.1+** (for GPU-accelerated audio generation with PyTorch)
 - **Node.js 18+** and **npm** (or pnpm)
 - **Git**
@@ -36,7 +36,7 @@ cd compas_soundscape
 
 ```bash
 # Create and activate the Mamba/Conda environment
-mamba create -n compas-toy python=3.10 -c conda-forge
+mamba create -n compas-toy python=3.11 -c conda-forge
 mamba activate compas-toy
 
 # Install PyTorch with CUDA 12.1 support

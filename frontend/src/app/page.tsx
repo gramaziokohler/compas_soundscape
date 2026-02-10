@@ -71,6 +71,15 @@ function HomeContent() {
   // Audio feature hooks (modular, integrate with orchestrator)
   const audioNormalization = useAudioNormalization(audioOrchestrator.orchestrator);
   const roomMaterials = useRoomMaterials(audioOrchestrator.orchestrator);
+
+  // Sync model bounding box → Resonance Audio room bounds
+  useEffect(() => {
+    if (!speckleBounds || !audioOrchestrator.orchestrator) return;
+    audioOrchestrator.orchestrator.updateResonanceRoomBounds(
+      speckleBounds.min,
+      speckleBounds.max
+    );
+  }, [speckleBounds, audioOrchestrator.orchestrator]);
   
   // Receiver selection callback - updates AudioOrchestrator with new receiver
   // Use ref to access latest orchestrator without recreating callback
@@ -104,6 +113,9 @@ function HomeContent() {
   // Bounding box visualization state
   const [showBoundingBox, setShowBoundingBox] = useState(false);
   const [refreshBoundingBoxTrigger, setRefreshBoundingBoxTrigger] = useState(0);
+
+  // Room scale state (for Resonance Audio bounding box scaling)
+  const [roomScale, setRoomScale] = useState({ x: 1, y: 1, z: 1 });
   
   // Audio rendering mode state (unified: threejs, resonance, anechoic)
   const [audioRenderingMode, setAudioRenderingMode] = useState<AudioRenderingMode>('anechoic');
@@ -1252,6 +1264,7 @@ function HomeContent() {
             resonanceAudioConfig={resonanceAudioConfig}
             showBoundingBox={showBoundingBox}
             refreshBoundingBoxTrigger={refreshBoundingBoxTrigger}
+            roomScale={roomScale}
             // Callback when Speckle viewer computes model bounds (for sound sphere placement)
             onBoundsComputed={setSpeckleBounds}
             // Sidebar states for control button and timeline positioning
@@ -1419,6 +1432,8 @@ function HomeContent() {
         showBoundingBox={showBoundingBox}
         onToggleBoundingBox={setShowBoundingBox}
         onRefreshBoundingBox={handleRefreshBoundingBox}
+        roomScale={roomScale}
+        onRoomScaleChange={setRoomScale}
 
         // Audio Orchestrator props (TODO: Phase 1-6)
         audioRenderingMode={audioRenderingMode}

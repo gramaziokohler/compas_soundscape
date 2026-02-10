@@ -54,6 +54,7 @@ export function ChorasSimulationSettings({
           onChange={(value) => handleSettingChange('de_ir_length', value)}
           showLabels={false}
           disabled={config.isRunning}
+          defaultValue={0.5}
         />
       </div>
 
