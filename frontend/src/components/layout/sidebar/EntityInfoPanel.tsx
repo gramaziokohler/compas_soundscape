@@ -1,9 +1,10 @@
 'use client';
 
 import { useMemo, useState, useCallback } from 'react';
-import { UI_COLORS, UI_BORDER_RADIUS, SPECKLE_FILTER_COLORS, RECEIVER_CONFIG, getMaterialColorByAbsorption } from '@/utils/constants';
+import { UI_COLORS, UI_BORDER_RADIUS, SPECKLE_FILTER_COLORS, RECEIVER_CONFIG, getMaterialColorByAbsorption, PYROOMACOUSTICS_DEFAULT_SCATTERING, PYROOMACOUSTICS_SCATTERING_MIN, PYROOMACOUSTICS_SCATTERING_MAX } from '@/utils/constants';
 import { useSpeckleSelectionMode } from '@/contexts/SpeckleSelectionModeContext';
 import { useAcousticMaterial } from '@/contexts/AcousticMaterialContext';
+import { RangeSlider } from '@/components/ui/RangeSlider';
 import { SoundResultContent } from '@/components/layout/sidebar/sound/SoundResultContent';
 import type { HierarchicalMeshObject } from '@/hooks/useSpeckleSurfaceMaterials';
 import type { SoundEvent } from '@/types';
@@ -28,6 +29,16 @@ function collectAllObjectIds(objects: HierarchicalMeshObject[]): string[] {
   for (const obj of objects) {
     if (obj.hasGeometry) ids.push(obj.id);
     ids.push(...collectAllObjectIds(obj.children));
+  }
+  return ids;
+}
+
+/** Collect all geometry IDs from a single node and its descendants */
+function collectGeometryIdsFromNode(node: HierarchicalMeshObject): string[] {
+  const ids: string[] = [];
+  if (node.hasGeometry) ids.push(node.id);
+  for (const child of node.children) {
+    ids.push(...collectGeometryIdsFromNode(child));
   }
   return ids;
 }
@@ -138,11 +149,54 @@ export function EntityInfoPanel({
     return findObjectInMeshTree(materialState.meshObjects, selectedEntity.objectId);
   }, [materialState, selectedEntity?.objectId, version]);
 
-  // Current material for the selected object
+  // Current material for the selected object (single geometry)
   const selectedObjectMaterialId = useMemo(() => {
     if (!materialState || !selectedEntity?.objectId) return null;
     return materialState.materialAssignments.get(selectedEntity.objectId) || null;
   }, [materialState, selectedEntity?.objectId, version]);
+
+  // Geometry IDs under the selected node (all descendants when it's a group/layer)
+  const selectedGeometryIds = useMemo(() => {
+    if (!selectedObjectInTree) return [];
+    return collectGeometryIdsFromNode(selectedObjectInTree);
+  }, [selectedObjectInTree, version]);
+
+  // Whether the selected node is a group/layer (not a single geometry object)
+  const isGroupSelection = selectedObjectInTree !== null && !selectedObjectInTree.hasGeometry;
+
+  // Scattering value for "All Objects" slider — common value or default
+  const allObjectsScattering = useMemo(() => {
+    if (!materialState) return PYROOMACOUSTICS_DEFAULT_SCATTERING;
+    const allIds = collectAllObjectIds(materialState.meshObjects);
+    if (allIds.length === 0) return PYROOMACOUSTICS_DEFAULT_SCATTERING;
+    const values = allIds.map(id => materialState.scatteringAssignments.get(id) ?? PYROOMACOUSTICS_DEFAULT_SCATTERING);
+    const unique = new Set(values);
+    return unique.size === 1 ? values[0] : PYROOMACOUSTICS_DEFAULT_SCATTERING;
+  }, [materialState, version]);
+
+  // Scattering value for selected object/group slider
+  const selectedObjectScattering = useMemo(() => {
+    if (!materialState) return PYROOMACOUSTICS_DEFAULT_SCATTERING;
+    if (isGroupSelection && selectedGeometryIds.length > 0) {
+      const values = selectedGeometryIds.map(id => materialState.scatteringAssignments.get(id) ?? PYROOMACOUSTICS_DEFAULT_SCATTERING);
+      const unique = new Set(values);
+      return unique.size === 1 ? values[0] : PYROOMACOUSTICS_DEFAULT_SCATTERING;
+    }
+    if (!selectedEntity?.objectId) return PYROOMACOUSTICS_DEFAULT_SCATTERING;
+    return materialState.scatteringAssignments.get(selectedEntity.objectId) ?? PYROOMACOUSTICS_DEFAULT_SCATTERING;
+  }, [materialState, selectedEntity?.objectId, selectedGeometryIds, isGroupSelection, version]);
+
+  // Assignment info for group selections: common material and mixed state
+  const selectedGroupAssignmentInfo = useMemo(() => {
+    if (!materialState || selectedGeometryIds.length === 0) return null;
+    const assignedMaterials = new Set(
+      selectedGeometryIds
+        .map(id => materialState.materialAssignments.get(id))
+        .filter(Boolean) as string[]
+    );
+    const commonMaterialId = assignedMaterials.size === 1 ? Array.from(assignedMaterials)[0] : null;
+    return { uniqueAssigned: assignedMaterials, commonMaterialId };
+  }, [materialState, selectedGeometryIds, version]);
 
   // Background color helper
   const getSelectBg = (materialId: string | null): string => {
@@ -170,9 +224,7 @@ export function EntityInfoPanel({
             <select
               value={allObjectsInfo.commonMaterialId || ''}
               onChange={(e) => {
-                if (e.target.value) {
-                  materialState.assignMaterialToAll(e.target.value);
-                }
+                materialState.assignMaterialToAll(e.target.value);
               }}
               className="text-xs px-2 py-1 text-white rounded focus:outline-none focus:ring-1 focus:ring-white"
               style={{
@@ -198,49 +250,99 @@ export function EntityInfoPanel({
             </select>
           </div>
 
-          {/* Per-object dropdown OR hint text */}
-          {selectedObjectInTree ? (
-            <div className="flex items-center justify-between gap-2">
-              <span
-                className="text-xs truncate"
-                style={{ color: UI_COLORS.NEUTRAL_500, maxWidth: '120px' }}
-                title={"selectedObjectInTree.name"}
-              >
-                Selected surface
-              </span>
-              <select
-                value={selectedObjectMaterialId || ''}
-                onChange={(e) => {
-                  if (e.target.value && selectedEntity) {
-                    materialState.assignMaterial(selectedEntity.objectId, e.target.value);
-                  }
-                }}
-                className="text-xs px-2 py-1 text-white rounded focus:outline-none focus:ring-1 focus:ring-white"
-                style={{
-                  backgroundColor: getSelectBg(selectedObjectMaterialId),
-                  borderRadius: `${UI_BORDER_RADIUS.SM}px`,
-                  maxWidth: '140px',
-                  minWidth: '100px'
-                }}
-              >
-                <option value="" style={{ backgroundColor: UI_COLORS.PRIMARY }}>
-                  Select...
-                </option>
-                {sortedMaterials.map(material => (
-                  <option
-                    key={material.id}
-                    value={material.id}
-                    style={{ backgroundColor: materialColors.get(material.id) }}
-                  >
-                    {material.name} ({(material.absorption * 100).toFixed(0)}%)
+          {/* Per-object / per-group dropdown OR hint text */}
+          {selectedObjectInTree && selectedGeometryIds.length > 0 ? (() => {
+            const isMixed = isGroupSelection
+              ? (selectedGroupAssignmentInfo?.uniqueAssigned.size ?? 0) > 1
+              : false;
+            const effectiveMaterialId = isGroupSelection
+              ? selectedGroupAssignmentInfo?.commonMaterialId ?? null
+              : selectedObjectMaterialId;
+            const label = isGroupSelection
+              ? `Selected (${selectedGeometryIds.length})`
+              : 'Selected surface';
+
+            return (
+              <div className="flex items-center justify-between gap-2">
+                <span
+                  className="text-xs truncate"
+                  style={{ color: UI_COLORS.NEUTRAL_500, maxWidth: '120px' }}
+                  title={selectedObjectInTree.name}
+                >
+                  {label}
+                </span>
+                <select
+                  value={effectiveMaterialId || ''}
+                  onChange={(e) => {
+                    if (isGroupSelection) {
+                      materialState.assignMaterialToObjects(selectedGeometryIds, e.target.value);
+                    } else if (selectedEntity) {
+                      materialState.assignMaterial(selectedEntity.objectId, e.target.value);
+                    }
+                  }}
+                  className="text-xs px-2 py-1 text-white rounded focus:outline-none focus:ring-1 focus:ring-white"
+                  style={{
+                    backgroundColor: getSelectBg(effectiveMaterialId),
+                    borderRadius: `${UI_BORDER_RADIUS.SM}px`,
+                    maxWidth: '140px',
+                    minWidth: '100px',
+                    opacity: isMixed ? 0.7 : 1
+                  }}
+                >
+                  <option value="" style={{ backgroundColor: UI_COLORS.PRIMARY }}>
+                    {isMixed ? '(mixed)' : 'Select...'}
                   </option>
-                ))}
-              </select>
-            </div>
-          ) : (
+                  {sortedMaterials.map(material => (
+                    <option
+                      key={material.id}
+                      value={material.id}
+                      style={{ backgroundColor: materialColors.get(material.id) }}
+                    >
+                      {material.name} ({(material.absorption * 100).toFixed(0)}%)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            );
+          })() : (
             <p className="text-xs" style={{ color: UI_COLORS.NEUTRAL_500, fontStyle: 'italic' }}>
               Select a surface in the viewer to assign material
             </p>
+          )}
+
+          {/* Scattering (per-object, same workflow as material) */}
+          {selectedObjectInTree && selectedGeometryIds.length > 0 ? (
+            <RangeSlider
+              label={isGroupSelection ? `Scattering (${selectedGeometryIds.length}): ` : 'Scattering: '}
+              value={selectedObjectScattering}
+              min={PYROOMACOUSTICS_SCATTERING_MIN}
+              max={PYROOMACOUSTICS_SCATTERING_MAX}
+              step={0.01}
+              onChange={(value) => {
+                if (isGroupSelection) {
+                  materialState.assignScatteringToObjects(selectedGeometryIds, value);
+                } else if (selectedEntity) {
+                  materialState.assignScattering(selectedEntity.objectId, value);
+                }
+              }}
+              defaultValue={PYROOMACOUSTICS_DEFAULT_SCATTERING}
+              showLabels={false}
+              formatValue={(v) => v.toFixed(2)}
+              hoverText="Scattering coefficient for selected surface(s) (double-click to reset)"
+            />
+          ) : (
+            <RangeSlider
+              label="Scattering (all): "
+              value={allObjectsScattering}
+              min={PYROOMACOUSTICS_SCATTERING_MIN}
+              max={PYROOMACOUSTICS_SCATTERING_MAX}
+              step={0.01}
+              onChange={(value) => materialState.assignScatteringToAll(value)}
+              defaultValue={PYROOMACOUSTICS_DEFAULT_SCATTERING}
+              showLabels={false}
+              formatValue={(v) => v.toFixed(2)}
+              hoverText="Scattering coefficient for all surfaces (double-click to reset)"
+            />
           )}
 
           {/* Unassigned count */}

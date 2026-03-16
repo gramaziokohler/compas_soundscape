@@ -7,11 +7,14 @@ import {
   DEFAULT_DIFFUSION_STEPS,
   DEFAULT_SEED_COPIES,
   DEFAULT_AUDIO_MODEL,
-  LIBRARY_MAX_SEARCH_RESULTS
+  AUDIO_MODEL_ELEVENLABS,
+  LIBRARY_MAX_SEARCH_RESULTS,
+  DUPLICATE_POSITION_OFFSET
 } from "@/utils/constants";
 import { loadAudioFile, revokeAudioUrl } from "@/lib/audio/utils/audio-upload";
 import { calculateSoundPosition, type GeometryBounds } from "@/utils/positioning";
 import { createSoundEventFromUpload } from "@/utils/event-factory";
+import { generateSoundEffect } from "@/services/elevenlabs.mts";
 import { trimDisplayName } from "@/utils/utils";
 import { useErrorNotification } from "@/contexts/ErrorContext";
 
@@ -59,13 +62,25 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
   }, [globalDuration, globalSteps]);
 
   const handleRemoveConfig = useCallback((index: number) => {
-    // Remove the config and any generated sounds atomically
+    // Remove the config and re-index remaining sounds atomically.
+    // After removing config at index i, all sounds with prompt_index > i
+    // must be decremented so they still match their shifted config positions.
+    // Both soundscapeData AND generatedSounds must be updated synchronously
+    // to avoid a stale render where isSoundGenerated() fails for shifted cards.
+    const reindex = (sounds: any[]) =>
+      sounds
+        .filter((sound: any) => sound.prompt_index !== index)
+        .map((sound: any) => ({
+          ...sound,
+          prompt_index: sound.prompt_index > index
+            ? sound.prompt_index - 1
+            : sound.prompt_index
+        }));
+
     setSoundConfigs(prev => prev.filter((_, i) => i !== index));
-    setSoundscapeData(prev => {
-      if (!prev) return prev;
-      return prev.filter((sound: any) => sound.prompt_index !== index);
-    });
-    
+    setSoundscapeData(prev => prev ? reindex(prev) : prev);
+    setGeneratedSounds(prev => reindex(prev));
+
     // Update active tab if needed
     if (activeSoundConfigTab >= soundConfigs.length - 1) {
       setActiveSoundConfigTab(Math.max(0, soundConfigs.length - 2));
@@ -168,30 +183,64 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
   }, [soundConfigs]);
 
   const handleGenerate = useCallback(async () => {
-    // Separate configs by type and track their original indices
+    // Identify configs that already have generated sounds — skip them to
+    // preserve existing sound events (and their dragged positions).
+    const alreadyGeneratedIndices = new Set<number>();
+    if (soundscapeData) {
+      soundscapeData.forEach((sound: any) => {
+        if (sound.prompt_index !== undefined) {
+          alreadyGeneratedIndices.add(sound.prompt_index);
+        }
+      });
+    }
+
+    // Separate PENDING configs by type and track their original indices
     const uploadedConfigsWithIndices = soundConfigs
       .map((config, idx) => ({ config, originalIndex: idx }))
-      .filter(({ config }) => (config.type === 'upload' || config.type === 'sample-audio') && config.uploadedAudioUrl);
+      .filter(({ config, originalIndex }) =>
+        !alreadyGeneratedIndices.has(originalIndex) &&
+        (config.type === 'upload' || config.type === 'sample-audio') && config.uploadedAudioUrl);
 
     const libraryConfigsWithIndices = soundConfigs
       .map((config, idx) => ({ config, originalIndex: idx }))
-      .filter(({ config }) => config.type === 'library' && config.selectedLibrarySound);
+      .filter(({ config, originalIndex }) =>
+        !alreadyGeneratedIndices.has(originalIndex) &&
+        config.type === 'library' && config.selectedLibrarySound);
 
-    const generationConfigsWithIndices = soundConfigs
+    const elevenLabsConfigsWithIndices = soundConfigs
       .map((config, idx) => ({ config, originalIndex: idx }))
-      .filter(({ config }) =>
+      .filter(({ config, originalIndex }) =>
+        !alreadyGeneratedIndices.has(originalIndex) &&
         (config.type === 'text-to-audio' || !config.type) &&
         !config.uploadedAudioUrl &&
         config.prompt.trim() !== ""
       );
 
-    if (generationConfigsWithIndices.length === 0 && uploadedConfigsWithIndices.length === 0 && libraryConfigsWithIndices.length === 0) {
+    // For non-ElevenLabs models, route to backend; for ElevenLabs, handled client-side below
+    const generationConfigsWithIndices = audioModel !== AUDIO_MODEL_ELEVENLABS
+      ? elevenLabsConfigsWithIndices
+      : [];
+
+    const elevenlabsConfigsWithIndices = audioModel === AUDIO_MODEL_ELEVENLABS
+      ? elevenLabsConfigsWithIndices
+      : [];
+
+    if (
+      generationConfigsWithIndices.length === 0 &&
+      uploadedConfigsWithIndices.length === 0 &&
+      libraryConfigsWithIndices.length === 0 &&
+      elevenlabsConfigsWithIndices.length === 0
+    ) {
       setSoundGenError("Please enter at least one sound prompt or upload an audio file.");
       return;
     }
 
     // Calculate total number of sounds across all modes for proper spacing
-    const totalSoundsCount = generationConfigsWithIndices.length + uploadedConfigsWithIndices.length + libraryConfigsWithIndices.length;
+    const totalSoundsCount =
+      generationConfigsWithIndices.length +
+      uploadedConfigsWithIndices.length +
+      libraryConfigsWithIndices.length +
+      elevenlabsConfigsWithIndices.length;
 
     setSoundGenError(null);
     setIsSoundGenerating(true);
@@ -339,8 +388,42 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
         }
       }
 
-      // Combine generated, uploaded, and library sounds
-      const allSoundEvents = [...generatedEvents, ...uploadedEvents, ...libraryEvents];
+      // Generate sounds client-side via ElevenLabs
+      let elevenLabsEvents: any[] = [];
+      if (elevenlabsConfigsWithIndices.length > 0) {
+        for (const { config, originalIndex } of elevenlabsConfigsWithIndices) {
+          try {
+            console.log(`[Sound Generation] ElevenLabs generating: ${config.prompt}`);
+
+            const duration = config.duration ?? DEFAULT_DURATION_SECONDS;
+            const audioUrl = await generateSoundEffect({
+              text: config.prompt,
+              durationSeconds: duration >= 0.5 && duration <= 22 ? duration : undefined,
+            });
+
+            const soundEvent = createSoundEventFromUpload(
+              config,
+              audioUrl,
+              originalIndex,
+              totalSoundsCount,
+              geometryBounds as GeometryBounds | undefined,
+              'elevenlabs'
+            );
+
+            elevenLabsEvents.push(soundEvent);
+            console.log(`[Sound Generation] ElevenLabs sound ready: ${config.prompt}`);
+          } catch (error) {
+            console.error(`[Sound Generation] ElevenLabs failed for: ${config.prompt}`, error);
+            throw error;
+          }
+        }
+      }
+
+      // Merge newly generated sounds with existing ones.
+      // Existing sounds keep their current positions (including dragged positions).
+      const existingEvents = soundscapeData ? [...soundscapeData] : [];
+      const newEvents = [...generatedEvents, ...uploadedEvents, ...libraryEvents, ...elevenLabsEvents];
+      const allSoundEvents = [...existingEvents, ...newEvents];
 
       setGeneratedSounds(allSoundEvents);
 
@@ -363,7 +446,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
       setIsSoundGenerating(false);
       abortControllerRef.current = null;
     }
-  }, [soundConfigs, geometryBounds, globalNegativePrompt, applyDenoising, addError]);
+  }, [soundConfigs, soundscapeData, geometryBounds, globalNegativePrompt, applyDenoising, audioModel, addError]);
 
   const setSoundConfigsFromPrompts = useCallback((prompts: any[]) => {
     setSoundConfigs(prev => {
@@ -835,6 +918,98 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [soundConfigs.map(c => c.display_name).join(',')]); // Watch display_name changes
 
+  /**
+   * Duplicate a sound config and its generated sound event.
+   * Creates a new card with the same audio URL and places a new sphere
+   * next to the original one (offset along X axis).
+   */
+  const handleDuplicateConfig = useCallback((index: number) => {
+    const config = soundConfigs[index];
+    if (!config) return;
+
+    // Clone the config (without entity link — duplicated sound is independent)
+    const newConfig: SoundGenerationConfig = {
+      ...config,
+      display_name: config.display_name ? `${config.display_name} (copy)` : undefined,
+      entity: undefined, // Duplicated sound is not entity-linked
+    };
+
+    // Add the new config
+    setSoundConfigs(prev => {
+      const updated = [...prev, newConfig];
+      setActiveSoundConfigTab(updated.length - 1);
+      return updated;
+    });
+
+    // If the original sound has been generated, duplicate the sound event too
+    if (soundscapeData) {
+      const originalEvents = soundscapeData.filter((s: any) => s.prompt_index === index);
+      if (originalEvents.length > 0) {
+        const newPromptIndex = soundConfigs.length; // Will be the index of the new config
+
+        const duplicatedEvents = originalEvents.map((event: any, variantIdx: number) => {
+          // Offset position along X axis so the new sphere appears next to the original
+          const originalPos = event.position as [number, number, number];
+          const offsetPosition: [number, number, number] = [
+            originalPos[0] + DUPLICATE_POSITION_OFFSET,
+            originalPos[1],
+            originalPos[2],
+          ];
+
+          return {
+            ...event,
+            id: `duplicate-${newPromptIndex}-${variantIdx}-${Date.now()}`,
+            prompt_index: newPromptIndex,
+            position: offsetPosition,
+            display_name: newConfig.display_name || event.display_name,
+            entity_index: undefined, // Not entity-linked
+          };
+        });
+
+        setSoundscapeData(prev => {
+          if (!prev) return duplicatedEvents;
+          return [...prev, ...duplicatedEvents];
+        });
+      }
+    }
+  }, [soundConfigs, soundscapeData]);
+
+  /**
+   * Atomically restore a full soundscape state (configs + events + settings).
+   * Unlike calling setSoundConfigsFromPrompts + setSoundscapeData separately,
+   * this sets ALL states in a single batch to guarantee the UI picks up both
+   * the configs and the generated sounds together.
+   */
+  const restoreSoundscape = useCallback((
+    configs: SoundGenerationConfig[],
+    events: any[],
+    settings?: {
+      negativePrompt?: string;
+      audioModel?: string;
+    }
+  ) => {
+    console.log(`[useSoundGeneration] Restoring soundscape: ${configs.length} configs, ${events.length} events`);
+
+    // Set configs directly (bypass dedup logic of setSoundConfigsFromPrompts)
+    setSoundConfigs(configs);
+
+    // Set both soundscapeData AND generatedSounds together
+    // so the UI sees matching data immediately without waiting for the sync effect
+    setSoundscapeData(events.length > 0 ? events : null);
+    setGeneratedSounds(events);
+
+    // Restore global settings if provided
+    if (settings?.negativePrompt !== undefined) {
+      setGlobalNegativePrompt(settings.negativePrompt);
+    }
+    if (settings?.audioModel !== undefined) {
+      setAudioModel(settings.audioModel);
+    }
+
+    // Reset active tab to first card
+    setActiveSoundConfigTab(0);
+  }, []);
+
   return {
     soundConfigs,
     activeSoundConfigTab,
@@ -869,8 +1044,10 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     handleLibrarySoundSelect,
     handleResetToDefaults,
     handleResetSoundConfig,
+    handleDuplicateConfig,
     handleDetachSoundFromEntity,
     handleAttachSoundToEntity,
-    updateSoundPosition
+    updateSoundPosition,
+    restoreSoundscape
   };
 }

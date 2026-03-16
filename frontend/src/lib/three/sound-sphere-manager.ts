@@ -180,6 +180,19 @@ export class SoundSphereManager {
     const meshSounds = visibleSounds.filter(s => s.entity_index === undefined);
     const entitySounds = visibleSounds.filter(s => s.entity_index !== undefined);
 
+    // Pre-populate spherePositions from soundEvent.position for sounds that have
+    // saved positions (e.g. from a restored soundscape). This ensures restored positions
+    // take priority over spiral calculation. A "saved" position is non-zero and non-default.
+    meshSounds.forEach(s => {
+      if (!this.spherePositions.has(s.id) && s.position) {
+        const pos = s.position as [number, number, number];
+        const hasSavedPosition = pos.length === 3 && (pos[0] !== 0 || pos[1] !== 0 || pos[2] !== 0);
+        if (hasSavedPosition) {
+          this.spherePositions.set(s.id, pos);
+        }
+      }
+    });
+
     // Calculate spiral positions for non-entity-linked sounds that don't have stored positions.
     // Entity-linked sounds use their entity's position (set via linkSoundToEntity).
     const hasNewMeshSounds = meshSounds.some(s => !this.spherePositions.has(s.id));
@@ -252,18 +265,20 @@ export class SoundSphereManager {
   /**
    * Sync audio sources with the current set of visible sounds.
    * Creates audio sources for new sounds, removes sources for sounds no longer visible.
+   * Also cleans up stale spherePositions entries to prevent unbounded growth.
    * Audio lifecycle is decoupled from mesh lifecycle.
    */
   private syncAudioSources(visibleSounds: SoundEvent[]): void {
     const visibleSoundIds = new Set(visibleSounds.map(s => s.id));
 
-    // Remove audio sources for sounds no longer visible
+    // Remove audio sources and stale positions for sounds no longer visible
     for (const [soundId] of this.soundMetadata) {
       if (!visibleSoundIds.has(soundId)) {
         if (this.audioOrchestrator) {
           this.audioOrchestrator.removeSource(soundId);
         }
         this.soundMetadata.delete(soundId);
+        this.spherePositions.delete(soundId);
       }
     }
 

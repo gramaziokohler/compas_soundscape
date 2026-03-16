@@ -8,6 +8,7 @@ uvicorn==0.37.0
 python-multipart==0.0.20
 python-dotenv==1.1.1
 pydantic==2.11.9
+dotenv==0.9.9
 
 # --- HTTP Clients ---
 requests==2.32.3
@@ -41,10 +42,6 @@ matplotlib==3.10.7
 # --- Speckle (3D model platform) ---
 specklepy==3.2.3
 gql==3.5.3
-
-# --- Finite Element / Modal Analysis ---
-sfepy==2025.3
-tetgen==0.6.7
 
 # --- Misc ---
 numpy-stl==3.2.0

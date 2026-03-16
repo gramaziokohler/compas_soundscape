@@ -15,7 +15,7 @@ from services.impulse_response_service import ImpulseResponseService
 # from services.modal_analysis_service import ModalAnalysisService
 
 # Import routers
-from routers import upload, generation, sounds, sed_analysis, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics
+from routers import upload, generation, sounds, sed_analysis, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, speckle, soundscape
 
 # Import utilities
 from utils.file_operations import cleanup_all_temp_directories
@@ -26,7 +26,9 @@ from config.constants import (
     STATIC_MOUNT_PATH,
     STATIC_FILES_DIRECTORY,
     IMPULSE_RESPONSE_DIR,
-    TEMP_SIMULATIONS_DIR
+    TEMP_SIMULATIONS_DIR,
+    SOUNDSCAPE_DATA_DIR,
+    SOUNDSCAPE_DATA_URL_PREFIX,
     )
 
 # --- Initialization ---
@@ -95,6 +97,14 @@ app.mount(
     name="temp"
 )
 
+# Mount soundscapes directory (persistent, outside temp/)
+Path(SOUNDSCAPE_DATA_DIR).mkdir(parents=True, exist_ok=True)
+app.mount(
+    SOUNDSCAPE_DATA_URL_PREFIX,
+    StaticFiles(directory=SOUNDSCAPE_DATA_DIR),
+    name="soundscapes"
+)
+
 # --- CORS Middleware ---
 # Allow all origins for network access (development mode)
 # For production, restrict to specific origins: [CORS_ORIGIN_LOCALHOST, CORS_ORIGIN_FRONTEND, CORS_ORIGIN_NETWORK]
@@ -119,6 +129,8 @@ app.include_router(impulse_responses.router)
 # app.include_router(modal_analysis.router)
 app.include_router(choras.router)
 app.include_router(pyroomacoustics.router)
+app.include_router(speckle.router)
+app.include_router(soundscape.router)
 
 
 @app.get("/")

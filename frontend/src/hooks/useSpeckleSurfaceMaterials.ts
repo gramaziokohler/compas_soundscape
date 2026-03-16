@@ -38,6 +38,7 @@ interface UseSpeckleSurfaceMaterialsReturn {
   selectLayer: (layerId: string) => void;
   assignMaterial: (objectId: string, materialId: string) => void;
   assignMaterialToAll: (materialId: string) => void;
+  assignMaterialToObjects: (objectIds: string[], materialId: string) => void;
   getMaterialColor: (materialId: string) => string;
   getColorGroups: () => ObjectColorGroup[];
   clearMaterialAssignments: () => void;
@@ -365,6 +366,24 @@ export function useSpeckleSurfaceMaterials(
   }, []);
 
   /**
+   * Assign material to a specific set of objects in a single state update
+   */
+  const assignMaterialToObjects = useCallback((objectIds: string[], materialId: string) => {
+    console.log('[useSpeckleSurfaceMaterials] Assigning material to', objectIds.length, 'objects:', materialId);
+    setMaterialAssignments(prev => {
+      const newAssignments = new Map(prev);
+      for (const objectId of objectIds) {
+        if (materialId) {
+          newAssignments.set(objectId, materialId);
+        } else {
+          newAssignments.delete(objectId);
+        }
+      }
+      return newAssignments;
+    });
+  }, []);
+
+  /**
    * Assign material to ALL objects in the tree
    */
   const assignMaterialToAll = useCallback((materialId: string) => {
@@ -442,6 +461,7 @@ export function useSpeckleSurfaceMaterials(
     selectLayer,
     assignMaterial,
     assignMaterialToAll,
+    assignMaterialToObjects,
     getMaterialColor,
     getColorGroups,
     clearMaterialAssignments,

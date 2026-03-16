@@ -15,6 +15,8 @@ A web application for populating architectural models with contextualized sounds
 |-----|---------|-------------|
 | `GOOGLE_API_KEY` | Google Gemini LLM (text/prompt generation) | [Google AI Studio](https://aistudio.google.com/apikey) |
 | `SPECKLE_TOKEN` | Speckle 3D model platform access | [Speckle Account](https://app.speckle.systems/) |
+Speckle Token tutorial: https://docs.speckle.systems/developers/sdks/python/getting-started/authentication
+
 
 ### Optional API Keys
 

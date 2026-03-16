@@ -16,8 +16,6 @@ import {
   PYROOMACOUSTICS_RAY_TRACING_RECOMMENDED_MAX_ORDER,
   PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MIN,
   PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MAX,
-  PYROOMACOUSTICS_SCATTERING_MIN,
-  PYROOMACOUSTICS_SCATTERING_MAX,
   PYROOMACOUSTICS_SIMULATION_MODE_MONO,
   PYROOMACOUSTICS_SIMULATION_MODE_FOA,
   PYROOMACOUSTICS_SIMULATION_MODE_NAMES
@@ -115,38 +113,29 @@ export function PyroomAcousticsSimulationSettings({
           label="Air absorption"
           disabled={config.isRunning}
         />
+        <CheckboxField
+          checked={config.settings.enable_grid}
+          onChange={(checked) => handleSettingChange('enable_grid', checked)}
+          label="Grid receiver heatmap"
+          disabled={config.isRunning}
+        />
       </div>
 
-      {/* Ray Tracing Parameters (2-column grid when enabled) */}
+      {/* Ray Tracing Parameters (visible when enabled) */}
       {config.settings.ray_tracing && (
-        <div className="grid grid-cols-2 gap-2">
+        <div>
           {/* Number of Rays */}
           <RangeSlider
-          label="Rays: "
-          value={config.settings.n_rays}
-          min={PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MIN}
-          max={PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MAX}
-          step={1000}
-          onChange={(value) => handleSettingChange('n_rays', value)}
-          disabled={config.isRunning}
-          defaultValue={10000}
-          showLabels={false}
-          />        
-
-          {/* Scattering */}
-          <div>
-            <RangeSlider
-            label="Scattering: "
-            value={config.settings.scattering}
-            min={PYROOMACOUSTICS_SCATTERING_MIN}
-            max={PYROOMACOUSTICS_SCATTERING_MAX}
-            step={0.01}
-            onChange={(value) => handleSettingChange('scattering', value)}
+            label="Rays: "
+            value={config.settings.n_rays}
+            min={PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MIN}
+            max={PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MAX}
+            step={1000}
+            onChange={(value) => handleSettingChange('n_rays', value)}
             disabled={config.isRunning}
-            defaultValue={0.05}
+            defaultValue={10000}
             showLabels={false}
-            />              
-          </div>
+          />
         </div>
       )}
 

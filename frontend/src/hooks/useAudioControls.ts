@@ -308,6 +308,17 @@ export function useAudioControls(generatedSounds: any[]) {
     setSoundIntervals({});
   }, []);
 
+  /**
+   * Restore volume and interval maps from saved soundscape state
+   */
+  const restoreVolumeAndIntervals = useCallback((
+    volumes: Record<string, number>,
+    intervals: Record<string, number>,
+  ) => {
+    setSoundVolumes(volumes);
+    setSoundIntervals(intervals);
+  }, []);
+
   return {
     individualSoundStates,
     selectedVariants,
@@ -329,6 +340,7 @@ export function useAudioControls(generatedSounds: any[]) {
     pauseAll,
     stopAll,
     isAnyPlaying,
-    forceStopAll
+    forceStopAll,
+    restoreVolumeAndIntervals
   };
 }

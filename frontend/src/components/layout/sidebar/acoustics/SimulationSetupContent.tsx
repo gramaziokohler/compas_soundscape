@@ -23,7 +23,7 @@ interface SimulationSetupContentProps {
   viewerRef: React.RefObject<Viewer | null>;
   worldTree: any;
   availableMaterials: AcousticMaterial[];
-  onMaterialAssignmentsChange: (assignments: Record<string, string>, layerName: string | null) => void;
+  onMaterialAssignmentsChange: (assignments: Record<string, string>, layerName: string | null, geometryObjectIds: string[], scatteringAssignments: Record<string, number>) => void;
   onUpdateConfig: (updates: Partial<SimulationConfig>) => void;
 }
 
@@ -42,6 +42,7 @@ export function SimulationSetupContent({
   // Extract persisted Speckle material assignments from config
   const initialAssignments = (config as any).speckleMaterialAssignments as Record<string, string> | undefined;
   const initialLayerName = (config as any).speckleLayerName as string | null | undefined;
+  const initialScatteringAssignments = (config as any).speckleScatteringAssignments as Record<string, number> | undefined;
 
   return (
     <div className="space-y-4">
@@ -53,6 +54,7 @@ export function SimulationSetupContent({
         onMaterialAssignmentsChange={onMaterialAssignmentsChange}
         initialAssignments={initialAssignments}
         initialLayerName={initialLayerName}
+        initialScatteringAssignments={initialScatteringAssignments}
       />
 
       {/* Choras Settings */}

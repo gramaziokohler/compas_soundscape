@@ -122,6 +122,7 @@ export interface SidebarProps {
   mutedSounds?: Set<string>;
   soloedSound?: string | null;
   onResetSound?: (soundId: string, promptIndex: number) => void;
+  onDuplicateConfig?: (index: number) => void;
   onSelectSoundCard?: (promptIndex: number) => void;
   selectedCardIndex?: number | null;
   soundVolumes?: { [soundId: string]: number };
@@ -302,6 +303,7 @@ export interface SoundGenerationSectionProps {
   mutedSounds?: Set<string>;
   soloedSound?: string | null;
   onResetSound?: (soundId: string, promptIndex: number) => void;
+  onDuplicateConfig?: (index: number) => void;
   onSelectSoundCard?: (promptIndex: number) => void;
   selectedCardIndex?: number | null;
   soundVolumes?: { [soundId: string]: number };

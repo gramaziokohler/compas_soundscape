@@ -1,8 +1,12 @@
 # backend/services/pyroomacoustics_service.py
 # Pyroomacoustics Acoustic Simulation Service
 
+import ast
 import numpy as np
 import pyroomacoustics as pra
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend for server-side rendering
+import matplotlib.pyplot as plt
 from scipy.io import wavfile
 from pathlib import Path
 from fastapi import HTTPException
@@ -12,7 +16,13 @@ from config.constants import (
     PYROOMACOUSTICS_SIMULATION_MODE_FOA,
     PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING,
     PYROOMACOUSTICS_MAX_ORDER_MAX,
-    PYROOMACOUSTICS_DEFAULT_ABSORPTION
+    PYROOMACOUSTICS_DEFAULT_ABSORPTION,
+    PYROOMACOUSTICS_CUSTOM_MATERIALS,
+    PYROOMACOUSTICS_GRID_RECEIVER_POINTS_FILE,
+    PYROOMACOUSTICS_GRID_PLOT_DPI,
+    PYROOMACOUSTICS_GRID_PLOT_FIGSIZE,
+    PYROOMACOUSTICS_GRID_PLOT_COLORMAP,
+    PYROOMACOUSTICS_GRID_PLOT_CONTOUR_LEVELS
 )
 
 
@@ -144,6 +154,157 @@ class PyroomacousticsService:
             raise ValueError(f"Failed to add receiver at {receiver_position}: {error_msg}")
 
     @staticmethod
+    def weld_mesh(
+        vertices: list[list[float]],
+        faces: list[list[int]],
+        face_materials: dict[int, float] = None,
+        face_scattering: dict[int, float] = None,
+        tolerance: float = None
+    ) -> tuple:
+        """
+        Remove duplicate vertices and merge ("weld") connected meshes.
+
+        When multiple mesh objects are concatenated, shared boundary vertices are
+        duplicated with the same 3D position but different indices.  This method
+        merges those duplicates so pyroomacoustics sees a single, clean closed
+        mesh.  Material and scattering assignments are preserved for every
+        surviving face.
+
+        Degenerate faces (where vertex merging causes two or more indices in a
+        triangle to collapse) are dropped automatically.
+
+        Args:
+            vertices: List of [x, y, z] vertex coordinates.
+            faces: List of face vertex index lists (e.g. [[0,1,2], [1,2,3]]).
+            face_materials: Optional dict mapping face index → absorption value.
+            face_scattering: Optional dict mapping face index → scattering value.
+            tolerance: Max distance to consider two vertices identical (metres).
+                       Defaults to PYROOMACOUSTICS_MESH_WELD_TOLERANCE.
+
+        Returns:
+            tuple: (welded_vertices, welded_faces, welded_face_materials,
+                    welded_face_scattering)
+                   – vertices and faces are plain Python lists
+                   – material/scattering dicts are re-indexed to match new faces
+        """
+        from config.constants import PYROOMACOUSTICS_MESH_WELD_TOLERANCE
+
+        if tolerance is None:
+            tolerance = PYROOMACOUSTICS_MESH_WELD_TOLERANCE
+
+        original_vert_count = len(vertices)
+        original_face_count = len(faces)
+
+        # Quantize vertices to a grid defined by the tolerance so that
+        # positions within *tolerance* of each other snap to the same value.
+        vertices_np = np.array(vertices, dtype=np.float64)
+        quantized = np.round(vertices_np / tolerance) * tolerance
+
+        # np.unique with axis=0 returns sorted unique rows and an inverse map
+        # inverse_indices[i] gives the index in unique_verts for old vertex i
+        unique_verts, inverse_indices = np.unique(
+            quantized, axis=0, return_inverse=True
+        )
+
+        # Remap faces, drop degenerate triangles, and remove duplicate faces
+        # Two meshes sharing a boundary each contribute a face with the same
+        # vertices — after vertex welding those faces become identical.
+        welded_faces = []
+        welded_face_materials = {} if face_materials is not None else None
+        welded_face_scattering = {} if face_scattering is not None else None
+        seen_faces: set[tuple[int, ...]] = set()
+        new_idx = 0
+        n_degenerate = 0
+        n_duplicate = 0
+
+        for old_idx, face in enumerate(faces):
+            remapped = [int(inverse_indices[v]) for v in face]
+
+            # A valid triangle needs at least 3 distinct vertices
+            if len(set(remapped)) < 3:
+                n_degenerate += 1
+                continue
+
+            # Canonical key: sorted vertex indices (order-independent)
+            face_key = tuple(sorted(remapped))
+            if face_key in seen_faces:
+                n_duplicate += 1
+                continue
+            seen_faces.add(face_key)
+
+            welded_faces.append(remapped)
+
+            if face_materials is not None and old_idx in face_materials:
+                welded_face_materials[new_idx] = face_materials[old_idx]
+            if face_scattering is not None and old_idx in face_scattering:
+                welded_face_scattering[new_idx] = face_scattering[old_idx]
+
+            new_idx += 1
+
+        # ── Fix non-manifold edges ──────────────────────────────────────
+        # After welding, boundary faces from different mesh objects may
+        # create non-manifold edges (edges shared by 3+ faces).  For a
+        # clean closed mesh every edge must be shared by exactly 2 faces.
+        # Iteratively remove the face that contributes the most non-manifold
+        # edges until none remain.
+        n_non_manifold_removed = 0
+        while True:
+            # Build edge → face index list
+            edge_faces: dict[tuple[int, int], list[int]] = {}
+            for fi, face in enumerate(welded_faces):
+                n = len(face)
+                for j in range(n):
+                    edge = tuple(sorted([face[j], face[(j + 1) % n]]))
+                    edge_faces.setdefault(edge, []).append(fi)
+
+            # Identify non-manifold edges (shared by 3+ faces)
+            nm_edges = {e: fis for e, fis in edge_faces.items() if len(fis) > 2}
+            if not nm_edges:
+                break
+
+            # Count how many non-manifold edges each face is involved in
+            face_nm_count: dict[int, int] = {}
+            for fis in nm_edges.values():
+                for fi in fis:
+                    face_nm_count[fi] = face_nm_count.get(fi, 0) + 1
+
+            # Remove the face with the highest non-manifold edge count
+            worst_face = max(face_nm_count, key=face_nm_count.get)
+            welded_faces.pop(worst_face)
+
+            # Re-index material / scattering dicts after removal
+            if welded_face_materials is not None:
+                welded_face_materials = {
+                    (i if i < worst_face else i - 1): welded_face_materials[i]
+                    for i in sorted(welded_face_materials)
+                    if i != worst_face
+                }
+            if welded_face_scattering is not None:
+                welded_face_scattering = {
+                    (i if i < worst_face else i - 1): welded_face_scattering[i]
+                    for i in sorted(welded_face_scattering)
+                    if i != worst_face
+                }
+            n_non_manifold_removed += 1
+
+        removed_verts = original_vert_count - len(unique_verts)
+        removed_faces = original_face_count - len(welded_faces)
+        print(
+            f"Mesh weld: {original_vert_count} → {len(unique_verts)} vertices "
+            f"(removed {removed_verts} duplicates), "
+            f"{original_face_count} → {len(welded_faces)} faces "
+            f"(removed {n_degenerate} degenerate, {n_duplicate} duplicate, "
+            f"{n_non_manifold_removed} non-manifold)"
+        )
+
+        return (
+            unique_verts.tolist(),
+            welded_faces,
+            welded_face_materials,
+            welded_face_scattering,
+        )
+
+    @staticmethod
     def create_room_from_mesh(
         vertices: list[list[float]],
         faces: list[list[int]],
@@ -226,14 +387,35 @@ class PyroomacousticsService:
                     # No materials provided - use defaults
                     face_materials = {}
 
+            # Weld mesh: merge duplicate vertices and drop degenerate faces
+            vertices, faces, face_materials, face_scattering = (
+                PyroomacousticsService.weld_mesh(
+                    vertices, faces, face_materials, face_scattering
+                )
+             )
+
             # Convert vertices to numpy array for easier indexing
             vertices_np = np.array(vertices)
+
+            # # DEBUG: save welded mesh data for comparison with STL
+            # np.savez(
+            #     str(Path(__file__).parent.parent / "debug_welded_mesh.npz"),
+            #     vertices=vertices_np,
+            #     faces=np.array(faces),
+            # )
+            # print(f"DEBUG: saved welded mesh to debug_welded_mesh.npz "
+            #       f"(verts={vertices_np.shape}, faces={np.array(faces).shape})")
 
             # Create walls from faces
             walls = []
             for face_idx, face in enumerate(faces):
                 # Get absorption coefficient for this face
-                material = pra.Material(energy_absorption = face_materials.get(face_idx,"rough_concrete"))
+                # Resolve custom materials (not in pra's built-in database) to their coeffs dict
+                mat_value = face_materials.get(face_idx, "rough_concrete")
+                if isinstance(mat_value, str) and mat_value in PYROOMACOUSTICS_CUSTOM_MATERIALS:
+                    custom = PYROOMACOUSTICS_CUSTOM_MATERIALS[mat_value]
+                    mat_value = {"coeffs": custom["coeffs"], "center_freqs": custom["center_freqs"]}
+                material = pra.Material(energy_absorption=mat_value)
                 absorption = material.energy_absorption["coeffs"]
                 # print(f"Face {face_idx}: absorption = {absorption}")
 
@@ -249,26 +431,12 @@ class PyroomacousticsService:
                         # print(f"Face {face_idx}: scattering = {scattering}")
 
                 # Extract face vertices (corners of the wall)
-                # pyroomacoustics expects corners for walls in 3D form [3, n_corners]
+                # pyroomacoustics expects corners as [3, n_corners] (float64)
                 face_vertices = vertices_np[face]  # Shape: [n_corners, 3]
+                corners = face_vertices.T          # Transpose to [3, n_corners]
 
-                # Create wall from corners
-                # Note: pra.Wall expects:
-                # - corners as array [3, n_walls]
-                # - absorption as numpy array [m, n_walls] where m is number of frequency bands
-                # - scattering as numpy array [m, n_walls] (optional, for ray tracing)
-
-                wall_params = {
-                    "corners": face_vertices.T.astype(np.float32),  # Transpose to [3, n_corners]
-                    "absorption": absorption,
-                    "name": f"face_{face_idx}"
-                }
-
-
-                # Add scattering if ray tracing is enabled
-                wall_params["scattering"] = scattering
-
-                wall = pra.Wall(**wall_params)
+                # Create wall using wall_factory (positional args matching working reference)
+                wall = pra.wall_factory(corners, absorption, scattering, f"face_{face_idx}")
                 walls.append(wall)
 
             # Create room from walls
@@ -392,6 +560,9 @@ class PyroomacousticsService:
 
         # Access the 'absorption' dictionary
         absoprtion_db = material_db["absorption"]
+
+        # Add custom materials under a "custom" category
+        absoprtion_db["custom"] = PYROOMACOUSTICS_CUSTOM_MATERIALS
 
         return absoprtion_db
 
@@ -795,4 +966,261 @@ class PyroomacousticsService:
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to export B-format IR: {str(e)}"
+            )
+
+    # ========================================================================
+    # Grid Receiver Simulation
+    # ========================================================================
+
+    @staticmethod
+    def load_receiver_grid(file_path: str = None) -> np.ndarray:
+        """
+        Load a grid of receiver points from a text file.
+
+        The file should contain a Python-style nested list with 3 sub-lists
+        for X, Y, Z coordinates respectively. Comments (lines starting with #)
+        are stripped before parsing.
+
+        Args:
+            file_path: Path to the receiver points file.
+                       Defaults to the path from constants (PYROOMACOUSTICS_GRID_RECEIVER_POINTS_FILE).
+
+        Returns:
+            np.ndarray: Shape (3, N) array where each column is [x, y, z] for a receiver.
+
+        Raises:
+            HTTPException: If the file cannot be read or parsed.
+        """
+        if file_path is None:
+            file_path = PYROOMACOUSTICS_GRID_RECEIVER_POINTS_FILE
+
+        try:
+            content = Path(file_path).read_text()
+
+            # Strip comment lines (lines starting with # after optional whitespace)
+            lines = [line for line in content.split('\n') if not line.strip().startswith('#')]
+            cleaned = '\n'.join(lines)
+
+            # Parse the nested list literal
+            raw = ast.literal_eval(cleaned)
+            grid_points = np.array(raw, dtype=float)
+
+            if grid_points.shape[0] != 3:
+                raise ValueError(f"Expected 3 rows (X, Y, Z), got {grid_points.shape[0]}")
+
+            print(f"Loaded {grid_points.shape[1]} receiver grid points from {file_path}")
+            # grid_points = grid_points[:,:50]
+            print(grid_points)
+            return grid_points
+
+        except FileNotFoundError:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Receiver points file not found: {file_path}"
+            )
+        except (ValueError, SyntaxError) as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to parse receiver points file: {str(e)}"
+            )
+
+    @staticmethod
+    def simulate_grid(
+        room_factory_args: dict,
+        source_positions: list[list[float]],
+        grid_points: np.ndarray,
+        fs: int = None
+    ) -> dict:
+        """
+        Run a simulation with a grid of receivers and compute acoustic metrics.
+
+        Creates a fresh room from the provided factory arguments, adds sources
+        and a grid MicrophoneArray, computes RIRs, then calculates RT60 and
+        dB levels for every source-receiver combination.
+
+        Args:
+            room_factory_args: Keyword arguments for create_room_from_mesh()
+                               (vertices, faces, face_materials, etc.)
+            source_positions: List of [x, y, z] source coordinates.
+            grid_points: Shape (3, N) array of receiver coordinates.
+            fs: Sample rate in Hz (default: from constants).
+
+        Returns:
+            dict with keys:
+                - 'rt60': np.ndarray shape (n_sources, N) — RT60 per source-receiver
+                - 'db_levels': np.ndarray shape (n_sources, N) — dB level per source-receiver
+                - 'grid_points': the (3, N) receiver grid
+                - 'source_positions': the source position list
+
+        Raises:
+            HTTPException: If room creation or simulation fails.
+        """
+        from config.constants import PYROOMACOUSTICS_SAMPLE_RATE
+
+        if fs is None:
+            fs = PYROOMACOUSTICS_SAMPLE_RATE
+
+        try:
+            # Build a fresh room for the grid run
+            room = PyroomacousticsService.create_room_from_mesh(**room_factory_args)
+
+            # Add sources
+            for src_pos in source_positions:
+                # src_pos = np.round(np.array(src_pos), 2).tolist()
+                # print(src_pos)
+                room.add_source(src_pos)
+
+            # Filter grid points to only those inside the room geometry
+            total_points = grid_points.shape[1]
+            mask = [room.is_inside(grid_points[:, i].tolist()) for i in range(total_points)]
+            filtered_points = grid_points[:, mask]
+
+            if filtered_points.shape[1] == 0:
+                raise ValueError(
+                    f"None of the {total_points} grid receiver points are inside the room geometry. "
+                    f"Grid X range: [{grid_points[0].min():.2f}, {grid_points[0].max():.2f}], "
+                    f"Y range: [{grid_points[1].min():.2f}, {grid_points[1].max():.2f}], "
+                    f"Z range: [{grid_points[2].min():.2f}, {grid_points[2].max():.2f}]"
+                )
+            
+            #Remove points that are too close to sources (e.g. within 0.5m) to avoid singularities in RIRs
+            threshold = 0.5
+            indices_to_remove = []
+            for i, point in enumerate(filtered_points.T):
+                for src_pos in source_positions:
+                    if np.linalg.norm(np.array(src_pos) - point) < threshold:
+                        indices_to_remove.append(i)
+
+            filtered_points = np.delete(filtered_points, indices_to_remove, axis=1)
+
+            print(f"Grid points: {filtered_points.shape[1]}/{total_points} are inside the room")
+
+            # Replace grid_points with filtered set
+            grid_points = filtered_points
+
+            print(grid_points)
+
+            # Add grid receivers as MicrophoneArray
+            mic_array = pra.MicrophoneArray(grid_points, fs=fs)
+            room.add_microphone_array(mic_array)
+
+            print(f"Grid simulation: {len(source_positions)} source(s), {grid_points.shape[1]} receivers")
+
+            # Compute RIRs
+            room.image_source_model()
+            room.compute_rir()
+
+            n_sources = len(source_positions)
+            n_receivers = grid_points.shape[1]
+
+            rt60 = np.zeros((n_sources, n_receivers))
+            db_levels = np.zeros((n_sources, n_receivers))
+
+            for src_idx in range(n_sources):
+                for rcv_idx in range(n_receivers):
+                    rir = room.rir[rcv_idx][src_idx]
+                    # RT60
+                    try:
+                        rt60[src_idx][rcv_idx] = pra.experimental.rt60.measure_rt60(rir, fs=fs)
+                    except Exception:
+                        rt60[src_idx][rcv_idx] = 0.0
+
+                    # RMS → dB level
+                    rms = np.sqrt(np.mean(rir ** 2))
+                    if rms > 0:
+                        db_levels[src_idx][rcv_idx] = 20 * np.log10(rms)
+                    else:
+                        db_levels[src_idx][rcv_idx] = -120.0  # floor value
+
+            print(f"Grid simulation complete — RT60 range: [{rt60.min():.3f}, {rt60.max():.3f}]s, "
+                  f"dB range: [{db_levels.min():.1f}, {db_levels.max():.1f}]")
+
+            return {
+                'rt60': rt60,
+                'db_levels': db_levels,
+                'grid_points': grid_points,
+                'source_positions': source_positions
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Grid simulation failed: {str(e)}"
+            )
+
+    @staticmethod
+    def plot_grid_results(
+        source_pos: list[float],
+        receivers_pos: np.ndarray,
+        values: np.ndarray,
+        title: str,
+        output_path: str
+    ) -> str:
+        """
+        Generate a 2D heatmap plot of grid simulation results and save as JPG.
+
+        Args:
+            source_pos: [x, y, z] of the sound source.
+            receivers_pos: Shape (3, N) receiver coordinates.
+            values: Shape (N,) metric values (RT60 or dB) for each receiver.
+            title: Colorbar / plot label (e.g. "RT60 (s)" or "dB Level").
+            output_path: Full path for the output JPG file.
+
+        Returns:
+            str: Path to the saved JPG file.
+
+        Raises:
+            HTTPException: If plotting fails.
+        """
+        try:
+            fig, ax = plt.subplots(figsize=PYROOMACOUSTICS_GRID_PLOT_FIGSIZE)
+
+            x = receivers_pos[0, :]
+            y = receivers_pos[1, :]
+            z = np.array(values).flatten()
+
+            # Filled contour for smooth gradient
+            contour = ax.tricontourf(
+                x, y, z,
+                levels=PYROOMACOUSTICS_GRID_PLOT_CONTOUR_LEVELS,
+                cmap=PYROOMACOUSTICS_GRID_PLOT_COLORMAP
+            )
+
+            # Source marker
+            ax.scatter(
+                source_pos[0], source_pos[1],
+                c='red', s=60, zorder=5, edgecolors='white', linewidths=0.8,
+                label='Source'
+            )
+
+            # Receiver markers
+            ax.scatter(x, y, c='white', s=12, alpha=0.7, zorder=4, label='Receivers')
+
+            # Colorbar
+            cbar = fig.colorbar(contour, ax=ax)
+            cbar.set_label(title, rotation=270, labelpad=15)
+
+            ax.set_xlabel('X [m]')
+            ax.set_ylabel('Y [m]')
+            ax.set_aspect('equal')
+            ax.legend(loc='upper right', fontsize=8)
+
+            plt.tight_layout()
+
+            # Ensure parent directory exists
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+            fig.savefig(output_path, dpi=PYROOMACOUSTICS_GRID_PLOT_DPI, format='jpg')
+            plt.close(fig)
+
+            print(f"Grid plot saved to {output_path}")
+            return output_path
+
+        except Exception as e:
+            plt.close('all')
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to generate grid plot: {str(e)}"
             )

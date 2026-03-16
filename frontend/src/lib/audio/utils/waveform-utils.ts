@@ -231,6 +231,12 @@ export function renderWaveform(
   ctx.fillStyle = backgroundColor;
   ctx.fillRect(0, 0, width, height);
 
+  // Compute global peak amplitude across all channels for Y-axis auto-zoom
+  const globalPeak = Math.max(
+    ...waveformData.channels.map(ch => ch.peak),
+    1e-6 // avoid division by zero
+  );
+
   // Determine layout based on number of channels
   const isMultiChannel = waveformData.numChannels > 1;
   const trackHeight = plotHeight / waveformData.numChannels;
@@ -326,7 +332,8 @@ export function renderWaveform(
 
     // Draw mirrored waveform (positive and negative) for visible range
     for (let i = startIdx; i <= endIdx; i++) {
-      const amplitude = channelData.amplitudes[i];
+      // Normalize amplitude against global peak so the waveform fills the track
+      const amplitude = channelData.amplitudes[i] / globalPeak;
 
       // Map data index to canvas X coordinate
       const dataFraction = i / (numPoints - 1); // Position in data (0-1)
@@ -372,10 +379,15 @@ export function renderWaveform(
   });
 
   // Draw Y axis labels (amplitude) - INSIDE the plot area on left, following vertical transform
+  // Labels reflect the actual peak amplitude instead of a fixed ±1 range
   ctx.fillStyle = greyColor;
   ctx.textAlign = 'left';
   ctx.font = '8px monospace';
-  const ampLevels = ['+1', '0', '-1'];
+
+  const peakLabel = globalPeak >= 0.01
+    ? globalPeak.toFixed(2)
+    : globalPeak.toExponential(1);
+  const ampLevels = [`+${peakLabel}`, '0', `-${peakLabel}`];
 
   // Draw labels for each track
   waveformData.channels.forEach((_, channelIdx) => {

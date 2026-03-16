@@ -24,8 +24,8 @@ import {
   PYROOMACOUSTICS_DEFAULT_RAY_TRACING,
   PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION,
   PYROOMACOUSTICS_RAY_TRACING_N_RAYS,
-  PYROOMACOUSTICS_DEFAULT_SCATTERING,
-  PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE
+  PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE,
+  PYROOMACOUSTICS_DEFAULT_ENABLE_GRID
 } from '@/utils/constants';
 import { CARD_TYPE_LABELS } from '@/types/card';
 
@@ -34,7 +34,7 @@ export interface UseAcousticsSimulationReturn {
   simulationConfigs: SimulationConfig[];
   activeSimulationIndex: number | null;
   expandedTabIndex: number | null;
-  
+
   // Actions
   handleAddConfig: (mode: AcousticSimulationMode) => void;
   handleRemoveConfig: (index: number) => void;
@@ -42,6 +42,7 @@ export interface UseAcousticsSimulationReturn {
   handleSetActiveSimulation: (index: number | null) => void;
   handleUpdateSimulationName: (index: number, name: string) => void;
   handleToggleExpand: (index: number) => void;
+  restoreSimulationState: (savedConfigs: SimulationConfig[], savedActiveIndex: number | null) => void;
 }
 
 // Module-level persistent state to survive component unmounts (e.g., tab switching)
@@ -140,8 +141,8 @@ export function useAcousticsSimulation(): UseAcousticsSimulationReturn {
             ray_tracing: PYROOMACOUSTICS_DEFAULT_RAY_TRACING,
             air_absorption: PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION,
             n_rays: PYROOMACOUSTICS_RAY_TRACING_N_RAYS,
-            scattering: PYROOMACOUSTICS_DEFAULT_SCATTERING,
-            simulation_mode: PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE
+            simulation_mode: PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE,
+            enable_grid: PYROOMACOUSTICS_DEFAULT_ENABLE_GRID
           },
           faceToMaterialMap: new Map(),
           isRunning: false,
@@ -244,6 +245,20 @@ export function useAcousticsSimulation(): UseAcousticsSimulationReturn {
     setExpandedTabIndex(prev => prev === index ? null : index);
   }, []);
 
+  /**
+   * Restore simulation state from saved soundscape data.
+   * Replaces current configs and active index with saved data.
+   */
+  const restoreSimulationState = useCallback((savedConfigs: SimulationConfig[], savedActiveIndex: number | null) => {
+    setSimulationConfigs(savedConfigs);
+    setActiveSimulationIndex(savedActiveIndex);
+    if (savedActiveIndex !== null) {
+      setExpandedTabIndex(savedActiveIndex);
+    }
+    // Ensure counter is high enough to avoid ID collisions
+    setSimulationCounter(prev => Math.max(prev, savedConfigs.length + 1));
+  }, []);
+
   return {
     simulationConfigs,
     activeSimulationIndex,
@@ -253,6 +268,7 @@ export function useAcousticsSimulation(): UseAcousticsSimulationReturn {
     handleUpdateConfig,
     handleSetActiveSimulation,
     handleUpdateSimulationName,
-    handleToggleExpand
+    handleToggleExpand,
+    restoreSimulationState,
   };
 }

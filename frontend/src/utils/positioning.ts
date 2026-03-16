@@ -5,13 +5,22 @@
  * Extracted from useSoundGeneration.ts to reduce duplication.
  */
 
+import * as THREE from 'three';
 import type { SoundGenerationConfig } from "@/types";
+import type { DrawnArea } from "@/types/area-drawing";
 import {
   DEFAULT_POSITION_SPACING,
   DEFAULT_POSITION_OFFSET,
   DEFAULT_POSITION_Y,
-  DEFAULT_POSITION_Z
+  DEFAULT_POSITION_Z,
+  AREA_DRAWING
 } from "@/utils/constants";
+import {
+  randomPointInPolygon2D,
+  unprojectPoint2DTo3D,
+  chooseProjectionAxes,
+  computePolygonBounds,
+} from "@/lib/three/polygon-utils";
 
 /**
  * Geometry bounding box
@@ -125,4 +134,40 @@ export function calculateSoundPositionWithSpacing(
     DEFAULT_POSITION_Y,
     DEFAULT_POSITION_Z
   ];
+}
+
+/**
+ * Generate random 3D positions within a drawn polygon area.
+ *
+ * Uses rejection sampling in the 2D projected polygon, then unprojects
+ * back to 3D at planeOrigin.z + hearingHeight (Z-up convention).
+ *
+ * @param area - Drawn polygon area with projected 2D vertices
+ * @param count - Number of positions to generate
+ * @param hearingHeight - Height above the polygon plane (default 1.5m)
+ * @returns Array of [x, y, z] positions
+ */
+export function generatePositionsInArea(
+  area: DrawnArea,
+  count: number,
+  hearingHeight: number = AREA_DRAWING.HEARING_HEIGHT
+): [number, number, number][] {
+  const polygon2D = area.projectedVertices;
+  if (polygon2D.length < 3) return [];
+
+  const planeOrigin = new THREE.Vector3(...area.planeOrigin);
+  const planeNormal = new THREE.Vector3(...area.planeNormal);
+  const axes = chooseProjectionAxes(planeNormal);
+  const bounds = computePolygonBounds(polygon2D);
+
+  const positions: [number, number, number][] = [];
+  for (let i = 0; i < count; i++) {
+    const pt2D = randomPointInPolygon2D(polygon2D, bounds);
+    const pt3D = unprojectPoint2DTo3D(pt2D, planeOrigin, planeNormal, axes);
+
+    // Apply hearing height along Z (Z-up convention)
+    positions.push([pt3D.x, pt3D.y, pt3D.z + hearingHeight]);
+  }
+
+  return positions;
 }

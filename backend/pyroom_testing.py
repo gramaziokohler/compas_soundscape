@@ -16,7 +16,7 @@ except ImportError as err:
     )
     raise err
 
-stl_path = Path("G:/My Drive/03_ETH Acoustic/02_Work/00_Case studies/HIL D24-1/HIL_D24-1_acoustic_mesh_no_furniture.stl")
+stl_path = Path("G:/My Drive/03_ETH Acoustic/02_Work/00_Case studies/HIL Extension - MAS/SL_2.stl")
 
 # from pyroomacoustics.parameters import materials
 # count = len(materials)
@@ -173,7 +173,7 @@ def plot_rt60_2d(source_pos, receivers_pos, values, title="RT60 Distribution"):
 
 
 
-points = create_grid(faces, spacing=1.5, z_height=1.5, margin=-0.5)
+# points = create_grid(faces, spacing=1.5, z_height=1.5, margin=-0.5)
 # print(points)
 
 
@@ -190,9 +190,9 @@ for w in range(ntriang):
         pra.wall_factory(
             the_mesh.vectors[w].T / size_reduc_factor,
             # material.energy_absorption["coeffs"],
-            [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],            
+            [0.45, 0.35, 0.4, 0.31, 0.251, 0.4, 0.7],            
             # material.scattering["coeffs"],
-            [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05] 
+            [0.05, 0.051, 0.05, 0.05, 0.05, 0.05, 0.051] 
         )
     )
 # material = pra.Material(energy_absorption = "rough_concrete")
@@ -209,29 +209,35 @@ for w in range(ntriang):
 room = pra.Room(
             walls,
             fs=freq_s,
-            max_order=1,
+            max_order=2,
             ray_tracing=True,
             air_absorption=False,
             use_rand_ism = False,
-            max_rand_disp = 0.05
+            max_rand_disp = 0
         )
 
-mask = [room.is_inside(p) for p in points.T]
-filtered_points = points[:, mask]
-print(f"Generated {points.shape[1]} points, {filtered_points.shape[1]} are inside the room.")
+# mask = [room.is_inside(p) for p in points.T]
+# filtered_points = points[:, mask]
+# print(f"Generated {points.shape[1]} points, {filtered_points.shape[1]} are inside the room.")
 
 
+# filtered_points = [[0,0,0],[0,0.5,0],[0,1,0],[0,1.5,0],[0,2,0],[0,-0.5,0],[0,-1,0],[0,-1.5,0],[-0.5,-1.5,0],[-0.5,-1,0],[-0.5,-0.5,0],[-0.5,2,0],[-0.5,1.5,0],[-0.5,1,0],[-0.5,0.5,0],[-0.5,0,0],[-1,0,0],[-1,0.5,0],[-1,1,0],[-1,1.5,0],[-1,-0.5,0],[-1,-1,0],[-1,-1.5,0],[-1.5,-1.5,0],[-1.5,-1,0],[-1.5,-0.5,0],[-1.5,1.5,0],[-1.5,1,0],[-1.5,0.5,0],[-1.5,0,0],[-2,0,0],[-2,0.5,0],[-2,1,0],[-2,1.5,0],[-2,-0.5,0],[-2,-1,0],[-2,-1.5,0],[-2.5,-1.5,0],[-2.5,-1,0],[-2.5,-0.5,0],[-2.5,1.5,0],[-2.5,1,0],[-2.5,0.5,0],[-2.5,0,0],[-3,0,0],[-3,0.5,0],[-3,1,0],[-3,-0.5,0],[-3,-1,0],[-3.5,-0.5,0],[-3.5,1,0],[-3.5,0.5,0],[-3.5,0,0],[-4,0,0],[0.5,-1.5,0],[0.5,-1,0],[0.5,-0.5,0],[0.5,2,0],[0.5,1.5,0],[0.5,1,0],[0.5,0.5,0],[0.5,0,0],[1,0,0],[1,0.5,0],[1,1,0],[1,1.5,0],[1,-0.5,0],[1,-1,0],[1,-1.5,0],[1.5,-1.5,0],[1.5,-1,0],[1.5,-0.5,0],[1.5,1.5,0],[1.5,1,0],[1.5,0.5,0],[1.5,0,0],[2,0,0],[2,0.5,0],[2,1,0],[2,1.5,0],[2,-0.5,0],[2,-1,0],[2,-1.5,0],[2.5,-1.5,0],[2.5,-1,0],[2.5,-0.5,0],[2.5,1.5,0],[2.5,1,0],[2.5,0.5,0],[2.5,0,0],[3,0,0],[3,0.5,0],[3,1,0],[3,-0.5,0],[3,-1,0],[3.5,-0.5,0],[3.5,1,0],[3.5,0.5,0],[3.5,0,0],[4,0,0]]
 
-source_pos = [2.0, 5.0, 1.0]
+
+source_pos = [163.540,43.480,16.940]
+mic = [168.583,62.692,17.440]
 room.add_source(source_pos)
+room.add_microphone(mic)
 # room.add_microphone(filtered_points[:,0])
-mic_array = pra.MicrophoneArray(filtered_points, fs=freq_s)
-room.add_microphone_array(mic_array)
-room.set_ray_tracing(receiver_radius=0.5, hist_bin_size=0.004)
+# mic_array = pra.MicrophoneArray(filtered_points, fs=freq_s)
+# room.add_microphone_array(mic_array)
+room.set_ray_tracing(n_rays=40000, receiver_radius=0.5, hist_bin_size=0.004)
 # room.image_source_model()
 # room.ray_tracing()
+print("Volume:", room.get_volume())
+print("Sabine RT60:", 0.161 * room.get_volume() / (sum(w.area() for w in room.walls) * 0.1))
 room.compute_rir()
-# room.plot_rir()
+room.plot_rir()
 
 # for i in range(35):
 #     room.add_microphone(filtered_points[:,i])
@@ -246,27 +252,27 @@ room.compute_rir()
 # signal = room.rir[0][0]
 # sample_count = len(signal)
 
-rt60 = np.zeros((len(room.rir), len(room.rir[0])))
-db_levels = np.zeros((len(room.rir), len(room.rir[0])))
-# print(f"RIR length: {sample_count} samples")
-for i in range(len(room.rir)):
-    for j in range(len(room.rir[i])):
-        rt60[i][j] = pra.experimental.rt60.measure_rt60(room.rir[i][j], fs=freq_s)
-        # 3. Calculate RMS (Root Mean Square) Amplitude
-        rms_amplitude = np.sqrt(np.mean(room.rir[i][j]**2))
-        # rms_amplitude = np.sum(room.rir[i][j]**2)
-        # 4. Convert to dB
-        # Note: This is dB relative to the digital scale (dBFS-like), not physical SPL
-        db_level = 20 * np.log10(rms_amplitude)
-        #db_level = 10 * np.log10(rms_amplitude)
-        db_levels[i][j] = db_level
-        print(f"RMS Amplitude: {rms_amplitude}")
-        print(f"Digital Level: {db_level:.2f} dB")
-        #rt60 = room.measure_rt60()
-        print(f"Calculated RT60: {rt60[i][j]} seconds")
+# rt60 = np.zeros((len(room.rir), len(room.rir[0])))
+# db_levels = np.zeros((len(room.rir), len(room.rir[0])))
+# # print(f"RIR length: {sample_count} samples")
+# for i in range(len(room.rir)):
+#     for j in range(len(room.rir[i])):
+#         rt60[i][j] = pra.experimental.rt60.measure_rt60(room.rir[i][j], fs=freq_s)
+#         # 3. Calculate RMS (Root Mean Square) Amplitude
+#         rms_amplitude = np.sqrt(np.mean(room.rir[i][j]**2))
+#         # rms_amplitude = np.sum(room.rir[i][j]**2)
+#         # 4. Convert to dB
+#         # Note: This is dB relative to the digital scale (dBFS-like), not physical SPL
+#         db_level = 20 * np.log10(rms_amplitude)
+#         #db_level = 10 * np.log10(rms_amplitude)
+#         db_levels[i][j] = db_level
+#         print(f"RMS Amplitude: {rms_amplitude}")
+#         print(f"Digital Level: {db_level:.2f} dB")
+#         #rt60 = room.measure_rt60()
+#         print(f"Calculated RT60: {rt60[i][j]} seconds")
 
-plot_rt60_2d(source_pos, filtered_points, rt60, title="RT60 Distribution")
+# plot_rt60_2d(source_pos, filtered_points, db_levels, title="Db levels")
 
 # plt.figure()
 # room.plot(img_order=0)
-# plt.show()
+plt.show()

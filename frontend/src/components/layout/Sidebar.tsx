@@ -206,6 +206,7 @@ export function Sidebar(props: SidebarProps) {
             mutedSounds={props.mutedSounds}
             soloedSound={props.soloedSound}
             onResetSound={props.onResetSound}
+            onDuplicateConfig={props.onDuplicateConfig}
             onSelectSoundCard={props.onSelectSoundCard}
             selectedCardIndex={props.selectedCardIndex}
             soundVolumes={props.soundVolumes}

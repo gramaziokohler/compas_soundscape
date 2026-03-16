@@ -78,6 +78,8 @@ export interface TextPromptResult {
   text: string;
   selected: boolean;
   entity?: any;
+  /** Pre-computed position from area drawing (overrides random placement) */
+  position?: [number, number, number];
   metadata?: {
     spl_db?: number;
     interval_seconds?: number;

@@ -27,7 +27,13 @@ export interface AcousticMaterialState {
   layerOptions: SpeckleLayerInfo[];
   assignMaterial: (objectId: string, materialId: string) => void;
   assignMaterialToAll: (materialId: string) => void;
+  assignMaterialToObjects: (objectIds: string[], materialId: string) => void;
   getMaterialColor: (materialId: string) => string;
+  // Scattering coefficients (per-object, same workflow as material assignment)
+  scatteringAssignments: Map<string, number>;
+  assignScattering: (objectId: string, value: number) => void;
+  assignScatteringToAll: (value: number) => void;
+  assignScatteringToObjects: (objectIds: string[], value: number) => void;
 }
 
 interface AcousticMaterialContextValue {

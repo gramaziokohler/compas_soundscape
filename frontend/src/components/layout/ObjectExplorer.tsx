@@ -9,6 +9,8 @@ import { useSpeckleViewerContext } from '@/contexts/SpeckleViewerContext';
 import { SelectionExtension } from '@speckle/viewer';
 import type { VirtualTreeItem as TreeItem } from '@/hooks/useSpeckleTree';
 import { useAcousticMaterial } from '@/contexts/AcousticMaterialContext';
+import { useSpeckleSelectionMode } from '@/contexts/SpeckleSelectionModeContext';
+import { getHeaderAndSubheader } from '@/hooks/useSpeckleTree';
 import { UI_COLORS, UI_RIGHT_SIDEBAR } from '@/utils/constants';
 
 /**
@@ -295,6 +297,9 @@ export function ObjectExplorer() {
     return () => clearInterval(interval);
   }, [viewerRef, disableScrollOnNextSelection, expandToShowObject, selectObject, clearSelection, scrollToSelectedItem]);
   
+  // ===== Selected entity sync =====
+  const { setSelectedEntity } = useSpeckleSelectionMode();
+
   // ===== Auto-expand/scroll to acoustic layer =====
   const { expandToLayerId, isActive: isAcousticMaterialActive } = useAcousticMaterial();
   const lastProcessedLayerIdRef = useRef<string | null>(null);
@@ -348,11 +353,20 @@ export function ObjectExplorer() {
       selectObject(objectId);
       selectObjects([objectId]);
 
+      // Immediately update selectedEntity so the EntityInfoPanel reacts without
+      // requiring a canvas interaction to trigger SpeckleEventBridge.checkSpeckleSelection()
+      const { header, subheader } = getHeaderAndSubheader(item.data.raw, modelFileName);
+      setSelectedEntity({
+        objectId,
+        objectName: header,
+        objectType: subheader || 'Speckle Object',
+      });
+
       if (item.hasChildren && !item.isExpanded) {
         toggleNodeExpansion(item.id);
       }
     }
-  }, [selectedObjectIds, removeFromSelection, addToSelection, clearSelection, selectObject, selectObjects, toggleNodeExpansion]);
+  }, [selectedObjectIds, removeFromSelection, addToSelection, clearSelection, selectObject, selectObjects, toggleNodeExpansion, setSelectedEntity, modelFileName]);
 
   const handleItemDoubleClick = useCallback((objectId: string) => {
     zoomToObjects([objectId]);

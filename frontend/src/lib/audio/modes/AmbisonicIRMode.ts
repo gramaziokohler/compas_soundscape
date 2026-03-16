@@ -319,6 +319,28 @@ export class AmbisonicIRMode implements IAudioMode {
   }
 
   /**
+   * Get the processed global IR buffer (for offline export).
+   * Returns the buffer after mono/stereo→FOA conversion and gain processing.
+   */
+  getProcessedIRBuffer(): AudioBuffer | null {
+    return this.irBuffer;
+  }
+
+  /**
+   * Get all per-source processed IR buffers (for offline export in simulation mode).
+   * Returns a Map of sourceId → processed IR buffer.
+   */
+  getSourceIRBuffers(): Map<string, AudioBuffer> {
+    const result = new Map<string, AudioBuffer>();
+    this.sourceChains.forEach((chain, sourceId) => {
+      if (chain.sourceIRBuffer) {
+        result.set(sourceId, chain.sourceIRBuffer);
+      }
+    });
+    return result;
+  }
+
+  /**
    * Create a new audio source with JSAmbisonics IR convolution
    */
   createSource(sourceId: string, audioBuffer: AudioBuffer, position: Position): void {

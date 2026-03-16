@@ -19,6 +19,43 @@ except ImportError:
     print("Warning: noisereduce library not available. Denoising feature will be disabled.")
 
 
+def trim_ir(ir_data: np.ndarray, threshold_fraction: float = 0.05) -> np.ndarray:
+    """Trim an impulse response by removing trailing samples below a threshold.
+
+    Finds the last sample whose absolute amplitude exceeds
+    `threshold_fraction * peak_amplitude` and discards everything after it.
+
+    Args:
+        ir_data: NumPy array of shape (samples,) or (samples, channels).
+        threshold_fraction: Fraction of the peak amplitude used as the
+            cut-off threshold (default 0.05 = 5%).
+
+    Returns:
+        Trimmed NumPy array with the same number of dimensions.
+    """
+    if ir_data.size == 0:
+        return ir_data
+
+    # Compute the absolute envelope across all channels
+    if ir_data.ndim == 2:
+        envelope = np.max(np.abs(ir_data), axis=1)
+    else:
+        envelope = np.abs(ir_data)
+
+    peak = np.max(envelope)
+    if peak == 0:
+        return ir_data
+
+    threshold = threshold_fraction * peak
+    # Find last sample above threshold
+    indices_above = np.where(envelope > threshold)[0]
+    if len(indices_above) == 0:
+        return ir_data
+
+    last_idx = indices_above[-1]
+    return ir_data[: last_idx + 1]
+
+
 def calculate_rms(audio_tensor: torch.Tensor) -> float:
     """Calculate RMS (Root Mean Square) level of audio signal
 

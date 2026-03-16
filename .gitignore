@@ -32,6 +32,9 @@ temp_library_downloads/
 temp_uploads/
 pyroomacoustics_rir/
 
+# Persistent data (audio files, soundscapes)
+backend/data/
+
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

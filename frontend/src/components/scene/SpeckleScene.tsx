@@ -16,6 +16,7 @@ import { PlaybackControls } from '@/components/controls/PlaybackControls';
 import { ControlsInfo } from '@/components/layout/sidebar/ControlsInfo';
 import { SceneControlButton } from '@/components/ui/SceneControlButton';
 import { FileUploadArea } from '@/components/controls/FileUploadArea';
+import { SpeckleModelBrowser } from '@/components/scene/SpeckleModelBrowser';
 import { Icon } from '@/components/ui/Icon';
 import { VerticalVolumeSlider } from '@/components/ui/VerticalVolumeSlider';
 import { SpeckleAudioCoordinator } from '@/lib/three/speckle-audio-coordinator';
@@ -24,11 +25,17 @@ import { BoundingBoxManager } from '@/lib/three/BoundingBoxManager';
 import { useTimelinePlayback } from '@/hooks/useTimelinePlayback';
 import { useSpeckleViewerContext } from '@/contexts/SpeckleViewerContext';
 import { useSpeckleSelectionMode } from '@/contexts/SpeckleSelectionModeContext';
+import { useAreaDrawingContext } from '@/contexts/AreaDrawingContext';
+import { AreaDrawingManager } from '@/lib/three/area-drawing-manager';
 import { useSpeckleTree, getHeaderAndSubheader } from '@/hooks/useSpeckleTree';
 import {
   extractTimelineSoundsFromData,
   calculateTimelineDurationFromData,
 } from '@/lib/audio/utils/timeline-utils';
+import {
+  exportSoundscapeToWav,
+  type SoundscapeExportConfig,
+} from '@/lib/audio/SoundscapeExporter';
 import {
   SPECKLE_VIEWER_RETRY,
   UI_COLORS,
@@ -141,6 +148,20 @@ interface SpeckleSceneProps {
   modelFile?: File | null;
   onModelFileChange?: (file: File) => void;
 
+  // Load existing Speckle model (for empty state model browser)
+  onSpeckleModelSelect?: (speckleData: {
+    model_id: string;
+    version_id: string;
+    file_id: string;
+    url: string;
+    object_id: string;
+    auth_token?: string;
+  }) => void;
+
+  // Soundscape persistence (save to Speckle)
+  onSaveSoundscape?: () => void;
+  isSavingSoundscape?: boolean;
+
   className?: string;
 }
 
@@ -195,6 +216,9 @@ export function SpeckleScene({
   isRightSidebarExpanded = true,
   modelFile = null,
   onModelFileChange,
+  onSpeckleModelSelect,
+  onSaveSoundscape,
+  isSavingSoundscape = false,
   className,
 }: SpeckleSceneProps) {
   // Refs
@@ -214,6 +238,10 @@ export function SpeckleScene({
   const filteringExtensionRef = useRef<FilteringExtension | null>(null);
   const boundingBoxManagerRef = useRef<BoundingBoxManager | null>(null);
   const cameraControllerRef = useRef<CameraController | null>(null);
+  const areaDrawingManagerRef = useRef<AreaDrawingManager | null>(null);
+
+  // Area drawing context
+  const areaDrawingCtx = useAreaDrawingContext();
 
   // State
   const [isLoading, setIsLoading] = useState(false);
@@ -466,6 +494,11 @@ export function SpeckleScene({
 
     // Cleanup
     return () => {
+      if (areaDrawingManagerRef.current) {
+        areaDrawingManagerRef.current.dispose();
+        areaDrawingManagerRef.current = null;
+      }
+
       if (coordinatorRef.current) {
         coordinatorRef.current.dispose();
         coordinatorRef.current = null;
@@ -481,6 +514,115 @@ export function SpeckleScene({
       }
     };
   }, [modelUrl, onViewerLoaded]);
+
+  // ============================================================================
+  // Effect - Initialize Area Drawing Manager
+  // ============================================================================
+  useEffect(() => {
+    if (!isViewerReady || !viewerRef.current || !coordinatorRef.current) return;
+
+    const adapter = coordinatorRef.current.getAdapter();
+    if (!adapter) return;
+
+    const manager = new AreaDrawingManager(
+      viewerRef.current,
+      adapter.getScene(),
+      adapter.getCustomObjectsGroup()
+    );
+    areaDrawingManagerRef.current = manager;
+
+    return () => {
+      manager.dispose();
+      areaDrawingManagerRef.current = null;
+    };
+  }, [isViewerReady]);
+
+  // ============================================================================
+  // Effect - Area Drawing Mode (event listeners on canvas)
+  // ============================================================================
+  useEffect(() => {
+    const manager = areaDrawingManagerRef.current;
+    if (!manager || !containerRef.current) return;
+
+    const { isDrawing, drawingCardIndex } = areaDrawingCtx;
+
+    if (!isDrawing || drawingCardIndex === null) {
+      // Not drawing — ensure manager is cancelled and selection re-enabled
+      if (manager.isDrawing) manager.cancelDrawing();
+      if (selectionExtensionRef.current) {
+        selectionExtensionRef.current.enabled = true;
+      }
+      return;
+    }
+
+    // Start drawing — disable SelectionExtension to prevent surface selection
+    manager.startDrawing(drawingCardIndex, `Area ${drawingCardIndex + 1}`);
+    if (selectionExtensionRef.current) {
+      selectionExtensionRef.current.enabled = false;
+    }
+
+    // Canvas element
+    const canvas = containerRef.current.querySelector('canvas');
+    if (!canvas) return;
+
+    const onPointerMove = (e: PointerEvent) => {
+      manager.handlePointerMove(e);
+    };
+
+    const onClick = (e: MouseEvent) => {
+      e.stopPropagation();
+      const result = manager.handleClick(e);
+      if (result) {
+        areaDrawingCtx.finishDrawing(drawingCardIndex, result);
+        manager.addCompletedArea(result, 'default');
+      }
+    };
+
+    const onDblClick = (e: MouseEvent) => {
+      e.stopPropagation();
+      const result = manager.handleDoubleClick(e);
+      if (result) {
+        areaDrawingCtx.finishDrawing(drawingCardIndex, result);
+        manager.addCompletedArea(result, 'default');
+      }
+    };
+
+    const onContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      manager.handleRightClick(e);
+    };
+
+    // Use capture phase to intercept before SpeckleEventBridge
+    canvas.addEventListener('pointermove', onPointerMove, true);
+    canvas.addEventListener('click', onClick, true);
+    canvas.addEventListener('dblclick', onDblClick, true);
+    canvas.addEventListener('contextmenu', onContextMenu, true);
+
+    return () => {
+      canvas.removeEventListener('pointermove', onPointerMove, true);
+      canvas.removeEventListener('click', onClick, true);
+      canvas.removeEventListener('dblclick', onDblClick, true);
+      canvas.removeEventListener('contextmenu', onContextMenu, true);
+      // Re-enable selection when drawing effect cleans up
+      if (selectionExtensionRef.current) {
+        selectionExtensionRef.current.enabled = true;
+      }
+    };
+  }, [areaDrawingCtx.isDrawing, areaDrawingCtx.drawingCardIndex, areaDrawingCtx.version]);
+
+  // ============================================================================
+  // Effect - Sync Completed Area Visuals
+  // ============================================================================
+  useEffect(() => {
+    const manager = areaDrawingManagerRef.current;
+    if (!manager) return;
+
+    // Update visual states for all existing areas
+    for (const [cardIndex, state] of areaDrawingCtx.areaVisualStates) {
+      manager.updateAreaVisualState(cardIndex, state);
+    }
+  }, [areaDrawingCtx.version]);
 
   // ============================================================================
   // Effect - Update Audio Orchestrator
@@ -788,8 +930,8 @@ export function SpeckleScene({
       );
     }
 
-    // Pass bounds and enable spiral placement when bounds are available
-    coordinatorRef.current.updateReceivers(receivers, effectiveBounds, !!effectiveBounds);
+    // Receivers carry their own positions (set by camera-based placement in page.tsx)
+    coordinatorRef.current.updateReceivers(receivers);
   }, [isViewerReady, receivers, soundscapeData]);
 
   // ============================================================================
@@ -946,6 +1088,48 @@ export function SpeckleScene({
       console.log('[SpeckleScene] 🔄 Timeline refreshed:', sounds.length, 'sounds, duration:', duration);
     }
   }, [soundIntervals]);
+
+  // ============================================================================
+  // Callback - Download Soundscape as WAV
+  // ============================================================================
+  const handleDownloadTimeline = useCallback(async () => {
+    if (!audioOrchestrator || timelineSounds.length === 0) {
+      console.warn('[SpeckleScene] Cannot export: no orchestrator or no timeline sounds');
+      return;
+    }
+
+    try {
+      const exportState = audioOrchestrator.getExportState();
+
+      // Compute linear gains for each sound from dB values stored in soundVolumes.
+      // Matches the gain computation in the existing volume-sync effect.
+      const soundGains = new Map<string, number>();
+      timelineSounds.forEach((ts) => {
+        const soundEvent = soundscapeData?.find((s) => s.id === ts.id);
+        const baseVolumeDb   = soundEvent?.volume_db ?? 70;
+        const targetVolumeDb = soundVolumes[ts.id] ?? baseVolumeDb;
+        const dbDiff         = targetVolumeDb - baseVolumeDb;
+        const gain           = Math.pow(10, dbDiff / 20);
+        soundGains.set(ts.id, Math.max(0, Math.min(10, gain)));
+      });
+
+      const config: SoundscapeExportConfig = {
+        ...exportState,
+        soundGains,
+        mutedSounds,
+        soloedSound,
+      };
+
+      const durationMs = timelineDuration > 0 ? timelineDuration : 180_000;
+
+      await exportSoundscapeToWav(timelineSounds, durationMs, config);
+
+      console.log('[SpeckleScene] ✅ Soundscape exported successfully');
+    } catch (err) {
+      console.error('[SpeckleScene] ❌ Export failed:', err);
+      throw err; // re-throw so WaveSurferTimeline can show the error state
+    }
+  }, [audioOrchestrator, timelineSounds, timelineDuration, soundscapeData, soundVolumes, mutedSounds, soloedSound]);
 
   // ============================================================================
   // Timeline Playback Hook
@@ -1749,6 +1933,11 @@ export function SpeckleScene({
               />
             </div>
 
+            {/* Speckle Model Browser */}
+            {onSpeckleModelSelect && (
+              <SpeckleModelBrowser onModelSelect={onSpeckleModelSelect} />
+            )}
+
             {/* Supported formats
             <div className="text-xs space-y-2 text-center" style={{ color: UI_COLORS.NEUTRAL_500 }}>
               <p className="font-medium" style={{ color: UI_COLORS.NEUTRAL_400 }}>Supported Formats:</p>
@@ -1789,6 +1978,7 @@ export function SpeckleScene({
             mutedSounds={mutedSounds}
             soloedSound={soloedSound}
             onRefresh={handleRefreshTimeline}
+            onDownload={handleDownloadTimeline}
           />
           </div>
         );
@@ -1861,6 +2051,30 @@ export function SpeckleScene({
             </div>
           </div>
 
+
+        {/* Save Soundscape to Speckle Button */}
+        {soundscapeData && soundscapeData.length > 0 && speckleData && onSaveSoundscape && (
+          <SceneControlButton
+            onClick={onSaveSoundscape}
+            isActive={isSavingSoundscape}
+            title={isSavingSoundscape ? "Saving soundscape..." : "Save soundscape to Speckle"}
+            icon={
+              isSavingSoundscape ? (
+                <Icon>
+                  <circle cx="12" cy="12" r="10" strokeDasharray="31.4 31.4" strokeDashoffset="0">
+                    <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite" />
+                  </circle>
+                </Icon>
+              ) : (
+                <Icon>
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </Icon>
+              )
+            }
+          />
+        )}
 
         {/* Reset Zoom Button */}
         <SceneControlButton

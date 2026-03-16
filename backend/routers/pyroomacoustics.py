@@ -13,6 +13,7 @@ from scipy.io import wavfile
 
 from services.pyroomacoustics_service import PyroomacousticsService
 from services.speckle_service import SpeckleService
+from utils.audio_processing import trim_ir
 from config.constants import (
     PYROOMACOUSTICS_RIR_DIR,
     PYROOMACOUSTICS_DEFAULT_MAX_ORDER,
@@ -26,8 +27,11 @@ from config.constants import (
     PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING,
     PYROOMACOUSTICS_SAMPLE_RATE,
     TEMP_SIMULATIONS_DIR,
-    PYROOMACOUSTICS_DEFAULT_ABSORPTION
+    PYROOMACOUSTICS_DEFAULT_ABSORPTION,
+    PYROOMACOUSTICS_GRID_DEFAULT_ENABLED,
+    PYROOMACOUSTICS_IR_TRIM_THRESHOLD
 )
+# PYROOMACOUSTICS_DEFAULT_SCATTERING kept for per-face fallback in service layer
 
 router = APIRouter()
 
@@ -64,6 +68,7 @@ class SimulationResult(BaseModel):
     message: str
     ir_files: List[str]
     results_file: str
+    grid_plot_file: Optional[str] = None  # JPG heatmap filename (when enable_grid=True)
 
 
 @router.get("/pyroomacoustics/materials")
@@ -110,14 +115,19 @@ async def get_result_file(simulation_id: str, file_type: str, ir_filename: Optio
         The file as a response
     """
     # Validate file_type
-    if file_type not in ['wav', 'json']:
-        raise HTTPException(status_code=400, detail="file_type must be 'wav' or 'json'")
+    if file_type not in ['wav', 'json', 'jpg']:
+        raise HTTPException(status_code=400, detail="file_type must be 'wav', 'json', or 'jpg'")
 
     if file_type == 'json':
         # Return results JSON from temp directory
         filename = f"simulation_{simulation_id}_results.json"
         file_path = TEMP_DIR / filename
         media_type = "application/json"
+    elif file_type == 'jpg':
+        # Return grid plot JPG from RIR directory
+        filename = f"sim_{simulation_id}_grid_db.jpg"
+        file_path = RIR_OUTPUT_DIR / filename
+        media_type = "image/jpeg"
     else:
         # For WAV files, support retrieving specific IR by filename
         if ir_filename:
@@ -157,12 +167,14 @@ async def run_simulation_speckle(
     speckle_version_id: str = Form(...),
     object_materials: str = Form(...),  # JSON: {"object_id": "material_id"}
     layer_name: str = Form("Acoustics"),
+    geometry_object_ids: Optional[str] = Form(None),  # JSON: ["id1", "id2", ...] from frontend
     max_order: int = Form(PYROOMACOUSTICS_DEFAULT_MAX_ORDER),
     ray_tracing: bool = Form(PYROOMACOUSTICS_DEFAULT_RAY_TRACING),
     air_absorption: bool = Form(PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION),
     n_rays: int = Form(PYROOMACOUSTICS_RAY_TRACING_N_RAYS),
-    scattering: float = Form(PYROOMACOUSTICS_DEFAULT_SCATTERING),
+    object_scattering: str = Form('{}'),  # JSON: {"object_id": scattering_value} per-object scattering
     simulation_mode: str = Form(PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE),
+    enable_grid: bool = Form(PYROOMACOUSTICS_GRID_DEFAULT_ENABLED),
     source_receiver_pairs: str = Form(...),  # JSON string
 ):
     """
@@ -184,6 +196,8 @@ async def run_simulation_speckle(
         import json
         pairs_data = json.loads(source_receiver_pairs)
         object_materials_dict = json.loads(object_materials)
+        object_ids_filter = json.loads(geometry_object_ids) if geometry_object_ids else None
+        object_scattering_dict: dict[str, float] = json.loads(object_scattering) if object_scattering else {}
         
         # Log simulation parameters
         print(f"\n{'='*60}")
@@ -193,6 +207,8 @@ async def run_simulation_speckle(
         print(f"Speckle Project ID: {speckle_project_id}")
         print(f"Speckle Version ID: {speckle_version_id}")
         print(f"Layer Name: {layer_name}")
+        if object_ids_filter:
+            print(f"Geometry Object IDs filter: {len(object_ids_filter)} IDs from frontend")
         print(f"Simulation Name: {simulation_name}")
         print(f"Settings:")
         print(f"  - Simulation Mode: {simulation_mode}")
@@ -201,7 +217,7 @@ async def run_simulation_speckle(
         print(f"  - Air Absorption: {air_absorption}")
         if ray_tracing:
             print(f"  - Number of Rays: {n_rays}")
-            print(f"  - Scattering: {scattering}")
+            print(f"  - Per-object scattering assignments: {len(object_scattering_dict)} objects")
         print(f"Source-Receiver Pairs: {len(pairs_data)}")
         print(f"Object Materials: {len(object_materials_dict)} objects assigned")
         if object_materials_dict:
@@ -219,7 +235,8 @@ async def run_simulation_speckle(
         geometry_data = speckle_service.get_model_geometry(
             project_id=speckle_project_id,
             version_id_or_object_id=speckle_version_id,
-            layer_name=layer_name
+            layer_name=layer_name,
+            object_ids_filter=object_ids_filter
         )
         
         if not geometry_data:
@@ -232,7 +249,7 @@ async def run_simulation_speckle(
         object_face_ranges = geometry_data.get("object_face_ranges", {})
         
         print(f"Geometry data returned: vertices={len(vertices)}, faces={len(faces)}, objects={len(object_ids)}")
-        print(f"Geometry data keys: {list(geometry_data.keys())}")
+        # print(f"Geometry data keys: {list(geometry_data.keys())}")
         
         if not vertices or not faces:
             # Try without layer filter to debug
@@ -250,8 +267,14 @@ async def run_simulation_speckle(
                     print(f"WARNING: Geometry found WITHOUT layer filter. The layer name '{layer_name}' may not match.")
                     print(f"Available objects: {geometry_data_no_filter.get('object_names', [])}")
             
+            if object_ids_filter:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"No geometry found for the {len(object_ids_filter)} object IDs sent from the frontend. "
+                           f"Ensure the objects have mesh display values in Speckle."
+                )
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail=f"No valid geometry found in Speckle layer '{layer_name}'. "
                        f"Ensure the layer contains mesh objects with display values."
             )
@@ -274,11 +297,20 @@ async def run_simulation_speckle(
             
         print(f"Mapped materials to {len(face_material_map)} faces")
         
-        # Create scattering map (only if ray tracing is enabled)
+        # Build per-face scattering map from per-object scattering assignments
+        # (only meaningful when ray_tracing=True, but built always so it persists through the call)
         face_scattering_map = None
-        if ray_tracing and face_material_map:
-            face_scattering_map = {face_idx: scattering for face_idx in face_material_map.keys()}
-            print(f"  Applying scattering coefficient: {scattering:.2f} to {len(face_scattering_map)} faces")
+        if ray_tracing:
+            face_scattering_map = {}
+            for obj_id, scatter_val in object_scattering_dict.items():
+                if obj_id not in object_face_ranges:
+                    print(f"  Warning: Object ID '{obj_id}' not found in geometry for scattering")
+                    continue
+                start_face, end_face = object_face_ranges[obj_id]
+                for face_idx in range(start_face, end_face + 1):
+                    face_scattering_map[face_idx] = float(scatter_val)
+            print(f"  Built per-face scattering map: {len(face_scattering_map)} faces assigned, "
+                  f"unassigned faces will use default ({PYROOMACOUSTICS_DEFAULT_SCATTERING})")
         
         # Build settings object
         settings = SimulationSettings(
@@ -371,6 +403,8 @@ async def run_simulation_speckle(
         
         # Compute RIR
         print(f"  Computing RIRs...")
+        print("Volume:", room.get_volume())
+        print("Sabine RT60:", 0.161 * room.get_volume() / (sum(w.area() for w in room.walls) * 0.1))
         room.compute_rir()
         print(f"  RIR computation complete!")
         
@@ -455,10 +489,13 @@ async def run_simulation_speckle(
                 print(f"Warning: Failed to calculate acoustic parameters: {e}")
                 acoustic_params = None
             
+            # Trim trailing silence from the IR
+            rir_data = trim_ir(rir_data, threshold_fraction=PYROOMACOUSTICS_IR_TRIM_THRESHOLD)
+
             # Export impulse response
             ir_filename = f"sim_{simulation_id}_src_{pair.source_id}_rcv_{pair.receiver_id}.wav"
             ir_path = RIR_OUTPUT_DIR / ir_filename
-            
+
             rir_int16 = np.int16(rir_data * 32767)
             wavfile.write(str(ir_path), PYROOMACOUSTICS_SAMPLE_RATE, rir_int16)
             
@@ -496,41 +533,104 @@ async def run_simulation_speckle(
             
             if ray_tracing:
                 result_entry["n_rays"] = n_rays
-                result_entry["scattering"] = scattering
+                result_entry["scattering_per_object"] = object_scattering_dict
             
             if acoustic_params:
                 result_entry["acoustic_parameters"] = acoustic_params
             
             results_data.append(result_entry)
-        
+
+        # ── Grid Receiver Simulation (optional) ───────────────────────────
+        grid_plot_filename = None
+
+        if enable_grid:
+            print(f"\n{'='*60}")
+            print(f"Running grid receiver simulation...")
+            print(f"{'='*60}")
+
+            try:
+                # Load grid receiver points from file
+                grid_points = PyroomacousticsService.load_receiver_grid()
+
+                # Collect source positions
+                all_source_positions = [pos for pos, _ in unique_sources.values()]
+
+                # Build room factory args (same geometry + materials as main sim)
+                room_factory_args = dict(
+                    vertices=vertices,
+                    faces=faces,
+                    face_materials=face_material_map if face_material_map else None,
+                    face_scattering=face_scattering_map,
+                    fs=PYROOMACOUSTICS_SAMPLE_RATE,
+                    max_order=settings.max_order,
+                    ray_tracing=False,       # Grid uses ISM only for speed
+                    air_absorption=settings.air_absorption
+                )
+
+                # Run grid simulation
+                grid_result = PyroomacousticsService.simulate_grid(
+                    room_factory_args=room_factory_args,
+                    source_positions=all_source_positions,
+                    grid_points=grid_points,
+                    fs=PYROOMACOUSTICS_SAMPLE_RATE
+                )
+
+                # Generate heatmap plot for first source (dB levels)
+                grid_plot_filename = f"sim_{simulation_id}_grid_db.jpg"
+                grid_plot_path = str(RIR_OUTPUT_DIR / grid_plot_filename)
+
+                PyroomacousticsService.plot_grid_results(
+                    source_pos=all_source_positions[0],
+                    receivers_pos=grid_result['grid_points'],
+                    values=grid_result['db_levels'][0],
+                    title="dB Level",
+                    output_path=grid_plot_path
+                )
+
+                print(f"Grid plot saved: {grid_plot_filename}")
+
+            except Exception as e:
+                import traceback
+                print(f"Grid simulation warning: {traceback.format_exc()}")
+                print(f"Grid simulation failed (non-fatal): {str(e)}")
+                grid_plot_filename = None
+
         # Save results JSON
         results_filename = f"simulation_{simulation_id}_results.json"
         results_path = TEMP_DIR / results_filename
-        
+
+        results_json = {
+            "simulation_id": simulation_id,
+            "simulation_name": simulation_name,
+            "settings": settings.dict(),
+            "speckle_source": {
+                "project_id": speckle_project_id,
+                "version_id": speckle_version_id,
+                "layer_name": layer_name
+            },
+            "results": results_data
+        }
+
+        if grid_plot_filename:
+            results_json["grid_plot_file"] = grid_plot_filename
+
         with open(results_path, "w") as f:
-            json.dump({
-                "simulation_id": simulation_id,
-                "simulation_name": simulation_name,
-                "settings": settings.dict(),
-                "speckle_source": {
-                    "project_id": speckle_project_id,
-                    "version_id": speckle_version_id,
-                    "layer_name": layer_name
-                },
-                "results": results_data
-            }, f, indent=2)
-        
+            json.dump(results_json, f, indent=2)
+
         print(f"\n{'='*60}")
         print(f"Speckle simulation completed successfully")
         print(f"  simulation_id: {simulation_id}")
         print(f"  Number of IR files: {len(ir_files)}")
+        if grid_plot_filename:
+            print(f"  Grid plot: {grid_plot_filename}")
         print(f"{'='*60}\n")
-        
+
         return SimulationResult(
             simulation_id=simulation_id,
             message="Speckle simulation completed successfully",
             ir_files=ir_files,
-            results_file=results_filename
+            results_file=results_filename,
+            grid_plot_file=grid_plot_filename
         )
         
     except HTTPException:

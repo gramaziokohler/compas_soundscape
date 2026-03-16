@@ -32,7 +32,7 @@ class AcousticMeasurement:
         """
         try:
             # RT60: Reverberation time using Schroeder integration
-            rt60 = pra.experimental.rt60.measure_rt60(rir, fs=fs)
+            rt60 = pra.experimental.rt60.measure_rt60(rir, fs=fs, decay_db=30)
             print(f"Calculated RT60: {rt60} seconds")
             if rt60 is None or np.isnan(rt60):
                 # Fallback: estimate from energy decay

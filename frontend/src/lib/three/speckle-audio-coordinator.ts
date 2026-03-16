@@ -259,15 +259,15 @@ export class SpeckleAudioCoordinator {
     }
   }
 
-  public updateReceivers(receivers: ReceiverData[], bounds?: BoundingBoxBounds | null, useSpiralPlacement: boolean = false): void {
+  public updateReceivers(receivers: ReceiverData[]): void {
     if (!this.receiverManager) return;
 
     const currentLength = receivers.length;
     this.prevReceiversLength = currentLength;
-    
-    // Set bounding box for spiral placement
-    this.receiverManager.setBoundingBox(bounds || null);
-    this.receiverManager.updateReceivers(receivers, useSpiralPlacement);
+
+    // Placement strategy is now camera-based (handled by caller before addReceiver).
+    // setBoundingBox / spiral placement removed.
+    this.receiverManager.updateReceivers(receivers);
 
     try {
       this.viewer.requestRender();

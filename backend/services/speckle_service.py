@@ -42,6 +42,7 @@ Documentation:
 """
 
 import os
+import json
 import logging
 from typing import Optional, Dict, List
 from dotenv import load_dotenv
@@ -54,6 +55,7 @@ from specklepy.core.api.inputs.project_inputs import WorkspaceProjectCreateInput
 from specklepy.core.api.inputs.model_inputs import CreateModelInput
 from specklepy.core.api.inputs.version_inputs import CreateVersionInput
 from specklepy.objects import Base
+from specklepy.objects.data_objects import DataObject
 
 from config.constants import (
     SPECKLE_SERVER_URL,
@@ -398,7 +400,7 @@ class SpeckleService:
             logger.error(traceback.format_exc())
             return None
 
-    def get_model_geometry(self, project_id: str, version_id_or_object_id: str, layer_name: str = None) -> Optional[Dict]:
+    def get_model_geometry(self, project_id: str, version_id_or_object_id: str, layer_name: str = None, object_ids_filter: list = None) -> Optional[Dict]:
         """
         Retrieve geometry from Speckle version or object using display values.
         
@@ -502,8 +504,9 @@ class SpeckleService:
             # Extract objects with display values
             logger.info("Extracting geometry from display values...")
             geometry_data = self._extract_geometry_from_display_values(
-                root_object, 
-                layer_name=layer_name
+                root_object,
+                layer_name=layer_name,
+                object_ids_filter=object_ids_filter
             )
             
             logger.info(f"Extracted geometry: {len(geometry_data['vertices'])} vertices, {len(geometry_data['faces'])} faces from {len(geometry_data['object_ids'])} objects")
@@ -515,7 +518,7 @@ class SpeckleService:
             logger.error(traceback.format_exc())
             return None
     
-    def _extract_geometry_from_display_values(self, root_object, layer_name: str = None) -> Dict:
+    def _extract_geometry_from_display_values(self, root_object, layer_name: str = None, object_ids_filter: list = None) -> Dict:
         """
         Extract mesh geometry from Speckle objects using display values.
         
@@ -647,8 +650,10 @@ class SpeckleService:
                     logger.info(f"{indent}  Name: {obj.name}")
             
             # Check layer filter
+            # When object_ids_filter is provided, skip layer-name filtering entirely —
+            # we collect everything and filter by ID after traversal.
             should_include = True
-            if layer_name:
+            if object_ids_filter is None and layer_name:
                 # Only include objects in the selected layer
                 should_include = current_layer and current_layer.lower() == layer_name.lower()
             
@@ -677,10 +682,16 @@ class SpeckleService:
         logger.info(f"Object types found: {object_types}")
         logger.info(f"Found {len(objects_with_display)} objects with geometry (displayValue or direct Mesh)")
         
+        object_ids_set = set(object_ids_filter) if object_ids_filter else None
+
         # Process each object with geometry
         for obj in objects_with_display:
             obj_id = getattr(obj, 'id', f"obj_{len(object_ids)}")
             obj_name = getattr(obj, 'name', f"Object {len(object_ids) + 1}")
+
+            # When filtering by explicit object IDs, skip objects not in the list
+            if object_ids_set is not None and obj_id not in object_ids_set:
+                continue
             
             logger.info(f"Processing object: {obj_name} (id: {obj_id})")
             
@@ -836,4 +847,509 @@ class SpeckleService:
 
         except Exception as e:
             logger.error(f"Failed to list models: {str(e)}")
+            return None
+
+    def get_project_models_detailed(self, project_id: str = None) -> Optional[Dict]:
+        """
+        Get detailed info for all models in a project, including version data.
+
+        Uses the specklepy SDK's ModelResource to fetch models with full metadata
+        (author, timestamps, preview URL) and then fetches version info for each.
+
+        Args:
+            project_id: Speckle project ID. Defaults to self.project_id.
+
+        Returns:
+            dict: {
+                "project_id": str,
+                "models": [
+                    {
+                        "id": str,
+                        "name": str,
+                        "display_name": str,
+                        "description": str | None,
+                        "created_at": str | None,
+                        "updated_at": str | None,
+                        "preview_url": str | None,
+                        "author": {"id": str, "name": str, "avatar": str | None} | None,
+                        "versions_count": int,
+                        "latest_version": {
+                            "id": str,
+                            "message": str | None,
+                            "source_application": str | None,
+                            "referenced_object": str | None,
+                            "created_at": str | None,
+                            "author_name": str | None,
+                        } | None,
+                    },
+                    ...
+                ],
+                "total_count": int,
+            }
+            None if not authenticated.
+        """
+        if not self.client:
+            logger.error("Not authenticated. Call authenticate() first.")
+            return None
+
+        pid = project_id or self.project_id
+        if not pid:
+            logger.error("No project ID provided and no active project.")
+            return None
+
+        try:
+            # Fetch paginated list of models via the SDK
+            models_collection = self.client.model.get_models(project_id=pid)
+            items = models_collection.items if models_collection else []
+            total = models_collection.total_count if models_collection else 0
+
+            logger.info(f"Fetched {len(items)} models (total: {total}) for project {pid}")
+
+            detailed_models: List[Dict] = []
+
+            for model in items:
+                model_info = self._serialize_model(model)
+
+                # Fetch version data for this model
+                try:
+                    model_with_versions = self.client.model.get_with_versions(
+                        model_id=model.id,
+                        project_id=pid,
+                        versions_limit=1,
+                    )
+                    versions = model_with_versions.versions if model_with_versions else None
+
+                    if versions:
+                        model_info["versions_count"] = versions.total_count
+                        if versions.items:
+                            model_info["latest_version"] = self._serialize_version(
+                                versions.items[0]
+                            )
+                except Exception as ver_err:
+                    logger.warning(
+                        f"Could not fetch versions for model {model.id}: {ver_err}"
+                    )
+
+                detailed_models.append(model_info)
+
+            return {
+                "project_id": pid,
+                "models": detailed_models,
+                "total_count": total,
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get detailed project models: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
+
+    # ------------------------------------------------------------------
+    # Serialization helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _serialize_model(model) -> Dict:
+        """
+        Convert a specklepy Model object to a plain dict.
+
+        Args:
+            model: specklepy Model instance.
+
+        Returns:
+            dict with model metadata.
+        """
+        author = None
+        if getattr(model, "author", None):
+            author = {
+                "id": model.author.id,
+                "name": model.author.name,
+                "avatar": getattr(model.author, "avatar", None),
+            }
+
+        return {
+            "id": model.id,
+            "name": model.name,
+            "display_name": getattr(model, "display_name", model.name),
+            "description": getattr(model, "description", None),
+            "created_at": (
+                model.created_at.isoformat()
+                if getattr(model, "created_at", None)
+                else None
+            ),
+            "updated_at": (
+                model.updated_at.isoformat()
+                if getattr(model, "updated_at", None)
+                else None
+            ),
+            "preview_url": getattr(model, "preview_url", None),
+            "author": author,
+            "versions_count": 0,
+            "latest_version": None,
+        }
+
+    @staticmethod
+    def _serialize_version(version) -> Dict:
+        """
+        Convert a specklepy Version object to a plain dict.
+
+        Args:
+            version: specklepy Version instance.
+
+        Returns:
+            dict with version metadata.
+        """
+        author_name = None
+        if getattr(version, "author_user", None):
+            author_name = version.author_user.name
+
+        return {
+            "id": version.id,
+            "message": getattr(version, "message", None),
+            "source_application": getattr(version, "source_application", None),
+            "referenced_object": getattr(version, "referenced_object", None),
+            "created_at": (
+                version.created_at.isoformat()
+                if getattr(version, "created_at", None)
+                else None
+            ),
+            "author_name": author_name,
+        }
+
+    # ------------------------------------------------------------------
+    # Soundscape data persistence (save/load to Speckle)
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Soundscape DataObject helpers
+    # ------------------------------------------------------------------
+
+    _SOUNDSCAPE_DATA_OBJECT_NAME = "Soundscape"
+
+    @staticmethod
+    def _create_soundscape_data_object(
+        model_id: str,
+        soundscape_data: dict,
+    ) -> DataObject:
+        """
+        Build an ``Objects.Data.DataObject`` that holds the serialised
+        soundscape payload inside its ``properties`` dict.
+
+        The DataObject constructor has a known property-descriptor bug in
+        specklepy, so we use ``__new__`` + direct field assignment.
+        """
+        obj = DataObject.__new__(DataObject)
+        Base.__init__(obj)
+
+        obj._name = SpeckleService._SOUNDSCAPE_DATA_OBJECT_NAME
+        obj._displayValue = []
+        obj._properties = {
+            "version": soundscape_data.get("version", "1.0"),
+            "model_id": model_id,
+            "model_name": soundscape_data.get("model_name", ""),
+            "created_at": soundscape_data.get("created_at", ""),
+            "global_settings": json.dumps(
+                soundscape_data.get("global_settings", {})
+            ),
+            "sound_configs": json.dumps(
+                soundscape_data.get("sound_configs", [])
+            ),
+            "sound_events": json.dumps(
+                soundscape_data.get("sound_events", [])
+            ),
+            "receivers": json.dumps(
+                soundscape_data.get("receivers", [])
+            ),
+            "selected_receiver_id": soundscape_data.get("selected_receiver_id", ""),
+            "simulation_configs": json.dumps(
+                soundscape_data.get("simulation_configs", [])
+            ),
+            "active_simulation_index": soundscape_data.get(
+                "active_simulation_index", -1
+            ),
+        }
+        return obj
+
+    @staticmethod
+    def _find_soundscape_element(root_object) -> tuple:
+        """
+        Search the root object's ``@elements`` / ``elements`` list for a
+        ``DataObject`` whose name equals ``_SOUNDSCAPE_DATA_OBJECT_NAME``.
+
+        Returns:
+            (elements_list, index)  – the mutable list and the index of the
+            soundscape object, or (None, -1) when not found.
+        """
+        target = SpeckleService._SOUNDSCAPE_DATA_OBJECT_NAME
+        for attr in ("@elements", "elements"):
+            elements = getattr(root_object, attr, None)
+            if not isinstance(elements, list):
+                continue
+            for idx, elem in enumerate(elements):
+                elem_name = getattr(elem, "name", None) or (
+                    elem.get("name") if isinstance(elem, dict) else None
+                )
+                elem_type = getattr(elem, "speckle_type", None) or (
+                    elem.get("speckle_type") if isinstance(elem, dict) else None
+                )
+                if (
+                    elem_name == target
+                    and elem_type == "Objects.Data.DataObject"
+                ):
+                    return (elements, idx)
+        return (None, -1)
+
+    def send_soundscape_data(self, model_id: str, soundscape_data: dict) -> Optional[str]:
+        """
+        Save soundscape metadata as a new version on the existing Speckle model.
+
+        Creates an ``Objects.Data.DataObject`` named *Soundscape* and inserts
+        it into the root object's ``@elements`` list (the standard Speckle
+        hierarchy convention).  If a Soundscape DataObject already exists in
+        the list it is replaced in-place; otherwise the new object is appended.
+
+        A new model version is created so the change is visible in the Speckle
+        version history.
+
+        Args:
+            model_id: The Speckle model ID of the source 3D model.
+            soundscape_data: Full soundscape dict (version, configs, events, etc.)
+
+        Returns:
+            str: The new Speckle object ID if successful, None otherwise.
+        """
+        if not self.client or not self.project_id:
+            logger.error("Not authenticated or no project selected.")
+            return None
+
+        try:
+            transport = ServerTransport(
+                stream_id=self.project_id, client=self.client
+            )
+
+            # ----- 1. Get latest version's root object -----
+            root_object = None
+            try:
+                model_with_versions = self.client.model.get_with_versions(
+                    model_id=model_id,
+                    project_id=self.project_id,
+                    versions_limit=1,
+                )
+                versions = model_with_versions.versions if model_with_versions else None
+                if versions and versions.items:
+                    latest = versions.items[0]
+                    ref_obj = (
+                        getattr(latest, "referenced_object", None)
+                        or getattr(latest, "referencedObject", None)
+                    )
+                    if ref_obj:
+                        logger.info(f"Receiving root object {ref_obj} for model {model_id}")
+                        root_object = operations.receive(
+                            obj_id=ref_obj, remote_transport=transport
+                        )
+            except Exception as e:
+                logger.warning(f"Could not receive root object: {e}")
+
+            if root_object is None:
+                logger.warning("No root object found – creating empty wrapper")
+                root_object = Base()
+
+            # ----- 2. Build soundscape DataObject -----
+            soundscape_obj = self._create_soundscape_data_object(
+                model_id, soundscape_data
+            )
+
+            # ----- 3. Insert into root's @elements -----
+            # Determine which attribute the root uses for its children
+            elements_attr = "@elements"
+            if hasattr(root_object, "@elements"):
+                elements_attr = "@elements"
+            elif hasattr(root_object, "elements"):
+                elements_attr = "elements"
+
+            elements = getattr(root_object, elements_attr, None)
+            if not isinstance(elements, list):
+                elements = []
+
+            # Replace an existing Soundscape DataObject if present
+            existing_list, existing_idx = self._find_soundscape_element(root_object)
+            if existing_list is not None and existing_idx >= 0:
+                existing_list[existing_idx] = soundscape_obj
+                logger.info("Replaced existing Soundscape DataObject in elements")
+            else:
+                elements.append(soundscape_obj)
+                root_object[elements_attr] = elements
+                logger.info("Appended Soundscape DataObject to root elements")
+
+            # Remove legacy @soundscape property (migration from old format)
+            for legacy in ("@soundscape", "soundscape"):
+                if hasattr(root_object, legacy):
+                    try:
+                        delattr(root_object, legacy)
+                    except Exception:
+                        pass
+
+            # ----- 4. Send updated root & create version -----
+            object_id = operations.send(base=root_object, transports=[transport])
+            logger.info(f"Updated root with soundscape DataObject sent: {object_id}")
+
+            version_input = CreateVersionInput(
+                project_id=self.project_id,
+                model_id=model_id,
+                object_id=object_id,
+                message="Updated with soundscape data",
+            )
+            version = self.client.version.create(version_input)
+            logger.info(f"New version on model {model_id}: {version.id}")
+
+            return object_id
+
+        except Exception as e:
+            logger.error(f"Failed to send soundscape data to Speckle: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
+
+    @staticmethod
+    def _parse_soundscape_object(soundscape_obj, model_id: str) -> dict:
+        """
+        Parse a Speckle soundscape object (DataObject *or* legacy Base) into
+        a plain dict suitable for ``SoundscapeData`` construction.
+
+        Handles both:
+        - **New format**: ``DataObject`` with a ``properties`` dict.
+        - **Legacy format**: ``Base`` with top-level JSON-string attributes.
+        """
+        # New format: DataObject with properties dict
+        props = getattr(soundscape_obj, "properties", None)
+        if isinstance(props, dict) and "sound_configs" in props:
+            def _load(key, default):
+                val = props.get(key, default)
+                if isinstance(val, str):
+                    try:
+                        return json.loads(val)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                return val
+
+            soundscape = {
+                "version": props.get("version", "1.0"),
+                "model_id": props.get("model_id", model_id),
+                "model_name": props.get("model_name", ""),
+                "created_at": props.get("created_at", ""),
+                "global_settings": _load("global_settings", {}),
+                "sound_configs": _load("sound_configs", []),
+                "sound_events": _load("sound_events", []),
+                "receivers": _load("receivers", []),
+                "selected_receiver_id": props.get("selected_receiver_id") or None,
+                "simulation_configs": _load("simulation_configs", []),
+                "active_simulation_index": props.get("active_simulation_index"),
+            }
+            # Clean sentinel values
+            if soundscape["active_simulation_index"] == -1:
+                soundscape["active_simulation_index"] = None
+            if soundscape["selected_receiver_id"] == "":
+                soundscape["selected_receiver_id"] = None
+            return soundscape
+
+        # Legacy format: direct attributes with JSON strings
+        soundscape = {
+            "version": getattr(soundscape_obj, "version", "1.0"),
+            "model_id": getattr(soundscape_obj, "model_id", model_id),
+            "model_name": getattr(soundscape_obj, "model_name", ""),
+            "created_at": getattr(soundscape_obj, "created_at", ""),
+            "global_settings": json.loads(
+                getattr(soundscape_obj, "global_settings", "{}")
+            ),
+            "sound_configs": json.loads(
+                getattr(soundscape_obj, "sound_configs", "[]")
+            ),
+            "sound_events": json.loads(
+                getattr(soundscape_obj, "sound_events", "[]")
+            ),
+        }
+        return soundscape
+
+    def get_soundscape_data(self, model_id: str) -> Optional[dict]:
+        """
+        Retrieve soundscape data from the latest version of the given model.
+
+        Searches for a ``DataObject`` named *Soundscape* inside the root
+        object's ``@elements`` / ``elements``.  Falls back to the legacy
+        ``@soundscape`` root property for backward compatibility.
+
+        Args:
+            model_id: The Speckle model ID of the source 3D model.
+
+        Returns:
+            dict: The parsed soundscape data, or None if not found.
+        """
+        if not self.client or not self.project_id:
+            logger.error("Not authenticated or no project selected.")
+            return None
+
+        try:
+            # Get latest version of this model
+            model_with_versions = self.client.model.get_with_versions(
+                model_id=model_id,
+                project_id=self.project_id,
+                versions_limit=1,
+            )
+            versions = model_with_versions.versions if model_with_versions else None
+            if not versions or not versions.items:
+                logger.info(f"No versions found for model {model_id}")
+                return None
+
+            latest_version = versions.items[0]
+            ref_obj = (
+                getattr(latest_version, "referenced_object", None)
+                or getattr(latest_version, "referencedObject", None)
+            )
+            if not ref_obj:
+                logger.warning("Latest version has no referenced object")
+                return None
+
+            # Receive root object
+            transport = ServerTransport(
+                stream_id=self.project_id, client=self.client
+            )
+            root_object = operations.receive(
+                obj_id=ref_obj, remote_transport=transport
+            )
+            if not root_object:
+                logger.warning("Failed to receive root object")
+                return None
+
+            # --- Strategy 1: DataObject inside elements (new format) ---
+            elements_list, idx = self._find_soundscape_element(root_object)
+            if elements_list is not None and idx >= 0:
+                soundscape_obj = elements_list[idx]
+                soundscape = self._parse_soundscape_object(soundscape_obj, model_id)
+                logger.info(
+                    f"Loaded soundscape DataObject from Speckle: "
+                    f"{len(soundscape.get('sound_configs', []))} configs, "
+                    f"{len(soundscape.get('sound_events', []))} events"
+                )
+                return soundscape
+
+            # --- Strategy 2: Legacy @soundscape root property ---
+            soundscape_obj = getattr(root_object, "@soundscape", None)
+            if soundscape_obj is None:
+                soundscape_obj = getattr(root_object, "soundscape", None)
+            if soundscape_obj is not None:
+                soundscape = self._parse_soundscape_object(soundscape_obj, model_id)
+                logger.info(
+                    f"Loaded legacy @soundscape from Speckle: "
+                    f"{len(soundscape.get('sound_configs', []))} configs, "
+                    f"{len(soundscape.get('sound_events', []))} events"
+                )
+                return soundscape
+
+            logger.info("No soundscape data found on model")
+            return None
+
+        except Exception as e:
+            logger.error(f"Failed to get soundscape data from Speckle: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None

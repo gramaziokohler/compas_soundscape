@@ -194,9 +194,22 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
       });
     }
 
+    // Sanitise: ensure every objectId is a string (the Speckle viewer calls
+    // id.includes() internally and crashes on non-string values)
+    const sanitised = colorGroups
+      .map(g => ({
+        ...g,
+        objectIds: g.objectIds.filter(id => typeof id === 'string' && id.length > 0),
+      }))
+      .filter(g => g.objectIds.length > 0);
+
     // Apply colors
-    if (colorGroups.length > 0) {
-      filteringExt.setUserObjectColors(colorGroups);
+    if (sanitised.length > 0) {
+      try {
+        filteringExt.setUserObjectColors(sanitised);
+      } catch (err) {
+        console.error('[Context] setUserObjectColors failed:', err);
+      }
       console.log('[Context] Applied colors - material:', materialColors.length, 'groups, diverse:', diverseOnlyIds.length, 'pending:', pendingLinkedIds.length, 'generated:', generatedLinkedIds.length);
     } else {
       // Clear colors if no objects to color

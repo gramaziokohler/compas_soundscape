@@ -4,10 +4,11 @@ import type { TextAnalysisConfig } from '@/types/analysis';
 import { UI_COLORS, NUM_SOUNDS_MAX, NUM_SOUNDS_MIN } from '@/utils/constants';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { CheckboxField } from '@/components/ui/CheckboxField';
+import { useAreaDrawing } from '@/hooks/useAreaDrawing';
 
 /**
  * TextContextContent Component
- * 
+ *
  * UI for text-based analysis configuration (before generation)
  * Uses llm_service.py backend to generate sound ideas
  */
@@ -24,7 +25,8 @@ export function TextContextContent({
   isAnalyzing,
   onUpdateConfig
 }: TextContextContentProps) {
-  
+  const { isDrawingThisCard, hasArea, removeArea } = useAreaDrawing(index);
+
   const canAnalyze = config.textInput.trim().length > 0;
 
   return (
@@ -69,6 +71,30 @@ export function TextContextContent({
         label="Combine with objects selection"
       />
 
+      {/* Drawing mode tip */}
+      {isDrawingThisCard && (
+        <div
+          className="text-xs p-2 rounded-md"
+          style={{ backgroundColor: 'rgba(16, 185, 129, 0.1)', color: UI_COLORS.SUCCESS }}
+        >
+          Click on surfaces to draw an area. Double-click to close.
+          Right-click to undo last point.
+        </div>
+      )}
+
+      {/* Area status indicator */}
+      {hasArea && !isDrawingThisCard && (
+        <div className="flex items-center justify-between text-xs py-1">
+          <span style={{ color: UI_COLORS.SUCCESS }}>Area defined</span>
+          <button
+            onClick={removeArea}
+            className="text-secondary-hover hover:text-foreground cursor-pointer text-xs"
+            title="Clear drawn area"
+          >
+            Clear
+          </button>
+        </div>
+      )}
 
       {/* Note: Action button is rendered by Card component */}
     </div>

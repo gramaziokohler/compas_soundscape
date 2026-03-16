@@ -174,3 +174,183 @@ class PyroomacousticsMaterial(BaseModel):
 class PyroomacousticsMaterialsResponse(BaseModel):
     """Response containing material database"""
     materials: dict[str, PyroomacousticsMaterial]
+
+
+# ============================================================================
+# Speckle Model Schemas
+# ============================================================================
+
+class SpeckleModelAuthor(BaseModel):
+    """Author info for a Speckle model"""
+    id: str
+    name: str
+    avatar: Optional[str] = None
+
+
+class SpeckleVersionSummary(BaseModel):
+    """Summary of a single Speckle model version"""
+    id: str
+    message: Optional[str] = None
+    source_application: Optional[str] = None
+    referenced_object: Optional[str] = None
+    created_at: Optional[str] = None
+    author_name: Optional[str] = None
+
+
+class SpeckleModelDetail(BaseModel):
+    """Detailed info for a Speckle model"""
+    id: str
+    name: str
+    display_name: str
+    description: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    preview_url: Optional[str] = None
+    author: Optional[SpeckleModelAuthor] = None
+    versions_count: int = 0
+    latest_version: Optional[SpeckleVersionSummary] = None
+
+
+class SpeckleProjectModelsResponse(BaseModel):
+    """Response containing detailed list of models in a Speckle project"""
+    project_id: str
+    models: list[SpeckleModelDetail]
+    total_count: int
+    auth_token: Optional[str] = None
+
+
+# ============================================================================
+# Soundscape Data Persistence Schemas
+# ============================================================================
+
+class SoundscapeGlobalSettings(BaseModel):
+    """Global generation settings for a soundscape session"""
+    duration: float = 5.0
+    steps: int = 25
+    negative_prompt: str = ""
+    audio_model: str = "tangoflux"
+
+
+class SoundscapeSoundConfig(BaseModel):
+    """Serializable sound configuration (one card)"""
+    index: int
+    prompt: str = ""
+    type: Optional[str] = None  # CardType: "text-to-audio", "upload", "library"
+    duration: float = 5.0
+    display_name: Optional[str] = None
+    spl_db: Optional[float] = None
+    interval_seconds: Optional[float] = None
+    entity_index: Optional[int] = None
+    seed_copies: int = 1
+    steps: int = 25
+
+
+class SoundscapeSoundEvent(BaseModel):
+    """Serializable sound event (generated/uploaded sound placed in 3D)"""
+    id: str
+    audio_filename: str  # filename only, not full URL
+    position: list[float]  # [x, y, z]
+    display_name: Optional[str] = None
+    prompt: Optional[str] = None
+    prompt_index: Optional[int] = None
+    volume_db: Optional[float] = None
+    current_volume_db: Optional[float] = None
+    interval_seconds: Optional[float] = None
+    current_interval_seconds: Optional[float] = None
+    is_uploaded: bool = False
+    entity_index: Optional[int] = None
+
+
+class SoundscapeReceiver(BaseModel):
+    """Serializable receiver position"""
+    id: str
+    name: str
+    position: list[float]  # [x, y, z]
+    type: Optional[str] = None
+
+
+class SoundscapeIRMetadata(BaseModel):
+    """Serializable impulse response metadata for persistence"""
+    id: str
+    url: str = ""  # Original URL (rewritten on restore)
+    filename: str  # Filename only, used for persistent copy
+    name: str
+    format: str  # "mono", "binaural", "foa", "toa"
+    channels: int
+    original_channels: int
+    sample_rate: int
+    duration: float
+    file_size: int
+    normalization_convention: Optional[str] = None
+    channel_ordering: Optional[str] = None
+
+
+class SoundscapeSimulationSettings(BaseModel):
+    """Serializable pyroomacoustics simulation settings"""
+    max_order: int = 3
+    ray_tracing: bool = False
+    air_absorption: bool = True
+    n_rays: int = 10000
+    simulation_mode: str = "foa"
+    enable_grid: bool = False
+
+
+class SoundscapeSimulationConfig(BaseModel):
+    """Serializable simulation configuration"""
+    id: str
+    display_name: str
+    type: str  # "pyroomacoustics", "choras", "resonance"
+    state: str = "completed"
+    simulation_instance_id: Optional[str] = None
+    settings: Optional[SoundscapeSimulationSettings] = None
+    speckle_material_assignments: Optional[dict[str, str]] = None
+    speckle_layer_name: Optional[str] = None
+    speckle_geometry_object_ids: Optional[list[str]] = None
+    speckle_scattering_assignments: Optional[dict[str, float]] = None
+    simulation_results: Optional[str] = None
+    current_simulation_id: Optional[str] = None
+    imported_ir_ids: Optional[list[str]] = None
+    source_receiver_ir_mapping: Optional[dict[str, dict[str, SoundscapeIRMetadata]]] = None
+    receiver_positions: Optional[dict[str, list[float]]] = None  # receiverId -> [x, y, z]
+
+
+class SoundscapeData(BaseModel):
+    """Full soundscape data package"""
+    version: str = "1.0"
+    model_id: str
+    model_name: str = ""
+    created_at: str = ""  # ISO datetime
+    global_settings: SoundscapeGlobalSettings = SoundscapeGlobalSettings()
+    sound_configs: list[SoundscapeSoundConfig] = []
+    sound_events: list[SoundscapeSoundEvent] = []
+    # Simulation persistence (all optional, backward-compatible)
+    receivers: list[SoundscapeReceiver] = []
+    selected_receiver_id: Optional[str] = None
+    simulation_configs: list[SoundscapeSimulationConfig] = []
+    active_simulation_index: Optional[int] = None
+
+
+class SoundscapeSaveRequest(BaseModel):
+    """Request to save soundscape data"""
+    soundscape_data: SoundscapeData
+    audio_urls: list[str] = []  # Audio file URLs to copy
+    ir_urls: list[str] = []  # IR file URLs to copy
+
+
+class SoundscapeSaveResponse(BaseModel):
+    """Response from saving soundscape data"""
+    success: bool
+    speckle_object_id: Optional[str] = None
+    local_folder: Optional[str] = None
+    json_path: Optional[str] = None
+    audio_files_copied: int = 0
+    ir_files_copied: int = 0
+    message: str = ""
+
+
+class SoundscapeLoadResponse(BaseModel):
+    """Response from loading soundscape data"""
+    soundscape_data: Optional[SoundscapeData] = None
+    audio_base_url: str = ""
+    ir_base_url: str = ""
+    found: bool = False

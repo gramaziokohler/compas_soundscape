@@ -30,11 +30,12 @@ interface SpeckleSurfaceMaterialsSectionProps {
   viewerRef: React.RefObject<Viewer | null>;
   worldTree?: any; // Optional - will be fetched from viewer if not provided
   availableMaterials: AcousticMaterial[];
-  onMaterialAssignmentsChange: (assignments: Record<string, string>, layerName: string | null) => void; // objectId -> materialId + selected layer name
+  onMaterialAssignmentsChange: (assignments: Record<string, string>, layerName: string | null, geometryObjectIds: string[], scatteringAssignments: Record<string, number>) => void; // objectId -> materialId + selected layer name + all geometry IDs + per-object scattering
   className?: string;
   // Persisted state for restoring on remount
   initialAssignments?: Record<string, string>; // objectId -> materialId from config
   initialLayerName?: string | null; // Previously selected layer name
+  initialScatteringAssignments?: Record<string, number>; // objectId -> scattering from config
 }
 
 export function SpeckleSurfaceMaterialsSection({
@@ -44,7 +45,8 @@ export function SpeckleSurfaceMaterialsSection({
   onMaterialAssignmentsChange,
   className = '',
   initialAssignments,
-  initialLayerName
+  initialLayerName,
+  initialScatteringAssignments
 }: SpeckleSurfaceMaterialsSectionProps) {
 
   // Get worldTree from viewer if not provided via props
@@ -94,6 +96,7 @@ export function SpeckleSurfaceMaterialsSection({
     selectLayer,
     assignMaterial,
     assignMaterialToAll,
+    assignMaterialToObjects,
     getMaterialColor,
     getColorGroups,
     clearMaterialAssignments,
@@ -102,6 +105,33 @@ export function SpeckleSurfaceMaterialsSection({
     initialAssignments,
     initialLayerName
   });
+
+  // ── Scattering assignments (per-object, same pattern as material assignments) ──
+  const [scatteringAssignments, setScatteringAssignments] = useState<Map<string, number>>(() => {
+    if (!initialScatteringAssignments) return new Map();
+    return new Map(Object.entries(initialScatteringAssignments).map(([k, v]) => [k, v]));
+  });
+
+  const assignScattering = useCallback((objectId: string, value: number) => {
+    setScatteringAssignments(prev => new Map(prev).set(objectId, value));
+  }, []);
+
+  const assignScatteringToAll = useCallback((value: number) => {
+    const allIds = getAllObjectIds();
+    setScatteringAssignments(() => {
+      const newMap = new Map<string, number>();
+      allIds.forEach(id => newMap.set(id, value));
+      return newMap;
+    });
+  }, [getAllObjectIds]);
+
+  const assignScatteringToObjects = useCallback((objectIds: string[], value: number) => {
+    setScatteringAssignments(prev => {
+      const newMap = new Map(prev);
+      objectIds.forEach(id => newMap.set(id, value));
+      return newMap;
+    });
+  }, []);
 
   // Publish material state to AcousticMaterialContext for right sidebar consumers
   const { publishMaterialState, clearMaterialState } = useAcousticMaterial();
@@ -115,9 +145,14 @@ export function SpeckleSurfaceMaterialsSection({
       layerOptions,
       assignMaterial,
       assignMaterialToAll,
-      getMaterialColor
+      assignMaterialToObjects,
+      getMaterialColor,
+      scatteringAssignments,
+      assignScattering,
+      assignScatteringToAll,
+      assignScatteringToObjects
     });
-  }, [meshObjects, materialAssignments, availableMaterials, selectedLayerId, layerOptions, assignMaterial, assignMaterialToAll, getMaterialColor, publishMaterialState]);
+  }, [meshObjects, materialAssignments, availableMaterials, selectedLayerId, layerOptions, assignMaterial, assignMaterialToAll, getMaterialColor, publishMaterialState, scatteringAssignments, assignScattering, assignScatteringToAll, assignScatteringToObjects]);
 
   // Clear context state on unmount
   useEffect(() => {
@@ -248,13 +283,22 @@ export function SpeckleSurfaceMaterialsSection({
       assignmentsObject[objectId] = materialId;
     });
 
+    // Convert scattering Map to plain object for parent
+    const scatteringObject: Record<string, number> = {};
+    scatteringAssignments.forEach((value, objectId) => {
+      scatteringObject[objectId] = value;
+    });
+
     // Find the layer name from selectedLayerId
     const selectedLayer = layerOptions.find(layer => layer.id === selectedLayerId);
     const layerName = selectedLayer?.name || null;
 
+    // Send only the IDs that have an assigned material (for backend geometry filtering)
+    const geometryObjectIds = Object.keys(assignmentsObject);
+
     // Call the latest callback without triggering re-run
-    onMaterialAssignmentsChangeRef.current(assignmentsObject, layerName);
-  }, [materialAssignments, selectedLayerId, layerOptions]);
+    onMaterialAssignmentsChangeRef.current(assignmentsObject, layerName, geometryObjectIds, scatteringObject);
+  }, [materialAssignments, selectedLayerId, layerOptions, scatteringAssignments]);
 
   /**
    * Clear material colors when component unmounts

@@ -5,6 +5,8 @@ import { API_BASE_URL, DEFAULT_NUM_SOUNDS, DEFAULT_SPL_DB, LLM_SUGGESTED_INTERVA
 import { loadAudioFileWithBuffer } from '@/lib/audio/utils/audio-info';
 import { apiService } from '@/services/api';
 import { useErrorNotification } from '@/contexts/ErrorContext';
+import { useAreaDrawingContext } from '@/contexts/AreaDrawingContext';
+import { generatePositionsInArea } from '@/utils/positioning';
 
 /**
  * useAnalysis Hook
@@ -15,6 +17,7 @@ import { useErrorNotification } from '@/contexts/ErrorContext';
  */
 export function useAnalysis() {
   const { addError } = useErrorNotification();
+  const areaDrawing = useAreaDrawingContext();
   const [analysisConfigs, setAnalysisConfigs] = useState<AnalysisConfig[]>([
     // Start with no default tabs - user imports model via right sidebar first
   ]);
@@ -526,6 +529,25 @@ export function useAnalysis() {
             duration_seconds: p.duration_seconds || 10
           }
         }));
+
+        // Assign positions from drawn area (if any)
+        const drawnArea = areaDrawing.getArea(index);
+        if (drawnArea) {
+          // Count prompts that already have entity positions
+          const promptsNeedingPositions = prompts.filter(p => !p.entity?.position);
+          if (promptsNeedingPositions.length > 0) {
+            const positions = generatePositionsInArea(drawnArea, promptsNeedingPositions.length);
+            let posIdx = 0;
+            for (const prompt of prompts) {
+              if (!prompt.entity?.position && posIdx < positions.length) {
+                prompt.position = positions[posIdx++];
+              }
+            }
+          }
+          // Update visual state to show generation happened
+          areaDrawing.setAreaVisualState(index, 'generated');
+          console.log(`[useAnalysis] Assigned ${promptsNeedingPositions.length} positions from drawn area for card ${index}`);
+        }
       }
 
       // Store results

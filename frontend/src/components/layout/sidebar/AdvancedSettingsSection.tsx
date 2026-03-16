@@ -1,7 +1,14 @@
 "use client";
 
 import { RangeSlider } from "@/components/ui/RangeSlider";
-import { UI_COLORS, UI_BORDER_RADIUS, AUDIO_MODEL_TANGOFLUX, AUDIO_MODEL_AUDIOLDM2, AUDIO_MODEL_NAMES } from "@/utils/constants";
+import {
+  UI_COLORS,
+  UI_BORDER_RADIUS,
+  AUDIO_MODEL_TANGOFLUX,
+  AUDIO_MODEL_AUDIOLDM2,
+  AUDIO_MODEL_ELEVENLABS,
+  AUDIO_MODEL_NAMES,
+} from "@/utils/constants";
 
 interface AdvancedSettingsSectionProps {
   globalDuration: number;
@@ -67,10 +74,13 @@ export function AdvancedSettingsSection({
         >
           <option value={AUDIO_MODEL_TANGOFLUX}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_TANGOFLUX]}</option>
           <option value={AUDIO_MODEL_AUDIOLDM2}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_AUDIOLDM2]}</option>
+          <option value={AUDIO_MODEL_ELEVENLABS}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_ELEVENLABS]}</option>
         </select>
         <p className="text-[10px] mt-1 text-gray-500 dark:text-gray-400 leading-tight">
           {audioModel === AUDIO_MODEL_TANGOFLUX
             ? "Fast, high-quality text-to-audio generation (default)"
+            : audioModel === AUDIO_MODEL_ELEVENLABS
+            ? "Cloud-based sound effects via ElevenLabs — requires NEXT_PUBLIC_ELEVENLABS_API_KEY"
             : "Alternative model with different characteristics"
           }
         </p>
@@ -84,32 +94,40 @@ export function AdvancedSettingsSection({
           max={30}
           step={1}
           onChange={onGlobalDurationChange}
-          hoverText="Applies to all sound tabs"
+          hoverText={
+            audioModel === AUDIO_MODEL_ELEVENLABS
+              ? "ElevenLabs accepts 0.5–22 s; values outside this range use auto-detect"
+              : "Applies to all sound tabs"
+          }
         />
 
-        <RangeSlider
-          label="Diffusion Steps: "
-          value={globalSteps}
-          min={10}
-          max={100}
-          step={5}
-          onChange={onGlobalStepsChange}
-          hoverText="Higher steps = better quality but slower"
-        />
-        
-        <div className="mt-1">
-          <label className="block text-[10px] font-medium mb-1 text-gray-700 dark:text-gray-300">
-            Global Negative Prompt
-          </label>
-          <textarea
-            value={globalNegativePrompt}
-            onChange={(e) => onGlobalNegativePromptChange(e.target.value)}
-            placeholder="e.g., distorted, reverb, echo"
-            className="w-full px-2 py-1.5 text-xs rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 resize-none placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-gray-400 dark:focus:border-gray-500 focus:outline-none transition-colors"
-            style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
-            rows={2}
-          />
-        </div>
+        {audioModel !== AUDIO_MODEL_ELEVENLABS && (
+          <>
+            <RangeSlider
+              label="Diffusion Steps: "
+              value={globalSteps}
+              min={10}
+              max={100}
+              step={5}
+              onChange={onGlobalStepsChange}
+              hoverText="Higher steps = better quality but slower"
+            />
+
+            <div className="mt-1">
+              <label className="block text-[10px] font-medium mb-1 text-gray-700 dark:text-gray-300">
+                Global Negative Prompt
+              </label>
+              <textarea
+                value={globalNegativePrompt}
+                onChange={(e) => onGlobalNegativePromptChange(e.target.value)}
+                placeholder="e.g., distorted, reverb, echo"
+                className="w-full px-2 py-1.5 text-xs rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 resize-none placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-gray-400 dark:focus:border-gray-500 focus:outline-none transition-colors"
+                style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
+                rows={2}
+              />
+            </div>
+          </>
+        )}
       </div>
 
       <div className="border-t border-gray-200 dark:border-gray-700 my-0.5" />

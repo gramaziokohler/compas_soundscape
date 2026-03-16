@@ -1034,6 +1034,51 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   private _pendingRoomBounds: { min: [number, number, number]; max: [number, number, number] } | null = null;
 
   /**
+   * Get the current audio state needed for offline export.
+   * Returns mode, source registry, listener state, and IR buffers.
+   */
+  getExportState(): {
+    mode: AudioMode;
+    ambisonicOrder: AmbisonicOrder;
+    sampleRate: number;
+    sourceRegistry: Map<string, { buffer: AudioBuffer; position: Position }>;
+    listenerPosition: Position;
+    listenerOrientation: Orientation;
+    irBuffer: AudioBuffer | null;
+    perSourceIRBuffers: Map<string, AudioBuffer>;
+  } {
+    // Extract listener state from current mode instance
+    let listenerPosition: Position = { x: 0, y: 0, z: 0 } as Position;
+    let listenerOrientation: Orientation = { yaw: 0, pitch: 0, roll: 0 };
+
+    if (this.currentModeInstance) {
+      const modeAny = this.currentModeInstance as any;
+      if (modeAny.listenerPosition) listenerPosition = modeAny.listenerPosition;
+      if (modeAny.listenerOrientation) listenerOrientation = modeAny.listenerOrientation;
+    }
+
+    // Get processed IR buffers from AmbisonicIRMode
+    let irBuffer: AudioBuffer | null = null;
+    let perSourceIRBuffers = new Map<string, AudioBuffer>();
+
+    if (this.currentMode === AudioMode.AMBISONIC_IR && this.ambisonicIRMode) {
+      irBuffer = this.ambisonicIRMode.getProcessedIRBuffer();
+      perSourceIRBuffers = this.ambisonicIRMode.getSourceIRBuffers();
+    }
+
+    return {
+      mode: this.currentMode,
+      ambisonicOrder: this.ambisonicOrder,
+      sampleRate: this.audioContext?.sampleRate ?? 48000,
+      sourceRegistry: new Map(this.sourceRegistry),
+      listenerPosition,
+      listenerOrientation,
+      irBuffer,
+      perSourceIRBuffers,
+    };
+  }
+
+  /**
    * Get current warnings
    */
   getWarnings(): string[] {
@@ -1134,14 +1179,15 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * Routes to current mode implementation
    */
   updateSourcePosition(sourceId: string, position: Position): void {
-    if (!this.currentModeInstance) {
-      throw new Error('[AudioOrchestrator] No mode active');
-    }
-
-    // Update position in registry
+    // Update position in registry regardless of mode state
     const existing = this.sourceRegistry.get(sourceId);
     if (existing) {
       this.sourceRegistry.set(sourceId, { ...existing, position });
+    }
+
+    if (!this.currentModeInstance) {
+      // Position saved in registry; will be applied when mode activates
+      return;
     }
 
     this.currentModeInstance.updateSourcePosition(sourceId, position);
@@ -1152,12 +1198,14 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * Routes to current mode implementation
    */
   removeSource(sourceId: string): void {
-    if (!this.currentModeInstance) {
-      throw new Error('[AudioOrchestrator] No mode active');
-    }
-
-    // Remove from registry
+    // Remove from registry regardless of mode state
     this.sourceRegistry.delete(sourceId);
+
+    if (!this.currentModeInstance) {
+      // No mode active — source was only registered, nothing to tear down
+      console.warn('[AudioOrchestrator] removeSource: no mode active, skipping', sourceId);
+      return;
+    }
 
     this.currentModeInstance.removeSource(sourceId);
   }

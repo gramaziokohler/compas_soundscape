@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useCallback } from "react";
+import React, { useMemo, useCallback } from "react";
 import type { AnalysisSectionProps, AnalysisConfig, AnalysisResult, ModelAnalysisConfig, AudioAnalysisConfig, TextAnalysisConfig } from "@/types/analysis";
 import type { CardTypeOption } from "@/components/ui/CardSection";
 import { CARD_TYPE_LABELS } from '@/types/card';
@@ -11,6 +11,7 @@ import { AudioContextContent } from "@/components/layout/sidebar/analysis/AudioC
 import { TextContextContent } from "@/components/layout/sidebar/analysis/TextContextContent";
 import { AnalysisResultContent } from "@/components/layout/sidebar/analysis/AnalysisResultContent";
 import { useSpeckleSelectionMode } from "@/contexts/SpeckleSelectionModeContext";
+import { useAreaDrawingContext } from "@/contexts/AreaDrawingContext";
 
 /**
  * AnalysisSection Component
@@ -44,6 +45,9 @@ export function AnalysisSection({
   // Get diverse selection from context (works even without a 3D model card)
   const { diverseSelectedObjectIds, clearDiverseSelection } = useSpeckleSelectionMode();
   const diverseCount = diverseSelectedObjectIds.size;
+
+  // Area drawing context (for text card draw-area buttons)
+  const areaDrawing = useAreaDrawingContext();
 
   // Helper to check if an analysis has generated results
   const hasResult = useCallback((index: number): boolean => {
@@ -204,6 +208,41 @@ export function AnalysisSection({
       }
     }
 
+    // Build custom buttons for text cards (draw area button)
+    let customButtons: React.ReactNode[] | undefined;
+    if (config.type === 'text') {
+      const cardHasArea = areaDrawing.hasArea(index);
+      const isDrawingThis = areaDrawing.isDrawing && areaDrawing.drawingCardIndex === index;
+
+      const drawAreaBtn = (
+        <button
+          key="draw-area"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (isDrawingThis) {
+              areaDrawing.cancelDrawing();
+            } else {
+              areaDrawing.startDrawing(index);
+            }
+          }}
+          title={isDrawingThis ? 'Cancel drawing' : 'Draw area in viewer'}
+          className={`w-5 h-5 flex items-center justify-center rounded-full transition-colors cursor-pointer ${
+            isDrawingThis
+              ? 'text-white bg-success'
+              : cardHasArea
+                ? 'text-success bg-emerald-100'
+                : 'text-secondary-hover hover:bg-emerald-100'
+          }`}
+        >
+          {/* Polygon icon */}
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 2l8 5v10l-8 5-8-5V7z" />
+          </svg>
+        </button>
+      );
+      customButtons = [drawAreaBtn];
+    }
+
     return (
       <Card
         config={config}
@@ -231,9 +270,10 @@ export function AnalysisSection({
         actionButtonDisabledReason={actionButtonDisabledReason}
         actionButtonColor={actionButtonColor}
         color="success"
+        customButtons={customButtons}
       />
     );
-  }, [hasResult, getResult, isRunning, getCollapsedInfo, onUpdateConfig, onRemoveConfig, onReset, getBeforeContent, getAfterContent, onRun, onStop]);
+  }, [hasResult, getResult, isRunning, getCollapsedInfo, onUpdateConfig, onRemoveConfig, onReset, getBeforeContent, getAfterContent, onRun, onStop, areaDrawing]);
 
   // Footer with send button
   const footer = (

@@ -268,10 +268,12 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
 
   // Speckle Material Assignments Handler (for SimulationSetup)
-  const handleSpeckleMaterialAssignments = useCallback((index: number, assignments: Record<string, string>, layerName: string | null) => {
+  const handleSpeckleMaterialAssignments = useCallback((index: number, assignments: Record<string, string>, layerName: string | null, geometryObjectIds: string[], scatteringAssignments: Record<string, number>) => {
     handleUpdateConfig(index, {
       speckleMaterialAssignments: assignments,
-      speckleLayerName: layerName
+      speckleLayerName: layerName,
+      speckleGeometryObjectIds: geometryObjectIds,
+      speckleScatteringAssignments: scatteringAssignments
     } as any);
   }, [handleUpdateConfig]);
 
@@ -452,6 +454,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       const projectId = urlMatch[1];
       const modelId = urlMatch[2];
 
+      const geometryObjectIds = (config as any).speckleGeometryObjectIds as string[] | undefined;
+      const speckleScatteringAssignments = (config as any).speckleScatteringAssignments as Record<string, number> | undefined;
       const result = await apiService.runPyroomacousticsSimulationSpeckle(
         projectId,
         modelId,
@@ -459,7 +463,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         (config as any).speckleLayerName || null,
         config.display_name || 'Simulation',
         settings,
-        sourceReceiverPairs
+        sourceReceiverPairs,
+        geometryObjectIds,
+        speckleScatteringAssignments || {}
       );
 
       // Import all IR files using shared utility
@@ -689,8 +695,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             viewerRef={viewerRef}
             worldTree={localWorldTree}
             availableMaterials={currentMaterials}
-            onMaterialAssignmentsChange={(assignments, layerName) =>
-              handleSpeckleMaterialAssignments(index, assignments, layerName)
+            onMaterialAssignmentsChange={(assignments, layerName, geometryObjectIds, scatteringAssignments) =>
+              handleSpeckleMaterialAssignments(index, assignments, layerName, geometryObjectIds, scatteringAssignments)
             }
             onUpdateConfig={(updates) => handleUpdateConfig(index, updates)}
         />

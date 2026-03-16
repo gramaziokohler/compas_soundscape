@@ -2,9 +2,9 @@ import * as THREE from "three";
 import { SpeckleStandardMaterial } from "@speckle/viewer";
 import { disposeMesh } from "@/lib/three/mesh-cleanup";
 import { updateDraggableMeshes, disposeMeshes } from "@/lib/three/draggable-mesh-manager";
-import { calculateSpiralPositions } from "@/lib/three/spiral-placement";
+// import { calculateSpiralPositions } from "@/lib/three/spiral-placement"; // Replaced by camera-based placement
 import type { ReceiverData } from "@/types";
-import type { BoundingBoxBounds } from "@/lib/three/BoundingBoxManager";
+// import type { BoundingBoxBounds } from "@/lib/three/BoundingBoxManager"; // Unused after spiral placement removal
 import { RECEIVER_CONFIG } from "@/utils/constants";
 
 /**
@@ -35,8 +35,8 @@ export class ReceiverManager {
   // Position tracking - stores positions by receiver ID to preserve dragged positions
   private receiverPositions: Map<string, [number, number, number]> = new Map();
 
-  // Bounding box for spiral placement
-  private boundingBox: BoundingBoxBounds | null = null;
+  // Bounding box (retained for potential future use; not used by current placement strategy)
+  // private boundingBox: BoundingBoxBounds | null = null;
 
   // Preview cube for placement
   private previewReceiver: THREE.Mesh | null = null;
@@ -47,13 +47,10 @@ export class ReceiverManager {
     this.parentGroup = parentGroup || null;
   }
 
-  /**
-   * Set bounding box for spiral placement
-   * Should be called when bounding box is calculated/updated
-   */
-  public setBoundingBox(bounds: BoundingBoxBounds | null): void {
-    this.boundingBox = bounds;
-  }
+  // setBoundingBox removed — spiral/bounding-box placement replaced by camera-based placement.
+  // public setBoundingBox(bounds: BoundingBoxBounds | null): void {
+  //   this.boundingBox = bounds;
+  // }
 
   /**
    * Update stored receiver position (called when receiver is dragged)
@@ -64,13 +61,13 @@ export class ReceiverManager {
   }
 
   /**
-   * Update receiver cubes based on receiver data
-   * Uses DraggableMeshManager utility for efficient updates
-   * 
+   * Update receiver cubes based on receiver data.
+   * New receivers are placed at the position provided in their data
+   * (caller is responsible for setting position, e.g. 2 m in front of camera).
+   *
    * @param receivers - Receiver data array
-   * @param useSpiralPlacement - Whether to use spiral placement (default: false)
    */
-  public updateReceivers(receivers: ReceiverData[], useSpiralPlacement: boolean = false): void {
+  public updateReceivers(receivers: ReceiverData[]): void {
     // Clean up positions for deleted receivers
     const currentReceiverIds = new Set(receivers.map(r => r.id));
     for (const id of this.receiverPositions.keys()) {
@@ -79,36 +76,35 @@ export class ReceiverManager {
       }
     }
 
-    // Calculate spiral positions ONLY for NEW receivers that don't have stored positions
-    // This preserves dragged positions when receivers are re-rendered
-    let spiralPositionMap: Map<string, [number, number, number]> = new Map();
-    const hasNewReceivers = receivers.some(r => !this.receiverPositions.has(r.id));
-
-    if (useSpiralPlacement && this.boundingBox && hasNewReceivers) {
-      const allSpiralPositions = calculateSpiralPositions(this.boundingBox, receivers.length);
-
-      // Map spiral positions only to new receivers
-      receivers.forEach((receiver, index) => {
-        if (!this.receiverPositions.has(receiver.id)) {
-          spiralPositionMap.set(receiver.id, allSpiralPositions[index].toArray() as [number, number, number]);
-        }
-      });
+    // On first call (empty map), seed positions from receiver data.
+    // This preserves restored/saved positions after a page reload.
+    if (this.receiverPositions.size === 0 && receivers.length > 0) {
+      for (const r of receivers) {
+        this.receiverPositions.set(r.id, [...r.position] as [number, number, number]);
+      }
     }
 
-    // Update receiver data with correct positions (priority: stored > spiral > original)
+    // ── Spiral / bounding-box placement removed ──────────────────────────────
+    // Receivers are now placed 2 m in front of the camera by the caller
+    // (see handleAddReceiver in page.tsx using RECEIVER_CONFIG.CAMERA_PLACEMENT_DISTANCE_M).
+    // let spiralPositionMap: Map<string, [number, number, number]> = new Map();
+    // const hasNewReceivers = receivers.some(r => !this.receiverPositions.has(r.id));
+    // if (useSpiralPlacement && this.boundingBox && hasNewReceivers) {
+    //   const allSpiralPositions = calculateSpiralPositions(this.boundingBox, receivers.length);
+    //   receivers.forEach((receiver, index) => {
+    //     if (!this.receiverPositions.has(receiver.id)) {
+    //       spiralPositionMap.set(receiver.id, allSpiralPositions[index].toArray() as [number, number, number]);
+    //     }
+    //   });
+    // }
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // Update receiver data with correct positions (priority: stored > original)
     const updatedReceivers = receivers.map(receiver => {
       // Check for stored position first (from drag)
       const storedPosition = this.receiverPositions.get(receiver.id);
       if (storedPosition) {
         return { ...receiver, position: storedPosition };
-      }
-
-      // Check for spiral position (for new receivers)
-      const spiralPosition = spiralPositionMap.get(receiver.id);
-      if (spiralPosition) {
-        // Store the new spiral position for future reference
-        this.receiverPositions.set(receiver.id, spiralPosition);
-        return { ...receiver, position: spiralPosition };
       }
 
       // Use original position and store it

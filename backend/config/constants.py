@@ -127,7 +127,7 @@ PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE = PYROOMACOUSTICS_SIMULATION_MODE_MONO  
 # A-Format Tetrahedral Array Configuration (for FOA with Ray Tracing)
 # Virtual A-format array simulates physical capsule arrangement of Ambisonics mics
 # (e.g., Sennheiser Ambeo, Røde NT-SF1) using 4 omnidirectional mics in a tetrahedron
-PYROOMACOUSTICS_A_FORMAT_ARRAY_RADIUS = 0.10  # Tetrahedron radius in meters (10cm for better spatial encoding in simulation)
+PYROOMACOUSTICS_A_FORMAT_ARRAY_RADIUS = 0.001  # Tetrahedron radius in meters (10cm for better spatial encoding in simulation)
 PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING = "foa_raytracing"  # FOA with ray tracing via A-format
 
 # Tetrahedral vertex coordinates (normalized, on unit sphere)
@@ -149,12 +149,32 @@ PYROOMACOUSTICS_RAY_TRACING_ENERGY_THRES = 1e-7  # Threshold for ray termination
 PYROOMACOUSTICS_RAY_TRACING_TIME_THRES = 10.0  # Maximum ray flight time (seconds)
 PYROOMACOUSTICS_RAY_TRACING_HIST_BIN_SIZE = 0.004  # Time granularity of energy bins (seconds)
 PYROOMACOUSTICS_RAY_TRACING_RECOMMENDED_MAX_ORDER = 3  # Recommended max_order for hybrid simulator
-PYROOMACOUSTICS_DEFAULT_SCATTERING = 0.1  # Default scattering coefficient (0-1)
+PYROOMACOUSTICS_DEFAULT_SCATTERING = 0.05  # Default scattering coefficient (0-1)
 PYROOMACOUSTICS_SCATTERING_MIN = 0.0  # Minimum scattering coefficient (specular reflection)
 PYROOMACOUSTICS_SCATTERING_MAX = 1.0  # Maximum scattering coefficient (diffuse reflection)
 PYROOMACOUSTICS_DEFAULT_ABSORPTION =  1.0  # Default surface absorption coefficient (0-1)
+
+# Custom Materials (not in pyroomacoustics built-in database)
+# Each entry follows the same format as the built-in database:
+#   - description: Human-readable description
+#   - coeffs: Absorption coefficients at each frequency band (0-1)
+#   - center_freqs: Octave band center frequencies in Hz
+PYROOMACOUSTICS_CUSTOM_MATERIALS = {
+    "perfect_absorber": {
+        "description": "Perfect absorber (fully absorptive at all frequencies)",
+        "coeffs": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+        "center_freqs": [125, 250, 500, 1000, 2000, 4000, 8000],
+    },
+    "almost_perfect_absorber": {
+        "description": "Almost perfect absorber (fully absorptive at all frequencies)",
+        "coeffs": [0.99, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99],
+        "center_freqs": [125, 250, 500, 1000, 2000, 4000, 8000],
+    },    
+}
+PYROOMACOUSTICS_MESH_WELD_TOLERANCE = 1e-4  # Vertex merge tolerance in meters (0.1 mm) for welding connected meshes
 PYROOMACOUSTICS_SAMPLE_RATE = 16000  # Sample rate -- uses n_bands = math.floor(np.log2(SAMPLE_RATE / BASE_FREQUENCY))
 PYROOMACOUSTICS_USE_RAND_ISM = False  # Use randomized ISM for better realism
+PYROOMACOUSTICS_IR_TRIM_THRESHOLD = 0.01  # Fraction of peak amplitude below which trailing IR samples are trimmed
 
 # Parameter Ranges
 PYROOMACOUSTICS_MAX_ORDER_MIN = 0  # Direct path only
@@ -163,6 +183,14 @@ PYROOMACOUSTICS_MAX_ORDER_MAX = 20
 # RIR Export
 PYROOMACOUSTICS_RIR_DIR = str(BACKEND_DIR / "temp" / "static" / "pyroomacoustics_rir")
 PYROOMACOUSTICS_RIR_URL_PREFIX = "/static/pyroomacoustics_rir"
+
+# Grid Receiver Simulation
+PYROOMACOUSTICS_GRID_RECEIVER_POINTS_FILE = str(BACKEND_DIR / "receiver_points.txt")  # Path to grid points file
+PYROOMACOUSTICS_GRID_DEFAULT_ENABLED = False  # Grid simulation disabled by default
+PYROOMACOUSTICS_GRID_PLOT_DPI = 150  # DPI for exported heatmap JPG
+PYROOMACOUSTICS_GRID_PLOT_FIGSIZE = (10, 8)  # Figure size in inches (width, height)
+PYROOMACOUSTICS_GRID_PLOT_COLORMAP = "viridis"  # Matplotlib colormap for heatmap
+PYROOMACOUSTICS_GRID_PLOT_CONTOUR_LEVELS = 100  # Number of contour levels for smooth gradient
 
 # ============================================================================
 # Directory Configuration - Temporary Files
@@ -447,3 +475,12 @@ SPECKLE_PROJECT_NAME = "soundscape-viewer"
 
 # Supported File Formats for Speckle Upload
 SPECKLE_SUPPORTED_FORMATS = ["3dm", "obj", "ifc"]
+
+# ============================================================================
+# Soundscape Data Persistence Configuration
+# ============================================================================
+
+# Local storage for saved soundscapes (per model_id)
+# Lives outside temp/ so it is NOT cleared on startup by cleanup_all_temp_directories
+SOUNDSCAPE_DATA_DIR = str(BACKEND_DIR / "data" / "soundscapes")
+SOUNDSCAPE_DATA_URL_PREFIX = "/soundscapes"

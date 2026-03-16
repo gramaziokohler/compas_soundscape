@@ -10,6 +10,7 @@ import { ErrorToast } from "@/components/ui/ErrorToast";
 import { SpeckleViewerProvider, useSpeckleViewerContext } from "@/contexts/SpeckleViewerContext";
 import { SpeckleSelectionModeProvider, useSpeckleSelectionMode } from "@/contexts/SpeckleSelectionModeContext";
 import { AcousticMaterialProvider } from "@/contexts/AcousticMaterialContext";
+import { AreaDrawingProvider } from "@/contexts/AreaDrawingContext";
 import { RightSidebarProvider, useRightSidebar } from "@/contexts/RightSidebarContext";
 import { useFileUpload } from "@/hooks/useFileUpload";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
@@ -23,13 +24,15 @@ import { useAudioOrchestrator } from "@/hooks/useAudioOrchestrator";
 import { useReceivers } from "@/hooks/useReceivers";
 import { useModalImpact } from "@/hooks/useModalImpact";
 import { useAcousticsSimulation } from "@/hooks/useAcousticsSimulation";
+import { seedPyroomPersistentState } from "@/hooks/usePyroomAcousticsSimulation";
 import { useAnalysis } from "@/hooks/useAnalysis";
 import { apiService } from "@/services/api";
-import { API_BASE_URL } from "@/utils/constants";
+import { API_BASE_URL, RECEIVER_CONFIG } from "@/utils/constants";
 import type { LoadTab, SoundGenerationConfig } from "@/types";
 import type { SelectedGeometry, AcousticMaterial } from "@/types/materials";
 import { AudioStatusDisplay } from "@/components/audio/AudioStatusDisplay";
 import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSelector";
+import { buildSoundscapeSavePayload, restoreSoundscapeState, getBlobUrlSounds } from "@/utils/soundscape-serializer";
 
 function HomeContent() {
   const fileUpload = useFileUpload();
@@ -129,6 +132,7 @@ function HomeContent() {
   const [globalModelFile, setGlobalModelFile] = useState<File | null>(null);
   const [globalSpeckleData, setGlobalSpeckleData] = useState<any>(null);
   const [isUploadingGlobalModel, setIsUploadingGlobalModel] = useState(false);
+  const [isSavingSoundscape, setIsSavingSoundscape] = useState(false);
 
   // Sidebar expanded states (for adjusting SpeckleScene control button and timeline positions)
   const [isLeftSidebarExpanded, setIsLeftSidebarExpanded] = useState(true);
@@ -348,7 +352,8 @@ function HomeContent() {
         spl_db: p.metadata?.spl_db ?? 60, // Default SPL if not provided
         interval_seconds: p.metadata?.interval_seconds ?? 5, // Default interval if not provided
         display_name: p.text.length > 50 ? p.text.substring(0, 47) + '...' : p.text,
-        entity: p.entity || undefined // Preserve entity association for 3D model sounds
+        // Preserve entity association for 3D model sounds, or use area-drawn position
+        entity: p.entity || (p.position ? { position: p.position, index: undefined } : undefined)
       }));
 
       console.log('[Analysis→SoundGen] Converted configs with metadata:', 
@@ -443,6 +448,171 @@ function HomeContent() {
       setIsUploadingGlobalModel(false);
     }
   }, [isUploadingGlobalModel, handleApiError]);
+
+  // Load an existing Speckle model directly (no upload needed)
+  const handleSpeckleModelSelect = useCallback(async (speckleData: {
+    model_id: string;
+    version_id: string;
+    file_id: string;
+    url: string;
+    object_id: string;
+    auth_token?: string;
+  }) => {
+    console.log('[page.tsx] Speckle model selected:', speckleData.url);
+    setGlobalSpeckleData(speckleData);
+    setSpeckleModelUrl(speckleData.url);
+
+    // Auto-load saved soundscape for this model
+    try {
+      const loadResponse = await apiService.loadSoundscapeFromSpeckle(speckleData.model_id);
+      if (loadResponse.found && loadResponse.soundscape_data) {
+        console.log('[page.tsx] Restoring saved soundscape:', loadResponse.soundscape_data);
+        const audioBaseUrl = `${API_BASE_URL}${loadResponse.audio_base_url}`;
+        // IR base URL is kept as a relative path (e.g. "/soundscapes/{model_id}/ir_files")
+        // because AudioOrchestrator prepends the host when fetching IR files
+        const irBaseUrl = loadResponse.ir_base_url || undefined;
+        const restored = restoreSoundscapeState(loadResponse.soundscape_data, audioBaseUrl, irBaseUrl);
+
+        // Atomically restore all soundscape state (configs + events + settings)
+        soundGen.restoreSoundscape(
+          restored.soundConfigs,
+          restored.soundEvents,
+          {
+            negativePrompt: restored.globalSettings.negativePrompt,
+            audioModel: restored.globalSettings.audioModel,
+          }
+        );
+
+        // Restore user-adjusted volume and interval values
+        audioControls.restoreVolumeAndIntervals(
+          restored.soundVolumes,
+          restored.soundIntervals,
+        );
+
+        // Restore receivers
+        if (restored.receivers.length > 0) {
+          receivers.restoreReceivers(restored.receivers, restored.selectedReceiverId);
+          console.log(`[page.tsx] Restored ${restored.receivers.length} receivers`);
+        }
+
+        // Restore simulation state
+        if (restored.simulationConfigs.length > 0) {
+          // Seed pyroom persistent states BEFORE restoring configs
+          // so that when hooks mount they find the correct saved state
+          restored.simulationConfigs.forEach(config => {
+            if (config.type === 'pyroomacoustics' && config.simulationInstanceId) {
+              const pyConfig = config as any;
+              seedPyroomPersistentState(config.simulationInstanceId, {
+                simulationSettings: pyConfig.settings,
+                simulationResults: pyConfig.simulationResults,
+                currentSimulationId: pyConfig.currentSimulationId,
+                importedIRIds: pyConfig.importedIRIds,
+                sourceReceiverIRMapping: pyConfig.sourceReceiverIRMapping,
+                irImported: !!(pyConfig.importedIRIds?.length),
+              });
+            }
+          });
+
+          acousticsSimulation.restoreSimulationState(
+            restored.simulationConfigs,
+            restored.activeSimulationIndex,
+          );
+          console.log(
+            `[page.tsx] Restored ${restored.simulationConfigs.length} simulations, ` +
+            `active index: ${restored.activeSimulationIndex}`
+          );
+        }
+
+        console.log(
+          `[page.tsx] Restored ${restored.soundConfigs.length} configs, ` +
+          `${restored.soundEvents.length} events`
+        );
+      }
+    } catch (err) {
+      console.warn('[page.tsx] Failed to auto-load soundscape:', err);
+    }
+  }, [
+    soundGen.restoreSoundscape,
+    audioControls.restoreVolumeAndIntervals,
+    receivers.restoreReceivers,
+    acousticsSimulation.restoreSimulationState,
+  ]);
+
+  // Save current soundscape state to Speckle + local storage
+  const handleSaveSoundscape = useCallback(async () => {
+    if (!globalSpeckleData?.model_id || !soundGen.soundscapeData?.length) return;
+    if (isSavingSoundscape) return;
+
+    const modelId = globalSpeckleData.model_id;
+    setIsSavingSoundscape(true);
+    try {
+      // 1. Upload blob-URL audio files (library/uploaded sounds) to the server
+      const blobSounds = getBlobUrlSounds(soundGen.soundscapeData);
+      const uploadedFilenames: Record<string, string> = {};
+
+      if (blobSounds.length > 0) {
+        console.log(`[page.tsx] Uploading ${blobSounds.length} blob audio file(s) to server...`);
+        const uploadPromises = blobSounds.map(async (event) => {
+          try {
+            const response = await fetch(event.url);
+            const blob = await response.blob();
+            const result = await apiService.uploadSoundscapeAudio(modelId, event.id, blob);
+            uploadedFilenames[event.id] = result.filename;
+            console.log(`[page.tsx] Uploaded blob audio: ${event.display_name} -> ${result.filename}`);
+          } catch (err) {
+            console.warn(`[page.tsx] Failed to upload blob audio for ${event.id}:`, err);
+          }
+        });
+        await Promise.all(uploadPromises);
+      }
+
+      // 2. Build save payload (with server filenames for blob sounds + simulation state)
+      const payload = buildSoundscapeSavePayload(
+        modelId,
+        modelId, // model_name - use model_id as fallback
+        soundGen.soundConfigs,
+        soundGen.soundscapeData,
+        {
+          duration: soundGen.globalDuration,
+          steps: soundGen.globalSteps,
+          negativePrompt: soundGen.globalNegativePrompt,
+          audioModel: soundGen.audioModel,
+        },
+        audioControls.soundVolumes,
+        audioControls.soundIntervals,
+        uploadedFilenames,
+        receivers.receivers,
+        receivers.selectedReceiverId,
+        acousticsSimulation.simulationConfigs,
+        acousticsSimulation.activeSimulationIndex,
+      );
+
+      // 3. Save to Speckle + local
+      const result = await apiService.saveSoundscapeToSpeckle(payload);
+      console.log('[page.tsx] Soundscape saved:', result.message);
+    } catch (err) {
+      console.error('[page.tsx] Failed to save soundscape:', err);
+      handleApiError(err, 'Failed to save soundscape');
+    } finally {
+      setIsSavingSoundscape(false);
+    }
+  }, [
+    globalSpeckleData,
+    soundGen.soundscapeData,
+    soundGen.soundConfigs,
+    soundGen.globalDuration,
+    soundGen.globalSteps,
+    soundGen.globalNegativePrompt,
+    soundGen.audioModel,
+    audioControls.soundVolumes,
+    audioControls.soundIntervals,
+    receivers.receivers,
+    receivers.selectedReceiverId,
+    acousticsSimulation.simulationConfigs,
+    acousticsSimulation.activeSimulationIndex,
+    isSavingSoundscape,
+    handleApiError,
+  ]);
 
   // Wrapped file change handler to clear SED results and load audio info
   const handleFileChangeWithSEDClear = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1126,6 +1296,36 @@ function HomeContent() {
     audioOrchestrator.setReceiverMode(true, receiverId, true);
   }, [receivers.receivers, audioOrchestrator]);
 
+  /**
+   * Add a receiver 2 m in front of the current camera look direction.
+   * Falls back to the hook's default position if the camera is unavailable.
+   */
+  const handleAddReceiver = useCallback((type: string) => {
+    let position: [number, number, number] | undefined;
+    const viewer = viewerRef?.current;
+    if (viewer) {
+      try {
+        // Access the active THREE.Camera from the Speckle renderer
+        const camera = (viewer as any).getRenderer().renderingCamera;
+        if (camera?.matrixWorld && camera?.position) {
+          // Camera looks down its -Z axis; column 2 of matrixWorld is the backward vector
+          const mx: number[] = camera.matrixWorld.elements;
+          const dx = -mx[8], dy = -mx[9], dz = -mx[10];
+          const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+          const d = RECEIVER_CONFIG.CAMERA_PLACEMENT_DISTANCE_M;
+          position = [
+            camera.position.x + (dx / len) * d,
+            camera.position.y + (dy / len) * d,
+            camera.position.z + (dz / len) * d,
+          ];
+        }
+      } catch {
+        // Camera not ready — fall through to hook default
+      }
+    }
+    receivers.addReceiver(type, position);
+  }, [viewerRef, receivers.addReceiver]);
+
   // Reset goToReceiverId after it's been processed (allows re-triggering same receiver)
   useEffect(() => {
     if (goToReceiverId) {
@@ -1273,6 +1473,11 @@ function HomeContent() {
             // Model file upload (for empty state in scene)
             modelFile={globalModelFile}
             onModelFileChange={handleRightSidebarModelUpload}
+            // Load existing Speckle model (for empty state model browser)
+            onSpeckleModelSelect={handleSpeckleModelSelect}
+            // Soundscape persistence
+            onSaveSoundscape={handleSaveSoundscape}
+            isSavingSoundscape={isSavingSoundscape}
             className="w-full h-full"
           />
         ) : (
@@ -1394,6 +1599,7 @@ function HomeContent() {
         mutedSounds={audioControls.mutedSounds}
         soloedSound={audioControls.soloedSound}
         onResetSound={handleResetSound}
+        onDuplicateConfig={soundGen.handleDuplicateConfig}
         onSelectSoundCard={handleSelectSoundCard}
         selectedCardIndex={selectedCardIndex}
         soundVolumes={audioControls.soundVolumes}
@@ -1419,7 +1625,7 @@ function HomeContent() {
 
         // Receiver props
         receivers={receivers.receivers}
-        onAddReceiver={receivers.addReceiver}
+        onAddReceiver={handleAddReceiver}
         onDeleteReceiver={receivers.deleteReceiver}
         onUpdateReceiverName={receivers.updateReceiverName}
         onGoToReceiver={handleGoToReceiver}
@@ -1513,8 +1719,10 @@ export default function Home() {
         <SpeckleViewerProvider>
           <SpeckleSelectionModeProvider>
             <AcousticMaterialProvider>
-              <ErrorToast />
-              <HomeContent />
+              <AreaDrawingProvider>
+                <ErrorToast />
+                <HomeContent />
+              </AreaDrawingProvider>
             </AcousticMaterialProvider>
           </SpeckleSelectionModeProvider>
         </SpeckleViewerProvider>

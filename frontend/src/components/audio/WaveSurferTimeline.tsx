@@ -25,6 +25,8 @@ interface WaveSurferTimelineProps {
   soloedSound?: string | null;
   /** Callback to reload all available sounds into the timeline */
   onRefresh?: () => void;
+  /** Callback to export the full soundscape as a WAV file */
+  onDownload?: () => Promise<void>;
 }
 
 interface WaveSurferInstance {
@@ -57,6 +59,7 @@ export function WaveSurferTimeline({
   mutedSounds = new Set(),
   soloedSound = null,
   onRefresh,
+  onDownload,
 }: WaveSurferTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -67,6 +70,8 @@ export function WaveSurferTimeline({
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [zoom, setZoom] = useState<number>(WAVESURFER_TIMELINE.DEFAULT_ZOOM);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
   const timeOffsetRef = useRef<number>(0);
   const isInitializingRef = useRef<boolean>(false);
   const instancesValidRef = useRef<boolean>(false);
@@ -596,6 +601,23 @@ export function WaveSurferTimeline({
     setZoom(newZoom);
   }, []);
 
+  /**
+   * Handle soundscape WAV export
+   */
+  const handleDownload = useCallback(async () => {
+    if (!onDownload || isDownloading) return;
+    setIsDownloading(true);
+    setDownloadProgress(0);
+    try {
+      await onDownload();
+    } catch (err) {
+      console.error('[WaveSurferTimeline] Export failed:', err);
+    } finally {
+      setIsDownloading(false);
+      setDownloadProgress(0);
+    }
+  }, [onDownload, isDownloading]);
+
   const hasSounds = sounds.length > 0;
 
   if (!hasSounds) {
@@ -655,6 +677,29 @@ export function WaveSurferTimeline({
           >
             Reload
           </button>
+          {onDownload && (
+            <button
+              onClick={handleDownload}
+              disabled={isDownloading || isLoading}
+              className="text-xs px-2 py-1 rounded transition-colors"
+              style={{
+                color: isDownloading ? 'rgba(245, 0, 184, 0.5)' : '#F500B8',
+                backgroundColor: isDownloading ? 'rgba(245, 0, 184, 0.05)' : 'rgba(245, 0, 184, 0.1)',
+                border: '1px solid rgba(245, 0, 184, 0.3)',
+                cursor: isDownloading || isLoading ? 'not-allowed' : 'pointer',
+                minWidth: '5.5rem',
+              }}
+              onMouseEnter={(e) => {
+                if (!isDownloading && !isLoading) e.currentTarget.style.backgroundColor = 'rgba(245, 0, 184, 0.2)';
+              }}
+              onMouseLeave={(e) => {
+                if (!isDownloading && !isLoading) e.currentTarget.style.backgroundColor = 'rgba(245, 0, 184, 0.1)';
+              }}
+              title={isDownloading ? 'Rendering soundscape…' : 'Download full soundscape as stereo WAV (includes spatial audio)'}
+            >
+              {isDownloading ? 'Rendering…' : '↓ Download'}
+            </button>
+          )}
         </div>
       </div>
 

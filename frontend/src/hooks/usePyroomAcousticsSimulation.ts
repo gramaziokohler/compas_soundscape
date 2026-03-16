@@ -22,8 +22,8 @@ import {
   PYROOMACOUSTICS_DEFAULT_RAY_TRACING,
   PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION,
   PYROOMACOUSTICS_RAY_TRACING_N_RAYS,
-  PYROOMACOUSTICS_DEFAULT_SCATTERING,
-  PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE
+  PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE,
+  PYROOMACOUSTICS_DEFAULT_ENABLE_GRID
 } from '@/utils/constants';
 import type { SourceReceiverIRMapping } from '@/types/audio';
 
@@ -41,8 +41,8 @@ export interface PyroomAcousticsSimulationSettings {
   ray_tracing: boolean;
   air_absorption: boolean;
   n_rays: number;
-  scattering: number;
   simulation_mode: string; // "mono", "binaural", or "foa"
+  enable_grid: boolean; // Enable grid receiver simulation (heatmap export)
 }
 
 export interface PyroomAcousticsSimulationState {
@@ -98,8 +98,8 @@ function createDefaultState(): PyroomAcousticsSimulationState {
       ray_tracing: PYROOMACOUSTICS_DEFAULT_RAY_TRACING,
       air_absorption: PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION,
       n_rays: PYROOMACOUSTICS_RAY_TRACING_N_RAYS,
-      scattering: PYROOMACOUSTICS_DEFAULT_SCATTERING,
-      simulation_mode: PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE
+      simulation_mode: PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE,
+      enable_grid: PYROOMACOUSTICS_DEFAULT_ENABLE_GRID
     },
     isRunning: false,
     status: 'Idle',
@@ -110,6 +110,19 @@ function createDefaultState(): PyroomAcousticsSimulationState {
     importedIRIds: undefined,
     sourceReceiverIRMapping: undefined
   };
+}
+
+/**
+ * Pre-populate persistent state for a simulation instance.
+ * Called before hook mount during soundscape restore so that
+ * when the hook initializes, it finds the correct saved state.
+ */
+export function seedPyroomPersistentState(
+  instanceId: string,
+  state: Partial<PyroomAcousticsSimulationState>
+): void {
+  const existing = persistentStates.get(instanceId) || createDefaultState();
+  persistentStates.set(instanceId, { ...existing, ...state });
 }
 
 /**

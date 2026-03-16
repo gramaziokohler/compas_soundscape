@@ -357,6 +357,7 @@ export const DEFAULT_SPL_DB = 70;
 // Position Generation (for sound sphere spacing)
 // These values match the backend's position calculation logic
 // Used to space sounds evenly when no bounding box is provided
+export const DUPLICATE_POSITION_OFFSET = 1.5;  // Offset for duplicated sound sphere (meters)
 export const DEFAULT_POSITION_SPACING = 5;    // Spacing multiplier for x-axis
 export const DEFAULT_POSITION_OFFSET = 1.5;   // Offset multiplier for x-axis
 export const DEFAULT_POSITION_Y = 1;          // Default Y position
@@ -374,13 +375,15 @@ export const SPIRAL_PLACEMENT = {
 // Audio Generation Models
 export const AUDIO_MODEL_TANGOFLUX = "tangoflux";
 export const AUDIO_MODEL_AUDIOLDM2 = "audioldm2";
+export const AUDIO_MODEL_ELEVENLABS = "elevenlabs";
 export const DEFAULT_AUDIO_MODEL = AUDIO_MODEL_TANGOFLUX;
 
 // Audio Model Display Names
-export const AUDIO_MODEL_NAMES = {
+export const AUDIO_MODEL_NAMES: Record<string, string> = {
   [AUDIO_MODEL_TANGOFLUX]: "TangoFlux",
-  [AUDIO_MODEL_AUDIOLDM2]: "AudioLDM2"
-} as const;
+  [AUDIO_MODEL_AUDIOLDM2]: "AudioLDM2",
+  [AUDIO_MODEL_ELEVENLABS]: "ElevenLabs",
+};
 
 export const DEFAULT_SOUND_CONFIG = {
   prompt: "",
@@ -913,15 +916,12 @@ export const AUDIO_VISUALIZATION = {
   ENABLE_WAVEFORM_DISPLAY: true,
 
   // Number of waveform points to visualize (affects performance/detail trade-off)
-  WAVEFORM_POINTS: 400,
+  WAVEFORM_POINTS: 800,
 
   // Canvas dimensions for sidebar waveform
   WAVEFORM_WIDTH: 320,
   WAVEFORM_HEIGHT: 160, // Increased to accommodate bottom time labels
 
-  // dB range for waveform display
-  WAVEFORM_MIN_DB: -60,
-  WAVEFORM_MAX_DB: 0
 } as const;
 
 
@@ -1023,7 +1023,9 @@ export const RECEIVER_CONFIG = {
   ROUGHNESS: 0.3,
   METALNESS: 0.7,
   PREVIEW_OPACITY: 0.5,
-  COLOR: 0xf0a938
+  COLOR: 0xf0a938,
+  /** Distance in front of the camera to place a new receiver (meters) */
+  CAMERA_PLACEMENT_DISTANCE_M: 2,
 } as const;
 
 // Receiver positioning (for direct creation like sound spheres)
@@ -1607,8 +1609,28 @@ export const PYROOMACOUSTICS_RAY_TRACING_RECOMMENDED_MAX_ORDER = 3; // Recommend
 export const PYROOMACOUSTICS_RAY_TRACING_N_RAYS = 10000; // Default number of rays
 export const PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MIN = 1000; // Minimum number of rays
 export const PYROOMACOUSTICS_RAY_TRACING_N_RAYS_MAX = 50000; // Maximum number of rays
-export const PYROOMACOUSTICS_DEFAULT_SCATTERING = 0.1; // Default scattering coefficient (0-1)
+export const PYROOMACOUSTICS_DEFAULT_SCATTERING = 0.05; // Default scattering coefficient (0-1)
 export const PYROOMACOUSTICS_SCATTERING_MIN = 0.0; // Minimum scattering (specular reflection)
 export const PYROOMACOUSTICS_SCATTERING_MAX = 1.0; // Maximum scattering (diffuse reflection)
 
+// Grid Receiver Simulation
+export const PYROOMACOUSTICS_DEFAULT_ENABLE_GRID = false; // Grid simulation disabled by default
 
+// ============================================================================
+// Area Drawing Constants (polygon drawing on 3D surfaces)
+// ============================================================================
+export const AREA_DRAWING = {
+  SNAP_DISTANCE_PX: 10,
+  LINE_COLOR: 0x10B981,
+  FILL_COLOR_DEFAULT: 0xd1fae5,
+  FILL_COLOR_GENERATED: 0x059669,
+  FILL_OPACITY_DEFAULT: 0.4,
+  FILL_OPACITY_GENERATED: 0.5,
+  POINT_PREVIEW_COLOR: 0x10B981,
+  POINT_PREVIEW_SIZE: 0.15,
+  HEARING_HEIGHT: 1.5,
+  EXTRUDE_DISTANCE: 5.0,
+  MIN_VERTICES: 3,
+  RENDER_ORDER: 90,
+  LABEL_FONT_SIZE: 14,
+} as const;

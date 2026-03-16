@@ -1,14 +1,7 @@
-# example.py
-import os
-from dotenv import load_dotenv
-from elevenlabs.client import ElevenLabs
-from elevenlabs.play import play
-
-load_dotenv()
-
-elevenlabs = ElevenLabs(
-  api_key=os.getenv("ELEVENLABS_API_KEY"),
-)
-audio = elevenlabs.text_to_sound_effects.convert(text="wooden door closing")
-
-play(audio)
+# ElevenLabs sound generation is handled client-side via the frontend service:
+#   frontend/src/services/elevenlabs.mts
+#
+# This file is kept as a placeholder.  No backend endpoint is needed because
+# the @elevenlabs/elevenlabs-js browser SDK calls the ElevenLabs API directly
+# from the user's browser and returns a local Blob URL — same pattern as
+# uploaded and BBC Sound Library sounds.

@@ -2,6 +2,8 @@ import { API_BASE_URL } from '@/utils/constants';
 import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse } from '@/types';
 import type { ImpulseResponseMetadata } from '@/types/audio';
 import type { ModalAnalysisRequest, ModalAnalysisResult } from '@/types/modal';
+import type { SpeckleProjectModelsResponse } from '@/types/speckle-models';
+import type { SoundscapeSavePayload, SoundscapeSaveResponse, SoundscapeLoadResponse } from '@/types/soundscape';
 
 /**
  * Enhanced error handling for API calls
@@ -542,6 +544,7 @@ export const apiService = {
       n_rays: number;
       scattering: number;
       simulation_mode: string;
+      enable_grid?: boolean;
     },
     sourceReceiverPairs: Array<{
       source_position: number[];
@@ -556,6 +559,7 @@ export const apiService = {
     message: string;
     ir_files: string[];
     results_file: string;
+    grid_plot_file?: string;
   }> {
     try {
       const formData = new FormData();
@@ -576,6 +580,7 @@ export const apiService = {
         backendSimulationMode = 'foa_raytracing';
       }
       formData.append('simulation_mode', backendSimulationMode);
+      formData.append('enable_grid', (settings.enable_grid ?? false).toString());
 
       formData.append('source_receiver_pairs', JSON.stringify(sourceReceiverPairs));
       formData.append('face_materials', JSON.stringify(faceMaterialAssignments));
@@ -626,20 +631,23 @@ export const apiService = {
       ray_tracing: boolean;
       air_absorption: boolean;
       n_rays: number;
-      scattering: number;
       simulation_mode: string;
+      enable_grid?: boolean;
     },
     sourceReceiverPairs: Array<{
       source_position: number[];
       receiver_position: number[];
       source_id: string;
       receiver_id: string;
-    }>
+    }>,
+    geometryObjectIds?: string[],
+    objectScattering?: Record<string, number>
   ): Promise<{
     simulation_id: string;
     message: string;
     ir_files: string[];
     results_file: string;
+    grid_plot_file?: string;
   }> {
     try {
       const formData = new FormData();
@@ -652,7 +660,7 @@ export const apiService = {
       formData.append('ray_tracing', settings.ray_tracing.toString());
       formData.append('air_absorption', settings.air_absorption.toString());
       formData.append('n_rays', settings.n_rays.toString());
-      formData.append('scattering', settings.scattering.toString());
+      formData.append('object_scattering', JSON.stringify(objectScattering || {}));
 
       // Determine backend simulation mode (same logic as file-based version)
       let backendSimulationMode = settings.simulation_mode;
@@ -660,6 +668,12 @@ export const apiService = {
         backendSimulationMode = 'foa_raytracing';
       }
       formData.append('simulation_mode', backendSimulationMode);
+      formData.append('enable_grid', (settings.enable_grid ?? false).toString());
+
+      // Send explicit geometry object IDs from the frontend to bypass layer-name filtering
+      if (geometryObjectIds && geometryObjectIds.length > 0) {
+        formData.append('geometry_object_ids', JSON.stringify(geometryObjectIds));
+      }
 
       formData.append('source_receiver_pairs', JSON.stringify(sourceReceiverPairs));
 
@@ -718,10 +732,10 @@ export const apiService = {
   // Speckle API Methods
 
   /**
-   * Get all Speckle models
-   * @returns Array of Speckle model objects
+   * Get all Speckle models with detailed metadata.
+   * Returns the full response envelope including project_id, models, and auth_token.
    */
-  async getSpeckleModels(): Promise<any[]> {
+  async getSpeckleModels(): Promise<SpeckleProjectModelsResponse> {
     try {
       const response = await fetchWithErrorHandling(
         `${API_BASE_URL}/api/speckle/models`,
@@ -761,6 +775,97 @@ export const apiService = {
       return response.json();
     } catch (error) {
       handleApiError(error, 'Load Speckle model');
+    }
+  },
+
+  // Soundscape Data Persistence
+
+  /**
+   * Save soundscape data (configs, events, audio files) to Speckle + local storage.
+   * @param payload - Soundscape save payload with data and audio URLs
+   */
+  async saveSoundscapeToSpeckle(payload: SoundscapeSavePayload): Promise<SoundscapeSaveResponse> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/speckle/soundscape/save`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        },
+        'Save soundscape to Speckle'
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Failed to save soundscape' }));
+        throw new Error(error.detail || 'Failed to save soundscape');
+      }
+
+      return response.json();
+    } catch (error) {
+      handleApiError(error, 'Save soundscape to Speckle');
+    }
+  },
+
+  /**
+   * Load soundscape data for a Speckle model (local-first, Speckle fallback).
+   * @param modelId - Speckle model ID
+   */
+  async loadSoundscapeFromSpeckle(modelId: string): Promise<SoundscapeLoadResponse> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/speckle/soundscape/${encodeURIComponent(modelId)}`,
+        undefined,
+        'Load soundscape from Speckle'
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Failed to load soundscape' }));
+        throw new Error(error.detail || 'Failed to load soundscape');
+      }
+
+      return response.json();
+    } catch (error) {
+      handleApiError(error, 'Load soundscape from Speckle');
+    }
+  },
+
+  /**
+   * Upload a blob audio file to the soundscape folder on the server.
+   * Used for library/uploaded sounds that only have browser blob URLs.
+   *
+   * @param modelId - Speckle model ID (used as folder name)
+   * @param soundId - Sound event ID (used to derive filename)
+   * @param audioBlob - The audio data as a Blob
+   * @returns Object with the saved filename and sound_id
+   */
+  async uploadSoundscapeAudio(
+    modelId: string,
+    soundId: string,
+    audioBlob: Blob,
+  ): Promise<{ filename: string; sound_id: string }> {
+    try {
+      const formData = new FormData();
+      formData.append('sound_id', soundId);
+      formData.append('audio', audioBlob, `${soundId}.wav`);
+
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/speckle/soundscape/${encodeURIComponent(modelId)}/upload-audio`,
+        {
+          method: 'POST',
+          body: formData,
+        },
+        'Upload soundscape audio'
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Failed to upload audio' }));
+        throw new Error(error.detail || 'Failed to upload audio');
+      }
+
+      return response.json();
+    } catch (error) {
+      handleApiError(error, 'Upload soundscape audio');
     }
   }
 };
