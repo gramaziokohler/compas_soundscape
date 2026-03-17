@@ -24,10 +24,12 @@
  * - Physically accurate: IR contains spatial information, rotation applied to ambisonic field
  *
  * Format Specification:
- * - Channel ordering: FuMa - FOA: W,X,Y,Z (pyroomacoustics output, no conversion)
- * - Normalization: N3D (orthonormalized 3D)
- * - Compatible with JSAmbisonics library (expects N3D by default)
- * - FOA IRs from pyroomacoustics use near-coincident tetrahedral array (5mm radius)
+ * - Channel ordering: ACN - FOA: W,Y,Z,X (AmbiX standard)
+ * - Normalization: SN3D (Schmidt semi-normalized, AmbiX standard)
+ * - Backend outputs AmbiX (ACN + SN3D) from pyroomacoustics directivity capture
+ * - Omnitone decoder: uses AmbiX natively (no conversion)
+ * - JSAmbisonics decoder: converts SN3D → N3D at convolver input
+ * - FOA IRs from pyroomacoustics use directivity-based MicrophoneArray (coincident)
  *
  * Implementation:
  * - Uses JSAmbisonics convolver for multi-channel IR convolution
@@ -44,7 +46,7 @@ import { AudioMode } from '@/types/audio';
 import { BinauralDecoder } from '../decoders/BinauralDecoder';
 import { OmnitoneFOADecoder } from '../decoders/OmnitoneFOADecoder';
 import { AUDIO_CONTROL, AMBISONIC } from '@/utils/constants';
-import { processImpulseResponse } from '../utils/ir-utils';
+import { convertSN3DtoN3D } from '../utils/ambisonic-utils';
 
 // Lazy load ambisonics to avoid SSR issues (window is not defined)
 let ambisonics: any = null;
@@ -92,17 +94,13 @@ export class AmbisonicIRMode implements IAudioMode {
 
   // Pipeline initialization counter (for race condition handling)
   private pipelineInitCounter: number = 0;
-  
-  // Ambisonic mix bus (sums all convolved sources)
-  // Using GainNode instead of ChannelMerger because we are mixing multi-channel sources,
-  // not merging mono channels into a multi-channel stream.
-  private ambisonicMixBus: GainNode | null = null;
-  
-  // Master output gain
-  private masterGain: GainNode | null = null;
 
-  // Boost gain (order-dependent compensation, separate from master)
-  private boostGain: GainNode | null = null;
+  // Whether the current decoder needs N3D normalization (JSAmbisonics)
+  // Omnitone uses SN3D (AmbiX native), JSAmbisonics uses N3D
+  private decoderNeedsN3D: boolean = false;
+  
+  // Master output gain (user-facing volume control only)
+  private masterGain: GainNode | null = null;
 
   // Per-source chains
   private sourceChains: Map<string, SourceChain> = new Map();
@@ -170,10 +168,8 @@ export class AmbisonicIRMode implements IAudioMode {
       console.log(`[AmbisonicIRMode] Converted stereo IR to FOA (L/R at ±30°)`);
     }
 
-    // Process IR buffer (resample if needed, apply fixed gain)
-    // Note: Uses fixed gain multiplier instead of normalization to preserve localization
-    // Assumes IR is in FuMa format (W,X,Y,Z) with N3D normalization (from pyroomacoustics)
-    const processedBuffer = processImpulseResponse(bufferToProcess, this.audioContext, true);
+    // Resample IR to match AudioContext sample rate if needed (no gain manipulation)
+    const processedBuffer = this.resampleIfNeeded(bufferToProcess);
 
     // Check if order changed - need to recreate convolvers
     const orderChanged = previousOrder !== order;
@@ -181,7 +177,7 @@ export class AmbisonicIRMode implements IAudioMode {
     // Store IR and configuration
     this.irBuffer = processedBuffer;
     this.ambisonicOrder = order;
-    this.numAmbisonicChannels = processedBuffer.numberOfChannels; // Use processed buffer channel count (mono→4ch)
+    this.numAmbisonicChannels = processedBuffer.numberOfChannels;
 
     console.log(`[AmbisonicIRMode] IR buffer set (order ${order}, ${channels}ch → ${processedBuffer.numberOfChannels}ch, ${processedBuffer.sampleRate}Hz, ${processedBuffer.length} samples)`);
 
@@ -256,11 +252,6 @@ export class AmbisonicIRMode implements IAudioMode {
       this.binauralDecoder.dispose();
       this.binauralDecoder = null;
     }
-    if (this.ambisonicMixBus) {
-      this.ambisonicMixBus.disconnect();
-      this.ambisonicMixBus = null;
-    }
-
     // Create binaural decoder with rotation support
     // For FOA, use Omnitone if enabled in constants, otherwise use JSAmbisonics
     // For SOA/TOA, always use JSAmbisonics (Omnitone doesn't support higher orders)
@@ -268,11 +259,13 @@ export class AmbisonicIRMode implements IAudioMode {
     const useOmnitone = useFOA && AMBISONIC.USE_OMNITONE_FOR_FOA;
     
     if (useOmnitone) {
-      console.log('[AmbisonicIRMode] Using Omnitone FOA decoder (Google SADIE HRTFs)');
+      console.log('[AmbisonicIRMode] Using Omnitone FOA decoder (Google SADIE HRTFs, SN3D native)');
       this.binauralDecoder = new OmnitoneFOADecoder();
+      this.decoderNeedsN3D = false; // Omnitone uses SN3D (AmbiX)
     } else {
-      console.log(`[AmbisonicIRMode] Using JSAmbisonics decoder (order ${this.ambisonicOrder})`);
+      console.log(`[AmbisonicIRMode] Using JSAmbisonics decoder (order ${this.ambisonicOrder}, N3D)`);
       this.binauralDecoder = new BinauralDecoder();
+      this.decoderNeedsN3D = true; // JSAmbisonics uses N3D
     }
     
     await this.binauralDecoder.initialize(this.audioContext, this.ambisonicOrder);
@@ -286,29 +279,11 @@ export class AmbisonicIRMode implements IAudioMode {
       return;
     }
 
-    // Remove GainNode mix bus - connect convolvers DIRECTLY to decoder
-    // Web Audio automatically sums multi-channel sources at the destination
-    // GainNode with explicit channel count causes channel routing issues
-    // JSAmbisonics approach: Each convolver.out connects to same destination
-    this.ambisonicMixBus = null; // Deprecated - using direct connections
+    // Connect pipeline: Convolvers → Decoder → Master Gain → Destination
+    // Each convolver connects directly to decoder input (Web Audio sums automatically)
+    this.binauralDecoder.getOutputNode().connect(this.masterGain!);
 
-    // Create boost gain for order-dependent compensation (separate from master)
-    const gainCompensation = this.ambisonicOrder === 1
-      ? AMBISONIC.ORDER_GAIN_COMPENSATION.FOA
-      : this.ambisonicOrder === 2
-        ? AMBISONIC.ORDER_GAIN_COMPENSATION.SOA
-        : AMBISONIC.ORDER_GAIN_COMPENSATION.TOA;
-
-    this.boostGain = this.audioContext.createGain();
-    this.boostGain.gain.value = gainCompensation;
-
-    // Connect pipeline: Convolvers → Decoder → Boost Gain → Master Gain → Destination
-    // Note: Each convolver will connect directly to decoder input (no mix bus)
-    this.binauralDecoder.getOutputNode().connect(this.boostGain);
-    this.boostGain.connect(this.masterGain!);
-
-    console.log(`[AmbisonicIRMode] Pipeline initialized (order ${this.ambisonicOrder}, ${this.numAmbisonicChannels} channels, gain compensation: ${gainCompensation.toFixed(2)})`);
-    console.log(`[AmbisonicIRMode] Audio graph: Convolver → SceneRotator → BinDecoder → BoostGain → MasterGain → Destination`);
+    console.log(`[AmbisonicIRMode] Pipeline: Convolver(s) → SceneRotator → BinDecoder → MasterGain → Destination`);
   }
 
   /**
@@ -341,6 +316,58 @@ export class AmbisonicIRMode implements IAudioMode {
   }
 
   /**
+   * Resample an AudioBuffer to match the AudioContext sample rate if needed.
+   * No gain manipulation — preserves the IR data exactly.
+   */
+  private resampleIfNeeded(buffer: AudioBuffer): AudioBuffer {
+    if (!this.audioContext || buffer.sampleRate === this.audioContext.sampleRate) {
+      return buffer;
+    }
+
+    const targetRate = this.audioContext.sampleRate;
+    const ratio = buffer.sampleRate / targetRate;
+    const outputLength = Math.floor(buffer.length / ratio);
+    const resampled = this.audioContext.createBuffer(
+      buffer.numberOfChannels,
+      outputLength,
+      targetRate
+    );
+
+    for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+      const input = buffer.getChannelData(ch);
+      const output = resampled.getChannelData(ch);
+      for (let i = 0; i < outputLength; i++) {
+        const srcIdx = i * ratio;
+        const idx0 = Math.floor(srcIdx);
+        const idx1 = Math.min(idx0 + 1, input.length - 1);
+        const frac = srcIdx - idx0;
+        output[i] = input[idx0] * (1 - frac) + input[idx1] * frac;
+      }
+    }
+
+    console.log(`[AmbisonicIRMode] Resampled IR: ${buffer.sampleRate}Hz → ${targetRate}Hz`);
+    return resampled;
+  }
+
+  /**
+   * Get IR buffer in the normalization expected by the current decoder.
+   * Backend outputs AmbiX (ACN + SN3D).
+   * - Omnitone: uses SN3D (AmbiX native), no conversion needed
+   * - JSAmbisonics: needs SN3D → N3D normalization only
+   *
+   * No Y-axis flip needed: the sceneRotator's transposed Rz is compensated
+   * by negating yaw/pitch in BinauralDecoder.updateOrientation instead.
+   * This keeps the IR in standard +Y=Left convention throughout.
+   */
+  private getConvolverIR(sn3dBuffer: AudioBuffer): AudioBuffer {
+    if (!this.audioContext) return sn3dBuffer;
+    if (this.decoderNeedsN3D) {
+      return convertSN3DtoN3D(sn3dBuffer, this.audioContext);
+    }
+    return sn3dBuffer;
+  }
+
+  /**
    * Create a new audio source with JSAmbisonics IR convolution
    */
   createSource(sourceId: string, audioBuffer: AudioBuffer, position: Position): void {
@@ -366,8 +393,9 @@ export class AmbisonicIRMode implements IAudioMode {
 
     // Set IR buffer if available (global IR mode)
     // In simulation mode, IR will be set per-source via setSourceImpulseResponse()
+    // Convert SN3D → N3D if JSAmbisonics decoder is active
     if (this.irBuffer) {
-      convolver.updateFilters(this.irBuffer);
+      convolver.updateFilters(this.getConvolverIR(this.irBuffer));
     }
 
     // Connect: GainNode → MuteGain → Convolver → Decoder (direct connection, no mix bus)
@@ -503,13 +531,13 @@ export class AmbisonicIRMode implements IAudioMode {
       console.log(`[AmbisonicIRMode] Converted stereo IR to FOA (L/R at ±30°) for source "${sourceId}"`);
     }
 
-    // Process IR buffer (resample if needed, apply gain compensation)
-    // Assumes IR is in FuMa format (W,X,Y,Z) with N3D normalization (from pyroomacoustics)
-    // const processedBuffer = processImpulseResponse(bufferToProcess, this.audioContext, true);
+    // Resample if needed, no gain manipulation
+    const processedBuffer = this.resampleIfNeeded(bufferToProcess);
 
     // Update JSAmbisonics convolver with new IR
-    chain.convolver.updateFilters(bufferToProcess);
-    chain.sourceIRBuffer = bufferToProcess;
+    // Convert SN3D → N3D if JSAmbisonics decoder is active
+    chain.convolver.updateFilters(this.getConvolverIR(processedBuffer));
+    chain.sourceIRBuffer = processedBuffer;
 
     console.log(`[AmbisonicIRMode] ✅ Updated IR for source "${sourceId}" (${channels}ch → ${bufferToProcess.numberOfChannels}ch, ${bufferToProcess.length} samples @ ${bufferToProcess.sampleRate}Hz)`);
   }
@@ -524,7 +552,8 @@ export class AmbisonicIRMode implements IAudioMode {
     }
 
     // Update JSAmbisonics convolver with new IR
-    chain.convolver.updateFilters(this.irBuffer);
+    // Convert SN3D → N3D if JSAmbisonics decoder is active
+    chain.convolver.updateFilters(this.getConvolverIR(this.irBuffer));
   }
 
   /**
@@ -747,11 +776,6 @@ export class AmbisonicIRMode implements IAudioMode {
       this.binauralDecoder = null;
     }
     
-    if (this.boostGain) {
-      this.boostGain.disconnect();
-      this.boostGain = null;
-    }
-
     if (this.masterGain) {
       this.masterGain.disconnect();
       this.masterGain = null;
@@ -818,7 +842,7 @@ export class AmbisonicIRMode implements IAudioMode {
     bufferSource.loop = true; // Loop for continuous playback
 
     // Connect to JSAmbisonics convolver
-    // Graph: bufferSource → gainNode → muteGain → wetGain → convolver.in → convolver.out → ambisonicMixBus
+    // Graph: bufferSource → gainNode → muteGain → convolver → decoder
     bufferSource.connect(chain.gainNode);
 
     // Start playback

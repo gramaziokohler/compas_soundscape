@@ -17,7 +17,7 @@ import type { TimelineSound, Position, Orientation, AmbisonicOrder } from '@/typ
 import { AudioMode } from '@/types/audio';
 import { cartesianToSpherical } from './utils/ambisonic-utils';
 import { BinauralDecoder } from './decoders/BinauralDecoder';
-import { AUDIO_CONTROL, AMBISONIC } from '@/utils/constants';
+import { AUDIO_CONTROL } from '@/utils/constants';
 
 /**
  * When true AND in AmbisonicIR mode with multi-channel IR (>2 channels),
@@ -296,19 +296,8 @@ async function buildAmbisonicIRGraph(
   binDecoder.setRotationEnabled(true);
   binDecoder.updateOrientation(listenerOrientation);
 
-  // Order-dependent gain compensation (matches AmbisonicIRMode.initializePipeline)
-  const gainComp = ambisonicOrder === 1
-    ? AMBISONIC.ORDER_GAIN_COMPENSATION.FOA
-    : ambisonicOrder === 2
-      ? AMBISONIC.ORDER_GAIN_COMPENSATION.SOA
-      : AMBISONIC.ORDER_GAIN_COMPENSATION.TOA;
-
-  const boostGain = offlineCtx.createGain();
-  boostGain.gain.value = gainComp;
-
-  // Connect: decoder → boostGain → limiter
-  binDecoder.getOutputNode().connect(boostGain);
-  boostGain.connect(limiter);
+  // Connect: decoder → limiter (no artificial gain compensation)
+  binDecoder.getOutputNode().connect(limiter);
 
   onProgress?.(0.25);
 
@@ -364,20 +353,12 @@ async function buildRawAmbisonicIRGraph(
   } = config;
   const numChannels = (ambisonicOrder + 1) ** 2;
 
-  // Order-dependent gain compensation (matches AmbisonicIRMode.initializePipeline)
-  const gainComp = ambisonicOrder === 1
-    ? AMBISONIC.ORDER_GAIN_COMPENSATION.FOA
-    : ambisonicOrder === 2
-      ? AMBISONIC.ORDER_GAIN_COMPENSATION.SOA
-      : AMBISONIC.ORDER_GAIN_COMPENSATION.TOA;
-
-  const boostGain = offlineCtx.createGain();
-  boostGain.gain.value = gainComp;
-  // Preserve all ambisonic channels through to destination (no limiter in this path)
-  boostGain.channelCount = numChannels;
-  boostGain.channelCountMode = 'explicit';
-  boostGain.channelInterpretation = 'discrete';
-  boostGain.connect(outputNode);
+  // Pass-through node to preserve all ambisonic channels to destination
+  const outputBus = offlineCtx.createGain();
+  outputBus.channelCount = numChannels;
+  outputBus.channelCountMode = 'explicit';
+  outputBus.channelInterpretation = 'discrete';
+  outputBus.connect(outputNode);
 
   onProgress?.(0.25);
 
@@ -405,9 +386,9 @@ async function buildRawAmbisonicIRGraph(
     const convolver = new ambisonics.convolver(offlineCtx, ambisonicOrder);
     convolver.updateFilters(sourceIR);
 
-    // Connect: gain → convolver.in → convolver.out → boostGain → destination
+    // Connect: gain → convolver.in → convolver.out → outputBus → destination
     gainNode.connect(convolver.in);
-    convolver.out.connect(boostGain);
+    convolver.out.connect(outputBus);
 
     // Schedule each timeline iteration
     scheduleIterations(offlineCtx, sourceInfo.buffer, sound.scheduledIterations, gainNode, durationSecs(offlineCtx));

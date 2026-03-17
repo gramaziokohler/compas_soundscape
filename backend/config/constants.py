@@ -120,25 +120,9 @@ PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION = False  # Default air absorption state
 PYROOMACOUSTICS_DEFAULT_RIR_DURATION = 1.0  # seconds
 PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE = PYROOMACOUSTICS_SIMULATION_MODE_MONO  # Default simulation mode
 
-# FOA Ambisonics Configuration (for FOA mode)
-# B-format microphone: Uses proper directivity patterns (W=omni, X/Y/Z=figure-8)
-# Directivity is only supported with Image Source Method (ISM), not ray tracing
-
-# A-Format Tetrahedral Array Configuration (for FOA with Ray Tracing)
-# Virtual A-format array simulates physical capsule arrangement of Ambisonics mics
-# (e.g., Sennheiser Ambeo, Røde NT-SF1) using 4 omnidirectional mics in a tetrahedron
-PYROOMACOUSTICS_A_FORMAT_ARRAY_RADIUS = 0.001  # Tetrahedron radius in meters (10cm for better spatial encoding in simulation)
-PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING = "foa_raytracing"  # FOA with ray tracing via A-format
-
-# Tetrahedral vertex coordinates (normalized, on unit sphere)
-# Z-up coordinate system: +X=Right, +Y=Forward, +Z=Up
-# These get scaled by radius and translated to mic center position
-PYROOMACOUSTICS_TETRAHEDRAL_COORDS = [
-    [1, 1, 1],     # RFU (Right Forward Up)
-    [-1, -1, 1],   # LBU (Left Back Up)
-    [1, -1, -1],   # RBD (Right Back Down)
-    [-1, 1, -1]    # LFD (Left Forward Down)
-]
+# FOA Ambisonics Configuration
+# B-format microphone: Uses directivity patterns (W=omni, Y/Z/X=figure-8) via MicrophoneArray.
+# Directivity is applied to ISM; ray tracing uses omnidirectional fallback.
 
 # Ray Tracing Configuration (Hybrid ISM/Ray Tracing)
 PYROOMACOUSTICS_RAY_TRACING_N_RAYS = 10000  # Number of rays to shoot (default)
@@ -172,7 +156,7 @@ PYROOMACOUSTICS_CUSTOM_MATERIALS = {
     },    
 }
 PYROOMACOUSTICS_MESH_WELD_TOLERANCE = 1e-4  # Vertex merge tolerance in meters (0.1 mm) for welding connected meshes
-PYROOMACOUSTICS_SAMPLE_RATE = 16000  # Sample rate -- uses n_bands = math.floor(np.log2(SAMPLE_RATE / BASE_FREQUENCY))
+PYROOMACOUSTICS_SAMPLE_RATE = 44100  # Sample rate -- uses n_bands = math.floor(np.log2(SAMPLE_RATE / BASE_FREQUENCY))
 PYROOMACOUSTICS_USE_RAND_ISM = False  # Use randomized ISM for better realism
 PYROOMACOUSTICS_IR_TRIM_THRESHOLD = 0.01  # Fraction of peak amplitude below which trailing IR samples are trimmed
 

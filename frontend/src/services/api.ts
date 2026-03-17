@@ -571,15 +571,7 @@ export const apiService = {
       formData.append('n_rays', settings.n_rays.toString());
       formData.append('scattering', settings.scattering.toString());
 
-      // Determine the actual backend simulation mode:
-      // - FOA + ray_tracing=true → 'foa_raytracing' (uses A-format tetrahedral array)
-      // - FOA + ray_tracing=false → 'foa' (uses directivity patterns, ISM only)
-      // - Mono → 'mono' (works with both ISM and ray tracing)
-      let backendSimulationMode = settings.simulation_mode;
-      if (settings.simulation_mode === 'foa' && settings.ray_tracing) {
-        backendSimulationMode = 'foa_raytracing';
-      }
-      formData.append('simulation_mode', backendSimulationMode);
+      formData.append('simulation_mode', settings.simulation_mode);
       formData.append('enable_grid', (settings.enable_grid ?? false).toString());
 
       formData.append('source_receiver_pairs', JSON.stringify(sourceReceiverPairs));
@@ -662,12 +654,7 @@ export const apiService = {
       formData.append('n_rays', settings.n_rays.toString());
       formData.append('object_scattering', JSON.stringify(objectScattering || {}));
 
-      // Determine backend simulation mode (same logic as file-based version)
-      let backendSimulationMode = settings.simulation_mode;
-      if (settings.simulation_mode === 'foa' && settings.ray_tracing) {
-        backendSimulationMode = 'foa_raytracing';
-      }
-      formData.append('simulation_mode', backendSimulationMode);
+      formData.append('simulation_mode', settings.simulation_mode);
       formData.append('enable_grid', (settings.enable_grid ?? false).toString());
 
       // Send explicit geometry object IDs from the frontend to bypass layer-name filtering

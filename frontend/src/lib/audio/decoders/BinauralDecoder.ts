@@ -209,10 +209,15 @@ export class BinauralDecoder implements IBinauralDecoder {
     } else {
       // AmbisonicIRMode: Apply rotation for head tracking
       // Convert radians to degrees
-      // NEGATE pitch for head tracking: when head looks up, scene rotates down
+      //
+      // NEGATE yaw and pitch: JSAmbisonics yawPitchRoll2Rzyx uses a transposed Rz matrix
+      // (Rz[0][1] = +sin(yaw) instead of -sin(yaw)), which reverses rotation direction.
+      // Without negation, the sceneRotator rotates CW for positive yaw (turning right),
+      // but correct scene rotation requires CCW (sounds move left when listener turns right).
+      // Negating the angles compensates for the transposed matrix.
       const RAD_TO_DEG = 180 / Math.PI;
-      this.sceneRotator.yaw = orientation.yaw * RAD_TO_DEG;
-      this.sceneRotator.pitch = (orientation.pitch * RAD_TO_DEG);
+      this.sceneRotator.yaw = -orientation.yaw * RAD_TO_DEG;
+      this.sceneRotator.pitch = -orientation.pitch * RAD_TO_DEG;
       this.sceneRotator.roll = 0; // Roll typically not used for head tracking
 
       // Debug logging (throttled)

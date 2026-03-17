@@ -24,14 +24,12 @@ from config.constants import (
     PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE,
     PYROOMACOUSTICS_SIMULATION_MODE_MONO,
     PYROOMACOUSTICS_SIMULATION_MODE_FOA,
-    PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING,
     PYROOMACOUSTICS_SAMPLE_RATE,
     TEMP_SIMULATIONS_DIR,
     PYROOMACOUSTICS_DEFAULT_ABSORPTION,
     PYROOMACOUSTICS_GRID_DEFAULT_ENABLED,
     PYROOMACOUSTICS_IR_TRIM_THRESHOLD
 )
-# PYROOMACOUSTICS_DEFAULT_SCATTERING kept for per-face fallback in service layer
 
 router = APIRouter()
 
@@ -338,7 +336,7 @@ async def run_simulation_speckle(
         # Determine number of channels
         if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO:
             num_channels = 1
-        elif simulation_mode in [PYROOMACOUSTICS_SIMULATION_MODE_FOA, PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING]:
+        elif simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
             num_channels = 4
         else:
             raise HTTPException(status_code=400, detail=f"Invalid simulation mode: {simulation_mode}")
@@ -374,16 +372,9 @@ async def run_simulation_speckle(
         
         # Add all receivers
         for receiver_id, (receiver_position, _) in unique_receivers.items():
-            try:                
-                if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA and ray_tracing:
-                    simulation_mode = PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING
-                    print(f"  Updated simulation mode to {simulation_mode} due to ray tracing requirement")
-
+            try:
                 PyroomacousticsService.add_receiver_to_room(room, receiver_position, simulation_mode)
-                print(f"  Added {simulation_mode} receiver {receiver_id} at {receiver_position}")     
-
-                #     print(f"  NOTE: Ray tracing disabled for FOA mode (directivity requires ISM)")
-                #     ray_tracing = False
+                print(f"  Added {simulation_mode} receiver {receiver_id} at {receiver_position}")
             except ValueError as e:
                 error_msg = str(e)
                 if "inside" in error_msg.lower() or "outside" in error_msg.lower() or "room geometry" in error_msg.lower():
@@ -395,18 +386,10 @@ async def run_simulation_speckle(
         
         # Enable ray tracing if needed
         if ray_tracing:
-            try:
-                PyroomacousticsService.enable_ray_tracing(room, n_rays=n_rays)
-                print("Ray tracing enabled for hybrid ISM/ray tracing simulation")
-            except Exception as e:
-                print(f"Warning: Failed to enable ray tracing: {type(e).__name__}: {str(e)}")
-        
+            PyroomacousticsService.enable_ray_tracing(room, n_rays=n_rays)
+
         # Compute RIR
-        print(f"  Computing RIRs...")
-        print("Volume:", room.get_volume())
-        print("Sabine RT60:", 0.161 * room.get_volume() / (sum(w.area() for w in room.walls) * 0.1))
         room.compute_rir()
-        print(f"  RIR computation complete!")
         
         # Import acoustic measurement utilities
         from utils.acoustic_measurement import AcousticMeasurement
@@ -422,7 +405,7 @@ async def run_simulation_speckle(
             receiver_base_idx = unique_receivers[pair.receiver_id][1]
             mic_start_idx = receiver_base_idx * num_channels
             
-            # Extract RIR (same logic as file-based version)
+            # Extract RIR
             if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO:
                 rir = room.rir[mic_start_idx][source_idx]
                 if rir is None or len(rir) == 0:
@@ -432,14 +415,10 @@ async def run_simulation_speckle(
                     )
                 rir_data = rir
             else:
+                # FOA: extract 4 directivity channels (W, Y, Z, X in ACN order)
+                channel_names_list = ['W', 'Y', 'Z', 'X']
                 rir_channels = []
-                if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
-                    channel_names_list = ['W', 'X', 'Y', 'Z']
-                elif simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING:
-                    channel_names_list = ['FLU', 'BRU', 'FRD', 'BLD']
-                else:
-                    channel_names_list = [f'Ch{i}' for i in range(num_channels)]
-                
+
                 for ch in range(num_channels):
                     mic_idx = mic_start_idx + ch
                     if mic_idx >= len(room.rir):
@@ -455,29 +434,17 @@ async def run_simulation_speckle(
                             detail=f"Empty RIR for {channel_name} channel"
                         )
                     rir_channels.append(rir)
-                
+
                 max_length = max(len(rir) for rir in rir_channels)
-                padded_channels = []
-                for rir in rir_channels:
-                    if len(rir) < max_length:
-                        padded_rir = np.pad(rir, (0, max_length - len(rir)), mode='constant')
-                        padded_channels.append(padded_rir)
-                    else:
-                        padded_channels.append(rir)
-                
-                if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING:
-                    a_format = np.array(padded_channels)
-                    b_format = PyroomacousticsService.convert_a_format_to_b_format(a_format)
-                    rir_data = b_format.T
-                    print(f"    Converted A-format to B-format for FOA Ray Tracing")
-                else:
-                    rir_data = np.column_stack(padded_channels)
-                    rir_transformed = np.zeros_like(rir_data)
-                    rir_transformed[:, 0] = rir_data[:, 0]
-                    rir_transformed[:, 1] = -rir_data[:, 3]
-                    rir_transformed[:, 2] = rir_data[:, 1]
-                    rir_transformed[:, 3] = rir_data[:, 2]
-                    rir_data = rir_transformed
+                padded_channels = [
+                    np.pad(rir, (0, max_length - len(rir)), mode='constant') if len(rir) < max_length else rir
+                    for rir in rir_channels
+                ]
+
+                # Directivity mics are oriented to capture AmbiX ACN channels directly:
+                #   Ch0=W (omni), Ch1=Y (-X mesh=Left), Ch2=Z (+Z mesh=Up), Ch3=X (-Y mesh=Front)
+                # No channel transform needed — already in correct AmbiX ACN order with SN3D normalization
+                rir_data = np.column_stack(padded_channels)
             
             # Calculate acoustic parameters
             try:
@@ -522,14 +489,11 @@ async def run_simulation_speckle(
                 }
             }
             
-            if simulation_mode in [PYROOMACOUSTICS_SIMULATION_MODE_FOA, PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING]:
-                result_entry["channel_ordering"] = "FuMa"
-                result_entry["normalization_convention"] = "N3D"
-                if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING:
-                    result_entry["encoding_method"] = "a_format_tetrahedral"
-                    result_entry["original_format"] = "A-format"
-                else:
-                    result_entry["encoding_method"] = "directivity"
+            if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_FOA:
+                result_entry["channel_ordering"] = "ACN"
+                result_entry["normalization_convention"] = "SN3D"
+                result_entry["format"] = "AmbiX"
+                result_entry["encoding_method"] = "directivity"
             
             if ray_tracing:
                 result_entry["n_rays"] = n_rays

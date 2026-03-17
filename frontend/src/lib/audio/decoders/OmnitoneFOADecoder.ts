@@ -194,35 +194,35 @@ export class OmnitoneFOADecoder implements IBinauralDecoder {
     }
 
     // AmbisonicIRMode: Apply rotation for head tracking
-    // Negate pitch for head tracking: when head looks up, scene rotates down
+    // Omnitone expects a Y-up rotation matrix (Three.js / WebGL convention)
+    // Our yaw/pitch are computed from the Speckle Z-up camera direction:
+    //   yaw = horizontal rotation (around up axis), pitch = vertical tilt
+    //
+    // In Y-up coords: yaw rotates around Y axis, pitch rotates around X axis
+    // Rotation order: R = Ry(yaw) * Rx(pitch) — yaw applied to world, pitch to local
     const yaw = orientation.yaw;
     const pitch = orientation.pitch;
-    const roll = orientation.roll;
 
-    // Compute rotation matrix (column-major, 3x3)
-    // R = Rz(roll) * Rx(pitch) * Ry(yaw)
     const cosYaw = Math.cos(yaw);
     const sinYaw = Math.sin(yaw);
     const cosPitch = Math.cos(pitch);
     const sinPitch = Math.sin(pitch);
-    const cosRoll = Math.cos(roll);
-    const sinRoll = Math.sin(roll);
 
-    // Combined rotation matrix (column-major format)
+    // R = Ry(yaw) * Rx(pitch), column-major format for Omnitone
     const matrix = [
-      // Column 1
-      cosYaw * cosRoll - sinYaw * sinPitch * sinRoll,
-      cosYaw * sinRoll + sinYaw * sinPitch * cosRoll,
-      -sinYaw * cosPitch,
+      // Column 0 (right vector)
+      cosYaw,
+      0,
+      -sinYaw,
 
-      // Column 2
-      -cosPitch * sinRoll,
-      cosPitch * cosRoll,
-      sinPitch,
+      // Column 1 (up vector)
+      sinYaw * sinPitch,
+      cosPitch,
+      cosYaw * sinPitch,
 
-      // Column 3
-      sinYaw * cosRoll + cosYaw * sinPitch * sinRoll,
-      sinYaw * sinRoll - cosYaw * sinPitch * cosRoll,
+      // Column 2 (-forward vector)
+      sinYaw * cosPitch,
+      -sinPitch,
       cosYaw * cosPitch
     ];
 

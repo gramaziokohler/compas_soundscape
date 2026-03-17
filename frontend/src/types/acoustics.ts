@@ -81,7 +81,7 @@ export interface PyroomAcousticsSimulationConfig extends BaseSimulationConfig, C
     ray_tracing: boolean;
     air_absorption: boolean;
     n_rays: number;
-    simulation_mode: string; // "mono", "foa" (ISM only), or "foa_raytracing" (A-format tetrahedral array)
+    simulation_mode: string; // "mono" or "foa" (directivity-based, supports ISM and hybrid ray tracing)
     enable_grid: boolean; // Enable grid receiver simulation (heatmap export)
   };
   // Material assignments per face

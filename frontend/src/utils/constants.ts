@@ -508,10 +508,9 @@ export const IMPULSE_RESPONSE = {
   // Maximum supported channels
   MAX_CHANNELS: 16,  // Changed from 2 to 16 to support TOA
 
-  // Fixed gain multiplier for ambisonic IRs (instead of normalization)
-  // This preserves channel balance and temporal dynamics for proper localization
-  // IRs are in FuMa/N3D format from pyroomacoustics (JSAmbisonics default)
-  AMBISONIC_IR_GAIN_MULTIPLIER: 1  // -10.5dB for headroom with FOA gain compensation
+  // Fixed gain multiplier for ambisonic IRs (used by legacy processImpulseResponse)
+  // AmbisonicIRMode bypasses this — passes IR data through unmodified
+  AMBISONIC_IR_GAIN_MULTIPLIER: 1
 } as const;
 
 // ============================================================================
@@ -558,7 +557,7 @@ export const AMBISONIC = {
 
   // Channel counts
   CHANNELS: {
-    FOA: 4,   // 1st order: W, X, Y, Z (FuMa ordering from pyroomacoustics)
+    FOA: 4,   // 1st order: W, Y, Z, X (ACN ordering, AmbiX standard)
     SOA: 9,   // 2nd order: (order+1)^2 channels
     TOA: 16   // 3rd order: (order+1)^2 channels
   } as const,
@@ -566,11 +565,12 @@ export const AMBISONIC = {
   // ACN channel ordering (JSAmbisonics default)
   ACN_ORDERING: true as const,
 
-  // Normalization scheme (N3D - JSAmbisonics and pyroomacoustics default)
-  NORMALIZATION: 'N3D' as const,
+  // Backend normalization: SN3D (AmbiX standard from pyroomacoustics)
+  // JSAmbisonics uses N3D internally — conversion applied in AmbisonicIRMode
+  // Omnitone uses SN3D natively — no conversion needed
+  NORMALIZATION: 'SN3D' as const,
 
-  // SN3D to N3D conversion factors (for reference - not used with N3D IRs from pyroomacoustics)
-  // JSAmbisonics uses N3D internally by default, matching pyroomacoustics output
+  // SN3D to N3D conversion factors (applied when JSAmbisonics decoder is active)
   // Reference: https://en.wikipedia.org/wiki/Ambisonic_data_exchange_formats
   SN3D_TO_N3D: {
     // FOA (First Order) - ACN channels 0-3
@@ -613,23 +613,6 @@ export const AMBISONIC = {
     ]
   } as const,
 
-  // Order-dependent gain compensation for N3D normalization
-  // Compensates for energy scaling when summing multiple ambisonic channels
-  // Formula: 1 / sqrt(numChannels) to maintain consistent perceived loudness
-  ORDER_GAIN_COMPENSATION: {
-    MONO: 1.0,           // 1 channel: no compensation (for AmbisonicIRMode reference)
-    FOA: 1.0,            // 4 channels: 1/sqrt(4) = 0.5 (-6dB)
-    SOA: 1.0,          // 9 channels: 1/sqrt(9) ≈ 0.333 (-9.5dB)
-    TOA: 1.0            // 16 channels: 1/sqrt(16) = 0.25 (-12dB)
-  } as const,
-
-  // Mono IR boost to match compensated ambisonic IR levels
-  // MonoIR convolution produces less energy than multi-channel IR convolution
-  // Boost by 2x (~+6dB) to match FOA level after compensation
-  MONO_IR_BOOST: 1.0 as const,
-
-  // Stereo IR boost (same as mono for consistency)
-  STEREO_IR_BOOST: 1.0 as const,
 
   // Channel names for FOA (FuMa ordering: W, X, Y, Z)
   FOA_CHANNEL_NAMES: ['W', 'X', 'Y', 'Z'] as const,
@@ -1577,21 +1560,18 @@ export const CHORAS_MAX_POLL_RETRIES = 5; // Maximum retry attempts for failed p
 
 // Simulation Modes
 export const PYROOMACOUSTICS_SIMULATION_MODE_MONO = "mono"; // Single microphone (1 channel)
-export const PYROOMACOUSTICS_SIMULATION_MODE_FOA = "foa"; // First-Order Ambisonics (4 channels: W, X, Y, Z - FuMa/N3D) - ISM only
-export const PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING = "foa_raytracing"; // FOA with ray tracing via A-format tetrahedral array
+export const PYROOMACOUSTICS_SIMULATION_MODE_FOA = "foa"; // First-Order Ambisonics (4 channels: W, Y, Z, X - ACN/N3D)
 
 // Simulation Mode Display Names
 export const PYROOMACOUSTICS_SIMULATION_MODE_NAMES = {
   [PYROOMACOUSTICS_SIMULATION_MODE_MONO]: "Mono (1-ch)",
   [PYROOMACOUSTICS_SIMULATION_MODE_FOA]: "FOA Ambisonics (4-ch)",
-  [PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING]: "FOA + Ray Tracing (4-ch)"
 } as const;
 
 // Simulation Mode Descriptions (for tooltips/UI help)
 export const PYROOMACOUSTICS_SIMULATION_MODE_DESCRIPTIONS = {
   [PYROOMACOUSTICS_SIMULATION_MODE_MONO]: "Single omnidirectional microphone. Supports both ISM and ray tracing.",
-  [PYROOMACOUSTICS_SIMULATION_MODE_FOA]: "B-format Ambisonics using directivity patterns (W=omni, X/Y/Z=fig-8). ISM only - ray tracing disabled.",
-  [PYROOMACOUSTICS_SIMULATION_MODE_FOA_RAYTRACING]: "FOA via virtual A-format tetrahedral array. Enables ray tracing for accurate late reverb."
+  [PYROOMACOUSTICS_SIMULATION_MODE_FOA]: "B-format Ambisonics using directivity patterns (W=omni, Y/Z/X=fig-8). Supports ISM and hybrid ray tracing.",
 } as const;
 
 // Default Simulation Settings
