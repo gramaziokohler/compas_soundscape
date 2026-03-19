@@ -428,6 +428,13 @@ export const DEFAULT_NUM_SOUNDS = 5;
 export const NUM_SOUNDS_MIN = 1;
 export const NUM_SOUNDS_MAX = 30;
 export const LIBRARY_MAX_SEARCH_RESULTS = 10; // Max results for BBC/Freesound library search
+
+// ============================================================================
+// Google Sound Catalog Configuration
+// ============================================================================
+export const CATALOG_BASE_URL = 'https://developers.google.com/assistant/tools/sound-library';
+export const CATALOG_CDN_BASE = 'https://actions.google.com/sounds/v1';
+export const CATALOG_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 // ENTITY_HIGHLIGHT_DELAY_MS moved to UI_TIMING section
 export const LLM_SUGGESTED_INTERVAL_SECONDS = 0;
 
@@ -1295,6 +1302,7 @@ export const AUDIO_TIMELINE = {
     IMPORT: UI_COLORS.INFO,       // Blue - Imported sounds
     LIBRARY: UI_COLORS.SUCCESS,   // Green - Library sounds (BBC, Freesound)
     TTA: UI_COLORS.PRIMARY,       // Primary pink - Text-to-Audio (TangoFlux)
+    CATALOG: UI_COLORS.WARNING,   // Amber - Google Sound Library catalog
   },
 } as const;
 

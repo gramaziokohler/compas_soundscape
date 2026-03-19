@@ -177,6 +177,7 @@ export function WaveSurferTimeline({
 
       // Add track label
       const labelContainer = document.createElement('div');
+      labelContainer.id = `label-${sound.id}`;
       labelContainer.style.position = 'absolute';
       labelContainer.style.left = '5px';
       labelContainer.style.top = '5px';
@@ -400,6 +401,19 @@ export function WaveSurferTimeline({
       }
     });
   }, [zoom, sounds, waveSurferInstances, PIXELS_PER_SECOND, TIMELINE_WIDTH, actualDuration]);
+
+  /**
+   * Sync track labels when sound display names change (e.g., user renames via handleSaveName)
+   * Updates DOM labels without recreating WaveSurfer instances.
+   */
+  useEffect(() => {
+    sounds.forEach((sound) => {
+      const labelEl = document.getElementById(`label-${sound.id}`);
+      if (labelEl) {
+        labelEl.textContent = sound.displayName.substring(0, 20);
+      }
+    });
+  }, [sounds]);
 
   /**
    * Add timeline ruler at the top

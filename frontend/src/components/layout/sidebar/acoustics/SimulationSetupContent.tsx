@@ -23,6 +23,8 @@ interface SimulationSetupContentProps {
   viewerRef: React.RefObject<Viewer | null>;
   worldTree: any;
   availableMaterials: AcousticMaterial[];
+  /** When true, layer isolation filtering is active in the Speckle viewer */
+  filteringEnabled?: boolean;
   onMaterialAssignmentsChange: (assignments: Record<string, string>, layerName: string | null, geometryObjectIds: string[], scatteringAssignments: Record<string, number>) => void;
   onUpdateConfig: (updates: Partial<SimulationConfig>) => void;
 }
@@ -36,6 +38,7 @@ export function SimulationSetupContent({
   viewerRef,
   worldTree,
   availableMaterials,
+  filteringEnabled = true,
   onMaterialAssignmentsChange,
   onUpdateConfig
 }: SimulationSetupContentProps) {
@@ -51,6 +54,7 @@ export function SimulationSetupContent({
         viewerRef={viewerRef}
         worldTree={worldTree}
         availableMaterials={availableMaterials}
+        filteringEnabled={filteringEnabled}
         onMaterialAssignmentsChange={onMaterialAssignmentsChange}
         initialAssignments={initialAssignments}
         initialLayerName={initialLayerName}

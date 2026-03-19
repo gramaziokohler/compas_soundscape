@@ -21,6 +21,9 @@ export type { UploadModeProps } from './UploadMode';
 export { LibraryMode } from './LibraryMode';
 export type { LibraryModeProps } from './LibraryMode';
 
+export { CatalogMode } from './CatalogMode';
+export type { CatalogModeProps } from './CatalogMode';
+
 export { SampleAudioMode } from './SampleAudioMode';
 export type { SampleAudioModeProps } from './SampleAudioMode';
 

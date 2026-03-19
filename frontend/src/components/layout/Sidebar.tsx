@@ -215,6 +215,7 @@ export function Sidebar(props: SidebarProps) {
             previewingSoundId={props.previewingSoundId}
             onPreviewPlayPause={props.onPreviewPlayPause}
             onPreviewStop={props.onPreviewStop}
+            onCatalogSoundSelect={props.onCatalogSoundSelect}                                        
           />
         </div>
 

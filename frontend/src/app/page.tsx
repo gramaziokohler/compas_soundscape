@@ -1581,6 +1581,7 @@ function HomeContent() {
         onClearUploadedAudio={soundGen.handleClearUploadedAudio}
         onLibrarySearch={soundGen.handleLibrarySearch}
         onLibrarySoundSelect={soundGen.handleLibrarySoundSelect}
+        onCatalogSoundSelect={soundGen.handleCatalogSoundSelect}
         onStartLinkingEntity={handleStartLinkingEntity}
         onCancelLinkingEntity={handleCancelLinkingEntity}
         isLinkingEntity={isLinkingEntity}

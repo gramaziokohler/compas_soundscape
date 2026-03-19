@@ -392,18 +392,27 @@ class PyroomacousticsService:
                     mat_value = {"coeffs": custom["coeffs"], "center_freqs": custom["center_freqs"]}
                 material = pra.Material(energy_absorption=mat_value)
                 absorption = material.energy_absorption["coeffs"]
-                # print(f"Face {face_idx}: absorption = {absorption}")
+
+                # Normalize absorption to n_bands by padding with last value
+                # (different materials may have different band counts)
+                if len(absorption) < n_bands:
+                    absorption = list(absorption) + [absorption[-1]] * (n_bands - len(absorption))
+                elif len(absorption) > n_bands:
+                    absorption = list(absorption[:n_bands])
 
                 # Get scattering coefficient for this face (only used if ray_tracing=True)
                 scattering = material.scattering["coeffs"]  # Default scattering
                 if ray_tracing:
-                    if len(absorption) != n_bands:
-                        absorption = absorption + [absorption[-1]] * (n_bands - len(absorption))
                     if face_scattering is None:
                         scattering = [PYROOMACOUSTICS_DEFAULT_SCATTERING]*n_bands
                     else:
                         scattering = [face_scattering.get(face_idx, PYROOMACOUSTICS_DEFAULT_SCATTERING)]*n_bands
-                        # print(f"Face {face_idx}: scattering = {scattering}")
+
+                # Normalize scattering to n_bands
+                if len(scattering) < n_bands:
+                    scattering = list(scattering) + [scattering[-1]] * (n_bands - len(scattering))
+                elif len(scattering) > n_bands:
+                    scattering = list(scattering[:n_bands])
 
                 # Extract face vertices (corners of the wall)
                 # pyroomacoustics expects corners as [3, n_corners] (float64)

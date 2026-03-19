@@ -30,6 +30,7 @@ import { Card } from '@/components/ui/Card';
 import { apiService } from '@/services/api';
 import { CARD_TYPE_LABELS } from '@/types/card';
 import { useSpeckleViewerContext } from '@/contexts/SpeckleViewerContext';
+import { useSpeckleSelectionMode } from '@/contexts/SpeckleSelectionModeContext';
 
 // Content Components
 import { ResonanceContent } from '@/components/layout/sidebar/acoustics/ResonanceContent';
@@ -181,6 +182,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // ==========================================================================
 
   const { viewerRef } = useSpeckleViewerContext();
+  const { clearMaterialColors } = useSpeckleSelectionMode();
 
   // Only fetch materials when a card of that type exists
   const hasChorasCard = simulationConfigs.some(c => c.type === 'choras');
@@ -197,6 +199,17 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     idPrefix: 'pyroom',
     enabled: hasPyroomCard
   });
+
+  // Global toggle: enable/disable layer isolation + color visualization for all simulation cards
+  const [filteringEnabled, setFilteringEnabled] = useState(true);
+
+  // Clear material colors at AcousticsSection level when toggle is turned off
+  // This works even when no simulation card is expanded (no SpeckleSurfaceMaterialsSection mounted)
+  useEffect(() => {
+    if (!filteringEnabled) {
+      clearMaterialColors();
+    }
+  }, [filteringEnabled, clearMaterialColors]);
 
   // World Tree state (for Speckle material assignment)
   const [localWorldTree, setLocalWorldTree] = useState(propWorldTree);
@@ -240,6 +253,11 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     const mode = type as AcousticSimulationMode;
     onAddSimulationConfig(mode);
 
+    // Auto-enable filtering when a new simulation card is created
+    if (mode === 'choras' || mode === 'pyroomacoustics') {
+      setFilteringEnabled(true);
+    }
+
     // Check for large layers to exclude
     if (geometryData && geometryData.face_entity_map && (mode === 'choras' || mode === 'pyroomacoustics')) {
       const layerFaceCounts = new Map<string, number>();
@@ -266,16 +284,6 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     }
   }, [onAddSimulationConfig, geometryData, modelEntities, simulationConfigs.length, onUpdateSimulationConfig]);
 
-
-  // Speckle Material Assignments Handler (for SimulationSetup)
-  const handleSpeckleMaterialAssignments = useCallback((index: number, assignments: Record<string, string>, layerName: string | null, geometryObjectIds: string[], scatteringAssignments: Record<string, number>) => {
-    handleUpdateConfig(index, {
-      speckleMaterialAssignments: assignments,
-      speckleLayerName: layerName,
-      speckleGeometryObjectIds: geometryObjectIds,
-      speckleScatteringAssignments: scatteringAssignments
-    } as any);
-  }, [handleUpdateConfig]);
 
   // ==========================================================================
   // Simulation Execution - Delegated to hooks (single source of truth)
@@ -567,6 +575,44 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     }
   }, [simulationConfigs, activeSimulationIndex, handleUpdateConfig, onAudioRenderingModeChange, onClearIR]);
 
+  // Speckle Material Assignments Handler (for SimulationSetup)
+  // If the card is already completed and materials *actually changed*, auto-reset to before-simulation state.
+  // On mount/restore the hook re-emits the same persisted assignments — skip reset in that case.
+  const handleSpeckleMaterialAssignments = useCallback((index: number, assignments: Record<string, string>, layerName: string | null, geometryObjectIds: string[], scatteringAssignments: Record<string, number>) => {
+    const config = simulationConfigs[index];
+
+    if (config && config.state === 'completed') {
+      // Compare with existing persisted assignments to detect actual changes
+      const existing = (config as any).speckleMaterialAssignments as Record<string, string> | undefined;
+      const existingScattering = (config as any).speckleScatteringAssignments as Record<string, number> | undefined;
+
+      const materialsChanged = JSON.stringify(existing ?? {}) !== JSON.stringify(assignments);
+      const scatteringChanged = JSON.stringify(existingScattering ?? {}) !== JSON.stringify(scatteringAssignments);
+
+      if (materialsChanged || scatteringChanged) {
+        resetSimulation(index);
+        setTimeout(() => {
+          handleUpdateConfig(index, {
+            speckleMaterialAssignments: assignments,
+            speckleLayerName: layerName,
+            speckleGeometryObjectIds: geometryObjectIds,
+            speckleScatteringAssignments: scatteringAssignments
+          } as any);
+        }, 0);
+        return;
+      }
+      // Same assignments — just a restore from mount, skip reset
+      return;
+    }
+
+    handleUpdateConfig(index, {
+      speckleMaterialAssignments: assignments,
+      speckleLayerName: layerName,
+      speckleGeometryObjectIds: geometryObjectIds,
+      speckleScatteringAssignments: scatteringAssignments
+    } as any);
+  }, [handleUpdateConfig, simulationConfigs, resetSimulation]);
+
   // Auto-Select IR logic - use refs to avoid infinite loops
   // Store callbacks in refs to avoid dependency issues
   const onAudioRenderingModeChangeRef = useRef(onAudioRenderingModeChange);
@@ -617,10 +663,32 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   ];
 
   const header = (
-  <div className="flex flex-col gap-2">
+  <div className="flex items-center gap-2">
     <div className="text-xs font-medium text-info">
       Acoustic cards
     </div>
+    <button
+      role="switch"
+      aria-checked={filteringEnabled}
+      onClick={() => setFilteringEnabled(prev => !prev)}
+      className="ml-auto flex items-center gap-1.5 group"
+      title={filteringEnabled ? 'Disable layer isolation & colors' : 'Enable layer isolation & colors'}
+    >
+      <span className="text-[10px] text-secondary-hover group-hover:text-foreground transition-colors">
+        Isolate
+      </span>
+      <span
+        className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
+          filteringEnabled ? 'bg-info' : 'bg-neutral-600'
+        }`}
+      >
+        <span
+          className={`inline-block h-3 w-3 rounded-full bg-white transition-transform ${
+            filteringEnabled ? 'translate-x-3.5' : 'translate-x-0.5'
+          }`}
+        />
+      </span>
+    </button>
   </div>
     );
 
@@ -674,6 +742,24 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       </button>
     );
 
+    // Simulation setup component — always rendered for non-resonance types
+    // so that filtering, coloring, and material context stay active
+    // regardless of completion state (decoupled from generation state)
+    const simulationSetup = config.type !== 'resonance' ? (
+        <SimulationSetupContent
+            config={config}
+            index={index}
+            viewerRef={viewerRef}
+            worldTree={localWorldTree}
+            availableMaterials={currentMaterials}
+            filteringEnabled={filteringEnabled}
+            onMaterialAssignmentsChange={(assignments, layerName, geometryObjectIds, scatteringAssignments) =>
+              handleSpeckleMaterialAssignments(index, assignments, layerName, geometryObjectIds, scatteringAssignments)
+            }
+            onUpdateConfig={(updates) => handleUpdateConfig(index, updates)}
+        />
+    ) : null;
+
     // Before Content - Simulation Setup
     const beforeContent = config.type === 'resonance' ? (
         <ResonanceContent
@@ -688,27 +774,19 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             roomScale={roomScale}
             onRoomScaleChange={onRoomScaleChange}
         />
-    ) : !isCompleted ? (
-        <SimulationSetupContent
-            config={config}
-            index={index}
-            viewerRef={viewerRef}
-            worldTree={localWorldTree}
-            availableMaterials={currentMaterials}
-            onMaterialAssignmentsChange={(assignments, layerName, geometryObjectIds, scatteringAssignments) =>
-              handleSpeckleMaterialAssignments(index, assignments, layerName, geometryObjectIds, scatteringAssignments)
-            }
-            onUpdateConfig={(updates) => handleUpdateConfig(index, updates)}
-        />
-    ) : undefined;
+    ) : !isCompleted ? simulationSetup : undefined;
 
-    // After Content
+    // After Content - results + hidden setup (keeps effects mounted for filtering/coloring)
     const afterContent = isCompleted ? (
-        <SimulationResultContent
-            config={config}
-            onClearIR={onClearIR}
-            irRefreshTrigger={irRefreshTrigger}
-        />
+        <>
+          <SimulationResultContent
+              config={config}
+              onClearIR={onClearIR}
+              irRefreshTrigger={irRefreshTrigger}
+          />
+          {/* Hidden: keeps SpeckleSurfaceMaterialsSection mounted for filtering/coloring effects */}
+          <div className="hidden">{simulationSetup}</div>
+        </>
     ) : undefined;
 
     return (

@@ -30,6 +30,8 @@ interface SpeckleSurfaceMaterialsSectionProps {
   viewerRef: React.RefObject<Viewer | null>;
   worldTree?: any; // Optional - will be fetched from viewer if not provided
   availableMaterials: AcousticMaterial[];
+  /** When true, the selected layer is isolated in the viewer. Controlled by global toggle. */
+  filteringEnabled?: boolean;
   onMaterialAssignmentsChange: (assignments: Record<string, string>, layerName: string | null, geometryObjectIds: string[], scatteringAssignments: Record<string, number>) => void; // objectId -> materialId + selected layer name + all geometry IDs + per-object scattering
   className?: string;
   // Persisted state for restoring on remount
@@ -42,6 +44,7 @@ export function SpeckleSurfaceMaterialsSection({
   viewerRef,
   worldTree: propWorldTree,
   availableMaterials,
+  filteringEnabled = true,
   onMaterialAssignmentsChange,
   className = '',
   initialAssignments,
@@ -134,9 +137,14 @@ export function SpeckleSurfaceMaterialsSection({
   }, []);
 
   // Publish material state to AcousticMaterialContext for right sidebar consumers
+  // Only publish when filteringEnabled is true — controls EntityInfoPanel mode switching
   const { publishMaterialState, clearMaterialState } = useAcousticMaterial();
 
   useEffect(() => {
+    if (!filteringEnabled) {
+      clearMaterialState();
+      return;
+    }
     publishMaterialState({
       meshObjects,
       materialAssignments,
@@ -152,7 +160,7 @@ export function SpeckleSurfaceMaterialsSection({
       assignScatteringToAll,
       assignScatteringToObjects
     });
-  }, [meshObjects, materialAssignments, availableMaterials, selectedLayerId, layerOptions, assignMaterial, assignMaterialToAll, getMaterialColor, publishMaterialState, scatteringAssignments, assignScattering, assignScatteringToAll, assignScatteringToObjects]);
+  }, [filteringEnabled, meshObjects, materialAssignments, availableMaterials, selectedLayerId, layerOptions, assignMaterial, assignMaterialToAll, getMaterialColor, publishMaterialState, clearMaterialState, scatteringAssignments, assignScattering, assignScatteringToAll, assignScatteringToObjects]);
 
   // Clear context state on unmount
   useEffect(() => {
@@ -165,11 +173,13 @@ export function SpeckleSurfaceMaterialsSection({
   const previousLayerIdRef = useRef<string | null>(null);
 
   /**
-   * Isolate the selected layer when it changes or component mounts
-   * This shows only the acoustic layer in the 3D viewer for easier material assignment
-   * Also saves the previous visibility state for restoration on unmount
+   * Isolate the selected layer when it changes, but ONLY when filteringEnabled is true.
+   * Filtering is controlled by the global toggle in AcousticsSection header,
+   * NOT by card mount/unmount (switching between cards).
    */
   useEffect(() => {
+    if (!filteringEnabled) return;
+
     // Skip if no layer selected or no objects
     if (!selectedLayerId) return;
 
@@ -177,7 +187,7 @@ export function SpeckleSurfaceMaterialsSection({
     const childObjectIds = getAllObjectIds();
     if (childObjectIds.length === 0) return;
 
-    // Only isolate if layer changed or first mount
+    // Only isolate if layer changed or first activation
     if (previousLayerIdRef.current !== selectedLayerId) {
       // Save current visibility state BEFORE isolating (only on first isolation)
       if (previousStateRef.current === null) {
@@ -193,7 +203,6 @@ export function SpeckleSurfaceMaterialsSection({
       }
 
       // Un-isolate the previous layer before isolating the new one
-      // (Speckle's isolateObjects is additive, so old objects would stay isolated)
       if (isolatedByUsRef.current.length > 0) {
         console.log('[SpeckleSurfaceMaterialsSection] Un-isolating previous layer:', isolatedByUsRef.current.length, 'objects');
         unIsolateObjects(isolatedByUsRef.current);
@@ -201,47 +210,74 @@ export function SpeckleSurfaceMaterialsSection({
 
       // Include parent layer ID + all children in isolation
       const objectIdsToIsolate = [selectedLayerId, ...childObjectIds];
-
-      // Store what we're isolating for cleanup
       isolatedByUsRef.current = objectIdsToIsolate;
 
-      console.log('[SpeckleSurfaceMaterialsSection] Isolating layer:', selectedLayerId, 'with', objectIdsToIsolate.length, 'objects (1 parent +', childObjectIds.length, 'children)');
+      console.log('[SpeckleSurfaceMaterialsSection] Isolating layer:', selectedLayerId, 'with', objectIdsToIsolate.length, 'objects');
       isolateObjects(objectIdsToIsolate);
       previousLayerIdRef.current = selectedLayerId;
     }
-  }, [selectedLayerId, getAllObjectIds, isolateObjects, unIsolateObjects, hiddenObjects, isolatedObjects]);
+  }, [filteringEnabled, selectedLayerId, getAllObjectIds, isolateObjects, unIsolateObjects, hiddenObjects, isolatedObjects]);
 
   /**
-   * Restore previous visibility state when component unmounts (card collapsed or switched)
+   * React to filteringEnabled toggle changes:
+   * - When turned OFF: un-isolate and restore previous visibility state
+   * - When turned ON: re-isolate the current layer (handled by the effect above via previousLayerIdRef reset)
+   */
+  const prevFilteringEnabledRef = useRef(filteringEnabled);
+  useEffect(() => {
+    const wasEnabled = prevFilteringEnabledRef.current;
+    prevFilteringEnabledRef.current = filteringEnabled;
+
+    if (wasEnabled && !filteringEnabled) {
+      // Toggled OFF → restore previous visibility state
+      console.log('[SpeckleSurfaceMaterialsSection] Filtering disabled - restoring visibility');
+
+      if (isolatedByUsRef.current.length > 0) {
+        unIsolateObjects(isolatedByUsRef.current);
+      }
+
+      if (previousStateRef.current?.hiddenObjects.length) {
+        hideObjects(previousStateRef.current.hiddenObjects);
+      }
+      if (previousStateRef.current?.wasIsolated && previousStateRef.current.isolatedObjects.length > 0) {
+        isolateObjects(previousStateRef.current.isolatedObjects);
+      }
+
+      // Reset state refs so re-enabling can start fresh
+      previousStateRef.current = null;
+      isolatedByUsRef.current = [];
+      previousLayerIdRef.current = null;
+    } else if (!wasEnabled && filteringEnabled) {
+      // Toggled ON → reset previousLayerIdRef so the isolation effect above re-runs
+      console.log('[SpeckleSurfaceMaterialsSection] Filtering enabled - will re-isolate');
+      previousLayerIdRef.current = null;
+    }
+  }, [filteringEnabled, unIsolateObjects, hideObjects, isolateObjects]);
+
+  /**
+   * Restore previous visibility state when component unmounts
+   * Only needed if filtering is currently active
    */
   useEffect(() => {
-    // Capture refs for cleanup (these refs persist across renders)
     const savedStateRef = previousStateRef;
     const isolatedByUsRefCaptured = isolatedByUsRef;
     const previousLayerIdRefCaptured = previousLayerIdRef;
 
     return () => {
+      // Only restore if we have active isolation (filteringEnabled was on)
+      if (isolatedByUsRefCaptured.current.length === 0) return;
+
       console.log('[SpeckleSurfaceMaterialsSection] Unmounting - restoring previous visibility state');
 
-      // Un-isolate the objects we isolated
-      if (isolatedByUsRefCaptured.current.length > 0) {
-        console.log('[SpeckleSurfaceMaterialsSection] Un-isolating', isolatedByUsRefCaptured.current.length, 'objects');
-        unIsolateObjects(isolatedByUsRefCaptured.current);
-      }
+      unIsolateObjects(isolatedByUsRefCaptured.current);
 
-      // Restore previous hidden objects
-      if (savedStateRef.current && savedStateRef.current.hiddenObjects.length > 0) {
-        console.log('[SpeckleSurfaceMaterialsSection] Restoring', savedStateRef.current.hiddenObjects.length, 'hidden objects');
+      if (savedStateRef.current?.hiddenObjects.length) {
         hideObjects(savedStateRef.current.hiddenObjects);
       }
-
-      // Restore previous isolated objects (if there were any before)
-      if (savedStateRef.current && savedStateRef.current.wasIsolated && savedStateRef.current.isolatedObjects.length > 0) {
-        console.log('[SpeckleSurfaceMaterialsSection] Restoring', savedStateRef.current.isolatedObjects.length, 'isolated objects');
+      if (savedStateRef.current?.wasIsolated && savedStateRef.current.isolatedObjects.length > 0) {
         isolateObjects(savedStateRef.current.isolatedObjects);
       }
 
-      // Reset refs
       savedStateRef.current = null;
       isolatedByUsRefCaptured.current = [];
       previousLayerIdRefCaptured.current = null;
@@ -249,12 +285,12 @@ export function SpeckleSurfaceMaterialsSection({
   }, [unIsolateObjects, hideObjects, isolateObjects]);
 
   /**
-   * Update color visualization when material assignments change
-   * Uses context's registerMaterialColors to merge with diverse/linked colors
+   * Update color visualization when material assignments change.
+   * Only registers colors when filteringEnabled is true.
+   * Uses context's registerMaterialColors to merge with diverse/linked colors.
    */
   useEffect(() => {
-    if (materialAssignments.size === 0) {
-      // Clear material colors when no assignments
+    if (!filteringEnabled || materialAssignments.size === 0) {
       clearMaterialColors();
       return;
     }
@@ -264,7 +300,7 @@ export function SpeckleSurfaceMaterialsSection({
     registerMaterialColors(colorGroups);
 
     console.log('[SpeckleSurfaceMaterialsSection] Registered material color groups:', colorGroups.length);
-  }, [materialAssignments, getColorGroups, registerMaterialColors, clearMaterialColors]);
+  }, [filteringEnabled, materialAssignments, getColorGroups, registerMaterialColors, clearMaterialColors]);
 
   /**
    * Notify parent component when assignments or selected layer changes

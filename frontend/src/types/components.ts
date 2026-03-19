@@ -16,6 +16,7 @@ import type {
   SEDAnalysisOptions,
   DetectedSound,
   LibrarySearchResult,
+  CatalogSoundSelection,
   ReceiverData,
   EntityData,
   AnalysisConfig,
@@ -104,6 +105,7 @@ export interface SidebarProps {
   onClearUploadedAudio: (index: number) => void;
   onLibrarySearch: (index: number) => Promise<void>;
   onLibrarySoundSelect: (index: number, sound: LibrarySearchResult) => void;
+  onCatalogSoundSelect?: (index: number, sound: CatalogSoundSelection) => void;
   // Entity linking props
   onStartLinkingEntity?: (configIndex: number) => void;
   onCancelLinkingEntity?: () => void;
@@ -284,6 +286,7 @@ export interface SoundGenerationSectionProps {
   onClearUploadedAudio: (index: number) => void;
   onLibrarySearch: (index: number) => Promise<void>;
   onLibrarySoundSelect: (index: number, sound: LibrarySearchResult) => void;
+  onCatalogSoundSelect?: (index: number, sound: CatalogSoundSelection) => void;
   // Entity linking props
   modelEntities: any[];
   onStartLinkingEntity?: (configIndex: number) => void;

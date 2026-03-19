@@ -1,9 +1,10 @@
 'use client';
 
-import type { SoundGenerationConfig, LibrarySearchResult } from '@/types';
+import type { SoundGenerationConfig, LibrarySearchResult, CatalogSoundSelection } from '@/types';
 import { TextToAudioMode } from './TextToAudioMode';
 import { UploadMode } from './UploadMode';
 import { LibraryMode } from './LibraryMode';
+import { CatalogMode } from './CatalogMode';
 import { SampleAudioMode } from './SampleAudioMode';
 
 /**
@@ -26,6 +27,7 @@ export interface SoundConfigContentProps {
   onClearUploadedAudio?: (index: number) => void;
   onLibrarySearch?: (index: number) => Promise<void>;
   onLibrarySoundSelect?: (index: number, sound: LibrarySearchResult) => void;
+  onCatalogSoundSelect?: (index: number, sound: CatalogSoundSelection) => void;
 }
 
 export function SoundConfigContent({
@@ -39,6 +41,7 @@ export function SoundConfigContent({
   onClearUploadedAudio,
   onLibrarySearch,
   onLibrarySoundSelect,
+  onCatalogSoundSelect,
 }: SoundConfigContentProps) {
   const cardType = config.type || 'text-to-audio';
 
@@ -82,6 +85,14 @@ export function SoundConfigContent({
           onUpdateConfig={onUpdateConfig}
           onLibrarySearch={onLibrarySearch}
           onLibrarySoundSelect={onLibrarySoundSelect}
+        />
+      )}
+
+      {cardType === 'catalog' && (
+        <CatalogMode
+          config={config}
+          index={index}
+          onCatalogSoundSelect={onCatalogSoundSelect}
         />
       )}
 

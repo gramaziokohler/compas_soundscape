@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { SoundGenerationConfig, CardType, LibrarySearchResult, LibrarySearchState } from "@/types";
+import { SoundGenerationConfig, CardType, LibrarySearchResult, LibrarySearchState, CatalogSoundSelection } from "@/types";
 import {
   API_BASE_URL,
   DEFAULT_DURATION_SECONDS,
@@ -52,6 +52,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
         uploadedAudioUrl: undefined,
         selectedLibrarySound: undefined,
         librarySearchState: undefined,
+        selectedCatalogSound: undefined,
         display_name: undefined,
         entity: undefined
       };
@@ -207,6 +208,12 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
         !alreadyGeneratedIndices.has(originalIndex) &&
         config.type === 'library' && config.selectedLibrarySound);
 
+    const catalogConfigsWithIndices = soundConfigs
+      .map((config, idx) => ({ config, originalIndex: idx }))
+      .filter(({ config, originalIndex }) =>
+        !alreadyGeneratedIndices.has(originalIndex) &&
+        config.type === 'catalog' && config.selectedCatalogSound);
+
     const elevenLabsConfigsWithIndices = soundConfigs
       .map((config, idx) => ({ config, originalIndex: idx }))
       .filter(({ config, originalIndex }) =>
@@ -229,6 +236,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
       generationConfigsWithIndices.length === 0 &&
       uploadedConfigsWithIndices.length === 0 &&
       libraryConfigsWithIndices.length === 0 &&
+      catalogConfigsWithIndices.length === 0 &&
       elevenlabsConfigsWithIndices.length === 0
     ) {
       setSoundGenError("Please enter at least one sound prompt or upload an audio file.");
@@ -240,6 +248,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
       generationConfigsWithIndices.length +
       uploadedConfigsWithIndices.length +
       libraryConfigsWithIndices.length +
+      catalogConfigsWithIndices.length +
       elevenlabsConfigsWithIndices.length;
 
     setSoundGenError(null);
@@ -388,6 +397,44 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
         }
       }
 
+      // Handle catalog mode - download sounds from Google Sound Library
+      let catalogEvents: any[] = [];
+      if (catalogConfigsWithIndices.length > 0) {
+        for (const { config, originalIndex } of catalogConfigsWithIndices) {
+          if (!config.selectedCatalogSound) continue;
+
+          try {
+            console.log(`[Sound Generation] Downloading catalog sound: ${config.selectedCatalogSound.name}`);
+
+            // Fetch directly from Google CDN
+            const downloadResponse = await fetch(config.selectedCatalogSound.url, {
+              signal: abortControllerRef.current?.signal,
+            });
+
+            if (!downloadResponse.ok) {
+              throw new Error('Failed to download catalog sound');
+            }
+
+            const audioBlob = await downloadResponse.blob();
+            const audioUrl = URL.createObjectURL(audioBlob);
+
+            const soundEvent = createSoundEventFromUpload(
+              config,
+              audioUrl,
+              originalIndex,
+              totalSoundsCount,
+              geometryBounds as GeometryBounds | undefined,
+              'catalog'
+            );
+
+            catalogEvents.push(soundEvent);
+            console.log(`[Sound Generation] Catalog sound added: ${config.selectedCatalogSound.name}`);
+          } catch (error) {
+            console.error(`[Sound Generation] Failed to download catalog sound:`, error);
+          }
+        }
+      }
+
       // Generate sounds client-side via ElevenLabs
       let elevenLabsEvents: any[] = [];
       if (elevenlabsConfigsWithIndices.length > 0) {
@@ -422,7 +469,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
       // Merge newly generated sounds with existing ones.
       // Existing sounds keep their current positions (including dragged positions).
       const existingEvents = soundscapeData ? [...soundscapeData] : [];
-      const newEvents = [...generatedEvents, ...uploadedEvents, ...libraryEvents, ...elevenLabsEvents];
+      const newEvents = [...generatedEvents, ...uploadedEvents, ...libraryEvents, ...catalogEvents, ...elevenLabsEvents];
       const allSoundEvents = [...existingEvents, ...newEvents];
 
       setGeneratedSounds(allSoundEvents);
@@ -639,6 +686,21 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
   }, [soundConfigs]);
 
   /**
+   * Select a sound from the Google Sound Library catalog
+   */
+  const handleCatalogSoundSelect = useCallback((index: number, sound: CatalogSoundSelection) => {
+    const updated = [...soundConfigs];
+    updated[index] = {
+      ...updated[index],
+      selectedCatalogSound: sound,
+      display_name: updated[index].display_name || trimDisplayName(sound.name),
+    };
+    setSoundConfigs(updated);
+
+    console.log(`[Catalog] Selected sound: ${sound.name} (${sound.category})`);
+  }, [soundConfigs]);
+
+  /**
    * Reprocess existing generated sounds to add or remove denoising
    */
   const handleReprocessSounds = useCallback(async (applyDenoising: boolean) => {
@@ -760,7 +822,8 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
         uploadedAudioInfo: undefined,
         uploadedAudioUrl: undefined,
         selectedLibrarySound: undefined,
-        librarySearchState: undefined
+        librarySearchState: undefined,
+        selectedCatalogSound: undefined,
       };
 
       return updated;
@@ -1042,6 +1105,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     handleClearUploadedAudio,
     handleLibrarySearch,
     handleLibrarySoundSelect,
+    handleCatalogSoundSelect,
     handleResetToDefaults,
     handleResetSoundConfig,
     handleDuplicateConfig,

@@ -147,7 +147,8 @@ export function calculateTimelineDuration(
 export function extractTimelineSoundsFromData(
   soundMetadata: Map<string, SoundMetadata>,
   soundIntervals: { [key: string]: number },
-  timelineDuration: number = AUDIO_TIMELINE.DEFAULT_DURATION_MS
+  timelineDuration: number = AUDIO_TIMELINE.DEFAULT_DURATION_MS,
+  soundEvents?: SoundEvent[]
 ): TimelineSound[] {
   const timelineSounds: TimelineSound[] = [];
 
@@ -160,8 +161,9 @@ export function extractTimelineSoundsFromData(
     const intervalSeconds = soundIntervals[soundId] ?? metadata.soundEvent.interval_seconds ?? 30;
     const intervalMs = (intervalSeconds * 1000) + soundDurationMs;
 
-    // Get display name from metadata
-    const displayName = metadata.soundEvent.display_name || soundId;
+    // Override display name from soundEvents if available (reflects user renames via handleSaveName)
+    const eventOverride = soundEvents?.find(e => e.id === soundId);
+    const displayName = eventOverride?.display_name || metadata.soundEvent.display_name || soundId;
 
     // Get color based on generation method
     const color = getSoundColor(metadata);

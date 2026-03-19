@@ -87,6 +87,7 @@ export function SoundGenerationSection({
   onClearUploadedAudio,
   onLibrarySearch,
   onLibrarySoundSelect,
+  onCatalogSoundSelect,
   modelEntities = [],
   onStartLinkingEntity,
   onCancelLinkingEntity,
@@ -159,6 +160,8 @@ export function SoundGenerationSection({
         return !!(config.uploadedAudioBuffer || config.uploadedAudioInfo);
       case 'library':
         return !!config.selectedLibrarySound;
+      case 'catalog':
+        return !!config.selectedCatalogSound;
       case 'sample-audio':
         return !!(config.uploadedAudioBuffer || config.uploadedAudioInfo);
       default:
@@ -258,6 +261,7 @@ export function SoundGenerationSection({
     { type: 'text-to-audio', label: CARD_TYPE_LABELS['text-to-audio'], enabled: true },
     { type: 'upload', label: CARD_TYPE_LABELS['upload'], enabled: true },
     { type: 'library', label: CARD_TYPE_LABELS['library'], enabled: true },
+    { type: 'catalog', label: CARD_TYPE_LABELS['catalog'], enabled: true },
     { type: 'sample-audio', label: CARD_TYPE_LABELS['sample-audio'], enabled: true },
   ], []);
 
@@ -462,6 +466,7 @@ export function SoundGenerationSection({
             onClearUploadedAudio={onClearUploadedAudio}
             onLibrarySearch={onLibrarySearch}
             onLibrarySoundSelect={onLibrarySoundSelect}
+            onCatalogSoundSelect={onCatalogSoundSelect}
           />
         }
         afterContent={
@@ -511,6 +516,7 @@ export function SoundGenerationSection({
     onClearUploadedAudio,
     onLibrarySearch,
     onLibrarySoundSelect,
+    onCatalogSoundSelect,
     onStartLinkingEntity,
     onCancelLinkingEntity,
     onMute,

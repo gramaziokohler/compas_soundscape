@@ -46,6 +46,7 @@ export type CardType =
   | 'text-to-audio'
   | 'upload'
   | 'library'
+  | 'catalog'
   | 'sample-audio'
   | 'resonance'
   | 'choras'
@@ -61,6 +62,7 @@ export const CARD_TYPE_LABELS: Record<CardType, string> = {
   'text-to-audio': 'Text-to-Audio',
   'upload': 'Uploaded Audio',
   'library': 'Library Sound',
+  'catalog': 'Catalog Sound',
   'sample-audio': 'Sample Audio',
   'resonance': 'Resonance Audio',
   'choras': 'Wave-based Simulation',

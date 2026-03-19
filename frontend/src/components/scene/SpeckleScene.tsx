@@ -1028,7 +1028,7 @@ export function SpeckleScene({
 
         if (soundMetadata && soundMetadata.size > 0) {
           const duration = calculateTimelineDurationFromData(soundMetadata, soundIntervals);
-          const sounds = extractTimelineSoundsFromData(soundMetadata, soundIntervals, duration);
+          const sounds = extractTimelineSoundsFromData(soundMetadata, soundIntervals, duration, soundscapeData ?? undefined);
 
           setTimelineSounds(sounds);
           setTimelineDuration(duration);
@@ -1081,13 +1081,13 @@ export function SpeckleScene({
     const soundMetadata = soundSphereManager.getAllAudioSources();
     if (soundMetadata && soundMetadata.size > 0) {
       const duration = calculateTimelineDurationFromData(soundMetadata, soundIntervals);
-      const sounds = extractTimelineSoundsFromData(soundMetadata, soundIntervals, duration);
+      const sounds = extractTimelineSoundsFromData(soundMetadata, soundIntervals, duration, soundscapeData ?? undefined);
 
       setTimelineSounds(sounds);
       setTimelineDuration(duration);
       console.log('[SpeckleScene] 🔄 Timeline refreshed:', sounds.length, 'sounds, duration:', duration);
     }
-  }, [soundIntervals]);
+  }, [soundIntervals, soundscapeData]);
 
   // ============================================================================
   // Callback - Download Soundscape as WAV

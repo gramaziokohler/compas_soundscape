@@ -154,6 +154,15 @@ export interface SoundGenerationConfig {
   // Library search fields
   librarySearchState?: LibrarySearchState; // State for library search results
   selectedLibrarySound?: LibrarySearchResult; // Selected sound from library
+  // Catalog (Google Sound Library) fields
+  selectedCatalogSound?: CatalogSoundSelection; // Selected sound from catalog
+}
+
+/** A sound selected from the Google Sound Library catalog */
+export interface CatalogSoundSelection {
+  name: string;
+  url: string;
+  category: string;
 }
 
 export type SoundState = 'playing' | 'paused' | 'stopped';
