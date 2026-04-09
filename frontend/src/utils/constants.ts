@@ -144,6 +144,32 @@ export const SPECKLE_FILTER_COLORS = {
 } as const;
 
 // ============================================================================
+// Dark Mode (Sound Source Lighting)
+// ============================================================================
+// When dark mode is enabled, all scene lights are turned off and sound sources
+// become the only light sources using electric blue point lights.
+
+export const DARK_MODE = {
+  // Electric blue color for sound source lights
+  LIGHT_COLOR: '#1a15c0',
+  LIGHT_COLOR_HEX: 0x1a15c0,
+
+  // Point light parameters for sound spheres
+  POINT_LIGHT_INTENSITY: 100.0,
+  POINT_LIGHT_DISTANCE: 50,
+  POINT_LIGHT_DECAY: 2,
+
+  // Entity-linked sound point light (slightly stronger to illuminate the object)
+  ENTITY_LIGHT_INTENSITY: 10.0,
+  ENTITY_LIGHT_DISTANCE: 50,
+
+  // Shadow configuration for point lights
+  SHADOW_MAP_SIZE: 512,       // per-face resolution of the cube shadow map
+  SHADOW_CAMERA_NEAR: 0.1,   // near plane of the shadow frustum
+  SHADOW_BIAS: -0.005,        // reduces shadow acne on angled surfaces
+} as const;
+
+// ============================================================================
 // UI Design System - Spacing, Borders, Shadows
 // ============================================================================
 
@@ -370,6 +396,8 @@ export const SPIRAL_PLACEMENT = {
   RADIUS_INCREMENT: 0.5,         // How much the radius grows per spiral turn
   INITIAL_RADIUS: 1,             // Starting radius for first element
   MIN_SPACING: 0.3,              // Minimum distance between elements
+  /** Distance threshold (meters) to detect camera movement between placements */
+  CAMERA_MOVE_THRESHOLD: 1.0,
 } as const;
 
 // Audio Generation Models
@@ -1002,6 +1030,8 @@ export const SOUND_SPHERE = {
   RENDER_ORDER: 999,
   DEPTH_TEST: false,
   DEPTH_WRITE: false,
+  /** World radius = distance * SCREEN_SPACE_SIZE — keeps constant apparent size at all zoom levels */
+  SCREEN_SPACE_SIZE: 0.03,
 } as const;
 
 // Receiver Configuration
@@ -1015,7 +1045,24 @@ export const RECEIVER_CONFIG = {
   PREVIEW_OPACITY: 0.5,
   COLOR: 0xf0a938,
   /** Distance in front of the camera to place a new receiver (meters) */
-  CAMERA_PLACEMENT_DISTANCE_M: 2,
+  CAMERA_PLACEMENT_DISTANCE_M: 3,
+  /** World half-size = distance * SCREEN_SPACE_SIZE — keeps constant apparent size at all zoom levels */
+  SCREEN_SPACE_SIZE: 0.03,
+} as const;
+
+// Object Label Sprites (shown above sound spheres and receivers)
+export const OBJECT_LABEL = {
+  FONT_SIZE: 14,
+  PADDING_H: 10,
+  PADDING_V: 6,
+  BG_COLOR: 'rgba(20, 20, 20, 0.80)',
+  TEXT_COLOR: '#ffffff',
+  BORDER_RADIUS: 3,
+  RENDER_ORDER: 1001,
+  /** World height of label = distance * SCREEN_SPACE_HEIGHT */
+  SCREEN_SPACE_HEIGHT: 0.018,
+  /** Label Z offset above object = distance * SCREEN_SPACE_SIZE * Z_OFFSET_FACTOR */
+  Z_OFFSET_FACTOR: 0.5,
 } as const;
 
 // Receiver positioning (for direct creation like sound spheres)

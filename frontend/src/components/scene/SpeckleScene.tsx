@@ -10,6 +10,7 @@ import {
   CameraController,
   SelectionExtension,
   FilteringExtension,
+  GeometryType,
 } from '@speckle/viewer';
 import { WaveSurferTimeline } from '@/components/audio/WaveSurferTimeline';
 import { PlaybackControls } from '@/components/controls/PlaybackControls';
@@ -47,6 +48,8 @@ import {
   UI_RIGHT_SIDEBAR,
   UI_VERTICAL_TABS,
   MODEL_FILE_EXTENSIONS,
+  DARK_MODE,
+  RECEIVER_CONFIG,
 } from '@/utils/constants';
 
 // Left sidebar content width when expanded (matches Sidebar.tsx: 20rem = 320px)
@@ -230,7 +233,7 @@ export function SpeckleScene({
   const viewerRef = contextViewerRef || localViewerRef;
   
   // Get selection mode context - colors are auto-applied via FilteringExtension
-  const { setViewer, selectedEntity, setSelectedEntity, applyFilterColors, getObjectLinkState } = useSpeckleSelectionMode();
+  const { setViewer, selectedEntity, setSelectedEntity, applyFilterColors, getObjectLinkState, linkedObjectIds } = useSpeckleSelectionMode();
   
   const coordinatorRef = useRef<SpeckleAudioCoordinator | null>(null);
   const playbackSchedulerRef = useRef<PlaybackSchedulerService | null>(null);
@@ -258,6 +261,25 @@ export function SpeckleScene({
   // Global volume state
   const [globalVolume, setGlobalVolume] = useState(0.8);
   const [isHoveringVolume, setIsHoveringVolume] = useState(false);
+
+  // Dark mode state
+  const [isDarkMode, setIsDarkMode] = useState(false);
+  const isDarkModeRef = useRef(false); // Non-reactive ref for enforcement interval
+  // Store original light values for restoration when dark mode is disabled
+  const darkModeStateRef = useRef<{
+    sunIntensity: number;
+    iblIntensity: number;
+    ambientLights: Array<{ light: THREE.AmbientLight; intensity: number }>;
+    sceneBackground: THREE.Color | THREE.Texture | null;
+    sceneEnvironment: THREE.Texture | null;
+    clearColor: THREE.Color;
+    clearAlpha: number;
+    entityPointLights: THREE.PointLight[];
+    entityObjectIds: string[];    // Speckle object IDs of entity-linked objects
+    entityRenderViews: any[];     // Render views for entity objects (blue emissive)
+    enforcementIntervalId: ReturnType<typeof setInterval> | null;
+    pipelineShadowHookCleanup: (() => void) | null; // removes onBeforePipelineRender hook
+  } | null>(null);
 
   // Selected object overlay state
   const [selectedObjectOverlay, setSelectedObjectOverlay] = useState<{
@@ -873,22 +895,37 @@ export function SpeckleScene({
     // Track changes
     prevSoundscapeDataLengthRef.current = currentLength;
 
-    // Calculate bounds for spiral placement (without triggering visualization)
-    let effectiveBounds = boundingBoxManagerRef.current.calculateBoundsFromSpeckleBatches(viewerRef.current);
+    // Bounding-box spiral placement removed — camera-based placement is the only strategy.
+    // let effectiveBounds = boundingBoxManagerRef.current.calculateBoundsFromSpeckleBatches(viewerRef.current);
+    // if (!effectiveBounds) {
+    //   const soundPositions: THREE.Vector3[] = [];
+    //   if (soundscapeData) {
+    //     soundscapeData.forEach(sound => {
+    //       if (sound.position) {
+    //         soundPositions.push(new THREE.Vector3(...sound.position));
+    //       }
+    //     });
+    //   }
+    //   effectiveBounds = boundingBoxManagerRef.current.calculateEffectiveBounds(null, soundPositions);
+    // }
 
-    if (!effectiveBounds) {
-      const soundPositions: THREE.Vector3[] = [];
-      if (soundscapeData) {
-        soundscapeData.forEach(sound => {
-          if (sound.position) {
-            soundPositions.push(new THREE.Vector3(...sound.position));
-          }
-        });
+    // Compute camera-front position for sound sphere placement
+    let cameraFrontPosition: THREE.Vector3 | null = null;
+    try {
+      const camera = (viewerRef.current as any).getRenderer().renderingCamera;
+      if (camera?.matrixWorld && camera?.position) {
+        const mx: number[] = camera.matrixWorld.elements;
+        const dx = -mx[8], dy = -mx[9], dz = -mx[10];
+        const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+        const d = RECEIVER_CONFIG.CAMERA_PLACEMENT_DISTANCE_M;
+        cameraFrontPosition = new THREE.Vector3(
+          camera.position.x + (dx / len) * d,
+          camera.position.y + (dy / len) * d,
+          camera.position.z + (dz / len) * d,
+        );
       }
-      effectiveBounds = boundingBoxManagerRef.current.calculateEffectiveBounds(
-        null, // Legacy geometryBounds removed - Speckle viewer computes bounds
-        soundPositions
-      );
+    } catch {
+      // Camera not ready — sound falls through to its backend event position
     }
 
     // Use ref to prevent infinite loop (same pattern as ThreeScene)
@@ -897,7 +934,8 @@ export function SpeckleScene({
       selectedVariants,
       scaleForSounds,
       auralizationConfigRef.current,
-      effectiveBounds
+      // effectiveBounds, // Bounding-box placement removed
+      cameraFrontPosition
     );
   }, [isViewerReady, soundscapeData, selectedVariants, scaleForSounds]);
 
@@ -912,25 +950,19 @@ export function SpeckleScene({
     const currentLength = receivers.length;
     prevReceiversLengthRef.current = currentLength;
 
-    // Calculate bounds for spiral placement (same as sound spheres)
-    let effectiveBounds = boundingBoxManagerRef.current.calculateBoundsFromSpeckleBatches(viewerRef.current);
+    // Bounding-box spiral placement removed — receivers are placed via camera-based spiral in page.tsx.
+    // let effectiveBounds = boundingBoxManagerRef.current.calculateBoundsFromSpeckleBatches(viewerRef.current);
+    // if (!effectiveBounds) {
+    //   const soundPositions: THREE.Vector3[] = [];
+    //   if (soundscapeData) {
+    //     soundscapeData.forEach(sound => {
+    //       if (sound.position) soundPositions.push(new THREE.Vector3(...sound.position));
+    //     });
+    //   }
+    //   effectiveBounds = boundingBoxManagerRef.current.calculateEffectiveBounds(null, soundPositions);
+    // }
 
-    if (!effectiveBounds) {
-      const soundPositions: THREE.Vector3[] = [];
-      if (soundscapeData) {
-        soundscapeData.forEach(sound => {
-          if (sound.position) {
-            soundPositions.push(new THREE.Vector3(...sound.position));
-          }
-        });
-      }
-      effectiveBounds = boundingBoxManagerRef.current.calculateEffectiveBounds(
-        null, // Legacy geometryBounds removed - Speckle viewer computes bounds
-        soundPositions
-      );
-    }
-
-    // Receivers carry their own positions (set by camera-based placement in page.tsx)
+    // Receivers carry their own positions (set by camera-based spiral placement in page.tsx)
     coordinatorRef.current.updateReceivers(receivers);
   }, [isViewerReady, receivers, soundscapeData]);
 
@@ -1299,6 +1331,461 @@ export function SpeckleScene({
   ]);
 
   // ============================================================================
+  // Effect - Dark Mode (Sound Source Lighting)
+  // ============================================================================
+  //
+  // Bugs fixed:
+  // - Speckle's FilteringExtension/SelectionExtension reset materials on click,
+  //   selection, and isolate operations. A periodic enforcement interval re-applies
+  //   dark mode state (lights, background, entity materials) every 150ms.
+  // - Background uses both scene.background, scene.environment AND the WebGL
+  //   renderer setClearColor to override the Speckle pipeline.
+  // - Entity-linked objects use MeshBasicMaterial (unlit) applied via
+  //   renderer.setMaterial() so they glow without scene lighting.
+  // ============================================================================
+  useEffect(() => {
+    if (!isViewerReady || !viewerRef.current || !coordinatorRef.current) return;
+
+    const viewer = viewerRef.current;
+    const speckleRenderer = viewer.getRenderer();
+    const scene = speckleRenderer.scene;
+    const webglRenderer = speckleRenderer.renderer; // Underlying WebGLRenderer
+    const soundSphereManager = coordinatorRef.current.getSoundSphereManager();
+    const adapter = coordinatorRef.current.getAdapter();
+
+    if (isDarkMode) {
+      // --- ENABLE DARK MODE ---
+      isDarkModeRef.current = true;
+
+      // 1. Save original light state
+      const sunLight = speckleRenderer.sunLight;
+      const savedSunIntensity = sunLight.intensity;
+
+      // Find ambient lights in the scene
+      const ambientLights: Array<{ light: THREE.AmbientLight; intensity: number }> = [];
+      scene.traverse((obj: THREE.Object3D) => {
+        if (obj instanceof THREE.AmbientLight) {
+          ambientLights.push({ light: obj, intensity: obj.intensity });
+        }
+      });
+
+      // Save scene background, environment, and WebGL clear color
+      const savedBackground = scene.background;
+      const savedEnvironment = scene.environment;
+      const savedClearColor = new THREE.Color();
+      webglRenderer.getClearColor(savedClearColor);
+      const savedClearAlpha = webglRenderer.getClearAlpha();
+
+      // Collect entity-linked object IDs from the SpeckleSelectionModeContext
+      const entityObjectIds = Array.from(linkedObjectIds);
+
+      // Collect render views for entity-linked objects (for emissive material)
+      const entityRenderViews: any[] = [];
+      if (worldTree && entityObjectIds.length > 0) {
+        const findNodeAndCollectRvs = (node: any, targetId: string): boolean => {
+          const nodeId = node?.raw?.id || node?.model?.id || node?.id;
+          if (nodeId === targetId) {
+            // Collect render views from this node and all descendants
+            const collectRvs = (n: any) => {
+              const rv = n?.model?.renderView;
+              if (rv) entityRenderViews.push(rv);
+              const children = n?.model?.children || n?.children;
+              if (children) children.forEach((c: any) => collectRvs(c));
+            };
+            collectRvs(node);
+            return true;
+          }
+          const children = node?.model?.children || node?.children;
+          if (children) {
+            for (const child of children) {
+              if (findNodeAndCollectRvs(child, targetId)) return true;
+            }
+          }
+          return false;
+        };
+
+        const rootChildren = worldTree.tree?._root?.children || worldTree._root?.children || worldTree.root?.children || worldTree.children;
+        if (rootChildren) {
+          entityObjectIds.forEach(objId => {
+            for (const child of rootChildren) {
+              if (findNodeAndCollectRvs(child, objId)) break;
+            }
+          });
+        }
+      }
+
+      // Read current IBL intensity from a batch material (setter-only API, no getter)
+      let savedIblIntensity = 1;
+      try {
+        const bIds: string[] = (speckleRenderer as any).getBatchIds();
+        for (const bid of bIds) {
+          const b = (speckleRenderer as any).getBatch(bid);
+          if (b?.batchMaterial?.envMapIntensity !== undefined) {
+            savedIblIntensity = b.batchMaterial.envMapIntensity;
+            break;
+          }
+        }
+      } catch { /* non-critical */ }
+
+      darkModeStateRef.current = {
+        sunIntensity: savedSunIntensity,
+        iblIntensity: savedIblIntensity,
+        ambientLights,
+        sceneBackground: savedBackground as THREE.Color | THREE.Texture | null,
+        sceneEnvironment: savedEnvironment as THREE.Texture | null,
+        clearColor: savedClearColor,
+        clearAlpha: savedClearAlpha,
+        entityPointLights: [],
+        entityObjectIds,
+        entityRenderViews,
+        enforcementIntervalId: null,
+        pipelineShadowHookCleanup: null,
+      };
+
+      // ---------- Apply dark mode state ----------
+
+      // Shared materials (reused across enforcement ticks — no allocation per tick)
+      // Dark opaque: MeshStandardMaterial so objects respond to point lights AND
+      // receive shadows. MeshBasicMaterial is unlit and has no shadow shader code,
+      // so Speckle's InstancedMeshGroup.getCachedMaterial() would clone it into a
+      // material that cannot receive shadows.
+      const darkOpaqueMat = new THREE.MeshStandardMaterial({
+        color: 0x1a1a2e,
+        side: THREE.DoubleSide,
+        transparent: false,
+        roughness: 0.85,
+        metalness: 0.05,
+      });
+      // Blue emissive: entity-linked objects glow electric blue (MeshBasicMaterial = unlit/always-on)
+      const entityEmissiveMat = new THREE.MeshBasicMaterial({ color: DARK_MODE.LIGHT_COLOR_HEX, side: THREE.DoubleSide });
+      // Pre-allocated black color (avoids creating new Color on every tick)
+      const blackColor = new THREE.Color(0x000000);
+
+      // Helper: apply all dark mode overrides (used both initially and by enforcement)
+      const applyDarkModeState = () => {
+        if (!isDarkModeRef.current || !viewerRef.current) return;
+        const r = viewerRef.current.getRenderer();
+        const s = r.scene;
+
+        // Kill all lights
+        r.sunLight.intensity = 0;
+        r.indirectIBLIntensity = 0;
+        s.traverse((obj: THREE.Object3D) => {
+          if (obj instanceof THREE.AmbientLight) obj.intensity = 0;
+        });
+
+        // Force black background everywhere.
+        // Speckle's pipeline clears to transparent white (alpha=0) at the start of every
+        // frame via setClearColor(0xFFFFFF, 0) + clear(). The canvas is transparent so
+        // the CSS background of the wrapper div shows through — see isDarkMode style on
+        // the outer div which sets backgroundColor:'#000000' to produce the black scene bg.
+        s.background = blackColor;
+        s.environment = null;
+        r.renderer.setClearColor(0x000000, 0); // match transparent clear, just darker
+
+        // 1. Override visible mesh batches with dark opaque material.
+        //    Live batcher scan covers meshes added after dark mode was enabled.
+        //    GeometryType.MESH excludes lines, points, text, shadow-catcher overlays.
+        //    Three sets of render views are excluded so their own materials stay intact:
+        //      - hidden objects  (FilteringExtension ghost/hidden draw-ranges)
+        //      - non-isolated objects  (when isolation is active)
+        //      - currently selected objects  (SelectionExtension highlight)
+        try {
+          const filterState = filteringExtensionRef.current?.filteringState;
+          const hiddenSet: Set<string> | null = filterState?.hiddenObjects?.length
+            ? new Set(filterState.hiddenObjects)
+            : null;
+          const isolatedSet: Set<string> | null = filterState?.isolatedObjects?.length
+            ? new Set(filterState.isolatedObjects)
+            : null;
+          // getSelectedObjects() returns raw Speckle objects whose .id matches rv.renderData.id
+          const selObjs = selectionExtensionRef.current?.getSelectedObjects() ?? [];
+          const selectedSet: Set<string> | null = selObjs.length > 0
+            ? new Set((selObjs as any[]).map((o) => o.id as string).filter(Boolean))
+            : null;
+
+          const needsFilter = hiddenSet || isolatedSet || selectedSet;
+
+          const batchIds: string[] = (r as any).getBatchIds();
+          for (const id of batchIds) {
+            const batch = (r as any).getBatch(id);
+            if (!batch || batch.geometryType !== GeometryType.MESH) continue;
+
+            // When any filter is active, exclude render views that must keep their own material
+            const rvs: any[] = needsFilter
+              ? batch.renderViews.filter((rv: any) => {
+                  const objId: string | undefined = rv.renderData?.id;
+                  if (!objId) return true; // No ID: include to be safe
+                  if (hiddenSet?.has(objId)) return false;              // Hidden: skip
+                  if (isolatedSet && !isolatedSet.has(objId)) return false; // Non-isolated: skip
+                  if (selectedSet?.has(objId)) return false;            // Selected: skip (preserve highlight)
+                  return true;
+                })
+              : batch.renderViews;
+
+            if (rvs.length > 0) {
+              r.setMaterial(rvs, darkOpaqueMat);
+            }
+          }
+        } catch {
+          // Non-critical: batcher may be rebuilding
+        }
+
+        // 2. Override entity render views with blue emissive (on top of dark override).
+        //    Entity objects glow electric-blue regardless of lighting.
+        if (darkModeStateRef.current && darkModeStateRef.current.entityRenderViews.length > 0) {
+          try {
+            r.setMaterial(darkModeStateRef.current.entityRenderViews, entityEmissiveMat);
+          } catch {
+            // Render views may become stale after re-batching; non-critical
+          }
+        }
+
+        // Enforce sound sphere colors (guards against drag / render resets)
+        if (coordinatorRef.current) {
+          const ssm = coordinatorRef.current.getSoundSphereManager();
+          if (ssm) ssm.enforceDarkModeColors();
+        }
+
+        // Trigger shadow map re-render (Speckle sets autoUpdate=false)
+        r.shadowMapNeedsUpdate = true;
+        r.needsRender = true;
+      };
+
+      // Initial application
+      applyDarkModeState();
+
+      // Hook each GEOMETRY pass's onBeforeRender so shadow maps are always re-rendered
+      // with OPAQUE visibility (full scene) rather than the STENCIL visibility that the
+      // preceding stencil pass leaves in place.
+      //
+      // Root cause: bs.render() calls passes in order [stencil, opaque, transparent, ...].
+      //   1. onBeforePipelineRender fires → shadowMapNeedsUpdate = true
+      //   2. Stencil pass: batcher.applyVisibility(getStencil())  → only selected objects
+      //      renderer.render() → Three.js renders shadow maps with selected-only visibility
+      //      → shadowMapNeedsUpdate = false
+      //   3. OPAQUE pass: batcher.applyVisibility(getOpaque()) → all opaque objects
+      //      renderer.render() → shadowMapNeedsUpdate already false → NO shadow update
+      //      → result: shadow maps from step 2 (often empty) → no shadows visible
+      //
+      // Fix: hook onBeforeRender on every GEOMETRY pass.  It fires inside Os.render()
+      // after bs.render() has already called batcher.applyVisibility for that pass,
+      // but before the pass calls renderer.render(scene,camera).  So when the OPAQUE
+      // pass's onBeforeRender fires, all opaque objects are visible → setting
+      // shadowMapNeedsUpdate=true here makes Three.js render shadow maps correctly.
+      //
+      // The same pass instance is shared across dynamicStage/progressiveStage/passthroughStage,
+      // so one hook covers all pipeline stages.
+      const pipeline = speckleRenderer.pipeline as any;
+
+      // Collect all unique passes across every stage
+      const allStagePasses: any[] = [
+        ...(pipeline.dynamicStage ?? []),
+        ...(pipeline.progressiveStage ?? []),
+        ...(pipeline.passthroughStage ?? []),
+      ];
+      const uniquePasses = [...new Set(allStagePasses)];
+      const geometryPasses = uniquePasses.filter((p: any) => p.displayName === 'GEOMETRY');
+
+      const passCleanups: Array<() => void> = [];
+      geometryPasses.forEach((p: any) => {
+        const origOnBeforeRender = p.onBeforeRender; // undefined by default
+        p.onBeforeRender = () => {
+          // Fires AFTER batcher.applyVisibility has been called for this pass,
+          // so shadow maps are rendered with this pass's correct visibility.
+          if (isDarkModeRef.current) speckleRenderer.shadowMapNeedsUpdate = true;
+          origOnBeforeRender?.();
+        };
+        passCleanups.push(() => { p.onBeforeRender = origOnBeforeRender; });
+      });
+
+      darkModeStateRef.current!.pipelineShadowHookCleanup = () => {
+        passCleanups.forEach(fn => fn());
+      };
+
+      // Enable dark mode on sound spheres (adds point lights + blue color)
+      if (soundSphereManager) {
+        soundSphereManager.enableDarkMode();
+      }
+
+      // Add point lights at entity positions
+      if (soundSphereManager && adapter) {
+        const entityPositions = soundSphereManager.getEntityLinkedSoundPositions();
+        const customGroup = adapter.getCustomObjectsGroup();
+
+        entityPositions.forEach(({ id, position }) => {
+          const light = new THREE.PointLight(
+            DARK_MODE.LIGHT_COLOR_HEX,
+            DARK_MODE.ENTITY_LIGHT_INTENSITY,
+            DARK_MODE.ENTITY_LIGHT_DISTANCE,
+            DARK_MODE.POINT_LIGHT_DECAY
+          );
+          light.name = `DarkModeEntityLight_${id}`;
+          light.position.set(position[0], position[1], position[2]);
+          light.layers.enableAll();
+
+          // Enable shadow casting so the entity's building blocks light from other sources
+          light.castShadow = true;
+          light.shadow.mapSize.width = DARK_MODE.SHADOW_MAP_SIZE;
+          light.shadow.mapSize.height = DARK_MODE.SHADOW_MAP_SIZE;
+          light.shadow.camera.near = DARK_MODE.SHADOW_CAMERA_NEAR;
+          light.shadow.camera.far = DARK_MODE.ENTITY_LIGHT_DISTANCE;
+          light.shadow.bias = DARK_MODE.SHADOW_BIAS;
+
+          customGroup.add(light);
+          darkModeStateRef.current!.entityPointLights.push(light);
+        });
+      }
+
+      // Start enforcement interval: re-apply dark mode state periodically
+      // This guards against Speckle's FilteringExtension, SelectionExtension,
+      // and isolate operations resetting materials/lights on click or selection.
+      const intervalId = setInterval(applyDarkModeState, 150);
+      darkModeStateRef.current.enforcementIntervalId = intervalId;
+
+      // Force render update
+      viewer.requestRender(8); // RENDER_RESET
+      setTimeout(() => viewer.requestRender(), 50);
+
+      console.log('[SpeckleScene] Dark mode enabled', {
+        entityObjects: entityObjectIds.length,
+        entityRenderViews: entityRenderViews.length,
+      });
+    } else {
+      // --- DISABLE DARK MODE ---
+      isDarkModeRef.current = false;
+      const saved = darkModeStateRef.current;
+      if (!saved) return;
+
+      // Stop enforcement interval
+      if (saved.enforcementIntervalId) {
+        clearInterval(saved.enforcementIntervalId);
+      }
+
+      // Remove pipeline shadow hook
+      saved.pipelineShadowHookCleanup?.();
+
+      // 1. Restore background + environment + clear color FIRST.
+      //    scene.environment must be back before materials recompile so shaders
+      //    include the environment-map sampling defines.
+      scene.background = saved.sceneBackground;
+      scene.environment = saved.sceneEnvironment;
+      webglRenderer.setClearColor(saved.clearColor, saved.clearAlpha);
+
+      // 2. Disable dark mode on sound spheres (removes point lights + restores color)
+      if (soundSphereManager) {
+        soundSphereManager.disableDarkMode();
+      }
+
+      // 3. Remove entity point lights
+      if (adapter) {
+        const customGroup = adapter.getCustomObjectsGroup();
+        saved.entityPointLights.forEach(light => {
+          customGroup.remove(light);
+          light.dispose();
+        });
+      }
+
+      // 4. Reset all object materials to original (reverts dark opaque + entity emissive overrides)
+      try {
+        speckleRenderer.resetMaterials();
+      } catch {
+        // Non-critical
+      }
+
+      // 5. Re-apply FilteringExtension hide/isolate state.
+      //    resetMaterials() wipes batch draw-ranges but not the extension's own
+      //    internal state, so hidden/isolated objects would briefly reappear.
+      try {
+        const fe = filteringExtensionRef.current;
+        if (fe) {
+          const fs = fe.filteringState;
+          if (fs?.hiddenObjects?.length) {
+            fe.hideObjects(fs.hiddenObjects, undefined, true, false);
+          }
+          if (fs?.isolatedObjects?.length) {
+            fe.isolateObjects(fs.isolatedObjects, undefined, true, true);
+          }
+        }
+      } catch {
+        // Non-critical
+      }
+
+      // 6. Restore scene lights AFTER all material operations (steps 4-5).
+      //    indirectIBLIntensity sets envMapIntensity on every batch.materials entry;
+      //    it must run after resetMaterials() and isolateObjects() which create/reset
+      //    draw-range materials — otherwise new materials get envMapIntensity=0 and
+      //    interior (back-facing) surfaces render black due to missing IBL lighting.
+      const sunLight = speckleRenderer.sunLight;
+      sunLight.intensity = saved.sunIntensity;
+      saved.ambientLights.forEach(({ light, intensity }) => { light.intensity = intensity; });
+      speckleRenderer.indirectIBLIntensity = saved.iblIntensity;
+
+      // 7. Force shader recompilation on all batch materials.
+      //    During dark mode scene.environment was null, so THREE.js compiled shaders
+      //    WITHOUT environment-map sampling defines. Now that scene.environment is
+      //    restored, materials need needsUpdate=true to recompile with env-map support.
+      try {
+        const batchIds: string[] = (speckleRenderer as any).getBatchIds();
+        for (const bId of batchIds) {
+          const batch = (speckleRenderer as any).getBatch(bId);
+          if (!batch) continue;
+          const mats = batch.materials;
+          if (mats) {
+            for (const mat of mats) {
+              if (mat) mat.needsUpdate = true;
+            }
+          }
+        }
+      } catch {
+        // Non-critical
+      }
+
+      // 8. Re-apply normal filter colors from the selection mode context.
+      //    After colors are applied, re-assert IBL intensity on any newly-created
+      //    materials and force shader recompilation.
+      const capturedIbl = saved.iblIntensity;
+      setTimeout(() => {
+        applyFilterColors();
+        try {
+          const r = viewerRef.current?.getRenderer();
+          if (r) {
+            r.indirectIBLIntensity = capturedIbl;
+            const ids: string[] = (r as any).getBatchIds();
+            for (const bid of ids) {
+              const b = (r as any).getBatch(bid);
+              if (!b) continue;
+              const ms = b.materials;
+              if (ms) {
+                for (const m of ms) {
+                  if (m) m.needsUpdate = true;
+                }
+              }
+            }
+            r.needsRender = true;
+          }
+        } catch { /* non-critical */ }
+      }, 100);
+
+      darkModeStateRef.current = null;
+
+      // Force render update
+      viewer.requestRender(8);
+      setTimeout(() => viewer.requestRender(), 50);
+
+      console.log('[SpeckleScene] Dark mode disabled');
+    }
+
+    // Cleanup: stop enforcement interval and pipeline hook on unmount or dependency change
+    return () => {
+      if (darkModeStateRef.current?.enforcementIntervalId) {
+        clearInterval(darkModeStateRef.current.enforcementIntervalId);
+      }
+      darkModeStateRef.current?.pipelineShadowHookCleanup?.();
+    };
+  }, [isDarkMode, isViewerReady]);
+
+  // ============================================================================
   // Global Volume Handlers
   // ============================================================================
   const handleGlobalVolumeChange = useCallback((value: number) => {
@@ -1371,13 +1858,15 @@ export function SpeckleScene({
   }, [pauseTimeline, onPauseAll]);
 
   const handleStopAll = useCallback(() => {
-    // Reset timeline cursor to start
-    stopTimeline();
-    
-    // Notify parent to update sound states
+    // Notify parent to update sound states FIRST (same as Power button disable path)
+    // This sets all individual sound states to 'stopped', which triggers
+    // updateSoundPlayback to unschedule and stop each source
     if (onStopAll) {
       onStopAll();
     }
+
+    // Reset timeline cursor to start
+    stopTimeline();
   }, [stopTimeline, onStopAll]);
 
   const handleSeek = useCallback(async (timeMs: number) => {
@@ -1851,13 +2340,71 @@ export function SpeckleScene({
   // Render
   // ============================================================================
   return (
-    <div className={`relative w-full h-full ${className || ''}`} style={{ height: '100vh' }}>
+    <div
+      className={`relative w-full h-full ${className || ''}`}
+      style={{ height: '100vh', backgroundColor: isDarkMode ? '#000000' : undefined }}
+    >
       {/* Viewer container */}
       <div
         ref={containerRef}
         style={{ width: '100%', height: '100%' }}
         id="speckle-scene-container"
       />
+
+      {/* Dark Mode Toggle - Top Right of Viewer */}
+      {isViewerReady && (
+        <div
+          className="absolute top-4 z-20 pointer-events-auto transition-all duration-300"
+          style={{
+            right: isRightSidebarExpanded ? `${UI_RIGHT_SIDEBAR.WIDTH + 20}px` : '20px'
+          }}
+        >
+          <button
+            role="switch"
+            aria-checked={isDarkMode}
+            onClick={() => setIsDarkMode(prev => !prev)}
+            className="flex items-center gap-1.5 group px-2 py-1 rounded-md"
+            style={{
+              backgroundColor: isDarkMode ? 'rgba(0,212,255,0.15)' : 'rgba(0,0,0,0.4)',
+              border: `1px solid ${isDarkMode ? DARK_MODE.LIGHT_COLOR : 'rgba(255,255,255,0.2)'}`,
+            }}
+            title={isDarkMode ? 'Disable dark mode' : 'Enable dark mode (sound source lighting)'}
+          >
+            <Icon>
+              {isDarkMode ? (
+                <>
+                  <circle cx="12" cy="12" r="5" />
+                  <line x1="12" y1="1" x2="12" y2="3" />
+                  <line x1="12" y1="21" x2="12" y2="23" />
+                  <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                  <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                  <line x1="1" y1="12" x2="3" y2="12" />
+                  <line x1="21" y1="12" x2="23" y2="12" />
+                  <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                  <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                </>
+              ) : (
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+              )}
+            </Icon>
+            <span className="text-[10px] text-white/70 group-hover:text-white transition-colors">
+              Dark
+            </span>
+            <span
+              className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
+                isDarkMode ? '' : 'bg-neutral-600'
+              }`}
+              style={isDarkMode ? { backgroundColor: DARK_MODE.LIGHT_COLOR } : {}}
+            >
+              <span
+                className={`inline-block h-3 w-3 rounded-full bg-white transition-transform ${
+                  isDarkMode ? 'translate-x-3.5' : 'translate-x-0.5'
+                }`}
+              />
+            </span>
+          </button>
+        </div>
+      )}
 
       {/* Loading overlay */}
       {isLoading && (

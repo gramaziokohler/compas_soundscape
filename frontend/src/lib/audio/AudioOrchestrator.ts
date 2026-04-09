@@ -654,6 +654,35 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   }
 
   /**
+   * Hot-swap source-receiver IR mapping without stopping playback.
+   * Only updates the mapping and per-source IRs — no mode switch, no source re-creation,
+   * no timeline reset. Used when switching between completed simulations while audio is playing.
+   * @param mapping - New source-receiver IR mapping
+   * @param simulationMode - Type of simulation (pyroomacoustics, choras)
+   * @param activeReceiverId - Receiver to use for IR selection
+   */
+  async hotSwapSourceReceiverIRMapping(
+    mapping: SourceReceiverIRMapping,
+    simulationMode: AcousticSimulationMode,
+    activeReceiverId?: string
+  ): Promise<void> {
+    this.sourceReceiverIRMapping = mapping;
+    this.simulationMode = simulationMode;
+    this.activeReceiverId = activeReceiverId || this.activeReceiverId;
+
+    console.log('[AudioOrchestrator] Hot-swapping IR mapping (no stop):', {
+      simulationMode,
+      sourceCount: Object.keys(mapping).length,
+      activeReceiverId: this.activeReceiverId
+    });
+
+    // Update per-source IRs for the active receiver without any mode/source changes
+    if (this.activeReceiverId) {
+      await this.updateSourceIRsForReceiver(this.activeReceiverId);
+    }
+  }
+
+  /**
    * Clear source-receiver IR mapping (exit simulation mode)
    */
   clearSourceReceiverIRMapping(): void {

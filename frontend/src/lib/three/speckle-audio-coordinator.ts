@@ -9,7 +9,7 @@ import { ReceiverManager } from './receiver-manager';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 import type { SoundEvent, ReceiverData } from '@/types';
 import type { AuralizationConfig, SourceReceiverIRMapping, AcousticSimulationMode } from '@/types/audio';
-import type { BoundingBoxBounds } from './BoundingBoxManager';
+// import type { BoundingBoxBounds } from './BoundingBoxManager'; // Bounding-box placement removed
 
 /**
  * SpeckleAudioCoordinator
@@ -116,6 +116,7 @@ export class SpeckleAudioCoordinator {
     this.dragHandler = new SpeckleDragHandler(this.viewer, this.adapter, this.cameraController);
     this.eventBridge.setDragHandler(this.dragHandler);
     this.setupEventCallbacks();
+    this.adapter.setOnFrameCallback(() => this.updateScreenSpaceScale());
     this.adapter.startAnimationLoop();
     this.isInitialized = true;
   }
@@ -231,7 +232,8 @@ export class SpeckleAudioCoordinator {
     selectedVariants: { [key: number]: number },
     scaleForSounds: number,
     auralizationConfig: AuralizationConfig,
-    bounds?: BoundingBoxBounds | null
+    // bounds?: BoundingBoxBounds | null, // Bounding-box placement removed — camera-based only
+    cameraFrontPosition?: THREE.Vector3 | null
   ): void {
     if (!this.soundSphereManager) return;
 
@@ -243,7 +245,8 @@ export class SpeckleAudioCoordinator {
       selectedVariants,
       scaleForSounds,
       auralizationConfig,
-      bounds
+      // bounds, // Bounding-box placement removed
+      cameraFrontPosition
     );
 
     try {
@@ -328,6 +331,26 @@ export class SpeckleAudioCoordinator {
     // Notify callback (for parent component integration)
     if (this.onReceiverActivatedCallback) {
       this.onReceiverActivatedCallback(receiverId);
+    }
+  }
+
+  /**
+   * Hot-swap source-receiver IR mapping without stopping playback.
+   * Used when switching between completed simulations while audio is playing.
+   */
+  public async hotSwapSourceReceiverIRMapping(
+    mapping: SourceReceiverIRMapping,
+    simulationMode: AcousticSimulationMode,
+    activeReceiverId?: string
+  ): Promise<void> {
+    this.sourceReceiverIRMapping = mapping;
+    this.simulationMode = simulationMode;
+    this.activeReceiverId = activeReceiverId || this.activeReceiverId;
+
+    console.log('[SpeckleAudioCoordinator] Hot-swapping IR mapping (no stop):', { simulationMode });
+
+    if (this.audioOrchestrator) {
+      await this.audioOrchestrator.hotSwapSourceReceiverIRMapping(mapping, simulationMode, activeReceiverId);
     }
   }
 
@@ -475,6 +498,19 @@ export class SpeckleAudioCoordinator {
 
   public getRenderer(): THREE.WebGLRenderer | null {
     return this.adapter ? this.adapter.getRenderer() : null;
+  }
+
+  /**
+   * Update screen-space scale for sound spheres and receivers every frame.
+   * Called via the adapter's onFrameCallback so objects maintain constant apparent size.
+   */
+  private updateScreenSpaceScale(): void {
+    if (!this.adapter) return;
+    const camera = this.adapter.getCamera();
+    if (!camera) return;
+
+    this.soundSphereManager?.updateScreenSpaceScale(camera);
+    this.receiverManager?.updateScreenSpaceScale(camera);
   }
 
   public dispose(): void {

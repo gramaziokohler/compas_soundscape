@@ -468,3 +468,10 @@ SPECKLE_SUPPORTED_FORMATS = ["3dm", "obj", "ifc"]
 # Lives outside temp/ so it is NOT cleared on startup by cleanup_all_temp_directories
 SOUNDSCAPE_DATA_DIR = str(BACKEND_DIR / "data" / "soundscapes")
 SOUNDSCAPE_DATA_URL_PREFIX = "/soundscapes"
+
+# Speckle Soundscape Object Constants
+# Pink color for entity-linked sound sources (ARGB signed 32-bit int: 0xFFF500B8)
+SPECKLE_SOUNDSCAPE_PINK_COLOR = -720712
+SPECKLE_SOUNDSCAPE_COLLECTION_NAME = "Soundscape"
+SPECKLE_SOUND_SOURCES_COLLECTION_NAME = "Sound Sources"
+SPECKLE_RECEIVERS_COLLECTION_NAME = "Receivers"

@@ -1070,11 +1070,18 @@ class SpeckleService:
         }
         return obj
 
+    # Speckle types recognised as a Soundscape element in the root tree
+    _SOUNDSCAPE_SPECKLE_TYPES = {
+        "Objects.Data.DataObject",                            # legacy
+        "Speckle.Core.Models.Collections.Collection",         # new
+    }
+
     @staticmethod
     def _find_soundscape_element(root_object) -> tuple:
         """
         Search the root object's ``@elements`` / ``elements`` list for a
-        ``DataObject`` whose name equals ``_SOUNDSCAPE_DATA_OBJECT_NAME``.
+        Soundscape element (DataObject *or* Collection) named
+        ``_SOUNDSCAPE_DATA_OBJECT_NAME``.
 
         Returns:
             (elements_list, index)  – the mutable list and the index of the
@@ -1094,30 +1101,44 @@ class SpeckleService:
                 )
                 if (
                     elem_name == target
-                    and elem_type == "Objects.Data.DataObject"
+                    and elem_type in SpeckleService._SOUNDSCAPE_SPECKLE_TYPES
                 ):
                     return (elements, idx)
         return (None, -1)
 
     def send_soundscape_data(self, model_id: str, soundscape_data: dict) -> Optional[str]:
         """
-        Save soundscape metadata as a new version on the existing Speckle model.
+        Save soundscape data as proper Speckle objects on the model.
 
-        Creates an ``Objects.Data.DataObject`` named *Soundscape* and inserts
-        it into the root object's ``@elements`` list (the standard Speckle
-        hierarchy convention).  If a Soundscape DataObject already exists in
-        the list it is replaced in-place; otherwise the new object is appended.
+        Creates a ``Soundscape`` Collection (replaces the old DataObject)
+        containing:
 
-        A new model version is created so the change is visible in the Speckle
-        version history.
+        - **Sound Sources** sub-collection with ``Point`` objects for
+          free-standing sounds (``entity_index`` is ``None``).
+        - **Receivers** sub-collection with ``Point`` objects.
+        - Full metadata as ``properties`` on the Collection for round-trip
+          loading.
+
+        Also modifies existing entities in-place:
+
+        - **Entity-linked sounds** (``entity_index`` is not ``None``):
+          sound metadata written to the entity's ``properties`` (position
+          flattened to ``position_x/y/z``), and ``color`` set to pink.
+        - **Material assignments**: ``acoustic_material`` and
+          ``acoustic_simulation_id`` written to each geometry object's
+          ``properties``.
+
+        All ``properties`` dicts respect Speckle's 2-level nesting maximum.
 
         Args:
             model_id: The Speckle model ID of the source 3D model.
-            soundscape_data: Full soundscape dict (version, configs, events, etc.)
+            soundscape_data: Full soundscape dict (version, configs, events …)
 
         Returns:
             str: The new Speckle object ID if successful, None otherwise.
         """
+        from services.speckle_soundscape_builder import build_soundscape_objects
+
         if not self.client or not self.project_id:
             logger.error("Not authenticated or no project selected.")
             return None
@@ -1154,13 +1175,17 @@ class SpeckleService:
                 logger.warning("No root object found – creating empty wrapper")
                 root_object = Base()
 
-            # ----- 2. Build soundscape DataObject -----
-            soundscape_obj = self._create_soundscape_data_object(
-                model_id, soundscape_data
+            # ----- 2. Build Speckle objects + modify entities -----
+            soundscape_collection, sources_count, receivers_count, materials_count = (
+                build_soundscape_objects(root_object, soundscape_data, model_id)
+            )
+            logger.info(
+                f"Built Speckle objects: {sources_count} source points, "
+                f"{receivers_count} receiver points, "
+                f"{materials_count} material assignments"
             )
 
-            # ----- 3. Insert into root's @elements -----
-            # Determine which attribute the root uses for its children
+            # ----- 3. Insert Collection into root's @elements -----
             elements_attr = "@elements"
             if hasattr(root_object, "@elements"):
                 elements_attr = "@elements"
@@ -1171,15 +1196,15 @@ class SpeckleService:
             if not isinstance(elements, list):
                 elements = []
 
-            # Replace an existing Soundscape DataObject if present
+            # Remove any old Soundscape DataObject or Collection
             existing_list, existing_idx = self._find_soundscape_element(root_object)
             if existing_list is not None and existing_idx >= 0:
-                existing_list[existing_idx] = soundscape_obj
-                logger.info("Replaced existing Soundscape DataObject in elements")
+                existing_list[existing_idx] = soundscape_collection
+                logger.info("Replaced existing Soundscape element in tree")
             else:
-                elements.append(soundscape_obj)
+                elements.append(soundscape_collection)
                 root_object[elements_attr] = elements
-                logger.info("Appended Soundscape DataObject to root elements")
+                logger.info("Appended Soundscape Collection to root elements")
 
             # Remove legacy @soundscape property (migration from old format)
             for legacy in ("@soundscape", "soundscape"):
@@ -1191,7 +1216,7 @@ class SpeckleService:
 
             # ----- 4. Send updated root & create version -----
             object_id = operations.send(base=root_object, transports=[transport])
-            logger.info(f"Updated root with soundscape DataObject sent: {object_id}")
+            logger.info(f"Updated root with soundscape objects sent: {object_id}")
 
             version_input = CreateVersionInput(
                 project_id=self.project_id,
@@ -1274,9 +1299,12 @@ class SpeckleService:
         """
         Retrieve soundscape data from the latest version of the given model.
 
-        Searches for a ``DataObject`` named *Soundscape* inside the root
-        object's ``@elements`` / ``elements``.  Falls back to the legacy
-        ``@soundscape`` root property for backward compatibility.
+        Search order:
+        1. **Collection** named *Soundscape* (current format) — reads its
+           ``properties`` via ``parse_soundscape_collection``.
+        2. **DataObject** named *Soundscape* (prior format) — reads via
+           ``_parse_soundscape_object``.
+        3. **Legacy** ``@soundscape`` root property.
 
         Args:
             model_id: The Speckle model ID of the source 3D model.
@@ -1284,6 +1312,8 @@ class SpeckleService:
         Returns:
             dict: The parsed soundscape data, or None if not found.
         """
+        from services.speckle_soundscape_builder import parse_soundscape_collection
+
         if not self.client or not self.project_id:
             logger.error("Not authenticated or no project selected.")
             return None
@@ -1320,11 +1350,29 @@ class SpeckleService:
                 logger.warning("Failed to receive root object")
                 return None
 
-            # --- Strategy 1: DataObject inside elements (new format) ---
+            # --- Strategy 1: Soundscape Collection or DataObject in elements ---
             elements_list, idx = self._find_soundscape_element(root_object)
             if elements_list is not None and idx >= 0:
                 soundscape_obj = elements_list[idx]
-                soundscape = self._parse_soundscape_object(soundscape_obj, model_id)
+                elem_type = getattr(soundscape_obj, "speckle_type", "") or ""
+
+                if elem_type == "Speckle.Core.Models.Collections.Collection":
+                    # New Collection format
+                    soundscape = parse_soundscape_collection(
+                        soundscape_obj, model_id
+                    )
+                    if soundscape:
+                        logger.info(
+                            f"Loaded soundscape Collection from Speckle: "
+                            f"{len(soundscape.get('sound_configs', []))} configs, "
+                            f"{len(soundscape.get('sound_events', []))} events"
+                        )
+                        return soundscape
+
+                # DataObject format (fallback)
+                soundscape = self._parse_soundscape_object(
+                    soundscape_obj, model_id
+                )
                 logger.info(
                     f"Loaded soundscape DataObject from Speckle: "
                     f"{len(soundscape.get('sound_configs', []))} configs, "

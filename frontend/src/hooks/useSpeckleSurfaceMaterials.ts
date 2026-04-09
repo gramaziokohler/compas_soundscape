@@ -7,7 +7,7 @@
  * Used for PyroomAcoustics and Choras simulations with Speckle models.
  */
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Viewer } from '@speckle/viewer';
 import type {
   SpeckleMeshObject,
@@ -252,6 +252,33 @@ export function useSpeckleSurfaceMaterials(
     }
     return new Map();
   });
+
+  // Defensive re-sync: if the component is reused (stays mounted) but
+  // initialAssignments changes (e.g. switching simulation cards), re-initialize.
+  // Guard: skip if the incoming assignments are identical to our current state —
+  // this prevents a loop where the parent reflects our own changes back as a new
+  // object reference (assignMaterial → notify parent → parent updates config →
+  // config.speckleMaterialAssignments is a new object → this effect fires again).
+  const prevInitialRef = useRef(options?.initialAssignments);
+  const initialAssignments = options?.initialAssignments;
+  const materialAssignmentsRef = useRef(materialAssignments);
+  materialAssignmentsRef.current = materialAssignments;
+  useEffect(() => {
+    if (initialAssignments === prevInitialRef.current) return;
+    prevInitialRef.current = initialAssignments;
+
+    if (!initialAssignments || Object.keys(initialAssignments).length === 0) return;
+
+    // Skip if the content matches our current state (parent echoing our own changes)
+    const current = materialAssignmentsRef.current;
+    const entries = Object.entries(initialAssignments);
+    if (
+      entries.length === current.size &&
+      entries.every(([k, v]) => current.get(k) === v)
+    ) return;
+
+    setMaterialAssignments(new Map(entries));
+  }, [initialAssignments]);
 
   // Track if we've already initialized the layer selection
   const [hasInitializedLayer, setHasInitializedLayer] = useState(false);

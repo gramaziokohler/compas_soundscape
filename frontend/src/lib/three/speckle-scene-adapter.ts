@@ -38,6 +38,9 @@ export class SpeckleSceneAdapter {
   private animationFrameId: number | null = null;
   private _noOrchestratorWarned: boolean = false;
 
+  // Per-frame callback (e.g. screen-space scale updates from coordinator)
+  private onFrameCallback: (() => void) | null = null;
+
   /**
    * Create a new SpeckleSceneAdapter
    * @param viewer - Speckle viewer instance
@@ -172,6 +175,14 @@ export class SpeckleSceneAdapter {
    * This syncs the AudioOrchestrator listener with the Speckle camera
    * position and orientation every frame.
    */
+  /**
+   * Register a callback to be invoked every animation frame.
+   * Used by SpeckleAudioCoordinator to update screen-space scales.
+   */
+  public setOnFrameCallback(cb: () => void): void {
+    this.onFrameCallback = cb;
+  }
+
   public startAnimationLoop(): void {
     if (this.animationFrameId !== null) {
       console.warn('[SpeckleSceneAdapter] ⚠️ Animation loop already running');
@@ -207,6 +218,9 @@ export class SpeckleSceneAdapter {
           this._noOrchestratorWarned = true;
         }
       }
+
+      // Per-frame callback (screen-space scale + label updates)
+      this.onFrameCallback?.();
 
       // Continue animation loop
       this.animationFrameId = requestAnimationFrame(animate);

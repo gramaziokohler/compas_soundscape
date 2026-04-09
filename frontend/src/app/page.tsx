@@ -27,7 +27,8 @@ import { useAcousticsSimulation } from "@/hooks/useAcousticsSimulation";
 import { seedPyroomPersistentState } from "@/hooks/usePyroomAcousticsSimulation";
 import { useAnalysis } from "@/hooks/useAnalysis";
 import { apiService } from "@/services/api";
-import { API_BASE_URL, RECEIVER_CONFIG } from "@/utils/constants";
+import { API_BASE_URL, RECEIVER_CONFIG, SPIRAL_PLACEMENT } from "@/utils/constants";
+import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
 import type { LoadTab, SoundGenerationConfig } from "@/types";
 import type { SelectedGeometry, AcousticMaterial } from "@/types/materials";
 import { AudioStatusDisplay } from "@/components/audio/AudioStatusDisplay";
@@ -104,6 +105,10 @@ function HomeContent() {
   }, []); // Empty deps - uses ref for orchestrator
   
   const receivers = useReceivers({ onReceiverSelected: handleReceiverSelected });
+
+  // Receiver spiral placement tracking — persists last camera-front position and count
+  const lastReceiverCameraFrontRef = useRef<[number, number, number] | null>(null);
+  const receiversAtCameraFrontRef = useRef<number>(0);
   const modalImpact = useModalImpact();
   const acousticsSimulation = useAcousticsSimulation();
   const [activeLoadTab, setActiveLoadTab] = useState<LoadTab>('upload');
@@ -172,63 +177,105 @@ function HomeContent() {
     }
   }, [audioOrchestrator.status?.currentMode, showBoundingBox]);
 
+  // Helper: check if a simulation config has a source-receiver IR mapping (completed simulation)
+  const getSimIRMapping = useCallback((index: number | null) => {
+    if (index === null) return null;
+    const config = acousticsSimulation.simulationConfigs[index];
+    if (!config || config.type !== 'pyroomacoustics') return null;
+    return (config as any).sourceReceiverIRMapping || null;
+  }, [acousticsSimulation.simulationConfigs]);
+
   // Set source-receiver IR mapping when simulation completes (PyroomAcoustics)
+  // Uses hot-swap (no stop) when already in IR mode and switching between completed simulations
+  const prevIRMappingIndexRef = useRef<number | null>(acousticsSimulation.activeSimulationIndex);
+
   useEffect(() => {
     if (!audioOrchestrator.orchestrator) return;
 
     // Check if active simulation is Pyroomacoustics and has source-receiver mapping
     if (acousticsSimulation.activeSimulationIndex !== null) {
       const activeConfig = acousticsSimulation.simulationConfigs[acousticsSimulation.activeSimulationIndex];
-      
+
       if (activeConfig && activeConfig.type === 'pyroomacoustics') {
         const pyroomConfig = activeConfig as any;
-        
+
         // If simulation has source-receiver IR mapping, pass it to AudioOrchestrator
         if (pyroomConfig.sourceReceiverIRMapping) {
-          console.log('[Page] Setting source-receiver IR mapping from simulation', {
-            simulationId: activeConfig.id,
-            hasMapping: !!pyroomConfig.sourceReceiverIRMapping,
-            sourceCount: Object.keys(pyroomConfig.sourceReceiverIRMapping).length
-          });
-          
-          // Get first receiver ID as initial selection (if receivers exist)
           const initialReceiverId = receivers.receivers.length > 0 ? receivers.receivers[0].id : undefined;
-          
-          audioOrchestrator.orchestrator.setSourceReceiverIRMapping(
-            pyroomConfig.sourceReceiverIRMapping,
-            'pyroomacoustics',
-            initialReceiverId
-          ).then(() => {
-            console.log('[Page] ✅ Source-receiver IR mapping applied successfully');
-          }).catch(error => {
-            console.error('[Page] ❌ Failed to set source-receiver IR mapping:', error);
-          });
+
+          // Determine if we can hot-swap: already in AMBISONIC_IR mode and previous sim also had IR mapping
+          const prevMapping = getSimIRMapping(prevIRMappingIndexRef.current);
+          const currentMode = audioOrchestrator.orchestrator.getCurrentMode();
+          const canHotSwap = prevMapping !== null && currentMode === 'ambisonic_ir';
+
+          if (canHotSwap) {
+            console.log('[Page] Hot-swapping IR mapping (no stop)', {
+              simulationId: activeConfig.id,
+              sourceCount: Object.keys(pyroomConfig.sourceReceiverIRMapping).length
+            });
+            audioOrchestrator.orchestrator.hotSwapSourceReceiverIRMapping(
+              pyroomConfig.sourceReceiverIRMapping,
+              'pyroomacoustics',
+              initialReceiverId
+            ).then(() => {
+              console.log('[Page] ✅ IR mapping hot-swapped successfully');
+            }).catch(error => {
+              console.error('[Page] ❌ Failed to hot-swap IR mapping:', error);
+            });
+          } else {
+            console.log('[Page] Setting source-receiver IR mapping from simulation', {
+              simulationId: activeConfig.id,
+              hasMapping: !!pyroomConfig.sourceReceiverIRMapping,
+              sourceCount: Object.keys(pyroomConfig.sourceReceiverIRMapping).length
+            });
+            audioOrchestrator.orchestrator.setSourceReceiverIRMapping(
+              pyroomConfig.sourceReceiverIRMapping,
+              'pyroomacoustics',
+              initialReceiverId
+            ).then(() => {
+              console.log('[Page] ✅ Source-receiver IR mapping applied successfully');
+            }).catch(error => {
+              console.error('[Page] ❌ Failed to set source-receiver IR mapping:', error);
+            });
+          }
         }
       }
     }
+
+    prevIRMappingIndexRef.current = acousticsSimulation.activeSimulationIndex;
   }, [
     audioOrchestrator.orchestrator,
     acousticsSimulation.activeSimulationIndex,
     acousticsSimulation.simulationConfigs,
-    receivers.receivers
+    receivers.receivers,
+    getSimIRMapping
   ]);
 
   // Stop timeline when switching between simulation tabs
+  // Skip stopping when both old and new simulations have IR mappings (hot-swap scenario)
   const prevActiveIndexRef = useRef<number | null>(acousticsSimulation.activeSimulationIndex);
-  
+
   useEffect(() => {
     const prevIndex = prevActiveIndexRef.current;
     const currentIndex = acousticsSimulation.activeSimulationIndex;
-    
+
     // Only stop if we're actually switching between simulations (not on initial mount)
     if (prevIndex !== null && prevIndex !== currentIndex) {
-      console.log(`[Page] Switching simulation tabs: ${prevIndex} → ${currentIndex}, stopping timeline`);
-      audioControls.stopAll();
+      // Check if both old and new simulations have IR mappings — if so, just hot-swap IRs
+      const prevMapping = getSimIRMapping(prevIndex);
+      const currentMapping = getSimIRMapping(currentIndex);
+
+      if (prevMapping && currentMapping) {
+        console.log(`[Page] Switching simulation tabs: ${prevIndex} → ${currentIndex}, hot-swapping IRs (no stop)`);
+      } else {
+        console.log(`[Page] Switching simulation tabs: ${prevIndex} → ${currentIndex}, stopping timeline`);
+        audioControls.stopAll();
+      }
     }
-    
+
     // Update ref for next comparison
     prevActiveIndexRef.current = currentIndex;
-  }, [acousticsSimulation.activeSimulationIndex, audioControls.stopAll]);
+  }, [acousticsSimulation.activeSimulationIndex, audioControls.stopAll, getSimIRMapping]);
   
   // Entity linking state
   const [isLinkingEntity, setIsLinkingEntity] = useState(false);
@@ -1297,7 +1344,9 @@ function HomeContent() {
   }, [receivers.receivers, audioOrchestrator]);
 
   /**
-   * Add a receiver 2 m in front of the current camera look direction.
+   * Add a receiver in front of the current camera.
+   * When multiple receivers are added without moving the camera, they are placed
+   * in a spiral pattern around the first camera-front position.
    * Falls back to the hook's default position if the camera is unavailable.
    */
   const handleAddReceiver = useCallback((type: string) => {
@@ -1313,11 +1362,32 @@ function HomeContent() {
           const dx = -mx[8], dy = -mx[9], dz = -mx[10];
           const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
           const d = RECEIVER_CONFIG.CAMERA_PLACEMENT_DISTANCE_M;
-          position = [
+          const cameraFront: [number, number, number] = [
             camera.position.x + (dx / len) * d,
             camera.position.y + (dy / len) * d,
             camera.position.z + (dz / len) * d,
           ];
+
+          // Check if camera moved significantly since last receiver placement
+          const lastFront = lastReceiverCameraFrontRef.current;
+          const distSq = lastFront
+            ? (cameraFront[0] - lastFront[0]) ** 2 +
+              (cameraFront[1] - lastFront[1]) ** 2 +
+              (cameraFront[2] - lastFront[2]) ** 2
+            : Infinity;
+          const cameraMoved = distSq > SPIRAL_PLACEMENT.CAMERA_MOVE_THRESHOLD ** 2;
+
+          if (cameraMoved) {
+            // Reset spiral — camera is at a new position
+            lastReceiverCameraFrontRef.current = cameraFront;
+            receiversAtCameraFrontRef.current = 0;
+          }
+
+          // Place this receiver at the next spiral slot around the anchor point
+          const anchor = lastReceiverCameraFrontRef.current!;
+          const idx = receiversAtCameraFrontRef.current;
+          position = getCameraFrontSpiralPosition(anchor, idx);
+          receiversAtCameraFrontRef.current += 1;
         }
       } catch {
         // Camera not ready — fall through to hook default

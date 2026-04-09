@@ -310,13 +310,14 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
             entityIndex = originalConfig.entity.index;
           }
 
-          // Determine position: use entity's center if entity-linked, otherwise backend position
-          let position = sound.position;
+          // Determine position:
+          // - Entity-linked sounds: use entity's bounding box center (spatial audio source matches object)
+          // - Non-entity sounds: [0,0,0] — SoundSphereManager places them in front of the camera.
+          //   Backend position (sound.position) was a random point inside the bounding box and is ignored.
+          let position: number[] = [0, 0, 0];
           if (hasEntityInConfig && originalConfig.entity?.bounds?.center) {
-            // Use entity's bounding box center as the sound source position
             position = originalConfig.entity.bounds.center;
           } else if (hasEntityInConfig && originalConfig.entity?.position) {
-            // Fallback to entity's position if no bounds
             position = originalConfig.entity.position;
           }
 

@@ -542,6 +542,16 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     if (!config || config.type === 'resonance') return;
 
     const simConfig = config as ChorasSimulationConfig | PyroomAcousticsSimulationConfig;
+
+    // Explicitly preserve Speckle material assignments across reset
+    // so that SpeckleSurfaceMaterialsSection can restore them on remount
+    const preservedMaterials = {
+      speckleMaterialAssignments: (simConfig as any).speckleMaterialAssignments,
+      speckleLayerName: (simConfig as any).speckleLayerName,
+      speckleGeometryObjectIds: (simConfig as any).speckleGeometryObjectIds,
+      speckleScatteringAssignments: (simConfig as any).speckleScatteringAssignments,
+    };
+
     const resetState = {
       state: 'before-simulation',
       isRunning: false,
@@ -553,7 +563,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       currentSimulationId: null,
       currentSimulationRunId: null,
       importedIRIds: undefined,
-      sourceReceiverIRMapping: undefined
+      sourceReceiverIRMapping: undefined,
+      ...preservedMaterials,
     };
 
     if (simConfig.savedSettings) {

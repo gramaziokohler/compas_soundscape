@@ -5,7 +5,8 @@ import { updateDraggableMeshes, disposeMeshes } from "@/lib/three/draggable-mesh
 // import { calculateSpiralPositions } from "@/lib/three/spiral-placement"; // Replaced by camera-based placement
 import type { ReceiverData } from "@/types";
 // import type { BoundingBoxBounds } from "@/lib/three/BoundingBoxManager"; // Unused after spiral placement removal
-import { RECEIVER_CONFIG } from "@/utils/constants";
+import { RECEIVER_CONFIG, OBJECT_LABEL } from "@/utils/constants";
+import { createLabelSprite, disposeLabelSprite } from "@/lib/three/label-sprite-factory";
 
 /**
  * ReceiverManager
@@ -34,6 +35,9 @@ export class ReceiverManager {
 
   // Position tracking - stores positions by receiver ID to preserve dragged positions
   private receiverPositions: Map<string, [number, number, number]> = new Map();
+
+  // Label sprites — one per receiver, keyed by receiver ID
+  private labelSprites: Map<string, THREE.Sprite> = new Map();
 
   // Bounding box (retained for potential future use; not used by current placement strategy)
   // private boundingBox: BoundingBoxBounds | null = null;
@@ -123,6 +127,9 @@ export class ReceiverManager {
 
     this.receiverMeshes = result.meshes;
     this.draggableObjects = result.draggableObjects;
+
+    // Sync label sprites with the current receiver set
+    this.syncLabelSprites(result.meshes);
   }
 
   /**
@@ -161,6 +168,7 @@ export class ReceiverManager {
     const cubeMesh = new THREE.Mesh(cubeGeom, material);
     cubeMesh.position.fromArray(receiver.position);
     cubeMesh.userData.receiverId = receiver.id;
+    cubeMesh.userData.receiverName = receiver.name;
     cubeMesh.userData.isReceiver = true;
     cubeMesh.userData.speckleType = 'Receiver'; // Mark as custom Speckle object
     cubeMesh.userData.customObjectType = 'receiver'; // CRITICAL: Required for drag handler and event bridge
@@ -295,14 +303,97 @@ export class ReceiverManager {
     this.scaleForSounds = scaleForSounds;
   }
 
+  // ============================================================================
+  // Screen-Space Sizing + Labels
+  // ============================================================================
+
+  /**
+   * Sync label sprites with the current set of receiver meshes.
+   * Creates, updates (on name change), or removes labels as needed.
+   */
+  private syncLabelSprites(meshes: THREE.Mesh[]): void {
+    const target = this.parentGroup || this.scene;
+    const currentIds = new Set(
+      meshes.map(m => m.userData.receiverId as string).filter(Boolean)
+    );
+
+    // Remove labels for deleted receivers
+    for (const [id, sprite] of this.labelSprites) {
+      if (!currentIds.has(id)) {
+        target.remove(sprite);
+        disposeLabelSprite(sprite);
+        this.labelSprites.delete(id);
+      }
+    }
+
+    // Create or refresh labels
+    for (const mesh of meshes) {
+      const id = mesh.userData.receiverId as string;
+      if (!id) continue;
+
+      const text = (mesh.userData.receiverName as string) || id;
+      const existing = this.labelSprites.get(id);
+
+      if (existing) {
+        if (existing.userData.labelText === text) continue;
+        target.remove(existing);
+        disposeLabelSprite(existing);
+        this.labelSprites.delete(id);
+      }
+
+      const sprite = createLabelSprite(text);
+      sprite.position.copy(mesh.position);
+      target.add(sprite);
+      this.labelSprites.set(id, sprite);
+    }
+  }
+
+  /**
+   * Update receiver mesh scales and label positions every frame so objects
+   * appear at a constant screen size regardless of camera distance (zoom).
+   *
+   * Called by SpeckleAudioCoordinator's per-frame callback.
+   */
+  public updateScreenSpaceScale(camera: THREE.PerspectiveCamera): void {
+    const baseHalfSize = RECEIVER_CONFIG.CUBE_SIZE_MULTIPLIER * this.scaleForSounds;
+    const target = this.parentGroup || this.scene;
+
+    this.receiverMeshes.forEach(mesh => {
+      const distance = camera.position.distanceTo(mesh.position);
+      if (distance < 0.01) return;
+
+      // Scale cube so world half-size = distance × SCREEN_SPACE_SIZE
+      mesh.scale.setScalar((distance * RECEIVER_CONFIG.SCREEN_SPACE_SIZE) / baseHalfSize);
+
+      // Position and scale label
+      const id = mesh.userData.receiverId as string;
+      const label = id ? this.labelSprites.get(id) : null;
+      if (label) {
+        const zOffset = distance * RECEIVER_CONFIG.SCREEN_SPACE_SIZE * OBJECT_LABEL.Z_OFFSET_FACTOR;
+        label.position.set(mesh.position.x, mesh.position.y, mesh.position.z + zOffset);
+        const h = distance * OBJECT_LABEL.SCREEN_SPACE_HEIGHT;
+        label.scale.set(h * (label.userData.aspectRatio as number || 3), h, 1);
+      }
+    });
+  }
+
   /**
    * Dispose of all resources
    */
   public dispose(): void {
+    const target = this.parentGroup || this.scene;
+
     // Remove all receiver cubes
     disposeMeshes(this.scene, this.receiverMeshes);
     this.receiverMeshes = [];
     this.draggableObjects = [];
+
+    // Dispose all label sprites
+    this.labelSprites.forEach((sprite) => {
+      target.remove(sprite);
+      disposeLabelSprite(sprite);
+    });
+    this.labelSprites.clear();
 
     // Clear position tracking
     this.receiverPositions.clear();

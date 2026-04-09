@@ -4,8 +4,14 @@
  * Bridges acoustic material assignment state between left sidebar (producer)
  * and right sidebar (consumers: EntityInfoPanel, ObjectExplorer).
  *
- * Uses refs to avoid re-render loops — consumers pull state via getters,
- * and a version counter triggers re-renders only when state actually changes.
+ * Design:
+ * - `materialState` is stored directly as React state (not in a ref behind a version counter).
+ * - `publishMaterialState` uses a functional updater with reference-equality guards so that
+ *   calling it with unchanged data returns the SAME object reference → React bails out and
+ *   does NOT re-render consumers. This definitively breaks any potential infinite loop:
+ *   no state-reference change → no context re-render → no cascading effect re-fires.
+ * - Function references (assignMaterial, getMaterialColor, etc.) are updated without
+ *   triggering re-renders when only they change (data is the same).
  */
 
 'use client';
@@ -39,16 +45,14 @@ export interface AcousticMaterialState {
 interface AcousticMaterialContextValue {
   /** Whether a simulation card is currently publishing material state */
   isActive: boolean;
-  /** Version counter — increments when published state changes */
-  version: number;
+  /** The current published material state (null when inactive) */
+  materialState: AcousticMaterialState | null;
   /** Layer ID that ObjectExplorer should expand/scroll to */
   expandToLayerId: string | null;
   /** Push material state into context (called by SpeckleSurfaceMaterialsSection) */
   publishMaterialState: (state: AcousticMaterialState) => void;
   /** Clear all published state (called on unmount) */
   clearMaterialState: () => void;
-  /** Get the current published state (returns null when inactive) */
-  getMaterialState: () => AcousticMaterialState | null;
 }
 
 // ============================================================================
@@ -62,43 +66,72 @@ const AcousticMaterialContext = createContext<AcousticMaterialContextValue | nul
 // ============================================================================
 
 export function AcousticMaterialProvider({ children }: { children: ReactNode }) {
-  const [isActive, setIsActive] = useState(false);
-  const [version, setVersion] = useState(0);
+  const [materialState, setMaterialState] = useState<AcousticMaterialState | null>(null);
   const [expandToLayerId, setExpandToLayerId] = useState<string | null>(null);
 
-  // Store published state in a ref to avoid re-render cascades
-  const stateRef = useRef<AcousticMaterialState | null>(null);
+  // Ref holds the latest function references — updated without triggering re-renders.
+  // When publishMaterialState is called with same data but new function refs (e.g.
+  // getMaterialColor got a new identity because availableMaterials prop changed),
+  // we update this ref so consumers always call the latest functions, while avoiding
+  // a context re-render (because we return `prev` from the functional state updater).
+  const latestFnsRef = useRef<Pick<
+    AcousticMaterialState,
+    'assignMaterial' | 'assignMaterialToAll' | 'assignMaterialToObjects' |
+    'getMaterialColor' | 'assignScattering' | 'assignScatteringToAll' | 'assignScatteringToObjects'
+  > | null>(null);
 
   const publishMaterialState = useCallback((state: AcousticMaterialState) => {
-    stateRef.current = state;
+    // Always keep latest function references in the side-ref
+    latestFnsRef.current = {
+      assignMaterial: state.assignMaterial,
+      assignMaterialToAll: state.assignMaterialToAll,
+      assignMaterialToObjects: state.assignMaterialToObjects,
+      getMaterialColor: state.getMaterialColor,
+      assignScattering: state.assignScattering,
+      assignScatteringToAll: state.assignScatteringToAll,
+      assignScatteringToObjects: state.assignScatteringToObjects,
+    };
 
-    // Update expandToLayerId when layer changes
-    setExpandToLayerId(state.selectedLayerId);
+    // Functional updater with data-equality guard.
+    // If only function refs changed (data is the same), return `prev` — same reference
+    // → React bails out → NO context re-render → NO cascading effects.
+    setMaterialState(prev => {
+      if (
+        prev !== null &&
+        prev.materialAssignments === state.materialAssignments &&
+        prev.selectedLayerId === state.selectedLayerId &&
+        prev.meshObjects === state.meshObjects &&
+        prev.scatteringAssignments === state.scatteringAssignments &&
+        prev.availableMaterials === state.availableMaterials &&
+        prev.layerOptions === state.layerOptions
+      ) {
+        return prev; // Data unchanged — bail out, no re-render
+      }
+      return state; // Data changed — new reference → consumers re-render
+    });
 
-    setIsActive(true);
-    setVersion(v => v + 1);
+    // Only update expandToLayerId if the value actually changed
+    setExpandToLayerId(prev => prev === state.selectedLayerId ? prev : state.selectedLayerId);
   }, []);
 
   const clearMaterialState = useCallback(() => {
-    stateRef.current = null;
-    setIsActive(false);
+    setMaterialState(prev => {
+      if (prev === null) return prev; // Already cleared — bail out, no re-render
+      return null;
+    });
     setExpandToLayerId(null);
-    setVersion(v => v + 1);
   }, []);
 
-  const getMaterialState = useCallback((): AcousticMaterialState | null => {
-    return stateRef.current;
-  }, []);
+  const isActive = materialState !== null;
 
   return (
     <AcousticMaterialContext.Provider
       value={{
         isActive,
-        version,
+        materialState,
         expandToLayerId,
         publishMaterialState,
         clearMaterialState,
-        getMaterialState
       }}
     >
       {children}

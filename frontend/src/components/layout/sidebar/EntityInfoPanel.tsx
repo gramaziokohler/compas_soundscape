@@ -95,7 +95,7 @@ export function EntityInfoPanel({
     removeFromDiverseSelection
   } = useSpeckleSelectionMode();
 
-  const { isActive, version, getMaterialState } = useAcousticMaterial();
+  const { isActive, materialState } = useAcousticMaterial();
 
   // Local independent playback state for the EntityInfoPanel sound player
   const [localPreviewId, setLocalPreviewId] = useState<string | null>(null);
@@ -108,8 +108,8 @@ export function EntityInfoPanel({
     setLocalPreviewId(prev => prev === soundId ? null : prev);
   }, []);
 
-  // Pull material state (re-evaluated when version changes)
-  const materialState = isActive ? getMaterialState() : null;
+  // materialState comes directly from context — changes only when DATA changes
+  // (the context uses functional state updates with reference-equality guards).
 
   // Sort materials by absorption for dropdown display
   const sortedMaterials = useMemo(() => {
@@ -117,7 +117,7 @@ export function EntityInfoPanel({
     return [...materialState.availableMaterials]
       .filter(mat => typeof mat.absorption === 'number' && !isNaN(mat.absorption))
       .sort((a, b) => a.absorption - b.absorption);
-  }, [materialState?.availableMaterials, version]);
+  }, [materialState]);
 
   // Material color map for dropdown backgrounds
   const materialColors = useMemo(() => {
@@ -127,7 +127,7 @@ export function EntityInfoPanel({
       colors.set(mat.id, getMaterialColorByAbsorption(mat.absorption));
     });
     return colors;
-  }, [materialState?.availableMaterials, version]);
+  }, [materialState]);
 
   // Compute "All Objects" material info
   const allObjectsInfo = useMemo(() => {
@@ -141,25 +141,25 @@ export function EntityInfoPanel({
     const assignedCount = materialState.materialAssignments.size;
     const unassignedCount = totalGeometry - assignedCount;
     return { totalGeometry, commonMaterialId, uniqueMaterials, assignedCount, unassignedCount };
-  }, [materialState, version]);
+  }, [materialState]);
 
   // Check if the selected entity is in the mesh tree
   const selectedObjectInTree = useMemo(() => {
     if (!materialState || !selectedEntity?.objectId) return null;
     return findObjectInMeshTree(materialState.meshObjects, selectedEntity.objectId);
-  }, [materialState, selectedEntity?.objectId, version]);
+  }, [materialState, selectedEntity?.objectId]);
 
   // Current material for the selected object (single geometry)
   const selectedObjectMaterialId = useMemo(() => {
     if (!materialState || !selectedEntity?.objectId) return null;
     return materialState.materialAssignments.get(selectedEntity.objectId) || null;
-  }, [materialState, selectedEntity?.objectId, version]);
+  }, [materialState, selectedEntity?.objectId]);
 
   // Geometry IDs under the selected node (all descendants when it's a group/layer)
   const selectedGeometryIds = useMemo(() => {
     if (!selectedObjectInTree) return [];
     return collectGeometryIdsFromNode(selectedObjectInTree);
-  }, [selectedObjectInTree, version]);
+  }, [selectedObjectInTree]);
 
   // Whether the selected node is a group/layer (not a single geometry object)
   const isGroupSelection = selectedObjectInTree !== null && !selectedObjectInTree.hasGeometry;
@@ -172,7 +172,7 @@ export function EntityInfoPanel({
     const values = allIds.map(id => materialState.scatteringAssignments.get(id) ?? PYROOMACOUSTICS_DEFAULT_SCATTERING);
     const unique = new Set(values);
     return unique.size === 1 ? values[0] : PYROOMACOUSTICS_DEFAULT_SCATTERING;
-  }, [materialState, version]);
+  }, [materialState]);
 
   // Scattering value for selected object/group slider
   const selectedObjectScattering = useMemo(() => {
@@ -184,7 +184,7 @@ export function EntityInfoPanel({
     }
     if (!selectedEntity?.objectId) return PYROOMACOUSTICS_DEFAULT_SCATTERING;
     return materialState.scatteringAssignments.get(selectedEntity.objectId) ?? PYROOMACOUSTICS_DEFAULT_SCATTERING;
-  }, [materialState, selectedEntity?.objectId, selectedGeometryIds, isGroupSelection, version]);
+  }, [materialState, selectedEntity?.objectId, selectedGeometryIds, isGroupSelection]);
 
   // Assignment info for group selections: common material and mixed state
   const selectedGroupAssignmentInfo = useMemo(() => {
@@ -196,7 +196,7 @@ export function EntityInfoPanel({
     );
     const commonMaterialId = assignedMaterials.size === 1 ? Array.from(assignedMaterials)[0] : null;
     return { uniqueAssigned: assignedMaterials, commonMaterialId };
-  }, [materialState, selectedGeometryIds, version]);
+  }, [materialState, selectedGeometryIds]);
 
   // Background color helper
   const getSelectBg = (materialId: string | null): string => {

@@ -241,6 +241,7 @@ class SoundscapeSoundConfig(BaseModel):
     spl_db: Optional[float] = None
     interval_seconds: Optional[float] = None
     entity_index: Optional[int] = None
+    entity_node_id: Optional[str] = None  # Full Speckle object hash ID
     seed_copies: int = 1
     steps: int = 25
 
@@ -259,6 +260,7 @@ class SoundscapeSoundEvent(BaseModel):
     current_interval_seconds: Optional[float] = None
     is_uploaded: bool = False
     entity_index: Optional[int] = None
+    entity_node_id: Optional[str] = None  # Full Speckle object hash ID
 
 
 class SoundscapeReceiver(BaseModel):
@@ -342,7 +344,6 @@ class SoundscapeSaveResponse(BaseModel):
     success: bool
     speckle_object_id: Optional[str] = None
     local_folder: Optional[str] = None
-    json_path: Optional[str] = None
     audio_files_copied: int = 0
     ir_files_copied: int = 0
     message: str = ""

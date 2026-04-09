@@ -1,12 +1,15 @@
 import * as THREE from "three";
 import { triangulate } from "@/utils/utils";
-import { API_BASE_URL, PRIMARY_COLOR_HEX, SOUND_SPHERE } from "@/utils/constants";
+import { API_BASE_URL, PRIMARY_COLOR_HEX, SOUND_SPHERE, DARK_MODE, OBJECT_LABEL } from "@/utils/constants";
+import { createLabelSprite, disposeLabelSprite } from "@/lib/three/label-sprite-factory";
 import { updateDraggableMeshes, disposeMeshes } from "@/lib/three/draggable-mesh-manager";
-import { calculateSpiralPositions } from "@/lib/three/spiral-placement";
+// import { calculateSpiralPositions } from "@/lib/three/spiral-placement"; // Bounding-box placement removed
+import { calculateCameraFrontSpiralPositions } from "@/lib/three/spiral-placement";
+import { SPIRAL_PLACEMENT } from "@/utils/constants";
 import type { SoundEvent } from "@/types";
 import type { AuralizationConfig, SoundMetadata } from "@/types/audio";
 import type { AudioOrchestrator } from "@/lib/audio/AudioOrchestrator";
-import type { BoundingBoxBounds } from "@/lib/three/BoundingBoxManager";
+// import type { BoundingBoxBounds } from "@/lib/three/BoundingBoxManager"; // Bounding-box placement removed
 
 /**
  * Data shape expected by updateDraggableMeshes for sound spheres.
@@ -57,8 +60,19 @@ export class SoundSphereManager {
   private entityLinkedIds: Set<string> = new Set();
   private audioLoader: THREE.AudioLoader;
 
+  // Dark mode state
+  private darkModeEnabled: boolean = false;
+  private darkModePointLights: Map<string, THREE.PointLight> = new Map();
+
   // Cached scale for mesh factory (set before calling updateDraggableMeshes)
   private scaleForSounds: number = 1.0;
+
+  // Camera-based spiral placement tracking
+  private lastPlacementCenter: THREE.Vector3 | null = null;
+  private soundsPlacedAtCenter: number = 0;
+
+  // Label sprites — one per non-entity sound sphere, keyed by sound ID
+  private labelSprites: Map<string, THREE.Sprite> = new Map();
 
   constructor(
     scene: THREE.Scene,
@@ -114,14 +128,17 @@ export class SoundSphereManager {
    * @param selectedVariants - Map of prompt index to variant index
    * @param scaleForSounds - Scale multiplier for sphere size
    * @param auralizationConfig - Auralization configuration
-   * @param bounds - Optional bounding box bounds for spiral placement
+   * @param cameraFrontPosition - Camera-front position for placement (spiral anchor). Sounds without
+   *   a saved backend position are placed here. Multiple sounds at the same camera position
+   *   are spread in a spiral. Falls through to backend event position if unavailable.
    */
   public updateSoundSpheres(
     soundscapeData: SoundEvent[] | null,
     selectedVariants: { [key: number]: number },
     scaleForSounds: number,
     auralizationConfig: AuralizationConfig,
-    bounds?: BoundingBoxBounds | null
+    // bounds?: BoundingBoxBounds | null, // Bounding-box placement removed — camera-based only
+    cameraFrontPosition?: THREE.Vector3 | null
   ): void {
     // Store scale for mesh factory
     this.scaleForSounds = scaleForSounds;
@@ -180,9 +197,9 @@ export class SoundSphereManager {
     const meshSounds = visibleSounds.filter(s => s.entity_index === undefined);
     const entitySounds = visibleSounds.filter(s => s.entity_index !== undefined);
 
-    // Pre-populate spherePositions from soundEvent.position for sounds that have
-    // saved positions (e.g. from a restored soundscape). This ensures restored positions
-    // take priority over spiral calculation. A "saved" position is non-zero and non-default.
+    // Pre-populate spherePositions from soundEvent.position ONLY for previously-dragged sounds
+    // restored from a saved soundscape. New sounds have position [0,0,0] and must go through
+    // camera-front placement. Restored sounds have their drag position (non-zero) saved in Speckle.
     meshSounds.forEach(s => {
       if (!this.spherePositions.has(s.id) && s.position) {
         const pos = s.position as [number, number, number];
@@ -195,19 +212,46 @@ export class SoundSphereManager {
 
     // Calculate spiral positions for non-entity-linked sounds that don't have stored positions.
     // Entity-linked sounds use their entity's position (set via linkSoundToEntity).
-    const hasNewMeshSounds = meshSounds.some(s => !this.spherePositions.has(s.id));
+    const newMeshSounds = meshSounds.filter(s => !this.spherePositions.has(s.id));
+    const hasNewMeshSounds = newMeshSounds.length > 0;
 
     let spiralPositionMap: Map<string, [number, number, number]> = new Map();
-    if (bounds && hasNewMeshSounds) {
-      // Calculate spiral for all non-entity sounds to maintain consistent pattern
-      const allSpiralPositions = calculateSpiralPositions(bounds, meshSounds.length);
-      meshSounds.forEach((soundEvent, index) => {
-        if (!this.spherePositions.has(soundEvent.id)) {
-          const v = allSpiralPositions[index];
-          spiralPositionMap.set(soundEvent.id, [v.x, v.y, v.z]);
-        }
+    if (cameraFrontPosition && hasNewMeshSounds) {
+      // Camera-based placement: check if camera moved significantly
+      const cameraMoved =
+        !this.lastPlacementCenter ||
+        cameraFrontPosition.distanceTo(this.lastPlacementCenter) > SPIRAL_PLACEMENT.CAMERA_MOVE_THRESHOLD;
+
+      if (cameraMoved) {
+        this.soundsPlacedAtCenter = 0;
+        this.lastPlacementCenter = cameraFrontPosition.clone();
+      } else if (newMeshSounds.length === meshSounds.length) {
+        // All sounds are new (clean slate after deletion) — reset counter, keep center
+        this.soundsPlacedAtCenter = 0;
+      }
+
+      const center = this.lastPlacementCenter!;
+      const startIndex = this.soundsPlacedAtCenter;
+      const allPositions = calculateCameraFrontSpiralPositions(center, startIndex + newMeshSounds.length);
+
+      newMeshSounds.forEach((soundEvent, i) => {
+        const pos = allPositions[startIndex + i];
+        spiralPositionMap.set(soundEvent.id, [pos.x, pos.y, pos.z]);
       });
+
+      this.soundsPlacedAtCenter += newMeshSounds.length;
     }
+    // Bounding-box spiral fallback removed — camera-front is always the placement origin.
+    // If cameraFrontPosition is unavailable, sounds fall through to their backend event position.
+    // else if (bounds && hasNewMeshSounds) {
+    //   const allSpiralPositions = calculateSpiralPositions(bounds, meshSounds.length);
+    //   meshSounds.forEach((soundEvent, index) => {
+    //     if (!this.spherePositions.has(soundEvent.id)) {
+    //       const v = allSpiralPositions[index];
+    //       spiralPositionMap.set(soundEvent.id, [v.x, v.y, v.z]);
+    //     }
+    //   });
+    // }
 
     // Prepare mesh data with resolved positions (priority: stored > spiral > event position)
     const meshSoundData: SoundMeshData[] = meshSounds.map(soundEvent => {
@@ -247,6 +291,9 @@ export class SoundSphereManager {
 
     this.soundMeshes = result.meshes;
     this.draggableObjects = result.draggableObjects;
+
+    // Sync label sprites with the current mesh set
+    this.syncLabelSprites(result.meshes);
 
     // Force group matrix update after mesh changes
     this.soundSpheresGroup.updateMatrixWorld(true);
@@ -371,11 +418,16 @@ export class SoundSphereManager {
     this.soundMetadata.clear();
   }
 
-  /** Remove all sound sphere meshes using disposeMeshes utility */
+  /** Remove all sound sphere meshes and their label sprites */
   private removeAllSoundMeshes(): void {
     disposeMeshes(this.soundSpheresGroup, this.soundMeshes);
     this.soundMeshes = [];
     this.draggableObjects = [];
+    this.labelSprites.forEach((sprite) => {
+      this.soundSpheresGroup.remove(sprite);
+      disposeLabelSprite(sprite);
+    });
+    this.labelSprites.clear();
   }
 
   /**
@@ -405,8 +457,11 @@ export class SoundSphereManager {
       sphereGeom = new THREE.SphereGeometry(sphereRadius, 32, 32);
     }
 
+    // Use electric blue color when dark mode is active, otherwise primary pink
+    const sphereColor = this.darkModeEnabled ? DARK_MODE.LIGHT_COLOR_HEX : PRIMARY_COLOR_HEX;
+
     const material = new THREE.MeshBasicMaterial({
-      color: PRIMARY_COLOR_HEX,
+      color: sphereColor,
       transparent: true,
       opacity: 0.7,
       fog: true,
@@ -436,6 +491,11 @@ export class SoundSphereManager {
 
     // Force matrix update
     sphereMesh.updateMatrix();
+
+    // If dark mode is active, add a point light to the new sphere
+    if (this.darkModeEnabled) {
+      this.addPointLightToMesh(sphereMesh);
+    }
 
     console.log(`[SoundSphereManager] Created sound sphere: ${promptKey}`);
 
@@ -515,6 +575,80 @@ export class SoundSphereManager {
   }
 
 
+  // ============================================================================
+  // Screen-Space Sizing + Labels
+  // ============================================================================
+
+  /**
+   * Sync label sprites with the current set of sound sphere meshes.
+   * Creates labels for new meshes, removes labels for deleted meshes,
+   * and recreates labels if the display_name changed.
+   */
+  private syncLabelSprites(meshes: THREE.Mesh[]): void {
+    const currentIds = new Set(
+      meshes.map(m => m.userData.soundEvent?.id as string).filter(Boolean)
+    );
+
+    // Remove labels for sounds that no longer have a mesh
+    for (const [id, sprite] of this.labelSprites) {
+      if (!currentIds.has(id)) {
+        this.soundSpheresGroup.remove(sprite);
+        disposeLabelSprite(sprite);
+        this.labelSprites.delete(id);
+      }
+    }
+
+    // Create (or recreate on name change) labels for current meshes
+    for (const mesh of meshes) {
+      const id = mesh.userData.soundEvent?.id as string;
+      if (!id) continue;
+
+      const text = (mesh.userData.soundEvent?.display_name as string) || id;
+      const existing = this.labelSprites.get(id);
+
+      if (existing) {
+        if (existing.userData.labelText === text) continue; // up-to-date
+        // Name changed — dispose and recreate
+        this.soundSpheresGroup.remove(existing);
+        disposeLabelSprite(existing);
+        this.labelSprites.delete(id);
+      }
+
+      const sprite = createLabelSprite(text);
+      sprite.position.copy(mesh.position);
+      this.soundSpheresGroup.add(sprite);
+      this.labelSprites.set(id, sprite);
+    }
+  }
+
+  /**
+   * Update mesh scales and label positions every frame so objects appear
+   * at a constant screen size regardless of camera distance (zoom).
+   *
+   * Called by SpeckleAudioCoordinator's per-frame callback.
+   */
+  public updateScreenSpaceScale(camera: THREE.PerspectiveCamera): void {
+    const baseRadius = SOUND_SPHERE.RADIUS_MULTIPLIER * this.scaleForSounds;
+
+    this.soundMeshes.forEach(mesh => {
+      const distance = camera.position.distanceTo(mesh.position);
+      if (distance < 0.01) return;
+
+      // Scale mesh so world radius = distance × SCREEN_SPACE_SIZE (constant angular size)
+      mesh.scale.setScalar((distance * SOUND_SPHERE.SCREEN_SPACE_SIZE) / baseRadius);
+
+      // Position and scale the corresponding label sprite
+      const soundId = mesh.userData.soundEvent?.id as string;
+      const label = soundId ? this.labelSprites.get(soundId) : null;
+      if (label) {
+        const zOffset = distance * SOUND_SPHERE.SCREEN_SPACE_SIZE * OBJECT_LABEL.Z_OFFSET_FACTOR;
+        label.position.set(mesh.position.x, mesh.position.y, mesh.position.z + zOffset);
+        const h = distance * OBJECT_LABEL.SCREEN_SPACE_HEIGHT;
+        label.scale.set(h * (label.userData.aspectRatio as number || 3), h, 1);
+      }
+    });
+  }
+
   /**
    * Find sound sphere by prompt key
    */
@@ -556,6 +690,124 @@ export class SoundSphereManager {
     console.log(`[SoundSphereManager] Re-registered ${registeredCount}/${this.soundMetadata.size} sources`);
   }
 
+  // ============================================================================
+  // Dark Mode - Point Light Management
+  // ============================================================================
+
+  /**
+   * Enable dark mode on all sound spheres.
+   * Changes sphere material color to electric blue and adds a PointLight child.
+   */
+  public enableDarkMode(): void {
+    this.darkModeEnabled = true;
+
+    this.soundMeshes.forEach(mesh => {
+      // Change sphere color to electric blue and make opaque
+      const material = mesh.material as THREE.MeshBasicMaterial;
+      material.color.setHex(DARK_MODE.LIGHT_COLOR_HEX);
+      material.transparent = false;
+      material.opacity = 1;
+      material.needsUpdate = true;
+
+      // Add point light as child (follows mesh during drag)
+      this.addPointLightToMesh(mesh);
+    });
+
+    console.log(`[SoundSphereManager] Dark mode enabled on ${this.soundMeshes.length} spheres`);
+  }
+
+  /**
+   * Disable dark mode: restore sphere colors and remove point lights.
+   */
+  public disableDarkMode(): void {
+    this.darkModeEnabled = false;
+
+    // Remove all point lights
+    this.darkModePointLights.forEach((light) => {
+      light.parent?.remove(light);
+      light.dispose();
+    });
+    this.darkModePointLights.clear();
+
+    // Restore sphere colors to primary pink and transparency
+    this.soundMeshes.forEach(mesh => {
+      const material = mesh.material as THREE.MeshBasicMaterial;
+      material.color.setHex(PRIMARY_COLOR_HEX);
+      material.transparent = true;
+      material.opacity = 0.7;
+      material.needsUpdate = true;
+    });
+
+    console.log('[SoundSphereManager] Dark mode disabled');
+  }
+
+  /** Add a point light as a child of a sound sphere mesh */
+  private addPointLightToMesh(mesh: THREE.Mesh): void {
+    const soundId = mesh.userData.soundEvent?.id;
+    if (!soundId || this.darkModePointLights.has(soundId)) return;
+
+    const light = new THREE.PointLight(
+      DARK_MODE.LIGHT_COLOR_HEX,
+      DARK_MODE.POINT_LIGHT_INTENSITY,
+      DARK_MODE.POINT_LIGHT_DISTANCE,
+      DARK_MODE.POINT_LIGHT_DECAY
+    );
+    light.name = `DarkModeLight_${soundId}`;
+    light.layers.enableAll();
+
+    // Enable shadow casting so geometry blocks the light
+    light.castShadow = true;
+    light.shadow.mapSize.width = DARK_MODE.SHADOW_MAP_SIZE;
+    light.shadow.mapSize.height = DARK_MODE.SHADOW_MAP_SIZE;
+    light.shadow.camera.near = DARK_MODE.SHADOW_CAMERA_NEAR;
+    light.shadow.camera.far = DARK_MODE.POINT_LIGHT_DISTANCE;
+    light.shadow.bias = DARK_MODE.SHADOW_BIAS;
+
+    mesh.add(light);
+    this.darkModePointLights.set(soundId, light);
+  }
+
+  /**
+   * Get positions of all entity-linked sounds (for external point light placement).
+   */
+  public getEntityLinkedSoundPositions(): Array<{ id: string; position: [number, number, number] }> {
+    const result: Array<{ id: string; position: [number, number, number] }> = [];
+    for (const soundId of this.entityLinkedIds) {
+      const pos = this.spherePositions.get(soundId);
+      if (pos) {
+        result.push({ id: soundId, position: pos });
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Re-enforce dark mode colors on all sound spheres.
+   * Called by the enforcement interval to guard against external material resets
+   * (e.g. Speckle render passes during drag operations).
+   */
+  public enforceDarkModeColors(): void {
+    if (!this.darkModeEnabled) return;
+    this.soundMeshes.forEach(mesh => {
+      const material = mesh.material as THREE.MeshBasicMaterial;
+      if (material.color.getHex() !== DARK_MODE.LIGHT_COLOR_HEX) {
+        material.color.setHex(DARK_MODE.LIGHT_COLOR_HEX);
+        material.needsUpdate = true;
+      }
+      // Also enforce opaque state
+      if (material.transparent) {
+        material.transparent = false;
+        material.opacity = 1;
+        material.needsUpdate = true;
+      }
+    });
+  }
+
+  /** Whether dark mode is currently enabled */
+  public isDarkMode(): boolean {
+    return this.darkModeEnabled;
+  }
+
   /**
    * Dispose of all resources
    */
@@ -567,6 +819,13 @@ export class SoundSphereManager {
     disposeMeshes(this.soundSpheresGroup, this.soundMeshes);
     this.soundMeshes = [];
     this.draggableObjects = [];
+
+    // Dispose all label sprites
+    this.labelSprites.forEach((sprite) => {
+      this.soundSpheresGroup.remove(sprite);
+      disposeLabelSprite(sprite);
+    });
+    this.labelSprites.clear();
 
     // Remove sound spheres group from scene
     this.scene.remove(this.soundSpheresGroup);

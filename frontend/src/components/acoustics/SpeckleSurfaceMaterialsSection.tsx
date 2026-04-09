@@ -20,7 +20,7 @@ import { useEffect, useCallback, useState, useRef } from 'react';
 import { useSpeckleSurfaceMaterials } from '@/hooks/useSpeckleSurfaceMaterials';
 import { useSpeckleFiltering } from '@/hooks/useSpeckleFiltering';
 import { useSpeckleSelectionMode } from '@/contexts/SpeckleSelectionModeContext';
-import { useAcousticMaterial } from '@/contexts/AcousticMaterialContext';
+import { useAcousticMaterial, type AcousticMaterialState } from '@/contexts/AcousticMaterialContext';
 import { SpeckleMaterialAssignmentUI } from './SpeckleMaterialAssignmentUI';
 import { UI_COLORS } from '@/utils/constants';
 import type { AcousticMaterial } from '@/types/materials';
@@ -140,27 +140,40 @@ export function SpeckleSurfaceMaterialsSection({
   // Only publish when filteringEnabled is true — controls EntityInfoPanel mode switching
   const { publishMaterialState, clearMaterialState } = useAcousticMaterial();
 
+  // Ref always holds the latest complete state — updated synchronously each render.
+  // Allows the publish effect to depend ONLY on data, not function references.
+  // Root cause of the infinite loop: function refs (getMaterialColor, assignMaterial, etc.)
+  // get new identities when availableMaterials prop receives a new array reference on
+  // parent re-renders (triggered by context version changes). With those functions in
+  // the effect deps, the chain was: function ref changes → effect fires → publishMaterialState
+  // → setVersion → context re-render → parent re-renders → new availableMaterials ref → repeat.
+  const latestPublishStateRef = useRef<AcousticMaterialState | null>(null);
+  latestPublishStateRef.current = {
+    meshObjects,
+    materialAssignments,
+    availableMaterials,
+    selectedLayerId,
+    layerOptions,
+    assignMaterial,
+    assignMaterialToAll,
+    assignMaterialToObjects,
+    getMaterialColor,
+    scatteringAssignments,
+    assignScattering,
+    assignScatteringToAll,
+    assignScatteringToObjects
+  };
+
   useEffect(() => {
     if (!filteringEnabled) {
       clearMaterialState();
       return;
     }
-    publishMaterialState({
-      meshObjects,
-      materialAssignments,
-      availableMaterials,
-      selectedLayerId,
-      layerOptions,
-      assignMaterial,
-      assignMaterialToAll,
-      assignMaterialToObjects,
-      getMaterialColor,
-      scatteringAssignments,
-      assignScattering,
-      assignScatteringToAll,
-      assignScatteringToObjects
-    });
-  }, [filteringEnabled, meshObjects, materialAssignments, availableMaterials, selectedLayerId, layerOptions, assignMaterial, assignMaterialToAll, getMaterialColor, publishMaterialState, clearMaterialState, scatteringAssignments, assignScattering, assignScatteringToAll, assignScatteringToObjects]);
+    publishMaterialState(latestPublishStateRef.current!);
+    // Data deps only — function refs (getMaterialColor etc.) excluded because they're
+    // captured via latestPublishStateRef. The context itself guards against re-renders
+    // when data hasn't changed (functional state update with reference-equality check).
+  }, [filteringEnabled, meshObjects, materialAssignments, availableMaterials, selectedLayerId, layerOptions, scatteringAssignments, publishMaterialState, clearMaterialState]);
 
   // Clear context state on unmount
   useEffect(() => {

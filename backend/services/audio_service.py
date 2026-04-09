@@ -75,21 +75,24 @@ class AudioService:
 
     @staticmethod
     def get_random_position(idx: int, total_sounds: int, bounding_box: dict = None):
-        """Generate random position within bounding box or default spacing"""
-        if bounding_box and bounding_box.get('min') and bounding_box.get('max'):
-            min_bounds = bounding_box['min']
-            max_bounds = bounding_box['max']
-            return [
-                random.uniform(min_bounds[0], max_bounds[0]),
-                random.uniform(min_bounds[1], max_bounds[1]),
-                random.uniform(min_bounds[2], max_bounds[2])
-            ]
-        else:
-            return [
-                (idx * DEFAULT_POSITION_SPACING) - total_sounds * DEFAULT_POSITION_OFFSET,
-                DEFAULT_POSITION_Y,
-                DEFAULT_POSITION_Z
-            ]
+        """Return [0, 0, 0] — positioning is handled by camera-front placement in the frontend."""
+        # Bounding-box and default-spacing placement removed.
+        # The frontend (SoundSphereManager) places sounds in front of the camera.
+        # if bounding_box and bounding_box.get('min') and bounding_box.get('max'):
+        #     min_bounds = bounding_box['min']
+        #     max_bounds = bounding_box['max']
+        #     return [
+        #         random.uniform(min_bounds[0], max_bounds[0]),
+        #         random.uniform(min_bounds[1], max_bounds[1]),
+        #         random.uniform(min_bounds[2], max_bounds[2])
+        #     ]
+        # else:
+        #     return [
+        #         (idx * DEFAULT_POSITION_SPACING) - total_sounds * DEFAULT_POSITION_OFFSET,
+        #         DEFAULT_POSITION_Y,
+        #         DEFAULT_POSITION_Z
+        #     ]
+        return [0, 0, 0]
 
     def generate_sound_file(
         self,

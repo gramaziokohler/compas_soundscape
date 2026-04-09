@@ -98,10 +98,19 @@ export function buildSoundscapeSavePayload(
           ? config.entity.id
           : parseInt(config.entity.id, 10))
         : undefined,
+      // Save full Speckle hash for exact entity matching on load
+      entity_node_id: config.entity?.nodeId
+        || (typeof config.entity?.id === 'string' ? config.entity.id : undefined),
       seed_copies: config.seed_copies,
       steps: config.steps,
     })
   );
+
+  // Build a lookup: prompt_index → entity_node_id (for event serialization)
+  const configEntityNodeIds: Record<number, string> = {};
+  serializedConfigs.forEach((c) => {
+    if (c.entity_node_id) configEntityNodeIds[c.index] = c.entity_node_id;
+  });
 
   // Map runtime sound events to serializable events and collect audio URLs
   const audioUrls: string[] = [];
@@ -121,6 +130,11 @@ export function buildSoundscapeSavePayload(
       const adjustedVolume = soundVolumes?.[event.id] ?? event.current_volume_db;
       const adjustedInterval = soundIntervals?.[event.id] ?? event.current_interval_seconds;
 
+      // Resolve entity_node_id from the matching config (events only have entity_index)
+      const eventEntityNodeId = event.prompt_index !== undefined
+        ? configEntityNodeIds[event.prompt_index]
+        : undefined;
+
       return {
         id: event.id,
         audio_filename: filename,
@@ -134,6 +148,7 @@ export function buildSoundscapeSavePayload(
         current_interval_seconds: adjustedInterval,
         is_uploaded: event.isUploaded || false,
         entity_index: event.entity_index,
+        entity_node_id: eventEntityNodeId,
       };
     }
   );
@@ -202,6 +217,7 @@ export function buildSoundscapeSavePayload(
     const speckleMaterialAssignments = pyConfig.speckleMaterialAssignments as Record<string, string> | undefined;
     const speckleLayerName = pyConfig.speckleLayerName as string | undefined;
     const speckleGeometryObjectIds = pyConfig.speckleGeometryObjectIds as string[] | undefined;
+    const speckleScatteringAssignments = pyConfig.speckleScatteringAssignments as Record<string, number> | undefined;
 
     // Build receiver position map from the receivers array
     // This captures the authoritative dragged positions at save time
@@ -239,6 +255,7 @@ export function buildSoundscapeSavePayload(
       speckle_material_assignments: speckleMaterialAssignments,
       speckle_layer_name: speckleLayerName,
       speckle_geometry_object_ids: speckleGeometryObjectIds,
+      speckle_scattering_assignments: speckleScatteringAssignments,
       simulation_results: pyConfig.simulationResults,
       current_simulation_id: pyConfig.currentSimulationId,
       imported_ir_ids: pyConfig.importedIRIds,
@@ -308,7 +325,12 @@ export function restoreSoundscapeState(
       interval_seconds: saved.interval_seconds,
       type: saved.type as SoundGenerationConfig['type'],
       entity: saved.entity_index !== undefined && saved.entity_index !== null
-        ? { id: saved.entity_index, index: saved.entity_index }
+        ? {
+            // Prefer the full hash for proper Speckle matching & coloring
+            id: saved.entity_node_id || saved.entity_index,
+            nodeId: saved.entity_node_id,
+            index: saved.entity_index,
+          }
         : undefined,
     })
   );
@@ -469,6 +491,7 @@ export function restoreSoundscapeState(
       speckleMaterialAssignments: saved.speckle_material_assignments,
       speckleLayerName: saved.speckle_layer_name,
       speckleGeometryObjectIds: saved.speckle_geometry_object_ids,
+      speckleScatteringAssignments: saved.speckle_scattering_assignments,
     } as any;
 
     return restoredConfig;

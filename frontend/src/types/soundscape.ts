@@ -23,6 +23,7 @@ export interface SoundscapeSoundConfig {
   spl_db?: number;
   interval_seconds?: number;
   entity_index?: number;
+  entity_node_id?: string; // Full Speckle object hash ID for entity matching
   seed_copies: number;
   steps: number;
 }
@@ -41,6 +42,7 @@ export interface SoundscapeSoundEvent {
   current_interval_seconds?: number;
   is_uploaded: boolean;
   entity_index?: number;
+  entity_node_id?: string; // Full Speckle object hash ID for entity matching
 }
 
 /** Serializable receiver position */
@@ -124,7 +126,6 @@ export interface SoundscapeSaveResponse {
   success: boolean;
   speckle_object_id?: string;
   local_folder?: string;
-  json_path?: string;
   audio_files_copied: number;
   ir_files_copied: number;
   message: string;

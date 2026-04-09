@@ -6,7 +6,7 @@
  */
 
 import type { SoundEvent, SoundGenerationConfig, CompasGeometry } from "@/types";
-import { calculateSoundPositionWithSpacing, type GeometryBounds } from "@/utils/positioning";
+// import { calculateSoundPositionWithSpacing, type GeometryBounds } from "@/utils/positioning"; // Bounding-box positioning removed — camera-front placement used instead
 import { DEFAULT_SOUND_CONFIG } from "@/utils/constants";
 
 /**
@@ -39,20 +39,20 @@ export function createSoundEventFromUpload(
   url: string,
   originalIndex: number,
   totalSounds: number,
-  geometryBounds?: GeometryBounds,
+  geometryBounds?: any, // Kept for API compatibility; no longer used for positioning
   idPrefix: string = 'uploaded'
 ): SoundEvent {
-  // Determine position: use entity's center if entity-linked, otherwise calculate from bounds
+  // Determine position: entity-linked sounds use the entity's center.
+  // Non-entity sounds use [0,0,0] — SoundSphereManager places them in front of the camera.
   let position: [number, number, number];
   if (config.entity?.bounds?.center) {
-    // Use entity's bounding box center as the sound source position
     position = config.entity.bounds.center as [number, number, number];
   } else if (config.entity?.position) {
-    // Fallback to entity's position if no bounds
     position = config.entity.position as [number, number, number];
   } else {
-    // No entity, calculate position based on geometry bounds
-    position = calculateSoundPositionWithSpacing(config, originalIndex, totalSounds, geometryBounds);
+    // No entity: camera-front placement (handled by SoundSphereManager)
+    // position = calculateSoundPositionWithSpacing(...); // Bounding-box positioning removed
+    position = [0, 0, 0];
   }
 
   // Determine display name

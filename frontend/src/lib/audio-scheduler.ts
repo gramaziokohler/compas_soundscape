@@ -139,25 +139,29 @@ export class AudioScheduler {
    */
   unscheduleSound(soundId: string): void {
     const scheduled = this.scheduledSounds.get(soundId);
-    if (scheduled && scheduled.timerId) {
-      // CRITICAL: Delete from map FIRST before clearTimeout
-      // This minimizes the race window where a timer callback could execute
-      this.scheduledSounds.delete(soundId);
+    if (!scheduled) return;
+
+    // CRITICAL: Delete from map FIRST before clearTimeout
+    // This minimizes the race window where a timer callback could execute
+    this.scheduledSounds.delete(soundId);
+
+    // Clear pending timer if any
+    if (scheduled.timerId) {
       clearTimeout(scheduled.timerId);
-
-      // Stop the audio if it's currently playing
-      if (this.audioOrchestrator) {
-        try {
-          this.audioOrchestrator.stopSource(soundId);
-          console.log(`[AudioScheduler] 🛑 Stopped orchestrator source: ${soundId}`);
-        } catch (error) {
-          console.warn('[AudioScheduler] Failed to stop source:', error);
-        }
-      }
-
-      // Remove from logger
-      scheduledSoundsLogger.removeSound(soundId);
     }
+
+    // Stop the audio if it's currently playing
+    if (this.audioOrchestrator) {
+      try {
+        this.audioOrchestrator.stopSource(soundId);
+        console.log(`[AudioScheduler] 🛑 Stopped orchestrator source: ${soundId}`);
+      } catch (error) {
+        console.warn('[AudioScheduler] Failed to stop source:', error);
+      }
+    }
+
+    // Remove from logger
+    scheduledSoundsLogger.removeSound(soundId);
   }
 
   /**
