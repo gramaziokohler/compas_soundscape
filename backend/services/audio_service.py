@@ -229,9 +229,8 @@ class AudioService:
             # Use display_name from config if provided by LLM, otherwise fallback
             display_name = sound_config.get('display_name')
             if not display_name:
-                # Fallback: extract first N words
-                words = prompt.split()[:DISPLAY_NAME_WORD_COUNT]
-                display_name = ' '.join(words).title()
+                # Fallback: use the complete prompt
+                display_name = prompt
 
             # Create a hash of all generation parameters for unique identification
             import hashlib
@@ -354,6 +353,49 @@ class AudioService:
         # Save the processed audio back to the same file
         sf.write(file_path, audio_np, sample_rate)
         print(f"Reprocessed: {file_path}")
+
+    def calibrate_audio_file(
+        self,
+        input_path: str,
+        output_path: str,
+        target_spl_db: float = DEFAULT_SPL_DB,
+        apply_denoising: bool = False,
+    ):
+        """Normalize RMS, optionally denoise, then apply SPL calibration to any audio file.
+
+        Mirrors the post-processing pipeline used by TangoFlux/AudioLDM2 so that
+        uploaded, library, catalog, sample, and ElevenLabs audio are treated
+        identically to ML-generated audio.
+
+        Args:
+            input_path: Path to the source audio file (any format readable by soundfile)
+            output_path: Path where the calibrated WAV will be saved
+            target_spl_db: Target SPL level in dB (default 70 dB)
+            apply_denoising: Whether to apply spectral-gating denoising before calibration
+        """
+        import soundfile as sf
+
+        audio_np, sample_rate = sf.read(input_path)
+
+        # (samples,) → (1, samples) ; (samples, channels) → (channels, samples)
+        if audio_np.ndim == 1:
+            audio_tensor = torch.from_numpy(audio_np).float().unsqueeze(0)
+        else:
+            audio_tensor = torch.from_numpy(audio_np.T).float()
+
+        # Step 1: Normalize to base RMS level
+        audio_tensor = normalize_audio_rms(audio_tensor, target_rms=TARGET_RMS)
+
+        # Step 2: Apply denoising if requested
+        if apply_denoising:
+            print("Applying denoising during calibration...")
+            audio_tensor = denoise_audio(audio_tensor, sample_rate=sample_rate)
+
+        # Step 3: Apply SPL calibration
+        audio_tensor = apply_spl_calibration(audio_tensor, target_spl_db=target_spl_db)
+
+        torchaudio.save(output_path, audio_tensor.cpu(), sample_rate)
+        print(f"Calibrated: {output_path} → {target_spl_db} dB SPL")
 
     @staticmethod
     def cleanup_generated_sounds(output_dir: str = GENERATED_SOUNDS_DIR):

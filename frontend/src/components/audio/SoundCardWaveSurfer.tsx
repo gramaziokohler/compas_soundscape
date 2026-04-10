@@ -45,6 +45,8 @@ export function SoundCardWaveSurfer({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const onStopRef = useRef(onStop);
+  useEffect(() => { onStopRef.current = onStop; }, [onStop]);
 
   // Initialize WaveSurfer
   useEffect(() => {
@@ -101,7 +103,7 @@ export function SoundCardWaveSurfer({
       // Reset to beginning and call onStop to update parent state
       setCurrentTime(0);
       wavesurfer.seekTo(0);
-      onStop();
+      onStopRef.current();
     });
 
     wavesurfer.on('error', (error: Error) => {
@@ -224,7 +226,13 @@ export function SoundCardWaveSurfer({
 
           {/* Stop button */}
           <button
-            onClick={onStop}
+            onClick={() => {
+              if (wavesurferRef.current) {
+                wavesurferRef.current.seekTo(0);
+                setCurrentTime(0);
+              }
+              onStop();
+            }}
             disabled={!isReady}
             className="w-8 h-8 flex items-center justify-center rounded-full transition-colors"
             style={{

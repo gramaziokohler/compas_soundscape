@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { apiService } from '@/services/api';
 import { UI_COLORS } from '@/utils/constants';
 import type { SpeckleModelDetail, SpeckleProjectModelsResponse } from '@/types/speckle-models';
@@ -32,6 +32,7 @@ interface SpeckleData {
   url: string;
   object_id: string;
   auth_token?: string;
+  display_name?: string;
 }
 
 interface SpeckleModelBrowserProps {
@@ -89,90 +90,235 @@ function ModelFallbackIcon() {
   );
 }
 
+/** Three-dot context menu for a model card */
+function ModelCardMenu({
+  modelUrl,
+  onClose,
+}: {
+  modelUrl: string;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    const handleOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [onClose]);
+
+  return (
+    <div
+      ref={menuRef}
+      style={{
+        position: 'absolute',
+        top: 28,
+        right: 4,
+        zIndex: 50,
+        minWidth: 160,
+        background: 'white',
+        border: `1px solid ${UI_COLORS.NEUTRAL_200}`,
+        borderRadius: 6,
+        boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+        overflow: 'hidden',
+      }}
+    >
+      <a
+        href={modelUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={onClose}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '8px 12px',
+          fontSize: 12,
+          color: UI_COLORS.NEUTRAL_700,
+          textDecoration: 'none',
+          whiteSpace: 'nowrap',
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLAnchorElement).style.background = UI_COLORS.NEUTRAL_100;
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLAnchorElement).style.background = 'transparent';
+        }}
+      >
+        {/* External link icon */}
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="13"
+          height="13"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          style={{ flexShrink: 0 }}
+        >
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+          <polyline points="15 3 21 3 21 9" />
+          <line x1="10" y1="14" x2="21" y2="3" />
+        </svg>
+        Open in Speckle app
+      </a>
+    </div>
+  );
+}
+
 /** Single model card */
 function ModelCard({
   model,
+  projectId,
   onSelect,
 }: {
   model: SpeckleModelDetail;
+  projectId: string;
   onSelect: () => void;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const sourceApp = model.latest_version?.source_application;
+  const modelUrl = `https://${SPECKLE_SERVER_HOST}/projects/${projectId}/models/${model.id}`;
+
+  const handleDotsClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setMenuOpen((prev) => !prev);
+  };
 
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className="w-full text-left transition-colors"
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: MODEL_BROWSER_STYLES.CARD_GAP + 2,
-        padding: MODEL_BROWSER_STYLES.CARD_PADDING,
-        borderRadius: MODEL_BROWSER_STYLES.CARD_BORDER_RADIUS,
-        border: `1px solid ${UI_COLORS.NEUTRAL_200}`,
-        background: 'white',
-        cursor: 'pointer',
-      }}
-      onMouseEnter={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.borderColor = UI_COLORS.PRIMARY;
-        (e.currentTarget as HTMLButtonElement).style.background = UI_COLORS.PRIMARY_LIGHT;
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.borderColor = UI_COLORS.NEUTRAL_200;
-        (e.currentTarget as HTMLButtonElement).style.background = 'white';
-      }}
-    >
-      {/* Preview / fallback icon */}
-      {model.preview_url ? (
-        <img
-          src={model.preview_url}
-          alt={model.display_name}
-          className="rounded object-cover"
-          style={{
-            width: MODEL_BROWSER_STYLES.PREVIEW_SIZE,
-            height: MODEL_BROWSER_STYLES.PREVIEW_SIZE,
-            flexShrink: 0,
-          }}
-        />
-      ) : (
-        <ModelFallbackIcon />
-      )}
-
-      {/* Model info */}
-      <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium truncate" style={{ color: UI_COLORS.NEUTRAL_800 }}>
-          {model.display_name}
-        </p>
-
-        {model.description && (
-          <p className="text-xs mt-0.5 truncate" style={{ color: UI_COLORS.NEUTRAL_500 }}>
-            {truncate(model.description, MODEL_BROWSER_STYLES.DESCRIPTION_MAX_LENGTH)}
-          </p>
+    <div style={{ position: 'relative' }}>
+      {/* Clickable card body */}
+      <button
+        type="button"
+        onClick={onSelect}
+        className="w-full text-left transition-colors"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: MODEL_BROWSER_STYLES.CARD_GAP + 2,
+          padding: MODEL_BROWSER_STYLES.CARD_PADDING,
+          paddingRight: 32, // leave room for 3-dot button
+          borderRadius: MODEL_BROWSER_STYLES.CARD_BORDER_RADIUS,
+          border: `1px solid ${UI_COLORS.NEUTRAL_200}`,
+          background: 'white',
+          cursor: 'pointer',
+          width: '100%',
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.borderColor = UI_COLORS.PRIMARY;
+          (e.currentTarget as HTMLButtonElement).style.background = UI_COLORS.PRIMARY_LIGHT;
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.borderColor = UI_COLORS.NEUTRAL_200;
+          (e.currentTarget as HTMLButtonElement).style.background = 'white';
+        }}
+      >
+        {/* Preview / fallback icon */}
+        {model.preview_url ? (
+          <img
+            src={model.preview_url}
+            alt={model.display_name}
+            className="rounded object-cover"
+            style={{
+              width: MODEL_BROWSER_STYLES.PREVIEW_SIZE,
+              height: MODEL_BROWSER_STYLES.PREVIEW_SIZE,
+              flexShrink: 0,
+            }}
+          />
+        ) : (
+          <ModelFallbackIcon />
         )}
 
-        <div className="flex items-center gap-2 mt-1">
-          {sourceApp && (
-            <span
-              className="text-xs px-1 rounded"
-              style={{ backgroundColor: UI_COLORS.NEUTRAL_100, color: UI_COLORS.NEUTRAL_500 }}
-            >
-              {sourceApp}
-            </span>
+        {/* Model info */}
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-medium truncate" style={{ color: UI_COLORS.NEUTRAL_800 }}>
+            {model.display_name}
+          </p>
+
+          {model.description && (
+            <p className="text-xs mt-0.5 truncate" style={{ color: UI_COLORS.NEUTRAL_500 }}>
+              {truncate(model.description, MODEL_BROWSER_STYLES.DESCRIPTION_MAX_LENGTH)}
+            </p>
           )}
-          {model.versions_count > 0 && (
-            <span className="text-xs" style={{ color: UI_COLORS.NEUTRAL_400 }}>
-              v{model.versions_count}
-            </span>
-          )}
-          {model.updated_at && (
-            <span className="text-xs" style={{ color: UI_COLORS.NEUTRAL_400 }}>
-              {formatRelativeTime(model.updated_at)}
-            </span>
-          )}
+
+          <div className="flex items-center gap-2 mt-1">
+            {sourceApp && (
+              <span
+                className="text-xs px-1 rounded"
+                style={{ backgroundColor: UI_COLORS.NEUTRAL_100, color: UI_COLORS.NEUTRAL_500 }}
+              >
+                {sourceApp}
+              </span>
+            )}
+            {model.versions_count > 0 && (
+              <span className="text-xs" style={{ color: UI_COLORS.NEUTRAL_400 }}>
+                v{model.versions_count}
+              </span>
+            )}
+            {model.updated_at && (
+              <span className="text-xs" style={{ color: UI_COLORS.NEUTRAL_400 }}>
+                {formatRelativeTime(model.updated_at)}
+              </span>
+            )}
+          </div>
         </div>
-      </div>
-    </button>
+      </button>
+
+      {/* 3-dot menu trigger */}
+      <button
+        type="button"
+        onClick={handleDotsClick}
+        title="More options"
+        style={{
+          position: 'absolute',
+          top: 6,
+          right: 6,
+          width: 22,
+          height: 22,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderRadius: 4,
+          border: 'none',
+          background: menuOpen ? UI_COLORS.NEUTRAL_100 : 'transparent',
+          color: UI_COLORS.NEUTRAL_500,
+          cursor: 'pointer',
+          padding: 0,
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.background = UI_COLORS.NEUTRAL_100;
+        }}
+        onMouseLeave={(e) => {
+          if (!menuOpen) {
+            (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+          }
+        }}
+      >
+        {/* Vertical ellipsis icon */}
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+        >
+          <circle cx="12" cy="5" r="1.5" />
+          <circle cx="12" cy="12" r="1.5" />
+          <circle cx="12" cy="19" r="1.5" />
+        </svg>
+      </button>
+
+      {/* Dropdown menu */}
+      {menuOpen && (
+        <ModelCardMenu modelUrl={modelUrl} onClose={() => setMenuOpen(false)} />
+      )}
+    </div>
   );
 }
 
@@ -226,6 +372,7 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
         url: `https://${SPECKLE_SERVER_HOST}/projects/${projectId}/models/${model.id}`,
         object_id: latestVersion.referenced_object ?? latestVersion.id,
         auth_token: authToken,
+        display_name: model.display_name,
       };
 
       onModelSelect(speckleData);
@@ -308,12 +455,14 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
           gap: MODEL_BROWSER_STYLES.CARD_GAP,
           maxHeight: MODEL_BROWSER_STYLES.MAX_HEIGHT,
           overflowY: 'auto',
+          overflowX: 'visible',
         }}
       >
         {loadableModels.map((model) => (
           <ModelCard
             key={model.id}
             model={model}
+            projectId={projectId}
             onSelect={() => handleSelect(model)}
           />
         ))}

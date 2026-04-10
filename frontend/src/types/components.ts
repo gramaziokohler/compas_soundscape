@@ -190,6 +190,8 @@ export interface SidebarProps {
   onSetActiveSimulation?: (index: number | null) => void;
   onUpdateSimulationName?: (index: number, name: string) => void;
   onToggleExpandSimulation?: (index: number) => void;
+  // IR hover line visualization
+  onIRHover?: (sourceId: string | null, receiverId: string | null) => void;
   // Analysis props (NEW)
   analysisConfigs: AnalysisConfig[];
   activeAnalysisTab: number;

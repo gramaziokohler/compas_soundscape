@@ -184,6 +184,35 @@ export const apiService = {
     }
   },
 
+  // Calibrate Audio (normalize RMS + SPL calibration for non-ML audio modes)
+  async calibrateAudio(
+    audioBlob: Blob,
+    splDb: number,
+    applyDenoising: boolean = false
+  ): Promise<{ url: string }> {
+    try {
+      const formData = new FormData();
+      formData.append('audio', audioBlob, 'audio.wav');
+      formData.append('spl_db', splDb.toString());
+      formData.append('apply_denoising', applyDenoising.toString());
+
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/calibrate-audio`,
+        { method: 'POST', body: formData },
+        'Audio calibration'
+      );
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: 'Calibration failed' }));
+        throw new Error(err.detail || 'Calibration failed');
+      }
+
+      return await response.json();
+    } catch (error) {
+      handleApiError(error, 'Audio calibration');
+    }
+  },
+
   // Cleanup Generated Sounds
   async cleanupGeneratedSounds(): Promise<void> {
     try {

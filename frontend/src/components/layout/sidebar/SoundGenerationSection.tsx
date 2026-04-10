@@ -27,32 +27,6 @@ import { apiService } from "@/services/api";
 // Helpers
 // ============================================================================
 
-const STOP_WORDS = new Set([
-  'a', 'an', 'the', 'of', 'in', 'on', 'at', 'to', 'for', 'with', 'and', 'or',
-  'is', 'are', 'was', 'were', 'be', 'been', 'by', 'from', 'that', 'this',
-  'it', 'its', 'as', 'but', 'not', 'no', 'so', 'if', 'up', 'out',
-]);
-
-/** Extract 2-3 important words from a text string */
-function shortenToKeyWords(text: string, maxWords = 3): string {
-  // Remove file extension if present
-  const withoutExt = text.replace(/\.[^.]+$/, '');
-  // Split on whitespace, hyphens, underscores
-  const words = withoutExt
-    .split(/[\s_\-,]+/)
-    .map(w => w.replace(/[^a-zA-Z0-9]/g, ''))
-    .filter(w => w.length > 0);
-
-  // Filter out stop words, keep important ones
-  const important = words.filter(w => !STOP_WORDS.has(w.toLowerCase()));
-  // Fall back to original words if all were stop words
-  const selected = (important.length > 0 ? important : words).slice(0, maxWords);
-
-  // Capitalize first letter of each word
-  return selected
-    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(' ');
-}
 
 /** Get the source name from a generated sound event or config fallback */
 function getSoundSourceName(sound: SoundEvent | undefined, config: SoundGenerationConfig): string {
@@ -223,23 +197,21 @@ export function SoundGenerationSection({
     }
   }, [selectedCardIndex, soundConfigs.length]);
 
-  // Auto-name cards when sounds are generated (shorten source name to 2-3 key words)
+  // Auto-name cards when sounds are generated
   const autoNamedIndices = useRef<Set<number>>(new Set());
   useEffect(() => {
     soundConfigs.forEach((config, index) => {
       if (
         isSoundGenerated(index) &&
-        !autoNamedIndices.current.has(index) &&
-        !config.display_name // Only auto-name if user hasn't set a custom name
+        !autoNamedIndices.current.has(index)
+        // !config.display_name // Only auto-name if user hasn't set a custom name
       ) {
         const generatedSound = getGeneratedSound(index);
         const sourceName = getSoundSourceName(generatedSound, config);
         if (sourceName) {
-          const shortName = shortenToKeyWords(sourceName);
-          if (shortName) {
-            onUpdateConfig(index, 'display_name', shortName);
+            onUpdateConfig(index, 'display_name', sourceName);
             autoNamedIndices.current.add(index);
-          }
+
         }
       }
     });
@@ -443,7 +415,7 @@ export function SoundGenerationSection({
         hasResult={isGenerated}
         result={generatedSound}
         isRunning={isSoundGenerating}
-        defaultName={CARD_TYPE_LABELS[item.type]}
+        defaultName={undefined}
         collapsedInfo={getCollapsedInfo(config, index)}
         showIndex={true}
         canRemove={true}

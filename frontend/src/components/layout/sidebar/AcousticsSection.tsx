@@ -23,7 +23,7 @@
 
 'use client';
 
-import { useCallback, useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import { Power } from 'lucide-react';
 import { CardSection, type CardTypeOption } from '@/components/ui/CardSection';
 import { Card } from '@/components/ui/Card';
@@ -134,6 +134,9 @@ interface AcousticsSectionProps {
   onSetActiveSimulation?: (index: number | null) => void;
   onUpdateSimulationName?: (index: number, name: string) => void;
 
+  // IR hover line visualization
+  onIRHover?: (sourceId: string | null, receiverId: string | null) => void;
+
   // World Tree (Special for Speckle)
   worldTree?: any;
 }
@@ -182,7 +185,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // ==========================================================================
 
   const { viewerRef } = useSpeckleViewerContext();
-  const { clearMaterialColors } = useSpeckleSelectionMode();
+  const { clearMaterialColors, filteringEnabled, viewMode, setViewMode } = useSpeckleSelectionMode();
 
   // Only fetch materials when a card of that type exists
   const hasChorasCard = simulationConfigs.some(c => c.type === 'choras');
@@ -200,11 +203,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     enabled: hasPyroomCard
   });
 
-  // Global toggle: enable/disable layer isolation + color visualization for all simulation cards
-  const [filteringEnabled, setFilteringEnabled] = useState(true);
-
-  // Clear material colors at AcousticsSection level when toggle is turned off
-  // This works even when no simulation card is expanded (no SpeckleSurfaceMaterialsSection mounted)
+  // Clear material colors when layer isolation is disabled (filteringEnabled comes from context,
+  // controlled by the View Mode switch in SpeckleScene)
   useEffect(() => {
     if (!filteringEnabled) {
       clearMaterialColors();
@@ -252,11 +252,6 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
     const mode = type as AcousticSimulationMode;
     onAddSimulationConfig(mode);
-
-    // Auto-enable filtering when a new simulation card is created
-    if (mode === 'choras' || mode === 'pyroomacoustics') {
-      setFilteringEnabled(true);
-    }
 
     // Check for large layers to exclude
     if (geometryData && geometryData.face_entity_map && (mode === 'choras' || mode === 'pyroomacoustics')) {
@@ -535,6 +530,69 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   }, [handleUpdateConfig]);
 
   /**
+   * Duplicate a simulation config.
+   * - Before-simulation: copies all settings and material assignments into a new card.
+   * - After-simulation (completed): creates a new card reset to before-simulation state,
+   *   restoring the pre-run settings snapshot (savedSettings) and material assignments.
+   */
+  const handleDuplicateSimulation = useCallback((index: number) => {
+    const config = simulationConfigs[index];
+    if (!config || !onAddSimulationConfig || !onUpdateSimulationConfig) return;
+
+    const newIndex = simulationConfigs.length;
+    onAddSimulationConfig(config.type as AcousticSimulationMode);
+
+    // Resonance cards have no per-card settings to copy — just add the new card.
+    if (config.type === 'resonance') return;
+
+    const simConfig = config as ChorasSimulationConfig | PyroomAcousticsSimulationConfig;
+    const isCompleted = config.state === 'completed';
+
+    // Speckle material data that should always be preserved
+    const speckleMaterials = {
+      speckleMaterialAssignments: (simConfig as any).speckleMaterialAssignments,
+      speckleLayerName: (simConfig as any).speckleLayerName,
+      speckleGeometryObjectIds: (simConfig as any).speckleGeometryObjectIds,
+      speckleScatteringAssignments: (simConfig as any).speckleScatteringAssignments,
+    };
+
+    setTimeout(() => {
+      const updates: any = {
+        state: 'before-simulation',
+        isRunning: false,
+        status: '',
+        error: null,
+        progress: 0,
+        simulationResults: null,
+        importedIRMetadata: undefined,
+        currentSimulationId: null,
+        currentSimulationRunId: null,
+        importedIRIds: undefined,
+        sourceReceiverIRMapping: undefined,
+        ...speckleMaterials,
+      };
+
+      if (isCompleted && simConfig.savedSettings) {
+        // Restore from the pre-run snapshot saved before the simulation ran
+        updates.settings = { ...simConfig.savedSettings.settings };
+        updates.faceToMaterialMap = new Map(simConfig.savedSettings.faceToMaterialMap);
+        updates.expandedMaterialItems = simConfig.savedSettings.expandedMaterialItems;
+        updates.excludedLayers = simConfig.savedSettings.excludedLayers;
+      } else {
+        // Copy current (before-simulation) state directly
+        updates.settings = { ...(simConfig as any).settings };
+        if (simConfig.faceToMaterialMap) {
+          updates.faceToMaterialMap = new Map(simConfig.faceToMaterialMap);
+        }
+        updates.expandedMaterialItems = simConfig.expandedMaterialItems;
+        updates.excludedLayers = simConfig.excludedLayers;
+      }
+
+      onUpdateSimulationConfig(newIndex, updates);
+    }, 0);
+  }, [simulationConfigs, onAddSimulationConfig, onUpdateSimulationConfig]);
+
+  /**
    * Reset a simulation to before-simulation state
    */
   const resetSimulation = useCallback((index: number) => {
@@ -664,6 +722,114 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
 
   // ==========================================================================
+  // Expand / Active Simulation Sync
+  // ==========================================================================
+
+  // Local expanded state (controlled mode for CardSection)
+  const [expandedCardIndex, setExpandedCardIndex] = useState<number | null>(
+    simulationConfigs.length > 0 ? 0 : null
+  );
+
+  // Auto-expand newly added cards, deactivate audio, and switch to Acoustic mode
+  const prevSimCount = useRef(simulationConfigs.length);
+  useEffect(() => {
+    if (simulationConfigs.length > prevSimCount.current) {
+      setExpandedCardIndex(simulationConfigs.length - 1);
+      // New card is always before-simulation → deactivate audio
+      if (activeSimulationIndex !== null && onSetActiveSimulation) {
+        onSetActiveSimulation(null);
+      }
+      // Switch to Acoustic mode so the new card's layer isolation + colors are active
+      if (viewMode !== 'acoustic') {
+        setViewMode('acoustic');
+      }
+    }
+    prevSimCount.current = simulationConfigs.length;
+  }, [simulationConfigs.length, activeSimulationIndex, onSetActiveSimulation, viewMode, setViewMode]);
+
+  // Track last completed-card index so the power button can re-enable it
+  const lastActiveIndexRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (activeSimulationIndex !== null) {
+      lastActiveIndexRef.current = activeSimulationIndex;
+    }
+  }, [activeSimulationIndex]);
+
+  // Auto-activate a card when it transitions to completed state
+  const prevStatesRef = useRef<string[]>(simulationConfigs.map(c => c.state));
+  useEffect(() => {
+    const prevStates = prevStatesRef.current;
+    simulationConfigs.forEach((config, index) => {
+      if (config.state === 'completed' && prevStates[index] !== 'completed') {
+        // Card just became completed → activate and expand it
+        if (onSetActiveSimulation) onSetActiveSimulation(index);
+        setExpandedCardIndex(index);
+      }
+    });
+    prevStatesRef.current = simulationConfigs.map(c => c.state);
+  }, [simulationConfigs, onSetActiveSimulation]);
+
+  // Handle expand/collapse from CardSection
+  const handleExpandedIndexChange = useCallback((index: number | null) => {
+    setExpandedCardIndex(index);
+
+    if (index === null) {
+      // Collapsing all cards → switch to Default mode (unless dark mode is active)
+      if (activeSimulationIndex !== null && onSetActiveSimulation) {
+        onSetActiveSimulation(null);
+      }
+      if (viewMode !== 'dark') {
+        setViewMode('default');
+      }
+    } else {
+      // Expanding any card → switch to Acoustic mode (unless dark mode is active)
+      if (viewMode !== 'dark') {
+        setViewMode('acoustic');
+      }
+      const config = simulationConfigs[index];
+      if (config?.state === 'completed') {
+        // Expanding a completed card → activate it
+        if (onSetActiveSimulation) onSetActiveSimulation(index);
+      } else if (activeSimulationIndex !== null && onSetActiveSimulation) {
+        // Expanding a before-simulation card → deactivate current
+        onSetActiveSimulation(null);
+      }
+    }
+  }, [onSetActiveSimulation, simulationConfigs, activeSimulationIndex, viewMode, setViewMode]);
+
+  // Global power button: toggle audio rendering (only for completed cards)
+  const hasAnyCompletedCard = simulationConfigs.some(c => c.state === 'completed');
+  const isAudioActive = activeSimulationIndex !== null;
+  const handleToggleAudioRendering = useCallback(() => {
+    if (!onSetActiveSimulation) return;
+    if (activeSimulationIndex !== null) {
+      // Deactivate and collapse the active card → switch to Default mode
+      onSetActiveSimulation(null);
+      setExpandedCardIndex(null);
+      if (viewMode !== 'dark') {
+        setViewMode('default');
+      }
+    } else {
+      // Re-activate last completed card and expand it → switch to Acoustic mode
+      const restoreIndex = lastActiveIndexRef.current;
+      if (restoreIndex !== null && restoreIndex < simulationConfigs.length && simulationConfigs[restoreIndex]?.state === 'completed') {
+        onSetActiveSimulation(restoreIndex);
+        setExpandedCardIndex(restoreIndex);
+      } else {
+        // Find first completed card
+        const firstCompleted = simulationConfigs.findIndex(c => c.state === 'completed');
+        if (firstCompleted >= 0) {
+          onSetActiveSimulation(firstCompleted);
+          setExpandedCardIndex(firstCompleted);
+        }
+      }
+      if (viewMode !== 'dark') {
+        setViewMode('acoustic');
+      }
+    }
+  }, [activeSimulationIndex, onSetActiveSimulation, simulationConfigs, viewMode, setViewMode]);
+
+  // ==========================================================================
   // Render Helpers
   // ==========================================================================
 
@@ -674,32 +840,26 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   ];
 
   const header = (
-  <div className="flex items-center gap-2">
+  <div className="flex items-center gap-2 w-full justify-between">
     <div className="text-xs font-medium text-info">
       Acoustic cards
     </div>
-    <button
-      role="switch"
-      aria-checked={filteringEnabled}
-      onClick={() => setFilteringEnabled(prev => !prev)}
-      className="ml-auto flex items-center gap-1.5 group"
-      title={filteringEnabled ? 'Disable layer isolation & colors' : 'Enable layer isolation & colors'}
-    >
-      <span className="text-[10px] text-secondary-hover group-hover:text-foreground transition-colors">
-        Isolate
-      </span>
-      <span
-        className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
-          filteringEnabled ? 'bg-info' : 'bg-neutral-600'
+    {simulationConfigs.length > 0 && hasAnyCompletedCard && (
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          handleToggleAudioRendering();
+        }}
+        className={`p-1.5 rounded-full transition-colors flex items-center justify-center ${
+          isAudioActive
+            ? 'bg-info text-white'
+            : 'text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100'
         }`}
+        title={isAudioActive ? "Disable Auralization" : "Enable Auralization"}
       >
-        <span
-          className={`inline-block h-3 w-3 rounded-full bg-white transition-transform ${
-            filteringEnabled ? 'translate-x-3.5' : 'translate-x-0.5'
-          }`}
-        />
-      </span>
-    </button>
+        <Power size={11} />
+      </button>
+    )}
   </div>
     );
 
@@ -707,7 +867,6 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     const isCompleted = config.state === 'completed';
     const isRunning = config.type !== 'resonance' && (config as any).isRunning;
     const hasResult = isCompleted;
-    const isActive = index === activeSimulationIndex;
 
     // Simulation action button state
     const isSimulationType = config.type === 'choras' || config.type === 'pyroomacoustics';
@@ -729,29 +888,6 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         : config.type === 'pyroomacoustics'
         ? pyroomMaterials
         : [];
-
-    // Custom Activation Action
-    const customActions = (
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          if (onSetActiveSimulation) onSetActiveSimulation(isActive ? null : index);
-        }}
-        className={`p-1.5 rounded-full transition-colors flex items-center justify-center ${
-          isActive
-            ? 'text-white ring-1'
-            : 'text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100'
-        }`}
-        style={isActive ? {
-          backgroundColor: 'var(--card-color, var(--color-primary))',
-          // @ts-expect-error -- ring-color CSS custom property
-          '--tw-ring-color': 'var(--card-color, var(--color-primary))',
-        } : undefined}
-        title={isActive ? "Disable Simulation" : "Activate Simulation"}
-      >
-        <Power size={11} />
-      </button>
-    );
 
     // Simulation setup component — always rendered for non-resonance types
     // so that filtering, coloring, and material context stay active
@@ -794,11 +930,32 @@ export function AcousticsSection(props: AcousticsSectionProps) {
               config={config}
               onClearIR={onClearIR}
               irRefreshTrigger={irRefreshTrigger}
+              onIRHover={props.onIRHover}
           />
           {/* Hidden: keeps SpeckleSurfaceMaterialsSection mounted for filtering/coloring effects */}
           <div className="hidden">{simulationSetup}</div>
         </>
     ) : undefined;
+
+    // Duplicate button — available for all simulation types and states
+    const customButtons: React.ReactNode[] = [];
+    if (onAddSimulationConfig && onUpdateSimulationConfig) {
+      customButtons.push(
+        <button
+          key="duplicate"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleDuplicateSimulation(index);
+          }}
+          className="w-5 h-5 flex items-center justify-center rounded-full transition-colors text-secondary-hover hover:bg-secondary-light hover:text-foreground"
+          title="Duplicate simulation"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+          </svg>
+        </button>
+      );
+    }
 
     return (
         <Card
@@ -814,11 +971,11 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             onUpdateConfig={(idx, updates) => handleUpdateConfig(idx, updates)}
             onRemove={() => onRemoveSimulationConfig && onRemoveSimulationConfig(index)}
             onReset={() => resetSimulation(index)}
-            customButtons={[customActions]}
             beforeContent={beforeContent}
             afterContent={afterContent}
             closeButtonTitle="Remove simulation"
             resetButtonTitle="Reset simulation"
+            customButtons={customButtons.length > 0 ? customButtons : undefined}
             // Simulation action button props (for choras/pyroomacoustics)
             onRun={isSimulationType ? async () => await runSimulation(index) : undefined}
             onCancel={isSimulationType ? () => cancelSimulation(index) : undefined}
@@ -844,6 +1001,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
           renderCard={renderCard}
           color="info"
           header={header}
+          expandedIndex={expandedCardIndex}
+          onExpandedIndexChange={handleExpandedIndexChange}
         />
      </div>
 

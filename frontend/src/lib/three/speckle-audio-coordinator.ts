@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Viewer, CameraController, SelectionExtension } from '@speckle/viewer';
+import { FilteringExtension } from '@speckle/viewer';
 import { SpeckleSceneAdapter } from './speckle-scene-adapter';
 import { SpeckleCameraController } from './speckle-camera-controller';
 import { SpeckleEventBridge } from './speckle-event-bridge';
@@ -113,6 +114,15 @@ export class SpeckleAudioCoordinator {
 
     this.receiverManager = new ReceiverManager(scene, scaleForSounds, customObjectsGroup);
     this.eventBridge = new SpeckleEventBridge(this.viewer, this.adapter, this.selectionExtension);
+
+    // Wire FilteringExtension for mode-agnostic hidden-object-aware selection
+    try {
+      const filteringExt = this.viewer.getExtension(FilteringExtension);
+      if (filteringExt) {
+        this.eventBridge.setFilteringExtension(filteringExt);
+      }
+    } catch { /* FilteringExtension may not be created yet — non-critical */ }
+
     this.dragHandler = new SpeckleDragHandler(this.viewer, this.adapter, this.cameraController);
     this.eventBridge.setDragHandler(this.dragHandler);
     this.setupEventCallbacks();
@@ -143,38 +153,17 @@ export class SpeckleAudioCoordinator {
       }
     });
 
+    // Zoom camera to any custom object (sound sphere or receiver) on double-click,
+    // mimicking Speckle's ViewerEvent.ObjectDoubleClicked zoom behaviour.
+    this.eventBridge.setOnCustomObjectDoubleClicked((position: THREE.Vector3, type: 'sound' | 'receiver') => {
+      this.zoomToPosition(position);
+    });
+
     this.eventBridge.setOnReceiverDoubleClicked((receiverId: string) => {
-      const receiverMeshes = this.receiverManager!.getReceiverMeshes();
-      const receiverMesh = receiverMeshes.find(mesh => mesh.userData.receiverId === receiverId);
+      // Update active receiver for simulation-based IR switching
+      // This triggers IR loading for all sources based on this receiver
 
-      if (receiverMesh) {
-        const receiverPosition = receiverMesh.position.clone();
-        let initialTarget: THREE.Vector3;
-
-        const soundSphereMeshes = this.soundSphereManager!.getSoundSphereMeshes();
-        const soundSpherePositions: THREE.Vector3[] = soundSphereMeshes.map(mesh => mesh.position.clone());
-
-        if (soundSpherePositions.length > 0) {
-          const sum = soundSpherePositions.reduce(
-            (acc, pos) => acc.add(pos),
-            new THREE.Vector3(0, 0, 0)
-          );
-          initialTarget = sum.divideScalar(soundSpherePositions.length);
-        } else {
-          initialTarget = new THREE.Vector3(
-            receiverPosition.x,
-            receiverPosition.y,
-            receiverPosition.z - 5
-          );
-        }
-
-        this.enableFirstPersonMode(receiverPosition, initialTarget);
-
-        // Update active receiver for simulation-based IR switching
-        // This triggers IR loading for all sources based on this receiver
-        console.log('[SpeckleAudioCoordinator] Receiver double-clicked, updating active receiver:', receiverId);
-        this.updateActiveReceiver(receiverId);
-      }
+      this.updateActiveReceiver(receiverId);
     });
 
     this.dragHandler.setOnDragEnd((objects: THREE.Object3D[], position: THREE.Vector3) => {
@@ -416,6 +405,22 @@ export class SpeckleAudioCoordinator {
   }
 
 
+
+  /**
+   * Zoom the camera to 2 meters from a position.
+   * Moves the camera along the current view direction so it ends up
+   * exactly `distance` metres away, looking at the target.
+   */
+  public zoomToPosition(position: THREE.Vector3, distance: number = 2): void {
+    const cam = this.viewer.getRenderer().renderingCamera as THREE.PerspectiveCamera;
+    const currentDist = cam.position.distanceTo(position);
+    // Direction from target to current camera (keeps the same viewing angle)
+    const offset = new THREE.Vector3().subVectors(cam.position, position).normalize().multiplyScalar(distance);
+    const newCamPos = new THREE.Vector3().addVectors(position, offset);
+    // Use Speckle's native controls API (setCameraView only accepts Box3/IDs)
+    this.cameraController.controls.fromPositionAndTarget(newCamPos, position);
+    this.viewer.requestRender();
+  }
 
   public enableFirstPersonMode(position: THREE.Vector3, target: THREE.Vector3): void {
     if (!this.speckleCameraController) return;

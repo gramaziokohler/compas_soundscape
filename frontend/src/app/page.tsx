@@ -143,6 +143,12 @@ function HomeContent() {
   const [isLeftSidebarExpanded, setIsLeftSidebarExpanded] = useState(true);
   const { isExpanded: isRightSidebarExpanded } = useRightSidebar();
 
+  // IR hover line: source-receiver pair currently hovered in the IR library
+  const [hoveredIRSourceReceiver, setHoveredIRSourceReceiver] = useState<{ sourceId: string; receiverId: string } | null>(null);
+  const handleIRHover = useCallback((sourceId: string | null, receiverId: string | null) => {
+    setHoveredIRSourceReceiver(sourceId && receiverId ? { sourceId, receiverId } : null);
+  }, []);
+
   // Callback when Speckle viewer is loaded
   const handleSpeckleViewerLoaded = useCallback((viewer: import('@speckle/viewer').Viewer) => {
     console.log('Speckle viewer loaded:', viewer);
@@ -504,10 +510,14 @@ function HomeContent() {
     url: string;
     object_id: string;
     auth_token?: string;
+    display_name?: string;
   }) => {
     console.log('[page.tsx] Speckle model selected:', speckleData.url);
     setGlobalSpeckleData(speckleData);
     setSpeckleModelUrl(speckleData.url);
+    if (speckleData.display_name) {
+      setModelFileName(speckleData.display_name);
+    }
 
     // Auto-load saved soundscape for this model
     try {
@@ -1540,6 +1550,8 @@ function HomeContent() {
             // Sidebar states for control button and timeline positioning
             isLeftSidebarExpanded={isLeftSidebarExpanded}
             isRightSidebarExpanded={isRightSidebarExpanded}
+            // IR hover line (source-receiver pair)
+            hoveredIRSourceReceiver={hoveredIRSourceReceiver}
             // Model file upload (for empty state in scene)
             modelFile={globalModelFile}
             onModelFileChange={handleRightSidebarModelUpload}
@@ -1735,6 +1747,7 @@ function HomeContent() {
         onSetActiveSimulation={acousticsSimulation.handleSetActiveSimulation}
         onUpdateSimulationName={acousticsSimulation.handleUpdateSimulationName}
         onToggleExpandSimulation={acousticsSimulation.handleToggleExpand}
+        onIRHover={handleIRHover}
 
         // Analysis props
         analysisConfigs={analysis.analysisConfigs}

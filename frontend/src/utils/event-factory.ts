@@ -70,6 +70,9 @@ export function createSoundEventFromUpload(
   } else if (config.display_name) {
     // Fallback to config display_name if no source-specific name available
     displayName = config.display_name;
+  } else if (config.prompt) {
+    // For text-to-audio modes (e.g. ElevenLabs), use the full prompt as display name
+    displayName = config.prompt;
   } else {
     // Final fallback
     displayName = `${idPrefix.charAt(0).toUpperCase() + idPrefix.slice(1)} ${originalIndex + 1}`;

@@ -9,16 +9,10 @@ import type { TimelineSound } from '@/types/audio';
 interface WaveSurferTimelineProps {
   /** Array of scheduled sounds to display */
   sounds: TimelineSound[];
-  /** Optional timeline duration in milliseconds (calculated from sounds) */
-  duration?: number;
   /** Current playback time in milliseconds (controlled externally) */
   currentTime?: number;
-  /** Whether timeline is currently playing (controlled externally) */
-  isPlaying?: boolean;
   /** Callback when user clicks on timeline to seek */
   onSeek?: (timeMs: number) => void;
-  /** Individual sound states - used to disable progress color for individual playback */
-  individualSoundStates?: { [key: string]: 'playing' | 'paused' | 'stopped' };
   /** Set of muted sound IDs */
   mutedSounds?: Set<string>;
   /** ID of the soloed sound */
@@ -39,23 +33,16 @@ interface WaveSurferInstance {
 }
 
 /**
- * WaveSurferTimeline Component (Unified Timeline Architecture)
+ * WaveSurferTimeline Component
  *
- * Enhanced timeline using WaveSurfer.js with a unified timeline dynamically sized to content.
- *
- * Architecture:
- * - Dynamic timeline duration based on actual audio content
- * - One track (row) per sound
- * - Multiple horizontal waveform instances per track (one per scheduled iteration)
- * - Single cursor overlay synchronized across all instances
- * - Click-to-seek anywhere on timeline
- * - Optimized to prevent unnecessary reinitialization
+ * Unified timeline with one track per sound, multiple waveform chunks per track
+ * (one per scheduled iteration). Width is dynamically sized to total audio content.
+ * Static low-resolution waveforms for performance — no zoom, no per-frame seeking.
  */
 export function WaveSurferTimeline({
   sounds,
   currentTime = 0,
   onSeek,
-  individualSoundStates = {},
   mutedSounds = new Set(),
   soloedSound = null,
   onRefresh,
@@ -69,13 +56,13 @@ export function WaveSurferTimeline({
   const [waveSurferInstances, setWaveSurferInstances] = useState<WaveSurferInstance[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [zoom, setZoom] = useState<number>(WAVESURFER_TIMELINE.DEFAULT_ZOOM);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [downloadProgress, setDownloadProgress] = useState(0);
   const timeOffsetRef = useRef<number>(0);
   const isInitializingRef = useRef<boolean>(false);
   const instancesValidRef = useRef<boolean>(false);
   const initializationIdRef = useRef<number>(0);
+
+  const PIXELS_PER_SECOND = WAVESURFER_TIMELINE.PIXELS_PER_SECOND;
 
   // Generate stable hash of sounds data to detect actual changes
   const soundsHash = useMemo(() => {
@@ -85,7 +72,7 @@ export function WaveSurferTimeline({
     ).join('|');
   }, [sounds]);
 
-  // Calculate actual timeline duration from sounds
+  // Calculate actual timeline duration from sounds — sized exactly to content
   const actualDuration = useMemo(() => {
     let maxEndTime = 0;
     sounds.forEach((sound) => {
@@ -98,23 +85,26 @@ export function WaveSurferTimeline({
     });
 
     if (maxEndTime > 0) {
-      const bufferTimeSeconds = (maxEndTime / 1000) * 1.1;
-      return Math.ceil(bufferTimeSeconds / 30) * 30;
+      return Math.ceil(maxEndTime / 1000); // exact seconds, no extra padding
     }
     return WAVESURFER_TIMELINE.FIXED_DURATION_SECONDS;
   }, [sounds]);
 
-  // Calculate these values but DON'T use them in initialization effect dependencies
-  const PIXELS_PER_SECOND = WAVESURFER_TIMELINE.PIXELS_PER_SECOND * zoom;
   const TIMELINE_WIDTH = actualDuration * PIXELS_PER_SECOND;
 
+  // Derived iteration count for header display (avoids depending on waveSurferInstances)
+  const totalIterations = useMemo(
+    () => sounds.reduce((acc, s) => acc + s.scheduledIterations.length, 0),
+    [sounds]
+  );
+
   /**
-   * Initialize WaveSurfer instances for each sound iteration
-   * Uses initialization ID to handle React Strict Mode double-invocation
+   * Initialize WaveSurfer instances for each sound iteration.
+   * Uses initialization ID to handle React Strict Mode double-invocation.
    */
   useEffect(() => {
     const currentInitId = ++initializationIdRef.current;
-    
+
     if (isInitializingRef.current) {
       return;
     }
@@ -129,16 +119,15 @@ export function WaveSurferTimeline({
     setIsLoading(true);
     setLoadError(null);
 
-    // Clear container BEFORE creating new tracks (prevents double tracks from Strict Mode)
+    // Clear container before creating new tracks
     if (containerRef.current) {
       containerRef.current.innerHTML = '';
     }
 
-    // Calculate PIXELS_PER_SECOND and TIMELINE_WIDTH at initialization time
-    const pixelsPerSecond = WAVESURFER_TIMELINE.PIXELS_PER_SECOND * zoom;
+    const pixelsPerSecond = WAVESURFER_TIMELINE.PIXELS_PER_SECOND;
     const timelineWidth = actualDuration * pixelsPerSecond;
 
-    // Find the earliest timestamp across all sounds to normalize positions
+    // Find the earliest timestamp to normalize positions
     let minTimestampMs = Infinity;
     sounds.forEach((sound) => {
       sound.scheduledIterations.forEach((timestamp) => {
@@ -189,6 +178,14 @@ export function WaveSurferTimeline({
       labelContainer.textContent = sound.displayName.substring(0, 20);
       trackContainer.appendChild(labelContainer);
 
+      // Determine mute state at init time
+      const isSoundMuted = soloedSound !== null
+        ? sound.id !== soloedSound
+        : mutedSounds.has(sound.id);
+      const waveformColor = isSoundMuted
+        ? WAVESURFER_TIMELINE.MUTED_COLOR
+        : WAVESURFER_TIMELINE.WAVEFORM_COLOR;
+
       // Create WaveSurfer instance for each scheduled iteration
       sound.scheduledIterations.forEach((timestamp, iterationIndex) => {
         const startTimeMs = timestamp;
@@ -214,28 +211,14 @@ export function WaveSurferTimeline({
         iterationContainer.style.height = `${WAVESURFER_TIMELINE.ITERATION_HEIGHT}px`;
         iterationContainer.style.borderRadius = '4px';
         iterationContainer.style.overflow = 'hidden';
-        iterationContainer.style.boxSizing = 'border-box'; // Ensure border doesn't add to dimensions
+        iterationContainer.style.boxSizing = 'border-box';
         trackContainer.appendChild(iterationContainer);
 
         try {
-          // Determine if this sound should be greyed out (muted or not soloed)
-          const isSoundMuted = soloedSound !== null 
-            ? sound.id !== soloedSound  // If solo is active, mute all except soloed
-            : mutedSounds.has(sound.id); // Otherwise check if explicitly muted
-          
-          const waveformColor = isSoundMuted 
-            ? WAVESURFER_TIMELINE.MUTED_COLOR  // Grey color for muted sounds
-            : WAVESURFER_TIMELINE.WAVEFORM_COLOR;
-          
-          const progressColorValue = isSoundMuted
-            ? WAVESURFER_TIMELINE.MUTED_COLOR  // Grey for muted sounds
-            : WAVESURFER_TIMELINE.WAVEFORM_COLOR; // Normal color for active sounds
-          
-          // Initialize WaveSurfer instance for this iteration
           const wavesurfer = WaveSurfer.create({
             container: iterationContainer,
             waveColor: waveformColor,
-            progressColor: progressColorValue,
+            progressColor: waveformColor,
             cursorColor: 'transparent',
             cursorWidth: 0,
             height: WAVESURFER_TIMELINE.ITERATION_HEIGHT,
@@ -249,13 +232,11 @@ export function WaveSurferTimeline({
           });
 
           wavesurfer.on('error', (error) => {
-            // Suppress AbortErrors from Strict Mode cleanup
             if (error.name !== 'AbortError') {
               console.error(`[WaveSurferTimeline] Error loading ${sound.displayName} iteration ${iterationIndex}:`, error);
             }
           });
 
-          // Prepare audio URL
           let audioUrl: string;
           if (
             audioUrlBase.startsWith('http://') ||
@@ -274,15 +255,12 @@ export function WaveSurferTimeline({
             .then(() => {
               const borderColor = isSoundMuted ? WAVESURFER_TIMELINE.MUTED_COLOR : sound.color;
               iterationContainer.style.border = `2px solid ${borderColor}`;
-              
-              // Ensure WaveSurfer's internal wrapper doesn't have a border
               const wrapper = wavesurfer.getWrapper();
               if (wrapper) {
                 wrapper.style.border = 'none';
               }
             })
             .catch((error) => {
-              // Ignore abort errors during cleanup
               if (error.name !== 'AbortError') {
                 console.error(`[WaveSurferTimeline] Failed to load ${sound.displayName}:`, error);
               }
@@ -304,16 +282,13 @@ export function WaveSurferTimeline({
       });
     });
 
-    // Wait for all waveforms to load
     Promise.all(loadPromises)
       .then(() => {
-        // Only update state if this initialization wasn't cancelled
         if (initializationIdRef.current === currentInitId) {
           instancesValidRef.current = true;
         }
       })
       .catch((error) => {
-        // Ignore abort errors
         if (error.name !== 'AbortError') {
           console.error('[WaveSurferTimeline] Error loading waveforms:', error);
         }
@@ -327,9 +302,7 @@ export function WaveSurferTimeline({
 
     setWaveSurferInstances(newInstances);
 
-    // Cleanup
     return () => {
-      // Mark instances as invalid before destroying
       instancesValidRef.current = false;
 
       newInstances.forEach((instance) => {
@@ -338,7 +311,6 @@ export function WaveSurferTimeline({
             instance.wavesurfer.destroy();
           }
         } catch (error) {
-          // Ignore errors during cleanup
           if (error instanceof Error && error.name !== 'AbortError') {
             console.error('[WaveSurferTimeline] Error destroying instance:', error);
           }
@@ -349,61 +321,15 @@ export function WaveSurferTimeline({
         containerRef.current.innerHTML = '';
       }
 
-      // Clear state and reset flags
       setWaveSurferInstances([]);
       setIsLoading(false);
       isInitializingRef.current = false;
     };
-    // Depend on soundsHash and mute/solo state to update waveform colors
-    // instancesValidRef tracks validity without causing re-renders
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [soundsHash, mutedSounds, soloedSound]);
 
   /**
-   * Handle zoom changes by updating layout WITHOUT recreating WaveSurfer instances
-   */
-  useEffect(() => {
-    if (!containerRef.current || waveSurferInstances.length === 0) return;
-
-    sounds.forEach((sound) => {
-      const trackContainer = document.getElementById(`track-${sound.id}`);
-      if (trackContainer) {
-        trackContainer.style.width = `${TIMELINE_WIDTH}px`;
-      }
-
-      sound.scheduledIterations.forEach((timestamp, iterationIndex) => {
-        const startTimeMs = timestamp;
-        const endTimeMs = timestamp + sound.soundDurationMs;
-
-        if (startTimeMs >= actualDuration * 1000) return;
-
-        const normalizedStartMs = startTimeMs - timeOffsetRef.current;
-        const normalizedEndMs = endTimeMs - timeOffsetRef.current;
-
-        const leftPx = (normalizedStartMs / 1000) * PIXELS_PER_SECOND;
-        const widthPx = ((normalizedEndMs - normalizedStartMs) / 1000) * PIXELS_PER_SECOND;
-
-        const iterationContainer = document.getElementById(`waveform-${sound.id}-${iterationIndex}`);
-        if (iterationContainer) {
-          iterationContainer.style.left = `${leftPx}px`;
-          iterationContainer.style.width = `${widthPx}px`;
-        }
-      });
-    });
-
-    waveSurferInstances.forEach((instance) => {
-      if (instance.wavesurfer && instance.wavesurfer.getDuration() > 0) {
-        try {
-          instance.wavesurfer.zoom(PIXELS_PER_SECOND);
-        } catch (error) {
-          // Ignore zoom errors during state changes
-        }
-      }
-    });
-  }, [zoom, sounds, waveSurferInstances, PIXELS_PER_SECOND, TIMELINE_WIDTH, actualDuration]);
-
-  /**
-   * Sync track labels when sound display names change (e.g., user renames via handleSaveName)
+   * Sync track labels when sound display names change.
    * Updates DOM labels without recreating WaveSurfer instances.
    */
   useEffect(() => {
@@ -416,7 +342,7 @@ export function WaveSurferTimeline({
   }, [sounds]);
 
   /**
-   * Add timeline ruler at the top
+   * Add timeline ruler at the top.
    */
   useEffect(() => {
     if (!timelineContainerRef.current) return;
@@ -455,11 +381,9 @@ export function WaveSurferTimeline({
 
     const emptyAudioUrl = createEmptyAudioDataUrl(actualDuration);
 
-    // Small delay to ensure proper rendering
     setTimeout(() => {
       if (timelineWaveSurferRef.current) {
         timelineWaveSurferRef.current.load(emptyAudioUrl).catch((error) => {
-          // Ignore abort errors
           if (error.name !== 'AbortError') {
             console.error('[WaveSurferTimeline] Error loading timeline ruler:', error);
           }
@@ -477,10 +401,11 @@ export function WaveSurferTimeline({
         timelineWaveSurferRef.current = null;
       }
     };
-  }, [zoom, actualDuration]);
+  }, [actualDuration]);
 
   /**
-   * Sync cursor position with external currentTime and auto-scroll
+   * Sync cursor position with external currentTime and auto-scroll.
+   * No per-frame seeking on WaveSurfer instances — cursor is the sole playback indicator.
    */
   useEffect(() => {
     if (!cursorRef.current || !scrollContainerRef.current) return;
@@ -492,92 +417,41 @@ export function WaveSurferTimeline({
     const scrollContainer = scrollContainerRef.current;
     const containerWidth = scrollContainer.clientWidth;
     const scrollLeft = scrollContainer.scrollLeft;
-    const scrollRight = scrollLeft + containerWidth;
 
-    if (cursorPosition < scrollLeft || cursorPosition > scrollRight) {
-      const targetScroll = cursorPosition - containerWidth / 2;
+    if (cursorPosition < scrollLeft || cursorPosition > scrollLeft + containerWidth) {
       scrollContainer.scrollTo({
-        left: Math.max(0, targetScroll),
-        behavior: 'smooth',
+        left: Math.max(0, cursorPosition - containerWidth / 2),
+        behavior: 'auto',
       });
     }
-
-    waveSurferInstances.forEach((instance) => {
-      if (!instance.wavesurfer) return;
-
-      if (currentTime >= instance.startTimeMs && currentTime < instance.endTimeMs) {
-        const relativeTime = currentTime - instance.startTimeMs;
-        const duration = instance.endTimeMs - instance.startTimeMs;
-        const progress = relativeTime / duration;
-
-        if (instance.wavesurfer.getDuration() > 0) {
-          try {
-            instance.wavesurfer.seekTo(Math.max(0, Math.min(1, progress)));
-          } catch (error) {
-            // Ignore seek errors
-          }
-        }
-      } else if (currentTime < instance.startTimeMs) {
-        if (instance.wavesurfer.getDuration() > 0) {
-          try {
-            instance.wavesurfer.seekTo(0);
-          } catch (error) {
-            // Ignore seek errors
-          }
-        }
-      }
-    });
-  }, [currentTime, waveSurferInstances, PIXELS_PER_SECOND]);
+  }, [currentTime]);
 
   /**
-   * Update waveform colors, progress colors, and borders
-   * Combines playback mode detection with mute/solo visual feedback
-   * This updates existing instances without recreating them (performance optimization)
+   * Update waveform colors and borders for mute/solo state changes.
+   * Does not depend on playback state — static color scheme only.
    */
   useEffect(() => {
     if (waveSurferInstances.length === 0) return;
-
-    // Count total sounds in session to determine timeline mode
-    const soundsInSession = Object.entries(individualSoundStates).filter(
-      ([_, state]) => state === 'playing' || state === 'paused'
-    );
-    const isTimelineMode = soundsInSession.length >= 2;
 
     waveSurferInstances.forEach((instance) => {
       if (!instance.wavesurfer) return;
 
       try {
-        // Determine if this sound should be greyed out
-        const isSoundMuted = soloedSound !== null 
-          ? instance.soundId !== soloedSound  // If solo is active, mute all except soloed
-          : mutedSounds.has(instance.soundId); // Otherwise check if explicitly muted
-        
-        const waveformColor = isSoundMuted 
-          ? WAVESURFER_TIMELINE.MUTED_COLOR  // Grey color for muted sounds
+        const isSoundMuted = soloedSound !== null
+          ? instance.soundId !== soloedSound
+          : mutedSounds.has(instance.soundId);
+
+        const waveformColor = isSoundMuted
+          ? WAVESURFER_TIMELINE.MUTED_COLOR
           : WAVESURFER_TIMELINE.WAVEFORM_COLOR;
-        
-        // Determine progress color based on playback state AND mute state
-        const soundState = individualSoundStates[instance.soundId];
-        const isSoundPlaying = soundState === 'playing';
-        
-        // Show pink progress only if:
-        // 1. This sound is playing AND
-        // 2. We're in timeline mode (2+ sounds in session) AND
-        // 3. Sound is NOT muted
-        const progressColor = (isSoundPlaying && isTimelineMode && !isSoundMuted)
-          ? WAVESURFER_TIMELINE.PROGRESS_COLOR // Pink for playing sound in timeline mode
-          : waveformColor; // Grey for muted, paused, or individual mode
-        
-        // Update waveform and progress colors
-        instance.wavesurfer.setOptions({ 
+
+        instance.wavesurfer.setOptions({
           waveColor: waveformColor,
-          progressColor: progressColor
+          progressColor: waveformColor,
         });
 
-        // Update border color
         const container = instance.wavesurfer.getWrapper().parentElement;
         if (container) {
-          // Find the sound data to get its color
           const soundData = sounds.find((s: TimelineSound) => s.id === instance.soundId);
           if (soundData) {
             const borderColor = isSoundMuted ? WAVESURFER_TIMELINE.MUTED_COLOR : soundData.color;
@@ -585,14 +459,13 @@ export function WaveSurferTimeline({
           }
         }
       } catch (error) {
-        // Ignore errors during option updates
         console.debug('[WaveSurferTimeline] Error updating mute/solo colors:', error);
       }
     });
-  }, [mutedSounds, soloedSound, waveSurferInstances, sounds, individualSoundStates]);
+  }, [mutedSounds, soloedSound, waveSurferInstances, sounds]);
 
   /**
-   * Handle click on timeline to seek
+   * Handle click on timeline to seek.
    */
   const handleTimelineClick = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -605,30 +478,21 @@ export function WaveSurferTimeline({
 
       onSeek(Math.max(0, Math.min(timeMs, actualDuration * 1000)));
     },
-    [onSeek, PIXELS_PER_SECOND, actualDuration]
+    [onSeek, actualDuration]
   );
 
   /**
-   * Handle zoom changes
-   */
-  const handleZoomChange = useCallback((newZoom: number) => {
-    setZoom(newZoom);
-  }, []);
-
-  /**
-   * Handle soundscape WAV export
+   * Handle soundscape WAV export.
    */
   const handleDownload = useCallback(async () => {
     if (!onDownload || isDownloading) return;
     setIsDownloading(true);
-    setDownloadProgress(0);
     try {
       await onDownload();
     } catch (err) {
       console.error('[WaveSurferTimeline] Export failed:', err);
     } finally {
       setIsDownloading(false);
-      setDownloadProgress(0);
     }
   }, [onDownload, isDownloading]);
 
@@ -653,30 +517,13 @@ export function WaveSurferTimeline({
       {/* Header with Title and Controls */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-white/10 bg-black/60">
         <div className="flex items-center gap-3">
-          <h3 className="text-sm font-semibold text-white">
-            Timeline
-          </h3>
+          <h3 className="text-sm font-semibold text-white">Timeline</h3>
           <span className="text-xs text-gray-400">
-            {sounds.length} sound{sounds.length !== 1 ? 's' : ''} • {waveSurferInstances.length} iteration{waveSurferInstances.length !== 1 ? 's' : ''} • {actualDuration}s
+            {sounds.length} sound{sounds.length !== 1 ? 's' : ''} • {totalIterations} iteration{totalIterations !== 1 ? 's' : ''} • {actualDuration}s
           </span>
         </div>
 
         <div className="flex items-center gap-3">
-          <label className="text-xs text-gray-400">Zoom:</label>
-          <input
-            type="range"
-            min={WAVESURFER_TIMELINE.MIN_ZOOM}
-            max={WAVESURFER_TIMELINE.MAX_ZOOM}
-            step={WAVESURFER_TIMELINE.ZOOM_STEP}
-            value={zoom}
-            onChange={(e) => handleZoomChange(parseFloat(e.target.value))}
-            className="w-32 h-2 rounded-lg appearance-none cursor-pointer accent-primary"
-            style={{ 
-              cursor: 'pointer',
-              backgroundColor: 'rgba(156, 163, 175, 0.3)'
-            }}
-          />
-          <span className="text-xs text-gray-400 min-w-[3rem]">{zoom.toFixed(1)}x</span>
           <button
             onClick={() => onRefresh?.()}
             className="text-xs px-2 py-1 rounded transition-colors"
@@ -736,7 +583,7 @@ export function WaveSurferTimeline({
         <div
           ref={timelineContainerRef}
           style={{
-            width: `${TIMELINE_WIDTH}px`,
+            width: `${TIMELINE_WIDTH}px`, 
             backgroundColor: WAVESURFER_TIMELINE.BACKGROUND_COLOR,
             minHeight: '30px',
           }}
@@ -746,8 +593,11 @@ export function WaveSurferTimeline({
       {/* Tracks Container with Cursor */}
       <div
         ref={scrollContainerRef}
-        className="relative overflow-x-auto overflow-y-auto max-h-96"
-        style={{ backgroundColor: WAVESURFER_TIMELINE.BACKGROUND_COLOR }}
+        className="relative overflow-x-auto overflow-y-auto"
+        style={{
+          maxHeight: `${WAVESURFER_TIMELINE.TOTAL_HEIGHT}px`,
+          backgroundColor: WAVESURFER_TIMELINE.BACKGROUND_COLOR,
+        }}
         onClick={handleTimelineClick}
       >
         {/* Waveform Tracks */}
@@ -773,7 +623,7 @@ export function WaveSurferTimeline({
 }
 
 /**
- * Create an empty audio data URL of specified duration
+ * Create an empty audio data URL of specified duration (for the timeline ruler).
  */
 function createEmptyAudioDataUrl(durationSeconds: number): string {
   const sampleRate = 44100;
@@ -787,7 +637,7 @@ function createEmptyAudioDataUrl(durationSeconds: number): string {
 }
 
 /**
- * Encode Float32Array to WAV format
+ * Encode Float32Array to WAV format.
  */
 function encodeWAV(samples: Float32Array, sampleRate: number, numChannels: number): ArrayBuffer {
   const buffer = new ArrayBuffer(44 + samples.length * 2);

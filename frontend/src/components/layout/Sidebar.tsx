@@ -256,6 +256,7 @@ export function Sidebar(props: SidebarProps) {
             irRefreshTrigger={props.irRefreshTrigger}
             simulationConfigs={props.simulationConfigs}
             activeSimulationIndex={props.activeSimulationIndex}
+            onIRHover={props.onIRHover}
             onAddSimulationConfig={props.onAddSimulationConfig}
             onRemoveSimulationConfig={props.onRemoveSimulationConfig}
             onUpdateSimulationConfig={props.onUpdateSimulationConfig}

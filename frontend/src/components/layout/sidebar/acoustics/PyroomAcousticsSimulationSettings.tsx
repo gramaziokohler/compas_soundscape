@@ -87,7 +87,7 @@ export function PyroomAcousticsSimulationSettings({
   </select>
 </div>
 
-      {/* Max Order Slider */}
+      {/* Image Source Order Slider */}
       <RangeSlider
         label="Image-Source order: "
         value={config.settings.max_order}

@@ -200,8 +200,8 @@ export function EntityInfoPanel({
 
   // Background color helper
   const getSelectBg = (materialId: string | null): string => {
-    if (!materialId) return UI_COLORS.PRIMARY;
-    return materialColors.get(materialId) || UI_COLORS.PRIMARY;
+    if (!materialId) return UI_COLORS.NEUTRAL_400;
+    return materialColors.get(materialId) || UI_COLORS.NEUTRAL_400;
   };
 
   // ===== MATERIAL ASSIGNMENT MODE =====
@@ -235,7 +235,7 @@ export function EntityInfoPanel({
                 opacity: allObjectsInfo.uniqueMaterials.size > 1 ? 0.7 : 1
               }}
             >
-              <option value="" style={{ backgroundColor: UI_COLORS.PRIMARY }}>
+              <option value="" style={{ backgroundColor: UI_COLORS.NEUTRAL_400 }}>
                 {allObjectsInfo.uniqueMaterials.size > 1 ? '(mixed)' : 'Select...'}
               </option>
               {sortedMaterials.map(material => (
@@ -289,7 +289,7 @@ export function EntityInfoPanel({
                     opacity: isMixed ? 0.7 : 1
                   }}
                 >
-                  <option value="" style={{ backgroundColor: UI_COLORS.PRIMARY }}>
+                  <option value="" style={{ backgroundColor: UI_COLORS.NEUTRAL_400 }}>
                     {isMixed ? '(mixed)' : 'Select...'}
                   </option>
                   {sortedMaterials.map(material => (
@@ -313,6 +313,7 @@ export function EntityInfoPanel({
           {/* Scattering (per-object, same workflow as material) */}
           {selectedObjectInTree && selectedGeometryIds.length > 0 ? (
             <RangeSlider
+              color ='var(--color-info)'
               label={isGroupSelection ? `Scattering (${selectedGeometryIds.length}): ` : 'Scattering: '}
               value={selectedObjectScattering}
               min={PYROOMACOUSTICS_SCATTERING_MIN}
@@ -332,6 +333,7 @@ export function EntityInfoPanel({
             />
           ) : (
             <RangeSlider
+              color ='var(--color-info)'
               label="Scattering (all): "
               value={allObjectsScattering}
               min={PYROOMACOUSTICS_SCATTERING_MIN}
@@ -364,8 +366,8 @@ export function EntityInfoPanel({
             <div
               className="text-xs text-center py-1 px-2"
               style={{
-                color: UI_COLORS.SUCCESS,
-                backgroundColor: `${UI_COLORS.SUCCESS}10`,
+                color: UI_COLORS.INFO,
+                backgroundColor: `${UI_COLORS.INFO}10`,
                 borderRadius: `${UI_BORDER_RADIUS.SM}px`,
                 border: `1px solid ${UI_COLORS.SUCCESS}40`
               }}

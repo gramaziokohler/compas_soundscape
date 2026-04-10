@@ -157,9 +157,8 @@ export function useAcousticsSimulation(): UseAcousticsSimulationReturn {
     setSimulationConfigs(prev => [...prev, newConfig]);
     setSimulationCounter(prev => prev + 1);
     
-    // Auto-activate and expand the new simulation
+    // Only expand (not activate) the new simulation — it's not completed yet
     const newIndex = simulationConfigs.length;
-    setActiveSimulationIndex(newIndex);
     setExpandedTabIndex(newIndex);
   }, [simulationCounter, simulationConfigs.length]);
 

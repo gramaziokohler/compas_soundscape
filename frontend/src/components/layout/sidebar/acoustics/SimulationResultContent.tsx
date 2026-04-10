@@ -14,12 +14,14 @@ interface SimulationResultContentProps {
   config: SimulationConfig;
   onClearIR: () => void;
   irRefreshTrigger?: number;
+  onIRHover?: (sourceId: string | null, receiverId: string | null) => void;
 }
 
 export function SimulationResultContent({
   config,
   onClearIR,
-  irRefreshTrigger = 0
+  irRefreshTrigger = 0,
+  onIRHover
 }: SimulationResultContentProps) {
   
   const simulationConfig = config as any;
@@ -40,6 +42,8 @@ export function SimulationResultContent({
           simulationResults={results}
           refreshTrigger={irRefreshTrigger}
           simulationIRIds={simulationConfig.importedIRIds}
+          sourceReceiverIRMapping={simulationConfig.sourceReceiverIRMapping}
+          onIRHover={onIRHover}
        />
     </div>
   );

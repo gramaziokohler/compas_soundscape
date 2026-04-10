@@ -115,8 +115,9 @@ export const UI_COLORS = {
   DARK_BORDER: "#262626",
   
  //  Material Colors - Gradient from pink to teal (6-char hex for Three.js compatibility)
-  MATERIAL_GRADIENT_START: "#67bfb4", // Blue
-  MATERIAL_GRADIENT_END: "#cd827c", // Red
+  MATERIAL_GRADIENT_START: "#67bfb4",
+  MATERIAL_GRADIENT_MIDDLE: "#ffbf6d", 
+  MATERIAL_GRADIENT_END: "#eb5c52",
 } as const;
 
 // Legacy exports for backward compatibility (still in use)
@@ -529,6 +530,20 @@ export const AURALIZATION_LIMITER = {
   RELEASE_SEC: 0.1
 } as const;
 
+// Impulse Response UI Configuration
+export const IR_HOVER_LINE = {
+  /** Show a line between source and receiver when hovering an IR in the library */
+  ENABLED: true,
+  COLOR: UI_COLORS.PRIMARY,
+  OPACITY: 0.8,
+  DASH_SIZE: 0.1,
+  GAP_SIZE: 0.02,
+} as const;
+
+// IR low-energy detection threshold
+// If the average of all channel peak amplitudes is below this value, the IR is flagged as low energy
+export const IR_LOW_ENERGY_THRESHOLD = 0.01;
+
 // Impulse Response Processing Constants
 export const IMPULSE_RESPONSE = {
   // Normalization scale factor (0.5 = -6dB headroom for convolution)
@@ -649,8 +664,8 @@ export const AMBISONIC = {
   } as const,
 
 
-  // Channel names for FOA (FuMa ordering: W, X, Y, Z)
-  FOA_CHANNEL_NAMES: ['W', 'X', 'Y', 'Z'] as const,
+  // Channel names for FOA (ACN ordering: W, Y, Z, X)
+  FOA_CHANNEL_NAMES: ['W', 'Y', 'Z', 'X'] as const,
 
   // Channel names for SOA (ACN ordering, 9 channels)
   SOA_CHANNEL_NAMES: [
@@ -1032,6 +1047,10 @@ export const SOUND_SPHERE = {
   DEPTH_WRITE: false,
   /** World radius = distance * SCREEN_SPACE_SIZE — keeps constant apparent size at all zoom levels */
   SCREEN_SPACE_SIZE: 0.03,
+  /** Minimum scale factor (prevents objects from vanishing when very close) */
+  MIN_SCALE: 0.8,
+  /** Maximum scale factor (prevents objects from becoming huge when far away) */
+  MAX_SCALE: 10,
 } as const;
 
 // Receiver Configuration
@@ -1048,6 +1067,10 @@ export const RECEIVER_CONFIG = {
   CAMERA_PLACEMENT_DISTANCE_M: 3,
   /** World half-size = distance * SCREEN_SPACE_SIZE — keeps constant apparent size at all zoom levels */
   SCREEN_SPACE_SIZE: 0.03,
+  /** Minimum scale factor (prevents objects from vanishing when very close) */
+  MIN_SCALE: 0.5,
+  /** Maximum scale factor (prevents objects from becoming huge when far away) */
+  MAX_SCALE: 10,
 } as const;
 
 // Object Label Sprites (shown above sound spheres and receivers)
@@ -1060,9 +1083,9 @@ export const OBJECT_LABEL = {
   BORDER_RADIUS: 3,
   RENDER_ORDER: 1001,
   /** World height of label = distance * SCREEN_SPACE_HEIGHT */
-  SCREEN_SPACE_HEIGHT: 0.018,
+  SCREEN_SPACE_HEIGHT: 0.015,
   /** Label Z offset above object = distance * SCREEN_SPACE_SIZE * Z_OFFSET_FACTOR */
-  Z_OFFSET_FACTOR: 0.5,
+  Z_OFFSET_FACTOR: 1,
 } as const;
 
 // Receiver positioning (for direct creation like sound spheres)
@@ -1226,13 +1249,6 @@ export const ENTITY_CONFIG = {
 } as const;
 
 // ============================================================================
-// Timeline Defaults
-// ============================================================================
-export const TIMELINE_DEFAULTS = {
-  DURATION_MS: 60000,  // 1 minute default timeline duration
-} as const;
-
-// ============================================================================
 // Audio Context States
 // ============================================================================
 export const AUDIO_CONTEXT_STATE = {
@@ -1357,60 +1373,39 @@ export const AUDIO_TIMELINE = {
 // WaveSurfer Enhanced Timeline Configuration
 // ============================================================================
 export const WAVESURFER_TIMELINE = {
-  // Timeline mode
-  DEFAULT_MODE: 'classic' as 'classic' | 'enhanced',
-
-  // Fixed timeline duration
-  FIXED_DURATION_SECONDS: 180,       // 3 minutes fixed timeline
+  // Fixed timeline duration (fallback when no sounds scheduled)
+  FIXED_DURATION_SECONDS: 180,
 
   // WaveSurfer visual config
   WAVEFORM_COLOR: UI_COLORS.NEUTRAL_600,    // Grey waveform
-  PROGRESS_COLOR: UI_COLORS.PRIMARY,         // Pink progress
   CURSOR_COLOR: UI_COLORS.PRIMARY,           // Pink cursor
   CURSOR_WIDTH: 2,
+  TOTAL_HEIGHT: 250,                 // Total height of the timeline tracks area in px
   TRACK_HEIGHT: 35,                  // Waveform height per track
   ITERATION_HEIGHT: 25,              // Height for each iteration waveform
-  
-  // Mute/Solo visual feedback
-  MUTED_COLOR: UI_COLORS.NEUTRAL_600,       // Grey color for muted sounds (same as waveform base)
 
-  // Waveform rendering
-  BAR_WIDTH: 2,
-  BAR_GAP: 1,
+  // Mute/Solo visual feedback
+  MUTED_COLOR: UI_COLORS.NEUTRAL_600,       // Grey color for muted sounds
+
+  // Waveform rendering — low-resolution for performance (larger bars = fewer canvas ops)
+  BAR_WIDTH: 4,
+  BAR_GAP: 2,
   BAR_RADIUS: 2,
 
-  // Regions config (for sound clips/iterations)
-  REGION_COLOR_ALPHA: 0.3,          // 30% opacity
-  REGION_BORDER_WIDTH: 2,
-  REGION_HANDLE_WIDTH: 5,
-
   // Timeline plugin config
-  TIME_INTERVAL: 15,                  // Time markers every 15s
+  TIME_INTERVAL: 15,                 // Time markers every 15s
   PRIMARY_LABEL_INTERVAL: 30,        // Bold labels every 30s
-  SECONDARY_HEIGHT: 5,               // Secondary tick height
-  PRIMARY_HEIGHT: 10,                // Primary tick height
-  NOTCH_PERCENTAGE: 90,              // Percentage of track height for notches
-
-  // Zoom & pan
-  MIN_ZOOM: 1,
-  MAX_ZOOM: 10,
-  DEFAULT_ZOOM: 1,
-  ZOOM_STEP: 0.01,
 
   // Track layout
   TRACK_SPACING: 5,
-  TRACK_PADDING: 5,
-  TRACK_LABEL_WIDTH: 120,            // Width reserved for track labels
 
   // Colors
-  BACKGROUND_COLOR: '#000000',              // Black background
-  TRACK_BACKGROUND_COLOR: UI_COLORS.NEUTRAL_800, // Dark grey track background
-  GRID_COLOR: UI_COLORS.NEUTRAL_600,        // Grey grid lines
-  TEXT_COLOR: '#FFFFFF',                    // White text
+  BACKGROUND_COLOR: '#000000',
+  TRACK_BACKGROUND_COLOR: UI_COLORS.NEUTRAL_800,
+  TEXT_COLOR: '#FFFFFF',
 
-  // Performance
-  PIXELS_PER_SECOND: 5,              // Pixels per second (180s needs to fit on screen)
-  MAX_CANVAS_WIDTH: 4000,            // Maximum canvas width for performance
+  // Width calculation
+  PIXELS_PER_SECOND: 5,              // Pixels per second — fixed (no zoom)
 } as const;
 
 
@@ -1479,31 +1474,38 @@ export const MATERIAL_DEFAULT_COLOR = '#808080';
  * @returns Hex color string
  */
 export function getMaterialColorByAbsorption(absorption: number): string {
-  // Validate absorption value
   if (typeof absorption !== 'number' || isNaN(absorption)) {
     console.warn('[getMaterialColorByAbsorption] Invalid absorption value:', absorption, 'Using default color');
     return MATERIAL_DEFAULT_COLOR;
   }
 
-  // Clamp absorption to 0-1 range
   const ratio = Math.max(0, Math.min(1, absorption));
 
-  // Parse gradient start (pink) and end (teal) colors
-  const start = UI_COLORS.MATERIAL_GRADIENT_START.replace('#', '');
-  const end = UI_COLORS.MATERIAL_GRADIENT_END.replace('#', '');
+  let startHex: string;
+  let endHex: string;
+  let localRatio: number;
 
-  const r1 = parseInt(start.substring(0, 2), 16);
-  const g1 = parseInt(start.substring(2, 4), 16);
-  const b1 = parseInt(start.substring(4, 6), 16);
+  if (ratio < 0.5) {
+    startHex = UI_COLORS.MATERIAL_GRADIENT_START.replace('#', '');
+    endHex = UI_COLORS.MATERIAL_GRADIENT_MIDDLE.replace('#', '');
+    localRatio = ratio * 2;
+  } else {
+    startHex = UI_COLORS.MATERIAL_GRADIENT_MIDDLE.replace('#', '');
+    endHex = UI_COLORS.MATERIAL_GRADIENT_END.replace('#', '');
+    localRatio = (ratio - 0.5) * 2;
+  }
 
-  const r2 = parseInt(end.substring(0, 2), 16);
-  const g2 = parseInt(end.substring(2, 4), 16);
-  const b2 = parseInt(end.substring(4, 6), 16);
+  const r1 = parseInt(startHex.substring(0, 2), 16);
+  const g1 = parseInt(startHex.substring(2, 4), 16);
+  const b1 = parseInt(startHex.substring(4, 6), 16);
 
-  // Interpolate between colors based on absorption
-  const r = Math.round(r1 + (r2 - r1) * ratio);
-  const g = Math.round(g1 + (g2 - g1) * ratio);
-  const b = Math.round(b1 + (b2 - b1) * ratio);
+  const r2 = parseInt(endHex.substring(0, 2), 16);
+  const g2 = parseInt(endHex.substring(2, 4), 16);
+  const b2 = parseInt(endHex.substring(4, 6), 16);
+
+  const r = Math.round(r1 + (r2 - r1) * localRatio);
+  const g = Math.round(g1 + (g2 - g1) * localRatio);
+  const b = Math.round(b1 + (b2 - b1) * localRatio);
 
   const color = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
 

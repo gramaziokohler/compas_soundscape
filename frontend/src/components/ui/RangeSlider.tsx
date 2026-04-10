@@ -14,6 +14,7 @@ interface RangeSliderProps {
   showLabels?: boolean;
   hoverText?: string;
   disabled?: boolean;
+  color?: string;
   /** Default value to reset to on double-click. If omitted, double-click reset is disabled. */
   defaultValue?: number;
 }
@@ -58,6 +59,7 @@ export function RangeSlider({
   showLabels = true,
   hoverText,
   disabled = false,
+  color,
   defaultValue,
 }: RangeSliderProps) {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -82,7 +84,7 @@ export function RangeSlider({
       {/* Label and Value */}
       <div className={`flex items-center gap-1 text-xs text-secondary-hover`}>
         <span>{label}</span>
-        <span className="text-xs font-bold" style={{ color: 'var(--card-color, var(--color-primary))' }}>
+        <span className="text-xs font-bold" style={{ color: color? color : 'var(--card-color, var(--color-primary))' }}>
           {formatValue(value)}
         </span>
       </div>
@@ -98,7 +100,7 @@ export function RangeSlider({
         onDoubleClick={handleDoubleClick}
         disabled={disabled}
         className={`w-full h-2 rounded-lg appearance-none cursor-pointer bg-secondary-light ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-        style={{ accentColor: 'var(--card-color, var(--color-primary))' }}
+        style={{ accentColor: color? color : 'var(--card-color, var(--color-primary))' }}
         title={defaultValue !== undefined ? `Double-click to reset (${formatValue(defaultValue)})` : hoverText}
       />
 

@@ -9,6 +9,7 @@ import { SPIRAL_PLACEMENT } from "@/utils/constants";
 import type { SoundEvent } from "@/types";
 import type { AuralizationConfig, SoundMetadata } from "@/types/audio";
 import type { AudioOrchestrator } from "@/lib/audio/AudioOrchestrator";
+import { trimDisplayName } from "@/utils/utils";
 // import type { BoundingBoxBounds } from "@/lib/three/BoundingBoxManager"; // Bounding-box placement removed
 
 /**
@@ -188,6 +189,30 @@ export class SoundSphereManager {
       newEntityLinkedIds.size === this.entityLinkedIds.size &&
       [...newEntityLinkedIds].every(id => this.entityLinkedIds.has(id))
     ) {
+      // Sounds unchanged — still refresh mesh userData and sync labels in case display_name changed
+      visibleSounds.forEach(soundEvent => {
+        const mesh = this.soundMeshes.find(m => m.userData.soundEvent?.id === soundEvent.id);
+        if (mesh) mesh.userData.soundEvent = soundEvent;
+
+        // For entity-linked sounds, update the position in case the sound was re-linked
+        // to a different Speckle object while the sound ID stayed the same.
+        if (soundEvent.entity_index !== undefined && soundEvent.position) {
+          const newPos = soundEvent.position as [number, number, number];
+          const oldPos = this.spherePositions.get(soundEvent.id);
+          const posChanged = !oldPos ||
+            oldPos[0] !== newPos[0] || oldPos[1] !== newPos[1] || oldPos[2] !== newPos[2];
+          if (posChanged) {
+            this.spherePositions.set(soundEvent.id, newPos);
+            if (this.audioOrchestrator) {
+              this.audioOrchestrator.updateSourcePosition(
+                soundEvent.id,
+                new THREE.Vector3(newPos[0], newPos[1], newPos[2])
+              );
+            }
+          }
+        }
+      });
+      this.syncLabelSprites(this.soundMeshes);
       return;
     }
 
@@ -603,7 +628,7 @@ export class SoundSphereManager {
       const id = mesh.userData.soundEvent?.id as string;
       if (!id) continue;
 
-      const text = (mesh.userData.soundEvent?.display_name as string) || id;
+      const text = trimDisplayName((mesh.userData.soundEvent?.display_name as string)) || id;
       const existing = this.labelSprites.get(id);
 
       if (existing) {
@@ -634,16 +659,19 @@ export class SoundSphereManager {
       const distance = camera.position.distanceTo(mesh.position);
       if (distance < 0.01) return;
 
-      // Scale mesh so world radius = distance × SCREEN_SPACE_SIZE (constant angular size)
-      mesh.scale.setScalar((distance * SOUND_SPHERE.SCREEN_SPACE_SIZE) / baseRadius);
+      // Scale mesh so world radius = distance × SCREEN_SPACE_SIZE, clamped to min/max
+      const rawScale = (distance * SOUND_SPHERE.SCREEN_SPACE_SIZE) / baseRadius;
+      const scale = Math.max(SOUND_SPHERE.MIN_SCALE, Math.min(SOUND_SPHERE.MAX_SCALE, rawScale));
+      mesh.scale.setScalar(scale);
 
-      // Position and scale the corresponding label sprite
+      // Position and scale the corresponding label sprite (use same clamped ratio)
       const soundId = mesh.userData.soundEvent?.id as string;
       const label = soundId ? this.labelSprites.get(soundId) : null;
       if (label) {
-        const zOffset = distance * SOUND_SPHERE.SCREEN_SPACE_SIZE * OBJECT_LABEL.Z_OFFSET_FACTOR;
+        const clampRatio = scale / rawScale;
+        const zOffset = distance * SOUND_SPHERE.SCREEN_SPACE_SIZE * OBJECT_LABEL.Z_OFFSET_FACTOR * clampRatio;
         label.position.set(mesh.position.x, mesh.position.y, mesh.position.z + zOffset);
-        const h = distance * OBJECT_LABEL.SCREEN_SPACE_HEIGHT;
+        const h = distance * OBJECT_LABEL.SCREEN_SPACE_HEIGHT * clampRatio;
         label.scale.set(h * (label.userData.aspectRatio as number || 3), h, 1);
       }
     });

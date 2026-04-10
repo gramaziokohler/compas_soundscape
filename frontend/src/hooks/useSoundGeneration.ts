@@ -9,14 +9,33 @@ import {
   DEFAULT_AUDIO_MODEL,
   AUDIO_MODEL_ELEVENLABS,
   LIBRARY_MAX_SEARCH_RESULTS,
-  DUPLICATE_POSITION_OFFSET
+  DUPLICATE_POSITION_OFFSET,
+  DEFAULT_SPL_DB
 } from "@/utils/constants";
 import { loadAudioFile, revokeAudioUrl } from "@/lib/audio/utils/audio-upload";
 import { calculateSoundPosition, type GeometryBounds } from "@/utils/positioning";
 import { createSoundEventFromUpload } from "@/utils/event-factory";
 import { generateSoundEffect } from "@/services/elevenlabs.mts";
-import { trimDisplayName } from "@/utils/utils";
 import { useErrorNotification } from "@/contexts/ErrorContext";
+import { apiService } from "@/services/api";
+
+/**
+ * Fetch a blob from a URL (or pass through if already a Blob), POST it to the
+ * calibration endpoint, and return the static server URL of the calibrated WAV.
+ * This normalises RMS and applies SPL calibration identically to ML-generated audio.
+ */
+async function calibrateBlobUrl(
+  blobOrUrl: Blob | string,
+  splDb: number,
+  applyDenoising: boolean
+): Promise<string> {
+  const blob =
+    typeof blobOrUrl === 'string'
+      ? await fetch(blobOrUrl).then((r) => r.blob())
+      : blobOrUrl;
+  const { url } = await apiService.calibrateAudio(blob, splDb, applyDenoising);
+  return url;
+}
 
 export function useSoundGeneration(geometryBounds: {min: number[], max: number[]} | null) {
   const { addError } = useErrorNotification();
@@ -335,18 +354,26 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
         });
       }
 
-      // Create sound events for uploaded audio configs
+      // Create sound events for uploaded / sample-audio configs
+      // Calibrate each audio blob to normalize RMS and apply SPL calibration
       if (uploadedConfigsWithIndices.length > 0) {
-        uploadedEvents = uploadedConfigsWithIndices.map(({ config, originalIndex }) => {
-          return createSoundEventFromUpload(
-            config,
+        for (const { config, originalIndex } of uploadedConfigsWithIndices) {
+          const audioUrl = await calibrateBlobUrl(
             config.uploadedAudioUrl!,
-            originalIndex,
-            totalSoundsCount,
-            geometryBounds as GeometryBounds | undefined,
-            'uploaded'
+            config.spl_db ?? DEFAULT_SPL_DB,
+            applyDenoising
           );
-        });
+          uploadedEvents.push(
+            createSoundEventFromUpload(
+              config,
+              audioUrl,
+              originalIndex,
+              totalSoundsCount,
+              geometryBounds as GeometryBounds | undefined,
+              'uploaded'
+            )
+          );
+        }
       }
 
       // Handle library search mode - download and use selected sounds
@@ -375,9 +402,13 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
               throw new Error('Failed to download sound');
             }
 
-            // Get the audio file as blob
+            // Get the audio file as blob, calibrate, then use static URL
             const audioBlob = await downloadResponse.blob();
-            const audioUrl = URL.createObjectURL(audioBlob);
+            const audioUrl = await calibrateBlobUrl(
+              audioBlob,
+              config.spl_db ?? DEFAULT_SPL_DB,
+              applyDenoising
+            );
 
             // Create sound event using factory function
             const soundEvent = createSoundEventFromUpload(
@@ -416,8 +447,13 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
               throw new Error('Failed to download catalog sound');
             }
 
+            // Calibrate blob before creating event so it matches ML-generated audio
             const audioBlob = await downloadResponse.blob();
-            const audioUrl = URL.createObjectURL(audioBlob);
+            const audioUrl = await calibrateBlobUrl(
+              audioBlob,
+              config.spl_db ?? DEFAULT_SPL_DB,
+              applyDenoising
+            );
 
             const soundEvent = createSoundEventFromUpload(
               config,
@@ -444,10 +480,17 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
             console.log(`[Sound Generation] ElevenLabs generating: ${config.prompt}`);
 
             const duration = config.duration ?? DEFAULT_DURATION_SECONDS;
-            const audioUrl = await generateSoundEffect({
+            const rawAudioUrl = await generateSoundEffect({
               text: config.prompt,
               durationSeconds: duration >= 0.5 && duration <= 22 ? duration : undefined,
             });
+
+            // Calibrate the ElevenLabs blob URL to match ML-generated audio levels
+            const audioUrl = await calibrateBlobUrl(
+              rawAudioUrl,
+              config.spl_db ?? DEFAULT_SPL_DB,
+              applyDenoising
+            );
 
             const soundEvent = createSoundEventFromUpload(
               config,
@@ -469,9 +512,14 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
 
       // Merge newly generated sounds with existing ones.
       // Existing sounds keep their current positions (including dragged positions).
+      // New events take precedence over existing ones with the same ID (e.g. re-generated upload).
       const existingEvents = soundscapeData ? [...soundscapeData] : [];
       const newEvents = [...generatedEvents, ...uploadedEvents, ...libraryEvents, ...catalogEvents, ...elevenLabsEvents];
-      const allSoundEvents = [...existingEvents, ...newEvents];
+      const newEventIds = new Set(newEvents.map(e => e.id));
+      const allSoundEvents = [
+        ...existingEvents.filter(e => !newEventIds.has(e.id)),
+        ...newEvents,
+      ];
 
       setGeneratedSounds(allSoundEvents);
 
@@ -675,7 +723,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     updated[index] = {
       ...updated[index],
       selectedLibrarySound: sound,
-      display_name: updated[index].display_name || trimDisplayName(sound.description),
+      display_name: updated[index].display_name || sound.description,
       librarySearchState: updated[index].librarySearchState ? {
         ...updated[index].librarySearchState!,
         selectedSound: sound
@@ -694,7 +742,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
     updated[index] = {
       ...updated[index],
       selectedCatalogSound: sound,
-      display_name: updated[index].display_name || trimDisplayName(sound.name),
+      display_name: updated[index].display_name || sound.name,
     };
     setSoundConfigs(updated);
 
@@ -933,7 +981,15 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
    * @param position - The new position as [x, y, z]
    */
   const updateSoundPosition = useCallback((soundId: string, position: [number, number, number]) => {
-    console.log(`[useSoundGeneration] Updating sound position:`, { soundId, position });
+    // Skip no-op updates to avoid unnecessary React cascades
+    // (bounding box recalc, timeline update, etc.)
+    const existing = soundscapeData?.find(s => s.id === soundId);
+    if (existing?.position &&
+        existing.position[0] === position[0] &&
+        existing.position[1] === position[1] &&
+        existing.position[2] === position[2]) {
+      return;
+    }
 
     // Update soundscapeData
     setSoundscapeData(prev => {
@@ -949,7 +1005,7 @@ export function useSoundGeneration(geometryBounds: {min: number[], max: number[]
         sound.id === soundId ? { ...sound, position } : sound
       )
     );
-  }, []);
+  }, [soundscapeData]);
 
   /**
    * Update soundscapeData when display_name changes in soundConfigs

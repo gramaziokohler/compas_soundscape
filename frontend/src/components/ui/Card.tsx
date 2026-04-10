@@ -58,7 +58,15 @@ export function getCardDefaultName<TConfig extends CardBaseConfig>(
 
   // Use CARD_TYPE_LABELS as single source of truth
   const baseName = CARD_TYPE_LABELS[config.type] || 'Item';
-  return config.type === 'text' ? `${baseName} ${index + 1}` : baseName;
+  if (config.type === 'text') {
+    const textInput = (config as any).textInput as string | undefined;
+    return textInput?.trim() || `${baseName} ${index + 1}`;
+  }
+  if (config.type === 'upload' || config.type === 'sample-audio') {
+    const filename = (config as any).uploadedAudioInfo?.filename as string | undefined;
+    if (filename) return filename.replace(/\.[^/.]+$/, '');
+  }
+  return baseName;
 }
 
 // ============================================================================
@@ -206,7 +214,7 @@ export function Card<TConfig extends CardBaseConfig>({
             onDoubleClick={startEdit}
             onClick={handleToggleClick}
             className={`${titleClassName} min-w-0 overflow-hidden`}
-            title="Double-click to edit name"
+            title={displayName}
           >
             <div className="truncate">
               {displayName}

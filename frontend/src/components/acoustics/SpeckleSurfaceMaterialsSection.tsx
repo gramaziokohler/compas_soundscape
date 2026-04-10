@@ -301,9 +301,24 @@ export function SpeckleSurfaceMaterialsSection({
    * Update color visualization when material assignments change.
    * Only registers colors when filteringEnabled is true.
    * Uses context's registerMaterialColors to merge with diverse/linked colors.
+   *
+   * NOTE: clearMaterialColors() is only called when filteringEnabled just changed
+   * from true → false. When filteringEnabled is already false (e.g. during dark mode),
+   * card expand/collapse changes materialAssignments but must NOT trigger scene
+   * operations — doing so calls resetMaterials() which wipes dark mode draw ranges.
    */
+  const prevFilteringEnabledForColors = useRef(filteringEnabled);
   useEffect(() => {
-    if (!filteringEnabled || materialAssignments.size === 0) {
+    const wasEnabled = prevFilteringEnabledForColors.current;
+    prevFilteringEnabledForColors.current = filteringEnabled;
+
+    if (!filteringEnabled) {
+      // Only clear when filtering was just turned OFF (not on every render while off)
+      if (wasEnabled) clearMaterialColors();
+      return;
+    }
+
+    if (materialAssignments.size === 0) {
       clearMaterialColors();
       return;
     }

@@ -362,16 +362,19 @@ export class ReceiverManager {
       const distance = camera.position.distanceTo(mesh.position);
       if (distance < 0.01) return;
 
-      // Scale cube so world half-size = distance × SCREEN_SPACE_SIZE
-      mesh.scale.setScalar((distance * RECEIVER_CONFIG.SCREEN_SPACE_SIZE) / baseHalfSize);
+      // Scale cube so world half-size = distance × SCREEN_SPACE_SIZE, clamped to min/max
+      const rawScale = (distance * RECEIVER_CONFIG.SCREEN_SPACE_SIZE) / baseHalfSize;
+      const scale = Math.max(RECEIVER_CONFIG.MIN_SCALE, Math.min(RECEIVER_CONFIG.MAX_SCALE, rawScale));
+      mesh.scale.setScalar(scale);
 
-      // Position and scale label
+      // Position and scale label (use same clamped ratio)
       const id = mesh.userData.receiverId as string;
       const label = id ? this.labelSprites.get(id) : null;
       if (label) {
-        const zOffset = distance * RECEIVER_CONFIG.SCREEN_SPACE_SIZE * OBJECT_LABEL.Z_OFFSET_FACTOR;
+        const clampRatio = scale / rawScale;
+        const zOffset = distance * RECEIVER_CONFIG.SCREEN_SPACE_SIZE * OBJECT_LABEL.Z_OFFSET_FACTOR * clampRatio;
         label.position.set(mesh.position.x, mesh.position.y, mesh.position.z + zOffset);
-        const h = distance * OBJECT_LABEL.SCREEN_SPACE_HEIGHT;
+        const h = distance * OBJECT_LABEL.SCREEN_SPACE_HEIGHT * clampRatio;
         label.scale.set(h * (label.userData.aspectRatio as number || 3), h, 1);
       }
     });

@@ -23,6 +23,11 @@ export interface SelectedEntityInfo {
 }
 
 /**
+ * Viewer display mode (controls dark mode and layer-isolation/color filtering)
+ */
+export type ViewMode = 'acoustic' | 'default' | 'dark';
+
+/**
  * Color group for material assignment or other custom coloring
  */
 export interface ColorGroup {
@@ -85,6 +90,14 @@ interface SpeckleSelectionModeContextType {
   // These colors are merged with diverse/linked colors in applyFilterColors
   registerMaterialColors: (colors: ColorGroup[]) => void;
   clearMaterialColors: () => void;
+
+  // Layer isolation filter toggle (shared between SpeckleScene 3-state switch and AcousticsSection)
+  filteringEnabled: boolean;
+  setFilteringEnabled: (enabled: boolean) => void;
+
+  // Viewer display mode — shared so AcousticsSection can drive mode switches
+  viewMode: ViewMode;
+  setViewMode: (mode: ViewMode) => void;
 }
 
 const SpeckleSelectionModeContext = createContext<SpeckleSelectionModeContextType | null>(null);
@@ -119,6 +132,12 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
   // Currently selected entity for display in RightSidebar
   const [selectedEntity, setSelectedEntity] = useState<SelectedEntityInfo | null>(null);
 
+  // Layer isolation toggle (controlled by SpeckleScene 3-state switch)
+  const [filteringEnabled, setFilteringEnabled] = useState(false);
+
+  // Viewer display mode (shared with AcousticsSection for auto-switching)
+  const [viewMode, setViewMode] = useState<ViewMode>('default');
+
   // Viewer reference for FilteringExtension access
   const viewerRef = useRef<Viewer | null>(null);
 
@@ -131,6 +150,11 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
   // Material colors registered by SpeckleSurfaceMaterialsSection
   const materialColorsRef = useRef<ColorGroup[]>([]);
 
+  // Ref always tracks current viewMode — used to guard applyFilterColors during dark mode
+  // Written every render so the callback always sees the current mode without being in deps
+  const viewModeRef = useRef<ViewMode>('default');
+  viewModeRef.current = viewMode;
+
   const setViewer = useCallback((viewer: Viewer | null) => {
     viewerRef.current = viewer;
   }, []);
@@ -140,6 +164,8 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
   // Merges diverse/linked colors with registered material colors
   const applyFilterColors = useCallback(() => {
     if (!viewerRef.current) return;
+    // No scene operations during dark mode — IBL/material state is managed by SpeckleScene
+    if (viewModeRef.current === 'dark') return;
 
     const filteringExt = viewerRef.current.getExtension(FilteringExtension);
     if (!filteringExt) {
@@ -431,7 +457,11 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
     applyFilterColors,
     clearFilterColors,
     registerMaterialColors,
-    clearMaterialColors
+    clearMaterialColors,
+    filteringEnabled,
+    setFilteringEnabled,
+    viewMode,
+    setViewMode,
   }), [
     linkedObjectIds,
     diverseSelectedObjectIds,
@@ -448,7 +478,11 @@ export function SpeckleSelectionModeProvider({ children }: SpeckleSelectionModeP
     applyFilterColors,
     clearFilterColors,
     registerMaterialColors,
-    clearMaterialColors
+    clearMaterialColors,
+    filteringEnabled,
+    setFilteringEnabled,
+    viewMode,
+    setViewMode,
   ]);
 
   return (

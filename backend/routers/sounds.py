@@ -1,9 +1,11 @@
-from fastapi import APIRouter, HTTPException
+import os
+import uuid
+import tempfile
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from services.audio_service import AudioService
 from models.schemas import SoundGenerationRequest
-from config.constants import GENERATED_SOUNDS_DIR
-import os
+from config.constants import GENERATED_SOUNDS_DIR, GENERATED_SOUND_URL_PREFIX, DEFAULT_SPL_DB
 
 router = APIRouter()
 
@@ -51,6 +53,48 @@ async def cleanup_generated_sounds():
         return {"message": "Cleanup successful"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error during cleanup: {str(e)}")
+
+
+@router.post("/api/calibrate-audio")
+async def calibrate_audio(
+    audio: UploadFile = File(...),
+    spl_db: float = Form(DEFAULT_SPL_DB),
+    apply_denoising: bool = Form(False),
+):
+    """
+    Normalize RMS + apply SPL calibration to any uploaded audio file.
+    Used by Upload, Library, Catalog, Sample-audio, and ElevenLabs modes so that
+    all audio sources are treated consistently with ML-generated audio.
+    Returns a static URL to the calibrated WAV file.
+    """
+    tmp_input = None
+    try:
+        # Save the uploaded audio to a temp file
+        ext = os.path.splitext(audio.filename or "audio.wav")[1] or ".wav"
+        tmp_input = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
+        tmp_input.write(await audio.read())
+        tmp_input.close()
+
+        # Build output path inside the generated sounds directory
+        filename = f"calibrated_{uuid.uuid4().hex}_{int(spl_db)}dB.wav"
+        output_path = os.path.join(GENERATED_SOUNDS_DIR, filename)
+        os.makedirs(GENERATED_SOUNDS_DIR, exist_ok=True)
+
+        audio_service.calibrate_audio_file(
+            tmp_input.name,
+            output_path,
+            target_spl_db=spl_db,
+            apply_denoising=apply_denoising,
+        )
+
+        return {"url": f"{GENERATED_SOUND_URL_PREFIX}/{filename}"}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Calibration failed: {str(e)}")
+
+    finally:
+        if tmp_input and os.path.exists(tmp_input.name):
+            os.unlink(tmp_input.name)
 
 
 @router.get("/api/sample-audio")

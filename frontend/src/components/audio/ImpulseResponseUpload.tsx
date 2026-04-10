@@ -4,14 +4,16 @@ import { useState, useEffect, useRef } from "react";
 import { AudioWaveformDisplay } from "@/components/audio/AudioWaveformDisplay";
 import { apiService } from "@/services/api";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
-import type { ImpulseResponseMetadata } from "@/types/audio";
-import { API_BASE_URL } from "@/utils/constants";
+import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from "@/types/audio";
+import { API_BASE_URL, IR_HOVER_LINE, IR_LOW_ENERGY_THRESHOLD } from "@/utils/constants";
 
 interface ImpulseResponseUploadProps {
   onClearIR: () => void;
   simulationResults?: string | null;
   refreshTrigger?: number;
   simulationIRIds?: string[]; // If provided, only show IRs with these IDs in the library
+  sourceReceiverIRMapping?: SourceReceiverIRMapping;
+  onIRHover?: (sourceId: string | null, receiverId: string | null) => void;
 }
 
 /**
@@ -32,7 +34,9 @@ export function ImpulseResponseUpload({
   onClearIR,
   simulationResults = null,
   refreshTrigger = 0,
-  simulationIRIds = undefined
+  simulationIRIds = undefined,
+  sourceReceiverIRMapping,
+  onIRHover
 }: ImpulseResponseUploadProps) {
   const handleError = useApiErrorHandler();
   const [impulseResponses, setImpulseResponses] = useState<ImpulseResponseMetadata[]>([]);
@@ -43,12 +47,27 @@ export function ImpulseResponseUpload({
 
   // Buffer cache: Map from IR ID to AudioBuffer (for waveform display on hover)
   const [bufferCache, setBufferCache] = useState<Map<string, AudioBuffer>>(new Map());
+  // Set of IR IDs flagged as low energy
+  const [lowEnergyIRIds, setLowEnergyIRIds] = useState<Set<string>>(new Set());
 
   // File upload state for drag-and-drop area
   const [isDragging, setIsDragging] = useState(false);
 
   // Hidden file input ref for IR Library Upload button
   const irLibraryFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Reverse-lookup: find sourceId and receiverId for a given IR id from the mapping
+  const findSourceReceiverForIR = (irId: string): { sourceId: string; receiverId: string } | null => {
+    if (!sourceReceiverIRMapping) return null;
+    for (const sourceId of Object.keys(sourceReceiverIRMapping)) {
+      for (const receiverId of Object.keys(sourceReceiverIRMapping[sourceId])) {
+        if (sourceReceiverIRMapping[sourceId][receiverId].id === irId) {
+          return { sourceId, receiverId };
+        }
+      }
+    }
+    return null;
+  };
 
   // Hover state for waveform overlay
   const [hoveredIRId, setHoveredIRId] = useState<string | null>(null);
@@ -61,6 +80,15 @@ export function ImpulseResponseUpload({
   useEffect(() => {
     loadImpulseResponses();
   }, [refreshTrigger]);
+
+  // Pre-load IR buffers to detect low-energy IRs
+  useEffect(() => {
+    for (const ir of impulseResponses) {
+      if (!bufferCache.has(ir.id)) {
+        loadIRBuffer(ir);
+      }
+    }
+  }, [impulseResponses]);
 
   const loadImpulseResponses = async () => {
     setIsLoading(true);
@@ -104,6 +132,22 @@ export function ImpulseResponseUpload({
       const arrayBuffer = await audioBlob.arrayBuffer();
       const audioContext = new AudioContext();
       const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+      // Check for low energy: average of per-channel peak amplitudes
+      let peakSum = 0;
+      for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+        const data = audioBuffer.getChannelData(ch);
+        let chPeak = 0;
+        for (let i = 0; i < data.length; i++) {
+          const abs = Math.abs(data[i]);
+          if (abs > chPeak) chPeak = abs;
+        }
+        peakSum += chPeak;
+      }
+      const avgPeak = peakSum / audioBuffer.numberOfChannels;
+      if (avgPeak < IR_LOW_ENERGY_THRESHOLD) {
+        setLowEnergyIRIds(prev => new Set(prev).add(ir.id));
+      }
 
       // Cache the buffer
       setBufferCache(prev => {
@@ -264,14 +308,17 @@ export function ImpulseResponseUpload({
           ) : (
             impulseResponses.map((ir) => {
               const badge = getFormatBadge(ir.format);
+              const isLowEnergy = lowEnergyIRIds.has(ir.id);
 
               return (
                 <div
                   key={ir.id}
                   className={`p-3 rounded-lg transition-colors relative border ${
-                    simulationResults 
-                      ? 'border-neutral-700 hover:border-neutral-600' 
-                      : 'border-neutral-200 dark:border-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-600'
+                    isLowEnergy
+                      ? 'border-red-500'
+                      : simulationResults 
+                        ? 'border-neutral-700 hover:border-neutral-600' 
+                        : 'border-neutral-200 dark:border-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-600'
                   }`}
                   onMouseEnter={async (e) => {
                     // Cancel any pending hide timeout
@@ -281,6 +328,14 @@ export function ImpulseResponseUpload({
                     }
 
                     setHoveredIRId(ir.id);
+
+                    // Emit hover event for source-receiver line visualization
+                    if (IR_HOVER_LINE.ENABLED && onIRHover) {
+                      const pair = findSourceReceiverForIR(ir.id);
+                      if (pair) {
+                        onIRHover(pair.sourceId, pair.receiverId);
+                      }
+                    }
 
                     // Calculate position for fixed overlay - to the right and centered
                     const rect = e.currentTarget.getBoundingClientRect();
@@ -301,6 +356,9 @@ export function ImpulseResponseUpload({
                         setHoveredIRId(null);
                         setHoveredIRBuffer(null);
                         setOverlayPosition(null);
+                        if (IR_HOVER_LINE.ENABLED && onIRHover) {
+                          onIRHover(null, null);
+                        }
                       }
                       hideTimeoutRef.current = null;
                     }, 100);
@@ -312,11 +370,16 @@ export function ImpulseResponseUpload({
                         {ir.name}
                       </div>
 
-                      <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        <span className={`text-xs px-2 py-0.5 rounded ${badge.color}`}>
+                      <div className="flex items-center gap-2 mt-1 whitespace-nowrap">
+                        <span className={`text-xs px-2 py-0.5 rounded flex-shrink-0 ${badge.color}`}>
                           {badge.label}
                         </span>
-                        <span className={`text-xs ${simulationResults ? 'text-neutral-400' : 'text-neutral-600 dark:text-neutral-400'}`}>
+                        {isLowEnergy && (
+                          <span className="text-xs font-medium text-red-500 flex-shrink-0">
+                            Low energy
+                          </span>
+                        )}
+                        <span className={`text-xs flex-shrink-0 ${simulationResults ? 'text-neutral-400' : 'text-neutral-600 dark:text-neutral-400'}`}>
                           Length={ir.duration.toFixed(2)}s
                         </span>
                       </div>
@@ -358,6 +421,9 @@ export function ImpulseResponseUpload({
             setHoveredIRId(null);
             setHoveredIRBuffer(null);
             setOverlayPosition(null);
+            if (IR_HOVER_LINE.ENABLED && onIRHover) {
+              onIRHover(null, null);
+            }
           }}
         >
           <AudioWaveformDisplay
