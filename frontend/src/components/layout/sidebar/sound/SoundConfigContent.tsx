@@ -92,6 +92,7 @@ export function SoundConfigContent({
         <CatalogMode
           config={config}
           index={index}
+          onUpdateConfig={onUpdateConfig}
           onCatalogSoundSelect={onCatalogSoundSelect}
         />
       )}

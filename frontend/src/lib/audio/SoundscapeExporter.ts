@@ -58,6 +58,15 @@ export interface SoundscapeExportConfig {
   /** Per-source processed IR buffers (simulation / pyroomacoustics mode) */
   perSourceIRBuffers?: Map<string, AudioBuffer>;
 
+  /**
+   * Original channel count of the IR before any mono/stereo→FOA conversion.
+   * Used to decide whether to export raw ambisonic channels or binaural stereo.
+   */
+  originalIRChannelCount?: number;
+
+  /** Active simulation card display name (included in exported filename when set) */
+  simulationName?: string | null;
+
   /** Linear gain per sound (0–10). Defaults to 1.0 if not present. */
   soundGains: Map<string, number>;
 
@@ -109,12 +118,18 @@ export async function exportSoundscapeToWav(
   const totalSamples = Math.ceil(durationSecsVal * sampleRate);
   const numAmbiChannels = (ambisonicOrder + 1) ** 2; // 4 for FOA, 9 for SOA, 16 for TOA
 
-  // Determine if we export raw ambisonic channels (bypass binaural decoder)
-  const irChannels = config.irBuffer?.numberOfChannels ?? 0;
+  // Determine if we export raw ambisonic channels (bypass binaural decoder).
+  //
+  // `originalIRChannelCount` is the channel count *before* AmbisonicIRMode's
+  // internal mono/stereo→FOA conversion, so it correctly distinguishes:
+  //   - Genuine FOA/SOA/TOA IRs (4/9/16 ch) → useRawAmbisonic = true
+  //   - Mono or stereo IRs upconverted to FOA → useRawAmbisonic = false
+  // In simulation mode irBuffer is null; originalIRChannelCount covers that case.
+  const effectiveIRChannels = config.originalIRChannelCount ?? config.irBuffer?.numberOfChannels ?? 0;
   const useRawAmbisonic =
     EXPORT_RAW_AMBISONIC &&
     mode === AudioMode.AMBISONIC_IR &&
-    irChannels > 2;
+    effectiveIRChannels > 2;
 
   // Channel count: raw ambisonic → N channels, otherwise stereo
   const outputChannels = useRawAmbisonic ? numAmbiChannels : 2;
@@ -173,7 +188,10 @@ export async function exportSoundscapeToWav(
   const durationLabel = Math.round(durationSecsVal);
   const modeLabel = getModeLabel(mode);
   const channelSuffix = useRawAmbisonic ? `_${numAmbiChannels}ch` : '';
-  downloadBlob(wavBlob, `soundscape_${modeLabel}${channelSuffix}_${durationLabel}s.wav`);
+  const simSuffix = config.simulationName
+    ? `_${config.simulationName.replace(/[^a-zA-Z0-9_\-]/g, '_')}`
+    : '';
+  downloadBlob(wavBlob, `soundscape_${modeLabel}${channelSuffix}${simSuffix}_${durationLabel}s.wav`);
 
   onProgress?.(1.0);
 }

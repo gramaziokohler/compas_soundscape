@@ -10,6 +10,7 @@
 
 'use client';
 
+import { useEffect } from 'react';
 import { SpeckleSurfaceMaterialsSection } from '@/components/acoustics/SpeckleSurfaceMaterialsSection';
 import { ChorasSimulationSettings } from './ChorasSimulationSettings';
 import { PyroomAcousticsSimulationSettings } from './PyroomAcousticsSimulationSettings';
@@ -25,6 +26,8 @@ interface SimulationSetupContentProps {
   availableMaterials: AcousticMaterial[];
   /** When true, layer isolation filtering is active in the Speckle viewer */
   filteringEnabled?: boolean;
+  /** When true, UI controls are disabled (read-only mode for completed simulations) */
+  isReadOnly?: boolean;
   onMaterialAssignmentsChange: (assignments: Record<string, string>, layerName: string | null, geometryObjectIds: string[], scatteringAssignments: Record<string, number>) => void;
   onUpdateConfig: (updates: Partial<SimulationConfig>) => void;
 }
@@ -39,6 +42,7 @@ export function SimulationSetupContent({
   worldTree,
   availableMaterials,
   filteringEnabled = true,
+  isReadOnly = false,
   onMaterialAssignmentsChange,
   onUpdateConfig
 }: SimulationSetupContentProps) {
@@ -46,6 +50,19 @@ export function SimulationSetupContent({
   const initialAssignments = (config as any).speckleMaterialAssignments as Record<string, string> | undefined;
   const initialLayerName = (config as any).speckleLayerName as string | null | undefined;
   const initialScatteringAssignments = (config as any).speckleScatteringAssignments as Record<string, number> | undefined;
+
+  // DEBUG: log what we receive on mount and when config changes
+  useEffect(() => {
+    console.log(`[SimulationSetupContent #${index}] MOUNT — config.state=${config.state} isReadOnly=${isReadOnly}`);
+    console.log(`[SimulationSetupContent #${index}] initialAssignments:`, initialAssignments ? Object.keys(initialAssignments).length + ' entries' : 'undefined', initialAssignments);
+    console.log(`[SimulationSetupContent #${index}] initialLayerName:`, initialLayerName);
+    console.log(`[SimulationSetupContent #${index}] worldTree:`, worldTree ? 'present' : 'null/undefined');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    console.log(`[SimulationSetupContent #${index}] worldTree changed:`, worldTree ? 'present' : 'null/undefined');
+  }, [index, worldTree]);
 
   return (
     <div className="space-y-4">
@@ -55,6 +72,7 @@ export function SimulationSetupContent({
         worldTree={worldTree}
         availableMaterials={availableMaterials}
         filteringEnabled={filteringEnabled}
+        isReadOnly={isReadOnly}
         onMaterialAssignmentsChange={onMaterialAssignmentsChange}
         initialAssignments={initialAssignments}
         initialLayerName={initialLayerName}

@@ -229,7 +229,7 @@ export class SpeckleAudioCoordinator {
     const currentLength = soundscapeData?.length || 0;
     this.prevSoundscapeDataLength = currentLength;
     this.scaleForSounds = scaleForSounds;
-    this.soundSphereManager.updateSoundSpheres(
+    const newlyPlacedPositions = this.soundSphereManager.updateSoundSpheres(
       soundscapeData,
       selectedVariants,
       scaleForSounds,
@@ -237,6 +237,14 @@ export class SpeckleAudioCoordinator {
       // bounds, // Bounding-box placement removed
       cameraFrontPosition
     );
+
+    // Sync newly placed positions (from spiral placement) back to React state
+    // so the serializer saves the correct position instead of [0,0,0].
+    if (newlyPlacedPositions.size > 0 && this.onSoundPositionUpdatedCallback) {
+      for (const [soundId, pos] of newlyPlacedPositions) {
+        this.onSoundPositionUpdatedCallback(soundId, pos);
+      }
+    }
 
     try {
       this.viewer.requestRender();
@@ -246,6 +254,14 @@ export class SpeckleAudioCoordinator {
       setTimeout(() => {
         this.viewer.requestRender();
       }, 50);
+      // Longer delays for when spheres are created right after model load —
+      // the Speckle viewer may still be settling its rendering pipeline.
+      setTimeout(() => {
+        this.viewer.requestRender();
+      }, 500);
+      setTimeout(() => {
+        this.viewer.requestRender();
+      }, 1500);
     } catch (error) {
       // Silently handle render request errors
     }

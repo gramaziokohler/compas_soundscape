@@ -15,17 +15,26 @@ export function createLabelSprite(text: string): THREE.Sprite {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d')!;
 
+  // Render at device pixel ratio so the texture stays crisp at any scale.
+  // Cap at 3× to avoid unnecessarily large textures on very high-DPI screens.
+  const dpr = Math.min(typeof window !== 'undefined' ? (window.devicePixelRatio || 2) : 2, 3);
+
   const font = `bold ${OBJECT_LABEL.FONT_SIZE}px sans-serif`;
   ctx.font = font;
   const textWidth = ctx.measureText(text).width;
 
   const padH = OBJECT_LABEL.PADDING_H;
   const padV = OBJECT_LABEL.PADDING_V;
-  const canvasW = Math.ceil(textWidth + padH * 2);
-  const canvasH = Math.ceil(OBJECT_LABEL.FONT_SIZE + padV * 2);
+  // Logical (CSS) dimensions
+  const logicalW = Math.ceil(textWidth + padH * 2);
+  const logicalH = Math.ceil(OBJECT_LABEL.FONT_SIZE + padV * 2);
 
-  canvas.width = canvasW;
-  canvas.height = canvasH;
+  // Physical canvas dimensions — scaled up for crisp texture
+  canvas.width = Math.ceil(logicalW * dpr);
+  canvas.height = Math.ceil(logicalH * dpr);
+
+  // Scale context so all drawing commands use logical coordinates
+  ctx.scale(dpr, dpr);
 
   // Re-set font after canvas resize (resize clears the context state)
   ctx.font = font;
@@ -33,14 +42,14 @@ export function createLabelSprite(text: string): THREE.Sprite {
   // Background pill
   ctx.fillStyle = OBJECT_LABEL.BG_COLOR;
   ctx.beginPath();
-  ctx.roundRect(0, 0, canvasW, canvasH, OBJECT_LABEL.BORDER_RADIUS);
+  ctx.roundRect(0, 0, logicalW, logicalH, OBJECT_LABEL.BORDER_RADIUS);
   ctx.fill();
 
   // Label text
   ctx.fillStyle = OBJECT_LABEL.TEXT_COLOR;
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'center';
-  ctx.fillText(text, canvasW / 2, canvasH / 2);
+  ctx.fillText(text, logicalW / 2, logicalH / 2);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.minFilter = THREE.LinearFilter;
@@ -57,7 +66,9 @@ export function createLabelSprite(text: string): THREE.Sprite {
   sprite.renderOrder = OBJECT_LABEL.RENDER_ORDER;
   sprite.layers.enable(0);
   sprite.layers.enable(4); // OVERLAY layer for custom objects
-  sprite.userData.aspectRatio = canvasW / canvasH;
+  // Aspect ratio is computed from logical dimensions so the world-space scale
+  // calculation in updateScreenSpaceScale() remains correct.
+  sprite.userData.aspectRatio = logicalW / logicalH;
   sprite.userData.labelText = text;
   sprite.userData.isLabel = true;
 

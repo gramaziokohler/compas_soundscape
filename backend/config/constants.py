@@ -164,6 +164,10 @@ PYROOMACOUSTICS_IR_TRIM_THRESHOLD = 0.01  # Fraction of peak amplitude below whi
 PYROOMACOUSTICS_MAX_ORDER_MIN = 0  # Direct path only
 PYROOMACOUSTICS_MAX_ORDER_MAX = 20
 
+# Unit Scale Validation (source-to-receiver distance sanity check)
+PYROOMACOUSTICS_UNIT_CHECK_MIN_DISTANCE_M = 0.05   # Below this → model likely in millimeters
+PYROOMACOUSTICS_UNIT_CHECK_MAX_DISTANCE_M = 100.0  # Above this → model likely not in meters
+
 # RIR Export
 PYROOMACOUSTICS_RIR_DIR = str(BACKEND_DIR / "temp" / "static" / "pyroomacoustics_rir")
 PYROOMACOUSTICS_RIR_URL_PREFIX = "/static/pyroomacoustics_rir"

@@ -10,6 +10,7 @@ import { Card } from "@/components/ui/Card";
 import { SoundConfigContent, SoundResultContent } from "./sound";
 import { CardTypeSwitcher } from "./sound/CardTypeSwitcher";
 import { apiService } from "@/services/api";
+import { useAudioControlsStore } from "@/store";
 
 /**
  * SoundGenerationSection Component
@@ -68,26 +69,28 @@ export function SoundGenerationSection({
   isLinkingEntity = false,
   linkingConfigIndex = null,
   useSpeckleViewer = false,
-  individualSoundStates = {},
-  onToggleSound,
-  onVolumeChange,
-  onIntervalChange,
-  onMute,
-  onSolo,
-  onVariantChange,
-  mutedSounds = new Set(),
-  soloedSound = null,
   onResetSound,
   onSelectSoundCard,
   selectedCardIndex = null,
-  soundVolumes = {},
-  soundIntervals = {},
-  selectedVariants = {},
-  previewingSoundId = null,
   onDuplicateConfig,
-  onPreviewPlayPause,
-  onPreviewStop,
 }: SoundGenerationSectionProps) {
+  // ── Audio controls from store ──
+  const individualSoundStates = useAudioControlsStore((s) => s.individualSoundStates);
+  const onToggleSound        = useAudioControlsStore((s) => s.toggleSound);
+  const onVolumeChange       = useAudioControlsStore((s) => s.handleVolumeChange);
+  const onIntervalChange     = useAudioControlsStore((s) => s.handleIntervalChange);
+  const onMute               = useAudioControlsStore((s) => s.handleMute);
+  const onSolo               = useAudioControlsStore((s) => s.handleSolo);
+  const onVariantChange      = useAudioControlsStore((s) => s.handleVariantChange);
+  const mutedSounds          = useAudioControlsStore((s) => s.mutedSounds);
+  const soloedSound          = useAudioControlsStore((s) => s.soloedSound);
+  const soundVolumes         = useAudioControlsStore((s) => s.soundVolumes);
+  const soundIntervals       = useAudioControlsStore((s) => s.soundIntervals);
+  const selectedVariants     = useAudioControlsStore((s) => s.selectedVariants);
+  const previewingSoundId    = useAudioControlsStore((s) => s.previewingSoundId);
+  const onPreviewPlayPause   = useAudioControlsStore((s) => s.handlePreviewPlayPause);
+  const onPreviewStop        = useAudioControlsStore((s) => s.handlePreviewStop);
+
   // Track expanded index for controlled mode (CardSection)
   const [expandedIndex, setExpandedIndex] = useState<number | null>(
     soundConfigs.length > 0 ? 0 : null

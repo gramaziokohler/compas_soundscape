@@ -75,6 +75,9 @@ export class SoundSphereManager {
   // Label sprites — one per non-entity sound sphere, keyed by sound ID
   private labelSprites: Map<string, THREE.Sprite> = new Map();
 
+  // Label sprites for entity-linked sounds (no mesh), keyed by sound ID
+  private entityLabelSprites: Map<string, THREE.Sprite> = new Map();
+
   constructor(
     scene: THREE.Scene,
     listener: THREE.AudioListener,
@@ -140,7 +143,7 @@ export class SoundSphereManager {
     auralizationConfig: AuralizationConfig,
     // bounds?: BoundingBoxBounds | null, // Bounding-box placement removed — camera-based only
     cameraFrontPosition?: THREE.Vector3 | null
-  ): void {
+  ): Map<string, [number, number, number]> {
     // Store scale for mesh factory
     this.scaleForSounds = scaleForSounds;
 
@@ -149,7 +152,7 @@ export class SoundSphereManager {
       this.removeAllAudioSources();
       this.removeAllSoundMeshes();
       this.entityLinkedIds.clear();
-      return;
+      return new Map();
     }
 
     // Compute visible sounds BEFORE any teardown to check if recreation is needed
@@ -194,15 +197,21 @@ export class SoundSphereManager {
         const mesh = this.soundMeshes.find(m => m.userData.soundEvent?.id === soundEvent.id);
         if (mesh) mesh.userData.soundEvent = soundEvent;
 
-        // For entity-linked sounds, update the position in case the sound was re-linked
-        // to a different Speckle object while the sound ID stayed the same.
-        if (soundEvent.entity_index !== undefined && soundEvent.position) {
+        // Sync position for ALL sounds in case an undo/redo changed stored positions.
+        // For entity-linked sounds: update if entity position changed.
+        // For draggable mesh sounds: update if the stored position in soundscapeData differs
+        //   from the manager's spherePositions (e.g., after undo of a drag).
+        if (soundEvent.position) {
           const newPos = soundEvent.position as [number, number, number];
           const oldPos = this.spherePositions.get(soundEvent.id);
           const posChanged = !oldPos ||
             oldPos[0] !== newPos[0] || oldPos[1] !== newPos[1] || oldPos[2] !== newPos[2];
           if (posChanged) {
             this.spherePositions.set(soundEvent.id, newPos);
+            // Update 3D mesh position so the viewer reflects undo/redo
+            if (mesh) {
+              mesh.position.set(newPos[0], newPos[1], newPos[2]);
+            }
             if (this.audioOrchestrator) {
               this.audioOrchestrator.updateSourcePosition(
                 soundEvent.id,
@@ -213,7 +222,8 @@ export class SoundSphereManager {
         }
       });
       this.syncLabelSprites(this.soundMeshes);
-      return;
+      this.syncEntityLabelSprites(visibleSounds.filter(s => s.entity_index !== undefined));
+      return new Map();
     }
 
     this.entityLinkedIds = newEntityLinkedIds;
@@ -279,6 +289,8 @@ export class SoundSphereManager {
     // }
 
     // Prepare mesh data with resolved positions (priority: stored > spiral > event position)
+    // Track newly placed positions so the caller can sync them back to React state
+    const newlyPlacedPositions: Map<string, [number, number, number]> = new Map();
     const meshSoundData: SoundMeshData[] = meshSounds.map(soundEvent => {
       const promptIdx = (soundEvent as any).prompt_index ?? 0;
       const promptKey = `prompt_${promptIdx}`;
@@ -292,9 +304,10 @@ export class SoundSphereManager {
       } else {
         const spiralPosition = spiralPositionMap.get(soundEvent.id);
         if (spiralPosition) {
-          // Use spiral position from bounding box placement (only for new sounds)
+          // Use spiral position from camera-front placement (only for new sounds)
           position = spiralPosition;
           this.spherePositions.set(soundEvent.id, position);
+          newlyPlacedPositions.set(soundEvent.id, position);
         } else {
           // Use event position (from backend or default)
           position = soundEvent.position as [number, number, number];
@@ -323,15 +336,18 @@ export class SoundSphereManager {
     // Force group matrix update after mesh changes
     this.soundSpheresGroup.updateMatrixWorld(true);
 
-    // Handle entity-linked sounds: store positions (no mesh)
+    // Handle entity-linked sounds: store positions (no mesh) and sync labels
     entitySounds.forEach(soundEvent => {
       // ALWAYS use soundEvent.position for entity-linked sounds — it contains
       // the entity's bounding box center (set by useSoundGeneration.linkSoundToEntity)
       this.spherePositions.set(soundEvent.id, soundEvent.position as [number, number, number]);
     });
+    this.syncEntityLabelSprites(entitySounds);
 
     // Sync audio sources: create new, remove stale
     this.syncAudioSources(visibleSounds);
+
+    return newlyPlacedPositions;
   }
 
   /**
@@ -443,7 +459,7 @@ export class SoundSphereManager {
     this.soundMetadata.clear();
   }
 
-  /** Remove all sound sphere meshes and their label sprites */
+  /** Remove all sound sphere meshes and their label sprites (including entity labels) */
   private removeAllSoundMeshes(): void {
     disposeMeshes(this.soundSpheresGroup, this.soundMeshes);
     this.soundMeshes = [];
@@ -453,6 +469,11 @@ export class SoundSphereManager {
       disposeLabelSprite(sprite);
     });
     this.labelSprites.clear();
+    this.entityLabelSprites.forEach((sprite) => {
+      this.soundSpheresGroup.remove(sprite);
+      disposeLabelSprite(sprite);
+    });
+    this.entityLabelSprites.clear();
   }
 
   /**
@@ -647,6 +668,66 @@ export class SoundSphereManager {
   }
 
   /**
+   * Sync label sprites for entity-linked sounds (which have no sphere mesh).
+   * Groups sounds by entity_index so co-located labels can be spread side-by-side
+   * in updateScreenSpaceScale. Each sprite gets userData.entitySlot (0-based index
+   * within the group) and userData.entityGroupSize so the per-frame update can
+   * compute the correct horizontal offset.
+   */
+  private syncEntityLabelSprites(entitySounds: SoundEvent[]): void {
+    const currentIds = new Set(entitySounds.map(s => s.id));
+
+    // Remove labels whose entity sound is no longer visible
+    for (const [id, sprite] of this.entityLabelSprites) {
+      if (!currentIds.has(id)) {
+        this.soundSpheresGroup.remove(sprite);
+        disposeLabelSprite(sprite);
+        this.entityLabelSprites.delete(id);
+      }
+    }
+
+    // Group sounds by entity_index to assign per-entity slot indices
+    const entityGroups = new Map<number, SoundEvent[]>();
+    for (const s of entitySounds) {
+      const idx = s.entity_index!;
+      if (!entityGroups.has(idx)) entityGroups.set(idx, []);
+      entityGroups.get(idx)!.push(s);
+    }
+
+    // Create (or recreate on text/slot/group-size change) labels
+    for (const sounds of entityGroups.values()) {
+      const groupSize = sounds.length;
+      sounds.forEach((soundEvent, slotIdx) => {
+        const text = trimDisplayName(soundEvent.display_name) || soundEvent.id;
+        const existing = this.entityLabelSprites.get(soundEvent.id);
+
+        // Recreate when text, slot index, or group size has changed
+        const needsRebuild = existing && (
+          existing.userData.labelText !== text ||
+          existing.userData.entitySlot !== slotIdx ||
+          existing.userData.entityGroupSize !== groupSize
+        );
+
+        if (existing && !needsRebuild) return; // up-to-date
+
+        if (existing) {
+          this.soundSpheresGroup.remove(existing);
+          disposeLabelSprite(existing);
+          this.entityLabelSprites.delete(soundEvent.id);
+        }
+
+        const pos = this.spherePositions.get(soundEvent.id) ?? soundEvent.position as [number, number, number];
+        const sprite = createLabelSprite(text);
+        sprite.position.set(pos[0], pos[1], pos[2]);
+        sprite.userData.entitySlot = slotIdx;
+        sprite.userData.entityGroupSize = groupSize;
+        this.soundSpheresGroup.add(sprite);
+        this.entityLabelSprites.set(soundEvent.id, sprite);
+      });
+    }
+  }
+
+  /**
    * Update mesh scales and label positions every frame so objects appear
    * at a constant screen size regardless of camera distance (zoom).
    *
@@ -675,6 +756,42 @@ export class SoundSphereManager {
         label.scale.set(h * (label.userData.aspectRatio as number || 3), h, 1);
       }
     });
+
+    // Update entity-linked label sprites (no mesh — use stored position + group offset)
+    // Camera up vector is computed once and reused to stack co-located labels
+    // vertically in screen space regardless of camera orientation.
+    const cameraUp = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+
+    for (const [soundId, label] of this.entityLabelSprites) {
+      const pos = this.spherePositions.get(soundId);
+      if (!pos) continue;
+
+      const worldPos = new THREE.Vector3(pos[0], pos[1], pos[2]);
+      const distance = camera.position.distanceTo(worldPos);
+      if (distance < 0.01) continue;
+
+      // Mirror the same MIN/MAX clamp used for sphere meshes so entity labels
+      // maintain the same minimum apparent size when zoomed in close.
+      const rawScale = (distance * SOUND_SPHERE.SCREEN_SPACE_SIZE) / baseRadius;
+      const clampedScale = Math.max(SOUND_SPHERE.MIN_SCALE, Math.min(SOUND_SPHERE.MAX_SCALE, rawScale));
+      const clampRatio = clampedScale / rawScale;
+
+      const h = distance * OBJECT_LABEL.SCREEN_SPACE_HEIGHT * clampRatio;
+      const labelWidth = h * (label.userData.aspectRatio as number || 3);
+
+      // Vertical offset so grouped labels stack above the anchor without overlapping.
+      // slot i of n: centered so the group as a whole is over the anchor.
+      const slot: number = label.userData.entitySlot ?? 0;
+      const groupSize: number = label.userData.entityGroupSize ?? 1;
+      const spacing = h * 1.2; // 20% gap between adjacent labels
+      const groupOffset = (slot - (groupSize - 1) / 2) * spacing;
+
+      const zOffset = distance * SOUND_SPHERE.SCREEN_SPACE_SIZE * OBJECT_LABEL.Z_OFFSET_FACTOR * clampRatio;
+      const labelPos = worldPos.clone().addScaledVector(cameraUp, groupOffset);
+      labelPos.z += zOffset;
+      label.position.copy(labelPos);
+      label.scale.set(labelWidth, h, 1);
+    }
   }
 
   /**
@@ -848,12 +965,17 @@ export class SoundSphereManager {
     this.soundMeshes = [];
     this.draggableObjects = [];
 
-    // Dispose all label sprites
+    // Dispose all label sprites (sphere-linked and entity-linked)
     this.labelSprites.forEach((sprite) => {
       this.soundSpheresGroup.remove(sprite);
       disposeLabelSprite(sprite);
     });
     this.labelSprites.clear();
+    this.entityLabelSprites.forEach((sprite) => {
+      this.soundSpheresGroup.remove(sprite);
+      disposeLabelSprite(sprite);
+    });
+    this.entityLabelSprites.clear();
 
     // Remove sound spheres group from scene
     this.scene.remove(this.soundSpheresGroup);

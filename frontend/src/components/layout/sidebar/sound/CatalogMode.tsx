@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import type { SoundGenerationConfig, CatalogSoundSelection } from '@/types';
 import { useCatalogBrowse } from '@/hooks/useCatalogBrowse';
 
@@ -16,10 +16,11 @@ import { useCatalogBrowse } from '@/hooks/useCatalogBrowse';
 export interface CatalogModeProps {
   config: SoundGenerationConfig;
   index: number;
+  onUpdateConfig: (index: number, field: keyof SoundGenerationConfig, value: any) => void;
   onCatalogSoundSelect?: (index: number, sound: CatalogSoundSelection) => void;
 }
 
-export function CatalogMode({ config, index, onCatalogSoundSelect }: CatalogModeProps) {
+export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelect }: CatalogModeProps) {
   const {
     categories,
     selectedCategory,
@@ -31,6 +32,27 @@ export function CatalogMode({ config, index, onCatalogSoundSelect }: CatalogMode
   } = useCatalogBrowse();
 
   const selectedSound = config.selectedCatalogSound;
+
+  // Restore selected category from the store config (so undo works)
+  useEffect(() => {
+    if (config.catalogSelectedCategory && !selectedCategory) {
+      selectCategory(config.catalogSelectedCategory);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.catalogSelectedCategory?.id]);
+
+  const handleSelectCategory = useCallback(
+    (cat: { id: string; name: string }) => {
+      selectCategory(cat);
+      onUpdateConfig(index, 'catalogSelectedCategory', cat);
+    },
+    [index, selectCategory, onUpdateConfig],
+  );
+
+  const handleGoBack = useCallback(() => {
+    goBack();
+    onUpdateConfig(index, 'catalogSelectedCategory', undefined);
+  }, [index, goBack, onUpdateConfig]);
 
   const handleSoundClick = useCallback(
     (sound: { name: string; url: string }) => {
@@ -50,7 +72,7 @@ export function CatalogMode({ config, index, onCatalogSoundSelect }: CatalogMode
       {/* Breadcrumb navigation */}
       <div className="flex items-center gap-1 text-[10px] text-secondary-hover">
         <button
-          onClick={goBack}
+          onClick={handleGoBack}
           disabled={!selectedCategory}
           className={`transition-colors ${
             selectedCategory
@@ -98,7 +120,7 @@ export function CatalogMode({ config, index, onCatalogSoundSelect }: CatalogMode
             {categories.map((cat) => (
               <button
                 key={cat.id}
-                onClick={() => selectCategory(cat)}
+                onClick={() => handleSelectCategory(cat)}
                 className="w-full text-left px-2 py-1.5 rounded-lg text-xs transition-colors bg-primary-lighter text-foreground hover:bg-primary-light"
               >
                 {cat.name}

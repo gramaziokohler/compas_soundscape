@@ -380,8 +380,8 @@ export class SpeckleEventBridge {
         event.preventDefault();
         try {
           const cameraCtrl = this.viewer.getExtension(CameraController) as any;
-          if (cameraCtrl?.zoomToObjects) {
-            cameraCtrl.zoomToObjects([visibleId]);
+          if (cameraCtrl?.setCameraView) {
+            cameraCtrl.setCameraView([visibleId], true);
           }
         } catch { /* non-critical */ }
       }

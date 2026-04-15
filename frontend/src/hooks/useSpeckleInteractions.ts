@@ -56,26 +56,11 @@ export function useSpeckleInteractions(viewerRef: React.RefObject<Viewer | null>
 
     try {
       const cameraController = viewerRef.current.getExtension(CameraController) as any;
-      if (cameraController && cameraController.zoomToObjects) {
-        cameraController.zoomToObjects(objectIds);
-      } else {
-        // Fallback: zoom extents to show everything
-        const controls = (viewerRef.current as any).cameraHandler;
-        if (controls && controls.fitToSphere) {
-          controls.fitToSphere();
-        }
+      if (cameraController && cameraController.setCameraView) {
+        cameraController.setCameraView(objectIds, true);
       }
     } catch (error) {
       console.error('Failed to zoom to objects:', error);
-      // Try alternative zoom method
-      try {
-        const controls = (viewerRef.current as any).cameraHandler;
-        if (controls) {
-          controls.fitToSphere();
-        }
-      } catch (e) {
-        console.error('Fallback zoom also failed:', e);
-      }
     }
   }, [viewerRef]);
 

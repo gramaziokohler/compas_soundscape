@@ -102,6 +102,7 @@ export function Card<TConfig extends CardBaseConfig>({
   onUpdateConfig,
   onRemove,
   onReset,
+  onDismissError,
   beforeContent,
   afterContent,
   loadingContent,
@@ -265,8 +266,16 @@ export function Card<TConfig extends CardBaseConfig>({
                     
           {/* Error display - shown before content but keeps configuration visible */}
           {error && (
-            <div className="p-2 text-xs rounded-lg bg-error-hover border border-error text-white">
-              {error}
+            <div className="px-2 py-1.5 text-xs rounded-lg bg-error-hover border border-error text-white flex items-start gap-2">
+              <span className="flex-1">{error}</span>
+              {onDismissError && (
+                <CardButton
+                  icon={<CloseIcon />}
+                  title="Dismiss error"
+                  onClick={(e) => { e.stopPropagation(); onDismissError(index); }}
+                  variant="close"
+                />
+              )}
             </div>
           )}
 
@@ -333,7 +342,7 @@ export function Card<TConfig extends CardBaseConfig>({
 // Sub-components
 // ============================================================================
 
-interface CardButtonProps {
+export interface CardButtonProps {
   icon: ReactNode;
   title: string;
   onClick: (e: React.MouseEvent) => void;
@@ -341,7 +350,7 @@ interface CardButtonProps {
   variant?: 'default' | 'close' | 'primary';
 }
 
-function CardButton({ icon, title, onClick, disabled = false, variant = 'default' }: CardButtonProps) {
+export function CardButton({ icon, title, onClick, disabled = false, variant = 'default' }: CardButtonProps) {
   const variantClasses = {
     default: 'text-secondary-hover hover:bg-secondary-light hover:text-foreground',
     close: 'text-secondary-hover hover:bg-error-light hover:text-error',
@@ -385,7 +394,7 @@ function ResetIcon() {
   );
 }
 
-function CloseIcon() {
+export function CloseIcon() {
   return (
     <span className="text-lg leading-none">×</span>
   );

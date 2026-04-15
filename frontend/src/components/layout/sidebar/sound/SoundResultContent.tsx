@@ -5,6 +5,7 @@ import type { SoundEvent } from '@/types';
 import { SoundCardWaveSurfer } from '@/components/audio/SoundCardWaveSurfer';
 import { VerticalVolumeSlider } from '@/components/ui/VerticalVolumeSlider';
 import { UI_VOLUME_SLIDER, UI_INTERVAL_SLIDER } from '@/utils/constants';
+import { useBatchedSlider } from '@/hooks/useBatchedSlider';
 
 /**
  * SoundResultContent Component
@@ -53,13 +54,30 @@ export function SoundResultContent({
   const currentVolumeDb = soundVolumes[generatedSound.id] ?? generatedSound.volume_db ?? 70;
   const currentIntervalSeconds = soundIntervals[generatedSound.id] ?? generatedSound.interval_seconds ?? 30;
 
-  // Local state for interval slider (visual feedback while dragging)
+  // Local state for sliders (visual feedback while dragging — no store write until release)
+  const [tempVolumeDb, setTempVolumeDb] = useState(currentVolumeDb);
   const [tempIntervalSeconds, setTempIntervalSeconds] = useState(currentIntervalSeconds);
 
-  // Sync temp interval with actual interval when it changes externally
-  useEffect(() => {
-    setTempIntervalSeconds(currentIntervalSeconds);
-  }, [currentIntervalSeconds]);
+  // Sync temp values with store when they change externally (e.g. undo/redo)
+  useEffect(() => { setTempVolumeDb(currentVolumeDb); }, [currentVolumeDb]);
+  useEffect(() => { setTempIntervalSeconds(currentIntervalSeconds); }, [currentIntervalSeconds]);
+
+  // Batched slider — only one undo step per full drag gesture
+  const volumeSlider = useBatchedSlider<number>(
+    'audioControls',
+    (v) => setTempVolumeDb(UI_VOLUME_SLIDER.MIN + v * (UI_VOLUME_SLIDER.MAX - UI_VOLUME_SLIDER.MIN)),
+    onVolumeChange
+      ? (v) => onVolumeChange(generatedSound.id, UI_VOLUME_SLIDER.MIN + v * (UI_VOLUME_SLIDER.MAX - UI_VOLUME_SLIDER.MIN))
+      : undefined,
+  );
+
+  const intervalSlider = useBatchedSlider<number>(
+    'audioControls',
+    (v) => setTempIntervalSeconds(Math.round(v * UI_INTERVAL_SLIDER.MAX)),
+    onIntervalChange
+      ? (v) => onIntervalChange(generatedSound.id, Math.round(v * UI_INTERVAL_SLIDER.MAX))
+      : undefined,
+  );
 
   return (
     <div className="flex gap-3">
@@ -109,8 +127,9 @@ export function SoundResultContent({
             </span>
             <VerticalVolumeSlider
               value={tempIntervalSeconds / UI_INTERVAL_SLIDER.MAX}
-              onChange={(v) => setTempIntervalSeconds(Math.round(v * UI_INTERVAL_SLIDER.MAX))}
-              onChangeCommitted={(v) => onIntervalChange(generatedSound.id, Math.round(v * UI_INTERVAL_SLIDER.MAX))}
+              onDragStart={intervalSlider.onDragStart}
+              onChange={intervalSlider.onChange}
+              onChangeCommitted={intervalSlider.onCommit}
             />
             <span className="text-[10px] mt-1 text-secondary-hover">Int.</span>
           </div>
@@ -123,11 +142,13 @@ export function SoundResultContent({
             title="Volume level: Controls the sound pressure level (SPL) in decibels for spatial audio playback."
           >
             <span className="text-[10px] mb-1 text-secondary-hover">
-              {currentVolumeDb.toFixed(0)}dB
+              {tempVolumeDb.toFixed(0)}dB
             </span>
             <VerticalVolumeSlider
-              value={(currentVolumeDb - UI_VOLUME_SLIDER.MIN) / (UI_VOLUME_SLIDER.MAX - UI_VOLUME_SLIDER.MIN)}
-              onChange={(v) => onVolumeChange(generatedSound.id, UI_VOLUME_SLIDER.MIN + v * (UI_VOLUME_SLIDER.MAX - UI_VOLUME_SLIDER.MIN))}
+              value={(tempVolumeDb - UI_VOLUME_SLIDER.MIN) / (UI_VOLUME_SLIDER.MAX - UI_VOLUME_SLIDER.MIN)}
+              onDragStart={volumeSlider.onDragStart}
+              onChange={volumeSlider.onChange}
+              onChangeCommitted={volumeSlider.onCommit}
             />
             <span className="text-[10px] mt-1 text-secondary-hover">Vol.</span>
           </div>
@@ -136,3 +157,4 @@ export function SoundResultContent({
     </div>
   );
 }
+

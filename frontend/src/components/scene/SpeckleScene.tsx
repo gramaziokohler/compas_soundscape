@@ -21,15 +21,15 @@ import { FileUploadArea } from '@/components/controls/FileUploadArea';
 import { SpeckleModelBrowser } from '@/components/scene/SpeckleModelBrowser';
 import { Icon } from '@/components/ui/Icon';
 import { VerticalVolumeSlider } from '@/components/ui/VerticalVolumeSlider';
+import { UndoRedoToolbar } from '@/components/ui/UndoRedoToolbar';
 import { SpeckleAudioCoordinator } from '@/lib/three/speckle-audio-coordinator';
 import { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
 import { BoundingBoxManager } from '@/lib/three/BoundingBoxManager';
 import { useTimelinePlayback } from '@/hooks/useTimelinePlayback';
-import { useSpeckleViewerContext } from '@/contexts/SpeckleViewerContext';
-import { useSpeckleSelectionMode } from '@/contexts/SpeckleSelectionModeContext';
-import { useAreaDrawingContext } from '@/contexts/AreaDrawingContext';
+import { useSpeckleStore, useAreaDrawingStore, useAcousticsSimulationStore } from '@/store';
 import { AreaDrawingManager } from '@/lib/three/area-drawing-manager';
 import { useSpeckleTree, getHeaderAndSubheader } from '@/hooks/useSpeckleTree';
+import { useAudioControlsStore } from '@/store';
 import {
   extractTimelineSoundsFromData,
   calculateTimelineDurationFromData,
@@ -94,12 +94,6 @@ interface SpeckleSceneProps {
 
   // Soundscape data
   soundscapeData: SoundEvent[] | null;
-  selectedVariants: { [key: number]: number };
-  individualSoundStates: { [key: string]: 'playing' | 'paused' | 'stopped' };
-  soundVolumes: { [key: string]: number };
-  soundIntervals: { [key: string]: number };
-  mutedSounds: Set<string>;
-  soloedSound: string | null;
   scaleForSounds: number;
 
   // Receivers
@@ -128,10 +122,7 @@ interface SpeckleSceneProps {
   onEntityLinked?: (entity: any) => void; // Callback when a Speckle object is clicked in linking mode
 
   // Playback controls
-  onPlayAll?: () => void;
-  onPauseAll?: () => void;
-  onStopAll?: () => void;
-  isAnyPlaying?: boolean;
+  // (onPlayAll/onPauseAll/onStopAll/isAnyPlaying are now read from audioControlsStore)
 
   // Resonance Audio (ShoeBox Acoustics) - NEW
   resonanceAudioConfig?: import('@/types/audio').ResonanceAudioConfig;
@@ -189,12 +180,6 @@ export function SpeckleScene({
   selectedIRId,
   auralizationConfig,
   soundscapeData,
-  selectedVariants,
-  individualSoundStates,
-  soundVolumes,
-  soundIntervals,
-  mutedSounds,
-  soloedSound,
   scaleForSounds,
   receivers,
   selectedReceiverId,
@@ -211,10 +196,6 @@ export function SpeckleScene({
   isLinkingEntity = false,
   linkingConfigIndex = null,
   onEntityLinked,
-  onPlayAll,
-  onPauseAll,
-  onStopAll,
-  isAnyPlaying = false,
   resonanceAudioConfig,
   showBoundingBox = false,
   refreshBoundingBoxTrigger = 0,
@@ -234,14 +215,14 @@ export function SpeckleScene({
   // Refs
   const containerRef = useRef<HTMLDivElement>(null);
   
-  // Use context viewer ref if available, otherwise use local ref
-  const { viewerRef: contextViewerRef, incrementWorldTreeVersion } = useSpeckleViewerContext();
+  // Viewer ref — SpeckleScene owns it; registering into store for cross-component access
+  const { getViewerRef: _getViewerRef, setViewer, incrementWorldTreeVersion, selectedEntity, setSelectedEntity, setSelectedObjectIds, applyFilterColors, getObjectLinkState, linkedObjectIds, setFilteringEnabled, viewMode, setViewMode } = useSpeckleStore();
   const localViewerRef = useRef<Viewer | null>(null);
-  const viewerRef = contextViewerRef || localViewerRef;
+  const viewerRef = localViewerRef;
   
-  // Get selection mode context - colors are auto-applied via FilteringExtension
-  const { setViewer, selectedEntity, setSelectedEntity, applyFilterColors, getObjectLinkState, linkedObjectIds, setFilteringEnabled, viewMode, setViewMode } = useSpeckleSelectionMode();
-  
+  // Area drawing store
+  const areaDrawingCtx = useAreaDrawingStore();
+
   const coordinatorRef = useRef<SpeckleAudioCoordinator | null>(null);
   const playbackSchedulerRef = useRef<PlaybackSchedulerService | null>(null);
   const selectionExtensionRef = useRef<SelectionExtension | null>(null);
@@ -251,8 +232,19 @@ export function SpeckleScene({
   const areaDrawingManagerRef = useRef<AreaDrawingManager | null>(null);
   const irHoverLineRef = useRef<THREE.Line | null>(null);
 
-  // Area drawing context
-  const areaDrawingCtx = useAreaDrawingContext();
+  // ── Audio controls from store ──
+  const selectedVariants     = useAudioControlsStore((s) => s.selectedVariants);
+  const individualSoundStates = useAudioControlsStore((s) => s.individualSoundStates);
+  const soundVolumes         = useAudioControlsStore((s) => s.soundVolumes);
+  const soundIntervals       = useAudioControlsStore((s) => s.soundIntervals);
+  const mutedSounds          = useAudioControlsStore((s) => s.mutedSounds);
+  const soloedSound          = useAudioControlsStore((s) => s.soloedSound);
+  const isAnyPlaying         = useAudioControlsStore((s) =>
+    Object.values(s.individualSoundStates).some((st) => st === 'playing')
+  );
+  const storePlayAll  = useAudioControlsStore((s) => s.playAll);
+  const storePauseAll = useAudioControlsStore((s) => s.pauseAll);
+  const storeStopAll  = useAudioControlsStore((s) => s.stopAll);
 
   // State
   const [isLoading, setIsLoading] = useState(false);
@@ -275,6 +267,7 @@ export function SpeckleScene({
   // Derived: dark mode is active only in 'dark' view mode
   const isDarkMode = viewMode === 'dark';
   const isDarkModeRef = useRef(false); // Non-reactive ref for enforcement interval
+  const isAcousticModeRef = useRef(false); // Non-reactive ref used by hover patch
   // Store original light values for restoration when dark mode is disabled
   const darkModeStateRef = useRef<{
     sunIntensity: number;
@@ -286,6 +279,7 @@ export function SpeckleScene({
     entityPointLights: THREE.PointLight[];
     entityObjectIds: string[];    // Speckle object IDs of entity-linked objects
     entityRenderViews: any[];     // Render views for entity objects (blue emissive)
+    entityEmissiveMat: THREE.MeshStandardMaterial | null; // Shared blue emissive material
     enforcementIntervalId: ReturnType<typeof setInterval> | null;
     pipelineShadowHookCleanup: (() => void) | null; // removes onBeforePipelineRender hook
   } | null>(null);
@@ -344,6 +338,12 @@ export function SpeckleScene({
   useEffect(() => {
     setFilteringEnabled(viewMode === 'acoustic');
   }, [viewMode, setFilteringEnabled]);
+
+  // Keep isAcousticModeRef in sync on every viewMode change so the hover patch
+  // (set up once during init) can read the current value without re-registration.
+  useEffect(() => {
+    isAcousticModeRef.current = viewMode === 'acoustic';
+  }, [viewMode]);
 
   // ============================================================================
   // Effect - Re-assert IBL intensity when entering Acoustic mode
@@ -521,8 +521,8 @@ export function SpeckleScene({
 
         const origApplyHover = (selectionExtension as any).applyHover.bind(selectionExtension);
         (selectionExtension as any).applyHover = function (renderView: any) {
-          // Disable hover entirely in dark mode
-          if (isDarkModeRef.current) {
+          // Disable hover entirely in dark mode or acoustic mode
+          if (isDarkModeRef.current || isAcousticModeRef.current) {
             origApplyHover(null);
             return;
           }
@@ -637,6 +637,9 @@ export function SpeckleScene({
 
             setIsLoading(false);
             setIsViewerReady(true);
+
+            // Always start in Default mode regardless of any persisted state
+            setViewMode('default');
 
             // Register viewer with selection mode context
             setViewer(viewer);
@@ -997,6 +1000,8 @@ export function SpeckleScene({
           // Speckle-specific fields for identification
           nodeId: selectedId,
           id: selectedId,
+          // Stable Rhino GUID for cross-session persistence (Speckle IDs change on every commit)
+          applicationId: objectData?.raw?.applicationId || undefined,
           speckle_type: objectType,
           raw: objectData?.raw
         };
@@ -1268,10 +1273,13 @@ export function SpeckleScene({
     }, UI_TIMING.UPDATE_DEBOUNCE_MS);
 
     return () => clearTimeout(timeoutId);
-    // NOTE: soundMetadataReady intentionally excluded — this effect sets it,
-    // including it would create a feedback loop.
+    // soundMetadataReady is included so the effect re-runs when the polling
+    // marks metadata as ready (allowing timelineSounds to populate on the retry).
+    // No feedback loop: React bails out of re-renders when the new state value
+    // equals the old one (Object.is), so setSoundMetadataReady(false/true) with
+    // the same value never triggers an extra run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [soundscapeData, selectedVariants, soundIntervals]);
+  }, [soundscapeData, selectedVariants, soundIntervals, soundMetadataReady]);
 
   // ============================================================================
   // Effect - Poll for Sound Metadata Readiness
@@ -1302,6 +1310,13 @@ export function SpeckleScene({
     // Cleanup
     return () => clearInterval(intervalId);
   }, [isViewerReady, soundscapeData, soundMetadataReady]);
+
+  // Auto-open the timeline whenever sounds become available (e.g. after generation)
+  useEffect(() => {
+    if (timelineSounds.length > 0) {
+      setShowTimeline(true);
+    }
+  }, [timelineSounds.length]);
 
   // ============================================================================
   // Callback - Refresh Timeline (reload all available sounds)
@@ -1345,11 +1360,15 @@ export function SpeckleScene({
         soundGains.set(ts.id, Math.max(0, Math.min(10, gain)));
       });
 
+      const { simulationConfigs, activeSimulationIndex } = useAcousticsSimulationStore.getState();
+      const activeSimulation = activeSimulationIndex !== null ? simulationConfigs[activeSimulationIndex] : null;
+
       const config: SoundscapeExportConfig = {
         ...exportState,
         soundGains,
         mutedSounds,
         soloedSound,
+        simulationName: activeSimulation?.display_name ?? null,
       };
 
       const durationMs = timelineDuration > 0 ? timelineDuration : 180_000;
@@ -1626,6 +1645,7 @@ export function SpeckleScene({
         entityPointLights: [],
         entityObjectIds,
         entityRenderViews,
+        entityEmissiveMat: null, // set below after material creation
         enforcementIntervalId: null,
         pipelineShadowHookCleanup: null,
       };
@@ -1644,8 +1664,20 @@ export function SpeckleScene({
         roughness: 0.85,
         metalness: 0.05,
       });
-      // Blue emissive: entity-linked objects glow electric blue (MeshBasicMaterial = unlit/always-on)
-      const entityEmissiveMat = new THREE.MeshBasicMaterial({ color: DARK_MODE.LIGHT_COLOR_HEX, side: THREE.DoubleSide });
+      // Blue emissive: entity-linked objects glow electric blue.
+      // MeshStandardMaterial with high emissiveIntensity produces an HDR value that
+      // Speckle's tone mapping clips/blooms into a bright glowing surface.
+      // base color is black so only the emissive channel contributes (all lights are off).
+      const entityEmissiveMat = new THREE.MeshStandardMaterial({
+        color: 0x000000,
+        emissive: new THREE.Color(DARK_MODE.LIGHT_COLOR_HEX),
+        emissiveIntensity: DARK_MODE.ENTITY_EMISSIVE_INTENSITY,
+        roughness: 0,
+        metalness: 0,
+        side: THREE.DoubleSide,
+      });
+      // Store on ref so the linkedObjectIds-change effect can reuse it without re-creating
+      darkModeStateRef.current!.entityEmissiveMat = entityEmissiveMat;
       // Pre-allocated black color (avoids creating new Color on every tick)
       const blackColor = new THREE.Color(0x000000);
 
@@ -1678,10 +1710,14 @@ export function SpeckleScene({
         // 1. Override visible mesh batches with dark opaque material.
         //    Live batcher scan covers meshes added after dark mode was enabled.
         //    GeometryType.MESH excludes lines, points, text, shadow-catcher overlays.
-        //    Three sets of render views are excluded so their own materials stay intact:
+        //    Four sets of render views are excluded so their own materials stay intact:
         //      - hidden objects  (FilteringExtension ghost/hidden draw-ranges)
         //      - non-isolated objects  (when isolation is active)
         //      - currently selected objects  (SelectionExtension highlight)
+        //      - entity-linked objects  (receive blue emissive in step 2)
+        const entityLinkedSet: Set<string> = new Set(
+          darkModeStateRef.current?.entityObjectIds ?? []
+        );
         try {
           const filterState = filteringExtensionRef.current?.filteringState;
           const hiddenSet: Set<string> | null = filterState?.hiddenObjects?.length
@@ -1696,7 +1732,7 @@ export function SpeckleScene({
             ? new Set((selObjs as any[]).map((o) => o.id as string).filter(Boolean))
             : null;
 
-          const needsFilter = hiddenSet || isolatedSet || selectedSet;
+          const needsFilter = hiddenSet || isolatedSet || selectedSet || entityLinkedSet.size > 0;
 
           const batchIds: string[] = (r as any).getBatchIds();
           for (const id of batchIds) {
@@ -1711,6 +1747,7 @@ export function SpeckleScene({
                   if (hiddenSet?.has(objId)) return false;              // Hidden: skip
                   if (isolatedSet && !isolatedSet.has(objId)) return false; // Non-isolated: skip
                   if (selectedSet?.has(objId)) return false;            // Selected: skip (preserve highlight)
+                  if (entityLinkedSet.has(objId)) return false;         // Entity-linked: blue emissive in step 2
                   return true;
                 })
               : batch.renderViews;
@@ -1735,13 +1772,26 @@ export function SpeckleScene({
           // Non-critical: batcher may be rebuilding
         }
 
-        // 2. Override entity render views with blue emissive (on top of dark override).
-        //    Entity objects glow electric-blue regardless of lighting.
-        if (darkModeStateRef.current && darkModeStateRef.current.entityRenderViews.length > 0) {
+        // 2. Apply blue emissive to entity-linked objects.
+        //    Scan batches directly using rv.renderData.id (same ID space as linkedObjectIds /
+        //    setUserObjectColors) — more reliable than WorldTree render-view lookup.
+        if (entityLinkedSet.size > 0) {
           try {
-            r.setMaterial(darkModeStateRef.current.entityRenderViews, entityEmissiveMat);
+            const entityRvs: any[] = [];
+            const bIds: string[] = (r as any).getBatchIds();
+            for (const bid of bIds) {
+              const b = (r as any).getBatch(bid);
+              if (!b || b.geometryType !== GeometryType.MESH) continue;
+              for (const rv of b.renderViews) {
+                const objId: string | undefined = rv.renderData?.id;
+                if (objId && entityLinkedSet.has(objId)) entityRvs.push(rv);
+              }
+            }
+            if (entityRvs.length > 0) {
+              r.setMaterial(entityRvs, entityEmissiveMat);
+            }
           } catch {
-            // Render views may become stale after re-batching; non-critical
+            // Non-critical: batcher may be rebuilding
           }
         }
 
@@ -1987,6 +2037,81 @@ export function SpeckleScene({
   }, [isDarkMode, isViewerReady]);
 
   // ============================================================================
+  // Effect - Sync entityObjectIds + object-center point lights in dark mode
+  // ============================================================================
+  // Runs when dark mode is active and linkedObjectIds changes (or dark mode first enables).
+  // 1. Keeps darkModeStateRef.current.entityObjectIds fresh for the enforcement interval.
+  // 2. Places point lights at the geometric centers of entity-linked Speckle meshes
+  //    (computed from render view AABBs — same batch data used for blue emissive).
+  //    Object-center lights are named DarkModeObjectLight_* and pushed onto
+  //    entityPointLights so the disable block cleans them up automatically.
+  // ============================================================================
+  useEffect(() => {
+    if (!isDarkMode || !darkModeStateRef.current || !viewerRef.current) return;
+    const state = darkModeStateRef.current;
+    state.entityObjectIds = Array.from(linkedObjectIds);
+
+    // Remove previously placed object-center lights before re-computing
+    const adapter = coordinatorRef.current?.getAdapter();
+    if (adapter) {
+      const customGroup = adapter.getCustomObjectsGroup();
+      state.entityPointLights = state.entityPointLights.filter(light => {
+        if (light.name.startsWith('DarkModeObjectLight_')) {
+          customGroup.remove(light);
+          light.dispose();
+          return false;
+        }
+        return true;
+      });
+
+      // Compute per-object AABB by unioning render views from batch scan
+      if (state.entityObjectIds.length > 0) {
+        const entitySet = new Set(state.entityObjectIds);
+        const r = viewerRef.current.getRenderer();
+        const boxPerObject = new Map<string, THREE.Box3>();
+
+        try {
+          const bIds: string[] = (r as any).getBatchIds();
+          for (const bid of bIds) {
+            const b = (r as any).getBatch(bid);
+            if (!b || b.geometryType !== GeometryType.MESH) continue;
+            for (const rv of b.renderViews) {
+              const objId: string | undefined = rv.renderData?.id;
+              if (!objId || !entitySet.has(objId)) continue;
+              const rvAabb: THREE.Box3 = rv.aabb;
+              if (!rvAabb) continue;
+              if (!boxPerObject.has(objId)) {
+                boxPerObject.set(objId, rvAabb.clone());
+              } else {
+                boxPerObject.get(objId)!.union(rvAabb);
+              }
+            }
+          }
+        } catch { /* non-critical */ }
+
+        const center = new THREE.Vector3();
+        boxPerObject.forEach((box, objId) => {
+          if (box.isEmpty()) return;
+          box.getCenter(center);
+          const light = new THREE.PointLight(
+            DARK_MODE.LIGHT_COLOR_HEX,
+            DARK_MODE.POINT_LIGHT_INTENSITY,
+            DARK_MODE.POINT_LIGHT_DISTANCE,
+            DARK_MODE.POINT_LIGHT_DECAY
+          );
+          light.name = `DarkModeObjectLight_${objId}`;
+          light.position.copy(center);
+          light.layers.enableAll();
+          // No shadow casting: the light is at the mesh surface, casting shadows would block
+          // neighboring geometry from being illuminated. Glow-only, no hard shadows.
+          customGroup.add(light);
+          state.entityPointLights.push(light);
+        });
+      }
+    }
+  }, [isDarkMode, linkedObjectIds]);
+
+  // ============================================================================
   // Global Volume Handlers
   // ============================================================================
   const handleGlobalVolumeChange = useCallback((value: number) => {
@@ -2036,39 +2161,68 @@ export function SpeckleScene({
   // ============================================================================
   // Playback Control Handlers (controlling both audio and timeline)
   // ============================================================================
-  const handlePlayAll = useCallback(() => {
+  const handlePlayAll = useCallback(async () => {
     console.log('[SpeckleScene] Play All clicked');
-    
-    // Start timeline cursor
-    playTimeline();
-    
-    // Notify parent to update sound states (which triggers playback via updateSoundPlayback)
-    if (onPlayAll) {
-      onPlayAll();
+    const isPausedResume = !playbackState.isPlaying && playbackState.currentTime > 0;
+
+    if (isPausedResume) {
+      const soundSphereManager = coordinatorRef.current?.getSoundSphereManager();
+      if (playbackSchedulerRef.current && soundSphereManager) {
+        // Build 'playing' states from current Zustand store (paused → playing)
+        const currentStates = useAudioControlsStore.getState().individualSoundStates;
+        const playingStates: Record<string, string> = { ...currentStates };
+        Object.keys(playingStates).forEach((id) => {
+          if (playingStates[id] === 'paused') playingStates[id] = 'playing';
+        });
+
+        const soundMetadata = soundSphereManager.getAllAudioSources();
+        await playbackSchedulerRef.current.seekToTime(
+          playbackState.currentTime,
+          soundMetadata,
+          playingStates as any,
+          soundIntervals
+        );
+      }
     }
-  }, [playTimeline, onPlayAll]);
+
+    // Start timeline cursor (preserves currentTime)
+    playTimeline();
+    // Update store states (updateSoundPlayback will skip — prevStates synced by seekToTime)
+    storePlayAll();
+  }, [playTimeline, storePlayAll, playbackState.isPlaying, playbackState.currentTime, soundIntervals]);
 
   const handlePauseAll = useCallback(() => {
     // Pause timeline cursor
     pauseTimeline();
-    
-    // Notify parent to update sound states
-    if (onPauseAll) {
-      onPauseAll();
-    }
-  }, [pauseTimeline, onPauseAll]);
+    // Notify store to update sound states
+    storePauseAll();
+  }, [pauseTimeline, storePauseAll]);
 
   const handleStopAll = useCallback(() => {
-    // Notify parent to update sound states FIRST (same as Power button disable path)
-    // This sets all individual sound states to 'stopped', which triggers
-    // updateSoundPlayback to unschedule and stop each source
-    if (onStopAll) {
-      onStopAll();
-    }
-
+    // Notify store to update sound states FIRST
+    storeStopAll();
     // Reset timeline cursor to start
     stopTimeline();
-  }, [stopTimeline, onStopAll]);
+  }, [stopTimeline, storeStopAll]);
+
+  const handleToggleAuralization = useCallback(() => {
+    const { simulationConfigs, activeSimulationIndex, handleSetActiveSimulation } = useAcousticsSimulationStore.getState();
+    if (activeSimulationIndex !== null) {
+      // Disable then immediately re-enable the same card (reset cycle)
+      const savedIndex = activeSimulationIndex;
+      handleSetActiveSimulation(null);
+      setTimeout(() => {
+        handleSetActiveSimulation(savedIndex);
+      }, 350);
+    } else {
+      // Nothing active — try to activate the first completed card
+      const restoreIndex = simulationConfigs.findIndex(c => c.state === 'completed');
+      if (restoreIndex >= 0) {
+        handleSetActiveSimulation(restoreIndex);
+        if (viewMode !== 'dark') setViewMode('acoustic');
+      }
+    }
+  }, [viewMode, setViewMode]);
 
   const handleSeek = useCallback(async (timeMs: number) => {
     const soundSphereManager = coordinatorRef.current?.getSoundSphereManager();
@@ -2271,12 +2425,14 @@ export function SpeckleScene({
       const wasSpeckleSelected = prevIds.length > 0;
       if (wasSpeckleSelected) {
         setSelectedEntity(null);
+        setSelectedObjectIds([]);
       } else {
         // Prev was already empty — this is a custom object (receiver/sound sphere)
         // whose selection is managed by its own click callbacks, not Speckle
         if (!selectedEntity?.receiverData && !selectedEntity?.soundData) {
           setSelectedEntity(null);
         }
+        setSelectedObjectIds([]);
       }
       return;
     }
@@ -2352,6 +2508,7 @@ export function SpeckleScene({
 
     if (!selectedObject) {
       setSelectedEntity(null);
+      setSelectedObjectIds([]);
       return;
     }
 
@@ -2365,7 +2522,8 @@ export function SpeckleScene({
       objectType,
       parentName
     });
-  }, [selectedSpeckleObjectIds, worldTree, setSelectedEntity, selectedEntity?.receiverData, getObjectLinkState]);
+    setSelectedObjectIds(selectedSpeckleObjectIds);
+  }, [selectedSpeckleObjectIds, worldTree, setSelectedEntity, setSelectedObjectIds, selectedEntity?.receiverData, getObjectLinkState]);
 
   // ============================================================================  // Keyboard Controls - First-Person Mode
   // ============================================================================
@@ -2626,7 +2784,7 @@ export function SpeckleScene({
       {/* View Mode Switch - Top Right of Viewer (Acoustic | Default | Dark) */}
       {isViewerReady && (
         <div
-          className="absolute top-4 z-20 pointer-events-auto transition-all duration-300"
+          className="absolute top-4 z-20 pointer-events-auto transition-all duration-300 flex flex-col items-end gap-1"
           style={{
             right: isRightSidebarExpanded ? `${UI_RIGHT_SIDEBAR.WIDTH + 20}px` : '20px'
           }}
@@ -2667,6 +2825,17 @@ export function SpeckleScene({
                 </button>
               );
             })}
+          </div>
+
+          {/* Undo / Redo toolbar */}
+          <div
+            className="flex items-center rounded-md overflow-hidden"
+            style={{
+              backgroundColor: 'rgba(0,0,0,0.45)',
+              border: '1px solid rgba(255,255,255,0.15)',
+            }}
+          >
+            <UndoRedoToolbar />
           </div>
         </div>
       )}
@@ -2772,12 +2941,11 @@ export function SpeckleScene({
             className="absolute pointer-events-auto z-10 transition-all duration-300"
             style={{
               bottom: `${TIMELINE_LAYOUT.BOTTOM_OFFSET_PX * 4}px`,
-              // Center between the two sidebars
+              // Center between the two sidebars — width is driven by WaveSurferTimeline content
               left: `calc(50% + ${centerOffset}px)`,
               transform: 'translateX(-50%)',
-              // Dynamic width based on both sidebars
-              width: `calc(100% - ${leftSidebarWidth}px - ${rightSidebarWidth}px - ${TIMELINE_LAYOUT.SIDEBAR_HORIZONTAL_OFFSET_PX}px)`,
-              maxWidth: `${TIMELINE_LAYOUT.MAX_WIDTH_PX}px`,
+              // Constrain to available space; WaveSurferTimeline sets its own width
+              maxWidth: `min(calc(100% - ${leftSidebarWidth}px - ${rightSidebarWidth}px - ${TIMELINE_LAYOUT.SIDEBAR_HORIZONTAL_OFFSET_PX}px), ${TIMELINE_LAYOUT.MAX_WIDTH_PX}px)`,
             }}
           >
           <WaveSurferTimeline
@@ -2798,6 +2966,7 @@ export function SpeckleScene({
         onPlayAll={handlePlayAll}
         onPauseAll={handlePauseAll}
         onStopAll={handleStopAll}
+        onToggleAuralization={handleToggleAuralization}
         isAnyPlaying={isAnyPlaying}
         hasSounds={soundscapeData !== null && soundscapeData.length > 0}
         isLeftSidebarExpanded={isLeftSidebarExpanded}

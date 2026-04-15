@@ -10,8 +10,8 @@ import { Model3DContextContent } from "@/components/layout/sidebar/analysis/Mode
 import { AudioContextContent } from "@/components/layout/sidebar/analysis/AudioContextContent";
 import { TextContextContent } from "@/components/layout/sidebar/analysis/TextContextContent";
 import { AnalysisResultContent } from "@/components/layout/sidebar/analysis/AnalysisResultContent";
-import { useSpeckleSelectionMode } from "@/contexts/SpeckleSelectionModeContext";
-import { useAreaDrawingContext } from "@/contexts/AreaDrawingContext";
+import { useSpeckleStore } from '@/store';
+import { useAreaDrawingStore } from '@/store';
 
 /**
  * AnalysisSection Component
@@ -42,12 +42,12 @@ export function AnalysisSection({
   onTogglePromptSelection,
   onSendToSoundGeneration
 }: AnalysisSectionProps) {
-  // Get diverse selection from context (works even without a 3D model card)
-  const { diverseSelectedObjectIds, clearDiverseSelection } = useSpeckleSelectionMode();
+  // Get diverse selection from store (works even without a 3D model card)
+  const { diverseSelectedObjectIds, clearDiverseSelection } = useSpeckleStore();
   const diverseCount = diverseSelectedObjectIds.size;
 
-  // Area drawing context (for text card draw-area buttons)
-  const areaDrawing = useAreaDrawingContext();
+  // Area drawing store (for text card draw-area buttons)
+  const areaDrawing = useAreaDrawingStore();
 
   // Helper to check if an analysis has generated results
   const hasResult = useCallback((index: number): boolean => {

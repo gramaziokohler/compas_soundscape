@@ -72,12 +72,13 @@ export function extractTimelineSounds(
       const iterations: number[] = [];
       let currentTime = initialDelayMs; // Start from initial delay
 
-      // Add iterations until we exceed timeline duration or hit max iterations
-      while (currentTime < timelineDuration && iterations.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY) {
+      // Add iterations only when the iteration END fits within the timeline duration.
+      while (
+        currentTime + soundDurationMs <= timelineDuration &&
+        iterations.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY
+      ) {
         iterations.push(currentTime);
-
-        // Next iteration = current + interval (with randomness applied in actual playback)
-        // For visualization, use base interval without randomness
+        // Next iteration = current + interval (randomness applied in actual playback)
         currentTime += intervalMs;
       }
 
@@ -110,13 +111,14 @@ export function extractTimelineSounds(
  */
 export function calculateTimelineDuration(
   audioSchedulers: Map<string, AudioScheduler>,
-  minIterationsPerSound: number = 3
+  minIterationsPerSound: number = AUDIO_TIMELINE.MIN_ITERATIONS_PER_SOUND
 ): number {
   if (audioSchedulers.size === 0) {
     return AUDIO_TIMELINE.DEFAULT_DURATION_MS;
   }
 
-  let maxDuration: number = AUDIO_TIMELINE.DEFAULT_DURATION_MS;
+  // Start at 0 — let actual content drive the duration (no artificial floor)
+  let maxDuration = 0;
 
   audioSchedulers.forEach((scheduler) => {
     const scheduledSounds = scheduler.getScheduledSounds();
@@ -128,8 +130,11 @@ export function calculateTimelineDuration(
     });
   });
 
-  // Cap at a reasonable maximum (5 minutes)
-  return Math.min(maxDuration, 300000);
+  if (maxDuration === 0) {
+    return AUDIO_TIMELINE.DEFAULT_DURATION_MS;
+  }
+
+  return Math.min(maxDuration, AUDIO_TIMELINE.MAX_DURATION_MS);
 }
 
 /**
@@ -172,8 +177,13 @@ export function extractTimelineSoundsFromData(
     const iterations: number[] = [];
     let currentTime = 0; // Start from beginning (no initial delay for visualization)
 
-    // Add iterations until we exceed timeline duration or hit max iterations
-    while (currentTime < timelineDuration && iterations.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY) {
+    // Add iterations only when the iteration END fits within the timeline duration.
+    // Checking end time (currentTime + soundDurationMs) avoids the last iteration
+    // overshooting the cap and inflating actualDuration in the component.
+    while (
+      currentTime + soundDurationMs <= timelineDuration &&
+      iterations.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY
+    ) {
       iterations.push(currentTime);
       currentTime += intervalMs;
     }
@@ -206,13 +216,14 @@ export function extractTimelineSoundsFromData(
 export function calculateTimelineDurationFromData(
   soundMetadata: Map<string, SoundMetadata>,
   soundIntervals: { [key: string]: number },
-  minIterationsPerSound: number = 3
+  minIterationsPerSound: number = AUDIO_TIMELINE.MIN_ITERATIONS_PER_SOUND
 ): number {
   if (soundMetadata.size === 0) {
     return AUDIO_TIMELINE.DEFAULT_DURATION_MS;
   }
 
-  let maxDuration: number = AUDIO_TIMELINE.DEFAULT_DURATION_MS;
+  // Start at 0 — let actual content drive the duration (no artificial floor)
+  let maxDuration = 0;
 
   soundMetadata.forEach((metadata, soundId) => {
     if (!metadata.buffer) return;
@@ -226,8 +237,11 @@ export function calculateTimelineDurationFromData(
     maxDuration = Math.max(maxDuration, neededDuration);
   });
 
-  // Cap at a reasonable maximum (5 minutes)
-  return Math.min(maxDuration, 300000);
+  if (maxDuration === 0) {
+    return AUDIO_TIMELINE.DEFAULT_DURATION_MS;
+  }
+
+  return Math.min(maxDuration, AUDIO_TIMELINE.MAX_DURATION_MS);
 }
 
 /**

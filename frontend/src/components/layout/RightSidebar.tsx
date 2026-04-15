@@ -4,9 +4,8 @@ import { useEffect } from 'react';
 import { UI_RIGHT_SIDEBAR, UI_COLORS } from '@/utils/constants';
 import { ObjectExplorer } from '@/components/layout/ObjectExplorer';
 import { EntityInfoPanel } from '@/components/layout/sidebar/EntityInfoPanel';
-import { useRightSidebar } from '@/contexts/RightSidebarContext';
-import { useSpeckleSelectionMode } from '@/contexts/SpeckleSelectionModeContext';
-import { useAcousticMaterial } from '@/contexts/AcousticMaterialContext';
+import { useRightSidebarStore, useSpeckleStore } from '@/store';
+import { useAcousticMaterialStore } from '@/store';
 import type { SoundEvent } from '@/types';
 
 /**
@@ -25,38 +24,18 @@ import type { SoundEvent } from '@/types';
 interface RightSidebarProps {
   isVisible: boolean;
   onGoToReceiver?: (receiverId: string) => void;
-  // Sound props for EntityInfoPanel sound mode
+  /** Still passed from page.tsx — SoundEvent list owned by useSoundGeneration (not yet migrated). */
   generatedSounds?: SoundEvent[];
-  selectedVariants?: { [key: number]: number };
-  soundVolumes?: { [soundId: string]: number };
-  soundIntervals?: { [soundId: string]: number };
-  mutedSounds?: Set<string>;
-  previewingSoundId?: string | null;
-  onPreviewPlayPause?: (soundId: string) => void;
-  onPreviewStop?: (soundId: string) => void;
-  onVolumeChange?: (soundId: string, volumeDb: number) => void;
-  onIntervalChange?: (soundId: string, intervalSeconds: number) => void;
-  onVariantChange?: (promptIdx: number, variantIdx: number) => void;
 }
 
 export function RightSidebar({
   isVisible,
   onGoToReceiver,
   generatedSounds,
-  selectedVariants,
-  soundVolumes,
-  soundIntervals,
-  mutedSounds,
-  previewingSoundId,
-  onPreviewPlayPause,
-  onPreviewStop,
-  onVolumeChange,
-  onIntervalChange,
-  onVariantChange,
 }: RightSidebarProps) {
-  const { isExpanded, requestExpand, requestCollapse } = useRightSidebar();
-  const { selectedEntity } = useSpeckleSelectionMode();
-  const { isActive: isAcousticMaterialActive } = useAcousticMaterial();
+  const { isExpanded, requestExpand, requestCollapse } = useRightSidebarStore();
+  const { selectedEntity } = useSpeckleStore();
+  const isAcousticMaterialActive = useAcousticMaterialStore((s) => s.isActive);
 
   // Auto-expand/collapse based on active signals
   // Expand when any signal is active, collapse when all are inactive
@@ -128,16 +107,6 @@ export function RightSidebar({
           <EntityInfoPanel
             onGoToReceiver={onGoToReceiver}
             generatedSounds={generatedSounds}
-            selectedVariants={selectedVariants}
-            soundVolumes={soundVolumes}
-            soundIntervals={soundIntervals}
-            mutedSounds={mutedSounds}
-            previewingSoundId={previewingSoundId}
-            onPreviewPlayPause={onPreviewPlayPause}
-            onPreviewStop={onPreviewStop}
-            onVolumeChange={onVolumeChange}
-            onIntervalChange={onIntervalChange}
-            onVariantChange={onVariantChange}
           />
         </div>
       </div>

@@ -6,6 +6,7 @@ interface VerticalVolumeSliderProps {
   value: number; // 0 to 1
   onChange: (value: number) => void;
   onChangeCommitted?: (value: number) => void; // Called when user releases the slider
+  onDragStart?: () => void; // Called when user presses the slider
   className?: string;
 }
 
@@ -39,6 +40,7 @@ export function VerticalVolumeSlider({
   value,
   onChange,
   onChangeCommitted,
+  onDragStart,
   className = ""
 }: VerticalVolumeSliderProps) {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -97,6 +99,8 @@ export function VerticalVolumeSlider({
         step={0.01}
         value={value}
         onChange={handleChange}
+        onMouseDown={() => onDragStart?.()}
+        onTouchStart={() => onDragStart?.()}
         onMouseUp={handleChangeCommitted}
         onTouchEnd={handleChangeCommitted}
         className="vertical-slider cursor-pointer absolute"

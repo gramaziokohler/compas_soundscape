@@ -6,6 +6,7 @@ import { UI_COLORS } from '@/utils/constants';
 import { ResonanceAudioMaterialUI } from '@/components/acoustics/ResonanceAudioMaterialUI';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { CheckboxField } from '@/components/ui/CheckboxField';
+import { useBatchedSlider } from '@/hooks/useBatchedSlider';
 
 export interface RoomScale {
   x: number;
@@ -58,6 +59,19 @@ export function ResonanceAudioControls({
     down: 'transparent',
     up: 'transparent'
   };
+
+  const scaleX = useBatchedSlider<number>(
+    'acousticsSim',
+    (v) => onRoomScaleChange?.({ ...roomScale, x: v }),
+  );
+  const scaleY = useBatchedSlider<number>(
+    'acousticsSim',
+    (v) => onRoomScaleChange?.({ ...roomScale, y: v }),
+  );
+  const scaleZ = useBatchedSlider<number>(
+    'acousticsSim',
+    (v) => onRoomScaleChange?.({ ...roomScale, z: v }),
+  );
 
   const handleToggle = () => {
     onToggle(!enabled);
@@ -147,7 +161,9 @@ export function ResonanceAudioControls({
                 min={0.1}
                 max={2}
                 step={0.01}
-                onChange={(v) => onRoomScaleChange({ ...roomScale, x: v })}
+                onDragStart={scaleX.onDragStart}
+                onChange={scaleX.onChange}
+                onChangeCommitted={scaleX.onCommit}
                 formatValue={(v) => `${v.toFixed(2)}x`}
                 defaultValue={1}
                 showLabels={false}
@@ -158,7 +174,9 @@ export function ResonanceAudioControls({
                 min={0.1}
                 max={2}
                 step={0.01}
-                onChange={(v) => onRoomScaleChange({ ...roomScale, y: v })}
+                onDragStart={scaleY.onDragStart}
+                onChange={scaleY.onChange}
+                onChangeCommitted={scaleY.onCommit}
                 formatValue={(v) => `${v.toFixed(2)}x`}
                 defaultValue={1}
                 showLabels={false}
@@ -169,7 +187,9 @@ export function ResonanceAudioControls({
                 min={0.1}
                 max={2}
                 step={0.01}
-                onChange={(v) => onRoomScaleChange({ ...roomScale, z: v })}
+                onDragStart={scaleZ.onDragStart}
+                onChange={scaleZ.onChange}
+                onChangeCommitted={scaleZ.onCommit}
                 formatValue={(v) => `${v.toFixed(2)}x`}
                 defaultValue={1}
                 showLabels={false}

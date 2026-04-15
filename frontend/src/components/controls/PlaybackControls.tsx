@@ -8,6 +8,7 @@ interface PlaybackControlsProps {
   onPlayAll: () => void;
   onPauseAll: () => void;
   onStopAll: () => void;
+  onToggleAuralization?: () => void;
   isAnyPlaying: boolean;
   hasSounds: boolean;
   isLeftSidebarExpanded?: boolean;
@@ -18,6 +19,7 @@ export function PlaybackControls({
   onPlayAll,
   onPauseAll,
   onStopAll,
+  onToggleAuralization,
   isAnyPlaying,
   hasSounds,
   isLeftSidebarExpanded = true,
@@ -79,7 +81,7 @@ export function PlaybackControls({
         </button>
 
         <button
-          onClick={isAnyPlaying ? onStopAll : undefined}
+          onClick={isAnyPlaying ? () => { onStopAll(); onToggleAuralization?.(); } : undefined}
           disabled={!isAnyPlaying}
           className={getButtonClass(isAnyPlaying)}
           style={{

@@ -1,6 +1,7 @@
 'use client';
 
 import type { SoundGenerationConfig, LibrarySearchResult } from '@/types';
+import { pauseStore, commitStore, globalUndo, globalRedo } from '@/store';
 
 /**
  * LibraryMode Component
@@ -34,6 +35,22 @@ export function LibraryMode({
         <textarea
           value={config.prompt}
           onChange={(e) => onUpdateConfig(index, 'prompt', e.target.value)}
+          onFocus={() => pauseStore('soundscape')}
+          onBlur={() => setTimeout(() => commitStore('soundscape'), 0)}
+          onKeyDown={(e) => {
+            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {
+              e.preventDefault();
+              commitStore('soundscape');
+              globalUndo();
+              pauseStore('soundscape');
+            }
+            if ((e.ctrlKey || e.metaKey) && (e.shiftKey ? e.key === 'z' : e.key === 'y')) {
+              e.preventDefault();
+              commitStore('soundscape');
+              globalRedo();
+              pauseStore('soundscape');
+            }
+          }}
           placeholder="e.g., Urban traffic, birds chirping, footsteps"
           className="flex-1 h-12 p-2 text-xs rounded-lg bg-white border border-secondary-light focus:border-primary focus:ring-1 focus:ring-primary outline-none"
           rows={2}

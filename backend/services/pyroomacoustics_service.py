@@ -526,6 +526,75 @@ class PyroomacousticsService:
             raise HTTPException(status_code=500, detail=f"Failed to enable ray tracing: {str(e)}")
 
     @staticmethod
+    def validate_unit_scale(
+        source_positions: list[list[float]],
+        receiver_positions: list[list[float]],
+    ) -> None:
+        """
+        Sanity-check that source/receiver coordinates are in meters.
+
+        Computes every source-to-receiver distance and raises an HTTPException
+        if any distance falls outside the plausible meter-scale range defined
+        in constants.  A very small minimum distance (< 0.05 m) almost always
+        means the model was exported in millimeters; a very large one
+        (> 1000 m) suggests an unexpected unit or a data error.
+
+        Args:
+            source_positions:   List of [x, y, z] source coordinates.
+            receiver_positions: List of [x, y, z] receiver coordinates.
+
+        Raises:
+            HTTPException 400: If distances are outside the expected meter range.
+        """
+        from config.constants import (
+            PYROOMACOUSTICS_UNIT_CHECK_MIN_DISTANCE_M,
+            PYROOMACOUSTICS_UNIT_CHECK_MAX_DISTANCE_M,
+        )
+
+        if not source_positions or not receiver_positions:
+            return  # Nothing to check
+
+        srcs = np.array(source_positions, dtype=float)   # (n_src, 3)
+        rcvs = np.array(receiver_positions, dtype=float)  # (n_rcv, 3)
+
+        # Compute all pairwise distances
+        distances = np.linalg.norm(
+            srcs[:, np.newaxis, :] - rcvs[np.newaxis, :, :], axis=-1
+        )  # shape (n_src, n_rcv)
+
+        min_dist = float(distances.min())
+        max_dist = float(distances.max())
+
+        print(
+            f"Unit check — source-to-receiver distances: "
+            f"min={min_dist:.4f} m, max={max_dist:.4f} m"
+        )
+
+        if min_dist < PYROOMACOUSTICS_UNIT_CHECK_MIN_DISTANCE_M:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Smallest source-to-receiver distance is {min_dist:.4f} m "
+                    f"({min_dist * 1000:.1f} mm), which is below the minimum expected "
+                    f"value of {PYROOMACOUSTICS_UNIT_CHECK_MIN_DISTANCE_M} m. "
+                    "The model geometry is likely exported in millimeters instead of meters. "
+                    "Please rescale the model to meters before running the simulation."
+                ),
+            )
+
+        if max_dist > PYROOMACOUSTICS_UNIT_CHECK_MAX_DISTANCE_M:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Largest source-to-receiver distance is {max_dist:.1f} m, "
+                    f"which exceeds the maximum expected value of "
+                    f"{PYROOMACOUSTICS_UNIT_CHECK_MAX_DISTANCE_M} m. "
+                    "The model geometry may not be in meters. "
+                    "Please verify the model units before running the simulation."
+                ),
+            )
+
+    @staticmethod
     def get_material_database() -> dict[str, dict]:
         """
         Get database of material absorption presets.
@@ -643,6 +712,11 @@ class PyroomacousticsService:
             fs = PYROOMACOUSTICS_SAMPLE_RATE
 
         try:
+            # Validate that coordinates are in meters before building the room
+            # Use a sample of grid receivers (first 10) to keep the check lightweight
+            sample_receivers = grid_points[:, :10].T.tolist()
+            PyroomacousticsService.validate_unit_scale(source_positions, sample_receivers)
+
             # Build a fresh room for the grid run
             room = PyroomacousticsService.create_room_from_mesh(**room_factory_args)
 

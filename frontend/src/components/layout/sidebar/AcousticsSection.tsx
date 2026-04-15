@@ -23,18 +23,17 @@
 
 'use client';
 
-import React, { useCallback, useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import { Power } from 'lucide-react';
 import { CardSection, type CardTypeOption } from '@/components/ui/CardSection';
 import { Card } from '@/components/ui/Card';
 import { apiService } from '@/services/api';
 import { CARD_TYPE_LABELS } from '@/types/card';
-import { useSpeckleViewerContext } from '@/contexts/SpeckleViewerContext';
-import { useSpeckleSelectionMode } from '@/contexts/SpeckleSelectionModeContext';
+import { useSpeckleStore, useAcousticsSimulationStore } from '@/store';
 
 // Content Components
 import { ResonanceContent } from '@/components/layout/sidebar/acoustics/ResonanceContent';
-import { SimulationResultContent } from '@/components/layout/sidebar/acoustics/SimulationResultContent';
+import { SimulationResultContent, SimulationSettingsSection } from '@/components/layout/sidebar/acoustics/SimulationResultContent';
 import { SimulationSetupContent } from '@/components/layout/sidebar/acoustics/SimulationSetupContent';
 import { ReceiversSection } from '@/components/layout/sidebar/ReceiversSection';
 
@@ -184,8 +183,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // Hooks & State
   // ==========================================================================
 
-  const { viewerRef } = useSpeckleViewerContext();
-  const { clearMaterialColors, filteringEnabled, viewMode, setViewMode } = useSpeckleSelectionMode();
+  const { getViewerRef, clearMaterialColors, filteringEnabled, viewMode, setViewMode, worldTreeVersion } = useSpeckleStore();
+  const viewerRef = useMemo<{ current: any }>(() => ({ get current() { return getViewerRef(); } }), [getViewerRef]);
 
   // Only fetch materials when a card of that type exists
   const hasChorasCard = simulationConfigs.some(c => c.type === 'choras');
@@ -214,29 +213,38 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // World Tree state (for Speckle material assignment)
   const [localWorldTree, setLocalWorldTree] = useState(propWorldTree);
 
-  // Load World Tree from Speckle viewer if not provided as prop
+  // Load World Tree from Speckle viewer if not provided as prop.
+  // worldTreeVersion is a reactive Zustand counter incremented by SpeckleScene
+  // when the tree loads. Also poll briefly in case the version was already set
+  // before this component mounted (e.g., soundscape restore after model load).
   useEffect(() => {
     if (propWorldTree) {
       setLocalWorldTree(propWorldTree);
       return;
     }
-    const checkWorldTree = () => {
-      if (!viewerRef?.current) return;
-      const tree = viewerRef.current.getWorldTree?.();
+    const tryGetTree = (): boolean => {
+      const viewer = getViewerRef();
+      if (!viewer) return false;
+      const tree = viewer.getWorldTree?.();
       const treeAny = tree as any;
       const children = treeAny?.tree?._root?.children ||
                       treeAny?._root?.children ||
                       treeAny?.root?.children ||
                       treeAny?.children;
-
       if (children && children.length > 0) {
         setLocalWorldTree(tree);
+        return true;
       }
+      return false;
     };
-    checkWorldTree();
-    const interval = setInterval(checkWorldTree, 500);
+    // Try immediately
+    if (tryGetTree()) return;
+    // Fallback: poll briefly in case viewer is still initializing
+    const interval = setInterval(() => {
+      if (tryGetTree()) clearInterval(interval);
+    }, 300);
     return () => clearInterval(interval);
-  }, [propWorldTree, viewerRef]);
+  }, [propWorldTree, getViewerRef, worldTreeVersion]);
 
   // ==========================================================================
   // Handlers
@@ -649,6 +657,10 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // On mount/restore the hook re-emits the same persisted assignments — skip reset in that case.
   const handleSpeckleMaterialAssignments = useCallback((index: number, assignments: Record<string, string>, layerName: string | null, geometryObjectIds: string[], scatteringAssignments: Record<string, number>) => {
     const config = simulationConfigs[index];
+    // Pause acousticsSimulation temporal so this config-sync never becomes its own undo step.
+    // Material assignment undo is owned entirely by acousticMaterial store.
+    const acousticsTemporalPause = () => useAcousticsSimulationStore.temporal.getState().pause();
+    const acousticsTemporalResume = () => useAcousticsSimulationStore.temporal.getState().resume();
 
     if (config && config.state === 'completed') {
       // Compare with existing persisted assignments to detect actual changes
@@ -659,6 +671,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       const scatteringChanged = JSON.stringify(existingScattering ?? {}) !== JSON.stringify(scatteringAssignments);
 
       if (materialsChanged || scatteringChanged) {
+        acousticsTemporalPause();
         resetSimulation(index);
         setTimeout(() => {
           handleUpdateConfig(index, {
@@ -667,6 +680,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             speckleGeometryObjectIds: geometryObjectIds,
             speckleScatteringAssignments: scatteringAssignments
           } as any);
+          acousticsTemporalResume();
         }, 0);
         return;
       }
@@ -674,12 +688,14 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       return;
     }
 
+    acousticsTemporalPause();
     handleUpdateConfig(index, {
       speckleMaterialAssignments: assignments,
       speckleLayerName: layerName,
       speckleGeometryObjectIds: geometryObjectIds,
       speckleScatteringAssignments: scatteringAssignments
     } as any);
+    acousticsTemporalResume();
   }, [handleUpdateConfig, simulationConfigs, resetSimulation]);
 
   // Auto-Select IR logic - use refs to avoid infinite loops
@@ -734,18 +750,26 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   const prevSimCount = useRef(simulationConfigs.length);
   useEffect(() => {
     if (simulationConfigs.length > prevSimCount.current) {
-      setExpandedCardIndex(simulationConfigs.length - 1);
-      // New card is always before-simulation → deactivate audio
-      if (activeSimulationIndex !== null && onSetActiveSimulation) {
-        onSetActiveSimulation(null);
-      }
-      // Switch to Acoustic mode so the new card's layer isolation + colors are active
-      if (viewMode !== 'acoustic') {
-        setViewMode('acoustic');
+      const newIndex = simulationConfigs.length - 1;
+      const newConfig = simulationConfigs[newIndex];
+      setExpandedCardIndex(newIndex);
+      if (newConfig?.type === 'resonance') {
+        // Resonance card is always ready → activate immediately so Resonance Audio launches
+        // Do NOT change the view mode — Resonance doesn't use layer isolation/coloring
+        if (onSetActiveSimulation) onSetActiveSimulation(newIndex);
+      } else {
+        // Non-resonance cards are always before-simulation → deactivate audio
+        if (activeSimulationIndex !== null && onSetActiveSimulation) {
+          onSetActiveSimulation(null);
+        }
+        // Switch to Acoustic mode so the new card's layer isolation + colors are active
+        if (viewMode !== 'acoustic') {
+          setViewMode('acoustic');
+        }
       }
     }
     prevSimCount.current = simulationConfigs.length;
-  }, [simulationConfigs.length, activeSimulationIndex, onSetActiveSimulation, viewMode, setViewMode]);
+  }, [simulationConfigs.length, simulationConfigs, activeSimulationIndex, onSetActiveSimulation, viewMode, setViewMode]);
 
   // Track last completed-card index so the power button can re-enable it
   const lastActiveIndexRef = useRef<number | null>(null);
@@ -782,13 +806,14 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         setViewMode('default');
       }
     } else {
-      // Expanding any card → switch to Acoustic mode (unless dark mode is active)
-      if (viewMode !== 'dark') {
+      const config = simulationConfigs[index];
+      // Resonance cards don't use layer isolation/coloring — don't touch the view mode
+      if (config?.type !== 'resonance' && viewMode !== 'dark') {
         setViewMode('acoustic');
       }
-      const config = simulationConfigs[index];
-      if (config?.state === 'completed') {
-        // Expanding a completed card → activate it
+      if (config?.state === 'completed' || config?.type === 'resonance') {
+        // Expanding a completed card or a resonance card → activate it
+        // (Resonance is always ready; it doesn't need a simulation run)
         if (onSetActiveSimulation) onSetActiveSimulation(index);
       } else if (activeSimulationIndex !== null && onSetActiveSimulation) {
         // Expanding a before-simulation card → deactivate current
@@ -932,6 +957,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
               irRefreshTrigger={irRefreshTrigger}
               onIRHover={props.onIRHover}
           />
+          <SimulationSettingsSection config={config} />
           {/* Hidden: keeps SpeckleSurfaceMaterialsSection mounted for filtering/coloring effects */}
           <div className="hidden">{simulationSetup}</div>
         </>
@@ -971,6 +997,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             onUpdateConfig={(idx, updates) => handleUpdateConfig(idx, updates)}
             onRemove={() => onRemoveSimulationConfig && onRemoveSimulationConfig(index)}
             onReset={() => resetSimulation(index)}
+            onDismissError={(idx) => handleUpdateConfig(idx, { error: null } as any)}
             beforeContent={beforeContent}
             afterContent={afterContent}
             closeButtonTitle="Remove simulation"

@@ -2,6 +2,8 @@
 
 import type { SoundGenerationConfig } from '@/types';
 import { RangeSlider } from '@/components/ui/RangeSlider';
+import { pauseStore, commitStore, globalUndo, globalRedo } from '@/store';
+import { useBatchedSlider } from '@/hooks/useBatchedSlider';
 
 /**
  * TextToAudioMode Component
@@ -17,11 +19,38 @@ export interface TextToAudioModeProps {
 }
 
 export function TextToAudioMode({ config, index, onUpdateConfig }: TextToAudioModeProps) {
+  // Batched sliders — one undo step per drag gesture
+  const durationSlider = useBatchedSlider<number>('soundscape', (v) =>
+    onUpdateConfig(index, 'duration', v),
+  );
+  const guidanceSlider = useBatchedSlider<number>('soundscape', (v) =>
+    onUpdateConfig(index, 'guidance_scale', v),
+  );
+  const variantsSlider = useBatchedSlider<number>('soundscape', (v) =>
+    onUpdateConfig(index, 'seed_copies', v),
+  );
+
   return (
     <>
       <textarea
         value={config.prompt}
         onChange={(e) => onUpdateConfig(index, 'prompt', e.target.value)}
+        onFocus={() => pauseStore('soundscape')}
+        onBlur={() => setTimeout(() => commitStore('soundscape'), 0)}
+        onKeyDown={(e) => {
+          if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {
+            e.preventDefault();
+            commitStore('soundscape');
+            globalUndo();
+            pauseStore('soundscape');
+          }
+          if ((e.ctrlKey || e.metaKey) && (e.shiftKey ? e.key === 'z' : e.key === 'y')) {
+            e.preventDefault();
+            commitStore('soundscape');
+            globalRedo();
+            pauseStore('soundscape');
+          }
+        }}
         placeholder="e.g., Hammer hitting wooden table"
         className="w-full h-16 p-2 text-xs rounded-lg bg-white border border-secondary-light focus:border-primary focus:ring-1 focus:ring-primary outline-none"
         rows={2}
@@ -34,7 +63,9 @@ export function TextToAudioMode({ config, index, onUpdateConfig }: TextToAudioMo
           min={1}
           max={30}
           step={1}
-          onChange={(value) => onUpdateConfig(index, 'duration', value)}
+          onDragStart={durationSlider.onDragStart}
+          onChange={durationSlider.onChange}
+          onChangeCommitted={durationSlider.onCommit}
           showLabels={false}
         />
 
@@ -44,7 +75,9 @@ export function TextToAudioMode({ config, index, onUpdateConfig }: TextToAudioMo
           min={0}
           max={10}
           step={0.5}
-          onChange={(value) => onUpdateConfig(index, 'guidance_scale', value)}
+          onDragStart={guidanceSlider.onDragStart}
+          onChange={guidanceSlider.onChange}
+          onChangeCommitted={guidanceSlider.onCommit}
           showLabels={false}
           hoverText="Low guidance = AI model can get creative, but follows less your prompts"
         />
@@ -56,7 +89,9 @@ export function TextToAudioMode({ config, index, onUpdateConfig }: TextToAudioMo
         min={1}
         max={5}
         step={1}
-        onChange={(value) => onUpdateConfig(index, 'seed_copies', value)}
+        onDragStart={variantsSlider.onDragStart}
+        onChange={variantsSlider.onChange}
+        onChangeCommitted={variantsSlider.onCommit}
         showLabels={false}
         hoverText="This will generate multiple variants of sounds from your prompt"
       />

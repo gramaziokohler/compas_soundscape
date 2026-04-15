@@ -332,7 +332,13 @@ async def run_simulation_speckle(
         
         print(f"  Unique sources: {len(unique_sources)}, Unique receivers: {len(unique_receivers)}")
         print(f"  Simulation mode: {simulation_mode}")
-        
+
+        # Validate that coordinates are in meters before building the room
+        PyroomacousticsService.validate_unit_scale(
+            source_positions=[pos for pos, _ in unique_sources.values()],
+            receiver_positions=[pos for pos, _ in unique_receivers.values()],
+        )
+
         # Determine number of channels
         if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO:
             num_channels = 1

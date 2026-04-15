@@ -6,6 +6,7 @@ import { FileUploadArea } from '@/components/controls/FileUploadArea';
 import { AudioWaveformDisplay } from '@/components/audio/AudioWaveformDisplay';
 import { UI_COLORS, AUDIO_FILE_EXTENSIONS, AUDIO_VISUALIZATION, NUM_SOUNDS_MAX, NUM_SOUNDS_MIN } from '@/utils/constants';
 import { RangeSlider } from '@/components/ui/RangeSlider';
+import { useBatchedSlider } from '@/hooks/useBatchedSlider';
 
 /**
  * AudioContextContent Component
@@ -31,6 +32,11 @@ export function AudioContextContent({
   const [isDragging, setIsDragging] = useState(false);
 
   const hasAudioFile = config.audioFile !== null;
+
+  // Batched slider — one undo step per drag gesture
+  const numSoundsSlider = useBatchedSlider<number>('analysis', (v) =>
+    onUpdateConfig(index, { numSounds: v }),
+  );
 
   // Drag and drop handlers
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
@@ -104,11 +110,13 @@ export function AudioContextContent({
           {/* Number of sounds */}
           <RangeSlider
             label="Number of sounds: "
-            value={config.numSounds}
+            value={config.numSounds ?? NUM_SOUNDS_MIN}
             min={NUM_SOUNDS_MIN}
             max={NUM_SOUNDS_MAX}
             step={1}
-            onChange={(value) => onUpdateConfig(index, { numSounds: value })}
+            onDragStart={numSoundsSlider.onDragStart}
+            onChange={numSoundsSlider.onChange}
+            onChangeCommitted={numSoundsSlider.onCommit}
           />
 
           {/* Note: Action button is rendered by Card component */}

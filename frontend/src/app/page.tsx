@@ -4,53 +4,73 @@ import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { SpeckleScene } from "@/components/scene/SpeckleScene";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { RightSidebar } from "@/components/layout/RightSidebar";
-import { IRStatusNotice } from "@/components/audio/IRStatusNotice";
-import { ErrorProvider } from "@/contexts/ErrorContext";
 import { ErrorToast } from "@/components/ui/ErrorToast";
-import { SpeckleViewerProvider, useSpeckleViewerContext } from "@/contexts/SpeckleViewerContext";
-import { SpeckleSelectionModeProvider, useSpeckleSelectionMode } from "@/contexts/SpeckleSelectionModeContext";
-import { AcousticMaterialProvider } from "@/contexts/AcousticMaterialContext";
-import { AreaDrawingProvider } from "@/contexts/AreaDrawingContext";
-import { RightSidebarProvider, useRightSidebar } from "@/contexts/RightSidebarContext";
-import { useFileUpload } from "@/hooks/useFileUpload";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
-import { useTextGeneration } from "@/hooks/useTextGeneration";
-import { useSoundGeneration } from "@/hooks/useSoundGeneration";
-import { useAudioControls } from "@/hooks/useAudioControls";
+import {
+  useAudioControlsStore,
+  useFileUploadStore,
+  useTextGenerationStore,
+  useSoundscapeStore,
+  useAnalysisStore,
+  useSpeckleStore,
+  useReceiversStore,
+  useModalImpactStore,
+  useAcousticsSimulationStore,
+  usePyroomAcousticsStore,
+  useSEDStore,
+  useRoomMaterialsStore,
+  useRightSidebarStore,
+  useUIStore,
+} from "@/store";
 import { useAudioNormalization } from "@/hooks/useAudioNormalization";
-import { useRoomMaterials } from "@/hooks/useRoomMaterials";
-import { useSED } from "@/hooks/useSED";
 import { useAudioOrchestrator } from "@/hooks/useAudioOrchestrator";
-import { useReceivers } from "@/hooks/useReceivers";
-import { useModalImpact } from "@/hooks/useModalImpact";
-import { useAcousticsSimulation } from "@/hooks/useAcousticsSimulation";
-import { seedPyroomPersistentState } from "@/hooks/usePyroomAcousticsSimulation";
-import { useAnalysis } from "@/hooks/useAnalysis";
+import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { apiService } from "@/services/api";
 import { API_BASE_URL, RECEIVER_CONFIG, SPIRAL_PLACEMENT } from "@/utils/constants";
 import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
 import type { LoadTab, SoundGenerationConfig } from "@/types";
 import type { SelectedGeometry, AcousticMaterial } from "@/types/materials";
-import { AudioStatusDisplay } from "@/components/audio/AudioStatusDisplay";
 import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSelector";
 import { buildSoundscapeSavePayload, restoreSoundscapeState, getBlobUrlSounds } from "@/utils/soundscape-serializer";
 
+/**
+ * Build a map from applicationId (Rhino GUID) → current Speckle tree ID.
+ * Walks the raw WorldTree nodes recursively. Used to remap entity links
+ * from saved soundscapes (Speckle IDs change on every commit, but
+ * applicationId stays stable).
+ */
+function buildAppIdMap(node: any, map: Map<string, string> = new Map()): Map<string, string> {
+  if (!node) return map;
+  const raw = node?.raw || node?.model?.raw;
+  const treeId: string | undefined = node?.model?.id || raw?.id;
+  const appId: string | undefined = raw?.applicationId;
+  if (appId && treeId) {
+    map.set(appId, treeId);
+  }
+  const children = node?.model?.children || node?.children || [];
+  for (const child of children) {
+    buildAppIdMap(child, map);
+  }
+  return map;
+}
+
 function HomeContent() {
-  const fileUpload = useFileUpload();
+  useUndoRedo();
+
+  const fileUpload = useFileUploadStore();
   const handleApiError = useApiErrorHandler();
-  const textGen = useTextGeneration(fileUpload.modelEntities, fileUpload.useModelAsContext);
+  const textGen = useTextGenerationStore();
+  const soundGen = useSoundscapeStore();
 
-  // Speckle-computed bounds state (updated by SpeckleScene callback when viewer computes bounds)
-  const [speckleBounds, setSpeckleBounds] = useState<{min: [number, number, number], max: [number, number, number]} | null>(null);
+  // Sync generated sounds to store so audioControlsStore can access them
+  const syncGeneratedSounds = useAudioControlsStore((s) => s.syncGeneratedSounds);
+  useEffect(() => {
+    syncGeneratedSounds(soundGen.generatedSounds);
+  }, [soundGen.generatedSounds, syncGeneratedSounds]);
 
-  const soundGen = useSoundGeneration(speckleBounds);
-  const audioControls = useAudioControls(soundGen.generatedSounds);
-  const analysis = useAnalysis();
-  
-  // Get Speckle viewer context
-  const { viewerRef, setModelFileName } = useSpeckleViewerContext();
-  
-  // Get Speckle selection mode context
+  const analysis = useAnalysisStore();
+
+  // Speckle store — replaces SpeckleViewerContext + SpeckleSelectionModeContext
   const {
     linkObjectToSound,
     unlinkObjectFromSound,
@@ -58,10 +78,52 @@ function HomeContent() {
     setSelectedEntity,
     diverseSelectedObjectIds,
     addToDiverseSelection,
-    removeFromDiverseSelection
-  } = useSpeckleSelectionMode();
+    removeFromDiverseSelection,
+    setModelFileName,
+    getViewerRef,
+  } = useSpeckleStore();
+  // Non-reactive compat shim — .current always returns latest viewer via getter
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const viewerRef = useMemo<{ current: ReturnType<typeof getViewerRef> }>(() => ({
+    get current() { return getViewerRef(); }
+  }), []);
 
-  const sed = useSED();
+  // WorldTree readiness: poll until the tree has root children.
+  // Used by entity-link effects and analysis entity population.
+  const [worldTreeReady, setWorldTreeReady] = useState(false);
+
+  useEffect(() => {
+    if (!viewerRef?.current) return;
+
+    const checkInterval = setInterval(() => {
+      const worldTree = viewerRef.current?.getWorldTree();
+      const worldTreeAny = worldTree as any;
+      const children = worldTreeAny?.tree?._root?.children ||
+                      worldTreeAny?._root?.children ||
+                      worldTreeAny?.root?.children ||
+                      worldTreeAny?.children;
+
+      if (children && children.length > 0) {
+        console.log('[page.tsx] WorldTree ready with', children.length, 'root nodes');
+        setWorldTreeReady(true);
+        clearInterval(checkInterval);
+      }
+    }, 500);
+
+    return () => clearInterval(checkInterval);
+  }, [viewerRef?.current]);
+
+  // Map applicationId (Rhino GUID) → current Speckle tree ID.
+  // Rebuilt when worldTree becomes ready. Used to remap entity links from saved soundscapes
+  // (Speckle object IDs change on every commit, applicationId stays stable).
+  const appIdToTreeIdMap = useMemo<Map<string, string>>(() => {
+    if (!worldTreeReady || !viewerRef?.current) return new Map();
+    const worldTree = viewerRef.current.getWorldTree() as any;
+    const root = worldTree?.tree?._root || worldTree?._root || worldTree?.root || worldTree;
+    return buildAppIdMap(root);
+  }, [worldTreeReady]);
+
+  const sed = useSEDStore();
 
   // MAIN AUDIO SYSTEM: Handles all 6 audio modes (Flat Anechoic, ShoeBox Acoustics, Spatial Anechoic, Mono IR, Stereo IR, Ambisonic IR)
   const audioOrchestrator = useAudioOrchestrator();
@@ -74,7 +136,46 @@ function HomeContent() {
 
   // Audio feature hooks (modular, integrate with orchestrator)
   const audioNormalization = useAudioNormalization(audioOrchestrator.orchestrator);
-  const roomMaterials = useRoomMaterials(audioOrchestrator.orchestrator);
+  const roomMaterials = useRoomMaterialsStore();
+
+  const receivers = useReceiversStore();
+
+  // Trigger AudioOrchestrator update when selected receiver changes (replaces onReceiverSelected callback)
+  useEffect(() => {
+    if (!receivers.selectedReceiverId || !orchestratorRef.current) return;
+    orchestratorRef.current.updateActiveReceiver(receivers.selectedReceiverId).catch(console.error);
+  }, [receivers.selectedReceiverId]);
+
+  // Receiver spiral placement tracking — persists last camera-front position and count
+  const lastReceiverCameraFrontRef = useRef<[number, number, number] | null>(null);
+  const receiversAtCameraFrontRef = useRef<number>(0);
+  const modalImpact = useModalImpactStore();
+  const acousticsSimulation = useAcousticsSimulationStore();
+
+  // UI state — from uiStore (replaces local useState calls)
+  const {
+    activeLoadTab, setActiveLoadTab,
+    selectedIRId, setSelectedIRId,
+    selectedIRMetadata, setSelectedIRMetadata,
+    irRefreshTrigger, triggerIRRefresh,
+    showBoundingBox, setShowBoundingBox,
+    refreshBoundingBoxTrigger, triggerBoundingBoxRefresh,
+    audioRenderingMode, setAudioRenderingMode,
+    useSpeckleViewer,
+    speckleModelUrl, setSpeckleModelUrl,
+    globalModelFile, setGlobalModelFile,
+    globalSpeckleData, setGlobalSpeckleData,
+    isUploadingGlobalModel, setIsUploadingGlobalModel,
+    isSavingSoundscape, setIsSavingSoundscape,
+    isLeftSidebarExpanded, setIsLeftSidebarExpanded,
+    speckleBounds, setSpeckleBounds,
+    hoveredIRSourceReceiver, setHoveredIRSourceReceiver,
+    showAxesHelper, setShowAxesHelper,
+  } = useUIStore();
+  // roomScale lives in acousticsSimulationStore so undo/redo works for Resonance Audio
+  const roomScale = useAcousticsSimulationStore((s) => s.roomScale);
+  const setRoomScale = useAcousticsSimulationStore((s) => s.setRoomScale);
+  const { isExpanded: isRightSidebarExpanded } = useRightSidebarStore();
 
   // Sync model bounding box → Resonance Audio room bounds
   useEffect(() => {
@@ -84,78 +185,24 @@ function HomeContent() {
       speckleBounds.max
     );
   }, [speckleBounds, audioOrchestrator.orchestrator]);
-  
-  // Receiver selection callback - updates AudioOrchestrator with new receiver
-  // Use ref to access latest orchestrator without recreating callback
-  const handleReceiverSelected = useCallback(async (receiverId: string) => {
-    console.log('[Page] 🎯 Receiver selected:', receiverId);
-    console.log('[Page] Orchestrator exists?', !!orchestratorRef.current);
-    
-    if (orchestratorRef.current) {
-      console.log('[Page] ⚡ Calling updateActiveReceiver...');
-      try {
-        await orchestratorRef.current.updateActiveReceiver(receiverId);
-        console.log('[Page] ✅ Receiver audio updated:', receiverId);
-      } catch (error) {
-        console.error('[Page] ❌ Failed to update active receiver:', error);
-      }
-    } else {
-      console.warn('[Page] ❌ No orchestrator available');
+
+  // When roomScale changes (including after undo/redo), trigger a bounding box re-render
+  useEffect(() => {
+    if (showBoundingBox) {
+      triggerBoundingBoxRefresh();
     }
-  }, []); // Empty deps - uses ref for orchestrator
-  
-  const receivers = useReceivers({ onReceiverSelected: handleReceiverSelected });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomScale]);
 
-  // Receiver spiral placement tracking — persists last camera-front position and count
-  const lastReceiverCameraFrontRef = useRef<[number, number, number] | null>(null);
-  const receiversAtCameraFrontRef = useRef<number>(0);
-  const modalImpact = useModalImpact();
-  const acousticsSimulation = useAcousticsSimulation();
-  const [activeLoadTab, setActiveLoadTab] = useState<LoadTab>('upload');
-  
-  // IR Library state - store both ID and full metadata for reload capability
-  const [selectedIRId, setSelectedIRId] = useState<string | null>(null);
-  const [selectedIRMetadata, setSelectedIRMetadata] = useState<any | null>(null);
-  const [irRefreshTrigger, setIrRefreshTrigger] = useState(0);
-
-  // Bounding box visualization state
-  const [showBoundingBox, setShowBoundingBox] = useState(false);
-  const [refreshBoundingBoxTrigger, setRefreshBoundingBoxTrigger] = useState(0);
-
-  // Room scale state (for Resonance Audio bounding box scaling)
-  const [roomScale, setRoomScale] = useState({ x: 1, y: 1, z: 1 });
-  
-  // Audio rendering mode state (unified: threejs, resonance, anechoic)
-  const [audioRenderingMode, setAudioRenderingMode] = useState<AudioRenderingMode>('anechoic');
-  
-  // Speckle viewer state
-  const [useSpeckleViewer, setUseSpeckleViewer] = useState(true);
-  const [speckleModelUrl, setSpeckleModelUrl] = useState<string | undefined>(undefined);
-  const speckleViewerRef = useRef<import('@/components/scene/SpeckleViewer_Deprecated').SpeckleViewerHandle>(null);
-
-  // Global model state (bypasses useAnalysis)
-  const [globalModelFile, setGlobalModelFile] = useState<File | null>(null);
-  const [globalSpeckleData, setGlobalSpeckleData] = useState<any>(null);
-  const [isUploadingGlobalModel, setIsUploadingGlobalModel] = useState(false);
-  const [isSavingSoundscape, setIsSavingSoundscape] = useState(false);
-
-  // Sidebar expanded states (for adjusting SpeckleScene control button and timeline positions)
-  const [isLeftSidebarExpanded, setIsLeftSidebarExpanded] = useState(true);
-  const { isExpanded: isRightSidebarExpanded } = useRightSidebar();
-
-  // IR hover line: source-receiver pair currently hovered in the IR library
-  const [hoveredIRSourceReceiver, setHoveredIRSourceReceiver] = useState<{ sourceId: string; receiverId: string } | null>(null);
+  // IR hover handler
   const handleIRHover = useCallback((sourceId: string | null, receiverId: string | null) => {
     setHoveredIRSourceReceiver(sourceId && receiverId ? { sourceId, receiverId } : null);
-  }, []);
+  }, [setHoveredIRSourceReceiver]);
 
   // Callback when Speckle viewer is loaded
   const handleSpeckleViewerLoaded = useCallback((viewer: import('@speckle/viewer').Viewer) => {
     console.log('Speckle viewer loaded:', viewer);
   }, []);
-  
-  // Scene visualization state
-  const [showAxesHelper, setShowAxesHelper] = useState(false);
   
   // Sync audioRenderingMode with orchestrator only when IR state changes
   useEffect(() => {
@@ -275,13 +322,13 @@ function HomeContent() {
         console.log(`[Page] Switching simulation tabs: ${prevIndex} → ${currentIndex}, hot-swapping IRs (no stop)`);
       } else {
         console.log(`[Page] Switching simulation tabs: ${prevIndex} → ${currentIndex}, stopping timeline`);
-        audioControls.stopAll();
+        useAudioControlsStore.getState().stopAll();
       }
     }
 
     // Update ref for next comparison
     prevActiveIndexRef.current = currentIndex;
-  }, [acousticsSimulation.activeSimulationIndex, audioControls.stopAll, getSimIRMapping]);
+  }, [acousticsSimulation.activeSimulationIndex, getSimIRMapping]);
   
   // Entity linking state
   const [isLinkingEntity, setIsLinkingEntity] = useState(false);
@@ -351,15 +398,19 @@ function HomeContent() {
       const config = soundGen.soundConfigs[promptIndex];
       if (!config?.entity) return;
 
-      // Get the object ID from the entity (Speckle object ID)
-      const objectId = config.entity.nodeId || config.entity.id;
+      // Resolve the object ID: if the entity has an applicationId (Rhino GUID from saved data),
+      // remap it to the current Speckle tree ID. Speckle IDs change on every commit.
+      let objectId = config.entity.nodeId || config.entity.id;
+      if (config.entity.applicationId && appIdToTreeIdMap.size > 0) {
+        objectId = appIdToTreeIdMap.get(config.entity.applicationId) || objectId;
+      }
       if (!objectId) return;
 
       // Register the entity-sound link in SpeckleSelectionModeContext
       // Pass hasGeneratedSound=true since this effect runs for generated sounds
       linkObjectToSound(objectId, promptIndex, true);
     });
-  }, [soundGen.generatedSounds, soundGen.soundConfigs, soundGen.soundscapeData, linkObjectToSound]);
+  }, [soundGen.generatedSounds, soundGen.soundConfigs, soundGen.soundscapeData, linkObjectToSound, appIdToTreeIdMap]);
 
   // ============================================================================
   // Effect - Register Pending Entity Links for Sound Configs (light pink)
@@ -369,16 +420,41 @@ function HomeContent() {
   useEffect(() => {
     soundGen.soundConfigs.forEach((config, index) => {
       if (!config.entity) return;
-      const objectId = config.entity.nodeId || config.entity.id;
+      // Resolve applicationId (Rhino GUID) to current Speckle tree ID
+      let objectId = config.entity.nodeId || config.entity.id;
+      if (config.entity.applicationId && appIdToTreeIdMap.size > 0) {
+        objectId = appIdToTreeIdMap.get(config.entity.applicationId) || objectId;
+      }
       if (!objectId || linkedObjectIds.has(objectId)) return;
       // Register as pending (no generated sound yet) → light pink
       linkObjectToSound(objectId, index);
     });
-  }, [soundGen.soundConfigs, linkedObjectIds, linkObjectToSound]);
+  }, [soundGen.soundConfigs, linkedObjectIds, linkObjectToSound, appIdToTreeIdMap]);
+
+  // ============================================================================
+  // Effect - Unlink objects that no longer have an entity in their sound config
+  // This fires after undo/redo so the pink coloring is removed when a card's
+  // entity link is reverted or the card itself disappears.
+  // ============================================================================
+  useEffect(() => {
+    const currentObjectSoundLinks = useSpeckleStore.getState().objectSoundLinks;
+    currentObjectSoundLinks.forEach((tabIndex, objectId) => {
+      const config = soundGen.soundConfigs[tabIndex];
+      let configObjectId = config?.entity?.nodeId || config?.entity?.id;
+      // Resolve applicationId to current tree ID for comparison
+      if (config?.entity?.applicationId && appIdToTreeIdMap.size > 0) {
+        configObjectId = appIdToTreeIdMap.get(config.entity.applicationId) || configObjectId;
+      }
+      // If the config is gone or its entity no longer matches, unlink
+      if (!config || !configObjectId || configObjectId !== objectId) {
+        unlinkObjectFromSound(objectId);
+      }
+    });
+  }, [soundGen.soundConfigs, unlinkObjectFromSound, appIdToTreeIdMap]);
 
   // Handler: Refresh bounding box calculation from sound sources
   const handleRefreshBoundingBox = useCallback(() => {
-    setRefreshBoundingBoxTrigger(prev => prev + 1);
+    triggerBoundingBoxRefresh();
     console.log('[Page] Triggering bounding box refresh');
   }, []);
 
@@ -541,7 +617,7 @@ function HomeContent() {
         );
 
         // Restore user-adjusted volume and interval values
-        audioControls.restoreVolumeAndIntervals(
+        useAudioControlsStore.getState().restoreVolumeAndIntervals(
           restored.soundVolumes,
           restored.soundIntervals,
         );
@@ -559,7 +635,7 @@ function HomeContent() {
           restored.simulationConfigs.forEach(config => {
             if (config.type === 'pyroomacoustics' && config.simulationInstanceId) {
               const pyConfig = config as any;
-              seedPyroomPersistentState(config.simulationInstanceId, {
+              usePyroomAcousticsStore.getState().seedInstance(config.simulationInstanceId, {
                 simulationSettings: pyConfig.settings,
                 simulationResults: pyConfig.simulationResults,
                 currentSimulationId: pyConfig.currentSimulationId,
@@ -590,7 +666,6 @@ function HomeContent() {
     }
   }, [
     soundGen.restoreSoundscape,
-    audioControls.restoreVolumeAndIntervals,
     receivers.restoreReceivers,
     acousticsSimulation.restoreSimulationState,
   ]);
@@ -635,8 +710,8 @@ function HomeContent() {
           negativePrompt: soundGen.globalNegativePrompt,
           audioModel: soundGen.audioModel,
         },
-        audioControls.soundVolumes,
-        audioControls.soundIntervals,
+        useAudioControlsStore.getState().soundVolumes,
+        useAudioControlsStore.getState().soundIntervals,
         uploadedFilenames,
         receivers.receivers,
         receivers.selectedReceiverId,
@@ -661,8 +736,6 @@ function HomeContent() {
     soundGen.globalSteps,
     soundGen.globalNegativePrompt,
     soundGen.audioModel,
-    audioControls.soundVolumes,
-    audioControls.soundIntervals,
     receivers.receivers,
     receivers.selectedReceiverId,
     acousticsSimulation.simulationConfigs,
@@ -715,31 +788,9 @@ function HomeContent() {
   }, [configsNeedingUpload, viewerRef]);
 
   // Populate entities from worldTree when it becomes available
-  // Poll for worldTree readiness
-  const [worldTreeReady, setWorldTreeReady] = useState(false);
-  
-  useEffect(() => {
-    if (!viewerRef?.current) return;
+  // (worldTreeReady state + poll effect + appIdToTreeIdMap are declared
+  //  earlier in the component, before entity-link effects that depend on them)
 
-    const checkInterval = setInterval(() => {
-      const worldTree = viewerRef.current?.getWorldTree();
-      // Use type casting to access internal tree structure (private in TypeScript but accessible at runtime)
-      const worldTreeAny = worldTree as any;
-      const children = worldTreeAny?.tree?._root?.children ||
-                      worldTreeAny?._root?.children ||
-                      worldTreeAny?.root?.children ||
-                      worldTreeAny?.children;
-      
-      if (children && children.length > 0) {
-        console.log('[page.tsx] ✅ WorldTree ready with', children.length, 'root nodes');
-        setWorldTreeReady(true);
-        clearInterval(checkInterval);
-      }
-    }, 500);
-
-    return () => clearInterval(checkInterval);
-  }, [viewerRef?.current]);
-  
   // Only track 3D model configs that need entity population (speckleData present, entities empty)
   // This avoids re-running on every slider/config change
   const modelConfigsNeedingEntities = useMemo(() => {
@@ -786,7 +837,7 @@ function HomeContent() {
 
     // Only sync if we have geometry data and it's different from current
     if (latestModelConfig.geometryData && latestModelConfig.geometryData !== fileUpload.geometryData) {
-      fileUpload.setGeometryData(latestModelConfig.geometryData);
+      fileUpload.processGeometry(latestModelConfig.geometryData);
     }
 
     // Sync model file if different
@@ -831,13 +882,16 @@ function HomeContent() {
     // Unlink entity from Speckle filtering before removing the config
     const config = soundGen.soundConfigs[index];
     if (config?.entity) {
-      const objectId = config.entity.nodeId || config.entity.id;
+      let objectId = config.entity.nodeId || config.entity.id;
+      if (config.entity.applicationId && appIdToTreeIdMap.size > 0) {
+        objectId = appIdToTreeIdMap.get(config.entity.applicationId) || objectId;
+      }
       if (objectId) {
         unlinkObjectFromSound(objectId);
       }
     }
     soundGen.handleRemoveConfig(index);
-  }, [soundGen.soundConfigs, soundGen.handleRemoveConfig, unlinkObjectFromSound]);
+  }, [soundGen.soundConfigs, soundGen.handleRemoveConfig, unlinkObjectFromSound, appIdToTreeIdMap]);
 
   // Handle sound reset (remove generated sound but keep config)
   // Downgrades entity color from full pink → light pink
@@ -846,30 +900,28 @@ function HomeContent() {
     // Downgrade entity color from generated (full pink) to pending (light pink)
     const config = soundGen.soundConfigs[promptIndex];
     if (config?.entity) {
-      const objectId = config.entity.nodeId || config.entity.id;
+      let objectId = config.entity.nodeId || config.entity.id;
+      if (config.entity.applicationId && appIdToTreeIdMap.size > 0) {
+        objectId = appIdToTreeIdMap.get(config.entity.applicationId) || objectId;
+      }
       if (objectId) {
         // Re-link with hasGeneratedSound=false to downgrade color
         linkObjectToSound(objectId, promptIndex, false);
       }
     }
 
-    // Use functional setState to avoid stale closure issues
-    soundGen.setSoundscapeData(prev => {
-      if (!prev) {
-        return prev;
-      }
-
-      // Filter out sounds with this prompt index
-      const updatedSounds = prev.filter(
-        sound => (sound as any).prompt_index !== promptIndex
+    // Filter out sounds with this prompt index using current state from store
+    const currentSoundscapeData = useSoundscapeStore.getState().soundscapeData;
+    if (currentSoundscapeData) {
+      const updatedSounds = currentSoundscapeData.filter(
+        (sound: any) => sound.prompt_index !== promptIndex
       );
-
-      return updatedSounds.length > 0 ? updatedSounds : null;
-    });
+      soundGen.setSoundscapeData(updatedSounds.length > 0 ? updatedSounds : null);
+    }
 
     // Reset the sound config atomically (clears display_name, uploaded audio, library search, etc.)
     soundGen.handleResetSoundConfig(promptIndex);
-  }, [soundGen.soundConfigs, soundGen.setSoundscapeData, soundGen.handleResetSoundConfig, linkObjectToSound]);
+  }, [soundGen.soundConfigs, soundGen.setSoundscapeData, soundGen.handleResetSoundConfig, linkObjectToSound, appIdToTreeIdMap]);
 
   // Handle sound card selection from ThreeScene (sound sphere click)
   const handleSelectSoundCard = useCallback((promptIndex: number) => {
@@ -1107,7 +1159,7 @@ function HomeContent() {
    */
   const handleIRImported = useCallback(() => {
     // Increment trigger to force ImpulseResponseUpload to reload its list
-    setIrRefreshTrigger(prev => prev + 1);
+    triggerIRRefresh();
     console.log('[Page] IR imported from Choras simulation, triggering IR library refresh');
   }, []);
 
@@ -1271,8 +1323,8 @@ function HomeContent() {
   // Handler: Audio Rendering Mode Change (unified handler for all 3 modes)
   const handleAudioRenderingModeChange = useCallback(async (mode: AudioRenderingMode) => {
     // Stop playback before switching modes to ensure clean state
-    if (audioControls.isAnyPlaying()) {
-      audioControls.stopAll();
+    if (useAudioControlsStore.getState().isAnyPlaying()) {
+      useAudioControlsStore.getState().stopAll();
     }
 
     setAudioRenderingMode(mode);
@@ -1298,7 +1350,7 @@ function HomeContent() {
         console.error('[Page] Failed to reload IR:', error);
       }
     }
-  }, [audioOrchestrator, audioControls, selectedIRMetadata, handleSelectIRFromLibrary]);
+  }, [audioOrchestrator, selectedIRMetadata, handleSelectIRFromLibrary]);
 
   // Handler: Update Output Decoder (Removed - binaural is default)
   const handleUpdateOutputDecoder = useCallback((decoder: 'binaural' | 'stereo') => {
@@ -1494,12 +1546,6 @@ function HomeContent() {
             auralizationConfig={auralizationConfig}
             // Soundscape data
             soundscapeData={soundGen.soundscapeData}
-            selectedVariants={audioControls.selectedVariants}
-            individualSoundStates={audioControls.individualSoundStates}
-            soundVolumes={audioControls.soundVolumes}
-            soundIntervals={audioControls.soundIntervals}
-            mutedSounds={audioControls.mutedSounds}
-            soloedSound={audioControls.soloedSound}
             scaleForSounds={fileUpload.scaleForSounds}
             // Receivers
             receivers={receivers.receivers}
@@ -1535,11 +1581,6 @@ function HomeContent() {
             isLinkingEntity={isLinkingEntity}
             linkingConfigIndex={linkingConfigIndex}
             onEntityLinked={handleEntityLinked}
-            // Playback controls
-            onPlayAll={audioControls.playAll}
-            onPauseAll={audioControls.pauseAll}
-            onStopAll={audioControls.stopAll}
-            isAnyPlaying={audioControls.isAnyPlaying()}
             // Resonance Audio (ShoeBox Acoustics)
             resonanceAudioConfig={resonanceAudioConfig}
             showBoundingBox={showBoundingBox}
@@ -1600,7 +1641,7 @@ function HomeContent() {
         onDragLeave={fileUpload.handleDragLeave}
         onDrop={fileUpload.handleDrop}
         onUploadModel={fileUpload.handleUploadModel}
-        onLoadSampleIfc={fileUpload.handleLoadSampleIfc}
+        onLoadSampleIfc={() => {}}
         setUseModelAsContext={fileUpload.setUseModelAsContext}
         activeLoadTab={activeLoadTab}
         setActiveLoadTab={setActiveLoadTab}
@@ -1669,30 +1710,10 @@ function HomeContent() {
         isLinkingEntity={isLinkingEntity}
         linkingConfigIndex={linkingConfigIndex}
         useSpeckleViewer={useSpeckleViewer}
-
-        // Audio controls props
-        selectedVariants={audioControls.selectedVariants}
-        individualSoundStates={audioControls.individualSoundStates}
-        onToggleSound={audioControls.toggleSound}
-        onVolumeChange={audioControls.handleVolumeChange}
-        onIntervalChange={audioControls.handleIntervalChange}
-        onMute={audioControls.handleMute}
-        onSolo={audioControls.handleSolo}
-        onVariantChange={audioControls.handleVariantChange}
-        mutedSounds={audioControls.mutedSounds}
-        soloedSound={audioControls.soloedSound}
         onResetSound={handleResetSound}
         onDuplicateConfig={soundGen.handleDuplicateConfig}
         onSelectSoundCard={handleSelectSoundCard}
         selectedCardIndex={selectedCardIndex}
-        soundVolumes={audioControls.soundVolumes}
-        soundIntervals={audioControls.soundIntervals}
-
-        // Soundcard preview playback props
-        previewingSoundId={audioControls.previewingSoundId}
-        onPreviewPlayPause={audioControls.handlePreviewPlayPause}
-        onPreviewStop={audioControls.handlePreviewStop}
-
         // AI tab props
         activeAiTab={textGen.activeAiTab}
         setActiveAiTab={textGen.setActiveAiTab}
@@ -1709,7 +1730,7 @@ function HomeContent() {
         // Receiver props
         receivers={receivers.receivers}
         onAddReceiver={handleAddReceiver}
-        onDeleteReceiver={receivers.deleteReceiver}
+        onDeleteReceiver={receivers.removeReceiver}
         onUpdateReceiverName={receivers.updateReceiverName}
         onGoToReceiver={handleGoToReceiver}
 
@@ -1781,16 +1802,6 @@ function HomeContent() {
         isVisible={useSpeckleViewer}
         onGoToReceiver={handleGoToReceiver}
         generatedSounds={soundGen.generatedSounds}
-        selectedVariants={audioControls.selectedVariants}
-        soundVolumes={audioControls.soundVolumes}
-        soundIntervals={audioControls.soundIntervals}
-        mutedSounds={audioControls.mutedSounds}
-        previewingSoundId={audioControls.previewingSoundId}
-        onPreviewPlayPause={audioControls.handlePreviewPlayPause}
-        onPreviewStop={audioControls.handlePreviewStop}
-        onVolumeChange={audioControls.handleVolumeChange}
-        onIntervalChange={audioControls.handleIntervalChange}
-        onVariantChange={audioControls.handleVariantChange}
       />
     </div>
   );
@@ -1798,19 +1809,9 @@ function HomeContent() {
 
 export default function Home() {
   return (
-    <ErrorProvider>
-      <RightSidebarProvider>
-        <SpeckleViewerProvider>
-          <SpeckleSelectionModeProvider>
-            <AcousticMaterialProvider>
-              <AreaDrawingProvider>
-                <ErrorToast />
-                <HomeContent />
-              </AreaDrawingProvider>
-            </AcousticMaterialProvider>
-          </SpeckleSelectionModeProvider>
-        </SpeckleViewerProvider>
-      </RightSidebarProvider>
-    </ErrorProvider>
+    <>
+      <ErrorToast />
+      <HomeContent />
+    </>
   );
 }

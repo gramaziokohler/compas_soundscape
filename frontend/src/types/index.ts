@@ -156,6 +156,7 @@ export interface SoundGenerationConfig {
   selectedLibrarySound?: LibrarySearchResult; // Selected sound from library
   // Catalog (Google Sound Library) fields
   selectedCatalogSound?: CatalogSoundSelection; // Selected sound from catalog
+  catalogSelectedCategory?: { id: string; name: string }; // Persisted category selection for undo
 }
 
 /** A sound selected from the Google Sound Library catalog */

@@ -16,7 +16,7 @@
 
 import React, { CSSProperties } from 'react';
 import { VirtualTreeItem as TreeItem, getHeaderAndSubheader, getTargetObjectIds, containsAll } from '@/hooks/useSpeckleTree';
-import { useSpeckleViewerContext } from '@/contexts/SpeckleViewerContext';
+import { useSpeckleStore } from '@/store';
 import { UI_COLORS } from '@/utils/constants';
 
 interface VirtualTreeItemProps {
@@ -48,7 +48,7 @@ export function VirtualTreeItem({
   onToggleVisibility,
   onToggleIsolation
 }: VirtualTreeItemProps) {
-  const { modelFileName } = useSpeckleViewerContext();
+  const { modelFileName } = useSpeckleStore();
   const rawSpeckleData = item.data.raw;
   const objectIds = getTargetObjectIds(rawSpeckleData);
   const isRootNode = item.indent === 0;

@@ -103,15 +103,11 @@ export class ReceiverManager {
     // }
     // ─────────────────────────────────────────────────────────────────────────
 
-    // Update receiver data with correct positions (priority: stored > original)
+    // Update receiver data with correct positions.
+    // The incoming receiver.position is authoritative (it reflects any undo/redo),
+    // so always sync receiverPositions from it to ensure the viewer shows the
+    // correct position after undo of a drag operation.
     const updatedReceivers = receivers.map(receiver => {
-      // Check for stored position first (from drag)
-      const storedPosition = this.receiverPositions.get(receiver.id);
-      if (storedPosition) {
-        return { ...receiver, position: storedPosition };
-      }
-
-      // Use original position and store it
       this.receiverPositions.set(receiver.id, receiver.position);
       return receiver;
     });

@@ -1,5 +1,7 @@
 import { useCallback } from 'react';
-import { useErrorNotification } from '@/contexts/ErrorContext';
+import { useErrorsStore } from '@/store';
+import type { AudioError } from '@/lib/audio/utils/error-handling';
+import { formatErrorForUser } from '@/lib/audio/utils/error-handling';
 
 /**
  * Hook for handling API errors with toast notifications
@@ -16,7 +18,7 @@ import { useErrorNotification } from '@/contexts/ErrorContext';
  * ```
  */
 export function useApiErrorHandler() {
-  const { addError } = useErrorNotification();
+  const { addError } = useErrorsStore();
 
   const handleError = useCallback((error: unknown, fallbackMessage?: string) => {
     let message = fallbackMessage || 'An error occurred';
@@ -31,6 +33,27 @@ export function useApiErrorHandler() {
   }, [addError]);
 
   return handleError;
+}
+
+/**
+ * Hook for routing AudioError objects (from audio error-handling utilities)
+ * into the unified error toast store.
+ *
+ * Usage:
+ * ```ts
+ * const handleAudioError = useAudioErrorHandler();
+ *
+ * // Pass as onError callback to recoverFromError
+ * await recoverFromError(audioError, handleAudioError);
+ * ```
+ */
+export function useAudioErrorHandler() {
+  const { addError } = useErrorsStore();
+
+  return useCallback((error: AudioError) => {
+    const message = formatErrorForUser(error);
+    addError(message, 'error');
+  }, [addError]);
 }
 
 /**

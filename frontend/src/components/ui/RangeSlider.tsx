@@ -7,6 +7,10 @@ interface RangeSliderProps {
   max: number;
   step: number;
   onChange: (value: number) => void;
+  /** Called once on pointer-release with the final value. Provide this to get batched undo. */
+  onChangeCommitted?: (value: number) => void;
+  /** Called on pointer-down — use with useBatchedSlider to pause temporal recording. */
+  onDragStart?: () => void;
   minLabel?: string;
   maxLabel?: string;
   formatValue?: (value: number) => string;
@@ -52,6 +56,8 @@ export function RangeSlider({
   max,
   step,
   onChange,
+  onChangeCommitted,
+  onDragStart,
   minLabel,
   maxLabel,
   formatValue = (v) => v.toString(),
@@ -64,6 +70,12 @@ export function RangeSlider({
 }: RangeSliderProps) {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onChange(parseFloat(e.target.value));
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLInputElement>) => {
+    if (onChangeCommitted) {
+      onChangeCommitted(parseFloat((e.currentTarget as HTMLInputElement).value));
+    }
   };
 
   const handleDoubleClick = () => {
@@ -97,6 +109,8 @@ export function RangeSlider({
         step={step}
         value={value}
         onChange={handleChange}
+        onPointerDown={() => onDragStart?.()}
+        onPointerUp={handlePointerUp}
         onDoubleClick={handleDoubleClick}
         disabled={disabled}
         className={`w-full h-2 rounded-lg appearance-none cursor-pointer bg-secondary-light ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}

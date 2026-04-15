@@ -14,6 +14,8 @@ interface ImpulseResponseUploadProps {
   simulationIRIds?: string[]; // If provided, only show IRs with these IDs in the library
   sourceReceiverIRMapping?: SourceReceiverIRMapping;
   onIRHover?: (sourceId: string | null, receiverId: string | null) => void;
+  /** Called whenever the set of low-energy IR IDs changes so parents can surface warnings */
+  onLowEnergyIdsChange?: (ids: Set<string>) => void;
 }
 
 /**
@@ -36,7 +38,8 @@ export function ImpulseResponseUpload({
   refreshTrigger = 0,
   simulationIRIds = undefined,
   sourceReceiverIRMapping,
-  onIRHover
+  onIRHover,
+  onLowEnergyIdsChange
 }: ImpulseResponseUploadProps) {
   const handleError = useApiErrorHandler();
   const [impulseResponses, setImpulseResponses] = useState<ImpulseResponseMetadata[]>([]);
@@ -89,6 +92,11 @@ export function ImpulseResponseUpload({
       }
     }
   }, [impulseResponses]);
+
+  // Surface low-energy IR IDs to parent whenever the set changes
+  useEffect(() => {
+    onLowEnergyIdsChange?.(lowEnergyIRIds);
+  }, [lowEnergyIRIds, onLowEnergyIdsChange]);
 
   const loadImpulseResponses = async () => {
     setIsLoading(true);

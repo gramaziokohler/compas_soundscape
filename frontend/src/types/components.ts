@@ -39,7 +39,6 @@ export interface SidebarProps {
   audioFile: File | null;
   geometryData: CompasGeometry | null;
   soundscapeData: SoundEvent[] | null;
-  selectedVariants: { [key: number]: number };
   activeAiTab: ActiveTab;
   activeLoadTab: LoadTab;
   modelEntities: any[];
@@ -113,26 +112,10 @@ export interface SidebarProps {
   linkingConfigIndex?: number | null;
   // Speckle viewer mode - enables entity linking for Speckle objects
   useSpeckleViewer?: boolean;
-  // Audio controls props
-  individualSoundStates?: { [soundId: string]: SoundState };
-  onToggleSound?: (soundId: string) => void;
-  onVolumeChange?: (soundId: string, volumeDb: number) => void;
-  onIntervalChange?: (soundId: string, intervalSeconds: number) => void;
-  onMute?: (soundId: string) => void;
-  onSolo?: (soundId: string) => void;
-  onVariantChange?: (promptIdx: number, variantIdx: number) => void;
-  mutedSounds?: Set<string>;
-  soloedSound?: string | null;
   onResetSound?: (soundId: string, promptIndex: number) => void;
   onDuplicateConfig?: (index: number) => void;
   onSelectSoundCard?: (promptIndex: number) => void;
   selectedCardIndex?: number | null;
-  soundVolumes?: { [soundId: string]: number };
-  soundIntervals?: { [soundId: string]: number };
-  // Soundcard preview playback props
-  previewingSoundId?: string | null;
-  onPreviewPlayPause?: (soundId: string) => void;
-  onPreviewStop?: (soundId: string) => void;
   // SED props
   isSEDAnalyzing?: boolean;
   sedAudioInfo?: SEDAudioInfo | null;
@@ -295,29 +278,12 @@ export interface SoundGenerationSectionProps {
   onCancelLinkingEntity?: () => void;
   isLinkingEntity?: boolean;
   linkingConfigIndex?: number | null;
-  // Speckle viewer mode - enables entity linking for Speckle objects
+  // Speckle viewer mode - enables entity Entity linking for Speckle objects
   useSpeckleViewer?: boolean;
-  // Audio controls props
-  individualSoundStates?: { [soundId: string]: SoundState };
-  onToggleSound?: (soundId: string) => void;
-  onVolumeChange?: (soundId: string, volumeDb: number) => void;
-  onIntervalChange?: (soundId: string, intervalSeconds: number) => void;
-  onMute?: (soundId: string) => void;
-  onSolo?: (soundId: string) => void;
-  onVariantChange?: (promptIdx: number, variantIdx: number) => void;
-  mutedSounds?: Set<string>;
-  soloedSound?: string | null;
   onResetSound?: (soundId: string, promptIndex: number) => void;
   onDuplicateConfig?: (index: number) => void;
   onSelectSoundCard?: (promptIndex: number) => void;
   selectedCardIndex?: number | null;
-  soundVolumes?: { [soundId: string]: number };
-  soundIntervals?: { [soundId: string]: number };
-  selectedVariants?: { [promptIdx: number]: number };
-  // Soundcard preview playback props
-  previewingSoundId?: string | null;
-  onPreviewPlayPause?: (soundId: string) => void;
-  onPreviewStop?: (soundId: string) => void;
   // Receiver props
   receivers?: ReceiverData[];
   onAddReceiver?: () => void;

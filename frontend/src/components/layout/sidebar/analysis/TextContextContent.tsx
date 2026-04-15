@@ -5,6 +5,8 @@ import { UI_COLORS, NUM_SOUNDS_MAX, NUM_SOUNDS_MIN } from '@/utils/constants';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { CheckboxField } from '@/components/ui/CheckboxField';
 import { useAreaDrawing } from '@/hooks/useAreaDrawing';
+import { pauseStore, commitStore, globalUndo, globalRedo } from '@/store';
+import { useBatchedSlider } from '@/hooks/useBatchedSlider';
 
 /**
  * TextContextContent Component
@@ -29,6 +31,11 @@ export function TextContextContent({
 
   const canAnalyze = config.textInput.trim().length > 0;
 
+  // Batched slider — one undo step per drag gesture
+  const numSoundsSlider = useBatchedSlider<number>('analysis', (v) =>
+    onUpdateConfig(index, { numSounds: v }),
+  );
+
   return (
     <div className="space-y-0.5">
       {/* Text input field */}
@@ -40,6 +47,24 @@ export function TextContextContent({
           id={`text-input-${index}`}
           value={config.textInput}
           onChange={(e) => onUpdateConfig(index, { textInput: e.target.value })}
+          onFocus={() => pauseStore('analysis')}
+          onBlur={() => setTimeout(() => commitStore('analysis'), 0)}
+          onKeyDown={(e) => {
+            // Intercept Ctrl/Cmd+Z — use our global undo instead of browser's
+            // letter-by-letter native undo, so the whole typing session reverts at once.
+            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {
+              e.preventDefault();
+              commitStore('analysis'); // flush pending typing as one step
+              globalUndo();            // undo that step (reverts to pre-typing state)
+              pauseStore('analysis');  // re-enable batching for continued typing
+            }
+            if ((e.ctrlKey || e.metaKey) && (e.shiftKey ? e.key === 'z' : e.key === 'y')) {
+              e.preventDefault();
+              commitStore('analysis');
+              globalRedo();
+              pauseStore('analysis');
+            }
+          }}
           placeholder="e.g., a busy coffee shop with espresso machine and conversations"
           className="w-full h-15 p-2 text-xs rounded"
           style={{
@@ -57,17 +82,24 @@ export function TextContextContent({
       {/* Number of sounds */}
       <RangeSlider
         label="Number of sounds: "
-        value={config.numSounds}
+        value={config.numSounds ?? NUM_SOUNDS_MIN}
         min={NUM_SOUNDS_MIN}
         max={NUM_SOUNDS_MAX}
         step={1}
-        onChange={(value) => onUpdateConfig(index, { numSounds: value })}
+        onDragStart={numSoundsSlider.onDragStart}
+        onChange={numSoundsSlider.onChange}
+        onChangeCommitted={numSoundsSlider.onCommit}
       />
 
       {/* Use model as context checkbox */}
       <CheckboxField
         checked={config.useModelAsContext}
-        onChange={(checked) => onUpdateConfig(index, { useModelAsContext: checked })}
+        onChange={(checked) => {
+          // Ensure any pending text-typing undo step is committed first, so the
+          // checkbox click becomes its own independent undo entry.
+          commitStore('analysis');
+          onUpdateConfig(index, { useModelAsContext: checked });
+        }}
         label="Combine with objects selection"
       />
 

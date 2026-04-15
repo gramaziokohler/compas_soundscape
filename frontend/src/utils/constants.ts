@@ -160,9 +160,12 @@ export const DARK_MODE = {
   POINT_LIGHT_DISTANCE: 50,
   POINT_LIGHT_DECAY: 2,
 
-  // Entity-linked sound point light (slightly stronger to illuminate the object)
+  // Entity-linked sound point light
   ENTITY_LIGHT_INTENSITY: 10.0,
   ENTITY_LIGHT_DISTANCE: 50,
+
+  // Entity-linked Speckle object surface material — max emissive so tone mapping blooms it
+  ENTITY_EMISSIVE_INTENSITY: 8.0,
 
   // Shadow configuration for point lights
   SHADOW_MAP_SIZE: 512,       // per-face resolution of the cube shadow map
@@ -1354,18 +1357,21 @@ export const DEFAULT_RANDOMNESS_PERCENT = 10;
 // Audio Timeline Configuration
 // ============================================================================
 export const AUDIO_TIMELINE = {
-  // Default timeline duration (120 seconds)
-  DEFAULT_DURATION_MS: 120000,
-
-  // Maximum iterations to display per sound
+  // Fallback duration when no sounds are scheduled (ms)
+  DEFAULT_DURATION_MS: 120_000,        // 2 minutes
+  // Hard cap on timeline display length (ms)
+  MAX_DURATION_MS: 180_000,            // 3 minutes
+  // Minimum number of iterations to show per sound
+  MIN_ITERATIONS_PER_SOUND: 3,
+  // Maximum iterations to render per track (performance cap)
   MAX_ITERATIONS_TO_DISPLAY: 50,
 
   // Colors for different sound generation methods
   SOUND_COLORS: {
-    IMPORT: UI_COLORS.INFO,       // Blue - Imported sounds
-    LIBRARY: UI_COLORS.SUCCESS,   // Green - Library sounds (BBC, Freesound)
-    TTA: UI_COLORS.PRIMARY,       // Primary pink - Text-to-Audio (TangoFlux)
-    CATALOG: UI_COLORS.WARNING,   // Amber - Google Sound Library catalog
+    IMPORT: UI_COLORS.INFO,       // Blue  — uploaded sounds
+    LIBRARY: UI_COLORS.SUCCESS,   // Green — BBC / Freesound library
+    TTA: UI_COLORS.PRIMARY,       // Pink  — TangoFlux generated
+    CATALOG: UI_COLORS.WARNING,   // Amber — Google Sound Catalog
   },
 } as const;
 
@@ -1373,9 +1379,6 @@ export const AUDIO_TIMELINE = {
 // WaveSurfer Enhanced Timeline Configuration
 // ============================================================================
 export const WAVESURFER_TIMELINE = {
-  // Fixed timeline duration (fallback when no sounds scheduled)
-  FIXED_DURATION_SECONDS: 180,
-
   // WaveSurfer visual config
   WAVEFORM_COLOR: UI_COLORS.NEUTRAL_600,    // Grey waveform
   CURSOR_COLOR: UI_COLORS.PRIMARY,           // Pink cursor
@@ -1406,6 +1409,7 @@ export const WAVESURFER_TIMELINE = {
 
   // Width calculation
   PIXELS_PER_SECOND: 5,              // Pixels per second — fixed (no zoom)
+  MIN_WIDTH: 420,                    // Minimum component width (keeps header controls readable)
 } as const;
 
 

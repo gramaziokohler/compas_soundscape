@@ -25,6 +25,10 @@ import { getMaterialColorByAbsorption, MATERIAL_DEFAULT_COLOR } from '@/utils/co
 export interface HierarchicalMeshObject extends SpeckleMeshObject {
   children: HierarchicalMeshObject[];
   hasGeometry: boolean;
+  /** Original Speckle server hash — may differ from id when WorldTree applies duplicate suffixes */
+  rawId?: string;
+  /** Stable CAD application ID (e.g. Rhino GUID) — persists across model republishes */
+  applicationId?: string;
 }
 
 interface UseSpeckleSurfaceMaterialsReturn {
@@ -43,6 +47,10 @@ interface UseSpeckleSurfaceMaterialsReturn {
   getColorGroups: () => ObjectColorGroup[];
   clearMaterialAssignments: () => void;
   getAllObjectIds: () => string[]; // Get all object IDs in the tree
+  /** Map from raw Speckle hash → WorldTree model.id, for migrating saved assignments */
+  rawIdToModelIdMap: Map<string, string>;
+  /** Map from applicationId (Rhino GUID) → current tree ID, for cross-session persistence */
+  appIdToTreeIdMap: Map<string, string>;
 }
 
 /**
@@ -100,7 +108,7 @@ function extractLayers(worldTree: any): SpeckleLayerInfo[] {
         for (const layerNode of layerNodes) {
           const raw = layerNode?.raw || layerNode?.model?.raw || {};
           const name = raw.name || layerNode?.model?.name || 'Unnamed Layer';
-          const id = raw.id || layerNode?.model?.id || layerNode?.id || `layer-${layers.length}`;
+          const id = layerNode?.model?.id || raw.id || layerNode?.id || `layer-${layers.length}`;
 
           // Count geometry objects in this layer
           const meshCount = countGeometryObjects(layerNode);
@@ -151,7 +159,8 @@ function buildHierarchicalTree(node: any): HierarchicalMeshObject | null {
 
   const raw = node?.raw || node?.model?.raw || {};
   const name = raw.name || node?.model?.name || 'Unnamed';
-  const id = raw.id || node?.model?.id || node?.id || `obj-${Math.random()}`;
+  // Use node.model.id first (WorldTree indexed key), fallback to raw.id (Speckle hash)
+  const id = node?.model?.id || raw.id || node?.id || `obj-${Math.random()}`;
   const speckleType = raw.speckle_type || '';
 
   const hasGeometry = isGeometryNode(node);
@@ -176,7 +185,9 @@ function buildHierarchicalTree(node: any): HierarchicalMeshObject | null {
     name,
     speckle_type: speckleType,
     hasGeometry,
-    children
+    children,
+    rawId: raw.id || undefined,
+    applicationId: raw.applicationId || undefined,
   };
 }
 
@@ -199,7 +210,7 @@ function getLayerNode(worldTree: any, layerId: string): any | null {
       // Search for the layer in the actual layer nodes
       for (const layerNode of layerNodes) {
         const raw = layerNode?.raw || layerNode?.model?.raw || {};
-        const nodeId = raw.id || layerNode?.model?.id || layerNode?.id;
+        const nodeId = layerNode?.model?.id || raw.id || layerNode?.id;
 
         if (nodeId === layerId) {
           return layerNode;
@@ -225,6 +236,40 @@ function collectAllObjectIds(objects: HierarchicalMeshObject[]): string[] {
   }
 
   return ids;
+}
+
+/**
+ * Build mapping from rawId → model.id for migrating saved assignments.
+ * Saved soundscapes may store object IDs using raw.id (Speckle hash) which
+ * differs from the WorldTree node model.id when duplicates exist.
+ */
+function buildRawIdToModelIdMap(objects: HierarchicalMeshObject[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const obj of objects) {
+    if (obj.rawId && obj.rawId !== obj.id) {
+      map.set(obj.rawId, obj.id);
+    }
+    const childMap = buildRawIdToModelIdMap(obj.children);
+    childMap.forEach((v, k) => map.set(k, v));
+  }
+  return map;
+}
+
+/**
+ * Build mapping from applicationId (Rhino GUID) → current tree ID.
+ * Used for cross-session persistence: saved soundscapes use applicationId as keys,
+ * which are stable across model republishes (unlike content-hash raw.id).
+ */
+function buildAppIdToTreeIdMap(objects: HierarchicalMeshObject[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const obj of objects) {
+    if (obj.applicationId) {
+      map.set(obj.applicationId, obj.id);
+    }
+    const childMap = buildAppIdToTreeIdMap(obj.children);
+    childMap.forEach((v, k) => map.set(k, v));
+  }
+  return map;
 }
 
 /**
@@ -310,7 +355,6 @@ export function useSpeckleSurfaceMaterials(
       }
     }
 
-    console.log('[useSpeckleSurfaceMaterials] Built hierarchical tree:', hierarchicalObjects);
     return hierarchicalObjects;
   }, [selectedLayerId, worldTree]);
 
@@ -480,6 +524,12 @@ export function useSpeckleSurfaceMaterials(
     setMaterialAssignments(new Map());
   }, []);
 
+  // Build rawId → modelId mapping for migrating saved assignments that used raw.id
+  const rawIdToModelIdMap = useMemo(() => buildRawIdToModelIdMap(meshObjects), [meshObjects]);
+
+  // Build applicationId → treeId mapping for cross-session persistence
+  const appIdToTreeIdMap = useMemo(() => buildAppIdToTreeIdMap(meshObjects), [meshObjects]);
+
   return {
     selectedLayerId,
     layerOptions,
@@ -492,6 +542,8 @@ export function useSpeckleSurfaceMaterials(
     getMaterialColor,
     getColorGroups,
     clearMaterialAssignments,
-    getAllObjectIds
+    getAllObjectIds,
+    rawIdToModelIdMap,
+    appIdToTreeIdMap,
   };
 }

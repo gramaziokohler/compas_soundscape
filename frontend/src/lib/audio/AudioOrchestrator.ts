@@ -1075,6 +1075,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     listenerOrientation: Orientation;
     irBuffer: AudioBuffer | null;
     perSourceIRBuffers: Map<string, AudioBuffer>;
+    originalIRChannelCount: number;
   } {
     // Extract listener state from current mode instance
     let listenerPosition: Position = { x: 0, y: 0, z: 0 } as Position;
@@ -1104,6 +1105,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       listenerOrientation,
       irBuffer,
       perSourceIRBuffers,
+      originalIRChannelCount: this.irState.channelCount ?? 0,
     };
   }
 

@@ -196,25 +196,10 @@ export function Sidebar(props: SidebarProps) {
             isLinkingEntity={props.isLinkingEntity}
             linkingConfigIndex={props.linkingConfigIndex}
             useSpeckleViewer={props.useSpeckleViewer}
-            individualSoundStates={props.individualSoundStates}
-            onToggleSound={props.onToggleSound}
-            onVolumeChange={props.onVolumeChange}
-            onIntervalChange={props.onIntervalChange}
-            onMute={props.onMute}
-            onSolo={props.onSolo}
-            onVariantChange={props.onVariantChange}
-            mutedSounds={props.mutedSounds}
-            soloedSound={props.soloedSound}
             onResetSound={props.onResetSound}
             onDuplicateConfig={props.onDuplicateConfig}
             onSelectSoundCard={props.onSelectSoundCard}
             selectedCardIndex={props.selectedCardIndex}
-            soundVolumes={props.soundVolumes}
-            soundIntervals={props.soundIntervals}
-            selectedVariants={props.selectedVariants}
-            previewingSoundId={props.previewingSoundId}
-            onPreviewPlayPause={props.onPreviewPlayPause}
-            onPreviewStop={props.onPreviewStop}
             onCatalogSoundSelect={props.onCatalogSoundSelect}                                        
           />
         </div>

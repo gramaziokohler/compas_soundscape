@@ -1,10 +1,11 @@
 "use client";
 
-import { useErrorNotification } from '@/contexts/ErrorContext';
-import { UI_COLORS, UI_CARD, UI_SPACING, UI_SHADOWS, UI_TRANSITIONS } from '@/utils/constants';
+import { useErrorsStore } from '@/store';
+import { UI_COLORS, UI_CARD, UI_SHADOWS, UI_TRANSITIONS } from '@/utils/constants';
+import { CardButton, CloseIcon } from './Card';
 
 export function ErrorToast() {
-  const { errors, removeError } = useErrorNotification();
+  const { errors, removeError } = useErrorsStore();
 
   if (errors.length === 0) return null;
 
@@ -48,20 +49,12 @@ export function ErrorToast() {
             </div>
 
             {/* Close button */}
-            <button
+            <CardButton
+              icon={<CloseIcon />}
+              title="Dismiss notification"
               onClick={() => removeError(error.id)}
-              className="text-lg leading-none hover:opacity-60 transition-opacity"
-              style={{
-                color: textColor,
-                cursor: 'pointer',
-                border: 'none',
-                background: 'none',
-                padding: '0 2px'
-              }}
-              aria-label="Dismiss notification"
-            >
-              ×
-            </button>
+              variant="close"
+            />
           </div>
         );
       })}

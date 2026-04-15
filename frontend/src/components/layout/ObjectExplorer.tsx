@@ -1,15 +1,14 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { VirtualTreeItem } from '@/components/scene/VirtualTreeItem';
 import { useSpeckleTree, getTargetObjectIds, getRootNodesForModel } from '@/hooks/useSpeckleTree';
 import { useSpeckleFiltering } from '@/hooks/useSpeckleFiltering';
 import { useSpeckleInteractions } from '@/hooks/useSpeckleInteractions';
-import { useSpeckleViewerContext } from '@/contexts/SpeckleViewerContext';
+import { useSpeckleStore } from '@/store';
 import { SelectionExtension } from '@speckle/viewer';
 import type { VirtualTreeItem as TreeItem } from '@/hooks/useSpeckleTree';
-import { useAcousticMaterial } from '@/contexts/AcousticMaterialContext';
-import { useSpeckleSelectionMode } from '@/contexts/SpeckleSelectionModeContext';
+import { useAcousticMaterialStore } from '@/store';
 import { getHeaderAndSubheader } from '@/hooks/useSpeckleTree';
 import { UI_COLORS, UI_RIGHT_SIDEBAR } from '@/utils/constants';
 
@@ -22,7 +21,11 @@ import { UI_COLORS, UI_RIGHT_SIDEBAR } from '@/utils/constants';
  */
 
 export function ObjectExplorer() {
-  const { viewerRef, modelFileName, worldTreeVersion } = useSpeckleViewerContext();
+  const { modelFileName, worldTreeVersion, getViewerRef, setSelectedEntity } = useSpeckleStore();
+  // Stable RefObject-like shim so hooks that expect RefObject<Viewer> keep working
+  const viewerRef = useMemo<React.RefObject<any>>(() => ({
+    get current() { return getViewerRef(); }
+  }), [getViewerRef]);
   
   // World tree state
   const [worldTree, setWorldTree] = useState<any>(null);
@@ -83,6 +86,24 @@ export function ObjectExplorer() {
   } = useSpeckleInteractions(viewerRef);
   
   const hasIsolatedObjectsInGeneral = isolatedObjects.size > 0;
+
+  // Exclude the "Soundscape" layer (and all its descendants) from the tree display.
+  // Uses indent as depth: once a Soundscape node is found, skip every subsequent
+  // item whose indent is greater, then resume when indent returns to the same level.
+  const filteredVirtualItems = useMemo(() => {
+    let skipBelowIndent: number | null = null;
+    return virtualItems.filter(item => {
+      if (skipBelowIndent !== null) {
+        if (item.indent > skipBelowIndent) return false;
+        skipBelowIndent = null; // back to parent level — stop skipping
+      }
+      if (item.data.raw?.name === 'Soundscape') {
+        skipBelowIndent = item.indent;
+        return false;
+      }
+      return true;
+    });
+  }, [virtualItems]);
 
   /**
    * Find a node by name in the tree (searches recursively)
@@ -267,7 +288,7 @@ export function ObjectExplorer() {
         const prevSelection = previousSelectionRef.current;
         const hasChanged =
           selectedIds.length !== prevSelection.length ||
-          !selectedIds.every((id, index) => id === prevSelection[index]);
+          !selectedIds.every((id: string, index: number) => id === prevSelection[index]);
 
         if (!hasChanged) return;
 
@@ -298,10 +319,11 @@ export function ObjectExplorer() {
   }, [viewerRef, disableScrollOnNextSelection, expandToShowObject, selectObject, clearSelection, scrollToSelectedItem]);
   
   // ===== Selected entity sync =====
-  const { setSelectedEntity } = useSpeckleSelectionMode();
+  // setSelectedEntity is already destructured from the store above
 
   // ===== Auto-expand/scroll to acoustic layer =====
-  const { expandToLayerId, isActive: isAcousticMaterialActive } = useAcousticMaterial();
+  const expandToLayerId = useAcousticMaterialStore((s) => s.expandToLayerId);
+  const isAcousticMaterialActive = useAcousticMaterialStore((s) => s.isActive);
   const lastProcessedLayerIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -413,7 +435,7 @@ export function ObjectExplorer() {
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <label className="text-xs font-medium" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-          {virtualItems.length > 0 && `${virtualItems.length} items`}
+          {filteredVirtualItems.length > 0 && `${filteredVirtualItems.length} items`}
         </label>
         {(hiddenObjects.size > 0 || isolatedObjects.size > 0 || selectedObjectIds.length > 0) && (
           <button
@@ -430,7 +452,7 @@ export function ObjectExplorer() {
         )}
       </div>
 
-      {virtualItems.length > 0 ? (
+      {filteredVirtualItems.length > 0 ? (
         <>
           {/* Scrolling Tree List */}
           <div
@@ -443,7 +465,7 @@ export function ObjectExplorer() {
               overflowY: 'auto'
             }}
           >
-            {virtualItems.map((item, index) => {
+            {filteredVirtualItems.map((item, index) => {
               try {
                 if (!item || !item.data) {
                   return (
@@ -536,7 +558,7 @@ export function ObjectExplorer() {
             World tree: {worldTree ? '✓' : '✗'}<br/>
             Tree loaded: {hasLoadedTreeRef.current ? '✓' : '✗'}<br/>
             Root nodes: {rootNodes.length}<br/>
-            Virtual items: {virtualItems.length}
+            Virtual items: {filteredVirtualItems.length}
           </div>
           <button
             onClick={refreshTree}

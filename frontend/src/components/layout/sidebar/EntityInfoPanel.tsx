@@ -1,9 +1,11 @@
 'use client';
 
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useRef } from 'react';
+import { useBatchedSlider } from '@/hooks/useBatchedSlider';
 import { UI_COLORS, UI_BORDER_RADIUS, SPECKLE_FILTER_COLORS, RECEIVER_CONFIG, getMaterialColorByAbsorption, PYROOMACOUSTICS_DEFAULT_SCATTERING, PYROOMACOUSTICS_SCATTERING_MIN, PYROOMACOUSTICS_SCATTERING_MAX } from '@/utils/constants';
-import { useSpeckleSelectionMode } from '@/contexts/SpeckleSelectionModeContext';
-import { useAcousticMaterial } from '@/contexts/AcousticMaterialContext';
+import { useSpeckleStore } from '@/store';
+import { useAcousticMaterialStore } from '@/store';
+import { useAudioControlsStore } from '@/store';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { SoundResultContent } from '@/components/layout/sidebar/sound/SoundResultContent';
 import type { HierarchicalMeshObject } from '@/hooks/useSpeckleSurfaceMaterials';
@@ -59,43 +61,47 @@ function collectGeometryIdsFromNode(node: HierarchicalMeshObject): string[] {
 
 interface EntityInfoPanelProps {
   onGoToReceiver?: (receiverId: string) => void;
-  // Sound props for Sound mode
+  /** Still passed from parent — SoundEvent list owned by useSoundGeneration (not yet migrated). */
   generatedSounds?: SoundEvent[];
-  selectedVariants?: { [key: number]: number };
-  soundVolumes?: { [soundId: string]: number };
-  soundIntervals?: { [soundId: string]: number };
-  mutedSounds?: Set<string>;
-  previewingSoundId?: string | null;
-  onPreviewPlayPause?: (soundId: string) => void;
-  onPreviewStop?: (soundId: string) => void;
-  onVolumeChange?: (soundId: string, volumeDb: number) => void;
-  onIntervalChange?: (soundId: string, intervalSeconds: number) => void;
-  onVariantChange?: (promptIdx: number, variantIdx: number) => void;
 }
 
 export function EntityInfoPanel({
   onGoToReceiver,
   generatedSounds,
-  selectedVariants,
-  soundVolumes,
-  soundIntervals,
-  mutedSounds,
-  previewingSoundId,
-  onPreviewPlayPause,
-  onPreviewStop,
-  onVolumeChange,
-  onIntervalChange,
-  onVariantChange,
 }: EntityInfoPanelProps) {
   const {
     selectedEntity,
+    selectedObjectIds,
     linkVersion,
     getObjectLinkState,
     addToDiverseSelection,
     removeFromDiverseSelection
-  } = useSpeckleSelectionMode();
+  } = useSpeckleStore();
 
-  const { isActive, materialState } = useAcousticMaterial();
+  // ── Acoustic material store (replaces AcousticMaterialContext) ──
+  const isActive = useAcousticMaterialStore((s) => s.isActive);
+  const meshObjects = useAcousticMaterialStore((s) => s.meshObjects);
+  const materialAssignments = useAcousticMaterialStore((s) => s.materialAssignments);
+  const scatteringAssignments = useAcousticMaterialStore((s) => s.scatteringAssignments);
+  const availableMaterials = useAcousticMaterialStore((s) => s.availableMaterials);
+  const assignMaterial = useAcousticMaterialStore((s) => s.assignMaterial);
+  const assignMaterialToAll = useAcousticMaterialStore((s) => s.assignMaterialToAll);
+  const assignMaterialToObjects = useAcousticMaterialStore((s) => s.assignMaterialToObjects);
+  const assignScattering = useAcousticMaterialStore((s) => s.assignScattering);
+  const assignScatteringToAll = useAcousticMaterialStore((s) => s.assignScatteringToAll);
+  const assignScatteringToObjects = useAcousticMaterialStore((s) => s.assignScatteringToObjects);
+
+  // ── Audio controls store ──
+  const selectedVariants = useAudioControlsStore((s) => s.selectedVariants);
+  const soundVolumes = useAudioControlsStore((s) => s.soundVolumes);
+  const soundIntervals = useAudioControlsStore((s) => s.soundIntervals);
+  const mutedSounds = useAudioControlsStore((s) => s.mutedSounds);
+  const previewingSoundId = useAudioControlsStore((s) => s.previewingSoundId);
+  const onPreviewPlayPause = useAudioControlsStore((s) => s.handlePreviewPlayPause);
+  const onPreviewStop = useAudioControlsStore((s) => s.handlePreviewStop);
+  const onVolumeChange = useAudioControlsStore((s) => s.handleVolumeChange);
+  const onIntervalChange = useAudioControlsStore((s) => s.handleIntervalChange);
+  const onVariantChange = useAudioControlsStore((s) => s.handleVariantChange);
 
   // Local independent playback state for the EntityInfoPanel sound player
   const [localPreviewId, setLocalPreviewId] = useState<string | null>(null);
@@ -113,47 +119,47 @@ export function EntityInfoPanel({
 
   // Sort materials by absorption for dropdown display
   const sortedMaterials = useMemo(() => {
-    if (!materialState) return [];
-    return [...materialState.availableMaterials]
+    if (!isActive) return [];
+    return [...availableMaterials]
       .filter(mat => typeof mat.absorption === 'number' && !isNaN(mat.absorption))
       .sort((a, b) => a.absorption - b.absorption);
-  }, [materialState]);
+  }, [isActive, availableMaterials]);
 
   // Material color map for dropdown backgrounds
   const materialColors = useMemo(() => {
-    if (!materialState) return new Map<string, string>();
+    if (!isActive) return new Map<string, string>();
     const colors = new Map<string, string>();
-    materialState.availableMaterials.forEach((mat) => {
+    availableMaterials.forEach((mat) => {
       colors.set(mat.id, getMaterialColorByAbsorption(mat.absorption));
     });
     return colors;
-  }, [materialState]);
+  }, [isActive, availableMaterials]);
 
   // Compute "All Objects" material info
   const allObjectsInfo = useMemo(() => {
-    if (!materialState) return null;
-    const allIds = collectAllObjectIds(materialState.meshObjects);
+    if (!isActive) return null;
+    const allIds = collectAllObjectIds(meshObjects);
     const totalGeometry = allIds.length;
     const uniqueMaterials = new Set(
-      allIds.map(id => materialState.materialAssignments.get(id)).filter(Boolean)
+      allIds.map(id => materialAssignments.get(id)).filter(Boolean)
     );
     const commonMaterialId = uniqueMaterials.size === 1 ? Array.from(uniqueMaterials)[0]! : null;
-    const assignedCount = materialState.materialAssignments.size;
+    const assignedCount = materialAssignments.size;
     const unassignedCount = totalGeometry - assignedCount;
     return { totalGeometry, commonMaterialId, uniqueMaterials, assignedCount, unassignedCount };
-  }, [materialState]);
+  }, [isActive, meshObjects, materialAssignments]);
 
   // Check if the selected entity is in the mesh tree
   const selectedObjectInTree = useMemo(() => {
-    if (!materialState || !selectedEntity?.objectId) return null;
-    return findObjectInMeshTree(materialState.meshObjects, selectedEntity.objectId);
-  }, [materialState, selectedEntity?.objectId]);
+    if (!isActive || !selectedEntity?.objectId) return null;
+    return findObjectInMeshTree(meshObjects, selectedEntity.objectId);
+  }, [isActive, meshObjects, selectedEntity?.objectId]);
 
   // Current material for the selected object (single geometry)
   const selectedObjectMaterialId = useMemo(() => {
-    if (!materialState || !selectedEntity?.objectId) return null;
-    return materialState.materialAssignments.get(selectedEntity.objectId) || null;
-  }, [materialState, selectedEntity?.objectId]);
+    if (!isActive || !selectedEntity?.objectId) return null;
+    return materialAssignments.get(selectedEntity.objectId) || null;
+  }, [isActive, materialAssignments, selectedEntity?.objectId]);
 
   // Geometry IDs under the selected node (all descendants when it's a group/layer)
   const selectedGeometryIds = useMemo(() => {
@@ -164,39 +170,69 @@ export function EntityInfoPanel({
   // Whether the selected node is a group/layer (not a single geometry object)
   const isGroupSelection = selectedObjectInTree !== null && !selectedObjectInTree.hasGeometry;
 
+  // True multi-select: shift-clicked multiple individual geometry surfaces
+  const isMultiSurfaceSelection = isActive && selectedObjectIds.length > 1 && !isGroupSelection;
+
+  // Geometry IDs from the shift-click multi-selection (only actual geometry nodes)
+  const multiSelectionGeometryIds = useMemo(() => {
+    if (!isMultiSurfaceSelection) return [];
+    return selectedObjectIds.filter(id => {
+      const node = findObjectInMeshTree(meshObjects, id);
+      return node?.hasGeometry === true;
+    });
+  }, [isMultiSurfaceSelection, selectedObjectIds, meshObjects]);
+
+  // Common material / mixed state for multi-selection
+  const multiSelectionAssignmentInfo = useMemo(() => {
+    if (!isActive || multiSelectionGeometryIds.length === 0) return null;
+    const assignedMaterials = new Set(
+      multiSelectionGeometryIds.map(id => materialAssignments.get(id)).filter(Boolean) as string[]
+    );
+    const commonMaterialId = assignedMaterials.size === 1 ? Array.from(assignedMaterials)[0] : null;
+    return { uniqueAssigned: assignedMaterials, commonMaterialId };
+  }, [isActive, multiSelectionGeometryIds, materialAssignments]);
+
   // Scattering value for "All Objects" slider — common value or default
   const allObjectsScattering = useMemo(() => {
-    if (!materialState) return PYROOMACOUSTICS_DEFAULT_SCATTERING;
-    const allIds = collectAllObjectIds(materialState.meshObjects);
+    if (!isActive) return PYROOMACOUSTICS_DEFAULT_SCATTERING;
+    const allIds = collectAllObjectIds(meshObjects);
     if (allIds.length === 0) return PYROOMACOUSTICS_DEFAULT_SCATTERING;
-    const values = allIds.map(id => materialState.scatteringAssignments.get(id) ?? PYROOMACOUSTICS_DEFAULT_SCATTERING);
+    const values = allIds.map(id => scatteringAssignments.get(id) ?? PYROOMACOUSTICS_DEFAULT_SCATTERING);
     const unique = new Set(values);
     return unique.size === 1 ? values[0] : PYROOMACOUSTICS_DEFAULT_SCATTERING;
-  }, [materialState]);
+  }, [isActive, meshObjects, scatteringAssignments]);
 
   // Scattering value for selected object/group slider
   const selectedObjectScattering = useMemo(() => {
-    if (!materialState) return PYROOMACOUSTICS_DEFAULT_SCATTERING;
+    if (!isActive) return PYROOMACOUSTICS_DEFAULT_SCATTERING;
     if (isGroupSelection && selectedGeometryIds.length > 0) {
-      const values = selectedGeometryIds.map(id => materialState.scatteringAssignments.get(id) ?? PYROOMACOUSTICS_DEFAULT_SCATTERING);
+      const values = selectedGeometryIds.map(id => scatteringAssignments.get(id) ?? PYROOMACOUSTICS_DEFAULT_SCATTERING);
       const unique = new Set(values);
       return unique.size === 1 ? values[0] : PYROOMACOUSTICS_DEFAULT_SCATTERING;
     }
     if (!selectedEntity?.objectId) return PYROOMACOUSTICS_DEFAULT_SCATTERING;
-    return materialState.scatteringAssignments.get(selectedEntity.objectId) ?? PYROOMACOUSTICS_DEFAULT_SCATTERING;
-  }, [materialState, selectedEntity?.objectId, selectedGeometryIds, isGroupSelection]);
+    return scatteringAssignments.get(selectedEntity.objectId) ?? PYROOMACOUSTICS_DEFAULT_SCATTERING;
+  }, [isActive, scatteringAssignments, selectedEntity?.objectId, selectedGeometryIds, isGroupSelection]);
+
+  // Scattering value for multi-surface shift-click selection
+  const multiSelectionScattering = useMemo(() => {
+    if (!isActive || multiSelectionGeometryIds.length === 0) return PYROOMACOUSTICS_DEFAULT_SCATTERING;
+    const values = multiSelectionGeometryIds.map(id => scatteringAssignments.get(id) ?? PYROOMACOUSTICS_DEFAULT_SCATTERING);
+    const unique = new Set(values);
+    return unique.size === 1 ? values[0] : PYROOMACOUSTICS_DEFAULT_SCATTERING;
+  }, [isActive, multiSelectionGeometryIds, scatteringAssignments]);
 
   // Assignment info for group selections: common material and mixed state
   const selectedGroupAssignmentInfo = useMemo(() => {
-    if (!materialState || selectedGeometryIds.length === 0) return null;
+    if (!isActive || selectedGeometryIds.length === 0) return null;
     const assignedMaterials = new Set(
       selectedGeometryIds
-        .map(id => materialState.materialAssignments.get(id))
+        .map(id => materialAssignments.get(id))
         .filter(Boolean) as string[]
     );
     const commonMaterialId = assignedMaterials.size === 1 ? Array.from(assignedMaterials)[0] : null;
     return { uniqueAssigned: assignedMaterials, commonMaterialId };
-  }, [materialState, selectedGeometryIds]);
+  }, [isActive, materialAssignments, selectedGeometryIds]);
 
   // Background color helper
   const getSelectBg = (materialId: string | null): string => {
@@ -204,8 +240,33 @@ export function EntityInfoPanel({
     return materialColors.get(materialId) || UI_COLORS.NEUTRAL_400;
   };
 
+  // ── Scattering sliders (batched — one undo step per drag) ──
+  // We need refs to the "assign" callbacks to avoid stale closure inside useBatchedSlider.
+  const selectedGeometryIdsRef = useRef(selectedGeometryIds);
+  selectedGeometryIdsRef.current = selectedGeometryIds;
+  const multiSelectionGeometryIdsRef = useRef(multiSelectionGeometryIds);
+  multiSelectionGeometryIdsRef.current = multiSelectionGeometryIds;
+  const selectedEntityRef = useRef(selectedEntity);
+  selectedEntityRef.current = selectedEntity;
+  const isMultiSurfaceSelectionRef = useRef(isMultiSurfaceSelection);
+  isMultiSurfaceSelectionRef.current = isMultiSurfaceSelection;
+
+  const selectedScatteringSlider = useBatchedSlider<number>(
+    'acousticMaterial',
+    (value) => {
+      if (isMultiSurfaceSelectionRef.current) assignScatteringToObjects(multiSelectionGeometryIdsRef.current, value);
+      else if (isGroupSelection) assignScatteringToObjects(selectedGeometryIdsRef.current, value);
+      else if (selectedEntityRef.current) assignScattering(selectedEntityRef.current.objectId, value);
+    },
+  );
+
+  const allScatteringSlider = useBatchedSlider<number>(
+    'acousticMaterial',
+    (value) => assignScatteringToAll(value),
+  );
+
   // ===== MATERIAL ASSIGNMENT MODE =====
-  if (materialState && allObjectsInfo) {
+  if (isActive && allObjectsInfo) {
     return (
       <div className="h-full flex flex-col">
         {/* Header */}
@@ -224,7 +285,7 @@ export function EntityInfoPanel({
             <select
               value={allObjectsInfo.commonMaterialId || ''}
               onChange={(e) => {
-                materialState.assignMaterialToAll(e.target.value);
+                assignMaterialToAll(e.target.value);
               }}
               className="text-xs px-2 py-1 text-white rounded focus:outline-none focus:ring-1 focus:ring-white"
               style={{
@@ -250,34 +311,46 @@ export function EntityInfoPanel({
             </select>
           </div>
 
-          {/* Per-object / per-group dropdown OR hint text */}
-          {selectedObjectInTree && selectedGeometryIds.length > 0 ? (() => {
-            const isMixed = isGroupSelection
-              ? (selectedGroupAssignmentInfo?.uniqueAssigned.size ?? 0) > 1
-              : false;
-            const effectiveMaterialId = isGroupSelection
-              ? selectedGroupAssignmentInfo?.commonMaterialId ?? null
-              : selectedObjectMaterialId;
-            const label = isGroupSelection
-              ? `Selected (${selectedGeometryIds.length})`
-              : 'Selected surface';
+          {/* Per-object / per-group / multi-surface dropdown OR hint text */}
+          {(isMultiSurfaceSelection && multiSelectionGeometryIds.length > 0) ||
+           (selectedObjectInTree && selectedGeometryIds.length > 0) ? (() => {
+            const isMixed = isMultiSurfaceSelection
+              ? (multiSelectionAssignmentInfo?.uniqueAssigned.size ?? 0) > 1
+              : isGroupSelection
+                ? (selectedGroupAssignmentInfo?.uniqueAssigned.size ?? 0) > 1
+                : false;
+            const effectiveMaterialId = isMultiSurfaceSelection
+              ? multiSelectionAssignmentInfo?.commonMaterialId ?? null
+              : isGroupSelection
+                ? selectedGroupAssignmentInfo?.commonMaterialId ?? null
+                : selectedObjectMaterialId;
+            const label = isMultiSurfaceSelection
+              ? `Selected (${multiSelectionGeometryIds.length})`
+              : isGroupSelection
+                ? `Selected (${selectedGeometryIds.length})`
+                : 'Selected surface';
+            const titleText = isMultiSurfaceSelection
+              ? `${multiSelectionGeometryIds.length} surfaces selected`
+              : selectedObjectInTree?.name ?? '';
 
             return (
               <div className="flex items-center justify-between gap-2">
                 <span
                   className="text-xs truncate"
                   style={{ color: UI_COLORS.NEUTRAL_500, maxWidth: '120px' }}
-                  title={selectedObjectInTree.name}
+                  title={titleText}
                 >
                   {label}
                 </span>
                 <select
                   value={effectiveMaterialId || ''}
                   onChange={(e) => {
-                    if (isGroupSelection) {
-                      materialState.assignMaterialToObjects(selectedGeometryIds, e.target.value);
+                    if (isMultiSurfaceSelection) {
+                      assignMaterialToObjects(multiSelectionGeometryIds, e.target.value);
+                    } else if (isGroupSelection) {
+                      assignMaterialToObjects(selectedGeometryIds, e.target.value);
                     } else if (selectedEntity) {
-                      materialState.assignMaterial(selectedEntity.objectId, e.target.value);
+                      assignMaterial(selectedEntity.objectId, e.target.value);
                     }
                   }}
                   className="text-xs px-2 py-1 text-white rounded focus:outline-none focus:ring-1 focus:ring-white"
@@ -310,22 +383,25 @@ export function EntityInfoPanel({
             </p>
           )}
 
-          {/* Scattering (per-object, same workflow as material) */}
-          {selectedObjectInTree && selectedGeometryIds.length > 0 ? (
+          {/* Scattering (per-object / group / multi-surface, same workflow as material) */}
+          {(isMultiSurfaceSelection && multiSelectionGeometryIds.length > 0) ||
+           (selectedObjectInTree && selectedGeometryIds.length > 0) ? (
             <RangeSlider
-              color ='var(--color-info)'
-              label={isGroupSelection ? `Scattering (${selectedGeometryIds.length}): ` : 'Scattering: '}
-              value={selectedObjectScattering}
+              color='var(--color-info)'
+              label={
+                isMultiSurfaceSelection
+                  ? `Scattering (${multiSelectionGeometryIds.length}): `
+                  : isGroupSelection
+                    ? `Scattering (${selectedGeometryIds.length}): `
+                    : 'Scattering: '
+              }
+              value={isMultiSurfaceSelection ? multiSelectionScattering : selectedObjectScattering}
               min={PYROOMACOUSTICS_SCATTERING_MIN}
               max={PYROOMACOUSTICS_SCATTERING_MAX}
               step={0.01}
-              onChange={(value) => {
-                if (isGroupSelection) {
-                  materialState.assignScatteringToObjects(selectedGeometryIds, value);
-                } else if (selectedEntity) {
-                  materialState.assignScattering(selectedEntity.objectId, value);
-                }
-              }}
+              onDragStart={selectedScatteringSlider.onDragStart}
+              onChange={selectedScatteringSlider.onChange}
+              onChangeCommitted={selectedScatteringSlider.onCommit}
               defaultValue={PYROOMACOUSTICS_DEFAULT_SCATTERING}
               showLabels={false}
               formatValue={(v) => v.toFixed(2)}
@@ -333,13 +409,15 @@ export function EntityInfoPanel({
             />
           ) : (
             <RangeSlider
-              color ='var(--color-info)'
+              color='var(--color-info)'
               label="Scattering (all): "
               value={allObjectsScattering}
               min={PYROOMACOUSTICS_SCATTERING_MIN}
               max={PYROOMACOUSTICS_SCATTERING_MAX}
               step={0.01}
-              onChange={(value) => materialState.assignScatteringToAll(value)}
+              onDragStart={allScatteringSlider.onDragStart}
+              onChange={allScatteringSlider.onChange}
+              onChangeCommitted={allScatteringSlider.onCommit}
               defaultValue={PYROOMACOUSTICS_DEFAULT_SCATTERING}
               showLabels={false}
               formatValue={(v) => v.toFixed(2)}

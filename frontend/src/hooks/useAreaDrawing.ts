@@ -1,16 +1,16 @@
 /**
  * useAreaDrawing Hook
  *
- * Convenience wrapper around AreaDrawingContext for a specific card index.
+ * Convenience wrapper around AreaDrawingStore for a specific card index.
  * Used by TextContextContent and AnalysisSection to interact with the
  * area drawing state for a single analysis card.
  */
 
 import { useMemo } from 'react';
-import { useAreaDrawingContext } from '@/contexts/AreaDrawingContext';
+import { useAreaDrawingStore } from '@/store';
 
 export function useAreaDrawing(cardIndex: number) {
-  const ctx = useAreaDrawingContext();
+  const ctx = useAreaDrawingStore();
 
   return useMemo(() => ({
     area: ctx.getArea(cardIndex),

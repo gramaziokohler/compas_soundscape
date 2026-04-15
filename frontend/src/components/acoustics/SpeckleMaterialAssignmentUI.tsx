@@ -15,7 +15,7 @@ interface SpeckleMaterialAssignmentUIProps {
   layerOptions: SpeckleLayerInfo[];
   selectedLayerId: string | null;
   availableMaterials: AcousticMaterial[];
-  onSelectLayer: (layerId: string) => void;
+  onSelectLayer?: (layerId: string) => void;
 }
 
 export function SpeckleMaterialAssignmentUI({
@@ -59,8 +59,9 @@ export function SpeckleMaterialAssignmentUI({
 
         <select
           value={selectedLayerId || ''}
-          onChange={(e) => onSelectLayer(e.target.value)}
-          className="w-full px-3 py-2 text-xs bg-info text-white border border-info rounded-md cursor-pointer"
+          onChange={(e) => onSelectLayer?.(e.target.value)}
+          disabled={!onSelectLayer}
+          className="w-full px-3 py-2 text-xs bg-info text-white border border-info rounded-md cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {layerOptions.map(layer => (
             <option key={layer.id} value={layer.id}>

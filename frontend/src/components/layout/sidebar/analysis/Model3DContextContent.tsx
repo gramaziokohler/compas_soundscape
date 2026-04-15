@@ -1,12 +1,12 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import type { ModelAnalysisConfig } from '@/types/analysis';
-import { useSpeckleViewerContext } from '@/contexts/SpeckleViewerContext';
-import { useSpeckleSelectionMode } from '@/contexts/SpeckleSelectionModeContext';
+import { useSpeckleStore, useAnalysisStore } from '@/store';
 import { getRootNodesForModel } from '@/hooks/useSpeckleTree';
 import { UI_COLORS, NUM_SOUNDS_MIN, NUM_SOUNDS_MAX } from '@/utils/constants';
 import { RangeSlider } from '@/components/ui/RangeSlider';
+import { useBatchedSlider } from '@/hooks/useBatchedSlider';
 
 /**
  * Model3DContextContent Component
@@ -28,11 +28,15 @@ export function Model3DContextContent({
   isAnalyzing,
   onUpdateConfig
 }: Model3DContextContentProps) {
-  // Get viewer ref from context
-  const { viewerRef } = useSpeckleViewerContext();
+  // Get viewer ref and selection state from store
+  const { getViewerRef, diverseSelectedObjectIds, setDiverseSelection } = useSpeckleStore();
+
+  // Batched slider — one undo step per drag gesture
+  const numSoundsSlider = useBatchedSlider<number>('analysis', (v) =>
+    onUpdateConfig(index, { numSounds: v }),
+  );
+  const viewerRef = useMemo<{ current: any }>(() => ({ get current() { return getViewerRef(); } }), [getViewerRef]);
   
-  // Get selection mode context
-  const { diverseSelectedObjectIds, setDiverseSelection } = useSpeckleSelectionMode();
 
   // World tree state (for entity population only)
   const [worldTree, setWorldTree] = useState<any>(null);
@@ -204,7 +208,11 @@ export function Model3DContextContent({
       }
       
       if (entities.length > 0 && entities.length !== config.modelEntities.length) {
+        // Auto-populate is not a user action — pause temporal so it doesn't create
+        // a separate undo entry from the card-creation step.
+        useAnalysisStore.temporal.getState().pause();
         onUpdateConfig(index, { modelEntities: entities });
+        useAnalysisStore.temporal.getState().resume();
       }
     }, 500);
 
@@ -244,11 +252,13 @@ export function Model3DContextContent({
           {/* Number of sounds */}
           <RangeSlider
             label="Number of sounds: "
-            value={config.numSounds}
+            value={config.numSounds ?? NUM_SOUNDS_MIN}
             min={NUM_SOUNDS_MIN}
             max={NUM_SOUNDS_MAX}
             step={1}
-            onChange={(value) => onUpdateConfig(index, { numSounds: value })}
+            onDragStart={numSoundsSlider.onDragStart}
+            onChange={numSoundsSlider.onChange}
+            onChangeCommitted={numSoundsSlider.onCommit}
           />
 
           {/* Note: Action button is rendered by Card component */}

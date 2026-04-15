@@ -3,8 +3,9 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import TimelinePlugin from 'wavesurfer.js/dist/plugins/timeline.js';
-import { WAVESURFER_TIMELINE, API_BASE_URL } from '@/utils/constants';
+import { WAVESURFER_TIMELINE, AUDIO_TIMELINE, API_BASE_URL } from '@/utils/constants';
 import type { TimelineSound } from '@/types/audio';
+import { useAudioControlsStore } from '@/store';
 
 interface WaveSurferTimelineProps {
   /** Array of scheduled sounds to display */
@@ -13,10 +14,6 @@ interface WaveSurferTimelineProps {
   currentTime?: number;
   /** Callback when user clicks on timeline to seek */
   onSeek?: (timeMs: number) => void;
-  /** Set of muted sound IDs */
-  mutedSounds?: Set<string>;
-  /** ID of the soloed sound */
-  soloedSound?: string | null;
   /** Callback to reload all available sounds into the timeline */
   onRefresh?: () => void;
   /** Callback to export the full soundscape as a WAV file */
@@ -43,11 +40,11 @@ export function WaveSurferTimeline({
   sounds,
   currentTime = 0,
   onSeek,
-  mutedSounds = new Set(),
-  soloedSound = null,
   onRefresh,
   onDownload,
 }: WaveSurferTimelineProps) {
+  const mutedSounds  = useAudioControlsStore((s) => s.mutedSounds);
+  const soloedSound  = useAudioControlsStore((s) => s.soloedSound);
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const timelineContainerRef = useRef<HTMLDivElement>(null);
@@ -87,7 +84,7 @@ export function WaveSurferTimeline({
     if (maxEndTime > 0) {
       return Math.ceil(maxEndTime / 1000); // exact seconds, no extra padding
     }
-    return WAVESURFER_TIMELINE.FIXED_DURATION_SECONDS;
+    return AUDIO_TIMELINE.DEFAULT_DURATION_MS / 1000; // fallback: 120s
   }, [sounds]);
 
   const TIMELINE_WIDTH = actualDuration * PIXELS_PER_SECOND;
@@ -509,10 +506,12 @@ export function WaveSurferTimeline({
     );
   }
 
+  const componentWidth = Math.max(TIMELINE_WIDTH, WAVESURFER_TIMELINE.MIN_WIDTH);
+
   return (
     <div
       className="bg-black/80 backdrop-blur-sm rounded-lg border border-white/20 overflow-hidden"
-      style={{ zIndex: 1000, position: 'relative' }}
+      style={{ zIndex: 1000, position: 'relative', width: `${componentWidth}px` }}
     >
       {/* Header with Title and Controls */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-white/10 bg-black/60">

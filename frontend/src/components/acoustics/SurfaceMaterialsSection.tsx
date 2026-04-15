@@ -7,7 +7,7 @@
 
 'use client';
 
-import { MaterialAssignmentUI } from './MaterialAssignmentUI';
+import { SpeckleMaterialAssignmentUI } from './SpeckleMaterialAssignmentUI';
 import { UI_COLORS } from '@/utils/constants';
 import type { EntityData, CompasGeometry } from '@/types';
 import type { AcousticMaterial, SelectedGeometry } from '@/types/materials';
@@ -54,7 +54,9 @@ export function SurfaceMaterialsSection({
         Surface Materials
       </h4>
 
-      <MaterialAssignmentUI
+      {/* NOTE: This component is currently unused - replaced by SpeckleSurfaceMaterialsSection */}
+      {/*
+      <SpeckleMaterialAssignmentUI
         modelEntities={modelEntities}
         modelType={modelType}
         geometryData={geometryData}
@@ -70,6 +72,7 @@ export function SurfaceMaterialsSection({
         excludedLayers={excludedLayers}
         onExcludedLayersChange={onExcludedLayersChange}
       />
+      */}
     </div>
   );
 }

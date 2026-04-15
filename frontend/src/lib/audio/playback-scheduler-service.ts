@@ -469,6 +469,11 @@ export class PlaybackSchedulerService {
       }
     });
 
+    // Sync prevIndividualSoundStates so that the next updateSoundPlayback call
+    // sees no diff and skips rescheduling (prevents double-scheduling after seek).
+    this.prevIndividualSoundStates = { ...individualSoundStates };
+    this.prevSoundIntervals = { ...soundIntervals };
+
     console.log('[PlaybackScheduler] ✅ SEEK - Complete, fresh schedulers created');
 
     // // Log detailed results for each sound

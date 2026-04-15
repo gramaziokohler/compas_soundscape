@@ -98,8 +98,10 @@ export function buildSoundscapeSavePayload(
           ? config.entity.id
           : parseInt(config.entity.id, 10))
         : undefined,
-      // Save full Speckle hash for exact entity matching on load
-      entity_node_id: config.entity?.nodeId
+      // Prefer stable applicationId (Rhino GUID) over Speckle nodeId for cross-session persistence.
+      // Speckle object IDs change on every commit, but applicationId (Rhino GUID) is stable.
+      entity_node_id: config.entity?.applicationId
+        || config.entity?.nodeId
         || (typeof config.entity?.id === 'string' ? config.entity.id : undefined),
       seed_copies: config.seed_copies,
       steps: config.steps,
@@ -326,9 +328,12 @@ export function restoreSoundscapeState(
       type: saved.type as SoundGenerationConfig['type'],
       entity: saved.entity_index !== undefined && saved.entity_index !== null
         ? {
-            // Prefer the full hash for proper Speckle matching & coloring
+            // entity_node_id is now a stable applicationId (Rhino GUID) —
+            // the actual Speckle tree ID must be resolved at runtime via appIdToTreeIdMap.
+            // Store it as applicationId so the link effects can remap it.
             id: saved.entity_node_id || saved.entity_index,
             nodeId: saved.entity_node_id,
+            applicationId: saved.entity_node_id,
             index: saved.entity_index,
           }
         : undefined,

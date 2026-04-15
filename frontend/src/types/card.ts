@@ -190,6 +190,8 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   onRemove: (index: number) => void;
   /** Called when card is reset (result cleared) */
   onReset: (index: number) => void;
+  /** Called when the inline error is dismissed (clears the error state in the parent) */
+  onDismissError?: (index: number) => void;
 
   // Content Slots
   /** Content to show when card has no result (before generation) */
