@@ -2,7 +2,7 @@ import json
 import os
 import pandas as pd
 
-from acousticDE.FiniteVolumeMethod.FVM import run_fvm_sim, check_should_cancel
+from acousticDE.FiniteVolumeMethod.FVM import run_fvm_sim
 from acousticDE.FiniteVolumeMethod.CreateMeshFVM import generate_mesh
 
 def de_method(json_file_path=None):
@@ -89,9 +89,6 @@ def de_method(json_file_path=None):
     results = run_fvm_sim(
         result_container["msh_path"], json_file_path, csv_path
     )
-
-    if check_should_cancel(json_file_path):
-        return
 
     ## Write the results to the correct locations in the result container
     result_container["results"][0]["responses"][0]["parameters"]["edt"] = results[

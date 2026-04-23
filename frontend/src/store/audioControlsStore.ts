@@ -24,6 +24,7 @@ export interface AudioControlsStoreState {
   selectedVariants: Record<number, number>;
   soundVolumes: Record<string, number>;
   soundIntervals: Record<string, number>;
+  soundTrims: Record<string, { start: number; end: number }>;
   mutedSounds: Set<string>;
   soloedSound: string | null;
   previewingSoundId: string | null;
@@ -40,6 +41,7 @@ export interface AudioControlsStoreState {
   handleIntervalChange: (soundId: string, intervalSeconds: number) => void;
   handleMute: (soundId: string) => void;
   handleSolo: (soundId: string) => void;
+  setSoundTrim: (soundId: string, trim: { start: number; end: number }) => void;
   handlePreviewPlayPause: (soundId: string) => void;
   handlePreviewStop: (soundId: string) => void;
   stopSoundcardPreview: () => void;
@@ -59,6 +61,7 @@ export interface AudioControlsStoreState {
 export const audioControlsPartialize = (state: AudioControlsStoreState) => ({
   soundVolumes: { ...state.soundVolumes },
   soundIntervals: { ...state.soundIntervals },
+  soundTrims: { ...state.soundTrims },
   selectedVariants: { ...state.selectedVariants },
   mutedSounds: new Set(state.mutedSounds),
   soloedSound: state.soloedSound,
@@ -73,6 +76,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         selectedVariants: {},
         soundVolumes: {},
         soundIntervals: {},
+        soundTrims: {},
         mutedSounds: new Set(),
         soloedSound: null,
         previewingSoundId: null,
@@ -178,6 +182,13 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             },
             false,
             'audio/handleSolo',
+          ),
+
+        setSoundTrim: (soundId, trim) =>
+          set(
+            (state) => ({ soundTrims: { ...state.soundTrims, [soundId]: trim } }),
+            false,
+            'audio/setSoundTrim',
           ),
 
         handlePreviewPlayPause: (soundId) => {
@@ -292,6 +303,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
       equality: (past, current) =>
         JSON.stringify(past.soundVolumes) === JSON.stringify(current.soundVolumes) &&
         JSON.stringify(past.soundIntervals) === JSON.stringify(current.soundIntervals) &&
+        JSON.stringify(past.soundTrims) === JSON.stringify(current.soundTrims) &&
         JSON.stringify(past.selectedVariants) === JSON.stringify(current.selectedVariants) &&
         past.mutedSounds.size === current.mutedSounds.size &&
         [...past.mutedSounds].every((id) => current.mutedSounds.has(id)) &&

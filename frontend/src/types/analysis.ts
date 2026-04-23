@@ -85,6 +85,7 @@ export interface TextPromptResult {
     interval_seconds?: number;
     duration_seconds?: number;
     confidence?: number;
+    detection_segments?: Array<{ start_sec: number; end_sec: number }>;
   };
 }
 

@@ -614,6 +614,16 @@ export class SoundSphereManager {
   }
 
   /**
+   * Get the rendered position of a sound sphere by sound ID.
+   * Returns from spherePositions (always up-to-date, includes dragged positions).
+   * Preferred over getAudioSource for position look-ups since it is populated
+   * synchronously and does not depend on audio loading completing.
+   */
+  public getSpherePosition(soundId: string): [number, number, number] | undefined {
+    return this.spherePositions.get(soundId);
+  }
+
+  /**
    * Get all sound metadata
    */
   public getAllAudioSources(): Map<string, SoundMetadata> {

@@ -7,6 +7,7 @@ import { useSpeckleStore } from '@/store';
 import { useAcousticMaterialStore } from '@/store';
 import { useAudioControlsStore } from '@/store';
 import { RangeSlider } from '@/components/ui/RangeSlider';
+import { MaterialSelect } from '@/components/ui/MaterialSelect';
 import { SoundResultContent } from '@/components/layout/sidebar/sound/SoundResultContent';
 import type { HierarchicalMeshObject } from '@/hooks/useSpeckleSurfaceMaterials';
 import type { SoundEvent } from '@/types';
@@ -78,6 +79,8 @@ export function EntityInfoPanel({
     removeFromDiverseSelection
   } = useSpeckleStore();
 
+  const explorerIsolatedIds = useSpeckleStore((s) => s.explorerIsolatedIds);
+
   // ── Acoustic material store (replaces AcousticMaterialContext) ──
   const isActive = useAcousticMaterialStore((s) => s.isActive);
   const meshObjects = useAcousticMaterialStore((s) => s.meshObjects);
@@ -85,10 +88,8 @@ export function EntityInfoPanel({
   const scatteringAssignments = useAcousticMaterialStore((s) => s.scatteringAssignments);
   const availableMaterials = useAcousticMaterialStore((s) => s.availableMaterials);
   const assignMaterial = useAcousticMaterialStore((s) => s.assignMaterial);
-  const assignMaterialToAll = useAcousticMaterialStore((s) => s.assignMaterialToAll);
   const assignMaterialToObjects = useAcousticMaterialStore((s) => s.assignMaterialToObjects);
   const assignScattering = useAcousticMaterialStore((s) => s.assignScattering);
-  const assignScatteringToAll = useAcousticMaterialStore((s) => s.assignScatteringToAll);
   const assignScatteringToObjects = useAcousticMaterialStore((s) => s.assignScatteringToObjects);
 
   // ── Audio controls store ──
@@ -135,19 +136,26 @@ export function EntityInfoPanel({
     return colors;
   }, [isActive, availableMaterials]);
 
-  // Compute "All Objects" material info
+  // Visible object IDs: all geometry IDs filtered by active isolation (if any)
+  const visibleObjectIds = useMemo(() => {
+    const allIds = collectAllObjectIds(meshObjects);
+    if (explorerIsolatedIds === null) return allIds;
+    const isolatedSet = new Set(explorerIsolatedIds);
+    return allIds.filter(id => isolatedSet.has(id));
+  }, [meshObjects, explorerIsolatedIds]);
+
+  // Compute "All Objects" material info — scoped to visible (isolated) objects only
   const allObjectsInfo = useMemo(() => {
     if (!isActive) return null;
-    const allIds = collectAllObjectIds(meshObjects);
-    const totalGeometry = allIds.length;
+    const totalGeometry = visibleObjectIds.length;
     const uniqueMaterials = new Set(
-      allIds.map(id => materialAssignments.get(id)).filter(Boolean)
+      visibleObjectIds.map(id => materialAssignments.get(id)).filter(Boolean)
     );
     const commonMaterialId = uniqueMaterials.size === 1 ? Array.from(uniqueMaterials)[0]! : null;
-    const assignedCount = materialAssignments.size;
+    const assignedCount = visibleObjectIds.filter(id => materialAssignments.has(id)).length;
     const unassignedCount = totalGeometry - assignedCount;
     return { totalGeometry, commonMaterialId, uniqueMaterials, assignedCount, unassignedCount };
-  }, [isActive, meshObjects, materialAssignments]);
+  }, [isActive, visibleObjectIds, materialAssignments]);
 
   // Check if the selected entity is in the mesh tree
   const selectedObjectInTree = useMemo(() => {
@@ -192,15 +200,14 @@ export function EntityInfoPanel({
     return { uniqueAssigned: assignedMaterials, commonMaterialId };
   }, [isActive, multiSelectionGeometryIds, materialAssignments]);
 
-  // Scattering value for "All Objects" slider — common value or default
+  // Scattering value for "All Objects" slider — scoped to visible objects
   const allObjectsScattering = useMemo(() => {
     if (!isActive) return PYROOMACOUSTICS_DEFAULT_SCATTERING;
-    const allIds = collectAllObjectIds(meshObjects);
-    if (allIds.length === 0) return PYROOMACOUSTICS_DEFAULT_SCATTERING;
-    const values = allIds.map(id => scatteringAssignments.get(id) ?? PYROOMACOUSTICS_DEFAULT_SCATTERING);
+    if (visibleObjectIds.length === 0) return PYROOMACOUSTICS_DEFAULT_SCATTERING;
+    const values = visibleObjectIds.map(id => scatteringAssignments.get(id) ?? PYROOMACOUSTICS_DEFAULT_SCATTERING);
     const unique = new Set(values);
     return unique.size === 1 ? values[0] : PYROOMACOUSTICS_DEFAULT_SCATTERING;
-  }, [isActive, meshObjects, scatteringAssignments]);
+  }, [isActive, visibleObjectIds, scatteringAssignments]);
 
   // Scattering value for selected object/group slider
   const selectedObjectScattering = useMemo(() => {
@@ -234,12 +241,6 @@ export function EntityInfoPanel({
     return { uniqueAssigned: assignedMaterials, commonMaterialId };
   }, [isActive, materialAssignments, selectedGeometryIds]);
 
-  // Background color helper
-  const getSelectBg = (materialId: string | null): string => {
-    if (!materialId) return UI_COLORS.NEUTRAL_400;
-    return materialColors.get(materialId) || UI_COLORS.NEUTRAL_400;
-  };
-
   // ── Scattering sliders (batched — one undo step per drag) ──
   // We need refs to the "assign" callbacks to avoid stale closure inside useBatchedSlider.
   const selectedGeometryIdsRef = useRef(selectedGeometryIds);
@@ -250,6 +251,8 @@ export function EntityInfoPanel({
   selectedEntityRef.current = selectedEntity;
   const isMultiSurfaceSelectionRef = useRef(isMultiSurfaceSelection);
   isMultiSurfaceSelectionRef.current = isMultiSurfaceSelection;
+  const visibleObjectIdsRef = useRef(visibleObjectIds);
+  visibleObjectIdsRef.current = visibleObjectIds;
 
   const selectedScatteringSlider = useBatchedSlider<number>(
     'acousticMaterial',
@@ -262,7 +265,7 @@ export function EntityInfoPanel({
 
   const allScatteringSlider = useBatchedSlider<number>(
     'acousticMaterial',
-    (value) => assignScatteringToAll(value),
+    (value) => assignScatteringToObjects(visibleObjectIdsRef.current, value),
   );
 
   // ===== MATERIAL ASSIGNMENT MODE =====
@@ -282,33 +285,14 @@ export function EntityInfoPanel({
             <span className="text-xs text-secondary">
               All Objects ({allObjectsInfo.totalGeometry})
             </span>
-            <select
+            <MaterialSelect
               value={allObjectsInfo.commonMaterialId || ''}
-              onChange={(e) => {
-                assignMaterialToAll(e.target.value);
-              }}
-              className="text-xs px-2 py-1 text-white rounded focus:outline-none focus:ring-1 focus:ring-white"
-              style={{
-                backgroundColor: getSelectBg(allObjectsInfo.commonMaterialId),
-                borderRadius: `${UI_BORDER_RADIUS.SM}px`,
-                maxWidth: '140px',
-                minWidth: '100px',
-                opacity: allObjectsInfo.uniqueMaterials.size > 1 ? 0.7 : 1
-              }}
-            >
-              <option value="" style={{ backgroundColor: UI_COLORS.NEUTRAL_400 }}>
-                {allObjectsInfo.uniqueMaterials.size > 1 ? '(mixed)' : 'Select...'}
-              </option>
-              {sortedMaterials.map(material => (
-                <option
-                  key={material.id}
-                  value={material.id}
-                  style={{ backgroundColor: materialColors.get(material.id) }}
-                >
-                  {material.name} ({(material.absorption * 100).toFixed(0)}%)
-                </option>
-              ))}
-            </select>
+              onChange={(matId) => assignMaterialToObjects(visibleObjectIds, matId)}
+              materials={sortedMaterials}
+              materialColors={materialColors}
+              placeholder={allObjectsInfo.uniqueMaterials.size > 1 ? '(mixed)' : 'Select...'}
+              opacity={allObjectsInfo.uniqueMaterials.size > 1 ? 0.7 : 1}
+            />
           </div>
 
           {/* Per-object / per-group / multi-surface dropdown OR hint text */}
@@ -342,39 +326,22 @@ export function EntityInfoPanel({
                 >
                   {label}
                 </span>
-                <select
+                <MaterialSelect
                   value={effectiveMaterialId || ''}
-                  onChange={(e) => {
+                  onChange={(matId) => {
                     if (isMultiSurfaceSelection) {
-                      assignMaterialToObjects(multiSelectionGeometryIds, e.target.value);
+                      assignMaterialToObjects(multiSelectionGeometryIds, matId);
                     } else if (isGroupSelection) {
-                      assignMaterialToObjects(selectedGeometryIds, e.target.value);
+                      assignMaterialToObjects(selectedGeometryIds, matId);
                     } else if (selectedEntity) {
-                      assignMaterial(selectedEntity.objectId, e.target.value);
+                      assignMaterial(selectedEntity.objectId, matId);
                     }
                   }}
-                  className="text-xs px-2 py-1 text-white rounded focus:outline-none focus:ring-1 focus:ring-white"
-                  style={{
-                    backgroundColor: getSelectBg(effectiveMaterialId),
-                    borderRadius: `${UI_BORDER_RADIUS.SM}px`,
-                    maxWidth: '140px',
-                    minWidth: '100px',
-                    opacity: isMixed ? 0.7 : 1
-                  }}
-                >
-                  <option value="" style={{ backgroundColor: UI_COLORS.NEUTRAL_400 }}>
-                    {isMixed ? '(mixed)' : 'Select...'}
-                  </option>
-                  {sortedMaterials.map(material => (
-                    <option
-                      key={material.id}
-                      value={material.id}
-                      style={{ backgroundColor: materialColors.get(material.id) }}
-                    >
-                      {material.name} ({(material.absorption * 100).toFixed(0)}%)
-                    </option>
-                  ))}
-                </select>
+                  materials={sortedMaterials}
+                  materialColors={materialColors}
+                  placeholder={isMixed ? '(mixed)' : 'Select...'}
+                  opacity={isMixed ? 0.7 : 1}
+                />
               </div>
             );
           })() : (

@@ -16,17 +16,21 @@ from config.constants import (
     PYROOMACOUSTICS_SIMULATION_MODE_FOA,
     PYROOMACOUSTICS_MAX_ORDER_MAX,
     PYROOMACOUSTICS_DEFAULT_ABSORPTION,
-    PYROOMACOUSTICS_CUSTOM_MATERIALS,
-    PYROOMACOUSTICS_GRID_RECEIVER_POINTS_FILE,
-    PYROOMACOUSTICS_GRID_PLOT_DPI,
-    PYROOMACOUSTICS_GRID_PLOT_FIGSIZE,
-    PYROOMACOUSTICS_GRID_PLOT_COLORMAP,
-    PYROOMACOUSTICS_GRID_PLOT_CONTOUR_LEVELS
+    PYROOMACOUSTICS_CUSTOM_MATERIALS
 )
 
 
 class PyroomacousticsService:
     """Service for acoustic simulation using pyroomacoustics library"""
+
+    @staticmethod
+    def get_service_version_info() -> dict:
+        import importlib.metadata
+        try:
+            version = importlib.metadata.version("pyroomacoustics")
+        except importlib.metadata.PackageNotFoundError:
+            version = getattr(pra, "__version__", "unknown")
+        return {"name": "pyroomacoustics", "version": version}
 
     @staticmethod
     def add_receiver_to_room(
@@ -291,7 +295,8 @@ class PyroomacousticsService:
         fs: int = None,
         max_order: int = PYROOMACOUSTICS_MAX_ORDER_MAX,
         ray_tracing: bool = False,
-        air_absorption: bool = False
+        air_absorption: bool = False,
+        skip_weld: bool = False,
     ) -> pra.Room:
         """
         Create a pyroomacoustics Room from a mesh with materials assigned per face or entity.
@@ -363,11 +368,12 @@ class PyroomacousticsService:
                     face_materials = {}
 
             # Weld mesh: merge duplicate vertices and drop degenerate faces
-            vertices, faces, face_materials, face_scattering = (
-                PyroomacousticsService.weld_mesh(
-                    vertices, faces, face_materials, face_scattering
+            if not skip_weld:
+                vertices, faces, face_materials, face_scattering = (
+                    PyroomacousticsService.weld_mesh(
+                        vertices, faces, face_materials, face_scattering
+                    )
                 )
-             )
 
             # Convert vertices to numpy array for easier indexing
             vertices_np = np.array(vertices)
@@ -619,264 +625,3 @@ class PyroomacousticsService:
 
         return absoprtion_db
 
-    # ========================================================================
-    # Grid Receiver Simulation
-    # ========================================================================
-
-    @staticmethod
-    def load_receiver_grid(file_path: str = None) -> np.ndarray:
-        """
-        Load a grid of receiver points from a text file.
-
-        The file should contain a Python-style nested list with 3 sub-lists
-        for X, Y, Z coordinates respectively. Comments (lines starting with #)
-        are stripped before parsing.
-
-        Args:
-            file_path: Path to the receiver points file.
-                       Defaults to the path from constants (PYROOMACOUSTICS_GRID_RECEIVER_POINTS_FILE).
-
-        Returns:
-            np.ndarray: Shape (3, N) array where each column is [x, y, z] for a receiver.
-
-        Raises:
-            HTTPException: If the file cannot be read or parsed.
-        """
-        if file_path is None:
-            file_path = PYROOMACOUSTICS_GRID_RECEIVER_POINTS_FILE
-
-        try:
-            content = Path(file_path).read_text()
-
-            # Strip comment lines (lines starting with # after optional whitespace)
-            lines = [line for line in content.split('\n') if not line.strip().startswith('#')]
-            cleaned = '\n'.join(lines)
-
-            # Parse the nested list literal
-            raw = ast.literal_eval(cleaned)
-            grid_points = np.array(raw, dtype=float)
-
-            if grid_points.shape[0] != 3:
-                raise ValueError(f"Expected 3 rows (X, Y, Z), got {grid_points.shape[0]}")
-
-            print(f"Loaded {grid_points.shape[1]} receiver grid points from {file_path}")
-            # grid_points = grid_points[:,:50]
-            print(grid_points)
-            return grid_points
-
-        except FileNotFoundError:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Receiver points file not found: {file_path}"
-            )
-        except (ValueError, SyntaxError) as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Failed to parse receiver points file: {str(e)}"
-            )
-
-    @staticmethod
-    def simulate_grid(
-        room_factory_args: dict,
-        source_positions: list[list[float]],
-        grid_points: np.ndarray,
-        fs: int = None
-    ) -> dict:
-        """
-        Run a simulation with a grid of receivers and compute acoustic metrics.
-
-        Creates a fresh room from the provided factory arguments, adds sources
-        and a grid MicrophoneArray, computes RIRs, then calculates RT60 and
-        dB levels for every source-receiver combination.
-
-        Args:
-            room_factory_args: Keyword arguments for create_room_from_mesh()
-                               (vertices, faces, face_materials, etc.)
-            source_positions: List of [x, y, z] source coordinates.
-            grid_points: Shape (3, N) array of receiver coordinates.
-            fs: Sample rate in Hz (default: from constants).
-
-        Returns:
-            dict with keys:
-                - 'rt60': np.ndarray shape (n_sources, N) — RT60 per source-receiver
-                - 'db_levels': np.ndarray shape (n_sources, N) — dB level per source-receiver
-                - 'grid_points': the (3, N) receiver grid
-                - 'source_positions': the source position list
-
-        Raises:
-            HTTPException: If room creation or simulation fails.
-        """
-        from config.constants import PYROOMACOUSTICS_SAMPLE_RATE
-
-        if fs is None:
-            fs = PYROOMACOUSTICS_SAMPLE_RATE
-
-        try:
-            # Validate that coordinates are in meters before building the room
-            # Use a sample of grid receivers (first 10) to keep the check lightweight
-            sample_receivers = grid_points[:, :10].T.tolist()
-            PyroomacousticsService.validate_unit_scale(source_positions, sample_receivers)
-
-            # Build a fresh room for the grid run
-            room = PyroomacousticsService.create_room_from_mesh(**room_factory_args)
-
-            # Add sources
-            for src_pos in source_positions:
-                # src_pos = np.round(np.array(src_pos), 2).tolist()
-                # print(src_pos)
-                room.add_source(src_pos)
-
-            # Filter grid points to only those inside the room geometry
-            total_points = grid_points.shape[1]
-            mask = [room.is_inside(grid_points[:, i].tolist()) for i in range(total_points)]
-            filtered_points = grid_points[:, mask]
-
-            if filtered_points.shape[1] == 0:
-                raise ValueError(
-                    f"None of the {total_points} grid receiver points are inside the room geometry. "
-                    f"Grid X range: [{grid_points[0].min():.2f}, {grid_points[0].max():.2f}], "
-                    f"Y range: [{grid_points[1].min():.2f}, {grid_points[1].max():.2f}], "
-                    f"Z range: [{grid_points[2].min():.2f}, {grid_points[2].max():.2f}]"
-                )
-            
-            #Remove points that are too close to sources (e.g. within 0.5m) to avoid singularities in RIRs
-            threshold = 0.5
-            indices_to_remove = []
-            for i, point in enumerate(filtered_points.T):
-                for src_pos in source_positions:
-                    if np.linalg.norm(np.array(src_pos) - point) < threshold:
-                        indices_to_remove.append(i)
-
-            filtered_points = np.delete(filtered_points, indices_to_remove, axis=1)
-
-            print(f"Grid points: {filtered_points.shape[1]}/{total_points} are inside the room")
-
-            # Replace grid_points with filtered set
-            grid_points = filtered_points
-
-            print(grid_points)
-
-            # Add grid receivers as MicrophoneArray
-            mic_array = pra.MicrophoneArray(grid_points, fs=fs)
-            room.add_microphone_array(mic_array)
-
-            print(f"Grid simulation: {len(source_positions)} source(s), {grid_points.shape[1]} receivers")
-
-            # Compute RIRs
-            room.image_source_model()
-            room.compute_rir()
-
-            n_sources = len(source_positions)
-            n_receivers = grid_points.shape[1]
-
-            rt60 = np.zeros((n_sources, n_receivers))
-            db_levels = np.zeros((n_sources, n_receivers))
-
-            for src_idx in range(n_sources):
-                for rcv_idx in range(n_receivers):
-                    rir = room.rir[rcv_idx][src_idx]
-                    # RT60
-                    try:
-                        rt60[src_idx][rcv_idx] = pra.experimental.rt60.measure_rt60(rir, fs=fs)
-                    except Exception:
-                        rt60[src_idx][rcv_idx] = 0.0
-
-                    # RMS → dB level
-                    rms = np.sqrt(np.mean(rir ** 2))
-                    if rms > 0:
-                        db_levels[src_idx][rcv_idx] = 20 * np.log10(rms)
-                    else:
-                        db_levels[src_idx][rcv_idx] = -120.0  # floor value
-
-            print(f"Grid simulation complete — RT60 range: [{rt60.min():.3f}, {rt60.max():.3f}]s, "
-                  f"dB range: [{db_levels.min():.1f}, {db_levels.max():.1f}]")
-
-            return {
-                'rt60': rt60,
-                'db_levels': db_levels,
-                'grid_points': grid_points,
-                'source_positions': source_positions
-            }
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Grid simulation failed: {str(e)}"
-            )
-
-    @staticmethod
-    def plot_grid_results(
-        source_pos: list[float],
-        receivers_pos: np.ndarray,
-        values: np.ndarray,
-        title: str,
-        output_path: str
-    ) -> str:
-        """
-        Generate a 2D heatmap plot of grid simulation results and save as JPG.
-
-        Args:
-            source_pos: [x, y, z] of the sound source.
-            receivers_pos: Shape (3, N) receiver coordinates.
-            values: Shape (N,) metric values (RT60 or dB) for each receiver.
-            title: Colorbar / plot label (e.g. "RT60 (s)" or "dB Level").
-            output_path: Full path for the output JPG file.
-
-        Returns:
-            str: Path to the saved JPG file.
-
-        Raises:
-            HTTPException: If plotting fails.
-        """
-        try:
-            fig, ax = plt.subplots(figsize=PYROOMACOUSTICS_GRID_PLOT_FIGSIZE)
-
-            x = receivers_pos[0, :]
-            y = receivers_pos[1, :]
-            z = np.array(values).flatten()
-
-            # Filled contour for smooth gradient
-            contour = ax.tricontourf(
-                x, y, z,
-                levels=PYROOMACOUSTICS_GRID_PLOT_CONTOUR_LEVELS,
-                cmap=PYROOMACOUSTICS_GRID_PLOT_COLORMAP
-            )
-
-            # Source marker
-            ax.scatter(
-                source_pos[0], source_pos[1],
-                c='red', s=60, zorder=5, edgecolors='white', linewidths=0.8,
-                label='Source'
-            )
-
-            # Receiver markers
-            ax.scatter(x, y, c='white', s=12, alpha=0.7, zorder=4, label='Receivers')
-
-            # Colorbar
-            cbar = fig.colorbar(contour, ax=ax)
-            cbar.set_label(title, rotation=270, labelpad=15)
-
-            ax.set_xlabel('X [m]')
-            ax.set_ylabel('Y [m]')
-            ax.set_aspect('equal')
-            ax.legend(loc='upper right', fontsize=8)
-
-            plt.tight_layout()
-
-            # Ensure parent directory exists
-            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-
-            fig.savefig(output_path, dpi=PYROOMACOUSTICS_GRID_PLOT_DPI, format='jpg')
-            plt.close(fig)
-
-            print(f"Grid plot saved to {output_path}")
-            return output_path
-
-        except Exception as e:
-            plt.close('all')
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to generate grid plot: {str(e)}"
-            )

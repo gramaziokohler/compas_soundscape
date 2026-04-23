@@ -30,6 +30,7 @@ interface SimulationSetupContentProps {
   isReadOnly?: boolean;
   onMaterialAssignmentsChange: (assignments: Record<string, string>, layerName: string | null, geometryObjectIds: string[], scatteringAssignments: Record<string, number>) => void;
   onUpdateConfig: (updates: Partial<SimulationConfig>) => void;
+  onIsolationChange?: (ids: string[] | null) => void;
 }
 
 /**
@@ -44,12 +45,14 @@ export function SimulationSetupContent({
   filteringEnabled = true,
   isReadOnly = false,
   onMaterialAssignmentsChange,
-  onUpdateConfig
+  onUpdateConfig,
+  onIsolationChange,
 }: SimulationSetupContentProps) {
-  // Extract persisted Speckle material assignments from config
+  // Extract persisted Speckle state from config
   const initialAssignments = (config as any).speckleMaterialAssignments as Record<string, string> | undefined;
   const initialLayerName = (config as any).speckleLayerName as string | null | undefined;
   const initialScatteringAssignments = (config as any).speckleScatteringAssignments as Record<string, number> | undefined;
+  const initialIsolatedObjectIds = (config as any).speckleIsolatedObjectIds as string[] | null | undefined;
 
   // DEBUG: log what we receive on mount and when config changes
   useEffect(() => {
@@ -77,6 +80,8 @@ export function SimulationSetupContent({
         initialAssignments={initialAssignments}
         initialLayerName={initialLayerName}
         initialScatteringAssignments={initialScatteringAssignments}
+        initialIsolatedObjectIds={initialIsolatedObjectIds}
+        onIsolationChange={onIsolationChange}
       />
 
       {/* Choras Settings */}
@@ -94,6 +99,7 @@ export function SimulationSetupContent({
           onUpdateConfig={(updates) => onUpdateConfig(updates as Partial<SimulationConfig>)}
         />
       )}
+
     </div>
   );
 }

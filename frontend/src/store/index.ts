@@ -10,6 +10,7 @@
  */
 
 import { useAcousticMaterialStore, acousticMaterialPartialize } from './acousticMaterialStore';
+import { useGridListenersStore, gridListenersPartialize } from './gridListenersStore';
 import { useAudioControlsStore, audioControlsPartialize } from './audioControlsStore';
 import { useObjectExplorerStore, objectExplorerPartialize } from './objectExplorerStore';
 import { useReceiversStore, receiversPartialize } from './receiversStore';
@@ -19,6 +20,7 @@ import {
   acousticsSimulationPartialize,
 } from './acousticsSimulationStore';
 import { usePyroomAcousticsStore, pyroomAcousticsPartialize } from './pyroomAcousticsStore';
+import { useChorasStore, chorasPartialize } from './chorasStore';
 import { useSoundscapeStore, soundscapePartialize } from './soundscapeStore';
 import { useTextGenerationStore, textGenerationPartialize } from './textGenerationStore';
 import { useAnalysisStore, analysisPartialize } from './analysisStore';
@@ -64,6 +66,11 @@ registerTemporalStore(
   () => pyroomAcousticsPartialize(usePyroomAcousticsStore.getState()),
 );
 registerTemporalStore(
+  'choras',
+  useChorasStore.temporal,
+  () => chorasPartialize(useChorasStore.getState()),
+);
+registerTemporalStore(
   'soundscape',
   useSoundscapeStore.temporal,
   () => soundscapePartialize(useSoundscapeStore.getState()),
@@ -93,6 +100,11 @@ registerTemporalStore(
   useAreaDrawingStore.temporal,
   () => areaDrawingPartialize(useAreaDrawingStore.getState()),
 );
+registerTemporalStore(
+  'gridListeners',
+  useGridListenersStore.temporal,
+  () => gridListenersPartialize(useGridListenersStore.getState()),
+);
 
 // ── Re-exports ────────────────────────────────────────────────────────────────
 export { useAcousticMaterialStore };
@@ -120,6 +132,10 @@ export type { SpeckleStoreState } from './speckleStore';
 export { useAreaDrawingStore } from './areaDrawingStore';
 export type { AreaDrawingStoreState } from './areaDrawingStore';
 
+export { useGridListenersStore } from './gridListenersStore';
+export type { GridListenersStoreState } from './gridListenersStore';
+export { computeGridPoints } from './gridListenersStore';
+
 // Temporal stores
 export { useObjectExplorerStore };
 export type { ObjectExplorerStoreState } from './objectExplorerStore';
@@ -140,6 +156,14 @@ export type {
   PyroomMaterial,
   PyroomSimulationSettings,
 } from './pyroomAcousticsStore';
+
+export { useChorasStore };
+export type {
+  ChorasStoreState,
+  ChorasInstanceState,
+  ChorasMaterial,
+  ChorasSimulationSettings,
+} from './chorasStore';
 
 export { useSoundscapeStore };
 export type { SoundscapeStoreState } from './soundscapeStore';

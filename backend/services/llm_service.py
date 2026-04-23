@@ -27,6 +27,15 @@ from config.constants import (
 class LLMService:
     """Service for interacting with Google Gemini LLM"""
 
+    @staticmethod
+    def get_service_version_info() -> dict:
+        import importlib.metadata
+        try:
+            version = importlib.metadata.version("google-genai")
+        except importlib.metadata.PackageNotFoundError:
+            version = getattr(genai, "__version__", "unknown")
+        return {"name": LLM_MODEL_NAME, "version": ""}
+
     def __init__(self, client: genai.Client):
         self.client = client
         self.progress_callback = None  # Optional callback for retry progress updates

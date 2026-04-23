@@ -12,8 +12,8 @@ import type { SEDAudioInfo, DetectedSound, SEDAnalysisResult, SEDAnalysisOptions
 export type { SEDAudioInfo, DetectedSound, SEDAnalysisResult, SEDAnalysisOptions, SEDUIState, UseSEDReturn };
 
 // Import and re-export Receiver types
-import type { ReceiverData, ReceiverOverlay } from './receiver';
-export type { ReceiverData, ReceiverOverlay };
+import type { ReceiverData, ReceiverOverlay, GridListenerData } from './receiver';
+export type { ReceiverData, ReceiverOverlay, GridListenerData };
 
 // Import and re-export Analysis types
 import type {

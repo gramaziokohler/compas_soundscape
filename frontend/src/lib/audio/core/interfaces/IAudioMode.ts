@@ -52,8 +52,9 @@ export interface IAudioMode {
    * @param sourceId - Source identifier
    * @param loop - Whether to loop the audio (default: false)
    * @param offset - Start playback from this position in seconds (default: 0)
+   * @param duration - Maximum playback duration in seconds (trim end)
    */
-  playSource(sourceId: string, loop?: boolean, offset?: number): void;
+  playSource(sourceId: string, loop?: boolean, offset?: number, duration?: number): void;
 
   /**
    * Stop audio playback for a source

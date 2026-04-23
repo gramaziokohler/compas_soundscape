@@ -5,15 +5,26 @@ import Image from "next/image";
 import { AnalysisSection } from "./sidebar/AnalysisSection";
 import { SoundGenerationSection } from "./sidebar/SoundGenerationSection";
 import { AcousticsSection } from "./sidebar/AcousticsSection";
+import { ListenersSection } from "./sidebar/ListenersSection";
 import { AdvancedSettingsSection } from "./sidebar/AdvancedSettingsSection";
 import { VerticalTabButton } from "@/components/ui/VerticalTabButton";
 import { Icon } from "@/components/ui/Icon";
-import { UI_VERTICAL_TABS } from "@/utils/constants";
+import { UI_VERTICAL_TABS, UI_COLORS, UI_SIDEBAR_RESIZE } from "@/utils/constants";
+import { useSidebarResize } from "@/hooks/useSidebarResize";
 import type { SidebarProps } from "@/types/components";
 import type { ActiveTab } from "@/types";
 
 export function Sidebar(props: SidebarProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isHandleHovered, setIsHandleHovered] = useState(false);
+
+  const { width: contentWidth, isResizing, handleMouseDown: handleResizeMouseDown } = useSidebarResize({
+    initialWidth: UI_SIDEBAR_RESIZE.LEFT_DEFAULT_WIDTH,
+    minWidth: UI_SIDEBAR_RESIZE.LEFT_MIN_WIDTH,
+    maxWidth: UI_SIDEBAR_RESIZE.LEFT_MAX_WIDTH,
+    direction: 'right',
+    onWidthChange: props.onWidthChange,
+  });
 
   // Notify parent when expanded state changes
   useEffect(() => {
@@ -77,6 +88,22 @@ export function Sidebar(props: SidebarProps) {
           onClick={() => handleTabClick('sound')}
         />
 
+        {/* Listeners Tab */}
+        <VerticalTabButton
+          icon={
+            <Icon size={`${UI_VERTICAL_TABS.ICON_SIZE}px`} color="currentColor">
+              {/* Headphones / Listener Icon */}
+              <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
+              <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z" />
+              <path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" />
+            </Icon>
+          }
+          label="Listeners"
+          isActive={props.activeAiTab === 'listeners'}
+          onClick={() => handleTabClick('listeners')}
+          buttonColor='var(--color-warning)'
+        />
+
         {/* Acoustics Tab */}
         <VerticalTabButton
           icon={
@@ -122,14 +149,45 @@ export function Sidebar(props: SidebarProps) {
 
       {/* Main Content Area */}
       <aside
-        className="flex-shrink-0 px-6 py-8 flex flex-col gap-4 bg-white dark:bg-gray-800 overflow-y-auto transition-all duration-300 ease-in-out"
+        className="flex-shrink-0 flex flex-col gap-4 bg-white dark:bg-gray-800 transition-all duration-300 ease-in-out relative"
         style={{
-          width: isExpanded ? '18rem' : '0',
+          width: isExpanded ? `${contentWidth}px` : '0',
           padding: isExpanded ? '1.5rem 1rem' : '0',
           overflow: isExpanded ? 'auto' : 'hidden',
-          opacity: isExpanded ? 0.95 : 0
+          opacity: isExpanded ? 0.95 : 0,
+          userSelect: isResizing ? 'none' : undefined,
         }}
       >
+        {/* Resize handle — right edge of the content panel */}
+        {isExpanded && (
+          <div
+            onMouseDown={handleResizeMouseDown}
+            onMouseEnter={() => setIsHandleHovered(true)}
+            onMouseLeave={() => setIsHandleHovered(false)}
+            style={{
+              position: 'absolute',
+              top: 0,
+              right: 0,
+              width: `${UI_SIDEBAR_RESIZE.HANDLE_HIT_AREA}px`,
+              height: '100%',
+              cursor: 'col-resize',
+              zIndex: 20,
+              display: 'flex',
+              alignItems: 'stretch',
+              justifyContent: 'flex-end',
+            }}
+          >
+            <div
+              style={{
+                width: `${UI_SIDEBAR_RESIZE.HANDLE_WIDTH}px`,
+                height: '100%',
+                backgroundColor: (isHandleHovered || isResizing) ? UI_COLORS.PRIMARY : 'transparent',
+                transition: 'background-color 150ms ease',
+                borderRadius: '2px',
+              }}
+            />
+          </div>
+        )}
         {/* Fixed header - prevents wrapping issues
         <div className="flex items-center gap-4 flex-shrink-0 min-h-[50px]">
           <Image className="dark:invert flex-shrink-0" src="/compas_icon_white.png" alt="compas logo" width={50} height={50} priority />
@@ -204,14 +262,31 @@ export function Sidebar(props: SidebarProps) {
           />
         </div>
 
-        {/* Acoustics Tab */}
-        <div style={{ display: props.activeAiTab === 'acoustics' ? 'block' : 'none' }}>
-          <AcousticsSection
+        {/* Listeners Tab */}
+        <div className="flex flex-col gap-4" style={{ display: props.activeAiTab === 'listeners' ? 'flex' : 'none' }}>
+          <ListenersSection
             receivers={props.receivers}
+            gridListeners={props.gridListeners}
             onAddReceiver={props.onAddReceiver}
             onDeleteReceiver={props.onDeleteReceiver}
             onUpdateReceiverName={props.onUpdateReceiverName}
+            onUpdateReceiverPosition={props.onUpdateReceiverPosition}
             onGoToReceiver={props.onGoToReceiver}
+            onToggleReceiverHiddenForSimulation={props.onToggleReceiverHiddenForSimulation}
+            onAddGridListener={props.onAddGridListener}
+            onDeleteGridListener={props.onDeleteGridListener}
+            onComputeBounds={props.onComputeBounds}
+            expandedGridListenerId={props.expandedGridListenerId}
+            onExpandedGridListenerChange={props.onExpandedGridListenerChange}
+            onExitFPS={props.onExitFPS}
+            forcedExpandedId={props.forcedExpandedListenerId}
+            collapseAllTrigger={props.collapseListenerCardTrigger}
+          />
+        </div>
+
+        {/* Acoustics Tab */}
+        <div style={{ display: props.activeAiTab === 'acoustics' ? 'block' : 'none' }}>
+          <AcousticsSection
             onSelectIRFromLibrary={props.onSelectIRFromLibrary}
             onClearIR={props.onClearIR}
             selectedIRId={props.selectedIRId}

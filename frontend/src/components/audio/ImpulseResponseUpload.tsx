@@ -6,6 +6,7 @@ import { apiService } from "@/services/api";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from "@/types/audio";
 import { API_BASE_URL, IR_HOVER_LINE, IR_LOW_ENERGY_THRESHOLD } from "@/utils/constants";
+import { trimDisplayName } from "@/utils/utils";
 
 interface ImpulseResponseUploadProps {
   onClearIR: () => void;
@@ -16,6 +17,10 @@ interface ImpulseResponseUploadProps {
   onIRHover?: (sourceId: string | null, receiverId: string | null) => void;
   /** Called whenever the set of low-energy IR IDs changes so parents can surface warnings */
   onLowEnergyIdsChange?: (ids: Set<string>) => void;
+  /** Optional map from sourceId → human-readable display name (e.g. sound event display_name) */
+  sourceDisplayNames?: Record<string, string>;
+  /** Optional map from receiverId → human-readable name */
+  receiverDisplayNames?: Record<string, string>;
 }
 
 /**
@@ -39,7 +44,9 @@ export function ImpulseResponseUpload({
   simulationIRIds = undefined,
   sourceReceiverIRMapping,
   onIRHover,
-  onLowEnergyIdsChange
+  onLowEnergyIdsChange,
+  sourceDisplayNames,
+  receiverDisplayNames,
 }: ImpulseResponseUploadProps) {
   const handleError = useApiErrorHandler();
   const [impulseResponses, setImpulseResponses] = useState<ImpulseResponseMetadata[]>([]);
@@ -70,6 +77,18 @@ export function ImpulseResponseUpload({
       }
     }
     return null;
+  };
+
+  // Derive a friendly display name for an IR using source/receiver name maps when available.
+  // Falls back to the stored ir.name if no mapping is found.
+  const getIRDisplayName = (ir: ImpulseResponseMetadata): string => {
+    if (!sourceReceiverIRMapping || (!sourceDisplayNames && !receiverDisplayNames)) return ir.name;
+    const pair = findSourceReceiverForIR(ir.id);
+    if (!pair) return ir.name;
+    const srcName = sourceDisplayNames?.[pair.sourceId];
+    const rcvName = receiverDisplayNames?.[pair.receiverId];
+    if (!srcName && !rcvName) return ir.name;
+    return `${trimDisplayName(srcName ?? pair.sourceId)} – ${trimDisplayName(rcvName ?? pair.receiverId)}`;
   };
 
   // Hover state for waveform overlay
@@ -375,7 +394,7 @@ export function ImpulseResponseUpload({
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
                       <div className={`text-xs font-medium truncate ${simulationResults ? 'text-white' : ''}`}>
-                        {ir.name}
+                        {getIRDisplayName(ir)}
                       </div>
 
                       <div className="flex items-center gap-2 mt-1 whitespace-nowrap">
@@ -437,7 +456,7 @@ export function ImpulseResponseUpload({
           <AudioWaveformDisplay
             audioBuffer={hoveredIRBuffer}
             audioInfo={{
-              filename: impulseResponses.find(ir => ir.id === hoveredIRId)?.name || 'Impulse Response',
+              filename: (() => { const ir = impulseResponses.find(ir => ir.id === hoveredIRId); return ir ? getIRDisplayName(ir) : 'Impulse Response'; })(),
               sample_rate: hoveredIRBuffer.sampleRate,
               channels: formatChannelLabel(hoveredIRBuffer.numberOfChannels),
               duration: hoveredIRBuffer.duration,

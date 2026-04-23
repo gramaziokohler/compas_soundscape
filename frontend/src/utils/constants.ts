@@ -39,7 +39,6 @@ export const API_BASE_URL = getApiBaseUrl();
 
 // API Endpoints
 export const SED_ANALYZE_ENDPOINT = `${API_BASE_URL}/api/analyze-sound-events`;
-export const CHORAS_API_URL = `${API_BASE_URL}/choras`;
 export const PYROOMACOUSTICS_API_URL = `${API_BASE_URL}/pyroomacoustics`;
 
 // ============================================================================
@@ -54,6 +53,7 @@ export const SIDEBAR_TABS = {
   TEXT: 'text',
   SOUND: 'sound',
   ACOUSTICS: 'acoustics',
+  LISTENERS: 'listeners',
   SETTINGS: 'settings',
 } as const;
 
@@ -69,12 +69,18 @@ export type SidebarTabValue = typeof SIDEBAR_TABS[keyof typeof SIDEBAR_TABS];
 
 // Brand Colors
 export const UI_COLORS = {
-  // Primary Brand Color (Pink) - Main accent color
-  PRIMARY: "#F500B8",
-  PRIMARY_HEX: 0xF500B8, // For Three.js materials
-  PRIMARY_HOVER: "#e53cbb",
-  PRIMARY_LIGHT: "#fce7f6",
-  
+  // // Primary Brand Color (Pink) - Main accent color
+  // PRIMARY: "#F500B8",
+  // PRIMARY_HEX: 0xF500B8, // For Three.js materials
+  // PRIMARY_HOVER: "#e53cbb",
+  // PRIMARY_LIGHT: "#fce7f6",
+
+  // Primary Brand Color (Blue) - Main accent color
+  PRIMARY: "#2F2FE4",
+  PRIMARY_HEX: 0x2F2FE4, // For Three.js materials
+  PRIMARY_HOVER: "#6a6ae6",
+  PRIMARY_LIGHT: "#c2c2ff",  
+
   // Secondary Color (Sky Blue) - Secondary accent
   SECONDARY: "#0ea5e9",
   SECONDARY_HOVER: "#0284c7",
@@ -365,7 +371,7 @@ export const UI_VERTICAL_TABS = {
 
 // Right Sidebar (Object Explorer)
 export const UI_RIGHT_SIDEBAR = {
-  WIDTH: 260,                // Width in pixels (w-80)
+  WIDTH: 260,                // Default width in pixels
   HEADER_HEIGHT: 48,         // Header height in pixels
   PADDING: UI_SPACING.MD,    // Internal padding
   TREE_ITEM_HEIGHT: 40,      // Height of each tree item in pixels
@@ -373,6 +379,23 @@ export const UI_RIGHT_SIDEBAR = {
   BACKGROUND: 'white',       // Background color
   BORDER_COLOR: UI_COLORS.NEUTRAL_200,
   BORDER_WIDTH: UI_LINE_THICKNESS.THIN,
+} as const;
+
+// Sidebar Resize Constraints
+export const UI_SIDEBAR_RESIZE = {
+  // Left sidebar content panel (excludes vertical tab bar)
+  LEFT_MIN_WIDTH: 180,
+  LEFT_MAX_WIDTH: 520,
+  LEFT_DEFAULT_WIDTH: 288,   // 18rem
+
+  // Right sidebar total width
+  RIGHT_MIN_WIDTH: 200,
+  RIGHT_MAX_WIDTH: 500,
+  RIGHT_DEFAULT_WIDTH: 260,  // matches UI_RIGHT_SIDEBAR.WIDTH
+
+  // Resize handle visual / hit area
+  HANDLE_WIDTH: 4,           // px — visible highlight bar
+  HANDLE_HIT_AREA: 8,        // px — actual pointer hit area
 } as const;
 
 // ============================================================================
@@ -409,6 +432,10 @@ export const AUDIO_MODEL_TANGOFLUX = "tangoflux";
 export const AUDIO_MODEL_AUDIOLDM2 = "audioldm2";
 export const AUDIO_MODEL_ELEVENLABS = "elevenlabs";
 export const DEFAULT_AUDIO_MODEL = AUDIO_MODEL_TANGOFLUX;
+
+// Frontend-only service version strings (for Card version display)
+export const ELEVENLABS_SERVICE_VERSION = "@elevenlabs/elevenlabs-js 2.35.0";
+export const GOOGLE_SOUND_LIBRARY_SERVICE_VERSION = "Google Sound Library v1";
 
 // Audio Model Display Names
 export const AUDIO_MODEL_NAMES: Record<string, string> = {
@@ -1099,10 +1126,24 @@ export const RECEIVER = {
 
 export const GRID_RECEIVERS = {
   DEFAULT_GRID_SPACING: 0.5, // Meters between receivers
-  MIN_GRID_SPACING: 0.1,  
-  MAX_GRID_SPACING: 5,    
+  MIN_GRID_SPACING: 0.1,
+  MAX_GRID_SPACING: 5,
   DEFAULT_GRID_SIZE: 9,
-    
+} as const;
+
+export const GRID_LISTENER_CONFIG = {
+  DEFAULT_X_SPACING: 2,     // m
+  DEFAULT_Y_SPACING: 2,     // m
+  DEFAULT_Z_OFFSET: 1.5,    // m above mid-plane
+  MIN_SPACING: 0.5,
+  MAX_SPACING: 20,
+  MIN_Z_OFFSET: 0,
+  MAX_Z_OFFSET: 10,
+  COLOR: 0x00e5cc,          // Teal for grid listener dots
+  SPHERE_SIZE_MULTIPLIER: 0.15,
+  SCREEN_SPACE_SIZE: 0.02,
+  MIN_SCALE: 0.3,
+  MAX_SCALE: 8,
 } as const;
 
 // ============================================================================
@@ -1346,7 +1387,7 @@ export const PLAYBACK_CONTROLS = {
   BUTTON_PADDING: "px-4 py-1.5",
   CONTROLS_PADDING: "px-4 py-2",
   PRIMARY_PINK: UI_COLORS.PRIMARY,
-  MIDDLE_PINK: '#F57EC8',
+  MIDDLE_PINK: UI_COLORS.PRIMARY_HOVER,
   BUTTON_GREY: UI_COLORS.NEUTRAL_400
 } as const;
 
@@ -1579,41 +1620,11 @@ export const AUDIO_WARNINGS = {
   MODE_INIT_FAILED: '⚠️ Audio mode initialization failed',
 } as const;
 
-// ============================================================================
-// Choras Acoustic Simulation Configuration
-// ============================================================================
+/** Distance threshold (meters) above which a source/receiver is flagged as not at its simulation position */
+export const SIMULATION_POSITION_THRESHOLD = 0.2;
 
-// Choras API Configuration
-export const CHORAS_API_BASE = 'http://localhost:5001';
-
-// Default Simulation Settings (DE - Diffusion Equation Method)
-export const CHORAS_DEFAULT_C0 = 343; // Speed of sound in m/s
-export const CHORAS_DEFAULT_IR_LENGTH = 0.2; // Impulse response length in seconds
-export const CHORAS_DEFAULT_LC = 1.0; // Characteristic length in meters
-export const CHORAS_DEFAULT_EDT = 35; // Energy decay threshold in dB
-export const CHORAS_DEFAULT_SIM_LEN_TYPE = 'ir_length'; // Simulation length type
-
-// Simulation Length Type Options
-export const CHORAS_SIM_LEN_TYPE_IR = 'ir_length';
-export const CHORAS_SIM_LEN_TYPE_EDT = 'edt';
-
-// Simulation Parameter Ranges
-export const CHORAS_C0_MIN = 300; // Minimum speed of sound (m/s)
-export const CHORAS_C0_MAX = 400; // Maximum speed of sound (m/s)
-export const CHORAS_IR_LENGTH_MIN = 0.1; // Minimum IR length (seconds)
-export const CHORAS_IR_LENGTH_MAX = 5.0; // Maximum IR length (seconds)
-export const CHORAS_LC_MIN = 0.1; // Minimum characteristic length (meters)
-export const CHORAS_LC_MAX = 10.0; // Maximum characteristic length (meters)
-export const CHORAS_EDT_MIN = 20; // Minimum EDT (dB)
-export const CHORAS_EDT_MAX = 60; // Maximum EDT (dB)
-
-// Polling Configuration
-export const CHORAS_POLL_INTERVAL = 2000; // Milliseconds between status checks
-export const CHORAS_INITIAL_POLL_DELAY = 1000; // Wait 1s before first poll to let Choras initialize files
-export const CHORAS_TIMEOUT = 600000; // Maximum simulation time (10 minutes in ms)
-export const CHORAS_POLL_TIMEOUT = 30000; // Timeout for individual poll requests (30 seconds)
-export const CHORAS_RUN_TIMEOUT = 30000; // Timeout for simulation start request (30 seconds)
-export const CHORAS_MAX_POLL_RETRIES = 5; // Maximum retry attempts for failed polls
+/** Hex color applied to sound spheres / receivers that are not at their simulation position */
+export const SIMULATION_MISMATCH_COLOR_HEX = 0xFF6666;
 
 // ============================================================================
 // Pyroomacoustics Acoustic Simulation Configuration
@@ -1656,6 +1667,48 @@ export const PYROOMACOUSTICS_SCATTERING_MAX = 1.0; // Maximum scattering (diffus
 
 // Grid Receiver Simulation
 export const PYROOMACOUSTICS_DEFAULT_ENABLE_GRID = false; // Grid simulation disabled by default
+
+// ============================================================================
+// Choras (DE/DG Wave Simulation) Configuration
+// ============================================================================
+
+export const CHORAS_DEFAULT_METHOD = 'DE';
+
+// DE (Diffusion Equation / FVM) defaults
+export const CHORAS_DE_DEFAULT_SIM_LEN_TYPE = 'edt';
+export const CHORAS_DE_DEFAULT_EDT = 35;
+export const CHORAS_DE_DEFAULT_IR_LENGTH = 0.5;
+export const CHORAS_DE_DEFAULT_C0 = 343;
+export const CHORAS_DE_DEFAULT_LC = 1.5;
+
+// DG (Discontinuous Galerkin) defaults
+export const CHORAS_DG_DEFAULT_FREQ_UPPER = 200;
+export const CHORAS_DG_DEFAULT_C0 = 343;
+export const CHORAS_DG_DEFAULT_RHO0 = 1.213;
+export const CHORAS_DG_DEFAULT_IR_LENGTH = 0.1;
+export const CHORAS_DG_DEFAULT_POLY_ORDER = 4;
+export const CHORAS_DG_DEFAULT_PPW = 2;
+export const CHORAS_DG_DEFAULT_CFL = 1.0;
+
+// Shared slider ranges
+export const CHORAS_C0_MIN = 300;
+export const CHORAS_C0_MAX = 400;
+export const CHORAS_DE_IR_LENGTH_MIN = 0.05;
+export const CHORAS_DE_IR_LENGTH_MAX = 5.0;
+export const CHORAS_DE_LC_MIN = 0.1;
+export const CHORAS_DE_LC_MAX = 10.0;
+export const CHORAS_DE_EDT_MIN = 10;
+export const CHORAS_DE_EDT_MAX = 60;
+export const CHORAS_DG_FREQ_UPPER_MIN = 50;
+export const CHORAS_DG_FREQ_UPPER_MAX = 1000;
+export const CHORAS_DG_IR_LENGTH_MIN = 0.01;
+export const CHORAS_DG_IR_LENGTH_MAX = 2.0;
+export const CHORAS_DG_POLY_ORDER_MIN = 1;
+export const CHORAS_DG_POLY_ORDER_MAX = 8;
+export const CHORAS_DG_PPW_MIN = 1;
+export const CHORAS_DG_PPW_MAX = 6;
+export const CHORAS_DG_CFL_MIN = 0.1;
+export const CHORAS_DG_CFL_MAX = 2.0;
 
 // ============================================================================
 // Area Drawing Constants (polygon drawing on 3D surfaces)

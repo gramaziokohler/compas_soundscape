@@ -688,6 +688,7 @@ class SpeckleService:
         for obj in objects_with_display:
             obj_id = getattr(obj, 'id', f"obj_{len(object_ids)}")
             obj_name = getattr(obj, 'name', f"Object {len(object_ids) + 1}")
+            obj_app_id = getattr(obj, 'applicationId', None)  # Rhino GUID — stable across commits
 
             # When filtering by explicit object IDs, skip objects not in the list
             if object_ids_set is not None and obj_id not in object_ids_set:
@@ -737,8 +738,12 @@ class SpeckleService:
             if face_count > start_face:
                 object_ids.append(obj_id)
                 object_names.append(obj_name)
-                object_face_ranges[obj_id] = [start_face, face_count - 1]
-                logger.info(f"Added {face_count - start_face} faces from {obj_name}")
+                face_range = [start_face, face_count - 1]
+                object_face_ranges[obj_id] = face_range
+                # Also index by applicationId (Rhino GUID) so the frontend can send either ID
+                if obj_app_id and obj_app_id != obj_id:
+                    object_face_ranges[obj_app_id] = face_range
+                logger.info(f"Added {face_count - start_face} faces from {obj_name} (id={obj_id}, applicationId={obj_app_id})")
         
         logger.info(f"Total geometry extracted: {len(all_vertices)} vertices, {len(all_faces)} faces across {len(object_ids)} objects")
         

@@ -607,7 +607,7 @@ export class AmbisonicIRMode implements IAudioMode {
    * @param loop - Whether to loop the audio
    * @param offset - Start playback from this position in seconds (default: 0)
    */
-  playSource(sourceId: string, loop: boolean = false, offset: number = 0): void {
+  playSource(sourceId: string, loop: boolean = false, offset: number = 0, duration?: number): void {
     if (!this.audioContext) return;
 
     const chain = this.sourceChains.get(sourceId);
@@ -635,8 +635,12 @@ export class AmbisonicIRMode implements IAudioMode {
     // Graph: bufferSource → convolver.in → convolver.out → ambisonicMerger
     bufferSource.connect(chain.gainNode);
 
-    // Start playback from offset position
-    bufferSource.start(0, offset);
+    // Start playback from offset position, optionally limited to trim duration
+    if (duration !== undefined && duration > 0) {
+      bufferSource.start(0, offset, duration);
+    } else {
+      bufferSource.start(0, offset);
+    }
     chain.bufferSource = bufferSource;
     chain.isPlaying = true;
 

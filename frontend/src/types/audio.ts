@@ -71,6 +71,8 @@ export interface TimelineSound {
   soundDurationMs: number;
   scheduledIterations: number[]; // Array of timestamps (ms) when sound will play
   audioUrl?: string; // Optional audio URL for WaveSurfer waveform visualization
+  trimStartFraction?: number; // Fraction (0-1) where trim starts
+  trimEndFraction?: number;   // Fraction (0-1) where trim ends
 }
 
 export interface TimelinePlaybackState {

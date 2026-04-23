@@ -166,7 +166,7 @@ def analyze_class_segments(
     class_scores: np.ndarray,
     frame_hop_sec: float,
     threshold: float
-) -> Tuple[list, list]:
+) -> Tuple[list, list, list]:
     """
     Analyzes segments where a sound class is detected or silent based on threshold.
 
@@ -182,10 +182,11 @@ def analyze_class_segments(
         threshold: Detection threshold (0.0 to 1.0)
 
     Returns:
-        tuple: (detected_durations_sec, silent_durations_sec) as lists of floats (seconds)
+        tuple: (detected_durations_sec, silent_durations_sec, detection_segments)
+               detection_segments is a list of {"start_sec": float, "end_sec": float} dicts
     """
     if class_scores.size == 0:
-        return [], []
+        return [], [], []
 
     num_frames = len(class_scores)
     detected = class_scores >= threshold
@@ -205,9 +206,16 @@ def analyze_class_segments(
 
     # Calculate detected segment durations
     detected_durations_sec = []
+    detection_segments = []
     if len(start_indices) > 0:
         detected_durations_frames = end_indices - start_indices + 1
         detected_durations_sec = (detected_durations_frames * frame_hop_sec).tolist()
+        # Build start/end timestamp list for frontend region overlays
+        for s_idx, e_idx in zip(start_indices, end_indices):
+            detection_segments.append({
+                "start_sec": float(s_idx * frame_hop_sec),
+                "end_sec": float((e_idx + 1) * frame_hop_sec),
+            })
 
     # Calculate silence durations (gaps between detections)
     silent_durations_sec = []
@@ -231,9 +239,8 @@ def analyze_class_segments(
         if end_indices[-1] < num_frames - 1:
             gap_frames = num_frames - 1 - end_indices[-1]
             silent_durations_sec.append(gap_frames * frame_hop_sec)
-    
-    return detected_durations_sec, silent_durations_sec
-    # return format_duration_range(detected_durations_sec), format_duration_range(silent_durations_sec)
+
+    return detected_durations_sec, silent_durations_sec, detection_segments
 
 
 def calculate_amplitude_stats_for_class(

@@ -4,6 +4,7 @@
 import type { ScheduledSound, SoundMetadata } from '@/types/audio';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 import { scheduledSoundsLogger } from '@/lib/audio/utils/scheduled-sounds-logger';
+import { useAudioControlsStore } from '@/store/audioControlsStore';
 
 export class AudioScheduler {
   private scheduledSounds: Map<string, ScheduledSound> = new Map();
@@ -34,8 +35,10 @@ export class AudioScheduler {
     // Clear existing schedule for this sound
     this.unscheduleSound(soundId);
 
-    // Calculate total interval: sound_duration + interval_seconds
-    const soundDurationMs = metadata.buffer ? (metadata.buffer.duration * 1000) : 0;
+    // Calculate effective duration (apply trim if set)
+    const bufferDurationMs = metadata.buffer ? (metadata.buffer.duration * 1000) : 0;
+    const trim = useAudioControlsStore.getState().soundTrims[soundId];
+    const soundDurationMs = trim ? bufferDurationMs * (trim.end - trim.start) : bufferDurationMs;
     const intervalMs = (intervalSeconds * 1000) + soundDurationMs;
 
     // Get display name from metadata for better logging
@@ -221,8 +224,14 @@ export class AudioScheduler {
 
     if (this.audioOrchestrator) {
       try {
+        // Apply trim: read current trim from store
+        const trim = useAudioControlsStore.getState().soundTrims[soundId];
+        const bufferDuration = metadata.buffer?.duration ?? 0;
+        const startOffset = trim ? trim.start * bufferDuration : 0;
+        const playDuration = trim ? (trim.end - trim.start) * bufferDuration : undefined;
+
         this.audioOrchestrator.stopSource(soundId);
-        this.audioOrchestrator.playSource(soundId, false);
+        this.audioOrchestrator.playSource(soundId, false, startOffset, playDuration);
       } catch (error) {
         console.warn(`[AudioScheduler] Failed to play via orchestrator:`, error);
       }

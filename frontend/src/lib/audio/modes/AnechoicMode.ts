@@ -357,7 +357,7 @@ export class AnechoicMode implements IAudioMode {
    * @param loop - Whether to loop the audio
    * @param offset - Start playback from this position in seconds (default: 0)
    */
-  playSource(sourceId: string, loop: boolean = false, offset: number = 0): void {
+  playSource(sourceId: string, loop: boolean = false, offset: number = 0, duration?: number): void {
     console.log(`[AnechoicMode] 🎵 playSource called`);
     console.log(`  - Source ID: ${sourceId}`);
     console.log(`  - Loop: ${loop}`);
@@ -406,14 +406,18 @@ export class AnechoicMode implements IAudioMode {
     // Connect to gain node
     sourceNode.connect(source.gainNode);
 
-    // Start playback from offset position
-    sourceNode.start(0, offset);
+    // Start playback from offset position, optionally limited to trim duration
+    if (duration !== undefined && duration > 0) {
+      sourceNode.start(0, offset, duration);
+    } else {
+      sourceNode.start(0, offset);
+    }
     source.sourceNode = sourceNode;
     source.isPlaying = true;
     source.loop = loop;
     source.startTime = this.audioContext.currentTime;
 
-    console.log(`[AnechoicMode] ✅ Playback started for ${sourceId} (offset: ${offset}s)`);
+    console.log(`[AnechoicMode] ✅ Playback started for ${sourceId} (offset: ${offset}s, duration: ${duration ?? 'full'}s)`);
 
     // Handle playback end (if not looping)
     sourceNode.onended = () => {

@@ -153,14 +153,17 @@ export function extractTimelineSoundsFromData(
   soundMetadata: Map<string, SoundMetadata>,
   soundIntervals: { [key: string]: number },
   timelineDuration: number = AUDIO_TIMELINE.DEFAULT_DURATION_MS,
-  soundEvents?: SoundEvent[]
+  soundEvents?: SoundEvent[],
+  soundTrims?: Record<string, { start: number; end: number }>
 ): TimelineSound[] {
   const timelineSounds: TimelineSound[] = [];
 
   soundMetadata.forEach((metadata, soundId) => {
     if (!metadata.buffer) return; // Skip sounds without buffers
 
-    const soundDurationMs = metadata.buffer.duration * 1000;
+    const bufferDurationMs = metadata.buffer.duration * 1000;
+    const trim = soundTrims?.[soundId];
+    const soundDurationMs = trim ? bufferDurationMs * (trim.end - trim.start) : bufferDurationMs;
 
     // Get interval from soundIntervals, fall back to metadata
     const intervalSeconds = soundIntervals[soundId] ?? metadata.soundEvent.interval_seconds ?? 30;
@@ -199,6 +202,8 @@ export function extractTimelineSoundsFromData(
       soundDurationMs,
       scheduledIterations: iterations,
       audioUrl: audioUrl || undefined,
+      trimStartFraction: trim?.start,
+      trimEndFraction: trim?.end,
     });
   });
 

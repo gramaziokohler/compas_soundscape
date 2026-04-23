@@ -221,7 +221,7 @@ export class ResonanceMode implements IAudioMode {
    * @param loop - Whether to loop the audio
    * @param offset - Start playback from this position in seconds (default: 0)
    */
-  playSource(sourceId: string, loop: boolean = false, offset: number = 0): void {
+  playSource(sourceId: string, loop: boolean = false, offset: number = 0, duration?: number): void {
     const source = this.resonanceSources.get(sourceId);
     if (!source || !this.audioContext) {
       console.warn(`[ResonanceMode] Cannot play source ${sourceId}`);
@@ -253,12 +253,16 @@ export class ResonanceMode implements IAudioMode {
       }
     };
 
-    // Start playback from offset position
-    sourceNode.start(0, offset);
+    // Start playback from offset position, optionally limited to trim duration
+    if (duration !== undefined && duration > 0) {
+      sourceNode.start(0, offset, duration);
+    } else {
+      sourceNode.start(0, offset);
+    }
     source.sourceNode = sourceNode;
     source.isPlaying = true;
 
-    console.log(`[ResonanceMode] Playing source: ${sourceId} (loop: ${loop}, offset: ${offset}s)`);
+    console.log(`[ResonanceMode] Playing source: ${sourceId} (loop: ${loop}, offset: ${offset}s, duration: ${duration ?? 'full'}s)`);
   }
 
   /**

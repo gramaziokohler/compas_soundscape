@@ -71,9 +71,31 @@ export interface UIStoreState {
   hoveredIRSourceReceiver: { sourceId: string; receiverId: string } | null;
   setHoveredIRSourceReceiver: (pair: { sourceId: string; receiverId: string } | null) => void;
 
+  // ── Gradient map (acoustic metric overlay on grid listener surface) ────────
+  activeGradientMap: GradientMapState | null;
+  setActiveGradientMap: (state: GradientMapState | null) => void;
+
   // ── Scene helpers ─────────────────────────────────────────────────────────
   showAxesHelper: boolean;
   setShowAxesHelper: (show: boolean) => void;
+
+  // ── Sound card interactions (sidebar → scene) ─────────────────────────────
+  /** Index of the currently expanded sound card (set by SoundGenerationSection). */
+  expandedSoundCardIndex: number | null;
+  setExpandedSoundCardIndex: (index: number | null) => void;
+  /** Incremented each time the user double-clicks a sound card to zoom to its sphere. */
+  zoomToSoundCardTrigger: { index: number; version: number } | null;
+  triggerZoomToSoundCard: (index: number) => void;
+}
+
+export type GradientMetric = 'rt60' | 'edt' | 'd50' | 'c50' | 'spl';
+
+export interface GradientMapState {
+  metric: GradientMetric;
+  /** Grid point positions with their scalar metric value */
+  pointValues: Array<{ position: [number, number, number]; value: number }>;
+  /** Bounding box of the grid listener surface */
+  boundingBox: { min: [number, number, number]; max: [number, number, number] };
 }
 
 export const useUIStore = create<UIStoreState>()(
@@ -147,9 +169,26 @@ export const useUIStore = create<UIStoreState>()(
       setHoveredIRSourceReceiver: (pair) =>
         set({ hoveredIRSourceReceiver: pair }, false, 'ui/setHoveredIRSourceReceiver'),
 
+      // ── Gradient map ─────────────────────────────────────────────────────
+      activeGradientMap: null,
+      setActiveGradientMap: (state) =>
+        set({ activeGradientMap: state }, false, 'ui/setActiveGradientMap'),
+
       // ── Scene helpers ────────────────────────────────────────────────────
       showAxesHelper: false,
       setShowAxesHelper: (show) => set({ showAxesHelper: show }, false, 'ui/setShowAxesHelper'),
+
+      // ── Sound card interactions ──────────────────────────────────────────────
+      expandedSoundCardIndex: null,
+      setExpandedSoundCardIndex: (index) =>
+        set({ expandedSoundCardIndex: index }, false, 'ui/setExpandedSoundCardIndex'),
+      zoomToSoundCardTrigger: null,
+      triggerZoomToSoundCard: (index) =>
+        set(
+          (s) => ({ zoomToSoundCardTrigger: { index, version: (s.zoomToSoundCardTrigger?.version ?? 0) + 1 } }),
+          false,
+          'ui/triggerZoomToSoundCard',
+        ),
     }),
     { name: 'uiStore' },
   ),

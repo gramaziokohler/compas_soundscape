@@ -124,6 +124,13 @@ export class ReceiverManager {
     this.receiverMeshes = result.meshes;
     this.draggableObjects = result.draggableObjects;
 
+    // Propagate name changes onto existing (reused) meshes so syncLabelSprites
+    // detects the change and recreates the sprite text.
+    result.meshes.forEach(mesh => {
+      const receiver = updatedReceivers.find(r => r.id === mesh.userData.receiverId);
+      if (receiver) mesh.userData.receiverName = receiver.name;
+    });
+
     // Sync label sprites with the current receiver set
     this.syncLabelSprites(result.meshes);
   }

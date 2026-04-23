@@ -53,6 +53,7 @@ export interface PyroomInstanceState {
   faceMaterialAssignments: Record<number, string>;
   simulationSettings: PyroomSimulationSettings;
   isRunning: boolean;
+  progress: number;
   status: string;
   error: string | null;
   simulationResults: string | null;
@@ -60,6 +61,9 @@ export interface PyroomInstanceState {
   irImported: boolean;
   importedIRIds?: string[];
   sourceReceiverIRMapping?: SourceReceiverIRMapping;
+  queuePosition?: number | null;
+  queueTotal?: number | null;
+  _pollInterval?: ReturnType<typeof setInterval> | null;
 }
 
 export interface SpeckleData {
@@ -91,11 +95,13 @@ function createDefaultInstanceState(sharedMaterials: PyroomMaterial[]): PyroomIn
       enable_grid: PYROOMACOUSTICS_DEFAULT_ENABLE_GRID,
     },
     isRunning: false,
+    progress: 0,
     status: 'Idle',
     error: null,
     simulationResults: null,
     currentSimulationId: null,
     irImported: false,
+    _pollInterval: null,
   };
 }
 
@@ -131,6 +137,8 @@ export interface PyroomAcousticsStoreState {
     layerName?: string | null,
     onIRImported?: () => void,
   ) => Promise<void>;
+
+  cancelSimulation: (instanceId: string) => void;
 
   /** Update arbitrary fields on an instance (used by components for status etc.) */
   patchInstance: (instanceId: string, patch: Partial<PyroomInstanceState>) => void;
@@ -336,7 +344,18 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
           patchInstance(
             set,
             instanceId,
-            { isRunning: true, status: 'Running simulation...', error: null, simulationResults: null, currentSimulationId: null, irImported: false, importedIRIds: undefined },
+            {
+              isRunning: true,
+              progress: 0,
+              status: 'Submitting...',
+              error: null,
+              simulationResults: null,
+              currentSimulationId: null,
+              irImported: false,
+              importedIRIds: undefined,
+              queuePosition: null,
+              queueTotal: null,
+            },
             'pyroom/runStart',
           );
 
@@ -351,7 +370,8 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
             const projectId = urlMatch[1];
             const modelId = urlMatch[2];
 
-            const result = await apiService.runPyroomacousticsSimulationSpeckle(
+            // 1. Submit → returns simulation_id immediately
+            const { simulation_id } = await apiService.runPyroomacousticsSimulationSpeckle(
               projectId,
               modelId,
               objectMaterials,
@@ -361,44 +381,125 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
               sourceReceiverPairs,
             );
 
-            // Import IRs
-            let irImportResult: IRImportResult = {
-              importedCount: 0,
-              totalCount: 0,
-              importedIRIds: [],
-              importedIRMetadataList: [],
-              sourceReceiverMapping: {},
-            };
+            patchInstance(set, instanceId, { currentSimulationId: simulation_id, status: 'Queued...' }, 'pyroom/queued');
 
-            if (result.ir_files && result.ir_files.length > 0) {
-              irImportResult = await importPyroomIRFiles(result.simulation_id, result.ir_files);
-              if (irImportResult.importedCount > 0 && onIRImported) {
-                onIRImported();
-              }
+            // Build display name lookups once
+            const sourceDisplayNames: Record<string, string> = {};
+            for (const sound of soundscapeData) {
+              const sid = (sound as any).id || (sound as any).name;
+              if (sid) sourceDisplayNames[sid] = (sound as any).display_name || sid;
+            }
+            const receiverDisplayNames: Record<string, string> = {};
+            for (const receiver of receivers) {
+              if (receiver.id) receiverDisplayNames[receiver.id] = receiver.name || receiver.id;
             }
 
-            const resultsText = await buildSimulationResultsText(result.simulation_id, irImportResult);
+            // 2. Poll for progress
+            const interval = setInterval(async () => {
+              try {
+                const statusData = await apiService.getPyroomacousticsSimulationStatus(simulation_id);
 
-            patchInstance(
-              set,
-              instanceId,
-              {
-                isRunning: false,
-                status: 'Complete!',
-                simulationResults: resultsText,
-                currentSimulationId: result.simulation_id,
-                irImported: irImportResult.importedCount > 0,
-                importedIRIds: irImportResult.importedIRIds,
-                sourceReceiverIRMapping: irImportResult.sourceReceiverMapping,
-              },
-              'pyroom/runComplete',
-            );
+                patchInstance(
+                  set,
+                  instanceId,
+                  {
+                    progress: statusData.progress,
+                    status: statusData.status,
+                    queuePosition: statusData.queue_position ?? null,
+                    queueTotal: statusData.queue_total ?? null,
+                  },
+                  'pyroom/pollUpdate',
+                );
 
-            const irWord = irImportResult.importedCount === 1 ? 'response' : 'responses';
-            useErrorsStore.getState().addError(
-              `🎉 Simulation completed! ${irImportResult.importedCount} impulse ${irWord} imported to library.`,
-              'info',
-            );
+                if (statusData.cancelled) {
+                  clearInterval(interval);
+                  patchInstance(
+                    set,
+                    instanceId,
+                    { isRunning: false, status: 'Cancelled', _pollInterval: null },
+                    'pyroom/cancelled',
+                  );
+                  return;
+                }
+
+                if (statusData.error) {
+                  clearInterval(interval);
+                  patchInstance(
+                    set,
+                    instanceId,
+                    { isRunning: false, status: 'Error', error: statusData.error, _pollInterval: null },
+                    'pyroom/pollError',
+                  );
+                  return;
+                }
+
+                if (statusData.completed && statusData.result) {
+                  clearInterval(interval);
+                  const result = statusData.result;
+
+                  let irImportResult: IRImportResult = {
+                    importedCount: 0,
+                    totalCount: 0,
+                    importedIRIds: [],
+                    importedIRMetadataList: [],
+                    sourceReceiverMapping: {},
+                  };
+
+                  if (result.ir_files && result.ir_files.length > 0) {
+                    irImportResult = await importPyroomIRFiles(
+                      result.simulation_id,
+                      result.ir_files,
+                      undefined,
+                      sourceDisplayNames,
+                      receiverDisplayNames,
+                    );
+                    if (irImportResult.importedCount > 0 && onIRImported) {
+                      onIRImported();
+                    }
+                  }
+
+                  const resultsText = await buildSimulationResultsText(result.simulation_id, irImportResult);
+
+                  patchInstance(
+                    set,
+                    instanceId,
+                    {
+                      isRunning: false,
+                      progress: 100,
+                      status: 'Complete!',
+                      simulationResults: resultsText,
+                      currentSimulationId: result.simulation_id,
+                      irImported: irImportResult.importedCount > 0,
+                      importedIRIds: irImportResult.importedIRIds,
+                      sourceReceiverIRMapping: irImportResult.sourceReceiverMapping,
+                      _pollInterval: null,
+                    },
+                    'pyroom/runComplete',
+                  );
+
+                  const irWord = irImportResult.importedCount === 1 ? 'response' : 'responses';
+                  useErrorsStore.getState().addError(
+                    `🎉 Simulation completed! ${irImportResult.importedCount} impulse ${irWord} imported to library.`,
+                    'info',
+                  );
+                }
+              } catch (pollErr) {
+                clearInterval(interval);
+                patchInstance(
+                  set,
+                  instanceId,
+                  {
+                    isRunning: false,
+                    status: 'Error',
+                    error: pollErr instanceof Error ? pollErr.message : 'Status polling failed',
+                    _pollInterval: null,
+                  },
+                  'pyroom/pollFetchError',
+                );
+              }
+            }, 1500);
+
+            patchInstance(set, instanceId, { _pollInterval: interval }, 'pyroom/pollStarted');
           } catch (error) {
             patchInstance(
               set,
@@ -411,6 +512,26 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
               'pyroom/runError',
             );
           }
+        },
+
+        cancelSimulation: (instanceId) => {
+          const instance = get().instances[instanceId];
+          if (instance?._pollInterval) clearInterval(instance._pollInterval);
+          if (instance?.currentSimulationId) {
+            apiService.cancelPyroomacousticsSimulation(instance.currentSimulationId).catch(console.warn);
+          }
+          patchInstance(
+            set,
+            instanceId,
+            {
+              isRunning: false,
+              status: 'Cancelled',
+              _pollInterval: null,
+              queuePosition: null,
+              queueTotal: null,
+            },
+            'pyroom/cancel',
+          );
         },
       }),
       { name: 'pyroomAcousticsStore' },

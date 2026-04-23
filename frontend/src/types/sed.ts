@@ -27,6 +27,7 @@ export interface DetectedSound {
   avg_amplitude_0_1: number | null;      // RMS amplitude in linear scale [0-1] (null if not analyzed)
   max_detection_duration_sec: number | null;   // Maximum duration when sound is detected (seconds, null if not analyzed)
   max_silence_duration_sec: number | null;     // Maximum silence duration between detections (seconds, null if not analyzed)
+  detection_segments?: Array<{ start_sec: number; end_sec: number }>;  // Temporal segments where this class was detected
 }
 
 /**

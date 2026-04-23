@@ -30,6 +30,10 @@ import { generatePositionsInArea } from '@/utils/positioning';
 import { useErrorsStore } from './errorsStore';
 import { useAreaDrawingStore } from './areaDrawingStore';
 
+// ─── Module-level abort ref ───────────────────────────────────────────────────
+
+let _analysisAbortController: AbortController | null = null;
+
 // ─── Partialize ───────────────────────────────────────────────────────────────
 
 export const analysisPartialize = (state: AnalysisStoreState) => ({
@@ -147,6 +151,8 @@ export interface AnalysisStoreState {
   analysisResults: AnalysisResult[];
   /** Indices of configs currently being uploaded. Not in zundo history. */
   uploadingConfigs: Set<number>;
+  analysisStatus: string;
+  analyzingConfigIndex: number | null;
 
   handleAddConfig: (type: CardType, initialSpeckleData?: any) => void;
   handleRemoveConfig: (index: number) => void;
@@ -181,6 +187,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
         analysisError: null,
         analysisResults: [],
         uploadingConfigs: new Set<number>(),
+        analysisStatus: '',
+        analyzingConfigIndex: null,
 
         handleAddConfig: (type, initialSpeckleData) => {
           const { analysisConfigs } = get();
@@ -332,7 +340,14 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           const config = analysisConfigs[index];
           if (!config) return;
 
-          set({ isAnalyzing: true, analysisError: null }, false, 'analysis/analyzeStart');
+          _analysisAbortController = new AbortController();
+          const signal = _analysisAbortController.signal;
+
+          set(
+            { isAnalyzing: true, analysisError: null, analyzingConfigIndex: index, analysisStatus: '' },
+            false,
+            'analysis/analyzeStart',
+          );
 
           try {
             let prompts: TextPromptResult[] = [];
@@ -343,6 +358,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
 
               if (modelConfig.selectedDiverseEntities.length === 0) {
                 // Step 1: select diverse entities
+                set({ analysisStatus: 'Selecting diverse entities...' }, false, 'analysis/selectEntities');
                 const res = await fetch(`${API_BASE_URL}/api/select-entities`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
@@ -350,24 +366,27 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                     entities: modelConfig.modelEntities,
                     max_sounds: config.numSounds,
                   }),
+                  signal,
                 });
                 if (!res.ok) throw new Error('Failed to select diverse entities');
                 const selectionResult = await res.json();
                 handleUpdateConfig(index, {
                   selectedDiverseEntities: selectionResult.selected_entities,
                 } as Partial<ModelAnalysisConfig>);
-                set({ isAnalyzing: false, analysisError: null }, false, 'analysis/selectionDone');
+                set({ isAnalyzing: false, analysisError: null, analysisStatus: '', analyzingConfigIndex: null }, false, 'analysis/selectionDone');
                 return;
               } else {
                 // Step 2: generate sound prompts
-                const res = await fetch(`${API_BASE_URL}/api/generate-text`, {
+                set({ analysisStatus: 'Generating sound prompts...' }, false, 'analysis/generatePrompts');
+                const res = await fetch(`${API_BASE_URL}/api/generate-prompts`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
-                    prompt: '',
+                    context: '',
                     num_sounds: config.numSounds,
                     entities: modelConfig.selectedDiverseEntities,
                   }),
+                  signal,
                 });
                 if (!res.ok) throw new Error('Failed to generate sound prompts');
                 const textResult = await res.json();
@@ -387,6 +406,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               const audioConfig = config as AudioAnalysisConfig;
               if (!audioConfig.audioFile) throw new Error('No audio file uploaded');
 
+              set({ analysisStatus: 'Analyzing sound events...' }, false, 'analysis/analyzingAudio');
+
               const formData = new FormData();
               formData.append('file', audioConfig.audioFile);
               formData.append('num_sounds', config.numSounds.toString());
@@ -403,6 +424,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               const res = await fetch(`${API_BASE_URL}/api/analyze-sound-events`, {
                 method: 'POST',
                 body: formData,
+                signal,
               });
               if (!res.ok) throw new Error('Failed to analyze sound events');
               const result = await res.json();
@@ -445,12 +467,15 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                       spl_db: volumeSPL,
                       interval_seconds: playbackInterval,
                       duration_seconds: estimatedDuration,
+                      detection_segments: sound.detection_segments ?? [],
                     },
                   };
                 });
             } else if (config.type === 'text') {
               const textConfig = config as TextAnalysisConfig;
               if (!textConfig.textInput.trim()) throw new Error('Please enter a text description');
+
+              set({ analysisStatus: 'Generating sound prompts...' }, false, 'analysis/generatingText');
 
               let entitiesToUse: any[] = [];
               if (textConfig.useModelAsContext) {
@@ -486,13 +511,14 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 }
               }
 
-              const requestBody: any = { prompt: textConfig.textInput, num_sounds: config.numSounds };
+              const requestBody: any = { context: textConfig.textInput, num_sounds: config.numSounds };
               if (entitiesToUse.length > 0) requestBody.entities = entitiesToUse;
 
-              const res = await fetch(`${API_BASE_URL}/api/generate-text`, {
+              const res = await fetch(`${API_BASE_URL}/api/generate-prompts`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(requestBody),
+                signal,
               });
 
               if (!res.ok) {
@@ -557,18 +583,25 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               'analysis/analyzeDone',
             );
           } catch (error) {
-            const errorMsg =
-              error instanceof Error ? error.message : 'Analysis failed';
-            const isQuotaError = errorMsg.includes('quota') || errorMsg.includes('429');
-            useErrorsStore.getState().addError(errorMsg, isQuotaError ? 'warning' : 'error');
-            set({ analysisError: errorMsg }, false, 'analysis/analyzeError');
+            if (error instanceof Error && error.name === 'AbortError') {
+              // Cancelled by user — silent
+            } else {
+              const errorMsg = error instanceof Error ? error.message : 'Analysis failed';
+              const isQuotaError = errorMsg.includes('quota') || errorMsg.includes('429');
+              useErrorsStore.getState().addError(errorMsg, isQuotaError ? 'warning' : 'error');
+              set({ analysisError: errorMsg }, false, 'analysis/analyzeError');
+            }
           } finally {
-            set({ isAnalyzing: false }, false, 'analysis/analyzeEnd');
+            _analysisAbortController = null;
+            set({ isAnalyzing: false, analysisStatus: '', analyzingConfigIndex: null }, false, 'analysis/analyzeEnd');
           }
         },
 
-        handleStopAnalysis: () =>
-          set({ isAnalyzing: false }, false, 'analysis/stop'),
+        handleStopAnalysis: () => {
+          _analysisAbortController?.abort();
+          _analysisAbortController = null;
+          set({ isAnalyzing: false, analysisStatus: '', analyzingConfigIndex: null }, false, 'analysis/stop');
+        },
 
         handleTogglePromptSelection: (configIndex, promptId) =>
           set(

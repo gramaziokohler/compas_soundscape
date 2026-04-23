@@ -179,24 +179,25 @@ def dg_method(json_file_path: str | Path, save_results_to_json: bool = True):
     generate_mesh(geo_filename, mesh_filename, lc)
 
     # FUNCTION CALLED HERE
-    (
-        materialNames,
-        absorption_coefficient,
-        surface_absorption,
-        triangle_face_absorption,
-    ) = surface_materials(result_container, c0)
+    # surface_materials reads absorption per gmsh entity; discard its return values
+    # and build BC_labels correctly from physical group TAGS (not entity IDs).
+    # The old code iterated over absorption_coefficient (one entry per entity in each
+    # Physical Surface group) but indexed materialNames (one entry per group), causing
+    # IndexError when any group contains more than one entity.
+    surface_materials(result_container, c0)
+
+    # BC_labels maps material name → physical group tag integer (what edg_acoustics expects)
     BC_labels = {}
     RIvals = {}
-    i = 0
-    for ac in absorption_coefficient:
-        BC_labels[materialNames[i]] = ac
-
-        # r = sqrt(1-a)
-        RIvals[materialNames[i]] = sqrt(
-            1 - sum(absorption_coefficient[ac]) / len(absorption_coefficient[ac])
-        )
-
-        i += 1
+    for group in gmsh.model.getPhysicalGroups(2):
+        phys_tag = group[1]
+        mat_name = gmsh.model.getPhysicalName(2, phys_tag).split("$")[0]
+        abscoeff_list = [
+            float(c) for c in result_container["absorption_coefficients"][mat_name].split(",")
+        ]
+        BC_labels[mat_name] = phys_tag
+        # r = sqrt(1 - mean(alpha))
+        RIvals[mat_name] = sqrt(1 - sum(abscoeff_list) / len(abscoeff_list))
 
     real_valued_impedance_boundary = [
         # {"label": 11, "RI": 0.9}
@@ -299,7 +300,14 @@ def dg_method(json_file_path: str | Path, save_results_to_json: bool = True):
     )
 
     results = edg_acoustics.Monopole_postprocessor(sim, 1)
+    # At this point IRnew is the resampled (44100 Hz) but uncorrected impulse response.
+    # Capture it BEFORE apply_correction() overwrites it — the correction divides by
+    # TR_free which has zero energy at DC (the monopole source is a Gaussian derivative,
+    # so its integral = 0), causing ifft(NaN) → entirely NaN corrected IR.
+    n_new_samples = round(results.IRold.shape[1] * results.dt_old / results.dt_new)
+    ir_resampled = [results.IRnew[i, :n_new_samples].tolist() for i in range(rec.shape[1])]
 
+    # Still attempt correction (used by standalone analysis/plots); may raise warnings.
     results.apply_correction()
 
     # Only save results back to JSON if in standalone mode
@@ -307,8 +315,9 @@ def dg_method(json_file_path: str | Path, save_results_to_json: bool = True):
         try:
             with open(json_file_path, "r", encoding="utf-8") as file:
                 data = json.load(file)
-            data["results"][0]["responses"][0]["receiverResults"] = results.IRnew[0:round(len(results.IRold[0]) * results.dt_old / results.dt_new)].tolist()
             for i in range(rec.shape[1]):
+                # Use pre-correction resampled IR — guaranteed non-NaN at 44100 Hz.
+                data["results"][0]["responses"][i]["receiverResults"] = ir_resampled[i]
                 data["results"][0]["responses"][i]["receiverResultsUncorrected"] = results.IRold[i].tolist()
             with open(json_file_path, "w", encoding="utf-8") as file:
                 json.dump(data, file, indent=4)

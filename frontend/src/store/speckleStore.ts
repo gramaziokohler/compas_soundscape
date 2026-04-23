@@ -47,6 +47,12 @@ let _generatedSoundObjectIdsRef: Set<string> = new Set();
 let _diverseSelectedObjectIdsRef: Set<string> = new Set();
 let _materialColorsRef: ColorGroup[] = [];
 let _viewModeRef: ViewMode = 'default';
+/** True while setUserObjectColors is active on the FilteringExtension (cleared by removeUserObjectColors) */
+let _userColorsApplied = false;
+/** IDs explicitly hidden by the Object Explorer — source of truth for color suppression */
+let _explorerHiddenIdsRef = new Set<string>();
+/** Currently isolated object IDs — null means no isolation active */
+let _explorerIsolatedIdsRef: Set<string> | null = null;
 
 /** Model fileName from SpeckleViewerContext */
 let _modelFileNameRef: string | null = null;
@@ -104,10 +110,24 @@ export interface SpeckleStoreState {
   clearFilterColors: () => void;
   registerMaterialColors: (colors: ColorGroup[]) => void;
   clearMaterialColors: () => void;
+  // Object Explorer hide/show tracking (so applyFilterColors can suppress colors for hidden objects)
+  trackExplorerHide: (ids: string[]) => void;
+  trackExplorerShow: (ids: string[]) => void;
+  clearExplorerHidden: () => void;
+  // Object Explorer isolation tracking (so applyFilterColors can suppress colors for non-isolated objects)
+  trackExplorerIsolate: (ids: string[]) => void;
+  /** Remove specific IDs from the isolation set (un-isolate without clearing all isolation) */
+  removeFromExplorerIsolation: (ids: string[]) => void;
+  clearExplorerIsolation: () => void;
+  /** Reactive copy of _explorerIsolatedIdsRef — null means no isolation active */
+  explorerIsolatedIds: string[] | null;
 
   // Actions — mode
   setFilteringEnabled: (enabled: boolean) => void;
   setViewMode: (mode: ViewMode) => void;
+
+  // Isolation state reader (synchronous, bypasses Zustand to avoid re-renders)
+  getExplorerIsolatedIds: () => string[] | null;
 
   // Selector helper
   getObjectLinkState: (objectId: string) => {
@@ -171,6 +191,7 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
       filteringEnabled: false,
       viewMode: 'default',
       linkedObjectIds: new Set(),
+      explorerIsolatedIds: null,
 
       // ── Link management ───────────────────────────────────────────────────
       linkObjectToSound: (objectId, soundTabIndex, hasGeneratedSound = false) => {
@@ -299,6 +320,15 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         const filteringExt = _viewerRef.getExtension(FilteringExtension);
         if (!filteringExt) return;
 
+        // Use explicitly-tracked hidden IDs (set synchronously by trackExplorerHide/Show).
+        // This avoids relying on filteringState.hiddenObjects which may be stale or use
+        // different IDs than what the material color groups contain.
+        const hiddenSet = _explorerHiddenIdsRef;
+        // When isolation is active, objects NOT in the isolated set are ghosted/hidden too.
+        const isolatedSet = _explorerIsolatedIdsRef;
+        const isExcluded = (id: string) =>
+          hiddenSet.has(id) || (isolatedSet !== null && !isolatedSet.has(id));
+
         const currentLinks = _objectSoundLinksRef;
         const currentGenerated = _generatedSoundObjectIdsRef;
         const currentDiverse = _diverseSelectedObjectIdsRef;
@@ -306,14 +336,21 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
 
         const colorGroups: { objectIds: string[]; color: string }[] = [];
 
-        if (materialColors.length > 0) colorGroups.push(...materialColors);
+        if (materialColors.length > 0) {
+          const filtered = materialColors
+            .map((g) => ({ ...g, objectIds: g.objectIds.filter((id) => !isExcluded(id)) }))
+            .filter((g) => g.objectIds.length > 0);
+          colorGroups.push(...filtered);
+        }
 
-        const diverseOnlyIds = Array.from(currentDiverse).filter((id) => !currentLinks.has(id));
+        const diverseOnlyIds = Array.from(currentDiverse).filter(
+          (id) => !currentLinks.has(id) && !isExcluded(id),
+        );
         if (diverseOnlyIds.length > 0)
           colorGroups.push({ objectIds: diverseOnlyIds, color: SPECKLE_FILTER_COLORS.DIVERSE_SELECTION });
 
         const pendingLinkedIds = Array.from(currentLinks.keys()).filter(
-          (id) => !currentGenerated.has(id),
+          (id) => !currentGenerated.has(id) && !isExcluded(id),
         );
         if (pendingLinkedIds.length > 0)
           colorGroups.push({
@@ -321,8 +358,8 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
             color: SPECKLE_FILTER_COLORS.SOUND_LINKED_PENDING,
           });
 
-        const generatedLinkedIds = Array.from(currentLinks.keys()).filter((id) =>
-          currentGenerated.has(id),
+        const generatedLinkedIds = Array.from(currentLinks.keys()).filter(
+          (id) => currentGenerated.has(id) && !isExcluded(id),
         );
         if (generatedLinkedIds.length > 0)
           colorGroups.push({
@@ -340,11 +377,13 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         if (sanitised.length > 0) {
           try {
             filteringExt.setUserObjectColors(sanitised);
+            _userColorsApplied = true;
           } catch (err) {
             console.error('[speckleStore] setUserObjectColors failed:', err);
           }
         } else {
           filteringExt.removeUserObjectColors();
+          _userColorsApplied = false;
         }
       },
 
@@ -353,6 +392,7 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         const filteringExt = _viewerRef.getExtension(FilteringExtension);
         if (filteringExt) {
           filteringExt.removeUserObjectColors();
+          _userColorsApplied = false;
           _viewerRef.requestRender();
         }
       },
@@ -373,6 +413,66 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
 
       clearMaterialColors: () => {
         _materialColorsRef = [];
+        if (_viewModeRef === 'dark') {
+          // applyFilterColors() is a no-op in dark mode, but stale setUserObjectColors
+          // from acoustic mode must still be cleared — otherwise the active color groups
+          // in FilteringExtension conflict with subsequent hideObjects() calls and keep
+          // objects visible that should be hidden (Acoustic → Dark with materials).
+          // Only call removeUserObjectColors() if colors are actually active; skipping
+          // when _userColorsApplied=false avoids unnecessary FilteringExtension resets
+          // during card switches while already in dark mode.
+          if (_userColorsApplied && _viewerRef) {
+            const filteringExt = _viewerRef.getExtension(FilteringExtension);
+            if (filteringExt) {
+              try {
+                filteringExt.removeUserObjectColors();
+                _userColorsApplied = false;
+                _viewerRef.requestRender();
+              } catch { /* non-critical */ }
+            }
+          }
+        } else {
+          get().applyFilterColors();
+        }
+      },
+
+      // ── Object Explorer hide tracking ─────────────────────────────────────
+      // These keep _explorerHiddenIdsRef in sync so applyFilterColors can suppress
+      // colors for hidden objects without relying on filteringState (which may be stale).
+      trackExplorerHide: (ids) => {
+        ids.forEach((id) => _explorerHiddenIdsRef.add(id));
+        get().applyFilterColors();
+      },
+      trackExplorerShow: (ids) => {
+        ids.forEach((id) => _explorerHiddenIdsRef.delete(id));
+        get().applyFilterColors();
+      },
+      clearExplorerHidden: () => {
+        _explorerHiddenIdsRef.clear();
+        get().applyFilterColors();
+      },
+      trackExplorerIsolate: (ids) => {
+        // Isolated objects are visible — remove them from hidden tracking so colors show
+        ids.forEach((id) => _explorerHiddenIdsRef.delete(id));
+        // MERGE into the existing isolation set rather than replacing it.
+        if (_explorerIsolatedIdsRef === null) {
+          _explorerIsolatedIdsRef = new Set(ids);
+        } else {
+          ids.forEach((id) => _explorerIsolatedIdsRef!.add(id));
+        }
+        set({ explorerIsolatedIds: Array.from(_explorerIsolatedIdsRef) }, false, 'speckle/trackExplorerIsolate');
+        get().applyFilterColors();
+      },
+      removeFromExplorerIsolation: (ids) => {
+        if (_explorerIsolatedIdsRef === null) return;
+        ids.forEach((id) => _explorerIsolatedIdsRef!.delete(id));
+        if (_explorerIsolatedIdsRef.size === 0) _explorerIsolatedIdsRef = null;
+        set({ explorerIsolatedIds: _explorerIsolatedIdsRef ? Array.from(_explorerIsolatedIdsRef) : null }, false, 'speckle/removeFromExplorerIsolation');
+        get().applyFilterColors();
+      },
+      clearExplorerIsolation: () => {
+        _explorerIsolatedIdsRef = null;
+        set({ explorerIsolatedIds: null }, false, 'speckle/clearExplorerIsolation');
         get().applyFilterColors();
       },
 
@@ -384,6 +484,10 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         _viewModeRef = mode;
         set({ viewMode: mode }, false, 'speckle/setViewMode');
       },
+
+      // ── Isolation state reader ────────────────────────────────────────────
+      getExplorerIsolatedIds: () =>
+        _explorerIsolatedIdsRef ? Array.from(_explorerIsolatedIdsRef) : null,
 
       // ── Selector helper ───────────────────────────────────────────────────
       getObjectLinkState: (objectId) => {

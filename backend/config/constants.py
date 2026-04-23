@@ -15,6 +15,10 @@ BACKEND_DIR = Path(__file__).parent.parent.resolve()
 # LLM Configuration
 # ============================================================================
 
+# Task Cleanup Delays
+SOUND_GENERATION_TASK_CLEANUP_DELAY_SECONDS = 600
+LLM_TASK_CLEANUP_DELAY_SECONDS = 300
+
 # Model Configuration
 LLM_MODEL_NAME = "gemini-2.5-flash"
 # LLM_MODEL_NAME = "gemini-2.5-pro"
@@ -159,6 +163,7 @@ PYROOMACOUSTICS_MESH_WELD_TOLERANCE = 1e-4  # Vertex merge tolerance in meters (
 PYROOMACOUSTICS_SAMPLE_RATE = 44100  # Sample rate -- uses n_bands = math.floor(np.log2(SAMPLE_RATE / BASE_FREQUENCY))
 PYROOMACOUSTICS_USE_RAND_ISM = False  # Use randomized ISM for better realism
 PYROOMACOUSTICS_IR_TRIM_THRESHOLD = 0.01  # Fraction of peak amplitude below which trailing IR samples are trimmed
+PYROOMACOUSTICS_TASK_CLEANUP_DELAY_SECONDS = 600  # 10 minutes after completion
 
 # Parameter Ranges
 PYROOMACOUSTICS_MAX_ORDER_MIN = 0  # Direct path only
@@ -171,14 +176,6 @@ PYROOMACOUSTICS_UNIT_CHECK_MAX_DISTANCE_M = 100.0  # Above this → model likely
 # RIR Export
 PYROOMACOUSTICS_RIR_DIR = str(BACKEND_DIR / "temp" / "static" / "pyroomacoustics_rir")
 PYROOMACOUSTICS_RIR_URL_PREFIX = "/static/pyroomacoustics_rir"
-
-# Grid Receiver Simulation
-PYROOMACOUSTICS_GRID_RECEIVER_POINTS_FILE = str(BACKEND_DIR / "receiver_points.txt")  # Path to grid points file
-PYROOMACOUSTICS_GRID_DEFAULT_ENABLED = False  # Grid simulation disabled by default
-PYROOMACOUSTICS_GRID_PLOT_DPI = 150  # DPI for exported heatmap JPG
-PYROOMACOUSTICS_GRID_PLOT_FIGSIZE = (10, 8)  # Figure size in inches (width, height)
-PYROOMACOUSTICS_GRID_PLOT_COLORMAP = "viridis"  # Matplotlib colormap for heatmap
-PYROOMACOUSTICS_GRID_PLOT_CONTOUR_LEVELS = 100  # Number of contour levels for smooth gradient
 
 # ============================================================================
 # Directory Configuration - Temporary Files
@@ -217,6 +214,7 @@ FRAME_HOP_SECONDS = 0.48  # YAMNet frame hop duration
 FRAME_WINDOW_SECONDS = 0.96  # YAMNet analysis window duration
 DEFAULT_SED_NUM_SOUNDS = 10  # Default number of top sounds to return
 DEFAULT_SED_TOP_N_CLASSES = 100  # Default maximum classes to analyze
+SED_MIN_CONFIDENCE = 0.05  # Minimum confidence (mean_score) threshold for returning results
 
 # Audio to dB Conversion
 AMPLITUDE_TO_DB_EPSILON = 1e-10  # Epsilon threshold for amplitude to dB conversion
@@ -412,44 +410,69 @@ SUPPORTED_IR_CHANNELS = [1, 2, 4, 9, 16]  # Mono, Binaural, FOA, SOA, TOA
 MAX_IR_CHANNELS = 16
 
 # ============================================================================
-# Choras Acoustic Simulation Configuration
+# Choras (DE/DG Wave Simulation) Configuration
 # ============================================================================
 
-# Choras API Configuration
-CHORAS_API_BASE = "http://localhost:5001"
+# Output directories (mirrors pyroomacoustics pattern)
+CHORAS_RIR_DIR  = str(BACKEND_DIR / "temp" / "static" / "choras_rir")
+CHORAS_TEMP_DIR = str(BACKEND_DIR / "temp" / "choras_sims")
 
-# Default Simulation Settings (DE - Diffusion Equation Method)
-CHORAS_DEFAULT_C0 = 343  # Speed of sound in m/s
-CHORAS_DEFAULT_IR_LENGTH = 0.2  # Impulse response length in seconds
-CHORAS_DEFAULT_LC = 1.0  # Characteristic length in meters
-CHORAS_DEFAULT_EDT = 35  # Energy decay threshold in dB
-CHORAS_DEFAULT_SIM_LEN_TYPE = "ir_length"  # Simulation length type: "ir_length" or "edt"
+# DE (Diffusion Equation / FVM) defaults
+CHORAS_DE_DEFAULT_C0           = 343        # Speed of sound (m/s)
+CHORAS_DE_DEFAULT_IR_LENGTH    = 0.5        # IR length in seconds
+CHORAS_DE_DEFAULT_LC           = 1        # Mesh characteristic length (m)
+CHORAS_DE_DEFAULT_EDT          = 35         # EDT target (dB)
+CHORAS_DE_DEFAULT_SIM_LEN_TYPE = "edt"     # "edt" or "ir_length"
+CHORAS_DE_SAMPLE_RATE          = 20000      # WAV sample rate (1/dt from DEinterface)
 
-# Simulation Length Type Options
-CHORAS_SIM_LEN_TYPE_IR = "ir_length"
-CHORAS_SIM_LEN_TYPE_EDT = "edt"
+# DG (Discontinuous Galerkin) defaults
+CHORAS_DG_DEFAULT_C0          = 343         # Speed of sound (m/s)
+CHORAS_DG_DEFAULT_RHO0        = 1.213       # Air density (kg/m³)
+CHORAS_DG_DEFAULT_IR_LENGTH   = 0.5         # IR length in seconds
+CHORAS_DG_DEFAULT_FREQ_UPPER  = 200         # Upper frequency limit (Hz)
+CHORAS_DG_DEFAULT_POLY_ORDER  = 4           # Polynomial order
+CHORAS_DG_DEFAULT_PPW         = 2           # Points per wavelength
+CHORAS_DG_DEFAULT_CFL         = 1.0         # CFL number
+CHORAS_DG_SAMPLE_RATE         = 44100       # Output WAV sample rate
 
-# Default Source/Receiver Positions (in meters)
-CHORAS_DEFAULT_SOURCE_X = 1.0
-CHORAS_DEFAULT_SOURCE_Y = 1.0
-CHORAS_DEFAULT_SOURCE_Z = 1.0
-CHORAS_DEFAULT_RECEIVER_X = 3.0
-CHORAS_DEFAULT_RECEIVER_Y = 3.0
-CHORAS_DEFAULT_RECEIVER_Z = 1.0
+# Frequency bands (shared by DE and DG)
+CHORAS_DEFAULT_FREQUENCIES = [125, 250, 500, 1000, 2000]
 
-# Simulation Parameter Ranges
-CHORAS_C0_MIN = 300  # Minimum speed of sound (m/s)
-CHORAS_C0_MAX = 400  # Maximum speed of sound (m/s)
-CHORAS_IR_LENGTH_MIN = 0.05  # Minimum IR length (seconds)
-CHORAS_IR_LENGTH_MAX = 5.0  # Maximum IR length (seconds)
-CHORAS_LC_MIN = 0.1  # Minimum characteristic length (meters)
-CHORAS_LC_MAX = 10.0  # Maximum characteristic length (meters)
-CHORAS_EDT_MIN = 20  # Minimum EDT (dB)
-CHORAS_EDT_MAX = 60  # Maximum EDT (dB)
-
-# Polling Configuration
-CHORAS_POLL_INTERVAL = 2000  # Milliseconds between status checks
-CHORAS_TIMEOUT = 600000  # Maximum simulation time (10 minutes in ms)
+# Absorption material database (5-band: 125, 250, 500, 1000, 2000 Hz)
+CHORAS_ABSORPTION_MATERIALS = {
+    "concrete_plain": {
+        "description": "Plain concrete (painted/unpainted)",
+        "coeffs": [0.01, 0.01, 0.02, 0.02, 0.02],
+    },
+    "brick_unplastered": {
+        "description": "Brick, unplastered",
+        "coeffs": [0.02, 0.03, 0.03, 0.04, 0.05],
+    },
+    "plasterboard": {
+        "description": "Plasterboard on battens",
+        "coeffs": [0.15, 0.10, 0.06, 0.04, 0.04],
+    },
+    "wood_floor": {
+        "description": "Parquet / wood floor on concrete",
+        "coeffs": [0.04, 0.04, 0.07, 0.06, 0.06],
+    },
+    "carpet_thick": {
+        "description": "Thick carpet on concrete",
+        "coeffs": [0.02, 0.06, 0.14, 0.37, 0.60],
+    },
+    "glass_window": {
+        "description": "Glass window",
+        "coeffs": [0.35, 0.25, 0.18, 0.12, 0.07],
+    },
+    "acoustic_tile": {
+        "description": "Acoustic ceiling tile",
+        "coeffs": [0.15, 0.25, 0.55, 0.65, 0.65],
+    },
+    "medium_absorber": {
+        "description": "Medium absorber (generic)",
+        "coeffs": [0.60, 0.69, 0.71, 0.70, 0.63],
+    },
+}
 
 # ============================================================================
 # Speckle Configuration

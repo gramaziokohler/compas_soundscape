@@ -10,7 +10,16 @@ import { Card } from "@/components/ui/Card";
 import { SoundConfigContent, SoundResultContent } from "./sound";
 import { CardTypeSwitcher } from "./sound/CardTypeSwitcher";
 import { apiService } from "@/services/api";
-import { useAudioControlsStore } from "@/store";
+import { useAudioControlsStore, useSoundscapeStore } from "@/store";
+import { useUIStore } from "@/store/uiStore";
+import { useServiceVersions } from "@/hooks/useServiceVersions";
+import {
+  AUDIO_MODEL_TANGOFLUX,
+  AUDIO_MODEL_AUDIOLDM2,
+  AUDIO_MODEL_ELEVENLABS,
+  ELEVENLABS_SERVICE_VERSION,
+  GOOGLE_SOUND_LIBRARY_SERVICE_VERSION,
+} from "@/utils/constants";
 
 /**
  * SoundGenerationSection Component
@@ -73,7 +82,32 @@ export function SoundGenerationSection({
   onSelectSoundCard,
   selectedCardIndex = null,
   onDuplicateConfig,
+  audioModel = AUDIO_MODEL_TANGOFLUX,
 }: SoundGenerationSectionProps) {
+  const serviceVersions = useServiceVersions();
+
+  // ── UI store for sidebar→scene communication ──
+  const setExpandedSoundCardIndex = useUIStore(s => s.setExpandedSoundCardIndex);
+  const triggerZoomToSoundCard    = useUIStore(s => s.triggerZoomToSoundCard);
+
+  // ── Sound generation progress from store ──
+  const soundGenProgress      = useSoundscapeStore((s) => s.soundGenProgress);
+  const soundGenProgressValue = useSoundscapeStore((s) => s.soundGenProgressValue);
+
+  // Snapshot the total number of pending configs (all types) when generation starts.
+  // The backend only counts ML sounds in its denominator, so we replace it here.
+  const pendingAtStartRef = useRef(0);
+  useEffect(() => {
+    if (isSoundGenerating) {
+      pendingAtStartRef.current = soundConfigs.filter((_, i) => !isSoundGenerated(i)).length;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSoundGenerating]); // intentionally snapshot once when generation starts
+
+  const displayProgress = (isSoundGenerating && soundGenProgress && pendingAtStartRef.current > 0)
+    ? soundGenProgress.replace(/\/\d+/, `/${pendingAtStartRef.current}`)
+    : (soundGenProgress || 'Generating Sounds...');
+
   // ── Audio controls from store ──
   const individualSoundStates = useAudioControlsStore((s) => s.individualSoundStates);
   const onToggleSound        = useAudioControlsStore((s) => s.toggleSound);
@@ -193,12 +227,19 @@ export function SoundGenerationSection({
     prevConfigsLength.current = soundConfigs.length;
   }, [soundConfigs.length]);
 
-  // When a card is selected externally (from ThreeScene), expand it
+  // Keep a ref to soundConfigs.length so the selection effect below can bounds-check
+  // without listing soundConfigs.length as a dependency (which would cause the effect
+  // to re-fire when a new card is added and override Effect A's auto-expand).
+  const soundConfigsLengthRef = useRef(soundConfigs.length);
+  soundConfigsLengthRef.current = soundConfigs.length;
+
+  // When a card is selected externally (from ThreeScene / sphere click), expand it.
+  // Only re-runs when selectedCardIndex changes — NOT when soundConfigs.length changes.
   useEffect(() => {
-    if (selectedCardIndex !== null && selectedCardIndex >= 0 && selectedCardIndex < soundConfigs.length) {
+    if (selectedCardIndex !== null && selectedCardIndex >= 0 && selectedCardIndex < soundConfigsLengthRef.current) {
       setExpandedIndex(selectedCardIndex);
     }
-  }, [selectedCardIndex, soundConfigs.length]);
+  }, [selectedCardIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-name cards when sounds are generated
   const autoNamedIndices = useRef<Set<number>>(new Set());
@@ -222,14 +263,15 @@ export function SoundGenerationSection({
 
   // Handle expansion change from CardSection (controlled mode callback)
   // Note: does NOT call onSelectSoundCard — that callback is only for scene-to-sidebar
-  // communication (sound sphere / linked object click) and would trigger right sidebar expansion
+  // communication (sound sphere / linked object click) and would trigger right sidebar expansion.
+  // Instead, we write directly to uiStore so SpeckleScene can highlight the sphere.
   const handleExpandedIndexChange = useCallback((newIndex: number | null) => {
-    // Stop preview when collapsing or switching cards
     if (previewingSoundId) {
       onPreviewStop?.(previewingSoundId);
     }
     setExpandedIndex(newIndex);
-  }, [previewingSoundId, onPreviewStop]);
+    setExpandedSoundCardIndex(newIndex);
+  }, [previewingSoundId, onPreviewStop, setExpandedSoundCardIndex]);
 
   // Available card types for add button dropdown (sound types only)
   const availableTypes: CardTypeOption[] = useMemo(() => [
@@ -410,7 +452,29 @@ export function SoundGenerationSection({
       );
     }
 
+    // Derive version string for this card's service
+    const cardVersion = (() => {
+      if (!serviceVersions) return undefined;
+      const cardType = item.type;
+      if (cardType === 'text-to-audio') {
+        if (audioModel === AUDIO_MODEL_ELEVENLABS) return ELEVENLABS_SERVICE_VERSION;
+        if (audioModel === AUDIO_MODEL_AUDIOLDM2) {
+          const v = serviceVersions.audioldm2;
+          return `${v.name} ${v.version}`;
+        }
+        const v = serviceVersions.tangoflux;
+        return `${v.name} ${v.version}`;
+      }
+      if (cardType === 'library') {
+        const v = serviceVersions.bbc;
+        return `${v.name} ${v.version}`;
+      }
+      if (cardType === 'catalog') return GOOGLE_SOUND_LIBRARY_SERVICE_VERSION;
+      return undefined;
+    })();
+
     return (
+      <div style={{ opacity: isMuted ? 0.55 : 1 }}>
       <Card
         config={item}
         index={index}
@@ -426,9 +490,12 @@ export function SoundGenerationSection({
         resetButtonTitle="Reset to configuration UI"
         customButtons={customButtons.length > 0 ? customButtons : undefined}
         onToggleExpand={onToggleExpandFn}
+        onDoubleClickCard={(i) => triggerZoomToSoundCard(i)}
         onUpdateConfig={handleUpdateConfig}
         onRemove={onRemoveConfig}
         onReset={handleReset}
+        color="primary"
+        version={cardVersion}
         beforeContent={
           <SoundConfigContent
             config={config}
@@ -442,6 +509,7 @@ export function SoundGenerationSection({
             onLibrarySearch={onLibrarySearch}
             onLibrarySoundSelect={onLibrarySoundSelect}
             onCatalogSoundSelect={onCatalogSoundSelect}
+            
           />
         }
         afterContent={
@@ -464,6 +532,7 @@ export function SoundGenerationSection({
           ) : null
         }
       />
+      </div>
     );
   }, [
     isSoundGenerated,
@@ -502,23 +571,48 @@ export function SoundGenerationSection({
     onVolumeChange,
     onIntervalChange,
     onVariantChange,
+    serviceVersions,
+    audioModel,
+    triggerZoomToSoundCard,
   ]);
 
   // Footer with generate button
   const footer = (
     <div className="flex gap-2">
-      <button
-        onClick={onGenerate}
-        disabled={shouldDisableGenerateButton}
-        className={`flex-1 py-2 px-4 rounded-lg text-white text-xs font-medium transition-colors ${
-          shouldDisableGenerateButton
-            ? 'bg-secondary-hover opacity-40 cursor-not-allowed'
-            : 'hover:opacity-80 cursor-pointer'
-        }`}
-        style={!shouldDisableGenerateButton ? { backgroundColor: 'var(--card-color, var(--color-primary))' } : undefined}
-      >
-        {isSoundGenerating ? 'Generating Sounds...' : 'Generate Sounds'}
-      </button>
+      {isSoundGenerating ? (
+        /* Progress bar replaces generate button while running */
+        <div
+          className="flex-1 px-3 py-2 rounded-lg text-xs"
+          style={{
+            backgroundColor: 'var(--color-secondary-hover)',
+            color: 'white',
+            backgroundImage: soundGenProgressValue > 0
+              ? `linear-gradient(to right, var(--card-color, var(--color-primary)) ${soundGenProgressValue}%, var(--color-secondary-hover) ${soundGenProgressValue}%)`
+              : undefined,
+            transition: 'background-image 0.3s ease',
+          }}
+        >
+          <div className="flex justify-between items-center">
+            <span className="font-medium">{displayProgress}</span>
+            {soundGenProgressValue > 0 && (
+              <span className="font-bold">{soundGenProgressValue}%</span>
+            )}
+          </div>
+        </div>
+      ) : (
+        <button
+          onClick={onGenerate}
+          disabled={shouldDisableGenerateButton}
+          className={`flex-1 py-2 px-4 rounded-lg text-white text-xs font-medium transition-colors ${
+            shouldDisableGenerateButton
+              ? 'bg-secondary-hover opacity-40 cursor-not-allowed'
+              : 'hover:opacity-80 cursor-pointer'
+          }`}
+          style={!shouldDisableGenerateButton ? { backgroundColor: 'var(--card-color, var(--color-primary))' } : undefined}
+        >
+          Generate Sounds
+        </button>
+      )}
 
       {/* Stop button - only visible when generating */}
       {isSoundGenerating && (
@@ -558,6 +652,8 @@ export function SoundGenerationSection({
       error={soundGenError}
       expandedIndex={expandedIndex}
       onExpandedIndexChange={handleExpandedIndexChange}
+      color="primary"
+
     />
   );
 }

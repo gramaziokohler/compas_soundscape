@@ -45,6 +45,22 @@ async function fetchWithErrorHandling(
   }
 }
 
+export interface ServiceVersionInfo {
+  name: string;
+  version: string;
+}
+
+export interface ServiceVersions {
+  pyroomacoustics: ServiceVersionInfo;
+  tangoflux: ServiceVersionInfo;
+  audioldm2: ServiceVersionInfo;
+  bbc: ServiceVersionInfo;
+  gemini: ServiceVersionInfo;
+  yamnet: ServiceVersionInfo;
+  acousticDE: ServiceVersionInfo;
+  edg_acoustics: ServiceVersionInfo;
+}
+
 // API Service Layer
 export const apiService = {
   // File Upload
@@ -112,7 +128,7 @@ export const apiService = {
     prompt?: string;
     num_sounds: number;
     entities?: any[];
-  }): Promise<{ text: string; sounds: string[]; prompts: any[] }> {
+  }): Promise<{ generation_id: string }> {
     try {
       const response = await fetchWithErrorHandling(
         `${API_BASE_URL}/api/generate-text`,
@@ -127,16 +143,6 @@ export const apiService = {
       if (!response.ok) {
         const err = await response.json().catch(() => ({ detail: 'Failed to generate text' }));
         const errorMessage = err.detail || 'Failed to generate text';
-        
-        // Format quota errors nicely
-        if (response.status === 429) {
-          if (errorMessage.includes('quota')) {
-            throw new Error(`⚠️ ${errorMessage}`);
-          } else {
-            throw new Error('⚠️ API quota exhausted. Please try again later.');
-          }
-        }
-        
         throw new Error(errorMessage);
       }
 
@@ -146,11 +152,54 @@ export const apiService = {
     }
   },
 
-  // Generate Sounds
+  // Poll text generation status
+  async getTextGenerationStatus(generationId: string): Promise<{
+    generation_id: string;
+    progress: number;
+    status: string;
+    completed: boolean;
+    cancelled: boolean;
+    error: string | null;
+    result?: { text: string; sounds: string[]; prompts: any[]; selected_entities: any[] | null } | null;
+    queue_position?: number | null;
+    queue_total?: number | null;
+  }> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/text-generation-status/${generationId}`,
+        undefined,
+        'Text generation status'
+      );
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: 'Failed to get status' }));
+        throw new Error(err.detail || 'Failed to get text generation status');
+      }
+      return await response.json();
+    } catch (error) {
+      handleApiError(error, 'Text generation status');
+    }
+  },
+
+  // Cancel text generation
+  async cancelTextGeneration(generationId: string): Promise<void> {
+    try {
+      await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/cancel-text-generation/${generationId}`,
+        { method: 'POST' },
+        'Cancel text generation'
+      );
+    } catch {
+      // Silently fail — cancel is best-effort
+    }
+  },
+
+  // Generate Sounds (async — returns generation_id for polling)
   async generateSounds(data: {
     sounds: SoundGenerationConfig[];
     bounding_box: { min: number[]; max: number[] } | null;
-  }): Promise<{ sounds: SoundEvent[] }> {
+    apply_denoising?: boolean;
+    audio_model?: string;
+  }): Promise<{ generation_id: string }> {
     try {
       const response = await fetchWithErrorHandling(
         `${API_BASE_URL}/api/generate-sounds`,
@@ -164,23 +213,54 @@ export const apiService = {
 
       if (!response.ok) {
         const err = await response.json().catch(() => ({ detail: 'Failed to generate sounds' }));
-        const errorMessage = err.detail || 'Failed to generate sounds';
-        
-        // Format quota errors nicely
-        if (response.status === 429) {
-          if (errorMessage.includes('quota')) {
-            throw new Error(`⚠️ ${errorMessage}`);
-          } else {
-            throw new Error('⚠️ API quota exhausted. Please try again later.');
-          }
-        }
-        
-        throw new Error(errorMessage);
+        throw new Error(err.detail || 'Failed to generate sounds');
       }
 
       return await response.json();
     } catch (error) {
       handleApiError(error, 'Generate sounds');
+    }
+  },
+
+  // Poll sound generation status
+  async getSoundGenerationStatus(generationId: string): Promise<{
+    generation_id: string;
+    progress: number;
+    status: string;
+    completed: boolean;
+    cancelled: boolean;
+    error: string | null;
+    result?: any[] | null;
+    partial_sounds?: any[] | null;
+    queue_position?: number | null;
+    queue_total?: number | null;
+  }> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/sound-generation-status/${generationId}`,
+        undefined,
+        'Sound generation status'
+      );
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: 'Failed to get status' }));
+        throw new Error(err.detail || 'Failed to get sound generation status');
+      }
+      return await response.json();
+    } catch (error) {
+      handleApiError(error, 'Sound generation status');
+    }
+  },
+
+  // Cancel sound generation
+  async cancelSoundGeneration(generationId: string): Promise<void> {
+    try {
+      await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/cancel-sound-generation/${generationId}`,
+        { method: 'POST' },
+        'Cancel sound generation'
+      );
+    } catch {
+      // Silently fail — cancel is best-effort
     }
   },
 
@@ -353,189 +433,19 @@ export const apiService = {
 
   // Choras Acoustic Simulation
 
-  /**
-   * Get available materials from Choras library
-   */
-  async getChorasMaterials(): Promise<Array<{ id: number; name: string; description?: string; category?: string }>> {
-    try {
-      // Import CHORAS_API_BASE from constants
-      const { CHORAS_API_BASE } = await import('@/utils/constants');
-      const response = await fetchWithErrorHandling(
-        `${CHORAS_API_BASE}/materials`,
-        undefined,
-        'Get Choras materials'
-      );
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch Choras materials');
-      }
-
-      return response.json();
-    } catch (error) {
-      handleApiError(error, 'Get Choras materials');
-    }
-  },
-
-  /**
-   * Run full Choras simulation workflow
-   * @param file - Geometry file (.obj)
-   * @param materialId - Material ID from Choras library
-   * @param simulationName - Name for the simulation
-   * @param simulationSettings - Simulation parameters
-   * @returns Simulation result data
-   */
-  async runChorasSimulation(
-    file: File,
-    materialId: number,
-    simulationName: string,
-    simulationSettings?: {
-      de_c0?: number;
-      de_ir_length?: number;
-      de_lc?: number;
-      edt?: number;
-      sim_len_type?: 'ir_length' | 'edt';
-    },
-    excludedLayers?: string[]
-  ): Promise<{
-    simulationId: number;
-    simulationRunId: number;
-    modelId: number;
-    percentage: number;
-    status: string;
-  }> {
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('materialId', materialId.toString());
-      formData.append('simulationName', simulationName);
-      
-      if (simulationSettings) {
-        formData.append('simulationSettings', JSON.stringify(simulationSettings));
-      }
-
-      if (excludedLayers && excludedLayers.length > 0) {
-        formData.append('excludedLayers', JSON.stringify(excludedLayers));
-      }
-
-      const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/choras/run-simulation`,
-        {
-          method: 'POST',
-          body: formData
-        },
-        'Run Choras simulation'
-      );
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ detail: 'Simulation failed' }));
-        throw new Error(error.detail || 'Simulation failed');
-      }
-
-      return response.json();
-    } catch (error) {
-      handleApiError(error, 'Run Choras simulation');
-    }
-  },
-
-  /**
-   * Get Choras simulation status and progress
-   */
-  async getChorasSimulationStatus(simulationRunId: number): Promise<{
-    id: number;
-    status: string;
-    percentage: number;
-    completedAt: string | null;
-  }> {
-    try {
-      const { CHORAS_API_BASE } = await import('@/utils/constants');
-      const response = await fetchWithErrorHandling(
-        `${CHORAS_API_BASE}/simulations/run`,
-        undefined,
-        'Get Choras simulation status'
-      );
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch simulation status');
-      }
-
-      const allRuns = await response.json();
-      const runInfo = allRuns.find((run: any) => run.id === simulationRunId);
-
-      if (!runInfo) {
-        throw new Error('Simulation run not found');
-      }
-
-      return runInfo;
-    } catch (error) {
-      handleApiError(error, 'Get Choras simulation status');
-    }
-  },
-
-  /**
-   * Cancel a running Choras simulation
-   */
-  async cancelChorasSimulation(simulationId: number): Promise<void> {
-    try {
-      const { CHORAS_API_BASE } = await import('@/utils/constants');
-      const response = await fetchWithErrorHandling(
-        `${CHORAS_API_BASE}/simulations/cancel`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ simulationId })
-        },
-        'Cancel Choras simulation'
-      );
-
-      if (!response.ok) {
-        throw new Error('Failed to cancel simulation');
-      }
-    } catch (error) {
-      handleApiError(error, 'Cancel Choras simulation');
-    }
-  },
-
-  /**
-   * Save Choras simulation results to backend
-   */
-  async saveChorasResults(simulationId: number): Promise<{
-    wav_path: string;
-    json_path: string;
-    message: string;
-  }> {
-    try {
-      const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/choras/save-results`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ simulationId })
-        },
-        'Save Choras results'
-      );
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ detail: 'Failed to save results' }));
-        throw new Error(error.detail || 'Failed to save results');
-      }
-
-      return response.json();
-    } catch (error) {
-      handleApiError(error, 'Save Choras results');
-    }
-  },
-
   // Pyroomacoustics Acoustic Simulation
 
   /**
    * Get available materials from Pyroomacoustics library
    */
-  async getPyroomacousticsMaterials(): Promise<Array<{ 
-    id: string; 
-    name: string; 
-    description?: string; 
+  async getPyroomacousticsMaterials(): Promise<Array<{
+    id: string;
+    name: string;
+    description?: string;
     category?: string;
     absorption: number;
+    coeffs?: number[];
+    center_freqs?: number[];
   }>> {
     try {
       const response = await fetchWithErrorHandling(
@@ -663,13 +573,7 @@ export const apiService = {
     }>,
     geometryObjectIds?: string[],
     objectScattering?: Record<string, number>
-  ): Promise<{
-    simulation_id: string;
-    message: string;
-    ir_files: string[];
-    results_file: string;
-    grid_plot_file?: string;
-  }> {
+  ): Promise<{ simulation_id: string }> {
     try {
       const formData = new FormData();
       formData.append('simulation_name', simulationName);
@@ -714,6 +618,58 @@ export const apiService = {
   },
 
   /**
+   * Poll the status of a queued or running Pyroomacoustics simulation.
+   * Call every ~1 second while isRunning=true.
+   */
+  async getPyroomacousticsSimulationStatus(simulationId: string): Promise<{
+    simulation_id: string;
+    progress: number;
+    status: string;
+    completed: boolean;
+    cancelled: boolean;
+    error: string | null;
+    result?: {
+      simulation_id: string;
+      message: string;
+      ir_files: string[];
+      results_file: string;
+    } | null;
+    queue_position?: number | null;
+    queue_total?: number | null;
+  }> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/pyroomacoustics/simulation-status/${simulationId}`,
+        undefined,
+        'Get Pyroomacoustics simulation status'
+      );
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Status check failed' }));
+        throw new Error(error.detail || 'Status check failed');
+      }
+      return response.json();
+    } catch (error) {
+      handleApiError(error, 'Get Pyroomacoustics simulation status');
+    }
+  },
+
+  /**
+   * Signal the backend to cancel a running or queued Pyroomacoustics simulation.
+   */
+  async cancelPyroomacousticsSimulation(simulationId: string): Promise<void> {
+    try {
+      await fetchWithErrorHandling(
+        `${API_BASE_URL}/pyroomacoustics/cancel-simulation/${simulationId}`,
+        { method: 'POST' },
+        'Cancel Pyroomacoustics simulation'
+      );
+    } catch (error) {
+      // Non-fatal: log but don't rethrow
+      console.warn('cancelPyroomacousticsSimulation:', error);
+    }
+  },
+
+  /**
    * Get a specific IR file from a Pyroomacoustics simulation
    *
    * @param simulationId - The simulation ID
@@ -742,6 +698,192 @@ export const apiService = {
       return response.blob();
     } catch (error) {
       handleApiError(error, 'Get Pyroomacoustics IR file');
+    }
+  },
+
+  // ─── Choras (DE/DG) API Methods ─────────────────────────────────────────
+
+  /**
+   * Get available absorption materials for Choras (DE/DG) simulations.
+   */
+  async getChorasMaterials(): Promise<Array<{
+    id: string;
+    name: string;
+    description?: string;
+    coeffs: number[];
+    center_freqs: number[];
+    absorption: number;
+  }>> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/choras/materials`,
+        undefined,
+        'Get Choras materials'
+      );
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Failed to get Choras materials' }));
+        throw new Error(error.detail || 'Failed to get Choras materials');
+      }
+      return response.json();
+    } catch (error) {
+      handleApiError(error, 'Get Choras materials');
+    }
+  },
+
+  /**
+   * Start a Choras (DE or DG) acoustic simulation from a Speckle model.
+   * Returns immediately with a simulation_id — poll getChorasSimulationStatus()
+   * for live progress updates.
+   */
+  async runChorasSimulationSpeckle(
+    speckleProjectId: string,
+    speckleVersionId: string,
+    objectMaterials: Record<string, string>,
+    layerName: string,
+    simulationName: string,
+    settings: {
+      simulation_method: 'DE' | 'DG';
+      de_sim_len_type?: string;
+      de_edt?: number;
+      de_ir_length?: number;
+      de_c0?: number;
+      de_lc?: number;
+      dg_freq_upper_limit?: number;
+      dg_c0?: number;
+      dg_rho0?: number;
+      dg_ir_length?: number;
+      dg_poly_order?: number;
+      dg_ppw?: number;
+      dg_cfl?: number;
+    },
+    sourceReceiverPairs: Array<{
+      source_position: number[];
+      receiver_position: number[];
+      source_id: string;
+      receiver_id: string;
+    }>,
+    geometryObjectIds?: string[],
+  ): Promise<{
+    simulation_id: string;
+    total_steps: number;
+    method: string;
+  }> {
+    try {
+      const formData = new FormData();
+      formData.append('simulation_name', simulationName);
+      formData.append('speckle_project_id', speckleProjectId);
+      formData.append('speckle_version_id', speckleVersionId);
+      formData.append('object_materials', JSON.stringify(objectMaterials));
+      formData.append('layer_name', layerName);
+      formData.append('simulation_method', settings.simulation_method);
+
+      if (settings.de_sim_len_type !== undefined) formData.append('de_sim_len_type', settings.de_sim_len_type);
+      if (settings.de_edt !== undefined) formData.append('de_edt', String(settings.de_edt));
+      if (settings.de_ir_length !== undefined) formData.append('de_ir_length', String(settings.de_ir_length));
+      if (settings.de_c0 !== undefined) formData.append('de_c0', String(settings.de_c0));
+      if (settings.de_lc !== undefined) formData.append('de_lc', String(settings.de_lc));
+      if (settings.dg_freq_upper_limit !== undefined) formData.append('dg_freq_upper_limit', String(settings.dg_freq_upper_limit));
+      if (settings.dg_c0 !== undefined) formData.append('dg_c0', String(settings.dg_c0));
+      if (settings.dg_rho0 !== undefined) formData.append('dg_rho0', String(settings.dg_rho0));
+      if (settings.dg_ir_length !== undefined) formData.append('dg_ir_length', String(settings.dg_ir_length));
+      if (settings.dg_poly_order !== undefined) formData.append('dg_poly_order', String(settings.dg_poly_order));
+      if (settings.dg_ppw !== undefined) formData.append('dg_ppw', String(settings.dg_ppw));
+      if (settings.dg_cfl !== undefined) formData.append('dg_cfl', String(settings.dg_cfl));
+
+      if (geometryObjectIds?.length) {
+        formData.append('geometry_object_ids', JSON.stringify(geometryObjectIds));
+      }
+      formData.append('source_receiver_pairs', JSON.stringify(sourceReceiverPairs));
+
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/choras/run-simulation-speckle`,
+        { method: 'POST', body: formData },
+        'Start Choras Speckle simulation'
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Choras simulation failed' }));
+        throw new Error(error.detail || 'Choras simulation failed');
+      }
+      return response.json();
+    } catch (error) {
+      handleApiError(error, 'Start Choras Speckle simulation');
+    }
+  },
+
+  /**
+   * Poll the status of a running (or recently completed) Choras simulation.
+   * Call every ~1 second while isRunning=true.
+   */
+  async getChorasSimulationStatus(simulationId: string): Promise<{
+    simulation_id: string;
+    progress: number;
+    status: string;
+    completed: boolean;
+    cancelled: boolean;
+    error: string | null;
+    result?: {
+      simulation_id: string;
+      message: string;
+      ir_files: string[];
+      results_file: string;
+      method: string;
+    } | null;
+  }> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/choras/simulation-status/${simulationId}`,
+        undefined,
+        'Get Choras simulation status'
+      );
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Status check failed' }));
+        throw new Error(error.detail || 'Status check failed');
+      }
+      return response.json();
+    } catch (error) {
+      handleApiError(error, 'Get Choras simulation status');
+    }
+  },
+
+  /**
+   * Signal the backend to cancel a running Choras simulation.
+   * The worker thread stops after the current pair/source step completes.
+   */
+  async cancelChorasSimulation(simulationId: string): Promise<void> {
+    try {
+      await fetchWithErrorHandling(
+        `${API_BASE_URL}/choras/cancel-simulation/${simulationId}`,
+        { method: 'POST' },
+        'Cancel Choras simulation'
+      );
+    } catch (error) {
+      // Non-fatal: log but don't rethrow — UI already shows cancelled state
+      console.warn('cancelChorasSimulation:', error);
+    }
+  },
+
+  /**
+   * Retrieve a Choras simulation WAV file by filename.
+   */
+  async getChorasIRFile(simulationId: string, irFilename: string): Promise<Blob> {
+    try {
+      const url = new URL(`${API_BASE_URL}/choras/get-result-file/${simulationId}/wav`);
+      url.searchParams.append('ir_filename', irFilename);
+
+      const response = await fetchWithErrorHandling(
+        url.toString(),
+        undefined,
+        'Get Choras IR file'
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Failed to get Choras IR file' }));
+        throw new Error(error.detail || 'Failed to get Choras IR file');
+      }
+      return response.blob();
+    } catch (error) {
+      handleApiError(error, 'Get Choras IR file');
     }
   },
 
@@ -883,5 +1025,19 @@ export const apiService = {
     } catch (error) {
       handleApiError(error, 'Upload soundscape audio');
     }
-  }
+  },
+
+  async getServiceVersions(): Promise<ServiceVersions> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/versions`,
+        {},
+        'Service versions'
+      );
+      if (!response.ok) throw new Error('Failed to fetch service versions');
+      return await response.json();
+    } catch (error) {
+      handleApiError(error, 'Service versions');
+    }
+  },
 };

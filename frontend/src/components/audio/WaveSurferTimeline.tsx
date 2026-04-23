@@ -3,7 +3,7 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import TimelinePlugin from 'wavesurfer.js/dist/plugins/timeline.js';
-import { WAVESURFER_TIMELINE, AUDIO_TIMELINE, API_BASE_URL } from '@/utils/constants';
+import { WAVESURFER_TIMELINE, AUDIO_TIMELINE, API_BASE_URL, UI_COLORS } from '@/utils/constants';
 import type { TimelineSound } from '@/types/audio';
 import { useAudioControlsStore } from '@/store';
 
@@ -447,14 +447,7 @@ export function WaveSurferTimeline({
           progressColor: waveformColor,
         });
 
-        const container = instance.wavesurfer.getWrapper().parentElement;
-        if (container) {
-          const soundData = sounds.find((s: TimelineSound) => s.id === instance.soundId);
-          if (soundData) {
-            const borderColor = isSoundMuted ? WAVESURFER_TIMELINE.MUTED_COLOR : soundData.color;
-            container.style.border = `2px solid ${borderColor}`;
-          }
-        }
+
       } catch (error) {
         console.debug('[WaveSurferTimeline] Error updating mute/solo colors:', error);
       }
@@ -527,12 +520,12 @@ export function WaveSurferTimeline({
             onClick={() => onRefresh?.()}
             className="text-xs px-2 py-1 rounded transition-colors"
             style={{
-              color: '#F500B8',
-              backgroundColor: 'rgba(245, 0, 184, 0.1)',
-              border: '1px solid rgba(245, 0, 184, 0.3)'
+              color: UI_COLORS.PRIMARY,
+              backgroundColor: UI_COLORS.DARK_BG,
+              border: '1px solid'
             }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(245, 0, 184, 0.2)'}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'rgba(245, 0, 184, 0.1)'}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY_LIGHT}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.DARK_BG}
             title="Reload all available sounds into the timeline"
           >
             Reload
@@ -543,17 +536,15 @@ export function WaveSurferTimeline({
               disabled={isDownloading || isLoading}
               className="text-xs px-2 py-1 rounded transition-colors"
               style={{
-                color: isDownloading ? 'rgba(245, 0, 184, 0.5)' : '#F500B8',
-                backgroundColor: isDownloading ? 'rgba(245, 0, 184, 0.05)' : 'rgba(245, 0, 184, 0.1)',
-                border: '1px solid rgba(245, 0, 184, 0.3)',
-                cursor: isDownloading || isLoading ? 'not-allowed' : 'pointer',
-                minWidth: '5.5rem',
+                color: UI_COLORS.PRIMARY,
+                backgroundColor: UI_COLORS.DARK_BG,
+                border: '1px solid'
               }}
               onMouseEnter={(e) => {
-                if (!isDownloading && !isLoading) e.currentTarget.style.backgroundColor = 'rgba(245, 0, 184, 0.2)';
+                if (!isDownloading && !isLoading) e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY_LIGHT;
               }}
               onMouseLeave={(e) => {
-                if (!isDownloading && !isLoading) e.currentTarget.style.backgroundColor = 'rgba(245, 0, 184, 0.1)';
+                if (!isDownloading && !isLoading) e.currentTarget.style.backgroundColor = UI_COLORS.DARK_BG;
               }}
               title={isDownloading ? 'Rendering soundscape…' : 'Download full soundscape as stereo WAV (includes spatial audio)'}
             >
@@ -578,7 +569,7 @@ export function WaveSurferTimeline({
       )}
 
       {/* Timeline Ruler */}
-      <div className="border-b border-white/10">
+      <div className="">
         <div
           ref={timelineContainerRef}
           style={{

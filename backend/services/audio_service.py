@@ -6,6 +6,7 @@ import torch
 import torchaudio
 from tangoflux import TangoFluxInference
 import random
+from contextlib import contextmanager
 from utils.audio_processing import (
     normalize_audio_rms,
     apply_spl_calibration,
@@ -39,8 +40,49 @@ from config.constants import (
 from services.audioldm2_service import AudioLDM2Service
 
 
+@contextmanager
+def _tangoflux_step_callback(tangoflux_model, callback, total_steps: int):
+    """Patch noise_scheduler.step on the inner TangoFlux model to fire callback each diffusion step.
+
+    TangoFlux's inference_flow creates a tqdm bar but never calls .update() on it —
+    so patching tqdm is useless. scheduler.step() is called exactly once per step.
+    """
+    if callback is None or tangoflux_model is None:
+        yield
+        return
+
+    scheduler = tangoflux_model.model.noise_scheduler
+    orig_step = scheduler.step
+    counter = [0]
+
+    def _patched_step(*args, **kwargs):
+        result = orig_step(*args, **kwargs)
+        counter[0] += 1
+        callback(counter[0], total_steps)
+        return result
+
+    scheduler.step = _patched_step
+    try:
+        yield
+    finally:
+        scheduler.step = orig_step
+
+
 class AudioService:
     """Service for generating audio from text prompts using multiple models"""
+
+    @staticmethod
+    def get_service_version_info() -> dict:
+        import importlib.metadata
+        try:
+            version = importlib.metadata.version("tangoflux")
+        except importlib.metadata.PackageNotFoundError:
+            try:
+                import tangoflux
+                version = getattr(tangoflux, "__version__", "unknown")
+            except ImportError:
+                version = "unknown"
+        return {"name": "tangoflux", "version": version}
 
     def __init__(self):
         # Respect FORCE_CPU_MODE setting, otherwise use CUDA if available
@@ -104,7 +146,8 @@ class AudioService:
         spl_db: float = DEFAULT_SPL_DB,
         apply_denoising: bool = False,
         audio_model: str = DEFAULT_AUDIO_MODEL,
-        negative_prompt: str = ""
+        negative_prompt: str = "",
+        progress_callback: callable = None,
     ) -> None:
         """Generate a single audio file from a text prompt with SPL calibration and optional denoising
 
@@ -134,7 +177,8 @@ class AudioService:
                 steps=steps,
                 spl_db=spl_db,
                 apply_denoising=apply_denoising,
-                negative_prompt=negative_prompt or "Low quality, distorted"
+                negative_prompt=negative_prompt or "Low quality, distorted",
+                progress_callback=progress_callback,
             )
         else:
             # Use TangoFlux (default)
@@ -144,12 +188,13 @@ class AudioService:
                 # Clear CUDA cache before generation
                 self._clear_cuda_cache()
 
-                audio = model.generate(
-                    prompt,
-                    steps=steps,
-                    duration=duration,
-                    guidance_scale=guidance_scale
-                )
+                with _tangoflux_step_callback(model, progress_callback, steps):
+                    audio = model.generate(
+                        prompt,
+                        steps=steps,
+                        duration=duration,
+                        guidance_scale=guidance_scale
+                    )
 
                 # Clear CUDA cache after generation
                 self._clear_cuda_cache()
@@ -167,12 +212,13 @@ class AudioService:
                     model = self._init_tangoflux_model()
 
                     # Generate on CPU
-                    audio = model.generate(
-                        prompt,
-                        steps=steps,
-                        duration=duration,
-                        guidance_scale=guidance_scale
-                    )
+                    with _tangoflux_step_callback(model, progress_callback, steps):
+                        audio = model.generate(
+                            prompt,
+                            steps=steps,
+                            duration=duration,
+                            guidance_scale=guidance_scale
+                        )
 
                     # Restore original device preference for next generation
                     self.device = original_device

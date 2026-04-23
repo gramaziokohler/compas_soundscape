@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect } from 'react';
-import { UI_RIGHT_SIDEBAR, UI_COLORS } from '@/utils/constants';
+import { useState, useEffect } from 'react';
+import { UI_RIGHT_SIDEBAR, UI_COLORS, UI_SIDEBAR_RESIZE } from '@/utils/constants';
 import { ObjectExplorer } from '@/components/layout/ObjectExplorer';
 import { EntityInfoPanel } from '@/components/layout/sidebar/EntityInfoPanel';
 import { useRightSidebarStore, useSpeckleStore } from '@/store';
 import { useAcousticMaterialStore } from '@/store';
+import { useSidebarResize } from '@/hooks/useSidebarResize';
 import type { SoundEvent } from '@/types';
 
 /**
@@ -26,16 +27,28 @@ interface RightSidebarProps {
   onGoToReceiver?: (receiverId: string) => void;
   /** Still passed from page.tsx — SoundEvent list owned by useSoundGeneration (not yet migrated). */
   generatedSounds?: SoundEvent[];
+  /** Fired during resize drag so parent can sync layout-sensitive children. */
+  onWidthChange?: (width: number) => void;
 }
 
 export function RightSidebar({
   isVisible,
   onGoToReceiver,
   generatedSounds,
+  onWidthChange,
 }: RightSidebarProps) {
   const { isExpanded, requestExpand, requestCollapse } = useRightSidebarStore();
   const { selectedEntity } = useSpeckleStore();
   const isAcousticMaterialActive = useAcousticMaterialStore((s) => s.isActive);
+  const [isHandleHovered, setIsHandleHovered] = useState(false);
+
+  const { width: sidebarWidth, isResizing, handleMouseDown: handleResizeMouseDown } = useSidebarResize({
+    initialWidth: UI_SIDEBAR_RESIZE.RIGHT_DEFAULT_WIDTH,
+    minWidth: UI_SIDEBAR_RESIZE.RIGHT_MIN_WIDTH,
+    maxWidth: UI_SIDEBAR_RESIZE.RIGHT_MAX_WIDTH,
+    direction: 'left',
+    onWidthChange,
+  });
 
   // Auto-expand/collapse based on active signals
   // Expand when any signal is active, collapse when all are inactive
@@ -53,12 +66,43 @@ export function RightSidebar({
     <aside
       className="fixed top-0 right-0 h-screen flex flex-col transition-all duration-300 ease-in-out overflow-hidden"
       style={{
-        width: isExpanded ? `${UI_RIGHT_SIDEBAR.WIDTH}px` : '0px',
+        width: isExpanded ? `${sidebarWidth}px` : '0px',
         backgroundColor: UI_RIGHT_SIDEBAR.BACKGROUND,
         borderLeft: isExpanded ? `${UI_RIGHT_SIDEBAR.BORDER_WIDTH}px solid ${UI_RIGHT_SIDEBAR.BORDER_COLOR}` : 'none',
         zIndex: 10,
+        userSelect: isResizing ? 'none' : undefined,
       }}
     >
+      {/* Resize handle — left edge */}
+      {isExpanded && (
+        <div
+          onMouseDown={handleResizeMouseDown}
+          onMouseEnter={() => setIsHandleHovered(true)}
+          onMouseLeave={() => setIsHandleHovered(false)}
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: `${UI_SIDEBAR_RESIZE.HANDLE_HIT_AREA}px`,
+            height: '100%',
+            cursor: 'col-resize',
+            zIndex: 20,
+            display: 'flex',
+            alignItems: 'stretch',
+            justifyContent: 'flex-start',
+          }}
+        >
+          <div
+            style={{
+              width: `${UI_SIDEBAR_RESIZE.HANDLE_WIDTH}px`,
+              height: '100%',
+              backgroundColor: (isHandleHovered || isResizing) ? UI_COLORS.PRIMARY : 'transparent',
+              transition: 'background-color 150ms ease',
+              borderRadius: '2px',
+            }}
+          />
+        </div>
+      )}
       {/* ===== TOP SECTION: Object Explorer / Import ===== */}
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {/* Header */}

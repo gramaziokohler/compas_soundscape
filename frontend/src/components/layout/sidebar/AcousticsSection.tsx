@@ -6,7 +6,7 @@
  * Manages simulation configurations, material assignments, and execution.
  *
  * Simulation execution is delegated to individual hooks:
- * - useChoras for Choras simulations
+ * - runChorasSimulation for Choras (DE/DG) simulations
  * - usePyroomAcousticsSimulation for Pyroomacoustics simulations
  * 
  * ARCHITECTURE:
@@ -29,22 +29,21 @@ import { CardSection, type CardTypeOption } from '@/components/ui/CardSection';
 import { Card } from '@/components/ui/Card';
 import { apiService } from '@/services/api';
 import { CARD_TYPE_LABELS } from '@/types/card';
-import { useSpeckleStore, useAcousticsSimulationStore } from '@/store';
+import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGridListenersStore, useAudioControlsStore, useSoundscapeStore } from '@/store';
 
 // Content Components
 import { ResonanceContent } from '@/components/layout/sidebar/acoustics/ResonanceContent';
 import { SimulationResultContent, SimulationSettingsSection } from '@/components/layout/sidebar/acoustics/SimulationResultContent';
 import { SimulationSetupContent } from '@/components/layout/sidebar/acoustics/SimulationSetupContent';
-import { ReceiversSection } from '@/components/layout/sidebar/ReceiversSection';
 
 // Hooks
 import { useAcousticsMaterials } from '@/hooks/useAcousticsMaterials';
-import { runFullSimulation as runChorasFullSimulation } from '@/hooks/useChoras';
-
 // Utils
 import {
   importPyroomIRFiles,
-  buildSimulationResultsText
+  buildSimulationResultsText,
+  importChorasIRFiles,
+  buildChorasSimulationResultsText
 } from '@/utils/acousticMetrics';
 
 // Types
@@ -52,14 +51,13 @@ import type {
   SimulationConfig,
   AcousticSimulationMode,
   ChorasSimulationConfig,
-  PyroomAcousticsSimulationConfig
+  PyroomAcousticsSimulationConfig,
 } from '@/types/acoustics';
 import type { CardType } from '@/types/card';
 import type {
   CompasGeometry,
   EntityData,
   SoundEvent,
-  ReceiverData
 } from '@/types';
 import type {
   ImpulseResponseMetadata,
@@ -78,15 +76,9 @@ import {
   MAX_FACES_FOR_LAYER_AUTO_EXCLUDE,
   UI_COLORS
 } from '@/utils/constants';
+import { useServiceVersions } from '@/hooks/useServiceVersions';
 
 interface AcousticsSectionProps {
-  // Receiver props
-  receivers?: ReceiverData[];
-  onAddReceiver?: (type: string) => void;
-  onDeleteReceiver?: (id: string) => void;
-  onUpdateReceiverName?: (id: string, name: string) => void;
-  onGoToReceiver?: (id: string) => void;
-
   // IR Library props
   onSelectIRFromLibrary: (irMetadata: ImpulseResponseMetadata) => Promise<void>;
   onClearIR: () => void;
@@ -142,11 +134,6 @@ interface AcousticsSectionProps {
 
 export function AcousticsSection(props: AcousticsSectionProps) {
   const {
-    receivers = [],
-    onAddReceiver,
-    onDeleteReceiver,
-    onUpdateReceiverName,
-    onGoToReceiver,
     onSelectIRFromLibrary,
     onClearIR,
     selectedIRId,
@@ -183,8 +170,40 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // Hooks & State
   // ==========================================================================
 
+  const serviceVersions = useServiceVersions();
+
   const { getViewerRef, clearMaterialColors, filteringEnabled, viewMode, setViewMode, worldTreeVersion } = useSpeckleStore();
   const viewerRef = useMemo<{ current: any }>(() => ({ get current() { return getViewerRef(); } }), [getViewerRef]);
+
+  // Read listeners/receivers from global store (no longer passed as props)
+  const receivers = useReceiversStore((s) => s.receivers);
+  const updateReceiverPosition = useReceiversStore((s) => s.updateReceiverPosition);
+  const gridListeners = useGridListenersStore((s) => s.gridListeners);
+  const updateSoundPosition = useSoundscapeStore((s) => s.updateSoundPosition);
+
+  // Muted sounds from audio controls store
+  const mutedSounds = useAudioControlsStore((s) => s.mutedSounds);
+
+  // Combined receiver list: active (not hidden) point receivers + active grid listener points
+  const allReceivers = useMemo<Array<{ id: string; position: [number, number, number] }>>(() => {
+    const list: Array<{ id: string; position: [number, number, number] }> = receivers
+      .filter((r) => !r.hiddenForSimulation)
+      .map((r) => ({ id: r.id, position: r.position }));
+    for (const g of gridListeners) {
+      if (!g.hiddenForSimulation) {
+        g.points.forEach((pt, i) => {
+          list.push({ id: `${g.id}-${i}`, position: pt });
+        });
+      }
+    }
+    return list;
+  }, [receivers, gridListeners]);
+
+  // Active soundscape: exclude muted sounds from simulation
+  const activeSoundscapeData = useMemo(
+    () => (soundscapeData ?? []).filter((s) => !mutedSounds.has(s.id)),
+    [soundscapeData, mutedSounds],
+  );
 
   // Only fetch materials when a card of that type exists
   const hasChorasCard = simulationConfigs.some(c => c.type === 'choras');
@@ -293,126 +312,211 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // ==========================================================================
 
   /**
-   * Run Choras simulation - delegates to useChoras hook
+   * Per-card polling interval refs — keyed by card index.
+   * Cleared on cancel, completion, error, or component unmount.
+   */
+  const pollIntervalsRef = useRef<Map<number, ReturnType<typeof setInterval>>>(new Map());
+
+  // Clear all active poll intervals when this component unmounts
+  useEffect(() => {
+    return () => {
+      pollIntervalsRef.current.forEach(clearInterval);
+      pollIntervalsRef.current.clear();
+    };
+  }, []);
+
+  // Resume polling for any cards that were already running when the component mounts
+  // (e.g. after a hot-reload or panel re-mount mid-simulation)
+  useEffect(() => {
+    simulationConfigs.forEach((config, index) => {
+      if (
+        (config as any).isRunning &&
+        (config as any).currentSimulationRunId &&
+        !pollIntervalsRef.current.has(index)
+      ) {
+        const simulationId = (config as any).currentSimulationRunId as string;
+        const pollInterval = setInterval(async () => {
+          try {
+            const statusData = await apiService.getChorasSimulationStatus(simulationId);
+            handleUpdateConfig(index, { progress: statusData.progress, status: statusData.status } as any);
+            if (statusData.completed) {
+              clearInterval(pollInterval);
+              pollIntervalsRef.current.delete(index);
+              if (statusData.cancelled) {
+                handleUpdateConfig(index, { isRunning: false, progress: 0, status: 'Cancelled', currentSimulationRunId: null } as any);
+              } else if (statusData.error) {
+                handleUpdateConfig(index, { isRunning: false, status: 'Error', error: statusData.error, currentSimulationRunId: null } as any);
+              } else {
+                handleUpdateConfig(index, { isRunning: false, progress: 100, status: 'Complete!', currentSimulationRunId: null } as any);
+              }
+            }
+          } catch {
+            clearInterval(pollInterval);
+            pollIntervalsRef.current.delete(index);
+            handleUpdateConfig(index, { isRunning: false, status: 'Error', error: 'Status check failed', currentSimulationRunId: null } as any);
+          }
+        }, 1000);
+        pollIntervalsRef.current.set(index, pollInterval);
+      }
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * Run Choras simulation.
+   * Starts the simulation (returns immediately with simulation_id),
+   * then polls /choras/simulation-status every second and routes
+   * progress updates to the Card progress bar.
    */
   const runChorasSimulation = useCallback(async (index: number) => {
     const config = simulationConfigs[index] as ChorasSimulationConfig;
     if (!config || config.type !== 'choras') return;
 
+    if (!speckleData) {
+      handleUpdateConfig(index, { error: 'No Speckle data' } as any);
+      return;
+    }
+
     const settings = config.settings;
-    const selectedMaterialId = settings.selectedMaterialId;
+    const speckleMaterialAssignments = (config as any).speckleMaterialAssignments || {};
 
-    if (!selectedMaterialId) {
-      handleUpdateConfig(index, { error: 'Please select a material' } as any);
+    if (Object.keys(speckleMaterialAssignments).length === 0) {
+      handleUpdateConfig(index, { error: 'Assign materials first' } as any);
       return;
     }
 
-    if (!modelFile) {
-      handleUpdateConfig(index, { error: 'Model file required' } as any);
-      return;
-    }
+    handleUpdateConfig(index, { isRunning: true, progress: 0, status: 'Initializing...', error: null } as any);
 
-    handleUpdateConfig(index, { isRunning: true, progress: 0, status: 'Running simulation...', error: null } as any);
-
-    const receiversList = receivers.map(r => ({ id: r.id, position: r.position }));
-    const soundscape = soundscapeData || [];
-    const excludedLayersArray: string[] = config.excludedLayers ? Array.from(config.excludedLayers) : [];
-
-    // Prepare settings (remove selectedMaterialId as it's passed separately)
-    const { selectedMaterialId: _, ...chorasSettings } = settings;
+    const receiversList = allReceivers;
+    const soundscape = activeSoundscapeData;
 
     try {
-      const result = await runChorasFullSimulation(
-        modelFile,
-        parseInt(selectedMaterialId, 10),
+      // Build source-receiver pairs
+      const sourceReceiverPairs: Array<{
+        source_position: number[];
+        receiver_position: number[];
+        source_id: string;
+        receiver_id: string;
+      }> = [];
+      for (const sound of soundscape) {
+        for (const receiver of receiversList) {
+          sourceReceiverPairs.push({
+            source_position: sound.position,
+            receiver_position: receiver.position,
+            source_id: sound.id,
+            receiver_id: receiver.id
+          });
+        }
+      }
+
+      // Prepare object materials (strip prefix)
+      const objectMaterials: Record<string, string> = {};
+      Object.entries(speckleMaterialAssignments).forEach(([objectId, materialId]) => {
+        objectMaterials[objectId] = (materialId as string).replace(/^choras_/, '');
+      });
+
+      // Parse Speckle URL for project/model IDs
+      const urlMatch = speckleData.url.match(/\/projects\/([^\/]+)\/models\/([^\/\?#]+)/);
+      if (!urlMatch) throw new Error('Invalid Speckle URL');
+      const projectId = urlMatch[1];
+      const modelId = urlMatch[2];
+
+      const geometryObjectIds = (config as any).speckleGeometryObjectIds as string[] | undefined;
+
+      // Start simulation — returns immediately with simulation_id
+      const { simulation_id } = await apiService.runChorasSimulationSpeckle(
+        projectId,
+        modelId,
+        objectMaterials,
+        (config as any).speckleLayerName || null,
         config.display_name || 'Simulation',
-        (percentage, message) => handleUpdateConfig(index, { progress: percentage, status: message } as any),
-        (simulationId, simulationRunId) => handleUpdateConfig(index, { currentSimulationId: simulationId, currentSimulationRunId: simulationRunId } as any),
-        receiversList,
-        soundscape,
-        chorasSettings,
-        excludedLayersArray
+        settings,
+        sourceReceiverPairs,
+        geometryObjectIds
       );
 
-      if (result.simulationId) {
-        // Import IR from Choras
-        await importChorasIR(index, result.simulationId, config.display_name || 'Choras');
-      } else {
-        handleUpdateConfig(index,{
-          isRunning: false,
-          status: 'Complete!',
-          progress: 100,
-          state: 'completed',
-          simulationResults: 'No results.'
-        } as any);
-      }
-    } catch (error) {
-      handleUpdateConfig(index, {
-        isRunning: false,
-        error: error instanceof Error ? error.message : 'Simulation failed'
-      } as any);
-    }
-  }, [simulationConfigs, modelFile, receivers, soundscapeData, handleUpdateConfig]);
+      // Store the running simulation ID so the cancel handler can reach it
+      handleUpdateConfig(index, { currentSimulationRunId: simulation_id } as any);
 
-  /**
-   * Import IR from Choras simulation
-   */
-  const importChorasIR = useCallback(async (index: number, simulationId: number, simulationName: string) => {
-    let resultsText = 'Simulation Complete!\n\n';
-
-    try {
-      const response = await fetch(`http://localhost:8000/choras/get-result-file/${simulationId}/wav`);
-
-      if (response.ok) {
-        const blob = await response.blob();
-        const file = new File([blob], `simulation_${simulationId}_impulse_response.wav`, { type: 'audio/wav' });
-        const irName = `Choras_Sim${simulationId}_${Date.now()}`;
-        const irMetadata = await apiService.uploadImpulseResponse(file, irName);
-
-        // Get acoustic metrics
+      // Poll for progress every second
+      const pollInterval = setInterval(async () => {
         try {
-          const jsonResponse = await fetch(`http://localhost:8000/choras/get-result-file/${simulationId}/json`);
-          if (jsonResponse.ok) {
-            const jsonData = await jsonResponse.json();
-            if (Array.isArray(jsonData) && jsonData.length > 0) {
-              const sourceData = jsonData[0];
-              const receiverData = sourceData.responses?.[0];
-              if (receiverData?.parameters) {
-                const params = receiverData.parameters;
-                const average = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
-                resultsText += `Acoustic Metrics:\n`;
-                const metrics = [];
-                if (params.t30) metrics.push(`T30: ${average(params.t30).toFixed(2)}s`);
-                if (params.edt) metrics.push(`EDT: ${average(params.edt).toFixed(2)}s`);
-                if (params.d50) metrics.push(`D50: ${average(params.d50).toFixed(1)}`);
-                if (params.c80) metrics.push(`C80: ${average(params.c80).toFixed(1)} dB`);
-                resultsText += metrics.join(', ') + '\n';
-              }
-            }
-          }
-        } catch (e) { console.error(e); }
+          const statusData = await apiService.getChorasSimulationStatus(simulation_id);
 
-        // resultsText += '\n✓ Impulse response imported to library\n';
-        handleUpdateConfig(index, {
-          importedIRMetadata: irMetadata,
-          simulationResults: resultsText,
-          isRunning: false,
-          status: 'Complete!',
-          progress: 100,
-          state: 'completed'
-        } as any);
-        if (onIRImported) onIRImported();
-      }
+          // Update progress bar on every tick
+          handleUpdateConfig(index, { progress: statusData.progress, status: statusData.status } as any);
+
+          if (!statusData.completed) return; // keep polling
+
+          // ── Terminal states ──────────────────────────────────────────────
+          clearInterval(pollInterval);
+          pollIntervalsRef.current.delete(index);
+
+          if (statusData.cancelled) {
+            handleUpdateConfig(index, { isRunning: false, progress: 0, status: 'Cancelled', currentSimulationRunId: null } as any);
+            return;
+          }
+
+          if (statusData.error) {
+            handleUpdateConfig(index, { isRunning: false, status: 'Error', error: statusData.error, currentSimulationRunId: null } as any);
+            return;
+          }
+
+          const result = statusData.result;
+          if (!result?.ir_files?.length) {
+            handleUpdateConfig(index, { isRunning: false, error: 'Simulation completed but generated no impulse responses.', currentSimulationRunId: null } as any);
+            return;
+          }
+
+          // ── Import IRs + build results text (same as before) ─────────────
+          const irImportResult = await importChorasIRFiles(result.simulation_id, result.ir_files);
+
+          if (irImportResult.importedCount > 0) {
+            const resultsText = await buildChorasSimulationResultsText(result.simulation_id, irImportResult);
+
+            handleUpdateConfig(index, {
+              importedIRMetadata: irImportResult.importedIRMetadataList[0],
+              isRunning: false,
+              status: 'Complete!',
+              progress: 100,
+              state: 'completed',
+              completedAt: Date.now(),
+              simulationResults: resultsText,
+              importedIRIds: irImportResult.importedIRIds,
+              sourceReceiverIRMapping: irImportResult.sourceReceiverMapping,
+              currentSimulationRunId: null,
+              currentSimulationId: result.simulation_id,
+              simulationPositions: {
+                sources: Object.fromEntries(soundscape.map(s => [s.id, s.position as [number, number, number]])),
+                receivers: Object.fromEntries(receiversList.map(r => [r.id, r.position])),
+              },
+            } as any);
+            if (onIRImported) onIRImported();
+          } else {
+            handleUpdateConfig(index, {
+              isRunning: false,
+              error: 'Simulation completed but failed to import impulse responses.',
+              currentSimulationRunId: null,
+            } as any);
+          }
+
+        } catch (pollErr) {
+          clearInterval(pollInterval);
+          pollIntervalsRef.current.delete(index);
+          handleUpdateConfig(index, {
+            isRunning: false,
+            status: 'Error',
+            error: pollErr instanceof Error ? pollErr.message : 'Status check failed',
+            currentSimulationRunId: null,
+          } as any);
+        }
+      }, 1000);
+
+      pollIntervalsRef.current.set(index, pollInterval);
+
     } catch (e) {
-      handleUpdateConfig(index, {
-        isRunning: false,
-        status: 'Complete!',
-        progress: 100,
-        state: 'completed',
-        simulationResults: 'Simulation Complete!\n\n⚠ Failed to import impulse response\n'
-      } as any);
+      handleUpdateConfig(index, { isRunning: false, error: e instanceof Error ? e.message : 'Failed' } as any);
     }
-  }, [handleUpdateConfig, onIRImported]);
+  }, [simulationConfigs, speckleData, allReceivers, activeSoundscapeData, handleUpdateConfig, onIRImported]);
 
   /**
    * Run Pyroomacoustics simulation via Speckle
@@ -434,10 +538,10 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       return;
     }
 
-    handleUpdateConfig(index, { isRunning: true, progress: 0, status: 'Running simulation...', error: null } as any);
+    handleUpdateConfig(index, { isRunning: true, progress: 0, status: 'Submitting...', error: null } as any);
 
-    const receiversList = receivers.map(r => ({ id: r.id, position: r.position }));
-    const soundscape = soundscapeData || [];
+    const receiversList = allReceivers;
+    const soundscape = activeSoundscapeData;
 
     try {
       // Build source-receiver pairs
@@ -467,7 +571,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
       const geometryObjectIds = (config as any).speckleGeometryObjectIds as string[] | undefined;
       const speckleScatteringAssignments = (config as any).speckleScatteringAssignments as Record<string, number> | undefined;
-      const result = await apiService.runPyroomacousticsSimulationSpeckle(
+
+      // Start simulation — returns immediately with simulation_id
+      const { simulation_id } = await apiService.runPyroomacousticsSimulationSpeckle(
         projectId,
         modelId,
         objectMaterials,
@@ -479,42 +585,93 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         speckleScatteringAssignments || {}
       );
 
-      // Import all IR files using shared utility
-      if (result.ir_files && result.ir_files.length > 0) {
-        const irImportResult = await importPyroomIRFiles(
-          result.simulation_id,
-          result.ir_files
-        );
+      // Store running simulation ID so the cancel handler can reach it
+      handleUpdateConfig(index, { currentSimulationRunId: simulation_id } as any);
 
-        if (irImportResult.importedCount > 0) {
-          // Build results text using shared utility
-          const resultsText = await buildSimulationResultsText(
-            result.simulation_id,
-            irImportResult
-          );
+      // Poll for progress every 1.5 seconds
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusData = await apiService.getPyroomacousticsSimulationStatus(simulation_id);
 
+          // Build status string — include queue position when waiting
+          const statusStr = statusData.queue_position != null
+            ? `Queued — position ${statusData.queue_position} of ${statusData.queue_total}`
+            : statusData.status;
+
+          handleUpdateConfig(index, { progress: statusData.progress, status: statusStr } as any);
+
+          if (!statusData.completed) return; // keep polling
+
+          // ── Terminal states ──────────────────────────────────────────────
+          clearInterval(pollInterval);
+          pollIntervalsRef.current.delete(index);
+
+          if (statusData.cancelled) {
+            handleUpdateConfig(index, { isRunning: false, progress: 0, status: 'Cancelled', currentSimulationRunId: null } as any);
+            return;
+          }
+
+          if (statusData.error) {
+            handleUpdateConfig(index, { isRunning: false, status: 'Error', error: statusData.error, currentSimulationRunId: null } as any);
+            return;
+          }
+
+          const result = statusData.result;
+          if (!result?.ir_files?.length) {
+            handleUpdateConfig(index, { isRunning: false, error: 'Simulation completed but generated no impulse responses.', currentSimulationRunId: null } as any);
+            return;
+          }
+
+          // ── Import IRs + build results text ──────────────────────────────
+          const irImportResult = await importPyroomIRFiles(result.simulation_id, result.ir_files);
+
+          if (irImportResult.importedCount > 0) {
+            const resultsText = await buildSimulationResultsText(result.simulation_id);
+
+            handleUpdateConfig(index, {
+              importedIRMetadata: irImportResult.importedIRMetadataList[0],
+              isRunning: false,
+              status: 'Complete!',
+              progress: 100,
+              state: 'completed',
+              completedAt: Date.now(),
+              simulationResults: resultsText,
+              importedIRIds: irImportResult.importedIRIds,
+              sourceReceiverIRMapping: irImportResult.sourceReceiverMapping,
+              currentSimulationRunId: null,
+              currentSimulationId: result.simulation_id,
+              simulationPositions: {
+                sources: Object.fromEntries(soundscape.map(s => [s.id, s.position as [number, number, number]])),
+                receivers: Object.fromEntries(receiversList.map(r => [r.id, r.position])),
+              },
+            } as any);
+            if (onIRImported) onIRImported();
+          } else {
+            handleUpdateConfig(index, {
+              isRunning: false,
+              error: 'Simulation completed but failed to import impulse responses.',
+              currentSimulationRunId: null,
+            } as any);
+          }
+
+        } catch (pollErr) {
+          clearInterval(pollInterval);
+          pollIntervalsRef.current.delete(index);
           handleUpdateConfig(index, {
-            importedIRMetadata: irImportResult.importedIRMetadataList[0],
             isRunning: false,
-            status: 'Complete!',
-            progress: 100,
-            state: 'completed',
-            simulationResults: resultsText,
-            importedIRIds: irImportResult.importedIRIds,
-            sourceReceiverIRMapping: irImportResult.sourceReceiverMapping
+            status: 'Error',
+            error: pollErr instanceof Error ? pollErr.message : 'Status check failed',
+            currentSimulationRunId: null,
           } as any);
-          if (onIRImported) onIRImported();
-        } else {
-          handleUpdateConfig(index, { isRunning: false, status: 'Complete', progress: 100, state: 'completed', simulationResults: 'Failed to import IRs' } as any);
         }
-      } else {
-        handleUpdateConfig(index, { isRunning: false, status: 'Complete', progress: 100, state: 'completed', simulationResults: 'No IRs generated' } as any);
-      }
+      }, 1500);
+
+      pollIntervalsRef.current.set(index, pollInterval);
 
     } catch (e) {
       handleUpdateConfig(index, { isRunning: false, error: e instanceof Error ? e.message : 'Failed' } as any);
     }
-  }, [simulationConfigs, speckleData, receivers, soundscapeData, handleUpdateConfig, onIRImported]);
+  }, [simulationConfigs, speckleData, allReceivers, activeSoundscapeData, handleUpdateConfig, onIRImported]);
 
   /**
    * Run simulation for the given config index
@@ -531,11 +688,29 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   }, [simulationConfigs, runChorasSimulation, runPyroomSimulation]);
 
   /**
-   * Cancel a running simulation
+   * Cancel a running simulation.
+   * Stops the local poll interval, tells the backend to abort, and resets card state.
    */
   const cancelSimulation = useCallback((index: number) => {
-    handleUpdateConfig(index, { isRunning: false, status: 'Cancelled', progress: 0 } as any);
-  }, [handleUpdateConfig]);
+    // Stop polling immediately
+    const interval = pollIntervalsRef.current.get(index);
+    if (interval) {
+      clearInterval(interval);
+      pollIntervalsRef.current.delete(index);
+    }
+
+    // Tell backend to cancel (fire-and-forget — UI resets regardless)
+    const config = simulationConfigs[index] as any;
+    if (config?.currentSimulationRunId) {
+      if (config.type === 'pyroomacoustics') {
+        apiService.cancelPyroomacousticsSimulation(config.currentSimulationRunId).catch(console.error);
+      } else {
+        apiService.cancelChorasSimulation(config.currentSimulationRunId).catch(console.error);
+      }
+    }
+
+    handleUpdateConfig(index, { isRunning: false, status: 'Cancelled', progress: 0, currentSimulationRunId: null } as any);
+  }, [simulationConfigs, handleUpdateConfig]);
 
   /**
    * Duplicate a simulation config.
@@ -562,42 +737,45 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       speckleLayerName: (simConfig as any).speckleLayerName,
       speckleGeometryObjectIds: (simConfig as any).speckleGeometryObjectIds,
       speckleScatteringAssignments: (simConfig as any).speckleScatteringAssignments,
+      speckleIsolatedObjectIds: (simConfig as any).speckleIsolatedObjectIds,
     };
 
-    setTimeout(() => {
-      const updates: any = {
-        state: 'before-simulation',
-        isRunning: false,
-        status: '',
-        error: null,
-        progress: 0,
-        simulationResults: null,
-        importedIRMetadata: undefined,
-        currentSimulationId: null,
-        currentSimulationRunId: null,
-        importedIRIds: undefined,
-        sourceReceiverIRMapping: undefined,
-        ...speckleMaterials,
-      };
+    // Apply updates synchronously — Zustand updates are synchronous and React 18
+    // auto-batches them, so the new card renders with speckleMaterialAssignments
+    // already set. This ensures SpeckleSurfaceMaterialsSection mounts with the
+    // correct initialAssignments instead of an empty object.
+    const updates: any = {
+      state: 'before-simulation',
+      isRunning: false,
+      status: '',
+      error: null,
+      progress: 0,
+      simulationResults: null,
+      importedIRMetadata: undefined,
+      currentSimulationId: null,
+      currentSimulationRunId: null,
+      importedIRIds: undefined,
+      sourceReceiverIRMapping: undefined,
+      ...speckleMaterials,
+    };
 
-      if (isCompleted && simConfig.savedSettings) {
-        // Restore from the pre-run snapshot saved before the simulation ran
-        updates.settings = { ...simConfig.savedSettings.settings };
-        updates.faceToMaterialMap = new Map(simConfig.savedSettings.faceToMaterialMap);
-        updates.expandedMaterialItems = simConfig.savedSettings.expandedMaterialItems;
-        updates.excludedLayers = simConfig.savedSettings.excludedLayers;
-      } else {
-        // Copy current (before-simulation) state directly
-        updates.settings = { ...(simConfig as any).settings };
-        if (simConfig.faceToMaterialMap) {
-          updates.faceToMaterialMap = new Map(simConfig.faceToMaterialMap);
-        }
-        updates.expandedMaterialItems = simConfig.expandedMaterialItems;
-        updates.excludedLayers = simConfig.excludedLayers;
+    if (isCompleted && simConfig.savedSettings) {
+      // Restore from the pre-run snapshot saved before the simulation ran
+      updates.settings = { ...simConfig.savedSettings.settings };
+      updates.faceToMaterialMap = new Map(simConfig.savedSettings.faceToMaterialMap);
+      updates.expandedMaterialItems = simConfig.savedSettings.expandedMaterialItems;
+      updates.excludedLayers = simConfig.savedSettings.excludedLayers;
+    } else {
+      // Copy current (before-simulation) state directly
+      updates.settings = { ...(simConfig as any).settings };
+      if (simConfig.faceToMaterialMap) {
+        updates.faceToMaterialMap = new Map(simConfig.faceToMaterialMap);
       }
+      updates.expandedMaterialItems = simConfig.expandedMaterialItems;
+      updates.excludedLayers = simConfig.excludedLayers;
+    }
 
-      onUpdateSimulationConfig(newIndex, updates);
-    }, 0);
+    onUpdateSimulationConfig(newIndex, updates);
   }, [simulationConfigs, onAddSimulationConfig, onUpdateSimulationConfig]);
 
   /**
@@ -609,13 +787,14 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
     const simConfig = config as ChorasSimulationConfig | PyroomAcousticsSimulationConfig;
 
-    // Explicitly preserve Speckle material assignments across reset
+    // Explicitly preserve Speckle material assignments and isolation across reset
     // so that SpeckleSurfaceMaterialsSection can restore them on remount
     const preservedMaterials = {
       speckleMaterialAssignments: (simConfig as any).speckleMaterialAssignments,
       speckleLayerName: (simConfig as any).speckleLayerName,
       speckleGeometryObjectIds: (simConfig as any).speckleGeometryObjectIds,
       speckleScatteringAssignments: (simConfig as any).speckleScatteringAssignments,
+      speckleIsolatedObjectIds: (simConfig as any).speckleIsolatedObjectIds,
     };
 
     const resetState = {
@@ -835,24 +1014,35 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         setViewMode('default');
       }
     } else {
-      // Re-activate last completed card and expand it → switch to Acoustic mode
-      const restoreIndex = lastActiveIndexRef.current;
-      if (restoreIndex !== null && restoreIndex < simulationConfigs.length && simulationConfigs[restoreIndex]?.state === 'completed') {
-        onSetActiveSimulation(restoreIndex);
-        setExpandedCardIndex(restoreIndex);
+      // Re-activate audio: prefer the currently expanded card if it's completed,
+      // then fall back to the last active card, then the first completed card
+      const expandedIsCompleted =
+        expandedCardIndex !== null &&
+        simulationConfigs[expandedCardIndex]?.state === 'completed';
+
+      let targetIndex: number | null = null;
+      if (expandedIsCompleted) {
+        targetIndex = expandedCardIndex;
+      } else if (
+        lastActiveIndexRef.current !== null &&
+        lastActiveIndexRef.current < simulationConfigs.length &&
+        simulationConfigs[lastActiveIndexRef.current]?.state === 'completed'
+      ) {
+        targetIndex = lastActiveIndexRef.current;
       } else {
-        // Find first completed card
         const firstCompleted = simulationConfigs.findIndex(c => c.state === 'completed');
-        if (firstCompleted >= 0) {
-          onSetActiveSimulation(firstCompleted);
-          setExpandedCardIndex(firstCompleted);
-        }
+        targetIndex = firstCompleted >= 0 ? firstCompleted : null;
+      }
+
+      if (targetIndex !== null) {
+        onSetActiveSimulation(targetIndex);
+        setExpandedCardIndex(targetIndex);
       }
       if (viewMode !== 'dark') {
         setViewMode('acoustic');
       }
     }
-  }, [activeSimulationIndex, onSetActiveSimulation, simulationConfigs, viewMode, setViewMode]);
+  }, [activeSimulationIndex, onSetActiveSimulation, simulationConfigs, viewMode, setViewMode, expandedCardIndex]);
 
   // ==========================================================================
   // Render Helpers
@@ -860,8 +1050,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
   const AVAILABLE_TYPES: CardTypeOption[] = [
     { type: 'resonance', label: CARD_TYPE_LABELS['resonance'], enabled: true },
-    { type: 'choras', label: CARD_TYPE_LABELS['choras'], enabled: true },
     { type: 'pyroomacoustics', label: CARD_TYPE_LABELS['pyroomacoustics'], enabled: true },
+    { type: 'choras', label: CARD_TYPE_LABELS['choras'], enabled: true },
   ];
 
   const header = (
@@ -896,15 +1086,15 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     // Simulation action button state
     const isSimulationType = config.type === 'choras' || config.type === 'pyroomacoustics';
     const hasValidGeometry = !!modelFile || !!(speckleData?.model_id && speckleData?.version_id && speckleData?.object_id);
-    const hasReceivers = receivers?.length > 0;
-    const hasSounds = (soundscapeData?.length ?? 0) > 0;
+    const hasReceivers = allReceivers.length > 0;
+    const hasSounds = activeSoundscapeData.length > 0;
     const actionButtonDisabled = isSimulationType && (!hasValidGeometry || !hasReceivers || !hasSounds);
-    const actionButtonDisabledReason = !hasValidGeometry 
-      ? 'No geometry loaded' 
-      : !hasReceivers 
-        ? 'No receivers configured' 
-        : !hasSounds 
-          ? 'No sounds configured' 
+    const actionButtonDisabledReason = !hasValidGeometry
+      ? 'No geometry loaded'
+      : !hasReceivers
+        ? 'No listeners configured (all hidden)'
+        : !hasSounds
+          ? 'No sounds configured (all muted)'
           : undefined;
 
     // Choose Materials based on Type
@@ -929,6 +1119,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
               handleSpeckleMaterialAssignments(index, assignments, layerName, geometryObjectIds, scatteringAssignments)
             }
             onUpdateConfig={(updates) => handleUpdateConfig(index, updates)}
+            onIsolationChange={(ids) => handleUpdateConfig(index, { speckleIsolatedObjectIds: ids } as any)}
         />
     ) : null;
 
@@ -949,6 +1140,45 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     ) : !isCompleted ? simulationSetup : undefined;
 
     // After Content - results + hidden setup (keeps effects mounted for filtering/coloring)
+    // Build display name maps from current soundscapeData and receivers for the IR label override
+    const sourceDisplayNames: Record<string, string> = {};
+    (soundscapeData ?? []).forEach((s) => {
+      const sid = s.id;
+      if (sid) sourceDisplayNames[sid] = s.display_name || sid;
+    });
+    const receiverDisplayNames: Record<string, string> = {};
+    (receivers ?? []).forEach((r) => {
+      if (r.id) receiverDisplayNames[r.id] = r.name || r.id;
+    });
+
+    // Current positions for mismatch detection in SimulationResultContent
+    const currentSourcePositions: Record<string, [number, number, number]> = {};
+    (soundscapeData ?? []).forEach((s) => {
+      if (s.id && s.position) currentSourcePositions[s.id] = s.position as [number, number, number];
+    });
+    const currentReceiverPositions: Record<string, [number, number, number]> = {};
+    receivers.forEach((r) => { currentReceiverPositions[r.id] = r.position; });
+    gridListeners.forEach((g) => {
+      g.points.forEach((pt, i) => { currentReceiverPositions[`${g.id}-${i}`] = pt; });
+    });
+
+    // Reset mismatched objects to their simulation-time positions
+    const handleResetPositions = (sourceIds: string[], receiverIds: string[]) => {
+      const simPositions = (config as any).simulationPositions as {
+        sources: Record<string, [number, number, number]>;
+        receivers: Record<string, [number, number, number]>;
+      } | undefined;
+      if (!simPositions) return;
+      for (const id of sourceIds) {
+        const pos = simPositions.sources[id];
+        if (pos) updateSoundPosition(id, pos);
+      }
+      for (const id of receiverIds) {
+        const pos = simPositions.receivers[id];
+        if (pos) updateReceiverPosition(id, pos);
+      }
+    };
+
     const afterContent = isCompleted ? (
         <>
           <SimulationResultContent
@@ -956,6 +1186,14 @@ export function AcousticsSection(props: AcousticsSectionProps) {
               onClearIR={onClearIR}
               irRefreshTrigger={irRefreshTrigger}
               onIRHover={props.onIRHover}
+              sourceDisplayNames={sourceDisplayNames}
+              receiverDisplayNames={receiverDisplayNames}
+              isExpanded={isExpanded}
+              selectedMetric={(config as any).selectedGradientMetric ?? null}
+              onMetricChange={(metric) => handleUpdateConfig(index, { selectedGradientMetric: metric } as any)}
+              currentSourcePositions={currentSourcePositions}
+              currentReceiverPositions={currentReceiverPositions}
+              onResetPositions={handleResetPositions}
           />
           <SimulationSettingsSection config={config} />
           {/* Hidden: keeps SpeckleSurfaceMaterialsSection mounted for filtering/coloring effects */}
@@ -982,6 +1220,34 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         </button>
       );
     }
+
+    // Derive version + timestamp lines for this card type
+    const cardVersion = (() => {
+      if (!serviceVersions || !hasResult) return undefined;
+      let versionLine: string | undefined;
+      if (config.type === 'pyroomacoustics') {
+        const v = serviceVersions.pyroomacoustics;
+        versionLine = `${v.name} ${v.version}`;
+      } else if (config.type === 'choras') {
+        const method = (config as any).settings?.simulation_method;
+        if (method === 'DG') {
+          const v = serviceVersions.edg_acoustics;
+          versionLine = `${v.name} ${v.version}`;
+        } else {
+          const v = serviceVersions.acousticDE;
+          versionLine = `${v.name} ${v.version}`;
+        }
+      }
+      if (!versionLine) return undefined;
+      const completedAt: number | undefined = (config as any).completedAt;
+      if (completedAt) {
+        const d = new Date(completedAt);
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const timestamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        return [versionLine, timestamp];
+      }
+      return versionLine;
+    })();
 
     return (
         <Card
@@ -1011,19 +1277,20 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             actionButtonDisabledReason={actionButtonDisabledReason}
             actionButtonColor='info'
             color="info"
+            version={cardVersion}
         />
     );
   };
 
   return (
-    <div className="flex flex-col min-h-0 overflow-hidden gap-4">
+    <div className="flex flex-col min-h-0 gap-4">
       <div className="flex-1">
         <CardSection
           items={simulationConfigs}
           availableTypes={AVAILABLE_TYPES}
           emptyMessage="No acoustic simulation configured."
           statusLabel="simulation"
-          addButtonTitle="Add acoustics"
+          addButtonTitle="Add acoustic simulation"
           onAddItem={handleAddItem}
           renderCard={renderCard}
           color="info"
@@ -1034,21 +1301,6 @@ export function AcousticsSection(props: AcousticsSectionProps) {
      </div>
 
      <div className="flex-1" />
-
-      {/* Receivers Section */}
-      {onAddReceiver && onDeleteReceiver && onUpdateReceiverName && onGoToReceiver && (
-        <>
-          <div className="flex-shrink-0 mt-5" >
-            <ReceiversSection
-              receivers={receivers}
-              onAddReceiver={onAddReceiver}
-              onDeleteReceiver={onDeleteReceiver}
-              onUpdateReceiverName={onUpdateReceiverName}
-              onGoToReceiver={onGoToReceiver}
-            />
-          </div>
-        </>
-      )}
 
     </div>
   );

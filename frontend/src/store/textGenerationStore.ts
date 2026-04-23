@@ -30,10 +30,13 @@ import {
 import type { ActiveTab } from '@/types';
 import { useErrorsStore } from './errorsStore';
 import { useFileUploadStore } from './fileUploadStore';
+import { apiService } from '@/services/api';
 
 // ─── Module-level abort ref ───────────────────────────────────────────────────
 
 let _abortController: AbortController | null = null;
+let _currentGenerationId: string | null = null;
+let _llmPollInterval: ReturnType<typeof setInterval> | null = null;
 
 // ─── Partialize ───────────────────────────────────────────────────────────────
 
@@ -248,19 +251,39 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
               }
             }
 
-            const response = await fetch(`${API_BASE_URL}/api/generate-text`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(requestBody),
-              signal: _abortController.signal,
+            // Submit LLM generation and get generation_id
+            set({ llmProgress: 'Submitting to LLM...' }, false, 'textGen/submitting');
+            const { generation_id } = await apiService.generateText(requestBody);
+            _currentGenerationId = generation_id;
+            set({ llmProgress: 'Queued...' }, false, 'textGen/queued');
+
+            // Poll until done
+            const result = await new Promise<any>((resolve, reject) => {
+              _llmPollInterval = setInterval(async () => {
+                try {
+                  const s = await apiService.getTextGenerationStatus(generation_id);
+                  if (s.status) set({ llmProgress: s.status }, false, 'textGen/poll');
+                  if (s.cancelled) {
+                    clearInterval(_llmPollInterval!);
+                    _llmPollInterval = null;
+                    reject(new Error('AbortError'));
+                  } else if (s.error) {
+                    clearInterval(_llmPollInterval!);
+                    _llmPollInterval = null;
+                    reject(new Error(s.error));
+                  } else if (s.completed && s.result) {
+                    clearInterval(_llmPollInterval!);
+                    _llmPollInterval = null;
+                    resolve(s.result);
+                  }
+                } catch (pollErr: any) {
+                  clearInterval(_llmPollInterval!);
+                  _llmPollInterval = null;
+                  reject(pollErr);
+                }
+              }, 1500);
             });
 
-            if (!response.ok) {
-              const err = await response.json();
-              throw new Error(err.detail);
-            }
-
-            const result = await response.json();
             set({ llmProgress: '' }, false, 'textGen/generateLlmDone');
 
             if (result.prompts?.length > 0) {
@@ -358,7 +381,7 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
               );
             }
           } catch (err: any) {
-            if (err.name === 'AbortError') {
+            if (err.name === 'AbortError' || err.message === 'AbortError') {
               const msg = 'Generation stopped by user.';
               set({ aiError: msg, llmProgress: '' }, false, 'textGen/abort');
               useErrorsStore.getState().addError(msg, 'info');
@@ -384,13 +407,26 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
           } finally {
             set({ isGenerating: false }, false, 'textGen/generateEnd');
             _abortController = null;
+            _currentGenerationId = null;
+            if (_llmPollInterval) {
+              clearInterval(_llmPollInterval);
+              _llmPollInterval = null;
+            }
           }
         },
 
         handleStopGeneration: () => {
+          if (_llmPollInterval) {
+            clearInterval(_llmPollInterval);
+            _llmPollInterval = null;
+          }
           if (_abortController) {
             _abortController.abort();
             _abortController = null;
+          }
+          if (_currentGenerationId) {
+            apiService.cancelTextGeneration(_currentGenerationId);
+            _currentGenerationId = null;
           }
           set(
             { isGenerating: false, isAnalyzingEntities: false, llmProgress: '', aiError: 'Generation stopped by user.' },

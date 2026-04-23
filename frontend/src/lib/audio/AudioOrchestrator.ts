@@ -1248,7 +1248,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * @param loop - Whether to loop the audio
    * @param offset - Start playback from this position in seconds (default: 0)
    */
-  playSource(sourceId: string, loop: boolean = false, offset: number = 0): void {
+  playSource(sourceId: string, loop: boolean = false, offset: number = 0, duration?: number): void {
     if (!this.currentModeInstance) {
       console.error('[AudioOrchestrator] ❌ playSource failed: No mode active');
       throw new Error('[AudioOrchestrator] No mode active');
@@ -1258,9 +1258,10 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     console.log(`  - Source ID: ${sourceId}`);
     console.log(`  - Loop: ${loop}`);
     console.log(`  - Offset: ${offset}s`);
+    console.log(`  - Duration: ${duration ?? 'full'}s`);
     console.log(`  - Mode instance:`, this.currentModeInstance.constructor.name);
 
-    this.currentModeInstance.playSource(sourceId, loop, offset);
+    this.currentModeInstance.playSource(sourceId, loop, offset, duration);
   }
 
   /**

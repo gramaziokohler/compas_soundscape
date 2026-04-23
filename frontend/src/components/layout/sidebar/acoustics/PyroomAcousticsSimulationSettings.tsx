@@ -113,12 +113,6 @@ export function PyroomAcousticsSimulationSettings({
           label="Air absorption"
           disabled={config.isRunning}
         />
-        <CheckboxField
-          checked={config.settings.enable_grid}
-          onChange={(checked) => handleSettingChange('enable_grid', checked)}
-          label="Grid receiver heatmap"
-          disabled={config.isRunning}
-        />
       </div>
 
       {/* Ray Tracing Parameters (visible when enabled) */}

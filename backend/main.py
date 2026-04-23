@@ -15,7 +15,7 @@ from services.impulse_response_service import ImpulseResponseService
 # from services.modal_analysis_service import ModalAnalysisService
 
 # Import routers
-from routers import upload, generation, sounds, sed_analysis, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, speckle, soundscape
+from routers import upload, generation, sounds, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, speckle, soundscape
 
 # Import utilities
 from utils.file_operations import cleanup_all_temp_directories
@@ -29,6 +29,7 @@ from config.constants import (
     TEMP_SIMULATIONS_DIR,
     SOUNDSCAPE_DATA_DIR,
     SOUNDSCAPE_DATA_URL_PREFIX,
+    CHORAS_RIR_DIR,
     )
 
 # --- Initialization ---
@@ -54,6 +55,7 @@ generation.init_generation_router(llm_service)
 sounds.init_sounds_router(audio_service)
 reprocess.init_reprocess_router(audio_service)
 impulse_responses.init_impulse_response_router(ir_service)
+sed_extract.init_sed_extract_router(audio_service)
 # modal_analysis.init_modal_analysis_router(modal_service)
 
 
@@ -105,6 +107,14 @@ app.mount(
     name="soundscapes"
 )
 
+# Mount Choras RIR output directory
+Path(CHORAS_RIR_DIR).mkdir(parents=True, exist_ok=True)
+app.mount(
+    "/static/choras_rir",
+    StaticFiles(directory=CHORAS_RIR_DIR),
+    name="choras_rir"
+)
+
 # --- CORS Middleware ---
 # Allow all origins for network access (development mode)
 # For production, restrict to specific origins: [CORS_ORIGIN_LOCALHOST, CORS_ORIGIN_FRONTEND, CORS_ORIGIN_NETWORK]
@@ -123,6 +133,7 @@ app.include_router(upload.router)
 app.include_router(generation.router)
 app.include_router(sounds.router)
 app.include_router(sed_analysis.router)
+app.include_router(sed_extract.router)
 app.include_router(library_search.router)
 app.include_router(reprocess.router)
 app.include_router(impulse_responses.router)
@@ -136,3 +147,26 @@ app.include_router(soundscape.router)
 @app.get("/")
 def read_root():
     return {"message": "COMPAS Soundscape API is running"}
+
+
+@app.get("/api/versions")
+def get_service_versions():
+    """Return name and version of every backend service library."""
+    from services.pyroomacoustics_service import PyroomacousticsService
+    from services.audio_service import AudioService
+    from services.audioldm2_service import AudioLDM2Service
+    from services.bbc_service import get_service_version_info as bbc_version_info
+    from services.llm_service import LLMService
+    from services.sed_service import SEDService
+    from services.choras_service import ChorasService
+
+    return {
+        "pyroomacoustics": PyroomacousticsService.get_service_version_info(),
+        "tangoflux": AudioService.get_service_version_info(),
+        "audioldm2": AudioLDM2Service.get_service_version_info(),
+        "bbc": bbc_version_info(),
+        "gemini": LLMService.get_service_version_info(),
+        "yamnet": SEDService.get_service_version_info(),
+        "acousticDE": ChorasService.get_de_version_info(),
+        "edg_acoustics": ChorasService.get_dg_version_info(),
+    }

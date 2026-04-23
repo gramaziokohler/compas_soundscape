@@ -4,6 +4,7 @@ import { AUDIO_PLAYBACK } from "@/utils/constants";
 import { emergencyKillAllAudio, restoreAudioAfterKill } from "@/lib/audio/utils/emergency-audio-kill";
 import type { SoundState } from "@/types";
 import type { SoundMetadata } from "@/types/audio";
+import { useAudioControlsStore } from "@/store/audioControlsStore";
 
 /**
  * PlaybackSchedulerService
@@ -393,7 +394,9 @@ export class PlaybackSchedulerService {
           ? soundEventInterval
           : AUDIO_PLAYBACK.DEFAULT_INTERVAL_SECONDS;
 
-      const soundDurationMs = metadata.buffer.duration * 1000;
+      const bufferDurationMs = metadata.buffer.duration * 1000;
+      const trim = useAudioControlsStore.getState().soundTrims[soundId];
+      const soundDurationMs = trim ? bufferDurationMs * (trim.end - trim.start) : bufferDurationMs;
       const totalIntervalMs = (intervalSeconds * 1000) + soundDurationMs;
       const randomnessPercent = AUDIO_PLAYBACK.INTERVAL_RANDOMNESS_PERCENT;
 
@@ -422,11 +425,14 @@ export class PlaybackSchedulerService {
       // If we're within the sound duration, play it from the correct position
       if (timeIntoIteration < soundDurationMs) {
         // Play sound from offset via orchestrator (ensures convolution/spatial processing)
-        const offsetSeconds = timeIntoIteration / 1000;
+        // Apply trim: actual buffer offset = trimStart * bufferDuration + timeIntoIteration
+        const trimStartSec = trim ? trim.start * (metadata.buffer.duration) : 0;
+        const trimDurationSec = trim ? (trim.end - trim.start) * metadata.buffer.duration : undefined;
+        const offsetSeconds = trimStartSec + (timeIntoIteration / 1000);
 
         if (this.audioOrchestrator) {
           try {
-            this.audioOrchestrator.playSource(soundId, false, offsetSeconds);
+            this.audioOrchestrator.playSource(soundId, false, offsetSeconds, trimDurationSec !== undefined ? trimDurationSec - (timeIntoIteration / 1000) : undefined);
             console.log(`[PlaybackScheduler] ✅ Playing "${displayName}" via orchestrator from offset ${offsetSeconds.toFixed(2)}s`);
           } catch (error) {
             console.warn(`[PlaybackScheduler] ❌ Orchestrator playback failed for "${displayName}":`, error);

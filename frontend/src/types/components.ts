@@ -23,6 +23,7 @@ import type {
   AnalysisResult,
   CardType,
 } from "./index";
+import type { GridListenerData } from "./receiver";
 import type { AuralizationConfig, ResonanceAudioConfig, ResonanceRoomDimensions, ResonanceRoomMaterial } from "./audio";
 import type { ModalAnalysisResult, ModeVisualizationState } from "./modal";
 import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSelector";
@@ -140,7 +141,23 @@ export interface SidebarProps {
   onAddReceiver: (type: string) => void;
   onDeleteReceiver: (id: string) => void;
   onUpdateReceiverName: (id: string, name: string) => void;
+  onUpdateReceiverPosition: (id: string, position: [number, number, number]) => void;
   onGoToReceiver: (id: string) => void;
+  onToggleReceiverHiddenForSimulation: (id: string) => void;
+  onExitFPS?: () => void;
+  /** Forces the given listener card to be expanded (e.g. from scene mesh double-click) */
+  forcedExpandedListenerId?: string | null;
+  /** Increment to collapse the currently expanded listener card (e.g. FPS exited via Escape) */
+  collapseListenerCardTrigger?: number;
+  // Grid listener props
+  gridListeners: GridListenerData[];
+  onAddGridListener: () => void;
+  onDeleteGridListener: (id: string) => void;
+  onComputeBounds: (
+    objectIds: string[],
+  ) => { min: [number, number, number]; max: [number, number, number] } | null;
+  expandedGridListenerId: string | null;
+  onExpandedGridListenerChange: (id: string | null) => void;
   // ShoeBox Acoustics props
   resonanceAudioConfig: ResonanceAudioConfig;
   onToggleResonanceAudio: (enabled: boolean) => void;
@@ -193,6 +210,8 @@ export interface SidebarProps {
   onResetAnalysis: (index: number) => void;
   // Sidebar expanded state callback
   onExpandedChange?: (isExpanded: boolean) => void;
+  // Sidebar content width change callback (fires during resize drag)
+  onWidthChange?: (width: number) => void;
 }
 
 /**

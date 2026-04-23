@@ -24,6 +24,19 @@ from utils.audio_processing import (
 class AudioLDM2Service:
     """Service for generating audio using AudioLDM2 model"""
 
+    @staticmethod
+    def get_service_version_info() -> dict:
+        import importlib.metadata
+        try:
+            version = importlib.metadata.version("diffusers")
+        except importlib.metadata.PackageNotFoundError:
+            try:
+                import diffusers
+                version = getattr(diffusers, "__version__", "unknown")
+            except ImportError:
+                version = "unknown"
+        return {"name": "diffusers (AudioLDM2)", "version": version}
+
     def __init__(self):
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         print(f"AudioLDM2Service using device: {self.device}")
@@ -50,7 +63,8 @@ class AudioLDM2Service:
         steps: int = AUDIOLDM2_INFERENCE_STEPS,
         spl_db: float = DEFAULT_SPL_DB,
         apply_denoising: bool = False,
-        negative_prompt: str = "Low quality, distorted"
+        negative_prompt: str = "Low quality, distorted",
+        progress_callback: callable = None
     ) -> None:
         """Generate a single audio file from a text prompt using AudioLDM2
 
@@ -63,6 +77,7 @@ class AudioLDM2Service:
             spl_db: Target SPL level in dB
             apply_denoising: Whether to apply noise reduction
             negative_prompt: Negative prompt to avoid certain characteristics
+            progress_callback: Callback function to update generation progress
         """
         model = self._init_model()
 
@@ -72,6 +87,10 @@ class AudioLDM2Service:
         # Set random seed for reproducibility
         generator = torch.Generator(self.device).manual_seed(0)
 
+        def _step_cb(step, timestep, latents):
+            if progress_callback:
+                progress_callback(step + 1, steps)
+
         # Generate audio using AudioLDM2
         audio_result = model(
             prompt,
@@ -80,6 +99,8 @@ class AudioLDM2Service:
             audio_length_in_s=float(duration),
             num_waveforms_per_prompt=AUDIOLDM2_NUM_WAVEFORMS,
             generator=generator,
+            callback=_step_cb if progress_callback else None,
+            callback_steps=1,
         )
 
         # Extract audio tensor from result (shape: [batch, samples])

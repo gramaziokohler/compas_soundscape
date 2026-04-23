@@ -61,9 +61,13 @@ export class SpeckleCameraController {
     position: THREE.Vector3,
     target: THREE.Vector3
   ): void {
-    // Save current camera state for restoration
-    this.savedCameraPosition = this.cameraController.controls.getPosition().clone();
-    this.savedCameraTarget = this.cameraController.controls.getTarget().clone();
+    // Only save camera state when first entering FPS mode.
+    // Guard prevents overwriting the saved state when called a second time (e.g.
+    // synchronous coordinator call followed by the React goToReceiverId useEffect).
+    if (!this.firstPersonMode) {
+      this.savedCameraPosition = this.cameraController.controls.getPosition().clone();
+      this.savedCameraTarget = this.cameraController.controls.getTarget().clone();
+    }
 
     // Calculate yaw and pitch from position to target
     const direction = new THREE.Vector3().subVectors(target, position).normalize();
@@ -88,8 +92,12 @@ export class SpeckleCameraController {
     // Use Speckle's native API to set camera position and target
     this.cameraController.controls.fromPositionAndTarget(position, target);
 
-    // Disable Speckle's camera controls to prevent user orbiting
+    // Disable Speckle's camera controls to prevent user orbiting.
+    // Re-enforce on the next frames: Speckle's internal double-click handler may
+    // process the dblclick asynchronously and re-enable the controls afterwards.
     this.cameraController.enabled = false;
+    requestAnimationFrame(() => { if (this.firstPersonMode) this.cameraController.enabled = false; });
+    setTimeout(() => { if (this.firstPersonMode) this.cameraController.enabled = false; }, 100);
 
     console.log('[SpeckleCameraController] 👁️ First-person mode enabled', {
       position: position.toArray(),
@@ -133,6 +141,17 @@ export class SpeckleCameraController {
    */
   public isFirstPersonMode(): boolean {
     return this.firstPersonMode;
+  }
+
+  /**
+   * Teleport the FPS camera to a new position, preserving current look direction.
+   * Called when the user edits receiver position coordinates while in FPS mode.
+   */
+  public teleportFirstPerson(position: THREE.Vector3): void {
+    if (!this.firstPersonMode) return;
+    this.lockedPosition = position.clone();
+    this.updateFirstPersonCamera();
+    this.viewer.requestRender();
   }
 
   /**

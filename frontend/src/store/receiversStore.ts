@@ -19,6 +19,7 @@ export const receiversPartialize = (state: ReceiversStoreState) => ({
     id: r.id,
     name: r.name,
     position: r.position,
+    hiddenForSimulation: r.hiddenForSimulation,
     // mesh is not serializable → omit from history
   })),
   selectedReceiverId: state.selectedReceiverId,
@@ -34,6 +35,7 @@ export interface ReceiversStoreState {
   removeReceiver: (id: string) => void;
   updateReceiverPosition: (id: string, position: [number, number, number]) => void;
   updateReceiverName: (id: string, name: string) => void;
+  toggleReceiverHiddenForSimulation: (id: string) => void;
   selectReceiver: (id: string | null) => void;
   clearReceivers: () => void;
   restoreReceivers: (savedReceivers: ReceiverData[], savedSelectedId?: string | null) => void;
@@ -64,7 +66,7 @@ export const useReceiversStore = create<ReceiversStoreState>()(
             position ?? calculateDefaultPosition(receivers.length);
           const newReceiver: ReceiverData = {
             id: `receiver-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            name: `Receiver ${receivers.length + 1}`,
+            name: `Listener ${receivers.length + 1}`,
             position: newPosition,
           };
           set(
@@ -101,6 +103,17 @@ export const useReceiversStore = create<ReceiversStoreState>()(
             }),
             false,
             'receivers/updateReceiverName',
+          ),
+
+        toggleReceiverHiddenForSimulation: (id) =>
+          set(
+            (s) => ({
+              receivers: s.receivers.map((r) =>
+                r.id === id ? { ...r, hiddenForSimulation: !r.hiddenForSimulation } : r,
+              ),
+            }),
+            false,
+            'receivers/toggleReceiverHiddenForSimulation',
           ),
 
         selectReceiver: (id) =>

@@ -13,6 +13,10 @@ interface PlaybackControlsProps {
   hasSounds: boolean;
   isLeftSidebarExpanded?: boolean;
   isRightSidebarExpanded?: boolean;
+  /** Exact left sidebar content-panel width (px). Overrides the hardcoded fallback. */
+  leftSidebarContentWidth?: number;
+  /** Exact right sidebar total width (px). Overrides the hardcoded fallback. */
+  rightSidebarWidth?: number;
 }
 
 export function PlaybackControls({
@@ -23,10 +27,14 @@ export function PlaybackControls({
   isAnyPlaying,
   hasSounds,
   isLeftSidebarExpanded = true,
-  isRightSidebarExpanded = true
+  isRightSidebarExpanded = true,
+  leftSidebarContentWidth,
+  rightSidebarWidth: rightSidebarWidthProp,
 }: PlaybackControlsProps) {
-  const leftSidebarWidth = (UI_VERTICAL_TABS.WIDTH * 0.75) + (isLeftSidebarExpanded ? LEFT_SIDEBAR_CONTENT_WIDTH : 0);
-  const rightSidebarWidth = isRightSidebarExpanded ? (UI_RIGHT_SIDEBAR.WIDTH * 0.75) : RIGHT_SIDEBAR_COLLAPSED_WIDTH;
+  const effectiveLeftContent = leftSidebarContentWidth ?? LEFT_SIDEBAR_CONTENT_WIDTH;
+  const effectiveRightWidth = rightSidebarWidthProp ?? UI_RIGHT_SIDEBAR.WIDTH;
+  const leftSidebarWidth = (UI_VERTICAL_TABS.WIDTH * 0.75) + (isLeftSidebarExpanded ? effectiveLeftContent : 0);
+  const rightSidebarWidth = isRightSidebarExpanded ? (effectiveRightWidth * 0.75) : RIGHT_SIDEBAR_COLLAPSED_WIDTH;
   const centerOffset = (leftSidebarWidth - rightSidebarWidth) / 2;
 
   useEffect(() => {

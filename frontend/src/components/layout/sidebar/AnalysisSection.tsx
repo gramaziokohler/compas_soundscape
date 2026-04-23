@@ -10,8 +10,10 @@ import { Model3DContextContent } from "@/components/layout/sidebar/analysis/Mode
 import { AudioContextContent } from "@/components/layout/sidebar/analysis/AudioContextContent";
 import { TextContextContent } from "@/components/layout/sidebar/analysis/TextContextContent";
 import { AnalysisResultContent } from "@/components/layout/sidebar/analysis/AnalysisResultContent";
-import { useSpeckleStore } from '@/store';
+import { AudioAnalysisAfterContent } from "@/components/layout/sidebar/analysis/AudioAnalysisAfterContent";
+import { useSpeckleStore, useAnalysisStore } from '@/store';
 import { useAreaDrawingStore } from '@/store';
+import { useServiceVersions } from '@/hooks/useServiceVersions';
 
 /**
  * AnalysisSection Component
@@ -42,9 +44,15 @@ export function AnalysisSection({
   onTogglePromptSelection,
   onSendToSoundGeneration
 }: AnalysisSectionProps) {
+  const serviceVersions = useServiceVersions();
+
   // Get diverse selection from store (works even without a 3D model card)
   const { diverseSelectedObjectIds, clearDiverseSelection } = useSpeckleStore();
   const diverseCount = diverseSelectedObjectIds.size;
+
+  // Analysis status/progress from store (avoids props threading)
+  const analysisStatus = useAnalysisStore((s) => s.analysisStatus);
+  const analyzingConfigIndex = useAnalysisStore((s) => s.analyzingConfigIndex);
 
   // Area drawing store (for text card draw-area buttons)
   const areaDrawing = useAreaDrawingStore();
@@ -116,6 +124,20 @@ export function AnalysisSection({
   const getAfterContent = useCallback((config: AnalysisConfig, index: number) => {
     const result = getResult(index);
     if (!result) return null;
+
+    if (config.type === 'audio') {
+      const audioConfig = config as AudioAnalysisConfig;
+      if (audioConfig.audioFile) {
+        return (
+          <AudioAnalysisAfterContent
+            analysisResult={result}
+            audioFile={audioConfig.audioFile}
+            audioDuration={audioConfig.audioInfo?.duration ?? 0}
+            onTogglePromptSelection={onTogglePromptSelection}
+          />
+        );
+      }
+    }
 
     return (
       <AnalysisResultContent
@@ -243,6 +265,19 @@ export function AnalysisSection({
       customButtons = [drawAreaBtn];
     }
 
+    const cardVersion = (() => {
+      if (!serviceVersions) return undefined;
+      if (config.type === 'audio') {
+        const v = serviceVersions.yamnet;
+        return `${v.name} ${v.version}`;
+      }
+      if (config.type === '3d-model' || config.type === 'text') {
+        const v = serviceVersions.gemini;
+        return `${v.name} ${v.version}`;
+      }
+      return undefined;
+    })();
+
     return (
       <Card
         config={config}
@@ -250,7 +285,8 @@ export function AnalysisSection({
         isExpanded={isExpanded}
         hasResult={configHasResult}
         result={getResult(index)}
-        isRunning={isRunning}
+        isRunning={isRunning && analyzingConfigIndex === index}
+        status={analyzingConfigIndex === index ? analysisStatus : undefined}
         collapsedInfo={getCollapsedInfo(config, index)}
         showIndex={true}
         canRemove={true}
@@ -271,9 +307,10 @@ export function AnalysisSection({
         actionButtonColor={actionButtonColor}
         color="success"
         customButtons={customButtons}
+        version={cardVersion}
       />
     );
-  }, [hasResult, getResult, isRunning, getCollapsedInfo, onUpdateConfig, onRemoveConfig, onReset, getBeforeContent, getAfterContent, onRun, onStop, areaDrawing]);
+  }, [hasResult, getResult, isRunning, analyzingConfigIndex, analysisStatus, getCollapsedInfo, onUpdateConfig, onRemoveConfig, onReset, getBeforeContent, getAfterContent, onRun, onStop, areaDrawing, serviceVersions]);
 
   // Footer with send button
   const footer = (

@@ -7,6 +7,7 @@ import { SpeckleEventBridge } from './speckle-event-bridge';
 import { SpeckleDragHandler } from './speckle-drag-handler';
 import { SoundSphereManager } from './sound-sphere-manager';
 import { ReceiverManager } from './receiver-manager';
+import { GridReceiverManager } from './grid-receiver-manager';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 import type { SoundEvent, ReceiverData } from '@/types';
 import type { AuralizationConfig, SourceReceiverIRMapping, AcousticSimulationMode } from '@/types/audio';
@@ -52,6 +53,7 @@ export class SpeckleAudioCoordinator {
   // Phase 3: Audio Manager Components
   private soundSphereManager: SoundSphereManager | null = null;
   private receiverManager: ReceiverManager | null = null;
+  private gridReceiverManager: GridReceiverManager | null = null;
 
   private isInitialized: boolean = false;
   private scaleForSounds: number = 1.0;
@@ -74,6 +76,9 @@ export class SpeckleAudioCoordinator {
 
   // Callback when custom object (sound/receiver) is deselected (clicking empty space)
   private onCustomObjectDeselectedCallback: (() => void) | null = null;
+
+  // External callback when a receiver mesh is double-clicked (for FPS mode + card expansion)
+  private externalOnReceiverDoubleClickedCallback: ((receiverId: string) => void) | null = null;
 
   constructor(
     viewer: Viewer,
@@ -113,6 +118,7 @@ export class SpeckleAudioCoordinator {
     );
 
     this.receiverManager = new ReceiverManager(scene, scaleForSounds, customObjectsGroup);
+    this.gridReceiverManager = new GridReceiverManager(scene, scaleForSounds, customObjectsGroup);
     this.eventBridge = new SpeckleEventBridge(this.viewer, this.adapter, this.selectionExtension);
 
     // Wire FilteringExtension for mode-agnostic hidden-object-aware selection
@@ -153,17 +159,44 @@ export class SpeckleAudioCoordinator {
       }
     });
 
-    // Zoom camera to any custom object (sound sphere or receiver) on double-click,
-    // mimicking Speckle's ViewerEvent.ObjectDoubleClicked zoom behaviour.
+    // Zoom camera to any custom object on double-click, but skip receivers
+    // (receiver double-click should enter FPS mode instead of zooming).
     this.eventBridge.setOnCustomObjectDoubleClicked((position: THREE.Vector3, type: 'sound' | 'receiver') => {
-      this.zoomToPosition(position);
+      if (type !== 'receiver') {
+        this.zoomToPosition(position);
+      }
     });
 
     this.eventBridge.setOnReceiverDoubleClicked((receiverId: string) => {
       // Update active receiver for simulation-based IR switching
-      // This triggers IR loading for all sources based on this receiver
-
       this.updateActiveReceiver(receiverId);
+
+      // Enable FPS mode SYNCHRONOUSLY, right here in the event handler, so that
+      // cameraController.enabled = false is set BEFORE Speckle's own dblclick
+      // processing (which may fire asynchronously via pointer/animation events and
+      // re-enable controls). The goToReceiverId useEffect in SpeckleScene will also
+      // call enableFirstPersonMode, but the guard in SpeckleCameraController prevents
+      // it from overwriting the saved camera state on that second call.
+      if (this.receiverManager && this.speckleCameraController) {
+        const mesh = this.receiverManager.getReceiverMeshes().find(
+          (m) => m.userData.receiverId === receiverId
+        );
+        if (mesh) {
+          const soundMeshes = this.soundSphereManager?.getSoundSphereMeshes() || [];
+          let target: THREE.Vector3;
+          if (soundMeshes.length > 0) {
+            target = soundMeshes
+              .reduce((acc, m) => acc.add(m.position.clone()), new THREE.Vector3())
+              .divideScalar(soundMeshes.length);
+          } else {
+            target = new THREE.Vector3(mesh.position.x, mesh.position.y - 5, mesh.position.z);
+          }
+          this.enableFirstPersonMode(mesh.position.clone(), target);
+        }
+      }
+
+      // Notify parent (SpeckleScene) so it can expand the listener card + sync React state
+      this.externalOnReceiverDoubleClickedCallback?.(receiverId);
     });
 
     this.dragHandler.setOnDragEnd((objects: THREE.Object3D[], position: THREE.Vector3) => {
@@ -405,6 +438,14 @@ export class SpeckleAudioCoordinator {
   }
 
   /**
+   * Set callback for when a receiver mesh is double-clicked in the scene.
+   * Parent can use this to expand the listener card and enter FPS mode.
+   */
+  public setOnReceiverDoubleClicked(callback: (receiverId: string) => void): void {
+    this.externalOnReceiverDoubleClickedCallback = callback;
+  }
+
+  /**
    * Set callback for when a receiver position is updated via drag
    * This syncs the 3D position back to React state to persist the dragged position
    */
@@ -451,6 +492,15 @@ export class SpeckleAudioCoordinator {
   public isFirstPersonMode(): boolean {
     if (!this.speckleCameraController) return false;
     return this.speckleCameraController.isFirstPersonMode();
+  }
+
+  public teleportFirstPerson(position: THREE.Vector3): void {
+    if (!this.speckleCameraController) return;
+    this.speckleCameraController.teleportFirstPerson(position);
+  }
+
+  public getActiveReceiverId(): string | null {
+    return this.activeReceiverId;
   }
 
   public rotateFirstPersonView(deltaYaw: number, deltaPitch: number): void {
@@ -501,6 +551,12 @@ export class SpeckleAudioCoordinator {
     return this.receiverManager;
   }
 
+  public updateGridListeners(points: [number, number, number][]): void {
+    this.gridReceiverManager?.updatePoints(points);
+    // Wake the Speckle viewer — it only renders on explicit request
+    this.viewer.requestRender();
+  }
+
   public getListener(): THREE.AudioListener {
     return this.listener;
   }
@@ -532,6 +588,7 @@ export class SpeckleAudioCoordinator {
 
     this.soundSphereManager?.updateScreenSpaceScale(camera);
     this.receiverManager?.updateScreenSpaceScale(camera);
+    this.gridReceiverManager?.updateScreenSpaceScale(camera);
   }
 
   public dispose(): void {
@@ -557,6 +614,11 @@ export class SpeckleAudioCoordinator {
     if (this.receiverManager) {
       this.receiverManager.dispose();
       this.receiverManager = null;
+    }
+
+    if (this.gridReceiverManager) {
+      this.gridReceiverManager.dispose();
+      this.gridReceiverManager = null;
     }
 
     if (this.speckleCameraController) {

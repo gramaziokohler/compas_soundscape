@@ -115,13 +115,13 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
 
       {/* Category list */}
       {!selectedCategory && !isLoading && categories.length > 0 && (
-        <div className="rounded-lg max-h-50 overflow-y-auto bg-white">
+        <div className="rounded-lg max-h-50 overflow-y-auto">
           <div className="space-y-0.5">
             {categories.map((cat) => (
               <button
                 key={cat.id}
                 onClick={() => handleSelectCategory(cat)}
-                className="w-full text-left px-2 py-1.5 rounded-lg text-xs transition-colors bg-primary-lighter text-foreground hover:bg-primary-light"
+                className="w-full text-left px-2 py-1.5 rounded-lg text-xs transition-colors bg-primary-lighter text-foreground hover:bg-white"
               >
                 {cat.name}
               </button>
@@ -139,7 +139,7 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
 
       {/* Sounds list */}
       {selectedCategory && !isLoading && sounds.length > 0 && (
-        <div className="rounded-lg max-h-50 overflow-y-auto bg-white">
+        <div className="rounded-lg max-h-50 overflow-y-auto">
           <p className="text-xs font-medium text-secondary-hover px-1 mb-1">
             {sounds.length} sounds
           </p>
@@ -153,7 +153,7 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
                   className={`w-full text-left px-2 py-1.5 rounded-lg text-xs transition-colors ${
                     isSelected
                       ? 'bg-primary text-white'
-                      : 'bg-primary-lighter text-foreground hover:bg-primary-light'
+                      : 'bg-primary-lighter text-foreground hover:bg-white'
                   }`}
                 >
                   <span className="truncate block">{sound.name}</span>

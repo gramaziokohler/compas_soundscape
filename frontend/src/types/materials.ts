@@ -19,6 +19,10 @@ export interface AcousticMaterial {
   category: 'Wall' | 'Floor' | 'Ceiling' | 'Soft';
   /** Optional description */
   description?: string;
+  /** Per-frequency absorption coefficients (0-1), indexed by center_freqs */
+  coeffs?: number[];
+  /** Octave-band center frequencies in Hz matching coeffs (e.g. [125,250,500,1000,2000,4000,8000]) */
+  center_freqs?: number[];
 }
 
 /**

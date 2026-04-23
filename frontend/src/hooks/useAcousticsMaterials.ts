@@ -92,7 +92,9 @@ export function useAcousticsMaterials({
       name: mat.name,
       absorption: mat.absorption ?? defaultAbsorption,
       category: mat.category as any || 'Wall',
-      description: mat.description
+      description: mat.description,
+      coeffs: mat.coeffs,
+      center_freqs: mat.center_freqs,
     })), [rawMaterials, idPrefix, defaultAbsorption]);
 
   return {

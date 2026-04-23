@@ -27,6 +27,15 @@ from config.constants import (
 import time
 
 
+def get_service_version_info() -> dict:
+    import importlib.metadata
+    try:
+        version = importlib.metadata.version("requests")
+    except importlib.metadata.PackageNotFoundError:
+        version = getattr(requests, "__version__", "unknown")
+    return {"name": "BBC", "version": f"requests {version}"}
+
+
 def _clean_filename(text: str) -> str:
     """Sanitize text for use in filenames."""
     return re.sub(r'[^a-zA-Z0-9_\-]', '_', text)[:MAX_FILENAME_LENGTH_SAFE]

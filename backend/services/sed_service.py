@@ -20,10 +20,16 @@ from utils.sed_processing import (
     FRAME_WINDOW_SECONDS,
     TARGET_SAMPLE_RATE
 )
+from config.constants import SED_MIN_CONFIDENCE
 
 
 class SEDService:
     """Service for Sound Event Detection using YAMNet model"""
+
+    @staticmethod
+    def get_service_version_info() -> dict:
+        import tensorflow as tf
+        return {"name": "tensorflow (YAMNet)", "version": tf.__version__}
 
     def __init__(self):
         """
@@ -157,14 +163,17 @@ class SEDService:
 
                 # Conditionally analyze detection/silence segments
                 if analyze_durations:
-                    detected_durations_sec, silent_durations_sec = analyze_class_segments(
+                    detected_durations_sec, silent_durations_sec, detection_segments = analyze_class_segments(
                         class_scores, FRAME_HOP_SECONDS, detection_threshold
                     )
                     # Calculate max durations (use max instead of average for better representation)
                     max_detection_duration = float(np.max(detected_durations_sec)) if detected_durations_sec else None
                     max_silence_duration = float(np.max(silent_durations_sec)) if silent_durations_sec else None
+                    # Cap at 20 segments per class to limit payload size
+                    detection_segments = detection_segments[:20]
                 else:
                     max_detection_duration, max_silence_duration = None, None
+                    detection_segments = []
 
                 # Conditionally calculate amplitude statistics
                 if analyze_amplitudes:
@@ -194,12 +203,13 @@ class SEDService:
                     'avg_amplitude_db': avg_amp_db,  # None or Python float
                     'avg_amplitude_0_1': avg_amp_0_1,  # None or Python float
                     'max_detection_duration_sec': max_detection_duration,  # None or float (seconds) - max value
-                    'max_silence_duration_sec': max_silence_duration  # None or float (seconds) - max value
+                    'max_silence_duration_sec': max_silence_duration,  # None or float (seconds) - max value
+                    'detection_segments': detection_segments,  # list of {start_sec, end_sec}
                 })
 
-            # Step 6: Sort by confidence and return top N
-            # sorted() with key=lambda sorts by mean_score in descending order
-            sorted_results = sorted(all_results, key=lambda item: item['mean_score'], reverse=True)
+            # Step 6: Filter, sort by confidence, and return top N
+            filtered_results = [r for r in all_results if r['mean_score'] >= SED_MIN_CONFIDENCE]
+            sorted_results = sorted(filtered_results, key=lambda item: item['mean_score'], reverse=True)
             top_results = sorted_results[:top_n_classes]
 
             print(f"Analysis complete: returning top {len(top_results)} classes")

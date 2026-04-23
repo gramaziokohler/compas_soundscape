@@ -20,6 +20,39 @@ class SoundGenerationRequest(BaseModel):
     audio_model: str = DEFAULT_AUDIO_MODEL  # Model to use for generation
 
 
+class SoundGenerationStartResponse(BaseModel):
+    generation_id: str
+
+
+class SoundGenerationStatusResponse(BaseModel):
+    generation_id: str
+    progress: int           # 0–100
+    status: str             # "Generating sound 3/5 (bird_chirp)..."
+    completed: bool
+    cancelled: bool
+    error: Optional[str] = None
+    result: Optional[list[dict]] = None      # final list of all generated sounds
+    partial_sounds: Optional[list[dict]] = None  # sounds ready so far (incremental UX)
+    queue_position: Optional[int] = None
+    queue_total: Optional[int] = None
+
+
+class LLMGenerationStartResponse(BaseModel):
+    generation_id: str
+
+
+class LLMGenerationStatusResponse(BaseModel):
+    generation_id: str
+    progress: int
+    status: str
+    completed: bool
+    cancelled: bool
+    error: Optional[str] = None
+    result: Optional[dict] = None   # {text, sounds, prompts, selected_entities}
+    queue_position: Optional[int] = None
+    queue_total: Optional[int] = None
+
+
 class IFCEntityInfo(BaseModel):
     index: int
     type: str
@@ -150,7 +183,7 @@ class AcousticParameters(BaseModel):
     rt60: float  # Reverberation time (s)
     edt: float  # Early decay time (s)
     c50: float  # Speech clarity (dB)
-    c80: float  # Music clarity (dB)
+    spl: float  # Sound pressure level (dB); physical for wave-based, relative energy for others
     d50: float  # Definition (0-1)
     drr: float  # Direct-to-reverberant ratio (dB)
 
@@ -337,6 +370,91 @@ class SoundscapeSaveRequest(BaseModel):
     soundscape_data: SoundscapeData
     audio_urls: list[str] = []  # Audio file URLs to copy
     ir_urls: list[str] = []  # IR file URLs to copy
+
+
+# ============================================================================
+# Choras (DE/DG Wave Simulation) Schemas
+# ============================================================================
+
+class ChorasDESettings(BaseModel):
+    """Settings for DE (Diffusion Equation / FVM) simulation."""
+    sim_len_type: str = "edt"             # "edt" or "ir_length"
+    edt: float = 35.0
+    de_ir_length: float = 0.5
+    de_c0: float = 343.0
+    de_lc: float = 1.5
+    frequencies: list[int] = [125, 250, 500, 1000, 2000]
+
+
+class ChorasDGSettings(BaseModel):
+    """Settings for DG (Discontinuous Galerkin) simulation."""
+    dg_freq_upper_limit: float = 200.0
+    dg_c0: float = 343.0
+    dg_rho0: float = 1.213
+    dg_ir_length: float = 0.1
+    dg_poly_order: int = 4
+    dg_ppw: float = 2.0
+    dg_cfl: float = 1.0
+    frequencies: list[int] = [125, 250, 500, 1000, 2000]
+
+
+class ChorasSimulationResult(BaseModel):
+    """Response from a completed Choras simulation."""
+    simulation_id: str
+    message: str
+    ir_files: list[str]
+    results_file: str
+    method: str   # "DE" or "DG"
+
+
+class ChorasSimulationStartResponse(BaseModel):
+    """Immediate response when a simulation is queued (non-blocking)."""
+    simulation_id: str
+    total_steps: int   # number of pairs (DE) or source groups (DG)
+    method: str        # "DE" or "DG"
+
+
+class ChorasSimulationStatusResponse(BaseModel):
+    """Response from the polling status endpoint."""
+    simulation_id: str
+    progress: int      # 0-100
+    status: str
+    completed: bool
+    cancelled: bool
+    error: Optional[str] = None
+    result: Optional[ChorasSimulationResult] = None  # populated when completed=True
+    queue_position: Optional[int] = None
+    queue_total: Optional[int] = None
+
+
+# ============================================================================
+# Pyroomacoustics Async Queue Schemas
+# ============================================================================
+
+class PyroomacousticsSimulationStartResponse(BaseModel):
+    """Immediate response when a pyroomacoustics simulation is queued (non-blocking)."""
+    simulation_id: str
+
+
+class PyroomacousticsSimulationResult(BaseModel):
+    """Result from a completed pyroomacoustics simulation."""
+    simulation_id: str
+    message: str
+    ir_files: list[str]
+    results_file: str
+
+
+class PyroomacousticsSimulationStatusResponse(BaseModel):
+    """Response from the pyroomacoustics polling status endpoint."""
+    simulation_id: str
+    progress: int           # 0–100
+    status: str             # human-readable status string
+    completed: bool
+    cancelled: bool
+    error: Optional[str] = None
+    result: Optional[PyroomacousticsSimulationResult] = None
+    queue_position: Optional[int] = None   # 1-based queue slot; None when running or done
+    queue_total: Optional[int] = None      # total jobs in system (running + queued)
 
 
 class SoundscapeSaveResponse(BaseModel):

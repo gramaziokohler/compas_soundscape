@@ -41,6 +41,10 @@ interface SpeckleSurfaceMaterialsSectionProps {
   initialAssignments?: Record<string, string>; // objectId -> materialId from config
   initialLayerName?: string | null; // Previously selected layer name
   initialScatteringAssignments?: Record<string, number>; // objectId -> scattering from config
+  /** Previously isolated object IDs — restored instead of the full layer set on re-mount */
+  initialIsolatedObjectIds?: string[] | null;
+  /** Called when the active isolation set changes (card switching / mode toggle) so the parent can persist it */
+  onIsolationChange?: (ids: string[] | null) => void;
 }
 
 export function SpeckleSurfaceMaterialsSection({
@@ -53,7 +57,9 @@ export function SpeckleSurfaceMaterialsSection({
   className = '',
   initialAssignments,
   initialLayerName,
-  initialScatteringAssignments
+  initialScatteringAssignments,
+  initialIsolatedObjectIds,
+  onIsolationChange,
 }: SpeckleSurfaceMaterialsSectionProps) {
 
   // Sync worldTree from prop — AcousticsSection handles the viewer lookup
@@ -83,6 +89,11 @@ export function SpeckleSurfaceMaterialsSection({
 
   // Store the object IDs we isolated (for cleanup)
   const isolatedByUsRef = useRef<string[]>([]);
+  // Saved isolation to restore when filteringEnabled re-enables or component remounts.
+  // Initialized from the persisted card config; replaced by the live isolation after toggle-OFF.
+  const savedIsolationRef = useRef<string[] | null>(initialIsolatedObjectIds ?? null);
+  // Stable ref to the onIsolationChange callback so cleanup can call it without stale closures
+  const onIsolationChangeRef = useRef(onIsolationChange);
 
   // Get context for material colors registration (merged with diverse/linked colors)
   const { registerMaterialColors, clearMaterialColors, applyFilterColors } = useSpeckleStore();
@@ -109,6 +120,21 @@ export function SpeckleSurfaceMaterialsSection({
   const loadAssignments       = useAcousticMaterialStore((s) => s.loadAssignments);
   const materialAssignments   = useAcousticMaterialStore((s) => s.materialAssignments);
   const scatteringAssignments = useAcousticMaterialStore((s) => s.scatteringAssignments);
+
+  // Keep onIsolationChangeRef current so cleanup can call latest version
+  useEffect(() => { onIsolationChangeRef.current = onIsolationChange; }, [onIsolationChange]);
+
+  // Eagerly persist isolation state to the card config whenever it changes.
+  // Without this, config.speckleIsolatedObjectIds is only updated on unmount/toggle-OFF.
+  // When the simulation completes, the component remounts in the same render cycle as the
+  // cleanup — the async config update from the cleanup hasn't landed yet, so the new instance
+  // reads stale initialIsolatedObjectIds and re-isolates the full layer set.
+  const explorerIsolatedIds = useSpeckleStore((s) => s.explorerIsolatedIds);
+  useEffect(() => {
+    // Only save if we are actively managing isolation (layer is isolated by this component)
+    if (!filteringEnabled || isolatedByUsRef.current.length === 0) return;
+    onIsolationChangeRef.current?.(explorerIsolatedIds);
+  }, [filteringEnabled, explorerIsolatedIds]);
 
   // Wrap selectLayer so that switching layers also clears store assignments
   const selectLayer = useCallback((layerId: string) => {
@@ -274,8 +300,23 @@ export function SpeckleSurfaceMaterialsSection({
         unIsolateObjects(isolatedByUsRef.current);
       }
 
-      // Include parent layer ID + all children in isolation
-      const objectIdsToIsolate = [selectedLayerId, ...childObjectIds];
+      // Use saved isolation if available (restored from card config or preserved across mode toggle).
+      // Fall back to the full layer set for a fresh card.
+      let objectIdsToIsolate: string[];
+      if (savedIsolationRef.current && savedIsolationRef.current.length > 0) {
+        // IMPORTANT: filter out selectedLayerId from the saved set.
+        // Passing it into isolateObjects() with includeDescendants=true would cause Speckle
+        // to re-isolate ALL layer children (including previously un-isolated meshes), because
+        // a fresh isolateObjects call has no memory of the prior per-mesh exclusions.
+        // Isolating only the specific geometry IDs (leaf nodes) avoids this.
+        const meshOnlyIds = savedIsolationRef.current.filter(id => id !== selectedLayerId);
+        objectIdsToIsolate = meshOnlyIds.length > 0
+          ? meshOnlyIds
+          : [selectedLayerId, ...childObjectIds]; // all were un-isolated → restore full set
+        savedIsolationRef.current = null; // consume — layer changes use the full set
+      } else {
+        objectIdsToIsolate = [selectedLayerId, ...childObjectIds];
+      }
       isolatedByUsRef.current = objectIdsToIsolate;
 
       isolateObjects(objectIdsToIsolate);
@@ -300,9 +341,21 @@ export function SpeckleSurfaceMaterialsSection({
     prevFilteringEnabledRef.current = filteringEnabled;
 
     if (wasEnabled && !filteringEnabled) {
-      // Toggled OFF → restore previous visibility state
+      // Toggled OFF → clear material colors FIRST so stale setUserObjectColors
+      // from acoustic mode are removed before unIsolate/hide run. Without this,
+      // active color groups in FilteringExtension conflict with hideObjects() when
+      // switching Acoustic → Dark with materials assigned, keeping objects visible.
+      clearMaterialColors();
 
       if (isolatedByUsRef.current.length > 0) {
+        // Save current isolation set BEFORE clearing so it survives the mode toggle.
+        // When filtering is re-enabled, savedIsolationRef is used to restore the
+        // user's exact isolation rather than re-isolating the full layer.
+        const currentIsolated = useSpeckleStore.getState().getExplorerIsolatedIds();
+        if (currentIsolated !== null) {
+          savedIsolationRef.current = currentIsolated;
+          onIsolationChangeRef.current?.(currentIsolated);
+        }
         unIsolateObjects(isolatedByUsRef.current);
       }
 
@@ -325,7 +378,7 @@ export function SpeckleSurfaceMaterialsSection({
       // previousLayerIdRef → next render un-isolates + re-isolates same layer).
       console.log('[SpeckleSurfaceMaterialsSection] Filtering enabled');
     }
-  }, [filteringEnabled, unIsolateObjects, hideObjects, isolateObjects]);
+  }, [filteringEnabled, clearMaterialColors, unIsolateObjects, hideObjects, isolateObjects]);
 
   /**
    * Restore previous visibility state when component unmounts.
@@ -344,6 +397,13 @@ export function SpeckleSurfaceMaterialsSection({
     return () => {
       // Only restore if we have active isolation (filteringEnabled was on)
       if (isolatedByUsRef.current.length === 0) return;
+
+      // Persist the current isolation set BEFORE un-isolating so the parent
+      // can save it to the card config and restore it on the next mount.
+      const currentIsolated = useSpeckleStore.getState().getExplorerIsolatedIds();
+      if (currentIsolated !== null) {
+        onIsolationChangeRef.current?.(currentIsolated);
+      }
 
       unIsolateObjectsRef.current(isolatedByUsRef.current);
 

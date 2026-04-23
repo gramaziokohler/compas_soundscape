@@ -16,6 +16,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { Viewer, FilteringExtension } from '@speckle/viewer';
 import type { ObjectColorGroup } from '@/types/speckle-materials';
+import { useSpeckleStore } from '@/store';
 
 /**
  * Hook for managing object filtering (hide/isolate)
@@ -27,6 +28,13 @@ export function useSpeckleFiltering(viewerRef: React.RefObject<Viewer | null>) {
   const [filteringExtension, setFilteringExtension] = useState<FilteringExtension | null>(null);
   // Force re-render trigger when state changes
   const [, forceUpdate] = useState(0);
+  // Track hide/isolate state in store so applyFilterColors can suppress colors correctly
+  const trackExplorerHide      = useSpeckleStore((s) => s.trackExplorerHide);
+  const trackExplorerShow      = useSpeckleStore((s) => s.trackExplorerShow);
+  const clearExplorerHidden    = useSpeckleStore((s) => s.clearExplorerHidden);
+  const trackExplorerIsolate      = useSpeckleStore((s) => s.trackExplorerIsolate);
+  const removeFromExplorerIsolation = useSpeckleStore((s) => s.removeFromExplorerIsolation);
+  const clearExplorerIsolation    = useSpeckleStore((s) => s.clearExplorerIsolation);
 
   // Get FilteringExtension when viewer is available
   useEffect(() => {
@@ -94,12 +102,14 @@ export function useSpeckleFiltering(viewerRef: React.RefObject<Viewer | null>) {
 
       // Trigger re-render to read fresh state from extension
       triggerUpdate();
+      // Track in store so applyFilterColors suppresses color for these objects
+      trackExplorerHide(objectIds);
 
       console.log('[useSpeckleFiltering] hideObjects complete - New state:', filteringExtension.filteringState?.hiddenObjects);
     } catch (error) {
       console.error('[useSpeckleFiltering] Failed to hide objects:', error);
     }
-  }, [filteringExtension, triggerUpdate]);
+  }, [filteringExtension, triggerUpdate, trackExplorerHide]);
 
   /**
    * Show specific objects using FilteringExtension
@@ -123,12 +133,14 @@ export function useSpeckleFiltering(viewerRef: React.RefObject<Viewer | null>) {
 
       // Trigger re-render to read fresh state from extension
       triggerUpdate();
+      // Untrack in store so re-shown objects get their color back
+      trackExplorerShow(objectIds);
 
       console.log('[useSpeckleFiltering] showObjects complete - New state:', filteringExtension.filteringState?.hiddenObjects);
     } catch (error) {
       console.error('[useSpeckleFiltering] Failed to show objects:', error);
     }
-  }, [filteringExtension, triggerUpdate]);
+  }, [filteringExtension, triggerUpdate, trackExplorerShow]);
 
   /**
    * Isolate specific objects using FilteringExtension
@@ -143,23 +155,33 @@ export function useSpeckleFiltering(viewerRef: React.RefObject<Viewer | null>) {
     try {
       console.log('[useSpeckleFiltering] isolateObjects called - IDs:', objectIds);
 
-      // Use FilteringExtension API (like Vue version)
-      // Parameters: objectIds, stateKey, includeDescendants, ghost
+      // Merge with the existing isolated set before calling Speckle so that
+      // additive isolations (e.g. ObjectExplorer re-isolating a single mesh)
+      // keep all currently isolated objects visible — not just the new ones.
+      // When there is no prior isolation (_explorerIsolatedIdsRef = null) the
+      // existing set is null and we fall through to objectIds as-is.
+      const existingIds = useSpeckleStore.getState().getExplorerIsolatedIds();
+      const idsToIsolate = existingIds
+        ? [...new Set([...existingIds, ...objectIds])]
+        : objectIds;
+
       filteringExtension.isolateObjects(
-        objectIds,
+        idsToIsolate,
         undefined, // stateKey
-        true,      // includeDescendants - include child objects
-        true      // ghost - don't ghost other objects, hide them completely
+        true,      // includeDescendants
+        true       // ghost
       );
 
       // Trigger re-render to read fresh state from extension
       triggerUpdate();
+      // Merge new IDs into the store's tracked isolation set
+      trackExplorerIsolate(objectIds);
 
       console.log('[useSpeckleFiltering] isolateObjects complete - New state:', filteringExtension.filteringState?.isolatedObjects);
     } catch (error) {
       console.error('[useSpeckleFiltering] Failed to isolate objects:', error);
     }
-  }, [filteringExtension, triggerUpdate]);
+  }, [filteringExtension, triggerUpdate, trackExplorerIsolate]);
 
   /**
    * Un-isolate specific objects using FilteringExtension
@@ -185,12 +207,15 @@ export function useSpeckleFiltering(viewerRef: React.RefObject<Viewer | null>) {
 
       // Trigger re-render to read fresh state from extension
       triggerUpdate();
+      // Remove only these IDs from the isolation set — remaining isolated objects still suppress colors
+      // for everything else (including the just-un-isolated objects which are now ghosted/hidden)
+      removeFromExplorerIsolation(objectIds);
 
       console.log('[useSpeckleFiltering] unIsolateObjects complete - New state:', filteringExtension.filteringState?.isolatedObjects);
     } catch (error) {
       console.error('[useSpeckleFiltering] Failed to un-isolate objects:', error);
     }
-  }, [filteringExtension, triggerUpdate]);
+  }, [filteringExtension, triggerUpdate, removeFromExplorerIsolation]);
 
   /**
    * Check if objects are hidden
@@ -223,12 +248,15 @@ export function useSpeckleFiltering(viewerRef: React.RefObject<Viewer | null>) {
 
       // Trigger re-render to read fresh state from extension
       triggerUpdate();
+      // Clear both hidden and isolation tracking so colors are fully restored
+      clearExplorerHidden();
+      clearExplorerIsolation();
 
       console.log('[useSpeckleFiltering] clearFilters complete');
     } catch (error) {
       console.error('[useSpeckleFiltering] Failed to clear filters:', error);
     }
-  }, [filteringExtension, triggerUpdate]);
+  }, [filteringExtension, triggerUpdate, clearExplorerHidden, clearExplorerIsolation]);
 
   /**
    * Set custom colors for objects using FilteringExtension

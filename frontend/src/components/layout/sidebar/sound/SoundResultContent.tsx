@@ -89,6 +89,7 @@ export function SoundResultContent({
           isPlaying={isPreviewPlaying}
           isMuted={isMuted}
           silent={silent}
+          soundId={generatedSound.id}
           onPlayPause={() => onPreviewPlayPause?.(generatedSound.id)}
           onStop={() => onPreviewStop?.(generatedSound.id)}
         />

@@ -50,7 +50,9 @@ export type CardType =
   | 'sample-audio'
   | 'resonance'
   | 'choras'
-  | 'pyroomacoustics';
+  | 'pyroomacoustics'
+  | 'listener'
+  | 'grid-listener';
 
 /**
  * Default display names for each card type
@@ -64,9 +66,11 @@ export const CARD_TYPE_LABELS: Record<CardType, string> = {
   'library': 'Library Sound',
   'catalog': 'Catalog Sound',
   'sample-audio': 'Sample Audio',
-  'resonance': 'Resonance Audio',
-  'choras': 'Wave-based Simulation',
-  'pyroomacoustics': 'Pyroomacoustics',
+  'resonance': 'Shoebox real-time ISM',
+  'choras': 'Wave-based simulation',
+  'pyroomacoustics': 'Ray-tracing + ISM',
+  'listener': 'Listener',
+  'grid-listener': 'Grid Listener',
 };
 
 // ============================================================================
@@ -192,6 +196,11 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   onReset: (index: number) => void;
   /** Called when the inline error is dismissed (clears the error state in the parent) */
   onDismissError?: (index: number) => void;
+  /** Called when the card header is double-clicked (e.g. zoom to associated 3D object) */
+  onDoubleClickCard?: (index: number) => void;
+
+  /** Library/service version string(s) shown under the title in after-generation state. Pass an array for multiple lines. */
+  version?: string | string[];
 
   // Content Slots
   /** Content to show when card has no result (before generation) */

@@ -4,11 +4,17 @@
   --background: #ffffff;
   --foreground: #171717;
 
-  /* Primary brand color */
+  /* Primary brand color
   --color-primary: #F500B8;
   --color-primary-hover: #e061c0;
   --color-primary-light: #fce7f6;
-  --color-primary-lighter: #fdf2fa;
+  --color-primary-lighter: #fdf2fa; */
+
+  /* Primary brand color */
+  --color-primary: #2F2FE4;
+  --color-primary-hover: #5151e3;
+  --color-primary-light: #c2c2ff;
+  --color-primary-lighter: #c6c6fb;
   
   /* Secondary color */
   --color-secondary: #1f1f1f;

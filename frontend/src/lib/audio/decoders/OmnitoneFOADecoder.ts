@@ -76,23 +76,30 @@ export class OmnitoneFOADecoder implements IBinauralDecoder {
       const Omnitone = OmnitoneModule.default;
 
       // Create FOA renderer with default configuration
-      this.foaRenderer = Omnitone.createFOARenderer(audioContext);
+      const renderer = Omnitone.createFOARenderer(audioContext);
+      this.foaRenderer = renderer;
 
-      if (!this.foaRenderer) {
+      if (!renderer) {
         throw new Error('[OmnitoneFOADecoder] Failed to create FOARenderer');
       }
 
       console.log('[OmnitoneFOADecoder] FOARenderer created:', {
-        hasInput: !!this.foaRenderer.input,
-        hasOutput: !!this.foaRenderer.output,
-        hasInitialize: typeof this.foaRenderer.initialize === 'function'
+        hasInput: !!renderer.input,
+        hasOutput: !!renderer.output,
+        hasInitialize: typeof renderer.initialize === 'function'
       });
 
       // Initialize renderer (loads HRTF data internally)
-      await this.foaRenderer.initialize();
+      await renderer.initialize();
+
+      // Check if we were disposed or replaced during the async initialization
+      if (this.foaRenderer !== renderer) {
+        renderer.setRenderingMode('off');
+        return;
+      }
 
       // Set to ambisonic rendering mode (vs bypass or off)
-      this.foaRenderer.setRenderingMode('ambisonic');
+      renderer.setRenderingMode('ambisonic');
 
       this.ready = true;
       console.log('[OmnitoneFOADecoder] Initialized successfully with built-in SADIE HRTFs');

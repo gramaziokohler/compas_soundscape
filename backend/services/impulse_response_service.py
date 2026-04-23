@@ -1,7 +1,7 @@
 """Service for handling impulse response files"""
 
 import os
-import hashlib
+import uuid
 import soundfile as sf
 import numpy as np
 from typing import Tuple, Optional
@@ -152,11 +152,13 @@ class ImpulseResponseService:
             )
             sample_rate = AUDIO_SAMPLE_RATE
         
-        # Generate unique filename
-        file_hash = hashlib.md5(audio_data.tobytes()).hexdigest()[:8]
+        # Generate unique filename using UUID so every upload has a unique ID
+        # regardless of audio content (content hashes caused duplicate IDs when
+        # two source-receiver pairs produced identical or near-identical IRs).
+        unique_id = uuid.uuid4().hex[:16]
         safe_name = "".join(c for c in name if c.isalnum() or c in (' ', '-', '_')).strip()
         safe_name = safe_name.replace(' ', '_')
-        filename = f"{safe_name}_{ir_format}_{file_hash}.wav"
+        filename = f"{safe_name}_{ir_format}_{unique_id}.wav"
         output_path = os.path.join(IMPULSE_RESPONSE_DIR, filename)
         
         # Save processed IR
@@ -171,7 +173,7 @@ class ImpulseResponseService:
         
         # Create metadata
         metadata = ImpulseResponseMetadata(
-            id=file_hash,
+            id=unique_id,
             url=f"{IMPULSE_RESPONSE_URL_PREFIX}/{filename}",
             name=name,
             format=IRFormat(ir_format),

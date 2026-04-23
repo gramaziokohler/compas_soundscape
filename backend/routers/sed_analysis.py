@@ -122,7 +122,8 @@ async def analyze_sound_events(
                 "avg_amplitude_db": sound["avg_amplitude_db"],
                 "avg_amplitude_0_1": sound["avg_amplitude_0_1"],
                 "max_detection_duration_sec": sound["max_detection_duration_sec"],
-                "max_silence_duration_sec": sound["max_silence_duration_sec"]
+                "max_silence_duration_sec": sound["max_silence_duration_sec"],
+                "detection_segments": sound.get("detection_segments", []),
             }
             formatted_sounds.append(formatted)
 

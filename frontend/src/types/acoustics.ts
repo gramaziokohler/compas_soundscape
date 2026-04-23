@@ -27,6 +27,7 @@ export interface BaseSimulationConfig extends CardBaseConfig {
   type: AcousticSimulationMode;
   state: SimulationState;
   createdAt: number; // Timestamp
+  completedAt?: number; // Timestamp when simulation finished
   simulationInstanceId?: string; // Unique ID to track which hook instance this config is bound to
 }
 
@@ -39,36 +40,49 @@ export interface ResonanceSimulationConfig extends BaseSimulationConfig {
 }
 
 /**
- * Choras simulation configuration
+ * Choras (DE/DG wave simulation) configuration
  */
 export interface ChorasSimulationConfig extends BaseSimulationConfig, CardExecutionState {
   type: 'choras';
   settings: {
-    de_c0: number; // Speed of sound in m/s
-    de_ir_length: number; // Impulse response length in seconds
-    de_lc: number; // Characteristic length in meters
-    edt: number; // Energy decay threshold in dB
-    sim_len_type: 'ir_length' | 'edt'; // Simulation length type
-    selectedMaterialId: string | null;
+    simulation_method: 'DE' | 'DG';
+    // DE (Diffusion Equation / FVM) settings
+    de_sim_len_type: 'ir_length' | 'edt';
+    de_edt: number;
+    de_ir_length: number;
+    de_c0: number;
+    de_lc: number;
+    // DG (Discontinuous Galerkin) settings
+    dg_freq_upper_limit: number;
+    dg_c0: number;
+    dg_rho0: number;
+    dg_ir_length: number;
+    dg_poly_order: number;
+    dg_ppw: number;
+    dg_cfl: number;
   };
-  // Material assignments per face (persisted per simulation instance)
-  faceToMaterialMap: Map<number, string>; // faceIndex -> materialId
+  // Material assignments per face
+  faceToMaterialMap: Map<number, string>;
   // Material UI state (persisted across tab switches)
-  expandedMaterialItems?: Set<string>; // Expanded tree items (e.g., 'all', 'layer-Default', 'entity-0')
-  // Excluded layers (layers not included in simulation or selection)
-  excludedLayers?: Set<string>; // Set of layer IDs to exclude from simulation and selection
-  // Saved settings for reset functionality (snapshot before simulation)
+  expandedMaterialItems?: Set<string>;
+  // Excluded layers
+  excludedLayers?: Set<string>;
+  // Saved settings for reset functionality
   savedSettings?: {
     settings: ChorasSimulationConfig['settings'];
     faceToMaterialMap: Map<number, string>;
     expandedMaterialItems?: Set<string>;
     excludedLayers?: Set<string>;
   };
-  // Runtime state (inherited from CardExecutionState)
-  currentSimulationId: string | null;
-  currentSimulationRunId: string | null;
+  // Runtime state
   simulationResults: string | null;
-  importedIRMetadata?: ImpulseResponseMetadata;
+  importedIRIds?: string[];
+  sourceReceiverIRMapping?: import('./audio').SourceReceiverIRMapping;
+  /** Positions of sources and receivers at the time the simulation was run (source of truth for IR hover line) */
+  simulationPositions?: {
+    sources: Record<string, [number, number, number]>;
+    receivers: Record<string, [number, number, number]>;
+  };
 }
 
 /**
@@ -103,12 +117,20 @@ export interface PyroomAcousticsSimulationConfig extends BaseSimulationConfig, C
   // Source-receiver IR mapping (for audio integration)
   importedIRIds?: string[]; // Array of imported IR IDs for filtering
   sourceReceiverIRMapping?: import('./audio').SourceReceiverIRMapping; // Source-receiver IR mapping
+  /** Positions of sources and receivers at the time the simulation was run (source of truth for IR hover line) */
+  simulationPositions?: {
+    sources: Record<string, [number, number, number]>;
+    receivers: Record<string, [number, number, number]>;
+  };
 }
 
 /**
  * Union type for all simulation configs
  */
-export type SimulationConfig = ResonanceSimulationConfig | ChorasSimulationConfig | PyroomAcousticsSimulationConfig;
+export type SimulationConfig =
+  | ResonanceSimulationConfig
+  | ChorasSimulationConfig
+  | PyroomAcousticsSimulationConfig;
 
 /**
  * Props for SimulationTab component (analogous to SoundTab)

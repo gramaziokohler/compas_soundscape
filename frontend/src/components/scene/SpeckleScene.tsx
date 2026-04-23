@@ -26,7 +26,9 @@ import { SpeckleAudioCoordinator } from '@/lib/three/speckle-audio-coordinator';
 import { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
 import { BoundingBoxManager } from '@/lib/three/BoundingBoxManager';
 import { useTimelinePlayback } from '@/hooks/useTimelinePlayback';
-import { useSpeckleStore, useAreaDrawingStore, useAcousticsSimulationStore } from '@/store';
+import { useSpeckleStore, useAreaDrawingStore, useAcousticsSimulationStore, useGridListenersStore } from '@/store';
+import { useUIStore } from '@/store/uiStore';
+import { GradientMapManager } from '@/lib/three/gradient-map-manager';
 import { AreaDrawingManager } from '@/lib/three/area-drawing-manager';
 import { useSpeckleTree, getHeaderAndSubheader } from '@/hooks/useSpeckleTree';
 import { useAudioControlsStore } from '@/store';
@@ -52,6 +54,8 @@ import {
   DARK_MODE,
   RECEIVER_CONFIG,
   IR_HOVER_LINE,
+  SIMULATION_POSITION_THRESHOLD,
+  SIMULATION_MISMATCH_COLOR_HEX,
 } from '@/utils/constants';
 
 // Left sidebar content width when expanded (matches Sidebar.tsx: 20rem = 320px)
@@ -103,6 +107,8 @@ interface SpeckleSceneProps {
   onReceiverSelected?: (receiverId: string) => void;
   onReceiverModeChange?: (isActive: boolean, receiverId: string | null) => void;
   goToReceiverId?: string | null;
+  /** Grid listener points to render (pre-filtered: only visible expanded grid). */
+  gridListenerPoints?: [number, number, number][];
 
   // Sound sphere position update (for simulation sync)
   onUpdateSoundPosition?: (soundId: string, position: [number, number, number]) => void;
@@ -139,9 +145,19 @@ interface SpeckleSceneProps {
   // Sidebar expanded states - adjusts timeline and control positions
   isLeftSidebarExpanded?: boolean;
   isRightSidebarExpanded?: boolean;
+  /** Exact left sidebar content-panel width (px). Overrides the hardcoded fallback. */
+  leftSidebarContentWidth?: number;
+  /** Exact right sidebar total width (px). Overrides the hardcoded fallback. */
+  rightSidebarWidth?: number;
 
   // IR hover line visualization (source-receiver pair)
   hoveredIRSourceReceiver?: { sourceId: string; receiverId: string } | null;
+
+  // Simulation-time positions (source of truth for IR hover line and mismatch coloring)
+  activeSimulationPositions?: {
+    sources: Record<string, [number, number, number]>;
+    receivers: Record<string, [number, number, number]>;
+  } | null;
 
   // Model file upload (for empty state)
   modelFile?: File | null;
@@ -161,6 +177,15 @@ interface SpeckleSceneProps {
   // Soundscape persistence (save to Speckle)
   onSaveSoundscape?: () => void;
   isSavingSoundscape?: boolean;
+
+  // FPS mode exit trigger: increment to programmatically exit first-person mode
+  exitFPSTrigger?: number;
+
+  // Callback when a receiver mesh is double-clicked in the scene
+  onReceiverDoubleClicked?: (receiverId: string) => void;
+
+  // Callback fired when FPS mode is exited (Escape or dblclick)
+  onFPSExited?: () => void;
 
   className?: string;
 }
@@ -187,6 +212,7 @@ export function SpeckleScene({
   onReceiverSelected,
   onReceiverModeChange,
   goToReceiverId,
+  gridListenerPoints = [],
   onUpdateSoundPosition,
   selectedDiverseEntities = [],
   entitiesWithLinkedSounds = new Set(),
@@ -204,12 +230,18 @@ export function SpeckleScene({
   onBoundsComputed,
   isLeftSidebarExpanded = true,
   isRightSidebarExpanded = true,
+  leftSidebarContentWidth,
+  rightSidebarWidth,
   hoveredIRSourceReceiver = null,
+  activeSimulationPositions = null,
   modelFile = null,
   onModelFileChange,
   onSpeckleModelSelect,
   onSaveSoundscape,
   isSavingSoundscape = false,
+  exitFPSTrigger,
+  onReceiverDoubleClicked,
+  onFPSExited,
   className,
 }: SpeckleSceneProps) {
   // Refs
@@ -222,6 +254,13 @@ export function SpeckleScene({
   
   // Area drawing store
   const areaDrawingCtx = useAreaDrawingStore();
+
+  // Grid listeners — needed for IR hover line position lookup
+  const gridListeners = useGridListenersStore((s) => s.gridListeners);
+
+  // Gradient map overlay
+  const activeGradientMap = useUIStore((s) => s.activeGradientMap);
+  const gradientMapManagerRef = useRef<GradientMapManager | null>(null);
 
   const coordinatorRef = useRef<SpeckleAudioCoordinator | null>(null);
   const playbackSchedulerRef = useRef<PlaybackSchedulerService | null>(null);
@@ -237,6 +276,7 @@ export function SpeckleScene({
   const individualSoundStates = useAudioControlsStore((s) => s.individualSoundStates);
   const soundVolumes         = useAudioControlsStore((s) => s.soundVolumes);
   const soundIntervals       = useAudioControlsStore((s) => s.soundIntervals);
+  const soundTrims           = useAudioControlsStore((s) => s.soundTrims);
   const mutedSounds          = useAudioControlsStore((s) => s.mutedSounds);
   const soloedSound          = useAudioControlsStore((s) => s.soloedSound);
   const isAnyPlaying         = useAudioControlsStore((s) =>
@@ -251,6 +291,10 @@ export function SpeckleScene({
   const [error, setError] = useState<string | null>(null);
   const [isViewerReady, setIsViewerReady] = useState(false);
   const [isFirstPersonMode, setIsFirstPersonMode] = useState(false);
+
+  // Mutable ref to check isFirstPersonMode inside effects without adding it to deps
+  const isFirstPersonModeRef = useRef(false);
+  useEffect(() => { isFirstPersonModeRef.current = isFirstPersonMode; }, [isFirstPersonMode]);
 
   // Timeline state
   const [timelineSounds, setTimelineSounds] = useState<TimelineSound[]>([]);
@@ -1049,6 +1093,8 @@ export function SpeckleScene({
       const promptIndex = parseInt(promptKey.split('_')[1]);
       if (!isNaN(promptIndex)) {
         console.log('[SpeckleScene] Sound sphere clicked, selecting card:', promptIndex);
+        // Clear sidebar-driven highlight so the scene-driven one takes over
+        setExpandedSoundCardIdx(null);
         // Skip the deselection effect — clearAllSelections sets selectedSpeckleObjectIds=[]
         // which would otherwise clear the selectedEntity we're about to set
         skipDeselectionRef.current = true;
@@ -1085,6 +1131,11 @@ export function SpeckleScene({
     // This syncs the 3D mesh position back to React state so simulations use updated positions
     if (onUpdateSoundPosition) {
       coordinatorRef.current.setOnSoundPositionUpdated(onUpdateSoundPosition);
+    }
+
+    // Set up callback for receiver mesh double-click (expand listener card + enter FPS mode)
+    if (onReceiverDoubleClicked) {
+      coordinatorRef.current.setOnReceiverDoubleClicked(onReceiverDoubleClicked);
     }
   }, [coordinatorRef.current, soundscapeData, onSelectSoundCard, isLinkingEntity, onEntityLinked, worldTree, getObjectLinkState, onUpdateReceiverPosition, onUpdateSoundPosition, applyFilterColors, receivers, setSelectedEntity]);
 
@@ -1171,13 +1222,41 @@ export function SpeckleScene({
 
     // Receivers carry their own positions (set by camera-based spiral placement in page.tsx)
     coordinatorRef.current.updateReceivers(receivers);
+
+    // If we're in FPS mode and the active receiver's position changed (e.g. the user
+    // edited an x/y/z coordinate in the Listeners card), teleport the camera to the
+    // new position while keeping the current look direction.
+    if (isFirstPersonModeRef.current) {
+      const activeId = coordinatorRef.current.getActiveReceiverId();
+      if (activeId) {
+        const rm = coordinatorRef.current.getReceiverManager();
+        const mesh = rm?.getReceiverMeshes().find((m) => m.userData.receiverId === activeId);
+        if (mesh) {
+          coordinatorRef.current.teleportFirstPerson(mesh.position.clone());
+        }
+      }
+    }
   }, [isViewerReady, receivers, soundscapeData]);
 
   // ============================================================================
+  // Effect - Update Grid Listener Points in Scene
+  // ============================================================================
+  useEffect(() => {
+    if (!isViewerReady || !coordinatorRef.current) return;
+    coordinatorRef.current.updateGridListeners(gridListenerPoints);
+  }, [isViewerReady, gridListenerPoints]);
+
+  // ============================================================================
   // Effect - Highlight Selected Sound Sphere
+  // ── Sidebar-driven sound card state ──────────────────────────────────────
+  const expandedSoundCardIndex  = useUIStore(s => s.expandedSoundCardIndex);
+  const zoomToSoundCardTrigger  = useUIStore(s => s.zoomToSoundCardTrigger);
+  const setExpandedSoundCardIdx = useUIStore(s => s.setExpandedSoundCardIndex);
+
   // ============================================================================
   // Note: Speckle object coloring (linked/diverse) is handled by the context's
   // FilteringExtension. This effect only handles sound sphere highlighting.
+  // Priority: sidebar-expanded card (expandedSoundCardIndex) > scene-selected card (selectedCardIndex)
   useEffect(() => {
     if (!isViewerReady || !soundscapeData || !coordinatorRef.current) {
       return;
@@ -1186,7 +1265,6 @@ export function SpeckleScene({
     const soundSphereManager = coordinatorRef.current.getSoundSphereManager();
     if (!soundSphereManager) return;
 
-    // Get all sphere meshes
     const sphereMeshes = soundSphereManager.getSoundSphereMeshes();
 
     // Reset all sphere colors to primary
@@ -1197,36 +1275,56 @@ export function SpeckleScene({
       }
     });
 
-    // If a card is selected, highlight the corresponding sound sphere (if not entity-linked)
-    if (selectedCardIndex !== null) {
-      // Find the sound for the selected card
+    // Sidebar expansion takes priority; fall back to scene-driven selection
+    const effectiveIndex = expandedSoundCardIndex ?? selectedCardIndex;
+
+    if (effectiveIndex !== null) {
       const selectedSound = soundscapeData.find((sound: any) => {
         const promptIdx = (sound as any).prompt_index ?? 0;
-        return promptIdx === selectedCardIndex;
+        return promptIdx === effectiveIndex;
       });
 
-      if (selectedSound) {
-        // Only highlight sphere if sound has no entity link
-        // (Entity-linked sounds are colored via FilteringExtension in the context)
-        if (selectedSound.entity_index === undefined || selectedSound.entity_index === null) {
-          const sphere = sphereMeshes.find(s => s.userData.soundEvent?.id === selectedSound.id);
-          if (sphere) {
-            const material = sphere.material as THREE.MeshStandardMaterial;
-            if (material.color) {
-              material.color.setHex(parseInt(UI_COLORS.PRIMARY_HOVER.replace('#', ''), 16));
-              material.needsUpdate = true;
-              console.log('[SpeckleScene] Highlighting sound sphere for card:', selectedCardIndex);
-            }
+      if (selectedSound && (selectedSound.entity_index === undefined || selectedSound.entity_index === null)) {
+        const sphere = sphereMeshes.find(s => s.userData.soundEvent?.id === selectedSound.id);
+        if (sphere) {
+          const material = sphere.material as THREE.MeshStandardMaterial;
+          if (material.color) {
+            material.color.setHex(parseInt(UI_COLORS.PRIMARY_HOVER.replace('#', ''), 16));
+            material.needsUpdate = true;
           }
         }
       }
     }
 
-    // Request render update to show changes immediately
     if (viewerRef.current) {
       viewerRef.current.requestRender();
     }
-  }, [isViewerReady, selectedCardIndex, soundscapeData, selectedVariants]);
+  }, [isViewerReady, selectedCardIndex, expandedSoundCardIndex, soundscapeData, selectedVariants]);
+
+  // ============================================================================
+  // Effect - Zoom to sound sphere when card is double-clicked in sidebar
+  // ============================================================================
+  useEffect(() => {
+    if (!zoomToSoundCardTrigger || !isViewerReady || !coordinatorRef.current || !soundscapeData) return;
+
+    const { index } = zoomToSoundCardTrigger;
+    const sound = soundscapeData.find((s: any) => ((s as any).prompt_index ?? 0) === index);
+    if (!sound) return;
+
+    const soundSphereManager = coordinatorRef.current.getSoundSphereManager();
+    if (!soundSphereManager) return;
+
+    const storedPos = soundSphereManager.getSpherePosition(sound.id);
+    const position = storedPos
+      ? new THREE.Vector3(...storedPos)
+      : sound.position
+        ? new THREE.Vector3(...(sound.position as [number, number, number]))
+        : null;
+
+    if (position) {
+      coordinatorRef.current.zoomToPosition(position);
+    }
+  }, [zoomToSoundCardTrigger, isViewerReady, soundscapeData]);
 
   // ============================================================================
   // NOTE: Diverse selection is managed by SpeckleSelectionModeContext
@@ -1260,7 +1358,7 @@ export function SpeckleScene({
 
         if (soundMetadata && soundMetadata.size > 0) {
           const duration = calculateTimelineDurationFromData(soundMetadata, soundIntervals);
-          const sounds = extractTimelineSoundsFromData(soundMetadata, soundIntervals, duration, soundscapeData ?? undefined);
+          const sounds = extractTimelineSoundsFromData(soundMetadata, soundIntervals, duration, soundscapeData ?? undefined, soundTrims);
 
           setTimelineSounds(sounds);
           setTimelineDuration(duration);
@@ -1279,7 +1377,7 @@ export function SpeckleScene({
     // equals the old one (Object.is), so setSoundMetadataReady(false/true) with
     // the same value never triggers an extra run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [soundscapeData, selectedVariants, soundIntervals, soundMetadataReady]);
+  }, [soundscapeData, selectedVariants, soundIntervals, soundTrims, soundMetadataReady]);
 
   // ============================================================================
   // Effect - Poll for Sound Metadata Readiness
@@ -1328,13 +1426,13 @@ export function SpeckleScene({
     const soundMetadata = soundSphereManager.getAllAudioSources();
     if (soundMetadata && soundMetadata.size > 0) {
       const duration = calculateTimelineDurationFromData(soundMetadata, soundIntervals);
-      const sounds = extractTimelineSoundsFromData(soundMetadata, soundIntervals, duration, soundscapeData ?? undefined);
+      const sounds = extractTimelineSoundsFromData(soundMetadata, soundIntervals, duration, soundscapeData ?? undefined, soundTrims);
 
       setTimelineSounds(sounds);
       setTimelineDuration(duration);
       console.log('[SpeckleScene] 🔄 Timeline refreshed:', sounds.length, 'sounds, duration:', duration);
     }
-  }, [soundIntervals, soundscapeData]);
+  }, [soundIntervals, soundTrims, soundscapeData]);
 
   // ============================================================================
   // Callback - Download Soundscape as WAV
@@ -2561,6 +2659,7 @@ export function SpeckleScene({
         case 'Escape':
           coordinatorRef.current.disableFirstPersonMode();
           setIsFirstPersonMode(false);
+          onFPSExited?.();
           event.preventDefault();
           break;
       }
@@ -2572,6 +2671,39 @@ export function SpeckleScene({
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
+
+  // ============================================================================
+  // Effect - Programmatic FPS exit (via exitFPSTrigger prop increment)
+  // ============================================================================
+  useEffect(() => {
+    if (exitFPSTrigger == null || exitFPSTrigger === 0) return;
+    if (!coordinatorRef.current) return;
+    coordinatorRef.current.disableFirstPersonMode();
+    setIsFirstPersonMode(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exitFPSTrigger]);
+
+  // ============================================================================
+  // Effect - Capture-phase dblclick listener: exit FPS on double-click
+  // ============================================================================
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleDblClickCapture = (e: MouseEvent) => {
+      if (!isFirstPersonMode) return;
+      // Exit FPS mode when user double-clicks anything while in first-person view
+      coordinatorRef.current?.disableFirstPersonMode();
+      setIsFirstPersonMode(false);
+      onFPSExited?.();
+      e.stopPropagation();
+    };
+
+    container.addEventListener('dblclick', handleDblClickCapture, true);
+    return () => {
+      container.removeEventListener('dblclick', handleDblClickCapture, true);
+    };
+  }, [isFirstPersonMode]);
 
   // ============================================================================
   // Effect - Sync Timeline Playback with Individual Sounds
@@ -2720,12 +2852,32 @@ export function SpeckleScene({
     const receiverManager = coordinatorRef.current.getReceiverManager();
     if (!soundSphereManager || !receiverManager) return;
 
-    const sourceMetadata = soundSphereManager.getAudioSource(sourceId);
-    const receiverPos = receivers.find(r => r.id === receiverId)?.position;
+    // Prefer simulation-time positions (source of truth per card) over current manager positions
+    const spherePos: [number, number, number] | undefined =
+      activeSimulationPositions?.sources[sourceId]
+      ?? soundSphereManager.getSpherePosition(sourceId)
+      ?? soundscapeData?.find(s => s.id === sourceId)?.position as [number, number, number] | undefined;
+    let receiverPos: [number, number, number] | undefined =
+      activeSimulationPositions?.receivers[receiverId]
+      ?? receivers.find((r) => r.id === receiverId)?.position;
 
-    if (!sourceMetadata || !receiverPos) return;
+    // Fall back to grid listener points (IDs: `{gridId}-{pointIndex}`) when no sim position covers it
+    if (!receiverPos) {
+      outer: for (const g of gridListeners) {
+        const prefix = `${g.id}-`;
+        if (receiverId.startsWith(prefix)) {
+          const idx = parseInt(receiverId.slice(prefix.length), 10);
+          if (!isNaN(idx) && g.points[idx]) {
+            receiverPos = g.points[idx];
+            break outer;
+          }
+        }
+      }
+    }
 
-    const srcPos = sourceMetadata.position;
+    if (!spherePos || !receiverPos) return;
+
+    const srcPos = { x: spherePos[0], y: spherePos[1], z: spherePos[2] };
     const points = [
       new THREE.Vector3(srcPos.x, srcPos.y, srcPos.z),
       new THREE.Vector3(receiverPos[0], receiverPos[1], receiverPos[2]),
@@ -2764,7 +2916,97 @@ export function SpeckleScene({
         viewerRef.current?.requestRender();
       }
     };
-  }, [hoveredIRSourceReceiver, receivers]);
+  }, [hoveredIRSourceReceiver, receivers, gridListeners, soundscapeData, activeSimulationPositions]);
+
+  // ============================================================================
+  // Simulation Position Mismatch Coloring
+  // Color sound spheres and receiver cubes light-red when they have moved more
+  // than SIMULATION_POSITION_THRESHOLD from their simulation-time positions.
+  // Only active when activeSimulationPositions is non-null (expanded completed card).
+  // ============================================================================
+  useEffect(() => {
+    if (!isViewerReady || !coordinatorRef.current) return;
+
+    const soundSphereManager = coordinatorRef.current.getSoundSphereManager();
+    const receiverManager = coordinatorRef.current.getReceiverManager();
+
+    if (!activeSimulationPositions) {
+      // No active simulation card expanded — restore default colors
+      soundSphereManager?.getSoundSphereMeshes().forEach(mesh => {
+        const mat = mesh.material as THREE.MeshStandardMaterial;
+        if (mat.color) mat.color.setHex(UI_COLORS.PRIMARY_HEX);
+        mat.needsUpdate = true;
+      });
+      receiverManager?.getReceiverMeshes().forEach(mesh => {
+        const mat = mesh.material as THREE.MeshStandardMaterial;
+        if (mat.color) mat.color.setHex(RECEIVER_CONFIG.COLOR);
+        if (mat.emissive) mat.emissive.setHex(RECEIVER_CONFIG.COLOR);
+        mat.needsUpdate = true;
+      });
+      viewerRef.current?.requestRender();
+      return;
+    }
+
+    // Color sphere meshes
+    soundSphereManager?.getSoundSphereMeshes().forEach(mesh => {
+      const soundId: string | undefined = mesh.userData.soundEvent?.id;
+      if (!soundId) return;
+      const simPos = activeSimulationPositions.sources[soundId];
+      if (!simPos) return;
+      const p = mesh.position;
+      const dist = Math.hypot(simPos[0] - p.x, simPos[1] - p.y, simPos[2] - p.z);
+      const mat = mesh.material as THREE.MeshStandardMaterial;
+      if (dist > SIMULATION_POSITION_THRESHOLD) {
+        mat.color.setHex(SIMULATION_MISMATCH_COLOR_HEX);
+      } else {
+        mat.color.setHex(UI_COLORS.PRIMARY_HEX);
+      }
+      mat.needsUpdate = true;
+    });
+
+    // Color receiver cube meshes
+    receiverManager?.getReceiverMeshes().forEach(mesh => {
+      const receiverId: string | undefined = mesh.userData.receiverId;
+      if (!receiverId) return;
+      const simPos = activeSimulationPositions.receivers[receiverId];
+      if (!simPos) return;
+      const p = mesh.position;
+      const dist = Math.hypot(simPos[0] - p.x, simPos[1] - p.y, simPos[2] - p.z);
+      const mat = mesh.material as THREE.MeshStandardMaterial;
+      if (dist > SIMULATION_POSITION_THRESHOLD) {
+        mat.color.setHex(SIMULATION_MISMATCH_COLOR_HEX);
+        mat.emissive.setHex(SIMULATION_MISMATCH_COLOR_HEX);
+      } else {
+        mat.color.setHex(RECEIVER_CONFIG.COLOR);
+        mat.emissive.setHex(RECEIVER_CONFIG.COLOR);
+      }
+      mat.needsUpdate = true;
+    });
+
+    viewerRef.current?.requestRender();
+  }, [isViewerReady, activeSimulationPositions, soundscapeData, receivers]);
+
+  // ── Gradient map overlay ──────────────────────────────────────────────────
+  useEffect(() => {
+    const scene = viewerRef.current?.getRenderer().scene as THREE.Scene | undefined;
+    if (!scene || !isViewerReady) return;
+
+    if (!gradientMapManagerRef.current) {
+      gradientMapManagerRef.current = new GradientMapManager(scene);
+    }
+
+    if (activeGradientMap) {
+      gradientMapManagerRef.current.update(activeGradientMap);
+    } else {
+      gradientMapManagerRef.current.clear();
+    }
+    viewerRef.current?.requestRender();
+
+    return () => {
+      gradientMapManagerRef.current?.clear();
+      viewerRef.current?.requestRender();
+    };
+  }, [activeGradientMap, isViewerReady]);
 
   // ============================================================================
   // Render
@@ -2786,9 +3028,14 @@ export function SpeckleScene({
         <div
           className="absolute top-4 z-20 pointer-events-auto transition-all duration-300 flex flex-col items-end gap-1"
           style={{
-            right: isRightSidebarExpanded ? `${UI_RIGHT_SIDEBAR.WIDTH + 20}px` : '20px'
+            right: isRightSidebarExpanded ? `${(rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH) + 20}px` : '20px'
           }}
         >
+        <div className="flex items-center gap-2">
+          <div className="flex items-center">
+            <UndoRedoToolbar />
+          </div>
+
           <div
             className="flex items-center rounded-md overflow-hidden"
             style={{
@@ -2798,7 +3045,7 @@ export function SpeckleScene({
             role="radiogroup"
             aria-label="View mode"
           >
-            {([ 
+            {([
               { mode: 'acoustic', label: 'Acoustic', title: 'Acoustic mode: layer isolation + material colors' },
               { mode: 'default', label: 'Default', title: 'Default mode: normal view' },
               { mode: 'dark', label: 'Dark', title: 'Dark mode: sound source lighting' },
@@ -2815,7 +3062,9 @@ export function SpeckleScene({
                   className="px-2.5 py-1 text-[10px] font-medium transition-colors"
                   style={{
                     backgroundColor: isActive
-                      ? (mode === 'dark' ? 'rgba(0,212,255,0.18)' : 'rgba(0,212,255,0.13)')
+                      ? mode === 'dark'
+                        ? 'rgba(0,212,255,0.18)'
+                        : 'rgba(0,212,255,0.13)'
                       : 'transparent',
                     color: isActive ? accentColor : 'rgba(255,255,255,0.55)',
                     borderRight: mode !== 'dark' ? '1px solid rgba(255,255,255,0.12)' : undefined,
@@ -2826,23 +3075,49 @@ export function SpeckleScene({
               );
             })}
           </div>
+        </div>
 
-          {/* Undo / Redo toolbar */}
-          <div
-            className="flex items-center rounded-md overflow-hidden"
-            style={{
-              backgroundColor: 'rgba(0,0,0,0.45)',
-              border: '1px solid rgba(255,255,255,0.15)',
-            }}
-          >
-            <UndoRedoToolbar />
-          </div>
         </div>
       )}
 
+      {/* First-person mode helper overlay — centered between sidebars like the timeline */}
+      {isFirstPersonMode && (() => {
+        const effectiveLeftContent = leftSidebarContentWidth ?? LEFT_SIDEBAR_CONTENT_WIDTH;
+        const effectiveRightWidth = rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH;
+        const leftW = UI_VERTICAL_TABS.WIDTH + (isLeftSidebarExpanded ? effectiveLeftContent : 0);
+        const rightW = isRightSidebarExpanded ? effectiveRightWidth : RIGHT_SIDEBAR_COLLAPSED_WIDTH;
+        const centerOffset = (leftW - rightW) / 2;
+        return (
+          <div
+            className="absolute top-4 pointer-events-none z-20 flex flex-col items-center gap-1 transition-all duration-300"
+            style={{
+              left: `calc(50% + ${centerOffset}px)`,
+              transform: 'translateX(-50%)',
+            }}
+          >
+            <div
+              className="px-4 py-2 rounded-xl text-xs font-medium text-white text-center"
+              style={{
+                backgroundColor: 'rgba(0,0,0,0.55)',
+                border: '1px solid rgba(255,255,255,0.15)',
+                backdropFilter: 'blur(6px)',
+              }}
+            >
+              <span className="opacity-90">First-person view · Use</span>{' '}
+              <kbd className="px-1.5 py-0.5 rounded font-mono text-[10px]" style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}>←</kbd>{' '}
+              <kbd className="px-1.5 py-0.5 rounded font-mono text-[10px]" style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}>→</kbd>{' '}
+              <kbd className="px-1.5 py-0.5 rounded font-mono text-[10px]" style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}>↑</kbd>{' '}
+              <kbd className="px-1.5 py-0.5 rounded font-mono text-[10px]" style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}>↓</kbd>{' '}
+              <span className="opacity-90">to look around · Press</span>{' '}
+              <kbd className="px-1.5 py-0.5 rounded font-mono text-[10px]" style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}>Esc</kbd>{' '}
+              <span className="opacity-90">to exit</span>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Loading overlay */}
-      {isLoading && (
-        <div
+      {isLoading && (        <div
           className="absolute inset-0 flex items-center justify-center pointer-events-none bg-white bg-opacity-50"
         >
           <div className="flex flex-col items-center gap-3">
@@ -2931,10 +3206,12 @@ export function SpeckleScene({
       {/* Audio Timeline - Bottom Center (dynamically centered between sidebars) */}
       {showTimeline && isViewerReady && timelineSounds.length > 0 && (() => {
         // Calculate sidebar widths for centering
-        const leftSidebarWidth = UI_VERTICAL_TABS.WIDTH + (isLeftSidebarExpanded ? LEFT_SIDEBAR_CONTENT_WIDTH : 0);
-        const rightSidebarWidth = isRightSidebarExpanded ? UI_RIGHT_SIDEBAR.WIDTH : RIGHT_SIDEBAR_COLLAPSED_WIDTH;
+        const effectiveLeftContent = leftSidebarContentWidth ?? LEFT_SIDEBAR_CONTENT_WIDTH;
+        const effectiveRightWidth = rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH;
+        const leftSidebarWidth = UI_VERTICAL_TABS.WIDTH + (isLeftSidebarExpanded ? effectiveLeftContent : 0);
+        const rightSidebarWidthCalc = isRightSidebarExpanded ? effectiveRightWidth : RIGHT_SIDEBAR_COLLAPSED_WIDTH;
         // Center offset: positive = shift right
-        const centerOffset = (leftSidebarWidth - rightSidebarWidth) / 2;
+        const centerOffset = (leftSidebarWidth - rightSidebarWidthCalc) / 2;
 
         return (
           <div
@@ -2971,6 +3248,8 @@ export function SpeckleScene({
         hasSounds={soundscapeData !== null && soundscapeData.length > 0}
         isLeftSidebarExpanded={isLeftSidebarExpanded}
         isRightSidebarExpanded={isRightSidebarExpanded}
+        leftSidebarContentWidth={leftSidebarContentWidth}
+        rightSidebarWidth={rightSidebarWidth}
       />
 
       {/* NOTE: Selected Object Info moved to RightSidebar EntityInfoPanel */}
@@ -2986,7 +3265,7 @@ export function SpeckleScene({
             gap: UI_SCENE_BUTTON.GAP,
             // When expanded: offset by full sidebar width + 24px margin
             // When collapsed: offset by collapsed width (40px) + 24px margin
-            right: isRightSidebarExpanded ? `${UI_RIGHT_SIDEBAR.WIDTH + 20}px` : '20px'
+            right: isRightSidebarExpanded ? `${(rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH) + 20}px` : '20px'
           }}
         >
           {/* Global Volume Control with Hover Slider */}

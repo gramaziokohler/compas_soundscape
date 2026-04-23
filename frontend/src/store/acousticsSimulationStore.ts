@@ -24,17 +24,25 @@ import type {
 } from '@/types/acoustics';
 import { CARD_TYPE_LABELS } from '@/types/card';
 import {
-  CHORAS_DEFAULT_C0,
-  CHORAS_DEFAULT_IR_LENGTH,
-  CHORAS_DEFAULT_LC,
-  CHORAS_DEFAULT_EDT,
-  CHORAS_DEFAULT_SIM_LEN_TYPE,
   PYROOMACOUSTICS_DEFAULT_MAX_ORDER,
   PYROOMACOUSTICS_DEFAULT_RAY_TRACING,
   PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION,
   PYROOMACOUSTICS_RAY_TRACING_N_RAYS,
   PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE,
   PYROOMACOUSTICS_DEFAULT_ENABLE_GRID,
+  CHORAS_DEFAULT_METHOD,
+  CHORAS_DE_DEFAULT_SIM_LEN_TYPE,
+  CHORAS_DE_DEFAULT_EDT,
+  CHORAS_DE_DEFAULT_IR_LENGTH,
+  CHORAS_DE_DEFAULT_C0,
+  CHORAS_DE_DEFAULT_LC,
+  CHORAS_DG_DEFAULT_FREQ_UPPER,
+  CHORAS_DG_DEFAULT_C0,
+  CHORAS_DG_DEFAULT_RHO0,
+  CHORAS_DG_DEFAULT_IR_LENGTH,
+  CHORAS_DG_DEFAULT_POLY_ORDER,
+  CHORAS_DG_DEFAULT_PPW,
+  CHORAS_DG_DEFAULT_CFL,
 } from '@/utils/constants';
 
 // ─── Partialize ───────────────────────────────────────────────────────────────
@@ -42,8 +50,10 @@ import {
 export const acousticsSimulationPartialize = (state: AcousticsSimulationStoreState) => ({
   simulationConfigs: state.simulationConfigs.map((c) => ({
     ...c,
-    // Never restore a "running" state after undo
+    // Never restore a "running" state or in-flight simulation ID after undo
     isRunning: false,
+    progress: 0,
+    currentSimulationRunId: null,
   })),
   activeSimulationIndex: state.activeSimulationIndex,
   roomScale: state.roomScale,
@@ -114,20 +124,25 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
                 createdAt: timestamp,
                 simulationInstanceId: `choras_${timestamp}`,
                 settings: {
-                  de_c0: CHORAS_DEFAULT_C0,
-                  de_ir_length: CHORAS_DEFAULT_IR_LENGTH,
-                  de_lc: CHORAS_DEFAULT_LC,
-                  edt: CHORAS_DEFAULT_EDT,
-                  sim_len_type: CHORAS_DEFAULT_SIM_LEN_TYPE as 'ir_length' | 'edt',
-                  selectedMaterialId: null,
+                  simulation_method: CHORAS_DEFAULT_METHOD as 'DE' | 'DG',
+                  de_sim_len_type: CHORAS_DE_DEFAULT_SIM_LEN_TYPE as 'ir_length' | 'edt',
+                  de_edt: CHORAS_DE_DEFAULT_EDT,
+                  de_ir_length: CHORAS_DE_DEFAULT_IR_LENGTH,
+                  de_c0: CHORAS_DE_DEFAULT_C0,
+                  de_lc: CHORAS_DE_DEFAULT_LC,
+                  dg_freq_upper_limit: CHORAS_DG_DEFAULT_FREQ_UPPER,
+                  dg_c0: CHORAS_DG_DEFAULT_C0,
+                  dg_rho0: CHORAS_DG_DEFAULT_RHO0,
+                  dg_ir_length: CHORAS_DG_DEFAULT_IR_LENGTH,
+                  dg_poly_order: CHORAS_DG_DEFAULT_POLY_ORDER,
+                  dg_ppw: CHORAS_DG_DEFAULT_PPW,
+                  dg_cfl: CHORAS_DG_DEFAULT_CFL,
                 },
                 faceToMaterialMap: new Map(),
                 isRunning: false,
                 progress: 0,
                 status: 'Idle',
                 error: null,
-                currentSimulationId: null,
-                currentSimulationRunId: null,
                 simulationResults: null,
               } as ChorasSimulationConfig;
               break;
@@ -156,6 +171,7 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
                 simulationResults: null,
               } as PyroomAcousticsSimulationConfig;
               break;
+
           }
 
           const newIndex = simulationConfigs.length;

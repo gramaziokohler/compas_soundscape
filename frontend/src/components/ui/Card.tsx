@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, type ReactNode } from 'react';
+import { useCallback, useRef, type ReactNode } from 'react';
 import type { CardProps, CardBaseConfig } from '@/types/card';
 import { CARD_TYPE_LABELS } from '@/types/card';
 import { CARD_COLOR_DEFAULT } from '@/utils/constants';
@@ -86,6 +86,7 @@ export function Card<TConfig extends CardBaseConfig>({
   color = CARD_COLOR_DEFAULT,
   defaultName,
   collapsedInfo,
+  version,
   showIndex = true,
   canRemove = true,
   closeButtonTitle = 'Remove',
@@ -103,6 +104,7 @@ export function Card<TConfig extends CardBaseConfig>({
   onRemove,
   onReset,
   onDismissError,
+  onDoubleClickCard,
   beforeContent,
   afterContent,
   loadingContent,
@@ -143,7 +145,7 @@ export function Card<TConfig extends CardBaseConfig>({
     'rounded-lg border-0 transition-all duration-200',
     // isExpanded ? `p-2 bg-${color}-light border-0` : hasResult ? `p-1.5 bg-${color}-light` : 'p-1.5 bg-secondary-lighter',
     isExpanded && hasResult ? `p-2 bg-secondary` : '',
-    isExpanded && !hasResult ? `p-2 bg-${color}-light border-0` : '',
+    isExpanded && !hasResult ? 'p-2 border-0' : '',
     !isExpanded && hasResult ? `p-2 bg-secondary` : '',
     !isExpanded && !hasResult ? `p-2 bg-secondary-lighter` : '',        
 
@@ -151,14 +153,35 @@ export function Card<TConfig extends CardBaseConfig>({
   ].filter(Boolean).join(' ');
 
   const titleClassName = [
-    `flex-1 text-left text-xs font-sans font-medium cursor-pointer transition-opacity group text-secondary`,
+    `flex-1 text-left text-xs font-sans font-medium transition-opacity group text-secondary`,
     hasResult ? 'text-white' : 'text-foreground',
   ].filter(Boolean).join(' ');
 
+  // Tracks the expansion state captured at the first click of a potential double-click sequence,
+  // so we can restore the original state when the second click fires.
+  const stateAtFirstClickRef = useRef<boolean | null>(null);
+
   // Button handlers
-  const handleToggleClick = useCallback(() => {
-    onToggleExpand(index);
-  }, [index, onToggleExpand]);
+  // Single click (e.detail=1): toggle expand/collapse.
+  // Double click (e.detail≥2, only when onDoubleClickCard is provided): zoom to sphere.
+  //   Click 1 already toggled the card; on click 2 we restore the card to its
+  //   pre-double-click state so double-click always ends with the card expanded.
+  const handleToggleClick = useCallback((e: React.MouseEvent) => {
+    if (e.detail >= 2 && onDoubleClickCard) {
+      if (stateAtFirstClickRef.current === true) {
+        // Card was expanded; click 1 collapsed it → re-expand to restore
+        onToggleExpand(index);
+      }
+      // If card was collapsed, click 1 expanded it → already expanded → no toggle needed
+      onDoubleClickCard(index);
+      stateAtFirstClickRef.current = null;
+    } else {
+      if (onDoubleClickCard) {
+        stateAtFirstClickRef.current = isExpanded; // capture before the toggle
+      }
+      onToggleExpand(index);
+    }
+  }, [index, isExpanded, onToggleExpand, onDoubleClickCard]);
 
   const handleRemoveClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -169,6 +192,15 @@ export function Card<TConfig extends CardBaseConfig>({
     e.stopPropagation();
     onReset(index);
   }, [index, onReset]);
+
+  // Double-click on the card body (outside the header) → zoom to sphere.
+  // Skips interactive elements (buttons, inputs, sliders, links) so content UI still works.
+  const handleCardDoubleClick = useCallback((e: React.MouseEvent) => {
+    if (!onDoubleClickCard) return;
+    const target = e.target as HTMLElement;
+    if (target.closest('button, input, select, textarea, a')) return;
+    onDoubleClickCard(index);
+  }, [index, onDoubleClickCard]);
 
   // Render content based on state
   // Note: Error display is handled at the Card level (shown before content)
@@ -192,41 +224,66 @@ export function Card<TConfig extends CardBaseConfig>({
   return (
     <div
       className={cardClassName}
+      onDoubleClick={handleCardDoubleClick}
       style={{
         ...cardColorStyle,
-        ...(isExpanded && !hasResult && !error ? { borderColor: `var(--color-${color})` } : {}),
+        ...(isExpanded && !hasResult && !error ? { borderColor: `var(--color-${color})`, backgroundColor: 'var(--card-color-light)' } : {}),
       }}
     >
-      {/* Header - Always visible */}
-      <div className="flex items-center justify-between gap-2">
-        {/* Title - editable on double-click */}
+      {/* Header - Click anywhere (except buttons) to expand/collapse.
+           Double-click to zoom — stops propagation so the outer card's onDoubleClick doesn't fire twice. */}
+      <div
+        className="flex items-center justify-between gap-2 cursor-pointer"
+        onClick={!isEditingName ? handleToggleClick : undefined}
+        onDoubleClick={e => e.stopPropagation()}
+        style={{ userSelect: 'none' }}
+      >
+        {/* Title / edit input */}
         {isEditingName ? (
           <input
             {...inputProps}
+            onClick={e => e.stopPropagation()}
             className="flex-1 text-xs font-medium px-2 py-1 rounded-lg border bg-background text-foreground outline-none focus:ring-1"
             style={{
               borderColor: 'var(--card-color)',
+              userSelect: 'text',
               // @ts-expect-error -- CSS custom property for focus ring
               '--tw-ring-color': 'var(--card-color)',
             }}
           />
         ) : (
           <div
-            onDoubleClick={startEdit}
-            onClick={handleToggleClick}
             className={`${titleClassName} min-w-0 overflow-hidden`}
             title={displayName}
           >
             <div className="truncate">
               {displayName}
-              <span className="text-[10px] ml-1 opacity-0 group-hover:opacity-50 transition-opacity">✏️</span>
             </div>
             {!isExpanded && collapsedInfo && (
               <div className="text-xs mt-0.5 text-secondary-hover">
                 {collapsedInfo}
               </div>
             )}
+            {isExpanded && hasResult && version && (
+              <div className="text-[9px] mt-0.5 text-secondary-hover font-mono opacity-60 leading-tight">
+                {Array.isArray(version)
+                  ? version.map((line, i) => <div key={i}>{line}</div>)
+                  : version}
+              </div>
+            )}
           </div>
+        )}
+
+        {/* Pen icon - always visible, click to edit name */}
+        {!isEditingName && (
+          <button
+            onClick={(e) => { e.stopPropagation(); startEdit(); }}
+            className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-secondary-hover opacity-40 hover:opacity-100 hover:bg-secondary-light hover:text-foreground transition-all cursor-pointer"
+            title="Click to edit name"
+            aria-label="Edit name"
+          >
+            <PenIcon />
+          </button>
         )}
 
         {/* Action buttons */}
@@ -397,5 +454,13 @@ function ResetIcon() {
 export function CloseIcon() {
   return (
     <span className="text-lg leading-none">×</span>
+  );
+}
+
+function PenIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H8v-2.414a2 2 0 01.586-1.414z" />
+    </svg>
   );
 }

@@ -38,6 +38,8 @@ import { useFileUploadStore } from './fileUploadStore';
 // ─── Module-level refs ────────────────────────────────────────────────────────
 
 let _abortController: AbortController | null = null;
+let _currentGenerationId: string | null = null;
+let _soundPollInterval: ReturnType<typeof setInterval> | null = null;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -90,6 +92,8 @@ export interface SoundscapeStoreState {
   activeSoundConfigTab: number;
   isSoundGenerating: boolean;
   soundGenError: string | null;
+  soundGenProgress: string;
+  soundGenProgressValue: number;
   generatedSounds: any[];
   soundscapeData: any[] | null;
   globalDuration: number;
@@ -130,6 +134,12 @@ export interface SoundscapeStoreState {
     events: any[],
     settings?: { negativePrompt?: string; audioModel?: string },
   ) => void;
+  injectExtractedSEDSounds: (sounds: Array<{
+    name: string;
+    spl_db?: number;
+    interval_seconds?: number;
+    variants: Array<{ url: string; duration: number }>;
+  }>) => void;
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -142,6 +152,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         activeSoundConfigTab: 0,
         isSoundGenerating: false,
         soundGenError: null,
+        soundGenProgress: '',
+        soundGenProgressValue: 0,
         generatedSounds: [],
         soundscapeData: null,
         globalDuration: DEFAULT_DURATION_SECONDS,
@@ -402,7 +414,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           }
 
           set(
-            { soundGenError: null, isSoundGenerating: true },
+            { soundGenError: null, isSoundGenerating: true, soundGenProgress: '', soundGenProgressValue: 0 },
             false,
             'soundscape/generateStart',
           );
@@ -411,7 +423,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           try {
             let generatedEvents: any[] = [];
 
-            // ── Backend generation ────────────────────────────────────────────
+            // ── Backend ML generation (async submit + poll) ───────────────────
             if (generationConfigs.length > 0) {
               const hasEntities = generationConfigs.some(({ config }) => config.entity);
               const configsWithNeg = generationConfigs.map(({ config }) => ({
@@ -419,25 +431,18 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 negative_prompt: globalNegativePrompt,
               }));
 
-              const response = await fetch(`${API_BASE_URL}/api/generate-sounds`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  sounds: configsWithNeg,
-                  bounding_box: hasEntities ? null : geometryBounds,
-                  apply_denoising: applyDenoising,
-                  audio_model: audioModel,
-                }),
-                signal: _abortController.signal,
+              // Submit and get generation_id
+              const { generation_id } = await apiService.generateSounds({
+                sounds: configsWithNeg,
+                bounding_box: hasEntities ? null : geometryBounds,
+                apply_denoising: applyDenoising,
+                audio_model: audioModel,
               });
+              _currentGenerationId = generation_id;
 
-              if (!response.ok) {
-                const err = await response.json();
-                throw new Error(err.detail);
-              }
-
-              const result = await response.json();
-              generatedEvents = result.sounds.map((sound: any) => {
+              // Map a raw backend sound object to a SoundEvent, resolving the
+              // actual prompt_index and entity position from generationConfigs.
+              const mapBackendSound = (sound: any) => {
                 const backendIndex = sound.prompt_index;
                 const actualIndex =
                   generationConfigs[backendIndex]?.originalIndex ?? backendIndex;
@@ -463,7 +468,58 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   geometry: sound.geometry || { vertices: [], faces: [] },
                   ...(entityIndex !== undefined && { entity_index: entityIndex }),
                 };
+              };
+
+              // Poll until done, streaming each completed sound into the UI immediately
+              const mlResult = await new Promise<any[]>((resolve, reject) => {
+                let lastPartialCount = 0;
+                _soundPollInterval = setInterval(async () => {
+                  try {
+                    const s = await apiService.getSoundGenerationStatus(generation_id);
+                    set(
+                      {
+                        soundGenProgress: s.status,
+                        soundGenProgressValue: s.progress,
+                      },
+                      false,
+                      'soundscape/generatePoll',
+                    );
+
+                    // Stream newly-completed sounds into the UI
+                    if (s.partial_sounds && s.partial_sounds.length > lastPartialCount) {
+                      const newPartials = s.partial_sounds.slice(lastPartialCount).map(mapBackendSound);
+                      lastPartialCount = s.partial_sounds.length;
+                      const { generatedSounds: current } = get();
+                      const newIds = new Set(newPartials.map((e: any) => e.id));
+                      const merged = [
+                        ...(current || []).filter((e: any) => !newIds.has(e.id)),
+                        ...newPartials,
+                      ];
+                      set({ generatedSounds: merged }, false, 'soundscape/partialSound');
+                    }
+
+                    if (s.cancelled) {
+                      clearInterval(_soundPollInterval!);
+                      _soundPollInterval = null;
+                      reject(new Error('AbortError'));
+                    } else if (s.error) {
+                      clearInterval(_soundPollInterval!);
+                      _soundPollInterval = null;
+                      reject(new Error(s.error));
+                    } else if (s.completed && s.result) {
+                      clearInterval(_soundPollInterval!);
+                      _soundPollInterval = null;
+                      resolve(s.result);
+                    }
+                  } catch (pollErr: any) {
+                    clearInterval(_soundPollInterval!);
+                    _soundPollInterval = null;
+                    reject(pollErr);
+                  }
+                }, 1500);
               });
+
+              generatedEvents = mlResult.map(mapBackendSound);
             }
 
             // ── Uploaded / sample audio ───────────────────────────────────────
@@ -597,7 +653,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               'soundscape/generateDone',
             );
           } catch (err: any) {
-            if (err.name === 'AbortError') {
+            if (err.name === 'AbortError' || err.message === 'AbortError') {
               const msg = 'Sound generation stopped by user.';
               set({ soundGenError: msg }, false, 'soundscape/generateAbort');
               useErrorsStore.getState().addError(msg, 'info');
@@ -607,18 +663,31 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               useErrorsStore.getState().addError(err.message, isQuota ? 'warning' : 'error');
             }
           } finally {
-            set({ isSoundGenerating: false }, false, 'soundscape/generateEnd');
+            set({ isSoundGenerating: false, soundGenProgress: '', soundGenProgressValue: 0 }, false, 'soundscape/generateEnd');
             _abortController = null;
+            _currentGenerationId = null;
+            if (_soundPollInterval) {
+              clearInterval(_soundPollInterval);
+              _soundPollInterval = null;
+            }
           }
         },
 
         handleStopGeneration: () => {
+          if (_soundPollInterval) {
+            clearInterval(_soundPollInterval);
+            _soundPollInterval = null;
+          }
           if (_abortController) {
             _abortController.abort();
             _abortController = null;
           }
+          if (_currentGenerationId) {
+            apiService.cancelSoundGeneration(_currentGenerationId);
+            _currentGenerationId = null;
+          }
           set(
-            { isSoundGenerating: false, soundGenError: 'Sound generation stopped by user.' },
+            { isSoundGenerating: false, soundGenError: 'Sound generation stopped by user.', soundGenProgress: '', soundGenProgressValue: 0 },
             false,
             'soundscape/stop',
           );
@@ -1047,6 +1116,53 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             },
             false,
             'soundscape/restore',
+          );
+        },
+
+        injectExtractedSEDSounds: (sounds) => {
+          const { soundConfigs, generatedSounds, soundscapeData, globalDuration, globalSteps } = get();
+          const startIndex = soundConfigs.length;
+
+          const newConfigs: SoundGenerationConfig[] = sounds.map((s) => ({
+            prompt: s.name,
+            duration: s.variants[0]?.duration ?? globalDuration,
+            guidance_scale: undefined,
+            negative_prompt: '',
+            seed_copies: 1,
+            steps: globalSteps,
+            type: 'upload' as import('@/types').CardType,
+            display_name: s.name,
+            spl_db: s.spl_db,
+            interval_seconds: s.interval_seconds,
+          }));
+
+          const newEvents: any[] = sounds.flatMap((s, si) => {
+            const promptIndex = startIndex + si;
+            return s.variants.map((v, vi) => ({
+              id: `sed-${promptIndex}-${vi}-${Date.now()}`,
+              url: v.url,
+              position: [0, 0, 0] as [number, number, number],
+              geometry: { vertices: [], faces: [] },
+              display_name: s.variants.length > 1 ? `${s.name}_${vi + 1}` : s.name,
+              prompt: s.name,
+              prompt_index: promptIndex,
+              total_copies: 1,
+              volume_db: s.spl_db ?? 70,
+              interval_seconds: s.interval_seconds ?? 30,
+              isUploaded: true,
+            }));
+          });
+
+          const existing = soundscapeData ? [...soundscapeData] : [...generatedSounds];
+          const allEvents = [...existing, ...newEvents];
+          set(
+            {
+              soundConfigs: [...soundConfigs, ...newConfigs],
+              generatedSounds: allEvents,
+              soundscapeData: allEvents.length > 0 ? allEvents : null,
+            },
+            false,
+            'soundscape/injectSEDSounds',
           );
         },
       }),

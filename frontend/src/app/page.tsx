@@ -21,7 +21,9 @@ import {
   useRoomMaterialsStore,
   useRightSidebarStore,
   useUIStore,
+  useGridListenersStore,
 } from "@/store";
+import * as THREE from "three";
 import { useAudioNormalization } from "@/hooks/useAudioNormalization";
 import { useAudioOrchestrator } from "@/hooks/useAudioOrchestrator";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
@@ -139,6 +141,7 @@ function HomeContent() {
   const roomMaterials = useRoomMaterialsStore();
 
   const receivers = useReceiversStore();
+  const gridListeners = useGridListenersStore();
 
   // Trigger AudioOrchestrator update when selected receiver changes (replaces onReceiverSelected callback)
   useEffect(() => {
@@ -177,6 +180,10 @@ function HomeContent() {
   const setRoomScale = useAcousticsSimulationStore((s) => s.setRoomScale);
   const { isExpanded: isRightSidebarExpanded } = useRightSidebarStore();
 
+  // Sidebar resize widths — kept in sync via callbacks from each sidebar
+  const [leftSidebarContentWidth, setLeftSidebarContentWidth] = useState<number | undefined>(undefined);
+  const [rightSidebarWidth, setRightSidebarWidth] = useState<number | undefined>(undefined);
+
   // Sync model bounding box → Resonance Audio room bounds
   useEffect(() => {
     if (!speckleBounds || !audioOrchestrator.orchestrator) return;
@@ -198,6 +205,18 @@ function HomeContent() {
   const handleIRHover = useCallback((sourceId: string | null, receiverId: string | null) => {
     setHoveredIRSourceReceiver(sourceId && receiverId ? { sourceId, receiverId } : null);
   }, [setHoveredIRSourceReceiver]);
+
+  // Simulation-time positions from the active (expanded) simulation card.
+  // Used by SpeckleScene as the source of truth for IR hover line and position mismatch.
+  const activeSimulationPositions = useMemo(() => {
+    const idx = acousticsSimulation.activeSimulationIndex;
+    if (idx === null) return null;
+    const cfg = acousticsSimulation.simulationConfigs[idx] as any;
+    return (cfg?.simulationPositions as {
+      sources: Record<string, [number, number, number]>;
+      receivers: Record<string, [number, number, number]>;
+    } | undefined) ?? null;
+  }, [acousticsSimulation.activeSimulationIndex, acousticsSimulation.simulationConfigs]);
 
   // Callback when Speckle viewer is loaded
   const handleSpeckleViewerLoaded = useCallback((viewer: import('@speckle/viewer').Viewer) => {
@@ -305,7 +324,7 @@ function HomeContent() {
   ]);
 
   // Stop timeline when switching between simulation tabs
-  // Skip stopping when both old and new simulations have IR mappings (hot-swap scenario)
+  // Skip stopping when both old and new simulations are completed (hot-swap or seamless switch)
   const prevActiveIndexRef = useRef<number | null>(acousticsSimulation.activeSimulationIndex);
 
   useEffect(() => {
@@ -321,14 +340,25 @@ function HomeContent() {
       if (prevMapping && currentMapping) {
         console.log(`[Page] Switching simulation tabs: ${prevIndex} → ${currentIndex}, hot-swapping IRs (no stop)`);
       } else {
-        console.log(`[Page] Switching simulation tabs: ${prevIndex} → ${currentIndex}, stopping timeline`);
-        useAudioControlsStore.getState().stopAll();
+        // Don't stop when switching between two completed simulations — the IR will update
+        // seamlessly via the auto-select IR effect. Only stop when turning off audio
+        // (currentIndex === null) or switching to/from a non-completed card.
+        const prevConfig = acousticsSimulation.simulationConfigs[prevIndex];
+        const currentConfig = currentIndex !== null ? acousticsSimulation.simulationConfigs[currentIndex] : null;
+        const bothCompleted = prevConfig?.state === 'completed' && currentConfig?.state === 'completed';
+
+        if (bothCompleted) {
+          console.log(`[Page] Switching simulation tabs: ${prevIndex} → ${currentIndex}, both completed - no stop`);
+        } else {
+          console.log(`[Page] Switching simulation tabs: ${prevIndex} → ${currentIndex}, stopping timeline`);
+          useAudioControlsStore.getState().stopAll();
+        }
       }
     }
 
     // Update ref for next comparison
     prevActiveIndexRef.current = currentIndex;
-  }, [acousticsSimulation.activeSimulationIndex, getSimIRMapping]);
+  }, [acousticsSimulation.activeSimulationIndex, acousticsSimulation.simulationConfigs, getSimIRMapping]);
   
   // Entity linking state
   const [isLinkingEntity, setIsLinkingEntity] = useState(false);
@@ -342,6 +372,18 @@ function HomeContent() {
 
   // Go to receiver state (triggers first-person view at specific receiver)
   const [goToReceiverId, setGoToReceiverId] = useState<string | null>(null);
+
+  // FPS mode programmatic exit trigger (increment to exit first-person mode)
+  const [exitFPSTrigger, setExitFPSTrigger] = useState(0);
+
+  // Forced expanded listener card (from scene mesh double-click)
+  const [forcedExpandedListenerId, setForcedExpandedListenerId] = useState<string | null>(null);
+
+  // Collapse all listener cards trigger (from FPS exit via Escape)
+  const [collapseListenerCardTrigger, setCollapseListenerCardTrigger] = useState(0);
+
+  // Expanded grid listener ID (controls which grid's points are rendered in 3D)
+  const [expandedGridListenerId, setExpandedGridListenerId] = useState<string | null>(null);
 
   // Detect model type from file extension and set model filename in context
   useEffect(() => {
@@ -1405,6 +1447,17 @@ function HomeContent() {
     audioOrchestrator.setReceiverMode(true, receiverId, true);
   }, [receivers.receivers, audioOrchestrator]);
 
+  // Handler: Receiver mesh double-clicked in 3D scene →
+  //   switch to Listeners tab, expand corresponding card, enter FPS mode
+  const handleReceiverDoubleClickedInScene = useCallback((receiverId: string) => {
+    textGen.setActiveAiTab('listeners');
+    setForcedExpandedListenerId(receiverId);
+    handleGoToReceiver(receiverId);
+    // Reset forcedExpandedListenerId after a tick so subsequent dblclicks on the same
+    // receiver still trigger the useEffect in ListenersSection
+    setTimeout(() => setForcedExpandedListenerId(null), 200);
+  }, [textGen, handleGoToReceiver]);
+
   /**
    * Add a receiver in front of the current camera.
    * When multiple receivers are added without moving the camera, they are placed
@@ -1466,6 +1519,51 @@ function HomeContent() {
     }
   }, [goToReceiverId]);
 
+  // Compute bounding box for a list of Speckle object IDs using batch render views
+  const computeBoundsForObjectIds = useCallback(
+    (objectIds: string[]): { min: [number, number, number]; max: [number, number, number] } | null => {
+      const viewer = viewerRef?.current;
+      if (!viewer || objectIds.length === 0) return null;
+      try {
+        const r = (viewer as any).getRenderer();
+        const bIds: string[] = (r as any).getBatchIds?.() ?? [];
+        const idSet = new Set(objectIds);
+        const unionBox = new THREE.Box3();
+        let hasBox = false;
+        for (const bid of bIds) {
+          const b = (r as any).getBatch?.(bid);
+          if (!b) continue;
+          for (const rv of (b.renderViews ?? [])) {
+            const objId: string | undefined = rv.renderData?.id;
+            if (!objId || !idSet.has(objId)) continue;
+            const aabb = rv.aabb as THREE.Box3 | undefined;
+            if (!aabb) continue;
+            unionBox.union(aabb);
+            hasBox = true;
+          }
+        }
+        if (!hasBox) return null;
+        return {
+          min: [unionBox.min.x, unionBox.min.y, unionBox.min.z],
+          max: [unionBox.max.x, unionBox.max.y, unionBox.max.z],
+        };
+      } catch (e) {
+        console.error('[computeBoundsForObjectIds]', e);
+        return null;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  // Visible grid listener points: only the currently expanded grid (if showListeners=true)
+  const visibleGridListenerPoints = useMemo<[number, number, number][]>(() => {
+    if (!expandedGridListenerId) return [];
+    const grid = gridListeners.gridListeners.find((g) => g.id === expandedGridListenerId);
+    if (!grid || !grid.showListeners || grid.points.length === 0) return [];
+    return grid.points;
+  }, [expandedGridListenerId, gridListeners.gridListeners]);
+
   // Sync receiver count with AudioOrchestrator when receivers are added/removed
   useEffect(() => {
     if (!audioOrchestrator.isInitialized || !audioOrchestrator.status) return;
@@ -1509,18 +1607,6 @@ function HomeContent() {
       <main className="absolute inset-0 z-0">
         {/* Viewer Toggle Button - Top Left */}
         <div className="absolute top-4 left-4 z-50">
-          {/* <button
-            onClick={() => setUseSpeckleViewer(!useSpeckleViewer)}
-            className="bg-gray-800/90 hover:bg-gray-700 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 transition-colors"
-            title={useSpeckleViewer ? "Switch to Three.js Viewer" : "Switch to Speckle Viewer"}
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            <span className="font-medium">
-              {useSpeckleViewer ? "Speckle" : "Three.js"}
-            </span>
-          </button> */}
         </div>
 
         {/* Toggle between Speckle Scene and Three.js Scene */}
@@ -1554,6 +1640,7 @@ function HomeContent() {
             onReceiverSelected={receivers.selectReceiver}
             onReceiverModeChange={handleReceiverModeChange}
             goToReceiverId={goToReceiverId}
+            gridListenerPoints={visibleGridListenerPoints}
             // Sound sphere position update (for simulation sync when dragging)
             onUpdateSoundPosition={soundGen.updateSoundPosition}
             // Sound Linking (entity linking from SoundCard to Speckle object)
@@ -1591,8 +1678,12 @@ function HomeContent() {
             // Sidebar states for control button and timeline positioning
             isLeftSidebarExpanded={isLeftSidebarExpanded}
             isRightSidebarExpanded={isRightSidebarExpanded}
+            leftSidebarContentWidth={leftSidebarContentWidth}
+            rightSidebarWidth={rightSidebarWidth}
             // IR hover line (source-receiver pair)
             hoveredIRSourceReceiver={hoveredIRSourceReceiver}
+            // Simulation-time positions (source of truth for IR hover line and mismatch coloring)
+            activeSimulationPositions={activeSimulationPositions}
             // Model file upload (for empty state in scene)
             modelFile={globalModelFile}
             onModelFileChange={handleRightSidebarModelUpload}
@@ -1601,6 +1692,12 @@ function HomeContent() {
             // Soundscape persistence
             onSaveSoundscape={handleSaveSoundscape}
             isSavingSoundscape={isSavingSoundscape}
+            // FPS mode programmatic exit
+            exitFPSTrigger={exitFPSTrigger}
+            // Receiver mesh double-click → expand listener card + enter FPS mode
+            onReceiverDoubleClicked={handleReceiverDoubleClickedInScene}
+            // FPS exit via Escape → collapse listener card
+            onFPSExited={() => setCollapseListenerCardTrigger(t => t + 1)}
             className="w-full h-full"
           />
         ) : (
@@ -1732,7 +1829,19 @@ function HomeContent() {
         onAddReceiver={handleAddReceiver}
         onDeleteReceiver={receivers.removeReceiver}
         onUpdateReceiverName={receivers.updateReceiverName}
+        onUpdateReceiverPosition={receivers.updateReceiverPosition}
         onGoToReceiver={handleGoToReceiver}
+        onToggleReceiverHiddenForSimulation={receivers.toggleReceiverHiddenForSimulation}
+        onExitFPS={() => setExitFPSTrigger(t => t + 1)}
+        forcedExpandedListenerId={forcedExpandedListenerId}
+        collapseListenerCardTrigger={collapseListenerCardTrigger}
+        // Grid listener props
+        gridListeners={gridListeners.gridListeners}
+        onAddGridListener={() => gridListeners.addGridListener()}
+        onDeleteGridListener={gridListeners.removeGridListener}
+        onComputeBounds={computeBoundsForObjectIds}
+        expandedGridListenerId={expandedGridListenerId}
+        onExpandedGridListenerChange={setExpandedGridListenerId}
 
         // ShoeBox Acoustics props
         resonanceAudioConfig={resonanceAudioConfig}
@@ -1795,6 +1904,7 @@ function HomeContent() {
         onResetAdvancedSettings={handleResetAdvancedSettings}
         // Sidebar expanded state callback
         onExpandedChange={setIsLeftSidebarExpanded}
+        onWidthChange={setLeftSidebarContentWidth}
       />
 
       {/* Right Sidebar - 3D Model Import / Object Explorer */}
@@ -1802,6 +1912,7 @@ function HomeContent() {
         isVisible={useSpeckleViewer}
         onGoToReceiver={handleGoToReceiver}
         generatedSounds={soundGen.generatedSounds}
+        onWidthChange={setRightSidebarWidth}
       />
     </div>
   );
