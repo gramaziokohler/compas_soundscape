@@ -3,6 +3,8 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { apiService } from '@/services/api';
 import { UI_COLORS } from '@/utils/constants';
+import { isAuthError } from '@/utils/authErrors';
+import { useTextGenerationStore } from '@/store/textGenerationStore';
 import type { SpeckleModelDetail, SpeckleProjectModelsResponse } from '@/types/speckle-models';
 
 // ============================================================================
@@ -398,15 +400,28 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
 
   // ── Error state ────────────────────────────────────────────────────────
   if (error) {
+    const isAuth = isAuthError(error);
     return (
-      <div className="w-full text-center py-3">
-        <p className="text-xs mb-2" style={{ color: UI_COLORS.ERROR }}>
-          {error}
-        </p>
+      <div className="w-full py-3 flex flex-col gap-2">
+        {isAuth ? (
+          <button
+            type="button"
+            onClick={() => useTextGenerationStore.getState().triggerOpenTokenSettings()}
+            className="self-start text-xs px-3 py-1 rounded transition-colors"
+            style={{
+              border: `1px solid ${UI_COLORS.NEUTRAL_300}`,
+              color: UI_COLORS.NEUTRAL_600,
+            }}
+          >
+            Configure API token in Advanced Settings →
+          </button>
+        ) : (
+          <p className="text-xs" style={{ color: UI_COLORS.ERROR }}>{error}</p>
+        )}
         <button
           type="button"
           onClick={fetchModels}
-          className="text-xs px-3 py-1 rounded transition-colors"
+          className="self-start text-xs px-3 py-1 rounded transition-colors"
           style={{
             border: `1px solid ${UI_COLORS.NEUTRAL_300}`,
             color: UI_COLORS.NEUTRAL_600,

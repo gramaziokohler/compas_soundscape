@@ -2,12 +2,11 @@
 
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
-import google.genai as genai
-
+from dotenv import load_dotenv, find_dotenv
 # Import services
 from services.llm_service import LLMService
 from services.audio_service import AudioService
@@ -15,10 +14,10 @@ from services.impulse_response_service import ImpulseResponseService
 # from services.modal_analysis_service import ModalAnalysisService
 
 # Import routers
-from routers import upload, generation, sounds, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, speckle, soundscape
+from routers import upload, generation, sounds, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, speckle, soundscape, tokens
 
 # Import utilities
-from utils.file_operations import cleanup_all_temp_directories
+from utils.file_operations import cleanup_all_temp_directories, ensure_all_temp_directories
 
 # Import constants
 from config.constants import (
@@ -34,15 +33,31 @@ from config.constants import (
 
 # --- Initialization ---
 
-# Load environment variables from the .env file
-load_dotenv()
+# Load environment variables — .env.local takes precedence over .env.
+# find_dotenv() searches upward from main.py's directory, so it finds files
+# at the repo root even when uvicorn is launched from a different CWD.
+_env_local = find_dotenv('.env.local', raise_error_if_not_found=False, usecwd=False)
+_env = find_dotenv('.env', raise_error_if_not_found=False, usecwd=False)
+if _env_local:
+    load_dotenv(_env_local, override=True)   # admin overrides (not shipped to users)
+if _env:
+    load_dotenv(_env)
+print(f"[env] .env.local: {_env_local or 'not found'}")
+print(f"[env] .env:       {_env or 'not found'}")
 
-# Configure the Google AI client with the API key from the environment
+# Configure the Google AI client — optional; user can supply the key at runtime
+from services.llm_service import GOOGLE_GENAI_AVAILABLE
+
 api_key = os.getenv("GOOGLE_API_KEY")
-
-client = genai.Client()
-if not client:
-    print("Warning: GOOGLE_API_KEY environment variable not set.")
+if GOOGLE_GENAI_AVAILABLE and api_key:
+    import google.genai as genai
+    client = genai.Client()
+elif not GOOGLE_GENAI_AVAILABLE:
+    client = None
+    print("Warning: google-genai package not installed — Gemini LLM disabled.")
+else:
+    client = None
+    print("Warning: GOOGLE_API_KEY not set — Gemini LLM disabled until configured in Advanced Settings.")
 
 # Initialize services
 llm_service = LLMService(client)
@@ -58,6 +73,9 @@ impulse_responses.init_impulse_response_router(ir_service)
 sed_extract.init_sed_extract_router(audio_service)
 # modal_analysis.init_modal_analysis_router(modal_service)
 
+# --- Ensure all directories exist before mounting static files ---
+ensure_all_temp_directories()
+
 
 # --- Application Lifespan ---
 @asynccontextmanager
@@ -66,9 +84,10 @@ async def lifespan(app: FastAPI):
     Application lifespan context manager.
     Handles startup and shutdown events.
     """
-    # Startup: Clean up all temporary directories
+    # Startup: clean temp files/empty dirs, then recreate required dirs
     print("Starting up: Cleaning temporary directories...")
     cleanup_all_temp_directories()
+    ensure_all_temp_directories()
     print("Startup complete.")
     
     yield
@@ -91,8 +110,6 @@ app.mount(
 )
 
 # Mount simulations directory for Choras/Pyroomacoustics results
-from pathlib import Path
-Path(TEMP_SIMULATIONS_DIR).mkdir(parents=True, exist_ok=True)
 app.mount(
     "/static/temp",
     StaticFiles(directory=TEMP_SIMULATIONS_DIR),
@@ -100,7 +117,6 @@ app.mount(
 )
 
 # Mount soundscapes directory (persistent, outside temp/)
-Path(SOUNDSCAPE_DATA_DIR).mkdir(parents=True, exist_ok=True)
 app.mount(
     SOUNDSCAPE_DATA_URL_PREFIX,
     StaticFiles(directory=SOUNDSCAPE_DATA_DIR),
@@ -108,7 +124,6 @@ app.mount(
 )
 
 # Mount Choras RIR output directory
-Path(CHORAS_RIR_DIR).mkdir(parents=True, exist_ok=True)
 app.mount(
     "/static/choras_rir",
     StaticFiles(directory=CHORAS_RIR_DIR),
@@ -142,6 +157,7 @@ app.include_router(choras.router)
 app.include_router(pyroomacoustics.router)
 app.include_router(speckle.router)
 app.include_router(soundscape.router)
+app.include_router(tokens.router)
 
 
 @app.get("/")
@@ -150,7 +166,7 @@ def read_root():
 
 
 @app.get("/api/versions")
-def get_service_versions():
+def get_service_versions(llm_model: str = None):
     """Return name and version of every backend service library."""
     from services.pyroomacoustics_service import PyroomacousticsService
     from services.audio_service import AudioService
@@ -165,7 +181,7 @@ def get_service_versions():
         "tangoflux": AudioService.get_service_version_info(),
         "audioldm2": AudioLDM2Service.get_service_version_info(),
         "bbc": bbc_version_info(),
-        "gemini": LLMService.get_service_version_info(),
+        "llm_providers": LLMService.get_service_version_info(),
         "yamnet": SEDService.get_service_version_info(),
         "acousticDE": ChorasService.get_de_version_info(),
         "edg_acoustics": ChorasService.get_dg_version_info(),

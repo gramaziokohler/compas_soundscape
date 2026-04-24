@@ -1,6 +1,7 @@
 # backend/routers/speckle.py
 # Speckle Project & Model Browsing Endpoints
 
+import os
 import logging
 from fastapi import APIRouter, HTTPException
 
@@ -19,7 +20,16 @@ def _ensure_authenticated() -> None:
     """Authenticate and initialise the Speckle project if not already done."""
     if not speckle_service.client:
         if not speckle_service.authenticate():
-            raise HTTPException(status_code=503, detail="Failed to authenticate with Speckle")
+            token_set = bool(os.environ.get("SPECKLE_TOKEN"))
+            if not token_set:
+                raise HTTPException(
+                    status_code=503,
+                    detail="SPECKLE_TOKEN is not configured. Get a token at app.speckle.systems and add it in Advanced Settings."
+                )
+            raise HTTPException(
+                status_code=503,
+                detail="Failed to authenticate with Speckle. Your token may be invalid or expired — update it in Advanced Settings."
+            )
         speckle_service.get_or_create_project()
 
     if not speckle_service.project_id:

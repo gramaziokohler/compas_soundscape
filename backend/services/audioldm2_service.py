@@ -38,7 +38,7 @@ class AudioLDM2Service:
         return {"name": "diffusers (AudioLDM2)", "version": version}
 
     def __init__(self):
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.device = 'cuda' if torch.cuda.is_available() else 'mps' if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available() else 'cpu'
         print(f"AudioLDM2Service using device: {self.device}")
         self.model = None
 
@@ -46,9 +46,11 @@ class AudioLDM2Service:
         """Lazy initialization of the AudioLDM2 model"""
         if self.model is None:
             print(f"Loading AudioLDM2 model: {AUDIOLDM2_MODEL_NAME}")
+            # Use float16 for CUDA and MPS if available, otherwise float32
+            use_half = self.device in ['cuda', 'mps']
             self.model = AudioLDM2Pipeline.from_pretrained(
                 AUDIOLDM2_MODEL_NAME,
-                torch_dtype=torch.float16 if self.device == 'cuda' else torch.float32
+                torch_dtype=torch.float16 if use_half else torch.float32
             )
             self.model = self.model.to(self.device)
             print("AudioLDM2 model loaded successfully")

@@ -30,14 +30,26 @@ export interface ElevenLabsGenerateOptions {
 // ─── Client (lazy-initialised so the module loads even without a key) ─────────
 
 let _client: ElevenLabsClient | null = null;
+let _runtimeApiKey: string | null = null;
+
+/** Override API key at runtime (no restart required). */
+export function setElevenLabsApiKey(key: string): void {
+  _runtimeApiKey = key.trim() || null;
+  _client = null; // force re-init on next use
+}
+
+/** True if a key is available (env var or runtime override). */
+export function isElevenLabsKeySet(): boolean {
+  return !!(_runtimeApiKey || process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY);
+}
 
 function getClient(): ElevenLabsClient {
   if (!_client) {
-    const apiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
+    const apiKey = _runtimeApiKey || process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
     if (!apiKey) {
       throw new Error(
-        "ElevenLabs: NEXT_PUBLIC_ELEVENLABS_API_KEY is not set. " +
-          "Add it to frontend/.env.local to enable ElevenLabs generation."
+        "ElevenLabs: API key not set. " +
+          "Add it in Advanced Settings → API Tokens, or set NEXT_PUBLIC_ELEVENLABS_API_KEY in frontend/.env.local."
       );
     }
     _client = new ElevenLabsClient({ apiKey });

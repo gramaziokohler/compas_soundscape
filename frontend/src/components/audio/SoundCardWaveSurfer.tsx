@@ -370,7 +370,7 @@ export function SoundCardWaveSurfer({
   const isTrimActive = localTrimStart > 0 || localTrimEnd < 1;
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 min-w-0 overflow-hidden">
       {/* Waveform container */}
       <div
         className="rounded overflow-hidden"

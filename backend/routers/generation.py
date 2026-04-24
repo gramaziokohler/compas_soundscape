@@ -12,6 +12,7 @@ POST /api/cancel-text-generation/{generation_id}
 """
 from __future__ import annotations
 
+import os
 import traceback
 import uuid
 from pathlib import Path
@@ -34,6 +35,7 @@ from config.constants import (
     DEFAULT_DURATION_SECONDS,
     LLM_TASK_CLEANUP_DELAY_SECONDS,
     TEMP_SIMULATIONS_DIR,
+    DEFAULT_LLM_MODEL,
 )
 
 router = APIRouter()
@@ -53,6 +55,7 @@ def init_generation_router(service: LLMService):
 class EntitySelectionRequest(BaseModel):
     entities: list[dict]
     max_sounds: int
+    llm_model: str = DEFAULT_LLM_MODEL
 
 
 @router.post("/api/select-entities")
@@ -61,7 +64,7 @@ async def select_entities(request: EntitySelectionRequest):
         if not request.entities:
             raise HTTPException(status_code=400, detail="No entities provided")
         selected_entities = llm_service.select_diverse_entities(
-            request.entities, request.max_sounds
+            request.entities, request.max_sounds, llm_model=request.llm_model
         )
         return {"selected_entities": selected_entities, "count": len(selected_entities)}
     except HTTPException:
@@ -81,10 +84,10 @@ async def generate_prompts(request: UnifiedPromptGenerationRequest):
             entities_to_use = request.entities
             if len(request.entities) > request.num_sounds * 1.5:
                 entities_to_use = llm_service.select_diverse_entities(
-                    request.entities, request.num_sounds
+                    request.entities, request.num_sounds, llm_model=request.llm_model
                 )
             sound_list = llm_service.generate_prompts_for_entities(
-                entities_to_use, request.num_sounds, request.context
+                entities_to_use, request.num_sounds, request.context, llm_model=request.llm_model
             )
             entity_prompts = []
             for sound_data in sound_list:
@@ -104,7 +107,7 @@ async def generate_prompts(request: UnifiedPromptGenerationRequest):
 
         elif request.context and request.context.strip():
             raw_text, sound_list = llm_service.generate_text_based_prompts(
-                request.context, request.num_sounds
+                request.context, request.num_sounds, llm_model=request.llm_model
             )
             return {"prompts": sound_list, "text": raw_text}
 
@@ -116,11 +119,8 @@ async def generate_prompts(request: UnifiedPromptGenerationRequest):
     except Exception as e:
         traceback.print_exc()
         error_str = str(e)
-        if "429" in error_str or "quota" in error_str.lower() or "RESOURCE_EXHAUSTED" in error_str:
-            raise HTTPException(
-                status_code=429,
-                detail=error_str if "quota" in error_str.lower() else "API quota exhausted. Please try again later.",
-            )
+        if "429" in error_str or "quota" in error_str.lower() or "RESOURCE_EXHAUSTED" in error_str or "RateLimitError" in type(e).__name__:
+            raise HTTPException(status_code=429, detail=error_str)
         if "503" in error_str or "overloaded" in error_str.lower() or "UNAVAILABLE" in error_str:
             raise HTTPException(status_code=503, detail="LLM service is currently overloaded. Please try again in a moment.")
         raise HTTPException(status_code=500, detail=f"Error generating prompts: {error_str}")
@@ -148,6 +148,12 @@ async def generate_text(request: PromptRequest):
             prompt=request.prompt,
             num_sounds=request.num_sounds,
             entities=request.entities,
+            llm_model=request.llm_model,
+            api_keys={
+                "GOOGLE_API_KEY": os.environ.get("GOOGLE_API_KEY"),
+                "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
+                "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY"),
+            },
         )
 
         run_fn = make_subprocess_runner(

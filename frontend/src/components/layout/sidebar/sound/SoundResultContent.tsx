@@ -80,9 +80,9 @@ export function SoundResultContent({
   );
 
   return (
-    <div className="flex gap-3">
+    <div className="flex gap-3 min-w-0">
       {/* Waveform area */}
-      <div className="flex-1">
+      <div className="flex-1 min-w-0 overflow-hidden">
         <SoundCardWaveSurfer
           audioUrl={generatedSound.url}
           volumeDb={currentVolumeDb}
@@ -96,12 +96,12 @@ export function SoundResultContent({
 
         {/* Variant Selector - bottom left under waveform */}
         {variants.length > 1 && onVariantChange && (
-          <div className="flex gap-1 mt-1">
+          <div className="flex gap-1 mt-1 overflow-x-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: 'var(--card-color, var(--color-primary)) transparent' }}>
             {variants.map((_, idx) => (
               <button
                 key={idx}
                 onClick={() => onVariantChange(index, idx)}
-                className={`w-5 h-5 text-[10px] rounded transition-colors ${
+                className={`w-5 h-5 text-[10px] rounded transition-colors flex-shrink-0 ${
                   idx === selectedVariantIdx
                     ? 'text-white'
                     : 'bg-secondary text-secondary-light'

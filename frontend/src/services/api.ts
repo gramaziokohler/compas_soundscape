@@ -50,15 +50,43 @@ export interface ServiceVersionInfo {
   version: string;
 }
 
+export interface LLMProviderInfo {
+  name: string;
+  version: string | null;
+  installed: boolean;
+}
+
+export interface LLMProviders {
+  google: LLMProviderInfo;
+  openai: LLMProviderInfo;
+  anthropic: LLMProviderInfo;
+}
+
 export interface ServiceVersions {
   pyroomacoustics: ServiceVersionInfo;
   tangoflux: ServiceVersionInfo;
   audioldm2: ServiceVersionInfo;
   bbc: ServiceVersionInfo;
-  gemini: ServiceVersionInfo;
+  llm_providers: LLMProviders;
   yamnet: ServiceVersionInfo;
   acousticDE: ServiceVersionInfo;
   edg_acoustics: ServiceVersionInfo;
+}
+
+export interface TokenStatus {
+  speckle_token_set: boolean;
+  speckle_project_name: string;
+  google_api_key_set: boolean;
+  openai_api_key_set: boolean;
+  anthropic_api_key_set: boolean;
+}
+
+export interface TokenUpdate {
+  speckle_token?: string;
+  speckle_project_name?: string;
+  google_api_key?: string;
+  openai_api_key?: string;
+  anthropic_api_key?: string;
 }
 
 // API Service Layer
@@ -128,6 +156,7 @@ export const apiService = {
     prompt?: string;
     num_sounds: number;
     entities?: any[];
+    llm_model?: string;
   }): Promise<{ generation_id: string }> {
     try {
       const response = await fetchWithErrorHandling(
@@ -1027,10 +1056,11 @@ export const apiService = {
     }
   },
 
-  async getServiceVersions(): Promise<ServiceVersions> {
+  async getServiceVersions(llm_model?: string): Promise<ServiceVersions> {
     try {
+      const url = llm_model ? `${API_BASE_URL}/api/versions?llm_model=${llm_model}` : `${API_BASE_URL}/api/versions`;
       const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/versions`,
+        url,
         {},
         'Service versions'
       );
@@ -1038,6 +1068,43 @@ export const apiService = {
       return await response.json();
     } catch (error) {
       handleApiError(error, 'Service versions');
+    }
+  },
+
+  // ── Token management ──────────────────────────────────────────────────────
+
+  async getTokenStatus(): Promise<TokenStatus> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/tokens`,
+        undefined,
+        'Get token status'
+      );
+      if (!response.ok) throw new Error('Failed to get token status');
+      return response.json();
+    } catch (error) {
+      handleApiError(error, 'Get token status');
+    }
+  },
+
+  async updateTokens(tokens: TokenUpdate): Promise<TokenStatus> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/tokens`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(tokens),
+        },
+        'Update tokens'
+      );
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: 'Failed to update tokens' }));
+        throw new Error(err.detail || 'Failed to update tokens');
+      }
+      return response.json();
+    } catch (error) {
+      handleApiError(error, 'Update tokens');
     }
   },
 };

@@ -28,6 +28,8 @@ import { BoundingBoxManager } from '@/lib/three/BoundingBoxManager';
 import { useTimelinePlayback } from '@/hooks/useTimelinePlayback';
 import { useSpeckleStore, useAreaDrawingStore, useAcousticsSimulationStore, useGridListenersStore } from '@/store';
 import { useUIStore } from '@/store/uiStore';
+import { useTextGenerationStore } from '@/store/textGenerationStore';
+import { apiService } from '@/services/api';
 import { GradientMapManager } from '@/lib/three/gradient-map-manager';
 import { AreaDrawingManager } from '@/lib/three/area-drawing-manager';
 import { useSpeckleTree, getHeaderAndSubheader } from '@/hooks/useSpeckleTree';
@@ -346,6 +348,8 @@ export function SpeckleScene({
 
   // File upload drag state (for empty state)
   const [isDragging, setIsDragging] = useState(false);
+  // Whether the Speckle token is configured (null = loading)
+  const [speckleTokenSet, setSpeckleTokenSet] = useState<boolean | null>(null);
 
   const modelUrl = viewer_url || speckleData?.url;
 
@@ -440,6 +444,14 @@ export function SpeckleScene({
 
     return () => clearTimeout(timer);
   }, [viewMode, isViewerReady]);
+
+  // ============================================================================
+  // Speckle token check (for empty state conditional rendering)
+  // ============================================================================
+  const tokenSettingsTrigger = useTextGenerationStore(s => s.tokenSettingsTrigger);
+  useEffect(() => {
+    apiService.getTokenStatus().then(s => setSpeckleTokenSet(s.speckle_token_set)).catch(() => setSpeckleTokenSet(false));
+  }, [tokenSettingsTrigger]);
 
   // ============================================================================
   // File upload handlers (for empty state)
@@ -3168,31 +3180,57 @@ export function SpeckleScene({
               <h3 className="text-xl font-semibold mb-2">
                 Compas Soundscape
               </h3>
-              <p className="text-xs" style={{ color: UI_COLORS.NEUTRAL_500 }}>
-                Upload a 3D model to start
-              </p>
             </div>
 
-            {/* File Upload Area */}
-            <div className="w-full">
-              <FileUploadArea
-                file={modelFile}
-                isDragging={isDragging}
-                acceptedFormats={MODEL_FILE_EXTENSIONS.join(',')}
-                acceptedExtensions={MODEL_FILE_EXTENSIONS.join(', ')}
-                onFileChange={handleFileChange}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                inputId="scene-model-upload"
-                multiple={false}
-              />
-            </div>
-
-            {/* Speckle Model Browser */}
-            {onSpeckleModelSelect && (
-              <SpeckleModelBrowser onModelSelect={onSpeckleModelSelect} />
-            )}
+            {/* File Upload Area or Speckle-required placeholder */}
+            {speckleTokenSet === true ? (
+              <>
+                <div className="w-full">
+                  <FileUploadArea
+                    file={modelFile}
+                    isDragging={isDragging}
+                    acceptedFormats={MODEL_FILE_EXTENSIONS.join(',')}
+                    acceptedExtensions={MODEL_FILE_EXTENSIONS.join(', ')}
+                    onFileChange={handleFileChange}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    inputId="scene-model-upload"
+                    multiple={false}
+                  />
+                </div>
+                {onSpeckleModelSelect && (
+                  <SpeckleModelBrowser onModelSelect={onSpeckleModelSelect} />
+                )}
+              </>
+            ) : speckleTokenSet === false ? (
+              <div
+                className="w-full rounded-lg p-5 text-center flex flex-col gap-3"
+                style={{ border: `1px dashed ${UI_COLORS.NEUTRAL_300}`, background: UI_COLORS.NEUTRAL_100 }}
+              >
+                <p className="text-xs" style={{ color: UI_COLORS.NEUTRAL_600 }}>
+                  3D models are hosted through{' '}
+                  <a
+                    href="https://app.speckle.systems"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline"
+                    style={{ color: UI_COLORS.PRIMARY }}
+                  >
+                    app.speckle.systems
+                  </a>
+                  . Add your Speckle token to upload and browse models.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => useTextGenerationStore.getState().triggerOpenTokenSettings()}
+                  className="self-center text-xs px-3 py-1.5 rounded transition-colors"
+                  style={{ border: `1px solid ${UI_COLORS.NEUTRAL_300}`, color: UI_COLORS.NEUTRAL_600 }}
+                >
+                  Configure Speckle token in Settings →
+                </button>
+              </div>
+            ) : null /* loading — render nothing while checking */}
 
             {/* Supported formats
             <div className="text-xs space-y-2 text-center" style={{ color: UI_COLORS.NEUTRAL_500 }}>

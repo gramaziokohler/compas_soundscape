@@ -129,7 +129,8 @@ class SpeckleService:
             return None
 
         try:
-            project_name = name or SPECKLE_PROJECT_NAME
+            # Allow runtime override of project name via os.environ
+            project_name = name or os.environ.get("SPECKLE_PROJECT_NAME", SPECKLE_PROJECT_NAME)
 
             # Check if project already exists
             projects_response = self.client.active_user.get_projects()

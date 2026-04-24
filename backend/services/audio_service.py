@@ -37,7 +37,8 @@ from config.constants import (
     GENERATED_SOUND_URL_PREFIX,
     FORCE_CPU_MODE
 )
-from services.audioldm2_service import AudioLDM2Service
+
+# AudioLDM2 is imported lazily to make it optional
 
 
 @contextmanager
@@ -90,7 +91,7 @@ class AudioService:
             self.device = 'cpu'
             print("AudioService: Forced CPU mode (FORCE_CPU_MODE=true)")
         else:
-            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            self.device = 'cuda' if torch.cuda.is_available() else 'mps' if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available() else 'cpu'
         print(f"AudioService using device: {self.device}")
         self.tangoflux_model = None
         self.audioldm2_service = None
@@ -103,16 +104,23 @@ class AudioService:
         return self.tangoflux_model
 
     def _clear_cuda_cache(self):
-        """Clear CUDA cache to free up GPU memory"""
+        """Clear CUDA/MPS cache to free up GPU memory"""
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
+        elif hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache') and self.device == 'mps':
+            torch.mps.empty_cache()
 
     def _init_audioldm2_service(self):
         """Lazy initialization of the AudioLDM2 service"""
         if self.audioldm2_service is None:
             print("Initializing AudioLDM2 service...")
-            self.audioldm2_service = AudioLDM2Service()
+            try:
+                from services.audioldm2_service import AudioLDM2Service
+                self.audioldm2_service = AudioLDM2Service()
+            except ImportError as e:
+                print(f"Warning: Failed to import AudioLDM2Service. Ensure dependencies are met. {e}")
+                self.audioldm2_service = None
         return self.audioldm2_service
 
     @staticmethod
@@ -169,18 +177,23 @@ class AudioService:
         if audio_model == AUDIO_MODEL_AUDIOLDM2:
             # Use AudioLDM2 service
             audioldm2_service = self._init_audioldm2_service()
-            audioldm2_service.generate_sound_file(
-                prompt=prompt,
-                output_path=output_path,
-                duration=duration,
-                guidance_scale=guidance_scale,
-                steps=steps,
-                spl_db=spl_db,
-                apply_denoising=apply_denoising,
-                negative_prompt=negative_prompt or "Low quality, distorted",
-                progress_callback=progress_callback,
-            )
-        else:
+            if audioldm2_service is not None:
+                audioldm2_service.generate_sound_file(
+                    prompt=prompt,
+                    output_path=output_path,
+                    duration=duration,
+                    guidance_scale=guidance_scale,
+                    steps=steps,
+                    spl_db=spl_db,
+                    apply_denoising=apply_denoising,
+                    negative_prompt=negative_prompt or "Low quality, distorted",
+                    progress_callback=progress_callback,
+                )
+            else:
+                print("AudioLDM2 service is unavailable. Falling back to TangoFlux.")
+                audio_model = AUDIO_MODEL_TANGOFLUX
+
+        if audio_model != AUDIO_MODEL_AUDIOLDM2:
             # Use TangoFlux (default)
             model = self._init_tangoflux_model()
 

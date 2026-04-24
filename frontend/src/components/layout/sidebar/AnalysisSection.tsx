@@ -11,9 +11,10 @@ import { AudioContextContent } from "@/components/layout/sidebar/analysis/AudioC
 import { TextContextContent } from "@/components/layout/sidebar/analysis/TextContextContent";
 import { AnalysisResultContent } from "@/components/layout/sidebar/analysis/AnalysisResultContent";
 import { AudioAnalysisAfterContent } from "@/components/layout/sidebar/analysis/AudioAnalysisAfterContent";
-import { useSpeckleStore, useAnalysisStore } from '@/store';
+import { useSpeckleStore, useAnalysisStore, useSoundscapeStore } from '@/store';
 import { useAreaDrawingStore } from '@/store';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
+import { LLM_MODEL_TO_PROVIDER } from '@/utils/constants';
 
 /**
  * AnalysisSection Component
@@ -45,6 +46,7 @@ export function AnalysisSection({
   onSendToSoundGeneration
 }: AnalysisSectionProps) {
   const serviceVersions = useServiceVersions();
+  const llmModel = useSoundscapeStore((s) => s.llmModel);
 
   // Get diverse selection from store (works even without a 3D model card)
   const { diverseSelectedObjectIds, clearDiverseSelection } = useSpeckleStore();
@@ -272,8 +274,11 @@ export function AnalysisSection({
         return `${v.name} ${v.version}`;
       }
       if (config.type === '3d-model' || config.type === 'text') {
-        const v = serviceVersions.gemini;
-        return `${v.name} ${v.version}`;
+        const providers = serviceVersions.llm_providers;
+        const providerKey = LLM_MODEL_TO_PROVIDER[llmModel] ?? "google";
+        const p = providers?.[providerKey as keyof typeof providers];
+        if (!p) return undefined;
+        return p.installed ? `${p.name} ${p.version ?? ""}`.trim() : `${p.name} (not installed)`;
       }
       return undefined;
     })();

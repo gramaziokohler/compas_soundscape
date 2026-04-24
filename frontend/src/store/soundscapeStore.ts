@@ -22,6 +22,7 @@ import {
   DEFAULT_DIFFUSION_STEPS,
   DEFAULT_SEED_COPIES,
   DEFAULT_AUDIO_MODEL,
+  DEFAULT_LLM_MODEL,
   AUDIO_MODEL_ELEVENLABS,
   LIBRARY_MAX_SEARCH_RESULTS,
   DUPLICATE_POSITION_OFFSET,
@@ -83,6 +84,7 @@ export const soundscapePartialize = (state: SoundscapeStoreState) => ({
   globalNegativePrompt: state.globalNegativePrompt,
   applyDenoising: state.applyDenoising,
   audioModel: state.audioModel,
+  llmModel: state.llmModel,
 });
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -101,6 +103,7 @@ export interface SoundscapeStoreState {
   globalNegativePrompt: string;
   applyDenoising: boolean;
   audioModel: string;
+  llmModel: string;
 
   handleAddConfig: (type?: CardType) => void;
   handleBatchAddConfigs: (count: number) => number;
@@ -118,6 +121,7 @@ export interface SoundscapeStoreState {
   setGlobalNegativePrompt: (val: string) => void;
   setApplyDenoising: (val: boolean) => void;
   setAudioModel: (model: string) => void;
+  setLlmModel: (model: string) => void;
   handleUploadAudio: (index: number, file: File) => Promise<void>;
   handleClearUploadedAudio: (index: number) => void;
   handleLibrarySearch: (index: number) => Promise<void>;
@@ -161,6 +165,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         globalNegativePrompt:
           'distorted, reverb, echo, background noise, hall, spaciousness',
         applyDenoising: false,
+        llmModel: DEFAULT_LLM_MODEL,
         audioModel: DEFAULT_AUDIO_MODEL,
 
         handleAddConfig: (type = 'text-to-audio') => {
@@ -782,6 +787,9 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         setAudioModel: (model) =>
           set({ audioModel: model }, false, 'soundscape/setModel'),
 
+        setLlmModel: (model) =>
+          set({ llmModel: model }, false, 'soundscape/setLlmModel'),
+
         handleUploadAudio: async (index, file) => {
           try {
             const result = await loadAudioFile(file);
@@ -945,6 +953,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               globalNegativePrompt: 'distorted, reverb, echo, background noise, hall, spaciousness',
               applyDenoising: false,
               audioModel: DEFAULT_AUDIO_MODEL,
+              llmModel: DEFAULT_LLM_MODEL,
             },
             false,
             'soundscape/resetDefaults',
@@ -1113,6 +1122,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 globalNegativePrompt: settings.negativePrompt,
               }),
               ...(settings?.audioModel !== undefined && { audioModel: settings.audioModel }),
+              ...(settings?.llmModel !== undefined && { llmModel: settings.llmModel }),
             },
             false,
             'soundscape/restore',

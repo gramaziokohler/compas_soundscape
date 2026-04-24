@@ -20,8 +20,39 @@ SOUND_GENERATION_TASK_CLEANUP_DELAY_SECONDS = 600
 LLM_TASK_CLEANUP_DELAY_SECONDS = 300
 
 # Model Configuration
-LLM_MODEL_NAME = "gemini-2.5-flash"
-# LLM_MODEL_NAME = "gemini-2.5-pro"
+LLM_MODEL_GEMINI_FLASH = "gemini-2.5-flash"
+LLM_MODEL_GEMINI_PRO = "gemini-2.5-pro"
+LLM_MODEL_GEMINI_3_FLASH = "gemini-3-flash-preview"
+LLM_MODEL_GEMINI_3_PRO = "gemini-3.1-pro-preview"
+LLM_MODEL_OPENAI = "openai"
+LLM_MODEL_ANTHROPIC = "anthropic"
+
+DEFAULT_LLM_MODEL = LLM_MODEL_GEMINI_FLASH
+
+# Provider keys — used in /api/versions response and availability checks
+LLM_PROVIDER_GOOGLE    = "google"
+LLM_PROVIDER_OPENAI    = "openai"
+LLM_PROVIDER_ANTHROPIC = "anthropic"
+
+# Maps each model key to its provider key
+LLM_MODEL_TO_PROVIDER = {
+    LLM_MODEL_GEMINI_FLASH:   LLM_PROVIDER_GOOGLE,
+    LLM_MODEL_GEMINI_PRO:     LLM_PROVIDER_GOOGLE,
+    LLM_MODEL_GEMINI_3_FLASH: LLM_PROVIDER_GOOGLE,
+    LLM_MODEL_GEMINI_3_PRO:   LLM_PROVIDER_GOOGLE,
+    LLM_MODEL_OPENAI:         LLM_PROVIDER_OPENAI,
+    LLM_MODEL_ANTHROPIC:      LLM_PROVIDER_ANTHROPIC,
+}
+
+# Specific model versions mapped to each provider
+LLM_MODEL_VERSIONS = {
+    LLM_MODEL_GEMINI_FLASH: "gemini-2.5-flash",
+    LLM_MODEL_GEMINI_PRO: "gemini-2.5-pro",
+    LLM_MODEL_GEMINI_3_FLASH: "gemini-3-flash-preview",
+    LLM_MODEL_GEMINI_3_PRO: "gemini-3.1-pro-preview",
+    LLM_MODEL_OPENAI: "gpt-4o",
+    LLM_MODEL_ANTHROPIC: "claude-3-5-sonnet-20241022",
+}
 
 # LLM Retry Configuration (for handling 503 overload errors)
 LLM_MAX_RETRIES = 4  # Maximum number of retry attempts

@@ -4,10 +4,35 @@
 import json
 import re
 import time
-import google.genai as genai
-from google.genai.errors import ServerError, ClientError
+try:
+    import google.genai as genai
+    from google.genai.errors import ServerError, ClientError
+    GOOGLE_GENAI_AVAILABLE = True
+except ImportError:
+    genai = None
+    ServerError = None
+    ClientError = None
+    GOOGLE_GENAI_AVAILABLE = False
+
+try:
+    import openai as _openai_module
+    OPENAI_AVAILABLE = True
+except ImportError:
+    _openai_module = None
+    OPENAI_AVAILABLE = False
+
+try:
+    import anthropic as _anthropic_module
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    _anthropic_module = None
+    ANTHROPIC_AVAILABLE = False
+
 from config.constants import (
-    LLM_MODEL_NAME,
+    LLM_MODEL_OPENAI,
+    LLM_MODEL_ANTHROPIC,
+    DEFAULT_LLM_MODEL,
+    LLM_MODEL_VERSIONS,
     DEFAULT_SPL_DB,
     LLM_SUGGESTED_INTERVAL_SECONDS,
     DEFAULT_DURATION_SECONDS,
@@ -21,23 +46,54 @@ from config.constants import (
     LLM_INITIAL_RETRY_DELAY,
     LLM_MAX_RETRY_DELAY,
     LLM_BACKOFF_MULTIPLIER,
+    LLM_PROVIDER_GOOGLE,
+    LLM_PROVIDER_OPENAI,
+    LLM_PROVIDER_ANTHROPIC,
 )
 
 
+class Error(Exception):
+    pass
+
+class MockResponse:
+    def __init__(self, text):
+        self.text = text
+
 class LLMService:
-    """Service for interacting with Google Gemini LLM"""
+    """Service for interacting with Google Gemini, OpenAI ChatGPT, and Anthropic Claude LLMs"""
 
     @staticmethod
-    def get_service_version_info() -> dict:
+    def get_service_version_info(llm_model: str = DEFAULT_LLM_MODEL) -> dict:
         import importlib.metadata
-        try:
-            version = importlib.metadata.version("google-genai")
-        except importlib.metadata.PackageNotFoundError:
-            version = getattr(genai, "__version__", "unknown")
-        return {"name": LLM_MODEL_NAME, "version": ""}
 
-    def __init__(self, client: genai.Client):
-        self.client = client
+        def _pkg_version(pkg_name: str) -> str:
+            try:
+                return importlib.metadata.version(pkg_name)
+            except importlib.metadata.PackageNotFoundError:
+                return "unknown"
+
+        return {
+            LLM_PROVIDER_GOOGLE: {
+                "name": "google-genai",
+                "version": _pkg_version("google-genai") if GOOGLE_GENAI_AVAILABLE else None,
+                "installed": GOOGLE_GENAI_AVAILABLE,
+            },
+            LLM_PROVIDER_OPENAI: {
+                "name": "openai",
+                "version": _pkg_version("openai") if OPENAI_AVAILABLE else None,
+                "installed": OPENAI_AVAILABLE,
+            },
+            LLM_PROVIDER_ANTHROPIC: {
+                "name": "anthropic",
+                "version": _pkg_version("anthropic") if ANTHROPIC_AVAILABLE else None,
+                "installed": ANTHROPIC_AVAILABLE,
+            },
+        }
+
+    def __init__(self, client=None):
+        self.gemini_client = client
+        self.openai_client = None
+        self.anthropic_client = None
         self.progress_callback = None  # Optional callback for retry progress updates
 
     def set_progress_callback(self, callback):
@@ -48,15 +104,16 @@ class LLMService:
         """
         self.progress_callback = callback
 
-    def _call_llm_with_retry(self, prompt: str, operation_name: str = "LLM request"):
+    def _call_llm_with_retry(self, prompt: str, operation_name: str = "LLM request", llm_model: str = DEFAULT_LLM_MODEL):
         """Call LLM with exponential backoff retry logic for 503 errors
 
         Args:
             prompt: The prompt to send to the LLM
             operation_name: Human-readable name for this operation (for progress messages)
+            llm_model: The LLM model provider to use
 
         Returns:
-            Response from LLM
+            Response from LLM (MockResponse with .text)
 
         Raises:
             Exception: If all retries are exhausted or a non-retryable error occurs
@@ -66,11 +123,48 @@ class LLMService:
 
         for attempt in range(1, LLM_MAX_RETRIES + 1):
             try:
-                response = self.client.models.generate_content(
-                    model=LLM_MODEL_NAME,
-                    contents=prompt
-                )
-                return response
+                # Dispatch based on model type
+                if llm_model == LLM_MODEL_OPENAI:
+                    if not OPENAI_AVAILABLE:
+                        from fastapi import HTTPException
+                        raise HTTPException(status_code=400, detail="openai package not installed. Run: pip install openai")
+                    if not self.openai_client:
+                        import os
+                        self.openai_client = _openai_module.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+                    resp = self.openai_client.chat.completions.create(
+                        model=LLM_MODEL_VERSIONS[LLM_MODEL_OPENAI],
+                        messages=[{"role": "user", "content": prompt}],
+                    )
+                    return MockResponse(text=resp.choices[0].message.content)
+
+                elif llm_model == LLM_MODEL_ANTHROPIC:
+                    if not ANTHROPIC_AVAILABLE:
+                        from fastapi import HTTPException
+                        raise HTTPException(status_code=400, detail="anthropic package not installed. Run: pip install anthropic")
+                    if not self.anthropic_client:
+                        import os
+                        self.anthropic_client = _anthropic_module.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+                    resp = self.anthropic_client.messages.create(
+                        model=LLM_MODEL_VERSIONS[LLM_MODEL_ANTHROPIC],
+                        max_tokens=2048,
+                        messages=[{"role": "user", "content": prompt}]
+                    )
+                    # Anthropic response contents is a list of TextBlock
+                    text_content = "".join([block.text for block in resp.content])
+                    return MockResponse(text=text_content)
+
+                else: # Default to Gemini
+                    if not GOOGLE_GENAI_AVAILABLE:
+                        from fastapi import HTTPException
+                        raise HTTPException(status_code=400, detail="google-genai package not installed. Run: pip install google-genai")
+                    if not self.gemini_client:
+                        self.gemini_client = genai.Client()
+                    model_to_use = LLM_MODEL_VERSIONS.get(llm_model, "gemini-2.5-flash")
+                    response = self.gemini_client.models.generate_content(
+                        model=model_to_use,
+                        contents=prompt
+                    )
+                    return MockResponse(text=response.text)
 
             except Exception as e:
                 error_str = str(e)
@@ -81,30 +175,12 @@ class LLMService:
                     '429' in error_str or
                     'RESOURCE_EXHAUSTED' in error_str or
                     'quota' in error_str.lower() or
-                    isinstance(e, ClientError) and hasattr(e, 'status_code') and e.status_code == 429
+                    (ClientError is not None and isinstance(e, ClientError) and hasattr(e, 'status_code') and e.status_code == 429)
                 )
 
                 if is_quota_error:
-                    # Extract retry delay if available
-                    retry_match = re.search(r'retry in (\d+(?:\.\d+)?)s', error_str)
-                    retry_delay = float(retry_match.group(1)) if retry_match else None
-                    
-                    # Format a user-friendly error message
-                    error_msg = "Google Gemini API quota exhausted. "
-                    if 'free_tier' in error_str.lower():
-                        error_msg += "You've reached the free tier limit (20 requests/day). "
-                    if retry_delay:
-                        retry_hours = retry_delay / 3600
-                        if retry_hours >= 1:
-                            error_msg += f"Please retry in {retry_hours:.1f} hours."
-                        else:
-                            retry_minutes = retry_delay / 60
-                            error_msg += f"Please retry in {retry_minutes:.1f} minutes."
-                    else:
-                        error_msg += "Please check your plan and billing details."
-                    
-                    # Raise with clean message
-                    raise Exception(error_msg)
+                    # Re-raise the original provider error unchanged
+                    raise
 
                 # Check if it's a retryable error (503 overload)
                 is_retryable = (
@@ -229,7 +305,7 @@ class LLMService:
 
         return None
 
-    def select_diverse_entities(self, entities: list, max_sounds: int, entity_type: str = "objects") -> list:
+    def select_diverse_entities(self, entities: list, max_sounds: int, entity_type: str = "objects", llm_model: str = DEFAULT_LLM_MODEL) -> list:
         """Select most diverse entities using LLM
         
         Supports both traditional entities and Speckle objects.
@@ -271,7 +347,7 @@ Return ONLY a JSON array of the selected indices (numbers), like: [0, 5, 12, 18,
 No explanation, just the JSON array."""
 
         try:
-            response = self._call_llm_with_retry(diversity_prompt, "Entity selection")
+            response = self._call_llm_with_retry(diversity_prompt, "Entity selection", llm_model=llm_model)
             response_text = response.text.strip()
 
             json_match = re.search(r'\[[\d,\s]+\]', response_text)
@@ -420,7 +496,7 @@ For the duration estimation (in seconds with 0.1 precision):
     
     """
 
-    def generate_prompts_for_entities(self, entities: list[dict], num_sounds: int, context: str = None) -> list[dict]:
+    def generate_prompts_for_entities(self, entities: list[dict], num_sounds: int, context: str = None, llm_model: str = DEFAULT_LLM_MODEL) -> list[dict]:
         """Generate sound prompts mixing entity-based and context-based sounds
 
         Args:
@@ -437,7 +513,7 @@ For the duration estimation (in seconds with 0.1 precision):
         llm_prompt = self._create_base_sound_prompt(context or "", num_sounds, entities)
 
         try:
-            response = self._call_llm_with_retry(llm_prompt, "Sound prompt generation")
+            response = self._call_llm_with_retry(llm_prompt, "Sound prompt generation", llm_model=llm_model)
             response_text = response.text.strip()
 
             # Print raw LLM response to terminal
@@ -496,7 +572,7 @@ For the duration estimation (in seconds with 0.1 precision):
             print(f"Error generating prompts for entities: {e}")
             raise
 
-    def generate_text_based_prompts(self, context: str, num_sounds: int) -> tuple[str, list[dict]]:
+    def generate_text_based_prompts(self, context: str, num_sounds: int, llm_model: str = DEFAULT_LLM_MODEL) -> tuple[str, list[dict]]:
         """Generate sound prompts with display names from text description only
 
         Returns:
@@ -505,7 +581,7 @@ For the duration estimation (in seconds with 0.1 precision):
         # Use unified base prompt (no entities)
         enhanced_prompt = self._create_base_sound_prompt(context, num_sounds, entities=None)
 
-        response = self._call_llm_with_retry(enhanced_prompt, "Text-based prompt generation")
+        response = self._call_llm_with_retry(enhanced_prompt, "Text-based prompt generation", llm_model=llm_model)
 
         raw_text = response.text
 

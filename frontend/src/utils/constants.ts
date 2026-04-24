@@ -433,6 +433,16 @@ export const AUDIO_MODEL_AUDIOLDM2 = "audioldm2";
 export const AUDIO_MODEL_ELEVENLABS = "elevenlabs";
 export const DEFAULT_AUDIO_MODEL = AUDIO_MODEL_TANGOFLUX;
 
+// LLM Models
+export const LLM_MODEL_GEMINI_FLASH = "gemini-2.5-flash";
+export const LLM_MODEL_GEMINI_PRO = "gemini-2.5-pro";
+export const LLM_MODEL_GEMINI_3_FLASH = "gemini-3-flash-preview";
+export const LLM_MODEL_GEMINI_3_PRO = "gemini-3.1-pro-preview";
+export const LLM_MODEL_OPENAI = "openai";
+export const LLM_MODEL_ANTHROPIC = "anthropic";
+
+export const DEFAULT_LLM_MODEL = LLM_MODEL_GEMINI_FLASH;
+
 // Frontend-only service version strings (for Card version display)
 export const ELEVENLABS_SERVICE_VERSION = "@elevenlabs/elevenlabs-js 2.35.0";
 export const GOOGLE_SOUND_LIBRARY_SERVICE_VERSION = "Google Sound Library v1";
@@ -442,6 +452,30 @@ export const AUDIO_MODEL_NAMES: Record<string, string> = {
   [AUDIO_MODEL_TANGOFLUX]: "TangoFlux",
   [AUDIO_MODEL_AUDIOLDM2]: "AudioLDM2",
   [AUDIO_MODEL_ELEVENLABS]: "ElevenLabs",
+};
+
+export const LLM_MODEL_NAMES: Record<string, string> = {
+  [LLM_MODEL_GEMINI_FLASH]: "Gemini 2.5 Flash",
+  [LLM_MODEL_GEMINI_PRO]: "Gemini 2.5 Pro",
+  [LLM_MODEL_GEMINI_3_FLASH]: "Gemini 3 Flash",
+  [LLM_MODEL_GEMINI_3_PRO]: "Gemini 3.1 Pro",
+  [LLM_MODEL_OPENAI]: "ChatGPT (GPT-4o)",
+  [LLM_MODEL_ANTHROPIC]: "Claude 3.5 Sonnet",
+};
+
+// Provider keys — must match backend LLM_PROVIDER_* constants
+export const LLM_PROVIDER_GOOGLE    = "google";
+export const LLM_PROVIDER_OPENAI    = "openai";
+export const LLM_PROVIDER_ANTHROPIC = "anthropic";
+
+// Maps each model key to its provider key
+export const LLM_MODEL_TO_PROVIDER: Record<string, string> = {
+  [LLM_MODEL_GEMINI_FLASH]:   LLM_PROVIDER_GOOGLE,
+  [LLM_MODEL_GEMINI_PRO]:     LLM_PROVIDER_GOOGLE,
+  [LLM_MODEL_GEMINI_3_FLASH]: LLM_PROVIDER_GOOGLE,
+  [LLM_MODEL_GEMINI_3_PRO]:   LLM_PROVIDER_GOOGLE,
+  [LLM_MODEL_OPENAI]:         LLM_PROVIDER_OPENAI,
+  [LLM_MODEL_ANTHROPIC]:      LLM_PROVIDER_ANTHROPIC,
 };
 
 export const DEFAULT_SOUND_CONFIG = {

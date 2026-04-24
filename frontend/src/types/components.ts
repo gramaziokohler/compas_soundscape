@@ -54,6 +54,7 @@ export interface SidebarProps {
   applyDenoising: boolean;
   normalizeImpulseResponses: boolean;
   audioModel: string;
+  llmModel: string;
   showAxesHelper: boolean;
   isUploading: boolean;
   isAnalyzingModel: boolean;
@@ -97,6 +98,7 @@ export interface SidebarProps {
   onApplyDenoisingChange: (apply: boolean) => void;
   onNormalizeImpulseResponsesChange: (normalize: boolean) => void;
   onAudioModelChange: (model: string) => void;
+  onLlmModelChange: (model: string) => void;
   onShowAxesHelperChange: (show: boolean) => void;
   onResetAdvancedSettings: () => void;
   onReprocessSounds?: (applyDenoising: boolean) => Promise<void>;

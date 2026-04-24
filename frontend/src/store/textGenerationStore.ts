@@ -30,6 +30,7 @@ import {
 import type { ActiveTab } from '@/types';
 import { useErrorsStore } from './errorsStore';
 import { useFileUploadStore } from './fileUploadStore';
+import { useSoundscapeStore } from './soundscapeStore';
 import { apiService } from '@/services/api';
 
 // ─── Module-level abort ref ───────────────────────────────────────────────────
@@ -61,11 +62,15 @@ export interface TextGenerationStoreState {
   activeAiTab: ActiveTab;
   selectedDiverseEntities: any[];
 
+  tokenSettingsTrigger: number;
+
   setAiPrompt: (prompt: string) => void;
   setNumSounds: (n: number) => void;
   setActiveAiTab: (tab: ActiveTab) => void;
   setPendingSoundConfigs: (configs: any[]) => void;
   setSelectedDiverseEntities: (entities: any[]) => void;
+  /** Switch to settings tab, expand sidebar, and open the API Tokens accordion. */
+  triggerOpenTokenSettings: () => void;
 
   handleAnalyzeModel: () => Promise<void>;
   handleGenerateText: () => Promise<void>;
@@ -90,10 +95,16 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
         pendingSoundConfigs: [],
         activeAiTab: 'text' as ActiveTab,
         selectedDiverseEntities: [],
+        tokenSettingsTrigger: 0,
 
         setAiPrompt: (prompt) => set({ aiPrompt: prompt }, false, 'textGen/setPrompt'),
         setNumSounds: (n) => set({ numSounds: n }, false, 'textGen/setNumSounds'),
         setActiveAiTab: (tab) => set({ activeAiTab: tab }, false, 'textGen/setTab'),
+        triggerOpenTokenSettings: () =>
+          set(
+            (s) => ({ tokenSettingsTrigger: s.tokenSettingsTrigger + 1, activeAiTab: 'settings' as ActiveTab }),
+            false, 'textGen/openTokenSettings'
+          ),
         setPendingSoundConfigs: (configs) =>
           set({ pendingSoundConfigs: configs }, false, 'textGen/setPendingConfigs'),
         setSelectedDiverseEntities: (entities) =>
@@ -123,7 +134,7 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
             const res = await fetch(`${API_BASE_URL}/api/select-entities`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ entities: modelEntities, max_sounds: numSounds }),
+              body: JSON.stringify({ entities: modelEntities, max_sounds: numSounds, llm_model: useSoundscapeStore.getState().llmModel }),
               signal: _abortController.signal,
             });
 
@@ -200,6 +211,7 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
             const requestBody: any = {
               prompt: aiPrompt || undefined,
               num_sounds: numSounds,
+              llm_model: useSoundscapeStore.getState().llmModel,
             };
 
             let selectedEntities: any[] | null = null;
@@ -225,7 +237,7 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
                 const selRes = await fetch(`${API_BASE_URL}/api/select-entities`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ entities: modelEntities, max_sounds: numSounds }),
+                  body: JSON.stringify({ entities: modelEntities, max_sounds: numSounds, llm_model: useSoundscapeStore.getState().llmModel }),
                   signal: _abortController.signal,
                 });
 

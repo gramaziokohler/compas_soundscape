@@ -11,12 +11,19 @@ import { VerticalTabButton } from "@/components/ui/VerticalTabButton";
 import { Icon } from "@/components/ui/Icon";
 import { UI_VERTICAL_TABS, UI_COLORS, UI_SIDEBAR_RESIZE } from "@/utils/constants";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
+import { useTextGenerationStore } from "@/store/textGenerationStore";
 import type { SidebarProps } from "@/types/components";
 import type { ActiveTab } from "@/types";
 
 export function Sidebar(props: SidebarProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isHandleHovered, setIsHandleHovered] = useState(false);
+
+  // Expand sidebar when "Configure API tokens" is triggered from anywhere
+  const tokenSettingsTrigger = useTextGenerationStore(s => s.tokenSettingsTrigger);
+  useEffect(() => {
+    if (tokenSettingsTrigger > 0) setIsExpanded(true);
+  }, [tokenSettingsTrigger]);
 
   const { width: contentWidth, isResizing, handleMouseDown: handleResizeMouseDown } = useSidebarResize({
     initialWidth: UI_SIDEBAR_RESIZE.LEFT_DEFAULT_WIDTH,
@@ -334,12 +341,14 @@ export function Sidebar(props: SidebarProps) {
             applyDenoising={props.applyDenoising}
             normalizeImpulseResponses={props.normalizeImpulseResponses}
             audioModel={props.audioModel}
+            llmModel={props.llmModel}
             onGlobalDurationChange={props.onGlobalDurationChange}
             onGlobalStepsChange={props.onGlobalStepsChange}
             onGlobalNegativePromptChange={props.onGlobalNegativePromptChange}
             onApplyDenoisingChange={props.onApplyDenoisingChange}
             onNormalizeImpulseResponsesChange={props.onNormalizeImpulseResponsesChange}
             onAudioModelChange={props.onAudioModelChange}
+            onLlmModelChange={props.onLlmModelChange}
             onResetToDefaults={props.onResetAdvancedSettings}
             showAxesHelper={props.showAxesHelper}
             onShowAxesHelperChange={props.onShowAxesHelperChange}

@@ -29,6 +29,7 @@ import { apiService } from '@/services/api';
 import { generatePositionsInArea } from '@/utils/positioning';
 import { useErrorsStore } from './errorsStore';
 import { useAreaDrawingStore } from './areaDrawingStore';
+import { useSoundscapeStore } from './soundscapeStore';
 
 // ─── Module-level abort ref ───────────────────────────────────────────────────
 
@@ -365,6 +366,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                   body: JSON.stringify({
                     entities: modelConfig.modelEntities,
                     max_sounds: config.numSounds,
+                    llm_model: useSoundscapeStore.getState().llmModel,
                   }),
                   signal,
                 });
@@ -385,6 +387,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                     context: '',
                     num_sounds: config.numSounds,
                     entities: modelConfig.selectedDiverseEntities,
+                    llm_model: useSoundscapeStore.getState().llmModel,
                   }),
                   signal,
                 });
@@ -511,7 +514,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 }
               }
 
-              const requestBody: any = { context: textConfig.textInput, num_sounds: config.numSounds };
+              const requestBody: any = { context: textConfig.textInput, num_sounds: config.numSounds, llm_model: useSoundscapeStore.getState().llmModel };
               if (entitiesToUse.length > 0) requestBody.entities = entitiesToUse;
 
               const res = await fetch(`${API_BASE_URL}/api/generate-prompts`, {

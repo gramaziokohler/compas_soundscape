@@ -2,7 +2,9 @@
 
 import { useState, useRef, useEffect, useCallback, type ReactNode } from 'react';
 import type { CardType, CardBaseConfig, CardColor } from '@/types/card';
-import { CARD_COLOR_DEFAULT } from '@/utils/constants';
+import { CARD_COLOR_DEFAULT, UI_COLORS } from '@/utils/constants';
+import { isAuthError } from '@/utils/authErrors';
+import { useTextGenerationStore } from '@/store/textGenerationStore';
 
 /**
  * CardSection Component
@@ -302,8 +304,22 @@ export function CardSection<TItem extends CardBaseConfig>({
 
       {/* Error display */}
       {error && (
-        <div className="p-3 text-sm rounded-lg bg-error-light border border-error text-error">
-          {error}
+        <div className="p-3 text-xs rounded-lg bg-error-light border border-error text-error flex flex-col gap-1.5">
+          {isAuthError(error) ? (
+            <button
+              onClick={() => useTextGenerationStore.getState().triggerOpenTokenSettings()}
+              className="self-start text-xs px-3 py-1 rounded transition-colors"
+              style={{
+                border: `1px solid ${UI_COLORS.ERROR}`,
+                color: UI_COLORS.ERROR,
+                background: 'transparent',
+              }}
+            >
+              Configure API token in Advanced Settings →
+            </button>
+          ) : (
+            <span>{error}</span>
+          )}
         </div>
       )}
 

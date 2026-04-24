@@ -4,13 +4,14 @@
 from pydantic import BaseModel
 from enum import Enum
 from typing import Optional
-from config.constants import DEFAULT_AUDIO_MODEL
+from config.constants import DEFAULT_AUDIO_MODEL, DEFAULT_LLM_MODEL
 
 
 class PromptRequest(BaseModel):
     prompt: str | None = None
     num_sounds: int = 5
     entities: list[dict] | None = None
+    llm_model: str = DEFAULT_LLM_MODEL
 
 
 class SoundGenerationRequest(BaseModel):
@@ -53,46 +54,11 @@ class LLMGenerationStatusResponse(BaseModel):
     queue_total: Optional[int] = None
 
 
-class IFCEntityInfo(BaseModel):
-    index: int
-    type: str
-    name: str | None
-    position: list[float]
-
-
-class IFCSoundGenerationRequest(BaseModel):
-    entities: list[IFCEntityInfo]
-    max_sounds: int = 10
-
-
-class IFCPromptGenerationRequest(BaseModel):
-    entities: list[IFCEntityInfo]
-    max_sounds: int = 10
-
-
-class RhinoEntityInfo(BaseModel):
-    index: int
-    type: str
-    name: str | None
-    layer: str | None
-    material: str | None
-    position: list[float]
-
-
-class RhinoSoundGenerationRequest(BaseModel):
-    entities: list[RhinoEntityInfo]
-    max_sounds: int = 10
-
-
-class RhinoPromptGenerationRequest(BaseModel):
-    entities: list[RhinoEntityInfo]
-    max_sounds: int = 10
-
-
 class UnifiedPromptGenerationRequest(BaseModel):
     context: str | None = None
     num_sounds: int = 5
     entities: list[dict] | None = None
+    llm_model: str = DEFAULT_LLM_MODEL
 
 
 class IRFormat(str, Enum):
@@ -115,20 +81,6 @@ class ImpulseResponseMetadata(BaseModel):
     duration: float  # Duration in seconds
     file_size: int  # Size in bytes
 
-
-class ImpulseResponseUploadRequest(BaseModel):
-    """Request for uploading an impulse response"""
-    name: str
-
-
-class AuralizationSettings(BaseModel):
-    """Settings for auralization"""
-    enabled: bool = False
-    ir_id: Optional[str] = None
-    ir_format: Optional[IRFormat] = None
-    wet_gain: float = 0.8  # Convolution output gain (0-1)
-    dry_gain: float = 0.2  # Direct signal gain (0-1)
-    
 
 class ImpulseResponseListResponse(BaseModel):
     """Response containing list of available IRs"""

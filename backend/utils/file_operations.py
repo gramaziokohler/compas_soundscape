@@ -12,7 +12,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 from fastapi import UploadFile
-from config.constants import TEMP_UPLOADS_DIR, TEMP_PARENT_DIR
+from config.constants import (
+    TEMP_UPLOADS_DIR, TEMP_PARENT_DIR, TEMP_LIBRARY_DIR, TEMP_SIMULATIONS_DIR,
+    TEMP_STATIC_DIR, IMPULSE_RESPONSE_DIR, PYROOMACOUSTICS_RIR_DIR,
+    CHORAS_RIR_DIR, CHORAS_TEMP_DIR, SOUNDSCAPE_DATA_DIR, GENERATED_SOUNDS_DIR,
+)
 
 
 def sanitize_filename(filename: str) -> str:
@@ -185,6 +189,19 @@ def get_safe_file_path(directory: str | Path, filename: str, extension: str = ""
     return Path(directory) / safe_name
 
 
+def ensure_all_temp_directories() -> None:
+    """Create all application directories if they don't exist."""
+    dirs = [
+        TEMP_UPLOADS_DIR, TEMP_LIBRARY_DIR, TEMP_SIMULATIONS_DIR,
+        TEMP_STATIC_DIR, GENERATED_SOUNDS_DIR, IMPULSE_RESPONSE_DIR,
+        PYROOMACOUSTICS_RIR_DIR, CHORAS_RIR_DIR, CHORAS_TEMP_DIR,
+        SOUNDSCAPE_DATA_DIR,
+    ]
+    for d in dirs:
+        ensure_directory(d)
+    print(f"Ensured {len(dirs)} application directories exist.")
+
+
 def cleanup_all_temp_directories() -> dict[str, int]:
     """
     Clean up all temporary directories used by the application.
@@ -227,6 +244,14 @@ def cleanup_all_temp_directories() -> dict[str, int]:
         if deleted_count > 0:
             results[str(dir_path)] = deleted_count
             print(f"Cleaned up {deleted_count} file(s) from {dir_path}")
+
+        # Remove empty subdirectories (skip the parent temp dir itself)
+        if dir_path != parent_path:
+            try:
+                dir_path.rmdir()  # Only succeeds if empty
+                print(f"Removed empty directory: {dir_path}")
+            except OSError:
+                pass
 
     total_deleted = sum(results.values())
     if total_deleted > 0:

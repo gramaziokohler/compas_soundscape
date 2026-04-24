@@ -1783,6 +1783,7 @@ function HomeContent() {
         globalNegativePrompt={soundGen.globalNegativePrompt}
         applyDenoising={soundGen.applyDenoising}
         audioModel={soundGen.audioModel}
+        llmModel={soundGen.llmModel}
         setActiveSoundConfigTab={soundGen.setActiveSoundConfigTab}
         onAddSoundConfig={soundGen.handleAddConfig}
         onBatchAddSoundConfigs={soundGen.handleBatchAddConfigs}
@@ -1796,6 +1797,7 @@ function HomeContent() {
         onGlobalNegativePromptChange={soundGen.setGlobalNegativePrompt}
         onApplyDenoisingChange={soundGen.setApplyDenoising}
         onAudioModelChange={soundGen.setAudioModel}
+        onLlmModelChange={soundGen.setLlmModel}
         onReprocessSounds={soundGen.handleReprocessSounds}
         onUploadAudio={soundGen.handleUploadAudio}
         onClearUploadedAudio={soundGen.handleClearUploadedAudio}

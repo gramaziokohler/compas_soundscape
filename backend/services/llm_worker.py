@@ -22,7 +22,7 @@ from typing import Optional
 # Ensure absolute imports work when run as __main__
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.constants import DEFAULT_SPL_DB, LLM_SUGGESTED_INTERVAL_SECONDS
+from config.constants import DEFAULT_SPL_DB, LLM_SUGGESTED_INTERVAL_SECONDS, DEFAULT_LLM_MODEL
 
 
 def _write_progress(progress_file: str, value: int, status: str) -> None:
@@ -48,6 +48,8 @@ def run_llm_generation(
     prompt: Optional[str],
     num_sounds: int,
     entities: Optional[list],
+    llm_model: str = DEFAULT_LLM_MODEL,
+    api_keys: Optional[dict] = None,
 ) -> None:
     """
     Full LLM generation pipeline, runs in a subprocess.
@@ -57,12 +59,23 @@ def run_llm_generation(
     to result_file on exit.
     """
     try:
-        import google.genai as genai
-        from services.llm_service import LLMService
+        # Apply runtime-injected API keys before any client is created
+        if api_keys:
+            for env_key, env_val in api_keys.items():
+                if env_val:
+                    os.environ[env_key] = env_val
 
-        _write_progress(progress_file, 5, "Connecting to Gemini...")
+        from services.llm_service import LLMService, GOOGLE_GENAI_AVAILABLE
+        from config.constants import LLM_MODEL_OPENAI, LLM_MODEL_ANTHROPIC
 
-        client = genai.Client()
+        _write_progress(progress_file, 5, f"Initializing LLM client ({llm_model})...")
+
+        if llm_model not in (LLM_MODEL_OPENAI, LLM_MODEL_ANTHROPIC) and GOOGLE_GENAI_AVAILABLE:
+            import google.genai as genai
+            client = genai.Client()
+        else:
+            client = None
+
         llm = LLMService(client=client)
 
         if entities and len(entities) > 0:
@@ -76,6 +89,7 @@ def run_llm_generation(
                 entities,
                 num_sounds,
                 prompt,
+                llm_model=llm_model,
             )
 
             _write_progress(progress_file, 80, "Processing entity prompts...")
@@ -108,7 +122,7 @@ def run_llm_generation(
 
         elif prompt and prompt.strip():
             _write_progress(progress_file, 20, "Generating sound prompts from description...")
-            raw_text, sound_list = llm.generate_text_based_prompts(prompt, num_sounds)
+            raw_text, sound_list = llm.generate_text_based_prompts(prompt, num_sounds, llm_model=llm_model)
 
             _write_progress(progress_file, 90, "Processing response...")
             result_payload = {
