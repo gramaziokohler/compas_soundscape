@@ -1,4 +1,5 @@
 # COMPAS Soundscape
+<img src=".\compas-soundscape-cover.png" alt="App cover" width="800">
 
 A web application for populating architectural models with contextualized sounds, enabling acoustic simulation and spatial audio rendering. Load 3D models via Speckle, assign acoustic materials, simulate room acoustics, and generate immersive soundscapes with AI-powered audio.
 
