@@ -21,11 +21,8 @@ aiofiles==24.1.0
 # Mac will fetch standard wheels, Windows will fetch cu121 wheels
 torch==2.4.0+cu121 ; sys_platform != 'darwin'
 torchaudio==2.4.0+cu121 ; sys_platform != 'darwin'
-torchvision==0.19.0+cu121 ; sys_platform != 'darwin'
 torch==2.4.0 ; sys_platform == 'darwin'
 torchaudio==2.4.0 ; sys_platform == 'darwin'
-torchvision==0.19.0 ; sys_platform == 'darwin'
-
 
 diffusers==0.30.0
 safetensors==0.4.4
@@ -36,6 +33,7 @@ librosa==0.11.0
 noisereduce==3.0.3
 tensorflow==2.18.1
 tensorflow-hub==0.16.1
+setuptools==78.1.1
 
 # --- Room Acoustics ---
 pyroomacoustics==0.9.0
