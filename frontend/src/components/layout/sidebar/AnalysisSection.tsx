@@ -4,6 +4,7 @@ import React, { useMemo, useCallback } from "react";
 import type { AnalysisSectionProps, AnalysisConfig, AnalysisResult, ModelAnalysisConfig, AudioAnalysisConfig, TextAnalysisConfig } from "@/types/analysis";
 import type { CardTypeOption } from "@/components/ui/CardSection";
 import { CARD_TYPE_LABELS } from '@/types/card';
+import type { CustomMenuItem } from '@/types/card';
 import { CardSection } from "@/components/ui/CardSection";
 import { Card } from "@/components/ui/Card";
 import { Model3DContextContent } from "@/components/layout/sidebar/analysis/Model3DContextContent";
@@ -55,6 +56,7 @@ export function AnalysisSection({
   // Analysis status/progress from store (avoids props threading)
   const analysisStatus = useAnalysisStore((s) => s.analysisStatus);
   const analyzingConfigIndex = useAnalysisStore((s) => s.analyzingConfigIndex);
+  const handleReorderConfigs = useAnalysisStore((s) => s.handleReorderConfigs);
 
   // Area drawing store (for text card draw-area buttons)
   const areaDrawing = useAreaDrawingStore();
@@ -233,38 +235,29 @@ export function AnalysisSection({
     }
 
     // Build custom buttons for text cards (draw area button)
-    let customButtons: React.ReactNode[] | undefined;
+    let customButtons: CustomMenuItem[] | undefined;
     if (config.type === 'text') {
       const cardHasArea = areaDrawing.hasArea(index);
       const isDrawingThis = areaDrawing.isDrawing && areaDrawing.drawingCardIndex === index;
 
-      const drawAreaBtn = (
-        <button
-          key="draw-area"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (isDrawingThis) {
-              areaDrawing.cancelDrawing();
-            } else {
-              areaDrawing.startDrawing(index);
-            }
-          }}
-          title={isDrawingThis ? 'Cancel drawing' : 'Draw area in viewer'}
-          className={`w-5 h-5 flex items-center justify-center rounded-full transition-colors cursor-pointer ${
-            isDrawingThis
-              ? 'text-white bg-success'
-              : cardHasArea
-                ? 'text-success bg-emerald-100'
-                : 'text-secondary-hover hover:bg-emerald-100'
-          }`}
-        >
-          {/* Polygon icon */}
+      customButtons = [{
+        key: 'draw-area',
+        icon: (
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 2l8 5v10l-8 5-8-5V7z" />
           </svg>
-        </button>
-      );
-      customButtons = [drawAreaBtn];
+        ),
+        label: isDrawingThis ? 'Cancel drawing' : cardHasArea ? 'Redraw area' : 'Draw area in viewer',
+        isActive: isDrawingThis || cardHasArea,
+        onClick: (e) => {
+          e.stopPropagation();
+          if (isDrawingThis) {
+            areaDrawing.cancelDrawing();
+          } else {
+            areaDrawing.startDrawing(index);
+          }
+        },
+      }];
     }
 
     const cardVersion = (() => {
@@ -364,6 +357,7 @@ export function AnalysisSection({
           isRunning={isRunning}
           error={error}
           color="success"
+          onReorder={handleReorderConfigs}
         />
       </div>
 

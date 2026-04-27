@@ -372,6 +372,16 @@ function HomeContent() {
 
   // Go to receiver state (triggers first-person view at specific receiver)
   const [goToReceiverId, setGoToReceiverId] = useState<string | null>(null);
+  // Go to a grid listener point directly by position (when no receiver mesh exists)
+  const [goToPosition, setGoToPosition] = useState<[number, number, number] | null>(null);
+  // Receiver ID paired with goToPosition — needed to load the correct IRs
+  const [goToPositionReceiverId, setGoToPositionReceiverId] = useState<string | null>(null);
+
+  // FPS mode tracking (true while inside first-person view)
+  const [isFPSModeActive, setIsFPSModeActive] = useState(false);
+
+  // Active IR group to highlight/scroll in the simulation card
+  const [activeIRGroupId, setActiveIRGroupId] = useState<string | null>(null);
 
   // FPS mode programmatic exit trigger (increment to exit first-person mode)
   const [exitFPSTrigger, setExitFPSTrigger] = useState(0);
@@ -1432,31 +1442,46 @@ function HomeContent() {
 
   // Handler: Go To Receiver (activates first-person view at receiver position)
   const handleGoToReceiver = useCallback((receiverId: string) => {
+    setActiveIRGroupId(receiverId);
+
+    // Try regular receivers first
     const receiver = receivers.receivers.find(r => r.id === receiverId);
-    if (!receiver) {
-      console.warn('[Page] handleGoToReceiver: Receiver not found:', receiverId);
+    if (receiver) {
+      setGoToReceiverId(receiverId);
+      setIsFPSModeActive(true);
+      audioOrchestrator.setReceiverMode(true, receiverId, true);
       return;
     }
 
-    console.log('[Page] Go to receiver:', { receiverId, position: receiver.position });
+    // Try grid listener points: ID format is `${gridListenerId}-${index}`
+    const lastDash = receiverId.lastIndexOf('-');
+    if (lastDash > 0) {
+      const parentId = receiverId.substring(0, lastDash);
+      const pointIdx = parseInt(receiverId.substring(lastDash + 1), 10);
+      const gridListener = gridListeners.gridListeners.find(g => g.id === parentId);
+      if (gridListener && !isNaN(pointIdx) && gridListener.points[pointIdx]) {
+        setGoToPosition(gridListener.points[pointIdx]);
+        setGoToPositionReceiverId(receiverId);
+        setIsFPSModeActive(true);
+        audioOrchestrator.setReceiverMode(true, receiverId, true);
+        return;
+      }
+    }
 
-    // Set the receiver ID to trigger the camera movement in ThreeScene
-    setGoToReceiverId(receiverId);
-
-    // Activate receiver mode for audio routing
-    audioOrchestrator.setReceiverMode(true, receiverId, true);
-  }, [receivers.receivers, audioOrchestrator]);
+    console.warn('[Page] handleGoToReceiver: Receiver not found:', receiverId);
+  }, [receivers.receivers, gridListeners.gridListeners, audioOrchestrator]);
 
   // Handler: Receiver mesh double-clicked in 3D scene →
-  //   switch to Listeners tab, expand corresponding card, enter FPS mode
+  //   switch to Listeners tab + expand card for single listeners; for grid points just enter FPS
   const handleReceiverDoubleClickedInScene = useCallback((receiverId: string) => {
-    textGen.setActiveAiTab('listeners');
-    setForcedExpandedListenerId(receiverId);
+    const isGridPoint = gridListeners.gridListeners.some(g => receiverId.startsWith(g.id + '-'));
+    if (!isGridPoint) {
+      textGen.setActiveAiTab('listeners');
+      setForcedExpandedListenerId(receiverId);
+      setTimeout(() => setForcedExpandedListenerId(null), 200);
+    }
     handleGoToReceiver(receiverId);
-    // Reset forcedExpandedListenerId after a tick so subsequent dblclicks on the same
-    // receiver still trigger the useEffect in ListenersSection
-    setTimeout(() => setForcedExpandedListenerId(null), 200);
-  }, [textGen, handleGoToReceiver]);
+  }, [textGen, handleGoToReceiver, gridListeners.gridListeners]);
 
   /**
    * Add a receiver in front of the current camera.
@@ -1511,13 +1536,25 @@ function HomeContent() {
     receivers.addReceiver(type, position);
   }, [viewerRef, receivers.addReceiver]);
 
-  // Reset goToReceiverId after it's been processed (allows re-triggering same receiver)
+  // Reset go-to triggers after being processed (allows re-triggering same receiver)
   useEffect(() => {
     if (goToReceiverId) {
       const timer = setTimeout(() => setGoToReceiverId(null), 100);
       return () => clearTimeout(timer);
     }
   }, [goToReceiverId]);
+  useEffect(() => {
+    if (goToPosition) {
+      const timer = setTimeout(() => setGoToPosition(null), 100);
+      return () => clearTimeout(timer);
+    }
+  }, [goToPosition]);
+  useEffect(() => {
+    if (goToPositionReceiverId) {
+      const timer = setTimeout(() => setGoToPositionReceiverId(null), 100);
+      return () => clearTimeout(timer);
+    }
+  }, [goToPositionReceiverId]);
 
   // Compute bounding box for a list of Speckle object IDs using batch render views
   const computeBoundsForObjectIds = useCallback(
@@ -1556,13 +1593,27 @@ function HomeContent() {
     [],
   );
 
-  // Visible grid listener points: only the currently expanded grid (if showListeners=true)
+  // Visible grid listener points: ALL grids with showListeners=true (collapse only hides gradient map)
   const visibleGridListenerPoints = useMemo<[number, number, number][]>(() => {
-    if (!expandedGridListenerId) return [];
-    const grid = gridListeners.gridListeners.find((g) => g.id === expandedGridListenerId);
-    if (!grid || !grid.showListeners || grid.points.length === 0) return [];
-    return grid.points;
-  }, [expandedGridListenerId, gridListeners.gridListeners]);
+    const all: [number, number, number][] = [];
+    for (const grid of gridListeners.gridListeners) {
+      if (grid.showListeners && grid.points.length > 0) {
+        all.push(...grid.points);
+      }
+    }
+    return all;
+  }, [gridListeners.gridListeners]);
+
+  // Point IDs parallel to visibleGridListenerPoints for double-click routing
+  const visibleGridListenerPointIds = useMemo<string[]>(() => {
+    const all: string[] = [];
+    for (const grid of gridListeners.gridListeners) {
+      if (grid.showListeners && grid.points.length > 0) {
+        grid.points.forEach((_, i) => all.push(`${grid.id}-${i}`));
+      }
+    }
+    return all;
+  }, [gridListeners.gridListeners]);
 
   // Sync receiver count with AudioOrchestrator when receivers are added/removed
   useEffect(() => {
@@ -1640,7 +1691,11 @@ function HomeContent() {
             onReceiverSelected={receivers.selectReceiver}
             onReceiverModeChange={handleReceiverModeChange}
             goToReceiverId={goToReceiverId}
+            goToPosition={goToPosition}
+            goToPositionReceiverId={goToPositionReceiverId}
             gridListenerPoints={visibleGridListenerPoints}
+            gridListenerPointIds={visibleGridListenerPointIds}
+            expandedGridListenerId={expandedGridListenerId}
             // Sound sphere position update (for simulation sync when dragging)
             onUpdateSoundPosition={soundGen.updateSoundPosition}
             // Sound Linking (entity linking from SoundCard to Speckle object)
@@ -1697,7 +1752,7 @@ function HomeContent() {
             // Receiver mesh double-click → expand listener card + enter FPS mode
             onReceiverDoubleClicked={handleReceiverDoubleClickedInScene}
             // FPS exit via Escape → collapse listener card
-            onFPSExited={() => setCollapseListenerCardTrigger(t => t + 1)}
+            onFPSExited={() => { setCollapseListenerCardTrigger(t => t + 1); setIsFPSModeActive(false); setActiveIRGroupId(null); }}
             className="w-full h-full"
           />
         ) : (
@@ -1835,6 +1890,8 @@ function HomeContent() {
         onGoToReceiver={handleGoToReceiver}
         onToggleReceiverHiddenForSimulation={receivers.toggleReceiverHiddenForSimulation}
         onExitFPS={() => setExitFPSTrigger(t => t + 1)}
+        isFPSModeActive={isFPSModeActive}
+        forcedActiveGroupId={activeIRGroupId}
         forcedExpandedListenerId={forcedExpandedListenerId}
         collapseListenerCardTrigger={collapseListenerCardTrigger}
         // Grid listener props

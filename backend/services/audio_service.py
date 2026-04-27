@@ -75,15 +75,25 @@ class AudioService:
     @staticmethod
     def get_service_version_info() -> dict:
         import importlib.metadata
-        try:
-            version = importlib.metadata.version("tangoflux")
-        except importlib.metadata.PackageNotFoundError:
+        version = None
+        for pkg in ("tangoflux", "tango-flux", "TangoFlux"):
             try:
-                import tangoflux
-                version = getattr(tangoflux, "__version__", "unknown")
+                version = importlib.metadata.version(pkg)
+                break
+            except importlib.metadata.PackageNotFoundError:
+                continue
+        if not version:
+            try:
+                import tangoflux as _tf
+                version = getattr(_tf, "__version__", None) or getattr(_tf, "VERSION", None)
             except ImportError:
-                version = "unknown"
-        return {"name": "tangoflux", "version": version}
+                pass
+        device = (
+            "cuda" if torch.cuda.is_available()
+            else "mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+            else "cpu"
+        )
+        return {"name": "TangoFlux", "version": version or "unknown", "device": device}
 
     def __init__(self):
         # Respect FORCE_CPU_MODE setting, otherwise use CUDA if available

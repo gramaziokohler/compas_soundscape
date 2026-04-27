@@ -52,7 +52,7 @@ export function TextToAudioMode({ config, index, onUpdateConfig }: TextToAudioMo
           }
         }}
         placeholder="e.g., Hammer hitting wooden table"
-        className="w-full h-16 p-2 text-xs rounded-lg bg-white border border-secondary-light focus:border-primary focus:ring-1 focus:ring-primary outline-none"
+        className="w-full h-16 p-2 text-xs rounded-lg bg-secondary-lighter text-foreground border border-secondary-light focus:border-primary focus:ring-1 focus:ring-primary outline-none"
         rows={2}
       />
 

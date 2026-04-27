@@ -79,6 +79,7 @@ export interface GridListenersStoreState {
 
   addGridListener: () => string;
   removeGridListener: (id: string) => void;
+  reorderGridListeners: (from: number, to: number) => void;
   /**
    * Update fields on a grid listener.
    * When xSpacing / ySpacing / zOffset change and a bounding box exists,
@@ -132,6 +133,18 @@ export const useGridListenersStore = create<GridListenersStoreState>()(
             (s) => ({ gridListeners: s.gridListeners.filter((g) => g.id !== id) }),
             false,
             'gridListeners/remove',
+          ),
+
+        reorderGridListeners: (from, to) =>
+          set(
+            (s) => {
+              const next = [...s.gridListeners];
+              const [removed] = next.splice(from, 1);
+              next.splice(to, 0, removed);
+              return { gridListeners: next };
+            },
+            false,
+            'gridListeners/reorder',
           ),
 
         updateGridListener: (id, updates) =>

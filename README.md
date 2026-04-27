@@ -5,7 +5,7 @@ A web application for populating architectural models with contextualized sounds
 
 ## Prerequisites
 
-- **Python 3.11** (recommend using Conda)
+- **Python 3.11** (recommended using Conda)
 - **CUDA 12.1** (for GPU-accelerated audio generation with PyTorch)
 - **Node.js 18+** and **npm** (or pnpm)
 
@@ -15,7 +15,7 @@ A web application for populating architectural models with contextualized sounds
 ### 1. Clone the Repository
 
 ```bash
-git clone https://https://github.com/gramaziokohler/compas_soundscape.git
+pip install git+https://https://github.com/gramaziokohler/compas_soundscape.git
 cd compas_soundscape
 ```
 
@@ -33,9 +33,12 @@ uv pip install -r requirements.txt --index-strategy unsafe-best-match
 # ---> Path 2: Install dependencies with pip
 pip install -r requirements.txt
 
-# (optional) Install your favorite LLM API. You can install: none, only one, or multiple. You will need API Token Access to use them in-app.
-
-pip install google-genai anthropic openai
+# (optional) Install your favorite LLM API. You will need s
+pip install google-genai
+# or / and
+pip install anthropic openai
+# or / and
+pip install openai    
 
 ```
 
@@ -71,19 +74,36 @@ npm run dev
 Frontend runs at: `http://localhost:3000`
 
 
-### API Keys
+## API Keys
 
 | Key | Purpose | Get it from |
 |-----|---------|-------------|
 | `SPECKLE_TOKEN` | Speckle 3D model platform access | [Speckle Account](https://app.speckle.systems/) |
-Speckle Token tutorial: https://docs.speckle.systems/developers/sdks/python/getting-started/authentication
 
+See the [Speckle authentication guide](https://docs.speckle.systems/developers/sdks/python/getting-started/authentication) for token setup.
 
-### Optional API Keys
+### Optional API Keys (LLM providers)
 
-| Key | Purpose | Get it from |
-|-----|---------|-------------|
-| `GOOGLE_API_KEY` | Google Gemini LLM (text/prompt generation) | [Google AI Studio](https://aistudio.google.com/apikey) |
+At least one LLM package must be installed (see Backend Setup) to use text/prompt generation. Keys can be set two ways:
+
+**Option A — fill in the `.env` file** (at your local folder root):
+```env
+GOOGLE_API_KEY=your_key_here
+OPENAI_API_KEY=your_key_here
+ANTHROPIC_API_KEY=your_key_here
+```
+
+**Option B — Advanced Settings panel** in the app (no restart needed).
+
+<img src=".\compas-soundscape-api-keys.png" alt="App cover" width="300">
+
+**Links (Choose your prefered provider)**
+
+| Key | Provider | Get it from |
+|-----|----------|-------------|
+| `GOOGLE_API_KEY` | Google Gemini | [Google AI Studio](https://aistudio.google.com/apikey) |
+| `OPENAI_API_KEY` | ChatGPT (GPT-4o) | [OpenAI Platform](https://platform.openai.com/api-keys) |
+| `ANTHROPIC_API_KEY` | Claude 3.5 Sonnet | [Anthropic Console](https://console.anthropic.com/) |
 
 
 

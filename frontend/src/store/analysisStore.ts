@@ -169,6 +169,8 @@ export interface AnalysisStoreState {
   ) => Promise<void>;
   handleStopAnalysis: () => void;
 
+  handleReorderConfigs: (from: number, to: number) => void;
+
   handleTogglePromptSelection: (configIndex: number, promptId: string) => void;
   handleSendToSoundGeneration: (onSuccess?: (prompts: TextPromptResult[]) => void) => TextPromptResult[];
   handleReset: (index: number) => void;
@@ -257,6 +259,29 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             false,
             'analysis/updateConfig',
           ),
+
+        handleReorderConfigs: (from, to) => {
+          const { analysisConfigs, analysisResults, activeAnalysisTab } = get();
+          const newConfigs = [...analysisConfigs];
+          const [removed] = newConfigs.splice(from, 1);
+          newConfigs.splice(to, 0, removed);
+          const newResults = analysisResults.map((r) => {
+            let idx = r.configIndex;
+            if (idx === from) idx = to;
+            else if (from < to && idx > from && idx <= to) idx--;
+            else if (from > to && idx >= to && idx < from) idx++;
+            return { ...r, configIndex: idx };
+          });
+          let newTab = activeAnalysisTab;
+          if (newTab === from) newTab = to;
+          else if (from < to && newTab > from && newTab <= to) newTab--;
+          else if (from > to && newTab >= to && newTab < from) newTab++;
+          set(
+            { analysisConfigs: newConfigs, analysisResults: newResults, activeAnalysisTab: newTab },
+            false,
+            'analysis/reorderConfigs',
+          );
+        },
 
         setActiveAnalysisTab: (index) =>
           set({ activeAnalysisTab: index }, false, 'analysis/setActiveTab'),

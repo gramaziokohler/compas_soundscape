@@ -109,8 +109,16 @@ interface SpeckleSceneProps {
   onReceiverSelected?: (receiverId: string) => void;
   onReceiverModeChange?: (isActive: boolean, receiverId: string | null) => void;
   goToReceiverId?: string | null;
-  /** Grid listener points to render (pre-filtered: only visible expanded grid). */
+  /** Directly enter FPS mode at this position (used for grid listener points that have no mesh). */
+  goToPosition?: [number, number, number] | null;
+  /** Receiver ID corresponding to goToPosition — used to load correct IRs. */
+  goToPositionReceiverId?: string | null;
+  /** Grid listener points to render (all grids with showListeners=true, combined). */
   gridListenerPoints?: [number, number, number][];
+  /** Point IDs parallel to gridListenerPoints — e.g. "gridA-0", "gridA-1", "gridB-0". */
+  gridListenerPointIds?: string[];
+  /** ID of the currently expanded grid listener (kept for legacy IR-routing fallback). */
+  expandedGridListenerId?: string | null;
 
   // Sound sphere position update (for simulation sync)
   onUpdateSoundPosition?: (soundId: string, position: [number, number, number]) => void;
@@ -214,7 +222,11 @@ export function SpeckleScene({
   onReceiverSelected,
   onReceiverModeChange,
   goToReceiverId,
+  goToPosition,
+  goToPositionReceiverId,
   gridListenerPoints = [],
+  gridListenerPointIds = [],
+  expandedGridListenerId,
   onUpdateSoundPosition,
   selectedDiverseEntities = [],
   entitiesWithLinkedSounds = new Set(),
@@ -293,6 +305,7 @@ export function SpeckleScene({
   const [error, setError] = useState<string | null>(null);
   const [isViewerReady, setIsViewerReady] = useState(false);
   const [isFirstPersonMode, setIsFirstPersonMode] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // Mutable ref to check isFirstPersonMode inside effects without adding it to deps
   const isFirstPersonModeRef = useRef(false);
@@ -759,7 +772,7 @@ export function SpeckleScene({
         playbackSchedulerRef.current = null;
       }
     };
-  }, [modelUrl, onViewerLoaded]);
+  }, [modelUrl, onViewerLoaded, refreshKey]);
 
   // ============================================================================
   // Effect - Initialize Area Drawing Manager
@@ -824,12 +837,14 @@ export function SpeckleScene({
       }
     };
 
-    const onDblClick = (e: MouseEvent) => {
-      e.stopPropagation();
-      const result = manager.handleDoubleClick(e);
-      if (result) {
-        areaDrawingCtx.finishDrawing(drawingCardIndex, result);
-        manager.addCompletedArea(result, 'default');
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const result = manager.confirmDrawing();
+        if (result) {
+          areaDrawingCtx.finishDrawing(drawingCardIndex, result);
+          manager.addCompletedArea(result, 'default');
+        }
       }
     };
 
@@ -842,14 +857,14 @@ export function SpeckleScene({
     // Use capture phase to intercept before SpeckleEventBridge
     canvas.addEventListener('pointermove', onPointerMove, true);
     canvas.addEventListener('click', onClick, true);
-    canvas.addEventListener('dblclick', onDblClick, true);
     canvas.addEventListener('contextmenu', onContextMenu, true);
+    document.addEventListener('keydown', onKeyDown, true);
 
     return () => {
       canvas.removeEventListener('pointermove', onPointerMove, true);
       canvas.removeEventListener('click', onClick, true);
-      canvas.removeEventListener('dblclick', onDblClick, true);
       canvas.removeEventListener('contextmenu', onContextMenu, true);
+      document.removeEventListener('keydown', onKeyDown, true);
       // Re-enable selection when drawing effect cleans up
       if (selectionExtensionRef.current) {
         selectionExtensionRef.current.enabled = true;
@@ -858,13 +873,39 @@ export function SpeckleScene({
   }, [areaDrawingCtx.isDrawing, areaDrawingCtx.drawingCardIndex, areaDrawingCtx.version]);
 
   // ============================================================================
+  // Effect - Sidebar "Validate" button confirm
+  // ============================================================================
+  useEffect(() => {
+    if (!areaDrawingCtx.pendingConfirm) return;
+    areaDrawingCtx.clearConfirmDrawing();
+
+    const manager = areaDrawingManagerRef.current;
+    const cardIndex = areaDrawingCtx.drawingCardIndex;
+    if (!manager || cardIndex === null) return;
+
+    const result = manager.confirmDrawing();
+    if (result) {
+      areaDrawingCtx.finishDrawing(cardIndex, result);
+      manager.addCompletedArea(result, 'default');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [areaDrawingCtx.pendingConfirm]);
+
+  // ============================================================================
   // Effect - Sync Completed Area Visuals
   // ============================================================================
   useEffect(() => {
     const manager = areaDrawingManagerRef.current;
     if (!manager) return;
 
-    // Update visual states for all existing areas
+    // Remove visuals for areas deleted from the store
+    for (const cardIndex of manager.managedCardIndices) {
+      if (!areaDrawingCtx.drawnAreas.has(cardIndex)) {
+        manager.removeArea(cardIndex);
+      }
+    }
+
+    // Update visual states for all remaining areas
     for (const [cardIndex, state] of areaDrawingCtx.areaVisualStates) {
       manager.updateAreaVisualState(cardIndex, state);
     }
@@ -1148,6 +1189,11 @@ export function SpeckleScene({
     // Set up callback for receiver mesh double-click (expand listener card + enter FPS mode)
     if (onReceiverDoubleClicked) {
       coordinatorRef.current.setOnReceiverDoubleClicked(onReceiverDoubleClicked);
+      // Grid listener double-click: sync FPS state and re-use same page.tsx handler
+      coordinatorRef.current.setOnGridListenerDoubleClicked((pointId: string) => {
+        setIsFirstPersonMode(true);
+        onReceiverDoubleClicked(pointId);
+      });
     }
   }, [coordinatorRef.current, soundscapeData, onSelectSoundCard, isLinkingEntity, onEntityLinked, worldTree, getObjectLinkState, onUpdateReceiverPosition, onUpdateSoundPosition, applyFilterColors, receivers, setSelectedEntity]);
 
@@ -1255,8 +1301,8 @@ export function SpeckleScene({
   // ============================================================================
   useEffect(() => {
     if (!isViewerReady || !coordinatorRef.current) return;
-    coordinatorRef.current.updateGridListeners(gridListenerPoints);
-  }, [isViewerReady, gridListenerPoints]);
+    coordinatorRef.current.updateGridListeners(gridListenerPoints, expandedGridListenerId, gridListenerPointIds);
+  }, [isViewerReady, gridListenerPoints, expandedGridListenerId, gridListenerPointIds]);
 
   // ============================================================================
   // Effect - Highlight Selected Sound Sphere
@@ -2250,6 +2296,13 @@ export function SpeckleScene({
   }, []);
 
   // ============================================================================
+  // Refresh Scene Handler (hard reinitialize — same as a page reload for the viewer)
+  // ============================================================================
+  const handleRefreshScene = useCallback(() => {
+    setRefreshKey((k) => k + 1);
+  }, []);
+
+  // ============================================================================
   // Reset Zoom Handler (using Speckle CameraController)
   // ============================================================================
   const handleResetZoom = useCallback(() => {
@@ -2704,6 +2757,9 @@ export function SpeckleScene({
 
     const handleDblClickCapture = (e: MouseEvent) => {
       if (!isFirstPersonMode) return;
+      // If a custom object (receiver/sound sphere/grid point) is under the cursor,
+      // let the canvas handler switch to it instead of exiting FPS mode.
+      if (coordinatorRef.current?.hasCustomObjectAt(e.clientX, e.clientY)) return;
       // Exit FPS mode when user double-clicks anything while in first-person view
       coordinatorRef.current?.disableFirstPersonMode();
       setIsFirstPersonMode(false);
@@ -2838,6 +2894,40 @@ export function SpeckleScene({
       target: initialTarget.toArray()
     });
   }, [goToReceiverId, receivers, soundscapeData]);
+
+  // Effect: Go To Position (for grid listener points that have no individual mesh)
+  useEffect(() => {
+    if (!goToPosition || !coordinatorRef.current) return;
+
+    const receiverPosition = new THREE.Vector3(...goToPosition);
+
+    let initialTarget: THREE.Vector3;
+    const soundSphereManager = coordinatorRef.current.getSoundSphereManager();
+    const soundSphereMeshes = soundSphereManager?.getSoundSphereMeshes() || [];
+    const soundSpherePositions: THREE.Vector3[] = soundSphereMeshes.map((mesh: THREE.Mesh) => mesh.position.clone());
+
+    if (soundSpherePositions.length > 0) {
+      const sum = soundSpherePositions.reduce(
+        (acc: THREE.Vector3, pos: THREE.Vector3) => acc.add(pos),
+        new THREE.Vector3(0, 0, 0)
+      );
+      initialTarget = sum.divideScalar(soundSpherePositions.length);
+    } else {
+      initialTarget = new THREE.Vector3(
+        receiverPosition.x,
+        receiverPosition.y - 5,
+        receiverPosition.z
+      );
+    }
+
+    coordinatorRef.current.enableFirstPersonMode(receiverPosition, initialTarget);
+    setIsFirstPersonMode(true);
+
+    // Load IRs for this grid point
+    if (goToPositionReceiverId) {
+      coordinatorRef.current.updateActiveReceiver(goToPositionReceiverId);
+    }
+  }, [goToPosition, goToPositionReceiverId]);
 
   // ============================================================================
   // IR Hover Line (source ↔ receiver)
@@ -3175,7 +3265,7 @@ export function SpeckleScene({
             <div className="text-center">
               {/* Fixed header - prevents wrapping issues */}
             <div className="flex items-center gap-4 flex-shrink-0 mb-4 justify-center">
-              <Image className="dark:invert flex-shrink-0" src="/compas_icon_white.png" alt="compas logo" width={100} height={100} priority />
+              <Image className="invert flex-shrink-0" src="/compas_icon_white.png" alt="compas logo" width={100} height={100} priority />
             </div>
               <h3 className="text-xl font-semibold mb-2">
                 Compas Soundscape
@@ -3378,6 +3468,18 @@ export function SpeckleScene({
           icon={
             <Icon>
               <rect x="3" y="3" width="18" height="18" strokeDasharray="3 3" />
+            </Icon>
+          }
+        />
+
+        {/* Refresh Scene Button */}
+        <SceneControlButton
+          onClick={handleRefreshScene}
+          title="Refresh scene"
+          icon={
+            <Icon>
+              <polyline points="23 4 23 10 17 10" />
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
             </Icon>
           }
         />

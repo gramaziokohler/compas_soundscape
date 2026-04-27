@@ -16,7 +16,9 @@ export class GridReceiverManager {
   private scaleForSounds: number;
   private instancedMesh: THREE.InstancedMesh | null = null;
   private positions: [number, number, number][] = [];
+  private pointIds: string[] = [];
   private readonly dummy = new THREE.Object3D();
+  private gridListenerId: string | null = null;
 
   constructor(scene: THREE.Scene, scaleForSounds: number, parentGroup?: THREE.Group) {
     this.scene = scene;
@@ -52,6 +54,7 @@ export class GridReceiverManager {
     const mesh = new THREE.InstancedMesh(geom, mat, MAX_GRID_INSTANCES);
     mesh.count = 0;
     mesh.userData.isGridListener = true;
+    mesh.userData.customObjectType = 'grid-receiver';
     mesh.layers.disableAll();
     mesh.layers.enable(0);
     mesh.layers.enable(4);
@@ -62,8 +65,17 @@ export class GridReceiverManager {
     return mesh;
   }
 
-  public updatePoints(points: [number, number, number][]): void {
+  public setGridListenerId(id: string | null): void { this.gridListenerId = id; }
+  public getGridListenerId(): string | null { return this.gridListenerId; }
+  public getPositions(): [number, number, number][] { return this.positions; }
+  /** Returns the point ID for a given instance index, or null if out of range. */
+  public getPointId(instanceId: number): string | null {
+    return this.pointIds[instanceId] ?? null;
+  }
+
+  public updatePoints(points: [number, number, number][], pointIds?: string[]): void {
     this.positions = points;
+    this.pointIds = pointIds ?? [];
 
     if (points.length === 0) {
       if (this.instancedMesh) this.instancedMesh.count = 0;
@@ -116,8 +128,10 @@ export class GridReceiverManager {
       (this.instancedMesh.material as THREE.Material).dispose();
       this.instancedMesh = null;
       const pts = this.positions;
+      const ids = this.pointIds;
       this.positions = [];
-      this.updatePoints(pts);
+      this.pointIds = [];
+      this.updatePoints(pts, ids);
     }
   }
 
@@ -130,5 +144,6 @@ export class GridReceiverManager {
       this.instancedMesh = null;
     }
     this.positions = [];
+    this.pointIds = [];
   }
 }

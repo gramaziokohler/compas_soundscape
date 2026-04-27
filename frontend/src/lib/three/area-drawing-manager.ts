@@ -222,9 +222,9 @@ export class AreaDrawingManager {
   }
 
   /**
-   * Handle double-click: auto-close the polygon if enough vertices.
+   * Confirm and close the polygon programmatically (Enter key or sidebar button).
    */
-  handleDoubleClick(event: MouseEvent): DrawnArea | null {
+  confirmDrawing(): DrawnArea | null {
     if (!this.state || this.state.projected3D.length < AREA_DRAWING.MIN_VERTICES) {
       return null;
     }
@@ -280,6 +280,13 @@ export class AreaDrawingManager {
    */
   get isDrawing(): boolean {
     return this.state !== null;
+  }
+
+  /**
+   * Returns the set of card indices currently rendered in the scene.
+   */
+  get managedCardIndices(): Set<number> {
+    return new Set(this.areaVisuals.keys());
   }
 
   // ==========================================================================
@@ -592,7 +599,7 @@ export class AreaDrawingManager {
   // Private: Polygon building helpers
   // ==========================================================================
 
-  private closePolygon(): DrawnArea | null {
+  closePolygon(): DrawnArea | null {
     if (!this.state || !this.state.planeOrigin || !this.state.planeNormal) return null;
     if (this.state.projected3D.length < AREA_DRAWING.MIN_VERTICES) return null;
 

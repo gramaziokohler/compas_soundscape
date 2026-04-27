@@ -2,13 +2,14 @@
 
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import type { ReceiverData, GridListenerData } from '@/types/receiver';
-import type { CardType } from '@/types/card';
+import type { CardType, CustomMenuItem } from '@/types/card';
 import type { CardTypeOption } from '@/components/ui/CardSection';
 import { CardSection } from '@/components/ui/CardSection';
 import { Card } from '@/components/ui/Card';
 import { SingleListenerContent } from './listeners/SingleListenerContent';
 import { GridListenerContent } from './listeners/GridListenerContent';
 import { useGridListenersStore } from '@/store/gridListenersStore';
+import { useReceiversStore } from '@/store/receiversStore';
 import { RECEIVER_CONFIG } from '@/utils/constants';
 
 // Unified item type satisfying CardBaseConfig
@@ -60,7 +61,8 @@ export function ListenersSection({
   forcedExpandedId,
   collapseAllTrigger,
 }: ListenersSectionProps) {
-  const { updateGridListener, toggleGridListenerHiddenForSimulation } = useGridListenersStore();
+  const { updateGridListener, toggleGridListenerHiddenForSimulation, reorderGridListeners } = useGridListenersStore();
+  const reorderReceivers = useReceiversStore((s) => s.reorderReceivers);
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const prevGridCountRef = useRef(gridListeners.length);
@@ -158,6 +160,18 @@ export function ListenersSection({
     }
   }, [items, expandedId, onDeleteReceiver, onDeleteGridListener, onExitFPS]);
 
+  // Within-type reorder only (cross-type moves are silently ignored)
+  const handleReorder = useCallback((from: number, to: number) => {
+    const nReceivers = receivers.length;
+    const fromIsReceiver = from < nReceivers;
+    const toIsReceiver = to < nReceivers;
+    if (fromIsReceiver && toIsReceiver) {
+      reorderReceivers(from, to);
+    } else if (!fromIsReceiver && !toIsReceiver) {
+      reorderGridListeners(from - nReceivers, to - nReceivers);
+    }
+  }, [receivers.length, reorderReceivers, reorderGridListeners]);
+
   const handlePositionChange = useCallback((
     id: string, axis: 0 | 1 | 2, raw: string, currentPos: [number, number, number],
   ) => {
@@ -184,24 +198,9 @@ export function ListenersSection({
   ) => {
     const isHidden = item.hiddenForSimulation ?? false;
 
-    const hideButton = (
-      <button
-        key="hide"
-        onClick={(e) => {
-          e.stopPropagation();
-          if (item.type === 'listener') {
-            onToggleReceiverHiddenForSimulation(item.id);
-          } else {
-            toggleGridListenerHiddenForSimulation(item.id);
-          }
-        }}
-        className={`w-5 h-5 flex items-center justify-center rounded-full transition-colors ${
-          isHidden
-            ? 'bg-warning-light text-warning'
-            : 'text-secondary-hover hover:bg-secondary-light hover:text-foreground'
-        }`}
-        title={isHidden ? 'Show for simulation' : 'Hide for simulation'}
-      >
+    const hideButton: CustomMenuItem = {
+      key: 'hide',
+      icon: (
         <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           {isHidden ? (
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" clipRule="evenodd" />
@@ -209,8 +208,18 @@ export function ListenersSection({
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
           )}
         </svg>
-      </button>
-    );
+      ),
+      label: isHidden ? 'Show for simulation' : 'Hide for simulation',
+      isActive: isHidden,
+      onClick: (e) => {
+        e.stopPropagation();
+        if (item.type === 'listener') {
+          onToggleReceiverHiddenForSimulation(item.id);
+        } else {
+          toggleGridListenerHiddenForSimulation(item.id);
+        }
+      },
+    };
 
     const content = item.type === 'listener' ? (
       <SingleListenerContent
@@ -269,6 +278,7 @@ export function ListenersSection({
       expandedIndex={expandedIndex}
       header={header}
       onExpandedIndexChange={handleExpandedIndexChange}
+      onReorder={handleReorder}
     />
   );
 }

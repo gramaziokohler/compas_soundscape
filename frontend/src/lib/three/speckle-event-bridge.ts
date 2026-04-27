@@ -36,6 +36,7 @@ export class SpeckleEventBridge {
   private lastIntersectionPoint: THREE.Vector3 | null = null;
   private onSoundSphereClicked: ((promptKey: string) => void) | null = null;
   private onReceiverSingleClicked: ((receiverId: string) => void) | null = null;
+  private onGridListenerDoubleClicked: ((instanceId: number) => void) | null = null;
   private lastClickTime: number = 0;
   private lastClickedObject: THREE.Object3D | null = null;
   private lastClickedObjectKey: string | null = null;
@@ -301,11 +302,17 @@ export class SpeckleEventBridge {
       event.stopPropagation();
       event.preventDefault();
 
+      // Grid listener points: no gumball, no single-click side effects — only double-click matters
+      if (customHit.type === 'grid-receiver') {
+        this.clearVisualSelections();
+        return;
+      }
+
       // Only clear visuals (Speckle highlight + drag gizmo) without notifying React,
       // to avoid cascading state updates (bounding box, timeline, etc.)
       this.clearVisualSelections();
       if (this.onCustomObjectSelected) {
-        this.onCustomObjectSelected(customHit.object, customHit.type);
+        this.onCustomObjectSelected(customHit.object, customHit.type as 'sound' | 'receiver');
       }
 
       // Debounce single-click side effects (card expansion, entity panel, etc.)
@@ -313,7 +320,7 @@ export class SpeckleEventBridge {
       if (this.singleClickTimer) {
         clearTimeout(this.singleClickTimer);
       }
-      this.pendingSingleClickData = { object: customHit.object, type: customHit.type };
+      this.pendingSingleClickData = { object: customHit.object, type: customHit.type as 'sound' | 'receiver' };
       this.singleClickTimer = setTimeout(() => {
         this.fireSingleClickCallbacks();
       }, this.doubleClickDelay);
@@ -370,7 +377,14 @@ export class SpeckleEventBridge {
         this.pendingSingleClickData = null;
       }
 
-      this.handleDoubleClick(customHit.object);
+      if (customHit.type === 'grid-receiver') {
+        this.clearVisualSelections();
+        if (customHit.instanceId !== undefined && this.onGridListenerDoubleClicked) {
+          this.onGridListenerDoubleClicked(customHit.instanceId);
+        }
+      } else {
+        this.handleDoubleClick(customHit.object);
+      }
     } else {
       // UNIFIED ZOOM (mode-agnostic): find the correct visible object and zoom to it.
       // Prevents zooming to a hidden object that Speckle might hit in dark mode.
@@ -436,7 +450,7 @@ export class SpeckleEventBridge {
     return intersects.length > 0;
   }
 
-  private raycastCustomObjects(): { type: 'sound' | 'receiver'; object: THREE.Object3D } | null {
+  private raycastCustomObjects(): { type: 'sound' | 'receiver' | 'grid-receiver'; object: THREE.Object3D; instanceId?: number } | null {
     const camera = this.adapter.getCamera();
     this.raycaster.setFromCamera(this.mouse, camera);
     const customObjects = this.adapter.getCustomObjects();
@@ -445,6 +459,11 @@ export class SpeckleEventBridge {
     if (intersects.length === 0) return null;
 
     for (const intersect of intersects) {
+      // InstancedMesh grid listener — use instanceId to identify the point
+      if ((intersect.object as any).isInstancedMesh && intersect.object.userData.customObjectType === 'grid-receiver') {
+        return { type: 'grid-receiver', object: intersect.object, instanceId: intersect.instanceId };
+      }
+
       let currentObject: THREE.Object3D | null = intersect.object;
       while (currentObject) {
         const objectType = currentObject.userData.customObjectType;
@@ -547,6 +566,22 @@ export class SpeckleEventBridge {
     this.onReceiverSingleClicked = callback;
   }
 
+  public setOnGridListenerDoubleClicked(callback: (instanceId: number) => void): void {
+    this.onGridListenerDoubleClicked = callback;
+  }
+
+  /** Returns true if a custom object (sound/receiver/grid-receiver) is under the given screen position. */
+  public hasCustomObjectAt(clientX: number, clientY: number): boolean {
+    const canvas = this.viewer.getRenderer().renderer.domElement;
+    const rect = canvas.getBoundingClientRect();
+    const savedMouse = this.mouse.clone();
+    this.mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    this.mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    const hit = this.raycastCustomObjects();
+    this.mouse.copy(savedMouse);
+    return hit !== null;
+  }
+
   public dispose(): void {
     if (this.singleClickTimer) {
       clearTimeout(this.singleClickTimer);
@@ -563,6 +598,7 @@ export class SpeckleEventBridge {
     this.onReceiverDoubleClicked = null;
     this.onCustomObjectDoubleClicked = null;
     this.onReceiverSingleClicked = null;
+    this.onGridListenerDoubleClicked = null;
     this.onSpeckleObjectSelected = null;
     this.lastClickedObject = null;
     this.pendingSingleClickData = null;

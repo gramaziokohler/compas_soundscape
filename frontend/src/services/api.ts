@@ -48,6 +48,7 @@ async function fetchWithErrorHandling(
 export interface ServiceVersionInfo {
   name: string;
   version: string;
+  device?: string;
 }
 
 export interface LLMProviderInfo {

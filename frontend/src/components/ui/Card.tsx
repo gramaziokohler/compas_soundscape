@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, type ReactNode } from 'react';
+import { useCallback, useRef, useState, useEffect, type ReactNode } from 'react';
 import type { CardProps, CardBaseConfig } from '@/types/card';
 import { CARD_TYPE_LABELS } from '@/types/card';
 import { CARD_COLOR_DEFAULT } from '@/utils/constants';
@@ -161,6 +161,23 @@ export function Card<TConfig extends CardBaseConfig>({
   // so we can restore the original state when the second click fires.
   const stateAtFirstClickRef = useRef<boolean | null>(null);
 
+  // Kebab menu state
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [expandedSubKey, setExpandedSubKey] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+        setExpandedSubKey(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [menuOpen]);
+
   // Button handlers
   // Single click (e.detail=1): toggle expand/collapse.
   // Double click (e.detail≥2, only when onDoubleClickCard is provided): zoom to sphere.
@@ -208,7 +225,7 @@ export function Card<TConfig extends CardBaseConfig>({
   const renderContent = () => {
     if (isRunning && loadingContent) {
       return (
-        <div className="flex items-center justify-center p-4 text-secondary-light text-xs">
+        <div className="flex items-center justify-center p-4 text-secondary-hover text-xs">
           {loadingContent}
         </div>
       );
@@ -288,10 +305,99 @@ export function Card<TConfig extends CardBaseConfig>({
 
         {/* Action buttons */}
         <div className="flex items-center gap-1 flex-shrink-0">
-          {/* Custom buttons (if provided) */}
-          {customButtons && customButtons.map((button, idx) => (
-            <span key={idx}>{button}</span>
-          ))}
+          {/* Kebab menu — contains all custom buttons */}
+          {customButtons && customButtons.length > 0 && (
+            <div className="relative" ref={menuRef}>
+              <CardButton
+                icon={<KebabIcon />}
+                title="More options"
+                onClick={(e) => { e.stopPropagation(); setMenuOpen(prev => !prev); setExpandedSubKey(null); }}
+                variant={menuOpen ? 'primary' : 'default'}
+              />
+              {menuOpen && (
+                <div
+                  className="absolute right-0 top-full mt-1 z-50 rounded-lg shadow-lg border border-secondary-light min-w-[160px] overflow-hidden py-1"
+                  style={{ backgroundColor: 'var(--color-background, white)' }}
+                  onClick={e => e.stopPropagation()}
+                >
+                  {customButtons.map(item => (
+                    <div key={item.key}>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (item.disabled) return;
+                          if (item.subItems) {
+                            setExpandedSubKey(prev => prev === item.key ? null : item.key);
+                          } else {
+                            item.onClick?.(e);
+                            setMenuOpen(false);
+                          }
+                        }}
+                        disabled={item.disabled && !item.subItems}
+                        className={`flex items-center gap-2 w-full text-left px-3 py-2 text-xs transition-colors ${
+                          item.disabled && !item.subItems
+                            ? 'opacity-40 cursor-not-allowed text-secondary-hover'
+                            : item.isActive
+                              ? 'cursor-pointer'
+                              : 'text-foreground cursor-pointer hover:bg-secondary-light'
+                        }`}
+                        style={item.isActive ? {
+                          backgroundColor: 'var(--card-color-lighter, var(--color-primary-light))',
+                          color: 'var(--card-color, var(--color-primary))',
+                        } : undefined}
+                      >
+                        <span className="flex-shrink-0 w-3 h-3 flex items-center justify-center">
+                          {item.icon}
+                        </span>
+                        <span className="flex-1">{item.label}</span>
+                        {item.subItems && (
+                          <span className="text-secondary-hover text-[10px]">
+                            {expandedSubKey === item.key ? '▾' : '▸'}
+                          </span>
+                        )}
+                      </button>
+
+                      {/* Sub-items accordion */}
+                      {item.subItems && expandedSubKey === item.key && (
+                        <div className="border-t border-secondary-light">
+                          {item.subItems.map(sub => (
+                            <button
+                              key={sub.key}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!sub.disabled) {
+                                  sub.onClick(e);
+                                  setMenuOpen(false);
+                                  setExpandedSubKey(null);
+                                }
+                              }}
+                              disabled={sub.disabled}
+                              className={`flex items-center gap-2 w-full text-left pl-8 pr-3 py-2 text-xs transition-colors ${
+                                sub.disabled
+                                  ? 'opacity-40 cursor-not-allowed text-secondary-hover'
+                                  : sub.isActive
+                                    ? 'cursor-pointer'
+                                    : 'text-foreground cursor-pointer hover:bg-secondary-light'
+                              }`}
+                              style={sub.isActive ? {
+                                backgroundColor: 'var(--card-color-lighter, var(--color-primary-light))',
+                                color: 'var(--card-color, var(--color-primary))',
+                              } : undefined}
+                            >
+                              <span className="flex-1">{sub.label}</span>
+                              {sub.isActive && (
+                                <span className="text-[10px] opacity-60">✓</span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Reset button - only show if result exists */}
           {hasResult && (
@@ -461,6 +567,16 @@ function PenIcon() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H8v-2.414a2 2 0 01.586-1.414z" />
+    </svg>
+  );
+}
+
+function KebabIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+      <circle cx="12" cy="5" r="2" />
+      <circle cx="12" cy="12" r="2" />
+      <circle cx="12" cy="19" r="2" />
     </svg>
   );
 }

@@ -443,7 +443,7 @@ export function ObjectExplorer() {
               clearFilters();
               clearSelection();
             }}
-            className="text-xs px-2 py-1 rounded hover:bg-gray-100 transition-colors"
+            className="text-xs px-2 py-1 rounded hover:bg-secondary-light transition-colors"
             style={{ color: UI_COLORS.PRIMARY }}
             title="Clear all filters and selection"
           >

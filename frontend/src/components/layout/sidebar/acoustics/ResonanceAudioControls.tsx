@@ -106,7 +106,7 @@ export function ResonanceAudioControls({
           {!hasGeometry && onRefreshBoundingBox && (
             <button
               onClick={onRefreshBoundingBox}
-              className="p-1 rounded hover:bg-gray-200 transition-colors"
+              className="p-1 rounded hover:bg-secondary-light transition-colors"
               title="Refresh bounding box from sound sources"
               style={{ color: UI_COLORS.NEUTRAL_600 }}
             >

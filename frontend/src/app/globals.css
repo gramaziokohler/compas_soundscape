@@ -72,6 +72,12 @@
   :root {
     --background: #0a0a0a;
     --foreground: #ededed;
+
+    /* Secondary scale flips: dark bg tones for cards/borders, medium for muted text */
+    --color-secondary: #222222;
+    --color-secondary-hover: #888888;
+    --color-secondary-light: #2a2a2a;
+    --color-secondary-lighter: #141414;
   }
 }
 

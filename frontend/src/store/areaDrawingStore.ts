@@ -27,6 +27,8 @@ export interface AreaDrawingStoreState {
   drawingCardIndex: number | null;
   /** Increments on any state change — use as useEffect dependency. */
   version: number;
+  /** Set to true when the sidebar "Validate" button or Enter key requests polygon close. */
+  pendingConfirm: boolean;
 
   startDrawing: (cardIndex: number) => void;
   cancelDrawing: () => void;
@@ -35,6 +37,8 @@ export interface AreaDrawingStoreState {
   setAreaVisualState: (cardIndex: number, state: AreaVisualState) => void;
   getArea: (cardIndex: number) => DrawnArea | undefined;
   hasArea: (cardIndex: number) => boolean;
+  requestConfirmDrawing: () => void;
+  clearConfirmDrawing: () => void;
 }
 
 export const useAreaDrawingStore = create<AreaDrawingStoreState>()(
@@ -46,6 +50,7 @@ export const useAreaDrawingStore = create<AreaDrawingStoreState>()(
         isDrawing: false,
         drawingCardIndex: null,
         version: 0,
+        pendingConfirm: false,
 
         startDrawing: (cardIndex) =>
           set(
@@ -104,6 +109,12 @@ export const useAreaDrawingStore = create<AreaDrawingStoreState>()(
         getArea: (cardIndex) => get().drawnAreas.get(cardIndex),
 
         hasArea: (cardIndex) => get().drawnAreas.has(cardIndex),
+
+        requestConfirmDrawing: () =>
+          set({ pendingConfirm: true }, false, 'areaDrawing/requestConfirmDrawing'),
+
+        clearConfirmDrawing: () =>
+          set({ pendingConfirm: false }, false, 'areaDrawing/clearConfirmDrawing'),
       }),
       { name: 'areaDrawingStore' },
     ),

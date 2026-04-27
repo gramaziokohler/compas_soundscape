@@ -70,6 +70,7 @@ export interface AcousticsSimulationStoreState {
 
   handleAddConfig: (mode: AcousticSimulationMode) => void;
   handleRemoveConfig: (index: number) => void;
+  handleReorderConfigs: (from: number, to: number) => void;
   handleUpdateConfig: (index: number, updates: Partial<SimulationConfig>) => void;
   handleSetActiveSimulation: (index: number | null) => void;
   handleUpdateSimulationName: (index: number, name: string) => void;
@@ -183,6 +184,25 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
             },
             false,
             'acousticsSim/addConfig',
+          );
+        },
+
+        handleReorderConfigs: (from, to) => {
+          const { simulationConfigs, activeSimulationIndex, expandedTabIndex } = get();
+          const newConfigs = [...simulationConfigs];
+          const [removed] = newConfigs.splice(from, 1);
+          newConfigs.splice(to, 0, removed);
+          const remap = (idx: number | null): number | null => {
+            if (idx === null) return null;
+            if (idx === from) return to;
+            if (from < to && idx > from && idx <= to) return idx - 1;
+            if (from > to && idx >= to && idx < from) return idx + 1;
+            return idx;
+          };
+          set(
+            { simulationConfigs: newConfigs, activeSimulationIndex: remap(activeSimulationIndex), expandedTabIndex: remap(expandedTabIndex) },
+            false,
+            'acousticsSim/reorderConfigs',
           );
         },
 

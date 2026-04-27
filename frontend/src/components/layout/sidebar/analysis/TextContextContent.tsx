@@ -27,7 +27,7 @@ export function TextContextContent({
   isAnalyzing,
   onUpdateConfig
 }: TextContextContentProps) {
-  const { isDrawingThisCard, hasArea, removeArea } = useAreaDrawing(index);
+  const { isDrawingThisCard, hasArea, removeArea, confirmDrawing } = useAreaDrawing(index);
 
   const canAnalyze = config.textInput.trim().length > 0;
 
@@ -106,11 +106,22 @@ export function TextContextContent({
       {/* Drawing mode tip */}
       {isDrawingThisCard && (
         <div
-          className="text-xs p-2 rounded-md"
+          className="text-xs p-2 rounded-md flex items-start justify-between gap-2"
           style={{ backgroundColor: 'rgba(16, 185, 129, 0.1)', color: UI_COLORS.SUCCESS }}
         >
-          Click on surfaces to draw an area. Double-click to close.
-          Right-click to undo last point.
+          <span>
+            Click to place points. Press <kbd className="px-1 py-0.5 rounded text-xs font-mono" style={{ backgroundColor: 'rgba(16,185,129,0.2)' }}>Enter</kbd> or right-click to undo last point.
+          </span>
+          <button
+            onClick={confirmDrawing}
+            className="shrink-0 px-2 py-0.5 rounded text-xs font-medium cursor-pointer"
+            style={{
+              backgroundColor: UI_COLORS.SUCCESS,
+              color: '#ffffff',
+            }}
+          >
+            Validate
+          </button>
         </div>
       )}
 

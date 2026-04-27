@@ -56,10 +56,10 @@ export function Sidebar(props: SidebarProps) {
   }, [props.activeAiTab, props.setActiveAiTab, isExpanded]);
 
   return (
-    <div className="fixed left-0 top-0 h-screen flex flex-row border-r border-gray-200 dark:border-gray-700 shadow-lg transition-all duration-300 ease-in-out z-10">
+    <div className="fixed left-0 top-0 h-screen flex flex-row border-r border-secondary-light shadow-lg transition-all duration-300 ease-in-out z-10">
       {/* Vertical Tab Navigation */}
       <div
-        className="flex-shrink-0 bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-700 flex flex-col items-center pt-6 gap-1"
+        className="flex-shrink-0 bg-secondary-lighter border-r border-secondary-light flex flex-col items-center pt-6 gap-1"
         style={{ width: `${UI_VERTICAL_TABS.WIDTH}px` }}
       >
         {/* Context Tab */}
@@ -156,7 +156,7 @@ export function Sidebar(props: SidebarProps) {
 
       {/* Main Content Area */}
       <aside
-        className="flex-shrink-0 flex flex-col gap-4 bg-white dark:bg-gray-800 transition-all duration-300 ease-in-out relative"
+        className="flex-shrink-0 flex flex-col gap-4 bg-background transition-all duration-300 ease-in-out relative"
         style={{
           width: isExpanded ? `${contentWidth}px` : '0',
           padding: isExpanded ? '1.5rem 1rem' : '0',
@@ -329,6 +329,10 @@ export function Sidebar(props: SidebarProps) {
             onUpdateSimulationConfig={props.onUpdateSimulationConfig}
             onSetActiveSimulation={props.onSetActiveSimulation}
             onUpdateSimulationName={props.onUpdateSimulationName}
+            onGoToReceiver={props.onGoToReceiver}
+            fpsExitTrigger={props.collapseListenerCardTrigger}
+            isFPSModeActive={props.isFPSModeActive}
+            forcedActiveGroupId={props.forcedActiveGroupId}
           />
         </div>
 

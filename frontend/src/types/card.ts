@@ -6,6 +6,7 @@
  */
 
 import type { ReactNode } from 'react';
+import type React from 'react';
 
 // ============================================================================
 // Card Type Identifiers
@@ -110,6 +111,36 @@ export interface CardBaseConfig {
 }
 
 // ============================================================================
+// Custom Menu Item Type
+// ============================================================================
+
+/**
+ * A structured menu item for the Card's kebab (⋮) action menu.
+ */
+export interface CustomMenuItem {
+  /** Unique key for React rendering */
+  key: string;
+  /** Icon element shown in the menu row */
+  icon: ReactNode;
+  /** Text label shown next to the icon */
+  label: string;
+  /** Click handler — called on item click (omit when using subItems only) */
+  onClick?: (e: React.MouseEvent) => void;
+  /** Disables the item (grayed out, not clickable) */
+  disabled?: boolean;
+  /** When true, renders with card-color accent styling */
+  isActive?: boolean;
+  /** Nested items rendered as an accordion below this item when clicked */
+  subItems?: Array<{
+    key: string;
+    label: string;
+    onClick: (e: React.MouseEvent) => void;
+    disabled?: boolean;
+    isActive?: boolean;
+  }>;
+}
+
+// ============================================================================
 // Card Props Interface
 // ============================================================================
 
@@ -182,8 +213,8 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   closeButtonTitle?: string;
   /** Custom title for the reset button */
   resetButtonTitle?: string;
-  /** Array of custom button elements to render before reset/close buttons */
-  customButtons?: ReactNode[];
+  /** Menu items shown in the kebab (⋮) dropdown — replaces the old ReactNode[] pattern */
+  customButtons?: CustomMenuItem[];
 
   // Callbacks
   /** Called when card expand/collapse is toggled */
@@ -253,8 +284,8 @@ export interface CardButtonBarProps {
   showReset: boolean;
   /** Whether to show close button */
   showClose: boolean;
-  /** Custom buttons to render */
-  customButtons?: ReactNode[];
+  /** Menu items shown in the kebab dropdown */
+  customButtons?: CustomMenuItem[];
 
   // Callbacks
   onReset: () => void;

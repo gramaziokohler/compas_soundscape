@@ -121,7 +121,7 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
               <button
                 key={cat.id}
                 onClick={() => handleSelectCategory(cat)}
-                className="w-full text-left px-2 py-1.5 rounded-lg text-xs transition-colors bg-primary-lighter text-foreground hover:bg-white"
+                className="w-full text-left px-2 py-1.5 rounded-lg text-xs transition-colors bg-primary-lighter text-foreground hover:bg-secondary-lighter"
               >
                 {cat.name}
               </button>
@@ -153,7 +153,7 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
                   className={`w-full text-left px-2 py-1.5 rounded-lg text-xs transition-colors ${
                     isSelected
                       ? 'bg-primary text-white'
-                      : 'bg-primary-lighter text-foreground hover:bg-white'
+                      : 'bg-primary-lighter text-foreground hover:bg-secondary-lighter'
                   }`}
                 >
                   <span className="truncate block">{sound.name}</span>

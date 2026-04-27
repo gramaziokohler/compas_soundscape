@@ -66,15 +66,15 @@ function AccordionSection({
 }) {
   return (
     <div
-      className="border border-gray-200 dark:border-gray-700"
+      className="border border-secondary-light"
       style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
     >
       <button
         onClick={onToggle}
-        className="w-full flex items-center justify-between px-2 py-1.5 text-left bg-primary dark:bg-gray-800 hover:bg-primary-light dark:hover:bg-primary-light transition-colors"
+        className="w-full flex items-center justify-between px-2 py-1.5 text-left bg-primary hover:bg-primary-hover transition-colors"
         style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
       >
-        <h4 className="text-[10px] font-bold text-white dark:text-gray-400 uppercase tracking-wider">
+        <h4 className="text-[10px] font-bold text-white uppercase tracking-wider">
           {title}
         </h4>
         <svg
@@ -97,7 +97,7 @@ function AccordionSection({
         </svg>
       </button>
       {expanded && (
-        <div className="px-2 pb-2 pt-1 border-t border-gray-200 dark:border-gray-700">
+        <div className="px-2 pb-2 pt-1 border-t border-secondary-light">
           {children}
         </div>
       )}
@@ -131,7 +131,7 @@ function TokenInput({
   return (
     <div className="flex flex-col gap-0.5">
       <div className="flex items-center justify-between">
-        <label className="text-[10px] font-medium text-gray-700 dark:text-gray-300">{label}</label>
+        <label className="text-[10px] font-medium text-foreground">{label}</label>
         {isSet && !value && (
           <span
             className="text-[9px] px-1 rounded"
@@ -147,14 +147,14 @@ function TokenInput({
           value={value}
           onChange={handleChange}
           placeholder={isSet ? "(already set — leave blank to keep)" : (placeholder ?? "Paste token here")}
-          className={`w-full px-2 py-1 text-xs rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 focus:outline-none focus:border-gray-400 transition-colors ${value ? "pr-7" : ""}`}
+          className={`w-full px-2 py-1 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light focus:outline-none focus:border-primary transition-colors ${value ? "pr-7" : ""}`}
           style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
         />
         {value && (
           <button
             type="button"
             onClick={() => setShow((s) => !s)}
-            className="absolute right-1.5 text-gray-400 hover:text-gray-600 transition-colors"
+            className="absolute right-1.5 text-secondary-hover hover:text-foreground transition-colors"
             title={show ? "Hide" : "Show"}
           >
             <svg
@@ -237,6 +237,11 @@ function TokensSection() {
 
       savedRef.current = { speckle: speckleToken, google: googleKey, openai: openaiKey, anthropic: anthropicKey, elevenlabs: elevenlabsKey };
       setSaveMsg("Saved");
+      setTimeout(() => {
+        if (window.confirm("Reload the page to apply the new tokens? (unsaved data will be lost)")) {
+          window.location.reload();
+        }
+      }, 800);
     } catch {
       setSaveMsg("Error saving");
     } finally {
@@ -253,7 +258,7 @@ function TokensSection() {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-col gap-1.5">
-        <h4 className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+        <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
           Speckle
           <a href="https://app.speckle.systems" target="_blank" rel="noopener noreferrer"
             className="ml-1 normal-case font-normal hover:underline" style={{ color: UI_COLORS.PRIMARY }}>
@@ -262,20 +267,20 @@ function TokensSection() {
         </h4>
         <TokenInput label="SPECKLE_TOKEN" value={speckleToken} onChange={setSpeckleToken} isSet={status?.speckle_token_set ?? false} />
         <div className="flex flex-col gap-0.5">
-          <label className="text-[10px] font-medium text-gray-700 dark:text-gray-300">SPECKLE_PROJECT_NAME</label>
+          <label className="text-[10px] font-medium text-foreground">SPECKLE_PROJECT_NAME</label>
           <input
             type="text"
             value={speckleProject}
             onChange={(e) => setSpeckleProject(e.target.value)}
             placeholder="soundscape-viewer"
-            className="w-full px-2 py-1 text-xs rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 focus:outline-none focus:border-gray-400 transition-colors"
+            className="w-full px-2 py-1 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light focus:outline-none focus:border-primary transition-colors"
             style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
           />
         </div>
       </div>
 
       <div className="flex flex-col gap-1">
-        <h4 className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+        <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
           Google AI
           <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer"
             className="ml-1 normal-case font-normal hover:underline" style={{ color: UI_COLORS.PRIMARY }}>
@@ -286,7 +291,7 @@ function TokensSection() {
       </div>
 
       <div className="flex flex-col gap-1">
-        <h4 className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+        <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
           OpenAI
           <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer"
             className="ml-1 normal-case font-normal hover:underline" style={{ color: UI_COLORS.PRIMARY }}>
@@ -297,7 +302,7 @@ function TokensSection() {
       </div>
 
       <div className="flex flex-col gap-1">
-        <h4 className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+        <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
           Anthropic
           <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer"
             className="ml-1 normal-case font-normal hover:underline" style={{ color: UI_COLORS.PRIMARY }}>
@@ -308,7 +313,7 @@ function TokensSection() {
       </div>
 
       <div className="flex flex-col gap-1">
-        <h4 className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+        <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
           ElevenLabs
           <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank" rel="noopener noreferrer"
             className="ml-1 normal-case font-normal hover:underline" style={{ color: UI_COLORS.PRIMARY }}>
@@ -373,7 +378,7 @@ export function AdvancedSettingsSection({
   return (
     <div className="flex flex-col gap-2 w-full">
       <div className="flex items-center justify-between">
-        <h3 className="text-xs font-medium text-gray-900 dark:text-white">Advanced Settings</h3>
+        <h3 className="text-xs font-medium text-foreground">Advanced Settings</h3>
         <button
           onClick={onResetToDefaults}
           className="text-xs transition-colors hover:opacity-80"
@@ -392,7 +397,7 @@ export function AdvancedSettingsSection({
         <select
           value={llmModel}
           onChange={(e) => onLlmModelChange(e.target.value)}
-          className="w-full px-2 py-1.5 text-xs rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 cursor-pointer hover:border-gray-400 dark:hover:border-gray-500 transition-colors focus:outline-none focus:ring-1"
+          className="w-full px-2 py-1.5 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light cursor-pointer hover:border-secondary-hover transition-colors focus:outline-none focus:ring-1"
           style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px`, accentColor: UI_COLORS.PRIMARY }}
         >
           {[
@@ -418,14 +423,14 @@ export function AdvancedSettingsSection({
           <select
             value={audioModel}
             onChange={(e) => onAudioModelChange(e.target.value)}
-            className="w-full px-2 py-1.5 text-xs rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 cursor-pointer hover:border-gray-400 dark:hover:border-gray-500 transition-colors focus:outline-none focus:ring-1"
+            className="w-full px-2 py-1.5 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light cursor-pointer hover:border-secondary-hover transition-colors focus:outline-none focus:ring-1"
             style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px`, accentColor: UI_COLORS.PRIMARY }}
           >
             <option value={AUDIO_MODEL_TANGOFLUX}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_TANGOFLUX]}</option>
             <option value={AUDIO_MODEL_AUDIOLDM2}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_AUDIOLDM2]}</option>
             <option value={AUDIO_MODEL_ELEVENLABS}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_ELEVENLABS]}</option>
           </select>
-          <p className="text-[10px] text-gray-500 dark:text-gray-400 leading-tight">
+          <p className="text-[10px] text-secondary-hover leading-tight">
             {audioModel === AUDIO_MODEL_TANGOFLUX
               ? "Fast, high-quality text-to-audio generation (default)"
               : audioModel === AUDIO_MODEL_ELEVENLABS
@@ -459,14 +464,14 @@ export function AdvancedSettingsSection({
                 hoverText="Higher steps = better quality but slower"
               />
               <div>
-                <label className="block text-[10px] font-medium mb-1 text-gray-700 dark:text-gray-300">
+                <label className="block text-[10px] font-medium mb-1 text-foreground">
                   Global Negative Prompt
                 </label>
                 <textarea
                   value={globalNegativePrompt}
                   onChange={(e) => onGlobalNegativePromptChange(e.target.value)}
                   placeholder="e.g., distorted, reverb, echo"
-                  className="w-full px-2 py-1.5 text-xs rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 resize-none placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-gray-400 dark:focus:border-gray-500 focus:outline-none transition-colors"
+                  className="w-full px-2 py-1.5 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light resize-none placeholder:text-secondary-hover focus:border-primary focus:outline-none transition-colors"
                   style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
                   rows={2}
                 />
@@ -475,7 +480,7 @@ export function AdvancedSettingsSection({
           )}
 
           <div className="flex flex-col gap-2 pt-1">
-            <h4 className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+            <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
               Audio Processing
             </h4>
             <label className="flex items-start cursor-pointer group">
@@ -487,10 +492,10 @@ export function AdvancedSettingsSection({
                 style={{ accentColor: UI_COLORS.PRIMARY }}
               />
               <div className="ml-2 flex-1 leading-none">
-                <span className="text-xs font-medium text-gray-900 dark:text-white group-hover:text-gray-700 dark:group-hover:text-gray-300 transition-colors">
+                <span className="text-xs font-medium text-foreground group-hover:text-secondary-hover transition-colors">
                   Remove Background Noise
                 </span>
-                <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">Apply noise reduction</p>
+                <p className="text-[10px] text-secondary-hover mt-0.5">Apply noise reduction</p>
               </div>
             </label>
             <label className="flex items-start cursor-pointer group">
@@ -502,10 +507,10 @@ export function AdvancedSettingsSection({
                 style={{ accentColor: UI_COLORS.PRIMARY }}
               />
               <div className="ml-2 flex-1 leading-none">
-                <span className="text-xs font-medium text-gray-900 dark:text-white group-hover:text-gray-700 dark:group-hover:text-gray-300 transition-colors">
+                <span className="text-xs font-medium text-foreground group-hover:text-secondary-hover transition-colors">
                   Normalize Impulse Responses
                 </span>
-                <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">Scale IR to -6dB headroom</p>
+                <p className="text-[10px] text-secondary-hover mt-0.5">Scale IR to -6dB headroom</p>
               </div>
             </label>
           </div>

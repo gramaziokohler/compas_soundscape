@@ -52,7 +52,7 @@ export function LibraryMode({
             }
           }}
           placeholder="e.g., Urban traffic, birds chirping, footsteps"
-          className="flex-1 h-12 p-2 text-xs rounded-lg bg-white border border-secondary-light focus:border-primary focus:ring-1 focus:ring-primary outline-none"
+          className="flex-1 h-12 p-2 text-xs rounded-lg bg-secondary-lighter text-foreground border border-secondary-light focus:border-primary focus:ring-1 focus:ring-primary outline-none"
           rows={2}
         />
         <button
@@ -66,7 +66,7 @@ export function LibraryMode({
 
       {/* Search results */}
       {results && results.length > 0 && (
-        <div className="rounded-lg max-h-50 overflow-y-auto bg-white">
+        <div className="rounded-lg max-h-50 overflow-y-auto bg-background">
           <p className="text-xs font-medium text-secondary-hover">
             Found {results.length} results:
           </p>

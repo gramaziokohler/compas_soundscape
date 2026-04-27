@@ -53,7 +53,7 @@ import type {
   ChorasSimulationConfig,
   PyroomAcousticsSimulationConfig,
 } from '@/types/acoustics';
-import type { CardType } from '@/types/card';
+import type { CardType, CustomMenuItem } from '@/types/card';
 import type {
   CompasGeometry,
   EntityData,
@@ -128,6 +128,18 @@ interface AcousticsSectionProps {
   // IR hover line visualization
   onIRHover?: (sourceId: string | null, receiverId: string | null) => void;
 
+  // Navigate to receiver in 3D view
+  onGoToReceiver?: (receiverId: string) => void;
+
+  // Increments when FPS mode exits — used to clear the active listener border
+  fpsExitTrigger?: number;
+
+  // True while the user is inside FPS (first-person) listener mode
+  isFPSModeActive?: boolean;
+
+  // When set, scrolls to and highlights the corresponding IR group in the simulation card
+  forcedActiveGroupId?: string | null;
+
   // World Tree (Special for Speckle)
   worldTree?: any;
 }
@@ -163,7 +175,11 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     onRemoveSimulationConfig,
     onUpdateSimulationConfig,
     onSetActiveSimulation,
-    worldTree: propWorldTree
+    worldTree: propWorldTree,
+    onGoToReceiver,
+    fpsExitTrigger,
+    isFPSModeActive = false,
+    forcedActiveGroupId,
   } = props;
 
   // ==========================================================================
@@ -173,6 +189,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   const serviceVersions = useServiceVersions();
 
   const { getViewerRef, clearMaterialColors, filteringEnabled, viewMode, setViewMode, worldTreeVersion } = useSpeckleStore();
+  const handleReorderSimulationConfigs = useAcousticsSimulationStore((s) => s.handleReorderConfigs);
   const viewerRef = useMemo<{ current: any }>(() => ({ get current() { return getViewerRef(); } }), [getViewerRef]);
 
   // Read listeners/receivers from global store (no longer passed as props)
@@ -183,6 +200,11 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
   // Muted sounds from audio controls store
   const mutedSounds = useAudioControlsStore((s) => s.mutedSounds);
+  const individualSoundStates = useAudioControlsStore((s) => s.individualSoundStates);
+  const isAudioActuallyPlaying = useMemo(
+    () => Object.values(individualSoundStates).some(s => s === 'playing'),
+    [individualSoundStates]
+  );
 
   // Combined receiver list: active (not hidden) point receivers + active grid listener points
   const allReceivers = useMemo<Array<{ id: string; position: [number, number, number] }>>(() => {
@@ -1151,6 +1173,19 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       if (r.id) receiverDisplayNames[r.id] = r.name || r.id;
     });
 
+    // Build receiverGroups: maps each individual receiver ID to a group
+    // Regular receivers: groupId = receiver ID; grid listener points: groupId = parent grid listener ID
+    const receiverGroups: Record<string, { groupId: string; groupName: string }> = {};
+    (receivers ?? []).forEach((r) => {
+      if (r.id) receiverGroups[r.id] = { groupId: r.id, groupName: r.name || r.id };
+    });
+    gridListeners.forEach((g) => {
+      g.points.forEach((_, i) => {
+        const pointId = `${g.id}-${i}`;
+        receiverGroups[pointId] = { groupId: pointId, groupName: `${g.name || g.id} ${i + 1}` };
+      });
+    });
+
     // Current positions for mismatch detection in SimulationResultContent
     const currentSourcePositions: Record<string, [number, number, number]> = {};
     (soundscapeData ?? []).forEach((s) => {
@@ -1181,6 +1216,13 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
     const afterContent = isCompleted ? (
         <>
+          {/* FPS mode warning: shown when this card is active, audio is actually playing, and user is not in listener view */}
+          {index === activeSimulationIndex && isExpanded && isAudioActuallyPlaying && !isFPSModeActive && (
+            <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-red-900/30 border border-red-500/60 text-red-400 text-xs">
+              <span className="font-bold shrink-0 mt-0.5">⚠</span>
+              <span>Not in listener mode — use <strong>Go to Listener</strong> to auralize from a receiver&apos;s perspective.</span>
+            </div>
+          )}
           <SimulationResultContent
               config={config}
               onClearIR={onClearIR}
@@ -1194,6 +1236,10 @@ export function AcousticsSection(props: AcousticsSectionProps) {
               currentSourcePositions={currentSourcePositions}
               currentReceiverPositions={currentReceiverPositions}
               onResetPositions={handleResetPositions}
+              receiverGroups={receiverGroups}
+              onGoToReceiver={onGoToReceiver}
+              fpsExitTrigger={fpsExitTrigger}
+              forcedActiveGroupId={forcedActiveGroupId}
           />
           <SimulationSettingsSection config={config} />
           {/* Hidden: keeps SpeckleSurfaceMaterialsSection mounted for filtering/coloring effects */}
@@ -1202,23 +1248,18 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     ) : undefined;
 
     // Duplicate button — available for all simulation types and states
-    const customButtons: React.ReactNode[] = [];
+    const customButtons: CustomMenuItem[] = [];
     if (onAddSimulationConfig && onUpdateSimulationConfig) {
-      customButtons.push(
-        <button
-          key="duplicate"
-          onClick={(e) => {
-            e.stopPropagation();
-            handleDuplicateSimulation(index);
-          }}
-          className="w-5 h-5 flex items-center justify-center rounded-full transition-colors text-secondary-hover hover:bg-secondary-light hover:text-foreground"
-          title="Duplicate simulation"
-        >
+      customButtons.push({
+        key: 'duplicate',
+        icon: (
           <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
           </svg>
-        </button>
-      );
+        ),
+        label: 'Duplicate simulation',
+        onClick: (e) => { e.stopPropagation(); handleDuplicateSimulation(index); },
+      });
     }
 
     // Derive version + timestamp lines for this card type
@@ -1297,6 +1338,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
           header={header}
           expandedIndex={expandedCardIndex}
           onExpandedIndexChange={handleExpandedIndexChange}
+          onReorder={handleReorderSimulationConfigs}
         />
      </div>
 

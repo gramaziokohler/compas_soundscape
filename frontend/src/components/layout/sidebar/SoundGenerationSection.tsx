@@ -5,10 +5,10 @@ import type { SoundGenerationSectionProps } from "@/types/components";
 import type { SoundGenerationConfig, SoundEvent, CardType, CardBaseConfig } from "@/types";
 import { CARD_TYPE_LABELS } from "@/types";
 import type { CardTypeOption } from "@/components/ui/CardSection";
+import type { CustomMenuItem } from "@/types/card";
 import { CardSection } from "@/components/ui/CardSection";
 import { Card } from "@/components/ui/Card";
 import { SoundConfigContent, SoundResultContent } from "./sound";
-import { CardTypeSwitcher } from "./sound/CardTypeSwitcher";
 import { apiService } from "@/services/api";
 import { useAudioControlsStore, useSoundscapeStore } from "@/store";
 import { useUIStore } from "@/store/uiStore";
@@ -91,8 +91,9 @@ export function SoundGenerationSection({
   const triggerZoomToSoundCard    = useUIStore(s => s.triggerZoomToSoundCard);
 
   // ── Sound generation progress from store ──
-  const soundGenProgress      = useSoundscapeStore((s) => s.soundGenProgress);
-  const soundGenProgressValue = useSoundscapeStore((s) => s.soundGenProgressValue);
+  const soundGenProgress         = useSoundscapeStore((s) => s.soundGenProgress);
+  const soundGenProgressValue    = useSoundscapeStore((s) => s.soundGenProgressValue);
+  const handleReorderSoundConfigs = useSoundscapeStore((s) => s.handleReorderSoundConfigs);
 
   // Snapshot the total number of pending configs (all types) when generation starts.
   // The backend only counts ML sounds in its denominator, so we replace it here.
@@ -330,74 +331,64 @@ export function SoundGenerationSection({
     const isMuted = generatedSound ? mutedSounds.has(generatedSound.id) : false;
     const isSoloed = generatedSound ? soloedSound === generatedSound.id : false;
 
-    // Build custom buttons array
-    const customButtons: React.ReactNode[] = [];
+    // Build custom menu items
+    const customButtons: CustomMenuItem[] = [];
 
-    // Card type switch button (only when not generated)
+    // Card type switch sub-menu (only when not generated)
     if (!isGenerated) {
-      customButtons.push(
-        <CardTypeSwitcher
-          key="switch"
-          currentType={item.type}
-          availableTypes={availableTypes}
-          onSwitchType={(newType) => handleSwitchCardType(index, newType)}
-        />
-      );
+      customButtons.push({
+        key: 'switch-type',
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+          </svg>
+        ),
+        label: 'Switch type',
+        subItems: availableTypes.map(option => ({
+          key: option.type,
+          label: option.label,
+          isActive: option.type === item.type,
+          disabled: option.type === item.type,
+          onClick: (e: React.MouseEvent) => {
+            e.stopPropagation();
+            if (option.type !== item.type) handleSwitchCardType(index, option.type);
+          },
+        })),
+      });
     }
 
     // Link button (if entities available or Speckle viewer active)
     if (modelEntities.length > 0 || useSpeckleViewer) {
       const isCurrentlyLinking = isLinkingEntity && linkingConfigIndex === index;
-      customButtons.push(
-        <button
-          key="link"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (isCurrentlyLinking) {
-              onCancelLinkingEntity?.();
-            } else {
-              onStartLinkingEntity?.(index);
-            }
-          }}
-          className={`w-5 h-5 flex items-center justify-center rounded-full transition-colors ${
-            isCurrentlyLinking
-              ? 'text-white'
-              : config.entity
-                ? 'text-success hover:bg-success-light'
-                : 'text-secondary-hover hover:bg-secondary-light hover:text-foreground'
-          }`}
-          style={isCurrentlyLinking ? { backgroundColor: 'var(--card-color, var(--color-primary))' } : undefined}
-          title={
-            isCurrentlyLinking
-              ? 'Cancel linking'
-              : config.entity
-                ? `Linked to entity ${config.entity.index}`
-                : 'Link to entity'
-          }
-        >
+      customButtons.push({
+        key: 'link',
+        icon: (
           <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
           </svg>
-        </button>
-      );
+        ),
+        label: isCurrentlyLinking
+          ? 'Cancel linking'
+          : config.entity
+            ? `Linked to entity ${config.entity.index}`
+            : 'Link to entity',
+        isActive: isCurrentlyLinking || !!config.entity,
+        onClick: (e) => {
+          e.stopPropagation();
+          if (isCurrentlyLinking) {
+            onCancelLinkingEntity?.();
+          } else {
+            onStartLinkingEntity?.(index);
+          }
+        },
+      });
     }
 
     // Mute button (only if generated)
     if (isGenerated && onMute && generatedSound) {
-      customButtons.push(
-        <button
-          key="mute"
-          onClick={(e) => {
-            e.stopPropagation();
-            onMute(generatedSound.id);
-          }}
-          className={`w-5 h-5 flex items-center justify-center rounded-full transition-colors ${
-            isMuted
-              ? 'bg-warning-light text-warning'
-              : 'text-secondary-hover hover:bg-secondary-light hover:text-foreground'
-          }`}
-          title={isMuted ? 'Unmute' : 'Mute'}
-        >
+      customButtons.push({
+        key: 'mute',
+        icon: (
           <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             {isMuted ? (
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" clipRule="evenodd" />
@@ -405,51 +396,40 @@ export function SoundGenerationSection({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
             )}
           </svg>
-        </button>
-      );
+        ),
+        label: isMuted ? 'Unmute' : 'Mute',
+        isActive: isMuted,
+        onClick: (e) => { e.stopPropagation(); onMute(generatedSound.id); },
+      });
     }
 
     // Solo button (only if generated)
     if (isGenerated && onSolo && generatedSound) {
-      customButtons.push(
-        <button
-          key="solo"
-          onClick={(e) => {
-            e.stopPropagation();
-            onSolo(generatedSound.id);
-          }}
-          className={`w-5 h-5 flex items-center justify-center rounded-full transition-colors ${
-            isSoloed
-              ? ''
-              : 'text-secondary-hover hover:bg-secondary-light hover:text-foreground'
-          }`}
-          style={isSoloed ? { backgroundColor: 'var(--card-color-light, var(--color-primary-light))', color: 'var(--card-color, var(--color-primary))' } : undefined}
-          title={isSoloed ? 'Unsolo' : 'Solo'}
-        >
+      customButtons.push({
+        key: 'solo',
+        icon: (
           <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill={isSoloed ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
           </svg>
-        </button>
-      );
+        ),
+        label: isSoloed ? 'Unsolo' : 'Solo',
+        isActive: isSoloed,
+        onClick: (e) => { e.stopPropagation(); onSolo(generatedSound.id); },
+      });
     }
 
     // Duplicate button (only if generated)
     if (isGenerated && onDuplicateConfig) {
-      customButtons.push(
-        <button
-          key="duplicate"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDuplicateConfig(index);
-          }}
-          className="w-5 h-5 flex items-center justify-center rounded-full transition-colors text-secondary-hover hover:bg-secondary-light hover:text-foreground"
-          title="Duplicate sound"
-        >
+      customButtons.push({
+        key: 'duplicate',
+        icon: (
           <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
           </svg>
-        </button>
-      );
+        ),
+        label: 'Duplicate sound',
+        onClick: (e) => { e.stopPropagation(); onDuplicateConfig(index); },
+      });
     }
 
     // Derive version string for this card's service
@@ -460,10 +440,10 @@ export function SoundGenerationSection({
         if (audioModel === AUDIO_MODEL_ELEVENLABS) return ELEVENLABS_SERVICE_VERSION;
         if (audioModel === AUDIO_MODEL_AUDIOLDM2) {
           const v = serviceVersions.audioldm2;
-          return `${v.name} ${v.version}`;
+          return v.version && v.version !== 'unknown' ? `${v.name} ${v.version}` : v.name;
         }
         const v = serviceVersions.tangoflux;
-        return `${v.name} ${v.version}`;
+        return v.version && v.version !== 'unknown' ? `${v.name} ${v.version}` : v.name;
       }
       if (cardType === 'library') {
         const v = serviceVersions.bbc;
@@ -653,6 +633,7 @@ export function SoundGenerationSection({
       expandedIndex={expandedIndex}
       onExpandedIndexChange={handleExpandedIndexChange}
       color="primary"
+      onReorder={handleReorderSoundConfigs}
 
     />
   );

@@ -129,6 +129,7 @@ export interface SoundscapeStoreState {
   handleCatalogSoundSelect: (index: number, sound: CatalogSoundSelection) => void;
   handleResetToDefaults: () => void;
   handleResetSoundConfig: (index: number) => void;
+  handleReorderSoundConfigs: (from: number, to: number) => void;
   handleDuplicateConfig: (index: number) => void;
   handleDetachSoundFromEntity: (index: number) => void;
   handleAttachSoundToEntity: (index: number, entity: any) => void;
@@ -232,6 +233,22 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             },
             false,
             'soundscape/removeConfig',
+          );
+        },
+
+        handleReorderSoundConfigs: (from, to) => {
+          const { soundConfigs, activeSoundConfigTab } = get();
+          const newConfigs = [...soundConfigs];
+          const [removed] = newConfigs.splice(from, 1);
+          newConfigs.splice(to, 0, removed);
+          let newTab = activeSoundConfigTab;
+          if (newTab === from) newTab = to;
+          else if (from < to && newTab > from && newTab <= to) newTab--;
+          else if (from > to && newTab >= to && newTab < from) newTab++;
+          set(
+            { soundConfigs: newConfigs, activeSoundConfigTab: newTab },
+            false,
+            'soundscape/reorderConfigs',
           );
         },
 

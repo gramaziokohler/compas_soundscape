@@ -21,6 +21,7 @@ export function useAreaDrawing(cardIndex: number) {
     startDrawing: () => ctx.startDrawing(cardIndex),
     cancelDrawing: ctx.cancelDrawing,
     removeArea: () => ctx.removeArea(cardIndex),
+    confirmDrawing: ctx.requestConfirmDrawing,
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [cardIndex, ctx.version]);
 }

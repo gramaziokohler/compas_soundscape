@@ -68,6 +68,14 @@ interface SimulationResultContentProps {
   currentReceiverPositions?: Record<string, [number, number, number]>;
   /** Called when user clicks "Reset positions" — should move mismatched objects back to sim positions */
   onResetPositions?: (sourceIds: string[], receiverIds: string[]) => void;
+  /** Maps each receiver ID → { groupId, groupName } for grouping grid listener points under one parent */
+  receiverGroups?: Record<string, { groupId: string; groupName: string }>;
+  /** Called when user clicks the Go-To button next to a receiver group */
+  onGoToReceiver?: (receiverId: string) => void;
+  /** Increments when FPS mode exits — clears the active listener border */
+  fpsExitTrigger?: number;
+  /** When set, scrolls to and highlights the corresponding IR group */
+  forcedActiveGroupId?: string | null;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -85,6 +93,10 @@ export function SimulationResultContent({
   currentSourcePositions,
   currentReceiverPositions,
   onResetPositions,
+  receiverGroups,
+  onGoToReceiver,
+  fpsExitTrigger,
+  forcedActiveGroupId,
 }: SimulationResultContentProps) {
   const simulationConfig = config as any;
   const results: string | null = simulationConfig.simulationResults;
@@ -310,6 +322,10 @@ export function SimulationResultContent({
         onLowEnergyIdsChange={handleLowEnergyIdsChange}
         sourceDisplayNames={sourceDisplayNames}
         receiverDisplayNames={receiverDisplayNames}
+        receiverGroups={receiverGroups}
+        onGoToReceiver={onGoToReceiver}
+        fpsExitTrigger={fpsExitTrigger}
+        forcedActiveGroupId={forcedActiveGroupId}
       />
     </div>
   );

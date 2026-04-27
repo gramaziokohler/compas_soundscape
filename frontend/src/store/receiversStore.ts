@@ -33,6 +33,7 @@ export interface ReceiversStoreState {
 
   addReceiver: (type?: string, position?: [number, number, number]) => void;
   removeReceiver: (id: string) => void;
+  reorderReceivers: (from: number, to: number) => void;
   updateReceiverPosition: (id: string, position: [number, number, number]) => void;
   updateReceiverName: (id: string, name: string) => void;
   toggleReceiverHiddenForSimulation: (id: string) => void;
@@ -82,6 +83,14 @@ export const useReceiversStore = create<ReceiversStoreState>()(
             false,
             'receivers/removeReceiver',
           ),
+
+        reorderReceivers: (from, to) => {
+          const { receivers } = get();
+          const next = [...receivers];
+          const [removed] = next.splice(from, 1);
+          next.splice(to, 0, removed);
+          set({ receivers: next }, false, 'receivers/reorderReceivers');
+        },
 
         updateReceiverPosition: (id, position) =>
           set(

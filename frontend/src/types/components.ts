@@ -151,6 +151,10 @@ export interface SidebarProps {
   forcedExpandedListenerId?: string | null;
   /** Increment to collapse the currently expanded listener card (e.g. FPS exited via Escape) */
   collapseListenerCardTrigger?: number;
+  /** True while the user is inside FPS (first-person) listener mode */
+  isFPSModeActive?: boolean;
+  /** When set, scrolls to and highlights the corresponding IR group in the active simulation card */
+  forcedActiveGroupId?: string | null;
   // Grid listener props
   gridListeners: GridListenerData[];
   onAddGridListener: () => void;

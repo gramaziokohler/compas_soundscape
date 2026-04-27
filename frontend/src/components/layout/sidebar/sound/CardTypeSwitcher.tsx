@@ -88,7 +88,7 @@ export function CardTypeSwitcher({
 
       {/* Type selector dropdown */}
       {showDropdown && (
-        <div className="absolute right-0 mt-1 z-[100] rounded-lg shadow-lg bg-white border border-secondary-light min-w-[150px] overflow-hidden">
+        <div className="absolute right-0 mt-1 z-[100] rounded-lg shadow-lg bg-background border border-secondary-light min-w-[150px] overflow-hidden">
           {availableTypes.map((option, idx) => {
             const isCurrent = option.type === currentType;
             const isFirst = idx === 0;

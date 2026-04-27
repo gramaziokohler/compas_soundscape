@@ -80,6 +80,9 @@ export class SpeckleAudioCoordinator {
   // External callback when a receiver mesh is double-clicked (for FPS mode + card expansion)
   private externalOnReceiverDoubleClickedCallback: ((receiverId: string) => void) | null = null;
 
+  // External callback when a grid listener point is double-clicked
+  private externalOnGridListenerDoubleClickedCallback: ((pointId: string) => void) | null = null;
+
   constructor(
     viewer: Viewer,
     cameraController: CameraController,
@@ -197,6 +200,41 @@ export class SpeckleAudioCoordinator {
 
       // Notify parent (SpeckleScene) so it can expand the listener card + sync React state
       this.externalOnReceiverDoubleClickedCallback?.(receiverId);
+    });
+
+    this.eventBridge.setOnGridListenerDoubleClicked((instanceId: number) => {
+      const positions = this.gridReceiverManager?.getPositions() || [];
+      if (!positions[instanceId]) return;
+
+      // Prefer explicit point ID (when multiple grids are visible); fall back to legacy format
+      const pointId =
+        this.gridReceiverManager?.getPointId(instanceId) ??
+        (() => {
+          const gid = this.gridReceiverManager?.getGridListenerId();
+          return gid ? `${gid}-${instanceId}` : null;
+        })();
+      if (!pointId) return;
+
+      const pos = positions[instanceId];
+
+      // Load IRs for this grid point
+      this.updateActiveReceiver(pointId);
+
+      // Enable FPS mode synchronously (same pattern as regular receiver double-click)
+      const receiverPosition = new THREE.Vector3(...pos);
+      const soundMeshes = this.soundSphereManager?.getSoundSphereMeshes() || [];
+      let target: THREE.Vector3;
+      if (soundMeshes.length > 0) {
+        target = soundMeshes
+          .reduce((acc: THREE.Vector3, m: THREE.Mesh) => acc.add(m.position.clone()), new THREE.Vector3())
+          .divideScalar(soundMeshes.length);
+      } else {
+        target = new THREE.Vector3(receiverPosition.x, receiverPosition.y - 5, receiverPosition.z);
+      }
+      this.enableFirstPersonMode(receiverPosition, target);
+
+      // Notify parent so React state (isFPSModeActive, IR group highlight) gets updated
+      this.externalOnGridListenerDoubleClickedCallback?.(pointId);
     });
 
     this.dragHandler.setOnDragEnd((objects: THREE.Object3D[], position: THREE.Vector3) => {
@@ -445,6 +483,10 @@ export class SpeckleAudioCoordinator {
     this.externalOnReceiverDoubleClickedCallback = callback;
   }
 
+  public setOnGridListenerDoubleClicked(callback: (pointId: string) => void): void {
+    this.externalOnGridListenerDoubleClickedCallback = callback;
+  }
+
   /**
    * Set callback for when a receiver position is updated via drag
    * This syncs the 3D position back to React state to persist the dragged position
@@ -539,6 +581,11 @@ export class SpeckleAudioCoordinator {
     return this.eventBridge;
   }
 
+  /** Returns true if a custom object is under the given screen position. */
+  public hasCustomObjectAt(clientX: number, clientY: number): boolean {
+    return this.eventBridge?.hasCustomObjectAt(clientX, clientY) ?? false;
+  }
+
   public getDragHandler(): SpeckleDragHandler | null {
     return this.dragHandler;
   }
@@ -551,8 +598,13 @@ export class SpeckleAudioCoordinator {
     return this.receiverManager;
   }
 
-  public updateGridListeners(points: [number, number, number][]): void {
-    this.gridReceiverManager?.updatePoints(points);
+  public updateGridListeners(
+    points: [number, number, number][],
+    gridListenerId?: string | null,
+    pointIds?: string[]
+  ): void {
+    this.gridReceiverManager?.updatePoints(points, pointIds);
+    this.gridReceiverManager?.setGridListenerId(gridListenerId ?? null);
     // Wake the Speckle viewer — it only renders on explicit request
     this.viewer.requestRender();
   }
