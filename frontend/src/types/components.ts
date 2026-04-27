@@ -101,6 +101,8 @@ export interface SidebarProps {
   onLlmModelChange: (model: string) => void;
   onShowAxesHelperChange: (show: boolean) => void;
   onResetAdvancedSettings: () => void;
+  listenerOrientation: { x: number; y: number; z: number };
+  onListenerOrientationChange: (orientation: { x: number; y: number; z: number }) => void;
   onReprocessSounds?: (applyDenoising: boolean) => Promise<void>;
   setUseModelAsContext: (value: boolean) => void;
   onUploadAudio: (index: number, file: File) => Promise<void>;

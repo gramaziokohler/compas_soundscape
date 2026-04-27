@@ -28,7 +28,7 @@ import { useAudioNormalization } from "@/hooks/useAudioNormalization";
 import { useAudioOrchestrator } from "@/hooks/useAudioOrchestrator";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { apiService } from "@/services/api";
-import { API_BASE_URL, RECEIVER_CONFIG, SPIRAL_PLACEMENT } from "@/utils/constants";
+import { API_BASE_URL, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION } from "@/utils/constants";
 import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
 import type { LoadTab, SoundGenerationConfig } from "@/types";
 import type { SelectedGeometry, AcousticMaterial } from "@/types/materials";
@@ -394,6 +394,11 @@ function HomeContent() {
 
   // Expanded grid listener ID (controls which grid's points are rendered in 3D)
   const [expandedGridListenerId, setExpandedGridListenerId] = useState<string | null>(null);
+
+  // FPS listener orientation: offset direction from receiver position used as look-at target
+  const [listenerOrientation, setListenerOrientation] = useState<{ x: number; y: number; z: number }>(
+    { ...DEFAULT_LISTENER_ORIENTATION }
+  );
 
   // Detect model type from file extension and set model filename in context
   useEffect(() => {
@@ -1235,6 +1240,7 @@ function HomeContent() {
     soundGen.handleResetToDefaults();
     audioNormalization.reset();
     setShowAxesHelper(false);
+    setListenerOrientation({ ...DEFAULT_LISTENER_ORIENTATION });
   }, [soundGen.handleResetToDefaults, audioNormalization.reset]);
 
   // Handler: Material assignment selection (NEW)
@@ -1476,12 +1482,53 @@ function HomeContent() {
   const handleReceiverDoubleClickedInScene = useCallback((receiverId: string) => {
     const isGridPoint = gridListeners.gridListeners.some(g => receiverId.startsWith(g.id + '-'));
     if (!isGridPoint) {
-      textGen.setActiveAiTab('listeners');
       setForcedExpandedListenerId(receiverId);
       setTimeout(() => setForcedExpandedListenerId(null), 200);
     }
     handleGoToReceiver(receiverId);
-  }, [textGen, handleGoToReceiver, gridListeners.gridListeners]);
+  }, [handleGoToReceiver, gridListeners.gridListeners]);
+
+  // Keyboard navigation between IR groups while in FPS mode (Shift+ArrowRight / Shift+ArrowLeft)
+  useEffect(() => {
+    if (!isFPSModeActive) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!e.shiftKey || (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft')) return;
+      e.preventDefault();
+
+      // Combined eligible list: single receivers + grid listener points (both non-hidden)
+      const eligibleIds: string[] = [
+        ...receivers.receivers
+          .filter(r => !r.hiddenForSimulation)
+          .map(r => r.id),
+        ...gridListeners.gridListeners
+          .filter(g => !g.hiddenForSimulation && g.showListeners && g.points.length > 0)
+          .flatMap(g => g.points.map((_, i) => `${g.id}-${i}`)),
+      ];
+      if (eligibleIds.length < 2) return;
+
+      const currentIndex = eligibleIds.indexOf(activeIRGroupId ?? '');
+      const nextIndex =
+        e.key === 'ArrowLeft'
+          ? currentIndex >= eligibleIds.length - 1 ? 0 : currentIndex + 1
+          : currentIndex <= 0 ? eligibleIds.length - 1 : currentIndex - 1;
+
+      const nextId = eligibleIds[nextIndex];
+      if (!nextId) return;
+
+      // Expand listener card only for single receivers (grid points have no card)
+      if (receivers.receivers.some(r => r.id === nextId)) {
+        setForcedExpandedListenerId(nextId);
+        setTimeout(() => setForcedExpandedListenerId(null), 200);
+      }
+
+      handleGoToReceiver(nextId);
+    };
+
+    // Capture phase so Speckle's camera controls (which stopPropagation on arrow keys) can't block this
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [isFPSModeActive, activeIRGroupId, receivers.receivers, gridListeners.gridListeners, handleGoToReceiver]);
 
   /**
    * Add a receiver in front of the current camera.
@@ -1696,6 +1743,7 @@ function HomeContent() {
             gridListenerPoints={visibleGridListenerPoints}
             gridListenerPointIds={visibleGridListenerPointIds}
             expandedGridListenerId={expandedGridListenerId}
+            listenerOrientation={listenerOrientation}
             // Sound sphere position update (for simulation sync when dragging)
             onUpdateSoundPosition={soundGen.updateSoundPosition}
             // Sound Linking (entity linking from SoundCard to Speckle object)
@@ -1961,6 +2009,8 @@ function HomeContent() {
         onNormalizeImpulseResponsesChange={handleToggleNormalize}
         onShowAxesHelperChange={setShowAxesHelper}
         onResetAdvancedSettings={handleResetAdvancedSettings}
+        listenerOrientation={listenerOrientation}
+        onListenerOrientationChange={setListenerOrientation}
         // Sidebar expanded state callback
         onExpandedChange={setIsLeftSidebarExpanded}
         onWidthChange={setLeftSidebarContentWidth}

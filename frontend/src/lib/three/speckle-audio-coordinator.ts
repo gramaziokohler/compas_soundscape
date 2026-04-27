@@ -185,15 +185,8 @@ export class SpeckleAudioCoordinator {
           (m) => m.userData.receiverId === receiverId
         );
         if (mesh) {
-          const soundMeshes = this.soundSphereManager?.getSoundSphereMeshes() || [];
-          let target: THREE.Vector3;
-          if (soundMeshes.length > 0) {
-            target = soundMeshes
-              .reduce((acc, m) => acc.add(m.position.clone()), new THREE.Vector3())
-              .divideScalar(soundMeshes.length);
-          } else {
-            target = new THREE.Vector3(mesh.position.x, mesh.position.y - 5, mesh.position.z);
-          }
+          // Fixed default orientation: always face +Y axis
+          const target = new THREE.Vector3(mesh.position.x, mesh.position.y + 1, mesh.position.z);
           this.enableFirstPersonMode(mesh.position.clone(), target);
         }
       }
@@ -222,15 +215,8 @@ export class SpeckleAudioCoordinator {
 
       // Enable FPS mode synchronously (same pattern as regular receiver double-click)
       const receiverPosition = new THREE.Vector3(...pos);
-      const soundMeshes = this.soundSphereManager?.getSoundSphereMeshes() || [];
-      let target: THREE.Vector3;
-      if (soundMeshes.length > 0) {
-        target = soundMeshes
-          .reduce((acc: THREE.Vector3, m: THREE.Mesh) => acc.add(m.position.clone()), new THREE.Vector3())
-          .divideScalar(soundMeshes.length);
-      } else {
-        target = new THREE.Vector3(receiverPosition.x, receiverPosition.y - 5, receiverPosition.z);
-      }
+      // Fixed default orientation: always face +Y axis
+      const target = new THREE.Vector3(receiverPosition.x, receiverPosition.y + 1, receiverPosition.z);
       this.enableFirstPersonMode(receiverPosition, target);
 
       // Notify parent so React state (isFPSModeActive, IR group highlight) gets updated
@@ -539,10 +525,6 @@ export class SpeckleAudioCoordinator {
   public teleportFirstPerson(position: THREE.Vector3): void {
     if (!this.speckleCameraController) return;
     this.speckleCameraController.teleportFirstPerson(position);
-  }
-
-  public getActiveReceiverId(): string | null {
-    return this.activeReceiverId;
   }
 
   public rotateFirstPersonView(deltaYaw: number, deltaPitch: number): void {

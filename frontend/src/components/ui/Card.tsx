@@ -305,8 +305,22 @@ export function Card<TConfig extends CardBaseConfig>({
 
         {/* Action buttons */}
         <div className="flex items-center gap-1 flex-shrink-0">
-          {/* Kebab menu — contains all custom buttons */}
-          {customButtons && customButtons.length > 0 && (
+          {/* Single custom button — render directly as icon */}
+          {customButtons && customButtons.length === 1 && (() => {
+            const item = customButtons[0];
+            return (
+              <CardButton
+                icon={item.icon}
+                title={item.label}
+                onClick={(e) => { e.stopPropagation(); item.onClick?.(e); }}
+                disabled={item.disabled}
+                variant={item.isActive ? 'primary' : 'default'}
+              />
+            );
+          })()}
+
+          {/* Kebab menu — only when 2+ custom buttons */}
+          {customButtons && customButtons.length > 1 && (
             <div className="relative" ref={menuRef}>
               <CardButton
                 icon={<KebabIcon />}

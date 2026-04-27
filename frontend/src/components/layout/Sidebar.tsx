@@ -356,6 +356,8 @@ export function Sidebar(props: SidebarProps) {
             onResetToDefaults={props.onResetAdvancedSettings}
             showAxesHelper={props.showAxesHelper}
             onShowAxesHelperChange={props.onShowAxesHelperChange}
+            listenerOrientation={props.listenerOrientation}
+            onListenerOrientationChange={props.onListenerOrientationChange}
           />
         </div>
       </div>

@@ -22,6 +22,7 @@ import {
   LLM_MODEL_ANTHROPIC,
   LLM_MODEL_NAMES,
   LLM_MODEL_TO_PROVIDER,
+  DEFAULT_LISTENER_ORIENTATION,
 } from "@/utils/constants";
 
 function isProviderInstalled(modelKey: string, llmProviders: LLMProviders | null): boolean {
@@ -49,6 +50,8 @@ interface AdvancedSettingsSectionProps {
   onResetToDefaults: () => void;
   showAxesHelper: boolean;
   onShowAxesHelperChange: (value: boolean) => void;
+  listenerOrientation: { x: number; y: number; z: number };
+  onListenerOrientationChange: (orientation: { x: number; y: number; z: number }) => void;
 }
 
 // ── Accordion wrapper ─────────────────────────────────────────────────────────
@@ -362,10 +365,13 @@ export function AdvancedSettingsSection({
   onResetToDefaults,
   showAxesHelper,
   onShowAxesHelperChange,
+  listenerOrientation,
+  onListenerOrientationChange,
 }: AdvancedSettingsSectionProps) {
   const [tokensExpanded, setTokensExpanded] = useState(false);
   const [llmExpanded, setLlmExpanded] = useState(false);
   const [audioExpanded, setAudioExpanded] = useState(false);
+  const [soundRenderingExpanded, setSoundRenderingExpanded] = useState(false);
 
   const serviceVersions = useServiceVersions();
   const llmProviders = serviceVersions?.llm_providers ?? null;
@@ -416,6 +422,45 @@ export function AdvancedSettingsSection({
             );
           })}
         </select>
+      </AccordionSection>
+
+      <AccordionSection title="Sound Rendering" expanded={soundRenderingExpanded} onToggle={() => setSoundRenderingExpanded((e) => !e)}>
+        <div className="flex flex-col gap-1.5 pt-1">
+          <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
+            Listener orientation
+          </h4>
+          <div className="flex gap-2">
+            {(['x', 'y', 'z'] as const).map((axis) => (
+              <div
+                key={axis}
+                className="flex-1 flex flex-col gap-0.5"
+                title={`Double-click to reset (default: ${DEFAULT_LISTENER_ORIENTATION[axis]})`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-medium text-secondary-hover uppercase">{axis}</span>
+                  <span className="text-[10px] font-bold" style={{ color: UI_COLORS.PRIMARY }}>
+                    {listenerOrientation[axis].toFixed(1)}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={-1}
+                  max={1}
+                  step={0.1}
+                  value={listenerOrientation[axis]}
+                  onChange={(e) =>
+                    onListenerOrientationChange({ ...listenerOrientation, [axis]: parseFloat(e.target.value) })
+                  }
+                  onDoubleClick={() =>
+                    onListenerOrientationChange({ ...listenerOrientation, [axis]: DEFAULT_LISTENER_ORIENTATION[axis] })
+                  }
+                  className="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-secondary-light"
+                  style={{ accentColor: UI_COLORS.PRIMARY }}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
       </AccordionSection>
 
       <AccordionSection title="Audio Models" expanded={audioExpanded} onToggle={() => setAudioExpanded((e) => !e)}>

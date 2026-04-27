@@ -330,6 +330,8 @@ export function SoundGenerationSection({
     const selectedVariantIdx = getSelectedVariantIdx(index);
     const isMuted = generatedSound ? mutedSounds.has(generatedSound.id) : false;
     const isSoloed = generatedSound ? soloedSound === generatedSound.id : false;
+    // When any sound is soloed, dim all other generated cards the same way as muted
+    const isEffectivelyMuted = isMuted || (!!soloedSound && isGenerated && !isSoloed);
 
     // Build custom menu items
     const customButtons: CustomMenuItem[] = [];
@@ -454,7 +456,7 @@ export function SoundGenerationSection({
     })();
 
     return (
-      <div style={{ opacity: isMuted ? 0.55 : 1 }}>
+      <div style={{ opacity: isEffectivelyMuted ? 0.55 : 1 }}>
       <Card
         config={item}
         index={index}

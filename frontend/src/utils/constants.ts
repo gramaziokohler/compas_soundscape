@@ -401,6 +401,11 @@ export const UI_SIDEBAR_RESIZE = {
 // ============================================================================
 // Default Sound Generation Values (Consolidated)
 // ============================================================================
+// Default FPS listener orientation: the direction the camera faces when entering first-person mode.
+// Expressed as an offset added to the receiver position to form the look-at target.
+// (0, 1, 0) = face +Y in Speckle's Z-up coordinate system (horizontal "north").
+export const DEFAULT_LISTENER_ORIENTATION = { x: 0, y: 1, z: 0 } as const;
+
 export const DEFAULT_DURATION_SECONDS = 5;
 export const DEFAULT_GUIDANCE_SCALE = 4.5;
 export const DEFAULT_DIFFUSION_STEPS = 25;

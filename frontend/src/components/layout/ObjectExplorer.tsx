@@ -148,6 +148,10 @@ export function ObjectExplorer() {
   useEffect(() => {
     if (!viewerRef?.current) return;
 
+    // Reset per-load flags so auto-hide and tree loading run fresh on each viewer init
+    hasHiddenAcousticsLayerRef.current = false;
+    hasLoadedTreeRef.current = false;
+
     const attemptTreeLoad = () => {
       if (!viewerRef.current) return false;
 

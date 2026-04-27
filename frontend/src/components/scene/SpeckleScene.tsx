@@ -119,6 +119,8 @@ interface SpeckleSceneProps {
   gridListenerPointIds?: string[];
   /** ID of the currently expanded grid listener (kept for legacy IR-routing fallback). */
   expandedGridListenerId?: string | null;
+  /** Direction offset from listener position used as FPS look-at target. Defaults to (0,1,0). */
+  listenerOrientation?: { x: number; y: number; z: number };
 
   // Sound sphere position update (for simulation sync)
   onUpdateSoundPosition?: (soundId: string, position: [number, number, number]) => void;
@@ -227,6 +229,7 @@ export function SpeckleScene({
   gridListenerPoints = [],
   gridListenerPointIds = [],
   expandedGridListenerId,
+  listenerOrientation = { x: 0, y: 1, z: 0 },
   onUpdateSoundPosition,
   selectedDiverseEntities = [],
   entitiesWithLinkedSounds = new Set(),
@@ -2855,32 +2858,14 @@ export function SpeckleScene({
     const receiverPosition = receiverMesh.position.clone();
     console.log('[SpeckleScene] Go to receiver:', { id: goToReceiverId, position: receiverPosition.toArray() });
 
-    // Calculate initial look-at target (same logic as double-click in coordinator)
-    // Try to look at the average of sound spheres, or default to looking forward
-    let initialTarget: THREE.Vector3;
+    // Build look-at target from configurable listener orientation
+    const initialTarget = new THREE.Vector3(
+      receiverPosition.x + listenerOrientation.x,
+      receiverPosition.y + listenerOrientation.y,
+      receiverPosition.z + listenerOrientation.z
+    );
 
-    // Get average position of sound sphere meshes (not soundscapeData - use actual mesh positions)
-    const soundSphereManager = coordinatorRef.current.getSoundSphereManager();
-    const soundSphereMeshes = soundSphereManager?.getSoundSphereMeshes() || [];
-    const soundSpherePositions: THREE.Vector3[] = soundSphereMeshes.map(mesh => mesh.position.clone());
-
-    if (soundSpherePositions.length > 0) {
-      // Average of all sound sphere positions
-      const sum = soundSpherePositions.reduce(
-        (acc, pos) => acc.add(pos),
-        new THREE.Vector3(0, 0, 0)
-      );
-      initialTarget = sum.divideScalar(soundSpherePositions.length);
-    } else {
-      // Default: look forward (negative Y direction in Z-up Speckle coordinate system)
-      initialTarget = new THREE.Vector3(
-        receiverPosition.x,
-        receiverPosition.y - 5,
-        receiverPosition.z
-      );
-    }
-
-    // Enable first-person mode with calculated target
+    // Enable first-person mode with orientation-based target
     coordinatorRef.current.enableFirstPersonMode(receiverPosition, initialTarget);
     setIsFirstPersonMode(true);
 
@@ -2893,7 +2878,7 @@ export function SpeckleScene({
       position: receiverPosition.toArray(),
       target: initialTarget.toArray()
     });
-  }, [goToReceiverId, receivers, soundscapeData]);
+  }, [goToReceiverId, receivers, soundscapeData, listenerOrientation]);
 
   // Effect: Go To Position (for grid listener points that have no individual mesh)
   useEffect(() => {
@@ -2901,24 +2886,12 @@ export function SpeckleScene({
 
     const receiverPosition = new THREE.Vector3(...goToPosition);
 
-    let initialTarget: THREE.Vector3;
-    const soundSphereManager = coordinatorRef.current.getSoundSphereManager();
-    const soundSphereMeshes = soundSphereManager?.getSoundSphereMeshes() || [];
-    const soundSpherePositions: THREE.Vector3[] = soundSphereMeshes.map((mesh: THREE.Mesh) => mesh.position.clone());
-
-    if (soundSpherePositions.length > 0) {
-      const sum = soundSpherePositions.reduce(
-        (acc: THREE.Vector3, pos: THREE.Vector3) => acc.add(pos),
-        new THREE.Vector3(0, 0, 0)
-      );
-      initialTarget = sum.divideScalar(soundSpherePositions.length);
-    } else {
-      initialTarget = new THREE.Vector3(
-        receiverPosition.x,
-        receiverPosition.y - 5,
-        receiverPosition.z
-      );
-    }
+    // Build look-at target from configurable listener orientation
+    const initialTarget = new THREE.Vector3(
+      receiverPosition.x + listenerOrientation.x,
+      receiverPosition.y + listenerOrientation.y,
+      receiverPosition.z + listenerOrientation.z
+    );
 
     coordinatorRef.current.enableFirstPersonMode(receiverPosition, initialTarget);
     setIsFirstPersonMode(true);
@@ -2927,7 +2900,7 @@ export function SpeckleScene({
     if (goToPositionReceiverId) {
       coordinatorRef.current.updateActiveReceiver(goToPositionReceiverId);
     }
-  }, [goToPosition, goToPositionReceiverId]);
+  }, [goToPosition, goToPositionReceiverId, listenerOrientation]);
 
   // ============================================================================
   // IR Hover Line (source ↔ receiver)
