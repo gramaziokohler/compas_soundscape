@@ -15,7 +15,7 @@ A web application for populating architectural models with contextualized sounds
 ### 1. Clone the Repository
 
 ```bash
-pip install git+https://https://github.com/gramaziokohler/compas_soundscape.git
+pip install git+https://github.com/gramaziokohler/compas_soundscape.git
 cd compas_soundscape
 ```
 
