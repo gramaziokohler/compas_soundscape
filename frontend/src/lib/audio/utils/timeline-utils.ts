@@ -11,6 +11,22 @@ import type { SoundEvent } from '@/types';
 import type { AudioScheduler } from '@/lib/audio-scheduler';
 
 /**
+ * Compute a deterministic stagger delay for a sound based on its ID.
+ * Using a hash instead of Math.random() ensures the delay is stable across renders,
+ * so the timeline can show the correct offset before playback starts.
+ */
+export function computeInitialDelay(soundId: string, maxDelayMs: number): number {
+  if (maxDelayMs <= 0) return 0;
+  // djb2-style hash → deterministic, sound-specific offset in [0, maxDelayMs)
+  let hash = 5381;
+  for (let i = 0; i < soundId.length; i++) {
+    hash = ((hash << 5) + hash) ^ soundId.charCodeAt(i);
+    hash = hash >>> 0; // keep unsigned 32-bit
+  }
+  return hash % Math.round(maxDelayMs);
+}
+
+/**
  * Get color based on sound generation method
  * @param metadata - Sound metadata containing soundEvent
  * @returns Color hex string
@@ -92,7 +108,8 @@ export function extractTimelineSounds(
         intervalMs,
         soundDurationMs,
         scheduledIterations: iterations,
-        audioUrl: audioUrl || undefined, // Only include if available
+        audioUrl: audioUrl || undefined,
+        initialDelayMs,
       });
     });
   });
@@ -154,7 +171,8 @@ export function extractTimelineSoundsFromData(
   soundIntervals: { [key: string]: number },
   timelineDuration: number = AUDIO_TIMELINE.DEFAULT_DURATION_MS,
   soundEvents?: SoundEvent[],
-  soundTrims?: Record<string, { start: number; end: number }>
+  soundTrims?: Record<string, { start: number; end: number }>,
+  intervalJitterSeconds: number = 3
 ): TimelineSound[] {
   const timelineSounds: TimelineSound[] = [];
 
@@ -176,19 +194,29 @@ export function extractTimelineSoundsFromData(
     // Get color based on generation method
     const color = getSoundColor(metadata);
 
-    // Calculate scheduled iterations
-    const iterations: number[] = [];
-    let currentTime = 0; // Start from beginning (no initial delay for visualization)
+    // Stagger delay matches the scheduler's jitter so the visual offset is always correct
+    const initialDelayMs = computeInitialDelay(soundId, intervalJitterSeconds * 1000);
 
-    // Add iterations only when the iteration END fits within the timeline duration.
-    // Checking end time (currentTime + soundDurationMs) avoids the last iteration
-    // overshooting the cap and inflating actualDuration in the component.
+    // Base parameters
+    const jitterMs = intervalJitterSeconds * 1000;
+    const baseGapMs = intervalSeconds * 1000;
+
+    const iterations: number[] = [];
+    const iterationOffsets: number[] = [];
+    let currentTime = 0;
+
     while (
       currentTime + soundDurationMs <= timelineDuration &&
       iterations.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY
     ) {
       iterations.push(currentTime);
-      currentTime += intervalMs;
+      
+      // Generate a true random offset once for this iteration
+      const randomOffset = (Math.random() * 2 - 1) * jitterMs;
+      iterationOffsets.push(randomOffset);
+      
+      const actualGapMs = Math.max(0, baseGapMs + randomOffset);
+      currentTime += soundDurationMs + actualGapMs;
     }
 
     // Extract audio URL from metadata (for WaveSurfer waveform visualization)
@@ -204,6 +232,8 @@ export function extractTimelineSoundsFromData(
       audioUrl: audioUrl || undefined,
       trimStartFraction: trim?.start,
       trimEndFraction: trim?.end,
+      initialDelayMs,
+      iterationOffsets,
     });
   });
 

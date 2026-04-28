@@ -38,10 +38,11 @@ export interface SoundMetadata {
 export interface ScheduledSound {
   metadata: SoundMetadata;
   intervalMs: number;
-  randomnessPercent: number;
   timerId: NodeJS.Timeout | null;
   isScheduled: boolean;
   initialDelayMs: number; // Initial delay before first playback
+  iterationOffsets?: number[]; // Pre-generated random offsets for each playback iteration
+  currentIteration?: number; // Tracks which iteration we are currently on
 }
 
 export interface WAVHeader {
@@ -73,6 +74,8 @@ export interface TimelineSound {
   audioUrl?: string; // Optional audio URL for WaveSurfer waveform visualization
   trimStartFraction?: number; // Fraction (0-1) where trim starts
   trimEndFraction?: number;   // Fraction (0-1) where trim ends
+  initialDelayMs?: number; // Delay before first playback (ms) — from stagger scheduling
+  iterationOffsets?: number[]; // Array of pre-generated random offsets for each iteration
 }
 
 export interface TimelinePlaybackState {

@@ -142,7 +142,7 @@ export function Card<TConfig extends CardBaseConfig>({
 
   // Build Tailwind class names
   const cardClassName = [
-    'rounded-lg border-0 transition-all duration-200',
+    'relative overflow-hidden rounded-lg border-0 transition-all duration-200',
     // isExpanded ? `p-2 bg-${color}-light border-0` : hasResult ? `p-1.5 bg-${color}-light` : 'p-1.5 bg-secondary-lighter',
     isExpanded && hasResult ? `p-2 bg-secondary` : '',
     isExpanded && !hasResult ? 'p-2 border-0' : '',
@@ -247,10 +247,33 @@ export function Card<TConfig extends CardBaseConfig>({
         ...(isExpanded && !hasResult && !error ? { borderColor: `var(--color-${color})`, backgroundColor: 'var(--card-color-light)' } : {}),
       }}
     >
+      {!isExpanded && isRunning && !error && (
+        <>
+          <div
+            aria-hidden="true"
+            className="absolute inset-y-0 left-0 transition-all duration-300"
+            style={{
+              width: `${Math.max(0, Math.min(progress, 100))}%`,
+              backgroundColor: 'var(--card-color)',
+            }}
+          />
+          <div
+            aria-hidden="true"
+            className="absolute inset-0"
+            style={{
+              background:
+                'linear-gradient(to right, transparent, transparent var(--collapsed-progress, 0%), rgba(255, 255, 255, 0.06) var(--collapsed-progress, 0%), rgba(255, 255, 255, 0.06) 100%)',
+              // @ts-expect-error -- CSS custom property for the collapsed progress divider
+              '--collapsed-progress': `${Math.max(0, Math.min(progress, 100))}%`,
+            }}
+          />
+        </>
+      )}
+
       {/* Header - Click anywhere (except buttons) to expand/collapse.
            Double-click to zoom — stops propagation so the outer card's onDoubleClick doesn't fire twice. */}
       <div
-        className="flex items-center justify-between gap-2 cursor-pointer"
+        className="relative z-10 flex items-center justify-between gap-2 cursor-pointer"
         onClick={!isEditingName ? handleToggleClick : undefined}
         onDoubleClick={e => e.stopPropagation()}
         style={{ userSelect: 'none' }}
@@ -279,6 +302,12 @@ export function Card<TConfig extends CardBaseConfig>({
             {!isExpanded && collapsedInfo && (
               <div className="text-xs mt-0.5 text-secondary-hover">
                 {collapsedInfo}
+              </div>
+            )}
+            {!isExpanded && isRunning && !error && (
+              <div className="mt-0.5 flex items-center gap-2 text-[10px] font-medium leading-tight text-white">
+                <span>{status || 'Calculating...'}</span>
+                <span className="opacity-80">{progress}%</span>
               </div>
             )}
             {isExpanded && hasResult && version && (

@@ -17,124 +17,120 @@ export class AudioScheduler {
   }
 
   /**
-   * Schedule a sound to play at intervals with optional randomness
-   * Interval = sound_duration + intervalSeconds + random_variance
-   * @param soundId Unique identifier for the sound
-   * @param metadata Sound metadata (buffer, position, event data)
-   * @param intervalSeconds Interval in seconds (will be added to sound duration)
-   * @param randomnessPercent Randomness percentage (0-100). Default 10 means ±10% variation
-   * @param initialDelayMs Optional initial delay in milliseconds before first playback
+   * Schedule a sound to play at intervals with per-iteration jitter.
+   * Interval = sound_duration + intervalSeconds ± jitter (clamped to ≥ 0)
+   * Jitter is read live from the audioControlsStore so slider changes take effect immediately.
    */
   scheduleSound(
     soundId: string,
     metadata: SoundMetadata,
     intervalSeconds: number,
-    randomnessPercent: number = 10,
-    initialDelayMs: number = 0
+    initialDelayMs: number = 0,
+    iterationOffsets?: number[],
+    startIteration: number = 0
   ): void {
-    // Clear existing schedule for this sound
+    // Preserve existing offsets if any, because unscheduleSound will clear them
+    const existing = this.scheduledSounds.get(soundId);
+    const savedOffsets = iterationOffsets || existing?.iterationOffsets;
+    
     this.unscheduleSound(soundId);
 
-    // Calculate effective duration (apply trim if set)
     const bufferDurationMs = metadata.buffer ? (metadata.buffer.duration * 1000) : 0;
     const trim = useAudioControlsStore.getState().soundTrims[soundId];
     const soundDurationMs = trim ? bufferDurationMs * (trim.end - trim.start) : bufferDurationMs;
     const intervalMs = (intervalSeconds * 1000) + soundDurationMs;
 
-    // Get display name from metadata for better logging
     const displayName = metadata.soundEvent.display_name || soundId;
 
-    // Store schedule info
     this.scheduledSounds.set(soundId, {
       metadata,
       intervalMs,
-      randomnessPercent,
       timerId: null,
       isScheduled: true,
-      initialDelayMs
+      initialDelayMs,
+      iterationOffsets: savedOffsets,
+      currentIteration: startIteration,
     });
 
-    // Add to logger
     scheduledSoundsLogger.addSound(soundId, displayName, intervalSeconds, performance.now() + initialDelayMs);
 
-    // If there's an initial delay, wait before first playback
     if (initialDelayMs > 0) {
       const timerId = setTimeout(() => {
         this.playOnce(metadata, soundId);
-        // Mark as playing in logger
         scheduledSoundsLogger.markPlaying(soundId, performance.now() + intervalMs);
-        // Schedule next playback
-        this.scheduleNextPlayback(soundId, metadata, intervalMs, randomnessPercent);
+        this.scheduleNextPlayback(soundId, metadata, intervalMs);
       }, initialDelayMs);
 
-      // Update the scheduled sound with initial delay timer
       const scheduled = this.scheduledSounds.get(soundId);
-      if (scheduled) {
-        scheduled.timerId = timerId;
-      }
+      if (scheduled) scheduled.timerId = timerId;
     } else {
-      // Play immediately
       this.playOnce(metadata, soundId);
-      // Mark as playing in logger
       scheduledSoundsLogger.markPlaying(soundId, performance.now() + intervalMs);
-      // Schedule next playback with randomness
-      this.scheduleNextPlayback(soundId, metadata, intervalMs, randomnessPercent);
+      this.scheduleNextPlayback(soundId, metadata, intervalMs);
     }
   }
 
   /**
-   * Schedule the next playback with randomness applied
+   * Schedule the next playback, applying a live ±jitter to the interval.
+   * Jitter is read from the store each iteration so the slider takes effect immediately.
    */
   private scheduleNextPlayback(
     soundId: string,
     metadata: SoundMetadata,
     intervalMs: number,
-    randomnessPercent: number
   ): void {
     const scheduled = this.scheduledSounds.get(soundId);
     if (!scheduled) return;
 
-    // Apply randomness: intervalMs * (1 ± randomnessPercent/100)
-    const randomFactor = 1 + ((Math.random() * 2 - 1) * (randomnessPercent / 100));
-    const actualInterval = intervalMs * randomFactor;
+    // Read live jitter and trim from store so slider changes apply to future iterations
+    const storeState = useAudioControlsStore.getState();
+    const jitterMs = storeState.intervalJitterSeconds * 1000;
+    
+    // Use pre-generated iteration offset if available, otherwise fallback to on-the-fly random
+    const currentIteration = scheduled.currentIteration || 0;
+    let randomOffset = 0;
+    if (scheduled.iterationOffsets && currentIteration < scheduled.iterationOffsets.length) {
+      randomOffset = scheduled.iterationOffsets[currentIteration];
+    } else {
+      randomOffset = (Math.random() * 2 - 1) * jitterMs;
+    }
+    
+    // Increment iteration counter
+    scheduled.currentIteration = currentIteration + 1;
 
-    // Update logger with next playback time
+    // Clamp the GAP between plays (not the total cycle) to >= 0
+    // intervalMs = soundDurationMs + gap, so actualInterval = soundDurationMs + max(0, gap + randomOffset)
+    const bufferDurationMs = metadata.buffer ? (metadata.buffer.duration * 1000) : 0;
+    const trim = storeState.soundTrims[soundId];
+    const soundDurationMs = trim ? bufferDurationMs * (trim.end - trim.start) : bufferDurationMs;
+    const actualInterval = Math.max(soundDurationMs, intervalMs + randomOffset);
+
     scheduledSoundsLogger.updateNextPlayback(soundId, performance.now() + actualInterval);
 
     const timerId = setTimeout(() => {
       this.playOnce(metadata, soundId);
-      // Mark as playing in logger
       scheduledSoundsLogger.markPlaying(soundId, performance.now() + intervalMs);
-
-      // Schedule next playback
-      this.scheduleNextPlayback(soundId, metadata, intervalMs, randomnessPercent);
+      this.scheduleNextPlayback(soundId, metadata, intervalMs);
     }, actualInterval);
 
-    // Update the scheduled sound with new timer
     scheduled.timerId = timerId;
   }
 
   /**
-   * Update the interval for a scheduled sound
-   * NOTE: This method is no longer used - interval changes now trigger Stop All
+   * Update the interval for a scheduled sound.
    * @deprecated Use Stop All + Play All workflow instead
    */
   updateInterval(soundId: string, newIntervalSeconds: number): void {
     const scheduled = this.scheduledSounds.get(soundId);
     if (!scheduled) return;
 
-    // Clear old timer
-    if (scheduled.timerId) {
-      clearTimeout(scheduled.timerId);
-    }
+    if (scheduled.timerId) clearTimeout(scheduled.timerId);
 
-    // Calculate new total interval: sound_duration + interval_seconds
     const soundDurationMs = scheduled.metadata.buffer ? (scheduled.metadata.buffer.duration * 1000) : 0;
     const newIntervalMs = (newIntervalSeconds * 1000) + soundDurationMs;
 
-    // Update interval and reschedule
     scheduled.intervalMs = newIntervalMs;
-    this.scheduleNextPlayback(soundId, scheduled.metadata, newIntervalMs, scheduled.randomnessPercent);
+    this.scheduleNextPlayback(soundId, scheduled.metadata, newIntervalMs);
   }
 
   /**

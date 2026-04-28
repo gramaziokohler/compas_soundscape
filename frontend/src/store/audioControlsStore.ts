@@ -17,6 +17,7 @@ import { create } from 'zustand';
 import { temporal } from 'zundo';
 import { devtools } from 'zustand/middleware';
 import type { SoundState } from '@/types';
+import { AUDIO_PLAYBACK } from '@/utils/constants';
 
 export interface AudioControlsStoreState {
   // ── State ──
@@ -28,6 +29,8 @@ export interface AudioControlsStoreState {
   mutedSounds: Set<string>;
   soloedSound: string | null;
   previewingSoundId: string | null;
+  /** Absolute jitter applied to each iteration's playback interval (seconds). */
+  intervalJitterSeconds: number;
   /** Internal: synced from useSoundGeneration. Used by playAll / stopAll / handleVariantChange. */
   _generatedSounds: any[];
 
@@ -42,6 +45,7 @@ export interface AudioControlsStoreState {
   handleMute: (soundId: string) => void;
   handleSolo: (soundId: string) => void;
   setSoundTrim: (soundId: string, trim: { start: number; end: number }) => void;
+  setIntervalJitter: (seconds: number) => void;
   handlePreviewPlayPause: (soundId: string) => void;
   handlePreviewStop: (soundId: string) => void;
   stopSoundcardPreview: () => void;
@@ -65,6 +69,7 @@ export const audioControlsPartialize = (state: AudioControlsStoreState) => ({
   selectedVariants: { ...state.selectedVariants },
   mutedSounds: new Set(state.mutedSounds),
   soloedSound: state.soloedSound,
+  intervalJitterSeconds: state.intervalJitterSeconds,
 });
 
 export const useAudioControlsStore = create<AudioControlsStoreState>()(
@@ -80,6 +85,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         mutedSounds: new Set(),
         soloedSound: null,
         previewingSoundId: null,
+        intervalJitterSeconds: AUDIO_PLAYBACK.DEFAULT_INTERVAL_JITTER_SECONDS,
         _generatedSounds: [],
 
         // ── Sync ──
@@ -190,6 +196,9 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             false,
             'audio/setSoundTrim',
           ),
+
+        setIntervalJitter: (seconds) =>
+          set({ intervalJitterSeconds: seconds }, false, 'audio/setIntervalJitter'),
 
         handlePreviewPlayPause: (soundId) => {
           const { individualSoundStates } = get();
@@ -307,7 +316,8 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         JSON.stringify(past.selectedVariants) === JSON.stringify(current.selectedVariants) &&
         past.mutedSounds.size === current.mutedSounds.size &&
         [...past.mutedSounds].every((id) => current.mutedSounds.has(id)) &&
-        past.soloedSound === current.soloedSound,
+        past.soloedSound === current.soloedSound &&
+        past.intervalJitterSeconds === current.intervalJitterSeconds,
     },
   ),
 );

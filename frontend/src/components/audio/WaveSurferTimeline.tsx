@@ -69,12 +69,20 @@ export function WaveSurferTimeline({
     ).join('|');
   }, [sounds]);
 
+  // Maximum initial delay across all sounds (for layout width compensation)
+  const maxDelayMs = useMemo(
+    () => sounds.reduce((max, s) => Math.max(max, s.initialDelayMs ?? 0), 0),
+    [sounds]
+  );
+
   // Calculate actual timeline duration from sounds — sized exactly to content
   const actualDuration = useMemo(() => {
     let maxEndTime = 0;
     sounds.forEach((sound) => {
+      const delay = sound.initialDelayMs ?? 0;
       sound.scheduledIterations.forEach((timestamp) => {
-        const endTime = timestamp + sound.soundDurationMs;
+        // scheduledIterations are relative to the track origin; add delay for absolute end time
+        const endTime = delay + timestamp + sound.soundDurationMs;
         if (endTime > maxEndTime) {
           maxEndTime = endTime;
         }
@@ -159,6 +167,9 @@ export function WaveSurferTimeline({
       trackContainer.style.marginBottom = `${WAVESURFER_TIMELINE.TRACK_SPACING}px`;
       trackContainer.style.width = `${timelineWidth}px`;
       trackContainer.style.backgroundColor = WAVESURFER_TIMELINE.TRACK_BACKGROUND_COLOR;
+      // Shift track right by its initial delay so waveforms align with cursor timing
+      const initDelayPx = ((sound.initialDelayMs ?? 0) / 1000) * pixelsPerSecond;
+      if (initDelayPx > 0) trackContainer.style.transform = `translateX(${initDelayPx}px)`;
       containerRef.current?.appendChild(trackContainer);
 
       // Add track label
@@ -339,6 +350,22 @@ export function WaveSurferTimeline({
   }, [sounds]);
 
   /**
+   * Sync track CSS translateX when initialDelayMs changes (e.g. after play-all scheduling).
+   * Runs independently of soundsHash so WaveSurfer instances are NOT rebuilt.
+   */
+  useEffect(() => {
+    sounds.forEach((sound) => {
+      const trackEl = document.getElementById(`track-${sound.id}`);
+      if (!trackEl) return;
+      const delayPx = ((sound.initialDelayMs ?? 0) / 1000) * PIXELS_PER_SECOND;
+      trackEl.style.transform = delayPx > 0 ? `translateX(${delayPx}px)` : '';
+      console.debug(
+        `[WaveSurferTimeline] track "${sound.displayName}" offset=${delayPx.toFixed(0)}px (delay=${sound.initialDelayMs ?? 0}ms)`
+      );
+    });
+  }, [sounds, PIXELS_PER_SECOND]);
+
+  /**
    * Add timeline ruler at the top.
    */
   useEffect(() => {
@@ -402,13 +429,13 @@ export function WaveSurferTimeline({
 
   /**
    * Sync cursor position with external currentTime and auto-scroll.
-   * No per-frame seeking on WaveSurfer instances — cursor is the sole playback indicator.
+   * Tracks are positioned by CSS translateX (initialDelayMs), so cursor uses raw currentTime.
    */
   useEffect(() => {
     if (!cursorRef.current || !scrollContainerRef.current) return;
 
-    const normalizedTime = currentTime - timeOffsetRef.current;
-    const cursorPosition = (normalizedTime / 1000) * PIXELS_PER_SECOND;
+    // No timeOffset subtraction — track positions are shifted by CSS transform instead
+    const cursorPosition = (currentTime / 1000) * PIXELS_PER_SECOND;
     cursorRef.current.style.left = `${cursorPosition}px`;
 
     const scrollContainer = scrollContainerRef.current;

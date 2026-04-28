@@ -7,6 +7,8 @@ import type { TokenStatus, LLMProviders } from "@/services/api";
 import { useTextGenerationStore } from "@/store/textGenerationStore";
 import { setElevenLabsApiKey, isElevenLabsKeySet } from "@/services/elevenlabs.mts";
 import { useServiceVersions } from "@/hooks/useServiceVersions";
+import { useAudioControlsStore } from "@/store/audioControlsStore";
+import { AUDIO_PLAYBACK } from "@/utils/constants";
 import {
   UI_COLORS,
   UI_BORDER_RADIUS,
@@ -381,6 +383,9 @@ export function AdvancedSettingsSection({
     if (tokenSettingsTrigger > 0) setTokensExpanded(true);
   }, [tokenSettingsTrigger]);
 
+  const intervalJitterSeconds = useAudioControlsStore((s) => s.intervalJitterSeconds);
+  const setIntervalJitter = useAudioControlsStore((s) => s.setIntervalJitter);
+
   return (
     <div className="flex flex-col gap-2 w-full">
       <div className="flex items-center justify-between">
@@ -425,40 +430,58 @@ export function AdvancedSettingsSection({
       </AccordionSection>
 
       <AccordionSection title="Sound Rendering" expanded={soundRenderingExpanded} onToggle={() => setSoundRenderingExpanded((e) => !e)}>
-        <div className="flex flex-col gap-1.5 pt-1">
-          <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
-            Listener orientation
-          </h4>
-          <div className="flex gap-2">
-            {(['x', 'y', 'z'] as const).map((axis) => (
-              <div
-                key={axis}
-                className="flex-1 flex flex-col gap-0.5"
-                title={`Double-click to reset (default: ${DEFAULT_LISTENER_ORIENTATION[axis]})`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-medium text-secondary-hover uppercase">{axis}</span>
-                  <span className="text-[10px] font-bold" style={{ color: UI_COLORS.PRIMARY }}>
-                    {listenerOrientation[axis].toFixed(1)}
-                  </span>
+        <div className="flex flex-col gap-3 pt-1">
+          <div className="flex flex-col gap-1.5">
+            <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
+              Listener orientation
+            </h4>
+            <div className="flex gap-2">
+              {(['x', 'y', 'z'] as const).map((axis) => (
+                <div
+                  key={axis}
+                  className="flex-1 flex flex-col gap-0.5"
+                  title={`Double-click to reset (default: ${DEFAULT_LISTENER_ORIENTATION[axis]})`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-medium text-secondary-hover uppercase">{axis}</span>
+                    <span className="text-[10px] font-bold" style={{ color: UI_COLORS.PRIMARY }}>
+                      {listenerOrientation[axis].toFixed(1)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={-1}
+                    max={1}
+                    step={0.1}
+                    value={listenerOrientation[axis]}
+                    onChange={(e) =>
+                      onListenerOrientationChange({ ...listenerOrientation, [axis]: parseFloat(e.target.value) })
+                    }
+                    onDoubleClick={() =>
+                      onListenerOrientationChange({ ...listenerOrientation, [axis]: DEFAULT_LISTENER_ORIENTATION[axis] })
+                    }
+                    className="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-secondary-light"
+                    style={{ accentColor: UI_COLORS.PRIMARY }}
+                  />
                 </div>
-                <input
-                  type="range"
-                  min={-1}
-                  max={1}
-                  step={0.1}
-                  value={listenerOrientation[axis]}
-                  onChange={(e) =>
-                    onListenerOrientationChange({ ...listenerOrientation, [axis]: parseFloat(e.target.value) })
-                  }
-                  onDoubleClick={() =>
-                    onListenerOrientationChange({ ...listenerOrientation, [axis]: DEFAULT_LISTENER_ORIENTATION[axis] })
-                  }
-                  className="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-secondary-light"
-                  style={{ accentColor: UI_COLORS.PRIMARY }}
-                />
-              </div>
-            ))}
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
+              Playback timing
+            </h4>
+            <RangeSlider
+              label="Interval Jitter (s): "
+              value={intervalJitterSeconds}
+              min={0}
+              max={15}
+              step={0.5}
+              onChange={setIntervalJitter}
+              defaultValue={AUDIO_PLAYBACK.DEFAULT_INTERVAL_JITTER_SECONDS}
+              hoverText="Each iteration fires at its base interval ± a random offset drawn from [0, jitter]. Also controls the stagger between sounds on Play All. Double-click to reset."
+            />
           </div>
         </div>
       </AccordionSection>

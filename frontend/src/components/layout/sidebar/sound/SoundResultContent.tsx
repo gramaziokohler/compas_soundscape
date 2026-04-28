@@ -32,6 +32,7 @@ export interface SoundResultContentProps {
   onVolumeChange?: (soundId: string, volumeDb: number) => void;
   onIntervalChange?: (soundId: string, intervalSeconds: number) => void;
   onVariantChange?: (promptIdx: number, variantIdx: number) => void;
+  onUpdatePosition?: (soundId: string, position: [number, number, number]) => void;
 }
 
 export function SoundResultContent({
@@ -49,6 +50,7 @@ export function SoundResultContent({
   onVolumeChange,
   onIntervalChange,
   onVariantChange,
+  onUpdatePosition,
 }: SoundResultContentProps) {
   // Volume and interval from live state
   const currentVolumeDb = soundVolumes[generatedSound.id] ?? generatedSound.volume_db ?? 70;
@@ -94,23 +96,55 @@ export function SoundResultContent({
           onStop={() => onPreviewStop?.(generatedSound.id)}
         />
 
-        {/* Variant Selector - bottom left under waveform */}
-        {variants.length > 1 && onVariantChange && (
-          <div className="flex gap-1 mt-1 overflow-x-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: 'var(--card-color, var(--color-primary)) transparent' }}>
-            {variants.map((_, idx) => (
-              <button
-                key={idx}
-                onClick={() => onVariantChange(index, idx)}
-                className={`w-5 h-5 text-[10px] rounded transition-colors flex-shrink-0 ${
-                  idx === selectedVariantIdx
-                    ? 'text-white'
-                    : 'bg-secondary text-secondary-light'
-                }`}
-                style={idx === selectedVariantIdx ? { backgroundColor: 'var(--card-color, var(--color-primary))' } : undefined}
+        {/* Bottom row: variant selector (left) + position inputs (right) */}
+        {(variants.length > 1 || onUpdatePosition) && (
+          <div className="flex flex-col items-start gap-2 mt-1 min-w-0">
+            {onUpdatePosition && (
+              <div className="flex gap-1 flex-shrink-0">
+                {(['x', 'y', 'z'] as const).map((axis, axisIdx) => {
+                  const val = generatedSound.position?.[axisIdx] ?? 0;
+                  return (
+                    <div key={axis} className="flex flex-col gap-0" style={{ width: '55px' }}>
+                      <span className="text-[9px] font-medium text-secondary-hover uppercase text-center leading-tight">{axis}</span>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={parseFloat(val.toFixed(2))}
+                        onChange={(e) => {
+                          const parsed = parseFloat(e.target.value);
+                          if (isNaN(parsed)) return;
+                          const newPos: [number, number, number] = [...(generatedSound.position ?? [0, 0, 0])] as [number, number, number];
+                          newPos[axisIdx] = parsed;
+                          onUpdatePosition(generatedSound.id, newPos);
+                        }}
+                        className="w-full text-[9px] font-mono rounded px-1 py-0.5 outline-none bg-foreground text-background"
+                        style={{ borderColor: 'var(--card-color, var(--color-primary))55' }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {variants.length > 1 && onVariantChange && (
+              <div
+                className="flex gap-1 overflow-x-auto flex-shrink-0"
+                style={{ scrollbarWidth: 'thin', scrollbarColor: 'var(--card-color, var(--color-primary)) transparent' }}
               >
-                {idx + 1}
-              </button>
-            ))}
+                {variants.map((_, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => onVariantChange(index, idx)}
+                    className={`w-5 h-5 text-[10px] rounded transition-colors flex-shrink-0 ${
+                      idx === selectedVariantIdx ? 'text-white' : 'bg-secondary text-secondary-light'
+                    }`}
+                    style={idx === selectedVariantIdx ? { backgroundColor: 'var(--card-color, var(--color-primary))' } : undefined}
+                  >
+                    {idx + 1}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

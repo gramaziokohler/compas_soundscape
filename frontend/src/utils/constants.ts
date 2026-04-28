@@ -498,8 +498,9 @@ export const AUDIO_PLAYBACK = {
   // Default interval in seconds when not specified
   DEFAULT_INTERVAL_SECONDS: 5,
 
-  // Randomness percentage for interval-based playback (±10% variance)
-  INTERVAL_RANDOMNESS_PERCENT: 10,
+  // Default absolute jitter applied to each iteration's interval (seconds).
+  // Each iteration fires at intervalMs ± random(0, jitter), clamped to ≥ 0.
+  DEFAULT_INTERVAL_JITTER_SECONDS: 3,
 } as const;
 
 // ============================================================================

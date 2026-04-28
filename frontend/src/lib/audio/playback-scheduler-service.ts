@@ -2,8 +2,9 @@ import type { AudioOrchestrator } from "@/lib/audio/AudioOrchestrator";
 import { AudioScheduler } from "@/lib/audio-scheduler";
 import { AUDIO_PLAYBACK } from "@/utils/constants";
 import { emergencyKillAllAudio, restoreAudioAfterKill } from "@/lib/audio/utils/emergency-audio-kill";
+import { computeInitialDelay } from "@/lib/audio/utils/timeline-utils";
 import type { SoundState } from "@/types";
-import type { SoundMetadata } from "@/types/audio";
+import type { SoundMetadata, TimelineSound } from "@/types/audio";
 import { useAudioControlsStore } from "@/store/audioControlsStore";
 
 /**
@@ -53,7 +54,8 @@ export class PlaybackSchedulerService {
   public async updateSoundPlayback(
     soundMetadata: Map<string, SoundMetadata>,
     individualSoundStates: { [key: string]: SoundState },
-    soundIntervals: { [key: string]: number }
+    soundIntervals: { [key: string]: number },
+    timelineSounds?: TimelineSound[]
   ): Promise<void> {
     if (soundMetadata.size === 0) return;
 
@@ -165,21 +167,28 @@ export class PlaybackSchedulerService {
                 : (soundEventInterval !== undefined && soundEventInterval !== null)
                   ? soundEventInterval
                   : AUDIO_PLAYBACK.DEFAULT_INTERVAL_SECONDS;
-              const randomnessPercent = AUDIO_PLAYBACK.INTERVAL_RANDOMNESS_PERCENT;
 
-              // Calculate initial delay if this is Play All
+              // Use the same jitter used in extractTimelineSoundsFromData so visual and audio match
+              const jitterMs = useAudioControlsStore.getState().intervalJitterSeconds * 1000;
               let initialDelayMs = 0;
-              if (this.isPlayAll) {
-                // Random delay from 0 to half the sound's interval
-                const soundDurationMs = metadata.buffer ? (metadata.buffer.duration * 1000) : 0;
-                const totalIntervalMs = (intervalSeconds * 1000) + soundDurationMs;
-                const maxDelayMs = (intervalSeconds * 1000) / 2;
-                initialDelayMs = Math.random() * maxDelayMs;
-                console.log(`[PlaybackScheduler] 🎭 Play All - "${displayName}" will start in ${(initialDelayMs / 1000).toFixed(1)}s (staggered start)`);
+              let iterationOffsets: number[] | undefined = undefined;
+
+              if (timelineSounds) {
+                const ts = timelineSounds.find(t => t.id === soundId);
+                // ALWAYS use the timeline's initial delay if available, to guarantee exact visual match
+                if (ts && ts.initialDelayMs !== undefined) {
+                  initialDelayMs = ts.initialDelayMs;
+                  iterationOffsets = ts.iterationOffsets;
+                }
               }
 
-              scheduler.scheduleSound(soundId, metadata, intervalSeconds, randomnessPercent, initialDelayMs);
-              console.log(`[PlaybackScheduler] ✅ Scheduled "${displayName}" - interval: ${intervalSeconds}s, initialDelay: ${(initialDelayMs / 1000).toFixed(1)}s`);
+              if (!timelineSounds && this.isPlayAll) {
+                initialDelayMs = computeInitialDelay(soundId, jitterMs);
+                console.log(`[PlaybackScheduler] 🎭 Play All - "${displayName}" start in ${(initialDelayMs / 1000).toFixed(1)}s`);
+              }
+
+              scheduler.scheduleSound(soundId, metadata, intervalSeconds, initialDelayMs, iterationOffsets);
+              console.log(`[PlaybackScheduler] ✅ Scheduled "${displayName}" interval=${intervalSeconds}s delay=${(initialDelayMs / 1000).toFixed(1)}s`);
             }
             break;
 
@@ -336,7 +345,8 @@ export class PlaybackSchedulerService {
     seekTimeMs: number,
     soundMetadata: Map<string, SoundMetadata>,
     individualSoundStates: { [key: string]: SoundState },
-    soundIntervals: { [key: string]: number }
+    soundIntervals: { [key: string]: number },
+    timelineSounds?: TimelineSound[]
   ): Promise<void> {
 
     console.log('[PlaybackScheduler] 🔄 SEEK - Nuclear cleanup started');
@@ -398,32 +408,97 @@ export class PlaybackSchedulerService {
       const trim = useAudioControlsStore.getState().soundTrims[soundId];
       const soundDurationMs = trim ? bufferDurationMs * (trim.end - trim.start) : bufferDurationMs;
       const totalIntervalMs = (intervalSeconds * 1000) + soundDurationMs;
-      const randomnessPercent = AUDIO_PLAYBACK.INTERVAL_RANDOMNESS_PERCENT;
-
-      // Calculate which iteration we're in (ignoring initial delays as per requirements)
-      // If a sound has iterations at 0ms, 10000ms, 20000ms, etc.
-      // and we seek to 15000ms, we should be in the middle of iteration 1
-
-      // Find the last iteration that started before or at seekTimeMs
-      let iterationIndex = 0;
-      let iterationStartTime = 0;
-
-      while (iterationStartTime + totalIntervalMs <= seekTimeMs) {
-        iterationIndex++;
-        iterationStartTime += totalIntervalMs;
-      }
-
-      // Now we know:
-      // - iterationStartTime: when the current/last iteration started
-      // - Current time in this iteration: seekTimeMs - iterationStartTime
-      const timeIntoIteration = seekTimeMs - iterationStartTime;
 
       // Create NEW scheduler (fresh, no old state)
       const scheduler = new AudioScheduler(this.audioOrchestrator, this.audioContext);
       this.audioSchedulers.set(soundId, scheduler);
 
+      let timeIntoIteration = 0;
+      let nextIterationDelayMs = 0;
+      let isWithinSound = false;
+      let iterationOffsets: number[] | undefined = undefined;
+
+      const ts = timelineSounds?.find(t => t.id === soundId);
+      if (ts && ts.scheduledIterations && ts.scheduledIterations.length > 0) {
+        iterationOffsets = ts.iterationOffsets;
+        
+        // The visual timeline displays iterations shifted by ts.initialDelayMs
+        // So a scheduled iteration 'i' actually starts at ts.initialDelayMs + ts.scheduledIterations[i].
+        let activeIterIndex = -1;
+        let actualIterationStart = 0;
+        const initialDelay = ts.initialDelayMs || 0;
+
+        for (let i = 0; i < ts.scheduledIterations.length; i++) {
+          const iterVisualStart = initialDelay + ts.scheduledIterations[i];
+          if (iterVisualStart <= seekTimeMs) {
+            activeIterIndex = i;
+            actualIterationStart = iterVisualStart;
+          } else {
+            break;
+          }
+        }
+
+        if (activeIterIndex >= 0) {
+          timeIntoIteration = seekTimeMs - actualIterationStart;
+          isWithinSound = timeIntoIteration < ts.soundDurationMs;
+          
+          if (!isWithinSound) {
+            // We are past the sound duration, so we are in the gap before the next iteration
+            if (activeIterIndex + 1 < ts.scheduledIterations.length) {
+              const nextIterVisualStart = initialDelay + ts.scheduledIterations[activeIterIndex + 1];
+              nextIterationDelayMs = nextIterVisualStart - seekTimeMs;
+            } else {
+              // No more iterations scheduled, just use default spacing
+              nextIterationDelayMs = totalIntervalMs - timeIntoIteration;
+              nextIterationDelayMs = Math.max(0, nextIterationDelayMs);
+            }
+          }
+          
+          // Seed the scheduler with where it is in the iteration count 
+          // so it picks up the right offsets going forward
+          scheduler.getScheduledSounds().set(soundId, {
+            metadata,
+            intervalMs: ts.intervalMs,
+            timerId: null,
+            isScheduled: true,
+            iterationOffsets: ts.iterationOffsets,
+            currentIteration: isWithinSound ? activeIterIndex + 1 : activeIterIndex + 1,
+            initialDelayMs: ts.initialDelayMs
+          });
+        } else {
+          // seekTimeMs is before the very first iteration (in the initialDelayMs gap)
+          isWithinSound = false;
+          const firstIterVisualStart = initialDelay + ts.scheduledIterations[0];
+          nextIterationDelayMs = firstIterVisualStart - seekTimeMs;
+          
+          scheduler.getScheduledSounds().set(soundId, {
+            metadata,
+            intervalMs: ts.intervalMs,
+            timerId: null,
+            isScheduled: true,
+            iterationOffsets: ts.iterationOffsets,
+            currentIteration: 0,
+            initialDelayMs: Math.max(0, nextIterationDelayMs)
+          });
+        }
+      } else {
+        // Fallback if timelineSounds is not available (the old way)
+        let iterationStartTime = 0;
+        let iterationIndex = 0;
+        while (iterationStartTime + totalIntervalMs <= seekTimeMs) {
+          iterationIndex++;
+          iterationStartTime += totalIntervalMs;
+        }
+
+        timeIntoIteration = seekTimeMs - iterationStartTime;
+        isWithinSound = timeIntoIteration < soundDurationMs;
+        if (!isWithinSound) {
+          nextIterationDelayMs = totalIntervalMs - timeIntoIteration;
+        }
+      }
+
       // If we're within the sound duration, play it from the correct position
-      if (timeIntoIteration < soundDurationMs) {
+      if (isWithinSound) {
         // Play sound from offset via orchestrator (ensures convolution/spatial processing)
         // Apply trim: actual buffer offset = trimStart * bufferDuration + timeIntoIteration
         const trimStartSec = trim ? trim.start * (metadata.buffer.duration) : 0;
@@ -441,37 +516,86 @@ export class PlaybackSchedulerService {
           console.error(`[PlaybackScheduler] ❌ No orchestrator available for "${displayName}"`);
         }
 
-        // Schedule next iteration after this one finishes
-        const remainingTimeMs = soundDurationMs - timeIntoIteration;
-        const nextIterationDelayMs = remainingTimeMs + (intervalSeconds * 1000);
+        let preciseDelayUntilNextStart = 0;
+        let currentIteration = 0;
 
-        seekResults[displayName] = `✅ PLAYING from ${(timeIntoIteration / 1000).toFixed(1)}s, next in ${(nextIterationDelayMs / 1000).toFixed(1)}s`;
+        if (ts && ts.scheduledIterations) {
+           const initialDelay = ts.initialDelayMs || 0;
+           // Find which iteration we are currently in
+           for (let i = 0; i < ts.scheduledIterations.length; i++) {
+             if (initialDelay + ts.scheduledIterations[i] <= seekTimeMs) {
+               currentIteration = i + 1; // It has started, next one is i+1
+             } else {
+               break;
+             }
+           }
 
-        // Use normal scheduling for next iteration
-        // After waiting and disposing, we don't need generation tracking here
-        const timer = setTimeout(() => {
-          const currentScheduler = this.audioSchedulers.get(soundId);
-          if (!currentScheduler) {
-            // Scheduler was disposed (new seek happened)
-            console.log(`[PlaybackScheduler] ⏹️ Skipping seek timer - scheduler disposed`);
-            return;
-          }
+           if (ts.scheduledIterations.length > currentIteration) {
+             const nextVisualStart = initialDelay + ts.scheduledIterations[currentIteration];
+             if (nextVisualStart > seekTimeMs) {
+               preciseDelayUntilNextStart = nextVisualStart - seekTimeMs;
+             } else {
+               preciseDelayUntilNextStart = 0;
+             }
+           } else {
+             // No more iterations mapped
+             preciseDelayUntilNextStart = Infinity; // NEVER schedule another iteration!
+           }
+        } else {
+           // Fallback to average calculation
+           const remainingTimeInIterationMs = soundDurationMs - timeIntoIteration;
+           preciseDelayUntilNextStart = remainingTimeInIterationMs + (totalIntervalMs - soundDurationMs);
+           currentIteration = Math.floor(seekTimeMs / totalIntervalMs) + 1;
+        }
+        
+        
+        if (preciseDelayUntilNextStart === Infinity) {
+          seekResults[displayName] = `✅ PLAYING final iteration from ${(timeIntoIteration / 1000).toFixed(1)}s, STOPPING afterwards`;
+        } else {
+          preciseDelayUntilNextStart = Math.max(0, preciseDelayUntilNextStart);
+          seekResults[displayName] = `✅ PLAYING from ${(timeIntoIteration / 1000).toFixed(1)}s, next in ${(preciseDelayUntilNextStart / 1000).toFixed(1)}s`;
 
-          // Schedule next iteration
-          currentScheduler.scheduleSound(soundId, metadata, intervalSeconds, randomnessPercent, 0);
-          this.seekTimers.delete(soundId);
-        }, nextIterationDelayMs);
+          // Use normal scheduling for next iteration
+          const timer = setTimeout(() => {
+            const currentScheduler = this.audioSchedulers.get(soundId);
+            if (!currentScheduler) {
+              console.log(`[PlaybackScheduler] ⏹️ Skipping seek timer - scheduler disposed`);
+              return;
+            }
 
-        this.seekTimers.set(soundId, timer);
+            // Schedule next iteration
+            currentScheduler.scheduleSound(soundId, metadata, intervalSeconds, 0, ts?.iterationOffsets, currentIteration);
+            this.seekTimers.delete(soundId);
+          }, preciseDelayUntilNextStart);
+
+          this.seekTimers.set(soundId, timer);
+        }
 
       } else {
-        // We're in the interval gap between iterations
-        const timeUntilNextIteration = totalIntervalMs - timeIntoIteration;
+        // We're in the gap between iterations
+        // The delay until the next playback was calculated above
+        seekResults[displayName] = `⏰ SCHEDULED to play in ${(nextIterationDelayMs / 1000).toFixed(1)}s`;
 
-        seekResults[displayName] = `⏰ SCHEDULED to play in ${(timeUntilNextIteration / 1000).toFixed(1)}s`;
+        let gapIter = 0;
+        if (ts && ts.scheduledIterations) {
+           const initialDelay = ts.initialDelayMs || 0;
+           for (let i = 0; i < ts.scheduledIterations.length; i++) {
+             if (initialDelay + ts.scheduledIterations[i] > seekTimeMs) {
+               gapIter = i;
+               break;
+             }
+           }
+           if (gapIter >= ts.scheduledIterations.length || (gapIter === 0 && initialDelay + ts.scheduledIterations[0] <= seekTimeMs)) {
+             // We are past all scheduled iterations! Do not schedule!
+             seekResults[displayName] = `🛑 PAST VISUAL DURATION; stopping`;
+             return;
+           }
+        } else {
+           gapIter = Math.ceil(seekTimeMs / totalIntervalMs);
+        }
 
         // Schedule with initial delay until next iteration
-        scheduler.scheduleSound(soundId, metadata, intervalSeconds, randomnessPercent, timeUntilNextIteration);
+        scheduler.scheduleSound(soundId, metadata, intervalSeconds, nextIterationDelayMs, ts?.iterationOffsets, gapIter);
       }
     });
 

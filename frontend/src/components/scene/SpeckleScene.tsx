@@ -281,6 +281,8 @@ export function SpeckleScene({
 
   const coordinatorRef = useRef<SpeckleAudioCoordinator | null>(null);
   const playbackSchedulerRef = useRef<PlaybackSchedulerService | null>(null);
+  // Set to true when Play All is pressed; playTimeline() fires after scheduling completes
+  const playAfterSchedulingRef = useRef<boolean>(false);
   const selectionExtensionRef = useRef<SelectionExtension | null>(null);
   const filteringExtensionRef = useRef<FilteringExtension | null>(null);
   const boundingBoxManagerRef = useRef<BoundingBoxManager | null>(null);
@@ -291,9 +293,10 @@ export function SpeckleScene({
   // ── Audio controls from store ──
   const selectedVariants     = useAudioControlsStore((s) => s.selectedVariants);
   const individualSoundStates = useAudioControlsStore((s) => s.individualSoundStates);
-  const soundVolumes         = useAudioControlsStore((s) => s.soundVolumes);
-  const soundIntervals       = useAudioControlsStore((s) => s.soundIntervals);
-  const soundTrims           = useAudioControlsStore((s) => s.soundTrims);
+  const soundVolumes            = useAudioControlsStore((s) => s.soundVolumes);
+  const soundIntervals          = useAudioControlsStore((s) => s.soundIntervals);
+  const soundTrims              = useAudioControlsStore((s) => s.soundTrims);
+  const intervalJitterSeconds   = useAudioControlsStore((s) => s.intervalJitterSeconds);
   const mutedSounds          = useAudioControlsStore((s) => s.mutedSounds);
   const soloedSound          = useAudioControlsStore((s) => s.soloedSound);
   const isAnyPlaying         = useAudioControlsStore((s) =>
@@ -1419,7 +1422,7 @@ export function SpeckleScene({
 
         if (soundMetadata && soundMetadata.size > 0) {
           const duration = calculateTimelineDurationFromData(soundMetadata, soundIntervals);
-          const sounds = extractTimelineSoundsFromData(soundMetadata, soundIntervals, duration, soundscapeData ?? undefined, soundTrims);
+          const sounds = extractTimelineSoundsFromData(soundMetadata, soundIntervals, duration, soundscapeData ?? undefined, soundTrims, intervalJitterSeconds);
 
           setTimelineSounds(sounds);
           setTimelineDuration(duration);
@@ -1438,7 +1441,7 @@ export function SpeckleScene({
     // equals the old one (Object.is), so setSoundMetadataReady(false/true) with
     // the same value never triggers an extra run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [soundscapeData, selectedVariants, soundIntervals, soundTrims, soundMetadataReady]);
+  }, [soundscapeData, selectedVariants, soundIntervals, soundTrims, soundMetadataReady, intervalJitterSeconds]);
 
   // ============================================================================
   // Effect - Poll for Sound Metadata Readiness
@@ -1487,13 +1490,13 @@ export function SpeckleScene({
     const soundMetadata = soundSphereManager.getAllAudioSources();
     if (soundMetadata && soundMetadata.size > 0) {
       const duration = calculateTimelineDurationFromData(soundMetadata, soundIntervals);
-      const sounds = extractTimelineSoundsFromData(soundMetadata, soundIntervals, duration, soundscapeData ?? undefined, soundTrims);
+      const sounds = extractTimelineSoundsFromData(soundMetadata, soundIntervals, duration, soundscapeData ?? undefined, soundTrims, intervalJitterSeconds);
 
       setTimelineSounds(sounds);
       setTimelineDuration(duration);
       console.log('[SpeckleScene] 🔄 Timeline refreshed:', sounds.length, 'sounds, duration:', duration);
     }
-  }, [soundIntervals, soundTrims, soundscapeData]);
+  }, [soundIntervals, soundTrims, soundscapeData, intervalJitterSeconds]);
 
   // ============================================================================
   // Callback - Download Soundscape as WAV
@@ -1544,10 +1547,28 @@ export function SpeckleScene({
   // ============================================================================
   // Timeline Playback Hook
   // ============================================================================
+
+  const stopTimelineRef = useRef<(() => void) | null>(null);
+
+  const handleTimelineEnd = useCallback(async () => {
+    const soundSphereManager = coordinatorRef.current?.getSoundSphereManager();
+    const playbackScheduler = playbackSchedulerRef.current;
+    if (!soundSphereManager || !playbackScheduler) return;
+
+    console.log('[SpeckleScene] 🛑 Timeline reached visual end! Stopping all playback strictly.');
+    storeStopAll();
+    stopTimelineRef.current?.();
+  }, [storeStopAll]);
+
   const { playbackState, play: playTimeline, pause: pauseTimeline, stop: stopTimeline, seekTo } = useTimelinePlayback({
     sounds: timelineSounds,
-    duration: timelineDuration
+    duration: timelineDuration,
+    onEnd: handleTimelineEnd
   });
+
+  useEffect(() => {
+    stopTimelineRef.current = stopTimeline;
+  }, [stopTimeline]);
 
   // ============================================================================
   // Effect - Control Individual Sound Playback
@@ -1569,10 +1590,20 @@ export function SpeckleScene({
       await playbackScheduler.updateSoundPlayback(
         soundMetadata,
         individualSoundStates,
-        soundIntervals
+        soundIntervals,
+        timelineSounds
       );
+
+      // After all scheduleSound() calls complete, start the cursor.
+      // Delays are already baked into timelineSounds (deterministic, set at generation time),
+      // so no setTimelineSounds update is needed here.
+      if (playAfterSchedulingRef.current) {
+        playAfterSchedulingRef.current = false;
+        console.debug('[SpeckleScene] Scheduling complete — starting timeline cursor');
+        playTimeline();
+      }
     })();
-  }, [individualSoundStates, soundIntervals]);
+  }, [individualSoundStates, soundIntervals, playTimeline]);
 
   // ============================================================================
   // Effect - Apply Volume Changes
@@ -2332,9 +2363,9 @@ export function SpeckleScene({
     const isPausedResume = !playbackState.isPlaying && playbackState.currentTime > 0;
 
     if (isPausedResume) {
+      // Resume from pause: seek restores audio, then start cursor immediately
       const soundSphereManager = coordinatorRef.current?.getSoundSphereManager();
       if (playbackSchedulerRef.current && soundSphereManager) {
-        // Build 'playing' states from current Zustand store (paused → playing)
         const currentStates = useAudioControlsStore.getState().individualSoundStates;
         const playingStates: Record<string, string> = { ...currentStates };
         Object.keys(playingStates).forEach((id) => {
@@ -2346,14 +2377,21 @@ export function SpeckleScene({
           playbackState.currentTime,
           soundMetadata,
           playingStates as any,
-          soundIntervals
+          soundIntervals,
+          timelineSounds
         );
       }
+      // Start timeline cursor (preserves currentTime)
+      playTimeline();
+      // Update store states (updateSoundPlayback will skip — prevStates synced by seekToTime)
+      storePlayAll();
+      return;
     }
 
-    // Start timeline cursor (preserves currentTime)
-    playTimeline();
-    // Update store states (updateSoundPlayback will skip — prevStates synced by seekToTime)
+    // Fresh start: defer playTimeline() until after scheduleSound() calls complete.
+    // The updateSoundPlayback effect reads this flag and starts the cursor post-scheduling.
+    playAfterSchedulingRef.current = true;
+    console.debug('[SpeckleScene] Fresh play — deferring cursor until scheduling complete');
     storePlayAll();
   }, [playTimeline, storePlayAll, playbackState.isPlaying, playbackState.currentTime, soundIntervals]);
 
@@ -2405,7 +2443,8 @@ export function SpeckleScene({
       timeMs,
       soundMetadata,
       individualSoundStates,
-      soundIntervals
+      soundIntervals,
+      timelineSounds
     );
   }, [seekTo, individualSoundStates, soundIntervals]);
 
@@ -2413,21 +2452,19 @@ export function SpeckleScene({
   // Effect - Sync Timeline Playback with Individual Sounds
   // ============================================================================
   useEffect(() => {
-    // Check if any sound is playing
     const anySoundPlaying = Object.values(individualSoundStates).some(state => state === 'playing');
-    // Check if any sound is paused (timeline should stay visible but cursor paused)
     const anySoundPaused = Object.values(individualSoundStates).some(state => state === 'paused');
-    // Check if all sounds are stopped (not playing and not paused)
     const allSoundsStopped = Object.values(individualSoundStates).every(state => state === 'stopped' || state === undefined);
 
     if (anySoundPlaying && !playbackState.isPlaying) {
-      // Start timeline if a sound is playing but timeline isn't
-      playTimeline();
+      // Don't start the cursor yet if Play All scheduling is still in progress —
+      // the updateSoundPlayback effect will call playTimeline() once ready.
+      if (!playAfterSchedulingRef.current) {
+        playTimeline();
+      }
     } else if (!anySoundPlaying && anySoundPaused && playbackState.isPlaying) {
-      // Pause timeline if no sounds are playing but some are paused
       pauseTimeline();
     } else if (allSoundsStopped && (playbackState.isPlaying || playbackState.currentTime > 0)) {
-      // Only stop/reset timeline if ALL sounds are stopped (not just paused)
       stopTimeline();
     }
   }, [individualSoundStates, playbackState.isPlaying, playbackState.currentTime, playTimeline, pauseTimeline, stopTimeline]);
@@ -2780,21 +2817,19 @@ export function SpeckleScene({
   // Effect - Sync Timeline Playback with Individual Sounds
   // ============================================================================
   useEffect(() => {
-    // Check if any sound is playing
     const anySoundPlaying = Object.values(individualSoundStates).some(state => state === 'playing');
-    // Check if any sound is paused (timeline should stay visible but cursor paused)
     const anySoundPaused = Object.values(individualSoundStates).some(state => state === 'paused');
-    // Check if all sounds are stopped (not playing and not paused)
     const allSoundsStopped = Object.values(individualSoundStates).every(state => state === 'stopped' || state === undefined);
 
     if (anySoundPlaying && !playbackState.isPlaying) {
-      // Start timeline if a sound is playing but timeline isn't
-      playTimeline();
+      // Don't start the cursor yet if Play All scheduling is still in progress —
+      // the updateSoundPlayback effect will call playTimeline() once ready.
+      if (!playAfterSchedulingRef.current) {
+        playTimeline();
+      }
     } else if (!anySoundPlaying && anySoundPaused && playbackState.isPlaying) {
-      // Pause timeline if no sounds are playing but some are paused
       pauseTimeline();
     } else if (allSoundsStopped && (playbackState.isPlaying || playbackState.currentTime > 0)) {
-      // Only stop/reset timeline if ALL sounds are stopped (not just paused)
       stopTimeline();
     }
   }, [individualSoundStates, playbackState.isPlaying, playbackState.currentTime, playTimeline, pauseTimeline, stopTimeline]);

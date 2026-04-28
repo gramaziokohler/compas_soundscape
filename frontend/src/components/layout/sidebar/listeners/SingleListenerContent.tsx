@@ -14,20 +14,18 @@ export function SingleListenerContent({ receiver, color, onUpdatePosition }: Sin
   return (
     <div className="text-xs text-secondary-hover">
       <div className="font-medium mb-1.5" style={{ color }}>Position</div>
-      <div className="flex flex-col gap-1">
+      <div className="flex gap-2">
         {(['x', 'y', 'z'] as const).map((axis, axisIdx) => {
           const val = [x, y, z][axisIdx];
           return (
-            <div key={axis} className="flex items-center gap-1.5">
-              <span className="text-[10px] font-mono font-semibold opacity-70 w-3 text-right flex-shrink-0" style={{ color }}>
-                {axis}
-              </span>
+            <div key={axis} className="flex-1 flex flex-col gap-0.5">
+              <span className="text-[10px] font-medium text-secondary-hover uppercase">{axis}</span>
               <input
                 type="number"
                 step="0.1"
                 value={parseFloat(val.toFixed(3))}
                 onChange={(e) => onUpdatePosition(receiver.id, axisIdx as 0 | 1 | 2, e.target.value, receiver.position)}
-                className="flex-1 text-[11px] font-mono rounded px-1.5 py-0.5 border outline-none focus:ring-1 bg-background text-foreground"
+                className="w-full text-[10px] font-mono rounded px-1.5 py-0.5 border outline-none focus:ring-1 bg-background text-foreground"
                 style={{ borderColor: `${color}55` }}
               />
             </div>

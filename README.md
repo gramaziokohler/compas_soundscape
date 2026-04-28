@@ -33,7 +33,7 @@ uv pip install -r requirements.txt --index-strategy unsafe-best-match
 # ---> Path 2: Install dependencies with pip
 pip install -r requirements.txt
 
-# (optional) Install your favorite LLM API. You will need s
+# (optional) Install your favorite LLM API. (You will need to input an API token to use it, explained later)
 pip install google-genai
 # or / and
 pip install anthropic openai
@@ -80,7 +80,7 @@ Frontend runs at: `http://localhost:3000`
 |-----|---------|-------------|
 | `SPECKLE_TOKEN` | Speckle 3D model platform access | [Speckle Account](https://app.speckle.systems/) |
 
-See the [Speckle authentication guide](https://docs.speckle.systems/developers/sdks/python/getting-started/authentication) for token setup.
+See the <a href="https://docs.speckle.systems/developers/sdks/python/getting-started/authentication" target="_blank" rel="noopener noreferrer">Speckle authentication guide</a> for token setup.
 
 ### Optional API Keys (LLM providers)
 

@@ -91,9 +91,10 @@ export function SoundGenerationSection({
   const triggerZoomToSoundCard    = useUIStore(s => s.triggerZoomToSoundCard);
 
   // ── Sound generation progress from store ──
-  const soundGenProgress         = useSoundscapeStore((s) => s.soundGenProgress);
-  const soundGenProgressValue    = useSoundscapeStore((s) => s.soundGenProgressValue);
+  const soundGenProgress          = useSoundscapeStore((s) => s.soundGenProgress);
+  const soundGenProgressValue     = useSoundscapeStore((s) => s.soundGenProgressValue);
   const handleReorderSoundConfigs = useSoundscapeStore((s) => s.handleReorderSoundConfigs);
+  const updateSoundPosition       = useSoundscapeStore((s) => s.updateSoundPosition);
 
   // Snapshot the total number of pending configs (all types) when generation starts.
   // The backend only counts ML sounds in its denominator, so we replace it here.
@@ -261,6 +262,10 @@ export function SoundGenerationSection({
       }
     });
   }, [soundConfigs, isSoundGenerated, getGeneratedSound, onUpdateConfig]);
+
+  const handleUpdateSoundPosition = useCallback((soundId: string, position: [number, number, number]) => {
+    updateSoundPosition(soundId, position);
+  }, [updateSoundPosition]);
 
   // Handle expansion change from CardSection (controlled mode callback)
   // Note: does NOT call onSelectSoundCard — that callback is only for scene-to-sidebar
@@ -510,6 +515,7 @@ export function SoundGenerationSection({
               onVolumeChange={onVolumeChange}
               onIntervalChange={onIntervalChange}
               onVariantChange={onVariantChange}
+              onUpdatePosition={handleUpdateSoundPosition}
             />
           ) : null
         }
@@ -553,6 +559,7 @@ export function SoundGenerationSection({
     onVolumeChange,
     onIntervalChange,
     onVariantChange,
+    handleUpdateSoundPosition,
     serviceVersions,
     audioModel,
     triggerZoomToSoundCard,
