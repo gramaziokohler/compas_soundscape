@@ -38,6 +38,25 @@
   --color-info: #3B82F6;
   --color-info-hover: #2563eb;
   --color-info-light: #dbeafe;
+
+  /* Acoustic material gradient */
+  --color-material-start: #67bfb4;
+  --color-material-mid: #ffbf6d;
+  --color-material-end: #eb5c52;
+
+  /* Three.js receiver cube color */
+  --color-receiver: #f0a938;
+
+  /* Elevation shadows */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  --shadow-overlay: 0 20px 25px -5px rgba(0, 0, 0, 0.3);
+
+  /* 3D scene overlay UI (glass panel on scene canvas) */
+  --color-overlay-bg: rgba(0, 0, 0, 0.8);
+  --color-overlay-border: rgba(255, 255, 255, 0.2);
 }
 
 @theme inline {
@@ -63,6 +82,10 @@
   --color-info: var(--color-info);
   --color-info-hover: var(--color-info-hover);
   --color-info-light: var(--color-info-light);
+  --color-material-start: var(--color-material-start);
+  --color-material-mid: var(--color-material-mid);
+  --color-material-end: var(--color-material-end);
+  --color-receiver: var(--color-receiver);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 
@@ -105,6 +128,32 @@ body {
 
 *::-webkit-scrollbar {
   display: none;  /* Chrome, Safari, Opera */
+}
+
+/* Opt-in horizontal scrollbar for timeline — overrides the global hide above */
+.timeline-hscroll {
+  scrollbar-width: thin;           /* Firefox */
+  scrollbar-color: var(--color-secondary-hover) var(--color-secondary); /* thumb / track */
+  -ms-overflow-style: auto;        /* IE / Edge */
+}
+
+.timeline-hscroll::-webkit-scrollbar {
+  display: block;
+  height: 6px;                     /* horizontal bar height */
+}
+
+.timeline-hscroll::-webkit-scrollbar-track {
+  background: var(--color-secondary);
+}
+
+.timeline-hscroll::-webkit-scrollbar-thumb {
+  background: var(--color-secondary-hover);
+  border-radius: 3px;
+}
+
+.timeline-hscroll::-webkit-scrollbar-thumb:hover {
+  background: var(--color-secondary-hover);
+  filter: brightness(1.3);
 }
 
 /* Remove focus outline from checkboxes and radio buttons */

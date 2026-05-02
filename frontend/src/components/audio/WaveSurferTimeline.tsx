@@ -3,7 +3,7 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import TimelinePlugin from 'wavesurfer.js/dist/plugins/timeline.js';
-import { WAVESURFER_TIMELINE, AUDIO_TIMELINE, API_BASE_URL, UI_COLORS } from '@/utils/constants';
+import { WAVESURFER_TIMELINE, API_BASE_URL } from '@/utils/constants';
 import type { TimelineSound } from '@/types/audio';
 import { useAudioControlsStore } from '@/store';
 
@@ -43,8 +43,9 @@ export function WaveSurferTimeline({
   onRefresh,
   onDownload,
 }: WaveSurferTimelineProps) {
-  const mutedSounds  = useAudioControlsStore((s) => s.mutedSounds);
-  const soloedSound  = useAudioControlsStore((s) => s.soloedSound);
+  const mutedSounds        = useAudioControlsStore((s) => s.mutedSounds);
+  const soloedSound        = useAudioControlsStore((s) => s.soloedSound);
+  const timelineDurationMs = useAudioControlsStore((s) => s.timelineDurationMs);
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const timelineContainerRef = useRef<HTMLDivElement>(null);
@@ -61,39 +62,17 @@ export function WaveSurferTimeline({
 
   const PIXELS_PER_SECOND = WAVESURFER_TIMELINE.PIXELS_PER_SECOND;
 
-  // Generate stable hash of sounds data to detect actual changes
+  // Generate stable hash of sounds data to detect actual changes (includes timeline duration)
   const soundsHash = useMemo(() => {
     if (sounds.length === 0) return 'empty';
-    return sounds.map(s =>
+    const base = sounds.map(s =>
       `${s.id}-${s.audioUrl}-${s.scheduledIterations.join(',')}-${s.soundDurationMs}-${s.intervalMs}`
     ).join('|');
-  }, [sounds]);
+    return `${base}@${timelineDurationMs}`;
+  }, [sounds, timelineDurationMs]);
 
-  // Maximum initial delay across all sounds (for layout width compensation)
-  const maxDelayMs = useMemo(
-    () => sounds.reduce((max, s) => Math.max(max, s.initialDelayMs ?? 0), 0),
-    [sounds]
-  );
-
-  // Calculate actual timeline duration from sounds — sized exactly to content
-  const actualDuration = useMemo(() => {
-    let maxEndTime = 0;
-    sounds.forEach((sound) => {
-      const delay = sound.initialDelayMs ?? 0;
-      sound.scheduledIterations.forEach((timestamp) => {
-        // scheduledIterations are relative to the track origin; add delay for absolute end time
-        const endTime = delay + timestamp + sound.soundDurationMs;
-        if (endTime > maxEndTime) {
-          maxEndTime = endTime;
-        }
-      });
-    });
-
-    if (maxEndTime > 0) {
-      return Math.ceil(maxEndTime / 1000); // exact seconds, no extra padding
-    }
-    return AUDIO_TIMELINE.DEFAULT_DURATION_MS / 1000; // fallback: 120s
-  }, [sounds]);
+  // Fixed timeline duration in seconds (from store)
+  const actualDuration = timelineDurationMs / 1000;
 
   const TIMELINE_WIDTH = actualDuration * PIXELS_PER_SECOND;
 
@@ -165,10 +144,11 @@ export function WaveSurferTimeline({
       trackContainer.style.position = 'relative';
       trackContainer.style.height = `${WAVESURFER_TIMELINE.TRACK_HEIGHT}px`;
       trackContainer.style.marginBottom = `${WAVESURFER_TIMELINE.TRACK_SPACING}px`;
-      trackContainer.style.width = `${timelineWidth}px`;
-      trackContainer.style.backgroundColor = WAVESURFER_TIMELINE.TRACK_BACKGROUND_COLOR;
-      // Shift track right by its initial delay so waveforms align with cursor timing
+      // Shift track right by initialDelayMs; shrink width by the same amount so the
+      // right edge stays exactly at timelineWidth (prevents overflow → no spurious scrollbar).
       const initDelayPx = ((sound.initialDelayMs ?? 0) / 1000) * pixelsPerSecond;
+      trackContainer.style.width = `${Math.max(0, timelineWidth - initDelayPx)}px`;
+      trackContainer.style.backgroundColor = 'var(--color-secondary)';
       if (initDelayPx > 0) trackContainer.style.transform = `translateX(${initDelayPx}px)`;
       containerRef.current?.appendChild(trackContainer);
 
@@ -178,7 +158,7 @@ export function WaveSurferTimeline({
       labelContainer.style.position = 'absolute';
       labelContainer.style.left = '5px';
       labelContainer.style.top = '5px';
-      labelContainer.style.color = WAVESURFER_TIMELINE.TEXT_COLOR;
+      labelContainer.style.color = 'var(--foreground)';
       labelContainer.style.fontSize = '12px';
       labelContainer.style.fontWeight = 'bold';
       labelContainer.style.zIndex = '10';
@@ -191,23 +171,28 @@ export function WaveSurferTimeline({
         ? sound.id !== soloedSound
         : mutedSounds.has(sound.id);
       const waveformColor = isSoundMuted
-        ? WAVESURFER_TIMELINE.MUTED_COLOR
-        : WAVESURFER_TIMELINE.WAVEFORM_COLOR;
+        ? 'var(--color-secondary-hover)'
+        : 'var(--color-secondary-hover)';
 
       // Create WaveSurfer instance for each scheduled iteration
+      const delay = sound.initialDelayMs ?? 0;
       sound.scheduledIterations.forEach((timestamp, iterationIndex) => {
         const startTimeMs = timestamp;
         const endTimeMs = timestamp + sound.soundDurationMs;
 
-        if (startTimeMs >= actualDuration * 1000) {
+        // Skip iterations that start at or after the fixed timeline boundary (accounting for delay)
+        if (delay + startTimeMs >= timelineDurationMs) {
           return;
         }
 
+        // Clip the visual end at the fixed boundary (track-local boundary = timelineDurationMs - delay)
+        const clippedEndTimeMs = Math.min(endTimeMs, timelineDurationMs - delay);
+
         const normalizedStartMs = startTimeMs - minTimestampMs;
-        const normalizedEndMs = endTimeMs - minTimestampMs;
+        const normalizedClippedEndMs = clippedEndTimeMs - minTimestampMs;
 
         const leftPx = (normalizedStartMs / 1000) * pixelsPerSecond;
-        const widthPx = ((normalizedEndMs - normalizedStartMs) / 1000) * pixelsPerSecond;
+        const widthPx = ((normalizedClippedEndMs - normalizedStartMs) / 1000) * pixelsPerSecond;
 
         // Create container for this iteration
         const iterationContainer = document.createElement('div');
@@ -261,7 +246,7 @@ export function WaveSurferTimeline({
           const loadPromise = wavesurfer
             .load(audioUrl)
             .then(() => {
-              const borderColor = isSoundMuted ? WAVESURFER_TIMELINE.MUTED_COLOR : sound.color;
+              const borderColor = isSoundMuted ? 'var(--color-secondary-hover)' : sound.color;
               iterationContainer.style.border = `2px solid ${borderColor}`;
               const wrapper = wavesurfer.getWrapper();
               if (wrapper) {
@@ -359,11 +344,9 @@ export function WaveSurferTimeline({
       if (!trackEl) return;
       const delayPx = ((sound.initialDelayMs ?? 0) / 1000) * PIXELS_PER_SECOND;
       trackEl.style.transform = delayPx > 0 ? `translateX(${delayPx}px)` : '';
-      console.debug(
-        `[WaveSurferTimeline] track "${sound.displayName}" offset=${delayPx.toFixed(0)}px (delay=${sound.initialDelayMs ?? 0}ms)`
-      );
+      trackEl.style.width = `${Math.max(0, TIMELINE_WIDTH - delayPx)}px`;
     });
-  }, [sounds, PIXELS_PER_SECOND]);
+  }, [sounds, PIXELS_PER_SECOND, TIMELINE_WIDTH]);
 
   /**
    * Add timeline ruler at the top.
@@ -398,7 +381,7 @@ export function WaveSurferTimeline({
         secondaryLabelInterval: WAVESURFER_TIMELINE.TIME_INTERVAL,
         style: {
           fontSize: '11px',
-          color: WAVESURFER_TIMELINE.TEXT_COLOR,
+          color: 'var(--foreground)',
         },
       })
     );
@@ -425,7 +408,7 @@ export function WaveSurferTimeline({
         timelineWaveSurferRef.current = null;
       }
     };
-  }, [actualDuration]);
+  }, [timelineDurationMs]);
 
   /**
    * Sync cursor position with external currentTime and auto-scroll.
@@ -466,8 +449,8 @@ export function WaveSurferTimeline({
           : mutedSounds.has(instance.soundId);
 
         const waveformColor = isSoundMuted
-          ? WAVESURFER_TIMELINE.MUTED_COLOR
-          : WAVESURFER_TIMELINE.WAVEFORM_COLOR;
+          ? 'var(--color-secondary-hover)'
+          : 'var(--color-secondary-hover)';
 
         instance.wavesurfer.setOptions({
           waveColor: waveformColor,
@@ -486,10 +469,10 @@ export function WaveSurferTimeline({
    */
   const handleTimelineClick = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
-      if (!onSeek || !containerRef.current) return;
+      if (!onSeek || !scrollContainerRef.current) return;
 
-      const rect = containerRef.current.getBoundingClientRect();
-      const clickX = event.clientX - rect.left + (scrollContainerRef.current?.scrollLeft || 0);
+      const rect = scrollContainerRef.current.getBoundingClientRect();
+      const clickX = event.clientX - rect.left + scrollContainerRef.current.scrollLeft;
       const timeSeconds = clickX / PIXELS_PER_SECOND;
       const timeMs = timeSeconds * 1000;
 
@@ -521,23 +504,24 @@ export function WaveSurferTimeline({
         className="bg-black/80 backdrop-blur-sm rounded-lg border border-white/20 p-6 text-center"
         style={{ minHeight: `${WAVESURFER_TIMELINE.TRACK_HEIGHT}px` }}
       >
-        <p className="text-gray-400 text-sm">No sounds are playing</p>
+        <p className="text-neutral-400 text-sm">No sounds are playing</p>
       </div>
     );
   }
 
-  const componentWidth = Math.max(TIMELINE_WIDTH, WAVESURFER_TIMELINE.MIN_WIDTH);
+  // Outer width is the full timeline width, capped visually at 60vw via maxWidth.
+  const componentWidth = Math.max(TIMELINE_WIDTH, WAVESURFER_TIMELINE.MIN_WIDTH) + 2;
 
   return (
     <div
       className="bg-black/80 backdrop-blur-sm rounded-lg border border-white/20 overflow-hidden"
-      style={{ zIndex: 1000, position: 'relative', width: `${componentWidth}px` }}
+      style={{ zIndex: 1000, position: 'relative', width: `${componentWidth}px`, maxWidth: '60vw' }}
     >
-      {/* Header with Title and Controls */}
+      {/* Header — full container width, does not scroll */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-white/10 bg-black/60">
         <div className="flex items-center gap-3">
           <h3 className="text-sm font-semibold text-white">Timeline</h3>
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-neutral-400">
             {sounds.length} sound{sounds.length !== 1 ? 's' : ''} • {totalIterations} iteration{totalIterations !== 1 ? 's' : ''} • {actualDuration}s
           </span>
         </div>
@@ -547,12 +531,12 @@ export function WaveSurferTimeline({
             onClick={() => onRefresh?.()}
             className="text-xs px-2 py-1 rounded transition-colors"
             style={{
-              color: UI_COLORS.PRIMARY,
-              backgroundColor: UI_COLORS.DARK_BG,
+              color: 'var(--color-primary)',
+              backgroundColor: 'var(--background)',
               border: '1px solid'
             }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY_LIGHT}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = UI_COLORS.DARK_BG}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--color-primary-light)'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--background)'}
             title="Reload all available sounds into the timeline"
           >
             Reload
@@ -563,15 +547,15 @@ export function WaveSurferTimeline({
               disabled={isDownloading || isLoading}
               className="text-xs px-2 py-1 rounded transition-colors"
               style={{
-                color: UI_COLORS.PRIMARY,
-                backgroundColor: UI_COLORS.DARK_BG,
+                color: 'var(--color-primary)',
+                backgroundColor: 'var(--background)',
                 border: '1px solid'
               }}
               onMouseEnter={(e) => {
-                if (!isDownloading && !isLoading) e.currentTarget.style.backgroundColor = UI_COLORS.PRIMARY_LIGHT;
+                if (!isDownloading && !isLoading) e.currentTarget.style.backgroundColor = 'var(--color-primary-light)';
               }}
               onMouseLeave={(e) => {
-                if (!isDownloading && !isLoading) e.currentTarget.style.backgroundColor = UI_COLORS.DARK_BG;
+                if (!isDownloading && !isLoading) e.currentTarget.style.backgroundColor = 'var(--background)';
               }}
               title={isDownloading ? 'Rendering soundscape…' : 'Download full soundscape as stereo WAV (includes spatial audio)'}
             >
@@ -584,43 +568,46 @@ export function WaveSurferTimeline({
       {/* Loading State */}
       {isLoading && (
         <div className="p-4 text-center border-b border-white/10">
-          <p className="text-sm text-gray-400">Loading waveforms...</p>
+          <p className="text-sm text-neutral-400">Loading waveforms...</p>
         </div>
       )}
 
       {/* Error State */}
       {loadError && (
-        <div className="p-4 bg-red-900/20 border-b border-red-900/50">
-          <p className="text-sm text-red-400">{loadError}</p>
+        <div className="p-4 bg-error/10 border-b border-error/30">
+          <p className="text-sm text-error">{loadError}</p>
         </div>
       )}
 
-      {/* Timeline Ruler */}
-      <div className="">
-        <div
-          ref={timelineContainerRef}
-          style={{
-            width: `${TIMELINE_WIDTH}px`, 
-            backgroundColor: WAVESURFER_TIMELINE.BACKGROUND_COLOR,
-            minHeight: '30px',
-          }}
-        />
-      </div>
-
-      {/* Tracks Container with Cursor */}
+      {/* Unified scrollable area: ruler + tracks scroll together horizontally.
+          maxHeight limits vertical growth; overflow-x-auto adds a scrollbar when
+          componentWidth > 60vw (the outer div's maxWidth). */}
       <div
         ref={scrollContainerRef}
-        className="relative overflow-x-auto overflow-y-auto"
+        className="relative overflow-x-auto overflow-y-auto timeline-hscroll"
         style={{
-          maxHeight: `${WAVESURFER_TIMELINE.TOTAL_HEIGHT}px`,
-          backgroundColor: WAVESURFER_TIMELINE.BACKGROUND_COLOR,
+          maxHeight: `${WAVESURFER_TIMELINE.TOTAL_HEIGHT + 30}px`,
+          backgroundColor: 'var(--background)',
         }}
         onClick={handleTimelineClick}
       >
+        {/* Timeline Ruler — sticky so it stays visible when scrolling vertically */}
+        <div
+          ref={timelineContainerRef}
+          style={{
+            width: `${TIMELINE_WIDTH}px`,
+            backgroundColor: 'var(--background)',
+            minHeight: '30px',
+            position: 'sticky',
+            top: 0,
+            zIndex: 5,
+          }}
+        />
+
         {/* Waveform Tracks */}
         <div ref={containerRef} className="relative" />
 
-        {/* Global Cursor */}
+        {/* Global Cursor — spans ruler + tracks */}
         <div
           ref={cursorRef}
           style={{
@@ -629,7 +616,7 @@ export function WaveSurferTimeline({
             left: 0,
             width: `${WAVESURFER_TIMELINE.CURSOR_WIDTH}px`,
             height: '100%',
-            backgroundColor: WAVESURFER_TIMELINE.CURSOR_COLOR,
+            backgroundColor: 'var(--color-primary)',
             pointerEvents: 'none',
             zIndex: 100,
           }}

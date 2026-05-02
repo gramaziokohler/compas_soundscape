@@ -13,6 +13,10 @@ import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import type { LoadTab } from '@/types';
 import type { AudioRenderingMode } from '@/components/audio/AudioRenderingModeSelector';
+import {
+  DEFAULT_SPEED_OF_SOUND,
+  CHORAS_DE_DEFAULT_LC,
+} from '@/utils/constants';
 
 export interface UIStoreState {
   // ── Load tab ──────────────────────────────────────────────────────────────
@@ -79,6 +83,22 @@ export interface UIStoreState {
   showAxesHelper: boolean;
   setShowAxesHelper: (show: boolean) => void;
 
+  // ── Viewer display toggles ────────────────────────────────────────────────
+  showLabelSprites: boolean;
+  setShowLabelSprites: (v: boolean) => void;
+  showHoveringHighlight: boolean;
+  setShowHoveringHighlight: (v: boolean) => void;
+  showSoundSpheres: boolean;
+  setShowSoundSpheres: (v: boolean) => void;
+  showSceneListeners: boolean;
+  setShowSceneListeners: (v: boolean) => void;
+
+  // ── Global acoustic simulation ────────────────────────────────────────────
+  globalSoundSpeed: number;
+  setGlobalSoundSpeed: (v: number) => void;
+  globalMeshLc: number;
+  setGlobalMeshLc: (v: number) => void;
+
   // ── Sound card interactions (sidebar → scene) ─────────────────────────────
   /** Index of the currently expanded sound card (set by SoundGenerationSection). */
   expandedSoundCardIndex: number | null;
@@ -96,6 +116,8 @@ export interface GradientMapState {
   pointValues: Array<{ position: [number, number, number]; value: number }>;
   /** Bounding box of the grid listener surface */
   boundingBox: { min: [number, number, number]; max: [number, number, number] };
+  /** Optional user-defined color range — overrides auto min/max from pointValues */
+  range?: { min: number; max: number };
 }
 
 export const useUIStore = create<UIStoreState>()(
@@ -177,6 +199,22 @@ export const useUIStore = create<UIStoreState>()(
       // ── Scene helpers ────────────────────────────────────────────────────
       showAxesHelper: false,
       setShowAxesHelper: (show) => set({ showAxesHelper: show }, false, 'ui/setShowAxesHelper'),
+
+      // ── Viewer display toggles ───────────────────────────────────────────
+      showLabelSprites: true,
+      setShowLabelSprites: (v) => set({ showLabelSprites: v }, false, 'ui/setShowLabelSprites'),
+      showHoveringHighlight: true,
+      setShowHoveringHighlight: (v) => set({ showHoveringHighlight: v }, false, 'ui/setShowHoveringHighlight'),
+      showSoundSpheres: true,
+      setShowSoundSpheres: (v) => set({ showSoundSpheres: v }, false, 'ui/setShowSoundSpheres'),
+      showSceneListeners: true,
+      setShowSceneListeners: (v) => set({ showSceneListeners: v }, false, 'ui/setShowSceneListeners'),
+
+      // ── Global acoustic simulation ───────────────────────────────────────
+      globalSoundSpeed: DEFAULT_SPEED_OF_SOUND,
+      setGlobalSoundSpeed: (v) => set({ globalSoundSpeed: v }, false, 'ui/setGlobalSoundSpeed'),
+      globalMeshLc: CHORAS_DE_DEFAULT_LC,
+      setGlobalMeshLc: (v) => set({ globalMeshLc: v }, false, 'ui/setGlobalMeshLc'),
 
       // ── Sound card interactions ──────────────────────────────────────────────
       expandedSoundCardIndex: null,

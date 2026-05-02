@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { SpeckleStandardMaterial } from '@speckle/viewer';
 import { RECEIVER_CONFIG } from '@/utils/constants';
+import { getCssColorHex } from '@/utils/utils';
 
 const MAX_GRID_INSTANCES = 5000;
 
@@ -33,8 +34,8 @@ export class GridReceiverManager {
     const geom = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
 
     const mat = new SpeckleStandardMaterial({
-      color: RECEIVER_CONFIG.COLOR,
-      emissive: RECEIVER_CONFIG.COLOR,
+      color: getCssColorHex('--color-receiver'),
+      emissive: getCssColorHex('--color-receiver'),
       emissiveIntensity: RECEIVER_CONFIG.EMISSIVE_INTENSITY,
       roughness: RECEIVER_CONFIG.ROUGHNESS,
       metalness: RECEIVER_CONFIG.METALNESS,
@@ -67,6 +68,9 @@ export class GridReceiverManager {
 
   public setGridListenerId(id: string | null): void { this.gridListenerId = id; }
   public getGridListenerId(): string | null { return this.gridListenerId; }
+  public setVisible(visible: boolean): void {
+    if (this.instancedMesh) this.instancedMesh.visible = visible;
+  }
   public getPositions(): [number, number, number][] { return this.positions; }
   /** Returns the point ID for a given instance index, or null if out of range. */
   public getPointId(instanceId: number): string | null {

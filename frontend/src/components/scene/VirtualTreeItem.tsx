@@ -17,7 +17,6 @@
 import React, { CSSProperties } from 'react';
 import { VirtualTreeItem as TreeItem, getHeaderAndSubheader, getTargetObjectIds, containsAll } from '@/hooks/useSpeckleTree';
 import { useSpeckleStore } from '@/store';
-import { UI_COLORS } from '@/utils/constants';
 
 interface VirtualTreeItemProps {
   item: TreeItem;
@@ -65,9 +64,9 @@ export function VirtualTreeItem({
 
   const getItemBackgroundClass = (): string => {
     if (isSelected) {
-      return 'bg-blue-100 hover:bg-blue-200 rounded-sm';
+      return 'bg-info-light hover:bg-info/20 rounded-sm';
     }
-    return 'bg-white hover:bg-gray-50 hover:rounded-sm';
+    return 'bg-background hover:bg-neutral-50 hover:rounded-sm';
   };
 
   const handleClick = (e: React.MouseEvent) => {
@@ -126,7 +125,7 @@ export function VirtualTreeItem({
           {/* Expansion triangle */}
           {item.hasChildren ? (
             <button
-              className="h-8 w-4 flex items-center justify-center shrink-0 text-gray-600 hover:text-gray-800"
+            className="h-8 w-4 flex items-center justify-center shrink-0 text-neutral-600 hover:text-neutral-800"
               onClick={handleToggleExpansion}
             >
               <svg
@@ -154,13 +153,13 @@ export function VirtualTreeItem({
             <div
               className="truncate text-xs"
               style={{
-                color: isHidden || shouldShowDimmed ? UI_COLORS.NEUTRAL_500 : UI_COLORS.NEUTRAL_700
+                color: isHidden || shouldShowDimmed ? 'var(--color-secondary-hover)' : 'var(--color-secondary)'
               }}
             >
               {displayHeader}
             </div>
             {subheader && (
-              <div className="truncate text-[10px]" style={{ color: UI_COLORS.NEUTRAL_500 }}>
+              <div className="truncate text-[10px] text-neutral-500">
                 {subheader}
               </div>
             )}
@@ -176,8 +175,8 @@ export function VirtualTreeItem({
           >
           {/* Hide/Show button */}
           <button
-            className={`p-1 hover:bg-gray-200 rounded transition-colors ${
-              isHidden ? 'text-gray-400' : 'text-gray-700'
+            className={`p-1 hover:bg-neutral-200 rounded transition-colors ${
+              isHidden ? 'text-neutral-400' : 'text-neutral-700'
             }`}
             onClick={handleToggleVisibility}
             title={isHidden ? 'Show' : 'Hide'}
@@ -199,8 +198,8 @@ export function VirtualTreeItem({
 
           {/* Isolate button */}
           <button
-            className={`p-1 hover:bg-gray-200 rounded transition-colors ${
-              isIsolated ? 'text-gray-700' : 'text-gray-600'
+            className={`p-1 hover:bg-neutral-200 rounded transition-colors ${
+              isIsolated ? 'text-neutral-700' : 'text-neutral-600'
             }`}
             onClick={handleToggleIsolation}
             title={isIsolated ? 'Un-isolate' : 'Isolate'}

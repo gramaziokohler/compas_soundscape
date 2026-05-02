@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import type { ModelAnalysisConfig } from '@/types/analysis';
 import { useSpeckleStore, useAnalysisStore } from '@/store';
 import { getRootNodesForModel } from '@/hooks/useSpeckleTree';
-import { UI_COLORS, NUM_SOUNDS_MIN, NUM_SOUNDS_MAX } from '@/utils/constants';
+import { NUM_SOUNDS_MIN, NUM_SOUNDS_MAX } from '@/utils/constants';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { useBatchedSlider } from '@/hooks/useBatchedSlider';
 
@@ -230,8 +230,8 @@ export function Model3DContextContent({
         <div
           className="rounded p-3 text-xs text-center"
           style={{
-            backgroundColor: UI_COLORS.NEUTRAL_100,
-            color: UI_COLORS.NEUTRAL_600,
+            backgroundColor: 'var(--color-secondary-lighter)',
+            color: 'var(--color-secondary-hover)',
           }}
         >
           No model loaded. Import a 3D model from the right sidebar.

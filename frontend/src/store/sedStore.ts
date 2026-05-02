@@ -12,6 +12,12 @@ import { devtools } from 'zustand/middleware';
 import type { SEDAudioInfo, DetectedSound, SEDAnalysisOptions } from '@/types';
 import { loadAudioFileWithBuffer } from '@/lib/audio/utils/audio-info';
 import { API_BASE_URL, DEFAULT_SPL_DB, DEFAULT_DIFFUSION_STEPS, LLM_SUGGESTED_INTERVAL_SECONDS, DEFAULT_DURATION_SECONDS } from '@/utils/constants';
+import { apiService } from '@/services/api';
+
+// ─── Module-level polling refs ────────────────────────────────────────────────
+
+let _sedTaskId: string | null = null;
+let _sedPollInterval: ReturnType<typeof setInterval> | null = null;
 
 // ─── Partialize ───────────────────────────────────────────────────────────────
 
@@ -33,6 +39,7 @@ export interface SEDStoreState {
 
   loadAudioInfo: (file: File) => Promise<void>;
   analyzeSoundEvents: (file: File, numSounds: number) => Promise<void>;
+  cancelSEDAnalysis: () => void;
   setSedAnalysisOptions: (opts: Partial<SEDAnalysisOptions>) => void;
   toggleSEDOption: (option: keyof SEDAnalysisOptions, value: boolean) => void;
   clearSEDResults: () => void;
@@ -88,21 +95,42 @@ export const useSEDStore = create<SEDStoreState>()(
             formData.append('num_sounds', String(numSounds));
             formData.append('analyze_amplitudes', String(get().sedAnalysisOptions.analyze_amplitudes));
             formData.append('analyze_durations', String(get().sedAnalysisOptions.analyze_durations));
-            formData.append('analyze_frequencies', String(get().sedAnalysisOptions.analyze_frequencies));
+            formData.append('top_n_classes', '100');
 
-            set({ sedProgress: 'Analyzing sound events with YAMNet...' }, false, 'sed/analyzing');
+            const { task_id } = await apiService.startSEDAnalysis(formData);
+            _sedTaskId = task_id;
+            set({ sedProgress: 'Queued...' }, false, 'sed/queued');
 
-            const response = await fetch(`${API_BASE_URL}/api/analyze-audio`, {
-              method: 'POST',
-              body: formData,
+            const result = await new Promise<any>((resolve, reject) => {
+              _sedPollInterval = setInterval(async () => {
+                try {
+                  const s = await apiService.getSEDAnalysisStatus(_sedTaskId!);
+                  if (s.status) set({ sedProgress: s.status }, false, 'sed/poll');
+                  if (s.cancelled) {
+                    clearInterval(_sedPollInterval!);
+                    _sedPollInterval = null;
+                    _sedTaskId = null;
+                    reject(new Error('SED analysis cancelled'));
+                  } else if (s.error) {
+                    clearInterval(_sedPollInterval!);
+                    _sedPollInterval = null;
+                    _sedTaskId = null;
+                    reject(new Error(s.error));
+                  } else if (s.completed && s.result) {
+                    clearInterval(_sedPollInterval!);
+                    _sedPollInterval = null;
+                    _sedTaskId = null;
+                    resolve(s.result);
+                  }
+                } catch (pollErr: any) {
+                  clearInterval(_sedPollInterval!);
+                  _sedPollInterval = null;
+                  _sedTaskId = null;
+                  reject(pollErr);
+                }
+              }, 1500);
             });
 
-            if (!response.ok) {
-              const errorData = await response.json().catch(() => ({}));
-              throw new Error(errorData.detail || 'SED analysis failed');
-            }
-
-            const result = await response.json();
             set(
               {
                 sedDetectedSounds: result.detected_sounds || [],
@@ -149,6 +177,18 @@ export const useSEDStore = create<SEDStoreState>()(
             spl_db: DEFAULT_SPL_DB,
             interval_seconds: sound.interval_seconds ?? LLM_SUGGESTED_INTERVAL_SECONDS,
           }));
+        },
+
+        cancelSEDAnalysis: () => {
+          if (_sedPollInterval) {
+            clearInterval(_sedPollInterval);
+            _sedPollInterval = null;
+          }
+          if (_sedTaskId) {
+            apiService.cancelSEDAnalysis(_sedTaskId).catch(() => {});
+            _sedTaskId = null;
+          }
+          set({ isSEDAnalyzing: false, sedProgress: '' }, false, 'sed/cancel');
         },
 
         resetSED: () =>

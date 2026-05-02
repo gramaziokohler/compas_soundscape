@@ -1,12 +1,8 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
-import type { ResonanceAudioConfig, ResonanceRoomMaterial } from '@/types/audio';
-import { UI_COLORS } from '@/utils/constants';
 import { ResonanceAudioMaterialUI } from '@/components/acoustics/ResonanceAudioMaterialUI';
-import { RangeSlider } from '@/components/ui/RangeSlider';
 import { CheckboxField } from '@/components/ui/CheckboxField';
-import { useBatchedSlider } from '@/hooks/useBatchedSlider';
 
 export interface RoomScale {
   x: number;
@@ -42,7 +38,7 @@ export function ResonanceAudioControls({
   onToggle,
   onUpdateRoomMaterials,
   hasGeometry,
-  showBoundingBox,
+  showBoundingBox ,
   onToggleBoundingBox,
   onRefreshBoundingBox,
   roomScale = { x: 1, y: 1, z: 1 },
@@ -60,40 +56,13 @@ export function ResonanceAudioControls({
     up: 'transparent'
   };
 
-  const scaleX = useBatchedSlider<number>(
-    'acousticsSim',
-    (v) => onRoomScaleChange?.({ ...roomScale, x: v }),
-  );
-  const scaleY = useBatchedSlider<number>(
-    'acousticsSim',
-    (v) => onRoomScaleChange?.({ ...roomScale, y: v }),
-  );
-  const scaleZ = useBatchedSlider<number>(
-    'acousticsSim',
-    (v) => onRoomScaleChange?.({ ...roomScale, z: v }),
-  );
-
+      
   const handleToggle = () => {
     onToggle(!enabled);
   };
 
   return (
     <div className={`flex flex-col gap-3 ${className}`}>
-      {/* Header with Title
-      <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-        SHOEBOX ACOUSTICS SETTINGS
-      </h4> */}
-
-      {/* Info when no geometry
-      {!hasGeometry && (
-        <div className="text-xs p-2 rounded" style={{
-          backgroundColor: '#EFF6FF',
-          color: '#1E40AF',
-          border: '1px solid #BFDBFE'
-        }}>
-          ℹ️ No 3D model loaded. Room will be auto-calculated from sound source positions.
-        </div>
-      )} */}
 
       {/* Bounding Box Visualization Toggle */}
       {enabled && (
@@ -106,9 +75,8 @@ export function ResonanceAudioControls({
           {!hasGeometry && onRefreshBoundingBox && (
             <button
               onClick={onRefreshBoundingBox}
-              className="p-1 rounded hover:bg-secondary-light transition-colors"
-              title="Refresh bounding box from sound sources"
-              style={{ color: UI_COLORS.NEUTRAL_600 }}
+              className="h-5 px-1 rounded hover:bg-secondary-light transition-colors text-neutral-600 flex items-center justify-center"
+              title="Reset bounding box to original size"
             >
               <svg 
                 width="16" 
@@ -140,66 +108,6 @@ export function ResonanceAudioControls({
           />
         </div>
       )}
-
-
-      {/* Room Scale */}
-      {enabled && (
-        <div className="flex flex-col gap-1">
-          <button
-            onClick={() => setIsRoomScaleExpanded(!isRoomScaleExpanded)}
-            className="flex items-center gap-1 text-xs cursor-pointer hover:opacity-80"
-            style={{ color: UI_COLORS.NEUTRAL_700 }}
-          >
-            <span className="text-[10px]">{isRoomScaleExpanded ? '▼' : '▶'}</span>
-            Room Scale
-          </button>
-          {isRoomScaleExpanded && onRoomScaleChange && (
-            <div className="flex flex-col gap-2 pl-3">
-              <RangeSlider
-                label="X"
-                value={roomScale.x}
-                min={0.1}
-                max={2}
-                step={0.01}
-                onDragStart={scaleX.onDragStart}
-                onChange={scaleX.onChange}
-                onChangeCommitted={scaleX.onCommit}
-                formatValue={(v) => `${v.toFixed(2)}x`}
-                defaultValue={1}
-                showLabels={false}
-              />
-              <RangeSlider
-                label="Y"
-                value={roomScale.y}
-                min={0.1}
-                max={2}
-                step={0.01}
-                onDragStart={scaleY.onDragStart}
-                onChange={scaleY.onChange}
-                onChangeCommitted={scaleY.onCommit}
-                formatValue={(v) => `${v.toFixed(2)}x`}
-                defaultValue={1}
-                showLabels={false}
-              />
-              <RangeSlider
-                label="Z"
-                value={roomScale.z}
-                min={0.1}
-                max={2}
-                step={0.01}
-                onDragStart={scaleZ.onDragStart}
-                onChange={scaleZ.onChange}
-                onChangeCommitted={scaleZ.onCommit}
-                formatValue={(v) => `${v.toFixed(2)}x`}
-                defaultValue={1}
-                showLabels={false}
-              />
-            </div>
-          )}
-        </div>
-      )}
-
-
 
 
       {/* {enabled && (

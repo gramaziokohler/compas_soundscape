@@ -17,7 +17,7 @@ import { devtools } from 'zustand/middleware';
 import type { AcousticMaterial } from '@/types/materials';
 import type { HierarchicalMeshObject } from '@/hooks/useSpeckleSurfaceMaterials';
 import type { SpeckleLayerInfo } from '@/types/speckle-materials';
-import { getMaterialColorByAbsorption, MATERIAL_DEFAULT_COLOR } from '@/utils/constants';
+import { getMaterialColorByAbsorption } from '@/utils/utils';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -247,7 +247,7 @@ export const useAcousticMaterialStore = create<AcousticMaterialStoreState>()(
         // ── Helper ──
         getMaterialColor: (materialId) => {
           const material = get().availableMaterials.find((m) => m.id === materialId);
-          if (!material) return MATERIAL_DEFAULT_COLOR;
+          if (!material) return '#808080';
           return getMaterialColorByAbsorption(material.absorption);
         },
       }),

@@ -229,6 +229,7 @@ export const apiService = {
     bounding_box: { min: number[]; max: number[] } | null;
     apply_denoising?: boolean;
     audio_model?: string;
+    base_spl_db?: number;
   }): Promise<{ generation_id: string }> {
     try {
       const response = await fetchWithErrorHandling(
@@ -594,6 +595,7 @@ export const apiService = {
       n_rays: number;
       simulation_mode: string;
       enable_grid?: boolean;
+      sound_speed?: number;
     },
     sourceReceiverPairs: Array<{
       source_position: number[];
@@ -619,6 +621,9 @@ export const apiService = {
 
       formData.append('simulation_mode', settings.simulation_mode);
       formData.append('enable_grid', (settings.enable_grid ?? false).toString());
+      if (settings.sound_speed !== undefined) {
+        formData.append('sound_speed', settings.sound_speed.toString());
+      }
 
       // Send explicit geometry object IDs from the frontend to bypass layer-name filtering
       if (geometryObjectIds && geometryObjectIds.length > 0) {
@@ -773,15 +778,11 @@ export const apiService = {
     simulationName: string,
     settings: {
       simulation_method: 'DE' | 'DG';
-      de_sim_len_type?: string;
-      de_edt?: number;
-      de_ir_length?: number;
       de_c0?: number;
       de_lc?: number;
       dg_freq_upper_limit?: number;
       dg_c0?: number;
       dg_rho0?: number;
-      dg_ir_length?: number;
       dg_poly_order?: number;
       dg_ppw?: number;
       dg_cfl?: number;
@@ -807,15 +808,11 @@ export const apiService = {
       formData.append('layer_name', layerName);
       formData.append('simulation_method', settings.simulation_method);
 
-      if (settings.de_sim_len_type !== undefined) formData.append('de_sim_len_type', settings.de_sim_len_type);
-      if (settings.de_edt !== undefined) formData.append('de_edt', String(settings.de_edt));
-      if (settings.de_ir_length !== undefined) formData.append('de_ir_length', String(settings.de_ir_length));
       if (settings.de_c0 !== undefined) formData.append('de_c0', String(settings.de_c0));
       if (settings.de_lc !== undefined) formData.append('de_lc', String(settings.de_lc));
       if (settings.dg_freq_upper_limit !== undefined) formData.append('dg_freq_upper_limit', String(settings.dg_freq_upper_limit));
       if (settings.dg_c0 !== undefined) formData.append('dg_c0', String(settings.dg_c0));
       if (settings.dg_rho0 !== undefined) formData.append('dg_rho0', String(settings.dg_rho0));
-      if (settings.dg_ir_length !== undefined) formData.append('dg_ir_length', String(settings.dg_ir_length));
       if (settings.dg_poly_order !== undefined) formData.append('dg_poly_order', String(settings.dg_poly_order));
       if (settings.dg_ppw !== undefined) formData.append('dg_ppw', String(settings.dg_ppw));
       if (settings.dg_cfl !== undefined) formData.append('dg_cfl', String(settings.dg_cfl));
@@ -1107,5 +1104,39 @@ export const apiService = {
     } catch (error) {
       handleApiError(error, 'Update tokens');
     }
+  },
+
+  // ── SED analysis (queued) ─────────────────────────────────────────────────
+
+  async startSEDAnalysis(formData: FormData): Promise<{ task_id: string }> {
+    const response = await fetch(`${API_BASE_URL}/api/analyze-sound-events`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Failed to start SED analysis' }));
+      throw new Error(err.detail || 'Failed to start SED analysis');
+    }
+    return response.json();
+  },
+
+  async getSEDAnalysisStatus(taskId: string): Promise<{
+    task_id: string;
+    progress: number;
+    status: string;
+    completed: boolean;
+    cancelled: boolean;
+    error?: string;
+    result?: { audio_info: any; detected_sounds: any[]; total_classes_analyzed: number };
+    queue_position?: number;
+    queue_total?: number;
+  }> {
+    const response = await fetch(`${API_BASE_URL}/api/sed-analysis-status/${taskId}`);
+    if (!response.ok) throw new Error('Failed to get SED analysis status');
+    return response.json();
+  },
+
+  async cancelSEDAnalysis(taskId: string): Promise<void> {
+    await fetch(`${API_BASE_URL}/api/cancel-sed-analysis/${taskId}`, { method: 'POST' });
   },
 };

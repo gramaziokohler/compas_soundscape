@@ -10,7 +10,7 @@ import { SelectionExtension } from '@speckle/viewer';
 import type { VirtualTreeItem as TreeItem } from '@/hooks/useSpeckleTree';
 import { useAcousticMaterialStore } from '@/store';
 import { getHeaderAndSubheader } from '@/hooks/useSpeckleTree';
-import { UI_COLORS, UI_RIGHT_SIDEBAR } from '@/utils/constants';
+import { UI_RIGHT_SIDEBAR } from '@/utils/constants';
 
 /**
  * ObjectExplorer Component
@@ -38,6 +38,8 @@ export function ObjectExplorer() {
   const treeContainerRef = useRef<HTMLDivElement>(null);
   const previousSelectionRef = useRef<string[]>([]);
   const hasHiddenAcousticsLayerRef = useRef<boolean>(false);
+  const pendingScrollIdRef = useRef<string | null>(null);
+  const virtualItemsRef = useRef<typeof virtualItems>([]);
   
   // Initialize tree management hooks
   const {
@@ -247,30 +249,64 @@ export function ObjectExplorer() {
     }
   }, [viewerRef, modelFileName]);
   
-  // Scroll to selected item in tree
-  const scrollToSelectedItem = useCallback((objectId: string) => {
-    requestAnimationFrame(() => {
-      if (!treeContainerRef.current) return;
+  // Keep virtualItemsRef in sync so scroll helpers always read the latest list
+  useEffect(() => { virtualItemsRef.current = virtualItems; }, [virtualItems]);
 
-      const itemIndex = virtualItems.findIndex(
-        (item) => item.data.raw?.id === objectId
-      );
+  // Core scroll helper — reads fresh data via refs, returns true on success
+  const doScrollToItem = useCallback((objectId: string): boolean => {
+    const container = treeContainerRef.current;
+    if (!container || container.clientHeight === 0) return false;
 
-      if (itemIndex !== -1) {
-        const container = treeContainerRef.current;
-        const containerHeight = container.clientHeight;
-        const itemHeight = UI_RIGHT_SIDEBAR.TREE_ITEM_HEIGHT;
-        const totalOffset = itemIndex * itemHeight;
-        const centerOffset = containerHeight / 2 - itemHeight / 2;
-        const scrollPosition = Math.max(0, totalOffset - centerOffset);
+    const itemIndex = virtualItemsRef.current.findIndex(
+      (item) => item.data.raw?.id === objectId
+    );
+    if (itemIndex === -1) return false; // not in view yet (expansion pending)
 
-        container.scrollTo({
-          top: scrollPosition,
-          behavior: 'smooth'
-        });
-      }
+    const itemHeight = UI_RIGHT_SIDEBAR.TREE_ITEM_HEIGHT;
+    const containerHeight = container.clientHeight;
+    const totalOffset = itemIndex * itemHeight;
+    const centerOffset = containerHeight / 2 - itemHeight / 2;
+
+    container.scrollTo({
+      top: Math.max(0, totalOffset - centerOffset),
+      behavior: 'smooth'
     });
-  }, [virtualItems]);
+    return true;
+  }, []);
+
+  // Public entry point — sets pending then tries immediately via rAF
+  const scrollToSelectedItem = useCallback((objectId: string) => {
+    pendingScrollIdRef.current = objectId;
+
+    requestAnimationFrame(() => {
+      if (!pendingScrollIdRef.current) return;
+      const success = doScrollToItem(objectId);
+      if (success) pendingScrollIdRef.current = null;
+      // else: pending stays — virtualItems effect or ResizeObserver will retry
+    });
+  }, [doScrollToItem]);
+
+  // Retry when virtualItems updates (covers expansion-before-scroll race)
+  useEffect(() => {
+    if (!pendingScrollIdRef.current) return;
+    const success = doScrollToItem(pendingScrollIdRef.current);
+    if (success) pendingScrollIdRef.current = null;
+  }, [virtualItems, doScrollToItem]);
+
+  // Retry when the tree container gains height (sidebar expands from collapsed state)
+  useEffect(() => {
+    const container = treeContainerRef.current;
+    if (!container) return;
+
+    const observer = new ResizeObserver(() => {
+      if (!pendingScrollIdRef.current || container.clientHeight === 0) return;
+      const success = doScrollToItem(pendingScrollIdRef.current);
+      if (success) pendingScrollIdRef.current = null;
+    });
+
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [filteredVirtualItems.length, doScrollToItem]);
   
   // Poll for selection changes from 3D viewer
   useEffect(() => {
@@ -429,7 +465,7 @@ export function ObjectExplorer() {
   // Don't render anything if no viewer
   if (!viewerRef?.current) {
     return (
-      <div className="text-center text-xs p-4" style={{ color: UI_COLORS.NEUTRAL_500 }}>
+      <div className="text-center text-xs p-4 text-neutral-500">
         No viewer available
       </div>
     );
@@ -438,7 +474,7 @@ export function ObjectExplorer() {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <label className="text-xs font-medium" style={{ color: UI_COLORS.NEUTRAL_700 }}>
+        <label className="text-xs font-medium text-neutral-700">
           {filteredVirtualItems.length > 0 && `${filteredVirtualItems.length} items`}
         </label>
         {(hiddenObjects.size > 0 || isolatedObjects.size > 0 || selectedObjectIds.length > 0) && (
@@ -448,7 +484,7 @@ export function ObjectExplorer() {
               clearSelection();
             }}
             className="text-xs px-2 py-1 rounded hover:bg-secondary-light transition-colors"
-            style={{ color: UI_COLORS.PRIMARY }}
+            style={{ color: 'var(--color-primary)' }}
             title="Clear all filters and selection"
           >
             🔄 Reset All
@@ -463,8 +499,8 @@ export function ObjectExplorer() {
             ref={treeContainerRef}
             className="border rounded"
             style={{
-              borderColor: UI_COLORS.NEUTRAL_200,
-              backgroundColor: 'white',
+              borderColor: 'var(--color-secondary-light)',
+              backgroundColor: 'var(--background)',
               maxHeight: `${UI_RIGHT_SIDEBAR.TREE_MAX_HEIGHT}px`,
               overflowY: 'auto'
             }}
@@ -473,7 +509,7 @@ export function ObjectExplorer() {
               try {
                 if (!item || !item.data) {
                   return (
-                    <div key={`loading-${index}`} style={{ padding: '8px', color: UI_COLORS.NEUTRAL_400 }}>
+                    <div key={`loading-${index}`} style={{ padding: '8px', color: 'var(--color-secondary-hover)' }}>
                       Loading...
                     </div>
                   );
@@ -503,7 +539,7 @@ export function ObjectExplorer() {
               } catch (error) {
                 console.error('[VirtualTreeItem] Error rendering item:', index, error);
                 return (
-                  <div key={`error-${index}`} style={{ padding: '8px', color: UI_COLORS.ERROR }}>
+                  <div key={`error-${index}`} style={{ padding: '8px', color: 'var(--color-error)' }}>
                     Error rendering item
                   </div>
                 );
@@ -518,8 +554,8 @@ export function ObjectExplorer() {
                 <div
                   className="px-2 py-1 rounded"
                   style={{
-                    backgroundColor: UI_COLORS.WARNING_LIGHT,
-                    color: UI_COLORS.WARNING
+                    backgroundColor: 'var(--color-warning-light)',
+                    color: 'var(--color-warning)'
                   }}
                 >
                   {hiddenObjects.size} hidden
@@ -529,8 +565,8 @@ export function ObjectExplorer() {
                 <div
                   className="px-2 py-1 rounded"
                   style={{
-                    backgroundColor: UI_COLORS.INFO_LIGHT,
-                    color: UI_COLORS.INFO
+                    backgroundColor: 'var(--color-info-light)',
+                    color: 'var(--color-info)'
                   }}
                 >
                   {isolatedObjects.size} isolated
@@ -544,9 +580,9 @@ export function ObjectExplorer() {
         <div
           className="border rounded p-4 text-center text-xs"
           style={{
-            borderColor: UI_COLORS.NEUTRAL_200,
-            backgroundColor: 'white',
-            color: UI_COLORS.NEUTRAL_500,
+            borderColor: 'var(--color-secondary-light)',
+            backgroundColor: 'var(--background)',
+            color: 'var(--color-secondary-hover)',
             minHeight: '150px',
             display: 'flex',
             flexDirection: 'column',
@@ -557,7 +593,7 @@ export function ObjectExplorer() {
         >
           <div style={{ fontSize: '24px' }}>📦</div>
           <div>Loading object tree from Speckle...</div>
-          <div style={{ fontSize: '10px', color: UI_COLORS.NEUTRAL_400, fontFamily: 'monospace' }}>
+          <div style={{ fontSize: '10px', color: 'var(--color-secondary-hover)', fontFamily: 'monospace' }}>
             Viewer ref: {viewerRef?.current ? '✓' : '✗'}<br/>
             World tree: {worldTree ? '✓' : '✗'}<br/>
             Tree loaded: {hasLoadedTreeRef.current ? '✓' : '✗'}<br/>
@@ -568,7 +604,7 @@ export function ObjectExplorer() {
             onClick={refreshTree}
             className="text-xs px-2 py-1 rounded mt-2"
             style={{
-              backgroundColor: UI_COLORS.SUCCESS,
+              backgroundColor: 'var(--color-success)',
               color: 'white',
               cursor: 'pointer'
             }}

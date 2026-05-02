@@ -93,18 +93,48 @@ export function SoundGenerationSection({
   // ── Sound generation progress from store ──
   const soundGenProgress          = useSoundscapeStore((s) => s.soundGenProgress);
   const soundGenProgressValue     = useSoundscapeStore((s) => s.soundGenProgressValue);
-  const handleReorderSoundConfigs = useSoundscapeStore((s) => s.handleReorderSoundConfigs);
-  const updateSoundPosition       = useSoundscapeStore((s) => s.updateSoundPosition);
+  const handleReorderSoundConfigs   = useSoundscapeStore((s) => s.handleReorderSoundConfigs);
+  const updateSoundPosition         = useSoundscapeStore((s) => s.updateSoundPosition);
+  const handleDetachSoundFromEntity = useSoundscapeStore((s) => s.handleDetachSoundFromEntity);
+
+  // Helper to check if a sound is generated (defined early for use in other callbacks)
+  const isSoundGenerated = useCallback((index: number): boolean => {
+    return generatedSounds.some(s => s.prompt_index === index);
+  }, [generatedSounds]);
 
   // Snapshot the total number of pending configs (all types) when generation starts.
   // The backend only counts ML sounds in its denominator, so we replace it here.
   const pendingAtStartRef = useRef(0);
+  // Snapshot of pending config object references in generation order (survives reordering)
+  const pendingConfigOrderRef = useRef<SoundGenerationConfig[]>([]);
+
   useEffect(() => {
     if (isSoundGenerating) {
-      pendingAtStartRef.current = soundConfigs.filter((_, i) => !isSoundGenerated(i)).length;
+      const pendingConfigs = soundConfigs.filter((_, i) => !isSoundGenerated(i));
+      pendingAtStartRef.current = pendingConfigs.length;
+      pendingConfigOrderRef.current = pendingConfigs;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSoundGenerating]); // intentionally snapshot once when generation starts
+
+  // Find the current generating card index by matching config object references.
+  // This is stable even if the user reorders cards, since the reference stays the same.
+  const getCurrentGeneratingCardIndex = useCallback((): number | null => {
+    if (!isSoundGenerating || pendingConfigOrderRef.current.length === 0) return null;
+    const generatedIndices = new Set(generatedSounds.map(s => s.prompt_index));
+    // Walk the original generation order; find the first not yet generated
+    for (const pendingConfig of pendingConfigOrderRef.current) {
+      // Find where this config object lives in the current soundConfigs array
+      const currentIdx = soundConfigs.indexOf(pendingConfig);
+      if (currentIdx === -1) continue; // config was removed
+      if (!generatedIndices.has(currentIdx)) {
+        return currentIdx;
+      }
+    }
+    return null;
+  }, [isSoundGenerating, soundConfigs, generatedSounds]);
+
+  const currentGeneratingCardIndex = getCurrentGeneratingCardIndex();
 
   const displayProgress = (isSoundGenerating && soundGenProgress && pendingAtStartRef.current > 0)
     ? soundGenProgress.replace(/\/\d+/, `/${pendingAtStartRef.current}`)
@@ -131,11 +161,6 @@ export function SoundGenerationSection({
   const [expandedIndex, setExpandedIndex] = useState<number | null>(
     soundConfigs.length > 0 ? 0 : null
   );
-
-  // Helper to check if a sound is generated
-  const isSoundGenerated = useCallback((index: number): boolean => {
-    return generatedSounds.some(s => s.prompt_index === index);
-  }, [generatedSounds]);
 
   // Helper to get generated sound for a config index (returns selected variant)
   const getGeneratedSound = useCallback((index: number): SoundEvent | undefined => {
@@ -302,8 +327,19 @@ export function SoundGenerationSection({
       }
       return '(generated)';
     }
+    if (isSoundGenerating && pendingConfigOrderRef.current.length > 0) {
+      const orderIdx = pendingConfigOrderRef.current.indexOf(config);
+      const currentConfig = pendingConfigOrderRef.current.find(c => {
+        const idx = soundConfigs.indexOf(c);
+        return idx !== -1 && !isSoundGenerated(idx);
+      });
+      const currentOrderIdx = currentConfig ? pendingConfigOrderRef.current.indexOf(currentConfig) : -1;
+      if (orderIdx >= 0 && currentOrderIdx >= 0) {
+        if (orderIdx > currentOrderIdx) return `(queued #${orderIdx - currentOrderIdx})`;
+      }
+    }
     return '';
-  }, [isSoundGenerated, getVariantsForPrompt]);
+  }, [isSoundGenerated, getVariantsForPrompt, isSoundGenerating, soundConfigs]);
 
   // Convert SoundGenerationConfig to SoundCardConfig for CardSection
   const cardItems: SoundCardConfig[] = useMemo(() => {
@@ -461,14 +497,21 @@ export function SoundGenerationSection({
     })();
 
     return (
-      <div style={{ opacity: isEffectivelyMuted ? 0.55 : 1 }}>
       <Card
         config={item}
         index={index}
         isExpanded={isExpanded}
         hasResult={isGenerated}
         result={generatedSound}
-        isRunning={isSoundGenerating}
+        isRunning={isSoundGenerating && index === currentGeneratingCardIndex}
+        progress={index === currentGeneratingCardIndex ? soundGenProgressValue : 0}
+        status={
+          index === currentGeneratingCardIndex
+            ? 'Generating...'
+            : !isGenerated && isSoundGenerating
+              ? 'Queued'
+              : undefined
+        }
         defaultName={undefined}
         collapsedInfo={getCollapsedInfo(config, index)}
         showIndex={true}
@@ -476,6 +519,8 @@ export function SoundGenerationSection({
         closeButtonTitle="Remove sound"
         resetButtonTitle="Reset to configuration UI"
         customButtons={customButtons.length > 0 ? customButtons : undefined}
+        error={config.error || null}
+        onDismissError={() => onUpdateConfig(index, 'error', null)}
         onToggleExpand={onToggleExpandFn}
         onDoubleClickCard={(i) => triggerZoomToSoundCard(i)}
         onUpdateConfig={handleUpdateConfig}
@@ -483,6 +528,7 @@ export function SoundGenerationSection({
         onReset={handleReset}
         color="primary"
         version={cardVersion}
+        dimmed={isEffectivelyMuted}
         beforeContent={
           <SoundConfigContent
             config={config}
@@ -516,11 +562,11 @@ export function SoundGenerationSection({
               onIntervalChange={onIntervalChange}
               onVariantChange={onVariantChange}
               onUpdatePosition={handleUpdateSoundPosition}
+              onUnlinkEntity={() => handleDetachSoundFromEntity(index)}
             />
           ) : null
         }
       />
-      </div>
     );
   }, [
     isSoundGenerated,
@@ -560,9 +606,12 @@ export function SoundGenerationSection({
     onIntervalChange,
     onVariantChange,
     handleUpdateSoundPosition,
+    handleDetachSoundFromEntity,
     serviceVersions,
     audioModel,
     triggerZoomToSoundCard,
+    currentGeneratingCardIndex,
+    soundGenProgressValue,
   ]);
 
   // Footer with generate button

@@ -7,7 +7,7 @@
 
 'use client';
 
-import { UI_COLORS, UI_BORDER_RADIUS } from '@/utils/constants';
+import { UI_BORDER_RADIUS } from '@/utils/constants';
 import type { SpeckleLayerInfo } from '@/types/speckle-materials';
 import type { AcousticMaterial } from '@/types/materials';
 
@@ -34,7 +34,7 @@ export function SpeckleMaterialAssignmentUI({
         <div
           className="px-3 py-2 text-xs"
           style={{
-            color: UI_COLORS.NEUTRAL_500,
+            color: 'var(--color-secondary-hover)',
             fontStyle: 'italic'
           }}
         >

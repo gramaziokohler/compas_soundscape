@@ -31,9 +31,11 @@ import { useErrorsStore } from './errorsStore';
 import { useAreaDrawingStore } from './areaDrawingStore';
 import { useSoundscapeStore } from './soundscapeStore';
 
-// ─── Module-level abort ref ───────────────────────────────────────────────────
+// ─── Module-level refs ────────────────────────────────────────────────────────
 
 let _analysisAbortController: AbortController | null = null;
+let _sedTaskId: string | null = null;
+let _sedPollInterval: ReturnType<typeof setInterval> | null = null;
 
 // ─── Partialize ───────────────────────────────────────────────────────────────
 
@@ -434,7 +436,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               const audioConfig = config as AudioAnalysisConfig;
               if (!audioConfig.audioFile) throw new Error('No audio file uploaded');
 
-              set({ analysisStatus: 'Analyzing sound events...' }, false, 'analysis/analyzingAudio');
+              set({ analysisStatus: 'Uploading audio file...' }, false, 'analysis/analyzingAudio');
 
               const formData = new FormData();
               formData.append('file', audioConfig.audioFile);
@@ -449,15 +451,51 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               );
               formData.append('top_n_classes', '100');
 
-              const res = await fetch(`${API_BASE_URL}/api/analyze-sound-events`, {
-                method: 'POST',
-                body: formData,
-                signal,
-              });
-              if (!res.ok) throw new Error('Failed to analyze sound events');
-              const result = await res.json();
+              const { task_id } = await apiService.startSEDAnalysis(formData);
+              _sedTaskId = task_id;
+              set({ analysisStatus: 'Queued...' }, false, 'analysis/sedQueued');
 
-              prompts = result.detected_sounds
+              const sedResult = await new Promise<any>((resolve, reject) => {
+                _sedPollInterval = setInterval(async () => {
+                  if (signal.aborted) {
+                    clearInterval(_sedPollInterval!);
+                    _sedPollInterval = null;
+                    if (_sedTaskId) {
+                      apiService.cancelSEDAnalysis(_sedTaskId).catch(() => {});
+                      _sedTaskId = null;
+                    }
+                    reject(new Error('AbortError'));
+                    return;
+                  }
+                  try {
+                    const s = await apiService.getSEDAnalysisStatus(_sedTaskId!);
+                    if (s.status) set({ analysisStatus: s.status }, false, 'analysis/sedPoll');
+                    if (s.cancelled) {
+                      clearInterval(_sedPollInterval!);
+                      _sedPollInterval = null;
+                      _sedTaskId = null;
+                      reject(new Error('AbortError'));
+                    } else if (s.error) {
+                      clearInterval(_sedPollInterval!);
+                      _sedPollInterval = null;
+                      _sedTaskId = null;
+                      reject(new Error(s.error));
+                    } else if (s.completed && s.result) {
+                      clearInterval(_sedPollInterval!);
+                      _sedPollInterval = null;
+                      _sedTaskId = null;
+                      resolve(s.result);
+                    }
+                  } catch (pollErr: any) {
+                    clearInterval(_sedPollInterval!);
+                    _sedPollInterval = null;
+                    _sedTaskId = null;
+                    reject(pollErr);
+                  }
+                }, 1500);
+              });
+
+              prompts = sedResult.detected_sounds
                 .filter((s: any) => s.confidence > 0)
                 .slice(0, config.numSounds)
                 .map((sound: any, i: number) => {
@@ -628,6 +666,14 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
         handleStopAnalysis: () => {
           _analysisAbortController?.abort();
           _analysisAbortController = null;
+          if (_sedPollInterval) {
+            clearInterval(_sedPollInterval);
+            _sedPollInterval = null;
+          }
+          if (_sedTaskId) {
+            apiService.cancelSEDAnalysis(_sedTaskId).catch(() => {});
+            _sedTaskId = null;
+          }
           set({ isAnalyzing: false, analysisStatus: '', analyzingConfigIndex: null }, false, 'analysis/stop');
         },
 

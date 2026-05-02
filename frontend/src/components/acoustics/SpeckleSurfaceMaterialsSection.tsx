@@ -22,7 +22,6 @@ import { useSpeckleFiltering } from '@/hooks/useSpeckleFiltering';
 import { useSpeckleStore } from '@/store';
 import { useAcousticMaterialStore } from '@/store';
 import { SpeckleMaterialAssignmentUI } from './SpeckleMaterialAssignmentUI';
-import { UI_COLORS } from '@/utils/constants';
 import type { AcousticMaterial } from '@/types/materials';
 import type { Viewer } from '@speckle/viewer';
 import type { ObjectColorGroup } from '@/types/speckle-materials';
@@ -513,16 +512,16 @@ export function SpeckleSurfaceMaterialsSection({
   if (!worldTree) {
     return (
       <div className={`flex flex-col gap-2 ${className}`}>
-        <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
+        <h4 className="text-xs font-semibold text-neutral-700">
           Acoustic Layer
         </h4>
         <div
           className="px-3 py-4 text-xs text-center"
           style={{
-            color: UI_COLORS.NEUTRAL_500,
-            backgroundColor: UI_COLORS.NEUTRAL_900,
+            color: 'var(--color-secondary-hover)',
+            backgroundColor: 'var(--background)',
             borderRadius: '8px',
-            border: `1px solid ${UI_COLORS.NEUTRAL_800}`
+            border: `1px solid var(--color-secondary)`
           }}
         >
           <div className="animate-pulse">Loading geometry from viewer...</div>
@@ -533,7 +532,7 @@ export function SpeckleSurfaceMaterialsSection({
 
   return (
     <div className={`flex flex-col gap-2 ${className}`}>
-      <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
+      <h4 className="text-xs font-semibold text-neutral-700">
         Acoustic Layer
       </h4>
 

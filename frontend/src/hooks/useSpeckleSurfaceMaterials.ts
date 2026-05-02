@@ -17,7 +17,7 @@ import type {
 } from '@/types/speckle-materials';
 import type { ExplorerNode } from './useSpeckleTree';
 import type { AcousticMaterial } from '@/types/materials';
-import { getMaterialColorByAbsorption, MATERIAL_DEFAULT_COLOR } from '@/utils/constants';
+import { getMaterialColorByAbsorption } from '@/utils/utils';
 
 /**
  * Hierarchical mesh object with children
@@ -483,7 +483,7 @@ export function useSpeckleSurfaceMaterials(
     const material = availableMaterials.find(m => m.id === materialId);
     if (!material) {
       console.warn('[useSpeckleSurfaceMaterials] Material not found:', materialId, 'Using default color');
-      return MATERIAL_DEFAULT_COLOR;
+      return '#808080';
     }
 
     // Get color based on absorption coefficient

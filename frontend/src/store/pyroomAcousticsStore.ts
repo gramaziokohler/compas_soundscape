@@ -27,6 +27,7 @@ import {
   PYROOMACOUSTICS_DEFAULT_ENABLE_GRID,
 } from '@/utils/constants';
 import { useErrorsStore } from './errorsStore';
+import { useUIStore } from './uiStore';
 import type { SourceReceiverIRMapping } from '@/types/audio';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -377,7 +378,10 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
               objectMaterials,
               layerName || '',
               simulationName,
-              inst.simulationSettings,
+              {
+                ...inst.simulationSettings,
+                sound_speed: useUIStore.getState().globalSoundSpeed,
+              },
               sourceReceiverPairs,
             );
 

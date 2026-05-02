@@ -1,7 +1,7 @@
 "use client";
 
 import { ReactNode } from "react";
-import { UI_COLORS, UI_VERTICAL_TABS } from "@/utils/constants";
+import { UI_VERTICAL_TABS } from "@/utils/constants";
 
 interface VerticalTabButtonProps {
   icon: ReactNode;
@@ -23,7 +23,7 @@ interface VerticalTabButtonProps {
  * @param onClick - Click handler
  * @param buttonColor - Optional color for active state (defaults to primary)
  */
-export function VerticalTabButton({ icon, label, buttonColor = UI_COLORS.PRIMARY, isActive, onClick }: VerticalTabButtonProps) {
+export function VerticalTabButton({ icon, label, buttonColor = 'var(--color-primary)', isActive, onClick }: VerticalTabButtonProps) {
   return (
     <button
       onClick={onClick}
@@ -32,16 +32,16 @@ export function VerticalTabButton({ icon, label, buttonColor = UI_COLORS.PRIMARY
       className="relative flex items-center justify-center w-full transition-all group"
       style={{
         height: `${UI_VERTICAL_TABS.HEIGHT}px`,
-        color: isActive ? buttonColor : UI_COLORS.NEUTRAL_500
+        color: isActive ? buttonColor : 'var(--color-secondary-hover)'
       }}
       onMouseEnter={(e) => {
         if (!isActive) {
-          e.currentTarget.style.color = UI_COLORS.NEUTRAL_800;
+          e.currentTarget.style.color = 'var(--color-foreground)';
         }
       }}
       onMouseLeave={(e) => {
         if (!isActive) {
-          e.currentTarget.style.color = UI_COLORS.NEUTRAL_500;
+          e.currentTarget.style.color = 'var(--color-secondary-hover)';
         }
       }}
     >

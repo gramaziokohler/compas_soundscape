@@ -2,7 +2,8 @@
 
 import { useMemo, useState, useCallback, useRef } from 'react';
 import { useBatchedSlider } from '@/hooks/useBatchedSlider';
-import { UI_COLORS, UI_BORDER_RADIUS, SPECKLE_FILTER_COLORS, RECEIVER_CONFIG, getMaterialColorByAbsorption, PYROOMACOUSTICS_DEFAULT_SCATTERING, PYROOMACOUSTICS_SCATTERING_MIN, PYROOMACOUSTICS_SCATTERING_MAX } from '@/utils/constants';
+import { UI_BORDER_RADIUS, PYROOMACOUSTICS_DEFAULT_SCATTERING, PYROOMACOUSTICS_SCATTERING_MIN, PYROOMACOUSTICS_SCATTERING_MAX } from '@/utils/constants';
+import { getMaterialColorByAbsorption } from '@/utils/utils';
 import { useSpeckleStore } from '@/store';
 import { useAcousticMaterialStore } from '@/store';
 import { useAudioControlsStore } from '@/store';
@@ -321,7 +322,7 @@ export function EntityInfoPanel({
               <div className="flex items-center justify-between gap-2">
                 <span
                   className="text-xs truncate"
-                  style={{ color: UI_COLORS.NEUTRAL_500, maxWidth: '120px' }}
+                  style={{ color: 'var(--color-secondary-hover)', maxWidth: '120px' }}
                   title={titleText}
                 >
                   {label}
@@ -345,7 +346,7 @@ export function EntityInfoPanel({
               </div>
             );
           })() : (
-            <p className="text-xs" style={{ color: UI_COLORS.NEUTRAL_500, fontStyle: 'italic' }}>
+            <p className="text-xs" style={{ color: 'var(--color-secondary-hover)', fontStyle: 'italic' }}>
               Select a surface in the viewer to assign material
             </p>
           )}
@@ -397,8 +398,8 @@ export function EntityInfoPanel({
             <div
               className="text-xs text-center py-1 px-2"
               style={{
-                color: UI_COLORS.WARNING,
-                backgroundColor: UI_COLORS.WARNING_LIGHT,
+              color: 'var(--color-warning)',
+              backgroundColor: 'var(--color-warning-light)',
                 borderRadius: `${UI_BORDER_RADIUS.SM}px`
               }}
             >
@@ -411,10 +412,10 @@ export function EntityInfoPanel({
             <div
               className="text-xs text-center py-1 px-2"
               style={{
-                color: UI_COLORS.INFO,
-                backgroundColor: `${UI_COLORS.INFO}10`,
-                borderRadius: `${UI_BORDER_RADIUS.SM}px`,
-                border: `1px solid ${UI_COLORS.SUCCESS}40`
+              color: 'var(--color-info)',
+              backgroundColor: 'color-mix(in srgb, var(--color-info) 6%, transparent)',
+              borderRadius: `${UI_BORDER_RADIUS.SM}px`,
+              border: `1px solid color-mix(in srgb, var(--color-success) 25%, transparent)`
               }}
             >
               {allObjectsInfo.assignedCount} object{allObjectsInfo.assignedCount !== 1 ? 's' : ''} assigned
@@ -427,7 +428,7 @@ export function EntityInfoPanel({
 
   // ===== RECEIVER INFORMATION MODE =====
   if (selectedEntity?.objectType === 'Receiver' && selectedEntity.receiverData) {
-    const receiverColor = `#${RECEIVER_CONFIG.COLOR.toString(16).padStart(6, '0')}`;
+    const receiverColor = 'var(--color-receiver)';
     return (
       <div className="flex flex-col">
         {/* Header with Go To button */}
@@ -534,7 +535,7 @@ export function EntityInfoPanel({
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
-          style={{ color: UI_COLORS.NEUTRAL_500 }}
+          style={{ color: 'var(--color-secondary-hover)' }}
         >
           <path
             strokeLinecap="round"
@@ -543,7 +544,7 @@ export function EntityInfoPanel({
             d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122"
           />
         </svg>
-        <p className="text-sm" style={{ color: UI_COLORS.NEUTRAL_500 }}>
+        <p className="text-sm" style={{ color: 'var(--color-secondary-hover)' }}>
           Click on an object in the 3D view to see its details
         </p>
       </div>
@@ -557,22 +558,22 @@ export function EntityInfoPanel({
   const getLinkButtonConfig = () => {
     if (isLinked) {
       return {
-        color: SPECKLE_FILTER_COLORS.SOUND_LINKED,
-        hoverColor: SPECKLE_FILTER_COLORS.SOUND_LINKED,
+        color: 'var(--color-primary)',
+        hoverColor: 'var(--color-primary)',
         title: `Linked to Sound #${linkedSoundIndex! + 1} (unlink from Sound tab)`,
         action: () => {}
       };
     } else if (isDiverse) {
       return {
-        color: SPECKLE_FILTER_COLORS.DIVERSE_SELECTION,
-        hoverColor: UI_COLORS.PRIMARY_HOVER,
+        color: 'var(--color-success)',
+        hoverColor: 'var(--color-primary-hover)',
         title: 'Remove from diverse selection',
         action: () => removeFromDiverseSelection(selectedEntity.objectId)
       };
     } else {
       return {
-        color: UI_COLORS.NEUTRAL_500,
-        hoverColor: UI_COLORS.NEUTRAL_600,
+        color: 'var(--color-secondary-hover)',
+        hoverColor: 'var(--color-secondary)',
         title: 'Add to diverse selection',
         action: () => addToDiverseSelection(selectedEntity.objectId)
       };
@@ -659,10 +660,10 @@ export function EntityInfoPanel({
 
         {/* Linked Sound Information */}
         {isLinked && linkedSoundIndex !== undefined && (
-          <div className="pt-2 mt-2" style={{ borderTop: `1px solid ${UI_COLORS.NEUTRAL_200}` }}>
+          <div className="pt-2 mt-2" style={{ borderTop: `1px solid var(--color-secondary-light)` }}>
             <div className="flex justify-between items-center">
               <span>Linked to:</span>
-              <span className="font-medium" style={{ color: SPECKLE_FILTER_COLORS.SOUND_LINKED }}>
+              <span className="font-medium" style={{ color: 'var(--color-primary)' }}>
                 Sound #{linkedSoundIndex + 1}
               </span>
             </div>
@@ -671,10 +672,10 @@ export function EntityInfoPanel({
 
         {/* Diverse Selection Information */}
         {isDiverse && !isLinked && (
-          <div className="pt-2 mt-2" style={{ borderTop: `1px solid ${UI_COLORS.NEUTRAL_200}` }}>
+          <div className="pt-2 mt-2" style={{ borderTop: `1px solid var(--color-secondary-light)` }}>
             <div className="flex justify-between items-center">
               <span>Status:</span>
-              <span className="font-medium" style={{ color: SPECKLE_FILTER_COLORS.DIVERSE_SELECTION }}>
+              <span className="font-medium" style={{ color: 'var(--color-success)' }}>
                 Diverse Selection
               </span>
             </div>

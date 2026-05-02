@@ -27,6 +27,33 @@ export function computeInitialDelay(soundId: string, maxDelayMs: number): number
 }
 
 /**
+ * Compute a deterministic jitter offset for a sound's specific iteration.
+ * Uses sound ID + iteration index to ensure the offset is stable across renders,
+ * preventing timeline refreshes when metadata updates trigger re-extraction.
+ *
+ * @param soundId - Unique sound identifier
+ * @param iterationIndex - Zero-based iteration number (0, 1, 2, ...)
+ * @param maxJitterMs - Maximum jitter magnitude in milliseconds
+ * @returns Jitter offset in range [-maxJitterMs, maxJitterMs]
+ */
+export function computeIterationJitter(soundId: string, iterationIndex: number, maxJitterMs: number): number {
+  if (maxJitterMs <= 0) return 0;
+
+  // Combine soundId and iterationIndex for unique per-iteration hash
+  const combined = `${soundId}#${iterationIndex}`;
+  let hash = 5381;
+  for (let i = 0; i < combined.length; i++) {
+    hash = ((hash << 5) + hash) ^ combined.charCodeAt(i);
+    hash = hash >>> 0;
+  }
+
+  // Map hash to range [0, 1]
+  const normalized = hash / 0xffffffff;
+  // Map to [-1, 1] then multiply by maxJitterMs
+  return (normalized * 2 - 1) * maxJitterMs;
+}
+
+/**
  * Get color based on sound generation method
  * @param metadata - Sound metadata containing soundEvent
  * @returns Color hex string
@@ -35,22 +62,22 @@ function getSoundColor(metadata: SoundMetadata): string {
   const soundEvent = metadata.soundEvent;
 
   if (!soundEvent) {
-    return AUDIO_TIMELINE.SOUND_COLORS.TTA; // Default to TTA color
+    return 'var(--color-primary)'; // Default to TTA color
   }
 
   // Imported sounds (uploaded)
   if (soundEvent.isUploaded) {
-    return AUDIO_TIMELINE.SOUND_COLORS.IMPORT;
+    return 'var(--color-info)';
   }
 
   // Library sounds (from BBC or Freesound)
   // Check if URL contains library indicators
   if (soundEvent.url && (soundEvent.url.includes('library') || soundEvent.url.includes('bbc') || soundEvent.url.includes('freesound'))) {
-    return AUDIO_TIMELINE.SOUND_COLORS.LIBRARY;
+    return 'var(--color-success)';
   }
 
   // Text-to-Audio (TangoFlux generated)
-  return AUDIO_TIMELINE.SOUND_COLORS.TTA;
+  return 'var(--color-primary)';
 }
 
 /**
@@ -206,15 +233,15 @@ export function extractTimelineSoundsFromData(
     let currentTime = 0;
 
     while (
-      currentTime + soundDurationMs <= timelineDuration &&
+      currentTime < timelineDuration &&
       iterations.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY
     ) {
       iterations.push(currentTime);
-      
-      // Generate a true random offset once for this iteration
-      const randomOffset = (Math.random() * 2 - 1) * jitterMs;
+
+      // Generate a deterministic jitter offset for this iteration
+      const randomOffset = computeIterationJitter(soundId, iterations.length - 1, jitterMs);
       iterationOffsets.push(randomOffset);
-      
+
       const actualGapMs = Math.max(0, baseGapMs + randomOffset);
       currentTime += soundDurationMs + actualGapMs;
     }

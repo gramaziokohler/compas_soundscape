@@ -30,7 +30,7 @@ export function ResonanceContent({
   onToggleResonanceAudio,
   onUpdateRoomMaterials,
   hasGeometry,
-  showBoundingBox,
+  showBoundingBox ,
   onToggleBoundingBox,
   onRefreshBoundingBox,
   roomScale,

@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import { ObjectLayers, type Viewer } from '@speckle/viewer';
 import type { DrawnArea, PolygonVertex, AreaVisualState } from '@/types/area-drawing';
 import { AREA_DRAWING } from '@/utils/constants';
+import { getCssColorHex } from '@/utils/utils';
 import {
   projectOnPlane,
   chooseProjectionAxes,
@@ -111,7 +112,7 @@ export class AreaDrawingManager {
     // Create cursor indicator
     const cursorGeo = new THREE.SphereGeometry(0.08, 12, 12);
     const cursorMat = new THREE.MeshBasicMaterial({
-      color: AREA_DRAWING.LINE_COLOR,
+      color: getCssColorHex('--color-success'),
       depthTest: false,
       depthWrite: false,
     });
@@ -166,7 +167,7 @@ export class AreaDrawingManager {
       this.cursorPoint.visible = true;
       // Change color when snapping
       (this.cursorPoint.material as THREE.MeshBasicMaterial).color.setHex(
-        snapped ? 0xffffff : AREA_DRAWING.LINE_COLOR
+        snapped ? 0xffffff : getCssColorHex('--color-success')
       );
     }
 
@@ -349,7 +350,7 @@ export class AreaDrawingManager {
 
     const mat = visuals.fill.material as THREE.MeshBasicMaterial;
     mat.color.setHex(
-      state === 'generated' ? AREA_DRAWING.FILL_COLOR_GENERATED : AREA_DRAWING.FILL_COLOR_DEFAULT
+      state === 'generated' ? getCssColorHex('--color-success-hover') : getCssColorHex('--color-success-light')
     );
     mat.opacity =
       state === 'generated' ? AREA_DRAWING.FILL_OPACITY_GENERATED : AREA_DRAWING.FILL_OPACITY_DEFAULT;
@@ -378,7 +379,7 @@ export class AreaDrawingManager {
 
     const geo = new THREE.SphereGeometry(AREA_DRAWING.POINT_PREVIEW_SIZE, 8, 8);
     const mat = new THREE.MeshBasicMaterial({
-      color: AREA_DRAWING.POINT_PREVIEW_COLOR,
+      color: getCssColorHex('--color-success'),
       depthTest: false,
       depthWrite: false,
       transparent: true,
@@ -541,7 +542,7 @@ export class AreaDrawingManager {
 
     const geometry = new THREE.BufferGeometry().setFromPoints(points);
     const material = new THREE.LineBasicMaterial({
-      color: AREA_DRAWING.LINE_COLOR,
+      color: getCssColorHex('--color-success'),
       depthTest: false,
       depthWrite: false,
       linewidth: 2,
@@ -583,7 +584,7 @@ export class AreaDrawingManager {
   private addPointMarker(position: THREE.Vector3): void {
     const geo = new THREE.SphereGeometry(0.06, 8, 8);
     const mat = new THREE.MeshBasicMaterial({
-      color: AREA_DRAWING.LINE_COLOR,
+      color: getCssColorHex('--color-success'),
       depthTest: false,
       depthWrite: false,
     });
@@ -648,7 +649,7 @@ export class AreaDrawingManager {
     geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
 
     const mat = new THREE.LineBasicMaterial({
-      color: AREA_DRAWING.LINE_COLOR,
+      color: getCssColorHex('--color-success'),
       depthTest: false,
       depthWrite: false,
       linewidth: 2,
@@ -693,7 +694,7 @@ export class AreaDrawingManager {
 
     const isGenerated = state === 'generated';
     const mat = new THREE.MeshBasicMaterial({
-      color: isGenerated ? AREA_DRAWING.FILL_COLOR_GENERATED : AREA_DRAWING.FILL_COLOR_DEFAULT,
+      color: isGenerated ? getCssColorHex('--color-success-hover') : getCssColorHex('--color-success-light'),
       transparent: true,
       opacity: isGenerated ? AREA_DRAWING.FILL_OPACITY_GENERATED : AREA_DRAWING.FILL_OPACITY_DEFAULT,
       side: THREE.DoubleSide,
@@ -724,12 +725,13 @@ export class AreaDrawingManager {
 
     // Redraw after resize
     ctx.font = `bold ${fontSize}px sans-serif`;
-    ctx.fillStyle = 'rgba(16, 185, 129, 0.85)';
+    const successColor = getComputedStyle(document.documentElement).getPropertyValue('--color-success').trim() || '#10B981';
+    ctx.fillStyle = `color-mix(in srgb, ${successColor} 85%, transparent)`;
     ctx.beginPath();
     ctx.roundRect(0, 0, canvas.width, canvas.height, 4);
     ctx.fill();
 
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = 'white';
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'center';
     ctx.fillText(text, canvas.width / 2, canvas.height / 2);

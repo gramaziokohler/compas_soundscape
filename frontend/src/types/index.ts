@@ -147,6 +147,7 @@ export interface SoundGenerationConfig {
   spl_db?: number; // SPL level from LLM estimation
   interval_seconds?: number; // Playback interval from LLM estimation
   type?: CardType; // Card type from CardType (single source of truth)
+  error?: string | null; // Per-card error message
   // Uploaded audio fields (when bypassing generation)
   uploadedAudioBuffer?: AudioBuffer; // Audio buffer for playback
   uploadedAudioInfo?: SEDAudioInfo; // Audio metadata for display

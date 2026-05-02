@@ -1,176 +1,127 @@
 """
 Sound Event Detection (SED) Analysis Router
 
-API endpoints for analyzing audio files to detect sound events.
+POST /api/analyze-sound-events
+  Saves uploaded file, enqueues SED job, returns task_id immediately.
+
+GET  /api/sed-analysis-status/{task_id}
+  Poll for progress, queue position, or completed result.
+
+POST /api/cancel-sed-analysis/{task_id}
+  Hard-kill the running subprocess.
+
+GET  /api/sed-model-info
+  Static YAMNet model info (no model loading required).
 """
 
 import os
+import uuid
+from pathlib import Path
+
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form
-from typing import Optional
-from services.sed_service import SEDService
+
+from services.sed_worker import run_sed_analysis
+from services.task_queue import unified_queue, make_subprocess_runner
+from models.schemas import SEDAnalysisStartResponse, SEDAnalysisStatusResponse
+from config.constants import (
+    TEMP_UPLOADS_DIR,
+    TEMP_SIMULATIONS_DIR,
+    SED_TASK_CLEANUP_DELAY_SECONDS,
+    TARGET_SAMPLE_RATE,
+    FRAME_HOP_SECONDS,
+    FRAME_WINDOW_SECONDS,
+)
 
 router = APIRouter()
 
-# Global SED service instance (initialized on first use)
-_sed_service: Optional[SEDService] = None
+TEMP_DIR = Path(TEMP_SIMULATIONS_DIR)
+TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def get_sed_service() -> SEDService:
-    """
-    Get or initialize the SED service (singleton pattern).
-
-    Lazy initialization ensures YAMNet model is only loaded when needed.
-    This avoids increasing startup time if SED features aren't used.
-
-    Returns:
-        SEDService: Initialized SED service instance
-    """
-    global _sed_service
-    if _sed_service is None:
-        _sed_service = SEDService()
-    return _sed_service
-
-
-@router.post("/api/analyze-sound-events")
+@router.post("/api/analyze-sound-events", response_model=SEDAnalysisStartResponse)
 async def analyze_sound_events(
     file: UploadFile = File(...),
     num_sounds: int = Form(10),
     analyze_amplitudes: bool = Form(True),
     analyze_durations: bool = Form(True),
-    top_n_classes: int = Form(100)
+    top_n_classes: int = Form(100),
 ):
-    """
-    Analyze uploaded audio file to detect sound events.
+    task_id = str(uuid.uuid4())
 
-    Request:
-        - file: Audio file (wav, mp3, flac, etc.)
-        - num_sounds: Number of top sound events to return (default: 10)
-        - analyze_amplitudes: Whether to calculate amplitude statistics (default: True)
-        - top_n_classes: Maximum classes to analyze (default: 100)
-
-    Response:
-        {
-            "success": bool,
-            "audio_info": {
-                "duration": float,
-                "sample_rate": int,
-                "num_samples": int,
-                "channels": "Mono",
-                "filename": str
-            },
-            "detected_sounds": [
-                {
-                    "name": str,
-                    "confidence": float (0-1),
-                    "max_amplitude_db": float | null,
-                    "max_amplitude_0_1": float | null,
-                    "avg_amplitude_db": float | null,
-                    "avg_amplitude_0_1": float | null,
-                    "max_detection_duration_sec": float | null,
-                    "max_silence_duration_sec": float | null
-                },
-                ...
-            ],
-            "total_classes_analyzed": int
-        }
-
-    Technical details:
-        - Uses FastAPI's Form() to parse multipart/form-data
-        - File is saved temporarily then analyzed
-        - Cleanup happens in finally block to ensure temp file removal
-    """
-    from config.constants import TEMP_UPLOADS_DIR
+    # Save uploaded file before enqueuing (file stream must be consumed in this request)
     os.makedirs(TEMP_UPLOADS_DIR, exist_ok=True)
-    temp_path = os.path.join(TEMP_UPLOADS_DIR, file.filename)
+    audio_path = os.path.join(TEMP_UPLOADS_DIR, f"sed_upload_{task_id}_{file.filename}")
 
     try:
-        # Save uploaded file to temporary location
-        print(f"Receiving audio file: {file.filename}")
-        with open(temp_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
+        content = await file.read()
+        with open(audio_path, "wb") as f:
+            f.write(content)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to save uploaded file: {str(exc)}")
 
-        print(f"Analyzing sound events (top {num_sounds} sounds)...")
+    progress_file = str(TEMP_DIR / f"sed_progress_{task_id}.json")
+    result_file = str(TEMP_DIR / f"sed_result_{task_id}.json")
 
-        # Get SED service (lazy initialization)
-        sed_service = get_sed_service()
+    worker_kwargs = dict(
+        task_id=task_id,
+        progress_file=progress_file,
+        result_file=result_file,
+        audio_file_path=audio_path,
+        num_sounds=num_sounds,
+        top_n_classes=top_n_classes,
+        analyze_amplitudes=analyze_amplitudes,
+        analyze_durations=analyze_durations,
+    )
 
-        # Analyze the audio file
-        analysis_result = sed_service.analyze_audio_file(
-            file_path=temp_path,
-            top_n_classes=top_n_classes,
-            analyze_amplitudes=analyze_amplitudes,
-            analyze_durations=analyze_durations
-        )
+    run_fn = make_subprocess_runner(
+        run_sed_analysis,
+        worker_kwargs,
+        progress_file,
+        result_file,
+        error_prefix="SED analysis",
+    )
 
-        if not analysis_result["success"]:
-            raise HTTPException(status_code=500, detail=analysis_result.get("error", "Analysis failed"))
+    pos, total = unified_queue.enqueue(task_id, "sed", run_fn, SED_TASK_CLEANUP_DELAY_SECONDS)
+    print(f"SED analysis {task_id} queued at position {pos} of {total}")
+    return SEDAnalysisStartResponse(task_id=task_id)
 
-        # Extract top N detected sounds
-        all_results = analysis_result["results"]
-        detected_sounds = all_results[:num_sounds]
 
-        # Format response for frontend
-        # Rename fields to be more user-friendly
-        formatted_sounds = []
-        for sound in detected_sounds:
-            formatted = {
-                "name": sound["name"],
-                "confidence": sound["mean_score"],
-                "max_amplitude_db": sound["max_amplitude_db"],
-                "max_amplitude_0_1": sound["max_amplitude_0_1"],
-                "avg_amplitude_db": sound["avg_amplitude_db"],
-                "avg_amplitude_0_1": sound["avg_amplitude_0_1"],
-                "max_detection_duration_sec": sound["max_detection_duration_sec"],
-                "max_silence_duration_sec": sound["max_silence_duration_sec"],
-                "detection_segments": sound.get("detection_segments", []),
-            }
-            formatted_sounds.append(formatted)
+@router.get("/api/sed-analysis-status/{task_id}", response_model=SEDAnalysisStatusResponse)
+async def get_sed_analysis_status(task_id: str):
+    task = unified_queue.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="SED analysis task not found")
 
-        # Enhance audio_info with additional metadata
-        audio_info = analysis_result["audio_info"]
-        audio_info["channels"] = "Mono"  # Always mono after preprocessing
-        audio_info["filename"] = file.filename
+    q_pos, q_total = unified_queue.get_queue_status(task_id)
+    status_str = f"Queued — position {q_pos} of {q_total}" if q_pos is not None else task.status
 
-        print(f"✓ Analysis complete: {len(formatted_sounds)} sounds detected")
+    return SEDAnalysisStatusResponse(
+        task_id=task_id,
+        progress=task.progress,
+        status=status_str,
+        completed=task.completed,
+        cancelled=task.cancelled,
+        error=task.error,
+        result=task.result if (task.completed and not task.error and not task.cancelled) else None,
+        queue_position=q_pos,
+        queue_total=q_total,
+    )
 
-        return {
-            "success": True,
-            "audio_info": audio_info,
-            "detected_sounds": formatted_sounds,
-            "total_classes_analyzed": len(all_results)
-        }
 
-    except HTTPException:
-        raise  # Re-raise HTTP exceptions
-    except Exception as e:
-        print(f"Error analyzing sound events: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to analyze audio: {str(e)}")
-    finally:
-        # Cleanup: remove temporary file
-        if os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except Exception as e:
-                print(f"Warning: Failed to remove temp file {temp_path}: {e}")
+@router.post("/api/cancel-sed-analysis/{task_id}")
+async def cancel_sed_analysis(task_id: str):
+    if not unified_queue.get_task(task_id):
+        raise HTTPException(status_code=404, detail="SED analysis task not found")
+    unified_queue.cancel(task_id)
+    return {"cancelled": True}
 
 
 @router.get("/api/sed-model-info")
 async def get_sed_model_info():
-    """
-    Get information about the SED model.
-
-    Response:
-        {
-            "model_name": "YAMNet",
-            "num_classes": 521,
-            "sample_rate": 16000,
-            "frame_hop_seconds": 0.48,
-            "frame_window_seconds": 0.96
-        }
-    """
-    try:
-        sed_service = get_sed_service()
-        return sed_service.get_model_info()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get model info: {str(e)}")
+    return {
+        "model_name": "YAMNet",
+        "num_classes": 521,
+        "sample_rate": TARGET_SAMPLE_RATE,
+        "frame_hop_seconds": FRAME_HOP_SECONDS,
+        "frame_window_seconds": FRAME_WINDOW_SECONDS,
+    }

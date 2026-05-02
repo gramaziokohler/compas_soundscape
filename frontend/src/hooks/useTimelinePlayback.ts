@@ -6,44 +6,40 @@ import { AUDIO_TIMELINE } from '@/utils/constants';
 
 interface UseTimelinePlaybackProps {
   sounds: TimelineSound[];
-  duration?: number; // Optional timeline duration in ms
-  onEnd?: () => void; // Optional callback when the timeline reaches the end
+  duration?: number;
+  onEnd?: () => void;
 }
 
 /**
- * Custom hook for managing audio timeline playback state
+ * Custom hook for managing audio timeline playback state.
  *
- * Features:
- * - Play/Pause/Stop controls
- * - Real-time current time tracking
- * - Automatic loop when reaching the end
- * - Reset on stop
- *
- * @param sounds - Array of scheduled sounds to display on timeline
- * @param duration - Optional timeline duration in milliseconds (default: 60 seconds)
- * @param onEnd - Optional callback when the timeline reaches the end
+ * End detection uses a useEffect (not a closure flag inside the rAF updater) because
+ * React 18 batches state updates — the functional updater passed to setPlaybackState
+ * runs asynchronously during React's render phase, AFTER the synchronous code that
+ * followed the setState call has already executed. A closure variable set inside the
+ * updater is therefore always stale at the check site. The effect fires reliably after
+ * the state settles.
  */
 export function useTimelinePlayback({ sounds, duration = AUDIO_TIMELINE.DEFAULT_DURATION_MS, onEnd }: UseTimelinePlaybackProps) {
   const [playbackState, setPlaybackState] = useState<TimelinePlaybackState>({
     isPlaying: false,
     currentTime: 0,
-    duration
+    duration,
   });
 
   const animationFrameRef = useRef<number | null>(null);
   const lastUpdateTimeRef = useRef<number | null>(null);
   const onEndRef = useRef(onEnd);
+  /** Guard so the effect never fires onEnd twice for the same natural end event. */
+  const onEndFiredRef = useRef(false);
 
   useEffect(() => {
     onEndRef.current = onEnd;
   }, [onEnd]);
 
-  /**
-   * Animation loop for updating current time
-   */
   const updatePlaybackTime = useCallback(() => {
     const now = performance.now();
-    
+
     if (lastUpdateTimeRef.current === null) {
       lastUpdateTimeRef.current = now;
     }
@@ -51,52 +47,58 @@ export function useTimelinePlayback({ sounds, duration = AUDIO_TIMELINE.DEFAULT_
     const deltaTime = now - lastUpdateTimeRef.current;
     lastUpdateTimeRef.current = now;
 
-    let reachedEnd = false;
-
     setPlaybackState((prev) => {
       if (!prev.isPlaying) return prev;
 
       const newTime = prev.currentTime + deltaTime;
 
       if (newTime >= prev.duration) {
-        reachedEnd = true;
-        return {
-          ...prev,
-          currentTime: prev.duration,
-          isPlaying: false
-        };
+        return { ...prev, currentTime: prev.duration, isPlaying: false };
       }
 
-      return {
-        ...prev,
-        currentTime: newTime,
-      };
+      return { ...prev, currentTime: newTime };
     });
 
-    if (reachedEnd) {
-      // Allow state to settle before triggering end callback
-      setTimeout(() => {
-        if (onEndRef.current) {
-          onEndRef.current();
-        }
-      }, 0);
-    } else {
-      animationFrameRef.current = requestAnimationFrame(updatePlaybackTime);
-    }
+    // Always schedule the next frame; it will be cancelled by stop/pause or by the
+    // end-detection effect below once the state update settles.
+    animationFrameRef.current = requestAnimationFrame(updatePlaybackTime);
   }, []);
 
   /**
-   * Play the timeline
+   * Detect the natural end of the timeline.
+   *
+   * Fires after React processes the state update that sets isPlaying=false at
+   * currentTime=duration. A closure variable inside updatePlaybackTime cannot be used
+   * for this because React 18 calls the functional updater asynchronously — it runs
+   * during the render phase, which happens after the synchronous rAF callback body has
+   * already finished executing.
    */
+  useEffect(() => {
+    const atEnd =
+      !playbackState.isPlaying &&
+      playbackState.currentTime >= playbackState.duration &&
+      playbackState.currentTime > 0;
+
+    if (atEnd && !onEndFiredRef.current) {
+      onEndFiredRef.current = true;
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      onEndRef.current?.();
+    } else if (!atEnd) {
+      // Reset guard when we leave the "at end" state (e.g. after stop() resets currentTime).
+      onEndFiredRef.current = false;
+    }
+  }, [playbackState.isPlaying, playbackState.currentTime, playbackState.duration]);
+
   const play = useCallback(() => {
+    onEndFiredRef.current = false;
     setPlaybackState((prev) => ({ ...prev, isPlaying: true }));
-    lastUpdateTimeRef.current = null; // Reset timing
+    lastUpdateTimeRef.current = null;
     animationFrameRef.current = requestAnimationFrame(updatePlaybackTime);
   }, [updatePlaybackTime]);
 
-  /**
-   * Pause the timeline
-   */
   const pause = useCallback(() => {
     setPlaybackState((prev) => ({ ...prev, isPlaying: false }));
     if (animationFrameRef.current !== null) {
@@ -106,15 +108,9 @@ export function useTimelinePlayback({ sounds, duration = AUDIO_TIMELINE.DEFAULT_
     lastUpdateTimeRef.current = null;
   }, []);
 
-  /**
-   * Stop the timeline and reset to beginning
-   */
   const stop = useCallback(() => {
-    setPlaybackState((prev) => ({
-      ...prev,
-      isPlaying: false,
-      currentTime: 0,
-    }));
+    onEndFiredRef.current = false;
+    setPlaybackState((prev) => ({ ...prev, isPlaying: false, currentTime: 0 }));
     if (animationFrameRef.current !== null) {
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
@@ -122,9 +118,6 @@ export function useTimelinePlayback({ sounds, duration = AUDIO_TIMELINE.DEFAULT_
     lastUpdateTimeRef.current = null;
   }, []);
 
-  /**
-   * Seek to a specific time (used for click-to-seek functionality)
-   */
   const seekTo = useCallback((timeMs: number) => {
     setPlaybackState((prev) => ({
       ...prev,
@@ -132,7 +125,6 @@ export function useTimelinePlayback({ sounds, duration = AUDIO_TIMELINE.DEFAULT_
     }));
   }, []);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (animationFrameRef.current !== null) {
@@ -141,16 +133,9 @@ export function useTimelinePlayback({ sounds, duration = AUDIO_TIMELINE.DEFAULT_
     };
   }, []);
 
-  // Update duration if it changes
   useEffect(() => {
     setPlaybackState((prev) => ({ ...prev, duration }));
   }, [duration]);
 
-  return {
-    playbackState,
-    play,
-    pause,
-    stop,
-    seekTo,
-  };
+  return { playbackState, play, pause, stop, seekTo };
 }

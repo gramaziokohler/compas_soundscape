@@ -1,7 +1,5 @@
 "use client";
 
-import { UI_COLORS } from "@/utils/constants";
-
 interface VerticalVolumeSliderProps {
   value: number; // 0 to 1
   onChange: (value: number) => void;
@@ -57,8 +55,8 @@ export function VerticalVolumeSlider({
   // Calculate fill percentage (inverted for vertical slider)
   const fillPercentage = value * 100;
   
-  // Determine color based on volume level (same logic as accent-primary in horizontal)
-  const fillColor = value === 0 ? UI_COLORS.WARNING : UI_COLORS.PRIMARY;
+  // Determine color: muted (0) uses secondary-hover (grey), otherwise primary
+  const fillColor = value === 0 ? 'var(--color-secondary-hover)' : 'var(--color-primary)';
 
   return (
     <div 
@@ -72,9 +70,9 @@ export function VerticalVolumeSlider({
       <div 
         className="absolute rounded-lg pointer-events-none"
         style={{
-          width: '8px', // h-2 equivalent (horizontal slider track height)
+          width: '8px',
           height: '100px',
-          backgroundColor: UI_COLORS.NEUTRAL_700, // Same as horizontal slider
+          backgroundColor: 'var(--color-secondary)',
           left: '50%',
           transform: 'translateX(-50%)'
         }}

@@ -1,7 +1,7 @@
 "use client";
 
 import { ReactNode } from "react";
-import { UI_COLORS, TAILWIND_TEXT_SIZE, TAILWIND_ROUNDED, TAILWIND_TRANSITION } from "@/utils/constants";
+import { TAILWIND_TEXT_SIZE, TAILWIND_ROUNDED, TAILWIND_TRANSITION } from "@/utils/constants";
 
 interface ButtonGroupItem {
   label: string;
@@ -61,12 +61,12 @@ export function ButtonGroup({ buttons, className = "" }: ButtonGroupProps) {
           key={index}
           onClick={button.onClick}
           className={`flex-1 py-2 ${TAILWIND_ROUNDED.MD} font-medium ${TAILWIND_TEXT_SIZE.SM} ${TAILWIND_TRANSITION.COLORS} ${
-            button.isActive ? "text-white" : "text-gray-300"
+            button.isActive ? 'text-white' : 'text-neutral-300'
           }`}
           style={{
             backgroundColor: button.isActive
-              ? button.activeColor || UI_COLORS.PRIMARY
-              : button.inactiveColor || UI_COLORS.NEUTRAL_700
+              ? button.activeColor || 'var(--color-primary)'
+              : button.inactiveColor || 'var(--color-secondary)'
           }}
           title={button.title}
         >

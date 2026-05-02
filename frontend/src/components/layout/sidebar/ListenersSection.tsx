@@ -10,7 +10,6 @@ import { SingleListenerContent } from './listeners/SingleListenerContent';
 import { GridListenerContent } from './listeners/GridListenerContent';
 import { useGridListenersStore } from '@/store/gridListenersStore';
 import { useReceiversStore } from '@/store/receiversStore';
-import { RECEIVER_CONFIG } from '@/utils/constants';
 
 // Unified item type satisfying CardBaseConfig
 type SingleListenerConfig = ReceiverData & { type: 'listener'; display_name?: string };
@@ -36,7 +35,7 @@ interface ListenersSectionProps {
   collapseAllTrigger?: number;
 }
 
-const LISTENER_COLOR = `#${RECEIVER_CONFIG.COLOR.toString(16).padStart(6, '0')}`;
+const LISTENER_COLOR = 'var(--color-receiver)';
 
 const AVAILABLE_TYPES: CardTypeOption[] = [
   { type: 'listener', label: 'Single listener', enabled: true },

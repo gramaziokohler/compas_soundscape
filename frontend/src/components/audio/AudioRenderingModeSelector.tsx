@@ -12,7 +12,6 @@
 'use client';
 
 import React from 'react';
-import { UI_COLORS } from '@/utils/constants';
 
 export type AudioRenderingMode = 'anechoic' | 'resonance' | 'precise';
 
@@ -33,7 +32,7 @@ export function AudioRenderingModeSelector({
       onChange={(e) => onModeChange(e.target.value as AudioRenderingMode)}
       className={`flex-1 text-xs px-2 py-1 text-white rounded focus:outline-none focus:ring-1 focus:ring-white ${className}`}
       style={{
-        backgroundColor: UI_COLORS.PRIMARY,
+        backgroundColor: 'var(--color-primary)',
         borderRadius: '8px'
       }}
     >

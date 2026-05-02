@@ -19,20 +19,17 @@ import {
 } from '@/utils/acousticMetrics';
 import {
   CHORAS_DEFAULT_METHOD,
-  CHORAS_DE_DEFAULT_SIM_LEN_TYPE,
-  CHORAS_DE_DEFAULT_EDT,
-  CHORAS_DE_DEFAULT_IR_LENGTH,
   CHORAS_DE_DEFAULT_C0,
   CHORAS_DE_DEFAULT_LC,
   CHORAS_DG_DEFAULT_FREQ_UPPER,
   CHORAS_DG_DEFAULT_C0,
   CHORAS_DG_DEFAULT_RHO0,
-  CHORAS_DG_DEFAULT_IR_LENGTH,
   CHORAS_DG_DEFAULT_POLY_ORDER,
   CHORAS_DG_DEFAULT_PPW,
   CHORAS_DG_DEFAULT_CFL,
 } from '@/utils/constants';
 import { useErrorsStore } from './errorsStore';
+import { useUIStore } from './uiStore';
 import type { SourceReceiverIRMapping } from '@/types/audio';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -50,16 +47,12 @@ export interface ChorasMaterial {
 export interface ChorasSimulationSettings {
   simulation_method: 'DE' | 'DG';
   // DE settings
-  de_sim_len_type: 'ir_length' | 'edt';
-  de_edt: number;
-  de_ir_length: number;
   de_c0: number;
   de_lc: number;
   // DG settings
   dg_freq_upper_limit: number;
   dg_c0: number;
   dg_rho0: number;
-  dg_ir_length: number;
   dg_poly_order: number;
   dg_ppw: number;
   dg_cfl: number;
@@ -114,15 +107,11 @@ function createDefaultInstanceState(sharedMaterials: ChorasMaterial[]): ChorasIn
     faceMaterialAssignments: {},
     simulationSettings: {
       simulation_method: CHORAS_DEFAULT_METHOD as 'DE' | 'DG',
-      de_sim_len_type: CHORAS_DE_DEFAULT_SIM_LEN_TYPE as 'ir_length' | 'edt',
-      de_edt: CHORAS_DE_DEFAULT_EDT,
-      de_ir_length: CHORAS_DE_DEFAULT_IR_LENGTH,
       de_c0: CHORAS_DE_DEFAULT_C0,
       de_lc: CHORAS_DE_DEFAULT_LC,
       dg_freq_upper_limit: CHORAS_DG_DEFAULT_FREQ_UPPER,
       dg_c0: CHORAS_DG_DEFAULT_C0,
       dg_rho0: CHORAS_DG_DEFAULT_RHO0,
-      dg_ir_length: CHORAS_DG_DEFAULT_IR_LENGTH,
       dg_poly_order: CHORAS_DG_DEFAULT_POLY_ORDER,
       dg_ppw: CHORAS_DG_DEFAULT_PPW,
       dg_cfl: CHORAS_DG_DEFAULT_CFL,
@@ -406,6 +395,9 @@ export const useChorasStore = create<ChorasStoreState>()(
 
             const { simulationSettings } = inst;
 
+            // Read global acoustic parameters (promoted from per-card UI)
+            const { globalSoundSpeed, globalMeshLc } = useUIStore.getState();
+
             // Start the simulation (non-blocking — returns simulation_id immediately)
             const { simulation_id } = await apiService.runChorasSimulationSpeckle(
               projectId,
@@ -415,15 +407,11 @@ export const useChorasStore = create<ChorasStoreState>()(
               simulationName,
               {
                 simulation_method:    simulationSettings.simulation_method,
-                de_sim_len_type:      simulationSettings.de_sim_len_type,
-                de_edt:               simulationSettings.de_edt,
-                de_ir_length:         simulationSettings.de_ir_length,
-                de_c0:                simulationSettings.de_c0,
-                de_lc:                simulationSettings.de_lc,
+                de_c0:                globalSoundSpeed,
+                de_lc:                globalMeshLc,
                 dg_freq_upper_limit:  simulationSettings.dg_freq_upper_limit,
-                dg_c0:                simulationSettings.dg_c0,
+                dg_c0:                globalSoundSpeed,
                 dg_rho0:              simulationSettings.dg_rho0,
-                dg_ir_length:         simulationSettings.dg_ir_length,
                 dg_poly_order:        simulationSettings.dg_poly_order,
                 dg_ppw:               simulationSettings.dg_ppw,
                 dg_cfl:               simulationSettings.dg_cfl,

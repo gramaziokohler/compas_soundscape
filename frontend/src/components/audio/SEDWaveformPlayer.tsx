@@ -2,7 +2,7 @@
 
 import { useRef, useEffect, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
-import { API_BASE_URL, UI_COLORS } from '@/utils/constants';
+import { API_BASE_URL } from '@/utils/constants';
 
 interface DetectionSegment {
   start_sec: number;
@@ -66,7 +66,7 @@ export function SEDWaveformPlayer({
 
     const ws = WaveSurfer.create({
       container: containerRef.current,
-      waveColor: '#9CA3AF',
+      waveColor: 'var(--color-secondary-hover)',
       progressColor: 'var(--color-success)',
       cursorColor: 'var(--color-success)',
       cursorWidth: 2,
@@ -151,7 +151,7 @@ export function SEDWaveformPlayer({
           border: `2px solid var(--color-success)`,
           borderRadius: '8px',
           overflow: 'hidden',
-          backgroundColor: UI_COLORS.DARK_BG,
+          backgroundColor: 'var(--background)',
         }}
       >
         {/* WaveSurfer mounts here */}
@@ -189,7 +189,7 @@ export function SEDWaveformPlayer({
 
       {/* Time + controls row */}
       <div className="flex items-center justify-between">
-        <span className="text-xs" style={{ color: UI_COLORS.NEUTRAL_400 }}>
+        <span className="text-xs text-neutral-400">
           {formatTime(currentTime)} / {formatTime(totalDur)}
         </span>
         <div className="flex items-center gap-2">
@@ -199,7 +199,7 @@ export function SEDWaveformPlayer({
             disabled={!isReady}
             className="w-8 h-8 flex items-center justify-center rounded-full transition-colors"
             style={{
-              backgroundColor: isPlaying ? 'var(--color-info, #0ea5e9)' : UI_COLORS.NEUTRAL_700,
+              backgroundColor: isPlaying ? 'var(--color-info)' : 'var(--color-secondary)',
               color: 'white',
               opacity: isReady ? 1 : 0.5,
             }}
@@ -222,7 +222,7 @@ export function SEDWaveformPlayer({
             disabled={!isReady}
             className="w-8 h-8 flex items-center justify-center rounded-full transition-colors"
             style={{
-              backgroundColor: UI_COLORS.NEUTRAL_700,
+              backgroundColor: 'var(--color-secondary)',
               color: 'white',
               opacity: isReady ? 1 : 0.5,
             }}

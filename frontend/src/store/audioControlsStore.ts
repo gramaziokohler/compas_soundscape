@@ -17,7 +17,7 @@ import { create } from 'zustand';
 import { temporal } from 'zundo';
 import { devtools } from 'zustand/middleware';
 import type { SoundState } from '@/types';
-import { AUDIO_PLAYBACK } from '@/utils/constants';
+import { AUDIO_PLAYBACK, DEFAULT_SPL_DB } from '@/utils/constants';
 
 export interface AudioControlsStoreState {
   // ── State ──
@@ -31,6 +31,8 @@ export interface AudioControlsStoreState {
   previewingSoundId: string | null;
   /** Absolute jitter applied to each iteration's playback interval (seconds). */
   intervalJitterSeconds: number;
+  /** Fixed timeline length in milliseconds — both visual and audio are bounded to this. */
+  timelineDurationMs: number;
   /** Internal: synced from useSoundGeneration. Used by playAll / stopAll / handleVariantChange. */
   _generatedSounds: any[];
 
@@ -46,6 +48,12 @@ export interface AudioControlsStoreState {
   handleSolo: (soundId: string) => void;
   setSoundTrim: (soundId: string, trim: { start: number; end: number }) => void;
   setIntervalJitter: (seconds: number) => void;
+  setTimelineDurationMs: (ms: number) => void;
+  resetTimelineDurationMs: () => void;
+  /** Global base SPL reference level for all generated sounds (dB). */
+  globalBaseSplDb: number;
+  setGlobalBaseSplDb: (db: number) => void;
+  resetGlobalBaseSplDb: () => void;
   handlePreviewPlayPause: (soundId: string) => void;
   handlePreviewStop: (soundId: string) => void;
   stopSoundcardPreview: () => void;
@@ -70,6 +78,8 @@ export const audioControlsPartialize = (state: AudioControlsStoreState) => ({
   mutedSounds: new Set(state.mutedSounds),
   soloedSound: state.soloedSound,
   intervalJitterSeconds: state.intervalJitterSeconds,
+  timelineDurationMs: state.timelineDurationMs,
+  globalBaseSplDb: state.globalBaseSplDb,
 });
 
 export const useAudioControlsStore = create<AudioControlsStoreState>()(
@@ -86,6 +96,8 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         soloedSound: null,
         previewingSoundId: null,
         intervalJitterSeconds: AUDIO_PLAYBACK.DEFAULT_INTERVAL_JITTER_SECONDS,
+        timelineDurationMs: AUDIO_PLAYBACK.TIMELINE_FIXED_DURATION_MS,
+        globalBaseSplDb: DEFAULT_SPL_DB,
         _generatedSounds: [],
 
         // ── Sync ──
@@ -200,6 +212,18 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         setIntervalJitter: (seconds) =>
           set({ intervalJitterSeconds: seconds }, false, 'audio/setIntervalJitter'),
 
+        setTimelineDurationMs: (ms) =>
+          set({ timelineDurationMs: ms }, false, 'audio/setTimelineDurationMs'),
+
+        resetTimelineDurationMs: () =>
+          set({ timelineDurationMs: AUDIO_PLAYBACK.TIMELINE_FIXED_DURATION_MS }, false, 'audio/resetTimelineDurationMs'),
+
+        setGlobalBaseSplDb: (db) =>
+          set({ globalBaseSplDb: db }, false, 'audio/setGlobalBaseSplDb'),
+
+        resetGlobalBaseSplDb: () =>
+          set({ globalBaseSplDb: DEFAULT_SPL_DB }, false, 'audio/resetGlobalBaseSplDb'),
+
         handlePreviewPlayPause: (soundId) => {
           const { individualSoundStates } = get();
           if (Object.values(individualSoundStates).some((s) => s === 'playing')) {
@@ -274,18 +298,21 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             'audio/pauseAll',
           ),
 
-        stopAll: () => {
-          const { _generatedSounds } = get();
+        stopAll: () =>
           set(
             (state) => {
-              const newStates = { ...state.individualSoundStates };
-              _generatedSounds.forEach((s) => { newStates[s.id] = 'stopped'; });
+              // Stop ALL tracked sounds — not just _generatedSounds, which may lag behind
+              // individualSoundStates and leave orphaned 'playing' entries that cause
+              // the sync effect to restart the timeline after it ends naturally.
+              const newStates: Record<string, SoundState> = {};
+              Object.keys(state.individualSoundStates).forEach((id) => {
+                newStates[id] = 'stopped';
+              });
               return { individualSoundStates: newStates };
             },
             false,
             'audio/stopAll',
-          );
-        },
+          ),
 
         isAnyPlaying: () =>
           Object.values(get().individualSoundStates).some((s) => s === 'playing'),
@@ -317,7 +344,9 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         past.mutedSounds.size === current.mutedSounds.size &&
         [...past.mutedSounds].every((id) => current.mutedSounds.has(id)) &&
         past.soloedSound === current.soloedSound &&
-        past.intervalJitterSeconds === current.intervalJitterSeconds,
+        past.intervalJitterSeconds === current.intervalJitterSeconds &&
+        past.timelineDurationMs === current.timelineDurationMs &&
+        past.globalBaseSplDb === current.globalBaseSplDb,
     },
   ),
 );

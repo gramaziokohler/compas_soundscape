@@ -24,7 +24,7 @@
 import type { IAudioMode } from '../core/interfaces/IAudioMode';
 import type { Position, Orientation } from '@/types/audio';
 import { AudioMode } from '@/types/audio';
-import { AUDIO_CONTROL } from '@/utils/constants';
+import { AUDIO_CONTROL, DEFAULT_SPEED_OF_SOUND } from '@/utils/constants';
 
 // Dynamic import type
 type ResonanceAudioClass = any;
@@ -57,6 +57,7 @@ export class ResonanceMode implements IAudioMode {
   private ResonanceAudio: ResonanceAudioClass | null = null; // Class reference
   private masterGain: GainNode | null = null;
   private enabled: boolean = true;
+  private speedOfSound: number = DEFAULT_SPEED_OF_SOUND;
 
   // Track current room properties
   private currentRoomDimensions: any = DEFAULT_ROOM_DIMENSIONS;
@@ -114,8 +115,9 @@ export class ResonanceMode implements IAudioMode {
   /**
    * Initialize Resonance Audio scene
    */
-  async initialize(audioContext: AudioContext): Promise<void> {
+  async initialize(audioContext: AudioContext, speedOfSound: number = DEFAULT_SPEED_OF_SOUND): Promise<void> {
     this.audioContext = audioContext;
+    this.speedOfSound = speedOfSound;
 
     try {
       console.log('[ResonanceMode] Initializing...');
@@ -130,6 +132,7 @@ export class ResonanceMode implements IAudioMode {
       // Create Resonance Audio scene
       this.resonanceAudioScene = new this.ResonanceAudio(audioContext, {
         ambisonicOrder: DEFAULT_AMBISONIC_ORDER,
+        speedOfSound: this.speedOfSound,
       });
 
       // Set room properties
@@ -536,6 +539,41 @@ export class ResonanceMode implements IAudioMode {
    */
   getRoomMaterials(): any {
     return { ...this.currentRoomMaterials };
+  }
+
+  /**
+   * Update speed of sound and reinitialize the Resonance Audio scene.
+   * Existing sources are re-registered so live playback is preserved.
+   */
+  async setSpeedOfSound(c: number): Promise<void> {
+    if (!this.audioContext || !this.ResonanceAudio) return;
+    this.speedOfSound = c;
+
+    // Snapshot existing sources so we can re-add them after reinit
+    const existingSources = Array.from(this.resonanceSources.entries());
+
+    // Disconnect old scene
+    if (this.resonanceAudioScene) {
+      try { this.resonanceAudioScene.output.disconnect(); } catch { /* ignore */ }
+    }
+
+    // Remove all sources from old scene
+    existingSources.forEach(([id]) => this.removeSource(id));
+
+    // Create a fresh scene with updated speed of sound
+    this.resonanceAudioScene = new this.ResonanceAudio(this.audioContext, {
+      ambisonicOrder: DEFAULT_AMBISONIC_ORDER,
+      speedOfSound: this.speedOfSound,
+    });
+    this.resonanceAudioScene.setRoomProperties(this.currentRoomDimensions, this.currentRoomMaterials);
+    if (this.masterGain) {
+      this.resonanceAudioScene.output.connect(this.masterGain);
+    }
+
+    // Re-add sources
+    for (const [id, src] of existingSources) {
+      await this.addSource(id, src.buffer, src.position);
+    }
   }
 
   /**

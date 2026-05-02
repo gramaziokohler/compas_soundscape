@@ -1,7 +1,10 @@
-import { UI_COLORS } from "@/utils/constants";
+interface UploadedFileLike {
+  name: string;
+  size: number;
+}
 
 interface FileUploadAreaProps {
-  file: File | null;
+  file: UploadedFileLike | null;
   isDragging: boolean;
   acceptedFormats: string;
   acceptedExtensions: string;
@@ -33,7 +36,7 @@ export function FileUploadArea({
       className={`relative border-2 border-dashed rounded-lg p-4 text-center transition-colors ${
         isDragging
           ? ''
-          : 'border-gray-300 dark:border-gray-600'
+          : 'border-neutral-300 dark:border-neutral-600'
       }`}
       style={{
         borderColor: isDragging ? 'var(--card-color, var(--color-primary))' : undefined,
@@ -46,13 +49,13 @@ export function FileUploadArea({
       <div className="flex flex-col items-center gap-1">
         {file ? (
           <>
-            <svg className="w-6 h-6" style={{ color: UI_COLORS.SUCCESS }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-6 h-6 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <p className="text-xs font-medium" style={{ color: UI_COLORS.NEUTRAL_700 }}>
+            <p className="text-xs font-medium text-neutral-700">
               {file.name}
             </p>
-            <p className="text-xs" style={{ color: UI_COLORS.NEUTRAL_500 }}>
+            <p className="text-xs text-neutral-500">
               {(file.size / 1024 / 1024).toFixed(2)} MB
             </p>
             <label
@@ -65,11 +68,11 @@ export function FileUploadArea({
           </>
         ) : (
           <>
-            <svg className="w-6 h-6" style={{ color: UI_COLORS.NEUTRAL_400 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-6 h-6 text-neutral-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
             </svg>
-            <p className="text-xs font-medium" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-              Drag & drop or
+            <p className="text-xs font-medium text-neutral-700">
+              Drag &amp; drop or
             </p>
             <label
               htmlFor={inputId}

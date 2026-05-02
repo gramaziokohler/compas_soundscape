@@ -43,6 +43,7 @@ from config.constants import (
     TEMP_SIMULATIONS_DIR,
     PYROOMACOUSTICS_DEFAULT_ABSORPTION,
     PYROOMACOUSTICS_TASK_CLEANUP_DELAY_SECONDS,
+    DEFAULT_SPEED_OF_SOUND,
 )
 
 router = APIRouter()
@@ -159,6 +160,7 @@ async def run_simulation_speckle(
     n_rays: int = Form(PYROOMACOUSTICS_RAY_TRACING_N_RAYS),
     object_scattering: str = Form("{}"),
     simulation_mode: str = Form(PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE),
+    sound_speed: float = Form(DEFAULT_SPEED_OF_SOUND),
     source_receiver_pairs: str = Form(...),
 ):
     """
@@ -220,6 +222,7 @@ async def run_simulation_speckle(
             ray_tracing=ray_tracing,
             air_absorption=air_absorption,
             n_rays=n_rays,
+            sound_speed=sound_speed,
             pairs_data=pairs_data,
             simulation_name=simulation_name,
             rir_output_dir=str(RIR_OUTPUT_DIR),

@@ -6,6 +6,7 @@ import { updateDraggableMeshes, disposeMeshes } from "@/lib/three/draggable-mesh
 import type { ReceiverData } from "@/types";
 // import type { BoundingBoxBounds } from "@/lib/three/BoundingBoxManager"; // Unused after spiral placement removal
 import { RECEIVER_CONFIG, OBJECT_LABEL } from "@/utils/constants";
+import { getCssColorHex } from "@/utils/utils";
 import { createLabelSprite, disposeLabelSprite } from "@/lib/three/label-sprite-factory";
 
 /**
@@ -145,8 +146,8 @@ export class ReceiverManager {
 
   
     const material = new SpeckleStandardMaterial({
-      color: RECEIVER_CONFIG.COLOR,
-      emissive: RECEIVER_CONFIG.COLOR,
+      color: getCssColorHex('--color-receiver'),
+      emissive: getCssColorHex('--color-receiver'),
       emissiveIntensity: 0.3,
       roughness: 0.3,
       metalness: 0.7,
@@ -208,8 +209,8 @@ export class ReceiverManager {
     const cubeGeom = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
 
     const material = new SpeckleStandardMaterial({
-      color: RECEIVER_CONFIG.COLOR,
-      emissive: RECEIVER_CONFIG.COLOR,
+      color: getCssColorHex('--color-receiver'),
+      emissive: getCssColorHex('--color-receiver'),
       emissiveIntensity: 0.3,
       roughness: 0.3,
       metalness: 0.7,
@@ -381,6 +382,16 @@ export class ReceiverManager {
         label.scale.set(h * (label.userData.aspectRatio as number || 3), h, 1);
       }
     });
+  }
+
+  /** Show or hide all receiver meshes. */
+  public setReceiversVisible(visible: boolean): void {
+    this.receiverMeshes.forEach(m => { m.visible = visible; });
+  }
+
+  /** Show or hide all receiver label sprites. */
+  public setLabelSpritesVisible(visible: boolean): void {
+    this.labelSprites.forEach(s => { s.visible = visible; });
   }
 
   /**

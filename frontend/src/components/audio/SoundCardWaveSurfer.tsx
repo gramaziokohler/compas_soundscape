@@ -2,7 +2,7 @@
 
 import { useRef, useEffect, useState, useCallback } from 'react';
 import WaveSurfer from 'wavesurfer.js';
-import { API_BASE_URL, UI_COLORS } from '@/utils/constants';
+import { API_BASE_URL } from '@/utils/constants';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { pauseStore, commitStore } from '@/store';
 
@@ -48,7 +48,7 @@ export function SoundCardWaveSurfer({
   silent = false,
   onPlayPause,
   onStop,
-  color = UI_COLORS.PRIMARY,
+  color = 'var(--color-primary)',
   soundId,
 }: SoundCardWaveSurferProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -118,9 +118,9 @@ export function SoundCardWaveSurfer({
 
     const wavesurfer = WaveSurfer.create({
       container: containerRef.current,
-      waveColor: '#9CA3AF',
-      progressColor: UI_COLORS.PRIMARY,
-      cursorColor: UI_COLORS.PRIMARY,
+      waveColor: 'var(--color-secondary-hover)',
+      progressColor: 'var(--color-primary)',
+      cursorColor: 'var(--color-primary)',
       cursorWidth: 2,
       height: 50,
       barWidth: 2,
@@ -375,8 +375,8 @@ export function SoundCardWaveSurfer({
       <div
         className="rounded overflow-hidden"
         style={{
-          border: `2px solid ${isMuted ? UI_COLORS.NEUTRAL_500 : color}`,
-          backgroundColor: UI_COLORS.DARK_BG,
+          border: `2px solid ${isMuted ? 'var(--color-secondary-hover)' : color}`,
+          backgroundColor: 'var(--background)',
           borderRadius: '8px',
           opacity: isMuted ? 0.5 : 1,
           position: 'relative',
@@ -443,7 +443,7 @@ export function SoundCardWaveSurfer({
               backgroundColor: color,
               pointerEvents: 'none',
               borderRadius: '2px',
-              zIndex: 10,
+              zIndex: 5,
             }}
           >
             {/* Grip nub */}
@@ -473,7 +473,7 @@ export function SoundCardWaveSurfer({
               backgroundColor: color,
               pointerEvents: 'none',
               borderRadius: '2px',
-              zIndex: 10,
+              zIndex: 5,
             }}
           >
             {/* Grip nub */}
@@ -496,7 +496,7 @@ export function SoundCardWaveSurfer({
       {/* Time display and controls */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="text-xs" style={{ color: UI_COLORS.NEUTRAL_400 }}>
+          <div className="text-xs text-neutral-400">
             {formatTime(currentTime)} / {formatTime(duration)}
           </div>
           {isTrimActive && (
@@ -515,7 +515,7 @@ export function SoundCardWaveSurfer({
                 onStop();
               }}
               className="text-xs px-1 rounded"
-              style={{ color: UI_COLORS.NEUTRAL_400, backgroundColor: 'transparent', border: `1px solid ${UI_COLORS.NEUTRAL_600}` }}
+              style={{ color: 'var(--color-secondary-hover)', backgroundColor: 'transparent', border: `1px solid var(--color-secondary-hover)` }}
               title="Clear trim"
             >
               ×
@@ -530,7 +530,7 @@ export function SoundCardWaveSurfer({
             disabled={!isReady}
             className="w-8 h-8 flex items-center justify-center rounded-full transition-colors"
             style={{
-              backgroundColor: isPlaying ? color : UI_COLORS.NEUTRAL_700,
+              backgroundColor: isPlaying ? color : 'var(--color-secondary)',
               color: 'white',
               opacity: isReady ? 1 : 0.5,
             }}
@@ -561,7 +561,7 @@ export function SoundCardWaveSurfer({
             disabled={!isReady}
             className="w-8 h-8 flex items-center justify-center rounded-full transition-colors"
             style={{
-              backgroundColor: UI_COLORS.NEUTRAL_700,
+              backgroundColor: 'var(--color-secondary)',
               color: 'white',
               opacity: isReady ? 1 : 0.5,
             }}

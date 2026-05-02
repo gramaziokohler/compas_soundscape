@@ -40,13 +40,13 @@ export function createLabelSprite(text: string): THREE.Sprite {
   ctx.font = font;
 
   // Background pill
-  ctx.fillStyle = OBJECT_LABEL.BG_COLOR;
+  ctx.fillStyle = 'rgba(20, 20, 20, 0.80)';
   ctx.beginPath();
   ctx.roundRect(0, 0, logicalW, logicalH, OBJECT_LABEL.BORDER_RADIUS);
   ctx.fill();
 
   // Label text
-  ctx.fillStyle = OBJECT_LABEL.TEXT_COLOR;
+  ctx.fillStyle = '#ffffff';
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'center';
   ctx.fillText(text, logicalW / 2, logicalH / 2);

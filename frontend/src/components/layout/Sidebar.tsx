@@ -9,7 +9,7 @@ import { ListenersSection } from "./sidebar/ListenersSection";
 import { AdvancedSettingsSection } from "./sidebar/AdvancedSettingsSection";
 import { VerticalTabButton } from "@/components/ui/VerticalTabButton";
 import { Icon } from "@/components/ui/Icon";
-import { UI_VERTICAL_TABS, UI_COLORS, UI_SIDEBAR_RESIZE } from "@/utils/constants";
+import { UI_VERTICAL_TABS, UI_SIDEBAR_RESIZE } from "@/utils/constants";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useTextGenerationStore } from "@/store/textGenerationStore";
 import type { SidebarProps } from "@/types/components";
@@ -188,7 +188,7 @@ export function Sidebar(props: SidebarProps) {
               style={{
                 width: `${UI_SIDEBAR_RESIZE.HANDLE_WIDTH}px`,
                 height: '100%',
-                backgroundColor: (isHandleHovered || isResizing) ? UI_COLORS.PRIMARY : 'transparent',
+                backgroundColor: (isHandleHovered || isResizing) ? 'var(--color-primary)' : 'transparent',
                 transition: 'background-color 150ms ease',
                 borderRadius: '2px',
               }}
@@ -356,6 +356,14 @@ export function Sidebar(props: SidebarProps) {
             onResetToDefaults={props.onResetAdvancedSettings}
             showAxesHelper={props.showAxesHelper}
             onShowAxesHelperChange={props.onShowAxesHelperChange}
+            showLabelSprites={props.showLabelSprites}
+            onShowLabelSpritesChange={props.onShowLabelSpritesChange}
+            showHoveringHighlight={props.showHoveringHighlight}
+            onShowHoveringHighlightChange={props.onShowHoveringHighlightChange}
+            showSoundSpheres={props.showSoundSpheres}
+            onShowSoundSpheresChange={props.onShowSoundSpheresChange}
+            showSceneListeners={props.showSceneListeners}
+            onShowSceneListenersChange={props.onShowSceneListenersChange}
             listenerOrientation={props.listenerOrientation}
             onListenerOrientationChange={props.onListenerOrientationChange}
           />

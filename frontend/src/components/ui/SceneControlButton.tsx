@@ -1,7 +1,7 @@
 "use client";
 
 import { ReactNode } from "react";
-import { UI_OVERLAY, UI_COLORS, UI_SCENE_BUTTON } from "@/utils/constants";
+import { UI_SCENE_BUTTON } from "@/utils/constants";
 
 interface SceneControlButtonProps {
   onClick: () => void;
@@ -39,8 +39,8 @@ export function SceneControlButton({
   icon,
   title,
   isActive = false,
-  activeColor = UI_COLORS.PRIMARY,
-  inactiveBackground = UI_OVERLAY.BACKGROUND
+  activeColor = 'var(--color-primary)',
+  inactiveBackground = 'var(--color-overlay-bg)'
 }: SceneControlButtonProps) {
   return (
     <button
@@ -51,13 +51,13 @@ export function SceneControlButton({
         height: UI_SCENE_BUTTON.SIZE,
         borderRadius: UI_SCENE_BUTTON.BORDER_RADIUS,
         backgroundColor: isActive ? activeColor : inactiveBackground,
-        borderColor: isActive ? activeColor : UI_OVERLAY.BORDER_COLOR,
+        borderColor: isActive ? activeColor : 'var(--color-overlay-border)',
         borderWidth: '1px',
         borderStyle: 'solid'
       }}
       onMouseEnter={(e) => {
         if (!isActive) {
-          e.currentTarget.style.backgroundColor = 'rgba(0, 0, 0, 0.9)';
+          e.currentTarget.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
         }
       }}
       onMouseLeave={(e) => {

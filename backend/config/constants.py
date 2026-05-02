@@ -18,6 +18,7 @@ BACKEND_DIR = Path(__file__).parent.parent.resolve()
 # Task Cleanup Delays
 SOUND_GENERATION_TASK_CLEANUP_DELAY_SECONDS = 600
 LLM_TASK_CLEANUP_DELAY_SECONDS = 300
+SED_TASK_CLEANUP_DELAY_SECONDS = 300
 
 # Model Configuration
 LLM_MODEL_GEMINI_FLASH = "gemini-2.5-flash"
@@ -71,6 +72,11 @@ DEFAULT_ENTITY_DURATION_SECONDS = 5.0  # Default duration for entity prompts
 SPL_MIN = 30.0
 SPL_MAX = 120.0
 SPL_RANGE = (SPL_MIN, SPL_MAX)
+
+# Speed of sound (shared by all simulation methods)
+DEFAULT_SPEED_OF_SOUND = 343.0  # m/s
+SPEED_OF_SOUND_MIN = 300.0
+SPEED_OF_SOUND_MAX = 400.0
 
 # Interval Range (seconds)
 INTERVAL_MIN = 5.0

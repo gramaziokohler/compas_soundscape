@@ -3,7 +3,6 @@
 import { useCallback, useRef, useState, useEffect, type ReactNode } from 'react';
 import type { CardProps, CardBaseConfig } from '@/types/card';
 import { CARD_TYPE_LABELS } from '@/types/card';
-import { CARD_COLOR_DEFAULT } from '@/utils/constants';
 import { useNameEditing } from '@/utils/useNameEditing';
 
 /**
@@ -83,7 +82,7 @@ export function Card<TConfig extends CardBaseConfig>({
   progress = 0,
   status,
   error,
-  color = CARD_COLOR_DEFAULT,
+  color = 'primary' as const,
   defaultName,
   collapsedInfo,
   version,
@@ -108,6 +107,7 @@ export function Card<TConfig extends CardBaseConfig>({
   beforeContent,
   afterContent,
   loadingContent,
+  dimmed = false,
 }: CardProps<TConfig>) {
   // Resolve action button color: explicit prop overrides card color
   const resolvedActionColor = actionButtonColor || color;
@@ -142,7 +142,7 @@ export function Card<TConfig extends CardBaseConfig>({
 
   // Build Tailwind class names
   const cardClassName = [
-    'relative overflow-hidden rounded-lg border-0 transition-all duration-200',
+    'relative rounded-lg border-0 transition-all duration-200',
     // isExpanded ? `p-2 bg-${color}-light border-0` : hasResult ? `p-1.5 bg-${color}-light` : 'p-1.5 bg-secondary-lighter',
     isExpanded && hasResult ? `p-2 bg-secondary` : '',
     isExpanded && !hasResult ? 'p-2 border-0' : '',
@@ -245,12 +245,12 @@ export function Card<TConfig extends CardBaseConfig>({
       style={{
         ...cardColorStyle,
         ...(isExpanded && !hasResult && !error ? { borderColor: `var(--color-${color})`, backgroundColor: 'var(--card-color-light)' } : {}),
+        ...(dimmed ? { filter: 'brightness(0.55)' } : {}),
       }}
     >
       {!isExpanded && isRunning && !error && (
-        <>
+        <div aria-hidden="true" className="absolute inset-0 overflow-hidden rounded-lg pointer-events-none">
           <div
-            aria-hidden="true"
             className="absolute inset-y-0 left-0 transition-all duration-300"
             style={{
               width: `${Math.max(0, Math.min(progress, 100))}%`,
@@ -258,7 +258,6 @@ export function Card<TConfig extends CardBaseConfig>({
             }}
           />
           <div
-            aria-hidden="true"
             className="absolute inset-0"
             style={{
               background:
@@ -267,7 +266,7 @@ export function Card<TConfig extends CardBaseConfig>({
               '--collapsed-progress': `${Math.max(0, Math.min(progress, 100))}%`,
             }}
           />
-        </>
+        </div>
       )}
 
       {/* Header - Click anywhere (except buttons) to expand/collapse.
@@ -278,59 +277,66 @@ export function Card<TConfig extends CardBaseConfig>({
         onDoubleClick={e => e.stopPropagation()}
         style={{ userSelect: 'none' }}
       >
-        {/* Title / edit input */}
-        {isEditingName ? (
-          <input
-            {...inputProps}
-            onClick={e => e.stopPropagation()}
-            className="flex-1 text-xs font-medium px-2 py-1 rounded-lg border bg-background text-foreground outline-none focus:ring-1"
-            style={{
-              borderColor: 'var(--card-color)',
-              userSelect: 'text',
-              // @ts-expect-error -- CSS custom property for focus ring
-              '--tw-ring-color': 'var(--card-color)',
-            }}
-          />
-        ) : (
-          <div
-            className={`${titleClassName} min-w-0 overflow-hidden`}
-            title={displayName}
-          >
-            <div className="truncate">
-              {displayName}
+        {/* Title + pen */}
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          {/* Title / edit input */}
+          {isEditingName ? (
+            <input
+              {...inputProps}
+              onClick={e => e.stopPropagation()}
+              className="flex-1 text-xs font-medium px-2 py-1 rounded-lg border bg-background text-foreground outline-none focus:ring-1"
+              style={{
+                borderColor: 'var(--card-color)',
+                userSelect: 'text',
+                // @ts-expect-error -- CSS custom property for focus ring
+                '--tw-ring-color': 'var(--card-color)',
+              }}
+            />
+          ) : (
+            <div
+              className={`${titleClassName} min-w-0 overflow-hidden`}
+              title={displayName}
+            >
+              <div className="truncate">
+                {displayName}
+              </div>
+              {!isExpanded && collapsedInfo && (
+                <div className="text-xs mt-0.5 text-secondary-hover">
+                  {collapsedInfo}
+                </div>
+              )}
+              {!isExpanded && isRunning && !error && (
+                <div 
+                  className={`mt-0.5 flex items-center gap-2 text-[10px] font-medium leading-tight transition-colors duration-300 ${
+                    progress > 40 ? 'text-white' : 'text-foreground'
+                  }`}
+                >
+                  <span>{status || 'Calculating...'}</span>
+                  <span className="opacity-80">{progress}%</span>
+                </div>
+              )}
+              {isExpanded && hasResult && version && (
+                <div className="text-[9px] mt-0.5 text-secondary-hover font-mono opacity-60 leading-tight">
+                  {Array.isArray(version)
+                    ? version.map((line, i) => <div key={i}>{line}</div>)
+                    : version}
+                </div>
+              )}
             </div>
-            {!isExpanded && collapsedInfo && (
-              <div className="text-xs mt-0.5 text-secondary-hover">
-                {collapsedInfo}
-              </div>
-            )}
-            {!isExpanded && isRunning && !error && (
-              <div className="mt-0.5 flex items-center gap-2 text-[10px] font-medium leading-tight text-white">
-                <span>{status || 'Calculating...'}</span>
-                <span className="opacity-80">{progress}%</span>
-              </div>
-            )}
-            {isExpanded && hasResult && version && (
-              <div className="text-[9px] mt-0.5 text-secondary-hover font-mono opacity-60 leading-tight">
-                {Array.isArray(version)
-                  ? version.map((line, i) => <div key={i}>{line}</div>)
-                  : version}
-              </div>
-            )}
-          </div>
-        )}
+          )}
 
-        {/* Pen icon - always visible, click to edit name */}
-        {!isEditingName && (
-          <button
-            onClick={(e) => { e.stopPropagation(); startEdit(); }}
-            className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-secondary-hover opacity-40 hover:opacity-100 hover:bg-secondary-light hover:text-foreground transition-all cursor-pointer"
-            title="Click to edit name"
-            aria-label="Edit name"
-          >
-            <PenIcon />
-          </button>
-        )}
+          {/* Pen icon - always visible, click to edit name */}
+          {!isEditingName && (
+            <button
+              onClick={(e) => { e.stopPropagation(); startEdit(); }}
+              className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-secondary-hover opacity-40 hover:opacity-100 hover:bg-secondary-light hover:text-foreground transition-all cursor-pointer"
+              title="Click to edit name"
+              aria-label="Edit name"
+            >
+              <PenIcon />
+            </button>
+          )}
+        </div>
 
         {/* Action buttons */}
         <div className="flex items-center gap-1 flex-shrink-0">
@@ -355,12 +361,12 @@ export function Card<TConfig extends CardBaseConfig>({
                 icon={<KebabIcon />}
                 title="More options"
                 onClick={(e) => { e.stopPropagation(); setMenuOpen(prev => !prev); setExpandedSubKey(null); }}
-                variant={menuOpen ? 'primary' : 'default'}
+                variant={menuOpen || customButtons.some(b => b.isActive) ? 'primary' : 'default'}
               />
               {menuOpen && (
                 <div
                   className="absolute right-0 top-full mt-1 z-50 rounded-lg shadow-lg border border-secondary-light min-w-[160px] overflow-hidden py-1"
-                  style={{ backgroundColor: 'var(--color-background, white)' }}
+                  style={{ backgroundColor: 'var(--background)' }}
                   onClick={e => e.stopPropagation()}
                 >
                   {customButtons.map(item => (
@@ -466,7 +472,7 @@ export function Card<TConfig extends CardBaseConfig>({
 
       {/* Expanded content */}
       {isExpanded && (
-        <div className="mt-3 space-y-3">
+        <div className="mt-3 space-y-3 ">
 
           {renderContent()}
                     
@@ -560,7 +566,7 @@ export function CardButton({ icon, title, onClick, disabled = false, variant = '
   const variantClasses = {
     default: 'text-secondary-hover hover:bg-secondary-light hover:text-foreground',
     close: 'text-secondary-hover hover:bg-error-light hover:text-error',
-    primary: 'text-secondary-hover hover:bg-primary-light hover:text-primary',
+    primary: 'text-primary hover:bg-primary-light hover:text-primary',
   };
 
   return (

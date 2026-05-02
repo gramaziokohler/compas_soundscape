@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { UI_RIGHT_SIDEBAR, UI_COLORS, UI_SIDEBAR_RESIZE } from '@/utils/constants';
+import { UI_RIGHT_SIDEBAR, UI_SIDEBAR_RESIZE } from '@/utils/constants';
 import { ObjectExplorer } from '@/components/layout/ObjectExplorer';
 import { EntityInfoPanel } from '@/components/layout/sidebar/EntityInfoPanel';
 import { useRightSidebarStore, useSpeckleStore } from '@/store';
@@ -67,8 +67,8 @@ export function RightSidebar({
       className="fixed top-0 right-0 h-screen flex flex-col transition-all duration-300 ease-in-out overflow-hidden"
       style={{
         width: isExpanded ? `${sidebarWidth}px` : '0px',
-        backgroundColor: UI_RIGHT_SIDEBAR.BACKGROUND,
-        borderLeft: isExpanded ? `${UI_RIGHT_SIDEBAR.BORDER_WIDTH}px solid ${UI_RIGHT_SIDEBAR.BORDER_COLOR}` : 'none',
+        backgroundColor: 'white',
+        borderLeft: isExpanded ? `${UI_RIGHT_SIDEBAR.BORDER_WIDTH}px solid var(--color-secondary-light)` : 'none',
         zIndex: 10,
         userSelect: isResizing ? 'none' : undefined,
       }}
@@ -96,7 +96,7 @@ export function RightSidebar({
             style={{
               width: `${UI_SIDEBAR_RESIZE.HANDLE_WIDTH}px`,
               height: '100%',
-              backgroundColor: (isHandleHovered || isResizing) ? UI_COLORS.PRIMARY : 'transparent',
+              backgroundColor: (isHandleHovered || isResizing) ? 'var(--color-primary)' : 'transparent',
               transition: 'background-color 150ms ease',
               borderRadius: '2px',
             }}
@@ -110,11 +110,11 @@ export function RightSidebar({
           className="flex-shrink-0 flex items-center px-4 gap-2"
           style={{
             height: `${UI_RIGHT_SIDEBAR.HEADER_HEIGHT}px`,
-            backgroundColor: UI_RIGHT_SIDEBAR.BACKGROUND,
-            borderBottom: `${UI_RIGHT_SIDEBAR.BORDER_WIDTH}px solid ${UI_RIGHT_SIDEBAR.BORDER_COLOR}`,
+            backgroundColor: 'white',
+            borderBottom: `${UI_RIGHT_SIDEBAR.BORDER_WIDTH}px solid var(--color-secondary-light)`,
           }}
         >
-          <h2 className="text-sm font-semibold whitespace-nowrap" style={{ color: UI_COLORS.NEUTRAL_700 }}>
+          <h2 className="text-sm font-semibold whitespace-nowrap text-neutral-700">
             Object Explorer
           </h2>
         </div>
@@ -135,8 +135,8 @@ export function RightSidebar({
         className="flex-shrink-0"
         style={{
           height: '220px',
-          borderTop: `${UI_RIGHT_SIDEBAR.BORDER_WIDTH}px solid ${UI_RIGHT_SIDEBAR.BORDER_COLOR}`,
-          backgroundColor: UI_RIGHT_SIDEBAR.BACKGROUND,
+          borderTop: `${UI_RIGHT_SIDEBAR.BORDER_WIDTH}px solid var(--color-secondary-light)`,
+          backgroundColor: 'white',
         }}
       >
         {/* Header */}

@@ -580,6 +580,10 @@ export class SpeckleAudioCoordinator {
     return this.receiverManager;
   }
 
+  public getGridReceiverManager(): GridReceiverManager | null {
+    return this.gridReceiverManager;
+  }
+
   public updateGridListeners(
     points: [number, number, number][],
     gridListenerId?: string | null,

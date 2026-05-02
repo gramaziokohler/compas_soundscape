@@ -93,9 +93,9 @@ export function AudioWaveformDisplay({
   if (!enableWaveform) {
     // Fallback to text-only display
     return (
-      <div className="p-3 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg">
-        <p className="text-xs font-semibold text-gray-800 dark:text-gray-300 mb-2">Audio Information</p>
-        <div className="text-xs text-gray-700 dark:text-gray-400 space-y-1">
+      <div className="p-3 bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded-lg">
+        <p className="text-xs font-semibold text-neutral-800 dark:text-neutral-300 mb-2">Audio Information</p>
+        <div className="text-xs text-neutral-700 dark:text-neutral-400 space-y-1">
           <div className="flex justify-between">
             <span>File:</span>
             <span className="text-xs">{audioInfo.filename}</span>
@@ -114,7 +114,7 @@ export function AudioWaveformDisplay({
   }
 
   return (
-    <div ref={containerRef} className="bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden">
+    <div ref={containerRef} className="bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded-lg overflow-hidden">
       {/* Waveform canvas container with reset button */}
       <div className="relative">
         <canvas
@@ -137,7 +137,7 @@ export function AudioWaveformDisplay({
 
       {/* Minimal text info - 2 lines (conditionally rendered) */}
       {!hideTextInfo && (
-        <div className="px-3 py-2 text-xs text-gray-700 dark:text-gray-400 space-y-0.5">
+        <div className="px-3 py-2 text-xs text-neutral-700 dark:text-neutral-400 space-y-0.5">
           <div className="truncate" title={audioInfo.filename}>
             {audioInfo.filename}
           </div>

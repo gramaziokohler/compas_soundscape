@@ -4,7 +4,7 @@ import { useState } from 'react';
 import type { AnalysisResult } from '@/types/analysis';
 import { SEDWaveformPlayer } from '@/components/audio/SEDWaveformPlayer';
 import { CheckboxField } from '@/components/ui/CheckboxField';
-import { UI_COLORS, API_BASE_URL } from '@/utils/constants';
+import { API_BASE_URL } from '@/utils/constants';
 import { useSoundscapeStore } from '@/store/soundscapeStore';
 import { useTextGenerationStore } from '@/store';
 
@@ -130,10 +130,10 @@ export function AudioAnalysisAfterContent({
 
       {/* Sound list header */}
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold" style={{ color: UI_COLORS.SUCCESS }}>
+        <span className="text-xs font-semibold text-success">
           Detected Sounds
         </span>
-        <span className="text-xs" style={{ color: UI_COLORS.NEUTRAL_300 }}>
+        <span className="text-xs text-neutral-300">
           {selectedCount} / {analysisResult.prompts.length} selected
         </span>
       </div>
@@ -145,12 +145,12 @@ export function AudioAnalysisAfterContent({
             key={prompt.id}
             className="flex items-start gap-0 p-1 rounded cursor-pointer transition-colors"
             style={{
-              backgroundColor: prompt.selected ? `${UI_COLORS.SUCCESS_HOVER}50` : 'transparent',
+              backgroundColor: prompt.selected ? 'color-mix(in srgb, var(--color-success-hover) 30%, transparent)' : 'transparent',
               borderRadius: '6px',
             }}
             onMouseEnter={(e) => {
               setHoveredIndex(i);
-              if (!prompt.selected) e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_500;
+              if (!prompt.selected) e.currentTarget.style.backgroundColor = 'var(--color-secondary-hover)';
             }}
             onMouseLeave={(e) => {
               setHoveredIndex(null);
@@ -162,10 +162,10 @@ export function AudioAnalysisAfterContent({
               onChange={() => onTogglePromptSelection(analysisResult.configIndex, prompt.id)}
               label=""
             />
-            <div className="flex-1 text-xs" style={{ color: UI_COLORS.NEUTRAL_200 }}>
+            <div className="flex-1 text-xs text-neutral-200">
               {prompt.text}
               {prompt.metadata && (
-                <div className="flex gap-3 mt-0.5 text-[10px]" style={{ color: UI_COLORS.NEUTRAL_400 }}>
+                <div className="flex gap-3 mt-0.5 text-[10px] text-neutral-400">
                   {prompt.metadata.confidence !== undefined && (
                     <span>{(prompt.metadata.confidence * 100).toFixed(0)}% conf.</span>
                   )}
@@ -186,7 +186,7 @@ export function AudioAnalysisAfterContent({
       </div>
 
       {/* Extract & Send controls */}
-      <div className="space-y-2 pt-1 border-t" style={{ borderColor: UI_COLORS.NEUTRAL_700 }}>
+      <div className="space-y-2 pt-1 border-t border-neutral-700">
         {/* Noise reduction toggle */}
         <label className="flex items-center gap-2 cursor-pointer">
           <CheckboxField
@@ -194,14 +194,14 @@ export function AudioAnalysisAfterContent({
             onChange={() => setApplyNoiseReduction((v) => !v)}
             label=""
           />
-          <span className="text-xs" style={{ color: UI_COLORS.NEUTRAL_300 }}>
+          <span className="text-xs text-neutral-300">
             Apply noise reduction
           </span>
         </label>
 
         {/* Error */}
         {extractError && (
-          <div className="text-xs" style={{ color: 'var(--color-error, #ef4444)' }}>
+          <div className="text-xs" style={{ color: 'var(--color-error)' }}>
             {extractError}
           </div>
         )}
@@ -214,8 +214,8 @@ export function AudioAnalysisAfterContent({
           style={{
             backgroundColor:
               isExtracting || selectedCount === 0
-                ? UI_COLORS.NEUTRAL_700
-                : UI_COLORS.SUCCESS,
+                ? 'var(--color-secondary)'
+                : 'var(--color-success)',
             color: 'white',
             opacity: isExtracting || selectedCount === 0 ? 0.5 : 1,
             cursor: isExtracting || selectedCount === 0 ? 'not-allowed' : 'pointer',

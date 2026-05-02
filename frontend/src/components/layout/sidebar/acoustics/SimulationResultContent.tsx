@@ -13,11 +13,11 @@
 
 'use client';
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { ImpulseResponseUpload } from '@/components/audio/ImpulseResponseUpload';
 import type { SimulationConfig, ChorasSimulationConfig, PyroomAcousticsSimulationConfig } from '@/types/acoustics';
-import type { SourceReceiverIRMapping } from '@/types/audio';
+import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from '@/types/audio';
 import type { GradientMetric } from '@/store/uiStore';
 import { useUIStore } from '@/store/uiStore';
 import { useGridListenersStore } from '@/store';
@@ -76,6 +76,12 @@ interface SimulationResultContentProps {
   fpsExitTrigger?: number;
   /** When set, scrolls to and highlights the corresponding IR group */
   forcedActiveGroupId?: string | null;
+  pairDefinitions?: Array<{ sourceId: string; receiverId: string }>;
+  availableSourceCount?: number;
+  availableReceiverCount?: number;
+  allowPairUploads?: boolean;
+  onPairIRUploaded?: (sourceId: string, receiverId: string, ir: ImpulseResponseMetadata) => void;
+  onPairAssignmentCleared?: (sourceId: string, receiverId: string) => void;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -97,6 +103,12 @@ export function SimulationResultContent({
   onGoToReceiver,
   fpsExitTrigger,
   forcedActiveGroupId,
+  pairDefinitions,
+  availableSourceCount,
+  availableReceiverCount,
+  allowPairUploads = false,
+  onPairIRUploaded,
+  onPairAssignmentCleared,
 }: SimulationResultContentProps) {
   const simulationConfig = config as any;
   const results: string | null = simulationConfig.simulationResults;
@@ -165,6 +177,11 @@ export function SimulationResultContent({
   const selectedMetric = controlledMetric;
   const setSelectedMetric = onMetricChange ?? (() => {});
 
+  // User-editable range — initialised from data, reset when metric/data changes
+  const [userMin, setUserMin] = useState<number | null>(null);
+  const [userMax, setUserMax] = useState<number | null>(null);
+  const prevMetricRef = useRef<string | null>(null);
+
   // Fetch per-receiver metrics once when grid receivers are present and we have a simulationId
   useEffect(() => {
     if (!hasGridReceivers || !simulationId || !simType) return;
@@ -206,8 +223,13 @@ export function SimulationResultContent({
       return;
     }
 
-    setActiveGradientMap({ metric: selectedMetric, pointValues: allPointValues, boundingBox: primaryBbox });
-  }, [isExpanded, selectedMetric, perReceiverMetrics, gridListeners, setActiveGradientMap]);
+    setActiveGradientMap({
+      metric: selectedMetric,
+      pointValues: allPointValues,
+      boundingBox: primaryBbox,
+      ...(userMin !== null && userMax !== null ? { range: { min: userMin, max: userMax } } : {}),
+    });
+  }, [isExpanded, selectedMetric, perReceiverMetrics, gridListeners, setActiveGradientMap, userMin, userMax]);
 
   // Clear gradient map when unmounted or card collapses
   useEffect(() => {
@@ -229,12 +251,28 @@ export function SimulationResultContent({
     return { min: minVal, max: maxVal, format: meta.format };
   }, [selectedMetric, perReceiverMetrics]);
 
+  useEffect(() => {
+    if (!legendRange) { setUserMin(null); setUserMax(null); return; }
+    // Reset when the metric or data changes
+    if (selectedMetric !== prevMetricRef.current) {
+      prevMetricRef.current = selectedMetric ?? null;
+      setUserMin(legendRange.min);
+      setUserMax(legendRange.max);
+    } else if (userMin === null || userMax === null) {
+      setUserMin(legendRange.min);
+      setUserMax(legendRange.max);
+    }
+  }, [legendRange, selectedMetric]);
+
+  const displayMin = userMin ?? legendRange?.min ?? 0;
+  const displayMax = userMax ?? legendRange?.max ?? 1;
+
   // ── Render ──────────────────────────────────────────────────────────────
   return (
     <div className="space-y-3">
       {/* Position mismatch warning */}
       {isExpanded && mismatchedNames.length > 0 && (
-        <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-red-900/30 border border-red-500/60 text-red-400 text-xs">
+        <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-error/10 border border-error/40 text-error text-xs">
           <span className="font-bold shrink-0 mt-0.5">⚠</span>
           <div className="flex-1 flex flex-col gap-1.5">
             <span>
@@ -244,7 +282,7 @@ export function SimulationResultContent({
             {onResetPositions && (
               <button
                 onClick={() => onResetPositions(mismatchInfo.sourceIds, mismatchInfo.receiverIds)}
-                className="self-start px-2 py-0.5 rounded border border-red-500/60 bg-red-900/40 hover:bg-red-800/50 text-red-300 hover:text-red-200 transition-colors"
+                className="self-start px-2 py-0.5 rounded border border-error/40 bg-error/10 hover:bg-error/20 text-error hover:text-error-hover transition-colors"
               >
                 Reset positions
               </button>
@@ -280,12 +318,40 @@ export function SimulationResultContent({
                 className="h-3.5 w-full rounded"
                 style={{ background: GradientMapManager.CSS_GRADIENT }}
               />
-              <div className="flex justify-between text-[9px] text-neutral-400">
-                <span>{legendRange.format(legendRange.min)}</span>
-                <span className="text-neutral-500">
+              <div className="flex items-end justify-between gap-1">
+                {/* Min input */}
+                <div className="flex flex-col gap-0" style={{ width: '64px' }}>
+                  <input
+                    type="number"
+                    step="any"
+                    value={parseFloat(displayMin.toFixed(2))}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      if (!isNaN(v)) setUserMin(v);
+                    }}
+                    className="w-full text-[10px] text-center rounded px-1 py-0.5 outline-none bg-foreground text-background text-center"
+                    style={{ borderBottom: '1px solid var(--color-info)55' }}
+                  />
+                </div>
+
+                <span className="text-[9px] text-neutral-500 pb-0.5">
                   {METRICS.find((m) => m.key === selectedMetric)?.label}
                 </span>
-                <span>{legendRange.format(legendRange.max)}</span>
+
+                {/* Max input */}
+                <div className="flex flex-col gap-0" style={{ width: '64px' }}>
+                  <input
+                    type="number"
+                    step="any"
+                    value={parseFloat(displayMax.toFixed(2))}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      if (!isNaN(v)) setUserMax(v);
+                    }}
+                    className="w-full text-[10px] text-center rounded px-1 py-0.5 outline-none bg-foreground text-background text-center"
+                    style={{ borderBottom: '1px solid var(--color-info)55' }}
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -301,7 +367,7 @@ export function SimulationResultContent({
 
       {/* Low-energy IR warning */}
       {lowEnergyIRIds.size > 0 && (
-        <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-red-900/30 border border-red-500/60 text-red-400 text-xs">
+        <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-error/10 border border-error/40 text-error text-xs">
           <span className="font-bold shrink-0">!</span>
           <span>
             {lowEnergyIRIds.size === 1
@@ -326,6 +392,12 @@ export function SimulationResultContent({
         onGoToReceiver={onGoToReceiver}
         fpsExitTrigger={fpsExitTrigger}
         forcedActiveGroupId={forcedActiveGroupId}
+        pairDefinitions={pairDefinitions}
+        availableSourceCount={availableSourceCount}
+        availableReceiverCount={availableReceiverCount}
+        allowPairUploads={allowPairUploads}
+        onPairIRUploaded={onPairIRUploaded}
+        onPairAssignmentCleared={onPairAssignmentCleared}
       />
     </div>
   );
@@ -359,26 +431,13 @@ export function SimulationSettingsSection({ config }: SimulationSettingsSectionP
     rows.push({ label: 'Air Absorption', value: s.air_absorption ? 'Yes' : 'No' });
     rows.push({ label: 'Max Order (ISM)', value: String(s.max_order) });
     if (s.enable_grid) rows.push({ label: 'Grid Receivers', value: 'Yes' });
-  } else if (config.type === 'choras') {
-    const s = (config as ChorasSimulationConfig).settings;
-    rows.push({ label: 'Speed of Sound', value: `${s.de_c0} m/s` });
-    rows.push({ label: 'IR Length', value: `${s.de_ir_length} s` });
-    rows.push({ label: 'Length Type', value: s.sim_len_type === 'edt' ? 'EDT' : 'IR Length' });
-    rows.push({ label: 'Char. Length', value: `${s.de_lc} m` });
-    rows.push({ label: 'EDT Threshold', value: `${s.edt} dB` });
   } else if (config.type === 'choras' && 'simulation_method' in config.settings) {
     const s = (config as ChorasSimulationConfig).settings;
     rows.push({ label: 'Method', value: s.simulation_method });
     if (s.simulation_method === 'DE') {
-      rows.push({ label: 'Speed of Sound', value: `${s.de_c0} m/s` });
-      rows.push({ label: 'IR Length', value: `${s.de_ir_length} s` });
-      rows.push({ label: 'Length Type', value: s.de_sim_len_type === 'edt' ? 'EDT' : 'IR Length' });
-      rows.push({ label: 'Char. Length', value: `${s.de_lc} m` });
-      if (s.de_sim_len_type === 'edt') rows.push({ label: 'EDT Threshold', value: `${s.de_edt} dB` });
+      // no DE-specific display rows
     } else {
       rows.push({ label: 'Freq. Upper Limit', value: `${s.dg_freq_upper_limit} Hz` });
-      rows.push({ label: 'IR Length', value: `${s.dg_ir_length} s` });
-      rows.push({ label: 'Speed of Sound', value: `${s.dg_c0} m/s` });
       rows.push({ label: 'Polynomial Order', value: String(s.dg_poly_order) });
       rows.push({ label: 'Points per Wavelength', value: String(s.dg_ppw) });
       rows.push({ label: 'CFL', value: String(s.dg_cfl) });

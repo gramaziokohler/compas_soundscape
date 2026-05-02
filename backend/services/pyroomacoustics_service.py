@@ -297,6 +297,7 @@ class PyroomacousticsService:
         ray_tracing: bool = False,
         air_absorption: bool = False,
         skip_weld: bool = False,
+        sound_speed: float = 343.0,
     ) -> pra.Room:
         """
         Create a pyroomacoustics Room from a mesh with materials assigned per face or entity.
@@ -430,16 +431,21 @@ class PyroomacousticsService:
                 walls.append(wall)
 
             # Create room from walls
-            # Use Room constructor with walls and ray tracing parameters
-            room = pra.Room(
-                walls=walls,
-                fs=fs,
-                max_order=max_order,
-                ray_tracing=ray_tracing,
-                air_absorption=air_absorption,
-                use_rand_ism = PYROOMACOUSTICS_USE_RAND_ISM,
-                max_rand_disp = 0.05
+            # Set speed of sound globally (pra.Room doesn't accept c= in all versions)
+            _orig_c = pra.constants.get('c')
+            pra.constants.set('c', sound_speed)
+            try:
+                room = pra.Room(
+                    walls=walls,
+                    fs=fs,
+                    max_order=max_order,
+                    ray_tracing=ray_tracing,
+                    air_absorption=air_absorption,
+                    use_rand_ism=PYROOMACOUSTICS_USE_RAND_ISM,
+                    max_rand_disp=0.05,
                 )
+            finally:
+                pra.constants.set('c', _orig_c)
 
             return room
 

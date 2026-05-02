@@ -17,7 +17,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { UI_COLORS, RESONANCE_AUDIO } from '@/utils/constants';
+import { RESONANCE_AUDIO } from '@/utils/constants';
 import type { ResonanceRoomMaterial } from '@/types/audio';
 
 interface ResonanceAudioMaterialUIProps {
@@ -44,8 +44,12 @@ const FACE_ORDER: RoomFace[] = ['left', 'right', 'front', 'back', 'down', 'up'];
  */
 const getAbsorptionColor = (absorption: number): string => {
   // Parse gradient colors from constants
-  const startColor = UI_COLORS.MATERIAL_GRADIENT_START; // #14b8a6 (teal)
-  const endColor = UI_COLORS.MATERIAL_GRADIENT_END; // #f97316 (orange)
+  const startColor = typeof window !== 'undefined'
+    ? getComputedStyle(document.documentElement).getPropertyValue('--color-material-start').trim()
+    : '#67bfb4';
+  const endColor = typeof window !== 'undefined'
+    ? getComputedStyle(document.documentElement).getPropertyValue('--color-material-end').trim()
+    : '#eb5c52';
 
   // Extract RGB components
   const start = {
@@ -163,7 +167,7 @@ export function ResonanceAudioMaterialUI({
 
   const allFacesColor = allFacesMaterial
     ? getSelectBackgroundColor(allFacesMaterial)
-    : UI_COLORS.NEUTRAL_400;
+    : 'var(--color-secondary-hover)';
 
   return (
     <div className="flex flex-col gap-1 text-xs w-full overflow-hidden">
@@ -192,7 +196,7 @@ export function ResonanceAudioMaterialUI({
             onClick={(e) => e.stopPropagation()}
           >
             {!allFacesMaterial && (
-              <option value="various" style={{ backgroundColor: UI_COLORS.NEUTRAL_400 }}>various</option>
+              <option value="various" style={{ backgroundColor: 'var(--color-secondary-hover)' }}>various</option>
             )}
             {materialOptions.map((opt) => {
               const display = getMaterialDisplay(opt.value);

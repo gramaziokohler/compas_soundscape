@@ -13,7 +13,8 @@
 
 import * as THREE from 'three';
 import { SpeckleBasicMaterial } from '@speckle/viewer';
-import { RESONANCE_AUDIO, UI_COLORS } from '@/utils/constants';
+import { RESONANCE_AUDIO } from '@/utils/constants';
+import { getCssColorHex } from '@/utils/utils';
 import type { ResonanceRoomMaterial } from '@/types/audio';
 
 export interface BoundingBoxBounds {
@@ -48,7 +49,9 @@ interface FaceConfig {
 export class BoundingBoxManager {
   private boundingBoxGroup: THREE.Group | null = null;
   private scene: THREE.Scene;
-  private currentBounds: BoundingBoxBounds | null = null;
+  public currentBounds: BoundingBoxBounds | null = null;
+  public gumballHandles: THREE.Mesh[] = [];
+  public activeGumball: THREE.Mesh | null = null;
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -136,26 +139,18 @@ export class BoundingBoxManager {
       // Use the World API to get the worldBox (Box3)
       const world = viewer.World;
       if (!world) {
-        console.warn('[BoundingBoxManager] No World accessor available');
         return null;
       }
 
       const worldBox = world.worldBox;
       if (!worldBox) {
-        console.warn('[BoundingBoxManager] No worldBox available');
         return null;
       }
 
       // Check if the box is valid (not empty)
       if (worldBox.isEmpty()) {
-        console.warn('[BoundingBoxManager] World box is empty');
         return null;
       }
-
-      console.log('[BoundingBoxManager] Successfully got world box:', {
-        min: worldBox.min,
-        max: worldBox.max
-      });
 
       // Convert THREE.Box3 to our bounds format
       return {
@@ -163,7 +158,6 @@ export class BoundingBoxManager {
         max: [worldBox.max.x, worldBox.max.y, worldBox.max.z]
       };
     } catch (error) {
-      console.error('[BoundingBoxManager] Error calculating bounds from Speckle World:', error);
       return null;
     }
   }
@@ -175,16 +169,8 @@ export class BoundingBoxManager {
    * @param config - Bounding box configuration (materials, visibility)
    */
   public updateBoundingBox(bounds: BoundingBoxBounds | null, config: BoundingBoxConfig): void {
-    console.log('[BoundingBoxManager] updateBoundingBox called:', { bounds, config });
-    console.log('[BoundingBoxManager] Scene info:', {
-      sceneUUID: this.scene.uuid,
-      sceneChildren: this.scene.children.length,
-      hasBoundingBoxGroup: !!this.boundingBoxGroup
-    });
-    
     // Remove existing bounding box if no bounds
     if (!bounds) {
-      console.log('[BoundingBoxManager] No bounds, disposing bounding box');
       this.disposeBoundingBox();
       return;
     }
@@ -200,7 +186,6 @@ export class BoundingBoxManager {
     );
 
     if (boundsChanged && this.boundingBoxGroup) {
-      console.log('[BoundingBoxManager] Bounds changed, recreating bounding box');
       this.disposeBoundingBox();
     }
 
@@ -209,10 +194,8 @@ export class BoundingBoxManager {
 
     // Create new bounding box if it doesn't exist
     if (!this.boundingBoxGroup) {
-      console.log('[BoundingBoxManager] Creating new bounding box');
       this.createBoundingBox(bounds, config);
     } else {
-      console.log('[BoundingBoxManager] Updating existing bounding box');
       // Update existing bounding box (materials, visibility)
       this.updateMaterials(config.roomMaterials);
       if (config.visible !== undefined) {
@@ -252,7 +235,7 @@ export class BoundingBoxManager {
     const boxGeometry = new THREE.BoxGeometry(width, height, depth);
     const edgesGeometry = new THREE.EdgesGeometry(boxGeometry);
     const wireframeMaterial = new THREE.LineBasicMaterial({ 
-      color: RESONANCE_AUDIO.BOUNDING_BOX.WIREFRAME_COLOR,
+      color: getCssColorHex('--color-info'),
       linewidth: RESONANCE_AUDIO.BOUNDING_BOX.WIREFRAME_WIDTH,
       depthTest: false,
       depthWrite: false
@@ -327,10 +310,10 @@ export class BoundingBoxManager {
       const context = canvas.getContext('2d')!;
       canvas.width = RESONANCE_AUDIO.BOUNDING_BOX.LABEL_CANVAS_WIDTH;
       canvas.height = RESONANCE_AUDIO.BOUNDING_BOX.LABEL_CANVAS_HEIGHT;
-      context.fillStyle = RESONANCE_AUDIO.BOUNDING_BOX.LABEL_BG_COLOR;
+      context.fillStyle = 'transparent';
       context.fillRect(0, 0, canvas.width, canvas.height);
       context.font = RESONANCE_AUDIO.BOUNDING_BOX.LABEL_FONT;
-      context.fillStyle = RESONANCE_AUDIO.BOUNDING_BOX.LABEL_TEXT_COLOR;
+      context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--foreground').trim() || '#171717';
       context.textAlign = 'center';
       context.textBaseline = 'middle';
       context.fillText(faceConfig.name, canvas.width / 2, canvas.height / 2);
@@ -354,6 +337,68 @@ export class BoundingBoxManager {
       sprite.layers.enable(4); // OVERLAY layer
       
       boundingBoxGroup.add(sprite);
+
+      // 3. Create gumball double-arrow handle
+      const gumballGrp = new THREE.Group();
+      gumballGrp.position.copy(faceConfig.position);
+
+      // Make group orient such that Y points along normal
+      const targetQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), faceConfig.normal);
+      gumballGrp.setRotationFromQuaternion(targetQuat);
+
+      // Geometry for the arrow
+      const bodyGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.8, 8);
+      const headGeo = new THREE.ConeGeometry(0.15, 0.25, 8);
+
+      const colorHover = 0x00ffcc;
+      const colorNormal = 0x00aaff;
+      
+      const mat = new THREE.MeshBasicMaterial({
+        color: colorNormal,
+        depthTest: false,
+        depthWrite: false,
+        transparent: true,
+        opacity: 0.9
+      });
+
+      const body = new THREE.Mesh(bodyGeo, mat);
+      gumballGrp.add(body);
+
+      const topHead = new THREE.Mesh(headGeo, mat);
+      topHead.position.set(0, 0.5, 0);
+      gumballGrp.add(topHead);
+
+      const botHead = new THREE.Mesh(headGeo, mat);
+      botHead.position.set(0, -0.5, 0);
+      botHead.rotation.x = Math.PI;
+      gumballGrp.add(botHead);
+
+      // A larger invisible cylinder for easier clicking
+      const hitGeo = new THREE.CylinderGeometry(0.5, 0.5, 1.5, 8);
+      const hitMat = new THREE.MeshBasicMaterial({ visible: false, depthTest: false, depthWrite: false });
+      const hitMesh = new THREE.Mesh(hitGeo, hitMat);
+      
+      hitMesh.userData = {
+         isGumballHit: true,
+         faceName: faceConfig.material,
+         faceNormal: faceConfig.normal,
+         originalColor: colorNormal,
+         hoverColor: colorHover,
+         visualArrowMaterial: mat
+      };
+
+      gumballGrp.add(hitMesh);
+      
+      // Force all parts onto overlay layers and top renderOrder
+      gumballGrp.traverse(c => {
+         c.renderOrder = 9999;
+         c.layers.disableAll();
+         c.layers.enable(0);
+         c.layers.enable(4);
+      });
+
+      boundingBoxGroup.add(gumballGrp);
+      this.gumballHandles.push(hitMesh);
     });
 
     // Add to scene
@@ -364,16 +409,6 @@ export class BoundingBoxManager {
     boundingBoxGroup.updateMatrix();
     boundingBoxGroup.updateMatrixWorld(true);
     this.scene.updateMatrixWorld(true);
-    
-    console.log('[BoundingBoxManager] ✅ Created bounding box:', {
-      groupUUID: boundingBoxGroup.uuid,
-      childrenCount: boundingBoxGroup.children.length,
-      position: boundingBoxGroup.position.toArray(),
-      visible: boundingBoxGroup.visible,
-      layers: boundingBoxGroup.layers.mask,
-      sceneChildrenCount: this.scene.children.length,
-      inScene: this.scene.children.includes(boundingBoxGroup)
-    });
 
     // Dispose temporary geometry
     boxGeometry.dispose();
@@ -386,7 +421,6 @@ export class BoundingBoxManager {
     // Set visibility
     if (config.visible !== undefined) {
       this.boundingBoxGroup.visible = config.visible;
-      console.log('[BoundingBoxManager] Initial visibility set to:', config.visible);
     }
   }
 
@@ -396,9 +430,13 @@ export class BoundingBoxManager {
   private updateMaterials(roomMaterials?: BoundingBoxConfig['roomMaterials']): void {
     if (!this.boundingBoxGroup || !roomMaterials) return;
 
-    // Gradient colors from constants
-    const startColor = UI_COLORS.MATERIAL_GRADIENT_START.replace("#", "");
-    const endColor = UI_COLORS.MATERIAL_GRADIENT_END.replace("#", "");
+    // Gradient colors from CSS vars
+    const getHexStr = (cssVar: string, fallback: string) => {
+      if (typeof document === 'undefined') return fallback;
+      return getComputedStyle(document.documentElement).getPropertyValue(cssVar).trim().replace('#', '') || fallback;
+    };
+    const startColor = getHexStr('--color-material-start', '67bfb4');
+    const endColor = getHexStr('--color-material-end', 'eb5c52');
 
     this.boundingBoxGroup.children.forEach(child => {
       if (child instanceof THREE.Mesh && child.userData.faceName) {
@@ -420,6 +458,18 @@ export class BoundingBoxManager {
     });
   }
 
+  public setHoveredGumball(mesh: THREE.Mesh | null) {
+    if (this.activeGumball && this.activeGumball !== mesh) {
+      const mat = this.activeGumball.userData.visualArrowMaterial;
+      if (mat) mat.color.setHex(this.activeGumball.userData.originalColor);
+    }
+    this.activeGumball = mesh;
+    if (this.activeGumball) {
+      const mat = this.activeGumball.userData.visualArrowMaterial;
+      if (mat) mat.color.setHex(this.activeGumball.userData.hoverColor);
+    }
+  }
+
   /**
    * Dispose of bounding box and clean up resources
    */
@@ -439,7 +489,9 @@ export class BoundingBoxManager {
         (child.material as THREE.Material).dispose();
       }
     });
+
     this.boundingBoxGroup = null;
+    this.gumballHandles = [];
   }
 
   /**

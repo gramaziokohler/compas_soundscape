@@ -79,6 +79,7 @@ async def generate_sounds(request: SoundGenerationRequest):
             sound_configs=ml_configs,
             apply_denoising=request.apply_denoising,
             audio_model=request.audio_model or DEFAULT_AUDIO_MODEL,
+            base_spl_db=request.base_spl_db,
             output_dir=GENERATED_SOUNDS_DIR,
         )
 

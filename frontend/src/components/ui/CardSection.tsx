@@ -2,7 +2,6 @@
 
 import { useState, useRef, useEffect, useCallback, type ReactNode, Fragment } from 'react';
 import type { CardType, CardBaseConfig, CardColor } from '@/types/card';
-import { CARD_COLOR_DEFAULT, UI_COLORS } from '@/utils/constants';
 import { isAuthError } from '@/utils/authErrors';
 import { useTextGenerationStore } from '@/store/textGenerationStore';
 
@@ -96,7 +95,7 @@ export function CardSection<TItem extends CardBaseConfig>({
   error,
   expandedIndex: controlledExpandedIndex,
   onExpandedIndexChange,
-  color = CARD_COLOR_DEFAULT,
+  color = 'primary' as const,
   onReorder,
 }: CardSectionProps<TItem>) {
   const isControlled = controlledExpandedIndex !== undefined;
@@ -418,8 +417,8 @@ export function CardSection<TItem extends CardBaseConfig>({
               onClick={() => useTextGenerationStore.getState().triggerOpenTokenSettings()}
               className="self-start text-xs px-3 py-1 rounded transition-colors"
               style={{
-                border: `1px solid ${UI_COLORS.ERROR}`,
-                color: UI_COLORS.ERROR,
+                border: `1px solid var(--color-error)`,
+                color: 'var(--color-error)',
                 background: 'transparent',
               }}
             >
@@ -446,7 +445,7 @@ export function CardSection<TItem extends CardBaseConfig>({
             zIndex: 9999,
             opacity: 0.85,
             transform: 'rotate(0.8deg) scale(1.01)',
-            boxShadow: '0 12px 32px rgba(0,0,0,0.22)',
+            boxShadow: '0 12px 32px rgba(0,0,0,0.18)',
             borderRadius: '8px',
             border: `1.5px solid var(--color-${color})`,
             backgroundColor: 'var(--color-background)',

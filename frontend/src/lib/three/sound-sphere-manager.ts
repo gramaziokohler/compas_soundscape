@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { triangulate } from "@/utils/utils";
-import { API_BASE_URL, PRIMARY_COLOR_HEX, SOUND_SPHERE, DARK_MODE, OBJECT_LABEL } from "@/utils/constants";
+import { API_BASE_URL, SOUND_SPHERE, DARK_MODE, OBJECT_LABEL } from "@/utils/constants";
+import { getCssColorHex } from '@/utils/utils';
 import { createLabelSprite, disposeLabelSprite } from "@/lib/three/label-sprite-factory";
 import { updateDraggableMeshes, disposeMeshes } from "@/lib/three/draggable-mesh-manager";
 // import { calculateSpiralPositions } from "@/lib/three/spiral-placement"; // Bounding-box placement removed
@@ -54,6 +55,8 @@ export class SoundSphereManager {
 
   // Position tracking — Map<soundId, [x, y, z]> for consistency with ReceiverManager
   private spherePositions: Map<string, [number, number, number]> = new Map();
+  // Shared position per prompt index so all variants in the same prompt stay aligned.
+  private promptPositions: Map<number, [number, number, number]> = new Map();
 
   // Sound metadata tracking (replaces legacy PositionalAudio)
   private soundMetadata: Map<string, SoundMetadata> = new Map();
@@ -152,6 +155,7 @@ export class SoundSphereManager {
       this.removeAllAudioSources();
       this.removeAllSoundMeshes();
       this.entityLinkedIds.clear();
+      this.promptPositions.clear();
       return new Map();
     }
 
@@ -176,6 +180,16 @@ export class SoundSphereManager {
       }
     });
 
+    // Keep prompt-level positions bounded to prompts that still exist.
+    const visiblePromptIndices = new Set(
+      soundscapeData.map((s) => ((s as any).prompt_index ?? 0) as number)
+    );
+    for (const promptIdx of this.promptPositions.keys()) {
+      if (!visiblePromptIndices.has(promptIdx)) {
+        this.promptPositions.delete(promptIdx);
+      }
+    }
+
     // Check if the sound set has actually changed (different IDs or entity_index toggled).
     // If the same sounds are still visible with same entity linking state,
     // skip teardown to avoid interrupting playback.
@@ -196,6 +210,7 @@ export class SoundSphereManager {
       visibleSounds.forEach(soundEvent => {
         const mesh = this.soundMeshes.find(m => m.userData.soundEvent?.id === soundEvent.id);
         if (mesh) mesh.userData.soundEvent = soundEvent;
+        const promptIdx = (soundEvent as any).prompt_index ?? 0;
 
         // Sync position for ALL sounds in case an undo/redo changed stored positions.
         // For entity-linked sounds: update if entity position changed.
@@ -208,6 +223,7 @@ export class SoundSphereManager {
             oldPos[0] !== newPos[0] || oldPos[1] !== newPos[1] || oldPos[2] !== newPos[2];
           if (posChanged) {
             this.spherePositions.set(soundEvent.id, newPos);
+            this.promptPositions.set(promptIdx, newPos);
             // Update 3D mesh position so the viewer reflects undo/redo
             if (mesh) {
               mesh.position.set(newPos[0], newPos[1], newPos[2]);
@@ -236,11 +252,18 @@ export class SoundSphereManager {
     // restored from a saved soundscape. New sounds have position [0,0,0] and must go through
     // camera-front placement. Restored sounds have their drag position (non-zero) saved in Speckle.
     meshSounds.forEach(s => {
+      const promptIdx = (s as any).prompt_index ?? 0;
+      const promptPos = this.promptPositions.get(promptIdx);
+      if (promptPos) {
+        this.spherePositions.set(s.id, promptPos);
+        return;
+      }
       if (!this.spherePositions.has(s.id) && s.position) {
         const pos = s.position as [number, number, number];
         const hasSavedPosition = pos.length === 3 && (pos[0] !== 0 || pos[1] !== 0 || pos[2] !== 0);
         if (hasSavedPosition) {
           this.spherePositions.set(s.id, pos);
+          this.promptPositions.set(promptIdx, pos);
         }
       }
     });
@@ -297,21 +320,25 @@ export class SoundSphereManager {
 
       let position: [number, number, number];
 
-      const storedPosition = this.spherePositions.get(soundEvent.id);
+      const sharedPromptPosition = this.promptPositions.get(promptIdx);
+      const storedPosition = sharedPromptPosition ?? this.spherePositions.get(soundEvent.id);
       if (storedPosition) {
         // Use stored position (from previous drag) — preserves dragged positions
         position = storedPosition;
+        this.spherePositions.set(soundEvent.id, position);
       } else {
         const spiralPosition = spiralPositionMap.get(soundEvent.id);
         if (spiralPosition) {
           // Use spiral position from camera-front placement (only for new sounds)
           position = spiralPosition;
           this.spherePositions.set(soundEvent.id, position);
+          this.promptPositions.set(promptIdx, position);
           newlyPlacedPositions.set(soundEvent.id, position);
         } else {
           // Use event position (from backend or default)
           position = soundEvent.position as [number, number, number];
           this.spherePositions.set(soundEvent.id, position);
+          this.promptPositions.set(promptIdx, position);
         }
       }
 
@@ -338,9 +365,12 @@ export class SoundSphereManager {
 
     // Handle entity-linked sounds: store positions (no mesh) and sync labels
     entitySounds.forEach(soundEvent => {
+      const promptIdx = (soundEvent as any).prompt_index ?? 0;
       // ALWAYS use soundEvent.position for entity-linked sounds — it contains
       // the entity's bounding box center (set by useSoundGeneration.linkSoundToEntity)
-      this.spherePositions.set(soundEvent.id, soundEvent.position as [number, number, number]);
+      const position = soundEvent.position as [number, number, number];
+      this.spherePositions.set(soundEvent.id, position);
+      this.promptPositions.set(promptIdx, position);
     });
     this.syncEntityLabelSprites(entitySounds);
 
@@ -504,7 +534,7 @@ export class SoundSphereManager {
     }
 
     // Use electric blue color when dark mode is active, otherwise primary pink
-    const sphereColor = this.darkModeEnabled ? DARK_MODE.LIGHT_COLOR_HEX : PRIMARY_COLOR_HEX;
+    const sphereColor = this.darkModeEnabled ? getCssColorHex('--color-primary') : getCssColorHex('--color-primary');
 
     const material = new THREE.MeshBasicMaterial({
       color: sphereColor,
@@ -563,9 +593,13 @@ export class SoundSphereManager {
       // Use positionKey (sound ID) for storage - this is the new stable key
       const positionKey = sphere.userData.positionKey || sphere.userData.soundEvent?.id || promptKey;
       this.spherePositions.set(positionKey, [position.x, position.y, position.z]);
+      const soundEvent = sphere.userData.soundEvent as SoundEvent | undefined;
+      const promptIdx = (soundEvent as any)?.prompt_index;
+      if (typeof promptIdx === 'number') {
+        this.promptPositions.set(promptIdx, [position.x, position.y, position.z]);
+      }
 
       // Update the audio source position if it exists
-      const soundEvent = sphere.userData.soundEvent;
       if (soundEvent) {
         const soundId = soundEvent.id;
         const metadata = this.soundMetadata.get(soundId);
@@ -859,7 +893,7 @@ export class SoundSphereManager {
     this.soundMeshes.forEach(mesh => {
       // Change sphere color to electric blue and make opaque
       const material = mesh.material as THREE.MeshBasicMaterial;
-      material.color.setHex(DARK_MODE.LIGHT_COLOR_HEX);
+      material.color.setHex(getCssColorHex('--color-primary'));
       material.transparent = false;
       material.opacity = 1;
       material.needsUpdate = true;
@@ -887,7 +921,7 @@ export class SoundSphereManager {
     // Restore sphere colors to primary pink and transparency
     this.soundMeshes.forEach(mesh => {
       const material = mesh.material as THREE.MeshBasicMaterial;
-      material.color.setHex(PRIMARY_COLOR_HEX);
+      material.color.setHex(getCssColorHex('--color-primary'));
       material.transparent = true;
       material.opacity = 0.7;
       material.needsUpdate = true;
@@ -902,7 +936,7 @@ export class SoundSphereManager {
     if (!soundId || this.darkModePointLights.has(soundId)) return;
 
     const light = new THREE.PointLight(
-      DARK_MODE.LIGHT_COLOR_HEX,
+      getCssColorHex('--color-primary'),
       DARK_MODE.POINT_LIGHT_INTENSITY,
       DARK_MODE.POINT_LIGHT_DISTANCE,
       DARK_MODE.POINT_LIGHT_DECAY
@@ -920,6 +954,17 @@ export class SoundSphereManager {
 
     mesh.add(light);
     this.darkModePointLights.set(soundId, light);
+  }
+
+  /**
+   * Show or hide the point light for a specific sound sphere (dark mode only).
+   * When muted, the point light is disabled so the sphere no longer illuminates the scene.
+   */
+  public setSourceMuted(soundId: string, muted: boolean): void {
+    const light = this.darkModePointLights.get(soundId);
+    if (light) {
+      light.visible = !muted;
+    }
   }
 
   /**
@@ -945,8 +990,8 @@ export class SoundSphereManager {
     if (!this.darkModeEnabled) return;
     this.soundMeshes.forEach(mesh => {
       const material = mesh.material as THREE.MeshBasicMaterial;
-      if (material.color.getHex() !== DARK_MODE.LIGHT_COLOR_HEX) {
-        material.color.setHex(DARK_MODE.LIGHT_COLOR_HEX);
+      if (material.color.getHex() !== getCssColorHex('--color-primary')) {
+        material.color.setHex(getCssColorHex('--color-primary'));
         material.needsUpdate = true;
       }
       // Also enforce opaque state
@@ -961,6 +1006,17 @@ export class SoundSphereManager {
   /** Whether dark mode is currently enabled */
   public isDarkMode(): boolean {
     return this.darkModeEnabled;
+  }
+
+  /** Show or hide all sound sphere meshes. */
+  public setSoundSpheresVisible(visible: boolean): void {
+    this.soundMeshes.forEach(m => { m.visible = visible; });
+  }
+
+  /** Show or hide all label sprites (sphere-linked and entity-linked). */
+  public setLabelSpritesVisible(visible: boolean): void {
+    this.labelSprites.forEach(s => { s.visible = visible; });
+    this.entityLabelSprites.forEach(s => { s.visible = visible; });
   }
 
   /**
@@ -992,6 +1048,7 @@ export class SoundSphereManager {
 
     // Clear tracking
     this.spherePositions.clear();
+    this.promptPositions.clear();
     this.entityLinkedIds.clear();
   }
 }

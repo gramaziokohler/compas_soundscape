@@ -63,7 +63,7 @@ export function GridListenerContent({ grid, color, onComputeBounds }: GridListen
   }, [grid.id, updateGridListener]);
 
   const btnLabel = phase === 'selecting' ? 'Validate selection' : phase === 'ready' ? 'Recreate grid' : 'Select objects';
-  const btnColor = phase === 'selecting' ? '#10B981' : phase === 'ready' ? '#6b7280' : color;
+  const btnColor = phase === 'selecting' ? 'var(--color-success)' : phase === 'ready' ? 'var(--color-secondary-hover)' : color;
 
   return (
     <div className="space-y-2">
@@ -123,7 +123,7 @@ export function GridListenerContent({ grid, color, onComputeBounds }: GridListen
       )}
 
       {phase === 'selecting' && (
-        <div className="text-[10px] rounded-lg px-2 py-1.5 text-white leading-relaxed" style={{ backgroundColor: '#10B981cc' }}>
+        <div className="text-[10px] rounded-lg px-2 py-1.5 text-white leading-relaxed" style={{ backgroundColor: 'color-mix(in srgb, var(--color-success) 80%, transparent)' }}>
           Select one or multiple surfaces. Press Enter or click the button to validate. Esc to cancel.
         </div>
       )}

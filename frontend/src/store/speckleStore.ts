@@ -15,7 +15,6 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { FilteringExtension, type Viewer } from '@speckle/viewer';
-import { SPECKLE_FILTER_COLORS } from '@/utils/constants';
 import type React from 'react';
 
 // ─── Types (re-exported for consumers) ───────────────────────────────────────
@@ -347,7 +346,7 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
           (id) => !currentLinks.has(id) && !isExcluded(id),
         );
         if (diverseOnlyIds.length > 0)
-          colorGroups.push({ objectIds: diverseOnlyIds, color: SPECKLE_FILTER_COLORS.DIVERSE_SELECTION });
+          colorGroups.push({ objectIds: diverseOnlyIds, color: 'var(--color-success)' });
 
         const pendingLinkedIds = Array.from(currentLinks.keys()).filter(
           (id) => !currentGenerated.has(id) && !isExcluded(id),
@@ -355,7 +354,7 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         if (pendingLinkedIds.length > 0)
           colorGroups.push({
             objectIds: pendingLinkedIds,
-            color: SPECKLE_FILTER_COLORS.SOUND_LINKED_PENDING,
+            color: 'var(--color-primary-light)',
           });
 
         const generatedLinkedIds = Array.from(currentLinks.keys()).filter(
@@ -364,7 +363,7 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         if (generatedLinkedIds.length > 0)
           colorGroups.push({
             objectIds: generatedLinkedIds,
-            color: SPECKLE_FILTER_COLORS.SOUND_LINKED,
+            color: 'var(--color-primary)',
           });
 
         const sanitised = colorGroups
@@ -498,11 +497,11 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         const linkedSoundIndex = objectSoundLinks.get(objectId);
         const linkColor = isLinked
           ? hasGenerated
-            ? SPECKLE_FILTER_COLORS.SOUND_LINKED
-            : SPECKLE_FILTER_COLORS.SOUND_LINKED_PENDING
+            ? 'var(--color-primary)'
+            : 'var(--color-primary-light)'
           : isDiverse
-            ? SPECKLE_FILTER_COLORS.DIVERSE_SELECTION
-            : '#6b7280';
+            ? 'var(--color-success)'
+            : 'var(--color-secondary-hover)';
         return { isLinked, isDiverse, linkColor, linkedSoundIndex };
       },
     }),

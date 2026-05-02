@@ -5,12 +5,6 @@
  * Style inspired by waveform-utils.ts: black background, monospace labels, dotted grid.
  */
 
-import { PRIMARY_COLOR } from '@/utils/constants';
-
-const GREY = '#9CA3AF';
-const GRID = '#374151';
-const BG = '#000000';
-
 /**
  * Draw an absorption-coefficient histogram.
  *
@@ -26,13 +20,22 @@ export function drawAbsorptionHistogram(
   const ctx = canvas.getContext('2d');
   if (!ctx || coeffs.length === 0) return;
 
+  const root = typeof document !== 'undefined' ? document.documentElement : null;
+  const getCssVar = (v: string, fallback: string) =>
+    root ? getComputedStyle(root).getPropertyValue(v).trim() || fallback : fallback;
+
+  const PRIMARY_COLOR = getCssVar('--color-primary', '#2F2FE4');
+  const GREY_RT = getCssVar('--color-secondary-hover', '#9CA3AF');
+  const GRID_RT = getCssVar('--color-secondary-hover', '#374151');
+  const BG_RT = getCssVar('--background', '#000000');
+
   const W = canvas.width;
   const H = canvas.height;
 
   // Scale factor relative to the base 130×78 design
   const scale = Math.min(W / 130, H / 78);
 
-  ctx.fillStyle = BG;
+  ctx.fillStyle = BG_RT;
   ctx.fillRect(0, 0, W, H);
 
   const pad = {
@@ -49,7 +52,7 @@ export function drawAbsorptionHistogram(
   const barW = (plotW - gap * (n - 1)) / n;
 
   // Dotted grid at 25 / 50 / 75 / 100 %
-  ctx.strokeStyle = GRID;
+  ctx.strokeStyle = GRID_RT;
   ctx.lineWidth = 1;
   ctx.setLineDash([Math.round(2 * scale), Math.round(3 * scale)]);
   [0.25, 0.5, 0.75, 1.0].forEach((level) => {
@@ -62,7 +65,7 @@ export function drawAbsorptionHistogram(
   ctx.setLineDash([]);
 
   // Left axis line
-  ctx.strokeStyle = GRID;
+  ctx.strokeStyle = GRID_RT;
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(pad.left, pad.top);
@@ -84,21 +87,21 @@ export function drawAbsorptionHistogram(
 
     const f = centerFreqs[i];
     const label = f >= 1000 ? `${f / 1000}k` : `${f}`;
-    ctx.fillStyle = GREY;
+    ctx.fillStyle = GREY_RT;
     ctx.font = fontStr;
     ctx.textAlign = 'center';
     ctx.fillText(label, x + barW / 2, H - Math.round(4 * scale));
   });
 
   // Y-axis labels: 100 / 0
-  ctx.fillStyle = GREY;
+  ctx.fillStyle = GREY_RT;
   ctx.font = fontStr;
   ctx.textAlign = 'right';
   ctx.fillText('100', pad.left - Math.round(2 * scale), pad.top + fontSize);
   ctx.fillText('0', pad.left - Math.round(2 * scale), pad.top + plotH + Math.round(4 * scale));
 
   // Y-axis title
-  ctx.fillStyle = GREY;
+  ctx.fillStyle = GREY_RT;
   ctx.font = fontStr;
   ctx.textAlign = 'left';
   ctx.fillText('α(%)', pad.left + Math.round(2 * scale), pad.top - Math.round(3 * scale));

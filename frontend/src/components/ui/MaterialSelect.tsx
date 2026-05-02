@@ -11,7 +11,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { UI_COLORS, UI_BORDER_RADIUS } from '@/utils/constants';
+import { UI_BORDER_RADIUS } from '@/utils/constants';
 import { drawAbsorptionHistogram } from '@/lib/audio/utils/absorption-histogram-utils';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -59,7 +59,7 @@ export function MaterialSelect({
   const canvasRef    = useRef<HTMLCanvasElement | null>(null);
 
   const selectedMat  = materials.find((m) => m.id === value);
-  const triggerBg    = value ? (materialColors.get(value) ?? UI_COLORS.NEUTRAL_400) : UI_COLORS.NEUTRAL_400;
+  const triggerBg    = value ? (materialColors.get(value) ?? 'var(--color-secondary-hover)') : 'var(--color-secondary-hover)';
   const triggerLabel = selectedMat
     ? `${selectedMat.name} (${(selectedMat.absorption * 100).toFixed(0)}%)`
     : placeholder;
@@ -155,7 +155,7 @@ export function MaterialSelect({
       {/* ── Dropdown list ─────────────────────────────────────────────────────── */}
       {isOpen && (
         <div
-          style={{
+            style={{
             position: 'absolute',
             ...(openUpward
               ? { bottom: '100%', marginBottom: '2px' }
@@ -165,15 +165,15 @@ export function MaterialSelect({
             maxHeight: `${LIST_MAX_HEIGHT}px`,
             overflowY: 'auto',
             zIndex: 50,
-            backgroundColor: '#111111',
-            border: `1px solid #374151`,
+            backgroundColor: 'var(--background)',
+            border: `1px solid var(--color-secondary-light)`,
             borderRadius: `${UI_BORDER_RADIUS.SM}px`,
           }}
         >
           {/* Placeholder / clear option */}
           <div
             className="text-xs px-2 py-1 cursor-pointer"
-            style={{ color: UI_COLORS.NEUTRAL_500, backgroundColor: UI_COLORS.NEUTRAL_400 }}
+            style={{ color: 'var(--color-secondary-hover)', backgroundColor: 'var(--color-secondary-lighter)' }}
             onMouseEnter={(e) => (e.currentTarget.style.filter = 'brightness(1.15)')}
             onMouseLeave={(e)  => (e.currentTarget.style.filter = '')}
             onClick={() => { onChange(''); setIsOpen(false); }}
@@ -182,7 +182,7 @@ export function MaterialSelect({
           </div>
 
           {materials.map((mat) => {
-            const bg = materialColors.get(mat.id) ?? UI_COLORS.NEUTRAL_400;
+              const bg = materialColors.get(mat.id) ?? 'var(--color-secondary-hover)';
             return (
               <div
                 key={mat.id}
@@ -221,7 +221,7 @@ export function MaterialSelect({
             height: HIST_H,
             borderRadius: `${UI_BORDER_RADIUS.SM}px`,
             overflow: 'hidden',
-            border: '1px solid #374151',
+            border: '1px solid var(--color-secondary-light)',
             boxShadow: '0 4px 16px rgba(0,0,0,0.7)',
           }}
         >

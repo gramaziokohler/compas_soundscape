@@ -28,7 +28,7 @@ export function Icon({
   children, 
   size = UI_SCENE_BUTTON.ICON_SIZE, 
   className = "",
-  color = "white",
+  color = "currentColor",
   strokeWidth = SVG_ICON_PROPS.STROKE_WIDTH
 }: IconProps) {
   return (

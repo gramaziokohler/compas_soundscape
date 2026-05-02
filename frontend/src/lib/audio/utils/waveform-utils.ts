@@ -13,7 +13,7 @@
  * - Axis labels and legend
  */
 
-import { PRIMARY_COLOR, AUDIO_VISUALIZATION, AMBISONIC } from "@/utils/constants";
+import { AUDIO_VISUALIZATION, AMBISONIC } from "@/utils/constants";
 import type { ViewportState } from "@/hooks/useWaveformInteraction";
 
 /**
@@ -222,10 +222,14 @@ export function renderWaveform(
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
 
-  const primaryColor = PRIMARY_COLOR;
-  const greyColor = '#9CA3AF';
-  const gridColor = '#4B5563';
-  const backgroundColor = '#000000';
+  const root = typeof document !== 'undefined' ? document.documentElement : null;
+  const getCssVar = (v: string, fallback: string) =>
+    root ? getComputedStyle(root).getPropertyValue(v).trim() || fallback : fallback;
+
+  const primaryColor = getCssVar('--color-primary', '#f500b8');
+  const greyColor = getCssVar('--color-secondary-hover', '#9CA3AF');
+  const gridColor = getCssVar('--color-secondary-hover', '#4B5563');
+  const backgroundColor = getCssVar('--background', '#000000');
 
   // Clear canvas with black background
   ctx.fillStyle = backgroundColor;

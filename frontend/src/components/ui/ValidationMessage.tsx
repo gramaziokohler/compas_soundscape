@@ -1,7 +1,7 @@
 "use client";
 
 import { ReactNode } from "react";
-import { UI_COLORS, UI_VALIDATION, TAILWIND_TEXT_SIZE } from "@/utils/constants";
+import { UI_VALIDATION, TAILWIND_TEXT_SIZE } from "@/utils/constants";
 
 type MessageType = "error" | "success" | "info" | "warning";
 
@@ -42,48 +42,20 @@ export function ValidationMessage({
   icon,
   className = ""
 }: ValidationMessageProps) {
-  const getColors = () => {
-    switch (type) {
-      case "error":
-        return {
-          bg: UI_COLORS.ERROR_LIGHT,
-          border: UI_COLORS.ERROR,
-          text: UI_COLORS.ERROR_HOVER
-        };
-      case "success":
-        return {
-          bg: UI_COLORS.SUCCESS_LIGHT,
-          border: UI_COLORS.SUCCESS,
-          text: UI_COLORS.SUCCESS_HOVER
-        };
-      case "info":
-        return {
-          bg: UI_COLORS.INFO_LIGHT,
-          border: UI_COLORS.INFO,
-          text: UI_COLORS.INFO_HOVER
-        };
-      case "warning":
-        return {
-          bg: UI_COLORS.WARNING_LIGHT,
-          border: UI_COLORS.WARNING,
-          text: UI_COLORS.WARNING_HOVER
-        };
-    }
+  const typeClasses: Record<MessageType, string> = {
+    error:   'bg-error-light border-error text-error-hover',
+    success: 'bg-success-light border-success text-success-hover',
+    info:    'bg-info-light border-info text-info-hover',
+    warning: 'bg-warning-light border-warning text-warning-hover',
   };
-
-  const colors = getColors();
 
   return (
     <div
-      className={`${TAILWIND_TEXT_SIZE.XS} flex items-start gap-2 ${className}`}
+      className={`${TAILWIND_TEXT_SIZE.XS} flex items-start gap-2 border ${typeClasses[type]} ${className}`}
       style={{
-        padding: `${UI_VALIDATION.PADDING}`,
+        padding: UI_VALIDATION.PADDING,
         borderRadius: `${UI_VALIDATION.BORDER_RADIUS}px`,
         borderWidth: `${UI_VALIDATION.BORDER_WIDTH}px`,
-        borderStyle: "solid",
-        borderColor: colors.border,
-        backgroundColor: colors.bg,
-        color: colors.text
       }}
     >
       {icon && (

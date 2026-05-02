@@ -2,7 +2,6 @@
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { apiService } from '@/services/api';
-import { UI_COLORS } from '@/utils/constants';
 import { isAuthError } from '@/utils/authErrors';
 import { useTextGenerationStore } from '@/store/textGenerationStore';
 import type { SpeckleModelDetail, SpeckleProjectModelsResponse } from '@/types/speckle-models';
@@ -81,8 +80,8 @@ function ModelFallbackIcon() {
       style={{
         width: MODEL_BROWSER_STYLES.PREVIEW_SIZE,
         height: MODEL_BROWSER_STYLES.PREVIEW_SIZE,
-        backgroundColor: UI_COLORS.NEUTRAL_100,
-        color: UI_COLORS.NEUTRAL_400,
+        backgroundColor: 'var(--color-secondary-lighter)',
+        color: 'var(--color-secondary-hover)',
         fontSize: 22,
         flexShrink: 0,
       }}
@@ -122,8 +121,8 @@ function ModelCardMenu({
         right: 4,
         zIndex: 50,
         minWidth: 160,
-        background: 'white',
-        border: `1px solid ${UI_COLORS.NEUTRAL_200}`,
+        background: 'var(--background)',
+        border: `1px solid var(--color-secondary-light)`,
         borderRadius: 6,
         boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
         overflow: 'hidden',
@@ -140,12 +139,12 @@ function ModelCardMenu({
           gap: 8,
           padding: '8px 12px',
           fontSize: 12,
-          color: UI_COLORS.NEUTRAL_700,
+          color: 'var(--color-secondary)',
           textDecoration: 'none',
           whiteSpace: 'nowrap',
         }}
         onMouseEnter={(e) => {
-          (e.currentTarget as HTMLAnchorElement).style.background = UI_COLORS.NEUTRAL_100;
+          (e.currentTarget as HTMLAnchorElement).style.background = 'var(--color-secondary-lighter)';
         }}
         onMouseLeave={(e) => {
           (e.currentTarget as HTMLAnchorElement).style.background = 'transparent';
@@ -207,18 +206,18 @@ function ModelCard({
           padding: MODEL_BROWSER_STYLES.CARD_PADDING,
           paddingRight: 32, // leave room for 3-dot button
           borderRadius: MODEL_BROWSER_STYLES.CARD_BORDER_RADIUS,
-          border: `1px solid ${UI_COLORS.NEUTRAL_200}`,
-          background: 'white',
+          border: `1px solid var(--color-secondary-light)`,
+          background: 'var(--background)',
           cursor: 'pointer',
           width: '100%',
         }}
         onMouseEnter={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.borderColor = UI_COLORS.PRIMARY;
-          (e.currentTarget as HTMLButtonElement).style.background = UI_COLORS.PRIMARY_LIGHT;
+          (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--color-primary)';
+          (e.currentTarget as HTMLButtonElement).style.background = 'var(--color-primary-light)';
         }}
         onMouseLeave={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.borderColor = UI_COLORS.NEUTRAL_200;
-          (e.currentTarget as HTMLButtonElement).style.background = 'white';
+          (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--color-secondary-light)';
+          (e.currentTarget as HTMLButtonElement).style.background = 'var(--background)';
         }}
       >
         {/* Preview / fallback icon */}
@@ -239,12 +238,12 @@ function ModelCard({
 
         {/* Model info */}
         <div className="flex-1 min-w-0">
-          <p className="text-xs font-medium truncate" style={{ color: UI_COLORS.NEUTRAL_800 }}>
+          <p className="text-xs font-medium truncate text-foreground">
             {model.display_name}
           </p>
 
           {model.description && (
-            <p className="text-xs mt-0.5 truncate" style={{ color: UI_COLORS.NEUTRAL_500 }}>
+            <p className="text-xs mt-0.5 truncate text-neutral-500">
               {truncate(model.description, MODEL_BROWSER_STYLES.DESCRIPTION_MAX_LENGTH)}
             </p>
           )}
@@ -253,18 +252,13 @@ function ModelCard({
             {sourceApp && (
               <span
                 className="text-xs px-1 rounded"
-                style={{ backgroundColor: UI_COLORS.NEUTRAL_100, color: UI_COLORS.NEUTRAL_500 }}
+                style={{ backgroundColor: 'var(--color-secondary-lighter)', color: 'var(--color-secondary-hover)' }}
               >
                 {sourceApp}
               </span>
             )}
             {model.versions_count > 0 && (
-              <span className="text-xs" style={{ color: UI_COLORS.NEUTRAL_400 }}>
-                v{model.versions_count}
-              </span>
-            )}
-            {model.updated_at && (
-              <span className="text-xs" style={{ color: UI_COLORS.NEUTRAL_400 }}>
+              <span className="text-xs text-neutral-400">
                 {formatRelativeTime(model.updated_at)}
               </span>
             )}
@@ -288,13 +282,13 @@ function ModelCard({
           justifyContent: 'center',
           borderRadius: 4,
           border: 'none',
-          background: menuOpen ? UI_COLORS.NEUTRAL_100 : 'transparent',
-          color: UI_COLORS.NEUTRAL_500,
+          background: menuOpen ? 'var(--color-secondary-lighter)' : 'transparent',
+          color: 'var(--color-secondary-hover)',
           cursor: 'pointer',
           padding: 0,
         }}
         onMouseEnter={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.background = UI_COLORS.NEUTRAL_100;
+          (e.currentTarget as HTMLButtonElement).style.background = 'var(--color-secondary-lighter)';
         }}
         onMouseLeave={(e) => {
           if (!menuOpen) {
@@ -388,10 +382,10 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
       <div className="w-full text-center py-4">
         <div
           className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-solid border-current border-r-transparent"
-          style={{ color: UI_COLORS.PRIMARY }}
+          style={{ color: 'var(--color-primary)' }}
           role="status"
         />
-        <p className="text-xs mt-2" style={{ color: UI_COLORS.NEUTRAL_500 }}>
+        <p className="text-xs mt-2 text-neutral-500">
           Loading models...
         </p>
       </div>
@@ -409,22 +403,22 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
             onClick={() => useTextGenerationStore.getState().triggerOpenTokenSettings()}
             className="self-start text-xs px-3 py-1 rounded transition-colors"
             style={{
-              border: `1px solid ${UI_COLORS.NEUTRAL_300}`,
-              color: UI_COLORS.NEUTRAL_600,
+              border: `1px solid var(--color-secondary-light)`,
+              color: 'var(--color-secondary-hover)',
             }}
           >
             Configure API token in Advanced Settings →
           </button>
         ) : (
-          <p className="text-xs" style={{ color: UI_COLORS.ERROR }}>{error}</p>
+          <p className="text-xs text-error">{error}</p>
         )}
         <button
           type="button"
           onClick={fetchModels}
           className="self-start text-xs px-3 py-1 rounded transition-colors"
           style={{
-            border: `1px solid ${UI_COLORS.NEUTRAL_300}`,
-            color: UI_COLORS.NEUTRAL_600,
+            border: `1px solid var(--color-secondary-light)`,
+            color: 'var(--color-secondary-hover)',
           }}
         >
           Retry
@@ -437,9 +431,7 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
   if (models.length === 0) {
     return (
       <div className="w-full text-center py-3">
-        <p className="text-xs" style={{ color: UI_COLORS.NEUTRAL_400 }}>
-          No models found in project
-        </p>
+        <p className="text-xs text-neutral-400">No models found.</p>
       </div>
     );
   }
@@ -451,16 +443,14 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
   if (loadableModels.length === 0) {
     return (
       <div className="w-full text-center py-3">
-        <p className="text-xs" style={{ color: UI_COLORS.NEUTRAL_400 }}>
-          No loadable models (no versions available)
-        </p>
+        <p className="text-xs text-neutral-400">No loadable models available.</p>
       </div>
     );
   }
 
   return (
     <div className="w-full">
-      <p className="text-xs font-medium mb-2" style={{ color: UI_COLORS.NEUTRAL_500 }}>
+      <p className="text-xs font-medium mb-2 text-neutral-500">
         Or load from Speckle
       </p>
 

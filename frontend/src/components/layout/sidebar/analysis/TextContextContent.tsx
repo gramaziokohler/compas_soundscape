@@ -1,7 +1,7 @@
 'use client';
 
 import type { TextAnalysisConfig } from '@/types/analysis';
-import { UI_COLORS, NUM_SOUNDS_MAX, NUM_SOUNDS_MIN } from '@/utils/constants';
+import { NUM_SOUNDS_MAX, NUM_SOUNDS_MIN } from '@/utils/constants';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { CheckboxField } from '@/components/ui/CheckboxField';
 import { useAreaDrawing } from '@/hooks/useAreaDrawing';
@@ -40,7 +40,7 @@ export function TextContextContent({
     <div className="space-y-0.5">
       {/* Text input field */}
       <div>
-        <label htmlFor={`text-input-${index}`} className="text-xs font-medium block mb-2" style={{ color: UI_COLORS.NEUTRAL_500 }}>
+        <label htmlFor={`text-input-${index}`} className="text-xs font-medium block mb-2 text-neutral-500">
           Text Description
         </label>
         <textarea
@@ -68,8 +68,8 @@ export function TextContextContent({
           placeholder="e.g., a busy coffee shop with espresso machine and conversations"
           className="w-full h-15 p-2 text-xs rounded"
           style={{
-            backgroundColor: UI_COLORS.NEUTRAL_50,
-            borderColor: UI_COLORS.NEUTRAL_300,
+            backgroundColor: 'var(--color-secondary-lighter)',
+            borderColor: 'var(--color-secondary-light)',
             borderWidth: '1px',
             borderStyle: 'solid',
             borderRadius: '8px'
@@ -107,7 +107,7 @@ export function TextContextContent({
       {isDrawingThisCard && (
         <div
           className="text-xs p-2 rounded-md flex items-start justify-between gap-2"
-          style={{ backgroundColor: 'rgba(16, 185, 129, 0.1)', color: UI_COLORS.SUCCESS }}
+          style={{ backgroundColor: 'rgba(16, 185, 129, 0.1)', color: 'var(--color-success)' }}
         >
           <span>
             Click to place points. Press <kbd className="px-1 py-0.5 rounded text-xs font-mono" style={{ backgroundColor: 'rgba(16,185,129,0.2)' }}>Enter</kbd> or right-click to undo last point.
@@ -116,8 +116,8 @@ export function TextContextContent({
             onClick={confirmDrawing}
             className="shrink-0 px-2 py-0.5 rounded text-xs font-medium cursor-pointer"
             style={{
-              backgroundColor: UI_COLORS.SUCCESS,
-              color: '#ffffff',
+              backgroundColor: 'var(--color-success)',
+              color: 'white',
             }}
           >
             Validate
@@ -128,7 +128,7 @@ export function TextContextContent({
       {/* Area status indicator */}
       {hasArea && !isDrawingThisCard && (
         <div className="flex items-center justify-between text-xs py-1">
-          <span style={{ color: UI_COLORS.SUCCESS }}>Area defined</span>
+          <span className="text-success">Area defined</span>
           <button
             onClick={removeArea}
             className="text-secondary-hover hover:text-foreground cursor-pointer text-xs"

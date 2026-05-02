@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo } from "react";
-import { UI_COLORS, UI_OVERLAY } from "@/utils/constants";
 
 interface OrientationIndicatorProps {
   /** Yaw angle in radians (horizontal rotation) */
@@ -57,10 +56,10 @@ export function OrientationIndicator({ yaw, pitch, className = "", onExitFirstPe
     <div 
       className={`rounded-lg px-4 py-3 text-white font-mono text-sm ${className}`}
       style={{
-        backgroundColor: UI_OVERLAY.BACKGROUND,
+        backgroundColor: 'var(--color-overlay-bg)',
         backdropFilter: 'blur(8px)',
         borderRadius: '8px',
-        borderColor: `${UI_OVERLAY.BORDER_COLOR}`,
+        borderColor: 'var(--color-overlay-border)',
         borderWidth: '1px',
         borderStyle: 'solid'
       }}
@@ -68,59 +67,59 @@ export function OrientationIndicator({ yaw, pitch, className = "", onExitFirstPe
       <div className="flex items-center gap-4">
         {/* Compass */}
         <div className="flex flex-col items-center">
-          <div className="text-xs mb-1" style={{ color: UI_COLORS.NEUTRAL_400 }}>Heading</div>
+          <div className="text-xs mb-1 text-neutral-400">Heading</div>
           <div className="flex items-center gap-2">
             {/* Compass Rose */}
             <div 
               className="relative w-12 h-12 rounded-full"
               style={{
-                backgroundColor: UI_COLORS.NEUTRAL_900,
-                borderColor: `${UI_COLORS.PRIMARY}80`,
+                backgroundColor: 'var(--color-secondary)',
+                borderColor: 'color-mix(in srgb, var(--color-primary) 50%, transparent)',
                 borderWidth: '1px',
                 borderStyle: 'solid',
                 borderRadius: '9999px'
               }}
             >
               {/* North marker */}
-              <div className="absolute top-0 left-1/2 -translate-x-1/2 w-0.5 h-2" style={{ backgroundColor: UI_COLORS.PRIMARY }} />
+              <div className="absolute top-0 left-1/2 -translate-x-1/2 w-0.5 h-2 bg-primary" />
               
               {/* Direction indicator (rotates) */}
               <div 
                 className="absolute inset-0 flex items-start justify-center transition-transform duration-100"
                 style={{ transform: `rotate(${yawDeg}deg)` }}
               >
-                <div className="w-0 h-0 border-l-[4px] border-r-[4px] border-b-[8px] border-l-transparent border-r-transparent mt-1" style={{ borderBottomColor: 'white' }} />
+                <div className="w-0 h-0 border-l-[4px] border-r-[4px] border-b-[8px] border-l-transparent border-r-transparent mt-1 border-b-white" />
               </div>
             </div>
             
             {/* Direction text */}
             <div className="flex flex-col">
-              <div className="text-xl font-bold" style={{ color: UI_COLORS.PRIMARY }}>{compassDirection}</div>
-              <div className="text-xs" style={{ color: UI_COLORS.NEUTRAL_400 }}>{yawDeg.toFixed(0)}°</div>
+              <div className="text-xl font-bold text-primary">{compassDirection}</div>
+              <div className="text-xs text-neutral-400">{yawDeg.toFixed(0)}°</div>
             </div>
           </div>
         </div>
 
         {/* Separator */}
-        <div className="w-px h-12" style={{ backgroundColor: `${UI_OVERLAY.BORDER_COLOR}` }} />
+        <div className="w-px h-12" style={{ backgroundColor: 'var(--color-overlay-border)' }} />
 
         {/* Pitch */}
         <div className="flex flex-col items-center">
-          <div className="text-xs mb-1" style={{ color: UI_COLORS.NEUTRAL_400 }}>Pitch</div>
+          <div className="text-xs mb-1 text-neutral-400">Pitch</div>
           <div className="flex items-center gap-2">
             {/* Pitch indicator */}
             <div 
               className="relative w-8 h-12 rounded overflow-hidden"
               style={{
-                backgroundColor: UI_COLORS.NEUTRAL_900,
-                borderColor: `${UI_COLORS.PRIMARY}80`,
+                backgroundColor: 'var(--color-secondary)',
+                borderColor: 'color-mix(in srgb, var(--color-primary) 50%, transparent)',
                 borderWidth: '1px',
                 borderStyle: 'solid',
                 borderRadius: '8px'
               }}
             >
               {/* Center line */}
-              <div className="absolute top-1/2 left-0 right-0 h-px" style={{ backgroundColor: `${UI_COLORS.PRIMARY}80` }} />
+              <div className="absolute top-1/2 left-0 right-0 h-px" style={{ backgroundColor: 'color-mix(in srgb, var(--color-primary) 50%, transparent)' }} />
               
               {/* Pitch marker */}
               <div 
@@ -134,16 +133,16 @@ export function OrientationIndicator({ yaw, pitch, className = "", onExitFirstPe
             
             {/* Pitch text */}
             <div className="flex flex-col">
-              <div className="text-lg font-bold" style={{ color: UI_COLORS.PRIMARY }}>{pitchDescription}</div>
-              <div className="text-xs" style={{ color: UI_COLORS.NEUTRAL_400 }}>{pitchDeg.toFixed(0)}°</div>
+              <div className="text-lg font-bold text-primary">{pitchDescription}</div>
+              <div className="text-xs text-neutral-400">{pitchDeg.toFixed(0)}°</div>
             </div>
           </div>
         </div>
       </div>
 
       {/* Help text and Exit button */}
-      <div className="mt-2 pt-2 flex items-center justify-between gap-4" style={{ borderTopColor: `${UI_OVERLAY.BORDER_COLOR}`, borderTopWidth: '1px', borderTopStyle: 'solid' }}>
-        <div className="text-xs text-center flex-1" style={{ color: UI_COLORS.NEUTRAL_400 }}>
+      <div className="mt-2 pt-2 flex items-center justify-between gap-4" style={{ borderTopColor: 'var(--color-overlay-border)', borderTopWidth: '1px', borderTopStyle: 'solid' }}>
+        <div className="text-xs text-center flex-1 text-neutral-400">
           Use arrow keys for Head rotation
           <br />
           (Translation locked)
@@ -155,15 +154,15 @@ export function OrientationIndicator({ yaw, pitch, className = "", onExitFirstPe
             onClick={onExitFirstPersonMode}
             className="px-3 py-1.5 rounded text-xs font-semibold transition-colors"
             style={{
-              backgroundColor: UI_COLORS.ERROR,
+              backgroundColor: 'var(--color-error)',
               color: 'white',
               borderRadius: '6px'
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = '#dc2626';
+              e.currentTarget.style.backgroundColor = 'var(--color-error-hover)';
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = UI_COLORS.ERROR;
+              e.currentTarget.style.backgroundColor = 'var(--color-error)';
             }}
             title="Exit first-person mode (ESC)"
           >

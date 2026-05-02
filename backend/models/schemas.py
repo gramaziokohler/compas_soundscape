@@ -4,7 +4,7 @@
 from pydantic import BaseModel
 from enum import Enum
 from typing import Optional
-from config.constants import DEFAULT_AUDIO_MODEL, DEFAULT_LLM_MODEL
+from config.constants import DEFAULT_AUDIO_MODEL, DEFAULT_LLM_MODEL, DEFAULT_SPL_DB
 
 
 class PromptRequest(BaseModel):
@@ -18,7 +18,8 @@ class SoundGenerationRequest(BaseModel):
     sounds: list[dict]
     bounding_box: dict | None = None
     apply_denoising: bool = False
-    audio_model: str = DEFAULT_AUDIO_MODEL  # Model to use for generation
+    audio_model: str = DEFAULT_AUDIO_MODEL
+    base_spl_db: float = DEFAULT_SPL_DB
 
 
 class SoundGenerationStartResponse(BaseModel):
@@ -50,6 +51,22 @@ class LLMGenerationStatusResponse(BaseModel):
     cancelled: bool
     error: Optional[str] = None
     result: Optional[dict] = None   # {text, sounds, prompts, selected_entities}
+    queue_position: Optional[int] = None
+    queue_total: Optional[int] = None
+
+
+class SEDAnalysisStartResponse(BaseModel):
+    task_id: str
+
+
+class SEDAnalysisStatusResponse(BaseModel):
+    task_id: str
+    progress: int
+    status: str
+    completed: bool
+    cancelled: bool
+    error: Optional[str] = None
+    result: Optional[dict] = None  # {audio_info, detected_sounds, total_classes_analyzed}
     queue_position: Optional[int] = None
     queue_total: Optional[int] = None
 
@@ -330,9 +347,6 @@ class SoundscapeSaveRequest(BaseModel):
 
 class ChorasDESettings(BaseModel):
     """Settings for DE (Diffusion Equation / FVM) simulation."""
-    sim_len_type: str = "edt"             # "edt" or "ir_length"
-    edt: float = 35.0
-    de_ir_length: float = 0.5
     de_c0: float = 343.0
     de_lc: float = 1.5
     frequencies: list[int] = [125, 250, 500, 1000, 2000]
@@ -343,7 +357,6 @@ class ChorasDGSettings(BaseModel):
     dg_freq_upper_limit: float = 200.0
     dg_c0: float = 343.0
     dg_rho0: float = 1.213
-    dg_ir_length: float = 0.1
     dg_poly_order: int = 4
     dg_ppw: float = 2.0
     dg_cfl: float = 1.0

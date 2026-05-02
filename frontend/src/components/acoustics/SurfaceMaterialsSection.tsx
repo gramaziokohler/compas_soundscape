@@ -8,7 +8,6 @@
 'use client';
 
 import { SpeckleMaterialAssignmentUI } from './SpeckleMaterialAssignmentUI';
-import { UI_COLORS } from '@/utils/constants';
 import type { EntityData, CompasGeometry } from '@/types';
 import type { AcousticMaterial, SelectedGeometry } from '@/types/materials';
 
@@ -50,7 +49,7 @@ export function SurfaceMaterialsSection({
 
   return (
     <div className={`flex flex-col gap-2 ${className}`}>
-      <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
+      <h4 className="text-xs font-semibold text-neutral-700">
         Surface Materials
       </h4>
 

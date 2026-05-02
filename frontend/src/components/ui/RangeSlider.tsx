@@ -62,7 +62,7 @@ export function RangeSlider({
   maxLabel,
   formatValue = (v) => v.toString(),
   className = "",
-  showLabels = true,
+  showLabels = false,
   hoverText,
   disabled = false,
   color,

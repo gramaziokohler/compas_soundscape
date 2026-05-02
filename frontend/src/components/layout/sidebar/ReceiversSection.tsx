@@ -19,7 +19,6 @@
 
 import { useState } from 'react';
 import type { ReceiverData } from '@/types';
-import { UI_COLORS, RECEIVER_CONFIG } from '@/utils/constants';
 
 interface ReceiversSectionProps {
   receivers: ReceiverData[];
@@ -67,7 +66,7 @@ export function ReceiversSection({
   };
 
   // Calculate receiver color from constants
-  const receiverColor = `#${RECEIVER_CONFIG.COLOR.toString(16).padStart(6, '0')}`;
+  const receiverColor = 'var(--color-receiver)';
 
   return (
     <div className="flex flex-col gap-3">
@@ -85,7 +84,7 @@ export function ReceiversSection({
             cursor: 'pointer'
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_400;
+            e.currentTarget.style.backgroundColor = 'var(--color-secondary-hover)';
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.backgroundColor = receiverColor;
@@ -116,7 +115,7 @@ export function ReceiversSection({
                   autoFocus
                   className="flex-1 text-xs text-primary font-medium px-2 py-1 rounded outline-none focus:ring-1"
                   style={{
-                    backgroundColor: UI_COLORS.NEUTRAL_100,
+                    backgroundColor: 'var(--color-secondary-lighter)',
                     borderColor: receiverColor,
                     borderRadius: '8px'
                   }}
@@ -125,9 +124,9 @@ export function ReceiversSection({
                 <div
                   onDoubleClick={() => handleDoubleClick(receiver)}
                   onMouseEnter={(e) => e.currentTarget.style.color = receiverColor}
-                  onMouseLeave={(e) => e.currentTarget.style.color = UI_COLORS.NEUTRAL_800}
+                  onMouseLeave={(e) => e.currentTarget.style.color = 'var(--foreground)'}
                   className="px-2 flex-1 text-xs text-primary font-medium cursor-pointer transition-colors group"
-                  style={{ color: UI_COLORS.NEUTRAL_800 }}
+                  style={{ color: 'var(--foreground)' }}
                   title="Double-click to edit name"
                 >
                   {receiver.name} - ({receiver.position.map(coord => coord.toFixed(2)).join(', ')})
@@ -175,15 +174,15 @@ export function ReceiversSection({
                   onClick={() => onDeleteReceiver(receiver.id)}
                   onMouseEnter={(e) => {
                     e.currentTarget.style.color = 'white';
-                    e.currentTarget.style.backgroundColor = UI_COLORS.ERROR;
+                    e.currentTarget.style.backgroundColor = 'var(--color-error)';
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.color = UI_COLORS.ERROR;
+                    e.currentTarget.style.color = 'var(--color-error)';
                     e.currentTarget.style.backgroundColor = 'transparent';
                   }}
                   className="w-7 h-7 flex items-center justify-center rounded transition-colors"
                   style={{
-                    color: UI_COLORS.ERROR,
+                    color: 'var(--color-error)',
                     borderRadius: '6px'
                   }}
                   title="Delete receiver"

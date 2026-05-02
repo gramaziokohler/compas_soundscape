@@ -81,10 +81,11 @@ def run_pyroomacoustics_simulation(
     ray_tracing: bool,
     air_absorption: bool,
     n_rays: int,
-    pairs_data: list,
-    simulation_name: str,
-    rir_output_dir: str,
-    temp_dir: str,
+    sound_speed: float = 343.0,
+    pairs_data: list = None,
+    simulation_name: str = "",
+    rir_output_dir: str = "",
+    temp_dir: str = "",
 ) -> None:
     """
     Full pyroomacoustics simulation pipeline, runs in a subprocess.
@@ -211,6 +212,7 @@ def run_pyroomacoustics_simulation(
                 ray_tracing=ray_tracing,
                 air_absorption=air_absorption,
                 skip_weld=True,
+                sound_speed=sound_speed,
             )
 
             # Single source per room

@@ -56,7 +56,7 @@ import {
   getAudioBufferInfo,
   formatAudioBufferInfo
 } from './utils/audio-file-decoder';
-import { AUDIO_CONTROL, AMBISONIC } from '@/utils/constants';
+import { AUDIO_CONTROL, AMBISONIC, DEFAULT_SPEED_OF_SOUND } from '@/utils/constants';
 
 export class AudioOrchestrator implements IAudioOrchestrator {
   private audioContext: AudioContext | null = null;
@@ -101,6 +101,9 @@ export class AudioOrchestrator implements IAudioOrchestrator {
 
   // Source registry - tracks all sources for re-creation on mode switch
   private sourceRegistry: Map<string, { buffer: AudioBuffer; position: Position }> = new Map();
+
+  // Mute registry - persists mute state across mode switches
+  private muteRegistry: Map<string, boolean> = new Map();
 
   // IR cache - prevents double downloads of same IR (keyed by IR metadata id)
   private irCache: Map<string, AudioBuffer> = new Map();
@@ -294,7 +297,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
         case AudioMode.NO_IR_RESONANCE:
           if (!this.resonanceMode) {
             this.resonanceMode = new ResonanceMode();
-            await this.resonanceMode.initialize(this.audioContext);
+            await this.resonanceMode.initialize(this.audioContext, this._pendingSpeedOfSound);
             this.connectModeToOutput(this.resonanceMode);
 
             // Apply pending room bounds if available
@@ -1062,6 +1065,17 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   /** Pending room bounds to apply once ResonanceMode is initialized */
   private _pendingRoomBounds: { min: [number, number, number]; max: [number, number, number] } | null = null;
 
+  /** Pending speed of sound to apply once ResonanceMode is initialized */
+  private _pendingSpeedOfSound: number = DEFAULT_SPEED_OF_SOUND;
+
+  /** Update speed of sound for Resonance Audio; reinitializes scene if active. */
+  async setSpeedOfSound(c: number): Promise<void> {
+    this._pendingSpeedOfSound = c;
+    if (this.resonanceMode) {
+      await this.resonanceMode.setSpeedOfSound(c);
+    }
+  }
+
   /**
    * Get the current audio state needed for offline export.
    * Returns mode, source registry, listener state, and IR buffers.
@@ -1190,6 +1204,13 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     for (const [sourceId, { buffer, position }] of this.sourceRegistry) {
       try {
         this.currentModeInstance.createSource(sourceId, buffer, position);
+
+        // Reapply persisted mute state — new mode instances start unmuted by default
+        const isMuted = this.muteRegistry.get(sourceId);
+        if (isMuted) {
+          this.currentModeInstance.setSourceMute(sourceId, true);
+        }
+
         console.log(`[AudioOrchestrator] ✅ Re-created source: ${sourceId}`);
       } catch (error) {
         console.error(`[AudioOrchestrator] ❌ Failed to re-create source ${sourceId}:`, error);
@@ -1229,8 +1250,9 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * Routes to current mode implementation
    */
   removeSource(sourceId: string): void {
-    // Remove from registry regardless of mode state
+    // Remove from registries regardless of mode state
     this.sourceRegistry.delete(sourceId);
+    this.muteRegistry.delete(sourceId);
 
     if (!this.currentModeInstance) {
       // No mode active — source was only registered, nothing to tear down
@@ -1326,6 +1348,9 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * Routes to current mode implementation
    */
   setSourceMute(sourceId: string, muted: boolean): void {
+    // Always persist mute state so it survives mode switches
+    this.muteRegistry.set(sourceId, muted);
+
     if (!this.currentModeInstance) {
       return;
     }

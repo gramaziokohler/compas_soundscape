@@ -2,12 +2,14 @@
 
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import * as THREE from 'three';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import {
   Viewer,
   DefaultViewerParams,
   SpeckleLoader,
   UrlHelper,
   CameraController,
+  NearPlaneCalculation,
   SelectionExtension,
   FilteringExtension,
   GeometryType,
@@ -24,7 +26,7 @@ import { VerticalVolumeSlider } from '@/components/ui/VerticalVolumeSlider';
 import { UndoRedoToolbar } from '@/components/ui/UndoRedoToolbar';
 import { SpeckleAudioCoordinator } from '@/lib/three/speckle-audio-coordinator';
 import { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
-import { BoundingBoxManager } from '@/lib/three/BoundingBoxManager';
+import { BoundingBoxManager, type BoundingBoxBounds } from '@/lib/three/BoundingBoxManager';
 import { useTimelinePlayback } from '@/hooks/useTimelinePlayback';
 import { useSpeckleStore, useAreaDrawingStore, useAcousticsSimulationStore, useGridListenersStore } from '@/store';
 import { useUIStore } from '@/store/uiStore';
@@ -36,19 +38,15 @@ import { useSpeckleTree, getHeaderAndSubheader } from '@/hooks/useSpeckleTree';
 import { useAudioControlsStore } from '@/store';
 import {
   extractTimelineSoundsFromData,
-  calculateTimelineDurationFromData,
 } from '@/lib/audio/utils/timeline-utils';
 import {
   exportSoundscapeToWav,
   type SoundscapeExportConfig,
 } from '@/lib/audio/SoundscapeExporter';
+import { getCssColorHex } from '@/utils/utils';
 import {
-  SPECKLE_VIEWER_RETRY,
-  UI_COLORS,
   TIMELINE_LAYOUT,
   UI_TIMING,
-  SCENE_FOG,
-  SCENE_ENVIRONMENT,
   UI_SCENE_BUTTON,
   UI_RIGHT_SIDEBAR,
   UI_VERTICAL_TABS,
@@ -57,7 +55,7 @@ import {
   RECEIVER_CONFIG,
   IR_HOVER_LINE,
   SIMULATION_POSITION_THRESHOLD,
-  SIMULATION_MISMATCH_COLOR_HEX,
+  SPECKLE_VIEWER_RETRY
 } from '@/utils/constants';
 
 // Left sidebar content width when expanded (matches Sidebar.tsx: 20rem = 320px)
@@ -147,6 +145,7 @@ interface SpeckleSceneProps {
   showBoundingBox?: boolean;
   refreshBoundingBoxTrigger?: number;
   roomScale?: { x: number; y: number; z: number };
+  onRoomScaleChange?: (scale: { x: number; y: number; z: number }) => void;
 
   // Callback when viewer is loaded
   onViewerLoaded?: (viewer: Viewer) => void;
@@ -240,9 +239,10 @@ export function SpeckleScene({
   linkingConfigIndex = null,
   onEntityLinked,
   resonanceAudioConfig,
-  showBoundingBox = false,
+  showBoundingBox ,
   refreshBoundingBoxTrigger = 0,
   roomScale = { x: 1, y: 1, z: 1 },
+  onRoomScaleChange,
   onViewerLoaded,
   onBoundsComputed,
   isLeftSidebarExpanded = true,
@@ -277,6 +277,13 @@ export function SpeckleScene({
 
   // Gradient map overlay
   const activeGradientMap = useUIStore((s) => s.activeGradientMap);
+
+  // Viewer display toggles
+  const showLabelSprites = useUIStore((s) => s.showLabelSprites);
+  const showHoveringHighlight = useUIStore((s) => s.showHoveringHighlight);
+  const showSoundSpheres = useUIStore((s) => s.showSoundSpheres);
+  const showSceneListeners = useUIStore((s) => s.showSceneListeners);
+  const globalSoundSpeed = useUIStore((s) => s.globalSoundSpeed);
   const gradientMapManagerRef = useRef<GradientMapManager | null>(null);
 
   const coordinatorRef = useRef<SpeckleAudioCoordinator | null>(null);
@@ -286,9 +293,27 @@ export function SpeckleScene({
   const selectionExtensionRef = useRef<SelectionExtension | null>(null);
   const filteringExtensionRef = useRef<FilteringExtension | null>(null);
   const boundingBoxManagerRef = useRef<BoundingBoxManager | null>(null);
+  const roomScaleRef = useRef(roomScale);
+  const onRoomScaleChangeRef = useRef(onRoomScaleChange);
   const cameraControllerRef = useRef<CameraController | null>(null);
   const areaDrawingManagerRef = useRef<AreaDrawingManager | null>(null);
   const irHoverLineRef = useRef<THREE.Line | null>(null);
+  const [draggedBoundsOverride, setDraggedBoundsOverride] = useState<BoundingBoxBounds | null>(null);
+
+  // Keep refs in sync so gumball drag handlers never go stale
+  roomScaleRef.current = roomScale;
+  onRoomScaleChangeRef.current = onRoomScaleChange;
+
+  // External roomScale edits are symmetric, so they should replace any one-face drag override.
+  useEffect(() => {
+    setDraggedBoundsOverride(null);
+  }, [roomScale.x, roomScale.y, roomScale.z]);
+
+  // Explicit refresh/reset should also clear any one-face drag override, even if
+  // roomScale is already back at 1,1,1 and therefore doesn't emit a state change.
+  useEffect(() => {
+    setDraggedBoundsOverride(null);
+  }, [refreshBoundingBoxTrigger]);
 
   // ── Audio controls from store ──
   const selectedVariants     = useAudioControlsStore((s) => s.selectedVariants);
@@ -297,6 +322,7 @@ export function SpeckleScene({
   const soundIntervals          = useAudioControlsStore((s) => s.soundIntervals);
   const soundTrims              = useAudioControlsStore((s) => s.soundTrims);
   const intervalJitterSeconds   = useAudioControlsStore((s) => s.intervalJitterSeconds);
+  const timelineDurationMs      = useAudioControlsStore((s) => s.timelineDurationMs);
   const mutedSounds          = useAudioControlsStore((s) => s.mutedSounds);
   const soloedSound          = useAudioControlsStore((s) => s.soloedSound);
   const isAnyPlaying         = useAudioControlsStore((s) =>
@@ -319,7 +345,6 @@ export function SpeckleScene({
 
   // Timeline state
   const [timelineSounds, setTimelineSounds] = useState<TimelineSound[]>([]);
-  const [timelineDuration, setTimelineDuration] = useState(0);
   const [showTimeline, setShowTimeline] = useState(true);
   const [soundMetadataReady, setSoundMetadataReady] = useState(false);
 
@@ -333,6 +358,7 @@ export function SpeckleScene({
   const isDarkMode = viewMode === 'dark';
   const isDarkModeRef = useRef(false); // Non-reactive ref for enforcement interval
   const isAcousticModeRef = useRef(false); // Non-reactive ref used by hover patch
+  const showHoveringHighlightRef = useRef(true); // Non-reactive ref for hover patch
   // Store original light values for restoration when dark mode is disabled
   const darkModeStateRef = useRef<{
     sunIntensity: number;
@@ -539,6 +565,11 @@ export function SpeckleScene({
 
         // Add extensions
         const cameraController = viewer.createExtension(CameraController);
+        // Use empiric near-plane calculation so the near clip stays proportional to
+        // scene size regardless of camera position. The default ACCURATE mode
+        // derives the near plane from camera-to-bounding-box distance, which pushes
+        // it too far when orbiting close to geometry from outside the scene volume.
+        cameraController.options = { nearPlaneCalculation: NearPlaneCalculation.EMPIRIC };
         const selectionExtension = viewer.createExtension(SelectionExtension);
         const filteringExtension = viewer.createExtension(FilteringExtension);
 
@@ -560,7 +591,7 @@ export function SpeckleScene({
             id: THREE.MathUtils.generateUUID(),
             color: 0xffffff,
             emissive: 0x000000,
-            opacity: 0.7,
+            opacity: 1,
             roughness: 1,
             metalness: 0,
             vertexColors: false,
@@ -595,9 +626,34 @@ export function SpeckleScene({
         };
 
         const origApplyHover = (selectionExtension as any).applyHover.bind(selectionExtension);
+
+        // Applies outline-only hover: registers the RV in the stencil pipeline via
+        // origApplyHover, then immediately swaps the draw-range material back to a
+        // clone of the original with stencilWrite=true so the mesh stays visually
+        // unchanged while the outline border still renders.
+        const applyOutlineHover = (rv: any) => {
+          if (!rv) { origApplyHover(null); return; }
+          origApplyHover(rv);
+          // origApplyHover saved the pre-hover material in selectionExtension.hoverMaterial
+          const savedOrig: any = (selectionExtension as any).hoverMaterial;
+          if (!savedOrig) return;
+          const clone = savedOrig.clone();
+          // Replicate OVERLAY stencil settings (AlwaysStencilFunc / ReplaceStencilOp)
+          // without touching colorWrite — mesh stays visually identical.
+          clone.stencilWrite = true;
+          clone.stencilWriteMask = 255;
+          clone.stencilRef = 0;
+          clone.stencilFunc = THREE.AlwaysStencilFunc;
+          clone.stencilZPass = THREE.ReplaceStencilOp;
+          clone.stencilFail = THREE.ReplaceStencilOp;
+          clone.stencilZFail = THREE.ReplaceStencilOp;
+          clone.needsUpdate = true;
+          viewer.getRenderer().setMaterial([rv], clone);
+        };
+
         (selectionExtension as any).applyHover = function (renderView: any) {
-          // Disable hover entirely in dark mode or acoustic mode
-          if (isDarkModeRef.current || isAcousticModeRef.current) {
+          // Disable hover entirely in dark mode, acoustic mode, or when toggled off
+          if (isDarkModeRef.current || isAcousticModeRef.current || !showHoveringHighlightRef.current) {
             origApplyHover(null);
             return;
           }
@@ -614,10 +670,10 @@ export function SpeckleScene({
                 break;
               }
             }
-            origApplyHover(fallback);
+            applyOutlineHover(fallback);
             return;
           }
-          origApplyHover(renderView);
+          applyOutlineHover(renderView);
         };
 
         // Store extensions in refs for later use
@@ -693,15 +749,8 @@ export function SpeckleScene({
             const renderer = viewer.getRenderer();
             const scene = renderer.scene;
             if (scene) {
-              console.log('[SpeckleScene] Initializing BoundingBoxManager with scene:', {
-                sceneUUID: scene.uuid,
-                sceneType: scene.type,
-                sceneChildren: scene.children.length,
-                rendererExists: !!renderer
-              });
               const boundingBoxManager = new BoundingBoxManager(scene);
               boundingBoxManagerRef.current = boundingBoxManager;
-              console.log('[SpeckleScene] BoundingBoxManager initialized');
             } else {
               console.error('[SpeckleScene] Failed to get scene from renderer!');
             }
@@ -1335,7 +1384,7 @@ export function SpeckleScene({
     sphereMeshes.forEach(sphere => {
       const material = sphere.material as THREE.MeshStandardMaterial;
       if (material.color) {
-        material.color.setHex(UI_COLORS.PRIMARY_HEX);
+        material.color.setHex(getCssColorHex('--color-primary'));
       }
     });
 
@@ -1353,7 +1402,7 @@ export function SpeckleScene({
         if (sphere) {
           const material = sphere.material as THREE.MeshStandardMaterial;
           if (material.color) {
-            material.color.setHex(parseInt(UI_COLORS.PRIMARY_HOVER.replace('#', ''), 16));
+            material.color.setHex(getCssColorHex('--color-primary-hover'));
             material.needsUpdate = true;
           }
         }
@@ -1407,7 +1456,6 @@ export function SpeckleScene({
   useEffect(() => {
     if (!soundscapeData || soundscapeData.length === 0) {
       setTimelineSounds([]);
-      setTimelineDuration(0);
       setSoundMetadataReady(false);
       return;
     }
@@ -1420,12 +1468,13 @@ export function SpeckleScene({
       if (soundSphereManager) {
         const soundMetadata = soundSphereManager.getAllAudioSources();
 
-        if (soundMetadata && soundMetadata.size > 0) {
-          const duration = calculateTimelineDurationFromData(soundMetadata, soundIntervals);
-          const sounds = extractTimelineSoundsFromData(soundMetadata, soundIntervals, duration, soundscapeData ?? undefined, soundTrims, intervalJitterSeconds);
+        // Check if we have metadata for at least one sound per unique prompt
+        const uniquePromptCount = new Set(soundscapeData.map(s => s.prompt_index ?? 0)).size;
+
+        if (soundMetadata && soundMetadata.size >= uniquePromptCount) {
+          const sounds = extractTimelineSoundsFromData(soundMetadata, soundIntervals, timelineDurationMs, soundscapeData ?? undefined, soundTrims, intervalJitterSeconds);
 
           setTimelineSounds(sounds);
-          setTimelineDuration(duration);
           setSoundMetadataReady(true);
         } else {
           // Metadata not ready yet, keep checking
@@ -1441,7 +1490,7 @@ export function SpeckleScene({
     // equals the old one (Object.is), so setSoundMetadataReady(false/true) with
     // the same value never triggers an extra run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [soundscapeData, selectedVariants, soundIntervals, soundTrims, soundMetadataReady, intervalJitterSeconds]);
+  }, [soundscapeData, selectedVariants, soundIntervals, soundTrims, soundMetadataReady, intervalJitterSeconds, timelineDurationMs]);
 
   // ============================================================================
   // Effect - Poll for Sound Metadata Readiness
@@ -1460,9 +1509,10 @@ export function SpeckleScene({
       const soundSphereManager = coordinatorRef.current?.getSoundSphereManager();
       if (soundSphereManager) {
         const soundMetadata = soundSphereManager.getAllAudioSources();
-        
-        // Check if we have metadata for all sounds
-        if (soundMetadata && soundMetadata.size > 0 && soundMetadata.size >= soundscapeData.length) {
+
+        // Check if we have metadata for at least one sound per unique prompt
+        const uniquePromptCount = new Set(soundscapeData.map(s => s.prompt_index ?? 0)).size;
+        if (soundMetadata && soundMetadata.size >= uniquePromptCount) {
           setSoundMetadataReady(true);
           clearInterval(intervalId); // Stop polling
         }
@@ -1489,14 +1539,12 @@ export function SpeckleScene({
 
     const soundMetadata = soundSphereManager.getAllAudioSources();
     if (soundMetadata && soundMetadata.size > 0) {
-      const duration = calculateTimelineDurationFromData(soundMetadata, soundIntervals);
-      const sounds = extractTimelineSoundsFromData(soundMetadata, soundIntervals, duration, soundscapeData ?? undefined, soundTrims, intervalJitterSeconds);
+      const sounds = extractTimelineSoundsFromData(soundMetadata, soundIntervals, timelineDurationMs, soundscapeData ?? undefined, soundTrims, intervalJitterSeconds);
 
       setTimelineSounds(sounds);
-      setTimelineDuration(duration);
-      console.log('[SpeckleScene] 🔄 Timeline refreshed:', sounds.length, 'sounds, duration:', duration);
+      console.log('[SpeckleScene] 🔄 Timeline refreshed:', sounds.length, 'sounds, duration:', timelineDurationMs);
     }
-  }, [soundIntervals, soundTrims, soundscapeData, intervalJitterSeconds]);
+  }, [soundIntervals, soundTrims, soundscapeData, intervalJitterSeconds, timelineDurationMs]);
 
   // ============================================================================
   // Callback - Download Soundscape as WAV
@@ -1527,22 +1575,21 @@ export function SpeckleScene({
 
       const config: SoundscapeExportConfig = {
         ...exportState,
+        globalListenerOrientation: listenerOrientation,
         soundGains,
         mutedSounds,
         soloedSound,
         simulationName: activeSimulation?.display_name ?? null,
       };
 
-      const durationMs = timelineDuration > 0 ? timelineDuration : 180_000;
-
-      await exportSoundscapeToWav(timelineSounds, durationMs, config);
+      await exportSoundscapeToWav(timelineSounds, timelineDurationMs, config);
 
       console.log('[SpeckleScene] ✅ Soundscape exported successfully');
     } catch (err) {
       console.error('[SpeckleScene] ❌ Export failed:', err);
       throw err; // re-throw so WaveSurferTimeline can show the error state
     }
-  }, [audioOrchestrator, timelineSounds, timelineDuration, soundscapeData, soundVolumes, mutedSounds, soloedSound]);
+  }, [audioOrchestrator, timelineSounds, timelineDurationMs, soundscapeData, soundVolumes, mutedSounds, soloedSound, listenerOrientation]);
 
   // ============================================================================
   // Timeline Playback Hook
@@ -1550,19 +1597,14 @@ export function SpeckleScene({
 
   const stopTimelineRef = useRef<(() => void) | null>(null);
 
-  const handleTimelineEnd = useCallback(async () => {
-    const soundSphereManager = coordinatorRef.current?.getSoundSphereManager();
-    const playbackScheduler = playbackSchedulerRef.current;
-    if (!soundSphereManager || !playbackScheduler) return;
-
-    console.log('[SpeckleScene] 🛑 Timeline reached visual end! Stopping all playback strictly.');
+  const handleTimelineEnd = useCallback(() => {
     storeStopAll();
     stopTimelineRef.current?.();
   }, [storeStopAll]);
 
   const { playbackState, play: playTimeline, pause: pauseTimeline, stop: stopTimeline, seekTo } = useTimelinePlayback({
     sounds: timelineSounds,
-    duration: timelineDuration,
+    duration: timelineDurationMs,
     onEnd: handleTimelineEnd
   });
 
@@ -1580,12 +1622,6 @@ export function SpeckleScene({
 
     const soundMetadata = soundSphereManager.getAllAudioSources();
 
-    // IMPORTANT: This runs AFTER updateSoundSpheres when variants change
-    // By that time, old variant metadata have been removed
-    // So we rely on updateSoundSpheres to stop any playing audio
-
-    // CRITICAL: updateSoundPlayback is now async (for audio context resume)
-    // Must await to ensure context is resumed before sounds are scheduled
     (async () => {
       await playbackScheduler.updateSoundPlayback(
         soundMetadata,
@@ -1594,12 +1630,8 @@ export function SpeckleScene({
         timelineSounds
       );
 
-      // After all scheduleSound() calls complete, start the cursor.
-      // Delays are already baked into timelineSounds (deterministic, set at generation time),
-      // so no setTimelineSounds update is needed here.
       if (playAfterSchedulingRef.current) {
         playAfterSchedulingRef.current = false;
-        console.debug('[SpeckleScene] Scheduling complete — starting timeline cursor');
         playTimeline();
       }
     })();
@@ -1631,6 +1663,7 @@ export function SpeckleScene({
   // ============================================================================
   useEffect(() => {
     if (audioOrchestrator && soundscapeData) {
+      const soundSphereManager = coordinatorRef.current?.getSoundSphereManager();
       soundscapeData.forEach(soundEvent => {
         // Determine if this sound should be muted
         let shouldBeMuted = mutedSounds.has(soundEvent.id);
@@ -1641,6 +1674,7 @@ export function SpeckleScene({
         }
 
         audioOrchestrator.setSourceMute(soundEvent.id, shouldBeMuted);
+        soundSphereManager?.setSourceMuted(soundEvent.id, shouldBeMuted);
       });
     }
   }, [mutedSounds, soloedSound, soundscapeData, audioOrchestrator]);
@@ -1693,18 +1727,20 @@ export function SpeckleScene({
       };
     }
 
-    // Notify parent of computed bounds (scaled - for Resonance Audio room dimensions)
-    if (scaledBounds && onBoundsComputed) {
-      onBoundsComputed(scaledBounds);
+    const resolvedBounds = draggedBoundsOverride ?? scaledBounds;
+
+    // Notify parent of computed bounds (for Resonance Audio room dimensions)
+    if (resolvedBounds && onBoundsComputed) {
+      onBoundsComputed(resolvedBounds);
     }
 
-    // Update bounding box with scaled bounds
+    // Update bounding box with resolved bounds
     const config = {
       roomMaterials: resonanceAudioConfig?.roomMaterials,
-      visible: showBoundingBox && !!scaledBounds
+      visible: showBoundingBox && !!resolvedBounds
     };
 
-    boundingBoxManager.updateBoundingBox(scaledBounds, config);
+    boundingBoxManager.updateBoundingBox(resolvedBounds, config);
 
     // Request render update to show changes - use multiple frames and RENDER_RESET flag
     if (viewerRef.current) {
@@ -1722,8 +1758,14 @@ export function SpeckleScene({
     resonanceAudioConfig?.roomMaterials,
     refreshBoundingBoxTrigger,
     onBoundsComputed,
-    roomScale
+    roomScale,
+    draggedBoundsOverride
   ]);
+
+  // ============================================================================
+  // Effects - Viewer Visibility Settings
+  // ============================================================================
+  useEffect(() => { showHoveringHighlightRef.current = showHoveringHighlight; }, [showHoveringHighlight]);
 
   // ============================================================================
   // Effect - Dark Mode (Sound Source Lighting)
@@ -1860,7 +1902,7 @@ export function SpeckleScene({
       // base color is black so only the emissive channel contributes (all lights are off).
       const entityEmissiveMat = new THREE.MeshStandardMaterial({
         color: 0x000000,
-        emissive: new THREE.Color(DARK_MODE.LIGHT_COLOR_HEX),
+        emissive: new THREE.Color(getCssColorHex('--color-primary')),
         emissiveIntensity: DARK_MODE.ENTITY_EMISSIVE_INTENSITY,
         roughness: 0,
         metalness: 0,
@@ -2059,7 +2101,7 @@ export function SpeckleScene({
 
         entityPositions.forEach(({ id, position }) => {
           const light = new THREE.PointLight(
-            DARK_MODE.LIGHT_COLOR_HEX,
+            getCssColorHex('--color-primary'),
             DARK_MODE.ENTITY_LIGHT_INTENSITY,
             DARK_MODE.ENTITY_LIGHT_DISTANCE,
             DARK_MODE.POINT_LIGHT_DECAY
@@ -2284,7 +2326,7 @@ export function SpeckleScene({
           if (box.isEmpty()) return;
           box.getCenter(center);
           const light = new THREE.PointLight(
-            DARK_MODE.LIGHT_COLOR_HEX,
+            getCssColorHex('--color-primary'),
             DARK_MODE.POINT_LIGHT_INTENSITY,
             DARK_MODE.POINT_LIGHT_DISTANCE,
             DARK_MODE.POINT_LIGHT_DECAY
@@ -2300,6 +2342,31 @@ export function SpeckleScene({
       }
     }
   }, [isDarkMode, linkedObjectIds]);
+
+  // ============================================================================
+  // Effect - Viewer visibility toggles
+  // ============================================================================
+  useEffect(() => {
+    showHoveringHighlightRef.current = showHoveringHighlight;
+  }, [showHoveringHighlight]);
+
+  useEffect(() => {
+    coordinatorRef.current?.getSoundSphereManager()?.setSoundSpheresVisible(showSoundSpheres);
+  }, [showSoundSpheres]);
+
+  useEffect(() => {
+    coordinatorRef.current?.getSoundSphereManager()?.setLabelSpritesVisible(showLabelSprites);
+    coordinatorRef.current?.getReceiverManager()?.setLabelSpritesVisible(showLabelSprites);
+  }, [showLabelSprites]);
+
+  useEffect(() => {
+    coordinatorRef.current?.getReceiverManager()?.setReceiversVisible(showSceneListeners);
+    coordinatorRef.current?.getGridReceiverManager()?.setVisible(showSceneListeners);
+  }, [showSceneListeners]);
+
+  useEffect(() => {
+    audioOrchestrator?.setSpeedOfSound(globalSoundSpeed);
+  }, [globalSoundSpeed, audioOrchestrator]);
 
   // ============================================================================
   // Global Volume Handlers
@@ -2456,18 +2523,18 @@ export function SpeckleScene({
     const anySoundPaused = Object.values(individualSoundStates).some(state => state === 'paused');
     const allSoundsStopped = Object.values(individualSoundStates).every(state => state === 'stopped' || state === undefined);
 
-    if (anySoundPlaying && !playbackState.isPlaying) {
-      // Don't start the cursor yet if Play All scheduling is still in progress —
-      // the updateSoundPlayback effect will call playTimeline() once ready.
-      if (!playAfterSchedulingRef.current) {
-        playTimeline();
-      }
+    // When the timeline ends naturally it sets isPlaying=false AND currentTime=duration.
+    // Restarting here would create an infinite loop before handleTimelineEnd fires.
+    const timelineAtEnd = playbackState.currentTime >= timelineDurationMs;
+
+    if (anySoundPlaying && !playbackState.isPlaying && !timelineAtEnd) {
+      if (!playAfterSchedulingRef.current) playTimeline();
     } else if (!anySoundPlaying && anySoundPaused && playbackState.isPlaying) {
       pauseTimeline();
     } else if (allSoundsStopped && (playbackState.isPlaying || playbackState.currentTime > 0)) {
       stopTimeline();
     }
-  }, [individualSoundStates, playbackState.isPlaying, playbackState.currentTime, playTimeline, pauseTimeline, stopTimeline]);
+  }, [individualSoundStates, playbackState.isPlaying, playbackState.currentTime, playTimeline, pauseTimeline, stopTimeline, timelineDurationMs]);
 
   // ============================================================================
   // Effect - Update Selected Object Overlay Position (Animation Loop)
@@ -2821,18 +2888,18 @@ export function SpeckleScene({
     const anySoundPaused = Object.values(individualSoundStates).some(state => state === 'paused');
     const allSoundsStopped = Object.values(individualSoundStates).every(state => state === 'stopped' || state === undefined);
 
-    if (anySoundPlaying && !playbackState.isPlaying) {
-      // Don't start the cursor yet if Play All scheduling is still in progress —
-      // the updateSoundPlayback effect will call playTimeline() once ready.
-      if (!playAfterSchedulingRef.current) {
-        playTimeline();
-      }
+    // When the timeline ends naturally it sets isPlaying=false AND currentTime=duration.
+    // Restarting here would create an infinite loop before handleTimelineEnd fires.
+    const timelineAtEnd = playbackState.currentTime >= timelineDurationMs;
+
+    if (anySoundPlaying && !playbackState.isPlaying && !timelineAtEnd) {
+      if (!playAfterSchedulingRef.current) playTimeline();
     } else if (!anySoundPlaying && anySoundPaused && playbackState.isPlaying) {
       pauseTimeline();
     } else if (allSoundsStopped && (playbackState.isPlaying || playbackState.currentTime > 0)) {
       stopTimeline();
     }
-  }, [individualSoundStates, playbackState.isPlaying, playbackState.currentTime, playTimeline, pauseTimeline, stopTimeline]);
+  }, [individualSoundStates, playbackState.isPlaying, playbackState.currentTime, playTimeline, pauseTimeline, stopTimeline, timelineDurationMs]);
 
   // ============================================================================
   // Effect - Notify Parent of Receiver Mode Changes (Change Detection)
@@ -2862,7 +2929,6 @@ export function SpeckleScene({
     return () => {
       // Cleanup bounding box on unmount
       if (boundingBoxManagerRef.current) {
-        console.log('[SpeckleScene] Cleaning up bounding box manager on unmount');
         boundingBoxManagerRef.current.dispose();
       }
     };
@@ -2995,7 +3061,7 @@ export function SpeckleScene({
 
     const geometry = new THREE.BufferGeometry().setFromPoints(points);
     const material = new THREE.LineDashedMaterial({
-      color: IR_HOVER_LINE.COLOR,
+      color: getCssColorHex('--color-primary'),
       opacity: IR_HOVER_LINE.OPACITY,
       transparent: true,
       dashSize: IR_HOVER_LINE.DASH_SIZE,
@@ -3044,13 +3110,13 @@ export function SpeckleScene({
       // No active simulation card expanded — restore default colors
       soundSphereManager?.getSoundSphereMeshes().forEach(mesh => {
         const mat = mesh.material as THREE.MeshStandardMaterial;
-        if (mat.color) mat.color.setHex(UI_COLORS.PRIMARY_HEX);
+        if (mat.color) mat.color.setHex(getCssColorHex('--color-primary'));
         mat.needsUpdate = true;
       });
       receiverManager?.getReceiverMeshes().forEach(mesh => {
         const mat = mesh.material as THREE.MeshStandardMaterial;
-        if (mat.color) mat.color.setHex(RECEIVER_CONFIG.COLOR);
-        if (mat.emissive) mat.emissive.setHex(RECEIVER_CONFIG.COLOR);
+        if (mat.color) mat.color.setHex(getCssColorHex('--color-receiver'));
+        if (mat.emissive) mat.emissive.setHex(getCssColorHex('--color-receiver'));
         mat.needsUpdate = true;
       });
       viewerRef.current?.requestRender();
@@ -3067,9 +3133,7 @@ export function SpeckleScene({
       const dist = Math.hypot(simPos[0] - p.x, simPos[1] - p.y, simPos[2] - p.z);
       const mat = mesh.material as THREE.MeshStandardMaterial;
       if (dist > SIMULATION_POSITION_THRESHOLD) {
-        mat.color.setHex(SIMULATION_MISMATCH_COLOR_HEX);
-      } else {
-        mat.color.setHex(UI_COLORS.PRIMARY_HEX);
+        mat.color.setHex(getCssColorHex('--color-error'));
       }
       mat.needsUpdate = true;
     });
@@ -3084,11 +3148,11 @@ export function SpeckleScene({
       const dist = Math.hypot(simPos[0] - p.x, simPos[1] - p.y, simPos[2] - p.z);
       const mat = mesh.material as THREE.MeshStandardMaterial;
       if (dist > SIMULATION_POSITION_THRESHOLD) {
-        mat.color.setHex(SIMULATION_MISMATCH_COLOR_HEX);
-        mat.emissive.setHex(SIMULATION_MISMATCH_COLOR_HEX);
+        mat.color.setHex(getCssColorHex('--color-error'));
+        mat.emissive.setHex(getCssColorHex('--color-error'));
       } else {
-        mat.color.setHex(RECEIVER_CONFIG.COLOR);
-        mat.emissive.setHex(RECEIVER_CONFIG.COLOR);
+        mat.color.setHex(getCssColorHex('--color-receiver'));
+        mat.emissive.setHex(getCssColorHex('--color-receiver'));
       }
       mat.needsUpdate = true;
     });
@@ -3119,12 +3183,253 @@ export function SpeckleScene({
   }, [activeGradientMap, isViewerReady]);
 
   // ============================================================================
+  // Effects - Bounding Box Gumball Interaction
+  // ============================================================================
+  useEffect(() => {
+    const canvas = containerRef.current?.querySelector('canvas');
+    const viewer = viewerRef.current;
+    if (!canvas || !viewer || !boundingBoxManagerRef.current || !showBoundingBox) return;
+
+    let isDragging = false;
+    let dragAxis: 'x' | 'y' | 'z' | null = null;
+    let dragNormal: THREE.Vector3 | null = null;
+    let dragStartAnchor: THREE.Vector3 | null = null;
+    let baseBoundsAtDragStart: BoundingBoxBounds | null = null;
+
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    const scene = viewer.getRenderer().scene;
+    const camera = (viewer as any).getRenderer().renderingCamera as THREE.Camera | null;
+    if (!camera) return;
+
+    const dragAnchor = new THREE.Object3D();
+    dragAnchor.visible = false;
+    scene.add(dragAnchor);
+
+    const transformControls = new TransformControls(camera, canvas);
+    transformControls.setMode('translate');
+    transformControls.setSpace('world');
+    transformControls.setSize(0.65);
+    const transformHelper = transformControls as unknown as THREE.Object3D;
+    transformHelper.visible = false;
+    transformControls.getRaycaster().layers.enable(0);
+    transformControls.getRaycaster().layers.enable(4);
+    scene.add(transformHelper);
+
+    requestAnimationFrame(() => {
+      transformHelper.traverse((child) => {
+        child.renderOrder = 10000;
+        child.layers.disableAll();
+        child.layers.enable(0);
+        child.layers.enable(4);
+      });
+    });
+
+    const getControlPointer = (e: PointerEvent, button: number) => {
+      updatePointer(e);
+      return { x: pointer.x, y: pointer.y, button } as PointerEvent;
+    };
+
+    const moveDraggedFace = (bounds: BoundingBoxBounds, normal: THREE.Vector3, delta: number): BoundingBoxBounds => {
+      const nextBounds: BoundingBoxBounds = {
+        min: [...bounds.min] as [number, number, number],
+        max: [...bounds.max] as [number, number, number],
+      };
+
+      if (Math.abs(normal.x) > 0.5) {
+        if (normal.x > 0) nextBounds.max[0] += delta;
+        else nextBounds.min[0] -= delta;
+      } else if (Math.abs(normal.y) > 0.5) {
+        if (normal.y > 0) nextBounds.max[1] += delta;
+        else nextBounds.min[1] -= delta;
+      } else if (Math.abs(normal.z) > 0.5) {
+        if (normal.z > 0) nextBounds.max[2] += delta;
+        else nextBounds.min[2] -= delta;
+      }
+
+      return nextBounds;
+    };
+
+    const syncTransformAxis = (axis: 'x' | 'y' | 'z' | null) => {
+      const axisToken: 'X' | 'Y' | 'Z' | null = axis === 'x' ? 'X' : axis === 'y' ? 'Y' : axis === 'z' ? 'Z' : null;
+      transformControls.showX = axis === 'x';
+      transformControls.showY = axis === 'y';
+      transformControls.showZ = axis === 'z';
+      transformControls.axis = axisToken;
+    };
+
+    transformControls.addEventListener('change', () => {
+      viewer.requestRender();
+    });
+
+    transformControls.addEventListener('dragging-changed', (event) => {
+      const dragging = !!(event as { value?: boolean }).value;
+      isDragging = dragging;
+      if (cameraControllerRef.current) {
+        if (dragging) {
+          cameraControllerRef.current.enabled = false;
+        } else {
+          setTimeout(() => {
+            if (cameraControllerRef.current) cameraControllerRef.current.enabled = true;
+          }, 100);
+        }
+      }
+      if (selectionExtensionRef.current) {
+        selectionExtensionRef.current.enabled = !dragging;
+      }
+      canvas.style.cursor = dragging ? 'grabbing' : 'default';
+    });
+
+    transformControls.addEventListener('objectChange', () => {
+      const boundingBoxManager = boundingBoxManagerRef.current;
+      if (!dragNormal || !dragStartAnchor || !baseBoundsAtDragStart || !boundingBoxManager) return;
+
+      const projectedDelta = new THREE.Vector3()
+        .subVectors(dragAnchor.position, dragStartAnchor)
+        .dot(dragNormal);
+      const previewBounds = moveDraggedFace(baseBoundsAtDragStart, dragNormal, projectedDelta);
+
+      boundingBoxManager.updateBoundingBox(previewBounds, {
+        roomMaterials: resonanceAudioConfig?.roomMaterials,
+        visible: showBoundingBox,
+      });
+      setDraggedBoundsOverride(previewBounds);
+      if (onBoundsComputed) {
+        onBoundsComputed(previewBounds);
+      }
+      viewer.requestRender(8);
+      viewer.requestRender();
+    });
+
+    const updatePointer = (e: PointerEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    };
+
+    const getIntersectedGumball = () => {
+      const bbm = boundingBoxManagerRef.current;
+      if (!bbm || bbm.gumballHandles.length === 0 || !showBoundingBox) return null;
+      
+      const camera = (viewer as any).getRenderer().renderingCamera;
+      if (!camera) return null;
+      raycaster.setFromCamera(pointer, camera);
+      const intersects = raycaster.intersectObjects(bbm.gumballHandles, false);
+      if (intersects.length > 0) {
+        return intersects[0].object as THREE.Mesh;
+      }
+      return null;
+    };
+
+    // Hover detection: runs on canvas pointermove when NOT dragging
+    const onCanvasPointerMove = (e: PointerEvent) => {
+      if (isDragging) return; // drag has its own document-level handler
+      const bbm = boundingBoxManagerRef.current;
+      if (!bbm) return;
+      updatePointer(e);
+      const hit = getIntersectedGumball();
+      if (hit) {
+        bbm.setHoveredGumball(hit);
+        canvas.style.cursor = 'grab';
+      } else if (bbm.activeGumball) {
+        bbm.setHoveredGumball(null);
+        canvas.style.cursor = 'default';
+      }
+    };
+
+    const onDocumentDragMove = (e: PointerEvent) => {
+      if (!isDragging) return;
+      e.stopPropagation();
+      transformControls.pointerMove(getControlPointer(e, -1));
+    };
+
+    const onPointerDown = (e: PointerEvent) => {
+      updatePointer(e);
+
+      const bbm = boundingBoxManagerRef.current;
+      if (!bbm || bbm.gumballHandles.length === 0 || !showBoundingBox) return;
+      raycaster.setFromCamera(pointer, camera);
+      const intersects = raycaster.intersectObjects(bbm.gumballHandles, false);
+      if (intersects.length === 0) return;
+
+      const hit = intersects[0].object as THREE.Mesh;
+      const hitWorldPoint = intersects[0].point;
+
+      e.stopPropagation();
+
+      const normal: THREE.Vector3 = hit.userData.faceNormal;
+      dragNormal = normal.clone();
+      if (Math.abs(normal.x) > 0.5) dragAxis = 'x';
+      else if (Math.abs(normal.y) > 0.5) dragAxis = 'y';
+      else dragAxis = 'z';
+
+      const bounds = bbm.currentBounds;
+      if (bounds) {
+        baseBoundsAtDragStart = {
+          min: [...bounds.min] as [number, number, number],
+          max: [...bounds.max] as [number, number, number],
+        };
+      }
+
+      dragAnchor.position.copy(hitWorldPoint);
+      dragStartAnchor = hitWorldPoint.clone();
+      dragAnchor.visible = true;
+      transformHelper.visible = true;
+      syncTransformAxis(dragAxis);
+      transformControls.attach(dragAnchor);
+      transformControls.pointerDown(getControlPointer(e, 0));
+
+      document.addEventListener('pointermove', onDocumentDragMove, true);
+    };
+
+    const onPointerUp = (e: PointerEvent) => {
+      if (isDragging) {
+        e.stopPropagation();
+        transformControls.pointerUp(getControlPointer(e, 0));
+        isDragging = false;
+        dragAxis = null;
+        dragNormal = null;
+        dragStartAnchor = null;
+        baseBoundsAtDragStart = null;
+        syncTransformAxis(null);
+        transformControls.detach();
+        dragAnchor.visible = false;
+        transformHelper.visible = false;
+        canvas.style.cursor = 'default';
+        document.removeEventListener('pointermove', onDocumentDragMove, true);
+        if (selectionExtensionRef.current) {
+          selectionExtensionRef.current.enabled = true;
+        }
+      }
+    };
+
+    canvas.addEventListener('pointermove', onCanvasPointerMove, true);
+    canvas.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('pointerup', onPointerUp, true);
+
+    return () => {
+      canvas.removeEventListener('pointermove', onCanvasPointerMove, true);
+      canvas.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('pointerup', onPointerUp, true);
+      document.removeEventListener('pointermove', onDocumentDragMove, true);
+      canvas.style.cursor = 'default';
+      transformControls.detach();
+      transformControls.dispose();
+      scene.remove(transformHelper);
+      scene.remove(dragAnchor);
+      if (cameraControllerRef.current) cameraControllerRef.current.enabled = true;
+      if (selectionExtensionRef.current) selectionExtensionRef.current.enabled = true;
+    };
+  }, [isViewerReady, showBoundingBox]);
+
+
+  // ============================================================================
   // Render
   // ============================================================================
   return (
     <div
       className={`relative w-full h-full ${className || ''}`}
-      style={{ height: '100vh', backgroundColor: isDarkMode ? '#000000' : undefined }}
+      style={{ height: '100vh', backgroundColor: isDarkMode ? 'var(--background)' : undefined }}
     >
       {/* Viewer container */}
       <div
@@ -3161,7 +3466,7 @@ export function SpeckleScene({
               { mode: 'dark', label: 'Dark', title: 'Dark mode: sound source lighting' },
             ] as const).map(({ mode, label, title }) => {
               const isActive = viewMode === mode;
-              const accentColor = mode === 'dark' ? DARK_MODE.LIGHT_COLOR : 'var(--color-info, #00d4ff)';
+              const accentColor = mode === 'dark' ? 'var(--color-primary)' : 'var(--color-info)';
               return (
                 <button
                   key={mode}
@@ -3228,7 +3533,7 @@ export function SpeckleScene({
 
       {/* Loading overlay */}
       {isLoading && (        <div
-          className="absolute inset-0 flex items-center justify-center pointer-events-none bg-white bg-opacity-50"
+          className="absolute inset-0 flex items-center justify-center pointer-events-none bg-background/50"
         >
           <div className="flex flex-col items-center gap-3">
             <div
@@ -3236,11 +3541,11 @@ export function SpeckleScene({
               style={{
                 width: '48px',
                 height: '48px',
-                borderColor: UI_COLORS.PRIMARY,
+                borderColor: 'var(--color-primary)',
                 borderTopColor: 'transparent',
               }}
             />
-            <p className="text-xs" style={{ color: UI_COLORS.NEUTRAL_400 }}>
+            <p className="text-xs text-neutral-400">
               Loading model...
             </p>
           </div>
@@ -3250,14 +3555,14 @@ export function SpeckleScene({
       {/* Error overlay */}
       {error && (
         <div
-          className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-50"
+          className="absolute inset-0 flex items-center justify-center bg-background/50"
         >
           <div className="text-center p-8">
             <div className="text-6xl mb-4">⚠️</div>
-            <h3 className="text-xl font-semibold mb-2" style={{ color: UI_COLORS.ERROR }}>
+            <h3 className="text-xl font-semibold mb-2 text-error">
               Failed to Load Model
             </h3>
-            <p className="text-sm" style={{ color: UI_COLORS.NEUTRAL_400 }}>
+            <p className="text-sm text-neutral-400">
               {error}
             </p>
           </div>
@@ -3267,7 +3572,7 @@ export function SpeckleScene({
       {/* Empty state - File upload */}
       {!modelUrl && !isLoading && !error && (
         <div
-          className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-50"
+          className="absolute inset-0 flex items-center justify-center bg-background/50"
         >
           <div className="flex flex-col items-center gap-6 p-8" style={{ maxWidth: '400px' }}>
             <div className="text-center">
@@ -3304,16 +3609,16 @@ export function SpeckleScene({
             ) : speckleTokenSet === false ? (
               <div
                 className="w-full rounded-lg p-5 text-center flex flex-col gap-3"
-                style={{ border: `1px dashed ${UI_COLORS.NEUTRAL_300}`, background: UI_COLORS.NEUTRAL_100 }}
+                style={{ border: `1px dashed var(--color-secondary-light)`, background: 'var(--color-secondary-lighter)' }}
               >
-                <p className="text-xs" style={{ color: UI_COLORS.NEUTRAL_600 }}>
+                <p className="text-xs text-neutral-600">
                   3D models are hosted through{' '}
                   <a
                     href="https://app.speckle.systems"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="underline"
-                    style={{ color: UI_COLORS.PRIMARY }}
+                    style={{ color: 'var(--color-primary)' }}
                   >
                     app.speckle.systems
                   </a>
@@ -3323,7 +3628,7 @@ export function SpeckleScene({
                   type="button"
                   onClick={() => useTextGenerationStore.getState().triggerOpenTokenSettings()}
                   className="self-center text-xs px-3 py-1.5 rounded transition-colors"
-                  style={{ border: `1px solid ${UI_COLORS.NEUTRAL_300}`, color: UI_COLORS.NEUTRAL_600 }}
+                  style={{ border: `1px solid var(--color-secondary-light)`, color: 'var(--color-secondary-hover)' }}
                 >
                   Configure Speckle token in Settings →
                 </button>
@@ -3331,8 +3636,8 @@ export function SpeckleScene({
             ) : null /* loading — render nothing while checking */}
 
             {/* Supported formats
-            <div className="text-xs space-y-2 text-center" style={{ color: UI_COLORS.NEUTRAL_500 }}>
-              <p className="font-medium" style={{ color: UI_COLORS.NEUTRAL_400 }}>Supported Formats:</p>
+            <div className="text-xs space-y-2 text-center text-neutral-500">
+              <p className="font-medium text-neutral-400">Supported Formats:</p>
               <p>.3dm (Rhino) &middot; .ifc (IFC) &middot; .obj (Wavefront)</p>
             </div> */}
           </div>
@@ -3425,7 +3730,7 @@ export function SpeckleScene({
               <SceneControlButton
                 onClick={handleToggleVolumeSlider}
                 isActive={globalVolume === 0}
-                activeColor={UI_COLORS.WARNING}
+                activeColor={'var(--color-warning)'}
                 title="Global Volume"
                 icon={globalVolume === 0 ? (
                   <Icon>

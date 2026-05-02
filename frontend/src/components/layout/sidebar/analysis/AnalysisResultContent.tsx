@@ -1,7 +1,6 @@
 'use client';
 
 import type { AnalysisResult } from '@/types/analysis';
-import { UI_COLORS } from '@/utils/constants';
 import { CheckboxField } from '@/components/ui/CheckboxField';
 
 /**
@@ -27,10 +26,10 @@ export function AnalysisResultContent({
     <div className="space-y-2">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="text-xs font-semibold" style={{ color: UI_COLORS.SUCCESS }}>
+        <div className="text-xs font-semibold text-success">
         Generated Prompts
         </div>
-        <div className="text-xs" style={{ color: UI_COLORS.NEUTRAL_300 }}>
+        <div className="text-xs text-neutral-300">
           {selectedCount} / {analysisResult.prompts.length} selected
         </div>
       </div>
@@ -44,12 +43,12 @@ export function AnalysisResultContent({
             key={prompt.id}
             className="flex items-start gap-0 p-1 rounded cursor-pointer transition-colors"
             style={{
-              backgroundColor: prompt.selected ? `${UI_COLORS.SUCCESS_HOVER}50` : 'transparent',
+              backgroundColor: prompt.selected ? 'color-mix(in srgb, var(--color-success-hover) 30%, transparent)' : 'transparent',
               borderRadius: '6px'
             }}
             onMouseEnter={(e) => {
               if (!prompt.selected) {
-                e.currentTarget.style.backgroundColor = UI_COLORS.NEUTRAL_500;
+                e.currentTarget.style.backgroundColor = 'var(--color-secondary-hover)';
               }
             }}
             onMouseLeave={(e) => {
@@ -63,12 +62,12 @@ export function AnalysisResultContent({
               onChange={() => onTogglePromptSelection(analysisResult.configIndex, prompt.id)}
               label=""
             />
-            <div className="flex-1 text-xs" style={{ color: UI_COLORS.NEUTRAL_200 }}>
+            <div className="flex-1 text-xs text-neutral-200">
               {prompt.text}
               
               {/* Metadata display (if available) */}
               {prompt.metadata && (
-                <div className="flex gap-3 mt-1 text-[10px]" style={{ color: UI_COLORS.NEUTRAL_400 }}>
+                <div className="flex gap-3 mt-1 text-[10px] text-neutral-400">
                   {prompt.metadata.spl_db !== undefined && (
                     <span>SPL: {prompt.metadata.spl_db}dB</span>
                   )}

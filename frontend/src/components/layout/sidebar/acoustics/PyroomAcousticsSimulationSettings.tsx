@@ -10,7 +10,6 @@
 'use client';
 
 import {
-  UI_COLORS,
   PYROOMACOUSTICS_MAX_ORDER_MIN,
   PYROOMACOUSTICS_MAX_ORDER_MAX,
   PYROOMACOUSTICS_RAY_TRACING_RECOMMENDED_MAX_ORDER,
@@ -46,7 +45,7 @@ export function PyroomAcousticsSimulationSettings({
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
-        <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
+        <h4 className="text-xs font-semibold text-neutral-700">
           Simulation Settings
         </h4>
       </div>
@@ -56,8 +55,7 @@ export function PyroomAcousticsSimulationSettings({
 {/* Simulation Mode Dropdown */}
 <div>
   <label
-    className="text-xs block mb-1"
-    style={{ color: UI_COLORS.NEUTRAL_700 }}
+    className="text-xs block mb-1 text-neutral-700"
   >
     Simulation Mode
   </label>
@@ -72,7 +70,7 @@ export function PyroomAcousticsSimulationSettings({
     style={{
       backgroundColor: 'var(--card-color, var(--color-primary))',
       color: 'white',
-      borderColor: UI_COLORS.NEUTRAL_300,
+      borderColor: 'var(--color-secondary-light)',
       borderRadius: '8px',
     }}
     disabled={config.isRunning}

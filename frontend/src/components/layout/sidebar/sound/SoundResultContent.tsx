@@ -33,6 +33,7 @@ export interface SoundResultContentProps {
   onIntervalChange?: (soundId: string, intervalSeconds: number) => void;
   onVariantChange?: (promptIdx: number, variantIdx: number) => void;
   onUpdatePosition?: (soundId: string, position: [number, number, number]) => void;
+  onUnlinkEntity?: () => void;
 }
 
 export function SoundResultContent({
@@ -51,6 +52,7 @@ export function SoundResultContent({
   onIntervalChange,
   onVariantChange,
   onUpdatePosition,
+  onUnlinkEntity,
 }: SoundResultContentProps) {
   // Volume and interval from live state
   const currentVolumeDb = soundVolumes[generatedSound.id] ?? generatedSound.volume_db ?? 70;
@@ -100,16 +102,35 @@ export function SoundResultContent({
         {(variants.length > 1 || onUpdatePosition) && (
           <div className="flex flex-col items-start gap-2 mt-1 min-w-0">
             {onUpdatePosition && (
-              <div className="flex gap-1 flex-shrink-0">
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                {generatedSound.entity_index !== undefined && onUnlinkEntity && (
+                  <button
+                    onClick={onUnlinkEntity}
+                    title="Unlink from entity — position will become manually editable"
+                    className="flex-shrink-0 transition-opacity hover:opacity-70"
+                    style={{ color: 'var(--color-primary)' }}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 7L7 17" />
+                    </svg>
+                  </button>
+                )}
+                <div
+                  className="flex gap-1"
+                  title={generatedSound.entity_index !== undefined ? 'Position is controlled by the linked entity' : undefined}
+                >
                 {(['x', 'y', 'z'] as const).map((axis, axisIdx) => {
                   const val = generatedSound.position?.[axisIdx] ?? 0;
+                  const isLinked = generatedSound.entity_index !== undefined;
                   return (
-                    <div key={axis} className="flex flex-col gap-0" style={{ width: '55px' }}>
+                    <div key={axis} className="flex flex-col gap-0" style={{ width: '55px', opacity: isLinked ? 0.4 : 1 }}>
                       <span className="text-[9px] font-medium text-secondary-hover uppercase text-center leading-tight">{axis}</span>
                       <input
                         type="number"
                         step="0.1"
                         value={parseFloat(val.toFixed(2))}
+                        disabled={isLinked}
                         onChange={(e) => {
                           const parsed = parseFloat(e.target.value);
                           if (isNaN(parsed)) return;
@@ -117,12 +138,13 @@ export function SoundResultContent({
                           newPos[axisIdx] = parsed;
                           onUpdatePosition(generatedSound.id, newPos);
                         }}
-                        className="w-full text-[9px] font-mono rounded px-1 py-0.5 outline-none bg-foreground text-background"
+                        className="w-full text-[9px] text-center rounded px-1 py-0.5 outline-none bg-foreground text-background disabled:cursor-not-allowed "
                         style={{ borderColor: 'var(--card-color, var(--color-primary))55' }}
                       />
                     </div>
                   );
                 })}
+                </div>
               </div>
             )}
 

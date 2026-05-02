@@ -175,7 +175,7 @@ export function buildSoundscapeSavePayload(
   const serializedSimConfigs: SoundscapeSimulationConfig[] = [];
 
   for (const config of simulationConfigs || []) {
-    if (config.type !== 'pyroomacoustics') continue;
+    if (config.type !== 'pyroomacoustics' && config.type !== 'import-irs') continue;
 
     const pyConfig = config as any;
 
@@ -458,7 +458,9 @@ export function restoreSoundscapeState(
       }
     }
 
-    // Build the runtime SimulationConfig (PyroomAcousticsSimulationConfig)
+    const hasSettings = !!saved.settings;
+
+    // Build the runtime SimulationConfig
     const restoredConfig: SimulationConfig = {
       id: saved.id,
       display_name: saved.display_name,
@@ -466,7 +468,7 @@ export function restoreSoundscapeState(
       state: (saved.state || 'completed') as SimulationConfig['state'],
       createdAt: Date.now(),
       simulationInstanceId: saved.simulation_instance_id,
-      settings: saved.settings ? {
+      settings: hasSettings ? {
         max_order: saved.settings.max_order,
         ray_tracing: saved.settings.ray_tracing,
         air_absorption: saved.settings.air_absorption,
@@ -498,6 +500,11 @@ export function restoreSoundscapeState(
       speckleGeometryObjectIds: saved.speckle_geometry_object_ids,
       speckleScatteringAssignments: saved.speckle_scattering_assignments,
     } as any;
+
+    if (!hasSettings) {
+      delete (restoredConfig as any).settings;
+      delete (restoredConfig as any).faceToMaterialMap;
+    }
 
     return restoredConfig;
   });

@@ -35,6 +35,7 @@ import { generateSoundEffect } from '@/services/elevenlabs.mts';
 import { apiService } from '@/services/api';
 import { useErrorsStore } from './errorsStore';
 import { useFileUploadStore } from './fileUploadStore';
+import { useAudioControlsStore } from './audioControlsStore';
 
 // ─── Module-level refs ────────────────────────────────────────────────────────
 
@@ -459,6 +460,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 bounding_box: hasEntities ? null : geometryBounds,
                 apply_denoising: applyDenoising,
                 audio_model: audioModel,
+                base_spl_db: useAudioControlsStore.getState().globalBaseSplDb,
               });
               _currentGenerationId = generation_id;
 
@@ -545,16 +547,18 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             }
 
             // ── Uploaded / sample audio ───────────────────────────────────────
+            const globalBaseSplDb = useAudioControlsStore.getState().globalBaseSplDb;
             const uploadedEvents: any[] = [];
             for (const { config, originalIndex } of uploadedConfigs) {
+              const resolvedSpl = config.spl_db ?? globalBaseSplDb;
               const audioUrl = await calibrateBlobUrl(
                 config.uploadedAudioUrl!,
-                config.spl_db ?? DEFAULT_SPL_DB,
+                resolvedSpl,
                 applyDenoising,
               );
               uploadedEvents.push(
                 createSoundEventFromUpload(
-                  config,
+                  { ...config, spl_db: resolvedSpl },
                   audioUrl,
                   originalIndex,
                   total,
@@ -579,14 +583,15 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   signal: _abortController.signal,
                 });
                 if (!dlRes.ok) throw new Error('Failed to download sound');
+                const resolvedSpl = config.spl_db ?? globalBaseSplDb;
                 const audioUrl = await calibrateBlobUrl(
                   await dlRes.blob(),
-                  config.spl_db ?? DEFAULT_SPL_DB,
+                  resolvedSpl,
                   applyDenoising,
                 );
                 libraryEvents.push(
                   createSoundEventFromUpload(
-                    config,
+                    { ...config, spl_db: resolvedSpl },
                     audioUrl,
                     originalIndex,
                     total,
@@ -608,14 +613,15 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   signal: _abortController.signal,
                 });
                 if (!dlRes.ok) throw new Error('Failed to download catalog sound');
+                const resolvedSpl = config.spl_db ?? globalBaseSplDb;
                 const audioUrl = await calibrateBlobUrl(
                   await dlRes.blob(),
-                  config.spl_db ?? DEFAULT_SPL_DB,
+                  resolvedSpl,
                   applyDenoising,
                 );
                 catalogEvents.push(
                   createSoundEventFromUpload(
-                    config,
+                    { ...config, spl_db: resolvedSpl },
                     audioUrl,
                     originalIndex,
                     total,
@@ -624,7 +630,10 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   ),
                 );
               } catch (error) {
+                const errorMsg = error instanceof Error ? error.message : 'Failed to download catalog sound';
                 console.error('[soundscapeStore] Catalog download error:', error);
+                // Set per-card error
+                get().handleUpdateConfig(originalIndex, 'error', errorMsg);
               }
             }
 
@@ -637,14 +646,15 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 durationSeconds:
                   duration >= 0.5 && duration <= 22 ? duration : undefined,
               });
+              const resolvedSpl = config.spl_db ?? globalBaseSplDb;
               const audioUrl = await calibrateBlobUrl(
                 rawUrl,
-                config.spl_db ?? DEFAULT_SPL_DB,
+                resolvedSpl,
                 applyDenoising,
               );
               elevenLabsEvents.push(
                 createSoundEventFromUpload(
-                  config,
+                  { ...config, spl_db: resolvedSpl },
                   audioUrl,
                   originalIndex,
                   total,
@@ -1108,6 +1118,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         updateSoundPosition: (soundId, position) => {
           const { soundscapeData, generatedSounds } = get();
           const existing = soundscapeData?.find((s) => s.id === soundId);
+          const promptIndex = existing?.prompt_index;
           if (
             existing?.position &&
             existing.position[0] === position[0] &&
@@ -1117,7 +1128,15 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             return; // no-op
           }
           const update = (sounds: any[]) =>
-            sounds.map((s) => (s.id === soundId ? { ...s, position } : s));
+            sounds.map((s) => {
+              if (promptIndex !== undefined && s.prompt_index === promptIndex) {
+                return { ...s, position };
+              }
+              if (promptIndex === undefined && s.id === soundId) {
+                return { ...s, position };
+              }
+              return s;
+            });
           set(
             {
               soundscapeData: soundscapeData ? update(soundscapeData) : null,

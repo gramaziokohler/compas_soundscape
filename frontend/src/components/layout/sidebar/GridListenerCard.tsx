@@ -103,7 +103,7 @@ export function GridListenerCard({
     phase === 'selecting' ? 'Validate selection' : phase === 'ready' ? 'Recreate grid' : 'Select objects';
 
   const btnColor =
-    phase === 'selecting' ? '#10B981' : phase === 'ready' ? '#6b7280' : color;
+    phase === 'selecting' ? 'var(--color-success)' : phase === 'ready' ? 'var(--color-secondary-hover)' : color;
 
   return (
     <div
@@ -143,7 +143,7 @@ export function GridListenerCard({
             <div className="truncate">
               {index + 1}. {grid.name}
               {grid.hiddenForSimulation && (
-                <span className="ml-1 text-[9px] text-amber-500 opacity-70">(hidden)</span>
+                <span className="ml-1 text-[9px] text-warning opacity-70">(hidden)</span>
               )}
               <span className="text-[10px] ml-1 opacity-0 group-hover:opacity-40 transition-opacity">✏️</span>
             </div>
@@ -243,7 +243,7 @@ export function GridListenerCard({
           {phase === 'selecting' && (
             <div
               className="text-[10px] rounded-lg px-2 py-1.5 text-white leading-relaxed"
-              style={{ backgroundColor: '#10B981cc' }}
+              style={{ backgroundColor: 'color-mix(in srgb, var(--color-success) 80%, transparent)' }}
             >
               Select one or multiple surfaces. Press Enter or click the button to validate. Esc to cancel.
             </div>

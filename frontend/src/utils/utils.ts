@@ -1,6 +1,68 @@
 // Helper Functions
 
 /**
+ * Read a CSS custom property at runtime and return its hex value as a Three.js-compatible number.
+ * Call only in browser context (not SSR).
+ */
+export function getCssColorHex(cssVar: string): number {
+  const val = getComputedStyle(document.documentElement)
+    .getPropertyValue(cssVar).trim().replace('#', '');
+  return parseInt(val, 16);
+}
+
+/**
+ * Generate a gradient color for acoustic materials based on absorption coefficient.
+ * Reads gradient stops from CSS custom properties (--color-material-start/mid/end)
+ * at call time; falls back to the original values for SSR.
+ *
+ * @param absorption - Absorption coefficient (0-1)
+ * @returns Hex color string
+ */
+export function getMaterialColorByAbsorption(absorption: number): string {
+  if (typeof absorption !== 'number' || isNaN(absorption)) {
+    console.warn('[getMaterialColorByAbsorption] Invalid absorption value:', absorption, 'Using default color');
+    const root = typeof document !== 'undefined' ? document.documentElement : null;
+    return root ? getComputedStyle(root).getPropertyValue('--color-secondary-hover').trim() || '#787878' : '#787878';
+  }
+
+  const ratio = Math.max(0, Math.min(1, absorption));
+
+  const root = typeof document !== 'undefined' ? document.documentElement : null;
+  const cssHex = (varName: string, fallback: string): string => {
+    if (!root) return fallback;
+    return getComputedStyle(root).getPropertyValue(varName).trim().replace('#', '') || fallback;
+  };
+
+  let startHex: string;
+  let endHex: string;
+  let localRatio: number;
+
+  if (ratio < 0.5) {
+    startHex = cssHex('--color-material-start', '67bfb4');
+    endHex = cssHex('--color-material-mid', 'ffbf6d');
+    localRatio = ratio * 2;
+  } else {
+    startHex = cssHex('--color-material-mid', 'ffbf6d');
+    endHex = cssHex('--color-material-end', 'eb5c52');
+    localRatio = (ratio - 0.5) * 2;
+  }
+
+  const r1 = parseInt(startHex.substring(0, 2), 16);
+  const g1 = parseInt(startHex.substring(2, 4), 16);
+  const b1 = parseInt(startHex.substring(4, 6), 16);
+
+  const r2 = parseInt(endHex.substring(0, 2), 16);
+  const g2 = parseInt(endHex.substring(2, 4), 16);
+  const b2 = parseInt(endHex.substring(4, 6), 16);
+
+  const r = Math.round(r1 + (r2 - r1) * localRatio);
+  const g = Math.round(g1 + (g2 - g1) * localRatio);
+  const b = Math.round(b1 + (b2 - b1) * localRatio);
+
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+}
+
+/**
  * Triangulate faces into triangle indices
  * @param faces - Array of face vertex indices
  * @returns Array of triangle vertex indices

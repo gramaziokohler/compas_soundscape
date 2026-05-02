@@ -21,6 +21,7 @@ import type {
   ResonanceSimulationConfig,
   ChorasSimulationConfig,
   PyroomAcousticsSimulationConfig,
+  ImportIRsSimulationConfig,
 } from '@/types/acoustics';
 import { CARD_TYPE_LABELS } from '@/types/card';
 import {
@@ -31,15 +32,11 @@ import {
   PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE,
   PYROOMACOUSTICS_DEFAULT_ENABLE_GRID,
   CHORAS_DEFAULT_METHOD,
-  CHORAS_DE_DEFAULT_SIM_LEN_TYPE,
-  CHORAS_DE_DEFAULT_EDT,
-  CHORAS_DE_DEFAULT_IR_LENGTH,
   CHORAS_DE_DEFAULT_C0,
   CHORAS_DE_DEFAULT_LC,
   CHORAS_DG_DEFAULT_FREQ_UPPER,
   CHORAS_DG_DEFAULT_C0,
   CHORAS_DG_DEFAULT_RHO0,
-  CHORAS_DG_DEFAULT_IR_LENGTH,
   CHORAS_DG_DEFAULT_POLY_ORDER,
   CHORAS_DG_DEFAULT_PPW,
   CHORAS_DG_DEFAULT_CFL,
@@ -126,15 +123,11 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
                 simulationInstanceId: `choras_${timestamp}`,
                 settings: {
                   simulation_method: CHORAS_DEFAULT_METHOD as 'DE' | 'DG',
-                  de_sim_len_type: CHORAS_DE_DEFAULT_SIM_LEN_TYPE as 'ir_length' | 'edt',
-                  de_edt: CHORAS_DE_DEFAULT_EDT,
-                  de_ir_length: CHORAS_DE_DEFAULT_IR_LENGTH,
                   de_c0: CHORAS_DE_DEFAULT_C0,
                   de_lc: CHORAS_DE_DEFAULT_LC,
                   dg_freq_upper_limit: CHORAS_DG_DEFAULT_FREQ_UPPER,
                   dg_c0: CHORAS_DG_DEFAULT_C0,
                   dg_rho0: CHORAS_DG_DEFAULT_RHO0,
-                  dg_ir_length: CHORAS_DG_DEFAULT_IR_LENGTH,
                   dg_poly_order: CHORAS_DG_DEFAULT_POLY_ORDER,
                   dg_ppw: CHORAS_DG_DEFAULT_PPW,
                   dg_cfl: CHORAS_DG_DEFAULT_CFL,
@@ -171,6 +164,20 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
                 error: null,
                 simulationResults: null,
               } as PyroomAcousticsSimulationConfig;
+              break;
+
+            case 'import-irs':
+              newConfig = {
+                id,
+                display_name: name,
+                type: 'import-irs',
+                state: 'completed',
+                createdAt: timestamp,
+                completedAt: timestamp,
+                simulationResults: null,
+                importedIRIds: undefined,
+                sourceReceiverIRMapping: undefined,
+              } as ImportIRsSimulationConfig;
               break;
 
           }

@@ -9,19 +9,8 @@
 'use client';
 
 import {
-  UI_COLORS,
-  CHORAS_C0_MIN,
-  CHORAS_C0_MAX,
-  CHORAS_DE_IR_LENGTH_MIN,
-  CHORAS_DE_IR_LENGTH_MAX,
-  CHORAS_DE_LC_MIN,
-  CHORAS_DE_LC_MAX,
-  CHORAS_DE_EDT_MIN,
-  CHORAS_DE_EDT_MAX,
   CHORAS_DG_FREQ_UPPER_MIN,
   CHORAS_DG_FREQ_UPPER_MAX,
-  CHORAS_DG_IR_LENGTH_MIN,
-  CHORAS_DG_IR_LENGTH_MAX,
   CHORAS_DG_POLY_ORDER_MIN,
   CHORAS_DG_POLY_ORDER_MAX,
   CHORAS_DG_PPW_MIN,
@@ -57,14 +46,14 @@ export function ChorasSimulationSettings({
     <div className="flex flex-col gap-3">
       {/* Section title */}
       <div className="flex items-center justify-between">
-        <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
+        <h4 className="text-xs font-semibold text-neutral-700">
           Simulation Settings
         </h4>
       </div>
 
       {/* Method selector */}
       <div>
-        <label className="text-xs block mb-1" style={{ color: UI_COLORS.NEUTRAL_700 }}>
+        <label className="text-xs block mb-1 text-neutral-700">
           Method
         </label>
         <select
@@ -77,7 +66,7 @@ export function ChorasSimulationSettings({
           style={{
             backgroundColor: 'var(--card-color, var(--color-primary))',
             color: 'white',
-            borderColor: UI_COLORS.NEUTRAL_300,
+            borderColor: 'var(--color-secondary-light)',
             borderRadius: '8px',
           }}
         >
@@ -88,81 +77,7 @@ export function ChorasSimulationSettings({
 
       {/* ── DE settings ─────────────────────────────────────────────────── */}
       {settings.simulation_method === 'DE' && (
-        <>
-          {/* Simulation length type */}
-          <div>
-            <label className="text-xs block mb-1" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-              Length type
-            </label>
-            <select
-              value={settings.de_sim_len_type}
-              onChange={(e) =>
-                handleSettingChange('de_sim_len_type', e.target.value as 'ir_length' | 'edt')
-              }
-              disabled={isRunning}
-              className="w-full px-3 py-2 text-xs rounded border transition-colors hover:bg-opacity-90 focus:outline-none"
-              style={{
-                backgroundColor: 'var(--card-color, var(--color-primary))',
-                color: 'white',
-                borderColor: UI_COLORS.NEUTRAL_300,
-                borderRadius: '8px',
-              }}
-            >
-              <option value="edt">EDT-based length</option>
-              <option value="ir_length">Fixed IR length</option>
-            </select>
-          </div>
-
-          {/* EDT threshold (only when sim_len_type === 'edt') */}
-          {settings.de_sim_len_type === 'edt' && (
-            <RangeSlider
-              label="EDT target: "
-              value={settings.de_edt}
-              min={CHORAS_DE_EDT_MIN}
-              max={CHORAS_DE_EDT_MAX}
-              step={1}
-              formatValue={(v) => `${v} dB`}
-              onChange={(v) => handleSettingChange('de_edt', v)}
-              disabled={isRunning}
-            />
-          )}
-
-          {/* IR length */}
-          <RangeSlider
-            label="IR length: "
-            value={settings.de_ir_length}
-            min={CHORAS_DE_IR_LENGTH_MIN}
-            max={CHORAS_DE_IR_LENGTH_MAX}
-            step={0.05}
-            formatValue={(v) => `${v.toFixed(2)} s`}
-            onChange={(v) => handleSettingChange('de_ir_length', v)}
-            disabled={isRunning}
-          />
-
-          {/* Speed of sound */}
-          <RangeSlider
-            label="Speed of sound: "
-            value={settings.de_c0}
-            min={CHORAS_C0_MIN}
-            max={CHORAS_C0_MAX}
-            step={1}
-            formatValue={(v) => `${v} m/s`}
-            onChange={(v) => handleSettingChange('de_c0', v)}
-            disabled={isRunning}
-          />
-
-          {/* Characteristic mesh length */}
-          <RangeSlider
-            label="Mesh length (lc): "
-            value={settings.de_lc}
-            min={CHORAS_DE_LC_MIN}
-            max={CHORAS_DE_LC_MAX}
-            step={0.1}
-            formatValue={(v) => `${v.toFixed(1)} m`}
-            onChange={(v) => handleSettingChange('de_lc', v)}
-            disabled={isRunning}
-          />
-        </>
+        <></>
       )}
 
       {/* ── DG settings ─────────────────────────────────────────────────── */}
@@ -177,30 +92,6 @@ export function ChorasSimulationSettings({
             step={10}
             formatValue={(v) => `${v} Hz`}
             onChange={(v) => handleSettingChange('dg_freq_upper_limit', v)}
-            disabled={isRunning}
-          />
-
-          {/* IR length */}
-          <RangeSlider
-            label="IR length: "
-            value={settings.dg_ir_length}
-            min={CHORAS_DG_IR_LENGTH_MIN}
-            max={CHORAS_DG_IR_LENGTH_MAX}
-            step={0.01}
-            formatValue={(v) => `${v.toFixed(2)} s`}
-            onChange={(v) => handleSettingChange('dg_ir_length', v)}
-            disabled={isRunning}
-          />
-
-          {/* Speed of sound */}
-          <RangeSlider
-            label="Speed of sound: "
-            value={settings.dg_c0}
-            min={CHORAS_C0_MIN}
-            max={CHORAS_C0_MAX}
-            step={1}
-            formatValue={(v) => `${v} m/s`}
-            onChange={(v) => handleSettingChange('dg_c0', v)}
             disabled={isRunning}
           />
 

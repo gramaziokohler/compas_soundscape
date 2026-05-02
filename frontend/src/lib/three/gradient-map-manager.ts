@@ -60,8 +60,8 @@ export class GradientMapManager {
 
     // ── Compute min/max for the selected metric ───────────────────────────
     const rawValues = pointValues.map((p) => p.value);
-    let minVal = Math.min(...rawValues);
-    let maxVal = Math.max(...rawValues);
+    let minVal = state.range?.min ?? Math.min(...rawValues);
+    let maxVal = state.range?.max ?? Math.max(...rawValues);
     if (maxVal === minVal) { minVal -= 0.001; maxVal += 0.001; }
 
     // ── Build geometry in world space ─────────────────────────────────────

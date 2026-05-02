@@ -42,10 +42,7 @@ from config.constants import (
     CHORAS_RIR_DIR,
     CHORAS_TEMP_DIR,
     CHORAS_DE_DEFAULT_C0,
-    CHORAS_DE_DEFAULT_IR_LENGTH,
     CHORAS_DE_DEFAULT_LC,
-    CHORAS_DE_DEFAULT_EDT,
-    CHORAS_DE_DEFAULT_SIM_LEN_TYPE,
     CHORAS_DG_DEFAULT_C0,
     CHORAS_DG_DEFAULT_RHO0,
     CHORAS_DG_DEFAULT_IR_LENGTH,
@@ -516,16 +513,13 @@ async def run_choras_simulation_speckle(
     geometry_object_ids: Optional[str] = Form(None),  # JSON: ["id1", ...]
     simulation_method: str = Form("DE"),          # "DE" or "DG"
     # ── DE settings ──────────────────────────────────────────────────────────
-    de_sim_len_type: str = Form(CHORAS_DE_DEFAULT_SIM_LEN_TYPE),
-    de_edt: float = Form(CHORAS_DE_DEFAULT_EDT),
-    de_ir_length: float = Form(CHORAS_DE_DEFAULT_IR_LENGTH),
+
     de_c0: float = Form(CHORAS_DE_DEFAULT_C0),
     de_lc: float = Form(CHORAS_DE_DEFAULT_LC),
     # ── DG settings ──────────────────────────────────────────────────────────
     dg_freq_upper_limit: float = Form(CHORAS_DG_DEFAULT_FREQ_UPPER),
     dg_c0: float = Form(CHORAS_DG_DEFAULT_C0),
     dg_rho0: float = Form(CHORAS_DG_DEFAULT_RHO0),
-    dg_ir_length: float = Form(CHORAS_DG_DEFAULT_IR_LENGTH),
     dg_poly_order: int = Form(CHORAS_DG_DEFAULT_POLY_ORDER),
     dg_ppw: float = Form(CHORAS_DG_DEFAULT_PPW),
     dg_cfl: float = Form(CHORAS_DG_DEFAULT_CFL),
@@ -610,9 +604,7 @@ async def run_choras_simulation_speckle(
 
         # ── Build method settings dicts ──────────────────────────────────────
         de_settings = {
-            "sim_len_type": de_sim_len_type,
-            "edt":          de_edt,
-            "de_ir_length": de_ir_length,
+            "sim_len_type": "edt",
             "de_c0":        de_c0,
             "de_lc":        de_lc,
             "frequencies":  frequencies,
@@ -621,7 +613,6 @@ async def run_choras_simulation_speckle(
             "dg_freq_upper_limit": dg_freq_upper_limit,
             "dg_c0":              dg_c0,
             "dg_rho0":            dg_rho0,
-            "dg_ir_length":       dg_ir_length,
             "dg_poly_order":      dg_poly_order,
             "dg_ppw":             dg_ppw,
             "dg_cfl":             dg_cfl,

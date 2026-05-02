@@ -5,7 +5,7 @@
  */
 
 import type { ReceiverData, SoundEvent, CompasGeometry } from './index';
-import type { ImpulseResponseMetadata } from './audio';
+import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from './audio';
 import type { AcousticMaterial } from './materials';
 import type { CardBaseConfig, CardType, CardExecutionState } from './card';
 
@@ -47,16 +47,12 @@ export interface ChorasSimulationConfig extends BaseSimulationConfig, CardExecut
   settings: {
     simulation_method: 'DE' | 'DG';
     // DE (Diffusion Equation / FVM) settings
-    de_sim_len_type: 'ir_length' | 'edt';
-    de_edt: number;
-    de_ir_length: number;
     de_c0: number;
     de_lc: number;
     // DG (Discontinuous Galerkin) settings
     dg_freq_upper_limit: number;
     dg_c0: number;
     dg_rho0: number;
-    dg_ir_length: number;
     dg_poly_order: number;
     dg_ppw: number;
     dg_cfl: number;
@@ -116,8 +112,22 @@ export interface PyroomAcousticsSimulationConfig extends BaseSimulationConfig, C
   importedIRMetadata?: ImpulseResponseMetadata;
   // Source-receiver IR mapping (for audio integration)
   importedIRIds?: string[]; // Array of imported IR IDs for filtering
-  sourceReceiverIRMapping?: import('./audio').SourceReceiverIRMapping; // Source-receiver IR mapping
+  sourceReceiverIRMapping?: SourceReceiverIRMapping; // Source-receiver IR mapping
   /** Positions of sources and receivers at the time the simulation was run (source of truth for IR hover line) */
+  simulationPositions?: {
+    sources: Record<string, [number, number, number]>;
+    receivers: Record<string, [number, number, number]>;
+  };
+}
+
+/**
+ * Manual source-receiver IR import configuration
+ */
+export interface ImportIRsSimulationConfig extends BaseSimulationConfig {
+  type: 'import-irs';
+  simulationResults: string | null;
+  importedIRIds?: string[];
+  sourceReceiverIRMapping?: SourceReceiverIRMapping;
   simulationPositions?: {
     sources: Record<string, [number, number, number]>;
     receivers: Record<string, [number, number, number]>;
@@ -130,7 +140,8 @@ export interface PyroomAcousticsSimulationConfig extends BaseSimulationConfig, C
 export type SimulationConfig =
   | ResonanceSimulationConfig
   | ChorasSimulationConfig
-  | PyroomAcousticsSimulationConfig;
+  | PyroomAcousticsSimulationConfig
+  | ImportIRsSimulationConfig;
 
 /**
  * Props for SimulationTab component (analogous to SoundTab)

@@ -3,11 +3,17 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { ChevronRight } from "lucide-react";
 import { AudioWaveformDisplay } from "@/components/audio/AudioWaveformDisplay";
+import { FileUploadArea } from "@/components/controls/FileUploadArea";
 import { apiService } from "@/services/api";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from "@/types/audio";
-import { API_BASE_URL, IR_HOVER_LINE, IR_LOW_ENERGY_THRESHOLD, UI_COLORS } from "@/utils/constants";
+import { API_BASE_URL, IR_HOVER_LINE, IR_LOW_ENERGY_THRESHOLD } from "@/utils/constants";
 import { trimDisplayName } from "@/utils/utils";
+
+type SourceReceiverPair = {
+  sourceId: string;
+  receiverId: string;
+};
 
 interface ImpulseResponseUploadProps {
   onClearIR: () => void;
@@ -27,12 +33,18 @@ interface ImpulseResponseUploadProps {
   fpsExitTrigger?: number;
   /** When set, scrolls to and highlights the corresponding IR group (e.g. after scene double-click) */
   forcedActiveGroupId?: string | null;
+  pairDefinitions?: SourceReceiverPair[];
+  availableSourceCount?: number;
+  availableReceiverCount?: number;
+  allowPairUploads?: boolean;
+  onPairIRUploaded?: (sourceId: string, receiverId: string, ir: ImpulseResponseMetadata) => void;
+  onPairAssignmentCleared?: (sourceId: string, receiverId: string) => void;
 }
 
 type ReceiverGroup = {
   groupId: string;
   groupName: string;
-  sources: Array<{ sourceId: string; receiverId: string; ir: ImpulseResponseMetadata }>;
+  sources: Array<{ sourceId: string; receiverId: string; ir: ImpulseResponseMetadata | null }>;
 };
 
 export function ImpulseResponseUpload({
@@ -49,6 +61,12 @@ export function ImpulseResponseUpload({
   onGoToReceiver,
   fpsExitTrigger,
   forcedActiveGroupId,
+  pairDefinitions,
+  availableSourceCount = 0,
+  availableReceiverCount = 0,
+  allowPairUploads = false,
+  onPairIRUploaded,
+  onPairAssignmentCleared,
 }: ImpulseResponseUploadProps) {
   const handleError = useApiErrorHandler();
   const [impulseResponses, setImpulseResponses] = useState<ImpulseResponseMetadata[]>([]);
@@ -60,7 +78,9 @@ export function ImpulseResponseUpload({
   const [bufferCache, setBufferCache] = useState<Map<string, AudioBuffer>>(new Map());
   const [lowEnergyIRIds, setLowEnergyIRIds] = useState<Set<string>>(new Set());
   const [isDragging, setIsDragging] = useState(false);
+  const [draggingPairKey, setDraggingPairKey] = useState<string | null>(null);
   const irLibraryFileInputRef = useRef<HTMLInputElement>(null);
+  const simulationIRIdsKey = useMemo(() => (simulationIRIds ?? []).join('|'), [simulationIRIds]);
 
   // Collapsed receiver groups (empty = all expanded)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
@@ -114,7 +134,7 @@ export function ImpulseResponseUpload({
   const [isOverlayHovered, setIsOverlayHovered] = useState(false);
   const hideTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  useEffect(() => { loadImpulseResponses(); }, [refreshTrigger]);
+  useEffect(() => { loadImpulseResponses(); }, [refreshTrigger, simulationIRIdsKey]);
 
   useEffect(() => {
     for (const ir of impulseResponses) {
@@ -221,14 +241,65 @@ export function ImpulseResponseUpload({
     if (e.target.files?.length) { await uploadFiles(e.target.files); e.target.value = ''; }
   };
 
+  const uploadPairIR = async (files: FileList | File[], sourceId: string, receiverId: string) => {
+    const file = Array.from(files)[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    setError(null);
+
+    try {
+      setUploadProgress(`Uploading IR for ${trimDisplayName(sourceDisplayNames?.[sourceId] ?? sourceId)}...`);
+      const uploaded = await apiService.uploadImpulseResponse(file, file.name.replace(/\.[^/.]+$/, ''));
+      onPairIRUploaded?.(sourceId, receiverId, uploaded);
+      setUploadProgress('IR imported');
+      await loadImpulseResponses();
+      setTimeout(() => setUploadProgress(''), 2000);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Pair IR upload failed';
+      setError(errorMessage);
+      handleError(err, errorMessage);
+      setUploadProgress('');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const buildPairKey = (sourceId: string, receiverId: string) => `${sourceId}::${receiverId}`;
+
+  const handlePairFileChange = (sourceId: string, receiverId: string) => async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files?.length) {
+      await uploadPairIR(e.target.files, sourceId, receiverId);
+      e.target.value = '';
+    }
+  };
+
+  const handlePairDragOver = (pairKey: string) => (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDraggingPairKey(pairKey);
+  };
+
+  const handlePairDragLeave = (pairKey: string) => (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (draggingPairKey === pairKey) setDraggingPairKey(null);
+  };
+
+  const handlePairDrop = (sourceId: string, receiverId: string, pairKey: string) => async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (draggingPairKey === pairKey) setDraggingPairKey(null);
+    if (e.dataTransfer.files.length > 0) {
+      await uploadPairIR(e.dataTransfer.files, sourceId, receiverId);
+    }
+  };
+
   const getFormatBadge = (format: string) => {
     const badges = {
-      mono:     { color: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',     label: 'Mono' },
-      binaural: { color: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200', label: 'Binaural' },
-      foa:      { color: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',   label: 'FOA' },
-      toa:      { color: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200', label: 'TOA' },
+      mono:     { color: 'bg-info-light text-info',         label: 'Mono' },
+      binaural: { color: 'bg-primary-light text-primary',   label: 'Binaural' },
+      foa:      { color: 'bg-success-light text-success',   label: 'FOA' },
+      toa:      { color: 'bg-warning-light text-warning',   label: 'TOA' },
     };
-    return badges[format as keyof typeof badges] || { color: 'bg-gray-100 text-gray-800', label: format };
+    return badges[format as keyof typeof badges] || { color: 'bg-neutral-100 text-neutral-800', label: format };
   };
 
   const formatChannelLabel = (channelCount: number): string => {
@@ -244,34 +315,41 @@ export function ImpulseResponseUpload({
     groups: ReceiverGroup[];
     unmapped: ImpulseResponseMetadata[];
   } | null => {
-    if (!sourceReceiverIRMapping) return null;
+    const hasPairDefinitions = (pairDefinitions?.length ?? 0) > 0;
+    if (!sourceReceiverIRMapping && !hasPairDefinitions) return null;
 
     const irById = new Map(impulseResponses.map(ir => [ir.id, ir]));
     const groups = new Map<string, ReceiverGroup>();
+    const pairs: SourceReceiverPair[] = hasPairDefinitions
+      ? pairDefinitions!
+      : Object.entries(sourceReceiverIRMapping || {}).flatMap(([sourceId, receivers]) =>
+          Object.keys(receivers).map((receiverId) => ({ sourceId, receiverId }))
+        );
 
-    for (const [sourceId, receivers] of Object.entries(sourceReceiverIRMapping)) {
-      for (const [receiverId, irMeta] of Object.entries(receivers)) {
-        const ir = irById.get(irMeta.id);
-        if (!ir) continue;
+    for (const { sourceId, receiverId } of pairs) {
+      const irMeta = sourceReceiverIRMapping?.[sourceId]?.[receiverId];
+      const rg = receiverGroups?.[receiverId];
+      const groupId = rg?.groupId ?? receiverId;
+      const groupName = rg?.groupName ?? receiverDisplayNames?.[receiverId] ?? receiverId;
 
-        const rg = receiverGroups?.[receiverId];
-        const groupId = rg?.groupId ?? receiverId;
-        const groupName = rg?.groupName ?? receiverDisplayNames?.[receiverId] ?? receiverId;
-
-        if (!groups.has(groupId)) {
-          groups.set(groupId, { groupId, groupName, sources: [] });
-        }
-        groups.get(groupId)!.sources.push({ sourceId, receiverId, ir });
+      if (!groups.has(groupId)) {
+        groups.set(groupId, { groupId, groupName, sources: [] });
       }
+
+      groups.get(groupId)!.sources.push({
+        sourceId,
+        receiverId,
+        ir: irMeta ? irById.get(irMeta.id) ?? irMeta : null,
+      });
     }
 
     const mappedIds = new Set(
-      Object.values(sourceReceiverIRMapping).flatMap(r => Object.values(r).map(ir => ir.id))
+      Object.values(sourceReceiverIRMapping || {}).flatMap(r => Object.values(r).map(ir => ir.id))
     );
-    const unmapped = impulseResponses.filter(ir => !mappedIds.has(ir.id));
+    const unmapped = hasPairDefinitions ? [] : impulseResponses.filter(ir => !mappedIds.has(ir.id));
 
     return { groups: Array.from(groups.values()), unmapped };
-  }, [sourceReceiverIRMapping, impulseResponses, receiverGroups, receiverDisplayNames]);
+  }, [sourceReceiverIRMapping, pairDefinitions, impulseResponses, receiverGroups, receiverDisplayNames]);
 
   // ── Hover handlers shared between flat and grouped renders ─────────────────
   const handleRowMouseEnter = useCallback(async (
@@ -306,6 +384,10 @@ export function ImpulseResponseUpload({
     sourceId: string,
     receiverId: string,
     sourceName: string,
+    options?: {
+      onDelete?: (e: React.MouseEvent<HTMLButtonElement>) => void;
+      deleteTitle?: string;
+    },
   ) => {
     const badge = getFormatBadge(ir.format);
     const isLowEnergy = lowEnergyIRIds.has(ir.id);
@@ -314,7 +396,7 @@ export function ImpulseResponseUpload({
         key={`${sourceId}-${receiverId}-${ir.id}`}
         className={`flex items-center gap-2 px-2 py-1.5 rounded border transition-colors ${
           isLowEnergy
-            ? 'border-red-500/50 bg-red-900/10'
+            ? 'border-error/30 bg-error/10'
             : 'border-neutral-700/50 hover:border-neutral-600/70'
         }`}
         onMouseEnter={(e) => handleRowMouseEnter(e, ir, sourceId, receiverId)}
@@ -324,20 +406,83 @@ export function ImpulseResponseUpload({
           <div className="text-[11px] text-neutral-200 truncate">{sourceName}</div>
           <div className="flex items-center gap-1.5 mt-0.5">
             <span className={`text-[9px] px-1.5 py-0.5 rounded ${badge.color}`}>{badge.label}</span>
-            {isLowEnergy && <span className="text-[9px] font-medium text-red-500">Low energy</span>}
+            {isLowEnergy && <span className="text-[9px] font-medium text-error">Low energy</span>}
             <span className="text-[9px] text-neutral-500">{ir.duration.toFixed(2)}s</span>
           </div>
         </div>
         <button
-          onClick={(e) => { e.stopPropagation(); handleDeleteIR(ir.id, ir.name); }}
-          className="shrink-0 text-neutral-500 hover:text-red-500 transition-colors"
-          title="Delete IR"
+          onClick={options?.onDelete ?? ((e) => { e.stopPropagation(); handleDeleteIR(ir.id, ir.name); })}
+          className="shrink-0 text-neutral-500 hover:text-error transition-colors"
+          title={options?.deleteTitle ?? 'Delete IR'}
         >
           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
               d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
           </svg>
         </button>
+      </div>
+    );
+  };
+
+  const renderPairUploadRow = (
+    sourceId: string,
+    receiverId: string,
+    sourceName: string,
+    ir: ImpulseResponseMetadata | null,
+  ) => {
+    const pairKey = buildPairKey(sourceId, receiverId);
+    const isLowEnergy = ir ? lowEnergyIRIds.has(ir.id) : false;
+    const fileSize = ir ? ((ir as any).fileSize ?? (ir as any).file_size ?? 0) : 0;
+
+    if (ir) {
+      return renderSourceRow(
+        ir,
+        sourceId,
+        receiverId,
+        sourceName,
+        onPairAssignmentCleared
+          ? {
+              onDelete: (e) => {
+                e.stopPropagation();
+                onPairAssignmentCleared(sourceId, receiverId);
+              },
+              deleteTitle: 'Clear assigned IR',
+            }
+          : undefined,
+      );
+    }
+
+    return (
+      <div
+        key={`${sourceId}-${receiverId}`}
+        className={`rounded border px-2 py-2 ${
+          isLowEnergy
+            ? 'border-error/30 bg-error/10'
+            : 'border-neutral-700/50'
+        }`}
+      >
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="text-[11px] text-neutral-200 truncate">{sourceName}</div>
+            <div className="text-[10px] text-neutral-500 mt-1">
+              No IR imported yet. Auralization stays disabled for this pair.
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-2">
+          <FileUploadArea
+            file={ir ? { name: ir.name, size: fileSize } : null}
+            isDragging={draggingPairKey === pairKey}
+            acceptedFormats=".wav,.flac,.aif,.aiff,.ogg"
+            acceptedExtensions="wav, flac, aiff, ogg"
+            onFileChange={handlePairFileChange(sourceId, receiverId)}
+            onDragOver={handlePairDragOver(pairKey)}
+            onDragLeave={handlePairDragLeave(pairKey)}
+            onDrop={handlePairDrop(sourceId, receiverId, pairKey)}
+            inputId={`pair-ir-${sourceId}-${receiverId}`}
+          />
+        </div>
       </div>
     );
   };
@@ -352,22 +497,47 @@ export function ImpulseResponseUpload({
   );
 
   const hoveredIR = impulseResponses.find(ir => ir.id === hoveredIRId);
+  const missingPairSetupMessage = (() => {
+    if (!allowPairUploads) return null;
+    if (availableSourceCount === 0 && availableReceiverCount === 0) {
+      return 'Add at least one sound source and one listener first. This card creates one IR upload slot for every source-listener pair.';
+    }
+    if (availableSourceCount === 0) {
+      return 'Add at least one sound source first. This card creates one IR upload slot for every source-listener pair.';
+    }
+    if (availableReceiverCount === 0) {
+      return 'Add at least one listener first. This card creates one IR upload slot for every source-listener pair.';
+    }
+    return null;
+  })();
 
   return (
     <div className="flex flex-col gap-4">
       {/* Error Display */}
       {error && (
-        <div className="text-xs rounded p-2 bg-red-100 dark:bg-red-900/30 border border-red-500 text-red-500">
+        <div className="text-xs rounded p-2 bg-error/10 border border-error text-error">
           {error}
         </div>
       )}
 
+      {uploadProgress && (
+        <div className="text-xs rounded p-2 bg-neutral-100 dark:bg-neutral-900/40 border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300">
+          {uploadProgress}
+        </div>
+      )}
+
+      {missingPairSetupMessage && (
+        <div className="text-xs rounded p-3 bg-info/10 border border-info/40 text-info">
+          {missingPairSetupMessage}
+        </div>
+      )}
+
       {/* IR Library — grouped by receiver when mapping is available */}
-      {impulseResponses.length > 0 && (
+      {(groupedByReceiver || impulseResponses.length > 0) && (
         <div>
           <div className="flex items-center justify-between mb-2">
             <h3 className={`text-xs font-semibold ${simulationResults ? 'text-white' : ''}`}>
-              Impulse Responses ({impulseResponses.length})
+              {allowPairUploads ? 'Source-listener IRs' : `Impulse Responses (${impulseResponses.length})`}
             </h3>
           </div>
 
@@ -377,14 +547,14 @@ export function ImpulseResponseUpload({
                 {/* Receiver-grouped list */}
                 {groupedByReceiver.groups.map(({ groupId, groupName, sources }) => {
                   const isCollapsed = collapsedGroups.has(groupId);
-                  const hasLowEnergy = sources.some(s => lowEnergyIRIds.has(s.ir.id));
+                  const hasLowEnergy = sources.some((s) => s.ir && lowEnergyIRIds.has(s.ir.id));
                   const isActive = activeGroupId === groupId;
                   return (
                     <div
                       key={groupId}
                       ref={(el) => setGroupRef(groupId, el)}
                       className="rounded transition-all duration-200"
-                      style={{ border: `1px solid ${isActive ? UI_COLORS.PRIMARY : 'transparent'}` }}
+                      style={{ border: `1px solid ${isActive ? 'var(--color-primary)' : 'transparent'}` }}
                     >
                       {/* Receiver header */}
                       <div className="flex items-center gap-1 px-1 py-1 group rounded hover:bg-neutral-800/40">
@@ -398,7 +568,7 @@ export function ImpulseResponseUpload({
                           />
                           <span className="text-[11px] font-medium text-neutral-200 truncate">{groupName}</span>
                           {hasLowEnergy && (
-                            <span className="text-[9px] text-red-500 shrink-0 ml-0.5">!</span>
+                            <span className="text-[9px] text-error shrink-0 ml-0.5">!</span>
                           )}
                           <span className="text-[9px] text-neutral-600 shrink-0">({sources.length})</span>
                         </button>
@@ -410,7 +580,7 @@ export function ImpulseResponseUpload({
                               onGoToReceiver(groupId);
                             }}
                             className="shrink-0 w-5 h-5 flex items-center justify-center rounded transition-colors opacity-0 group-hover:opacity-100 hover:text-white"
-                            style={{ color: isActive ? UI_COLORS.PRIMARY : 'rgb(163 163 163)' }}
+                            style={{ color: isActive ? 'var(--color-primary)' : 'rgb(163 163 163)' }}
                             title="Go to Listener (first-person view)"
                           >
                             <GoToIcon />
@@ -421,14 +591,15 @@ export function ImpulseResponseUpload({
                       {/* Source rows */}
                       {!isCollapsed && (
                         <div className="ml-4 pl-2 border-l border-neutral-700/50 space-y-1 pb-1 pt-0.5">
-                          {sources.map(({ sourceId, receiverId, ir }) =>
-                            renderSourceRow(
-                              ir,
-                              sourceId,
-                              receiverId,
-                              trimDisplayName(sourceDisplayNames?.[sourceId] ?? sourceId),
-                            )
-                          )}
+                          {sources.map(({ sourceId, receiverId, ir }) => {
+                            const sourceName = trimDisplayName(sourceDisplayNames?.[sourceId] ?? sourceId);
+                            if (allowPairUploads) {
+                              return renderPairUploadRow(sourceId, receiverId, sourceName, ir);
+                            }
+                            return ir
+                              ? renderSourceRow(ir, sourceId, receiverId, sourceName)
+                              : null;
+                          })}
                         </div>
                       )}
                     </div>
@@ -464,7 +635,7 @@ export function ImpulseResponseUpload({
                     key={ir.id}
                     className={`p-3 rounded-lg transition-colors relative border ${
                       isLowEnergy
-                        ? 'border-red-500'
+                        ? 'border-error'
                         : simulationResults
                           ? 'border-neutral-700 hover:border-neutral-600'
                           : 'border-neutral-200 dark:border-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-600'
@@ -487,7 +658,7 @@ export function ImpulseResponseUpload({
                         </div>
                         <div className="flex items-center gap-2 mt-1 whitespace-nowrap">
                           <span className={`text-xs px-2 py-0.5 rounded flex-shrink-0 ${badge.color}`}>{badge.label}</span>
-                          {isLowEnergy && <span className="text-xs font-medium text-red-500 flex-shrink-0">Low energy</span>}
+                          {isLowEnergy && <span className="text-xs font-medium text-error flex-shrink-0">Low energy</span>}
                           <span className={`text-xs flex-shrink-0 ${simulationResults ? 'text-neutral-400' : 'text-neutral-600 dark:text-neutral-400'}`}>
                             Length={ir.duration.toFixed(2)}s
                           </span>
@@ -495,7 +666,7 @@ export function ImpulseResponseUpload({
                       </div>
                       <button
                         onClick={(e) => { e.stopPropagation(); handleDeleteIR(ir.id, ir.name); }}
-                        className="text-neutral-400 hover:text-red-500 transition-colors"
+                        className="text-neutral-400 hover:text-error transition-colors"
                         title="Delete IR"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -63,92 +63,10 @@ export type SidebarTabValue = typeof SIDEBAR_TABS[keyof typeof SIDEBAR_TABS];
 // ============================================================================
 // UI Design System - Unified Color Palette
 // ============================================================================
-// Note: CSS custom properties are defined in globals.css for Tailwind usage.
+// All colors are defined in globals.css as CSS custom properties.
 // Use Tailwind classes (bg-primary, text-primary, etc.) in components.
-// These constants are for programmatic use (Three.js materials, dynamic calculations).
-
-// Brand Colors
-export const UI_COLORS = {
-  // // Primary Brand Color (Pink) - Main accent color
-  // PRIMARY: "#F500B8",
-  // PRIMARY_HEX: 0xF500B8, // For Three.js materials
-  // PRIMARY_HOVER: "#e53cbb",
-  // PRIMARY_LIGHT: "#fce7f6",
-
-  // Primary Brand Color (Blue) - Main accent color
-  PRIMARY: "#2F2FE4",
-  PRIMARY_HEX: 0x2F2FE4, // For Three.js materials
-  PRIMARY_HOVER: "#6a6ae6",
-  PRIMARY_LIGHT: "#c2c2ff",  
-
-  // Secondary Color (Sky Blue) - Secondary accent
-  SECONDARY: "#0ea5e9",
-  SECONDARY_HOVER: "#0284c7",
-  SECONDARY_LIGHT: "#e0f2fe",
-  
-  // Semantic Colors
-  SUCCESS: "#10B981", // Green - confirmations, success states
-  SUCCESS_HOVER: "#059669",
-  SUCCESS_LIGHT: "#d1fae5",
-  
-  ERROR: "#EF4444", // Red - errors, delete actions
-  ERROR_HOVER: "#dc2626",
-  ERROR_LIGHT: "#fee2e2",
-  
-  WARNING: "#F59E0B", // Amber - warnings, cautions
-  WARNING_HOVER: "#d97706",
-  WARNING_LIGHT: "#fef3c7",
-  
-  INFO: "#3B82F6", // Blue - informational messages
-  INFO_HOVER: "#2563eb",
-  INFO_LIGHT: "#dbeafe",
-  
-  // Neutral Colors (Light Mode)
-  NEUTRAL_50: "#fafafa",
-  NEUTRAL_100: "#f5f5f5",
-  NEUTRAL_200: "#e5e5e5",
-  NEUTRAL_300: "#d4d4d4",
-  NEUTRAL_400: "#a3a3a3",
-  NEUTRAL_500: "#737373",
-  NEUTRAL_600: "#525252",
-  NEUTRAL_700: "#404040",
-  NEUTRAL_800: "#262626",
-  NEUTRAL_900: "#171717",
-  
-  // Dark Mode Overrides (via Tailwind dark: prefix)
-  DARK_BG: "#0a0a0a",
-  DARK_FG: "#ededed",
-  DARK_BORDER: "#262626",
-  
- //  Material Colors - Gradient from pink to teal (6-char hex for Three.js compatibility)
-  MATERIAL_GRADIENT_START: "#67bfb4",
-  MATERIAL_GRADIENT_MIDDLE: "#ffbf6d", 
-  MATERIAL_GRADIENT_END: "#eb5c52",
-} as const;
-
-// Legacy exports for backward compatibility (still in use)
-export const PRIMARY_COLOR = UI_COLORS.PRIMARY;
-export const PRIMARY_COLOR_HEX = UI_COLORS.PRIMARY_HEX;
-
-// ============================================================================
-// Speckle Object Filtering Colors
-// ============================================================================
-// Colors used with Speckle FilteringExtension's setUserObjectColors()
-// These colors visually distinguish objects by their state in the scene
-
-export const SPECKLE_FILTER_COLORS = {
-  // Full pink - Objects linked to sounds WITH generated audio
-  // Shows which Speckle objects have a completed sound source
-  SOUND_LINKED: UI_COLORS.PRIMARY,
-
-  // Light pink - Objects linked to sounds still in config state (no audio yet)
-  // Visual cue that the object is linked but awaiting sound generation
-  SOUND_LINKED_PENDING: '#F9A8D4',
-
-  // Green - Objects selected for diverse analysis (context generation)
-  // Shows which objects were selected/generated for sound idea analysis
-  DIVERSE_SELECTION: UI_COLORS.SUCCESS,
-} as const;
+// Use 'var(--color-*)' strings for inline style props.
+// Use getCssColorHex('--color-*') for Three.js numeric hex values.
 
 // ============================================================================
 // Dark Mode (Sound Source Lighting)
@@ -157,10 +75,6 @@ export const SPECKLE_FILTER_COLORS = {
 // become the only light sources using electric blue point lights.
 
 export const DARK_MODE = {
-  // Electric blue color for sound source lights
-  LIGHT_COLOR: '#1a15c0',
-  LIGHT_COLOR_HEX: 0x1a15c0,
-
   // Point light parameters for sound spheres
   POINT_LIGHT_INTENSITY: 100.0,
   POINT_LIGHT_DISTANCE: 50,
@@ -232,14 +146,14 @@ export const UI_LINE_THICKNESS = {
   EXTRA_THICK: 4,
 } as const;
 
-// Shadows (CSS box-shadow values)
+// Shadows (CSS box-shadow values — defined in globals.css)
 export const UI_SHADOWS = {
   NONE: "none",
-  SM: "0 1px 2px 0 rgba(0, 0, 0, 0.05)",
-  MD: "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)",
-  LG: "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
-  XL: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
-  OVERLAY: "0 20px 25px -5px rgba(0, 0, 0, 0.3)", // For overlays
+  SM: "var(--shadow-sm)",
+  MD: "var(--shadow-md)",
+  LG: "var(--shadow-lg)",
+  XL: "var(--shadow-xl)",
+  OVERLAY: "var(--shadow-overlay)",
 } as const;
 
 // Transitions
@@ -254,38 +168,12 @@ export const UI_TRANSITIONS = {
 // UI Design System - Component Specific
 // ============================================================================
 
-// Buttons
-export const UI_BUTTON = {
-  PADDING_SM: "6px 12px",    // Small buttons (py-1.5 px-3)
-  PADDING_MD: "8px 16px",    // Medium buttons (py-2 px-4) - PRIMARY
-  PADDING_LG: "12px 24px",   // Large buttons (py-3 px-6)
-  HEIGHT_SM: "32px",         // h-8
-  HEIGHT_MD: "40px",         // h-10
-  HEIGHT_LG: "48px",         // h-12
-  BORDER_RADIUS_SM: "4px",   // rounded (small)
-  BORDER_RADIUS_MD: "6px",   // rounded-md (STANDARD for all buttons)
-  BORDER_RADIUS_LG: "8px",   // rounded-lg
-  BORDER_RADIUS_FULL: "9999px", // rounded-full
-  FONT_SIZE: UI_FONT_SIZE.SM,
-  FONT_WEIGHT: "500",        // font-medium (STANDARD)
-  TRANSITION: UI_TRANSITIONS.COLORS,
-} as const;
-
 // Checkboxes
 export const UI_CHECKBOX = {
   SIZE: 16,                  // Width and height (w-4 h-4)
   BORDER_RADIUS: UI_BORDER_RADIUS.SM,
   FOCUS_RING_WIDTH: 2,       // focus:ring-2
-  ACCENT_COLOR: UI_COLORS.PRIMARY, // accent-primary
-} as const;
-
-// Input Fields
-export const UI_INPUT = {
-  PADDING: "8px 12px",       // Padding for text inputs
-  BORDER_RADIUS: UI_BORDER_RADIUS.MD,
-  BORDER_WIDTH: UI_LINE_THICKNESS.THIN,
-  FONT_SIZE: UI_FONT_SIZE.SM,
-  FOCUS_RING_WIDTH: 1,       // focus:ring-1
+  // Accent color: use Tailwind class `accent-primary` in components
 } as const;
 
 // Cards and Panels
@@ -298,10 +186,8 @@ export const UI_CARD = {
 
 // Overlays (3D Scene UI)
 export const UI_OVERLAY = {
-  BACKGROUND: `rgba(0, 0, 0, ${UI_OPACITY.BACKDROP})`, // black/80
   BACKDROP_BLUR: "8px",      // backdrop-blur-sm
   BORDER_RADIUS: UI_BORDER_RADIUS.MD,
-  BORDER_COLOR: `rgba(255, 255, 255, ${UI_OPACITY.SUBTLE})`, // white/20
   BORDER_WIDTH: UI_LINE_THICKNESS.THIN,
   PADDING: UI_SPACING.MD,
   SHADOW: UI_SHADOWS.OVERLAY,
@@ -322,25 +208,9 @@ export const UI_SCENE_BUTTON = {
   GAP: "8px",                // gap-2 between buttons
 } as const;
 
-// Card Color Defaults
-/** Default theme color for Card and CardSection components */
-export const CARD_COLOR_DEFAULT = 'primary' as const;
-
 // Material Assignment UI
 export const MAX_FACES_FOR_EXPANSION = 10; // Maximum number of faces before disabling entity expansion
 export const MAX_FACES_FOR_LAYER_AUTO_EXCLUDE = 1000; // Auto-exclude layers with more than this many faces in new simulations
-
-// Entity Overlays (Light background)
-export const UI_ENTITY_OVERLAY = {
-  BACKGROUND: `rgba(255, 255, 255, ${UI_OPACITY.BACKDROP_LIGHT})`, // white/95
-  BACKDROP_BLUR: "8px",
-  BORDER_RADIUS: UI_BORDER_RADIUS.MD,
-  BORDER_COLOR: UI_COLORS.NEUTRAL_300,
-  BORDER_WIDTH: UI_LINE_THICKNESS.THIN,
-  PADDING: UI_SPACING.MD,
-  SHADOW: UI_SHADOWS.LG,
-  MIN_WIDTH: "200px",
-} as const;
 
 // Validation Messages
 export const UI_VALIDATION = {
@@ -349,14 +219,6 @@ export const UI_VALIDATION = {
   BORDER_WIDTH: UI_LINE_THICKNESS.THIN,
   FONT_SIZE: UI_FONT_SIZE.XS,
   ICON_SIZE: 16,             // w-4 h-4
-} as const;
-
-// Tabs
-export const UI_TABS = {
-  PADDING: "6px 12px",       // px-3 py-1
-  BORDER_RADIUS_TOP: "8px 8px 0 0", // rounded-t
-  FONT_SIZE: UI_FONT_SIZE.XS,
-  TRANSITION: UI_TRANSITIONS.COLORS,
 } as const;
 
 // Vertical Tabs (Icon-based sidebar navigation)
@@ -376,8 +238,8 @@ export const UI_RIGHT_SIDEBAR = {
   PADDING: UI_SPACING.MD,    // Internal padding
   TREE_ITEM_HEIGHT: 40,      // Height of each tree item in pixels
   TREE_MAX_HEIGHT: 700,      // Maximum height of scrolling tree view
-  BACKGROUND: 'white',       // Background color
-  BORDER_COLOR: UI_COLORS.NEUTRAL_200,
+  // Background: 'white' — inlined in RightSidebar.tsx
+  // Border color: 'var(--color-secondary-light)' — inlined in RightSidebar.tsx
   BORDER_WIDTH: UI_LINE_THICKNESS.THIN,
 } as const;
 
@@ -411,6 +273,8 @@ export const DEFAULT_GUIDANCE_SCALE = 4.5;
 export const DEFAULT_DIFFUSION_STEPS = 25;
 export const DEFAULT_SEED_COPIES = 1;
 export const DEFAULT_SPL_DB = 70;
+export const SPL_MIN = 30;
+export const SPL_MAX = 120;
 
 // Position Generation (for sound sphere spacing)
 // These values match the backend's position calculation logic
@@ -500,7 +364,10 @@ export const AUDIO_PLAYBACK = {
 
   // Default absolute jitter applied to each iteration's interval (seconds).
   // Each iteration fires at intervalMs ± random(0, jitter), clamped to ≥ 0.
-  DEFAULT_INTERVAL_JITTER_SECONDS: 3,
+  DEFAULT_INTERVAL_JITTER_SECONDS: 2,
+
+  // Fixed timeline length in milliseconds (visual + audio are both bounded to this).
+  TIMELINE_FIXED_DURATION_MS: 150_000, // 2.5 minutes
 } as const;
 
 // ============================================================================
@@ -509,7 +376,6 @@ export const AUDIO_PLAYBACK = {
 
 // Model File Extensions
 export const MODEL_FILE_EXTENSIONS = ['.obj', '.stl', '.ifc', '.3dm', '.gltf', '.glb', '.fbx'];
-export const VALID_FILE_EXTENSIONS = ['.obj', '.stl', '.ifc', '.3dm']; // Legacy - for backward compatibility
 export const ACCEPT_FILE_TYPES = ".obj,.stl,.ifc,.3dm";
 
 // Audio File Extensions
@@ -562,12 +428,12 @@ export const SED_TOP_N_CLASSES = '100';
 
 // Volume Slider Settings
 export const UI_VOLUME_SLIDER = {
-  MIN: 30,           // Minimum volume in dB SPL (quiet/whisper)
-  MAX: 120,          // Maximum volume in dB SPL (loud/concert)
+  MIN: SPL_MIN,      // Minimum volume in dB SPL (quiet/whisper)
+  MAX: SPL_MAX,      // Maximum volume in dB SPL (loud/concert)
   STEP: 1,           // Step size for volume adjustments
   LABEL: 'Volume (dB SPL)',
-  MIN_LABEL: '30',
-  MAX_LABEL: '120'
+  MIN_LABEL: `${SPL_MIN}`,
+  MAX_LABEL: `${SPL_MAX}`
 } as const;
 
 // Interval Slider Settings
@@ -604,7 +470,6 @@ export const AURALIZATION_LIMITER = {
 export const IR_HOVER_LINE = {
   /** Show a line between source and receiver when hovering an IR in the library */
   ENABLED: true,
-  COLOR: UI_COLORS.PRIMARY,
   OPACITY: 0.8,
   DASH_SIZE: 0.1,
   GAP_SIZE: 0.02,
@@ -981,8 +846,6 @@ export const RESONANCE_AUDIO = {
   
   // Bounding Box Visualization
   BOUNDING_BOX: {
-    // Wireframe color (cyan)
-    WIREFRAME_COLOR: 0x00ffff,
     WIREFRAME_WIDTH: 8,
     
     // Face plane opacity
@@ -997,8 +860,6 @@ export const RESONANCE_AUDIO = {
     LABEL_CANVAS_WIDTH: 256,
     LABEL_CANVAS_HEIGHT: 128,
     LABEL_FONT: 'Bold 24px Arial',
-    LABEL_BG_COLOR: 'rgba(0, 0, 0, 0)',
-    LABEL_TEXT_COLOR: 'black',
     
     // Render order (higher = rendered later/on top)
     WIREFRAME_RENDER_ORDER: 5,
@@ -1043,24 +904,16 @@ export const SCENE_LIGHTING = {
 export const SCENE_GRID = {
   SIZE: 20,
   DIVISIONS: 20,
-  COLOR_MAIN: 0xb0b8c0,
-  COLOR_SECONDARY: 0xd0d8e0
 } as const;
 
 // Arctic Theme
 export const ARCTIC_THEME = {
-  BACKGROUND_COLOR: 0xe8edf2,
-  GEOMETRY_COLOR: 0xf0f4f8,
   MATERIAL_ROUGHNESS: 0.5,
   GEOMETRY_OPACITY: 0.5  // Slightly transparent geometry (70% opacity)
 } as const;
 
 // Scene Fog Configuration (atmospheric depth effect)
 export const SCENE_FOG = {
-  // Fog colors (gradient from near to far)
-  COLOR: 0x1a1a2e,           // Dark blue-purple fog (matches dark theme)
-  COLOR_LIGHT: 0xe8edf2,     // Light arctic fog (for light theme)
-
   // Exponential fog density (lower = less dense, more gradual)
   DENSITY: 0.015,            // Subtle atmospheric effect
   DENSITY_STRONG: 0.03,      // More pronounced fog
@@ -1085,7 +938,6 @@ export const SCENE_ENVIRONMENT = {
   TONE_MAPPING_EXPOSURE: 1.2,
 
   // Ground plane
-  GROUND_COLOR: 0x0a0a0f,    // Very dark blue-black
   GROUND_ROUGHNESS: 0.9,
   GROUND_METALNESS: 0.1,
 } as const;
@@ -1132,7 +984,6 @@ export const RECEIVER_CONFIG = {
   ROUGHNESS: 0.3,
   METALNESS: 0.7,
   PREVIEW_OPACITY: 0.5,
-  COLOR: 0xf0a938,
   /** Distance in front of the camera to place a new receiver (meters) */
   CAMERA_PLACEMENT_DISTANCE_M: 3,
   /** World half-size = distance * SCREEN_SPACE_SIZE — keeps constant apparent size at all zoom levels */
@@ -1148,8 +999,6 @@ export const OBJECT_LABEL = {
   FONT_SIZE: 14,
   PADDING_H: 10,
   PADDING_V: 6,
-  BG_COLOR: 'rgba(20, 20, 20, 0.80)',
-  TEXT_COLOR: '#ffffff',
   BORDER_RADIUS: 3,
   RENDER_ORDER: 1001,
   /** World height of label = distance * SCREEN_SPACE_HEIGHT */
@@ -1179,7 +1028,6 @@ export const GRID_LISTENER_CONFIG = {
   MAX_SPACING: 20,
   MIN_Z_OFFSET: 0,
   MAX_Z_OFFSET: 10,
-  COLOR: 0x00e5cc,          // Teal for grid listener dots
   SPHERE_SIZE_MULTIPLIER: 0.15,
   SCREEN_SPACE_SIZE: 0.02,
   MIN_SCALE: 0.3,
@@ -1255,29 +1103,9 @@ export const TAILWIND_TRANSITION = {
   DEFAULT: "transition-all duration-200" // With duration
 } as const;
 
-// Common overlay/backdrop patterns (complete class strings)
-export const TAILWIND_OVERLAY = {
-  // Dark overlay with blur (most common for 3D UI)
-  DARK_BLUR: "bg-black/80 backdrop-blur-sm rounded-lg border border-white/20",
-  
-  // Light overlay with blur
-  LIGHT_BLUR: "bg-white/95 backdrop-blur-sm rounded-lg border border-gray-300",
-  
-  // Sky-themed overlay (for ambisonic notice)
-  SKY_BLUR: "bg-sky-900/90 backdrop-blur-sm rounded-lg border border-sky-500/50"
-} as const;
-
 // ============================================================================
 // Utility Configuration
 // ============================================================================
-
-// Display Names
-export const DISPLAY_NAME_MAX_WORDS = 3;
-
-// Scaling
-export const SCALE_FACTOR_DIVISOR = 10;
-export const MIN_SCALE_FOR_SOUNDS = 0.2;
-export const MAX_SCALE_FOR_SOUNDS = 5;
 
 // Audio Channel Names
 export const AUDIO_CHANNEL_NAMES = {
@@ -1306,15 +1134,6 @@ export const AUDIO_VOLUME = {
 } as const;
 
 // ============================================================================
-// Screen Projection Configuration (NDC to screen space)
-// ============================================================================
-export const SCREEN_PROJECTION = {
-  SCALE: 0.5,
-  OFFSET: 0.5,
-  CAMERA_BEHIND_THRESHOLD: 1
-} as const;
-
-// ============================================================================
 // UI Timing Configuration (Debounce, Delays, Intervals)
 // ============================================================================
 export const UI_TIMING = {
@@ -1322,23 +1141,6 @@ export const UI_TIMING = {
   RECEIVER_UPDATE_DELAY_MS: 200,
   SCENE_UPDATE_DELAY_MS: 100,
   ENTITY_HIGHLIGHT_DELAY_MS: 800
-} as const;
-
-// ============================================================================
-// Entity Configuration
-// ============================================================================
-export const ENTITY_CONFIG = {
-  SCALE_MULTIPLIER: 1.25,
-  SELECTION_SCALE: 1.2
-} as const;
-
-// ============================================================================
-// Audio Context States
-// ============================================================================
-export const AUDIO_CONTEXT_STATE = {
-  RUNNING: 'running',
-  SUSPENDED: 'suspended',
-  CLOSED: 'closed'
 } as const;
 
 // ============================================================================
@@ -1389,11 +1191,11 @@ export const IMPACT_SOUND = {
 
 // Impact Material Presets (for UI selection)
 export const IMPACT_MATERIALS = {
-  steel: { name: 'Steel', damping: 0.01, color: '#A8A9AD' },
-  aluminum: { name: 'Aluminum', damping: 0.015, color: '#8C92AC' },
-  concrete: { name: 'Concrete', damping: 0.05, color: '#9B9B9B' },
-  wood: { name: 'Wood', damping: 0.03, color: '#D2691E' },
-  glass: { name: 'Glass', damping: 0.008, color: '#B0E0E6' },
+  steel: { name: 'Steel', damping: 0.01 },
+  aluminum: { name: 'Aluminum', damping: 0.015 },
+  concrete: { name: 'Concrete', damping: 0.05 },
+  wood: { name: 'Wood', damping: 0.03 },
+  glass: { name: 'Glass', damping: 0.008 },
 } as const;
 
 // ============================================================================
@@ -1414,25 +1216,12 @@ export const TIMELINE_LAYOUT = {
   MAX_WIDTH_PX: 1000,
 } as const;
 
-// Button Sizes (Tailwind)
-export const BUTTON_SIZES = {
-  SMALL: 5,   // w-5 h-5
-  MEDIUM: 12,  // w-12 h-12
-  LARGE: 16   // w-16 h-16
-} as const;
-
 // Playback Controls
 export const PLAYBACK_CONTROLS = {
   HORIZONTAL_OFFSET: "calc(50% + 192px)",
   BUTTON_PADDING: "px-4 py-1.5",
   CONTROLS_PADDING: "px-4 py-2",
-  PRIMARY_PINK: UI_COLORS.PRIMARY,
-  MIDDLE_PINK: UI_COLORS.PRIMARY_HOVER,
-  BUTTON_GREY: UI_COLORS.NEUTRAL_400
 } as const;
-
-// Audio Scheduler
-export const DEFAULT_RANDOMNESS_PERCENT = 10;
 
 // ============================================================================
 // Audio Timeline Configuration
@@ -1447,13 +1236,6 @@ export const AUDIO_TIMELINE = {
   // Maximum iterations to render per track (performance cap)
   MAX_ITERATIONS_TO_DISPLAY: 50,
 
-  // Colors for different sound generation methods
-  SOUND_COLORS: {
-    IMPORT: UI_COLORS.INFO,       // Blue  — uploaded sounds
-    LIBRARY: UI_COLORS.SUCCESS,   // Green — BBC / Freesound library
-    TTA: UI_COLORS.PRIMARY,       // Pink  — TangoFlux generated
-    CATALOG: UI_COLORS.WARNING,   // Amber — Google Sound Catalog
-  },
 } as const;
 
 // ============================================================================
@@ -1461,15 +1243,11 @@ export const AUDIO_TIMELINE = {
 // ============================================================================
 export const WAVESURFER_TIMELINE = {
   // WaveSurfer visual config
-  WAVEFORM_COLOR: UI_COLORS.NEUTRAL_600,    // Grey waveform
-  CURSOR_COLOR: UI_COLORS.PRIMARY,           // Pink cursor
+
   CURSOR_WIDTH: 2,
   TOTAL_HEIGHT: 250,                 // Total height of the timeline tracks area in px
   TRACK_HEIGHT: 35,                  // Waveform height per track
   ITERATION_HEIGHT: 25,              // Height for each iteration waveform
-
-  // Mute/Solo visual feedback
-  MUTED_COLOR: UI_COLORS.NEUTRAL_600,       // Grey color for muted sounds
 
   // Waveform rendering — low-resolution for performance (larger bars = fewer canvas ops)
   BAR_WIDTH: 4,
@@ -1482,11 +1260,6 @@ export const WAVESURFER_TIMELINE = {
 
   // Track layout
   TRACK_SPACING: 5,
-
-  // Colors
-  BACKGROUND_COLOR: '#000000',
-  TRACK_BACKGROUND_COLOR: UI_COLORS.NEUTRAL_800,
-  TEXT_COLOR: '#FFFFFF',
 
   // Width calculation
   PIXELS_PER_SECOND: 5,              // Pixels per second — fixed (no zoom)
@@ -1534,68 +1307,6 @@ export const AUDIO_MODE_DESCRIPTIONS = {
     icon: '🌐',
   },
 } as const;
-
-/**
- * Audio mode colors for UI differentiation
- * Uses existing UI_COLORS for consistency
- */
-export const AUDIO_MODE_COLORS = {
-  no_ir_resonance: UI_COLORS.SECONDARY,
-  anechoic: UI_COLORS.PRIMARY,
-  ambisonic_ir: UI_COLORS.SUCCESS,
-} as const;
-
-/**
- * Default color for unassigned materials
- */
-export const MATERIAL_DEFAULT_COLOR = '#808080';
-
-/**
- * Generate a gradient color for acoustic materials based on absorption coefficient.
- * Uses the MATERIAL_GRADIENT_START (pink) to MATERIAL_GRADIENT_END (teal) gradient.
- * Low absorption = pink (reflective), High absorption = teal (absorptive)
- *
- * @param absorption - Absorption coefficient (0-1)
- * @returns Hex color string
- */
-export function getMaterialColorByAbsorption(absorption: number): string {
-  if (typeof absorption !== 'number' || isNaN(absorption)) {
-    console.warn('[getMaterialColorByAbsorption] Invalid absorption value:', absorption, 'Using default color');
-    return MATERIAL_DEFAULT_COLOR;
-  }
-
-  const ratio = Math.max(0, Math.min(1, absorption));
-
-  let startHex: string;
-  let endHex: string;
-  let localRatio: number;
-
-  if (ratio < 0.5) {
-    startHex = UI_COLORS.MATERIAL_GRADIENT_START.replace('#', '');
-    endHex = UI_COLORS.MATERIAL_GRADIENT_MIDDLE.replace('#', '');
-    localRatio = ratio * 2;
-  } else {
-    startHex = UI_COLORS.MATERIAL_GRADIENT_MIDDLE.replace('#', '');
-    endHex = UI_COLORS.MATERIAL_GRADIENT_END.replace('#', '');
-    localRatio = (ratio - 0.5) * 2;
-  }
-
-  const r1 = parseInt(startHex.substring(0, 2), 16);
-  const g1 = parseInt(startHex.substring(2, 4), 16);
-  const b1 = parseInt(startHex.substring(4, 6), 16);
-
-  const r2 = parseInt(endHex.substring(0, 2), 16);
-  const g2 = parseInt(endHex.substring(2, 4), 16);
-  const b2 = parseInt(endHex.substring(4, 6), 16);
-
-  const r = Math.round(r1 + (r2 - r1) * localRatio);
-  const g = Math.round(g1 + (g2 - g1) * localRatio);
-  const b = Math.round(b1 + (b2 - b1) * localRatio);
-
-  const color = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-
-  return color;
-}
 
 /**
  * Ambisonic order configuration
@@ -1663,9 +1374,6 @@ export const AUDIO_WARNINGS = {
 /** Distance threshold (meters) above which a source/receiver is flagged as not at its simulation position */
 export const SIMULATION_POSITION_THRESHOLD = 0.2;
 
-/** Hex color applied to sound spheres / receivers that are not at their simulation position */
-export const SIMULATION_MISMATCH_COLOR_HEX = 0xFF6666;
-
 // ============================================================================
 // Pyroomacoustics Acoustic Simulation Configuration
 // ============================================================================
@@ -1731,8 +1439,6 @@ export const CHORAS_DG_DEFAULT_PPW = 2;
 export const CHORAS_DG_DEFAULT_CFL = 1.0;
 
 // Shared slider ranges
-export const CHORAS_C0_MIN = 300;
-export const CHORAS_C0_MAX = 400;
 export const CHORAS_DE_IR_LENGTH_MIN = 0.05;
 export const CHORAS_DE_IR_LENGTH_MAX = 5.0;
 export const CHORAS_DE_LC_MIN = 0.1;
@@ -1750,17 +1456,24 @@ export const CHORAS_DG_PPW_MAX = 6;
 export const CHORAS_DG_CFL_MIN = 0.1;
 export const CHORAS_DG_CFL_MAX = 2.0;
 
+// Generic speed of sound — shared by all simulation engines
+export const DEFAULT_SPEED_OF_SOUND = 343; // m/s
+export const SPEED_OF_SOUND_MIN = 300;
+export const SPEED_OF_SOUND_MAX = 400;
+
+// Viewer display defaults
+export const VIEWER_DEFAULT_SHOW_LABEL_SPRITES = true;
+export const VIEWER_DEFAULT_HOVERING_HIGHLIGHT = true;
+export const VIEWER_DEFAULT_SHOW_SOUND_SPHERES = true;
+export const VIEWER_DEFAULT_SHOW_SCENE_LISTENERS = true;
+
 // ============================================================================
 // Area Drawing Constants (polygon drawing on 3D surfaces)
 // ============================================================================
 export const AREA_DRAWING = {
   SNAP_DISTANCE_PX: 10,
-  LINE_COLOR: 0x10B981,
-  FILL_COLOR_DEFAULT: 0xd1fae5,
-  FILL_COLOR_GENERATED: 0x059669,
   FILL_OPACITY_DEFAULT: 0.4,
   FILL_OPACITY_GENERATED: 0.5,
-  POINT_PREVIEW_COLOR: 0x10B981,
   POINT_PREVIEW_SIZE: 0.15,
   HEARING_HEIGHT: 1.5,
   EXTRUDE_DISTANCE: 5.0,

@@ -2,15 +2,16 @@
 
 import { useState, useEffect, useRef } from "react";
 import { RangeSlider } from "@/components/ui/RangeSlider";
+import { CheckboxField } from "@/components/ui/CheckboxField";
 import { apiService } from "@/services/api";
 import type { TokenStatus, LLMProviders } from "@/services/api";
 import { useTextGenerationStore } from "@/store/textGenerationStore";
 import { setElevenLabsApiKey, isElevenLabsKeySet } from "@/services/elevenlabs.mts";
 import { useServiceVersions } from "@/hooks/useServiceVersions";
 import { useAudioControlsStore } from "@/store/audioControlsStore";
+import { useUIStore } from "@/store/uiStore";
 import { AUDIO_PLAYBACK } from "@/utils/constants";
 import {
-  UI_COLORS,
   UI_BORDER_RADIUS,
   AUDIO_MODEL_TANGOFLUX,
   AUDIO_MODEL_AUDIOLDM2,
@@ -25,6 +26,15 @@ import {
   LLM_MODEL_NAMES,
   LLM_MODEL_TO_PROVIDER,
   DEFAULT_LISTENER_ORIENTATION,
+  DEFAULT_SPEED_OF_SOUND,
+  SPEED_OF_SOUND_MIN,
+  SPEED_OF_SOUND_MAX,
+  CHORAS_DE_DEFAULT_LC,
+  CHORAS_DE_LC_MIN,
+  CHORAS_DE_LC_MAX,
+  DEFAULT_SPL_DB,
+  SPL_MIN,
+  SPL_MAX,
 } from "@/utils/constants";
 
 function isProviderInstalled(modelKey: string, llmProviders: LLMProviders | null): boolean {
@@ -52,6 +62,14 @@ interface AdvancedSettingsSectionProps {
   onResetToDefaults: () => void;
   showAxesHelper: boolean;
   onShowAxesHelperChange: (value: boolean) => void;
+  showLabelSprites: boolean;
+  onShowLabelSpritesChange: (value: boolean) => void;
+  showHoveringHighlight: boolean;
+  onShowHoveringHighlightChange: (value: boolean) => void;
+  showSoundSpheres: boolean;
+  onShowSoundSpheresChange: (value: boolean) => void;
+  showSceneListeners: boolean;
+  onShowSceneListenersChange: (value: boolean) => void;
   listenerOrientation: { x: number; y: number; z: number };
   onListenerOrientationChange: (orientation: { x: number; y: number; z: number }) => void;
 }
@@ -95,7 +113,6 @@ function AccordionSection({
           className="transition-transform"
           style={{
             transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
-            color: UI_COLORS.NEUTRAL_400,
           }}
         >
           <polyline points="6 9 12 15 18 9" />
@@ -140,7 +157,7 @@ function TokenInput({
         {isSet && !value && (
           <span
             className="text-[9px] px-1 rounded"
-            style={{ background: UI_COLORS.SUCCESS + "22", color: UI_COLORS.SUCCESS }}
+            style={{ background: 'color-mix(in srgb, var(--color-success) 13%, transparent)', color: 'var(--color-success)' }}
           >
             set
           </span>
@@ -266,7 +283,7 @@ function TokensSection() {
         <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
           Speckle
           <a href="https://app.speckle.systems" target="_blank" rel="noopener noreferrer"
-            className="ml-1 normal-case font-normal hover:underline" style={{ color: UI_COLORS.PRIMARY }}>
+            className="ml-1 normal-case font-normal hover:underline text-primary" target="_blank" rel="noopener noreferrer">
             app.speckle.systems ↗
           </a>
         </h4>
@@ -288,7 +305,7 @@ function TokensSection() {
         <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
           Google AI
           <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer"
-            className="ml-1 normal-case font-normal hover:underline" style={{ color: UI_COLORS.PRIMARY }}>
+            className="ml-1 normal-case font-normal hover:underline text-primary" target="_blank" rel="noopener noreferrer">
             aistudio.google.com ↗
           </a>
         </h4>
@@ -299,7 +316,7 @@ function TokensSection() {
         <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
           OpenAI
           <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer"
-            className="ml-1 normal-case font-normal hover:underline" style={{ color: UI_COLORS.PRIMARY }}>
+            className="ml-1 normal-case font-normal hover:underline text-primary" target="_blank" rel="noopener noreferrer">
             platform.openai.com ↗
           </a>
         </h4>
@@ -310,7 +327,7 @@ function TokensSection() {
         <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
           Anthropic
           <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer"
-            className="ml-1 normal-case font-normal hover:underline" style={{ color: UI_COLORS.PRIMARY }}>
+            className="ml-1 normal-case font-normal hover:underline text-primary" target="_blank" rel="noopener noreferrer">
             console.anthropic.com ↗
           </a>
         </h4>
@@ -321,7 +338,7 @@ function TokensSection() {
         <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
           ElevenLabs
           <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank" rel="noopener noreferrer"
-            className="ml-1 normal-case font-normal hover:underline" style={{ color: UI_COLORS.PRIMARY }}>
+            className="ml-1 normal-case font-normal hover:underline text-primary" target="_blank" rel="noopener noreferrer">
             elevenlabs.io ↗
           </a>
         </h4>
@@ -333,12 +350,12 @@ function TokensSection() {
           onClick={handleSave}
           disabled={saving || !hasChanges}
           className="flex-1 py-1.5 text-xs font-medium rounded transition-colors disabled:opacity-40"
-          style={{ background: UI_COLORS.PRIMARY, color: "white", borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
+          style={{ background: 'var(--color-primary)', color: "white", borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
         >
           {saving ? "Saving…" : "Apply Tokens"}
         </button>
         {saveMsg && (
-          <span className="text-[10px]" style={{ color: saveMsg === "Saved" ? UI_COLORS.SUCCESS : UI_COLORS.ERROR }}>
+          <span className="text-[10px]" style={{ color: saveMsg === "Saved" ? 'var(--color-success)' : 'var(--color-error)' }}>
             {saveMsg}
           </span>
         )}
@@ -367,9 +384,19 @@ export function AdvancedSettingsSection({
   onResetToDefaults,
   showAxesHelper,
   onShowAxesHelperChange,
+  showLabelSprites,
+  onShowLabelSpritesChange,
+  showHoveringHighlight,
+  onShowHoveringHighlightChange,
+  showSoundSpheres,
+  onShowSoundSpheresChange,
+  showSceneListeners,
+  onShowSceneListenersChange,
   listenerOrientation,
   onListenerOrientationChange,
 }: AdvancedSettingsSectionProps) {
+  const [viewerExpanded, setViewerExpanded] = useState(false);
+  const [acousticExpanded, setAcousticExpanded] = useState(false);
   const [tokensExpanded, setTokensExpanded] = useState(false);
   const [llmExpanded, setLlmExpanded] = useState(false);
   const [audioExpanded, setAudioExpanded] = useState(false);
@@ -385,6 +412,15 @@ export function AdvancedSettingsSection({
 
   const intervalJitterSeconds = useAudioControlsStore((s) => s.intervalJitterSeconds);
   const setIntervalJitter = useAudioControlsStore((s) => s.setIntervalJitter);
+  const timelineDurationMs = useAudioControlsStore((s) => s.timelineDurationMs);
+  const setTimelineDurationMs = useAudioControlsStore((s) => s.setTimelineDurationMs);
+  const globalBaseSplDb = useAudioControlsStore((s) => s.globalBaseSplDb);
+  const setGlobalBaseSplDb = useAudioControlsStore((s) => s.setGlobalBaseSplDb);
+
+  const globalSoundSpeed = useUIStore((s) => s.globalSoundSpeed);
+  const setGlobalSoundSpeed = useUIStore((s) => s.setGlobalSoundSpeed);
+  const globalMeshLc = useUIStore((s) => s.globalMeshLc);
+  const setGlobalMeshLc = useUIStore((s) => s.setGlobalMeshLc);
 
   return (
     <div className="flex flex-col gap-2 w-full">
@@ -392,13 +428,49 @@ export function AdvancedSettingsSection({
         <h3 className="text-xs font-medium text-foreground">Advanced Settings</h3>
         <button
           onClick={onResetToDefaults}
-          className="text-xs transition-colors hover:opacity-80"
-          style={{ color: UI_COLORS.PRIMARY }}
+          className="text-xs transition-colors hover:opacity-80 text-primary"
           title="Reset to defaults"
         >
           Reset
         </button>
       </div>
+
+      <AccordionSection title="Viewer" expanded={viewerExpanded} onToggle={() => setViewerExpanded((e) => !e)}>
+        <div className="flex flex-col gap-1 pt-1">
+          <CheckboxField checked={showAxesHelper} onChange={onShowAxesHelperChange} label="Show axes helper" />
+          <CheckboxField checked={showLabelSprites} onChange={onShowLabelSpritesChange} label="Show label sprites" />
+          <CheckboxField checked={showHoveringHighlight} onChange={onShowHoveringHighlightChange} label="Hovering highlight" />
+          <CheckboxField checked={showSoundSpheres} onChange={onShowSoundSpheresChange} label="Show sound spheres" />
+          <CheckboxField checked={showSceneListeners} onChange={onShowSceneListenersChange} label="Show listeners" />
+        </div>
+      </AccordionSection>
+
+      <AccordionSection title="Acoustic simulation" expanded={acousticExpanded} onToggle={() => setAcousticExpanded((e) => !e)}>
+        <div className="flex flex-col gap-2 pt-1">
+          <RangeSlider
+            label="Sound speed (m/s): "
+            value={globalSoundSpeed}
+            min={SPEED_OF_SOUND_MIN}
+            max={SPEED_OF_SOUND_MAX}
+            step={1}
+            onChange={setGlobalSoundSpeed}
+            defaultValue={DEFAULT_SPEED_OF_SOUND}
+            formatValue={(v) => `${v} m/s`}
+            hoverText="Applied to all simulation engines (Choras DE/DG, pyroomacoustics, Resonance Audio). Double-click to reset to 343 m/s."
+          />
+          <RangeSlider
+            label="Mesh length (lc): "
+            value={globalMeshLc}
+            min={CHORAS_DE_LC_MIN}
+            max={CHORAS_DE_LC_MAX}
+            step={0.1}
+            onChange={setGlobalMeshLc}
+            defaultValue={CHORAS_DE_DEFAULT_LC}
+            formatValue={(v) => `${v.toFixed(1)} m`}
+            hoverText="Characteristic mesh length for DE method. Double-click to reset to 1.5 m."
+          />
+        </div>
+      </AccordionSection>
 
       <AccordionSection title="API Tokens" expanded={tokensExpanded} onToggle={() => setTokensExpanded((e) => !e)}>
         <TokensSection />
@@ -409,7 +481,7 @@ export function AdvancedSettingsSection({
           value={llmModel}
           onChange={(e) => onLlmModelChange(e.target.value)}
           className="w-full px-2 py-1.5 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light cursor-pointer hover:border-secondary-hover transition-colors focus:outline-none focus:ring-1"
-          style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px`, accentColor: UI_COLORS.PRIMARY }}
+          style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px`, accentColor: 'var(--color-primary)' }}
         >
           {[
             LLM_MODEL_GEMINI_3_PRO,
@@ -444,7 +516,7 @@ export function AdvancedSettingsSection({
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-medium text-secondary-hover uppercase">{axis}</span>
-                    <span className="text-[10px] font-bold" style={{ color: UI_COLORS.PRIMARY }}>
+                    <span className="text-[10px] font-bold text-primary">
                       {listenerOrientation[axis].toFixed(1)}
                     </span>
                   </div>
@@ -461,7 +533,7 @@ export function AdvancedSettingsSection({
                       onListenerOrientationChange({ ...listenerOrientation, [axis]: DEFAULT_LISTENER_ORIENTATION[axis] })
                     }
                     className="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-secondary-light"
-                    style={{ accentColor: UI_COLORS.PRIMARY }}
+                    style={{ accentColor: 'var(--color-primary)' }}
                   />
                 </div>
               ))}
@@ -482,17 +554,37 @@ export function AdvancedSettingsSection({
               defaultValue={AUDIO_PLAYBACK.DEFAULT_INTERVAL_JITTER_SECONDS}
               hoverText="Each iteration fires at its base interval ± a random offset drawn from [0, jitter]. Also controls the stagger between sounds on Play All. Double-click to reset."
             />
+            <RangeSlider
+              label="Timeline Length (s): "
+              value={timelineDurationMs / 1_000}
+              min={30}
+              max={600}
+              step={30}
+              onChange={(v) => setTimelineDurationMs(v * 1_000)}
+              defaultValue={AUDIO_PLAYBACK.TIMELINE_FIXED_DURATION_MS / 1_000}
+              hoverText="Fixed length of the visual and audio timeline in seconds. Sounds that extend past this boundary are trimmed. Double-click to reset to 180 s (3 min)."
+            />
           </div>
         </div>
       </AccordionSection>
 
       <AccordionSection title="Audio Models" expanded={audioExpanded} onToggle={() => setAudioExpanded((e) => !e)}>
         <div className="flex flex-col gap-2">
+          <RangeSlider
+            label="Base SPL (dB): "
+            value={globalBaseSplDb}
+            min={SPL_MIN}
+            max={SPL_MAX}
+            step={1}
+            onChange={setGlobalBaseSplDb}
+            defaultValue={DEFAULT_SPL_DB}
+            hoverText="Reference SPL level used in audio calibration for all generated sounds. Double-click to reset to 70 dB."
+          />
           <select
             value={audioModel}
             onChange={(e) => onAudioModelChange(e.target.value)}
             className="w-full px-2 py-1.5 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light cursor-pointer hover:border-secondary-hover transition-colors focus:outline-none focus:ring-1"
-            style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px`, accentColor: UI_COLORS.PRIMARY }}
+            style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px`, accentColor: 'var(--color-primary)' }}
           >
             <option value={AUDIO_MODEL_TANGOFLUX}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_TANGOFLUX]}</option>
             <option value={AUDIO_MODEL_AUDIOLDM2}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_AUDIOLDM2]}</option>
@@ -547,41 +639,6 @@ export function AdvancedSettingsSection({
             </>
           )}
 
-          <div className="flex flex-col gap-2 pt-1">
-            <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
-              Audio Processing
-            </h4>
-            <label className="flex items-start cursor-pointer group">
-              <input
-                type="checkbox"
-                checked={applyDenoising}
-                onChange={(e) => onApplyDenoisingChange(e.target.checked)}
-                className="mt-0.5 w-3.5 h-3.5 cursor-pointer"
-                style={{ accentColor: UI_COLORS.PRIMARY }}
-              />
-              <div className="ml-2 flex-1 leading-none">
-                <span className="text-xs font-medium text-foreground group-hover:text-secondary-hover transition-colors">
-                  Remove Background Noise
-                </span>
-                <p className="text-[10px] text-secondary-hover mt-0.5">Apply noise reduction</p>
-              </div>
-            </label>
-            <label className="flex items-start cursor-pointer group">
-              <input
-                type="checkbox"
-                checked={normalizeImpulseResponses}
-                onChange={(e) => onNormalizeImpulseResponsesChange(e.target.checked)}
-                className="mt-0.5 w-3.5 h-3.5 cursor-pointer"
-                style={{ accentColor: UI_COLORS.PRIMARY }}
-              />
-              <div className="ml-2 flex-1 leading-none">
-                <span className="text-xs font-medium text-foreground group-hover:text-secondary-hover transition-colors">
-                  Normalize Impulse Responses
-                </span>
-                <p className="text-[10px] text-secondary-hover mt-0.5">Scale IR to -6dB headroom</p>
-              </div>
-            </label>
-          </div>
         </div>
       </AccordionSection>
     </div>

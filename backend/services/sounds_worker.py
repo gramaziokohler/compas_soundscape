@@ -81,6 +81,7 @@ def run_sound_generation(
     apply_denoising: bool,
     audio_model: str,
     output_dir: str,
+    base_spl_db: float = None,
 ) -> None:
     """
     Full sound generation pipeline, runs in a subprocess.
@@ -104,7 +105,7 @@ def run_sound_generation(
             guidance_scale = cfg.get("guidance_scale", DEFAULT_GUIDANCE_SCALE)
             seed_copies = cfg.get("seed_copies", DEFAULT_SEED_COPIES)
             steps = cfg.get("steps", DEFAULT_DIFFUSION_STEPS)
-            spl_db = cfg.get("spl_db", DEFAULT_SPL_DB)
+            spl_db = cfg.get("spl_db") or base_spl_db or DEFAULT_SPL_DB
             interval_seconds = cfg.get("interval_seconds", DEFAULT_INTERVAL_BETWEEN_SOUNDS)
             negative_prompt = cfg.get("negative_prompt", "")
 

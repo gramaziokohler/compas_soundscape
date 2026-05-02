@@ -13,7 +13,7 @@
  * binaural decoding, limiter, listener orientation, and mute/solo state.
  */
 
-import type { TimelineSound, Position, Orientation, AmbisonicOrder } from '@/types/audio';
+import type { TimelineSound, Position, Position3D, Orientation, AmbisonicOrder } from '@/types/audio';
 import { AudioMode } from '@/types/audio';
 import { cartesianToSpherical } from './utils/ambisonic-utils';
 import { BinauralDecoder } from './decoders/BinauralDecoder';
@@ -51,6 +51,13 @@ export interface SoundscapeExportConfig {
   /** Listener pose at the time of export (snapshot) */
   listenerPosition: Position;
   listenerOrientation: Orientation;
+
+  /**
+   * Optional global listener forward direction from UI advanced settings.
+   * Used for raw ambisonic export (4/9/16ch) to apply the same orientation
+   * that is used when entering first-person mode.
+   */
+  globalListenerOrientation?: Position3D;
 
   /** Processed global IR buffer (AmbisonicIR mode with manual IR) */
   irBuffer?: AudioBuffer | null;
@@ -368,6 +375,8 @@ async function buildRawAmbisonicIRGraph(
     soundGains,
     irBuffer,
     perSourceIRBuffers,
+    listenerOrientation,
+    globalListenerOrientation,
   } = config;
   const numChannels = (ambisonicOrder + 1) ** 2;
 
@@ -377,6 +386,25 @@ async function buildRawAmbisonicIRGraph(
   outputBus.channelCountMode = 'explicit';
   outputBus.channelInterpretation = 'discrete';
   outputBus.connect(outputNode);
+
+  // Apply listener rotation before writing raw ambisonic channels so exported
+  // FOA/SOA/TOA matches the global listener orientation from Advanced Settings.
+  // Use the same JSAmbisonics sign convention correction as BinauralDecoder.
+  const sceneRotator = new ambisonics.sceneRotator(offlineCtx, ambisonicOrder);
+  sceneRotator.yaw = 0;
+  sceneRotator.pitch = 0;
+  sceneRotator.roll = 0;
+
+  const orientationForRaw = globalListenerOrientation
+    ? orientationFromForwardVector(globalListenerOrientation)
+    : listenerOrientation;
+  const RAD_TO_DEG = 180 / Math.PI;
+  sceneRotator.yaw = -orientationForRaw.yaw * RAD_TO_DEG;
+  sceneRotator.pitch = -orientationForRaw.pitch * RAD_TO_DEG;
+  sceneRotator.roll = 0;
+  sceneRotator.updateRotMtx();
+
+  sceneRotator.out.connect(outputBus);
 
   onProgress?.(0.25);
 
@@ -404,13 +432,36 @@ async function buildRawAmbisonicIRGraph(
     const convolver = new ambisonics.convolver(offlineCtx, ambisonicOrder);
     convolver.updateFilters(sourceIR);
 
-    // Connect: gain → convolver.in → convolver.out → outputBus → destination
+    // Connect: gain → convolver.in → convolver.out → sceneRotator → outputBus
     gainNode.connect(convolver.in);
-    convolver.out.connect(outputBus);
+    convolver.out.connect(sceneRotator.in);
 
     // Schedule each timeline iteration
     scheduleIterations(offlineCtx, sourceInfo.buffer, sound.scheduledIterations, gainNode, durationSecs(offlineCtx));
   }
+}
+
+/**
+ * Convert a forward vector in Speckle Z-up coordinates to yaw/pitch radians.
+ * Matches SpeckleCameraController's orientation convention:
+ * - yaw = atan2(-x, -y)
+ * - pitch = asin(z)
+ */
+function orientationFromForwardVector(forward: Position3D): Orientation {
+  const mag = Math.hypot(forward.x, forward.y, forward.z);
+  if (mag < 1e-6) {
+    return { yaw: 0, pitch: 0, roll: 0 };
+  }
+
+  const nx = forward.x / mag;
+  const ny = forward.y / mag;
+  const nz = forward.z / mag;
+
+  return {
+    yaw: Math.atan2(-nx, -ny),
+    pitch: Math.asin(nz),
+    roll: 0,
+  };
 }
 
 // ============================================================================

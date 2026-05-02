@@ -330,7 +330,7 @@ class LLMService:
             entity_summaries.append(summary)
 
         entities_list = "\n".join(entity_summaries)
-
+        
         diversity_prompt = f"""You are selecting the most semantically diverse {entity_type} from a 3D model to create a varied soundscape.
 
 Here are {len(entities)} {entity_type}:

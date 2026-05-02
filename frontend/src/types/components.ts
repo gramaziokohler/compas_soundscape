@@ -100,6 +100,14 @@ export interface SidebarProps {
   onAudioModelChange: (model: string) => void;
   onLlmModelChange: (model: string) => void;
   onShowAxesHelperChange: (show: boolean) => void;
+  showLabelSprites: boolean;
+  onShowLabelSpritesChange: (v: boolean) => void;
+  showHoveringHighlight: boolean;
+  onShowHoveringHighlightChange: (v: boolean) => void;
+  showSoundSpheres: boolean;
+  onShowSoundSpheresChange: (v: boolean) => void;
+  showSceneListeners: boolean;
+  onShowSceneListenersChange: (v: boolean) => void;
   onResetAdvancedSettings: () => void;
   listenerOrientation: { x: number; y: number; z: number };
   onListenerOrientationChange: (orientation: { x: number; y: number; z: number }) => void;

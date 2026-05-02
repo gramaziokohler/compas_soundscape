@@ -16,6 +16,7 @@ declare module 'resonance-audio' {
     constructor(audioContext: AudioContext, options?: {
       ambisonicOrder?: number;
       listenerPosition?: [number, number, number];
+      speedOfSound?: number;
       dimensions?: {
         width: number;
         height: number;

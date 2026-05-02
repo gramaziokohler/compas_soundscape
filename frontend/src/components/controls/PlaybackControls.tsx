@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { UI_COLORS, UI_OVERLAY, UI_VERTICAL_TABS, UI_RIGHT_SIDEBAR } from "@/utils/constants";
+import { UI_VERTICAL_TABS, UI_RIGHT_SIDEBAR } from "@/utils/constants";
 
 const LEFT_SIDEBAR_CONTENT_WIDTH = 240;
 const RIGHT_SIDEBAR_COLLAPSED_WIDTH = 30;
@@ -69,7 +69,7 @@ export function PlaybackControls({
           disabled={isAnyPlaying}
           className={getButtonClass(!isAnyPlaying)}
           style={{
-            backgroundColor: !isAnyPlaying ? UI_COLORS.PRIMARY : UI_COLORS.NEUTRAL_600,
+            backgroundColor: !isAnyPlaying ? 'var(--color-primary)' : 'var(--color-secondary-hover)',
             borderRadius: '6px'
           }}
         >
@@ -81,7 +81,7 @@ export function PlaybackControls({
           disabled={!isAnyPlaying}
           className={getButtonClass(isAnyPlaying)}
           style={{
-            backgroundColor: isAnyPlaying ? UI_COLORS.WARNING : UI_COLORS.NEUTRAL_600,
+            backgroundColor: isAnyPlaying ? 'var(--color-warning)' : 'var(--color-secondary-hover)',
             borderRadius: '6px'
           }}
         >
@@ -93,7 +93,7 @@ export function PlaybackControls({
           disabled={!isAnyPlaying}
           className={getButtonClass(isAnyPlaying)}
           style={{
-            backgroundColor: isAnyPlaying ? UI_COLORS.PRIMARY : UI_COLORS.NEUTRAL_600,
+            backgroundColor: isAnyPlaying ? 'var(--color-primary)' : 'var(--color-secondary-hover)',
             borderRadius: '6px'
           }}
         >

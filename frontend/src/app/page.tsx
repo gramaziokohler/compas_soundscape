@@ -22,6 +22,7 @@ import {
   useRightSidebarStore,
   useUIStore,
   useGridListenersStore,
+  useErrorsStore,
 } from "@/store";
 import * as THREE from "three";
 import { useAudioNormalization } from "@/hooks/useAudioNormalization";
@@ -61,6 +62,7 @@ function HomeContent() {
 
   const fileUpload = useFileUploadStore();
   const handleApiError = useApiErrorHandler();
+  const addError = useErrorsStore((s) => s.addError);
   const textGen = useTextGenerationStore();
   const soundGen = useSoundscapeStore();
 
@@ -174,6 +176,12 @@ function HomeContent() {
     speckleBounds, setSpeckleBounds,
     hoveredIRSourceReceiver, setHoveredIRSourceReceiver,
     showAxesHelper, setShowAxesHelper,
+    showLabelSprites, setShowLabelSprites,
+    showHoveringHighlight, setShowHoveringHighlight,
+    showSoundSpheres, setShowSoundSpheres,
+    showSceneListeners, setShowSceneListeners,
+    setGlobalSoundSpeed,
+    setGlobalMeshLc,
   } = useUIStore();
   // roomScale lives in acousticsSimulationStore so undo/redo works for Resonance Audio
   const roomScale = useAcousticsSimulationStore((s) => s.roomScale);
@@ -237,24 +245,32 @@ function HomeContent() {
     // They may be about to upload an IR
   }, [audioOrchestrator.status?.isIRActive]);
 
-  // Auto-hide bounding box when not in ResonanceMode
+  const prevOrchestratorModeRef = useRef<string | undefined>(undefined);
+
+  // Auto-show/hide bounding box on ResonanceMode transitions only
   useEffect(() => {
     if (!audioOrchestrator.status) return;
 
     const currentMode = audioOrchestrator.status.currentMode;
+    const prevMode = prevOrchestratorModeRef.current;
+    prevOrchestratorModeRef.current = currentMode;
 
-    // Only show bounding box in ResonanceMode (no_ir_resonance)
-    if (currentMode !== 'no_ir_resonance' && showBoundingBox) {
+    if (prevMode === currentMode) return;
+
+    if (currentMode === 'no_ir_resonance') {
+      setShowBoundingBox(true);
+    } else if (prevMode === 'no_ir_resonance') {
       setShowBoundingBox(false);
     }
-  }, [audioOrchestrator.status?.currentMode, showBoundingBox]);
+  }, [audioOrchestrator.status?.currentMode]);
 
   // Helper: check if a simulation config has a source-receiver IR mapping (completed simulation)
   const getSimIRMapping = useCallback((index: number | null) => {
     if (index === null) return null;
     const config = acousticsSimulation.simulationConfigs[index];
-    if (!config || config.type !== 'pyroomacoustics') return null;
-    return (config as any).sourceReceiverIRMapping || null;
+    if (!config || (config.type !== 'pyroomacoustics' && config.type !== 'import-irs')) return null;
+    const mapping = (config as any).sourceReceiverIRMapping || null;
+    return mapping && Object.keys(mapping).length > 0 ? mapping : null;
   }, [acousticsSimulation.simulationConfigs]);
 
   // Set source-receiver IR mapping when simulation completes (PyroomAcoustics)
@@ -268,11 +284,12 @@ function HomeContent() {
     if (acousticsSimulation.activeSimulationIndex !== null) {
       const activeConfig = acousticsSimulation.simulationConfigs[acousticsSimulation.activeSimulationIndex];
 
-      if (activeConfig && activeConfig.type === 'pyroomacoustics') {
-        const pyroomConfig = activeConfig as any;
+      if (activeConfig && (activeConfig.type === 'pyroomacoustics' || activeConfig.type === 'import-irs')) {
+        const simConfig = activeConfig as any;
+        const simulationMode = activeConfig.type === 'import-irs' ? 'pyroomacoustics' : activeConfig.type;
 
         // If simulation has source-receiver IR mapping, pass it to AudioOrchestrator
-        if (pyroomConfig.sourceReceiverIRMapping) {
+        if (simConfig.sourceReceiverIRMapping) {
           const initialReceiverId = receivers.receivers.length > 0 ? receivers.receivers[0].id : undefined;
 
           // Determine if we can hot-swap: already in AMBISONIC_IR mode and previous sim also had IR mapping
@@ -283,11 +300,11 @@ function HomeContent() {
           if (canHotSwap) {
             console.log('[Page] Hot-swapping IR mapping (no stop)', {
               simulationId: activeConfig.id,
-              sourceCount: Object.keys(pyroomConfig.sourceReceiverIRMapping).length
+              sourceCount: Object.keys(simConfig.sourceReceiverIRMapping).length
             });
             audioOrchestrator.orchestrator.hotSwapSourceReceiverIRMapping(
-              pyroomConfig.sourceReceiverIRMapping,
-              'pyroomacoustics',
+              simConfig.sourceReceiverIRMapping,
+              simulationMode,
               initialReceiverId
             ).then(() => {
               console.log('[Page] ✅ IR mapping hot-swapped successfully');
@@ -297,12 +314,12 @@ function HomeContent() {
           } else {
             console.log('[Page] Setting source-receiver IR mapping from simulation', {
               simulationId: activeConfig.id,
-              hasMapping: !!pyroomConfig.sourceReceiverIRMapping,
-              sourceCount: Object.keys(pyroomConfig.sourceReceiverIRMapping).length
+              hasMapping: !!simConfig.sourceReceiverIRMapping,
+              sourceCount: Object.keys(simConfig.sourceReceiverIRMapping).length
             });
             audioOrchestrator.orchestrator.setSourceReceiverIRMapping(
-              pyroomConfig.sourceReceiverIRMapping,
-              'pyroomacoustics',
+              simConfig.sourceReceiverIRMapping,
+              simulationMode,
               initialReceiverId
             ).then(() => {
               console.log('[Page] ✅ Source-receiver IR mapping applied successfully');
@@ -509,11 +526,11 @@ function HomeContent() {
     });
   }, [soundGen.soundConfigs, unlinkObjectFromSound, appIdToTreeIdMap]);
 
-  // Handler: Refresh bounding box calculation from sound sources
+  // Handler: Reset bounding box to its original model-derived size
   const handleRefreshBoundingBox = useCallback(() => {
+    setRoomScale({ x: 1, y: 1, z: 1 });
     triggerBoundingBoxRefresh();
-    console.log('[Page] Triggering bounding box refresh');
-  }, []);
+  }, [setRoomScale, triggerBoundingBoxRefresh]);
 
   // Load sounds from text generation into sound generation tab
   const handleLoadSoundsToGeneration = useCallback(() => {
@@ -1241,7 +1258,16 @@ function HomeContent() {
     audioNormalization.reset();
     setShowAxesHelper(false);
     setListenerOrientation({ ...DEFAULT_LISTENER_ORIENTATION });
-  }, [soundGen.handleResetToDefaults, audioNormalization.reset]);
+    setShowLabelSprites(true);
+    setShowHoveringHighlight(true);
+    setShowSoundSpheres(true);
+    setShowSceneListeners(true);
+    setGlobalSoundSpeed(343);
+    setGlobalMeshLc(1.5);
+    useAudioControlsStore.getState().resetGlobalBaseSplDb();
+  }, [soundGen.handleResetToDefaults, audioNormalization.reset,
+      setShowLabelSprites, setShowHoveringHighlight, setShowSoundSpheres, setShowSceneListeners,
+      setGlobalSoundSpeed, setGlobalMeshLc]);
 
   // Handler: Material assignment selection (NEW)
   const handleSelectGeometry = useCallback((selection: SelectedGeometry | null) => {
@@ -1450,6 +1476,20 @@ function HomeContent() {
   const handleGoToReceiver = useCallback((receiverId: string) => {
     setActiveIRGroupId(receiverId);
 
+    const activeSimulation = acousticsSimulation.activeSimulationIndex !== null
+      ? acousticsSimulation.simulationConfigs[acousticsSimulation.activeSimulationIndex]
+      : null;
+    const activeMapping = activeSimulation
+      ? (activeSimulation as any).sourceReceiverIRMapping as Record<string, Record<string, unknown>> | undefined
+      : undefined;
+
+    if (activeMapping) {
+      const hasMissingIR = Object.keys(activeMapping).some((sourceId) => !activeMapping[sourceId]?.[receiverId]);
+      if (hasMissingIR) {
+        addError('You have to import an ir, auralization is disabled', 'warning');
+      }
+    }
+
     // Try regular receivers first
     const receiver = receivers.receivers.find(r => r.id === receiverId);
     if (receiver) {
@@ -1475,7 +1515,7 @@ function HomeContent() {
     }
 
     console.warn('[Page] handleGoToReceiver: Receiver not found:', receiverId);
-  }, [receivers.receivers, gridListeners.gridListeners, audioOrchestrator]);
+  }, [receivers.receivers, gridListeners.gridListeners, audioOrchestrator, acousticsSimulation.activeSimulationIndex, acousticsSimulation.simulationConfigs, addError]);
 
   // Handler: Receiver mesh double-clicked in 3D scene →
   //   switch to Listeners tab + expand card for single listeners; for grid points just enter FPS
@@ -1700,7 +1740,7 @@ function HomeContent() {
   }, []);
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-gray-100 dark:bg-gray-900">
+    <div className="relative w-screen h-screen overflow-hidden bg-neutral-100 dark:bg-neutral-900">
       {/* Main 3D Scene - Fixed at screen center, full size, lowest z-index */}
       <main className="absolute inset-0 z-0">
         {/* Viewer Toggle Button - Top Left */}
@@ -1805,7 +1845,7 @@ function HomeContent() {
           />
         ) : (
           /* ThreeScene is deprecated - SpeckleScene is the default viewer */
-          <div className="w-full h-full flex items-center justify-center bg-gray-900 text-gray-400">
+          <div className="w-full h-full flex items-center justify-center bg-neutral-900 text-neutral-400">
             <div className="text-center">
               <p className="text-lg mb-2">Three.js Viewer (Deprecated)</p>
               <p className="text-sm">Please use SpeckleScene viewer instead.</p>
@@ -2008,6 +2048,14 @@ function HomeContent() {
         showAxesHelper={showAxesHelper}
         onNormalizeImpulseResponsesChange={handleToggleNormalize}
         onShowAxesHelperChange={setShowAxesHelper}
+        showLabelSprites={showLabelSprites}
+        onShowLabelSpritesChange={setShowLabelSprites}
+        showHoveringHighlight={showHoveringHighlight}
+        onShowHoveringHighlightChange={setShowHoveringHighlight}
+        showSoundSpheres={showSoundSpheres}
+        onShowSoundSpheresChange={setShowSoundSpheres}
+        showSceneListeners={showSceneListeners}
+        onShowSceneListenersChange={setShowSceneListeners}
         onResetAdvancedSettings={handleResetAdvancedSettings}
         listenerOrientation={listenerOrientation}
         onListenerOrientationChange={setListenerOrientation}

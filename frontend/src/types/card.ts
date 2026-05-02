@@ -38,7 +38,7 @@ export type CardColor =
  *
  * Analysis types: '3d-model', 'audio', 'text'
  * Sound types: 'text-to-audio', 'upload', 'library', 'sample-audio'
- * Acoustics types: 'resonance', 'choras', 'pyroomacoustics'
+ * Acoustics types: 'resonance', 'choras', 'pyroomacoustics', 'import-irs'
  */
 export type CardType =
   | '3d-model'
@@ -52,6 +52,7 @@ export type CardType =
   | 'resonance'
   | 'choras'
   | 'pyroomacoustics'
+  | 'import-irs'
   | 'listener'
   | 'grid-listener';
 
@@ -70,6 +71,7 @@ export const CARD_TYPE_LABELS: Record<CardType, string> = {
   'resonance': 'Shoebox real-time ISM',
   'choras': 'Wave-based simulation',
   'pyroomacoustics': 'Ray-tracing + ISM',
+  'import-irs': 'Import IRs',
   'listener': 'Listener',
   'grid-listener': 'Grid Listener',
 };
@@ -240,6 +242,8 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   afterContent?: ReactNode;
   /** Content to show while generation is running (optional loading state) */
   loadingContent?: ReactNode;
+  /** When true, dims the card title and body (but not the action buttons / kebab menu) */
+  dimmed?: boolean;
 }
 
 

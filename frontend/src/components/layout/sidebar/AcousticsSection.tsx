@@ -30,6 +30,7 @@ import { Card } from '@/components/ui/Card';
 import { apiService } from '@/services/api';
 import { CARD_TYPE_LABELS } from '@/types/card';
 import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGridListenersStore, useAudioControlsStore, useSoundscapeStore } from '@/store';
+import { useUIStore } from '@/store/uiStore';
 
 // Content Components
 import { ResonanceContent } from '@/components/layout/sidebar/acoustics/ResonanceContent';
@@ -73,8 +74,7 @@ import type { RoomScale } from '@/components/layout/sidebar/acoustics/ResonanceA
 
 // Constants
 import {
-  MAX_FACES_FOR_LAYER_AUTO_EXCLUDE,
-  UI_COLORS
+  MAX_FACES_FOR_LAYER_AUTO_EXCLUDE
 } from '@/utils/constants';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
 
@@ -154,7 +154,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     onToggleResonanceAudio,
     onUpdateRoomMaterials,
     hasGeometry,
-    showBoundingBox,
+    showBoundingBox ,
     onToggleBoundingBox,
     onRefreshBoundingBox,
     roomScale,
@@ -444,6 +444,15 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
       const geometryObjectIds = (config as any).speckleGeometryObjectIds as string[] | undefined;
 
+      // Override per-card fields with global acoustic parameters from uiStore
+      const { globalSoundSpeed, globalMeshLc } = useUIStore.getState();
+      const mergedSettings = {
+        ...settings,
+        de_c0: globalSoundSpeed,
+        dg_c0: globalSoundSpeed,
+        de_lc: globalMeshLc,
+      };
+
       // Start simulation — returns immediately with simulation_id
       const { simulation_id } = await apiService.runChorasSimulationSpeckle(
         projectId,
@@ -451,7 +460,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         objectMaterials,
         (config as any).speckleLayerName || null,
         config.display_name || 'Simulation',
-        settings,
+        mergedSettings,
         sourceReceiverPairs,
         geometryObjectIds
       );
@@ -601,7 +610,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         objectMaterials,
         (config as any).speckleLayerName || null,
         config.display_name || 'Simulation',
-        settings,
+        { ...settings, sound_speed: useUIStore.getState().globalSoundSpeed },
         sourceReceiverPairs,
         geometryObjectIds,
         speckleScatteringAssignments || {}
@@ -750,6 +759,18 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     // Resonance cards have no per-card settings to copy — just add the new card.
     if (config.type === 'resonance') return;
 
+    if (config.type === 'import-irs') {
+      onUpdateSimulationConfig(newIndex, {
+        state: 'completed',
+        simulationResults: (config as any).simulationResults,
+        sourceReceiverIRMapping: (config as any).sourceReceiverIRMapping,
+        importedIRIds: (config as any).importedIRIds,
+        simulationPositions: (config as any).simulationPositions,
+        completedAt: (config as any).completedAt,
+      } as any);
+      return;
+    }
+
     const simConfig = config as ChorasSimulationConfig | PyroomAcousticsSimulationConfig;
     const isCompleted = config.state === 'completed';
 
@@ -806,6 +827,17 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   const resetSimulation = useCallback((index: number) => {
     const config = simulationConfigs[index];
     if (!config || config.type === 'resonance') return;
+
+    if (config.type === 'import-irs') {
+      handleUpdateConfig(index, {
+        state: 'completed',
+        error: null,
+        simulationResults: null,
+        importedIRIds: undefined,
+        sourceReceiverIRMapping: undefined,
+      } as any);
+      return;
+    }
 
     const simConfig = config as ChorasSimulationConfig | PyroomAcousticsSimulationConfig;
 
@@ -1074,6 +1106,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     { type: 'resonance', label: CARD_TYPE_LABELS['resonance'], enabled: true },
     { type: 'pyroomacoustics', label: CARD_TYPE_LABELS['pyroomacoustics'], enabled: true },
     { type: 'choras', label: CARD_TYPE_LABELS['choras'], enabled: true },
+    { type: 'import-irs', label: CARD_TYPE_LABELS['import-irs'], enabled: true },
   ];
 
   const header = (
@@ -1129,7 +1162,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     // Simulation setup component — always rendered for non-resonance types
     // so that filtering, coloring, and material context stay active
     // regardless of completion state (decoupled from generation state)
-    const simulationSetup = config.type !== 'resonance' ? (
+    const simulationSetup = config.type !== 'resonance' && config.type !== 'import-irs' ? (
         <SimulationSetupContent
             config={config}
             index={index}
@@ -1197,6 +1230,66 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       g.points.forEach((pt, i) => { currentReceiverPositions[`${g.id}-${i}`] = pt; });
     });
 
+    const pairDefinitions = allReceivers.flatMap(({ id: receiverId }) =>
+      (soundscapeData ?? []).map((sound) => ({ sourceId: sound.id, receiverId }))
+    );
+    const availableSourceCount = soundscapeData?.length ?? 0;
+    const availableReceiverCount = allReceivers.length;
+
+    const importIRMapping = (config as any).sourceReceiverIRMapping as Record<string, Record<string, ImpulseResponseMetadata>> | undefined;
+    const missingPairCount = config.type === 'import-irs'
+      ? pairDefinitions.filter(({ sourceId, receiverId }) => !importIRMapping?.[sourceId]?.[receiverId]).length
+      : 0;
+
+    const handlePairIRUploaded = (sourceId: string, receiverId: string, irMetadata: ImpulseResponseMetadata) => {
+      const prevMapping = ((config as any).sourceReceiverIRMapping ?? {}) as Record<string, Record<string, ImpulseResponseMetadata>>;
+      const nextMapping: Record<string, Record<string, ImpulseResponseMetadata>> = { ...prevMapping };
+      nextMapping[sourceId] = { ...(nextMapping[sourceId] ?? {}), [receiverId]: irMetadata };
+
+      const usedIds = new Set<string>();
+      Object.values(nextMapping).forEach((receiverMap) => {
+        Object.values(receiverMap).forEach((ir) => usedIds.add(ir.id));
+      });
+
+      handleUpdateConfig(index, {
+        sourceReceiverIRMapping: nextMapping,
+        importedIRIds: Array.from(usedIds),
+        simulationResults: 'Manual IR import',
+        completedAt: Date.now(),
+        simulationPositions: {
+          sources: currentSourcePositions,
+          receivers: currentReceiverPositions,
+        },
+      } as any);
+
+      if (onIRImported) onIRImported();
+    };
+
+    const handlePairAssignmentCleared = (sourceId: string, receiverId: string) => {
+      const prevMapping = ((config as any).sourceReceiverIRMapping ?? {}) as Record<string, Record<string, ImpulseResponseMetadata>>;
+      if (!prevMapping[sourceId]?.[receiverId]) return;
+
+      const nextMapping: Record<string, Record<string, ImpulseResponseMetadata>> = { ...prevMapping };
+      const nextSourceMap = { ...(nextMapping[sourceId] ?? {}) };
+      delete nextSourceMap[receiverId];
+
+      if (Object.keys(nextSourceMap).length > 0) {
+        nextMapping[sourceId] = nextSourceMap;
+      } else {
+        delete nextMapping[sourceId];
+      }
+
+      const usedIds = new Set<string>();
+      Object.values(nextMapping).forEach((receiverMap) => {
+        Object.values(receiverMap).forEach((ir) => usedIds.add(ir.id));
+      });
+
+      handleUpdateConfig(index, {
+        sourceReceiverIRMapping: Object.keys(nextMapping).length > 0 ? nextMapping : undefined,
+        importedIRIds: usedIds.size > 0 ? Array.from(usedIds) : undefined,
+      } as any);
+    };
+
     // Reset mismatched objects to their simulation-time positions
     const handleResetPositions = (sourceIds: string[], receiverIds: string[]) => {
       const simPositions = (config as any).simulationPositions as {
@@ -1218,9 +1311,15 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         <>
           {/* FPS mode warning: shown when this card is active, audio is actually playing, and user is not in listener view */}
           {index === activeSimulationIndex && isExpanded && isAudioActuallyPlaying && !isFPSModeActive && (
-            <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-red-900/30 border border-red-500/60 text-red-400 text-xs">
+            <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-error/10 border border-error/40 text-error text-xs">
               <span className="font-bold shrink-0 mt-0.5">⚠</span>
               <span>Not in listener mode — use <strong>Go to Listener</strong> to auralize from a receiver&apos;s perspective.</span>
+            </div>
+          )}
+          {config.type === 'import-irs' && missingPairCount > 0 && (
+            <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-warning/10 border border-warning/40 text-warning text-xs">
+              <span className="font-bold shrink-0 mt-0.5">!</span>
+              <span>{missingPairCount} source-listener pair{missingPairCount === 1 ? '' : 's'} still need an IR. Auralization stays disabled for listener groups with missing assignments.</span>
             </div>
           )}
           <SimulationResultContent
@@ -1240,8 +1339,14 @@ export function AcousticsSection(props: AcousticsSectionProps) {
               onGoToReceiver={onGoToReceiver}
               fpsExitTrigger={fpsExitTrigger}
               forcedActiveGroupId={forcedActiveGroupId}
+                pairDefinitions={config.type === 'import-irs' ? pairDefinitions : undefined}
+                availableSourceCount={config.type === 'import-irs' ? availableSourceCount : undefined}
+                availableReceiverCount={config.type === 'import-irs' ? availableReceiverCount : undefined}
+                allowPairUploads={config.type === 'import-irs'}
+                onPairIRUploaded={config.type === 'import-irs' ? handlePairIRUploaded : undefined}
+                onPairAssignmentCleared={config.type === 'import-irs' ? handlePairAssignmentCleared : undefined}
           />
-          <SimulationSettingsSection config={config} />
+              {config.type !== 'import-irs' && <SimulationSettingsSection config={config} />}
           {/* Hidden: keeps SpeckleSurfaceMaterialsSection mounted for filtering/coloring effects */}
           <div className="hidden">{simulationSetup}</div>
         </>
