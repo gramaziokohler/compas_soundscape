@@ -543,29 +543,47 @@ class SpeckleService:
         object_ids = []
         object_names = []
         object_face_ranges = {}
-        
+
         vertex_offset = 0
         face_count = 0
-        
+
+        # Unit conversion: Speckle unit string → scale factor to meters
+        _UNIT_TO_METERS = {
+            "m": 1.0, "meters": 1.0, "metre": 1.0, "metres": 1.0,
+            "mm": 0.001, "millimeters": 0.001, "millimetres": 0.001,
+            "cm": 0.01, "centimeters": 0.01, "centimetres": 0.01,
+            "ft": 0.3048, "feet": 0.3048,
+            "in": 0.0254, "inches": 0.0254,
+            "yd": 0.9144, "yards": 0.9144,
+        }
+
+        # Detect root-level units as fallback for meshes without their own units field
+        root_units = str(getattr(root_object, 'units', None) or 'm').lower()
+        root_scale = _UNIT_TO_METERS.get(root_units, 1.0)
+        if root_units != 'm':
+            logger.info(f"Root object units: '{root_units}' (scale {root_scale} → meters)")
+
         def extract_mesh_data(mesh):
-            """Extract vertices and faces from a Speckle Mesh object"""
+            """Extract vertices and faces from a Speckle Mesh object, scaling to meters."""
             if not isinstance(mesh, Mesh):
                 return None
-        def extract_mesh_data(mesh):
-            """Extract vertices and faces from a Speckle Mesh object"""
-            if not isinstance(mesh, Mesh):
-                return None
-                
+
             if not hasattr(mesh, 'vertices') or not hasattr(mesh, 'faces'):
                 return None
-            
+
+            # Per-mesh units override root units; default to root_units captured above
+            mesh_units = str(getattr(mesh, 'units', None) or root_units).lower()
+            scale = _UNIT_TO_METERS.get(mesh_units, 1.0)
+            if scale != 1.0:
+                logger.info(f"  Mesh units: '{mesh_units}' → scale {scale} to meters")
+
             # Vertices are stored as flat list [x, y, z, x, y, z, ...]
             verts = []
             for i in range(0, len(mesh.vertices), 3):
                 verts.append([
-                    mesh.vertices[i],
-                    mesh.vertices[i + 1],
-                    mesh.vertices[i + 2]
+                    mesh.vertices[i] * scale,
+                    mesh.vertices[i + 1] * scale,
+                    mesh.vertices[i + 2] * scale,
                 ])
             
             # Faces are stored with count prefix: [n, v0, v1, ..., vn-1, m, v0, v1, ...]
@@ -746,14 +764,15 @@ class SpeckleService:
                     object_face_ranges[obj_app_id] = face_range
                 logger.info(f"Added {face_count - start_face} faces from {obj_name} (id={obj_id}, applicationId={obj_app_id})")
         
-        logger.info(f"Total geometry extracted: {len(all_vertices)} vertices, {len(all_faces)} faces across {len(object_ids)} objects")
-        
+        logger.info(f"Total geometry extracted: {len(all_vertices)} vertices, {len(all_faces)} faces across {len(object_ids)} objects (units: '{root_units}', scaled to meters)")
+
         return {
             "vertices": all_vertices,
             "faces": all_faces,
             "object_ids": object_ids,
             "object_names": object_names,
-            "object_face_ranges": object_face_ranges
+            "object_face_ranges": object_face_ranges,
+            "units": root_units,
         }
     
     async def get_object_materials(

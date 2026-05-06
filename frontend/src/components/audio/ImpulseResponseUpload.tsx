@@ -136,6 +136,22 @@ export function ImpulseResponseUpload({
 
   useEffect(() => { loadImpulseResponses(); }, [refreshTrigger, simulationIRIdsKey]);
 
+  // Fast metadata-based energy check (no audio download needed).
+  // Uses peak_amplitude from the server response when available, so very short
+  // IRs (where int16 quantisation collapses all samples to 0) are still detected
+  // regardless of any browser AudioContext limitations.
+  useEffect(() => {
+    for (const ir of impulseResponses) {
+      const peak = (ir as any).peak_amplitude ?? ir.peakAmplitude;
+      console.log({ peak })
+      if (peak !== undefined && peak !== null && peak < IR_LOW_ENERGY_THRESHOLD) {
+        setLowEnergyIRIds(prev => prev.has(ir.id) ? prev : new Set(prev).add(ir.id));
+      }
+    }
+  }, [impulseResponses]);
+
+  // Buffer load for waveform hover preview; also catches energy for legacy IRs
+  // that pre-date the peak_amplitude metadata field.
   useEffect(() => {
     for (const ir of impulseResponses) {
       if (!bufferCache.has(ir.id)) loadIRBuffer(ir);
@@ -351,6 +367,25 @@ export function ImpulseResponseUpload({
     return { groups: Array.from(groups.values()), unmapped };
   }, [sourceReceiverIRMapping, pairDefinitions, impulseResponses, receiverGroups, receiverDisplayNames]);
 
+  // Safety net: also run the energy check and load buffers for IRs that appear in
+  // the grouped view via the sourceReceiverIRMapping / irMeta fallback path — these
+  // may not be present in `impulseResponses` when simulationIRIds filtering is active.
+  useEffect(() => {
+    if (!groupedByReceiver) return;
+    for (const { sources } of groupedByReceiver.groups) {
+      for (const { ir } of sources) {
+        if (!ir) continue;
+        // Metadata-based check first (instant, no download)
+        const peak = (ir as any).peak_amplitude ?? ir.peakAmplitude;
+        if (peak !== undefined && peak !== null && peak < IR_LOW_ENERGY_THRESHOLD) {
+          setLowEnergyIRIds(prev => prev.has(ir.id) ? prev : new Set(prev).add(ir.id));
+        }
+        // Buffer load for hover preview / legacy fallback
+        if (!bufferCache.has(ir.id)) loadIRBuffer(ir);
+      }
+    }
+  }, [groupedByReceiver]);
+
   // ── Hover handlers shared between flat and grouped renders ─────────────────
   const handleRowMouseEnter = useCallback(async (
     e: React.MouseEvent<HTMLDivElement>,
@@ -472,7 +507,7 @@ export function ImpulseResponseUpload({
 
         <div className="mt-2">
           <FileUploadArea
-            file={ir ? { name: ir.name, size: fileSize } : null}
+            file={null}
             isDragging={draggingPairKey === pairKey}
             acceptedFormats=".wav,.flac,.aif,.aiff,.ogg"
             acceptedExtensions="wav, flac, aiff, ogg"
@@ -536,7 +571,7 @@ export function ImpulseResponseUpload({
       {(groupedByReceiver || impulseResponses.length > 0) && (
         <div>
           <div className="flex items-center justify-between mb-2">
-            <h3 className={`text-xs font-semibold ${simulationResults ? 'text-white' : ''}`}>
+            <h3 className={`text-xs font-semibol text-white`}>
               {allowPairUploads ? 'Source-listener IRs' : `Impulse Responses (${impulseResponses.length})`}
             </h3>
           </div>

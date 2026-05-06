@@ -113,7 +113,7 @@ export function RangeSlider({
         onPointerUp={handlePointerUp}
         onDoubleClick={handleDoubleClick}
         disabled={disabled}
-        className={`w-full h-2 rounded-lg appearance-none cursor-pointer bg-secondary-light ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+        className={`w-full h-2 rounded-lg appearance-none cursor-pointer bg-secondary-light-static ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
         style={{ accentColor: color? color : 'var(--card-color, var(--color-primary))' }}
         title={defaultValue !== undefined ? `Double-click to reset (${formatValue(defaultValue)})` : hoverText}
       />

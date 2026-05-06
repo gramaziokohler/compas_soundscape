@@ -40,7 +40,7 @@ export function SceneControlButton({
   title,
   isActive = false,
   activeColor = 'var(--color-primary)',
-  inactiveBackground = 'var(--color-overlay-bg)'
+  inactiveBackground = 'var(--color-secondary-lighter)'
 }: SceneControlButtonProps) {
   return (
     <button
@@ -57,7 +57,7 @@ export function SceneControlButton({
       }}
       onMouseEnter={(e) => {
         if (!isActive) {
-          e.currentTarget.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+          e.currentTarget.style.backgroundColor = 'var(--color-overlay-border)';
         }
       }}
       onMouseLeave={(e) => {

@@ -100,7 +100,15 @@ function extractChannelWaveform(
   targetPoints: number
 ): ChannelWaveformData {
   const totalSamples = channelData.length;
-  const samplesPerPoint = Math.floor(totalSamples / targetPoints);
+
+  // When the buffer is shorter than the requested number of points (e.g. a very
+  // short IR at 441 samples vs. 800 target points), Math.floor gives 0 and every
+  // segment is empty → all amplitudes are zero.  Cap effective points to the
+  // actual sample count so each point maps to at least one sample.
+  const effectivePoints = Math.min(targetPoints, totalSamples);
+  const samplesPerPoint = effectivePoints > 0
+    ? Math.max(1, Math.floor(totalSamples / effectivePoints))
+    : 1;
 
   const amplitudes: number[] = [];
   const timePoints: number[] = [];
@@ -108,7 +116,7 @@ function extractChannelWaveform(
   let peakLinear = 0;
 
   // Extract peak amplitude for each visualization point
-  for (let i = 0; i < targetPoints; i++) {
+  for (let i = 0; i < effectivePoints; i++) {
     const startIdx = i * samplesPerPoint;
     const endIdx = Math.min(startIdx + samplesPerPoint, totalSamples);
 
@@ -229,7 +237,7 @@ export function renderWaveform(
   const primaryColor = getCssVar('--color-primary', '#f500b8');
   const greyColor = getCssVar('--color-secondary-hover', '#9CA3AF');
   const gridColor = getCssVar('--color-secondary-hover', '#4B5563');
-  const backgroundColor = getCssVar('--background', '#000000');
+  const backgroundColor = getCssVar('--color-canvas-bg', '#000000');
 
   // Clear canvas with black background
   ctx.fillStyle = backgroundColor;

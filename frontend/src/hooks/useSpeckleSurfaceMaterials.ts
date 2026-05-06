@@ -85,8 +85,46 @@ function isGeometryNode(node: any): boolean {
 }
 
 /**
- * Extract layers from world tree - goes TWO LEVELS DEEPER
- * Root nodes -> Model containers -> Their children are the actual layers
+ * Recursively collect layer entries from a list of tree nodes.
+ * Skips depth < 2 (root and immediate model containers) to avoid treating
+ * top-level wrappers as selectable layers.
+ * Geometry leaf nodes (Mesh/Brep) are not treated as layers.
+ */
+function collectLayerNodesRecursive(nodes: any[], depth: number, layers: SpeckleLayerInfo[]): void {
+  for (const node of nodes) {
+    const raw = node?.raw || node?.model?.raw || {};
+    const speckleType = raw.speckle_type || '';
+
+    // Don't treat pure geometry objects as layers
+    const isGeometry = speckleType.includes('Mesh') || speckleType.includes('Brep');
+    if (isGeometry) continue;
+
+    if (depth >= 2) {
+      const name = raw.name || node?.model?.name || 'Unnamed Layer';
+      const id = node?.model?.id || raw.id || node?.id || `layer-${layers.length}`;
+      const meshCount = countGeometryObjects(node);
+
+      if (meshCount > 0) {
+        layers.push({
+          id,
+          name,
+          meshCount,
+          meshObjects: []
+        });
+      }
+    }
+
+    // Always recurse into children regardless of whether we added this node
+    const children = node?.model?.children || node?.children || [];
+    if (children.length > 0) {
+      collectLayerNodesRecursive(children, depth + 1, layers);
+    }
+  }
+}
+
+/**
+ * Extract layers from world tree - recursively searches at any depth.
+ * Root nodes -> Model containers (skipped) -> Named layer nodes at any depth below
  */
 function extractLayers(worldTree: any): SpeckleLayerInfo[] {
   const layers: SpeckleLayerInfo[] = [];
@@ -95,35 +133,7 @@ function extractLayers(worldTree: any): SpeckleLayerInfo[] {
 
   try {
     const rootChildren = getRootChildren(worldTree);
-
-    // The root children contain the model root(s)
-    for (const rootNode of rootChildren) {
-      const modelContainers = rootNode?.model?.children || rootNode?.children || [];
-
-      // Go one level deeper - into model containers
-      for (const container of modelContainers) {
-        const layerNodes = container?.model?.children || container?.children || [];
-
-        // These are the actual layers
-        for (const layerNode of layerNodes) {
-          const raw = layerNode?.raw || layerNode?.model?.raw || {};
-          const name = raw.name || layerNode?.model?.name || 'Unnamed Layer';
-          const id = layerNode?.model?.id || raw.id || layerNode?.id || `layer-${layers.length}`;
-
-          // Count geometry objects in this layer
-          const meshCount = countGeometryObjects(layerNode);
-
-          if (meshCount > 0) {
-            layers.push({
-              id,
-              name,
-              meshCount,
-              meshObjects: [] // Will be populated when layer is selected
-            });
-          }
-        }
-      }
-    }
+    collectLayerNodesRecursive(rootChildren, 0, layers);
   } catch (error) {
     console.error('[extractLayers] Error:', error);
   }
@@ -192,34 +202,33 @@ function buildHierarchicalTree(node: any): HierarchicalMeshObject | null {
 }
 
 /**
- * Get the layer node from world tree by ID
- * Searches two levels deep: root -> containers -> layers
+ * Recursively search a list of nodes for a node with the given ID.
+ */
+function findNodeByIdRecursive(nodes: any[], layerId: string): any | null {
+  for (const node of nodes) {
+    const raw = node?.raw || node?.model?.raw || {};
+    const nodeId = node?.model?.id || raw.id || node?.id;
+
+    if (nodeId === layerId) return node;
+
+    const children = node?.model?.children || node?.children || [];
+    if (children.length > 0) {
+      const found = findNodeByIdRecursive(children, layerId);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+/**
+ * Get the layer node from world tree by ID.
+ * Searches recursively at any depth.
  */
 function getLayerNode(worldTree: any, layerId: string): any | null {
   if (!worldTree) return null;
 
   const rootChildren = getRootChildren(worldTree);
-
-  for (const rootNode of rootChildren) {
-    const modelContainers = rootNode?.model?.children || rootNode?.children || [];
-
-    // Go one level deeper into containers
-    for (const container of modelContainers) {
-      const layerNodes = container?.model?.children || container?.children || [];
-
-      // Search for the layer in the actual layer nodes
-      for (const layerNode of layerNodes) {
-        const raw = layerNode?.raw || layerNode?.model?.raw || {};
-        const nodeId = layerNode?.model?.id || raw.id || layerNode?.id;
-
-        if (nodeId === layerId) {
-          return layerNode;
-        }
-      }
-    }
-  }
-
-  return null;
+  return findNodeByIdRecursive(rootChildren, layerId);
 }
 
 /**

@@ -1,0 +1,3424 @@
+'use client';
+
+import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
+import * as THREE from 'three';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
+import {
+  Viewer,
+  CameraController,
+  SelectionExtension,
+  FilteringExtension,
+  GeometryType,
+} from '@speckle/viewer';
+import { WaveSurferTimeline } from '@/components/audio/WaveSurferTimeline';
+import { PlaybackControls } from '@/components/controls/PlaybackControls';
+import { ControlsInfo } from '@/components/layout/sidebar/ControlsInfo';
+import { SceneControlButton } from '@/components/ui/SceneControlButton';
+import { FileUploadArea } from '@/components/controls/FileUploadArea';
+import { SpeckleModelBrowser } from '@/components/scene/SpeckleModelBrowser';
+import { Icon } from '@/components/ui/Icon';
+import { VerticalVolumeSlider } from '@/components/ui/VerticalVolumeSlider';
+import { UndoRedoToolbar } from '@/components/ui/UndoRedoToolbar';
+import { SpeckleAudioCoordinator } from '@/lib/three/speckle-audio-coordinator';
+import { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
+import { BoundingBoxManager, type BoundingBoxBounds } from '@/lib/three/BoundingBoxManager';
+import { useTimelinePlayback } from '@/hooks/useTimelinePlayback';
+import { useSpeckleStore, useAreaDrawingStore, useAcousticsSimulationStore, useGridListenersStore } from '@/store';
+import { useUIStore } from '@/store/uiStore';
+import { useTextGenerationStore } from '@/store/textGenerationStore';
+import { apiService } from '@/services/api';
+import { GradientMapManager } from '@/lib/three/gradient-map-manager';
+import { useSpeckleTree, getHeaderAndSubheader } from '@/hooks/useSpeckleTree';
+import { useAudioControlsStore } from '@/store';
+import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
+import { getCssColorHex } from '@/utils/utils';
+import {
+  TIMELINE_LAYOUT,
+  UI_SCENE_BUTTON,
+  UI_RIGHT_SIDEBAR,
+  UI_VERTICAL_TABS,
+  MODEL_FILE_EXTENSIONS,
+  RECEIVER_CONFIG,
+  IR_HOVER_LINE,
+  SIMULATION_POSITION_THRESHOLD,
+} from '@/utils/constants';
+// Custom hooks (Phase 1-4 refactor)
+import { useSpeckleViewerInit } from '@/components/scene/hooks/useSpeckleViewerInit';
+import { useSpeckleFPS } from '@/components/scene/hooks/useSpeckleFPS';
+import { useSpeckleAreaDrawing } from '@/components/scene/hooks/useSpeckleAreaDrawing';
+import { useSpeckleSelection } from '@/components/scene/hooks/useSpeckleSelection';
+import { useSpeckleTimeline } from '@/components/scene/hooks/useSpeckleTimeline';
+import { useSpeckleAudioSync } from '@/components/scene/hooks/useSpeckleAudioSync';
+import { useSpeckleDarkMode } from '@/components/scene/hooks/useSpeckleDarkMode';
+import { useSpeckleBoundingBox } from '@/components/scene/hooks/useSpeckleBoundingBox';
+
+// Left sidebar content width when expanded (matches Sidebar.tsx: 20rem = 320px)
+const LEFT_SIDEBAR_CONTENT_WIDTH = 320;
+// Right sidebar collapsed width
+const RIGHT_SIDEBAR_COLLAPSED_WIDTH = 40;
+import type { SoundEvent, ReceiverData } from '@/types';
+import type { AuralizationConfig } from '@/types/audio';
+import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
+import type { TimelineSound } from '@/types/audio';
+import Image from "next/image";
+
+/**
+ * Props for SpeckleScene component
+ *
+ * SpeckleScene integrates Speckle viewer with audio workflow:
+ * - Sound spheres, receivers, spatial audio
+ * - Timeline playback and synchronization
+ * - First-person mode navigation
+ */
+interface SpeckleSceneProps {
+  /** Speckle viewer URL */
+  viewer_url?: string;
+  /** Alternative: pass full speckleData object from backend */
+  speckleData?: {
+    model_id: string;
+    version_id: string;
+    file_id: string;
+    url: string;
+    object_id: string;
+    auth_token?: string;
+  };
+
+  // Audio system props
+  audioOrchestrator: AudioOrchestrator | null;
+  audioContext: AudioContext | null;
+  audioRenderingMode?: string;
+  selectedIRId?: string | null;
+  auralizationConfig?: AuralizationConfig;
+
+  // Soundscape data
+  soundscapeData: SoundEvent[] | null;
+  scaleForSounds: number;
+
+  // Receivers
+  receivers: ReceiverData[];
+  selectedReceiverId: string | null;
+  onUpdateReceiverPosition?: (receiverId: string, position: [number, number, number]) => void;
+  onReceiverSelected?: (receiverId: string) => void;
+  onReceiverModeChange?: (isActive: boolean, receiverId: string | null) => void;
+  goToReceiverId?: string | null;
+  /** Directly enter FPS mode at this position (used for grid listener points that have no mesh). */
+  goToPosition?: [number, number, number] | null;
+  /** Receiver ID corresponding to goToPosition â€” used to load correct IRs. */
+  goToPositionReceiverId?: string | null;
+  /** Grid listener points to render (all grids with showListeners=true, combined). */
+  gridListenerPoints?: [number, number, number][];
+  /** Point IDs parallel to gridListenerPoints â€” e.g. "gridA-0", "gridA-1", "gridB-0". */
+  gridListenerPointIds?: string[];
+  /** ID of the currently expanded grid listener (kept for legacy IR-routing fallback). */
+  expandedGridListenerId?: string | null;
+  /** Direction offset from listener position used as FPS look-at target. Defaults to (0,1,0). */
+  listenerOrientation?: { x: number; y: number; z: number };
+
+  // Sound sphere position update (for simulation sync)
+  onUpdateSoundPosition?: (soundId: string, position: [number, number, number]) => void;
+
+  // Analysis - Diverse Entity Highlighting (NEW)
+  selectedDiverseEntities?: any[]; // Entities selected for sound generation
+  entitiesWithLinkedSounds?: Set<number>; // Entity indices that have sounds linked
+  onToggleDiverseSelection?: (entity: any) => void; // Toggle entity in diverse selection
+
+  // Sound card selection (for expand/highlight logic)
+  selectedCardIndex?: number | null; // Currently selected sound card index
+  onSelectSoundCard?: (promptIndex: number) => void; // Callback to select sound card
+
+  // Entity linking (sound-to-Speckle-object linking)
+  isLinkingEntity?: boolean; // Whether we're in entity linking mode
+  linkingConfigIndex?: number | null; // Index of the sound config being linked
+  onEntityLinked?: (entity: any) => void; // Callback when a Speckle object is clicked in linking mode
+
+  // Playback controls
+  // (onPlayAll/onPauseAll/onStopAll/isAnyPlaying are now read from audioControlsStore)
+
+  // Resonance Audio (ShoeBox Acoustics) - NEW
+  resonanceAudioConfig?: import('@/types/audio').ResonanceAudioConfig;
+  showBoundingBox?: boolean;
+  refreshBoundingBoxTrigger?: number;
+  roomScale?: { x: number; y: number; z: number };
+  onRoomScaleChange?: (scale: { x: number; y: number; z: number }) => void;
+
+  // Callback when viewer is loaded
+  onViewerLoaded?: (viewer: Viewer) => void;
+
+  // Callback when bounds are computed from Speckle viewer (for sound sphere placement during generation)
+  onBoundsComputed?: (bounds: { min: [number, number, number]; max: [number, number, number] }) => void;
+
+  // Sidebar expanded states - adjusts timeline and control positions
+  isLeftSidebarExpanded?: boolean;
+  isRightSidebarExpanded?: boolean;
+  /** Exact left sidebar content-panel width (px). Overrides the hardcoded fallback. */
+  leftSidebarContentWidth?: number;
+  /** Exact right sidebar total width (px). Overrides the hardcoded fallback. */
+  rightSidebarWidth?: number;
+
+  // IR hover line visualization (source-receiver pair)
+  hoveredIRSourceReceiver?: { sourceId: string; receiverId: string } | null;
+
+  // Simulation-time positions (source of truth for IR hover line and mismatch coloring)
+  activeSimulationPositions?: {
+    sources: Record<string, [number, number, number]>;
+    receivers: Record<string, [number, number, number]>;
+  } | null;
+
+  // Model file upload (for empty state)
+  modelFile?: File | null;
+  onModelFileChange?: (file: File) => void;
+
+  // Load existing Speckle model (for empty state model browser)
+  onSpeckleModelSelect?: (speckleData: {
+    model_id: string;
+    version_id: string;
+    file_id: string;
+    url: string;
+    object_id: string;
+    auth_token?: string;
+    display_name?: string;
+  }) => void;
+
+  // Soundscape persistence (save to Speckle)
+  onSaveSoundscape?: () => void;
+  isSavingSoundscape?: boolean;
+
+  // FPS mode exit trigger: increment to programmatically exit first-person mode
+  exitFPSTrigger?: number;
+
+  // Callback when a receiver mesh is double-clicked in the scene
+  onReceiverDoubleClicked?: (receiverId: string) => void;
+
+  // Callback fired when FPS mode is exited (Escape or dblclick)
+  onFPSExited?: () => void;
+
+  className?: string;
+}
+
+/**
+ * SpeckleScene Component
+ *
+ * Integrates Speckle viewer with audio workflow (sound spheres, receivers, timeline).
+ * Uses SpeckleAudioCoordinator to orchestrate all audio components.
+ */
+export function SpeckleScene({
+  viewer_url,
+  speckleData,
+  audioOrchestrator,
+  audioContext,
+  audioRenderingMode = 'anechoic',
+  selectedIRId,
+  auralizationConfig,
+  soundscapeData,
+  scaleForSounds,
+  receivers,
+  selectedReceiverId,
+  onUpdateReceiverPosition,
+  onReceiverSelected,
+  onReceiverModeChange,
+  goToReceiverId,
+  goToPosition,
+  goToPositionReceiverId,
+  gridListenerPoints = [],
+  gridListenerPointIds = [],
+  expandedGridListenerId,
+  listenerOrientation = { x: 0, y: 1, z: 0 },
+  onUpdateSoundPosition,
+  selectedDiverseEntities = [],
+  entitiesWithLinkedSounds = new Set(),
+  onToggleDiverseSelection,
+  selectedCardIndex = null,
+  onSelectSoundCard,
+  isLinkingEntity = false,
+  linkingConfigIndex = null,
+  onEntityLinked,
+  resonanceAudioConfig,
+  showBoundingBox ,
+  refreshBoundingBoxTrigger = 0,
+  roomScale = { x: 1, y: 1, z: 1 },
+  onRoomScaleChange,
+  onViewerLoaded,
+  onBoundsComputed,
+  isLeftSidebarExpanded = true,
+  isRightSidebarExpanded = true,
+  leftSidebarContentWidth,
+  rightSidebarWidth,
+  hoveredIRSourceReceiver = null,
+  activeSimulationPositions = null,
+  modelFile = null,
+  onModelFileChange,
+  onSpeckleModelSelect,
+  onSaveSoundscape,
+  isSavingSoundscape = false,
+  exitFPSTrigger,
+  onReceiverDoubleClicked,
+  onFPSExited,
+  className,
+}: SpeckleSceneProps) {
+  // Refs
+  const containerRef = useRef<HTMLDivElement>(null);
+  
+  // Viewer ref â€” SpeckleScene owns it; registering into store for cross-component access
+  const { getViewerRef: _getViewerRef, setViewer, incrementWorldTreeVersion, selectedEntity, setSelectedEntity, setSelectedObjectIds, applyFilterColors, getObjectLinkState, linkedObjectIds, setFilteringEnabled, viewMode, setViewMode } = useSpeckleStore();
+
+  // Grid listeners â€” needed for IR hover line position lookup
+  const gridListeners = useGridListenersStore((s) => s.gridListeners);
+
+  // Gradient map overlay
+  const activeGradientMap = useUIStore((s) => s.activeGradientMap);
+
+  // Viewer display toggles
+  const showLabelSprites = useUIStore((s) => s.showLabelSprites);
+  const showHoveringHighlight = useUIStore((s) => s.showHoveringHighlight);
+  const showSoundSpheres = useUIStore((s) => s.showSoundSpheres);
+  const showSceneListeners = useUIStore((s) => s.showSceneListeners);
+  const globalSoundSpeed = useUIStore((s) => s.globalSoundSpeed);
+  const gradientMapManagerRef = useRef<GradientMapManager | null>(null);
+
+  // Local refs synced from engine store â€” remaining effects use .current pattern unchanged
+  const viewerRef = useRef<Viewer | null>(null);
+  const coordinatorRef = useRef<SpeckleAudioCoordinator | null>(null);
+  const selectionExtensionRef = useRef<SelectionExtension | null>(null);
+  const filteringExtensionRef = useRef<FilteringExtension | null>(null);
+  const boundingBoxManagerRef = useRef<BoundingBoxManager | null>(null);
+  const cameraControllerRef = useRef<CameraController | null>(null);
+  const playbackSchedulerRef = useRef<PlaybackSchedulerService | null>(null);
+
+  // Set to true when Play All is pressed; playTimeline() fires after scheduling completes
+  const playAfterSchedulingRef = useRef<boolean>(false);
+  const roomScaleRef = useRef(roomScale);
+  const onRoomScaleChangeRef = useRef(onRoomScaleChange);
+  const irHoverLineRef = useRef<THREE.Line | null>(null);
+  const [draggedBoundsOverride, setDraggedBoundsOverride] = useState<BoundingBoxBounds | null>(null);
+
+  // Keep refs in sync so gumball drag handlers never go stale
+  roomScaleRef.current = roomScale;
+  onRoomScaleChangeRef.current = onRoomScaleChange;
+
+  useEffect(() => { setDraggedBoundsOverride(null); }, [roomScale.x, roomScale.y, roomScale.z]);
+  useEffect(() => { setDraggedBoundsOverride(null); }, [refreshBoundingBoxTrigger]);
+
+  // â”€â”€ Audio controls from store â”€â”€
+  const selectedVariants     = useAudioControlsStore((s) => s.selectedVariants);
+  const individualSoundStates = useAudioControlsStore((s) => s.individualSoundStates);
+  const soundVolumes            = useAudioControlsStore((s) => s.soundVolumes);
+  const soundIntervals          = useAudioControlsStore((s) => s.soundIntervals);
+  const soundTrims              = useAudioControlsStore((s) => s.soundTrims);
+  const intervalJitterSeconds   = useAudioControlsStore((s) => s.intervalJitterSeconds);
+  const timelineDurationMs      = useAudioControlsStore((s) => s.timelineDurationMs);
+  const mutedSounds          = useAudioControlsStore((s) => s.mutedSounds);
+  const soloedSound          = useAudioControlsStore((s) => s.soloedSound);
+  const isAnyPlaying         = useAudioControlsStore((s) =>
+    Object.values(s.individualSoundStates).some((st) => st === 'playing')
+  );
+  const storePlayAll  = useAudioControlsStore((s) => s.playAll);
+  const storePauseAll = useAudioControlsStore((s) => s.pauseAll);
+  const storeStopAll  = useAudioControlsStore((s) => s.stopAll);
+
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // Global volume state
+  const [globalVolume, setGlobalVolume] = useState(0.8);
+  const [isHoveringVolume, setIsHoveringVolume] = useState(false);
+
+  // Derived: dark mode is active only in 'dark' view mode
+  const isDarkMode = viewMode === 'dark';
+  // Non-reactive refs â€” read by hover patch set up in useSpeckleViewerInit
+  const isDarkModeRef = useRef(false);
+  const isAcousticModeRef = useRef(false);
+  const showHoveringHighlightRef = useRef(true);
+
+  // Selected object overlay state
+  const [selectedObjectOverlay, setSelectedObjectOverlay] = useState<{
+    x: number;
+    y: number;
+    visible: boolean;
+    objectData: any;
+  } | null>(null);
+  const prevOverlayRef = useRef<{ x: number; y: number; visible: boolean } | null>(null);
+  const [selectedSpeckleObjectIds, setSelectedSpeckleObjectIds] = useState<string[]>([]);
+  // Flag to skip the deselection effect when a sound sphere click clears Speckle selection
+  const skipDeselectionRef = useRef(false);
+
+  // File upload drag state (for empty state)
+  const [isDragging, setIsDragging] = useState(false);
+  const [speckleTokenSet, setSpeckleTokenSet] = useState<boolean | null>(null);
+
+  const modelUrl = viewer_url || speckleData?.url;
+
+  // ============================================================================
+  // Phase 1-4 Hook Invocations
+  // ============================================================================
+
+  // â”€â”€ Viewer Init â”€â”€
+  const { isViewerReady, isLoading, error, worldTree } = useSpeckleViewerInit({
+    containerRef,
+    modelUrl,
+    speckleData,
+    audioOrchestrator,
+    audioContext,
+    scaleForSounds,
+    onViewerLoaded,
+    refreshKey,
+    isDarkModeRef,
+    isAcousticModeRef,
+    showHoveringHighlightRef,
+  });
+
+  // Sync local refs from engine store so remaining in-scene effects use .current unchanged
+  useEffect(() => {
+    const unsub = useSpeckleEngineStore.subscribe((state) => {
+      viewerRef.current = state.viewer;
+      coordinatorRef.current = state.coordinator;
+      selectionExtensionRef.current = state.selectionExtension;
+      filteringExtensionRef.current = state.filteringExtension;
+      boundingBoxManagerRef.current = state.boundingBoxManager;
+      cameraControllerRef.current = state.cameraController;
+      playbackSchedulerRef.current = state.playbackScheduler;
+    });
+    return unsub;
+  }, []);
+
+  // â”€â”€ FPS Navigation â”€â”€
+  const { isFirstPersonMode, setIsFirstPersonMode } = useSpeckleFPS({
+    isViewerReady,
+    containerRef,
+    exitFPSTrigger,
+    goToReceiverId,
+    goToPosition,
+    goToPositionReceiverId,
+    listenerOrientation,
+    receivers,
+    soundscapeData,
+    selectedReceiverId,
+    onReceiverModeChange,
+    onFPSExited,
+    onReceiverDoubleClicked,
+  });
+
+  // â”€â”€ Area Drawing â”€â”€
+  useSpeckleAreaDrawing({ isViewerReady, containerRef });
+
+  // â”€â”€ Object Selection â”€â”€
+  useSpeckleSelection({
+    worldTree,
+    selectedSpeckleObjectIds,
+    setSelectedSpeckleObjectIds,
+    setSelectedEntity,
+    setSelectedObjectIds,
+    getObjectLinkState,
+    isViewerReady,
+    selectedEntity,
+    skipDeselectionRef,
+  });
+
+  // â”€â”€ Timeline â”€â”€
+  const {
+    timelineSounds, soundMetadataReady, showTimeline, setShowTimeline,
+    handleRefreshTimeline, handleDownloadTimeline,
+  } = useSpeckleTimeline({
+    isViewerReady,
+    soundscapeData,
+    selectedVariants,
+    soundIntervals,
+    soundTrims,
+    intervalJitterSeconds,
+    timelineDurationMs,
+    audioOrchestrator,
+    soundVolumes,
+    mutedSounds,
+    soloedSound,
+    listenerOrientation,
+  });
+
+  // â”€â”€ Audio Sync â”€â”€
+  useSpeckleAudioSync({
+    audioOrchestrator,
+    soundscapeData,
+    soundVolumes,
+    mutedSounds,
+    soloedSound,
+    globalSoundSpeed,
+  });
+
+  // â”€â”€ Dark Mode â”€â”€
+  useSpeckleDarkMode({
+    isDarkMode,
+    isViewerReady,
+    linkedObjectIds,
+    worldTree,
+    applyFilterColors,
+    isDarkModeRef,
+  });
+
+  // â”€â”€ Bounding Box â”€â”€
+  useSpeckleBoundingBox({
+    isViewerReady,
+    soundscapeData,
+    showBoundingBox,
+    resonanceAudioConfig,
+    refreshBoundingBoxTrigger,
+    onBoundsComputed,
+    roomScale,
+    draggedBoundsOverride,
+  });
+
+  // Use Speckle tree hook for selection handling
+  useSpeckleTree(worldTree);
+
+  // Change detection refs (to avoid flooding console)
+  const prevSoundscapeDataLengthRef = useRef<number>(0);
+  const prevReceiversLengthRef = useRef<number>(0);
+
+  // Use ref for auralizationConfig to prevent infinite re-renders
+  const auralizationConfigRef = useRef<AuralizationConfig>(
+    auralizationConfig || {
+      enabled: false,
+      impulseResponseUrl: null,
+      impulseResponseBuffer: null,
+      impulseResponseFilename: null,
+      normalize: false,
+    }
+  );
+
+  useEffect(() => {
+    if (auralizationConfig) {
+      auralizationConfigRef.current = auralizationConfig;
+    }
+  }, [auralizationConfig]);
+
+  // ============================================================================
+  // Effect - Sync viewMode â†’ filteringEnabled in context
+  // ============================================================================
+  useEffect(() => {
+    setFilteringEnabled(viewMode === 'acoustic');
+  }, [viewMode, setFilteringEnabled]);
+
+  // Keep isAcousticModeRef in sync so hover patch reads current value
+  useEffect(() => {
+    isAcousticModeRef.current = viewMode === 'acoustic';
+  }, [viewMode]);
+
+  // ============================================================================
+  // Effect - Re-assert IBL intensity when entering Acoustic mode
+  // ============================================================================
+  useEffect(() => {
+    if (!isViewerReady || !viewerRef.current) return;
+    if (viewMode !== 'acoustic') return;
+
+    const timer = setTimeout(() => {
+      const r = viewerRef.current?.getRenderer();
+      if (!r) return;
+
+      let targetIbl = 1;
+      try {
+        const bIds: string[] = (r as any).getBatchIds();
+        for (const bid of bIds) {
+          const b = (r as any).getBatch(bid);
+          if (b?.batchMaterial?.envMapIntensity !== undefined) {
+            targetIbl = b.batchMaterial.envMapIntensity;
+            break;
+          }
+        }
+      } catch { /* non-critical */ }
+
+      r.indirectIBLIntensity = targetIbl;
+      r.needsRender = true;
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [viewMode, isViewerReady]);
+
+  // ============================================================================
+  // Speckle token check (for empty state conditional rendering)
+  // ============================================================================
+  const tokenSettingsTrigger = useTextGenerationStore(s => s.tokenSettingsTrigger);
+  useEffect(() => {
+    apiService.getTokenStatus().then(s => setSpeckleTokenSet(s.speckle_token_set)).catch(() => setSpeckleTokenSet(false));
+  }, [tokenSettingsTrigger]);
+
+  // ============================================================================
+  // File upload handlers (for empty state)
+  // ============================================================================
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length === 0) return;
+    onModelFileChange?.(files[0]);
+  }, [onModelFileChange]);
+
+  const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    onModelFileChange?.(files[0]);
+    e.target.value = "";
+  }, [onModelFileChange]);
+
+  // ============================================================================
+  // Effect - Update Audio Orchestrator
+  // ============================================================================
+  useEffect(() => {
+    if (coordinatorRef.current && audioOrchestrator) {
+      coordinatorRef.current.setAudioOrchestrator(audioOrchestrator);
+    }
+  }, [audioOrchestrator]);
+
+  // ============================================================================
+  // Effect - Compute and Report Bounds When Viewer Ready
+  // This ensures bounds are available for sound generation before any sounds exist
+  // ============================================================================
+  useEffect(() => {
+    if (!isViewerReady || !viewerRef.current || !boundingBoxManagerRef.current) {
+      return;
+    }
+
+    // Compute bounds from Speckle viewer
+    const bounds = boundingBoxManagerRef.current.calculateBoundsFromSpeckleBatches(viewerRef.current);
+
+    if (bounds && onBoundsComputed) {
+      console.log('[SpeckleScene] âœ… Reporting initial bounds to parent:', bounds);
+      onBoundsComputed(bounds);
+    }
+  }, [isViewerReady, onBoundsComputed]);
+
+  // ============================================================================
+  // Effect - Setup Speckle Object Selection Callback
+  // ============================================================================
+  useEffect(() => {
+    if (!coordinatorRef.current) return;
+
+    // Set up callback to receive selected object IDs from Speckle viewer
+    coordinatorRef.current.setOnSpeckleObjectSelected((objectIds: string[]) => {
+      setSelectedSpeckleObjectIds(objectIds);
+
+      // ENTITY LINKING MODE: When in linking mode and a Speckle object is clicked
+      if (isLinkingEntity && onEntityLinked) {
+        // If clicked on empty space (no object selected), pass null to unlink/cancel
+        if (objectIds.length === 0) {
+          console.log('[SpeckleScene] Empty space clicked in linking mode - unlinking');
+          onEntityLinked(null);
+          return;
+        }
+
+        const selectedId = objectIds[0];
+
+        // Find object data from world tree to create entity
+        let objectData: any = null;
+        if (worldTree) {
+          const findObjectInTree = (tree: any, id: string): any => {
+            if (!tree) return null;
+
+            const checkNode = (node: any): any => {
+              const nodeId = node?.raw?.id || node?.model?.id || node?.id;
+              if (nodeId === id) return node;
+
+              const children = node?.model?.children || node?.children;
+              if (children) {
+                for (const child of children) {
+                  const found = checkNode(child);
+                  if (found) return found;
+                }
+              }
+              return null;
+            };
+
+            const rootChildren = tree.tree?._root?.children || tree._root?.children || tree.root?.children || tree.children;
+            if (rootChildren) {
+              for (const child of rootChildren) {
+                const found = checkNode(child);
+                if (found) return found;
+              }
+            }
+            return null;
+          };
+
+          objectData = findObjectInTree(worldTree, selectedId);
+        }
+
+        // Create entity data from Speckle object for linking
+        const objectName = objectData?.model?.name || objectData?.raw?.name || 'Unnamed Object';
+        const objectType = objectData?.raw?.speckle_type || 'Speckle Object';
+
+        // Get bounds from Speckle viewer's render view (from world tree node)
+        // The renderView contains accurate bounding box information for the object
+        let position: [number, number, number] = [0, 0, 0];
+        let entityBounds: { min: [number, number, number]; max: [number, number, number]; center: [number, number, number] } | undefined;
+
+        try {
+          // Get renderView from the tree node (contains bounds from Speckle Batch API)
+          const renderView = objectData?.model?.renderView || objectData?.renderView;
+
+          if (renderView?.aabb) {
+            // renderView.aabb is a THREE.Box3 from the Speckle Batch API
+            const aabb = renderView.aabb as THREE.Box3;
+            const center = new THREE.Vector3();
+            aabb.getCenter(center);
+
+            position = [center.x, center.y, center.z];
+            entityBounds = {
+              min: [aabb.min.x, aabb.min.y, aabb.min.z],
+              max: [aabb.max.x, aabb.max.y, aabb.max.z],
+              center: position
+            };
+
+            console.log('[SpeckleScene] Got bounds from renderView.aabb:', {
+              objectId: selectedId,
+              center: position,
+              min: entityBounds.min,
+              max: entityBounds.max
+            });
+          }
+        } catch (boundsError) {
+          console.warn('[SpeckleScene] Could not get render bounds, falling back to raw data:', boundsError);
+        }
+
+        // Fallback: Try to get bounds from raw data if render bounds failed
+        if (position[0] === 0 && position[1] === 0 && position[2] === 0) {
+          const rawBounds = objectData?.raw?.bounds || objectData?.model?.bounds;
+          if (rawBounds && rawBounds.min && rawBounds.max) {
+            position = [
+              (rawBounds.min.x + rawBounds.max.x) / 2,
+              (rawBounds.min.y + rawBounds.max.y) / 2,
+              (rawBounds.min.z + rawBounds.max.z) / 2
+            ];
+            entityBounds = {
+              min: [rawBounds.min.x, rawBounds.min.y, rawBounds.min.z],
+              max: [rawBounds.max.x, rawBounds.max.y, rawBounds.max.z],
+              center: position
+            };
+          }
+        }
+
+        // Fallback for parent layers: union all descendants' render-view bounding boxes.
+        // A layer node has no renderView of its own but its leaf children do.
+        if (position[0] === 0 && position[1] === 0 && position[2] === 0) {
+          const collectDescendantAabbs = (node: any): THREE.Box3[] => {
+            const boxes: THREE.Box3[] = [];
+            const rv = node?.model?.renderView || node?.renderView;
+            if (rv?.aabb) {
+              boxes.push(rv.aabb as THREE.Box3);
+            }
+            const children: any[] = node?.model?.children || node?.children || [];
+            for (const child of children) {
+              boxes.push(...collectDescendantAabbs(child));
+            }
+            return boxes;
+          };
+
+          const allBoxes = collectDescendantAabbs(objectData);
+          if (allBoxes.length > 0) {
+            const unionBox = new THREE.Box3();
+            for (const box of allBoxes) {
+              unionBox.union(box);
+            }
+            const center = new THREE.Vector3();
+            unionBox.getCenter(center);
+            position = [center.x, center.y, center.z];
+            entityBounds = {
+              min: [unionBox.min.x, unionBox.min.y, unionBox.min.z],
+              max: [unionBox.max.x, unionBox.max.y, unionBox.max.z],
+              center: position
+            };
+            console.log('[SpeckleScene] Got bounds by unioning', allBoxes.length, 'descendant aabbs for layer:', {
+              objectId: selectedId,
+              center: position
+            });
+          }
+        }
+
+        // Find next available entity index for Speckle objects
+        // Use a unique index based on existing diverse entities
+        const existingIndices = selectedDiverseEntities.map(e => e.index).filter(i => i !== undefined);
+        const nextIndex = existingIndices.length > 0 ? Math.max(...existingIndices) + 1 : 0;
+
+        const entity = {
+          index: nextIndex,
+          type: objectType,
+          name: objectName,
+          position,
+          bounds: entityBounds,
+          // Speckle-specific fields for identification
+          nodeId: selectedId,
+          id: selectedId,
+          // Stable Rhino GUID for cross-session persistence (Speckle IDs change on every commit)
+          applicationId: objectData?.raw?.applicationId || undefined,
+          speckle_type: objectType,
+          raw: objectData?.raw
+        };
+
+        console.log('[SpeckleScene] Entity linked in linking mode:', {
+          objectId: selectedId,
+          entityIndex: entity.index,
+          name: entity.name,
+          position
+        });
+
+        onEntityLinked(entity);
+        return;
+      }
+
+      // NORMAL SELECTION: When a Speckle object is clicked, check if it has a linked sound
+      // and expand the corresponding sound card (same flow as sound sphere click)
+      if (objectIds.length > 0 && onSelectSoundCard) {
+        const selectedId = objectIds[0];
+
+        // Use SpeckleSelectionModeContext to check if this object is linked to a sound
+        const linkState = getObjectLinkState(selectedId);
+
+        if (linkState.isLinked && linkState.linkedSoundIndex !== undefined) {
+          console.log('[SpeckleScene] Speckle object clicked with linked sound, selecting card:', linkState.linkedSoundIndex);
+          onSelectSoundCard(linkState.linkedSoundIndex);
+        }
+      }
+
+      // Re-apply filter colors ONLY when deselecting (clicking on empty space)
+      // When selecting an object, SelectionExtension handles the highlight
+      // and we don't want to override it with our colors
+      if (objectIds.length === 0) {
+        setTimeout(() => {
+          applyFilterColors();
+        }, 50);
+      }
+    });
+
+    // Set up callback for sound sphere clicks to expand corresponding sound card
+    coordinatorRef.current.setOnSoundSphereClicked((promptKey: string) => {
+      if (!onSelectSoundCard) return;
+
+      // Extract promptIndex from promptKey (format: 'prompt_0', 'prompt_1', etc.)
+      const promptIndex = parseInt(promptKey.split('_')[1]);
+      if (!isNaN(promptIndex)) {
+        console.log('[SpeckleScene] Sound sphere clicked, selecting card:', promptIndex);
+        // Clear sidebar-driven highlight so the scene-driven one takes over
+        setExpandedSoundCardIdx(null);
+        // Skip the deselection effect â€” clearAllSelections sets selectedSpeckleObjectIds=[]
+        // which would otherwise clear the selectedEntity we're about to set
+        skipDeselectionRef.current = true;
+        onSelectSoundCard(promptIndex);
+      }
+    });
+
+    // Set up callback for receiver single-click to show info in EntityInfoPanel
+    coordinatorRef.current.setOnReceiverSingleClicked((receiverId: string) => {
+      const receiver = receivers.find(r => r.id === receiverId);
+      if (receiver) {
+        skipDeselectionRef.current = true;
+        setSelectedEntity({
+          objectId: receiver.id,
+          objectName: receiver.name,
+          objectType: 'Receiver',
+          receiverData: { position: receiver.position },
+        });
+      }
+    });
+
+    // Set up callback for custom object deselection (clicking empty space after receiver/sound)
+    coordinatorRef.current.setOnCustomObjectDeselected(() => {
+      setSelectedEntity(null);
+    });
+
+    // Set up callback for receiver position updates (from drag)
+    // This syncs the 3D mesh position back to React state so positions persist
+    if (onUpdateReceiverPosition) {
+      coordinatorRef.current.setOnReceiverPositionUpdated(onUpdateReceiverPosition);
+    }
+
+    // Set up callback for sound sphere position updates (from drag)
+    // This syncs the 3D mesh position back to React state so simulations use updated positions
+    if (onUpdateSoundPosition) {
+      coordinatorRef.current.setOnSoundPositionUpdated(onUpdateSoundPosition);
+    }
+
+    // Set up callback for receiver mesh double-click (expand listener card + enter FPS mode)
+    if (onReceiverDoubleClicked) {
+      coordinatorRef.current.setOnReceiverDoubleClicked(onReceiverDoubleClicked);
+      // Grid listener double-click: sync FPS state and re-use same page.tsx handler
+      coordinatorRef.current.setOnGridListenerDoubleClicked((pointId: string) => {
+        setIsFirstPersonMode(true);
+        onReceiverDoubleClicked(pointId);
+      });
+    }
+  }, [coordinatorRef.current, soundscapeData, onSelectSoundCard, isLinkingEntity, onEntityLinked, worldTree, getObjectLinkState, onUpdateReceiverPosition, onUpdateSoundPosition, applyFilterColors, receivers, setSelectedEntity]);
+
+  // ============================================================================
+  // Effect - Update Sound Spheres
+  // ============================================================================
+  useEffect(() => {
+    if (!coordinatorRef.current || !isViewerReady || !boundingBoxManagerRef.current || !viewerRef.current) {
+      return;
+    }
+
+    const currentLength = soundscapeData?.length || 0;
+    const prevLength = prevSoundscapeDataLengthRef.current;
+
+    // Track changes
+    prevSoundscapeDataLengthRef.current = currentLength;
+
+    // Bounding-box spiral placement removed â€” camera-based placement is the only strategy.
+    // let effectiveBounds = boundingBoxManagerRef.current.calculateBoundsFromSpeckleBatches(viewerRef.current);
+    // if (!effectiveBounds) {
+    //   const soundPositions: THREE.Vector3[] = [];
+    //   if (soundscapeData) {
+    //     soundscapeData.forEach(sound => {
+    //       if (sound.position) {
+    //         soundPositions.push(new THREE.Vector3(...sound.position));
+    //       }
+    //     });
+    //   }
+    //   effectiveBounds = boundingBoxManagerRef.current.calculateEffectiveBounds(null, soundPositions);
+    // }
+
+    // Compute camera-front position for sound sphere placement
+    let cameraFrontPosition: THREE.Vector3 | null = null;
+    try {
+      const camera = (viewerRef.current as any).getRenderer().renderingCamera;
+      if (camera?.matrixWorld && camera?.position) {
+        const mx: number[] = camera.matrixWorld.elements;
+        const dx = -mx[8], dy = -mx[9], dz = -mx[10];
+        const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+        const d = RECEIVER_CONFIG.CAMERA_PLACEMENT_DISTANCE_M;
+        cameraFrontPosition = new THREE.Vector3(
+          camera.position.x + (dx / len) * d,
+          camera.position.y + (dy / len) * d,
+          camera.position.z + (dz / len) * d,
+        );
+      }
+    } catch {
+      // Camera not ready â€” sound falls through to its backend event position
+    }
+
+    // Use ref to prevent infinite loop (same pattern as ThreeScene)
+    coordinatorRef.current.updateSoundSpheres(
+      soundscapeData,
+      selectedVariants,
+      scaleForSounds,
+      auralizationConfigRef.current,
+      // effectiveBounds, // Bounding-box placement removed
+      cameraFrontPosition
+    );
+  }, [isViewerReady, soundscapeData, selectedVariants, scaleForSounds]);
+
+  // ============================================================================
+  // Effect - Update Receivers
+  // ============================================================================
+  useEffect(() => {
+    if (!coordinatorRef.current || !isViewerReady || !boundingBoxManagerRef.current || !viewerRef.current) {
+      return;
+    }
+
+    const currentLength = receivers.length;
+    prevReceiversLengthRef.current = currentLength;
+
+    // Bounding-box spiral placement removed â€” receivers are placed via camera-based spiral in page.tsx.
+    // let effectiveBounds = boundingBoxManagerRef.current.calculateBoundsFromSpeckleBatches(viewerRef.current);
+    // if (!effectiveBounds) {
+    //   const soundPositions: THREE.Vector3[] = [];
+    //   if (soundscapeData) {
+    //     soundscapeData.forEach(sound => {
+    //       if (sound.position) soundPositions.push(new THREE.Vector3(...sound.position));
+    //     });
+    //   }
+    //   effectiveBounds = boundingBoxManagerRef.current.calculateEffectiveBounds(null, soundPositions);
+    // }
+
+    // Receivers carry their own positions (set by camera-based spiral placement in page.tsx)
+    coordinatorRef.current.updateReceivers(receivers);
+
+    // If we're in FPS mode and the active receiver's position changed (e.g. the user
+    // edited an x/y/z coordinate in the Listeners card), teleport the camera to the
+    // new position while keeping the current look direction.
+    if (isFirstPersonModeRef.current) {
+      const activeId = coordinatorRef.current.getActiveReceiverId();
+      if (activeId) {
+        const rm = coordinatorRef.current.getReceiverManager();
+        const mesh = rm?.getReceiverMeshes().find((m) => m.userData.receiverId === activeId);
+        if (mesh) {
+          coordinatorRef.current.teleportFirstPerson(mesh.position.clone());
+        }
+      }
+    }
+  }, [isViewerReady, receivers, soundscapeData]);
+
+  // ============================================================================
+  // Effect - Update Grid Listener Points in Scene
+  // ============================================================================
+  useEffect(() => {
+    if (!isViewerReady || !coordinatorRef.current) return;
+    coordinatorRef.current.updateGridListeners(gridListenerPoints, expandedGridListenerId, gridListenerPointIds);
+  }, [isViewerReady, gridListenerPoints, expandedGridListenerId, gridListenerPointIds]);
+
+  // ============================================================================
+  // Effect - Highlight Selected Sound Sphere
+  // â”€â”€ Sidebar-driven sound card state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const expandedSoundCardIndex  = useUIStore(s => s.expandedSoundCardIndex);
+  const zoomToSoundCardTrigger  = useUIStore(s => s.zoomToSoundCardTrigger);
+  const setExpandedSoundCardIdx = useUIStore(s => s.setExpandedSoundCardIndex);
+
+  // ============================================================================
+  // Note: Speckle object coloring (linked/diverse) is handled by the context's
+  // FilteringExtension. This effect only handles sound sphere highlighting.
+  // Priority: sidebar-expanded card (expandedSoundCardIndex) > scene-selected card (selectedCardIndex)
+  useEffect(() => {
+    if (!isViewerReady || !soundscapeData || !coordinatorRef.current) {
+      return;
+    }
+
+    const soundSphereManager = coordinatorRef.current.getSoundSphereManager();
+    if (!soundSphereManager) return;
+
+    const sphereMeshes = soundSphereManager.getSoundSphereMeshes();
+
+    // Reset all sphere colors to primary
+    sphereMeshes.forEach(sphere => {
+      const material = sphere.material as THREE.MeshStandardMaterial;
+      if (material.color) {
+        material.color.setHex(getCssColorHex('--color-primary'));
+      }
+    });
+
+    // Sidebar expansion takes priority; fall back to scene-driven selection
+    const effectiveIndex = expandedSoundCardIndex ?? selectedCardIndex;
+
+    if (effectiveIndex !== null) {
+      const selectedSound = soundscapeData.find((sound: any) => {
+        const promptIdx = (sound as any).prompt_index ?? 0;
+        return promptIdx === effectiveIndex;
+      });
+
+      if (selectedSound && (selectedSound.entity_index === undefined || selectedSound.entity_index === null)) {
+        const sphere = sphereMeshes.find(s => s.userData.soundEvent?.id === selectedSound.id);
+        if (sphere) {
+          const material = sphere.material as THREE.MeshStandardMaterial;
+          if (material.color) {
+            material.color.setHex(getCssColorHex('--color-primary-hover'));
+            material.needsUpdate = true;
+          }
+        }
+      }
+    }
+
+    if (viewerRef.current) {
+      viewerRef.current.requestRender();
+    }
+  }, [isViewerReady, selectedCardIndex, expandedSoundCardIndex, soundscapeData, selectedVariants]);
+
+  // ============================================================================
+  // Effect - Zoom to sound sphere when card is double-clicked in sidebar
+  // ============================================================================
+  useEffect(() => {
+    if (!zoomToSoundCardTrigger || !isViewerReady || !coordinatorRef.current || !soundscapeData) return;
+
+    const { index } = zoomToSoundCardTrigger;
+    const sound = soundscapeData.find((s: any) => ((s as any).prompt_index ?? 0) === index);
+    if (!sound) return;
+
+    const soundSphereManager = coordinatorRef.current.getSoundSphereManager();
+    if (!soundSphereManager) return;
+
+    const storedPos = soundSphereManager.getSpherePosition(sound.id);
+    const position = storedPos
+      ? new THREE.Vector3(...storedPos)
+      : sound.position
+        ? new THREE.Vector3(...(sound.position as [number, number, number]))
+        : null;
+
+    if (position) {
+      coordinatorRef.current.zoomToPosition(position);
+    }
+  }, [zoomToSoundCardTrigger, isViewerReady, soundscapeData]);
+
+  // ============================================================================
+  // NOTE: Diverse selection is managed by SpeckleSelectionModeContext
+  // ============================================================================
+  // The context's FilteringExtension automatically colors:
+  // - Green: Objects in diverseSelectedObjectIds (diverse selection)
+  // - Pink: Objects in linkedObjectIds (sound-linked)
+  //
+  // User interactions (EntityInfoBox link button) update context directly.
+  // Model3DContextContent syncs context state to config for analysis.
+  // No sync from props to context needed - context is source of truth.
+
+  // ============================================================================
+  // Effect - Update Timeline
+  // ============================================================================
+  useEffect(() => {
+    if (!soundscapeData || soundscapeData.length === 0) {
+      setTimelineSounds([]);
+      setSoundMetadataReady(false);
+      return;
+    }
+
+    // Debounce timeline updates
+    const timeoutId = setTimeout(() => {
+      // Get sound metadata from sound sphere manager via coordinator
+      const soundSphereManager = coordinatorRef.current?.getSoundSphereManager();
+
+      if (soundSphereManager) {
+        const soundMetadata = soundSphereManager.getAllAudioSources();
+
+        // Check if we have metadata for at least one sound per unique prompt
+        const uniquePromptCount = new Set(soundscapeData.map(s => s.prompt_index ?? 0)).size;
+
+        if (soundMetadata && soundMetadata.size >= uniquePromptCount) {
+          const sounds = extractTimelineSoundsFromData(soundMetadata, soundIntervals, timelineDurationMs, soundscapeData ?? undefined, soundTrims, intervalJitterSeconds);
+
+          setTimelineSounds(sounds);
+          setSoundMetadataReady(true);
+        } else {
+          // Metadata not ready yet, keep checking
+          setSoundMetadataReady(false);
+        }
+      }
+    }, UI_TIMING.UPDATE_DEBOUNCE_MS);
+
+    return () => clearTimeout(timeoutId);
+    // soundMetadataReady is included so the effect re-runs when the polling
+    // marks metadata as ready (allowing timelineSounds to populate on the retry).
+    // No feedback loop: React bails out of re-renders when the new state value
+    // equals the old one (Object.is), so setSoundMetadataReady(false/true) with
+    // the same value never triggers an extra run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [soundscapeData, selectedVariants, soundIntervals, soundTrims, soundMetadataReady, intervalJitterSeconds, timelineDurationMs]);
+
+  // ============================================================================
+  // Effect - Poll for Sound Metadata Readiness
+  // ============================================================================
+  useEffect(() => {
+    if (!isViewerReady || !soundscapeData || soundscapeData.length === 0) {
+      return;
+    }
+
+    // If metadata is already marked ready, no need to poll.
+    // The timeline effect will pick up soundscapeData changes on its own.
+    if (soundMetadataReady) return;
+
+    // Poll for sound metadata every 500ms until all sounds are loaded
+    const intervalId = setInterval(() => {
+      const soundSphereManager = coordinatorRef.current?.getSoundSphereManager();
+      if (soundSphereManager) {
+        const soundMetadata = soundSphereManager.getAllAudioSources();
+
+        // Check if we have metadata for at least one sound per unique prompt
+        const uniquePromptCount = new Set(soundscapeData.map(s => s.prompt_index ?? 0)).size;
+        if (soundMetadata && soundMetadata.size >= uniquePromptCount) {
+          setSoundMetadataReady(true);
+          clearInterval(intervalId); // Stop polling
+        }
+      }
+    }, 500);
+
+    // Cleanup
+    return () => clearInterval(intervalId);
+  }, [isViewerReady, soundscapeData, soundMetadataReady]);
+
+  // Auto-open the timeline whenever sounds become available (e.g. after generation)
+  useEffect(() => {
+    if (timelineSounds.length > 0) {
+      setShowTimeline(true);
+    }
+  }, [timelineSounds.length]);
+
+  // ============================================================================
+  // Callback - Refresh Timeline (reload all available sounds)
+  // ============================================================================
+  const handleRefreshTimeline = useCallback(() => {
+    const soundSphereManager = coordinatorRef.current?.getSoundSphereManager();
+    if (!soundSphereManager) return;
+
+    const soundMetadata = soundSphereManager.getAllAudioSources();
+    if (soundMetadata && soundMetadata.size > 0) {
+      const sounds = extractTimelineSoundsFromData(soundMetadata, soundIntervals, timelineDurationMs, soundscapeData ?? undefined, soundTrims, intervalJitterSeconds);
+
+      setTimelineSounds(sounds);
+      console.log('[SpeckleScene] ðŸ”„ Timeline refreshed:', sounds.length, 'sounds, duration:', timelineDurationMs);
+    }
+  }, [soundIntervals, soundTrims, soundscapeData, intervalJitterSeconds, timelineDurationMs]);
+
+  // ============================================================================
+  // Callback - Download Soundscape as WAV
+  // ============================================================================
+  const handleDownloadTimeline = useCallback(async () => {
+    if (!audioOrchestrator || timelineSounds.length === 0) {
+      console.warn('[SpeckleScene] Cannot export: no orchestrator or no timeline sounds');
+      return;
+    }
+
+    try {
+      const exportState = audioOrchestrator.getExportState();
+
+      // Compute linear gains for each sound from dB values stored in soundVolumes.
+      // Matches the gain computation in the existing volume-sync effect.
+      const soundGains = new Map<string, number>();
+      timelineSounds.forEach((ts) => {
+        const soundEvent = soundscapeData?.find((s) => s.id === ts.id);
+        const baseVolumeDb   = soundEvent?.volume_db ?? 70;
+        const targetVolumeDb = soundVolumes[ts.id] ?? baseVolumeDb;
+        const dbDiff         = targetVolumeDb - baseVolumeDb;
+        const gain           = Math.pow(10, dbDiff / 20);
+        soundGains.set(ts.id, Math.max(0, Math.min(10, gain)));
+      });
+
+      const { simulationConfigs, activeSimulationIndex } = useAcousticsSimulationStore.getState();
+      const activeSimulation = activeSimulationIndex !== null ? simulationConfigs[activeSimulationIndex] : null;
+
+      const config: SoundscapeExportConfig = {
+        ...exportState,
+        globalListenerOrientation: listenerOrientation,
+        soundGains,
+        mutedSounds,
+        soloedSound,
+        simulationName: activeSimulation?.display_name ?? null,
+      };
+
+      await exportSoundscapeToWav(timelineSounds, timelineDurationMs, config);
+
+      console.log('[SpeckleScene] âœ… Soundscape exported successfully');
+    } catch (err) {
+      console.error('[SpeckleScene] âŒ Export failed:', err);
+      throw err; // re-throw so WaveSurferTimeline can show the error state
+    }
+  }, [audioOrchestrator, timelineSounds, timelineDurationMs, soundscapeData, soundVolumes, mutedSounds, soloedSound, listenerOrientation]);
+
+  // ============================================================================
+  // Timeline Playback Hook
+  // ============================================================================
+
+  const stopTimelineRef = useRef<(() => void) | null>(null);
+
+  const handleTimelineEnd = useCallback(() => {
+    storeStopAll();
+    stopTimelineRef.current?.();
+  }, [storeStopAll]);
+
+  const { playbackState, play: playTimeline, pause: pauseTimeline, stop: stopTimeline, seekTo } = useTimelinePlayback({
+    sounds: timelineSounds,
+    duration: timelineDurationMs,
+    onEnd: handleTimelineEnd
+  });
+
+  useEffect(() => {
+    stopTimelineRef.current = stopTimeline;
+  }, [stopTimeline]);
+
+  // ============================================================================
+  // Effect - Control Individual Sound Playback
+  // ============================================================================
+  useEffect(() => {
+    const playbackScheduler = playbackSchedulerRef.current;
+    const soundSphereManager = coordinatorRef.current?.getSoundSphereManager();
+    if (!playbackScheduler || !soundSphereManager) return;
+
+    const soundMetadata = soundSphereManager.getAllAudioSources();
+
+    (async () => {
+      await playbackScheduler.updateSoundPlayback(
+        soundMetadata,
+        individualSoundStates,
+        soundIntervals,
+        timelineSounds
+      );
+
+      if (playAfterSchedulingRef.current) {
+        playAfterSchedulingRef.current = false;
+        playTimeline();
+      }
+    })();
+  }, [individualSoundStates, soundIntervals, playTimeline]);
+
+  // ============================================================================
+  // Effect - Apply Volume Changes
+  // ============================================================================
+  useEffect(() => {
+    if (audioOrchestrator && soundscapeData) {
+      soundscapeData.forEach(soundEvent => {
+        const targetVolumeDb = soundVolumes[soundEvent.id] ?? soundEvent.volume_db ?? 70;
+        const baseVolumeDb = soundEvent.volume_db ?? 70;
+
+        // Calculate volume difference in dB
+        const dbDiff = targetVolumeDb - baseVolumeDb;
+
+        // Convert dB difference to linear gain (0.0 to 1.0)
+        const gainFactor = Math.pow(10, dbDiff / 20);
+        const clampedGain = Math.max(0.0, Math.min(10.0, gainFactor));
+
+        audioOrchestrator.setSourceVolume(soundEvent.id, clampedGain);
+      });
+    }
+  }, [soundVolumes, soundscapeData, audioOrchestrator]);
+
+  // ============================================================================
+  // Effect - Apply Mute/Solo States
+  // ============================================================================
+  useEffect(() => {
+    if (audioOrchestrator && soundscapeData) {
+      const soundSphereManager = coordinatorRef.current?.getSoundSphereManager();
+      soundscapeData.forEach(soundEvent => {
+        // Determine if this sound should be muted
+        let shouldBeMuted = mutedSounds.has(soundEvent.id);
+
+        // If there's a soloed sound, mute everything except that sound
+        if (soloedSound !== null) {
+          shouldBeMuted = soundEvent.id !== soloedSound;
+        }
+
+        audioOrchestrator.setSourceMute(soundEvent.id, shouldBeMuted);
+        soundSphereManager?.setSourceMuted(soundEvent.id, shouldBeMuted);
+      });
+    }
+  }, [mutedSounds, soloedSound, soundscapeData, audioOrchestrator]);
+
+  // ============================================================================
+  // Effect - Bounding Box Visualization (Resonance Audio Room)
+  // ============================================================================
+  useEffect(() => {
+    const boundingBoxManager = boundingBoxManagerRef.current;
+    const viewer = viewerRef.current;
+    
+    if (!boundingBoxManager || !isViewerReady || !viewer) {
+      return;
+    }
+
+    // Calculate effective bounds from Speckle viewer (primary method)
+    let effectiveBounds = boundingBoxManager.calculateBoundsFromSpeckleBatches(viewer);
+
+    // Fallback to auto-calculate from sound positions
+    if (!effectiveBounds) {
+      const soundPositions: THREE.Vector3[] = [];
+      if (soundscapeData) {
+        soundscapeData.forEach(sound => {
+          if (sound.position) {
+            soundPositions.push(new THREE.Vector3(...sound.position));
+          }
+        });
+      }
+
+      effectiveBounds = boundingBoxManager.calculateEffectiveBounds(
+        null, // Legacy geometryBounds removed - Speckle viewer computes bounds
+        soundPositions
+      );
+    }
+
+    // Apply room scale around center of bounds
+    let scaledBounds = effectiveBounds;
+    if (effectiveBounds && (roomScale.x !== 1 || roomScale.y !== 1 || roomScale.z !== 1)) {
+      const [minX, minY, minZ] = effectiveBounds.min;
+      const [maxX, maxY, maxZ] = effectiveBounds.max;
+      const cx = (minX + maxX) / 2;
+      const cy = (minY + maxY) / 2;
+      const cz = (minZ + maxZ) / 2;
+      const halfW = ((maxX - minX) / 2) * roomScale.x;
+      const halfH = ((maxY - minY) / 2) * roomScale.y;
+      const halfD = ((maxZ - minZ) / 2) * roomScale.z;
+      scaledBounds = {
+        min: [cx - halfW, cy - halfH, cz - halfD],
+        max: [cx + halfW, cy + halfH, cz + halfD]
+      };
+    }
+
+    const resolvedBounds = draggedBoundsOverride ?? scaledBounds;
+
+    // Notify parent of computed bounds (for Resonance Audio room dimensions)
+    if (resolvedBounds && onBoundsComputed) {
+      onBoundsComputed(resolvedBounds);
+    }
+
+    // Update bounding box with resolved bounds
+    const config = {
+      roomMaterials: resonanceAudioConfig?.roomMaterials,
+      visible: showBoundingBox && !!resolvedBounds
+    };
+
+    boundingBoxManager.updateBoundingBox(resolvedBounds, config);
+
+    // Request render update to show changes - use multiple frames and RENDER_RESET flag
+    if (viewerRef.current) {
+      // Request render with RENDER_RESET flag (0b1000 = 8) to force complete re-render
+      viewerRef.current.requestRender(8); // UpdateFlags.RENDER_RESET
+      // Also request a few regular renders to ensure it shows up
+      setTimeout(() => viewerRef.current?.requestRender(), 0);
+      setTimeout(() => viewerRef.current?.requestRender(), 100);
+      setTimeout(() => viewerRef.current?.requestRender(), 200);
+    }
+  }, [
+    isViewerReady,
+    soundscapeData,
+    showBoundingBox,
+    resonanceAudioConfig?.roomMaterials,
+    refreshBoundingBoxTrigger,
+    onBoundsComputed,
+    roomScale,
+    draggedBoundsOverride
+  ]);
+
+  // ============================================================================
+  // Effects - Viewer Visibility Settings
+  // ============================================================================
+  useEffect(() => { showHoveringHighlightRef.current = showHoveringHighlight; }, [showHoveringHighlight]);
+
+  // ============================================================================
+  // Effect - Dark Mode (Sound Source Lighting)
+  // ============================================================================
+  //
+  // Bugs fixed:
+  // - Speckle's FilteringExtension/SelectionExtension reset materials on click,
+  //   selection, and isolate operations. A periodic enforcement interval re-applies
+  //   dark mode state (lights, background, entity materials) every 150ms.
+  // - Background uses both scene.background AND the WebGL renderer setClearColor
+  //   to override the Speckle pipeline. scene.environment is left untouched;
+  //   indirectIBLIntensity = 0 zeroes envMapIntensity on all mesh materials.
+  // - Entity-linked objects use MeshBasicMaterial (unlit) applied via
+  //   renderer.setMaterial() so they glow without scene lighting.
+  // ============================================================================
+  useEffect(() => {
+    if (!isViewerReady || !viewerRef.current || !coordinatorRef.current) return;
+
+    const viewer = viewerRef.current;
+    const speckleRenderer = viewer.getRenderer();
+    const scene = speckleRenderer.scene;
+    const webglRenderer = speckleRenderer.renderer; // Underlying WebGLRenderer
+    const soundSphereManager = coordinatorRef.current.getSoundSphereManager();
+    const adapter = coordinatorRef.current.getAdapter();
+
+    if (isDarkMode) {
+      // --- ENABLE DARK MODE ---
+      isDarkModeRef.current = true;
+
+      // 1. Save original light state
+      const sunLight = speckleRenderer.sunLight;
+      const savedSunIntensity = sunLight.intensity;
+
+      // Find ambient lights in the scene
+      const ambientLights: Array<{ light: THREE.AmbientLight; intensity: number }> = [];
+      scene.traverse((obj: THREE.Object3D) => {
+        if (obj instanceof THREE.AmbientLight) {
+          ambientLights.push({ light: obj, intensity: obj.intensity });
+        }
+      });
+
+      // Save scene background and WebGL clear color.
+      // NOTE: scene.environment is NOT saved/modified â€” indirectIBLIntensity = 0 is
+      // sufficient to eliminate IBL contribution, and leaving the env map in place
+      // avoids THREE.js shader program cache churn (USE_ENVMAP define toggling).
+      const savedBackground = scene.background;
+      const savedClearColor = new THREE.Color();
+      webglRenderer.getClearColor(savedClearColor);
+      const savedClearAlpha = webglRenderer.getClearAlpha();
+
+      // Collect entity-linked object IDs from the SpeckleSelectionModeContext
+      const entityObjectIds = Array.from(linkedObjectIds);
+
+      // Collect render views for entity-linked objects (for emissive material)
+      const entityRenderViews: any[] = [];
+      if (worldTree && entityObjectIds.length > 0) {
+        const findNodeAndCollectRvs = (node: any, targetId: string): boolean => {
+          const nodeId = node?.raw?.id || node?.model?.id || node?.id;
+          if (nodeId === targetId) {
+            // Collect render views from this node and all descendants
+            const collectRvs = (n: any) => {
+              const rv = n?.model?.renderView;
+              if (rv) entityRenderViews.push(rv);
+              const children = n?.model?.children || n?.children;
+              if (children) children.forEach((c: any) => collectRvs(c));
+            };
+            collectRvs(node);
+            return true;
+          }
+          const children = node?.model?.children || node?.children;
+          if (children) {
+            for (const child of children) {
+              if (findNodeAndCollectRvs(child, targetId)) return true;
+            }
+          }
+          return false;
+        };
+
+        const rootChildren = worldTree.tree?._root?.children || worldTree._root?.children || worldTree.root?.children || worldTree.children;
+        if (rootChildren) {
+          entityObjectIds.forEach(objId => {
+            for (const child of rootChildren) {
+              if (findNodeAndCollectRvs(child, objId)) break;
+            }
+          });
+        }
+      }
+
+      // Read current IBL intensity from a batch material (setter-only API, no getter)
+      let savedIblIntensity = 1;
+      try {
+        const bIds: string[] = (speckleRenderer as any).getBatchIds();
+        for (const bid of bIds) {
+          const b = (speckleRenderer as any).getBatch(bid);
+          if (b?.batchMaterial?.envMapIntensity !== undefined) {
+            savedIblIntensity = b.batchMaterial.envMapIntensity;
+            break;
+          }
+        }
+      } catch { /* non-critical */ }
+
+      darkModeStateRef.current = {
+        sunIntensity: savedSunIntensity,
+        iblIntensity: savedIblIntensity,
+        ambientLights,
+        sceneBackground: savedBackground as THREE.Color | THREE.Texture | null,
+        clearColor: savedClearColor,
+        clearAlpha: savedClearAlpha,
+        entityPointLights: [],
+        entityObjectIds,
+        entityRenderViews,
+        entityEmissiveMat: null, // set below after material creation
+        enforcementIntervalId: null,
+        pipelineShadowHookCleanup: null,
+      };
+
+      // ---------- Apply dark mode state ----------
+
+      // Shared materials (reused across enforcement ticks â€” no allocation per tick)
+      // Dark opaque: MeshStandardMaterial so objects respond to point lights AND
+      // receive shadows. MeshBasicMaterial is unlit and has no shadow shader code,
+      // so Speckle's InstancedMeshGroup.getCachedMaterial() would clone it into a
+      // material that cannot receive shadows.
+      const darkOpaqueMat = new THREE.MeshStandardMaterial({
+        color: 0x1a1a2e,
+        side: THREE.DoubleSide,
+        transparent: false,
+        roughness: 0.85,
+        metalness: 0.05,
+      });
+      // Blue emissive: entity-linked objects glow electric blue.
+      // MeshStandardMaterial with high emissiveIntensity produces an HDR value that
+      // Speckle's tone mapping clips/blooms into a bright glowing surface.
+      // base color is black so only the emissive channel contributes (all lights are off).
+      const entityEmissiveMat = new THREE.MeshStandardMaterial({
+        color: 0x000000,
+        emissive: new THREE.Color(getCssColorHex('--color-primary')),
+        emissiveIntensity: DARK_MODE.ENTITY_EMISSIVE_INTENSITY,
+        roughness: 0,
+        metalness: 0,
+        side: THREE.DoubleSide,
+      });
+      // Store on ref so the linkedObjectIds-change effect can reuse it without re-creating
+      darkModeStateRef.current!.entityEmissiveMat = entityEmissiveMat;
+      // Pre-allocated black color (avoids creating new Color on every tick)
+      const blackColor = new THREE.Color(0x000000);
+
+      // Helper: apply all dark mode overrides (used both initially and by enforcement)
+      const applyDarkModeState = () => {
+        if (!isDarkModeRef.current || !viewerRef.current) return;
+        const r = viewerRef.current.getRenderer();
+        const s = r.scene;
+
+        // Kill all lights
+        r.sunLight.intensity = 0;
+        r.indirectIBLIntensity = 0;
+        s.traverse((obj: THREE.Object3D) => {
+          if (obj instanceof THREE.AmbientLight) obj.intensity = 0;
+        });
+
+        // Force black background everywhere.
+        // Speckle's pipeline clears to transparent white (alpha=0) at the start of every
+        // frame via setClearColor(0xFFFFFF, 0) + clear(). The canvas is transparent so
+        // the CSS background of the wrapper div shows through â€” see isDarkMode style on
+        // the outer div which sets backgroundColor:'#000000' to produce the black scene bg.
+        // NOTE: Do NOT set scene.environment = null here. indirectIBLIntensity = 0 already
+        // zeroes envMapIntensity on all mesh materials, eliminating IBL contribution.
+        // Nulling the env map forces THREE.js to toggle the USE_ENVMAP shader define on
+        // every dark-mode cycle, and after ~20-30 toggles the shader program cache
+        // degrades, causing black interior faces in Acoustic filter mode.
+        s.background = blackColor;
+        r.renderer.setClearColor(0x000000, 0); // match transparent clear, just darker
+
+        // 1. Override visible mesh batches with dark opaque material.
+        //    Live batcher scan covers meshes added after dark mode was enabled.
+        //    GeometryType.MESH excludes lines, points, text, shadow-catcher overlays.
+        //    Four sets of render views are excluded so their own materials stay intact:
+        //      - hidden objects  (FilteringExtension ghost/hidden draw-ranges)
+        //      - non-isolated objects  (when isolation is active)
+        //      - currently selected objects  (SelectionExtension highlight)
+        //      - entity-linked objects  (receive blue emissive in step 2)
+        const entityLinkedSet: Set<string> = new Set(
+          darkModeStateRef.current?.entityObjectIds ?? []
+        );
+        try {
+          const filterState = filteringExtensionRef.current?.filteringState;
+          const hiddenSet: Set<string> | null = filterState?.hiddenObjects?.length
+            ? new Set(filterState.hiddenObjects)
+            : null;
+          const isolatedSet: Set<string> | null = filterState?.isolatedObjects?.length
+            ? new Set(filterState.isolatedObjects)
+            : null;
+          // getSelectedObjects() returns raw Speckle objects whose .id matches rv.renderData.id
+          const selObjs = selectionExtensionRef.current?.getSelectedObjects() ?? [];
+          const selectedSet: Set<string> | null = selObjs.length > 0
+            ? new Set((selObjs as any[]).map((o) => o.id as string).filter(Boolean))
+            : null;
+
+          const needsFilter = hiddenSet || isolatedSet || selectedSet || entityLinkedSet.size > 0;
+
+          const batchIds: string[] = (r as any).getBatchIds();
+          for (const id of batchIds) {
+            const batch = (r as any).getBatch(id);
+            if (!batch || batch.geometryType !== GeometryType.MESH) continue;
+
+            // When any filter is active, exclude render views that must keep their own material
+            const rvs: any[] = needsFilter
+              ? batch.renderViews.filter((rv: any) => {
+                  const objId: string | undefined = rv.renderData?.id;
+                  if (!objId) return true; // No ID: include to be safe
+                  if (hiddenSet?.has(objId)) return false;              // Hidden: skip
+                  if (isolatedSet && !isolatedSet.has(objId)) return false; // Non-isolated: skip
+                  if (selectedSet?.has(objId)) return false;            // Selected: skip (preserve highlight)
+                  if (entityLinkedSet.has(objId)) return false;         // Entity-linked: blue emissive in step 2
+                  return true;
+                })
+              : batch.renderViews;
+
+            if (rvs.length > 0) {
+              r.setMaterial(rvs, darkOpaqueMat);
+            }
+          }
+          // Re-apply selection highlight on top of dark materials.
+          // SelectionExtension.selectObjects() highlights the object AND all its
+          // descendants' render views, so parent-group children that just received
+          // darkOpaqueMat will get the selection material painted back on top.
+          // This runs synchronously (no render between setMaterial and selectObjects),
+          // so there is no visible flicker.
+          if (selObjs.length > 0) {
+            try {
+              const ids = (selObjs as any[]).map((o: any) => o.id as string).filter(Boolean);
+              selectionExtensionRef.current?.selectObjects(ids);
+            } catch { /* non-critical */ }
+          }
+        } catch {
+          // Non-critical: batcher may be rebuilding
+        }
+
+        // 2. Apply blue emissive to entity-linked objects.
+        //    Scan batches directly using rv.renderData.id (same ID space as linkedObjectIds /
+        //    setUserObjectColors) â€” more reliable than WorldTree render-view lookup.
+        if (entityLinkedSet.size > 0) {
+          try {
+            const entityRvs: any[] = [];
+            const bIds: string[] = (r as any).getBatchIds();
+            for (const bid of bIds) {
+              const b = (r as any).getBatch(bid);
+              if (!b || b.geometryType !== GeometryType.MESH) continue;
+              for (const rv of b.renderViews) {
+                const objId: string | undefined = rv.renderData?.id;
+                if (objId && entityLinkedSet.has(objId)) entityRvs.push(rv);
+              }
+            }
+            if (entityRvs.length > 0) {
+              r.setMaterial(entityRvs, entityEmissiveMat);
+            }
+          } catch {
+            // Non-critical: batcher may be rebuilding
+          }
+        }
+
+        // Enforce sound sphere colors (guards against drag / render resets)
+        if (coordinatorRef.current) {
+          const ssm = coordinatorRef.current.getSoundSphereManager();
+          if (ssm) ssm.enforceDarkModeColors();
+        }
+
+        // Trigger shadow map re-render (Speckle sets autoUpdate=false)
+        r.shadowMapNeedsUpdate = true;
+        r.needsRender = true;
+      };
+
+      // Initial application
+      applyDarkModeState();
+
+      // Hook each GEOMETRY pass's onBeforeRender so shadow maps are always re-rendered
+      // with OPAQUE visibility (full scene) rather than the STENCIL visibility that the
+      // preceding stencil pass leaves in place.
+      //
+      // Root cause: bs.render() calls passes in order [stencil, opaque, transparent, ...].
+      //   1. onBeforePipelineRender fires â†’ shadowMapNeedsUpdate = true
+      //   2. Stencil pass: batcher.applyVisibility(getStencil())  â†’ only selected objects
+      //      renderer.render() â†’ Three.js renders shadow maps with selected-only visibility
+      //      â†’ shadowMapNeedsUpdate = false
+      //   3. OPAQUE pass: batcher.applyVisibility(getOpaque()) â†’ all opaque objects
+      //      renderer.render() â†’ shadowMapNeedsUpdate already false â†’ NO shadow update
+      //      â†’ result: shadow maps from step 2 (often empty) â†’ no shadows visible
+      //
+      // Fix: hook onBeforeRender on every GEOMETRY pass.  It fires inside Os.render()
+      // after bs.render() has already called batcher.applyVisibility for that pass,
+      // but before the pass calls renderer.render(scene,camera).  So when the OPAQUE
+      // pass's onBeforeRender fires, all opaque objects are visible â†’ setting
+      // shadowMapNeedsUpdate=true here makes Three.js render shadow maps correctly.
+      //
+      // The same pass instance is shared across dynamicStage/progressiveStage/passthroughStage,
+      // so one hook covers all pipeline stages.
+      const pipeline = speckleRenderer.pipeline as any;
+
+      // Collect all unique passes across every stage
+      const allStagePasses: any[] = [
+        ...(pipeline.dynamicStage ?? []),
+        ...(pipeline.progressiveStage ?? []),
+        ...(pipeline.passthroughStage ?? []),
+      ];
+      const uniquePasses = [...new Set(allStagePasses)];
+      const geometryPasses = uniquePasses.filter((p: any) => p.displayName === 'GEOMETRY');
+
+      const passCleanups: Array<() => void> = [];
+      geometryPasses.forEach((p: any) => {
+        const origOnBeforeRender = p.onBeforeRender; // undefined by default
+        p.onBeforeRender = () => {
+          // Fires AFTER batcher.applyVisibility has been called for this pass,
+          // so shadow maps are rendered with this pass's correct visibility.
+          if (isDarkModeRef.current) speckleRenderer.shadowMapNeedsUpdate = true;
+          origOnBeforeRender?.();
+        };
+        passCleanups.push(() => { p.onBeforeRender = origOnBeforeRender; });
+      });
+
+      darkModeStateRef.current!.pipelineShadowHookCleanup = () => {
+        passCleanups.forEach(fn => fn());
+      };
+
+      // Enable dark mode on sound spheres (adds point lights + blue color)
+      if (soundSphereManager) {
+        soundSphereManager.enableDarkMode();
+      }
+
+      // Add point lights at entity positions
+      if (soundSphereManager && adapter) {
+        const entityPositions = soundSphereManager.getEntityLinkedSoundPositions();
+        const customGroup = adapter.getCustomObjectsGroup();
+
+        entityPositions.forEach(({ id, position }) => {
+          const light = new THREE.PointLight(
+            getCssColorHex('--color-primary'),
+            DARK_MODE.ENTITY_LIGHT_INTENSITY,
+            DARK_MODE.ENTITY_LIGHT_DISTANCE,
+            DARK_MODE.POINT_LIGHT_DECAY
+          );
+          light.name = `DarkModeEntityLight_${id}`;
+          light.position.set(position[0], position[1], position[2]);
+          light.layers.enableAll();
+
+          // Enable shadow casting so the entity's building blocks light from other sources
+          light.castShadow = true;
+          light.shadow.mapSize.width = DARK_MODE.SHADOW_MAP_SIZE;
+          light.shadow.mapSize.height = DARK_MODE.SHADOW_MAP_SIZE;
+          light.shadow.camera.near = DARK_MODE.SHADOW_CAMERA_NEAR;
+          light.shadow.camera.far = DARK_MODE.ENTITY_LIGHT_DISTANCE;
+          light.shadow.bias = DARK_MODE.SHADOW_BIAS;
+
+          customGroup.add(light);
+          darkModeStateRef.current!.entityPointLights.push(light);
+        });
+      }
+
+      // Start enforcement interval: re-apply dark mode state periodically
+      // This guards against Speckle's FilteringExtension, SelectionExtension,
+      // and isolate operations resetting materials/lights on click or selection.
+      const intervalId = setInterval(applyDarkModeState, 150);
+      darkModeStateRef.current.enforcementIntervalId = intervalId;
+
+      // Force render update
+      viewer.requestRender(8); // RENDER_RESET
+      setTimeout(() => viewer.requestRender(), 50);
+
+      console.log('[SpeckleScene] Dark mode enabled', {
+        entityObjects: entityObjectIds.length,
+        entityRenderViews: entityRenderViews.length,
+      });
+    } else {
+      // --- DISABLE DARK MODE ---
+      isDarkModeRef.current = false;
+      const saved = darkModeStateRef.current;
+      if (!saved) return;
+
+      // Stop enforcement interval
+      if (saved.enforcementIntervalId) {
+        clearInterval(saved.enforcementIntervalId);
+      }
+
+      // Remove pipeline shadow hook
+      saved.pipelineShadowHookCleanup?.();
+
+      // 1. Restore background + clear color.
+      //    scene.environment was never modified (indirectIBLIntensity = 0 is sufficient),
+      //    so no env map restoration is needed.
+      scene.background = saved.sceneBackground;
+      webglRenderer.setClearColor(saved.clearColor, saved.clearAlpha);
+
+      // 2. Disable dark mode on sound spheres (removes point lights + restores color)
+      if (soundSphereManager) {
+        soundSphereManager.disableDarkMode();
+      }
+
+      // 3. Remove entity point lights
+      if (adapter) {
+        const customGroup = adapter.getCustomObjectsGroup();
+        saved.entityPointLights.forEach(light => {
+          customGroup.remove(light);
+          light.dispose();
+        });
+      }
+
+      // 4. Reset all object materials to original (reverts dark opaque + entity emissive overrides)
+      try {
+        speckleRenderer.resetMaterials();
+      } catch {
+        // Non-critical
+      }
+
+      // 5. Re-apply FilteringExtension hide/isolate state.
+      //    resetMaterials() wipes batch draw-ranges but not the extension's own
+      //    internal state, so hidden/isolated objects would briefly reappear.
+      try {
+        const fe = filteringExtensionRef.current;
+        if (fe) {
+          const fs = fe.filteringState;
+          if (fs?.hiddenObjects?.length) {
+            fe.hideObjects(fs.hiddenObjects, undefined, true, false);
+          }
+          if (fs?.isolatedObjects?.length) {
+            fe.isolateObjects(fs.isolatedObjects, undefined, true, true);
+          }
+        }
+      } catch {
+        // Non-critical
+      }
+
+      // 6. Restore scene lights AFTER all material operations (steps 4-5).
+      //    indirectIBLIntensity sets envMapIntensity on every batch.materials entry;
+      //    it must run after resetMaterials() and isolateObjects() which create/reset
+      //    draw-range materials â€” otherwise new materials get envMapIntensity=0 and
+      //    interior (back-facing) surfaces render black due to missing IBL lighting.
+      const sunLight = speckleRenderer.sunLight;
+      sunLight.intensity = saved.sunIntensity;
+      saved.ambientLights.forEach(({ light, intensity }) => { light.intensity = intensity; });
+      speckleRenderer.indirectIBLIntensity = saved.iblIntensity;
+
+      // 6b. Also restore envMapIntensity on singleton filter materials that are NOT
+      //     currently in any batch.  During dark mode, indirectIBLIntensity = 0 set
+      //     envMapIntensity = 0 on ALL batch.materials â€” including singletons like
+      //     meshColoredMaterial and meshGhostMaterial.  resetMaterials() removes them
+      //     from batches, so step 6's indirectIBLIntensity only fixes batchMaterial.
+      //     If the user later enters Acoustic mode (Dark â†’ Default â†’ Acoustic), these
+      //     singletons are re-added with stale envMapIntensity = 0 â†’ black interior faces.
+      try {
+        const matModule = (speckleRenderer as any).batcher?.materials;
+        if (matModule) {
+          const singletons = [
+            matModule.meshColoredMaterial,
+            matModule.meshTransparentColoredMaterial,
+            matModule.meshGhostMaterial,
+            matModule.lineColoredMaterial,
+            matModule.pointCloudColouredMaterial,
+          ];
+          for (const mat of singletons) {
+            if (mat && 'envMapIntensity' in mat) {
+              (mat as any).envMapIntensity = saved.iblIntensity;
+            }
+          }
+        }
+      } catch {
+        // Non-critical: internal Speckle API
+      }
+
+      // 7. Re-apply normal filter colors from the selection mode context.
+      //    setUserObjectColors() internally calls setFilters() â†’ resetMaterials()
+      //    which re-creates draw-range materials. The IBL re-assertion after
+      //    applyFilterColors() ensures any newly-added batch materials get the
+      //    correct envMapIntensity value.
+      const capturedIbl = saved.iblIntensity;
+      setTimeout(() => {
+        applyFilterColors();
+        try {
+          const r = viewerRef.current?.getRenderer();
+          if (r) {
+            r.indirectIBLIntensity = capturedIbl;
+            r.needsRender = true;
+          }
+        } catch { /* non-critical */ }
+      }, 100);
+
+      darkModeStateRef.current = null;
+
+      // Force render update
+      viewer.requestRender(8);
+      setTimeout(() => viewer.requestRender(), 50);
+
+      console.log('[SpeckleScene] Dark mode disabled');
+    }
+
+    // Cleanup: stop enforcement interval and pipeline hook on unmount or dependency change
+    return () => {
+      if (darkModeStateRef.current?.enforcementIntervalId) {
+        clearInterval(darkModeStateRef.current.enforcementIntervalId);
+      }
+      darkModeStateRef.current?.pipelineShadowHookCleanup?.();
+    };
+  }, [isDarkMode, isViewerReady]);
+
+  // ============================================================================
+  // Effect - Sync entityObjectIds + object-center point lights in dark mode
+  // ============================================================================
+  // Runs when dark mode is active and linkedObjectIds changes (or dark mode first enables).
+  // 1. Keeps darkModeStateRef.current.entityObjectIds fresh for the enforcement interval.
+  // 2. Places point lights at the geometric centers of entity-linked Speckle meshes
+  //    (computed from render view AABBs â€” same batch data used for blue emissive).
+  //    Object-center lights are named DarkModeObjectLight_* and pushed onto
+  //    entityPointLights so the disable block cleans them up automatically.
+  // ============================================================================
+  useEffect(() => {
+    if (!isDarkMode || !darkModeStateRef.current || !viewerRef.current) return;
+    const state = darkModeStateRef.current;
+    state.entityObjectIds = Array.from(linkedObjectIds);
+
+    // Remove previously placed object-center lights before re-computing
+    const adapter = coordinatorRef.current?.getAdapter();
+    if (adapter) {
+      const customGroup = adapter.getCustomObjectsGroup();
+      state.entityPointLights = state.entityPointLights.filter(light => {
+        if (light.name.startsWith('DarkModeObjectLight_')) {
+          customGroup.remove(light);
+          light.dispose();
+          return false;
+        }
+        return true;
+      });
+
+      // Compute per-object AABB by unioning render views from batch scan
+      if (state.entityObjectIds.length > 0) {
+        const entitySet = new Set(state.entityObjectIds);
+        const r = viewerRef.current.getRenderer();
+        const boxPerObject = new Map<string, THREE.Box3>();
+
+        try {
+          const bIds: string[] = (r as any).getBatchIds();
+          for (const bid of bIds) {
+            const b = (r as any).getBatch(bid);
+            if (!b || b.geometryType !== GeometryType.MESH) continue;
+            for (const rv of b.renderViews) {
+              const objId: string | undefined = rv.renderData?.id;
+              if (!objId || !entitySet.has(objId)) continue;
+              const rvAabb: THREE.Box3 = rv.aabb;
+              if (!rvAabb) continue;
+              if (!boxPerObject.has(objId)) {
+                boxPerObject.set(objId, rvAabb.clone());
+              } else {
+                boxPerObject.get(objId)!.union(rvAabb);
+              }
+            }
+          }
+        } catch { /* non-critical */ }
+
+        const center = new THREE.Vector3();
+        boxPerObject.forEach((box, objId) => {
+          if (box.isEmpty()) return;
+          box.getCenter(center);
+          const light = new THREE.PointLight(
+            getCssColorHex('--color-primary'),
+            DARK_MODE.POINT_LIGHT_INTENSITY,
+            DARK_MODE.POINT_LIGHT_DISTANCE,
+            DARK_MODE.POINT_LIGHT_DECAY
+          );
+          light.name = `DarkModeObjectLight_${objId}`;
+          light.position.copy(center);
+          light.layers.enableAll();
+          // No shadow casting: the light is at the mesh surface, casting shadows would block
+          // neighboring geometry from being illuminated. Glow-only, no hard shadows.
+          customGroup.add(light);
+          state.entityPointLights.push(light);
+        });
+      }
+    }
+  }, [isDarkMode, linkedObjectIds]);
+
+  // ============================================================================
+  // Effect - Viewer visibility toggles
+  // ============================================================================
+  useEffect(() => {
+    showHoveringHighlightRef.current = showHoveringHighlight;
+  }, [showHoveringHighlight]);
+
+  useEffect(() => {
+    coordinatorRef.current?.getSoundSphereManager()?.setSoundSpheresVisible(showSoundSpheres);
+  }, [showSoundSpheres]);
+
+  useEffect(() => {
+    coordinatorRef.current?.getSoundSphereManager()?.setLabelSpritesVisible(showLabelSprites);
+    coordinatorRef.current?.getReceiverManager()?.setLabelSpritesVisible(showLabelSprites);
+  }, [showLabelSprites]);
+
+  useEffect(() => {
+    coordinatorRef.current?.getReceiverManager()?.setReceiversVisible(showSceneListeners);
+    coordinatorRef.current?.getGridReceiverManager()?.setVisible(showSceneListeners);
+  }, [showSceneListeners]);
+
+  useEffect(() => {
+    audioOrchestrator?.setSpeedOfSound(globalSoundSpeed);
+  }, [globalSoundSpeed, audioOrchestrator]);
+
+  // ============================================================================
+  // Global Volume Handlers
+  // ============================================================================
+  const handleGlobalVolumeChange = useCallback((value: number) => {
+    setGlobalVolume(value);
+    // Apply global volume to audio orchestrator
+    if (audioOrchestrator) {
+      audioOrchestrator.setMasterVolume(value);
+    }
+  }, [audioOrchestrator]);
+
+  const handleToggleVolumeSlider = useCallback(() => {
+    // Toggle mute when clicking the button
+    if (globalVolume > 0) {
+      handleGlobalVolumeChange(0);
+    } else {
+      handleGlobalVolumeChange(0.8);
+    }
+  }, [globalVolume, handleGlobalVolumeChange]);
+
+  const handleVolumeMouseEnter = useCallback(() => {
+    setIsHoveringVolume(true);
+  }, []);
+
+  const handleVolumeMouseLeave = useCallback(() => {
+    setIsHoveringVolume(false);
+  }, []);
+
+  // ============================================================================
+  // Refresh Scene Handler (hard reinitialize â€” same as a page reload for the viewer)
+  // ============================================================================
+  const handleRefreshScene = useCallback(() => {
+    setRefreshKey((k) => k + 1);
+  }, []);
+
+  // ============================================================================
+  // Reset Zoom Handler (using Speckle CameraController)
+  // ============================================================================
+  const handleResetZoom = useCallback(() => {
+    if (!cameraControllerRef.current || !viewerRef.current) {
+      console.warn('[SpeckleScene] Cannot reset zoom - camera controller or viewer not ready');
+      return;
+    }
+
+    try {
+      // Use setCameraView with undefined objectIds to fit all objects
+      // This uses the CameraController's default fit-to-all behavior
+      cameraControllerRef.current.setCameraView([], true);
+      console.log('[SpeckleScene] Camera reset to fit all objects');
+    } catch (error) {
+      console.error('[SpeckleScene] Error resetting camera:', error);
+    }
+  }, []);
+
+  // ============================================================================
+  // Playback Control Handlers (controlling both audio and timeline)
+  // ============================================================================
+  const handlePlayAll = useCallback(async () => {
+    console.log('[SpeckleScene] Play All clicked');
+    const isPausedResume = !playbackState.isPlaying && playbackState.currentTime > 0;
+
+    if (isPausedResume) {
+      // Resume from pause: seek restores audio, then start cursor immediately
+      const soundSphereManager = coordinatorRef.current?.getSoundSphereManager();
+      if (playbackSchedulerRef.current && soundSphereManager) {
+        const currentStates = useAudioControlsStore.getState().individualSoundStates;
+        const playingStates: Record<string, string> = { ...currentStates };
+        Object.keys(playingStates).forEach((id) => {
+          if (playingStates[id] === 'paused') playingStates[id] = 'playing';
+        });
+
+        const soundMetadata = soundSphereManager.getAllAudioSources();
+        await playbackSchedulerRef.current.seekToTime(
+          playbackState.currentTime,
+          soundMetadata,
+          playingStates as any,
+          soundIntervals,
+          timelineSounds
+        );
+      }
+      // Start timeline cursor (preserves currentTime)
+      playTimeline();
+      // Update store states (updateSoundPlayback will skip â€” prevStates synced by seekToTime)
+      storePlayAll();
+      return;
+    }
+
+    // Fresh start: defer playTimeline() until after scheduleSound() calls complete.
+    // The updateSoundPlayback effect reads this flag and starts the cursor post-scheduling.
+    playAfterSchedulingRef.current = true;
+    console.debug('[SpeckleScene] Fresh play â€” deferring cursor until scheduling complete');
+    storePlayAll();
+  }, [playTimeline, storePlayAll, playbackState.isPlaying, playbackState.currentTime, soundIntervals]);
+
+  const handlePauseAll = useCallback(() => {
+    // Pause timeline cursor
+    pauseTimeline();
+    // Notify store to update sound states
+    storePauseAll();
+  }, [pauseTimeline, storePauseAll]);
+
+  const handleStopAll = useCallback(() => {
+    // Notify store to update sound states FIRST
+    storeStopAll();
+    // Reset timeline cursor to start
+    stopTimeline();
+  }, [stopTimeline, storeStopAll]);
+
+  const handleToggleAuralization = useCallback(() => {
+    const { simulationConfigs, activeSimulationIndex, handleSetActiveSimulation } = useAcousticsSimulationStore.getState();
+    if (activeSimulationIndex !== null) {
+      // Disable then immediately re-enable the same card (reset cycle)
+      const savedIndex = activeSimulationIndex;
+      handleSetActiveSimulation(null);
+      setTimeout(() => {
+        handleSetActiveSimulation(savedIndex);
+      }, 350);
+    } else {
+      // Nothing active â€” try to activate the first completed card
+      const restoreIndex = simulationConfigs.findIndex(c => c.state === 'completed');
+      if (restoreIndex >= 0) {
+        handleSetActiveSimulation(restoreIndex);
+        if (viewMode !== 'dark') setViewMode('acoustic');
+      }
+    }
+  }, [viewMode, setViewMode]);
+
+  const handleSeek = useCallback(async (timeMs: number) => {
+    const soundSphereManager = coordinatorRef.current?.getSoundSphereManager();
+    if (!playbackSchedulerRef.current || !soundSphereManager) return;
+
+    // Get sound metadata
+    const soundMetadata = soundSphereManager.getAllAudioSources();
+
+    // Update timeline cursor position
+    seekTo(timeMs);
+
+    // Update audio playback to match new timeline position
+    await playbackSchedulerRef.current.seekToTime(
+      timeMs,
+      soundMetadata,
+      individualSoundStates,
+      soundIntervals,
+      timelineSounds
+    );
+  }, [seekTo, individualSoundStates, soundIntervals]);
+
+  // ============================================================================
+  // Effect - Sync Timeline Playback with Individual Sounds
+  // ============================================================================
+  useEffect(() => {
+    const anySoundPlaying = Object.values(individualSoundStates).some(state => state === 'playing');
+    const anySoundPaused = Object.values(individualSoundStates).some(state => state === 'paused');
+    const allSoundsStopped = Object.values(individualSoundStates).every(state => state === 'stopped' || state === undefined);
+
+    // When the timeline ends naturally it sets isPlaying=false AND currentTime=duration.
+    // Restarting here would create an infinite loop before handleTimelineEnd fires.
+    const timelineAtEnd = playbackState.currentTime >= timelineDurationMs;
+
+    if (anySoundPlaying && !playbackState.isPlaying && !timelineAtEnd) {
+      if (!playAfterSchedulingRef.current) playTimeline();
+    } else if (!anySoundPlaying && anySoundPaused && playbackState.isPlaying) {
+      pauseTimeline();
+    } else if (allSoundsStopped && (playbackState.isPlaying || playbackState.currentTime > 0)) {
+      stopTimeline();
+    }
+  }, [individualSoundStates, playbackState.isPlaying, playbackState.currentTime, playTimeline, pauseTimeline, stopTimeline, timelineDurationMs]);
+
+  // ============================================================================
+  // Effect - Update Selected Object Overlay Position (Animation Loop)
+  // ============================================================================
+  useEffect(() => {
+    if (!isViewerReady || !viewerRef.current || !selectedSpeckleObjectIds || selectedSpeckleObjectIds.length === 0) {
+      // Only update if not already null
+      if (prevOverlayRef.current !== null) {
+        prevOverlayRef.current = null;
+        setSelectedObjectOverlay(null);
+      }
+      return;
+    }
+
+    const viewer = viewerRef.current;
+    const selectedId = selectedSpeckleObjectIds[0];
+
+    // Get the selected object from world tree
+    const findObjectInTree = (tree: any, id: string): any => {
+      if (!tree) return null;
+
+      const checkNode = (node: any): any => {
+        const nodeId = node?.raw?.id || node?.model?.id || node?.id;
+        if (nodeId === id) return node;
+
+        const children = node?.model?.children || node?.children;
+        if (children) {
+          for (const child of children) {
+            const found = checkNode(child);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+
+      const rootChildren = tree.tree?._root?.children || tree._root?.children || tree.root?.children || tree.children;
+      if (rootChildren) {
+        for (const child of rootChildren) {
+          const found = checkNode(child);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    const selectedObject = findObjectInTree(worldTree, selectedId);
+
+    if (!selectedObject) {
+      // Only update if not already null
+      if (prevOverlayRef.current !== null) {
+        prevOverlayRef.current = null;
+        setSelectedObjectOverlay(null);
+      }
+      return;
+    }
+
+    // Animation loop to update overlay position
+    const updateOverlayPosition = () => {
+      if (!viewer || !selectedObject) return;
+
+      // Get bounding box of selected object
+      const renderView = viewer.getRenderer().renderingCamera;
+      if (!renderView) return;
+
+      // Try to get object bounds - Speckle objects may have bounds in different locations
+      let bounds = selectedObject.raw?.bounds || selectedObject.model?.bounds;
+
+      // If no bounds, try to get from viewer's world tree
+      if (!bounds) {
+        try {
+          const worldTree = viewer.getWorldTree();
+          const node = worldTree.findId(selectedId) as any;
+          if (node && node.raw) {
+            bounds = node.raw.bounds || node.raw.bbox;
+          }
+        } catch (e) {
+          // Ignore errors
+        }
+      }
+
+      let newX: number;
+      let newY: number;
+      let newVisible: boolean;
+
+      if (!bounds || !bounds.min || !bounds.max) {
+        // Fallback: use screen center if no bounds available
+        const canvas = viewer.getRenderer().renderer.domElement;
+        newX = canvas.clientWidth / 2;
+        newY = canvas.clientHeight / 2;
+        newVisible = true;
+      } else {
+        // Calculate center of bounding box
+        const center = new THREE.Vector3(
+          (bounds.min.x + bounds.max.x) / 2,
+          (bounds.min.y + bounds.max.y) / 2,
+          (bounds.min.z + bounds.max.z) / 2
+        );
+
+        // Project to screen coordinates
+        const camera = renderView as THREE.Camera;
+        const tempVector = center.clone();
+        tempVector.project(camera);
+
+        const canvas = viewer.getRenderer().renderer.domElement;
+        newX = (tempVector.x * 0.5 + 0.5) * canvas.clientWidth;
+        newY = (-(tempVector.y * 0.5) + 0.5) * canvas.clientHeight;
+
+        // Check if behind camera
+        newVisible = tempVector.z <= 1;
+      }
+
+      // Only update state if values changed significantly (avoid micro-updates)
+      const prev = prevOverlayRef.current;
+      const xChanged = !prev || Math.abs(prev.x - newX) > 0.5;
+      const yChanged = !prev || Math.abs(prev.y - newY) > 0.5;
+      const visChanged = !prev || prev.visible !== newVisible;
+
+      if (xChanged || yChanged || visChanged) {
+        prevOverlayRef.current = { x: newX, y: newY, visible: newVisible };
+        setSelectedObjectOverlay({
+          x: newX,
+          y: newY,
+          visible: newVisible,
+          objectData: selectedObject
+        });
+      }
+    };
+
+    // Run update on animation loop
+    const intervalId = setInterval(updateOverlayPosition, 16); // ~60fps
+
+    // Also run once immediately
+    updateOverlayPosition();
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [isViewerReady, viewerRef, selectedSpeckleObjectIds, worldTree]);
+
+  // ============================================================================
+  // Effect - Update Selected Entity in Context (for RightSidebar display)
+  // ============================================================================
+  useEffect(() => {
+    const prevIds = prevSpeckleObjectIdsRef.current;
+    prevSpeckleObjectIdsRef.current = selectedSpeckleObjectIds || [];
+
+    if (!selectedSpeckleObjectIds || selectedSpeckleObjectIds.length === 0) {
+      // A custom object click (sound sphere / receiver) in the same cycle cleared
+      // Speckle selection via clearAllSelections â€” don't interfere with the entity
+      // it already set via its own callback
+      if (skipDeselectionRef.current) {
+        skipDeselectionRef.current = false;
+        return;
+      }
+
+      // If we're deselecting FROM a Speckle object (prev was non-empty),
+      // always clear â€” even if selectedEntity has soundData (linked object case)
+      const wasSpeckleSelected = prevIds.length > 0;
+      if (wasSpeckleSelected) {
+        setSelectedEntity(null);
+        setSelectedObjectIds([]);
+      } else {
+        // Prev was already empty â€” this is a custom object (receiver/sound sphere)
+        // whose selection is managed by its own click callbacks, not Speckle
+        if (!selectedEntity?.receiverData && !selectedEntity?.soundData) {
+          setSelectedEntity(null);
+        }
+        setSelectedObjectIds([]);
+      }
+      return;
+    }
+
+    const selectedId = selectedSpeckleObjectIds[0];
+
+    // If this object is linked to a sound, skip â€” the click callback already set
+    // selectedEntity with objectType 'Sound' via onSelectSoundCard/handleSelectSoundCard
+    const linkState = getObjectLinkState(selectedId);
+    if (linkState.isLinked && linkState.linkedSoundIndex !== undefined) {
+      return;
+    }
+
+    // Helper to find object in tree
+    const findObjectInTree = (tree: any, id: string): any => {
+      if (!tree) return null;
+
+      const checkNode = (node: any): any => {
+        const nodeId = node?.raw?.id || node?.model?.id || node?.id;
+        if (nodeId === id) return node;
+
+        const children = node?.model?.children || node?.children;
+        if (children) {
+          for (const child of children) {
+            const found = checkNode(child);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+
+      const rootChildren = tree.tree?._root?.children || tree._root?.children || tree.root?.children || tree.children;
+      if (rootChildren) {
+        for (const child of rootChildren) {
+          const found = checkNode(child);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    // Helper to find parent name
+    const findParentName = (tree: any, childId: string): string | undefined => {
+      if (!tree) return undefined;
+
+      const checkNode = (node: any, parentNode: any): string | undefined => {
+        const nodeId = node?.raw?.id || node?.model?.id || node?.id;
+        if (nodeId === childId && parentNode) {
+          return parentNode?.model?.name || parentNode?.raw?.name || undefined;
+        }
+
+        const children = node?.model?.children || node?.children;
+        if (children) {
+          for (const child of children) {
+            const result = checkNode(child, node);
+            if (result) return result;
+          }
+        }
+        return undefined;
+      };
+
+      const rootChildren = tree.tree?._root?.children || tree._root?.children || tree.root?.children || tree.children;
+      if (rootChildren) {
+        for (const child of rootChildren) {
+          const result = checkNode(child, null);
+          if (result) return result;
+        }
+      }
+      return undefined;
+    };
+
+    const selectedObject = findObjectInTree(worldTree, selectedId);
+
+    if (!selectedObject) {
+      setSelectedEntity(null);
+      setSelectedObjectIds([]);
+      return;
+    }
+
+    const objectName = selectedObject.model?.name || selectedObject.raw?.name || 'Unnamed';
+    const objectType = selectedObject.raw?.speckle_type || 'Speckle Object';
+    const parentName = findParentName(worldTree, selectedId);
+
+    setSelectedEntity({
+      objectId: selectedId,
+      objectName,
+      objectType,
+      parentName
+    });
+    setSelectedObjectIds(selectedSpeckleObjectIds);
+  }, [selectedSpeckleObjectIds, worldTree, setSelectedEntity, setSelectedObjectIds, selectedEntity?.receiverData, getObjectLinkState]);
+
+  // ============================================================================  // Keyboard Controls - First-Person Mode
+  // ============================================================================
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!coordinatorRef.current) return;
+
+      const isFirstPerson = coordinatorRef.current.isFirstPersonMode();
+
+      if (!isFirstPerson) return;
+
+      const rotationSpeed = 0.05; // radians per key press
+
+      switch (event.key) {
+        case 'ArrowRight':
+          // Rotate left: positive yaw (rotate view left)
+          coordinatorRef.current.rotateFirstPersonView(rotationSpeed, 0);
+          event.preventDefault();
+          break;
+        case 'ArrowLeft':
+          // Rotate right: negative yaw (rotate view right)
+          coordinatorRef.current.rotateFirstPersonView(-rotationSpeed, 0);
+          event.preventDefault();
+          break;
+        case 'ArrowDown':
+          // Look up: negative pitch (look up in Three.js coordinate system)
+          coordinatorRef.current.rotateFirstPersonView(0, -rotationSpeed);
+          event.preventDefault();
+          break;
+        case 'ArrowUp':
+          // Look down: positive pitch (look down in Three.js coordinate system)
+          coordinatorRef.current.rotateFirstPersonView(0, rotationSpeed);
+          event.preventDefault();
+          break;
+        case 'Escape':
+          coordinatorRef.current.disableFirstPersonMode();
+          setIsFirstPersonMode(false);
+          onFPSExited?.();
+          event.preventDefault();
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
+  // ============================================================================
+  // Effect - Programmatic FPS exit (via exitFPSTrigger prop increment)
+  // ============================================================================
+  useEffect(() => {
+    if (exitFPSTrigger == null || exitFPSTrigger === 0) return;
+    if (!coordinatorRef.current) return;
+    coordinatorRef.current.disableFirstPersonMode();
+    setIsFirstPersonMode(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exitFPSTrigger]);
+
+  // ============================================================================
+  // Effect - Capture-phase dblclick listener: exit FPS on double-click
+  // ============================================================================
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleDblClickCapture = (e: MouseEvent) => {
+      if (!isFirstPersonMode) return;
+      // If a custom object (receiver/sound sphere/grid point) is under the cursor,
+      // let the canvas handler switch to it instead of exiting FPS mode.
+      if (coordinatorRef.current?.hasCustomObjectAt(e.clientX, e.clientY)) return;
+      // Exit FPS mode when user double-clicks anything while in first-person view
+      coordinatorRef.current?.disableFirstPersonMode();
+      setIsFirstPersonMode(false);
+      onFPSExited?.();
+      e.stopPropagation();
+    };
+
+    container.addEventListener('dblclick', handleDblClickCapture, true);
+    return () => {
+      container.removeEventListener('dblclick', handleDblClickCapture, true);
+    };
+  }, [isFirstPersonMode]);
+
+  // ============================================================================
+  // Effect - Sync Timeline Playback with Individual Sounds
+  // ============================================================================
+  useEffect(() => {
+    const anySoundPlaying = Object.values(individualSoundStates).some(state => state === 'playing');
+    const anySoundPaused = Object.values(individualSoundStates).some(state => state === 'paused');
+    const allSoundsStopped = Object.values(individualSoundStates).every(state => state === 'stopped' || state === undefined);
+
+    // When the timeline ends naturally it sets isPlaying=false AND currentTime=duration.
+    // Restarting here would create an infinite loop before handleTimelineEnd fires.
+    const timelineAtEnd = playbackState.currentTime >= timelineDurationMs;
+
+    if (anySoundPlaying && !playbackState.isPlaying && !timelineAtEnd) {
+      if (!playAfterSchedulingRef.current) playTimeline();
+    } else if (!anySoundPlaying && anySoundPaused && playbackState.isPlaying) {
+      pauseTimeline();
+    } else if (allSoundsStopped && (playbackState.isPlaying || playbackState.currentTime > 0)) {
+      stopTimeline();
+    }
+  }, [individualSoundStates, playbackState.isPlaying, playbackState.currentTime, playTimeline, pauseTimeline, stopTimeline, timelineDurationMs]);
+
+  // ============================================================================
+  // Effect - Notify Parent of Receiver Mode Changes (Change Detection)
+  // ============================================================================
+  useEffect(() => {
+    if (!onReceiverModeChange) return;
+
+    // Use the selected receiver ID, or fall back to first receiver if in first-person mode
+    const receiverId = isFirstPersonMode
+      ? (selectedReceiverId || (receivers.length > 0 ? receivers[0].id : null))
+      : null;
+
+    // Only notify if state actually changed (prevent infinite loop)
+    const prev = prevReceiverModeRef.current;
+    if (prev.isActive !== isFirstPersonMode || prev.receiverId !== receiverId) {
+      console.log('[SpeckleScene] Receiver mode changed:', { isFirstPersonMode, receiverId });
+      onReceiverModeChange(isFirstPersonMode, receiverId);
+      prevReceiverModeRef.current = { isActive: isFirstPersonMode, receiverId };
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isFirstPersonMode, selectedReceiverId, receivers[0]?.id]);
+
+  // ============================================================================
+  // Effect - Cleanup on component unmount
+  // ============================================================================
+  useEffect(() => {
+    return () => {
+      // Cleanup bounding box on unmount
+      if (boundingBoxManagerRef.current) {
+        boundingBoxManagerRef.current.dispose();
+      }
+    };
+  }, []);
+
+  // ============================================================================
+  // Effect - Go To Receiver (First-Person Mode)
+  // ============================================================================
+  useEffect(() => {
+    if (!goToReceiverId || !coordinatorRef.current) return;
+
+    // Get receiver mesh from ReceiverManager to use current position (after drag)
+    const receiverManager = coordinatorRef.current.getReceiverManager();
+    if (!receiverManager) {
+      console.warn('[SpeckleScene] Go to receiver: ReceiverManager not initialized');
+      return;
+    }
+
+    const receiverMeshes = receiverManager.getReceiverMeshes();
+    const receiverMesh = receiverMeshes.find(mesh => mesh.userData.receiverId === goToReceiverId);
+
+    if (!receiverMesh) {
+      console.warn('[SpeckleScene] Go to receiver: Receiver mesh not found:', goToReceiverId);
+      return;
+    }
+
+    // Use current mesh position (which reflects dragged position)
+    const receiverPosition = receiverMesh.position.clone();
+    console.log('[SpeckleScene] Go to receiver:', { id: goToReceiverId, position: receiverPosition.toArray() });
+
+    // Build look-at target from configurable listener orientation
+    const initialTarget = new THREE.Vector3(
+      receiverPosition.x + listenerOrientation.x,
+      receiverPosition.y + listenerOrientation.y,
+      receiverPosition.z + listenerOrientation.z
+    );
+
+    // Enable first-person mode with orientation-based target
+    coordinatorRef.current.enableFirstPersonMode(receiverPosition, initialTarget);
+    setIsFirstPersonMode(true);
+
+    // Update active receiver for simulation-based IR switching
+    // This triggers IR loading for all sources based on this receiver
+    coordinatorRef.current.updateActiveReceiver(goToReceiverId);
+
+    console.log('[SpeckleScene] Activated first-person mode for receiver:', {
+      receiverId: goToReceiverId,
+      position: receiverPosition.toArray(),
+      target: initialTarget.toArray()
+    });
+  }, [goToReceiverId, receivers, soundscapeData, listenerOrientation]);
+
+  // Effect: Go To Position (for grid listener points that have no individual mesh)
+  useEffect(() => {
+    if (!goToPosition || !coordinatorRef.current) return;
+
+    const receiverPosition = new THREE.Vector3(...goToPosition);
+
+    // Build look-at target from configurable listener orientation
+    const initialTarget = new THREE.Vector3(
+      receiverPosition.x + listenerOrientation.x,
+      receiverPosition.y + listenerOrientation.y,
+      receiverPosition.z + listenerOrientation.z
+    );
+
+    coordinatorRef.current.enableFirstPersonMode(receiverPosition, initialTarget);
+    setIsFirstPersonMode(true);
+
+    // Load IRs for this grid point
+    if (goToPositionReceiverId) {
+      coordinatorRef.current.updateActiveReceiver(goToPositionReceiverId);
+    }
+  }, [goToPosition, goToPositionReceiverId, listenerOrientation]);
+
+  // ============================================================================
+  // IR Hover Line (source â†” receiver)
+  // ============================================================================
+  useEffect(() => {
+    if (!IR_HOVER_LINE.ENABLED || !coordinatorRef.current) return;
+
+    // Remove existing line
+    if (irHoverLineRef.current) {
+      const scene = viewerRef.current?.getRenderer().scene;
+      if (scene) scene.remove(irHoverLineRef.current);
+      irHoverLineRef.current.geometry.dispose();
+      (irHoverLineRef.current.material as THREE.Material).dispose();
+      irHoverLineRef.current = null;
+      viewerRef.current?.requestRender();
+    }
+
+    if (!hoveredIRSourceReceiver) return;
+
+    const { sourceId, receiverId } = hoveredIRSourceReceiver;
+
+    // Look up positions from managers
+    const soundSphereManager = coordinatorRef.current.getSoundSphereManager();
+    const receiverManager = coordinatorRef.current.getReceiverManager();
+    if (!soundSphereManager || !receiverManager) return;
+
+    // Prefer simulation-time positions (source of truth per card) over current manager positions
+    const spherePos: [number, number, number] | undefined =
+      activeSimulationPositions?.sources[sourceId]
+      ?? soundSphereManager.getSpherePosition(sourceId)
+      ?? soundscapeData?.find(s => s.id === sourceId)?.position as [number, number, number] | undefined;
+    let receiverPos: [number, number, number] | undefined =
+      activeSimulationPositions?.receivers[receiverId]
+      ?? receivers.find((r) => r.id === receiverId)?.position;
+
+    // Fall back to grid listener points (IDs: `{gridId}-{pointIndex}`) when no sim position covers it
+    if (!receiverPos) {
+      outer: for (const g of gridListeners) {
+        const prefix = `${g.id}-`;
+        if (receiverId.startsWith(prefix)) {
+          const idx = parseInt(receiverId.slice(prefix.length), 10);
+          if (!isNaN(idx) && g.points[idx]) {
+            receiverPos = g.points[idx];
+            break outer;
+          }
+        }
+      }
+    }
+
+    if (!spherePos || !receiverPos) return;
+
+    const srcPos = { x: spherePos[0], y: spherePos[1], z: spherePos[2] };
+    const points = [
+      new THREE.Vector3(srcPos.x, srcPos.y, srcPos.z),
+      new THREE.Vector3(receiverPos[0], receiverPos[1], receiverPos[2]),
+    ];
+
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    const material = new THREE.LineDashedMaterial({
+      color: getCssColorHex('--color-primary'),
+      opacity: IR_HOVER_LINE.OPACITY,
+      transparent: true,
+      dashSize: IR_HOVER_LINE.DASH_SIZE,
+      gapSize: IR_HOVER_LINE.GAP_SIZE,
+      depthTest: false,
+      depthWrite: false,
+    });
+
+    const line = new THREE.Line(geometry, material);
+    line.computeLineDistances();
+    line.renderOrder = 9999;
+    line.layers.enable(4); // SPECKLE_OVERLAY_LAYER
+
+    const scene = viewerRef.current?.getRenderer().scene;
+    if (scene) {
+      scene.add(line);
+      irHoverLineRef.current = line;
+      viewerRef.current?.requestRender();
+    }
+
+    return () => {
+      if (irHoverLineRef.current) {
+        const scene = viewerRef.current?.getRenderer().scene;
+        if (scene) scene.remove(irHoverLineRef.current);
+        irHoverLineRef.current.geometry.dispose();
+        (irHoverLineRef.current.material as THREE.Material).dispose();
+        irHoverLineRef.current = null;
+        viewerRef.current?.requestRender();
+      }
+    };
+  }, [hoveredIRSourceReceiver, receivers, gridListeners, soundscapeData, activeSimulationPositions]);
+
+  // ============================================================================
+  // Simulation Position Mismatch Coloring
+  // Color sound spheres and receiver cubes light-red when they have moved more
+  // than SIMULATION_POSITION_THRESHOLD from their simulation-time positions.
+  // Only active when activeSimulationPositions is non-null (expanded completed card).
+  // ============================================================================
+  useEffect(() => {
+    if (!isViewerReady || !coordinatorRef.current) return;
+
+    const soundSphereManager = coordinatorRef.current.getSoundSphereManager();
+    const receiverManager = coordinatorRef.current.getReceiverManager();
+
+    if (!activeSimulationPositions) {
+      // No active simulation card expanded â€” restore default colors
+      soundSphereManager?.getSoundSphereMeshes().forEach(mesh => {
+        const mat = mesh.material as THREE.MeshStandardMaterial;
+        if (mat.color) mat.color.setHex(getCssColorHex('--color-primary'));
+        mat.needsUpdate = true;
+      });
+      receiverManager?.getReceiverMeshes().forEach(mesh => {
+        const mat = mesh.material as THREE.MeshStandardMaterial;
+        if (mat.color) mat.color.setHex(getCssColorHex('--color-receiver'));
+        if (mat.emissive) mat.emissive.setHex(getCssColorHex('--color-receiver'));
+        mat.needsUpdate = true;
+      });
+      viewerRef.current?.requestRender();
+      return;
+    }
+
+    // Color sphere meshes
+    soundSphereManager?.getSoundSphereMeshes().forEach(mesh => {
+      const soundId: string | undefined = mesh.userData.soundEvent?.id;
+      if (!soundId) return;
+      const simPos = activeSimulationPositions.sources[soundId];
+      if (!simPos) return;
+      const p = mesh.position;
+      const dist = Math.hypot(simPos[0] - p.x, simPos[1] - p.y, simPos[2] - p.z);
+      const mat = mesh.material as THREE.MeshStandardMaterial;
+      if (dist > SIMULATION_POSITION_THRESHOLD) {
+        mat.color.setHex(getCssColorHex('--color-error'));
+      }
+      mat.needsUpdate = true;
+    });
+
+    // Color receiver cube meshes
+    receiverManager?.getReceiverMeshes().forEach(mesh => {
+      const receiverId: string | undefined = mesh.userData.receiverId;
+      if (!receiverId) return;
+      const simPos = activeSimulationPositions.receivers[receiverId];
+      if (!simPos) return;
+      const p = mesh.position;
+      const dist = Math.hypot(simPos[0] - p.x, simPos[1] - p.y, simPos[2] - p.z);
+      const mat = mesh.material as THREE.MeshStandardMaterial;
+      if (dist > SIMULATION_POSITION_THRESHOLD) {
+        mat.color.setHex(getCssColorHex('--color-error'));
+        mat.emissive.setHex(getCssColorHex('--color-error'));
+      } else {
+        mat.color.setHex(getCssColorHex('--color-receiver'));
+        mat.emissive.setHex(getCssColorHex('--color-receiver'));
+      }
+      mat.needsUpdate = true;
+    });
+
+    viewerRef.current?.requestRender();
+  }, [isViewerReady, activeSimulationPositions, soundscapeData, receivers]);
+
+  // â”€â”€ Gradient map overlay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  useEffect(() => {
+    const scene = viewerRef.current?.getRenderer().scene as THREE.Scene | undefined;
+    if (!scene || !isViewerReady) return;
+
+    if (!gradientMapManagerRef.current) {
+      gradientMapManagerRef.current = new GradientMapManager(scene);
+    }
+
+    if (activeGradientMap) {
+      gradientMapManagerRef.current.update(activeGradientMap);
+    } else {
+      gradientMapManagerRef.current.clear();
+    }
+    viewerRef.current?.requestRender();
+
+    return () => {
+      gradientMapManagerRef.current?.clear();
+      viewerRef.current?.requestRender();
+    };
+  }, [activeGradientMap, isViewerReady]);
+
+  // ============================================================================
+  // Effects - Bounding Box Gumball Interaction
+  // ============================================================================
+  useEffect(() => {
+    const canvas = containerRef.current?.querySelector('canvas');
+    const viewer = viewerRef.current;
+    if (!canvas || !viewer || !boundingBoxManagerRef.current || !showBoundingBox) return;
+
+    let isDragging = false;
+    let dragAxis: 'x' | 'y' | 'z' | null = null;
+    let dragNormal: THREE.Vector3 | null = null;
+    let dragStartAnchor: THREE.Vector3 | null = null;
+    let baseBoundsAtDragStart: BoundingBoxBounds | null = null;
+
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    const scene = viewer.getRenderer().scene;
+    const camera = (viewer as any).getRenderer().renderingCamera as THREE.Camera | null;
+    if (!camera) return;
+
+    const dragAnchor = new THREE.Object3D();
+    dragAnchor.visible = false;
+    scene.add(dragAnchor);
+
+    const transformControls = new TransformControls(camera, canvas);
+    transformControls.setMode('translate');
+    transformControls.setSpace('world');
+    transformControls.setSize(0.65);
+    const transformHelper = transformControls as unknown as THREE.Object3D;
+    transformHelper.visible = false;
+    transformControls.getRaycaster().layers.enable(0);
+    transformControls.getRaycaster().layers.enable(4);
+    scene.add(transformHelper);
+
+    requestAnimationFrame(() => {
+      transformHelper.traverse((child) => {
+        child.renderOrder = 10000;
+        child.layers.disableAll();
+        child.layers.enable(0);
+        child.layers.enable(4);
+      });
+    });
+
+    const getControlPointer = (e: PointerEvent, button: number) => {
+      updatePointer(e);
+      return { x: pointer.x, y: pointer.y, button } as PointerEvent;
+    };
+
+    const moveDraggedFace = (bounds: BoundingBoxBounds, normal: THREE.Vector3, delta: number): BoundingBoxBounds => {
+      const nextBounds: BoundingBoxBounds = {
+        min: [...bounds.min] as [number, number, number],
+        max: [...bounds.max] as [number, number, number],
+      };
+
+      if (Math.abs(normal.x) > 0.5) {
+        if (normal.x > 0) nextBounds.max[0] += delta;
+        else nextBounds.min[0] -= delta;
+      } else if (Math.abs(normal.y) > 0.5) {
+        if (normal.y > 0) nextBounds.max[1] += delta;
+        else nextBounds.min[1] -= delta;
+      } else if (Math.abs(normal.z) > 0.5) {
+        if (normal.z > 0) nextBounds.max[2] += delta;
+        else nextBounds.min[2] -= delta;
+      }
+
+      return nextBounds;
+    };
+
+    const syncTransformAxis = (axis: 'x' | 'y' | 'z' | null) => {
+      const axisToken: 'X' | 'Y' | 'Z' | null = axis === 'x' ? 'X' : axis === 'y' ? 'Y' : axis === 'z' ? 'Z' : null;
+      transformControls.showX = axis === 'x';
+      transformControls.showY = axis === 'y';
+      transformControls.showZ = axis === 'z';
+      transformControls.axis = axisToken;
+    };
+
+    transformControls.addEventListener('change', () => {
+      viewer.requestRender();
+    });
+
+    transformControls.addEventListener('dragging-changed', (event) => {
+      const dragging = !!(event as { value?: boolean }).value;
+      isDragging = dragging;
+      if (cameraControllerRef.current) {
+        if (dragging) {
+          cameraControllerRef.current.enabled = false;
+        } else {
+          setTimeout(() => {
+            if (cameraControllerRef.current) cameraControllerRef.current.enabled = true;
+          }, 100);
+        }
+      }
+      if (selectionExtensionRef.current) {
+        selectionExtensionRef.current.enabled = !dragging;
+      }
+      canvas.style.cursor = dragging ? 'grabbing' : 'default';
+    });
+
+    transformControls.addEventListener('objectChange', () => {
+      const boundingBoxManager = boundingBoxManagerRef.current;
+      if (!dragNormal || !dragStartAnchor || !baseBoundsAtDragStart || !boundingBoxManager) return;
+
+      const projectedDelta = new THREE.Vector3()
+        .subVectors(dragAnchor.position, dragStartAnchor)
+        .dot(dragNormal);
+      const previewBounds = moveDraggedFace(baseBoundsAtDragStart, dragNormal, projectedDelta);
+
+      boundingBoxManager.updateBoundingBox(previewBounds, {
+        roomMaterials: resonanceAudioConfig?.roomMaterials,
+        visible: showBoundingBox,
+      });
+      setDraggedBoundsOverride(previewBounds);
+      if (onBoundsComputed) {
+        onBoundsComputed(previewBounds);
+      }
+      viewer.requestRender(8);
+      viewer.requestRender();
+    });
+
+    const updatePointer = (e: PointerEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    };
+
+    const getIntersectedGumball = () => {
+      const bbm = boundingBoxManagerRef.current;
+      if (!bbm || bbm.gumballHandles.length === 0 || !showBoundingBox) return null;
+      
+      const camera = (viewer as any).getRenderer().renderingCamera;
+      if (!camera) return null;
+      raycaster.setFromCamera(pointer, camera);
+      const intersects = raycaster.intersectObjects(bbm.gumballHandles, false);
+      if (intersects.length > 0) {
+        return intersects[0].object as THREE.Mesh;
+      }
+      return null;
+    };
+
+    // Hover detection: runs on canvas pointermove when NOT dragging
+    const onCanvasPointerMove = (e: PointerEvent) => {
+      if (isDragging) return; // drag has its own document-level handler
+      const bbm = boundingBoxManagerRef.current;
+      if (!bbm) return;
+      updatePointer(e);
+      const hit = getIntersectedGumball();
+      if (hit) {
+        bbm.setHoveredGumball(hit);
+        canvas.style.cursor = 'grab';
+      } else if (bbm.activeGumball) {
+        bbm.setHoveredGumball(null);
+        canvas.style.cursor = 'default';
+      }
+    };
+
+    const onDocumentDragMove = (e: PointerEvent) => {
+      if (!isDragging) return;
+      e.stopPropagation();
+      transformControls.pointerMove(getControlPointer(e, -1));
+    };
+
+    const onPointerDown = (e: PointerEvent) => {
+      updatePointer(e);
+
+      const bbm = boundingBoxManagerRef.current;
+      if (!bbm || bbm.gumballHandles.length === 0 || !showBoundingBox) return;
+      raycaster.setFromCamera(pointer, camera);
+      const intersects = raycaster.intersectObjects(bbm.gumballHandles, false);
+      if (intersects.length === 0) return;
+
+      const hit = intersects[0].object as THREE.Mesh;
+      const hitWorldPoint = intersects[0].point;
+
+      e.stopPropagation();
+
+      const normal: THREE.Vector3 = hit.userData.faceNormal;
+      dragNormal = normal.clone();
+      if (Math.abs(normal.x) > 0.5) dragAxis = 'x';
+      else if (Math.abs(normal.y) > 0.5) dragAxis = 'y';
+      else dragAxis = 'z';
+
+      const bounds = bbm.currentBounds;
+      if (bounds) {
+        baseBoundsAtDragStart = {
+          min: [...bounds.min] as [number, number, number],
+          max: [...bounds.max] as [number, number, number],
+        };
+      }
+
+      dragAnchor.position.copy(hitWorldPoint);
+      dragStartAnchor = hitWorldPoint.clone();
+      dragAnchor.visible = true;
+      transformHelper.visible = true;
+      syncTransformAxis(dragAxis);
+      transformControls.attach(dragAnchor);
+      transformControls.pointerDown(getControlPointer(e, 0));
+
+      document.addEventListener('pointermove', onDocumentDragMove, true);
+    };
+
+    const onPointerUp = (e: PointerEvent) => {
+      if (isDragging) {
+        e.stopPropagation();
+        transformControls.pointerUp(getControlPointer(e, 0));
+        isDragging = false;
+        dragAxis = null;
+        dragNormal = null;
+        dragStartAnchor = null;
+        baseBoundsAtDragStart = null;
+        syncTransformAxis(null);
+        transformControls.detach();
+        dragAnchor.visible = false;
+        transformHelper.visible = false;
+        canvas.style.cursor = 'default';
+        document.removeEventListener('pointermove', onDocumentDragMove, true);
+        if (selectionExtensionRef.current) {
+          selectionExtensionRef.current.enabled = true;
+        }
+      }
+    };
+
+    canvas.addEventListener('pointermove', onCanvasPointerMove, true);
+    canvas.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('pointerup', onPointerUp, true);
+
+    return () => {
+      canvas.removeEventListener('pointermove', onCanvasPointerMove, true);
+      canvas.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('pointerup', onPointerUp, true);
+      document.removeEventListener('pointermove', onDocumentDragMove, true);
+      canvas.style.cursor = 'default';
+      transformControls.detach();
+      transformControls.dispose();
+      scene.remove(transformHelper);
+      scene.remove(dragAnchor);
+      if (cameraControllerRef.current) cameraControllerRef.current.enabled = true;
+      if (selectionExtensionRef.current) selectionExtensionRef.current.enabled = true;
+    };
+  }, [isViewerReady, showBoundingBox]);
+
+
+  // ============================================================================
+  // Render
+  // ============================================================================
+  return (
+    <div
+      className={`relative w-full h-full ${className || ''}`}
+      style={{ height: '100vh', backgroundColor: isDarkMode ? 'var(--background)' : undefined }}
+    >
+      {/* Viewer container */}
+      <div
+        ref={containerRef}
+        style={{ width: '100%', height: '100%' }}
+        id="speckle-scene-container"
+      />
+
+      {/* View Mode Switch - Top Right of Viewer (Acoustic | Default | Dark) */}
+      {isViewerReady && (
+        <div
+          className="absolute top-4 z-20 pointer-events-auto transition-all duration-300 flex flex-col items-end gap-1"
+          style={{
+            right: isRightSidebarExpanded ? `${(rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH) + 20}px` : '20px'
+          }}
+        >
+        <div className="flex items-center gap-2">
+          <div className="flex items-center">
+            <UndoRedoToolbar />
+          </div>
+
+          <div
+            className="flex items-center rounded-md overflow-hidden"
+            style={{
+              backgroundColor: 'rgba(0,0,0,0.45)',
+              border: '1px solid rgba(255,255,255,0.15)',
+            }}
+            role="radiogroup"
+            aria-label="View mode"
+          >
+            {([
+              { mode: 'acoustic', label: 'Acoustic', title: 'Acoustic mode: layer isolation + material colors' },
+              { mode: 'default', label: 'Default', title: 'Default mode: normal view' },
+              { mode: 'dark', label: 'Dark', title: 'Dark mode: sound source lighting' },
+            ] as const).map(({ mode, label, title }) => {
+              const isActive = viewMode === mode;
+              const accentColor = mode === 'dark' ? 'var(--color-primary)' : 'var(--color-info)';
+              return (
+                <button
+                  key={mode}
+                  role="radio"
+                  aria-checked={isActive}
+                  onClick={() => setViewMode(mode)}
+                  title={title}
+                  className="px-2.5 py-1 text-[10px] font-medium transition-colors"
+                  style={{
+                    backgroundColor: isActive
+                      ? mode === 'dark'
+                        ? 'rgba(0,212,255,0.18)'
+                        : 'rgba(0,212,255,0.13)'
+                      : 'transparent',
+                    color: isActive ? accentColor : 'rgba(255,255,255,0.55)',
+                    borderRight: mode !== 'dark' ? '1px solid rgba(255,255,255,0.12)' : undefined,
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        </div>
+      )}
+
+      {/* First-person mode helper overlay â€” centered between sidebars like the timeline */}
+      {isFirstPersonMode && (() => {
+        const effectiveLeftContent = leftSidebarContentWidth ?? LEFT_SIDEBAR_CONTENT_WIDTH;
+        const effectiveRightWidth = rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH;
+        const leftW = UI_VERTICAL_TABS.WIDTH + (isLeftSidebarExpanded ? effectiveLeftContent : 0);
+        const rightW = isRightSidebarExpanded ? effectiveRightWidth : RIGHT_SIDEBAR_COLLAPSED_WIDTH;
+        const centerOffset = (leftW - rightW) / 2;
+        return (
+          <div
+            className="absolute top-4 pointer-events-none z-20 flex flex-col items-center gap-1 transition-all duration-300"
+            style={{
+              left: `calc(50% + ${centerOffset}px)`,
+              transform: 'translateX(-50%)',
+            }}
+          >
+            <div
+              className="px-4 py-2 rounded-xl text-xs font-medium text-white text-center"
+              style={{
+                backgroundColor: 'rgba(0,0,0,0.55)',
+                border: '1px solid rgba(255,255,255,0.15)',
+                backdropFilter: 'blur(6px)',
+              }}
+            >
+              <span className="opacity-90">First-person view Â· Use</span>{' '}
+              <kbd className="px-1.5 py-0.5 rounded font-mono text-[10px]" style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}>â†</kbd>{' '}
+              <kbd className="px-1.5 py-0.5 rounded font-mono text-[10px]" style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}>â†’</kbd>{' '}
+              <kbd className="px-1.5 py-0.5 rounded font-mono text-[10px]" style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}>â†‘</kbd>{' '}
+              <kbd className="px-1.5 py-0.5 rounded font-mono text-[10px]" style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}>â†“</kbd>{' '}
+              <span className="opacity-90">to look around Â· Press</span>{' '}
+              <kbd className="px-1.5 py-0.5 rounded font-mono text-[10px]" style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}>Esc</kbd>{' '}
+              <span className="opacity-90">to exit</span>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Loading overlay */}
+      {isLoading && (        <div
+          className="absolute inset-0 flex items-center justify-center pointer-events-none bg-background/50"
+        >
+          <div className="flex flex-col items-center gap-3">
+            <div
+              className="animate-spin rounded-full border-4 border-t-transparent"
+              style={{
+                width: '48px',
+                height: '48px',
+                borderColor: 'var(--color-primary)',
+                borderTopColor: 'transparent',
+              }}
+            />
+            <p className="text-xs text-neutral-400">
+              Loading model...
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Error overlay */}
+      {error && (
+        <div
+          className="absolute inset-0 flex items-center justify-center bg-background/50"
+        >
+          <div className="text-center p-8">
+            <div className="text-6xl mb-4">âš ï¸</div>
+            <h3 className="text-xl font-semibold mb-2 text-error">
+              Failed to Load Model
+            </h3>
+            <p className="text-sm text-neutral-400">
+              {error}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Empty state - File upload */}
+      {!modelUrl && !isLoading && !error && (
+        <div
+          className="absolute inset-0 flex items-center justify-center bg-background/50"
+        >
+          <div className="flex flex-col items-center gap-6 p-8" style={{ maxWidth: '400px' }}>
+            <div className="text-center">
+              {/* Fixed header - prevents wrapping issues */}
+            <div className="flex items-center gap-4 flex-shrink-0 mb-4 justify-center">
+              <Image className="invert flex-shrink-0" src="/compas_icon_white.png" alt="compas logo" width={100} height={100} priority />
+            </div>
+              <h3 className="text-xl font-semibold mb-2">
+                Compas Soundscape
+              </h3>
+            </div>
+
+            {/* File Upload Area or Speckle-required placeholder */}
+            {speckleTokenSet === true ? (
+              <>
+                <div className="w-full">
+                  <FileUploadArea
+                    file={modelFile}
+                    isDragging={isDragging}
+                    acceptedFormats={MODEL_FILE_EXTENSIONS.join(',')}
+                    acceptedExtensions={MODEL_FILE_EXTENSIONS.join(', ')}
+                    onFileChange={handleFileChange}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    inputId="scene-model-upload"
+                    multiple={false}
+                  />
+                </div>
+                {onSpeckleModelSelect && (
+                  <SpeckleModelBrowser onModelSelect={onSpeckleModelSelect} />
+                )}
+              </>
+            ) : speckleTokenSet === false ? (
+              <div
+                className="w-full rounded-lg p-5 text-center flex flex-col gap-3"
+                style={{ border: `1px dashed var(--color-secondary-light)`, background: 'var(--color-secondary-lighter)' }}
+              >
+                <p className="text-xs text-neutral-600">
+                  3D models are hosted through{' '}
+                  <a
+                    href="https://app.speckle.systems"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline"
+                    style={{ color: 'var(--color-primary)' }}
+                  >
+                    app.speckle.systems
+                  </a>
+                  . Add your Speckle token to upload and browse models.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => useTextGenerationStore.getState().triggerOpenTokenSettings()}
+                  className="self-center text-xs px-3 py-1.5 rounded transition-colors"
+                  style={{ border: `1px solid var(--color-secondary-light)`, color: 'var(--color-secondary-hover)' }}
+                >
+                  Configure Speckle token in Settings â†’
+                </button>
+              </div>
+            ) : null /* loading â€” render nothing while checking */}
+
+            {/* Supported formats
+            <div className="text-xs space-y-2 text-center text-neutral-500">
+              <p className="font-medium text-neutral-400">Supported Formats:</p>
+              <p>.3dm (Rhino) &middot; .ifc (IFC) &middot; .obj (Wavefront)</p>
+            </div> */}
+          </div>
+        </div>
+      )}
+
+      {/* Audio Timeline - Bottom Center (dynamically centered between sidebars) */}
+      {showTimeline && isViewerReady && timelineSounds.length > 0 && (() => {
+        // Calculate sidebar widths for centering
+        const effectiveLeftContent = leftSidebarContentWidth ?? LEFT_SIDEBAR_CONTENT_WIDTH;
+        const effectiveRightWidth = rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH;
+        const leftSidebarWidth = UI_VERTICAL_TABS.WIDTH + (isLeftSidebarExpanded ? effectiveLeftContent : 0);
+        const rightSidebarWidthCalc = isRightSidebarExpanded ? effectiveRightWidth : RIGHT_SIDEBAR_COLLAPSED_WIDTH;
+        // Center offset: positive = shift right
+        const centerOffset = (leftSidebarWidth - rightSidebarWidthCalc) / 2;
+
+        return (
+          <div
+            className="absolute pointer-events-auto z-10 transition-all duration-300"
+            style={{
+              bottom: `${TIMELINE_LAYOUT.BOTTOM_OFFSET_PX * 4}px`,
+              // Center between the two sidebars â€” width is driven by WaveSurferTimeline content
+              left: `calc(50% + ${centerOffset}px)`,
+              transform: 'translateX(-50%)',
+              // Constrain to available space; WaveSurferTimeline sets its own width
+              maxWidth: `min(calc(100% - ${leftSidebarWidth}px - ${rightSidebarWidth}px - ${TIMELINE_LAYOUT.SIDEBAR_HORIZONTAL_OFFSET_PX}px), ${TIMELINE_LAYOUT.MAX_WIDTH_PX}px)`,
+            }}
+          >
+          <WaveSurferTimeline
+            sounds={timelineSounds}
+            currentTime={playbackState.currentTime}
+            onSeek={handleSeek}
+            mutedSounds={mutedSounds}
+            soloedSound={soloedSound}
+            onRefresh={handleRefreshTimeline}
+            onDownload={handleDownloadTimeline}
+          />
+          </div>
+        );
+      })()}
+
+      {/* Playback Controls - Bottom Center (dynamically centered between sidebars) */}
+      <PlaybackControls
+        onPlayAll={handlePlayAll}
+        onPauseAll={handlePauseAll}
+        onStopAll={handleStopAll}
+        onToggleAuralization={handleToggleAuralization}
+        isAnyPlaying={isAnyPlaying}
+        hasSounds={soundscapeData !== null && soundscapeData.length > 0}
+        isLeftSidebarExpanded={isLeftSidebarExpanded}
+        isRightSidebarExpanded={isRightSidebarExpanded}
+        leftSidebarContentWidth={leftSidebarContentWidth}
+        rightSidebarWidth={rightSidebarWidth}
+      />
+
+      {/* NOTE: Selected Object Info moved to RightSidebar EntityInfoPanel */}
+
+      {/* 3D Controls Info - Bottom Left */}
+      {isViewerReady && <ControlsInfo />}
+
+      {/* Bottom-right control buttons */}
+      {isViewerReady && (
+        <div
+          className="absolute bottom-6 flex flex-col items-center pointer-events-auto z-20 transition-all duration-300"
+          style={{
+            gap: UI_SCENE_BUTTON.GAP,
+            // When expanded: offset by full sidebar width + 24px margin
+            // When collapsed: offset by collapsed width (40px) + 24px margin
+            right: isRightSidebarExpanded ? `${(rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH) + 20}px` : '20px'
+          }}
+        >
+          {/* Global Volume Control with Hover Slider */}
+          <div
+            className="flex flex-col items-center"
+            onMouseEnter={handleVolumeMouseEnter}
+            onMouseLeave={handleVolumeMouseLeave}
+          >
+            {/* Global Volume Slider (appears above button on hover) */}
+            {isHoveringVolume && (
+              <div data-volume-slider className="mb-1 flex items-center justify-center">
+                <VerticalVolumeSlider
+                  value={globalVolume}
+                  onChange={handleGlobalVolumeChange}
+                />
+              </div>
+            )}
+
+            {/* Global Volume Button */}
+            <div data-volume-button>
+              <SceneControlButton
+                onClick={handleToggleVolumeSlider}
+                isActive={globalVolume === 0}
+                activeColor={'var(--color-warning)'}
+                title="Global Volume"
+                icon={globalVolume === 0 ? (
+                  <Icon>
+                    <path d="M11 5L6 9H2v6h4l5 4V5z" />
+                    <line x1="23" y1="9" x2="17" y2="15" />
+                    <line x1="17" y1="9" x2="23" y2="15" />
+                  </Icon>
+                ) : (
+                  <Icon>
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                  </Icon>
+                )}
+              />
+            </div>
+          </div>
+
+
+        {/* Save Soundscape to Speckle Button */}
+        {soundscapeData && soundscapeData.length > 0 && speckleData && onSaveSoundscape && (
+          <SceneControlButton
+            onClick={onSaveSoundscape}
+            isActive={isSavingSoundscape}
+            title={isSavingSoundscape ? "Saving soundscape..." : "Save soundscape to Speckle"}
+            icon={
+              isSavingSoundscape ? (
+                <Icon>
+                  <circle cx="12" cy="12" r="10" strokeDasharray="31.4 31.4" strokeDashoffset="0">
+                    <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite" />
+                  </circle>
+                </Icon>
+              ) : (
+                <Icon>
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </Icon>
+              )
+            }
+          />
+        )}
+
+        {/* Reset Zoom Button */}
+        <SceneControlButton
+          onClick={handleResetZoom}
+          title="Reset camera view"
+          icon={
+            <Icon>
+              <rect x="3" y="3" width="18" height="18" strokeDasharray="3 3" />
+            </Icon>
+          }
+        />
+
+        {/* Refresh Scene Button */}
+        <SceneControlButton
+          onClick={handleRefreshScene}
+          title="Refresh scene"
+          icon={
+            <Icon>
+              <polyline points="23 4 23 10 17 10" />
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+            </Icon>
+          }
+        />
+
+        {/* Toggle Timeline Button */}
+        <SceneControlButton
+          onClick={() => setShowTimeline(!showTimeline)}
+          isActive={showTimeline}
+          title={showTimeline ? "Hide timeline" : "Show timeline"}
+          icon={
+            <Icon>
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+              <line x1="16" y1="2" x2="16" y2="6" />
+              <line x1="8" y1="2" x2="8" y2="6" />
+              <line x1="3" y1="10" x2="21" y2="10" />
+              <path d="M8 14h.01" />
+              <path d="M12 14h.01" />
+              <path d="M16 14h.01" />
+              <path d="M8 18h.01" />
+              <path d="M12 18h.01" />
+              <path d="M16 18h.01" />
+            </Icon>
+          }
+        />
+      </div>
+      
+        )}
+    </div>
+  );
+}

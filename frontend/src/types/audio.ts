@@ -105,6 +105,7 @@ export interface ImpulseResponseMetadata {
   sampleRate: number;
   duration: number; // Duration in seconds
   fileSize: number; // Size in bytes
+  peakAmplitude?: number; // Peak absolute amplitude in the float-normalised [-1, 1] domain
   normalizationConvention?: 'N3D' | 'SN3D'; // Ambisonic normalization scheme (simulation metadata)
   channelOrdering?: 'AmbiX' | 'FuMa' | 'ACN'; // Ambisonic channel ordering (AmbiX=W,Y,Z,X, FuMa=W,X,Y,Z)
 }

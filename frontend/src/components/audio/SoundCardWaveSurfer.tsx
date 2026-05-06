@@ -116,11 +116,14 @@ export function SoundCardWaveSurfer({
       fullAudioUrl = `${API_BASE_URL}${audioUrl}`;
     }
 
+    const primaryColor = resolveCssVar('var(--color-primary)');
+    const secondaryHoverColor = resolveCssVar('var(--color-secondary-hover)');
+
     const wavesurfer = WaveSurfer.create({
       container: containerRef.current,
-      waveColor: 'var(--color-secondary-hover)',
-      progressColor: 'var(--color-primary)',
-      cursorColor: 'var(--color-primary)',
+      waveColor: secondaryHoverColor,
+      progressColor: primaryColor,
+      cursorColor: primaryColor,
       cursorWidth: 2,
       height: 50,
       barWidth: 2,
@@ -376,7 +379,7 @@ export function SoundCardWaveSurfer({
         className="rounded overflow-hidden"
         style={{
           border: `2px solid ${isMuted ? 'var(--color-secondary-hover)' : color}`,
-          backgroundColor: 'var(--background)',
+          backgroundColor: 'var(--foreground-static)',
           borderRadius: '8px',
           opacity: isMuted ? 0.5 : 1,
           position: 'relative',
@@ -408,7 +411,7 @@ export function SoundCardWaveSurfer({
                 left: 0,
                 width: `${localTrimStart * 100}%`,
                 height: '100%',
-                backgroundColor: 'rgba(0,0,0,0.78)',
+                backgroundColor: 'var(--foreground-static)',
                 pointerEvents: 'none',
                 zIndex: 5,
               }}
@@ -424,7 +427,7 @@ export function SoundCardWaveSurfer({
                 left: `${localTrimEnd * 100}%`,
                 width: `${(1 - localTrimEnd) * 100}%`,
                 height: '100%',
-                backgroundColor: 'rgba(0,0,0,0.78)',
+                backgroundColor: 'var(--foreground-static)',
                 pointerEvents: 'none',
                 zIndex: 5,
               }}
@@ -528,6 +531,12 @@ export function SoundCardWaveSurfer({
           <button
             onClick={onPlayPause}
             disabled={!isReady}
+            onMouseEnter={(e) => {
+              if (!isPlaying) e.currentTarget.style.backgroundColor = 'var(--color-secondary-hover-static)';
+            }}
+            onMouseLeave={(e) => {
+              if (!isPlaying) e.currentTarget.style.backgroundColor = 'var(--color-secondary)';
+            }}
             className="w-8 h-8 flex items-center justify-center rounded-full transition-colors"
             style={{
               backgroundColor: isPlaying ? color : 'var(--color-secondary)',
@@ -559,6 +568,12 @@ export function SoundCardWaveSurfer({
               onStop();
             }}
             disabled={!isReady}
+            onMouseEnter={(e) => {
+              if (!isPlaying) e.currentTarget.style.backgroundColor = 'var(--color-secondary-hover-static)';
+            }}
+            onMouseLeave={(e) => {
+              if (!isPlaying) e.currentTarget.style.backgroundColor = 'var(--color-secondary)';
+            }}
             className="w-8 h-8 flex items-center justify-center rounded-full transition-colors"
             style={{
               backgroundColor: 'var(--color-secondary)',
@@ -575,4 +590,14 @@ export function SoundCardWaveSurfer({
       </div>
     </div>
   );
+}
+
+/** Resolve a CSS custom property to its computed hex/rgb value for use with Canvas APIs. */
+function resolveCssVar(variable: string, fallback = '#888888'): string {
+  if (typeof window === 'undefined') return fallback;
+  if (!variable.startsWith('var(')) return variable;
+  const match = variable.match(/var\(\s*(--[^,)]+)/);
+  if (!match) return fallback;
+  const val = getComputedStyle(document.documentElement).getPropertyValue(match[1]).trim();
+  return val || fallback;
 }

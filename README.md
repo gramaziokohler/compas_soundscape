@@ -26,14 +26,11 @@ cd compas_soundscape
 conda create -n compas-soundscape python=3.11 -c conda-forge
 conda activate compas-soundscape
 
-# ---> Path 1 (recommended): Install uv for faster dependencies check
+# Install dependencies
 pip install uv
 uv pip install -r requirements.txt --index-strategy unsafe-best-match
 
-# ---> Path 2: Install dependencies with pip
-pip install -r requirements.txt
-
-# (optional) Install your favorite LLM API. (You will need to input an API token to use it, explained later)
+# (optional) Install your favorite LLM API. (You will need an API token key to use it, explained later)
 pip install google-genai
 # or / and
 pip install anthropic openai

@@ -344,7 +344,7 @@ class PyroomacousticsService:
             n_bands = 7
 
             # Define Frequency bands for absorption/scattering
-            # factory = pra.acoustics.OctaveBandsFactory(fs=fs, base_frequency=PYROOMACOUSTICS_BASE_FREQUENCY)
+            # factory = pra.acoustics.OctaveBandsFactory(fs=fs, base_frequency=125)
             # print(f"  Number of frequency bands: {factory.n_bands}")
 
             # Build face_materials dict based on input mode
@@ -505,18 +505,6 @@ class PyroomacousticsService:
             energy_thres = energy_thres or PYROOMACOUSTICS_RAY_TRACING_ENERGY_THRES
             time_thres = time_thres or PYROOMACOUSTICS_RAY_TRACING_TIME_THRES
             hist_bin_size = hist_bin_size or PYROOMACOUSTICS_RAY_TRACING_HIST_BIN_SIZE
-
-            # Validate parameters
-            if n_rays <= 0:
-                raise ValueError("n_rays must be positive")
-            if receiver_radius <= 0:
-                raise ValueError("receiver_radius must be positive")
-            if energy_thres <= 0:
-                raise ValueError("energy_thres must be positive")
-            if time_thres <= 0:
-                raise ValueError("time_thres must be positive")
-            if hist_bin_size <= 0:
-                raise ValueError("hist_bin_size must be positive")
 
             # Enable ray tracing with specified parameters
             # This will raise an error if room wasn't created with ray_tracing=True

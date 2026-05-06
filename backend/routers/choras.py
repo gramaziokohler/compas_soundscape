@@ -573,6 +573,12 @@ async def run_choras_simulation_speckle(
         faces: list[list[int]]       = geometry_data["faces"]
         object_ids: list[str]        = geometry_data["object_ids"]
         object_face_ranges: dict     = geometry_data["object_face_ranges"]
+        geometry_units: str          = geometry_data.get("units", "m")
+
+        logger.info(
+            f"Geometry: {len(vertices)} vertices, {len(faces)} faces, "
+            f"{len(object_ids)} objects (source units: '{geometry_units}', vertices converted to meters)"
+        )
 
         if not vertices or not faces:
             raise HTTPException(status_code=400, detail="No geometry found in Speckle layer")

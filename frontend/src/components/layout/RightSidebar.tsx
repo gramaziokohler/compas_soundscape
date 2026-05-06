@@ -64,10 +64,9 @@ export function RightSidebar({
 
   return (
     <aside
-      className="fixed top-0 right-0 h-screen flex flex-col transition-all duration-300 ease-in-out overflow-hidden"
+      className="fixed top-0 right-0 h-screen flex flex-col transition-all duration-300 ease-in-out overflow-hidden bg-background"
       style={{
         width: isExpanded ? `${sidebarWidth}px` : '0px',
-        backgroundColor: 'white',
         borderLeft: isExpanded ? `${UI_RIGHT_SIDEBAR.BORDER_WIDTH}px solid var(--color-secondary-light)` : 'none',
         zIndex: 10,
         userSelect: isResizing ? 'none' : undefined,
@@ -107,14 +106,13 @@ export function RightSidebar({
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {/* Header */}
         <div
-          className="flex-shrink-0 flex items-center px-4 gap-2"
+          className="flex-shrink-0 flex items-center px-4 gap-2 bg-background"
           style={{
             height: `${UI_RIGHT_SIDEBAR.HEADER_HEIGHT}px`,
-            backgroundColor: 'white',
             borderBottom: `${UI_RIGHT_SIDEBAR.BORDER_WIDTH}px solid var(--color-secondary-light)`,
           }}
         >
-          <h2 className="text-sm font-semibold whitespace-nowrap text-neutral-700">
+          <h2 className="text-sm font-semibold whitespace-nowrap text-foreground">
             Object Explorer
           </h2>
         </div>
@@ -132,11 +130,10 @@ export function RightSidebar({
 
       {/* ===== BOTTOM SECTION: Entity Information Panel ===== */}
       <div
-        className="flex-shrink-0"
+        className="flex-shrink-0 bg-background"
         style={{
           height: '220px',
           borderTop: `${UI_RIGHT_SIDEBAR.BORDER_WIDTH}px solid var(--color-secondary-light)`,
-          backgroundColor: 'white',
         }}
       >
         {/* Header */}

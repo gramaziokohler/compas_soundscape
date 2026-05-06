@@ -4,6 +4,7 @@ import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import TimelinePlugin from 'wavesurfer.js/dist/plugins/timeline.js';
 import { WAVESURFER_TIMELINE, API_BASE_URL } from '@/utils/constants';
+import { SceneControlButton } from '@/components/ui/SceneControlButton';
 import type { TimelineSound } from '@/types/audio';
 import { useAudioControlsStore } from '@/store';
 
@@ -148,7 +149,7 @@ export function WaveSurferTimeline({
       // right edge stays exactly at timelineWidth (prevents overflow → no spurious scrollbar).
       const initDelayPx = ((sound.initialDelayMs ?? 0) / 1000) * pixelsPerSecond;
       trackContainer.style.width = `${Math.max(0, timelineWidth - initDelayPx)}px`;
-      trackContainer.style.backgroundColor = 'var(--color-secondary)';
+      trackContainer.style.backgroundColor = 'var(--foreground-static)';
       if (initDelayPx > 0) trackContainer.style.transform = `translateX(${initDelayPx}px)`;
       containerRef.current?.appendChild(trackContainer);
 
@@ -158,7 +159,7 @@ export function WaveSurferTimeline({
       labelContainer.style.position = 'absolute';
       labelContainer.style.left = '5px';
       labelContainer.style.top = '5px';
-      labelContainer.style.color = 'var(--foreground)';
+      labelContainer.style.color = 'var(--background-static)';
       labelContainer.style.fontSize = '12px';
       labelContainer.style.fontWeight = 'bold';
       labelContainer.style.zIndex = '10';
@@ -170,9 +171,10 @@ export function WaveSurferTimeline({
       const isSoundMuted = soloedSound !== null
         ? sound.id !== soloedSound
         : mutedSounds.has(sound.id);
+      const resolvedSecondaryHover = resolveCssVar('var(--color-secondary-hover)');
       const waveformColor = isSoundMuted
-        ? 'var(--color-secondary-hover)'
-        : 'var(--color-secondary-hover)';
+        ? resolvedSecondaryHover
+        : resolvedSecondaryHover;
 
       // Create WaveSurfer instance for each scheduled iteration
       const delay = sound.initialDelayMs ?? 0;
@@ -375,13 +377,13 @@ export function WaveSurferTimeline({
 
     timelineWavesurfer.registerPlugin(
       TimelinePlugin.create({
-        height: 30,
+        height: 20,
         timeInterval: WAVESURFER_TIMELINE.TIME_INTERVAL,
         primaryLabelInterval: WAVESURFER_TIMELINE.PRIMARY_LABEL_INTERVAL,
         secondaryLabelInterval: WAVESURFER_TIMELINE.TIME_INTERVAL,
         style: {
           fontSize: '11px',
-          color: 'var(--foreground)',
+          color: 'var(--background-static)',
         },
       })
     );
@@ -452,9 +454,10 @@ export function WaveSurferTimeline({
           ? 'var(--color-secondary-hover)'
           : 'var(--color-secondary-hover)';
 
+        const resolvedWaveColor = resolveCssVar(waveformColor);
         instance.wavesurfer.setOptions({
-          waveColor: waveformColor,
-          progressColor: waveformColor,
+          waveColor: resolvedWaveColor,
+          progressColor: resolvedWaveColor,
         });
 
 
@@ -526,41 +529,42 @@ export function WaveSurferTimeline({
           </span>
         </div>
 
-        <div className="flex items-center gap-3">
-          <button
+        <div className="flex items-center gap-2">
+          <SceneControlButton
             onClick={() => onRefresh?.()}
-            className="text-xs px-2 py-1 rounded transition-colors"
-            style={{
-              color: 'var(--color-primary)',
-              backgroundColor: 'var(--background)',
-              border: '1px solid'
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--color-primary-light)'}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--background)'}
             title="Reload all available sounds into the timeline"
-          >
-            Reload
-          </button>
+            inactiveBackground="var(--color-foreground-static)"
+            activeColor="var(--color-primary)"
+            icon={
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                <path d="M21 3v5h-5" />
+                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                <path d="M8 16H3v5" />
+              </svg>
+            }
+          />
           {onDownload && (
-            <button
+            <SceneControlButton
               onClick={handleDownload}
-              disabled={isDownloading || isLoading}
-              className="text-xs px-2 py-1 rounded transition-colors"
-              style={{
-                color: 'var(--color-primary)',
-                backgroundColor: 'var(--background)',
-                border: '1px solid'
-              }}
-              onMouseEnter={(e) => {
-                if (!isDownloading && !isLoading) e.currentTarget.style.backgroundColor = 'var(--color-primary-light)';
-              }}
-              onMouseLeave={(e) => {
-                if (!isDownloading && !isLoading) e.currentTarget.style.backgroundColor = 'var(--background)';
-              }}
               title={isDownloading ? 'Rendering soundscape…' : 'Download full soundscape as stereo WAV (includes spatial audio)'}
-            >
-              {isDownloading ? 'Rendering…' : '↓ Download'}
-            </button>
+              inactiveBackground="var(--color-foreground-static)"
+              activeColor="var(--color-primary)"
+              isActive={isDownloading}
+              icon={
+                isDownloading ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                  </svg>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                )
+              }
+            />
           )}
         </div>
       </div>
@@ -587,7 +591,7 @@ export function WaveSurferTimeline({
         className="relative overflow-x-auto overflow-y-auto timeline-hscroll"
         style={{
           maxHeight: `${WAVESURFER_TIMELINE.TOTAL_HEIGHT + 30}px`,
-          backgroundColor: 'var(--background)',
+          backgroundColor: 'var(--foreground-static)',
         }}
         onClick={handleTimelineClick}
       >
@@ -596,7 +600,7 @@ export function WaveSurferTimeline({
           ref={timelineContainerRef}
           style={{
             width: `${TIMELINE_WIDTH}px`,
-            backgroundColor: 'var(--background)',
+            backgroundColor: 'var(--foreground-static)',
             minHeight: '30px',
             position: 'sticky',
             top: 0,
@@ -624,6 +628,16 @@ export function WaveSurferTimeline({
       </div>
     </div>
   );
+}
+
+/** Resolve a CSS custom property to its computed hex/rgb value for use with Canvas APIs. */
+function resolveCssVar(variable: string, fallback = '#888888'): string {
+  if (typeof window === 'undefined') return fallback;
+  if (!variable.startsWith('var(')) return variable;
+  const match = variable.match(/var\(\s*(--[^,)]+)/);
+  if (!match) return fallback;
+  const val = getComputedStyle(document.documentElement).getPropertyValue(match[1]).trim();
+  return val || fallback;
 }
 
 /**

@@ -126,9 +126,11 @@ def run_pyroomacoustics_simulation(
                 f"Ensure the layer contains mesh objects with display values."
             )
 
+        geometry_units = geometry_data.get("units", "m")
         print(
             f"[{simulation_id[:8]}] Geometry: {len(vertices)} vertices, "
-            f"{len(faces)} faces, {len(object_face_ranges)} objects"
+            f"{len(faces)} faces, {len(object_face_ranges)} objects "
+            f"(source units: '{geometry_units}', vertices converted to meters)"
         )
 
         # ── Phase 2: Material + scattering mapping ────────────────────────────

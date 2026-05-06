@@ -4,6 +4,10 @@
   --background: #ffffff;
   --foreground: #171717;
 
+  --background-static: #ffffff;
+  --foreground-static: #171717;
+
+
   /* Primary brand color
   --color-primary: #F500B8;
   --color-primary-hover: #e061c0;
@@ -21,6 +25,12 @@
   --color-secondary-hover: #787878;
   --color-secondary-light: #dbdbdb;
   --color-secondary-lighter: #f3f3f3;
+
+  /* Secondary color */
+  --color-secondary-static: #1f1f1f;
+  --color-secondary-hover-static: #787878;
+  --color-secondary-light-static: #dbdbdb;
+  --color-secondary-lighter-static: #f3f3f3;
   
   /* Semantic colors */
   --color-success: #10B981;
@@ -62,6 +72,8 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-background-static: var(--background-static);
+  --color-foreground-static: var(--foreground-static);  
   --color-primary: var(--color-primary);
   --color-primary-hover: var(--color-primary-hover);
   --color-primary-light: var(--color-primary-light);
@@ -70,6 +82,10 @@
   --color-secondary-hover: var(--color-secondary-hover);
   --color-secondary-light: var(--color-secondary-light);
   --color-secondary-lighter: var(--color-secondary-lighter);
+  --color-secondary-static: var(--color-secondary-static);
+  --color-secondary-hover-static: var(--color-secondary-hover-static);
+  --color-secondary-light-static: var(--color-secondary-light-static);
+  --color-secondary-lighter-static: var(--color-secondary-lighter-static);
   --color-success: var(--color-success);
   --color-success-hover: var(--color-success-hover);
   --color-success-light: var(--color-success-light);
@@ -97,8 +113,8 @@
     --foreground: #ededed;
 
     /* Secondary scale flips: dark bg tones for cards/borders, medium for muted text */
-    --color-secondary: #222222;
-    --color-secondary-hover: #888888;
+    --color-secondary: #dbdbdb;
+    --color-secondary-hover: #909090;
     --color-secondary-light: #2a2a2a;
     --color-secondary-lighter: #141414;
   }

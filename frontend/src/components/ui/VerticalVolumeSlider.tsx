@@ -72,7 +72,7 @@ export function VerticalVolumeSlider({
         style={{
           width: '8px',
           height: '100px',
-          backgroundColor: 'var(--color-secondary)',
+          backgroundColor: 'var(--color-secondary-light)',
           left: '50%',
           transform: 'translateX(-50%)'
         }}
