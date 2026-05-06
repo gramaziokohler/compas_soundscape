@@ -71,28 +71,16 @@ npm run dev
 Frontend runs at: `http://localhost:3000`
 
 
-## API Keys
-
-| Key | Purpose | Get it from |
-|-----|---------|-------------|
-| `SPECKLE_TOKEN` | Speckle 3D model platform access | [Speckle Account](https://app.speckle.systems/) |
-
-See the <a href="https://docs.speckle.systems/developers/sdks/python/getting-started/authentication" target="_blank" rel="noopener noreferrer">Speckle authentication guide</a> for token setup.
-
 ### Optional API Keys (LLM providers)
 
 At least one LLM package must be installed (see Backend Setup) to use text/prompt generation. Keys can be set two ways:
 
-**Option A — fill in the `.env` file** (at your local folder root):
+Fill in the key(s) in ./compas_soundscape/.env :
 ```env
-GOOGLE_API_KEY=your_key_here
-OPENAI_API_KEY=your_key_here
-ANTHROPIC_API_KEY=your_key_here
+GOOGLE_API_KEY="your_key_here"
+OPENAI_API_KEY="your_key_here"
+ANTHROPIC_API_KEY="your_key_here"
 ```
-
-**Option B — Advanced Settings panel** in the app (no restart needed).
-
-<img src=".\compas-soundscape-api-keys.png" alt="App cover" width="300">
 
 **Links (Choose your prefered provider)**
 
@@ -101,7 +89,6 @@ ANTHROPIC_API_KEY=your_key_here
 | `GOOGLE_API_KEY` | Google Gemini | [Google AI Studio](https://aistudio.google.com/apikey) |
 | `OPENAI_API_KEY` | ChatGPT (GPT-4o) | [OpenAI Platform](https://platform.openai.com/api-keys) |
 | `ANTHROPIC_API_KEY` | Claude 3.5 Sonnet | [Anthropic Console](https://console.anthropic.com/) |
-
 
 
 
