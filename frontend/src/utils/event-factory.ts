@@ -100,8 +100,19 @@ export function createSoundEventFromUpload(
     volume_db: config.spl_db ?? DEFAULT_SOUND_CONFIG.spl_db, // Default to 70 dB
     interval_seconds: config.interval_seconds ?? DEFAULT_SOUND_CONFIG.interval_seconds, // Default to 5 seconds
     isUploaded: true, // Mark as uploaded/library sound
-    // Include entity_index if entity is present
-    ...(config.entity?.index !== undefined && { entity_index: config.entity.index })
+    // Include entity_index if entity is present.
+    // For entities with a Speckle ID but no numeric index, use originalIndex as a sentinel
+    // so SoundSphereManager treats the sound as entity-linked (no floating sphere).
+    ...(config.entity?.index !== undefined
+      ? { entity_index: config.entity.index }
+      : (config.entity?.nodeId || config.entity?.id)
+        ? { entity_index: originalIndex }
+        : {}),
+    // Carry foley timestamps through to the SoundEvent
+    ...(config.timestamps?.length && {
+      timestamps: config.timestamps,
+      scheduling_mode: 'timestamps' as const,
+    }),
   };
 }
 

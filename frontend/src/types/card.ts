@@ -54,7 +54,9 @@ export type CardType =
   | 'pyroomacoustics'
   | 'import-irs'
   | 'listener'
-  | 'grid-listener';
+  | 'grid-listener'
+  | 'model-analysis'
+  | 'scenario';
 
 /**
  * Default display names for each card type
@@ -74,6 +76,8 @@ export const CARD_TYPE_LABELS: Record<CardType, string> = {
   'import-irs': 'Import IRs',
   'listener': 'Listener',
   'grid-listener': 'Grid Listener',
+  'model-analysis': 'Analyze 3D Model',
+  'scenario': 'Scenario',
 };
 
 // ============================================================================

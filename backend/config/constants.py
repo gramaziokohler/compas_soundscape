@@ -88,6 +88,9 @@ DURATION_MIN = 5.0
 DURATION_MAX = 25.0
 DURATION_RANGE = (DURATION_MIN, DURATION_MAX)
 
+# Foley Artist Configuration
+DEFAULT_MAXIMUM_FOLEY_SOUNDS = 20  # Maximum total sound events across all scenarios
+
 # ============================================================================
 # Audio Processing Configuration
 # ============================================================================
@@ -226,6 +229,7 @@ TEMP_UPLOADS_DIR = str(BACKEND_DIR / "temp" / "uploads")
 TEMP_LIBRARY_DIR = str(BACKEND_DIR / "temp" / "library_downloads")
 TEMP_SIMULATIONS_DIR = str(BACKEND_DIR / "temp" / "simulations")
 TEMP_STATIC_DIR = str(BACKEND_DIR / "temp" / "static")
+TEMP_ANALYSIS_DIR = str(BACKEND_DIR / "temp" / "analysis")
 
 # ============================================================================
 # Directory Configuration - Audio
@@ -460,7 +464,7 @@ CHORAS_DE_DEFAULT_IR_LENGTH    = 0.5        # IR length in seconds
 CHORAS_DE_DEFAULT_LC           = 1        # Mesh characteristic length (m)
 CHORAS_DE_DEFAULT_EDT          = 35         # EDT target (dB)
 CHORAS_DE_DEFAULT_SIM_LEN_TYPE = "edt"     # "edt" or "ir_length"
-CHORAS_DE_SAMPLE_RATE          = 20000      # WAV sample rate (1/dt from DEinterface)
+CHORAS_DE_SAMPLE_RATE          = 44100      # WAV sample rate (1/dt from DEinterface)
 
 # DG (Discontinuous Galerkin) defaults
 CHORAS_DG_DEFAULT_C0          = 343         # Speed of sound (m/s)
@@ -473,41 +477,41 @@ CHORAS_DG_DEFAULT_CFL         = 1.0         # CFL number
 CHORAS_DG_SAMPLE_RATE         = 44100       # Output WAV sample rate
 
 # Frequency bands (shared by DE and DG)
-CHORAS_DEFAULT_FREQUENCIES = [125, 250, 500, 1000, 2000]
+CHORAS_DEFAULT_FREQUENCIES = [125, 250, 500, 1000, 2000, 4000, 8000]
 
-# Absorption material database (5-band: 125, 250, 500, 1000, 2000 Hz)
+# Absorption material database (5-band: 125, 250, 500, 1000, 2000, 4000, 8000 Hz)
 CHORAS_ABSORPTION_MATERIALS = {
     "concrete_plain": {
         "description": "Plain concrete (painted/unpainted)",
-        "coeffs": [0.01, 0.01, 0.02, 0.02, 0.02],
+        "coeffs": [0.01, 0.01, 0.02, 0.02, 0.02, 0.02, 0.02],
     },
     "brick_unplastered": {
         "description": "Brick, unplastered",
-        "coeffs": [0.02, 0.03, 0.03, 0.04, 0.05],
+        "coeffs": [0.02, 0.03, 0.03, 0.04, 0.05, 0.05, 0.05],
     },
     "plasterboard": {
         "description": "Plasterboard on battens",
-        "coeffs": [0.15, 0.10, 0.06, 0.04, 0.04],
+        "coeffs": [0.15, 0.10, 0.06, 0.04, 0.04, 0.04, 0.04],
     },
     "wood_floor": {
         "description": "Parquet / wood floor on concrete",
-        "coeffs": [0.04, 0.04, 0.07, 0.06, 0.06],
+        "coeffs": [0.04, 0.04, 0.07, 0.06, 0.06, 0.06, 0.06],
     },
     "carpet_thick": {
         "description": "Thick carpet on concrete",
-        "coeffs": [0.02, 0.06, 0.14, 0.37, 0.60],
+        "coeffs": [0.02, 0.06, 0.14, 0.37, 0.60, 0.60, 0.60],
     },
     "glass_window": {
         "description": "Glass window",
-        "coeffs": [0.35, 0.25, 0.18, 0.12, 0.07],
+        "coeffs": [0.35, 0.25, 0.18, 0.12, 0.07, 0.07, 0.07],
     },
     "acoustic_tile": {
         "description": "Acoustic ceiling tile",
-        "coeffs": [0.15, 0.25, 0.55, 0.65, 0.65],
+        "coeffs": [0.15, 0.25, 0.55, 0.65, 0.65, 0.65, 0.65],
     },
     "medium_absorber": {
         "description": "Medium absorber (generic)",
-        "coeffs": [0.60, 0.69, 0.71, 0.70, 0.63],
+        "coeffs": [0.60, 0.69, 0.71, 0.70, 0.63, 0.63, 0.63],
     },
 }
 

@@ -117,6 +117,55 @@ export class AudioScheduler {
   }
 
   /**
+   * Schedule a sound to play at explicit timestamps (one-shot per timestamp).
+   * Alternative to scheduleSound() — use when scheduling mode is 'timestamps'.
+   *
+   * @param soundId - Unique sound identifier
+   * @param metadata - Sound metadata (buffer, position, etc.)
+   * @param timestampsMs - Array of absolute playback positions in milliseconds
+   * @param currentTimeMs - Current timeline playback offset in ms (skips past timestamps)
+   */
+  scheduleSoundAtTimestamps(
+    soundId: string,
+    metadata: SoundMetadata,
+    timestampsMs: number[],
+    currentTimeMs: number = 0
+  ): void {
+    this.unscheduleSound(soundId);
+
+    const displayName = metadata.soundEvent.display_name || soundId;
+    const futureTimestamps = timestampsMs.filter((t) => t >= currentTimeMs);
+
+    if (futureTimestamps.length === 0) {
+      console.log(`[AudioScheduler] No future timestamps for ${soundId} at currentTime=${currentTimeMs}ms`);
+      return;
+    }
+
+    const timers: NodeJS.Timeout[] = [];
+
+    this.scheduledSounds.set(soundId, {
+      metadata,
+      intervalMs: 0,
+      timerId: null,
+      isScheduled: true,
+      initialDelayMs: Math.max(0, futureTimestamps[0] - currentTimeMs),
+      timestampsMs,
+      timestampTimers: timers,
+      currentIteration: 0,
+    });
+
+    scheduledSoundsLogger.addSound(soundId, displayName, 0, performance.now() + (futureTimestamps[0] - currentTimeMs));
+
+    futureTimestamps.forEach((tsMs) => {
+      const delay = tsMs - currentTimeMs;
+      const timer = setTimeout(() => {
+        this.playOnce(metadata, soundId);
+      }, delay);
+      timers.push(timer);
+    });
+  }
+
+  /**
    * Update the interval for a scheduled sound.
    * @deprecated Use Stop All + Play All workflow instead
    */
@@ -149,6 +198,11 @@ export class AudioScheduler {
       clearTimeout(scheduled.timerId);
     }
 
+    // Clear timestamp-mode one-shot timers
+    if (scheduled.timestampTimers) {
+      scheduled.timestampTimers.forEach((t) => clearTimeout(t));
+    }
+
     // Stop the audio if it's currently playing
     if (this.audioOrchestrator) {
       try {
@@ -175,6 +229,10 @@ export class AudioScheduler {
     timersToCancel.forEach(([soundId, scheduled]) => {
       if (scheduled.timerId) {
         clearTimeout(scheduled.timerId);
+      }
+      // Clear timestamp-mode one-shot timers
+      if (scheduled.timestampTimers) {
+        scheduled.timestampTimers.forEach((t) => clearTimeout(t));
       }
       // Stop the audio source through orchestrator
       if (this.audioOrchestrator) {

@@ -78,6 +78,47 @@ class UnifiedPromptGenerationRequest(BaseModel):
     llm_model: str = DEFAULT_LLM_MODEL
 
 
+# ─── 3D Model Analysis Schemas ────────────────────────────────────────────────
+
+class ModelObjectResult(BaseModel):
+    """A single identified object/group from a 3D model analysis."""
+    name: str
+    description: str
+    material: str
+    quantity: int
+    object_ids: list[str]
+    confidence: float
+
+
+class ModelAnalysisRequest(BaseModel):
+    entities: list[dict]
+    screenshots: list[str] | None = None  # base64 data URIs, max 3
+    user_context: str | None = None
+    llm_model: str = DEFAULT_LLM_MODEL
+
+
+class ModelAnalysisResponse(BaseModel):
+    objects: list[ModelObjectResult]
+    high_confidence: list[ModelObjectResult]   # confidence > 0.7
+    low_confidence: list[ModelObjectResult]    # confidence <= 0.7
+
+
+class ModelAnalysisStartResponse(BaseModel):
+    analysis_id: str
+
+
+class ModelAnalysisStatusResponse(BaseModel):
+    analysis_id: str
+    progress: int
+    status: str
+    completed: bool
+    cancelled: bool
+    error: Optional[str] = None
+    result: Optional[dict] = None   # ModelAnalysisResponse serialised as dict
+    queue_position: Optional[int] = None
+    queue_total: Optional[int] = None
+
+
 class IRFormat(str, Enum):
     """Impulse response format enumeration"""
     MONO = "mono"
@@ -437,4 +478,68 @@ class SoundscapeLoadResponse(BaseModel):
     soundscape_data: Optional[SoundscapeData] = None
     audio_base_url: str = ""
     ir_base_url: str = ""
+
+
+# ── LLM Analysis Output Schemas ───────────────────────────────────────────────
+
+class ModelAnalysisOutput(BaseModel):
+    """Wrapper for 3D model analysis output (all providers require object root, not bare array)."""
+    objects: list[ModelObjectResult]
+
+
+class ScenarioEvent(BaseModel):
+    timestamp: str
+    description: str
+
+
+class Scenario(BaseModel):
+    title: str
+    duration: str
+    peopleCount: int
+    likeliness: int
+    events: list[ScenarioEvent]
+
+class ScenarioResponse(BaseModel):
+    scenarios: list[Scenario]
     found: bool = False
+
+
+class FoleySoundEvent(BaseModel):
+    """A single foley sound event generated for a scenario."""
+    soundName: str
+    description: str
+    duration: str
+    timestamps: list[str]
+    category: str  # 'background sound' | 'sound event' | 'speech'
+    objectsInvolved: list[str]
+    position: list[float]
+    spl: str
+
+
+class FoleyScenario(BaseModel):
+    """Foley sound events for a single scenario."""
+    scenario_title: str
+    sound_events: list[FoleySoundEvent]
+
+
+class FoleyResponse(BaseModel):
+    """Wrapper for foley artist output — one entry per scenario."""
+    scenarios: list[FoleyScenario]
+
+
+# ── Scenarist / Foley request schemas ─────────────────────────────────────────
+
+class ScenaristStreamRequest(BaseModel):
+    user_context: str | None = None
+    llm_model: str = "gemini-2.5-flash"
+    analysis_id: str | None = None
+    people_count: int = 5
+    likeliness: int = 9
+    duration: int = 150
+
+
+class FoleyArtistRequest(BaseModel):
+    scenario_id: str
+    analysis_id: str | None = None
+    llm_model: str = "gemini-2.5-flash"
+    maximum_sounds: int = 20

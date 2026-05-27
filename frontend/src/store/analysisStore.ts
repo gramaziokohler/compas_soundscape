@@ -17,6 +17,12 @@ import type {
   ModelAnalysisConfig,
   AudioAnalysisConfig,
   TextAnalysisConfig,
+  AnalyzeModelConfig,
+  ArchitecturalObject,
+  ModelAnalysisResultData,
+  ScenarioConfig,
+  ScenarioResult,
+  FoleyResult,
 } from '@/types/analysis';
 import type { CardType } from '@/types/card';
 import {
@@ -27,15 +33,77 @@ import {
 import { loadAudioFileWithBuffer } from '@/lib/audio/utils/audio-info';
 import { apiService } from '@/services/api';
 import { generatePositionsInArea } from '@/utils/positioning';
+import { getAnalysisGroupColor } from '@/utils/utils';
 import { useErrorsStore } from './errorsStore';
 import { useAreaDrawingStore } from './areaDrawingStore';
 import { useSoundscapeStore } from './soundscapeStore';
+import { useSpeckleStore } from './speckleStore';
+import { useObjectExplorerStore } from './objectExplorerStore';
 
 // ─── Module-level refs ────────────────────────────────────────────────────────
 
 let _analysisAbortController: AbortController | null = null;
 let _sedTaskId: string | null = null;
 let _sedPollInterval: ReturnType<typeof setInterval> | null = null;
+
+// ─── SSE helper ───────────────────────────────────────────────────────────────
+
+/**
+ * Async generator over a POST SSE endpoint.
+ * Yields each parsed JSON event object. Stops on `[DONE]` or stream end.
+ * Throws on HTTP error or `{type: "error"}` event.
+ */
+async function* streamPrompts(
+  url: string,
+  body: object,
+  signal: AbortSignal,
+): AsyncGenerator<any> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Failed to generate sound prompts' }));
+    const msg = err.detail || 'Failed to generate sound prompts';
+    if (res.status === 429) {
+      throw new Error(msg.includes('quota') ? `⚠️ ${msg}` : '⚠️ API quota exhausted. Please try again later.');
+    }
+    throw new Error(msg);
+  }
+
+  if (!res.body) throw new Error('No response body from stream endpoint');
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // Split on SSE double-newline event boundaries
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop() ?? '';
+
+      for (const block of parts) {
+        const dataLine = block.split('\n').find((l) => l.startsWith('data: '));
+        if (!dataLine) continue;
+        const data = dataLine.slice(6).trim();
+        if (data === '[DONE]') return;
+        const event = JSON.parse(data);
+        if (event.type === 'error') throw new Error(event.message);
+        yield event;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 // ─── Partialize ───────────────────────────────────────────────────────────────
 
@@ -48,6 +116,13 @@ export const analysisPartialize = (state: AnalysisStoreState) => ({
     }
     if (config.type === '3d-model') {
       return { ...config, modelFile: null, geometryData: undefined };
+    }
+    if (config.type === 'model-analysis') {
+      return { ...config, liveScreenshots: [] };
+    }
+    if (config.type === 'scenario') {
+      // Don't persist streaming state in undo history
+      return { ...config, scenarioRawText: '' };
     }
     return config;
   }),
@@ -109,6 +184,7 @@ function extractSpeckleEntities(worldTree: any): any[] {
         index: nodeIndex++,
         type: speckleType,
         name,
+        layer: raw.layer || '',
         speckle_type: speckleType,
         raw,
         nodeId: id,
@@ -178,6 +254,17 @@ export interface AnalysisStoreState {
   handleReset: (index: number) => void;
 
   handleUpdateEntitiesFromWorldTree: (index: number, worldTree: any) => void;
+
+  handleAnalyzeModel: (index: number) => Promise<void>;
+  handleUpdateAnalysisObject: (
+    configIndex: number,
+    objectIndex: number,
+    updates: Partial<Pick<ArchitecturalObject, 'name' | 'description' | 'material'>>,
+  ) => Promise<void>;
+
+  handleScenarioAnalyze: (index: number) => Promise<void>;
+  handleFoleyArtist: (index: number) => Promise<void>;
+  handleToggleFoleySound: (index: number, key: string) => void;
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -198,7 +285,16 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
         handleAddConfig: (type, initialSpeckleData) => {
           const { analysisConfigs } = get();
           const newConfig: AnalysisConfig =
-            type === '3d-model'
+            type === 'model-analysis'
+              ? {
+                  type: 'model-analysis',
+                  numSounds: 5,
+                  liveScreenshots: [],
+                  userContext: '',
+                  modelEntities: [],
+                  speckleData: initialSpeckleData,
+                } as AnalyzeModelConfig
+              : type === '3d-model'
               ? {
                   type: '3d-model',
                   numSounds: 5,
@@ -222,7 +318,21 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                       analyze_frequencies: false,
                     },
                   }
-                : {
+                : type === 'scenario'
+              ? ({
+                  type: 'scenario',
+                  numSounds: 5,
+                  userContext: '',
+                  peopleCount: 5,
+                  likeliness: 9,
+                  useAnalysisResult: true,
+                  scenarioRawText: '',
+                  scenarioResult: null,
+                  scenarioId: null,
+                  foleyResult: null,
+                  selectedFoleyKeys: [],
+                } as ScenarioConfig)
+              : {
                     type: 'text',
                     numSounds: 5,
                     textInput: '',
@@ -380,18 +490,34 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           try {
             let prompts: TextPromptResult[] = [];
 
-            if (config.type === '3d-model') {
+            if (config.type === 'model-analysis') {
+              await get().handleAnalyzeModel(index);
+              return;
+            } else if (config.type === 'scenario') {
+              const sc = config as ScenarioConfig;
+              if (sc.scenarioResult) {
+                // Scenario already generated → call foley artist
+                await get().handleFoleyArtist(index);
+              } else {
+                await get().handleScenarioAnalyze(index);
+              }
+              return;
+            } else if (config.type === '3d-model') {
               const modelConfig = config as ModelAnalysisConfig;
               if (modelConfig.modelEntities.length === 0) throw new Error('No 3D model loaded');
 
               if (modelConfig.selectedDiverseEntities.length === 0) {
                 // Step 1: select diverse entities
                 set({ analysisStatus: 'Selecting diverse entities...' }, false, 'analysis/selectEntities');
+                const hiddenIds = useObjectExplorerStore.getState().hiddenObjectIds;
+                const visibleEntities = modelConfig.modelEntities.filter(
+                  (e: any) => !hiddenIds.has(e.id),
+                );
                 const res = await fetch(`${API_BASE_URL}/api/select-entities`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
-                    entities: modelConfig.modelEntities,
+                    entities: visibleEntities,
                     max_sounds: config.numSounds,
                     llm_model: useSoundscapeStore.getState().llmModel,
                   }),
@@ -405,32 +531,52 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 set({ isAnalyzing: false, analysisError: null, analysisStatus: '', analyzingConfigIndex: null }, false, 'analysis/selectionDone');
                 return;
               } else {
-                // Step 2: generate sound prompts
+                // Step 2: stream sound prompts one by one
                 set({ analysisStatus: 'Generating sound prompts...' }, false, 'analysis/generatePrompts');
-                const res = await fetch(`${API_BASE_URL}/api/generate-prompts`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
+                const hiddenIdsForPrompts = useObjectExplorerStore.getState().hiddenObjectIds;
+                const visibleDiverseEntities = modelConfig.selectedDiverseEntities.filter(
+                  (e: any) => !hiddenIdsForPrompts.has(e.id),
+                );
+                let soundIdx = 0;
+                for await (const event of streamPrompts(
+                  `${API_BASE_URL}/api/generate-prompts-stream`,
+                  {
                     context: '',
                     num_sounds: config.numSounds,
-                    entities: modelConfig.selectedDiverseEntities,
+                    entities: visibleDiverseEntities,
                     llm_model: useSoundscapeStore.getState().llmModel,
-                  }),
-                  signal,
-                });
-                if (!res.ok) throw new Error('Failed to generate sound prompts');
-                const textResult = await res.json();
-                prompts = textResult.prompts.map((p: any, i: number) => ({
-                  id: `${index}-${i}`,
-                  text: p.prompt,
-                  selected: true,
-                  entity: p.entity || null,
-                  metadata: {
-                    spl_db: p.spl_db || DEFAULT_SPL_DB,
-                    interval_seconds: p.interval_seconds || LLM_SUGGESTED_INTERVAL_SECONDS,
-                    duration_seconds: p.duration_seconds || 10,
                   },
-                }));
+                  signal,
+                )) {
+                  if (event.type !== 'sound') continue;
+                  const { type: _t, ...p } = event;
+                  const prompt: TextPromptResult = {
+                    id: `${index}-${soundIdx++}`,
+                    text: p.prompt,
+                    selected: true,
+                    entity: p.entity || null,
+                    metadata: {
+                      spl_db: p.spl_db || DEFAULT_SPL_DB,
+                      interval_seconds: p.interval_seconds || LLM_SUGGESTED_INTERVAL_SECONDS,
+                      duration_seconds: p.duration_seconds || 10,
+                    },
+                  };
+                  prompts.push(prompt);
+                  set(
+                    (s) => {
+                      const ex = s.analysisResults.findIndex((r) => r.configIndex === index);
+                      const partial = { configIndex: index, prompts: [...prompts], generatedAt: new Date() };
+                      return {
+                        analysisResults:
+                          ex >= 0
+                            ? s.analysisResults.map((r, i) => (i === ex ? partial : r))
+                            : [...s.analysisResults, partial],
+                      };
+                    },
+                    false,
+                    'analysis/soundStreamed',
+                  );
+                }
               }
             } else if (config.type === 'audio') {
               const audioConfig = config as AudioAnalysisConfig;
@@ -580,38 +726,41 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               const requestBody: any = { context: textConfig.textInput, num_sounds: config.numSounds, llm_model: useSoundscapeStore.getState().llmModel };
               if (entitiesToUse.length > 0) requestBody.entities = entitiesToUse;
 
-              const res = await fetch(`${API_BASE_URL}/api/generate-prompts`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(requestBody),
+              let soundIdx = 0;
+              for await (const event of streamPrompts(
+                `${API_BASE_URL}/api/generate-prompts-stream`,
+                requestBody,
                 signal,
-              });
-
-              if (!res.ok) {
-                const err = await res.json().catch(() => ({ detail: 'Failed to generate sound prompts' }));
-                const errorMessage = err.detail || 'Failed to generate sound prompts';
-                if (res.status === 429) {
-                  throw new Error(
-                    errorMessage.includes('quota')
-                      ? `⚠️ ${errorMessage}`
-                      : '⚠️ API quota exhausted. Please try again later.',
-                  );
-                }
-                throw new Error(errorMessage);
+              )) {
+                if (event.type !== 'sound') continue;
+                const { type: _t, ...p } = event;
+                const prompt: TextPromptResult = {
+                  id: `${index}-${soundIdx++}`,
+                  text: p.prompt,
+                  selected: true,
+                  entity: p.entity || null,
+                  metadata: {
+                    spl_db: p.spl_db || DEFAULT_SPL_DB,
+                    interval_seconds: p.interval_seconds || LLM_SUGGESTED_INTERVAL_SECONDS,
+                    duration_seconds: p.duration_seconds || 10,
+                  },
+                };
+                prompts.push(prompt);
+                set(
+                  (s) => {
+                    const ex = s.analysisResults.findIndex((r) => r.configIndex === index);
+                    const partial = { configIndex: index, prompts: [...prompts], generatedAt: new Date() };
+                    return {
+                      analysisResults:
+                        ex >= 0
+                          ? s.analysisResults.map((r, i) => (i === ex ? partial : r))
+                          : [...s.analysisResults, partial],
+                    };
+                  },
+                  false,
+                  'analysis/soundStreamed',
+                );
               }
-
-              const result = await res.json();
-              prompts = result.prompts.map((p: any, i: number) => ({
-                id: `${index}-${i}`,
-                text: p.prompt,
-                selected: true,
-                entity: p.entity || null,
-                metadata: {
-                  spl_db: p.spl_db || DEFAULT_SPL_DB,
-                  interval_seconds: p.interval_seconds || LLM_SUGGESTED_INTERVAL_SECONDS,
-                  duration_seconds: p.duration_seconds || 10,
-                },
-              }));
 
               const drawnArea = useAreaDrawingStore.getState().getArea(index);
               if (drawnArea) {
@@ -695,22 +844,231 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           ),
 
         handleSendToSoundGeneration: (onSuccess) => {
-          const { analysisResults } = get();
+          const { analysisResults, analysisConfigs } = get();
           const allSelected = analysisResults.flatMap((result) =>
             result.prompts.filter((p) => p.selected),
           );
-          if (onSuccess) onSuccess(allSelected);
-          return allSelected;
+
+          // Also collect selected foley sounds from scenario configs
+          const foleyPrompts: TextPromptResult[] = [];
+          analysisConfigs.forEach((config) => {
+            if (config.type !== 'scenario') return;
+            const sc = config as ScenarioConfig;
+            if (!sc.foleyResult) return;
+            const selectedKeys = new Set(sc.selectedFoleyKeys ?? []);
+            sc.foleyResult.scenarios.forEach((scenario, si) => {
+              scenario.sound_events.forEach((sound, ei) => {
+                const key = `${scenario.scenario_title}__${sound.soundName}`;
+                if (!selectedKeys.has(key)) return;
+                const splMatch = sound.spl?.match(/(\d+(?:\.\d+)?)/);
+                const splDb = splMatch ? parseFloat(splMatch[1]) : DEFAULT_SPL_DB;
+                // Parse duration from "MM:SS" format to seconds
+                const durationSec = (() => {
+                  const d = sound.duration ?? '';
+                  const colonIdx = d.indexOf(':');
+                  if (colonIdx !== -1) {
+                    const mm = parseFloat(d.slice(0, colonIdx)) || 0;
+                    const ss = parseFloat(d.slice(colonIdx + 1)) || 0;
+                    return mm * 60 + ss;
+                  }
+                  const n = parseFloat(d);
+                  return isNaN(n) ? 5 : n;
+                })();
+                const pos = sound.position;
+                // Pick a random Speckle object ID from objectsInvolved for entity linking
+                const involvedIds = sound.objectsInvolved?.filter(Boolean) ?? [];
+                const linkedObjectId = involvedIds.length > 0
+                  ? involvedIds[Math.floor(Math.random() * involvedIds.length)]
+                  : null;
+                foleyPrompts.push({
+                  id: `foley-${sc.foleyResult!.foleyId}-${si}-${ei}`,
+                  // Use only description as the generation prompt; soundName goes to displayName
+                  text: sound.description || sound.soundName,
+                  displayName: sound.soundName,
+                  selected: true,
+                  // Only set position when there is no entity link (mutually exclusive per foley spec)
+                  position:
+                    !linkedObjectId && Array.isArray(pos) && pos.length >= 3
+                      ? [pos[0], pos[1], pos[2]]
+                      : undefined,
+                  // Set entity with the linked Speckle object ID and foley position as fallback
+                  entity: linkedObjectId
+                    ? {
+                        applicationId: linkedObjectId,
+                        id: linkedObjectId,
+                        // Foley position used as fallback when viewer can't resolve entity bounds
+                        foleyPosition: Array.isArray(pos) && pos.length >= 3
+                          ? ([pos[0], pos[1], pos[2]] as [number, number, number])
+                          : undefined,
+                      }
+                    : undefined,
+                  metadata: {
+                    spl_db: splDb,
+                    duration_seconds: durationSec,
+                    interval_seconds: LLM_SUGGESTED_INTERVAL_SECONDS,
+                    timestamps: sound.timestamps?.length ? sound.timestamps : undefined,
+                  },
+                });
+              });
+            });
+          });
+
+          const combined = [...allSelected, ...foleyPrompts];
+          if (onSuccess) onSuccess(combined);
+          return combined;
         },
 
-        handleReset: (index) =>
+        handleReset: (index) => {
+          const config = get().analysisConfigs[index];
+
+          // Scenario: two-step reset
+          if (config?.type === 'scenario') {
+            const sc = config as ScenarioConfig;
+            if (sc.foleyResult) {
+              // Step 1: clear foley only, keep scenario
+              get().handleUpdateConfig(index, {
+                foleyResult: null,
+                selectedFoleyKeys: [],
+              } as Partial<ScenarioConfig>);
+            } else {
+              // Step 2: clear entire scenario
+              get().handleUpdateConfig(index, {
+                scenarioRawText: '',
+                scenarioResult: null,
+                scenarioId: null,
+                foleyResult: null,
+                selectedFoleyKeys: [],
+              } as Partial<ScenarioConfig>);
+            }
+            return;
+          }
+
+          if (config?.type === 'model-analysis') {
+            useSpeckleStore.getState().clearAnalysisObjectGroups();
+          }
           set(
             (s) => ({
+              analysisConfigs: s.analysisConfigs.map((c, i) =>
+                i === index && c.type === 'model-analysis'
+                  ? ({ ...c, analysisResult: undefined } as AnalyzeModelConfig)
+                  : c,
+              ),
               analysisResults: s.analysisResults.filter((r) => r.configIndex !== index),
             }),
             false,
             'analysis/reset',
-          ),
+          );
+        },
+
+        handleAnalyzeModel: async (index) => {
+          const { analysisConfigs, handleUpdateConfig } = get();
+          const config = analysisConfigs[index] as AnalyzeModelConfig;
+          if (config?.type !== 'model-analysis') return;
+
+          _analysisAbortController = new AbortController();
+          const signal = _analysisAbortController.signal;
+
+          set(
+            { isAnalyzing: true, analysisError: null, analyzingConfigIndex: index, analysisStatus: 'Analyzing 3D model...' },
+            false,
+            'analysis/analyzeModelStart',
+          );
+
+          const objects: ArchitecturalObject[] = [];
+          const colorGroups: { objectIds: string[]; color: string }[] = [];
+          let analysisId = '';
+
+          try {
+            for await (const event of streamPrompts(
+              `${API_BASE_URL}/api/analyze-3dmodel-stream`,
+              {
+                entities: config.modelEntities,
+                screenshots: config.liveScreenshots,
+                user_context: config.userContext,
+                llm_model: useSoundscapeStore.getState().llmModel,
+              },
+              signal,
+            )) {
+              if (event.type === 'start') {
+                analysisId = event.analysis_id;
+              } else if (event.type === 'object') {
+                const { type: _t, ...obj } = event;
+                const archObj = obj as ArchitecturalObject;
+                objects.push(archObj);
+                const idx = objects.length - 1;
+                const color = getAnalysisGroupColor(idx);
+                const ids = archObj.object_ids ?? [];
+                if (ids.length > 0) {
+                  colorGroups.push({ objectIds: ids, color });
+                }
+                // Partial update
+                useSpeckleStore.getState().setAnalysisObjectGroups([...colorGroups], [...objects]);
+                handleUpdateConfig(index, {
+                  analysisResult: { analysisId, architecturalObjects: [...objects] },
+                } as Partial<AnalyzeModelConfig>);
+              } else if (event.type === 'done') {
+                // Final update handled below
+              }
+            }
+
+            const resultData: ModelAnalysisResultData = {
+              analysisId,
+              architecturalObjects: objects,
+            };
+            handleUpdateConfig(index, { analysisResult: resultData } as Partial<AnalyzeModelConfig>);
+            useSpeckleStore.getState().setAnalysisObjectGroups(colorGroups, objects);
+
+          } catch (error) {
+            if (error instanceof Error && error.name === 'AbortError') {
+              // Cancelled
+            } else {
+              const errorMsg = error instanceof Error ? error.message : 'Model analysis failed';
+              const isQuota = errorMsg.includes('quota') || errorMsg.includes('429');
+              useErrorsStore.getState().addError(errorMsg, isQuota ? 'warning' : 'error');
+              set({ analysisError: errorMsg }, false, 'analysis/analyzeModelError');
+            }
+          } finally {
+            _analysisAbortController = null;
+            set({ isAnalyzing: false, analysisStatus: '', analyzingConfigIndex: null }, false, 'analysis/analyzeModelEnd');
+          }
+        },
+
+        handleUpdateAnalysisObject: async (configIndex, objectIndex, updates) => {
+          const { analysisConfigs, handleUpdateConfig } = get();
+          const config = analysisConfigs[configIndex] as AnalyzeModelConfig;
+          if (config?.type !== 'model-analysis' || !config.analysisResult) return;
+
+          // Optimistic update
+          const updatedObjects = config.analysisResult.architecturalObjects.map((obj, i) =>
+            i === objectIndex ? { ...obj, ...updates } : obj,
+          );
+          handleUpdateConfig(configIndex, {
+            analysisResult: { ...config.analysisResult, architecturalObjects: updatedObjects },
+          } as Partial<AnalyzeModelConfig>);
+
+          // Refresh viewer colors with updated names (object_ids unchanged)
+          const colorGroups = updatedObjects.map((obj, i) => ({
+            objectIds: obj.object_ids ?? [],
+            color: getAnalysisGroupColor(i),
+          })).filter((g) => g.objectIds.length > 0);
+          useSpeckleStore.getState().setAnalysisObjectGroups(colorGroups, updatedObjects);
+
+          // Background persist
+          if (config.analysisResult.analysisId) {
+            try {
+              await fetch(
+                `${API_BASE_URL}/api/analyze-3dmodel-result/${config.analysisResult.analysisId}/objects/${objectIndex}`,
+                {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(updates),
+                },
+              );
+            } catch {
+              // Non-critical
+            }
+          }
+        },
 
         handleUpdateEntitiesFromWorldTree: (index, worldTree) => {
           const { analysisConfigs, handleUpdateConfig } = get();
@@ -720,6 +1078,182 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
 
           const entities = extractSpeckleEntities(worldTree);
           handleUpdateConfig(index, { modelEntities: entities } as Partial<ModelAnalysisConfig>);
+        },
+
+        handleToggleFoleySound: (index, key) => {
+          const config = get().analysisConfigs[index] as ScenarioConfig;
+          if (config?.type !== 'scenario') return;
+          const current = config.selectedFoleyKeys ?? [];
+          const next = current.includes(key)
+            ? current.filter((k) => k !== key)
+            : [...current, key];
+          get().handleUpdateConfig(index, { selectedFoleyKeys: next } as Partial<ScenarioConfig>);
+        },
+
+        handleScenarioAnalyze: async (index) => {
+          const { analysisConfigs, handleUpdateConfig } = get();
+          const config = analysisConfigs[index] as ScenarioConfig;
+          if (config?.type !== 'scenario') return;
+
+          // Reset previous results
+          handleUpdateConfig(index, {
+            scenarioRawText: '',
+            scenarioResult: null,
+            scenarioId: null,
+            foleyResult: null,
+          } as Partial<ScenarioConfig>);
+
+          // Find analysis_id from the most recent 'model-analysis' config with a result
+          let analysisId: string | undefined;
+          if (config.useAnalysisResult) {
+            const analyzeConfig = analysisConfigs.find(
+              (c) => c.type === 'model-analysis' && (c as ModelAnalysisConfig).analysisResult?.analysisId,
+            ) as ModelAnalysisConfig | undefined;
+            analysisId = analyzeConfig?.analysisResult?.analysisId ?? undefined;
+          }
+
+          const { timelineDurationMs } = await import('@/store/audioControlsStore').then(
+            (m) => m.useAudioControlsStore.getState(),
+          );
+
+          const body = {
+            user_context: config.userContext || undefined,
+            llm_model: 'gemini-2.5-flash',
+            analysis_id: analysisId,
+            people_count: config.peopleCount,
+            likeliness: config.likeliness,
+            duration: Math.round(timelineDurationMs / 1000),
+          };
+
+          const controller = new AbortController();
+          // Working scenarios being built progressively
+          let workingScenarios: ScenarioResult['scenarios'] = [];
+
+          try {
+            for await (const event of streamPrompts(
+              `${API_BASE_URL}/api/scenarist-stream`,
+              body,
+              controller.signal,
+            )) {
+              if (event.type === 'scenario') {
+                // New scenario header — add slot with empty events array
+                const { scenario_index, title, duration, peopleCount, likeliness } = event as {
+                  scenario_index: number; title: string; duration: string;
+                  peopleCount: number; likeliness: number;
+                };
+                const next = [...workingScenarios];
+                next[scenario_index] = { title, duration, peopleCount, likeliness, events: [] };
+                workingScenarios = next;
+                handleUpdateConfig(index, {
+                  display_name: title,
+                  scenarioResult: { scenarios: workingScenarios, scenarioId: '' },
+                } as Partial<ScenarioConfig>);
+              } else if (event.type === 'event') {
+                // Timestamped event for an existing scenario slot
+                const { scenario_index, event: ev } = event as {
+                  scenario_index: number; event: { timestamp: string; description: string };
+                };
+                if (workingScenarios[scenario_index]) {
+                  const next = [...workingScenarios];
+                  next[scenario_index] = {
+                    ...next[scenario_index],
+                    events: [...next[scenario_index].events, ev],
+                  };
+                  workingScenarios = next;
+                  handleUpdateConfig(index, {
+                    scenarioResult: { scenarios: workingScenarios, scenarioId: '' },
+                  } as Partial<ScenarioConfig>);
+                }
+              } else if (event.type === 'done') {
+                const result = event.result as ScenarioResult;
+                const scenarioId = (event.scenario_id as string) ?? null;
+                handleUpdateConfig(index, {
+                  scenarioResult: { ...result, scenarioId: scenarioId ?? '' },
+                  scenarioId,
+                } as Partial<ScenarioConfig>);
+              } else if (event.type === 'error') {
+                console.error('[handleScenarioAnalyze] SSE error:', event.message);
+              }
+            }
+          } catch (e) {
+            console.error('[handleScenarioAnalyze] stream error:', e);
+          }
+        },
+
+        handleFoleyArtist: async (index) => {
+          const { analysisConfigs, handleUpdateConfig } = get();
+          const config = analysisConfigs[index] as ScenarioConfig;
+          if (config?.type !== 'scenario' || !config.scenarioId) return;
+
+          // Import audioControlsStore lazily to avoid circular deps
+          const { maximumFoleySounds } = await import('@/store/audioControlsStore').then(
+            (m) => m.useAudioControlsStore.getState(),
+          );
+
+          // Find analysis_id
+          let analysisId: string | undefined;
+          if (config.useAnalysisResult) {
+            const analyzeConfig = analysisConfigs.find(
+              (c) => c.type === 'model-analysis' && (c as ModelAnalysisConfig).analysisResult?.analysisId,
+            ) as ModelAnalysisConfig | undefined;
+            analysisId = analyzeConfig?.analysisResult?.analysisId ?? undefined;
+          }
+
+          const body = {
+            scenario_id: config.scenarioId,
+            analysis_id: analysisId,
+            llm_model: 'gemini-2.5-flash',
+            maximum_sounds: maximumFoleySounds,
+          };
+
+          // SSE streaming: sounds appear progressively as they arrive
+          const controller = new AbortController();
+          let workingResult: FoleyResult = { scenarios: [], foleyId: '' };
+          const workingKeys: string[] = [];
+
+          try {
+            for await (const event of streamPrompts(
+              `${API_BASE_URL}/api/foley-artist-stream`,
+              body,
+              controller.signal,
+            )) {
+              if (event.type === 'sound') {
+                const { scenario_title, sound } = event as {
+                  scenario_title: string; scenario_index: number; sound: FoleyResult['scenarios'][number]['sound_events'][number];
+                };
+                const key = `${scenario_title}__${sound.soundName}`;
+                workingKeys.push(key);
+                const newScenarios = [...workingResult.scenarios];
+                const si = newScenarios.findIndex((s) => s.scenario_title === scenario_title);
+                if (si === -1) {
+                  newScenarios.push({ scenario_title, sound_events: [sound] });
+                } else {
+                  newScenarios[si] = {
+                    ...newScenarios[si],
+                    sound_events: [...newScenarios[si].sound_events, sound],
+                  };
+                }
+                workingResult = { ...workingResult, scenarios: newScenarios };
+                handleUpdateConfig(index, {
+                  foleyResult: workingResult,
+                  selectedFoleyKeys: [...workingKeys],
+                } as Partial<ScenarioConfig>);
+              } else if (event.type === 'done') {
+                const finalResult: FoleyResult = {
+                  scenarios: event.result?.scenarios ?? workingResult.scenarios,
+                  foleyId: (event.foley_id as string) ?? '',
+                };
+                const selectedFoleyKeys = finalResult.scenarios.flatMap((s) =>
+                  s.sound_events.map((e) => `${s.scenario_title}__${e.soundName}`),
+                );
+                handleUpdateConfig(index, { foleyResult: finalResult, selectedFoleyKeys } as Partial<ScenarioConfig>);
+              } else if (event.type === 'error') {
+                console.error('[handleFoleyArtist] SSE error:', event.message);
+              }
+            }
+          } catch (e) {
+            console.error('[handleFoleyArtist] stream error:', e);
+          }
         },
       }),
       { name: 'analysisStore' },

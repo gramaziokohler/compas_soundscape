@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useMemo, useCallback } from "react";
-import type { AnalysisSectionProps, AnalysisConfig, AnalysisResult, ModelAnalysisConfig, AudioAnalysisConfig, TextAnalysisConfig } from "@/types/analysis";
+import React, { useMemo, useCallback, useEffect, useRef } from "react";
+import type { AnalysisSectionProps, AnalysisConfig, AnalysisResult, ModelAnalysisConfig, AudioAnalysisConfig, TextAnalysisConfig, AnalyzeModelConfig, ScenarioConfig } from "@/types/analysis";
 import type { CardTypeOption } from "@/components/ui/CardSection";
 import { CARD_TYPE_LABELS } from '@/types/card';
 import type { CustomMenuItem } from '@/types/card';
@@ -12,10 +12,52 @@ import { AudioContextContent } from "@/components/layout/sidebar/analysis/AudioC
 import { TextContextContent } from "@/components/layout/sidebar/analysis/TextContextContent";
 import { AnalysisResultContent } from "@/components/layout/sidebar/analysis/AnalysisResultContent";
 import { AudioAnalysisAfterContent } from "@/components/layout/sidebar/analysis/AudioAnalysisAfterContent";
+import { AnalyzeModelContent } from "@/components/layout/sidebar/analysis/AnalyzeModelContent";
+import { AnalyzeModelResultContent } from "@/components/layout/sidebar/analysis/AnalyzeModelResultContent";
+import { ScenarioContent, ScenarioAfterView } from "@/components/layout/sidebar/analysis/ScenarioContent";
+import { ScenarioResultContent } from "@/components/layout/sidebar/analysis/ScenarioResultContent";
 import { useSpeckleStore, useAnalysisStore, useSoundscapeStore } from '@/store';
 import { useAreaDrawingStore } from '@/store';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
 import { LLM_MODEL_TO_PROVIDER } from '@/utils/constants';
+import { getAnalysisGroupColor } from '@/utils/utils';
+
+/**
+ * AnalysisGroupColorSync
+ *
+ * Always-mounted sibling of a model-analysis Card. Applies/clears viewer colors
+ * based on the card's expansion state, mirroring the SpeckleSurfaceMaterialsSection
+ * pattern: no cleanup return, prevRef transition detection to avoid StrictMode issues.
+ */
+function AnalysisGroupColorSync({ config, isExpanded }: { config: AnalyzeModelConfig; isExpanded: boolean }) {
+  const objects = config.analysisResult?.architecturalObjects ?? [];
+  const prevExpandedRef = useRef(isExpanded);
+
+  useEffect(() => {
+    const wasExpanded = prevExpandedRef.current;
+    prevExpandedRef.current = isExpanded;
+
+    if (!isExpanded) {
+      // Only clear when transitioning expanded → collapsed, not on every render while collapsed
+      if (wasExpanded) {
+        useSpeckleStore.getState().clearAnalysisObjectGroups();
+      }
+      return;
+    }
+
+    if (objects.length === 0) return;
+
+    const colorGroups = objects
+      .map((obj, i) => ({ objectIds: obj.object_ids ?? [], color: getAnalysisGroupColor(i) }))
+      .filter((g) => g.objectIds.length > 0);
+
+    useSpeckleStore.getState().setAnalysisObjectGroups(colorGroups, objects);
+    // No cleanup return — same pattern as SpeckleSurfaceMaterialsSection.
+    // Colors are cleared explicitly via the expanded→collapsed transition above.
+  }, [isExpanded, objects]);
+
+  return null;
+}
 
 /**
  * AnalysisSection Component
@@ -63,8 +105,14 @@ export function AnalysisSection({
 
   // Helper to check if an analysis has generated results
   const hasResult = useCallback((index: number): boolean => {
+    const config = analysisConfigs[index];
+    if (config?.type === 'model-analysis') {
+      return ((config as AnalyzeModelConfig).analysisResult?.architecturalObjects?.length ?? 0) > 0;
+    }
+    // Scenario: completed when scenario text has been generated
+    if (config?.type === 'scenario') return (config as ScenarioConfig).scenarioResult !== null;
     return analysisResult.some(r => r.configIndex === index);
-  }, [analysisResult]);
+  }, [analysisResult, analysisConfigs]);
 
   // Helper to get result for a config index
   const getResult = useCallback((index: number): AnalysisResult | undefined => {
@@ -73,6 +121,20 @@ export function AnalysisSection({
 
   // Get collapsed info for a config
   const getCollapsedInfo = useCallback((config: AnalysisConfig, index: number): string => {
+    if (config.type === 'model-analysis') {
+      const mc = config as AnalyzeModelConfig;
+      const n = mc.analysisResult?.architecturalObjects?.length ?? 0;
+      return n > 0 ? `(${n} group${n !== 1 ? 's' : ''} identified)` : '';
+    }
+    if (config.type === 'scenario') {
+      const sc = config as ScenarioConfig;
+      if (sc.foleyResult) {
+        const n = sc.foleyResult.scenarios.reduce((t, s) => t + s.sound_events.length, 0);
+        return `(${n} foley sound${n !== 1 ? 's' : ''})`;
+      }
+      if (sc.scenarioResult) return '(scenario generated)';
+      return '';
+    }
     const result = getResult(index);
     if (result) {
       const selectedCount = result.prompts.filter(p => p.selected).length;
@@ -92,6 +154,15 @@ export function AnalysisSection({
   // Get before content (configuration UI) for a config
   const getBeforeContent = useCallback((config: AnalysisConfig, index: number) => {
     switch (config.type) {
+      case 'model-analysis':
+        return (
+          <AnalyzeModelContent
+            config={config as AnalyzeModelConfig}
+            index={index}
+            isAnalyzing={isRunning}
+            onUpdateConfig={onUpdateConfig}
+          />
+        );
       case '3d-model':
         return (
           <Model3DContextContent
@@ -119,6 +190,15 @@ export function AnalysisSection({
             onUpdateConfig={onUpdateConfig}
           />
         );
+      case 'scenario':
+        return (
+          <ScenarioContent
+            config={config as ScenarioConfig}
+            index={index}
+            isAnalyzing={isRunning && analyzingConfigIndex === index}
+            onUpdateConfig={onUpdateConfig}
+          />
+        );
       default:
         return null;
     }
@@ -126,6 +206,20 @@ export function AnalysisSection({
 
   // Get after content (result UI) for a config
   const getAfterContent = useCallback((config: AnalysisConfig, index: number) => {
+    if (config.type === 'model-analysis') {
+      const mc = config as AnalyzeModelConfig;
+      if ((mc.analysisResult?.architecturalObjects?.length ?? 0) > 0) {
+        return <AnalyzeModelResultContent config={mc} />;
+      }
+      return null;
+    }
+
+    if (config.type === 'scenario') {
+      const sc = config as ScenarioConfig;
+      if (!sc.scenarioResult) return null;
+      return <ScenarioAfterView config={sc} index={index} />;
+    }
+
     const result = getResult(index);
     if (!result) return null;
 
@@ -155,12 +249,19 @@ export function AnalysisSection({
   const hasModelLoaded = useMemo(() => {
     if (hasGlobalModelLoaded) return true;
     return analysisConfigs.some(config =>
-      config.type === '3d-model' && ((config as ModelAnalysisConfig).modelFile !== null || (config as ModelAnalysisConfig).speckleData !== undefined)
+      (config.type === '3d-model' && ((config as ModelAnalysisConfig).modelFile !== null || (config as ModelAnalysisConfig).speckleData !== undefined)) ||
+      (config.type === 'model-analysis' && (config as AnalyzeModelConfig).speckleData !== undefined)
     );
   }, [analysisConfigs, hasGlobalModelLoaded]);
 
   // Available card types for add button
   const availableTypes: CardTypeOption[] = useMemo(() => [
+    {
+      type: 'model-analysis',
+      label: CARD_TYPE_LABELS['model-analysis'],
+      enabled: hasModelLoaded,
+      disabledTooltip: 'Import a 3D model first (right sidebar)'
+    },
     {
       type: '3d-model',
       label: CARD_TYPE_LABELS['3d-model'],
@@ -176,16 +277,25 @@ export function AnalysisSection({
       type: 'text',
       label: CARD_TYPE_LABELS['text'],
       enabled: true
+    },
+    {
+      type: 'scenario',
+      label: CARD_TYPE_LABELS['scenario'],
+      enabled: true
     }
   ], [hasModelLoaded]);
 
-  // Calculate total selected prompts
+  // Calculate total selected prompts (analysis results + foley sounds from scenario cards)
   const totalSelectedPrompts = useMemo(() => {
-    return analysisResult.reduce((total, result) => {
-      const selectedCount = result.prompts.filter(p => p.selected).length;
-      return total + selectedCount;
+    const fromAnalysis = analysisResult.reduce((total, result) => {
+      return total + result.prompts.filter(p => p.selected).length;
     }, 0);
-  }, [analysisResult]);
+    const fromFoley = analysisConfigs.reduce((total, config) => {
+      if (config.type !== 'scenario') return total;
+      return total + ((config as ScenarioConfig).selectedFoleyKeys?.length ?? 0);
+    }, 0);
+    return fromAnalysis + fromFoley;
+  }, [analysisResult, analysisConfigs]);
 
   const canSendToGeneration = totalSelectedPrompts > 0;
 
@@ -232,6 +342,21 @@ export function AnalysisSection({
         actionButtonDisabledReason = actionButtonDisabled ? 'Enter a text description' : undefined;
         break;
       }
+      case 'model-analysis': {
+        const analyzeConfig = config as AnalyzeModelConfig;
+        actionButtonLabel = 'Analyze 3D Model';
+        actionButtonDisabled = analyzeConfig.modelEntities.length === 0;
+        actionButtonDisabledReason = actionButtonDisabled ? 'Loading model objects…' : undefined;
+        actionButtonColor = 'success';
+        break;
+      }
+      case 'scenario': {
+        // Action button only shown when hasResult=false (no scenario yet)
+        actionButtonLabel = 'Generate Scenario';
+        actionButtonColor = 'success';
+        actionButtonDisabledReason = actionButtonDisabled ? 'Imagining usage scenarios…' : undefined;
+        break;
+      }
     }
 
     // Build custom buttons for text cards (draw area button)
@@ -266,7 +391,7 @@ export function AnalysisSection({
         const v = serviceVersions.yamnet;
         return `${v.name} ${v.version}`;
       }
-      if (config.type === '3d-model' || config.type === 'text') {
+      if (config.type === '3d-model' || config.type === 'text' || config.type === 'model-analysis') {
         const providers = serviceVersions.llm_providers;
         const providerKey = LLM_MODEL_TO_PROVIDER[llmModel] ?? "google";
         const p = providers?.[providerKey as keyof typeof providers];
@@ -276,7 +401,7 @@ export function AnalysisSection({
       return undefined;
     })();
 
-    return (
+    const card = (
       <Card
         config={config}
         index={index}
@@ -284,8 +409,9 @@ export function AnalysisSection({
         hasResult={configHasResult}
         result={getResult(index)}
         isRunning={isRunning && analyzingConfigIndex === index}
-        status={analyzingConfigIndex === index ? analysisStatus : undefined}
+        status={analyzingConfigIndex === index ? (config.type === 'scenario' ? 'Imagining usage scenarios…' : analysisStatus) : undefined}
         collapsedInfo={getCollapsedInfo(config, index)}
+        defaultName={config.type === 'scenario' ? ((config as ScenarioConfig).scenarioResult?.scenarios?.[0]?.title ?? undefined) : undefined}
         showIndex={true}
         canRemove={true}
         closeButtonTitle="Remove analysis"
@@ -308,6 +434,20 @@ export function AnalysisSection({
         version={cardVersion}
       />
     );
+
+    if (config.type === 'model-analysis') {
+      return (
+        <>
+          <AnalysisGroupColorSync
+            config={config as AnalyzeModelConfig}
+            isExpanded={isExpanded}
+          />
+          {card}
+        </>
+      );
+    }
+
+    return card;
   }, [hasResult, getResult, isRunning, analyzingConfigIndex, analysisStatus, getCollapsedInfo, onUpdateConfig, onRemoveConfig, onReset, getBeforeContent, getAfterContent, onRun, onStop, areaDrawing, serviceVersions]);
 
   // Footer with send button

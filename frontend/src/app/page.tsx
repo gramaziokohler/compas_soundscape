@@ -72,6 +72,22 @@ function HomeContent() {
     syncGeneratedSounds(soundGen.generatedSounds);
   }, [soundGen.generatedSounds, syncGeneratedSounds]);
 
+  // Auto-initialize timestamp scheduling for sounds that carry foley timestamps.
+  // Runs whenever generatedSounds changes; uses getState() to avoid store subscriptions.
+  useEffect(() => {
+    const audioStore = useAudioControlsStore.getState();
+    soundGen.generatedSounds.forEach((sound: any) => {
+      if (!sound.timestamps?.length) return;
+      if (audioStore.soundSchedulingModes[sound.id]) return; // already initialized
+      const timestampsSec = (sound.timestamps as string[]).map((t) => {
+        const [mm, ss] = t.split(':').map(Number);
+        return (mm ?? 0) * 60 + (ss ?? 0);
+      });
+      audioStore.handleSchedulingModeChange(sound.id, 'timestamps');
+      audioStore.handleTimestampsChange(sound.id, timestampsSec);
+    });
+  }, [soundGen.generatedSounds]);
+
   const analysis = useAnalysisStore();
 
   // Speckle store — replaces SpeckleViewerContext + SpeckleSelectionModeContext
@@ -544,6 +560,87 @@ function HomeContent() {
   // Handler: Send analysis prompts to sound generation
   const handleSendAnalysisToGeneration = useCallback(() => {
     analysis.handleSendToSoundGeneration((prompts) => {
+      // Resolve a full entity object from a Speckle tree ID by searching the world tree.
+      // objectsInvolved from the foley LLM contains Speckle tree IDs, so we can search directly.
+      const resolveEntityFromTreeId = (treeId: string, fallbackPosition?: [number, number, number]): any => {
+        const viewer = viewerRef.current;
+        if (!viewer) return { id: treeId, nodeId: treeId };
+        let worldTree: any;
+        try { worldTree = viewer.getWorldTree(); } catch { /* ignore */ }
+        if (!worldTree) return { id: treeId, nodeId: treeId };
+
+        // Depth-first search through the world tree for the node matching treeId
+        const checkNode = (node: any): any => {
+          const nodeId = node?.raw?.id || node?.model?.id || node?.id;
+          if (nodeId === treeId) return node;
+          const children = node?.model?.children || node?.children;
+          if (children) {
+            for (const child of children) {
+              const found = checkNode(child);
+              if (found) return found;
+            }
+          }
+          return null;
+        };
+        const rootChildren =
+          worldTree.tree?._root?.children ||
+          worldTree._root?.children ||
+          worldTree.root?.children ||
+          worldTree.children;
+        let objectData: any = null;
+        if (rootChildren) {
+          for (const child of rootChildren) {
+            objectData = checkNode(child);
+            if (objectData) break;
+          }
+        }
+
+        const objectName: string | undefined =
+          objectData?.model?.name || objectData?.raw?.name || undefined;
+        const speckleType: string | undefined =
+          objectData?.raw?.speckle_type || undefined;
+        const applicationId: string | undefined =
+          objectData?.raw?.applicationId || undefined;
+
+        let position: [number, number, number] = [0, 0, 0];
+        let entityBounds: any;
+        try {
+          const renderView = objectData?.model?.renderView || objectData?.renderView;
+          if (renderView?.aabb) {
+            const aabb = renderView.aabb as any;
+            const cx = (aabb.min.x + aabb.max.x) / 2;
+            const cy = (aabb.min.y + aabb.max.y) / 2;
+            const cz = (aabb.min.z + aabb.max.z) / 2;
+            position = [cx, cy, cz];
+            entityBounds = {
+              min: [aabb.min.x, aabb.min.y, aabb.min.z] as [number, number, number],
+              max: [aabb.max.x, aabb.max.y, aabb.max.z] as [number, number, number],
+              center: position,
+            };
+          }
+        } catch { /* ignore */ }
+
+        // If the viewer couldn't provide bounds, use the foley position as fallback
+        if (!entityBounds && fallbackPosition) {
+          position = fallbackPosition;
+          entityBounds = {
+            min: [fallbackPosition[0] - 0.5, fallbackPosition[1] - 0.5, fallbackPosition[2] - 0.5] as [number, number, number],
+            max: [fallbackPosition[0] + 0.5, fallbackPosition[1] + 0.5, fallbackPosition[2] + 0.5] as [number, number, number],
+            center: fallbackPosition,
+          };
+        }
+
+        return {
+          id: treeId,
+          nodeId: treeId,
+          applicationId,
+          name: objectName,
+          type: speckleType,
+          position,
+          bounds: entityBounds,
+        };
+      };
+
       // Convert text prompts to sound configs
       const newConfigs = prompts.map(p => ({
         prompt: p.text,
@@ -554,9 +651,14 @@ function HomeContent() {
         steps: 100,
         spl_db: p.metadata?.spl_db ?? 60, // Default SPL if not provided
         interval_seconds: p.metadata?.interval_seconds ?? 5, // Default interval if not provided
-        display_name: p.text.length > 50 ? p.text.substring(0, 47) + '...' : p.text,
-        // Preserve entity association for 3D model sounds, or use area-drawn position
-        entity: p.entity || (p.position ? { position: p.position, index: undefined } : undefined)
+        display_name: p.displayName || (p.text.length > 50 ? p.text.substring(0, 47) + '...' : p.text),
+        // Resolve entity from world tree when available; pass foley position as bounds fallback.
+        // Non-entity sounds get no entity object — SoundSphereManager places them at camera-front.
+        entity: p.entity?.id
+          ? resolveEntityFromTreeId(p.entity.id, p.entity.foleyPosition)
+          : undefined,
+        // Pass foley timestamps through so they can be applied after generation
+        ...(p.metadata?.timestamps?.length ? { timestamps: p.metadata.timestamps } : {}),
       }));
 
       console.log('[Analysis→SoundGen] Converted configs with metadata:', 
@@ -583,7 +685,7 @@ function HomeContent() {
   // Handler: Add analysis config with global model inheritance
   const handleAddAnalysisConfig = useCallback((type: import('@/types/card').CardType) => {
     // For 3D model configs, pass globalSpeckleData so new card inherits the loaded model
-    if (type === '3d-model' && globalSpeckleData) {
+    if ((type === '3d-model' || type === 'model-analysis') && globalSpeckleData) {
       analysis.handleAddConfig(type, globalSpeckleData);
     } else {
       analysis.handleAddConfig(type);

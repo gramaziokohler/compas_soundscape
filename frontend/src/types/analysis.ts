@@ -31,6 +31,7 @@ export interface ModelAnalysisConfig extends AnalysisBaseConfig {
   selectedDiverseEntities: any[];
   useModelAsContext: boolean;
   geometryData?: any;
+  liveScreenshots?: string[];
   speckleData?: {
     model_id: string;
     version_id: string;
@@ -62,9 +63,113 @@ export interface TextAnalysisConfig extends AnalysisBaseConfig {
 }
 
 /**
+ * Architectural object identified by model analysis
+ */
+export interface ArchitecturalObject {
+  name: string;
+  description: string;
+  material: string;
+  confidence: number;
+  quantity: number;
+  object_ids: string[];
+}
+
+/**
+ * Result data from model analysis
+ */
+export interface ModelAnalysisResultData {
+  analysisId: string;
+  architecturalObjects: ArchitecturalObject[];
+}
+
+/**
+ * Analyze 3D Model Config — streaming architectural object identification
+ */
+export interface AnalyzeModelConfig extends AnalysisBaseConfig {
+  type: 'model-analysis';
+  liveScreenshots: string[];
+  userContext: string;
+  modelEntities: any[];
+  speckleData?: {
+    model_id: string;
+    version_id: string;
+    file_id: string;
+    url: string;
+    object_id: string;
+    auth_token?: string;
+  };
+  analysisResult?: ModelAnalysisResultData;
+}
+
+/**
  * Union type for all analysis configs
  */
-export type AnalysisConfig = ModelAnalysisConfig | AudioAnalysisConfig | TextAnalysisConfig;
+export type AnalysisConfig = ModelAnalysisConfig | AudioAnalysisConfig | TextAnalysisConfig | AnalyzeModelConfig | ScenarioConfig;
+
+// ============================================================================
+// Scenario Types
+// ============================================================================
+
+export interface ScenarioEventItem {
+  timestamp: string;
+  description: string;
+}
+
+export interface ScenarioItem {
+  title: string;
+  duration: string;
+  peopleCount: number;
+  likeliness: number;
+  events: ScenarioEventItem[];
+}
+
+export interface ScenarioResult {
+  scenarios: ScenarioItem[];
+  scenarioId: string;
+}
+
+export interface FoleySoundEvent {
+  soundName: string;
+  description: string;
+  duration: string;
+  timestamps: string[];
+  category: string;
+  objectsInvolved: string[];
+  position: number[];
+  spl: string;
+}
+
+export interface FoleyScenario {
+  scenario_title: string;
+  sound_events: FoleySoundEvent[];
+}
+
+export interface FoleyResult {
+  scenarios: FoleyScenario[];
+  foleyId: string;
+}
+
+/**
+ * Scenario Config — streams a scenario from scenarist agent, then calls foley artist
+ */
+export interface ScenarioConfig extends AnalysisBaseConfig {
+  type: 'scenario';
+  userContext: string;
+  peopleCount: number;
+  likeliness: number;
+  /** If true, pass the most recent model-analysis result as furniture context */
+  useAnalysisResult: boolean;
+  /** Raw streamed text (typewriter) */
+  scenarioRawText: string;
+  /** Structured scenario result after streaming completes */
+  scenarioResult: ScenarioResult | null;
+  /** UUID of the saved scenario file */
+  scenarioId: string | null;
+  /** Foley result after calling foley artist */
+  foleyResult: FoleyResult | null;
+  /** Keys of foley sounds currently selected for sound generation */
+  selectedFoleyKeys: string[];
+}
 
 // ============================================================================
 // Analysis Result Types
@@ -76,6 +181,8 @@ export type AnalysisConfig = ModelAnalysisConfig | AudioAnalysisConfig | TextAna
 export interface TextPromptResult {
   id: string;
   text: string;
+  /** Optional display name override (e.g. soundName from foley, separate from prompt text) */
+  displayName?: string;
   selected: boolean;
   entity?: any;
   /** Pre-computed position from area drawing (overrides random placement) */
@@ -86,6 +193,8 @@ export interface TextPromptResult {
     duration_seconds?: number;
     confidence?: number;
     detection_segments?: Array<{ start_sec: number; end_sec: number }>;
+    /** Explicit playback timestamps in "MM:SS" format (from foley/scenario JSON). */
+    timestamps?: string[];
   };
 }
 

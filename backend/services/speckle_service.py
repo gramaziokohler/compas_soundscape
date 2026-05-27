@@ -444,12 +444,20 @@ class SpeckleService:
                 logger.info(f"Attempting to fetch version metadata: {version_id_or_object_id}")
                 version = self.client.version.get(version_id=version_id_or_object_id, project_id=project_id)
                 
-                if version and version.referencedObject:
-                    logger.info(f"Version found. Referenced Object ID: {version.referencedObject}")
-                    object_id_to_receive = version.referencedObject
+                if version:
+                    # specklepy uses snake_case; fall back to camelCase for older SDK versions
+                    ref_obj = (
+                        getattr(version, "referenced_object", None)
+                        or getattr(version, "referencedObject", None)
+                    )
+                    if ref_obj:
+                        logger.info(f"Version found. Referenced Object ID: {ref_obj}")
+                        object_id_to_receive = ref_obj
+                    else:
+                        logger.warning(f"Version lookup succeeded but no referenced_object found")
+                        raise Exception("No referenced_object in version")
                 else:
-                    logger.warning(f"Version lookup succeeded but no referencedObject found")
-                    raise Exception("No referencedObject in version")
+                    raise Exception("Version lookup returned None")
             except Exception as version_error:
                 # Version lookup failed - try to get latest version from model
                 logger.info(f"Version lookup failed: {str(version_error)}")
@@ -774,7 +782,65 @@ class SpeckleService:
             "object_face_ranges": object_face_ranges,
             "units": root_units,
         }
-    
+
+    def get_model_entities(self, project_id: str, version_id_or_object_id: str) -> list:
+        """
+        Extract entity metadata from a Speckle model.
+
+        Delegates to get_model_geometry() — which already handles all version/object
+        ID resolution and traversal — then derives entity dicts from the returned
+        object_ids, object_names, object_face_ranges and vertex data.
+        """
+        geometry = self.get_model_geometry(
+            project_id=project_id,
+            version_id_or_object_id=version_id_or_object_id,
+        )
+        if not geometry or not geometry.get("object_ids"):
+            logger.warning(
+                f"get_model_geometry returned no objects for {version_id_or_object_id}"
+            )
+            return []
+
+        vertices = geometry["vertices"]           # list of [x, y, z]
+        faces = geometry["faces"]                 # list of [v0, v1, v2]
+        object_ids = geometry["object_ids"]       # list of str
+        object_names = geometry["object_names"]   # list of str
+        object_face_ranges = geometry["object_face_ranges"]  # {id: [start, end]}
+
+        entities = []
+        for idx, (obj_id, obj_name) in enumerate(zip(object_ids, object_names)):
+            face_range = object_face_ranges.get(obj_id)
+
+            bounds = None
+            if face_range and vertices and faces:
+                start_f, end_f = face_range
+                used = set()
+                for face in faces[start_f: end_f + 1]:
+                    used.update(face)
+                obj_verts = [vertices[vi] for vi in used if vi < len(vertices)]
+                if obj_verts:
+                    xs = [v[0] for v in obj_verts]
+                    ys = [v[1] for v in obj_verts]
+                    zs = [v[2] for v in obj_verts]
+                    mn = [min(xs), min(ys), min(zs)]
+                    mx = [max(xs), max(ys), max(zs)]
+                    ct = [(mn[i] + mx[i]) / 2 for i in range(3)]
+                    bounds = {"min": mn, "max": mx, "center": ct}
+
+            entities.append({
+                "id": obj_id,
+                "index": idx,
+                "name": obj_name,
+                "type": obj_name,
+                "speckle_type": obj_name,
+                "layer": None,
+                "material": None,
+                "bounds": bounds,
+            })
+
+        logger.info(f"Extracted {len(entities)} entities from {version_id_or_object_id}")
+        return entities
+
     async def get_object_materials(
         self, 
         project_id: str, 
@@ -1033,6 +1099,7 @@ class SpeckleService:
             "message": getattr(version, "message", None),
             "source_application": getattr(version, "source_application", None),
             "referenced_object": getattr(version, "referenced_object", None),
+            "preview_url": getattr(version, "preview_url", None),
             "created_at": (
                 version.created_at.isoformat()
                 if getattr(version, "created_at", None)

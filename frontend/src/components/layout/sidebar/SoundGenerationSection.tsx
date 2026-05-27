@@ -11,6 +11,7 @@ import { Card } from "@/components/ui/Card";
 import { SoundConfigContent, SoundResultContent } from "./sound";
 import { apiService } from "@/services/api";
 import { useAudioControlsStore, useSoundscapeStore } from "@/store";
+import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
 import { useUIStore } from "@/store/uiStore";
 import { useServiceVersions } from "@/hooks/useServiceVersions";
 import {
@@ -156,6 +157,10 @@ export function SoundGenerationSection({
   const previewingSoundId    = useAudioControlsStore((s) => s.previewingSoundId);
   const onPreviewPlayPause   = useAudioControlsStore((s) => s.handlePreviewPlayPause);
   const onPreviewStop        = useAudioControlsStore((s) => s.handlePreviewStop);
+  const soundSchedulingModes = useAudioControlsStore((s) => s.soundSchedulingModes);
+  const soundTimestamps      = useAudioControlsStore((s) => s.soundTimestamps);
+  const onSchedulingModeChange = useAudioControlsStore((s) => s.handleSchedulingModeChange);
+  const onTimestampsChange   = useAudioControlsStore((s) => s.handleTimestampsChange);
 
   // Track expanded index for controlled mode (CardSection)
   const [expandedIndex, setExpandedIndex] = useState<number | null>(
@@ -461,6 +466,34 @@ export function SoundGenerationSection({
       });
     }
 
+    // Scheduling mode toggle (only if generated)
+    if (isGenerated && generatedSound) {
+      const currentSchedulingMode = soundSchedulingModes[generatedSound.id] ?? 'interval';
+      const isTimestampsMode = currentSchedulingMode === 'timestamps';
+      customButtons.push({
+        key: 'scheduling-mode',
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        ),
+        label: isTimestampsMode ? 'Switch to interval mode' : 'Switch to timestamp mode',
+        isActive: isTimestampsMode,
+        onClick: (e) => {
+          e.stopPropagation();
+          const newMode: 'interval' | 'timestamps' = isTimestampsMode ? 'interval' : 'timestamps';
+          // Look up the buffer duration so auto-timestamps are spaced by sound length
+          let soundDurationSec: number | undefined;
+          try {
+            const { coordinator } = useSpeckleEngineStore.getState();
+            const meta = coordinator?.getSoundSphereManager?.()?.getAllAudioSources?.()?.get(generatedSound.id);
+            if (meta?.buffer?.duration) soundDurationSec = meta.buffer.duration;
+          } catch { /* ignore */ }
+          onSchedulingModeChange(generatedSound.id, newMode, soundDurationSec);
+        },
+      });
+    }
+
     // Duplicate button (only if generated)
     if (isGenerated && onDuplicateConfig) {
       customButtons.push({
@@ -560,6 +593,10 @@ export function SoundGenerationSection({
               onPreviewStop={onPreviewStop}
               onVolumeChange={onVolumeChange}
               onIntervalChange={onIntervalChange}
+              schedulingMode={soundSchedulingModes[generatedSound.id] ?? 'interval'}
+              soundTimestamps={soundTimestamps}
+              onSchedulingModeChange={onSchedulingModeChange}
+              onTimestampsChange={onTimestampsChange}
               onVariantChange={onVariantChange}
               onUpdatePosition={handleUpdateSoundPosition}
               onUnlinkEntity={() => handleDetachSoundFromEntity(index)}
@@ -604,6 +641,10 @@ export function SoundGenerationSection({
     onPreviewStop,
     onVolumeChange,
     onIntervalChange,
+    soundSchedulingModes,
+    soundTimestamps,
+    onSchedulingModeChange,
+    onTimestampsChange,
     onVariantChange,
     handleUpdateSoundPosition,
     handleDetachSoundFromEntity,

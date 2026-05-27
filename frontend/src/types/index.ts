@@ -95,6 +95,10 @@ export interface SoundEvent {
   current_interval_seconds?: number; // Current interval override (user-adjustable)
   isUploaded?: boolean; // Flag indicating this sound was uploaded (not generated)
   entity_index?: number; // Index of the entity this sound is linked to (for entity-based sounds)
+  /** Explicit playback timestamps in "MM:SS" format (from foley/scenario JSON). */
+  timestamps?: string[];
+  /** Default scheduling mode hint carried from source data. */
+  scheduling_mode?: 'interval' | 'timestamps';
 }
 
 export interface UIOverlay {
@@ -148,6 +152,8 @@ export interface SoundGenerationConfig {
   interval_seconds?: number; // Playback interval from LLM estimation
   type?: CardType; // Card type from CardType (single source of truth)
   error?: string | null; // Per-card error message
+  /** Explicit playback timestamps in "MM:SS" format (from foley/scenario JSON). */
+  timestamps?: string[];
   // Uploaded audio fields (when bypassing generation)
   uploadedAudioBuffer?: AudioBuffer; // Audio buffer for playback
   uploadedAudioInfo?: SEDAudioInfo; // Audio metadata for display

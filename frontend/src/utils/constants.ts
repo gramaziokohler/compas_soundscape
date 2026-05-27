@@ -276,6 +276,11 @@ export const DEFAULT_SPL_DB = 70;
 export const SPL_MIN = 30;
 export const SPL_MAX = 120;
 
+// Scenario / Foley Artist
+export const DEFAULT_MAXIMUM_FOLEY_SOUNDS = 10;
+export const MAXIMUM_FOLEY_SOUNDS_MIN = 1;
+export const MAXIMUM_FOLEY_SOUNDS_MAX = 20;
+
 // Position Generation (for sound sphere spacing)
 // These values match the backend's position calculation logic
 // Used to space sounds evenly when no bounding box is provided

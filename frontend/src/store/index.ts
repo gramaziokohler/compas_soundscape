@@ -126,7 +126,7 @@ export type { UIStoreState } from './uiStore';
 export { useFileUploadStore } from './fileUploadStore';
 export type { FileUploadStoreState } from './fileUploadStore';
 
-export { useSpeckleStore } from './speckleStore';
+export { useSpeckleStore, getAnalysisResultGroups } from './speckleStore';
 export type { SpeckleStoreState } from './speckleStore';
 
 export { useAreaDrawingStore } from './areaDrawingStore';

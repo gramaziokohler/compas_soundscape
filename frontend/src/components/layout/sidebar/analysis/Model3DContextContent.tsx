@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { toPng } from 'html-to-image';
 import type { ModelAnalysisConfig } from '@/types/analysis';
 import { useSpeckleStore, useAnalysisStore } from '@/store';
 import { getRootNodesForModel } from '@/hooks/useSpeckleTree';
@@ -261,8 +262,138 @@ export function Model3DContextContent({
             onChangeCommitted={numSoundsSlider.onCommit}
           />
 
+          {/* Capture View button + thumbnails */}
+          <CaptureViewSection
+            index={index}
+            screenshots={config.liveScreenshots ?? []}
+            onUpdateConfig={onUpdateConfig}
+          />
+
           {/* Note: Action button is rendered by Card component */}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ─── CaptureViewSection ───────────────────────────────────────────────────────
+
+interface CaptureViewSectionProps {
+  index: number;
+  screenshots: string[];
+  onUpdateConfig: (index: number, updates: Partial<import('@/types/analysis').ModelAnalysisConfig>) => void;
+}
+
+function CaptureViewSection({ index, screenshots, onUpdateConfig }: CaptureViewSectionProps) {
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleCapture = useCallback(async () => {
+    const container = document.getElementById('speckle-scene-container');
+    if (!container) {
+      setError('Viewer not found');
+      return;
+    }
+
+    setIsCapturing(true);
+    setError(null);
+
+    try {
+      const dataUrl = await toPng(container, { cacheBust: true });
+
+      const res = await fetch('/api/screenshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: dataUrl }),
+      });
+
+      if (!res.ok) throw new Error(`Server error: ${res.status}`);
+
+      const { image } = await res.json() as { image: string };
+      onUpdateConfig(index, { liveScreenshots: [...screenshots, image] });
+    } catch (err) {
+      console.error('[CaptureViewSection] Capture failed:', err);
+      setError(err instanceof Error ? err.message : 'Capture failed');
+    } finally {
+      setIsCapturing(false);
+    }
+  }, [index, screenshots, onUpdateConfig]);
+
+  const handleRemove = useCallback((i: number) => {
+    onUpdateConfig(index, { liveScreenshots: screenshots.filter((_, idx) => idx !== i) });
+  }, [index, screenshots, onUpdateConfig]);
+
+  return (
+    <div className="px-4 space-y-2">
+      {/* Capture button */}
+      <button
+        onClick={handleCapture}
+        disabled={isCapturing}
+        className="w-full text-xs py-1.5 px-3 rounded flex items-center justify-center gap-1.5"
+        style={{
+          backgroundColor: 'var(--color-secondary-lighter)',
+          color: screenshots.length > 0 ? 'var(--color-success, #4ade80)' : 'var(--color-secondary-hover)',
+          opacity: isCapturing ? 0.6 : 1,
+          cursor: isCapturing ? 'wait' : 'pointer',
+        }}
+      >
+        {isCapturing
+          ? 'Capturing…'
+          : screenshots.length > 0
+            ? `+ Capture view (${screenshots.length} captured)`
+            : 'Capture current view'}
+      </button>
+
+      {/* Thumbnail strip */}
+      {screenshots.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {screenshots.map((src, i) => (
+            <Thumbnail key={i} src={src} onRemove={() => handleRemove(i)} />
+          ))}
+        </div>
+      )}
+
+      {error && (
+        <p className="text-xs" style={{ color: 'var(--color-error, #f87171)' }}>
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ─── Thumbnail ────────────────────────────────────────────────────────────────
+
+function Thumbnail({ src, onRemove }: { src: string; onRemove: () => void }) {
+  const [hovered, setHovered] = useState(false);
+
+  return (
+    <div
+      className="relative rounded overflow-hidden flex-shrink-0"
+      style={{ width: 52, height: 52 }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <img src={src} alt="capture" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+      {hovered && (
+        <button
+          onClick={onRemove}
+          className="absolute top-0 right-0 flex items-center justify-center rounded-bl"
+          style={{
+            width: 16,
+            height: 16,
+            fontSize: 10,
+            lineHeight: 1,
+            backgroundColor: 'rgba(0,0,0,0.7)',
+            color: '#fff',
+            cursor: 'pointer',
+            border: 'none',
+            padding: 0,
+          }}
+          title="Remove"
+        >
+          ×
+        </button>
       )}
     </div>
   );

@@ -88,11 +88,15 @@ function getSoundColor(metadata: SoundMetadata): string {
  *
  * @param audioSchedulers - Map of AudioScheduler instances (one per sound)
  * @param timelineDuration - Timeline duration in milliseconds
+ * @param soundSchedulingModes - Optional per-sound scheduling modes from store
+ * @param soundTimestamps - Optional per-sound explicit timestamps in seconds from store
  * @returns Array of TimelineSound objects ready for visualization
  */
 export function extractTimelineSounds(
   audioSchedulers: Map<string, AudioScheduler>,
-  timelineDuration: number = AUDIO_TIMELINE.DEFAULT_DURATION_MS
+  timelineDuration: number = AUDIO_TIMELINE.DEFAULT_DURATION_MS,
+  soundSchedulingModes?: Record<string, 'interval' | 'timestamps'>,
+  soundTimestamps?: Record<string, number[]>
 ): TimelineSound[] {
   const timelineSounds: TimelineSound[] = [];
 
@@ -111,18 +115,27 @@ export function extractTimelineSounds(
       // Get color based on generation method
       const color = getSoundColor(metadata);
 
-      // Calculate scheduled iterations
-      const iterations: number[] = [];
-      let currentTime = initialDelayMs; // Start from initial delay
+      const schedulingMode = soundSchedulingModes?.[schedSoundId] ?? 'interval';
 
-      // Add iterations only when the iteration END fits within the timeline duration.
-      while (
-        currentTime + soundDurationMs <= timelineDuration &&
-        iterations.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY
-      ) {
-        iterations.push(currentTime);
-        // Next iteration = current + interval (randomness applied in actual playback)
-        currentTime += intervalMs;
+      let iterations: number[];
+
+      if (schedulingMode === 'timestamps' && soundTimestamps?.[schedSoundId]) {
+        // Timestamps mode: use explicit timestamps directly (converted to ms)
+        iterations = soundTimestamps[schedSoundId]
+          .map((s) => s * 1000)
+          .filter((ms) => ms + soundDurationMs <= timelineDuration)
+          .slice(0, AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY);
+      } else {
+        // Interval mode: calculate iterations from interval (original logic)
+        iterations = [];
+        let currentTime = initialDelayMs;
+        while (
+          currentTime + soundDurationMs <= timelineDuration &&
+          iterations.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY
+        ) {
+          iterations.push(currentTime);
+          currentTime += intervalMs;
+        }
       }
 
       // Extract audio URL from metadata (for WaveSurfer waveform visualization)
@@ -137,6 +150,7 @@ export function extractTimelineSounds(
         scheduledIterations: iterations,
         audioUrl: audioUrl || undefined,
         initialDelayMs,
+        schedulingMode,
       });
     });
   });
@@ -199,7 +213,9 @@ export function extractTimelineSoundsFromData(
   timelineDuration: number = AUDIO_TIMELINE.DEFAULT_DURATION_MS,
   soundEvents?: SoundEvent[],
   soundTrims?: Record<string, { start: number; end: number }>,
-  intervalJitterSeconds: number = 3
+  intervalJitterSeconds: number = 3,
+  soundSchedulingModes?: Record<string, 'interval' | 'timestamps'>,
+  soundTimestamps?: Record<string, number[]>
 ): TimelineSound[] {
   const timelineSounds: TimelineSound[] = [];
 
@@ -221,29 +237,44 @@ export function extractTimelineSoundsFromData(
     // Get color based on generation method
     const color = getSoundColor(metadata);
 
-    // Stagger delay matches the scheduler's jitter so the visual offset is always correct
-    const initialDelayMs = computeInitialDelay(soundId, intervalJitterSeconds * 1000);
+    const schedulingMode = soundSchedulingModes?.[soundId] ?? 'interval';
 
-    // Base parameters
-    const jitterMs = intervalJitterSeconds * 1000;
-    const baseGapMs = intervalSeconds * 1000;
+    // Timestamps mode: no stagger delay, no jitter — iterations are absolute positions.
+    // Interval mode: apply stagger delay so visual offset matches the audio scheduler.
+    const initialDelayMs = schedulingMode === 'timestamps'
+      ? 0
+      : computeInitialDelay(soundId, intervalJitterSeconds * 1000);
 
-    const iterations: number[] = [];
-    const iterationOffsets: number[] = [];
-    let currentTime = 0;
+    let iterations: number[];
+    let iterationOffsets: number[];
 
-    while (
-      currentTime < timelineDuration &&
-      iterations.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY
-    ) {
-      iterations.push(currentTime);
+    if (schedulingMode === 'timestamps' && soundTimestamps?.[soundId]) {
+      // Timestamps mode: use explicit timestamps (converted to ms), filtered to timeline bounds.
+      // Keep only iterations whose start fits within the timeline (end is allowed to clip).
+      iterations = soundTimestamps[soundId]
+        .map((s) => s * 1000)
+        .filter((ms) => ms < timelineDuration)
+        .slice(0, AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY);
+      // No jitter offsets for timestamps mode
+      iterationOffsets = [];
+    } else {
+      // Interval mode: calculate iterations from interval (original logic)
+      const jitterMs = intervalJitterSeconds * 1000;
+      const baseGapMs = intervalSeconds * 1000;
+      iterations = [];
+      iterationOffsets = [];
+      let currentTime = 0;
 
-      // Generate a deterministic jitter offset for this iteration
-      const randomOffset = computeIterationJitter(soundId, iterations.length - 1, jitterMs);
-      iterationOffsets.push(randomOffset);
-
-      const actualGapMs = Math.max(0, baseGapMs + randomOffset);
-      currentTime += soundDurationMs + actualGapMs;
+      while (
+        currentTime < timelineDuration &&
+        iterations.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY
+      ) {
+        iterations.push(currentTime);
+        const randomOffset = computeIterationJitter(soundId, iterations.length - 1, jitterMs);
+        iterationOffsets.push(randomOffset);
+        const actualGapMs = Math.max(0, baseGapMs + randomOffset);
+        currentTime += soundDurationMs + actualGapMs;
+      }
     }
 
     // Extract audio URL from metadata (for WaveSurfer waveform visualization)
@@ -261,6 +292,7 @@ export function extractTimelineSoundsFromData(
       trimEndFraction: trim?.end,
       initialDelayMs,
       iterationOffsets,
+      schedulingMode,
     });
   });
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import asyncio
 import sys
 import traceback
 from typing import Optional
@@ -85,12 +86,12 @@ def run_llm_generation(
                 20,
                 f"Generating {num_sounds} sound prompts for {entity_count} entities...",
             )
-            sound_list = llm.generate_prompts_for_entities(
+            sound_list = asyncio.run(llm.generate_prompts_for_entities(
                 entities,
                 num_sounds,
                 prompt,
                 llm_model=llm_model,
-            )
+            ))
 
             _write_progress(progress_file, 80, "Processing entity prompts...")
 
@@ -122,7 +123,7 @@ def run_llm_generation(
 
         elif prompt and prompt.strip():
             _write_progress(progress_file, 20, "Generating sound prompts from description...")
-            raw_text, sound_list = llm.generate_text_based_prompts(prompt, num_sounds, llm_model=llm_model)
+            raw_text, sound_list = asyncio.run(llm.generate_text_based_prompts(prompt, num_sounds, llm_model=llm_model))
 
             _write_progress(progress_file, 90, "Processing response...")
             result_payload = {

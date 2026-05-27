@@ -1,6 +1,8 @@
 # backend/services/llm_service.py
 # LLM Service for text generation and prompts
 
+import asyncio
+import base64
 import json
 import re
 import time
@@ -55,9 +57,6 @@ from config.constants import (
 class Error(Exception):
     pass
 
-class MockResponse:
-    def __init__(self, text):
-        self.text = text
 
 class LLMService:
     """Service for interacting with Google Gemini, OpenAI ChatGPT, and Anthropic Claude LLMs"""
@@ -104,125 +103,422 @@ class LLMService:
         """
         self.progress_callback = callback
 
-    def _call_llm_with_retry(self, prompt: str, operation_name: str = "LLM request", llm_model: str = DEFAULT_LLM_MODEL):
-        """Call LLM with exponential backoff retry logic for 503 errors
+    @staticmethod
+    def _to_json_schema(response_schema) -> dict:
+        """Convert a Pydantic model class to a plain JSON schema dict.
+
+        Adds ``additionalProperties: false`` recursively at all object levels
+        (required for OpenAI strict mode).
+        """
+        schema = response_schema.model_json_schema()
+
+        def _add_no_additional(s: dict) -> None:
+            if isinstance(s, dict):
+                if s.get("type") == "object":
+                    s["additionalProperties"] = False
+                    for prop in s.get("properties", {}).values():
+                        _add_no_additional(prop)
+                elif s.get("type") == "array":
+                    items = s.get("items")
+                    if isinstance(items, dict):
+                        _add_no_additional(items)
+                for defn in s.get("$defs", {}).values():
+                    _add_no_additional(defn)
+
+        _add_no_additional(schema)
+        return schema
+
+    async def _call_llm(
+        self,
+        user_prompt: str,
+        system_prompt: str = "",
+        *,
+        response_schema=None,
+        screenshots: list[str] | None = None,
+        streaming: bool = True,
+        operation_name: str = "LLM request",
+        llm_model: str = DEFAULT_LLM_MODEL,
+    ) -> str | dict:
+        """Unified async LLM caller with retry, schema enforcement, and optional streaming.
 
         Args:
-            prompt: The prompt to send to the LLM
-            operation_name: Human-readable name for this operation (for progress messages)
-            llm_model: The LLM model provider to use
+            user_prompt:     The user-facing prompt text.
+            system_prompt:   Optional system/role instructions.
+            response_schema: Pydantic model class for structured JSON output, or None for plain text.
+            screenshots:     Optional list of base64 PNG data URIs (max 3).
+            streaming:       When True, print chunks live to stdout (same return type).
+            operation_name:  Human-readable label for retry/progress messages.
+            llm_model:       Provider key (gemini / openai / anthropic).
 
         Returns:
-            Response from LLM (MockResponse with .text)
-
-        Raises:
-            Exception: If all retries are exhausted or a non-retryable error occurs
+            str if response_schema is None, else dict parsed from JSON output.
         """
+        import os as _os
+
+        # Normalize screenshots
+        clean_b64: list[str] = []
+        raw_data_uris: list[str] = []
+        if screenshots:
+            for s in screenshots[:3]:
+                if isinstance(s, str) and s.strip():
+                    raw_data_uris.append(s)
+                    clean_b64.append(s.split(",", 1)[1] if "," in s else s)
+
+        # Compute schema dict once before retry loop
+        schema_dict: dict | None = None
+        if response_schema is not None:
+            schema_dict = self._to_json_schema(response_schema)
+
         delay = LLM_INITIAL_RETRY_DELAY
-        last_error = None
 
         for attempt in range(1, LLM_MAX_RETRIES + 1):
             try:
-                # Dispatch based on model type
+                # ── OpenAI ────────────────────────────────────────────────────
                 if llm_model == LLM_MODEL_OPENAI:
                     if not OPENAI_AVAILABLE:
-                        from fastapi import HTTPException
-                        raise HTTPException(status_code=400, detail="openai package not installed. Run: pip install openai")
-                    if not self.openai_client:
-                        import os
-                        self.openai_client = _openai_module.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-                    resp = self.openai_client.chat.completions.create(
-                        model=LLM_MODEL_VERSIONS[LLM_MODEL_OPENAI],
-                        messages=[{"role": "user", "content": prompt}],
-                    )
-                    return MockResponse(text=resp.choices[0].message.content)
+                        raise ImportError("openai package not installed. Run: pip install openai")
+                    async_client = _openai_module.AsyncOpenAI(api_key=_os.environ.get("OPENAI_API_KEY"))
+                    user_content: list = [{"type": "text", "text": user_prompt}]
+                    for data_uri in raw_data_uris:
+                        user_content.append({"type": "image_url", "image_url": {"url": data_uri}})
+                    messages: list = []
+                    if system_prompt:
+                        messages.append({"role": "system", "content": system_prompt})
+                    messages.append({"role": "user", "content": user_content})
 
+                    if schema_dict is not None:
+                        rf = {
+                            "type": "json_schema",
+                            "json_schema": {"name": "output", "strict": True, "schema": schema_dict},
+                        }
+                        if streaming:
+                            accumulated = ""
+                            async with async_client.chat.completions.stream(
+                                model=LLM_MODEL_VERSIONS[LLM_MODEL_OPENAI],
+                                messages=messages,
+                                response_format=rf,
+                            ) as stream:
+                                async for event in stream:
+                                    if event.type == "content.delta":
+                                        print(event.delta, end="", flush=True)
+                                        accumulated += event.delta
+                            print(flush=True)
+                            return json.loads(accumulated)
+                        else:
+                            resp = await async_client.chat.completions.create(
+                                model=LLM_MODEL_VERSIONS[LLM_MODEL_OPENAI],
+                                messages=messages,
+                                response_format=rf,
+                            )
+                            return json.loads(resp.choices[0].message.content)
+                    else:
+                        if streaming:
+                            accumulated = ""
+                            stream = await async_client.chat.completions.create(
+                                model=LLM_MODEL_VERSIONS[LLM_MODEL_OPENAI],
+                                messages=messages,
+                                stream=True,
+                            )
+                            async for chunk in stream:
+                                delta = chunk.choices[0].delta.content
+                                if delta:
+                                    print(delta, end="", flush=True)
+                                    accumulated += delta
+                            print(flush=True)
+                            return accumulated
+                        else:
+                            resp = await async_client.chat.completions.create(
+                                model=LLM_MODEL_VERSIONS[LLM_MODEL_OPENAI],
+                                messages=messages,
+                            )
+                            return resp.choices[0].message.content
+
+                # ── Anthropic ─────────────────────────────────────────────────
                 elif llm_model == LLM_MODEL_ANTHROPIC:
                     if not ANTHROPIC_AVAILABLE:
-                        from fastapi import HTTPException
-                        raise HTTPException(status_code=400, detail="anthropic package not installed. Run: pip install anthropic")
-                    if not self.anthropic_client:
-                        import os
-                        self.anthropic_client = _anthropic_module.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-                    resp = self.anthropic_client.messages.create(
-                        model=LLM_MODEL_VERSIONS[LLM_MODEL_ANTHROPIC],
-                        max_tokens=2048,
-                        messages=[{"role": "user", "content": prompt}]
-                    )
-                    # Anthropic response contents is a list of TextBlock
-                    text_content = "".join([block.text for block in resp.content])
-                    return MockResponse(text=text_content)
+                        raise ImportError("anthropic package not installed. Run: pip install anthropic")
+                    async_client = _anthropic_module.AsyncAnthropic(api_key=_os.environ.get("ANTHROPIC_API_KEY"))
+                    content_blocks: list = []
+                    for b64_data in clean_b64:
+                        content_blocks.append({
+                            "type": "image",
+                            "source": {"type": "base64", "media_type": "image/png", "data": b64_data},
+                        })
+                    content_blocks.append({"type": "text", "text": user_prompt})
 
-                else: # Default to Gemini
+                    if schema_dict is not None:
+                        tool = {
+                            "name": "output",
+                            "description": "Output the structured result.",
+                            "input_schema": schema_dict,
+                        }
+                        if streaming:
+                            async with async_client.messages.stream(
+                                model=LLM_MODEL_VERSIONS[LLM_MODEL_ANTHROPIC],
+                                max_tokens=4096,
+                                system=system_prompt,
+                                tools=[tool],
+                                tool_choice={"type": "tool", "name": "output"},
+                                messages=[{"role": "user", "content": content_blocks}],
+                            ) as stream:
+                                async for event in stream:
+                                    if (
+                                        event.type == "content_block_delta"
+                                        and hasattr(event.delta, "partial_json")
+                                    ):
+                                        print(event.delta.partial_json, end="", flush=True)
+                                final_msg = await stream.get_final_message()
+                            print(flush=True)
+                            for block in final_msg.content:
+                                if block.type == "tool_use" and block.name == "output":
+                                    return block.input
+                            raise ValueError("Anthropic response did not contain expected tool_use block")
+                        else:
+                            resp = await async_client.messages.create(
+                                model=LLM_MODEL_VERSIONS[LLM_MODEL_ANTHROPIC],
+                                max_tokens=4096,
+                                system=system_prompt,
+                                tools=[tool],
+                                tool_choice={"type": "tool", "name": "output"},
+                                messages=[{"role": "user", "content": content_blocks}],
+                            )
+                            for block in resp.content:
+                                if block.type == "tool_use" and block.name == "output":
+                                    return block.input
+                            raise ValueError("Anthropic response did not contain expected tool_use block")
+                    else:
+                        if streaming:
+                            accumulated = ""
+                            async with async_client.messages.stream(
+                                model=LLM_MODEL_VERSIONS[LLM_MODEL_ANTHROPIC],
+                                max_tokens=4096,
+                                system=system_prompt,
+                                messages=[{"role": "user", "content": content_blocks}],
+                            ) as stream:
+                                async for text in stream.text_stream:
+                                    print(text, end="", flush=True)
+                                    accumulated += text
+                            print(flush=True)
+                            return accumulated
+                        else:
+                            resp = await async_client.messages.create(
+                                model=LLM_MODEL_VERSIONS[LLM_MODEL_ANTHROPIC],
+                                max_tokens=4096,
+                                system=system_prompt,
+                                messages=[{"role": "user", "content": content_blocks}],
+                            )
+                            return "".join(
+                                block.text for block in resp.content if hasattr(block, "text")
+                            )
+
+                # ── Google Gemini (default) ────────────────────────────────────
+                else:
                     if not GOOGLE_GENAI_AVAILABLE:
-                        from fastapi import HTTPException
-                        raise HTTPException(status_code=400, detail="google-genai package not installed. Run: pip install google-genai")
+                        raise ImportError("google-genai package not installed. Run: pip install google-genai")
                     if not self.gemini_client:
                         self.gemini_client = genai.Client()
+                    from google.genai import types as _gtypes
                     model_to_use = LLM_MODEL_VERSIONS.get(llm_model, "gemini-2.5-flash")
-                    response = self.gemini_client.models.generate_content(
-                        model=model_to_use,
-                        contents=prompt
-                    )
-                    return MockResponse(text=response.text)
+                    parts = [_gtypes.Part.from_text(text=user_prompt)]
+                    for b64_data in clean_b64:
+                        image_bytes = base64.b64decode(b64_data)
+                        parts.append(_gtypes.Part.from_bytes(data=image_bytes, mime_type="image/png"))
+
+                    if schema_dict is not None:
+                        config = _gtypes.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            response_json_schema=schema_dict,
+                            system_instruction=system_prompt,
+                        )
+                        if streaming:
+                            accumulated = ""
+                            response_stream = await self.gemini_client.aio.models.generate_content_stream(
+                                model=model_to_use,
+                                contents=[_gtypes.Content(role="user", parts=parts)],
+                                config=config,
+                            )
+                            async for chunk in response_stream:
+                                if chunk.text:
+                                    print(chunk.text, end="", flush=True)
+                                    accumulated += chunk.text
+                            print(flush=True)
+                            return json.loads(accumulated)
+                        else:
+                            response = await self.gemini_client.aio.models.generate_content(
+                                model=model_to_use,
+                                contents=[_gtypes.Content(role="user", parts=parts)],
+                                config=config,
+                            )
+                            return json.loads(response.text or "{}")
+                    else:
+                        config = _gtypes.GenerateContentConfig(
+                            system_instruction=system_prompt,
+                        ) if system_prompt else None
+                        contents: list = (  # type: ignore[assignment]
+                            [_gtypes.Content(role="user", parts=parts)]
+                            if clean_b64
+                            else user_prompt  # type: ignore[list-item]
+                        )
+                        if streaming:
+                            accumulated = ""
+                            response_stream = await self.gemini_client.aio.models.generate_content_stream(
+                                model=model_to_use,
+                                contents=contents,
+                                **({"config": config} if config else {}),
+                            )
+                            async for chunk in response_stream:
+                                if chunk.text:
+                                    print(chunk.text, end="", flush=True)
+                                    accumulated += chunk.text
+                            print(flush=True)
+                            return accumulated
+                        else:
+                            response = await self.gemini_client.aio.models.generate_content(
+                                model=model_to_use,
+                                contents=contents,
+                                **({"config": config} if config else {}),
+                            )
+                            return response.text or ""
 
             except Exception as e:
                 error_str = str(e)
-                last_error = e
-
-                # Check if it's a quota exhausted error (429)
-                is_quota_error = (
-                    '429' in error_str or
-                    'RESOURCE_EXHAUSTED' in error_str or
-                    'quota' in error_str.lower() or
-                    (ClientError is not None and isinstance(e, ClientError) and hasattr(e, 'status_code') and e.status_code == 429)
+                is_quota = (
+                    "429" in error_str
+                    or "RESOURCE_EXHAUSTED" in error_str
+                    or "quota" in error_str.lower()
+                    or (
+                        ClientError is not None
+                        and isinstance(e, ClientError)
+                        and getattr(e, "status_code", None) == 429
+                    )
                 )
-
-                if is_quota_error:
-                    # Re-raise the original provider error unchanged
+                if is_quota:
                     raise
 
-                # Check if it's a retryable error (503 overload)
                 is_retryable = (
-                    '503' in error_str or
-                    'overloaded' in error_str.lower() or
-                    'UNAVAILABLE' in error_str or
-                    'ServerError' in str(type(e).__name__)
+                    "503" in error_str
+                    or "overloaded" in error_str.lower()
+                    or "UNAVAILABLE" in error_str
+                    or "ServerError" in type(e).__name__
+                    # Mid-stream network drops (aiohttp / OS level)
+                    or "ClientPayloadError" in type(e).__name__
+                    or "TransferEncodingError" in type(e).__name__
+                    or "ConnectionResetError" in type(e).__name__
+                    or "Response payload is not completed" in error_str
+                    or "Not enough data to satisfy" in error_str
                 )
-
                 if not is_retryable:
-                    # Non-retryable error, raise immediately
                     raise
 
-                # If this was the last attempt, raise the error
                 if attempt >= LLM_MAX_RETRIES:
                     print(f"❌ {operation_name} failed after {LLM_MAX_RETRIES} attempts")
                     raise
 
-                # Calculate wait time with exponential backoff
                 wait_time = min(delay, LLM_MAX_RETRY_DELAY)
-
-                # Send progress update if callback is set
                 if self.progress_callback:
                     self.progress_callback(
                         attempt=attempt,
                         max_attempts=LLM_MAX_RETRIES,
                         delay=wait_time,
-                        error_msg=error_str
+                        error_msg=error_str,
                     )
-
-                # Log retry attempt
-                print(f"⏳ {operation_name} failed (attempt {attempt}/{LLM_MAX_RETRIES}): {error_str}")
+                print(f"\n⏳ {operation_name} failed (attempt {attempt}/{LLM_MAX_RETRIES}): {type(e).__name__}: {error_str}")
                 print(f"   Retrying in {wait_time:.1f} seconds...")
-
-                # Wait before retry
-                time.sleep(wait_time)
-
-                # Increase delay for next attempt (exponential backoff)
+                await asyncio.sleep(wait_time)
                 delay *= LLM_BACKOFF_MULTIPLIER
 
-        # This should never be reached, but just in case
-        raise last_error if last_error else Exception(f"{operation_name} failed")
+        raise RuntimeError(f"{operation_name} failed after {LLM_MAX_RETRIES} attempts")
+
+    async def _stream_llm_chunks(
+        self,
+        user_prompt: str,
+        system_prompt: str = "",
+        *,
+        screenshots: list[str] | None = None,
+        operation_name: str = "LLM stream",
+        llm_model: str = DEFAULT_LLM_MODEL,
+    ):
+        """Async generator yielding raw text chunks from the LLM as they arrive.
+
+        Supports optional screenshots (base64 PNG data URIs) for vision-capable models.
+        Used by streaming generation methods for SSE endpoints.
+        """
+        import os as _os
+
+        # Normalize screenshots
+        clean_b64: list[str] = []
+        raw_data_uris: list[str] = []
+        if screenshots:
+            for s in screenshots[:3]:
+                if isinstance(s, str) and s.strip():
+                    raw_data_uris.append(s)
+                    clean_b64.append(s.split(",", 1)[1] if "," in s else s)
+
+        if llm_model == LLM_MODEL_OPENAI:
+            if not OPENAI_AVAILABLE:
+                raise ImportError("openai package not installed. Run: pip install openai")
+            async_client = _openai_module.AsyncOpenAI(api_key=_os.environ.get("OPENAI_API_KEY"))
+            user_content: list = [{"type": "text", "text": user_prompt}]
+            for data_uri in raw_data_uris:
+                user_content.append({"type": "image_url", "image_url": {"url": data_uri}})
+            messages: list = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": user_content if raw_data_uris else user_prompt})
+            stream = await async_client.chat.completions.create(
+                model=LLM_MODEL_VERSIONS[LLM_MODEL_OPENAI],
+                messages=messages,
+                stream=True,
+            )
+            async for chunk in stream:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield delta
+
+        elif llm_model == LLM_MODEL_ANTHROPIC:
+            if not ANTHROPIC_AVAILABLE:
+                raise ImportError("anthropic package not installed. Run: pip install anthropic")
+            async_client = _anthropic_module.AsyncAnthropic(api_key=_os.environ.get("ANTHROPIC_API_KEY"))
+            anthropic_content: list = []
+            for b64_data in clean_b64:
+                anthropic_content.append({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": "image/png", "data": b64_data},
+                })
+            anthropic_content.append({"type": "text", "text": user_prompt})
+            async with async_client.messages.stream(
+                model=LLM_MODEL_VERSIONS[LLM_MODEL_ANTHROPIC],
+                max_tokens=4096,
+                system=system_prompt,
+                messages=[{"role": "user", "content": anthropic_content}],
+            ) as stream:
+                async for text in stream.text_stream:
+                    yield text
+
+        else:  # Google Gemini (default)
+            if not GOOGLE_GENAI_AVAILABLE:
+                raise ImportError("google-genai package not installed. Run: pip install google-genai")
+            if not self.gemini_client:
+                self.gemini_client = genai.Client()
+            from google.genai import types as _gtypes
+            model_to_use = LLM_MODEL_VERSIONS.get(llm_model, "gemini-2.5-flash")
+            config = _gtypes.GenerateContentConfig(system_instruction=system_prompt) if system_prompt else None
+            if clean_b64:
+                gemini_parts = [_gtypes.Part.from_text(text=user_prompt)]
+                for b64_data in clean_b64:
+                    image_bytes = base64.b64decode(b64_data)
+                    gemini_parts.append(_gtypes.Part.from_bytes(data=image_bytes, mime_type="image/png"))
+                gemini_contents = [_gtypes.Content(role="user", parts=gemini_parts)]
+            else:
+                gemini_contents = user_prompt
+            response_stream = await self.gemini_client.aio.models.generate_content_stream(
+                model=model_to_use,
+                contents=gemini_contents,
+                **({"config": config} if config else {}),
+            )
+            async for chunk in response_stream:
+                if chunk.text:
+                    yield chunk.text
 
     def _parse_prompt_and_name(self, text: str) -> dict:
         """Parse structured PROMPT: ... NAME: ... SPL: ... INTERVAL: ... DURATION: ... ENTITY: ... format into dict
@@ -305,7 +601,7 @@ class LLMService:
 
         return None
 
-    def select_diverse_entities(self, entities: list, max_sounds: int, entity_type: str = "objects", llm_model: str = DEFAULT_LLM_MODEL) -> list:
+    async def select_diverse_entities(self, entities: list, max_sounds: int, entity_type: str = "objects", llm_model: str = DEFAULT_LLM_MODEL) -> list:
         """Select most diverse entities using LLM
         
         Supports both traditional entities and Speckle objects.
@@ -347,8 +643,7 @@ Return ONLY a JSON array of the selected indices (numbers), like: [0, 5, 12, 18,
 No explanation, just the JSON array."""
 
         try:
-            response = self._call_llm_with_retry(diversity_prompt, "Entity selection", llm_model=llm_model)
-            response_text = response.text.strip()
+            response_text = str(await self._call_llm(diversity_prompt, operation_name="Entity selection", llm_model=llm_model)).strip()
 
             json_match = re.search(r'\[[\d,\s]+\]', response_text)
             if json_match:
@@ -395,6 +690,7 @@ No explanation, just the JSON array."""
             entities_text = "\n".join(entity_descriptions)
             if context and context.strip():
                 context_intro = f"""IMPORTANT CONTEXT: {context.upper()}
+
 
 You are designing a soundscape specifically for: "{context}"
 
@@ -496,7 +792,7 @@ For the duration estimation (in seconds with 0.1 precision):
     
     """
 
-    def generate_prompts_for_entities(self, entities: list[dict], num_sounds: int, context: str = None, llm_model: str = DEFAULT_LLM_MODEL) -> list[dict]:
+    async def generate_prompts_for_entities(self, entities: list[dict], num_sounds: int, context: str = None, llm_model: str = DEFAULT_LLM_MODEL) -> list[dict]:
         """Generate sound prompts mixing entity-based and context-based sounds
 
         Args:
@@ -513,8 +809,7 @@ For the duration estimation (in seconds with 0.1 precision):
         llm_prompt = self._create_base_sound_prompt(context or "", num_sounds, entities)
 
         try:
-            response = self._call_llm_with_retry(llm_prompt, "Sound prompt generation", llm_model=llm_model)
-            response_text = response.text.strip()
+            response_text = str(await self._call_llm(llm_prompt, operation_name="Sound prompt generation", llm_model=llm_model)).strip()
 
             # Print raw LLM response to terminal
             print(f"\n=== LLM Raw Response (Mixed Generation: {num_sounds} sounds from {len(entities) if entities else 0} entities) ===")
@@ -572,7 +867,7 @@ For the duration estimation (in seconds with 0.1 precision):
             print(f"Error generating prompts for entities: {e}")
             raise
 
-    def generate_text_based_prompts(self, context: str, num_sounds: int, llm_model: str = DEFAULT_LLM_MODEL) -> tuple[str, list[dict]]:
+    async def generate_text_based_prompts(self, context: str, num_sounds: int, llm_model: str = DEFAULT_LLM_MODEL) -> tuple[str, list[dict]]:
         """Generate sound prompts with display names from text description only
 
         Returns:
@@ -581,9 +876,7 @@ For the duration estimation (in seconds with 0.1 precision):
         # Use unified base prompt (no entities)
         enhanced_prompt = self._create_base_sound_prompt(context, num_sounds, entities=None)
 
-        response = self._call_llm_with_retry(enhanced_prompt, "Text-based prompt generation", llm_model=llm_model)
-
-        raw_text = response.text
+        raw_text: str = str(await self._call_llm(enhanced_prompt, operation_name="Text-based prompt generation", llm_model=llm_model))
 
         # Print raw LLM response to terminal
         print(f"\n=== LLM Raw Response (Text-based generation) ===")
@@ -627,3 +920,759 @@ For the duration estimation (in seconds with 0.1 precision):
                     })
 
         return raw_text, sound_list
+
+    async def stream_generate_text_based_prompts(
+        self, context: str, num_sounds: int, llm_model: str = DEFAULT_LLM_MODEL
+    ):
+        """Async generator yielding sound dicts one by one as they are parsed from the live LLM stream.
+
+        Yields:
+            dict: same shape as generate_text_based_prompts result items
+        """
+        enhanced_prompt = self._create_base_sound_prompt(context, num_sounds, entities=None)
+        _ENTRY_START = re.compile(r'\n\s*\d+[\.\)]\s+')
+        buffer = ""
+        async for chunk in self._stream_llm_chunks(
+            enhanced_prompt, operation_name="Text-based prompt streaming", llm_model=llm_model
+        ):
+            buffer += chunk
+            while True:
+                match = _ENTRY_START.search(buffer, 1)
+                if not match:
+                    break
+                completed = buffer[: match.start()]
+                buffer = buffer[match.start():]
+                entry_clean = re.sub(r'^\s*\d+[\.\)]\s*', '', completed.strip())
+                if entry_clean:
+                    parsed = self._parse_prompt_and_name(entry_clean)
+                    if parsed:
+                        yield parsed
+        # Yield trailing entry
+        if buffer.strip():
+            entry_clean = re.sub(r'^\s*\d+[\.\)]\s*', '', buffer.strip())
+            if entry_clean:
+                parsed = self._parse_prompt_and_name(entry_clean)
+                if parsed:
+                    yield parsed
+
+    async def stream_generate_prompts_for_entities(
+        self, entities: list[dict], num_sounds: int, context: str | None = None, llm_model: str = DEFAULT_LLM_MODEL
+    ):
+        """Async generator yielding sound dicts one by one as they are parsed from the live LLM stream.
+
+        Yields:
+            dict: same shape as generate_prompts_for_entities result items
+        """
+        llm_prompt = self._create_base_sound_prompt(context or "", num_sounds, entities)
+        _ENTRY_START = re.compile(r'\n\s*\d+[\.\)]\s+')
+        buffer = ""
+        async for chunk in self._stream_llm_chunks(
+            llm_prompt, operation_name="Entity prompt streaming", llm_model=llm_model
+        ):
+            buffer += chunk
+            while True:
+                match = _ENTRY_START.search(buffer, 1)
+                if not match:
+                    break
+                completed = buffer[: match.start()]
+                buffer = buffer[match.start():]
+                entry_clean = re.sub(r'^\s*\d+[\.\)]\s*', '', completed.strip())
+                if entry_clean:
+                    parsed = self._parse_prompt_and_name(entry_clean)
+                    if parsed:
+                        yield parsed
+        # Yield trailing entry
+        if buffer.strip():
+            entry_clean = re.sub(r'^\s*\d+[\.\)]\s*', '', buffer.strip())
+            if entry_clean:
+                parsed = self._parse_prompt_and_name(entry_clean)
+                if parsed:
+                    yield parsed
+
+    def _parse_architecture_object(self, text: str) -> dict | None:
+        """Parse a NAME:/DESCRIPTION:/MATERIAL:/CONFIDENCE:/QUANTITY:/IDS: block.
+
+        Returns:
+            dict with keys name, description, material, confidence, quantity, object_ids
+            or None if NAME: is missing.
+        """
+        name_match = re.search(r'NAME:\s*(.+?)(?=\s*DESCRIPTION:|$)', text, re.DOTALL | re.IGNORECASE)
+        if not name_match:
+            return None
+
+        desc_match = re.search(r'DESCRIPTION:\s*(.+?)(?=\s*MATERIAL:|$)', text, re.DOTALL | re.IGNORECASE)
+        mat_match = re.search(r'MATERIAL:\s*(.+?)(?=\s*CONFIDENCE:|$)', text, re.DOTALL | re.IGNORECASE)
+        conf_match = re.search(r'CONFIDENCE:\s*(\d+(?:\.\d+)?)', text, re.IGNORECASE)
+        qty_match = re.search(r'QUANTITY:\s*(\d+)', text, re.IGNORECASE)
+        ids_match = re.search(r'IDS:\s*(.+?)$', text, re.DOTALL | re.IGNORECASE)
+
+        name = name_match.group(1).strip()
+        description = desc_match.group(1).strip() if desc_match else ''
+        material = mat_match.group(1).strip() if mat_match else ''
+
+        confidence = 0.0
+        if conf_match:
+            try:
+                confidence = max(0.0, min(1.0, float(conf_match.group(1))))
+            except ValueError:
+                pass
+
+        quantity = 1
+        if qty_match:
+            try:
+                quantity = int(qty_match.group(1))
+            except ValueError:
+                pass
+
+        object_ids: list[str] = []
+        if ids_match:
+            raw = ids_match.group(1).strip()
+            # Strip outer backtick/bracket code-span wrapping from the whole value
+            raw = re.sub(r'^[`\[]+|[`\]]+$', '', raw).strip()
+            tokens: list[str] = []
+            for tok in re.split(r'[,\n]+', raw):
+                # Strip all formatting chars from each token boundary
+                tok = re.sub(r'^[`\'"*\[\]\s]+|[`\'"*\[\]\s]+$', '', tok)
+                if not tok:
+                    continue
+                # Keep only tokens that look like a Speckle ID (hex ≥20 chars)
+                # or a plain/bracket integer (handled later by _resolve_object_ids)
+                if re.fullmatch(r'[0-9a-fA-F]{20,}', tok) or re.fullmatch(r'\d+', tok):
+                    tokens.append(tok)
+            object_ids = tokens
+
+        return {
+            'name': name,
+            'description': description,
+            'material': material,
+            'confidence': confidence,
+            'quantity': quantity,
+            'object_ids': object_ids,
+        }
+
+    def _resolve_object_ids(self, object_ids: list[str], entities: list[dict]) -> list[str]:
+        """Replace simple numeric IDs with actual Speckle IDs from the entities list.
+
+        The LLM sometimes outputs bracket indices (e.g. '1', '[3]') instead of
+        the actual Speckle ID string. This fallback maps those back using the
+        1-based index that _prepare_entities embeds in the prompt ("[i+1] SPECKLE_ID=...").
+        """
+        if not entities:
+            return object_ids
+
+        # Build 1-indexed lookup: 1-based position → actual speckle id
+        index_to_id: dict[int, str] = {}
+        for i, entity in enumerate(entities):
+            entity_id = entity.get("id") or entity.get("nodeId") or f"obj-{i}"
+            index_to_id[i + 1] = str(entity_id)
+
+        resolved: list[str] = []
+        for oid in object_ids:
+            # Strip surrounding brackets if present: [42] → 42
+            stripped = oid.strip().lstrip('[').rstrip(']').strip()
+            if stripped.isdigit():
+                idx = int(stripped)
+                resolved.append(index_to_id.get(idx, oid))
+            else:
+                resolved.append(oid)
+        return resolved
+
+    # ── Private prompt/entity helpers (source of truth) ──────────────────────
+
+    def _prepare_entities(self, entities: list[dict]) -> tuple[list[dict], str]:
+        """Filter internal collections and build the entity metadata text block.
+
+        This is the single source of truth for entity filtering and formatting.
+        Both analyze_3dmodel and stream_analyze_3dmodel delegate here.
+
+        Returns:
+            (filtered_entities, entities_text)
+        """
+        _EXCLUDED = frozenset({"soundscape", "acoustics"})
+
+        def _is_excluded(e: dict) -> bool:
+            name = (e.get("name") or "").lower().strip()
+            if name in _EXCLUDED:
+                return True
+            # Fall back to raw.layer when top-level "layer" key is absent
+            raw_layer = (e.get("raw") or {}).get("layer") or ""
+            layer = ((e.get("layer") or "") or raw_layer).lower()
+            # Check every segment of a hierarchical path (e.g. "Soundscape::SoundSources")
+            parts = {p.strip() for p in re.split(r'[::/\\|]+', layer) if p.strip()}
+            return bool(parts & _EXCLUDED)
+
+        filtered = [e for e in entities if not _is_excluded(e)]
+        lines: list[str] = []
+        for i, entity in enumerate(filtered):
+            entity_id = entity.get("id") or entity.get("nodeId") or f"obj-{i}"
+            type_name = entity.get("speckle_type") or entity.get("type", "Object")
+            name = entity.get("name", "")
+            layer = entity.get("layer", "")
+            material = entity.get("material", "")
+
+            line = f"[{i + 1}] SPECKLE_ID={entity_id} | Type={type_name}"
+            if name:
+                line += f" | Name={name}"
+            if layer:
+                line += f" | Layer={layer}"
+            if material:
+                line += f" | Material={material}"
+
+            bounds = entity.get("bounds")
+            if bounds:
+                try:
+                    mn = bounds.get("min") or [0, 0, 0]
+                    mx = bounds.get("max") or [0, 0, 0]
+                    dims = [round(mx[j] - mn[j], 2) for j in range(3)]
+                    line += f" | Dims(m)={dims[0]}\u00d7{dims[1]}\u00d7{dims[2]}"
+                except Exception:
+                    pass
+
+            lines.append(line)
+        return filtered, "\n".join(lines)
+    
+    def _build_analyze_3dmodel_prompts(
+        self,
+        entities: list[dict],
+        entities_text: str,
+        screenshots: list[str] | None,
+        user_context: str | None,
+    ) -> tuple[str, str]:
+        """Canonical system + user prompts for 3D model analysis.
+
+        Single source of truth used by both analyze_3dmodel and stream_analyze_3dmodel.
+        """
+        context_note = f'\nContext: "{user_context}"' if user_context else ""
+        screenshot_note = (
+            "A preview image of the model is also provided — use it alongside the metadata.\n"
+            if screenshots
+            else "No visual screenshots available; rely on metadata only.\n"
+        )
+        system_prompt = (
+            "You are an expert 3D model analyzer specializing in architecture and interior design. "
+            "Identify and group objects/furniture from entity metadata and optional screenshots. "
+            "When scoring confidence, weight it by: name clarity (primary), material presence and specificity (secondary), "
+            "layer context (tertiary). A clearly named object with a known material scores higher than one with neither. "
+            "Never include 3D modelling primitives (e.g.: Brep, Mesh, Line, Curve, ...); focus on real-world object description."
+        )
+        user_prompt = (
+            f"Analyze this 3D architectural model and group objects by type/function.\n"
+            f"{screenshot_note}{context_note}\n"
+            f"Do NOT include 3D modelling related objects (e.g.: Brep, Mesh, Line, Curve, ...), "
+            f"focus on real-world object identification and description.\n"
+            f"For EACH identified group, output ONE numbered entry using EXACTLY this format:\n\n"
+            f"1. NAME: [standardized object name]\n"
+            f"DESCRIPTION: [brief functional description]\n"
+            f"MATERIAL: [finishing material, e.g. polished wood, plaster, rough concrete — focus on material, not color]\n"
+            f"CONFIDENCE: [score 0.0-1.0]\n"
+            f"QUANTITY: [integer count]\n"
+            f"IDS: [raw hex IDs only, comma-separated — e.g. b30f783e4ae80e8331c0c5377c2a9dab, 9f1c2e…]\n\n"
+            f"Rules:\n"
+            f"- Group similar objects together depending on their function (e.g. desk chair and conference chair → Chairs).\n"
+            f"- Separate high-confidence objects (>0.7) from uncertain ones (<0.7).\n"
+            f"- IDS must contain ONLY the raw hex SPECKLE_ID strings — no backticks, no code formatting, no quotes, no brackets, no extra text.\n"
+            f"- Do NOT put any section headers, labels, or comments inside an IDS field.\n"
+            f"- Output ONLY the numbered list.\n\n"
+            f"Model contains {len(entities)} objects:\n{entities_text}"
+        )
+        return system_prompt, user_prompt
+
+    def _build_scenarist_prompts(
+        self,
+        user_context: str | None,
+        furniture_context: str,
+        duration: int,
+        scenario_parameters: list[list[int]],
+    ) -> tuple[str, str]:
+        """Build system and user prompts for the scenarist agent.
+
+        Single source of truth used by both scenarist_agent and stream_scenarist_agent.
+        """
+        duration_mmss = f"{duration // 60}:{duration % 60:02d}"
+        context_note = (
+            f'\nAdditional context about this space: "{user_context}"'
+            if user_context
+            else ""
+        )
+        system_prompt = (
+            "You are a creative scenarist specializing in architectural space usage. "
+            "Create realistic, detailed scenarios showing how people interact with "
+            "furniture and objects in architectural spaces. First think potential usages "
+            "of the space, then derive a scenario from this usage. Include natural "
+            "human behaviors, movements, and object interactions with precise timestamps."
+        )
+        user_prompt = (
+            "Create detailed usage scenarios for this space based on input parameters "
+            "(see below): typology of the space, number of people using the space, "
+            "the likeliness / plausibility of the usage scenario and the list of "
+            "furniture of this space. Make scenarios realistic and varied "
+            "(e.g., meeting, focused work, casual conversation). "
+            "The scenarios have to be rooted to the usage enabled by the architectural "
+            "space through: affordances of furniture_list, what is realistic to happen "
+            "in the dimension of the space total_bounds, etc. "
+            "You don't have to use all the objects, prioritize scenario credibility.\n\n"
+            "Input definition:\n"
+            "- number of people: Tune the scenario to the number of people. "
+            "E.g.: if 2 people > conversation, 0 people > imagine the inherent "
+            "soundscape of the space, 20 people > gathering or event\n"
+            "- likeliness (1 to 10): 10 = realistic and expected use of the space "
+            "(e.g.: an office space > corporate meeting, client presentation, ...), "
+            "1 = imagine alternative uses of the space (be creative) that still match "
+            "the typology and furniture affordances "
+            "(e.g.: a classroom > fire alarm situation, student arguing, ...\n\n"
+            "For each scenario, provide:\n"
+            "- title: descriptive scenario name\n"
+            "- duration: \"MM:SS\" format\n"
+            "- peopleCount: number of people (from input)\n"
+            "- likeliness: plausibility of the scenario (from input)\n"
+            "- events: array of timestamped events (each 5-30 seconds)\n"
+            "  - timestamp: \"MM:SS-MM:SS\" format\n"
+            "  - description: detailed action description with references to "
+            "objects as object.name (id:{objectId})\n"
+            f"Now create {len(scenario_parameters)} scenario(s) of approximately "
+            f"{duration_mmss} approximately ({duration} seconds) each.\n"
+            f"Scenario(s) requested (number of people, likeliness): {scenario_parameters}\n"
+            f"{context_note}\n"
+            f"Architectural space information:\n{furniture_context}"
+        )
+        return system_prompt, user_prompt
+
+    def _build_foley_prompts(
+        self,
+        scenarios_json: str,
+        furniture_json: str,
+        maximum_number_of_sounds: int,
+        total_bounds: dict | None = None,
+    ) -> tuple[str, str]:
+        """Build system and user prompts for the foley artist.
+
+        Single source of truth used by both foley_artist and async_foley_artist.
+        """
+        system_prompt = (
+            "You are an expert foley artist specializing in architectural soundscapes. "
+            "Create comprehensive, realistic sound event lists for interior spaces, and "
+            "orchestrate it on a timeline in a realistic way, to match as close as possible the scenario. "
+            "Consider material properties (wood, metal, fabric), human actions (walking, "
+            "sitting, handling objects), ambient sounds (HVAC, outside noise), and speech "
+            "patterns. Be specific about sound characteristics. "
+            "DO NOT include room acoustics characteristics (reverberant, echo, ...)."
+        )
+        user_prompt = (
+            f"Convert this scenario into detailed single sound events, background sounds, "
+            f"and speech sounds (total maximum of {maximum_number_of_sounds} sounds).\n\n"
+            "For each sound event, provide:\n"
+            "- soundName: brief sound identifier\n"
+            "- description: 1-sentence (5 to 10 words) description of the sound using simple descriptive "
+            "words (e.g., 'A wooden door closing firmly'), based on the context and on the "
+            "related objectsInvolved description and material properties from the "
+            "architectural space information. Do NOT include scenario character names.\n"
+            "- duration: duration of the sound in 'MM:SS' format\n"
+            "- timestamps: starting positions of the sound in 'MM:SS' format (can be "
+            "multiple and irregular); Be realistic in the orchestration: single events "
+            "should happen at random moments to be realistic, background sounds, if "
+            "continuous, should happen at a single timestamp. 0:00 \n"
+            "- category: 'background sound' | 'sound event' | 'speech'\n"
+            "- objectsInvolved: if the source of the sound is an object, copy the related "
+            "objectIds from the architectural space information. If the sound is not linked "
+            "to an object (e.g. speech, background hum), leave as an empty list.\n"
+            "- position: if objectsInvolved is empty, provide a plausible [x, y, z] "
+            "position for the sound within the room given the bounding box dimensions "
+            "(e.g., speech at mouth height \u2192 z=1.50). Leave as an empty list when "
+            "objectsInvolved is not empty.\n"
+            "- spl: estimate a decibel level (Sound Pressure Level) at 1 metre "
+            "(e.g., '65 dB').\n\n"
+            "Include all realistic sounds: footsteps, object interactions, ambient sounds, "
+            "speech, etc. Root your foley work in relation to the overall architecture, "
+            "object materials, and the mood described by the scenario. "
+            "Do not include room acoustic effects (e.g., reverberant, resonant). "
+            "Sound events can have varied durations and can be repeated multiple times "
+            "in the soundtrack. NOT every sound needs to be correlated with an object. "
+            "You do NOT have to output the maximum number of sounds, create only the sounds "
+            "necessary to render a plausible soundtrack for the scenario. "
+            "Have at the end a critical look on the overall orchestration of the sounds and "
+            "their timestamps to create a believable soundtrack of the input scenario, "
+            "as if it was a movie.\n\n"
+            f"Scenarios:\n{scenarios_json}\n\n"
+            f"Room bounding box: {total_bounds}\n\n"
+            f"Architectural space information:\n{furniture_json}"
+        )
+        return system_prompt, user_prompt
+
+    async def stream_analyze_3dmodel(
+        self,
+        entities: list[dict],
+        screenshots: list[str] | None = None,
+        user_context: str | None = None,
+        llm_model: str = DEFAULT_LLM_MODEL,
+    ):
+        """Async generator yielding architectural object dicts one by one as the LLM streams.
+
+        Each yielded dict matches ArchitecturalObject shape:
+            name, description, material, confidence, quantity, object_ids
+        """
+        entities, entities_text = self._prepare_entities(entities)
+        print(f"[stream_analyze_3dmodel] {len(entities)} entities after filtering:\n{entities_text}", flush=True)
+
+        if not entities:
+            return
+        system_prompt, user_prompt = self._build_analyze_3dmodel_prompts(
+            entities, entities_text, screenshots, user_context
+        )
+
+        _ENTRY_START = re.compile(r'\n\s*\d+[\.\)]\s+')
+        buffer = ""
+        async for chunk in self._stream_llm_chunks(
+            user_prompt, system_prompt,
+            screenshots=screenshots,
+            operation_name="Model analysis streaming",
+            llm_model=llm_model,
+        ):
+            buffer += chunk
+            while True:
+                match = _ENTRY_START.search(buffer, 1)
+                if not match:
+                    break
+                completed = buffer[: match.start()]
+                buffer = buffer[match.start():]
+                entry_clean = re.sub(r'^\s*\d+[\.\)]\s*', '', completed.strip())
+                if entry_clean:
+                    parsed = self._parse_architecture_object(entry_clean)
+                    if parsed:
+                        parsed['object_ids'] = self._resolve_object_ids(parsed['object_ids'], entities)
+                        yield parsed
+        # Yield trailing entry
+        if buffer.strip():
+            entry_clean = re.sub(r'^\s*\d+[\.\)]\s*', '', buffer.strip())
+            if entry_clean:
+                parsed = self._parse_architecture_object(entry_clean)
+                if parsed:
+                    parsed['object_ids'] = self._resolve_object_ids(parsed['object_ids'], entities)
+                    yield parsed
+
+    # ── 3D Model Analysis ─────────────────────────────────────────────────────
+
+    def analyze_3dmodel(
+        self,
+        entities: list[dict],
+        screenshots: list[str] | None = None,
+        user_context: str | None = None,
+        llm_model: str = DEFAULT_LLM_MODEL,
+    ) -> dict:
+        """
+        Identify architectural objects from 3D model entity metadata and optional
+        screenshots.
+
+        Args:
+            entities:     Speckle entity dicts (id, name, speckle_type, layer,
+                          material, bounds, …)
+            screenshots:  Optional list of base64 PNG data URIs (max 3). If None
+                          or empty, analysis runs on metadata only.
+            user_context: Optional free-text context (e.g. "open-plan office")
+            llm_model:    Provider key ("gemini-2.5-flash", "openai", "anthropic")
+
+        Returns:
+            dict with an "objects" key — list of raw dicts matching ModelObjectResult fields.
+        """
+        entities, entities_text = self._prepare_entities(entities)
+        print(f"[analyze_3dmodel] {len(entities)} entities after filtering:\n{entities_text}", flush=True)
+
+        if not entities:
+            return {"objects": []}
+
+        system_prompt, user_prompt = self._build_analyze_3dmodel_prompts(
+            entities, entities_text, screenshots, user_context
+        )
+
+        # ── Retry with exponential back-off ───────────────────────────────────
+        from models.schemas import ModelAnalysisOutput
+
+        result = asyncio.run(self._call_llm(  # type: ignore[return-value]
+            user_prompt, system_prompt,
+            response_schema=ModelAnalysisOutput,
+            screenshots=screenshots,
+            operation_name="Model analysis",
+            llm_model=llm_model,
+        ))
+        # Resolve any numeric bracket indices the LLM may have used instead of Speckle IDs
+        if isinstance(result, dict):
+            for obj in result.get("objects") or []:
+                if isinstance(obj, dict) and "object_ids" in obj:
+                    obj["object_ids"] = self._resolve_object_ids(obj["object_ids"], entities)
+        return result  # type: ignore[return-value]
+
+    # ── Scenario Generation ───────────────────────────────────────────────────
+
+    def scenarist_agent(
+        self,
+        user_context: str | None = None,
+        llm_model: str = DEFAULT_LLM_MODEL,
+        furniture_list: dict | None = None,
+        duration: int = 150,
+        scenario_parameters: list[list[int]] | None = None,
+    ) -> dict:
+        """
+        Generate detailed usage scenarios for an architectural space using an LLM.
+
+        Args:
+            user_context:         Optional free-text description of the space
+                                  (e.g. "open-plan office with kitchen corner").
+            llm_model:            Provider key ("gemini", "openai", "anthropic").
+            furniture_list:       JSON result from analyze_3dmodel / save_results_json
+                                  containing architectural_objects and meta (optional).
+            duration:             Approximate duration of each scenario in seconds
+                                  (default: 150).
+            scenario_parameters:  List of [number_of_people, likeliness] pairs,
+                                  one per scenario to generate
+                                  (default: [[5, 9], [1, 9]]).
+
+        Returns:
+            dict with a "scenarios" key — list of scenario dicts, each containing:
+            title, duration, peopleCount, likeliness, events, objectsInvolved.
+        """
+        if scenario_parameters is None:
+            scenario_parameters = [[5, 9], [100, 1], [0, 9]]
+
+        furniture_context = json.dumps(furniture_list, indent=2) if furniture_list else "{}"
+        system_prompt, user_prompt = self._build_scenarist_prompts(
+            user_context, furniture_context, duration, scenario_parameters
+        )
+
+        # ── Retry with exponential back-off ───────────────────────────────────
+        from models.schemas import ScenarioResponse
+
+        return asyncio.run(self._call_llm(  # type: ignore[return-value]
+            user_prompt, system_prompt,
+            response_schema=ScenarioResponse,
+            operation_name="Scenarist",
+            llm_model=llm_model,
+        ))
+
+    async def stream_scenarist_agent(
+        self,
+        user_context: str | None = None,
+        llm_model: str = DEFAULT_LLM_MODEL,
+        furniture_list: dict | None = None,
+        duration: int = 150,
+        people_count: int = 5,
+        likeliness: int = 9,
+    ):
+        """Async generator yielding formatted scenario events one by one.
+
+        Replaces raw text chunk streaming with direct structured output.
+
+        Yields:
+            {"type": "scenario", "scenario_index": int, "title": str, "duration": str,
+             "peopleCount": int, "likeliness": int}  — one per scenario header
+            {"type": "event", "scenario_index": int, "event": {"timestamp": str, "description": str}}
+            {"type": "error", "message": str}         — on LLM failure
+            {"type": "done", "result": dict, "scenario_id": str}
+        """
+        from models.schemas import ScenarioResponse as _ScenarioResponse
+
+        scenario_parameters = [[people_count, likeliness]]
+        furniture_context = json.dumps(furniture_list, indent=2) if furniture_list else "{}"
+        system_prompt, user_prompt = self._build_scenarist_prompts(
+            user_context, furniture_context, duration, scenario_parameters
+        )
+
+        import uuid as _uuid
+        scenario_id = str(_uuid.uuid4())
+
+        # ── Single structured LLM call ────────────────────────────────────────
+        try:
+            result = await self._call_llm(
+                user_prompt, system_prompt,
+                response_schema=_ScenarioResponse,
+                operation_name="Scenarist",
+                llm_model=llm_model,
+            )
+            if not isinstance(result, dict):
+                result = result.model_dump() if hasattr(result, "model_dump") else dict(result)
+        except Exception as e:
+            print(f"[stream_scenarist_agent] LLM call failed: {e}")
+            yield {"type": "error", "message": str(e)}
+            result = {"scenarios": [], "found": False}
+
+        # ── Save to disk ──────────────────────────────────────────────────────
+        from config.constants import TEMP_ANALYSIS_DIR as _TEMP_ANALYSIS_DIR
+        import pathlib as _pathlib
+        try:
+            analysis_dir = _pathlib.Path(_TEMP_ANALYSIS_DIR)
+            analysis_dir.mkdir(parents=True, exist_ok=True)
+            out_file = analysis_dir / f"scenarios_{scenario_id}.json"
+            tmp_file = out_file.with_suffix(".tmp")
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump({"scenario_id": scenario_id, **result}, f, indent=2)
+            tmp_file.replace(out_file)
+        except Exception as save_err:
+            print(f"[stream_scenarist_agent] failed to save result: {save_err}")
+
+        # ── Stream structured results one by one ──────────────────────────────
+        for i, scenario in enumerate(result.get("scenarios", [])):
+            await asyncio.sleep(0)  # allow SSE to flush
+            yield {
+                "type": "scenario",
+                "scenario_index": i,
+                "title": scenario.get("title", ""),
+                "duration": scenario.get("duration", ""),
+                "peopleCount": scenario.get("peopleCount", 0),
+                "likeliness": scenario.get("likeliness", 0),
+            }
+            for event in scenario.get("events", []):
+                await asyncio.sleep(0)
+                yield {"type": "event", "scenario_index": i, "event": event}
+
+        yield {"type": "done", "result": result, "scenario_id": scenario_id}
+
+    # ── Foley Artist ──────────────────────────────────────────────────────────
+
+    def foley_artist(
+        self,
+        scenarist_agent_result: dict,
+        furniture_list: dict | None = None,
+        scenario_ids: list[int] | None = None,
+        maximum_number_of_sounds: int = 20,
+        llm_model: str = DEFAULT_LLM_MODEL,
+    ) -> dict:
+        """
+        Generate detailed foley sound events for scenarios from scenarist_agent.
+
+        Args:
+            scenarist_agent_result:   JSON output from scenarist_agent() containing
+                                      a "scenarios" list.
+            furniture_list:           3D model analysis result from analyze_3dmodel /
+                                      save_results_json, containing architectural_objects
+                                      and meta (optional).
+            scenario_ids:             Indices (0-based) of scenarios to process from
+                                      scenarist_agent_result. If None, all scenarios
+                                      are processed.
+            maximum_number_of_sounds: Maximum total number of sound events to create
+                                      across all selected scenarios (default: 20).
+            llm_model:                Provider key ("gemini", "openai", "anthropic").
+
+        Returns:
+            dict with a "sound_events" key — list of sound event dicts, each containing:
+            soundName, description, duration, timestamps, category, objectsInvolved,
+            position, spl.
+        """
+        # ── Filter scenarios ──────────────────────────────────────────────────
+        all_scenarios = scenarist_agent_result.get("scenarios", [])
+        if scenario_ids is not None:
+            selected_scenarios = [
+                all_scenarios[i] for i in scenario_ids if 0 <= i < len(all_scenarios)
+            ]
+        else:
+            selected_scenarios = all_scenarios
+
+        if not selected_scenarios:
+            return {"sound_events": []}
+
+        # ── Serialize inputs ──────────────────────────────────────────────────
+        scenarios_json = json.dumps({"scenarios": selected_scenarios}, indent=2)
+        furniture_json = json.dumps(furniture_list, indent=2) if furniture_list else "{}"
+        total_bounds = (furniture_list or {}).get("meta", {}).get("total_bounds")
+        system_prompt, user_prompt = self._build_foley_prompts(
+            scenarios_json, furniture_json, maximum_number_of_sounds, total_bounds
+        )
+
+        # ── Call LLM with structured output ───────────────────────────────────
+        from models.schemas import FoleyResponse
+
+        return asyncio.run(self._call_llm(  # type: ignore[return-value]
+            user_prompt, system_prompt,
+            response_schema=FoleyResponse,
+            operation_name="Foley artist",
+            llm_model=llm_model,
+        ))
+
+    async def async_foley_artist(
+        self,
+        scenarist_agent_result: dict,
+        furniture_list: dict | None = None,
+        maximum_number_of_sounds: int = 20,
+        llm_model: str = DEFAULT_LLM_MODEL,
+    ) -> dict:
+        """Async version of foley_artist — awaits _call_llm directly.
+
+        Identical logic to foley_artist but avoids asyncio.run() so it can be
+        called safely from within an async FastAPI endpoint.
+        """
+        from models.schemas import FoleyResponse as _FoleyResponse
+
+        all_scenarios = scenarist_agent_result.get("scenarios", [])
+        if not all_scenarios:
+            return _FoleyResponse(scenarios=[]).model_dump()
+
+        scenarios_json = json.dumps({"scenarios": all_scenarios}, indent=2)
+        furniture_json = json.dumps(furniture_list, indent=2) if furniture_list else "{}"
+        total_bounds = (furniture_list or {}).get("meta", {}).get("total_bounds")
+        system_prompt, user_prompt = self._build_foley_prompts(
+            scenarios_json, furniture_json, maximum_number_of_sounds, total_bounds
+        )
+
+        result = await self._call_llm(
+            user_prompt, system_prompt,
+            response_schema=_FoleyResponse,
+            operation_name="Foley artist (async)",
+            llm_model=llm_model,
+        )
+        if not isinstance(result, dict):
+            result = result.model_dump() if hasattr(result, "model_dump") else dict(result)
+        return result
+
+    async def stream_foley_artist(
+        self,
+        scenarist_agent_result: dict,
+        furniture_list: dict | None = None,
+        maximum_number_of_sounds: int = 20,
+        llm_model: str = DEFAULT_LLM_MODEL,
+    ):
+        """Async generator yielding foley sound events one by one.
+
+        Makes the full structured LLM call, saves the result, then yields sounds
+        progressively so the frontend can display them as they arrive.
+
+        Yields:
+            {"type": "sound", "scenario_title": str, "scenario_index": int, "sound": dict}
+            {"type": "error", "message": str}
+            {"type": "done", "result": dict, "foley_id": str}
+        """
+        try:
+            result = await self.async_foley_artist(
+                scenarist_agent_result=scenarist_agent_result,
+                furniture_list=furniture_list,
+                maximum_number_of_sounds=maximum_number_of_sounds,
+                llm_model=llm_model,
+            )
+        except Exception as e:
+            yield {"type": "error", "message": str(e)}
+            return
+
+        # ── Save to disk ──────────────────────────────────────────────────────
+        import uuid as _uuid
+        foley_id = str(_uuid.uuid4())
+        from config.constants import TEMP_ANALYSIS_DIR as _TEMP_ANALYSIS_DIR
+        import pathlib as _pathlib
+        try:
+            analysis_dir = _pathlib.Path(_TEMP_ANALYSIS_DIR)
+            analysis_dir.mkdir(parents=True, exist_ok=True)
+            out_file = analysis_dir / f"foley_{foley_id}.json"
+            tmp_file = out_file.with_suffix(".tmp")
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump({"foley_id": foley_id, **result}, f, indent=2)
+            tmp_file.replace(out_file)
+        except Exception as save_err:
+            print(f"[stream_foley_artist] failed to save result: {save_err}")
+
+        # ── Stream sounds one by one ──────────────────────────────────────────
+        for si, scenario in enumerate(result.get("scenarios", [])):
+            for sound in scenario.get("sound_events", []):
+                await asyncio.sleep(0)  # allow SSE to flush
+                yield {
+                    "type": "sound",
+                    "scenario_title": scenario.get("scenario_title", ""),
+                    "scenario_index": si,
+                    "sound": sound,
+                }
+
+        yield {"type": "done", "result": result, "foley_id": foley_id}

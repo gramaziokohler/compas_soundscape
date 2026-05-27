@@ -90,6 +90,35 @@ export interface TokenUpdate {
   anthropic_api_key?: string;
 }
 
+// ─── 3D Model Analysis types ──────────────────────────────────────────────────
+
+export interface ModelObjectResult {
+  name: string;
+  description: string;
+  material: string;
+  quantity: number;
+  object_ids: string[];
+  confidence: number;
+}
+
+export interface ModelAnalysisResponse {
+  objects: ModelObjectResult[];
+  high_confidence: ModelObjectResult[];
+  low_confidence: ModelObjectResult[];
+}
+
+export interface ModelAnalysisStatusResponse {
+  analysis_id: string;
+  progress: number;
+  status: string;
+  completed: boolean;
+  cancelled: boolean;
+  error: string | null;
+  result: ModelAnalysisResponse | null;
+  queue_position: number | null;
+  queue_total: number | null;
+}
+
 // API Service Layer
 export const apiService = {
   // File Upload
@@ -1138,5 +1167,54 @@ export const apiService = {
 
   async cancelSEDAnalysis(taskId: string): Promise<void> {
     await fetch(`${API_BASE_URL}/api/cancel-sed-analysis/${taskId}`, { method: 'POST' });
+  },
+
+  // ─── 3D Model Analysis ─────────────────────────────────────────────────────
+
+  async startModelAnalysis(data: {
+    entities: any[];
+    screenshots?: string[] | null;
+    user_context?: string | null;
+    llm_model?: string;
+  }): Promise<{ analysis_id: string }> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/analyze-3dmodel`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      },
+      'Start model analysis',
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Failed to start model analysis' }));
+      throw new Error(err.detail || 'Failed to start model analysis');
+    }
+    return response.json();
+  },
+
+  async getModelAnalysisStatus(analysisId: string): Promise<ModelAnalysisStatusResponse> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/analyze-3dmodel-status/${analysisId}`,
+      undefined,
+      'Model analysis status',
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Failed to get status' }));
+      throw new Error(err.detail || 'Failed to get model analysis status');
+    }
+    return response.json();
+  },
+
+  async cancelModelAnalysis(analysisId: string): Promise<void> {
+    try {
+      await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/cancel-model-analysis/${analysisId}`,
+        { method: 'POST' },
+        'Cancel model analysis',
+      );
+    } catch {
+      // Silently fail — cancel is best-effort
+    }
   },
 };

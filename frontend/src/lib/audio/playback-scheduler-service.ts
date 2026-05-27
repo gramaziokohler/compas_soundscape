@@ -173,22 +173,29 @@ export class PlaybackSchedulerService {
               let initialDelayMs = 0;
               let iterationOffsets: number[] | undefined = undefined;
 
-              if (timelineSounds) {
-                const ts = timelineSounds.find(t => t.id === soundId);
-                // ALWAYS use the timeline's initial delay if available, to guarantee exact visual match
+              const ts = timelineSounds?.find(t => t.id === soundId);
+
+              // Timestamps mode: schedule one-shot playbacks at exact absolute positions —
+              // no stagger delay, no jitter.  Falls back to interval mode if no timeline
+              // data is available (e.g. early play before metadata is ready).
+              if (ts?.schedulingMode === 'timestamps' && ts.scheduledIterations.length > 0) {
+                scheduler.scheduleSoundAtTimestamps(soundId, metadata, ts.scheduledIterations, 0);
+                console.log(`[PlaybackScheduler] ✅ Scheduled "${displayName}" via timestamps (${ts.scheduledIterations.length} events)`);
+              } else {
+                // Interval mode: apply stagger delay from timeline so visual and audio match
                 if (ts && ts.initialDelayMs !== undefined) {
                   initialDelayMs = ts.initialDelayMs;
                   iterationOffsets = ts.iterationOffsets;
                 }
-              }
 
-              if (!timelineSounds && this.isPlayAll) {
-                initialDelayMs = computeInitialDelay(soundId, jitterMs);
-                console.log(`[PlaybackScheduler] 🎭 Play All - "${displayName}" start in ${(initialDelayMs / 1000).toFixed(1)}s`);
-              }
+                if (!timelineSounds && this.isPlayAll) {
+                  initialDelayMs = computeInitialDelay(soundId, jitterMs);
+                  console.log(`[PlaybackScheduler] 🎭 Play All - "${displayName}" start in ${(initialDelayMs / 1000).toFixed(1)}s`);
+                }
 
-              scheduler.scheduleSound(soundId, metadata, intervalSeconds, initialDelayMs, iterationOffsets);
-              console.log(`[PlaybackScheduler] ✅ Scheduled "${displayName}" interval=${intervalSeconds}s delay=${(initialDelayMs / 1000).toFixed(1)}s`);
+                scheduler.scheduleSound(soundId, metadata, intervalSeconds, initialDelayMs, iterationOffsets);
+                console.log(`[PlaybackScheduler] ✅ Scheduled "${displayName}" interval=${intervalSeconds}s delay=${(initialDelayMs / 1000).toFixed(1)}s`);
+              }
             }
             break;
 

@@ -112,9 +112,12 @@ export function WaveSurferTimeline({
     const pixelsPerSecond = WAVESURFER_TIMELINE.PIXELS_PER_SECOND;
     const timelineWidth = actualDuration * pixelsPerSecond;
 
-    // Find the earliest timestamp to normalize positions
+    // Find the earliest timestamp across interval-mode sounds only.
+    // Timestamps-mode sounds carry absolute positions and must NOT be included
+    // in this normalisation — they would shift the origin and compress everything.
     let minTimestampMs = Infinity;
     sounds.forEach((sound) => {
+      if (sound.schedulingMode === 'timestamps') return; // absolute — skip
       sound.scheduledIterations.forEach((timestamp) => {
         if (timestamp < minTimestampMs) {
           minTimestampMs = timestamp;
@@ -122,6 +125,8 @@ export function WaveSurferTimeline({
       });
     });
 
+    // Interval-mode sounds always start at 0, so this is effectively a no-op
+    // for them.  We keep the fallback for safety.
     if (!isFinite(minTimestampMs)) {
       minTimestampMs = 0;
     }
@@ -178,20 +183,35 @@ export function WaveSurferTimeline({
 
       // Create WaveSurfer instance for each scheduled iteration
       const delay = sound.initialDelayMs ?? 0;
+      const isTimestampsMode = sound.schedulingMode === 'timestamps';
+
       sound.scheduledIterations.forEach((timestamp, iterationIndex) => {
         const startTimeMs = timestamp;
         const endTimeMs = timestamp + sound.soundDurationMs;
 
-        // Skip iterations that start at or after the fixed timeline boundary (accounting for delay)
-        if (delay + startTimeMs >= timelineDurationMs) {
+        // For timestamps mode: startTimeMs is absolute on the timeline (delay is 0).
+        // For interval mode: the track container is shifted by initDelayPx, so the
+        //   boundary check must include that shift.
+        const absoluteStartMs = isTimestampsMode ? startTimeMs : delay + startTimeMs;
+
+        // Skip iterations that start at or after the fixed timeline boundary
+        if (absoluteStartMs >= timelineDurationMs) {
           return;
         }
 
-        // Clip the visual end at the fixed boundary (track-local boundary = timelineDurationMs - delay)
-        const clippedEndTimeMs = Math.min(endTimeMs, timelineDurationMs - delay);
+        // Clip the visual end at the fixed timeline boundary
+        const clippedEndTimeMs = isTimestampsMode
+          ? Math.min(endTimeMs, timelineDurationMs)
+          : Math.min(endTimeMs, timelineDurationMs - delay);
 
-        const normalizedStartMs = startTimeMs - minTimestampMs;
-        const normalizedClippedEndMs = clippedEndTimeMs - minTimestampMs;
+        // Timestamps mode: positions are already absolute — no normalization needed.
+        // Interval mode: normalize by subtracting minTimestampMs (always 0 in practice).
+        const normalizedStartMs = isTimestampsMode
+          ? startTimeMs
+          : startTimeMs - minTimestampMs;
+        const normalizedClippedEndMs = isTimestampsMode
+          ? clippedEndTimeMs
+          : clippedEndTimeMs - minTimestampMs;
 
         const leftPx = (normalizedStartMs / 1000) * pixelsPerSecond;
         const widthPx = ((normalizedClippedEndMs - normalizedStartMs) / 1000) * pixelsPerSecond;

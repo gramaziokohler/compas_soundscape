@@ -52,8 +52,8 @@ export function SoundConfigContent({
         <EntityLinkingStatus />
       )}
 
-      {/* Linked entity info */}
-      {config.entity && (
+      {/* Linked entity info — only shown when entity has an actual Speckle object ID */}
+      {config.entity && (config.entity.nodeId || config.entity.id || config.entity.applicationId) && (
         <LinkedEntityInfo
           entity={config.entity}
           onUnlink={() => onUpdateConfig(index, 'entity' as any, undefined as any)}
@@ -126,7 +126,7 @@ function EntityLinkingStatus() {
 }
 
 interface LinkedEntityInfoProps {
-  entity: { name?: string; index: number };
+  entity: { name?: string; index?: number; id?: string; [key: string]: any };
   onUnlink: () => void;
 }
 
@@ -138,7 +138,7 @@ function LinkedEntityInfo({ entity, onUnlink }: LinkedEntityInfoProps) {
           <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
           </svg>
-          <span>Linked to entity: {entity.name || `Entity ${entity.index}`}</span>
+          <span>Linked to entity: {entity.name || (entity.index !== undefined ? `Entity ${entity.index}` : entity.id?.slice(0, 8) || 'Object')}</span>
         </div>
         <button
           onClick={onUnlink}

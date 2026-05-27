@@ -1,0 +1,135 @@
+"""
+3D model analysis subprocess worker.
+
+Runs as a subprocess via multiprocessing.Process.  Reports progress via
+atomic JSON file writes to avoid GIL-starvation issues.
+
+Progress file  (temp_dir/model_analysis_progress_{analysis_id}.json):
+    {"value": 0-100, "status": "<human text>"}
+
+Result file  (temp_dir/model_analysis_result_{analysis_id}.json):
+    {"type": "done",  "result": {"objects": [...], "high_confidence": [...], "low_confidence": [...]}}
+ or {"type": "error", "message": "<str>", "traceback": "<str>"}
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import traceback
+from typing import Optional
+
+# Ensure absolute imports work when run as __main__
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from config.constants import DEFAULT_LLM_MODEL
+
+
+def _write_progress(progress_file: str, value: int, status: str) -> None:
+    """Atomically write progress JSON via temp-file + os.replace()."""
+    tmp = progress_file + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"value": value, "status": status}, f)
+    os.replace(tmp, progress_file)
+
+
+def _write_result(result_file: str, payload: dict) -> None:
+    """Atomically write the final result/error JSON."""
+    tmp = result_file + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(payload, f)
+    os.replace(tmp, result_file)
+
+
+def _normalize_objects(raw: list) -> list[dict]:
+    """Clamp and coerce raw object dicts from the LLM into consistent types."""
+    out = []
+    for obj in raw:
+        if not isinstance(obj, dict):
+            continue
+        try:
+            confidence = max(0.0, min(1.0, float(obj.get("confidence", 0.5))))
+            out.append({
+                "name":        str(obj.get("name", "Unknown")),
+                "description": str(obj.get("description", "")),
+                "material":    str(obj.get("material", "")),
+                "quantity":    max(1, int(obj.get("quantity", 1))),
+                "object_ids":  [str(x) for x in obj.get("object_ids", [])],
+                "confidence":  round(confidence, 3),
+            })
+        except (ValueError, TypeError):
+            continue
+    return out
+
+def run_model_analysis(
+    analysis_id: str,
+    progress_file: str,
+    result_file: str,
+    entities: list[dict],
+    screenshots: Optional[list[str]],
+    user_context: Optional[str],
+    llm_model: str = DEFAULT_LLM_MODEL,
+    api_keys: Optional[dict] = None,
+) -> None:
+    """
+    Full 3D model analysis pipeline, runs in a subprocess.
+
+    Calls LLMService.analyze_3dmodel() directly.
+    Progress is reported via atomic JSON file writes; result/error is written
+    to result_file on exit.
+    """
+    try:
+        # Apply runtime-injected API keys before any client is created
+        if api_keys:
+            for env_key, env_val in api_keys.items():
+                if env_val:
+                    os.environ[env_key] = env_val
+
+        from services.llm_service import LLMService, GOOGLE_GENAI_AVAILABLE
+        from config.constants import LLM_MODEL_OPENAI, LLM_MODEL_ANTHROPIC
+
+        _write_progress(progress_file, 5, f"Initializing LLM client ({llm_model})...")
+
+        if llm_model not in (LLM_MODEL_OPENAI, LLM_MODEL_ANTHROPIC) and GOOGLE_GENAI_AVAILABLE:
+            import google.genai as genai
+            client = genai.Client()
+        else:
+            client = None
+
+        llm = LLMService(client=client)
+
+        screenshot_count = len(screenshots) if screenshots else 0
+        _write_progress(
+            progress_file,
+            20,
+            f"Analyzing {len(entities)} objects"
+            + (f" with {screenshot_count} screenshot(s)" if screenshot_count else " (metadata only)")
+            + "...",
+        )
+
+        raw_result = llm.analyze_3dmodel(
+            entities=entities,
+            screenshots=screenshots,
+            user_context=user_context,
+            llm_model=llm_model,
+        )
+        objects = _normalize_objects(raw_result.get("objects", []))
+
+        _write_progress(progress_file, 90, "Classifying confidence levels...")
+
+        high_confidence = [o for o in objects if o["confidence"] > 0.7]
+        low_confidence  = [o for o in objects if o["confidence"] <= 0.7]
+
+        _write_progress(progress_file, 95, "Finalizing...")
+
+        result_payload = {
+            "objects":         objects,
+            "high_confidence": high_confidence,
+            "low_confidence":  low_confidence,
+        }
+        _write_result(result_file, {"type": "done", "result": result_payload})
+
+    except Exception as exc:
+        tb = traceback.format_exc()
+        print(f"[model_analysis_worker] Error: {exc}\n{tb}", file=sys.stderr)
+        _write_result(result_file, {"type": "error", "message": str(exc), "traceback": tb})

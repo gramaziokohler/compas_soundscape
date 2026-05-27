@@ -472,11 +472,15 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   generationConfigs[backendIndex]?.originalIndex ?? backendIndex;
                 const originalConfig = generationConfigs[backendIndex]?.config;
                 let entityIndex = sound.entity_index;
-                if (
-                  entityIndex === undefined &&
-                  originalConfig?.entity?.index !== undefined
-                )
-                  entityIndex = originalConfig.entity.index;
+                if (entityIndex === undefined) {
+                  if (originalConfig?.entity?.index !== undefined) {
+                    entityIndex = originalConfig.entity.index;
+                  } else if (originalConfig?.entity?.nodeId || originalConfig?.entity?.id) {
+                    // Entity has a Speckle ID but no numeric index — use actualIndex as a
+                    // sentinel so SoundSphereManager treats this as entity-linked (no sphere).
+                    entityIndex = actualIndex;
+                  }
+                }
 
                 let position: number[] = [0, 0, 0];
                 if (originalConfig?.entity?.bounds?.center) {
@@ -485,12 +489,19 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   position = originalConfig.entity.position;
                 }
 
+                // Carry foley timestamps from the original config to the SoundEvent
+                const configTimestamps = originalConfig?.timestamps;
+
                 return {
                   ...sound,
                   prompt_index: actualIndex,
                   position,
                   geometry: sound.geometry || { vertices: [], faces: [] },
                   ...(entityIndex !== undefined && { entity_index: entityIndex }),
+                  ...(configTimestamps?.length && {
+                    timestamps: configTimestamps,
+                    scheduling_mode: 'timestamps' as const,
+                  }),
                 };
               };
 

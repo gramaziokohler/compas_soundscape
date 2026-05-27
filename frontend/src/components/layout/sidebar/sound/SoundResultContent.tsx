@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import type { SoundEvent } from '@/types';
 import { SoundCardWaveSurfer } from '@/components/audio/SoundCardWaveSurfer';
 import { VerticalVolumeSlider } from '@/components/ui/VerticalVolumeSlider';
+import { TimestampList } from './TimestampList';
 import { UI_VOLUME_SLIDER, UI_INTERVAL_SLIDER } from '@/utils/constants';
 import { useBatchedSlider } from '@/hooks/useBatchedSlider';
 
@@ -27,10 +28,16 @@ export interface SoundResultContentProps {
   silent?: boolean;
   soundVolumes: { [soundId: string]: number };
   soundIntervals: { [soundId: string]: number };
+  /** Per-sound scheduling mode: 'interval' (default) or 'timestamps'. */
+  schedulingMode?: 'interval' | 'timestamps';
+  /** Per-sound explicit timestamps in seconds (used when schedulingMode is 'timestamps'). */
+  soundTimestamps?: { [soundId: string]: number[] };
   onPreviewPlayPause?: (soundId: string) => void;
   onPreviewStop?: (soundId: string) => void;
   onVolumeChange?: (soundId: string, volumeDb: number) => void;
   onIntervalChange?: (soundId: string, intervalSeconds: number) => void;
+  onSchedulingModeChange?: (soundId: string, mode: 'interval' | 'timestamps') => void;
+  onTimestampsChange?: (soundId: string, timestamps: number[]) => void;
   onVariantChange?: (promptIdx: number, variantIdx: number) => void;
   onUpdatePosition?: (soundId: string, position: [number, number, number]) => void;
   onUnlinkEntity?: () => void;
@@ -46,10 +53,14 @@ export function SoundResultContent({
   silent = false,
   soundVolumes,
   soundIntervals,
+  schedulingMode = 'interval',
+  soundTimestamps,
   onPreviewPlayPause,
   onPreviewStop,
   onVolumeChange,
   onIntervalChange,
+  onSchedulingModeChange: _onSchedulingModeChange,
+  onTimestampsChange,
   onVariantChange,
   onUpdatePosition,
   onUnlinkEntity,
@@ -57,6 +68,13 @@ export function SoundResultContent({
   // Volume and interval from live state
   const currentVolumeDb = soundVolumes[generatedSound.id] ?? generatedSound.volume_db ?? 70;
   const currentIntervalSeconds = soundIntervals[generatedSound.id] ?? generatedSound.interval_seconds ?? 30;
+
+  // Resolve current timestamps: prefer store, then fall back to SoundEvent.timestamps (MM:SS → seconds)
+  const currentTimestamps: number[] = soundTimestamps?.[generatedSound.id] ??
+    generatedSound.timestamps?.map((t) => {
+      const [mm, ss] = t.split(':').map(Number);
+      return (mm ?? 0) * 60 + (ss ?? 0);
+    }) ?? [];
 
   // Local state for sliders (visual feedback while dragging — no store write until release)
   const [tempVolumeDb, setTempVolumeDb] = useState(currentVolumeDb);
@@ -173,8 +191,8 @@ export function SoundResultContent({
 
       {/* Vertical sliders container */}
       <div className="flex gap-2">
-        {/* Interval slider */}
-        {onIntervalChange && (
+        {/* Interval slider — shown in 'interval' mode */}
+        {schedulingMode === 'interval' && onIntervalChange && (
           <div
             className="flex flex-col items-center"
             title="Playback interval: Time between sound repetitions in the timeline. Set to 0 for continuous loop."
@@ -190,6 +208,14 @@ export function SoundResultContent({
             />
             <span className="text-[10px] mt-1 text-secondary-hover">Int.</span>
           </div>
+        )}
+
+        {/* Timestamp list — shown in 'timestamps' mode */}
+        {schedulingMode === 'timestamps' && onTimestampsChange && (
+          <TimestampList
+            timestamps={currentTimestamps}
+            onChange={(ts) => onTimestampsChange(generatedSound.id, ts)}
+          />
         )}
 
         {/* Volume slider */}

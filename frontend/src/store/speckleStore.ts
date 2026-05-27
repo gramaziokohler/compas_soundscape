@@ -14,8 +14,9 @@
 
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import { FilteringExtension, type Viewer } from '@speckle/viewer';
+import { FilteringExtension, CameraController, type Viewer } from '@speckle/viewer';
 import type React from 'react';
+import type { ArchitecturalObject } from '@/types/analysis';
 
 // ─── Types (re-exported for consumers) ───────────────────────────────────────
 
@@ -45,7 +46,14 @@ let _objectSoundLinksRef: Map<string, number> = new Map();
 let _generatedSoundObjectIdsRef: Set<string> = new Set();
 let _diverseSelectedObjectIdsRef: Set<string> = new Set();
 let _materialColorsRef: ColorGroup[] = [];
+let _analysisObjectGroupsRef: ColorGroup[] = [];
+let _analysisResultGroupsRef: ArchitecturalObject[] = [];
 let _viewModeRef: ViewMode = 'default';
+
+/** Read current analysis result groups (for EntityInfoPanel lookup — no re-render) */
+export function getAnalysisResultGroups(): ArchitecturalObject[] {
+  return _analysisResultGroupsRef;
+}
 /** True while setUserObjectColors is active on the FilteringExtension (cleared by removeUserObjectColors) */
 let _userColorsApplied = false;
 /** IDs explicitly hidden by the Object Explorer — source of truth for color suppression */
@@ -61,6 +69,7 @@ let _worldTreeVersion = 0;
 
 // Debounce handle for applyFilterColors
 let _applyColorsTimer: ReturnType<typeof setTimeout> | null = null;
+let _hoverHighlightId: string | null = null;
 
 // ─── Store state/actions interface ───────────────────────────────────────────
 
@@ -125,6 +134,11 @@ export interface SpeckleStoreState {
   setFilteringEnabled: (enabled: boolean) => void;
   setViewMode: (mode: ViewMode) => void;
 
+  // Analysis object groups (from model-analysis card)
+  analysisObjectGroups: ColorGroup[];
+  setAnalysisObjectGroups: (groups: ColorGroup[], objects: ArchitecturalObject[]) => void;
+  clearAnalysisObjectGroups: () => void;
+
   // Isolation state reader (synchronous, bypasses Zustand to avoid re-renders)
   getExplorerIsolatedIds: () => string[] | null;
 
@@ -135,6 +149,11 @@ export interface SpeckleStoreState {
     linkColor: string;
     linkedSoundIndex?: number;
   };
+
+  // Scenario hover/zoom helpers
+  highlightObjectForHover: (objectId: string) => void;
+  clearHoverHighlight: () => void;
+  zoomToObjectById: (objectId: string | string[]) => void;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -163,7 +182,9 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         const hasPendingColors =
           _materialColorsRef.length > 0 ||
           _objectSoundLinksRef.size > 0 ||
-          _diverseSelectedObjectIdsRef.size > 0;
+          _diverseSelectedObjectIdsRef.size > 0 ||
+          _analysisObjectGroupsRef.length > 0;
+        console.log('[speckleStore] setViewer \u2014 hasPendingColors:', hasPendingColors, '(material:', _materialColorsRef.length, 'links:', _objectSoundLinksRef.size, 'diverse:', _diverseSelectedObjectIdsRef.size, 'analysisGroups:', _analysisObjectGroupsRef.length, ')');
         if (viewer && hasPendingColors) {
           setTimeout(() => get().applyFilterColors(), 200);
           setTimeout(() => get().applyFilterColors(), 1000);
@@ -191,6 +212,7 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
       viewMode: 'default',
       linkedObjectIds: new Set(),
       explorerIsolatedIds: null,
+      analysisObjectGroups: [],
 
       // ── Link management ───────────────────────────────────────────────────
       linkObjectToSound: (objectId, soundTabIndex, hasGeneratedSound = false) => {
@@ -342,6 +364,14 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
           colorGroups.push(...filtered);
         }
 
+        // Analysis object groups (model-analysis card coloring)
+        if (_analysisObjectGroupsRef.length > 0) {
+          const filtered = _analysisObjectGroupsRef
+            .map((g) => ({ ...g, objectIds: g.objectIds.filter((id) => !isExcluded(id)) }))
+            .filter((g) => g.objectIds.length > 0);
+          colorGroups.push(...filtered);
+        }
+
         const diverseOnlyIds = Array.from(currentDiverse).filter(
           (id) => !currentLinks.has(id) && !isExcluded(id),
         );
@@ -351,10 +381,17 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         const pendingLinkedIds = Array.from(currentLinks.keys()).filter(
           (id) => !currentGenerated.has(id) && !isExcluded(id),
         );
+        const pendingColor = getComputedStyle(document.documentElement)
+          .getPropertyValue('--color-primary-light')
+          .trim();
+        const generatedColor = getComputedStyle(document.documentElement)
+          .getPropertyValue('--color-primary')
+          .trim();                       
+        
         if (pendingLinkedIds.length > 0)
           colorGroups.push({
             objectIds: pendingLinkedIds,
-            color: 'var(--color-primary-light)',
+            color: pendingColor,
           });
 
         const generatedLinkedIds = Array.from(currentLinks.keys()).filter(
@@ -363,8 +400,24 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         if (generatedLinkedIds.length > 0)
           colorGroups.push({
             objectIds: generatedLinkedIds,
-            color: 'var(--color-primary)',
+            color: generatedColor,
           });
+
+        // Hover highlight (scenario object reference hover)
+        // Resolve the CSS variable to a concrete color string — the Speckle viewer's
+        // THREE.js-based color parser cannot handle var() syntax and defaults to white.
+        // Also remove the hover ID from any earlier color group so Speckle doesn't keep
+        // whichever assignment it sees first for a given object ID.
+        if (_hoverHighlightId && !isExcluded(_hoverHighlightId)) {
+          for (const g of colorGroups) {
+            const idx = g.objectIds.indexOf(_hoverHighlightId);
+            if (idx !== -1) g.objectIds.splice(idx, 1);
+          }
+          const successColor = getComputedStyle(document.documentElement)
+            .getPropertyValue('--color-success')
+            .trim();
+          colorGroups.push({ objectIds: [_hoverHighlightId], color: successColor });
+        }
 
         const sanitised = colorGroups
           .map((g) => ({
@@ -394,6 +447,21 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
           _userColorsApplied = false;
           _viewerRef.requestRender();
         }
+      },
+
+      // ── Analysis object groups (model-analysis card) ──────────────────────
+      setAnalysisObjectGroups: (groups, objects) => {
+        _analysisObjectGroupsRef = groups;
+        _analysisResultGroupsRef = objects;
+        set({ analysisObjectGroups: groups }, false, 'speckle/setAnalysisObjectGroups');
+        scheduleApplyColors(get().applyFilterColors);
+      },
+
+      clearAnalysisObjectGroups: () => {
+        _analysisObjectGroupsRef = [];
+        _analysisResultGroupsRef = [];
+        set({ analysisObjectGroups: [] }, false, 'speckle/clearAnalysisObjectGroups');
+        scheduleApplyColors(get().applyFilterColors);
       },
 
       registerMaterialColors: (colors) => {
@@ -503,6 +571,28 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
             ? 'var(--color-success)'
             : 'var(--color-secondary-hover)';
         return { isLinked, isDiverse, linkColor, linkedSoundIndex };
+      },
+
+      highlightObjectForHover: (objectId) => {
+        _hoverHighlightId = objectId;
+        get().applyFilterColors();
+      },
+
+      clearHoverHighlight: () => {
+        _hoverHighlightId = null;
+        get().applyFilterColors();
+      },
+
+      zoomToObjectById: (objectId) => {
+        if (!_viewerRef) return;
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const cameraController = _viewerRef.getExtension(CameraController) as any;
+          if (cameraController?.setCameraView) {
+            const ids = Array.isArray(objectId) ? objectId : [objectId];
+            cameraController.setCameraView(ids, true);
+          }
+        } catch { /* ignore */ }
       },
     }),
     { name: 'speckleStore' },

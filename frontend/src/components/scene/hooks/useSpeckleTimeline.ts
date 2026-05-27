@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
-import { useAcousticsSimulationStore } from '@/store';
+import { useAcousticsSimulationStore, useAudioControlsStore } from '@/store';
 import {
   extractTimelineSoundsFromData,
 } from '@/lib/audio/utils/timeline-utils';
@@ -57,6 +57,10 @@ export function useSpeckleTimeline({
   const [soundMetadataReady, setSoundMetadataReady] = useState(false);
   const [showTimeline, setShowTimeline] = useState(true);
 
+  // Subscribe to scheduling mode + timestamps so the timeline rerenders when they change
+  const soundSchedulingModes = useAudioControlsStore((s) => s.soundSchedulingModes);
+  const soundTimestamps       = useAudioControlsStore((s) => s.soundTimestamps);
+
   // ============================================================================
   // Effect - Update Timeline (debounced)
   // ============================================================================
@@ -82,7 +86,9 @@ export function useSpeckleTimeline({
             timelineDurationMs,
             soundscapeData ?? undefined,
             soundTrims,
-            intervalJitterSeconds
+            intervalJitterSeconds,
+            soundSchedulingModes,
+            soundTimestamps
           );
           setTimelineSounds(sounds);
           setSoundMetadataReady(true);
@@ -95,7 +101,7 @@ export function useSpeckleTimeline({
     return () => clearTimeout(timeoutId);
     // soundMetadataReady is included so the effect re-runs when polling marks it ready.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [soundscapeData, selectedVariants, soundIntervals, soundTrims, soundMetadataReady, intervalJitterSeconds, timelineDurationMs]);
+  }, [soundscapeData, selectedVariants, soundIntervals, soundTrims, soundMetadataReady, intervalJitterSeconds, timelineDurationMs, soundSchedulingModes, soundTimestamps]);
 
   // ============================================================================
   // Effect - Poll for Sound Metadata Readiness
@@ -143,12 +149,14 @@ export function useSpeckleTimeline({
         timelineDurationMs,
         soundscapeData ?? undefined,
         soundTrims,
-        intervalJitterSeconds
+        intervalJitterSeconds,
+        soundSchedulingModes,
+        soundTimestamps
       );
       setTimelineSounds(sounds);
       console.log('[useSpeckleTimeline] 🔄 Timeline refreshed:', sounds.length, 'sounds');
     }
-  }, [soundIntervals, soundTrims, soundscapeData, intervalJitterSeconds, timelineDurationMs]);
+  }, [soundIntervals, soundTrims, soundscapeData, intervalJitterSeconds, timelineDurationMs, soundSchedulingModes, soundTimestamps]);
 
   // ============================================================================
   // Callback - Download Soundscape as WAV

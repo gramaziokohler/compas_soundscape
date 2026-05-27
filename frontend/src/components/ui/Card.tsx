@@ -472,7 +472,7 @@ export function Card<TConfig extends CardBaseConfig>({
 
       {/* Expanded content */}
       {isExpanded && (
-        <div className="mt-3 space-y-3 ">
+        <div className="mt-3 space-y-3 max-h-[480px] overflow-y-auto pr-0.5">
 
           {renderContent()}
                     

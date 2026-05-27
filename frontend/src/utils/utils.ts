@@ -144,3 +144,11 @@ export function trimDisplayName(name: string): string {
   if (words.length <= 3) return name;
   return words.slice(0, 3).join(' ') + '...';
 }
+
+/**
+ * Compute a perceptually-distinct HSL color for analysis object group at given index.
+ * Uses golden-angle hue distribution — no stored palette, computed at call time.
+ */
+export function getAnalysisGroupColor(index: number): string {
+  return `hsl(${(index * 137.5) % 360}, 68%, 58%)`;
+}

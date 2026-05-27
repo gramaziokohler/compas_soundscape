@@ -43,6 +43,10 @@ export interface ScheduledSound {
   initialDelayMs: number; // Initial delay before first playback
   iterationOffsets?: number[]; // Pre-generated random offsets for each playback iteration
   currentIteration?: number; // Tracks which iteration we are currently on
+  /** Explicit playback timestamps in ms (used in 'timestamps' scheduling mode). */
+  timestampsMs?: number[];
+  /** Timer IDs for each timestamp-based one-shot playback. */
+  timestampTimers?: NodeJS.Timeout[];
 }
 
 export interface WAVHeader {
@@ -76,6 +80,8 @@ export interface TimelineSound {
   trimEndFraction?: number;   // Fraction (0-1) where trim ends
   initialDelayMs?: number; // Delay before first playback (ms) — from stagger scheduling
   iterationOffsets?: number[]; // Array of pre-generated random offsets for each iteration
+  /** Scheduling mode for this sound ('interval' = default, 'timestamps' = explicit). */
+  schedulingMode?: 'interval' | 'timestamps';
 }
 
 export interface TimelinePlaybackState {

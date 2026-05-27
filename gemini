@@ -1,0 +1,137 @@
+{
+  "meta": {
+    "model_name": "public toilet",
+    "total_bounds": {
+      "min": {
+        "x": -11.967,
+        "y": 7.163,
+        "z": -0.2
+      },
+      "max": {
+        "x": -6.54,
+        "y": 15.079,
+        "z": 3.718
+      },
+      "dimensions_m": {
+        "width": 5.427,
+        "depth": 7.915,
+        "height": 3.918
+      }
+    }
+  },
+  "architectural_objects": [
+    {
+      "name": "Wall",
+      "material": "Plaster or painted drywall",
+      "quantity": 4,
+      "object_ids": [
+        "8fb69780b21af32ce895784299f7506a",
+        "1aaba579ed53411732f378b503bfa21b",
+        "12e9d6df250cfe1cb7a53ab79c9c4456",
+        "627003791df7212fe65c595a045046e5"
+      ]
+    },
+    {
+      "name": "Hand Dryer",
+      "material": "Metal or plastic",
+      "quantity": 1,
+      "object_ids": [
+        "d37e308d91d09c74cc0e1028e045ce2b"
+      ]
+    },
+    {
+      "name": "Marble Floor",
+      "material": "Marble",
+      "quantity": 1,
+      "object_ids": [
+        "d43ab3b4dbb9f3f98e31ce8dca611a3f"
+      ]
+    },
+    {
+      "name": "Recessed LED Spotlight",
+      "material": "Metal, plastic, and glass",
+      "quantity": 5,
+      "object_ids": [
+        "c0093dd23c75551fa28c4b3dd395c25a",
+        "7d3e5163edcba09f33b5d47d8c48ae7b",
+        "adb7ca7b1bfb996daf0d01ef0736d64d",
+        "0198212a439004759de464602096b822",
+        "a6303940ea726d614d537a77c5be8a78"
+      ]
+    },
+    {
+      "name": "Air Duct (VMC)",
+      "material": "Galvanized steel or aluminum",
+      "quantity": 5,
+      "object_ids": [
+        "beb03ac18e73315c94c7c60978fafe36",
+        "219710e1b9b00d8c1c4ffcccbe2f9116",
+        "6f567626263e5c5ab12d3998bb269f6e",
+        "77abe03e78b47b44b1d59ef7e3b7e22b",
+        "98fde7d129059949a454f891eb6b2d1e"
+      ]
+    },
+    {
+      "name": "Wall-Mounted Toilet",
+      "material": "Ceramic (bowl), plastic (seat)",
+      "quantity": 9,
+      "object_ids": [
+        "ec029c143cd0d71d4b43ebcb7e2d4cb2",
+        "862934628242346e4f0391796600fd03",
+        "7ed750aa254046e9b58da00cac09d468",
+        "0f7de622c09df1bd92764d1b088964a2",
+        "c492ca27521ea324fc9d80484491d5b9",
+        "2cb7ebfa67ee7af6a72bf5375eb8c5e7",
+        "c1cf2ee55b7276f407d6ff7a159e7a85",
+        "2864b72eb0d4bfd8940c4c2cad9e220e",
+        "8e78da9eb240251fe354ef6cb82ce705"
+      ]
+    },
+    {
+      "name": "Sink Water Tap",
+      "material": "Chrome-plated metal",
+      "quantity": 12,
+      "object_ids": [
+        "24f83e575998fb4689c4d2f2abac9405",
+        "b9340398bb3da23ae93b4f10a590780f",
+        "67499ec99d0e473d9ad2921fb49c76ab",
+        "bd9ef3b976d3c4c9a5e881647de0754a",
+        "f3c9e28531cde3e550a6d89c15099ac8",
+        "3f10ae825b1ff4dff06d31aed1b8b759",
+        "3e8b0dfc52f47a03e0639b617bfcfdc7",
+        "4318bfae405bc2b9cef4bce940435bcc",
+        "3ce0ea48c90a74d0f59fd63d30a19cc8",
+        "0e1986c0836d250b9a57fe412052949d",
+        "ab096a3363d94e5e2d105975075c73cd",
+        "659f0c5b84c4bad65d48d0d7f5727d45"
+      ]
+    },
+    {
+      "name": "Wooden Laminate Door",
+      "material": "Laminate (wood finish)",
+      "quantity": 4,
+      "object_ids": [
+        "0efad0f8bffe48badec1ba30b9c3571b",
+        "1b03a602b189621214e9c8339302975c",
+        "8b801543317a4980c0df87b87119edf3",
+        "b253fa588c18cd7dc62a0af437788c8b"
+      ]
+    },
+    {
+      "name": "Mirror",
+      "material": "Glass",
+      "quantity": 1,
+      "object_ids": [
+        "fe5d0ff527e1e48ef859117ef30e701a"
+      ]
+    },
+    {
+      "name": "Sink Countertop",
+      "material": "Faience (glazed ceramic)",
+      "quantity": 1,
+      "object_ids": [
+        "7e2a05e7c5a80c32757516114113aa43"
+      ]
+    }
+  ]
+}
