@@ -83,6 +83,14 @@ export interface UIStoreState {
   showAxesHelper: boolean;
   setShowAxesHelper: (show: boolean) => void;
 
+  // ── Ground grid ───────────────────────────────────────────────────────────
+  showGroundGrid: boolean;
+  setShowGroundGrid: (v: boolean) => void;
+  groundGridSpacing: number;
+  setGroundGridSpacing: (v: number) => void;
+  groundGridColor: string;
+  setGroundGridColor: (v: string) => void;
+
   // ── Viewer display toggles ────────────────────────────────────────────────
   showLabelSprites: boolean;
   setShowLabelSprites: (v: boolean) => void;
@@ -92,6 +100,10 @@ export interface UIStoreState {
   setShowSoundSpheres: (v: boolean) => void;
   showSceneListeners: boolean;
   setShowSceneListeners: (v: boolean) => void;
+
+  // ── Panel toggles ──────────────────────────────────────────────────────────
+  showAdvancedSettings: boolean;
+  setShowAdvancedSettings: (v: boolean) => void;
 
   // ── Global acoustic simulation ────────────────────────────────────────────
   globalSoundSpeed: number;
@@ -106,6 +118,9 @@ export interface UIStoreState {
   /** Incremented each time the user double-clicks a sound card to zoom to its sphere. */
   zoomToSoundCardTrigger: { index: number; version: number } | null;
   triggerZoomToSoundCard: (index: number) => void;
+  /** Active parent (usage or context) index filtering the Sounds section. Null = show all. */
+  activeSoundParentIndex: number | null;
+  setActiveSoundParentIndex: (index: number | null) => void;
 }
 
 export type GradientMetric = 'rt60' | 'edt' | 'd50' | 'c50' | 'spl';
@@ -200,6 +215,14 @@ export const useUIStore = create<UIStoreState>()(
       showAxesHelper: false,
       setShowAxesHelper: (show) => set({ showAxesHelper: show }, false, 'ui/setShowAxesHelper'),
 
+      // ── Ground grid ──────────────────────────────────────────────────────
+      showGroundGrid: false,
+      setShowGroundGrid: (v) => set({ showGroundGrid: v }, false, 'ui/setShowGroundGrid'),
+      groundGridSpacing: 5,
+      setGroundGridSpacing: (v) => set({ groundGridSpacing: v }, false, 'ui/setGroundGridSpacing'),
+      groundGridColor: '#888888',
+      setGroundGridColor: (v) => set({ groundGridColor: v }, false, 'ui/setGroundGridColor'),
+
       // ── Viewer display toggles ───────────────────────────────────────────
       showLabelSprites: true,
       setShowLabelSprites: (v) => set({ showLabelSprites: v }, false, 'ui/setShowLabelSprites'),
@@ -209,6 +232,10 @@ export const useUIStore = create<UIStoreState>()(
       setShowSoundSpheres: (v) => set({ showSoundSpheres: v }, false, 'ui/setShowSoundSpheres'),
       showSceneListeners: true,
       setShowSceneListeners: (v) => set({ showSceneListeners: v }, false, 'ui/setShowSceneListeners'),
+
+      // ── Panel toggles ────────────────────────────────────────────────────
+      showAdvancedSettings: false,
+      setShowAdvancedSettings: (v) => set({ showAdvancedSettings: v }, false, 'ui/setShowAdvancedSettings'),
 
       // ── Global acoustic simulation ───────────────────────────────────────
       globalSoundSpeed: DEFAULT_SPEED_OF_SOUND,
@@ -227,6 +254,9 @@ export const useUIStore = create<UIStoreState>()(
           false,
           'ui/triggerZoomToSoundCard',
         ),
+      activeSoundParentIndex: null,
+      setActiveSoundParentIndex: (index) =>
+        set({ activeSoundParentIndex: index }, false, 'ui/setActiveSoundParentIndex'),
     }),
     { name: 'uiStore' },
   ),

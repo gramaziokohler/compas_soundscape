@@ -9,7 +9,6 @@ import type {
   CompasGeometry,
   SoundEvent,
   SoundGenerationConfig,
-  ActiveTab,
   LoadTab,
   SoundState,
   SEDAudioInfo,
@@ -23,6 +22,7 @@ import type {
   AnalysisResult,
   CardType,
 } from "./index";
+import type { AudioAnalysisConfig } from "./analysis";
 import type { GridListenerData } from "./receiver";
 import type { AuralizationConfig, ResonanceAudioConfig, ResonanceRoomDimensions, ResonanceRoomMaterial } from "./audio";
 import type { ModalAnalysisResult, ModeVisualizationState } from "./modal";
@@ -35,12 +35,7 @@ import type { SimulationConfig, AcousticSimulationMode } from "./acoustics";
  */
 export interface SidebarProps {
   // Separate model and audio file states
-  modelFile: File | null;
-  speckleData?: { model_id: string; version_id: string; object_id: string; url: string; auth_token?: string } | null;
   audioFile: File | null;
-  geometryData: CompasGeometry | null;
-  soundscapeData: SoundEvent[] | null;
-  activeAiTab: ActiveTab;
   activeLoadTab: LoadTab;
   modelEntities: any[];
   aiPrompt: string;
@@ -77,7 +72,6 @@ export interface SidebarProps {
   onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
   onUploadModel: () => void;
   onLoadSampleIfc: () => void;
-  setActiveAiTab: (tab: ActiveTab) => void;
   setActiveLoadTab: (tab: LoadTab) => void;
   setAiPrompt: (prompt: string) => void;
   setNumSounds: (num: number) => void;
@@ -88,8 +82,8 @@ export interface SidebarProps {
   onAddSoundConfig: (type?: CardType) => void;
   onBatchAddSoundConfigs: (count: number) => number;
   onRemoveSoundConfig: (index: number) => void;
-  onUpdateSoundConfig: (index: number, field: keyof SoundGenerationConfig, value: string | number) => void;
-  onSoundTypeChange: (index: number, type: CardType) => void;
+  onUpdateSoundConfig: (index: number, field: keyof SoundGenerationConfig, value: any) => void;
+  onSoundTypeChange: (index: number, type: CardType) => Promise<void>;
   onGenerateSounds: () => void;
   onStopSoundGeneration: () => void;
   onGlobalDurationChange: (duration: number) => void;
@@ -108,6 +102,12 @@ export interface SidebarProps {
   onShowSoundSpheresChange: (v: boolean) => void;
   showSceneListeners: boolean;
   onShowSceneListenersChange: (v: boolean) => void;
+  showGroundGrid: boolean;
+  onShowGroundGridChange: (v: boolean) => void;
+  groundGridSpacing: number;
+  onGroundGridSpacingChange: (v: number) => void;
+  groundGridColor: string;
+  onGroundGridColorChange: (v: string) => void;
   onResetAdvancedSettings: () => void;
   listenerOrientation: { x: number; y: number; z: number };
   onListenerOrientationChange: (orientation: { x: number; y: number; z: number }) => void;
@@ -143,74 +143,8 @@ export interface SidebarProps {
   selectedDiverseEntities?: any[];
   isAnalyzingEntities?: boolean;
   onAnalyzeModel?: () => void;
-  // IR Library props
-  onSelectIRFromLibrary: (irMetadata: any) => Promise<void>;
-  onClearIR: () => void;
-  selectedIRId: string | null;
-  auralizationConfig: AuralizationConfig;
-  // Receiver props
-  receivers: ReceiverData[];
-  onAddReceiver: (type: string) => void;
-  onDeleteReceiver: (id: string) => void;
-  onUpdateReceiverName: (id: string, name: string) => void;
-  onUpdateReceiverPosition: (id: string, position: [number, number, number]) => void;
-  onGoToReceiver: (id: string) => void;
-  onToggleReceiverHiddenForSimulation: (id: string) => void;
-  onExitFPS?: () => void;
-  /** Forces the given listener card to be expanded (e.g. from scene mesh double-click) */
-  forcedExpandedListenerId?: string | null;
-  /** Increment to collapse the currently expanded listener card (e.g. FPS exited via Escape) */
-  collapseListenerCardTrigger?: number;
-  /** True while the user is inside FPS (first-person) listener mode */
-  isFPSModeActive?: boolean;
-  /** When set, scrolls to and highlights the corresponding IR group in the active simulation card */
-  forcedActiveGroupId?: string | null;
-  // Grid listener props
-  gridListeners: GridListenerData[];
-  onAddGridListener: () => void;
-  onDeleteGridListener: (id: string) => void;
-  onComputeBounds: (
-    objectIds: string[],
-  ) => { min: [number, number, number]; max: [number, number, number] } | null;
-  expandedGridListenerId: string | null;
-  onExpandedGridListenerChange: (id: string | null) => void;
-  // ShoeBox Acoustics props
-  resonanceAudioConfig: ResonanceAudioConfig;
-  onToggleResonanceAudio: (enabled: boolean) => void;
-  onUpdateRoomMaterials: (materials: ResonanceRoomMaterial) => void;
-  hasGeometry: boolean;
-  showBoundingBox: boolean;
-  onToggleBoundingBox: (show: boolean) => void;
-  onRefreshBoundingBox?: () => void;
-  roomScale?: { x: number; y: number; z: number };
-  onRoomScaleChange?: (scale: { x: number; y: number; z: number }) => void;
-  // Audio Orchestrator props (NEW)
-  audioRenderingMode?: AudioRenderingMode;
-  onAudioRenderingModeChange?: (mode: AudioRenderingMode) => void;
-  // Material assignment props (NEW)
-  modelType?: '3dm' | 'obj' | 'ifc' | null;
-  selectedGeometry?: SelectedGeometry | null;
-  onSelectGeometry?: (selection: SelectedGeometry | null) => void;
-  onHoverGeometry?: (selection: SelectedGeometry | null) => void;
-  onAssignMaterial?: (selection: SelectedGeometry, material: AcousticMaterial | null) => void;
-  // Choras Simulation props (NEW)
-  onIRImported?: () => void;
-  irRefreshTrigger?: number;
-  // Acoustics simulation state (NEW - passed from page.tsx to avoid duplicate hook calls)
-  simulationConfigs?: SimulationConfig[];
-  activeSimulationIndex?: number | null;
-  expandedTabIndex?: number | null;
-  onAddSimulationConfig?: (mode: AcousticSimulationMode) => void;
-  onRemoveSimulationConfig?: (index: number) => void;
-  onUpdateSimulationConfig?: (index: number, updates: Partial<SimulationConfig>) => void;
-  onSetActiveSimulation?: (index: number | null) => void;
-  onUpdateSimulationName?: (index: number, name: string) => void;
-  onToggleExpandSimulation?: (index: number) => void;
-  // IR hover line visualization
-  onIRHover?: (sourceId: string | null, receiverId: string | null) => void;
   // Analysis props (NEW)
   analysisConfigs: AnalysisConfig[];
-  activeAnalysisTab: number;
   isAnalyzing: boolean;
   analysisError: string | null;
   analysisResult: AnalysisResult[];
@@ -218,16 +152,19 @@ export interface SidebarProps {
   onAddAnalysisConfig: (type: CardType) => void;
   onRemoveAnalysisConfig: (index: number) => void;
   onUpdateAnalysisConfig: (index: number, updates: Partial<AnalysisConfig>) => void;
-  onSetActiveAnalysisTab: (index: number) => void;
   onAnalyze: (index: number) => void;
   onStop: () => void;
   onTogglePromptSelection: (configIndex: number, promptId: string) => void;
-  onSendToSoundGeneration: () => void;
+  onSendToSoundGeneration: (parentUsageIndex?: number) => void;
   onResetAnalysis: (index: number) => void;
+  /** Async callback to extract SED audio segments and inject them as sound cards. */
+  onAudioExtract: (config: AudioAnalysisConfig, originalIndex: number) => Promise<void>;
   // Sidebar expanded state callback
   onExpandedChange?: (isExpanded: boolean) => void;
   // Sidebar content width change callback (fires during resize drag)
   onWidthChange?: (width: number) => void;
+  // Step advance trigger: increment to programmatically advance to step 2 (Sounds)
+  stepAdvanceTrigger?: number;
 }
 
 /**
@@ -285,7 +222,7 @@ export interface SoundGenerationSectionProps {
   onAddConfig: (type?: CardType) => void;
   onBatchAddConfigs: (count: number) => number;
   onRemoveConfig: (index: number) => void;
-  onUpdateConfig: (index: number, field: keyof SoundGenerationConfig, value: string | number) => void;
+  onUpdateConfig: (index: number, field: keyof SoundGenerationConfig, value: any) => void;
   onTypeChange?: (index: number, type: CardType) => Promise<void>;
   onSetActiveTab: (index: number) => void;
   onGenerate: () => void;
@@ -325,6 +262,8 @@ export interface SoundGenerationSectionProps {
   onDeleteReceiver?: (id: string) => void;
   onUpdateReceiverName?: (id: string, name: string) => void;
   onGoToReceiver?: (id: string) => void;
+  /** When set, only show sound configs whose parentUsageOriginalIndex matches this value */
+  visibleParentUsageIndex?: number | null;
 }
 
 /**

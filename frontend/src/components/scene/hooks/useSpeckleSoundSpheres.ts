@@ -59,7 +59,7 @@ export function useSpeckleSoundSpheres({
     }
 
     coordinator.updateSoundSpheres(
-      soundscapeData,
+      soundscapeData ?? [],
       selectedVariants,
       scaleForSounds,
       auralizationConfigRef.current,

@@ -645,6 +645,7 @@ class SpeckleService:
         # Create traversal with default rules
         traversal_func = GraphTraversal([])
         
+        # Each entry is (obj, layer_path_string)
         objects_with_display = []
         total_objects = 0
         object_types = {}
@@ -660,12 +661,23 @@ class SpeckleService:
             total_objects += 1
             obj_type = type(obj).__name__
             object_types[obj_type] = object_types.get(obj_type, 0) + 1
-            
-            # Update current layer if this object has a name and is not geometry
-            # (layers/groups are Base objects with names, not Mesh objects)
-            if hasattr(obj, 'name') and obj.name and not isinstance(obj, Mesh):
-                # This might be a layer or group
-                current_layer = obj.name
+
+            # Update current layer only for pure container/group nodes.
+            # A container node has a name but NO displayValue and is not a Mesh.
+            # BIM objects (doors, walls, etc.) have both a name AND displayValue —
+            # they must NOT overwrite the layer tracked from their parent container.
+            has_display_value = hasattr(obj, 'displayValue') and obj.displayValue is not None
+            is_container = (
+                hasattr(obj, 'name') and obj.name
+                and not isinstance(obj, Mesh)
+                and not has_display_value
+            )
+            if is_container:
+                # Build a hierarchical path so nested layers are preserved
+                # e.g. "Acoustics" → child group → "Acoustics::ChildGroup"
+                current_layer = (
+                    f"{current_layer}::{obj.name}" if current_layer else obj.name
+                )
             
             # Debug first few objects
             if total_objects <= 20:
@@ -687,10 +699,10 @@ class SpeckleService:
             # Check if this object has displayValue OR if it IS geometry itself
             if should_include:
                 if hasattr(obj, 'displayValue') and obj.displayValue is not None:
-                    objects_with_display.append(obj)
+                    objects_with_display.append((obj, current_layer))
                 elif isinstance(obj, Mesh):
                     # Object IS geometry (e.g., from Rhino/3dm files)
-                    objects_with_display.append(obj)
+                    objects_with_display.append((obj, current_layer))
             
             # Recurse through all properties, passing the current layer context
             for prop_name in obj.get_member_names():
@@ -710,9 +722,11 @@ class SpeckleService:
         logger.info(f"Found {len(objects_with_display)} objects with geometry (displayValue or direct Mesh)")
         
         object_ids_set = set(object_ids_filter) if object_ids_filter else None
+        # Maps obj_id → layer path for downstream consumers (e.g. get_model_entities)
+        object_layers: dict[str, str | None] = {}
 
         # Process each object with geometry
-        for obj in objects_with_display:
+        for obj, obj_layer in objects_with_display:
             obj_id = getattr(obj, 'id', f"obj_{len(object_ids)}")
             obj_name = getattr(obj, 'name', f"Object {len(object_ids) + 1}")
             obj_app_id = getattr(obj, 'applicationId', None)  # Rhino GUID — stable across commits
@@ -767,10 +781,12 @@ class SpeckleService:
                 object_names.append(obj_name)
                 face_range = [start_face, face_count - 1]
                 object_face_ranges[obj_id] = face_range
+                object_layers[obj_id] = obj_layer
                 # Also index by applicationId (Rhino GUID) so the frontend can send either ID
                 if obj_app_id and obj_app_id != obj_id:
                     object_face_ranges[obj_app_id] = face_range
-                logger.info(f"Added {face_count - start_face} faces from {obj_name} (id={obj_id}, applicationId={obj_app_id})")
+                    object_layers[obj_app_id] = obj_layer
+                logger.info(f"Added {face_count - start_face} faces from {obj_name} (id={obj_id}, applicationId={obj_app_id}, layer={obj_layer})")
         
         logger.info(f"Total geometry extracted: {len(all_vertices)} vertices, {len(all_faces)} faces across {len(object_ids)} objects (units: '{root_units}', scaled to meters)")
 
@@ -780,6 +796,7 @@ class SpeckleService:
             "object_ids": object_ids,
             "object_names": object_names,
             "object_face_ranges": object_face_ranges,
+            "object_layers": object_layers,
             "units": root_units,
         }
 
@@ -806,6 +823,7 @@ class SpeckleService:
         object_ids = geometry["object_ids"]       # list of str
         object_names = geometry["object_names"]   # list of str
         object_face_ranges = geometry["object_face_ranges"]  # {id: [start, end]}
+        object_layers = geometry.get("object_layers", {})   # {id: layer_path}
 
         entities = []
         for idx, (obj_id, obj_name) in enumerate(zip(object_ids, object_names)):
@@ -833,7 +851,7 @@ class SpeckleService:
                 "name": obj_name,
                 "type": obj_name,
                 "speckle_type": obj_name,
-                "layer": None,
+                "layer": object_layers.get(obj_id),
                 "material": None,
                 "bounds": bounds,
             })

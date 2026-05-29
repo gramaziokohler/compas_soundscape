@@ -9,6 +9,7 @@ import { BoundingBoxManager } from '@/lib/three/BoundingBoxManager';
 import { GradientMapManager } from '@/lib/three/gradient-map-manager';
 import { useTimelinePlayback } from '@/hooks/useTimelinePlayback';
 import { useSpeckleStore, useAcousticsSimulationStore, useGridListenersStore } from '@/store';
+import { useRightSidebarStore } from '@/store/rightSidebarStore';
 import { useUIStore } from '@/store/uiStore';
 import { useTextGenerationStore } from '@/store/textGenerationStore';
 import { apiService } from '@/services/api';
@@ -17,6 +18,7 @@ import { useAudioControlsStore } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { Viewer, CameraController, SelectionExtension, FilteringExtension } from '@speckle/viewer';
 import type * as THREE from 'three';
+import { Vector2 as ThreeVector2 } from 'three';
 // Custom hooks (Phase 1-4 refactor)
 import { useSpeckleViewerInit } from '@/components/scene/hooks/useSpeckleViewerInit';
 import { useSpeckleFPS } from '@/components/scene/hooks/useSpeckleFPS';
@@ -35,12 +37,18 @@ import { useSpeckleIRHoverLine } from '@/components/scene/hooks/useSpeckleIRHove
 import { useSpeckleObjectOverlay } from '@/components/scene/hooks/useSpeckleObjectOverlay';
 import { useSpeckleCoordinatorCallbacks } from '@/components/scene/hooks/useSpeckleCoordinatorCallbacks';
 import { useSpeckleBoundingBoxGumball } from '@/components/scene/hooks/useSpeckleBoundingBoxGumball';
+import { useSpeckleGroundGrid } from '@/components/scene/hooks/useSpeckleGroundGrid';
 // Phase 5 JSX sub-components
 import { SceneViewModeToolbar } from '@/components/scene/SceneViewModeToolbar';
 import { SceneFPSOverlay } from '@/components/scene/SceneFPSOverlay';
+import { SceneContextMenu } from '@/components/scene/SceneContextMenu';
+import { SceneHoverPreview } from '@/components/scene/SceneHoverPreview';
 import { SceneEmptyState } from '@/components/scene/SceneEmptyState';
 import { SceneTimeline } from '@/components/scene/SceneTimeline';
 import { SceneControlButtons } from '@/components/scene/SceneControlButtons';
+import { ObjectExplorerPanel } from '@/components/scene/ObjectExplorerPanel';
+import { SceneControlButton } from '@/components/ui/SceneControlButton';
+import { UndoRedoToolbar } from '@/components/ui/UndoRedoToolbar';
 import { UI_RIGHT_SIDEBAR, UI_VERTICAL_TABS } from '@/utils/constants';
 import type { SoundEvent, ReceiverData } from '@/types';
 import type { AuralizationConfig } from '@/types/audio';
@@ -262,6 +270,8 @@ export function SpeckleScene({
   const showSoundSpheres = useUIStore((s) => s.showSoundSpheres);
   const showSceneListeners = useUIStore((s) => s.showSceneListeners);
   const globalSoundSpeed = useUIStore((s) => s.globalSoundSpeed);
+  const showAdvancedSettings = useUIStore((s) => s.showAdvancedSettings);
+  const setShowAdvancedSettings = useUIStore((s) => s.setShowAdvancedSettings);
   const gradientMapManagerRef = useRef<GradientMapManager | null>(null);
 
   // Local refs synced from engine store — remaining effects use .current pattern unchanged
@@ -294,6 +304,7 @@ export function SpeckleScene({
   const storeStopAll  = useAudioControlsStore((s) => s.stopAll);
 
   const [refreshKey, setRefreshKey] = useState(0);
+  const [showObjectExplorer, setShowObjectExplorer] = useState(false);
 
   // Derived: dark mode is active only in 'dark' view mode
   const isDarkMode = viewMode === 'dark';
@@ -305,6 +316,23 @@ export function SpeckleScene({
   const [selectedSpeckleObjectIds, setSelectedSpeckleObjectIds] = useState<string[]>([]);
   // Flag to skip the deselection effect when a sound sphere click clears Speckle selection
   const skipDeselectionRef = useRef(false);
+
+  // Context menu (right-click floating panel)
+  const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const savedPrevEntityRef = useRef<import('@/store/speckleStore').SelectedEntityInfo | null>(null);
+
+  // Hover preview — shown after 2 s of dwelling over a Speckle object
+  const [hoverPreview, setHoverPreview] = useState<{ x: number; y: number; objectName: string; objectType: string } | null>(null);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Ref so timer callbacks can read contextMenuPos without stale closure
+  const contextMenuPosRef = useRef<{ x: number; y: number } | null>(null);
+  useEffect(() => { contextMenuPosRef.current = contextMenuPos; }, [contextMenuPos]);
+  const savedPrevObjectIdsRef = useRef<string[]>([]);
+  // Refs for latest mutable values accessible inside event callbacks without re-registering listeners
+  const worldTreeRef = useRef<any>(null);
+  const isFirstPersonModeRef = useRef(false);
+  const setSelectedSpeckleObjectIdsRef = useRef(setSelectedSpeckleObjectIds);
+  useEffect(() => { setSelectedSpeckleObjectIdsRef.current = setSelectedSpeckleObjectIds; });
 
   // File upload drag state (for empty state)
   const [isDragging, setIsDragging] = useState(false);
@@ -345,6 +373,9 @@ export function SpeckleScene({
     return unsub;
   }, []);
 
+  // Keep worldTreeRef current for use inside event callbacks
+  useEffect(() => { worldTreeRef.current = worldTree; }, [worldTree]);
+
   // ── FPS Navigation ──
   const { isFirstPersonMode, setIsFirstPersonMode } = useSpeckleFPS({
     isViewerReady,
@@ -361,6 +392,333 @@ export function SpeckleScene({
     onFPSExited,
     onReceiverDoubleClicked,
   });
+
+  // Keep isFirstPersonModeRef current for event callbacks
+  useEffect(() => { isFirstPersonModeRef.current = isFirstPersonMode; }, [isFirstPersonMode]);
+
+  // ── Right-click context menu ──
+  // Shows the EntityInfoPanel as a floating panel at cursor position.
+  // Only fires when the mouse has not moved (no orbit/pan drag).
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      // Do not open in FPS mode or when the mouse was dragged (orbiting/panning).
+      // Reuse SpeckleEventBridge's wasOrbiting flag — it tracks pointerdown/pointerup
+      // for all buttons (no button filter), so right-click drags are already detected.
+      const wasDragging = coordinatorRef.current?.getWasOrbiting() ?? false;
+      if (isFirstPersonModeRef.current || wasDragging) return;
+
+      // Dismiss hover preview immediately when the full panel opens
+      setHoverPreview(null);
+      if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; }
+
+      const { viewer, selectionExtension: sel, filteringExtension: fe } = useSpeckleEngineStore.getState();
+      if (!viewer || !sel) return;
+
+      // Convert client coordinates to NDC
+      const renderer = viewer.getRenderer();
+      const canvas = renderer.renderer.domElement;
+      const rect = canvas.getBoundingClientRect();
+      const mouse = new ThreeVector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1
+      );
+
+      // ── 1. Try custom objects (sound spheres + receivers) first ──
+      const adapter = coordinatorRef.current?.getAdapter();
+      const customHit = adapter?.raycastCustomObjectsAt(mouse) ?? null;
+
+      if (customHit) {
+        const obj = customHit.object;
+        const currentState = useSpeckleStore.getState();
+        savedPrevEntityRef.current = currentState.selectedEntity;
+        savedPrevObjectIdsRef.current = (currentState as any).selectedObjectIds ?? [];
+
+        useRightSidebarStore.getState().setRightClickActive(true);
+
+        let entityData: import('@/store/speckleStore').SelectedEntityInfo;
+
+        if (customHit.type === 'sound') {
+          const soundEvent = obj.userData.soundEvent as import('@/types').SoundEvent | undefined;
+          const promptKey = obj.userData.promptKey as string | undefined;
+          const promptIndex = promptKey ? parseInt(promptKey.replace('prompt_', ''), 10) : 0;
+          entityData = {
+            objectId: soundEvent?.id ?? obj.uuid,
+            objectName: soundEvent?.display_name || soundEvent?.id || 'Sound Sphere',
+            objectType: 'Sound',
+            soundData: { promptIndex },
+          };
+        } else {
+          // receiver
+          const pos = obj.position;
+          entityData = {
+            objectId: obj.userData.receiverId ?? obj.uuid,
+            objectName: obj.userData.receiverName || 'Receiver',
+            objectType: 'Receiver',
+            receiverData: { position: [pos.x, pos.y, pos.z] },
+          };
+        }
+
+        sel.selectObjects([]);
+        setSelectedEntity(entityData);
+        setSelectedObjectIds([entityData.objectId]);
+        setContextMenuPos({ x: e.clientX, y: e.clientY });
+        return;
+      }
+
+      // ── 2. Fall through to Speckle scene objects ──
+      let foundId: string | null = null;
+      try {
+        const intersections = (renderer as any).intersections.intersect(
+          renderer.scene,
+          renderer.renderingCamera,
+          mouse,
+          undefined,
+          false,
+          undefined
+        );
+        if (intersections?.length) {
+          for (const hit of intersections) {
+            const pair = (renderer as any).renderViewFromIntersection(hit);
+            if (!pair) continue;
+            const rv = pair[0];
+            const objectId: string | undefined = rv?.renderData?.id;
+            if (!objectId) continue;
+
+            // Skip objects hidden by FilteringExtension
+            if (fe) {
+              const state = fe.filteringState;
+              const isHidden = state?.hiddenObjects?.includes(objectId) ?? false;
+              const isExcluded =
+                (state?.isolatedObjects?.length ?? 0) > 0 &&
+                !state?.isolatedObjects?.includes(objectId);
+              if (isHidden || isExcluded) continue;
+            }
+
+            foundId = objectId;
+            break;
+          }
+        }
+      } catch (err) {
+        console.warn('[SpeckleScene] Context menu intersection error:', err);
+      }
+
+      if (foundId) {
+        const currentState = useSpeckleStore.getState();
+        savedPrevEntityRef.current = currentState.selectedEntity;
+        savedPrevObjectIdsRef.current = (currentState as any).selectedObjectIds ?? [];
+
+        sel.selectObjects([foundId]);
+        useRightSidebarStore.getState().setRightClickActive(true);
+
+        // Build entity data directly from world tree for immediate display
+        let entityData: import('@/store/speckleStore').SelectedEntityInfo = {
+          objectId: foundId,
+          objectName: 'Unknown',
+          objectType: 'Speckle Object',
+        };
+        const tree = worldTreeRef.current;
+        if (tree) {
+          const checkNode = (node: any, id: string): any => {
+            const nodeId = node?.raw?.id || node?.model?.id || node?.id;
+            if (nodeId === id) return node;
+            const children = node?.model?.children || node?.children;
+            if (children) {
+              for (const child of children) {
+                const found = checkNode(child, id);
+                if (found) return found;
+              }
+            }
+            return null;
+          };
+          const rootChildren =
+            tree.tree?._root?.children ||
+            tree._root?.children ||
+            tree.root?.children ||
+            tree.children;
+          let foundNode: any = null;
+          if (rootChildren) {
+            for (const child of rootChildren) {
+              foundNode = checkNode(child, foundId);
+              if (foundNode) break;
+            }
+          }
+          if (foundNode) {
+            const objectName = foundNode.model?.name || foundNode.raw?.name || 'Unnamed';
+            const objectType = foundNode.raw?.speckle_type || 'Speckle Object';
+            entityData = { objectId: foundId, objectName, objectType };
+          }
+        }
+
+        // If this Speckle object has a linked sound, show the WaveSurfer player
+        const linkState = getObjectLinkState(foundId);
+        if (linkState.isLinked && linkState.linkedSoundIndex !== undefined) {
+          entityData = {
+            ...entityData,
+            objectType: 'Sound',
+            soundData: { promptIndex: linkState.linkedSoundIndex },
+          };
+        }
+
+        setSelectedEntity(entityData);
+        setSelectedObjectIds([foundId]);
+        setContextMenuPos({ x: e.clientX, y: e.clientY });
+      }
+    };
+
+    container.addEventListener('contextmenu', handleContextMenu);
+
+    return () => {
+      container.removeEventListener('contextmenu', handleContextMenu);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [containerRef]);
+
+  // ── Hover preview (2 s dwell) ──
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const clearHoverTimer = () => {
+      if (hoverTimerRef.current) {
+        clearTimeout(hoverTimerRef.current);
+        hoverTimerRef.current = null;
+      }
+    };
+
+    const handlePointerMove = (e: PointerEvent) => {
+      // Only track idle hover — no buttons held, not in FPS mode
+      if (e.buttons !== 0 || isFirstPersonModeRef.current) {
+        clearHoverTimer();
+        setHoverPreview(null);
+        return;
+      }
+
+      clearHoverTimer();
+      const clientX = e.clientX;
+      const clientY = e.clientY;
+
+      hoverTimerRef.current = setTimeout(() => {
+        // Skip if context menu is already open
+        if (contextMenuPosRef.current) return;
+
+        const { viewer, filteringExtension: fe } = useSpeckleEngineStore.getState();
+        if (!viewer) return;
+
+        const renderer = viewer.getRenderer();
+        const canvas = renderer.renderer.domElement;
+        const rect = canvas.getBoundingClientRect();
+        const mouse = new ThreeVector2(
+          ((clientX - rect.left) / rect.width) * 2 - 1,
+          -((clientY - rect.top) / rect.height) * 2 + 1
+        );
+
+        // Try custom objects first
+        const adapter = coordinatorRef.current?.getAdapter();
+        const customHit = adapter?.raycastCustomObjectsAt(mouse) ?? null;
+        if (customHit) {
+          const obj = customHit.object;
+          const objectName = customHit.type === 'sound'
+            ? (obj.userData.soundEvent?.display_name || obj.userData.soundEvent?.id || 'Sound Sphere')
+            : (obj.userData.receiverName || 'Receiver');
+          const objectType = customHit.type === 'sound' ? 'Sound' : 'Receiver';
+          setHoverPreview({ x: clientX, y: clientY, objectName, objectType });
+          return;
+        }
+
+        // Fall through to Speckle scene objects
+        try {
+          const intersections = (renderer as any).intersections.intersect(
+            renderer.scene,
+            renderer.renderingCamera,
+            mouse,
+            undefined,
+            false,
+            undefined
+          );
+          if (!intersections?.length) return;
+
+          for (const hit of intersections) {
+            const pair = (renderer as any).renderViewFromIntersection(hit);
+            if (!pair) continue;
+            const rv = pair[0];
+            const objectId: string | undefined = rv?.renderData?.id;
+            if (!objectId) continue;
+
+            if (fe) {
+              const state = fe.filteringState;
+              const isHidden = state?.hiddenObjects?.includes(objectId) ?? false;
+              const isExcluded =
+                (state?.isolatedObjects?.length ?? 0) > 0 &&
+                !state?.isolatedObjects?.includes(objectId);
+              if (isHidden || isExcluded) continue;
+            }
+
+            // Resolve name from world tree
+            let objectName = 'Speckle Object';
+            let objectType = 'Speckle Object';
+            const tree = worldTreeRef.current;
+            if (tree) {
+              const checkNode = (node: any, id: string): any => {
+                const nodeId = node?.raw?.id || node?.model?.id || node?.id;
+                if (nodeId === id) return node;
+                const children = node?.model?.children || node?.children;
+                if (children) {
+                  for (const child of children) {
+                    const found = checkNode(child, id);
+                    if (found) return found;
+                  }
+                }
+                return null;
+              };
+              const rootChildren =
+                tree.tree?._root?.children ||
+                tree._root?.children ||
+                tree.root?.children ||
+                tree.children;
+              if (rootChildren) {
+                for (const child of rootChildren) {
+                  const node = checkNode(child, objectId);
+                  if (node) {
+                    objectName = node.model?.name || node.raw?.name || 'Unnamed';
+                    objectType = node.raw?.speckle_type || 'Speckle Object';
+                    break;
+                  }
+                }
+              }
+            }
+
+            setHoverPreview({ x: clientX, y: clientY, objectName, objectType });
+            return;
+          }
+        } catch {
+          // silently ignore hover raycast errors
+        }
+        // No object under cursor
+        setHoverPreview(null);
+      }, 2000);
+    };
+
+    const handlePointerLeave = () => {
+      clearHoverTimer();
+      setHoverPreview(null);
+    };
+
+    container.addEventListener('pointermove', handlePointerMove);
+    container.addEventListener('pointerleave', handlePointerLeave);
+
+    return () => {
+      clearHoverTimer();
+      container.removeEventListener('pointermove', handlePointerMove);
+      container.removeEventListener('pointerleave', handlePointerLeave);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [containerRef]);
 
   // ── Area Drawing ──
   useSpeckleAreaDrawing({ isViewerReady, containerRef });
@@ -517,6 +875,9 @@ export function SpeckleScene({
     selectedSpeckleObjectIds,
     worldTree,
   });
+
+  // ── Ground Grid ──
+  useSpeckleGroundGrid({ isViewerReady });
 
   // ============================================================================
   // Effect - Sync viewMode → filteringEnabled in context
@@ -987,6 +1348,50 @@ export function SpeckleScene({
         rightSidebarWidth={rightSidebarWidth}
       />
 
+      {/* Object Explorer + Advanced Settings toggles — top-right */}
+      {isViewerReady && (
+        <div
+          className="absolute pointer-events-auto z-20 transition-all duration-300 flex gap-2"
+          style={{
+            top: '16px',
+            right: isRightSidebarExpanded ? `${(rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH) + 16}px` : '16px',
+          }}
+        >
+          <UndoRedoToolbar />
+          <SceneControlButton
+            onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+            isActive={showAdvancedSettings}
+            title={showAdvancedSettings ? 'Close Advanced Settings' : 'Open Advanced Settings'}
+            icon={
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            }
+          />
+          <SceneControlButton
+            onClick={() => setShowObjectExplorer((v) => !v)}
+            isActive={showObjectExplorer}
+            title={showObjectExplorer ? 'Close Object Explorer' : 'Open Object Explorer'}
+            icon={
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+              </svg>
+            }
+          />
+        </div>
+      )}
+
+      {/* Object Explorer floating panel — always mounted so ObjectExplorer initializes (auto-hides Acoustics layer) on load */}
+      <ObjectExplorerPanel
+        isVisible={showObjectExplorer}
+        onClose={() => setShowObjectExplorer(false)}
+        isRightSidebarExpanded={isRightSidebarExpanded}
+        rightSidebarWidth={rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH}
+      />
+
       {/* 3D Controls Info */}
       {isViewerReady && <ControlsInfo />}
 
@@ -1005,6 +1410,41 @@ export function SpeckleScene({
         onRefreshScene={handleRefreshScene}
         onToggleTimeline={() => setShowTimeline(!showTimeline)}
       />
+
+      {/* Hover preview — shown after 2 s dwell, dismissed on right-click */}
+      {hoverPreview && !contextMenuPos && (
+        <SceneHoverPreview
+          x={hoverPreview.x}
+          y={hoverPreview.y}
+          entity={{ objectName: hoverPreview.objectName, objectType: hoverPreview.objectType }}
+        />
+      )}
+
+      {/* Right-click context menu — floating EntityInfoPanel */}
+      {contextMenuPos && (
+        <SceneContextMenu
+          x={contextMenuPos.x}
+          y={contextMenuPos.y}
+          onClose={() => {
+            setContextMenuPos(null);
+            useRightSidebarStore.getState().setRightClickActive(false);
+            // Restore the entity and selection that were active before right-click
+            setSelectedEntity(savedPrevEntityRef.current);
+            setSelectedObjectIds(savedPrevObjectIdsRef.current);
+            const { selectionExtension: sel } = useSpeckleEngineStore.getState();
+            if (sel) {
+              if (savedPrevObjectIdsRef.current.length > 0) {
+                sel.selectObjects(savedPrevObjectIdsRef.current);
+              } else {
+                sel.selectObjects([]);
+              }
+            }
+            savedPrevEntityRef.current = null;
+            savedPrevObjectIdsRef.current = [];
+          }}
+          generatedSounds={soundscapeData ?? undefined}
+        />
+      )}
     </div>
   );
 }

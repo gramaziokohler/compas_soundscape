@@ -4,8 +4,11 @@
 import asyncio
 import base64
 import json
+import logging
 import re
 import time
+
+logger = logging.getLogger(__name__)
 try:
     import google.genai as genai
     from google.genai.errors import ServerError, ClientError
@@ -1077,6 +1080,79 @@ For the duration estimation (in seconds with 0.1 precision):
                 resolved.append(oid)
         return resolved
 
+    @staticmethod
+    def _build_entity_bbox_map(entities: list[dict]) -> dict[str, dict]:
+        """Build speckle_id → {"min_bounds": [x,y,z], "max_bounds": [x,y,z]} from entity bbox data."""
+        result: dict[str, dict] = {}
+        for e in entities:
+            eid = str(e.get("id") or e.get("nodeId") or "")
+            if not eid:
+                continue
+            bbox = e.get("bbox") or {}
+            mn = bbox.get("min") or {}
+            mx = bbox.get("max") or {}
+            if not mn or not mx:
+                continue
+            result[eid] = {
+                "min_bounds": [
+                    round(float(mn.get("x") or mn.get("X") or 0), 3),
+                    round(float(mn.get("y") or mn.get("Y") or 0), 3),
+                    round(float(mn.get("z") or mn.get("Z") or 0), 3),
+                ],
+                "max_bounds": [
+                    round(float(mx.get("x") or mx.get("X") or 0), 3),
+                    round(float(mx.get("y") or mx.get("Y") or 0), 3),
+                    round(float(mx.get("z") or mx.get("Z") or 0), 3),
+                ],
+            }
+        return result
+
+    def _resolve_and_build_object_ids(
+        self,
+        raw_ids: list[str],
+        entities: list[dict],
+        bbox_map: dict[str, dict],
+    ) -> dict[str, dict]:
+        """Resolve raw LLM IDs (possibly bracket indices) → dict with per-ID bounds.
+
+        Returns:
+            object_ids_dict = {hex_id: {"min_bounds": [x,y,z], "max_bounds": [x,y,z]}}
+        """
+        resolved = self._resolve_object_ids(raw_ids, entities)
+
+        object_ids_dict: dict[str, dict] = {}
+        for oid in resolved:
+            bounds = bbox_map.get(oid)
+            object_ids_dict[oid] = bounds if bounds else {}
+
+        return object_ids_dict
+
+    @staticmethod
+    def _normalize_object_refs(text: str) -> str:
+        """Normalize object ID references in parentheses to the (id:hexid) format.
+
+        Handles three patterns:
+        - ``(e03387f2...)``                         → ``(id:e03387f2...)``
+        - ``(id:aaa... to bbb...)``                 → ``(id:aaa...) to (id:bbb...)``
+        - ``(aaa... to bbb...)``                    → ``(id:aaa...) to (id:bbb...)``
+        """
+        HEX = r'[0-9a-f]{24,64}'
+        # Expand range with id: prefix on the first ID: (id:HEX to HEX)
+        text = re.sub(
+            rf'\(id:({HEX})\s+to\s+({HEX})\)',
+            r'(id:\1) to (id:\2)',
+            text,
+        )
+        # Expand bare hex range: (HEX to HEX)
+        text = re.sub(
+            rf'\(({HEX})\s+to\s+({HEX})\)',
+            r'(id:\1) to (id:\2)',
+            text,
+        )
+        # Normalise remaining bare hex singles: (HEX)
+        text = re.sub(rf'\((?!id:)({HEX})\)', r'(id:\1)', text)
+        return text
+
     # ── Private prompt/entity helpers (source of truth) ──────────────────────
 
     def _prepare_entities(self, entities: list[dict]) -> tuple[list[dict], str]:
@@ -1090,47 +1166,120 @@ For the duration estimation (in seconds with 0.1 precision):
         """
         _EXCLUDED = frozenset({"soundscape", "acoustics"})
 
+        def _segments(text: str) -> set[str]:
+            """Split a hierarchical path into lowercase non-empty segments."""
+            return {p.strip() for p in re.split(r'[::/\\|]+', text) if p.strip()}
+
         def _is_excluded(e: dict) -> bool:
             name = (e.get("name") or "").lower().strip()
+            # Exact name match (e.g. a layer node that was itself captured as an entity)
             if name in _EXCLUDED:
                 return True
-            # Fall back to raw.layer when top-level "layer" key is absent
+            # Layer path check — covers the entity's own layer and all ancestors
+            # e.g. "Acoustics", "Acoustics::SubGroup", "Soundscape::SoundSources"
             raw_layer = (e.get("raw") or {}).get("layer") or ""
             layer = ((e.get("layer") or "") or raw_layer).lower()
-            # Check every segment of a hierarchical path (e.g. "Soundscape::SoundSources")
-            parts = {p.strip() for p in re.split(r'[::/\\|]+', layer) if p.strip()}
-            return bool(parts & _EXCLUDED)
+            if _segments(layer) & _EXCLUDED:
+                return True
+            return False
 
-        filtered = [e for e in entities if not _is_excluded(e)]
+        # Build applicationId -> material name from RenderMaterialProxy objects.
+        # Speckle v3 schema stores the RenderMaterial under raw.value; older schemas
+        # used raw.material or raw.renderMaterial. The objects list (application IDs)
+        # may appear as "objects" or "@objects" (detached-array notation).
+        material_map: dict[str, str] = {}
+        for e in entities:
+            type_str = e.get("speckle_type") or e.get("type") or ""
+            if "RenderMaterialProxy" not in type_str:
+                continue
+            raw_proxy = e.get("raw") or {}
+            nested_mat = (
+                raw_proxy.get("value")
+                or raw_proxy.get("material")
+                or raw_proxy.get("renderMaterial")
+                or {}
+            )
+            if isinstance(nested_mat, str):
+                nested_mat_name = nested_mat
+            else:
+                nested_mat_name = (nested_mat or {}).get("name") or ""
+            mat_name = raw_proxy.get("name") or nested_mat_name or ""
+            if mat_name.lower() in ("rendermaterialproxy", "object", ""):
+                mat_name = nested_mat_name
+            objects_list = raw_proxy.get("objects") or raw_proxy.get("@objects") or []
+            for app_id in objects_list:
+                if app_id and mat_name:
+                    material_map[str(app_id)] = mat_name
+
+        # The proxy objects list contains Layer Collection applicationIds, not
+        # individual mesh IDs. Build a secondary layer_name -> material map by
+        # finding the Collection entities that own those applicationIds.
+        layer_material_map: dict[str, str] = {}
+        for e in entities:
+            raw_e = e.get("raw") or {}
+            aid = str(raw_e.get("applicationId") or "")
+            if aid in material_map:
+                layer_name = (e.get("name") or raw_e.get("name") or "").strip()
+                if layer_name:
+                    layer_material_map[layer_name] = material_map[aid]
+
+        # Keep only Mesh geometry; all other types (Collections, Proxies, etc.) are
+        # structural/relational and not meaningful for the LLM analysis.
+        def _is_mesh(e: dict) -> bool:
+            type_str = e.get("speckle_type") or e.get("type") or ""
+            return "Mesh" in type_str
+
+        filtered = [e for e in entities if not _is_excluded(e) and _is_mesh(e)]
+
+        def _fmt_pt(pt: dict) -> str:
+            x = round(float(pt.get("x") or pt.get("X") or 0), 2)
+            y = round(float(pt.get("y") or pt.get("Y") or 0), 2)
+            z = round(float(pt.get("z") or pt.get("Z") or 0), 2)
+            return f"[{x}, {y}, {z}]"
+
+        def _bbox_str(entity: dict) -> str:
+            # Prefer the entity-level bbox passed from the viewer's renderView.aabb
+            # (raw.bbox is always null — Speckle stores it as an unresolved reference)
+            bbox = entity.get("bbox") or {}
+            if not isinstance(bbox, dict):
+                return ""
+            mn = bbox.get("min") or {}
+            mx = bbox.get("max") or {}
+            if not isinstance(mn, dict) or not isinstance(mx, dict) or not mn or not mx:
+                return ""
+            return f"{_fmt_pt(mn)} to {_fmt_pt(mx)}"
+
         lines: list[str] = []
         for i, entity in enumerate(filtered):
             entity_id = entity.get("id") or entity.get("nodeId") or f"obj-{i}"
-            type_name = entity.get("speckle_type") or entity.get("type", "Object")
             name = entity.get("name", "")
-            layer = entity.get("layer", "")
-            material = entity.get("material", "")
+            raw = entity.get("raw") or {}
+            layer = entity.get("layer") or raw.get("layer") or ""
 
-            line = f"[{i + 1}] SPECKLE_ID={entity_id} | Type={type_name}"
-            if name:
-                line += f" | Name={name}"
+            # Material: try direct applicationId match first, then layer name
+            app_id = str(raw.get("applicationId") or "")
+            material = (
+                material_map.get(app_id)
+                or layer_material_map.get(layer)
+                or entity.get("material")
+                or ""
+            )
+
+            position = _bbox_str(entity)
+
+            line = f"[{i + 1}] SPECKLE_ID={entity_id}"
             if layer:
                 line += f" | Layer={layer}"
+            if name:
+                line += f" | Name={name}"
             if material:
                 line += f" | Material={material}"
-
-            bounds = entity.get("bounds")
-            if bounds:
-                try:
-                    mn = bounds.get("min") or [0, 0, 0]
-                    mx = bounds.get("max") or [0, 0, 0]
-                    dims = [round(mx[j] - mn[j], 2) for j in range(3)]
-                    line += f" | Dims(m)={dims[0]}\u00d7{dims[1]}\u00d7{dims[2]}"
-                except Exception:
-                    pass
+            if position:
+                line += f" | Position={position}"
 
             lines.append(line)
         return filtered, "\n".join(lines)
-    
+
     def _build_analyze_3dmodel_prompts(
         self,
         entities: list[dict],
@@ -1144,7 +1293,8 @@ For the duration estimation (in seconds with 0.1 precision):
         """
         context_note = f'\nContext: "{user_context}"' if user_context else ""
         screenshot_note = (
-            "A preview image of the model is also provided — use it alongside the metadata.\n"
+            "A preview image of the model is also provided — use it alongside the metadata. The preview image contains "
+            "a position grid in meters. Correlate it with the objects'bouding boxes to improve the identification when needed.\n"
             if screenshots
             else "No visual screenshots available; rely on metadata only.\n"
         )
@@ -1173,6 +1323,9 @@ For the duration estimation (in seconds with 0.1 precision):
             f"- IDS must contain ONLY the raw hex SPECKLE_ID strings — no backticks, no code formatting, no quotes, no brackets, no extra text.\n"
             f"- Do NOT put any section headers, labels, or comments inside an IDS field.\n"
             f"- Output ONLY the numbered list.\n\n"
+            f"Each entity line includes 'Position=[min] to [max]' — the 3D bounding box in metres. "
+            f"Use this to understand the spatial layout of the room (which objects are near each other, "
+            f"their height, footprint, etc.).\n\n"
             f"Model contains {len(entities)} objects:\n{entities_text}"
         )
         return system_prompt, user_prompt
@@ -1199,7 +1352,10 @@ For the duration estimation (in seconds with 0.1 precision):
             "Create realistic, detailed scenarios showing how people interact with "
             "furniture and objects in architectural spaces. First think potential usages "
             "of the space, then derive a scenario from this usage. Include natural "
-            "human behaviors, movements, and object interactions with precise timestamps."
+            "human behaviors, movements, and object interactions with precise timestamps. "
+            "Each object in the architectural space information includes an 'object_ids' dict "
+            "with bounding box data — use it to understand spatial layout and ground the "
+            "scenario on realistic paths (proximity, group effects, ...)."
         )
         user_prompt = (
             "Create detailed usage scenarios for this space based on input parameters "
@@ -1255,7 +1411,11 @@ For the duration estimation (in seconds with 0.1 precision):
             "Consider material properties (wood, metal, fabric), human actions (walking, "
             "sitting, handling objects), ambient sounds (HVAC, outside noise), and speech "
             "patterns. Be specific about sound characteristics. "
-            "DO NOT include room acoustics characteristics (reverberant, echo, ...)."
+            "DO NOT include room acoustics characteristics (reverberant, echo, ...). "
+            "Each object in the architectural space information includes an 'object_ids' dict "
+            "with bounding box data — use it to derive accurate spatial positions "
+            "for sounds linked to those objects, and as reference when estimating positions "
+            "for unlinked sounds (speech, footsteps, ambient)."
         )
         user_prompt = (
             f"Convert this scenario into detailed single sound events, background sounds, "
@@ -1273,12 +1433,14 @@ For the duration estimation (in seconds with 0.1 precision):
             "continuous, should happen at a single timestamp. 0:00 \n"
             "- category: 'background sound' | 'sound event' | 'speech'\n"
             "- objectsInvolved: if the source of the sound is an object, copy the related "
-            "objectIds from the architectural space information. If the sound is not linked "
+            "hex ID keys from the object_ids dict in the architectural space information. "
+            "If the sound is not linked "
             "to an object (e.g. speech, background hum), leave as an empty list.\n"
             "- position: if objectsInvolved is empty, provide a plausible [x, y, z] "
             "position for the sound within the room given the bounding box dimensions "
-            "(e.g., speech at mouth height \u2192 z=1.50). Leave as an empty list when "
-            "objectsInvolved is not empty.\n"
+            "and the min_bounds/max_bounds of nearby objects in the architectural space information "
+            "(e.g., speech at mouth height → z=1.50). Leave as an empty list when "
+            "objectsInvolved is not empty — the frontend derives position from the linked objects.\n"
             "- spl: estimate a decibel level (Sound Pressure Level) at 1 metre "
             "(e.g., '65 dB').\n\n"
             "Include all realistic sounds: footsteps, object interactions, ambient sounds, "
@@ -1315,6 +1477,8 @@ For the duration estimation (in seconds with 0.1 precision):
 
         if not entities:
             return
+
+        bbox_map = self._build_entity_bbox_map(entities)
         system_prompt, user_prompt = self._build_analyze_3dmodel_prompts(
             entities, entities_text, screenshots, user_context
         )
@@ -1338,7 +1502,9 @@ For the duration estimation (in seconds with 0.1 precision):
                 if entry_clean:
                     parsed = self._parse_architecture_object(entry_clean)
                     if parsed:
-                        parsed['object_ids'] = self._resolve_object_ids(parsed['object_ids'], entities)
+                        parsed['object_ids'] = self._resolve_and_build_object_ids(
+                            parsed['object_ids'], entities, bbox_map
+                        )
                         yield parsed
         # Yield trailing entry
         if buffer.strip():
@@ -1346,7 +1512,9 @@ For the duration estimation (in seconds with 0.1 precision):
             if entry_clean:
                 parsed = self._parse_architecture_object(entry_clean)
                 if parsed:
-                    parsed['object_ids'] = self._resolve_object_ids(parsed['object_ids'], entities)
+                    parsed['object_ids'] = self._resolve_and_build_object_ids(
+                        parsed['object_ids'], entities, bbox_map
+                    )
                     yield parsed
 
     # ── 3D Model Analysis ─────────────────────────────────────────────────────
@@ -1394,10 +1562,14 @@ For the duration estimation (in seconds with 0.1 precision):
             llm_model=llm_model,
         ))
         # Resolve any numeric bracket indices the LLM may have used instead of Speckle IDs
+        # and build per-entity bounds dict.
         if isinstance(result, dict):
-            for obj in result.get("objects") or []:
-                if isinstance(obj, dict) and "object_ids" in obj:
-                    obj["object_ids"] = self._resolve_object_ids(obj["object_ids"], entities)
+            bbox_map = self._build_entity_bbox_map(entities)
+            for obj in [o for o in (result.get("objects") or []) if isinstance(o, dict)]:
+                if "object_ids" in obj and isinstance(obj["object_ids"], list):
+                    obj["object_ids"] = self._resolve_and_build_object_ids(
+                        obj["object_ids"], entities, bbox_map
+                    )
         return result  # type: ignore[return-value]
 
     # ── Scenario Generation ───────────────────────────────────────────────────
@@ -1440,12 +1612,19 @@ For the duration estimation (in seconds with 0.1 precision):
         # ── Retry with exponential back-off ───────────────────────────────────
         from models.schemas import ScenarioResponse
 
-        return asyncio.run(self._call_llm(  # type: ignore[return-value]
+        result = asyncio.run(self._call_llm(  # type: ignore[return-value]
             user_prompt, system_prompt,
             response_schema=ScenarioResponse,
             operation_name="Scenarist",
             llm_model=llm_model,
         ))
+        # Normalise bare hex IDs in event descriptions
+        if isinstance(result, dict):
+            for _sc in result.get("scenarios") or []:
+                for _ev in _sc.get("events") or []:
+                    if isinstance(_ev.get("description"), str):
+                        _ev["description"] = self._normalize_object_refs(_ev["description"])
+        return result
 
     async def stream_scenarist_agent(
         self,
@@ -1488,6 +1667,11 @@ For the duration estimation (in seconds with 0.1 precision):
             )
             if not isinstance(result, dict):
                 result = result.model_dump() if hasattr(result, "model_dump") else dict(result)
+            # Normalise bare hex IDs in event descriptions
+            for _sc in result.get("scenarios") or []:
+                for _ev in _sc.get("events") or []:
+                    if isinstance(_ev.get("description"), str):
+                        _ev["description"] = self._normalize_object_refs(_ev["description"])
         except Exception as e:
             print(f"[stream_scenarist_agent] LLM call failed: {e}")
             yield {"type": "error", "message": str(e)}

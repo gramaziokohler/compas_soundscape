@@ -1,12 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
 import type { SoundEvent } from '@/types';
 import { SoundCardWaveSurfer } from '@/components/audio/SoundCardWaveSurfer';
-import { VerticalVolumeSlider } from '@/components/ui/VerticalVolumeSlider';
-import { TimestampList } from './TimestampList';
-import { UI_VOLUME_SLIDER, UI_INTERVAL_SLIDER } from '@/utils/constants';
-import { useBatchedSlider } from '@/hooks/useBatchedSlider';
+import { SoundCardBody } from './SoundCardBody';
 
 /**
  * SoundResultContent Component
@@ -76,35 +72,31 @@ export function SoundResultContent({
       return (mm ?? 0) * 60 + (ss ?? 0);
     }) ?? [];
 
-  // Local state for sliders (visual feedback while dragging — no store write until release)
-  const [tempVolumeDb, setTempVolumeDb] = useState(currentVolumeDb);
-  const [tempIntervalSeconds, setTempIntervalSeconds] = useState(currentIntervalSeconds);
-
-  // Sync temp values with store when they change externally (e.g. undo/redo)
-  useEffect(() => { setTempVolumeDb(currentVolumeDb); }, [currentVolumeDb]);
-  useEffect(() => { setTempIntervalSeconds(currentIntervalSeconds); }, [currentIntervalSeconds]);
-
-  // Batched slider — only one undo step per full drag gesture
-  const volumeSlider = useBatchedSlider<number>(
-    'audioControls',
-    (v) => setTempVolumeDb(UI_VOLUME_SLIDER.MIN + v * (UI_VOLUME_SLIDER.MAX - UI_VOLUME_SLIDER.MIN)),
-    onVolumeChange
-      ? (v) => onVolumeChange(generatedSound.id, UI_VOLUME_SLIDER.MIN + v * (UI_VOLUME_SLIDER.MAX - UI_VOLUME_SLIDER.MIN))
-      : undefined,
-  );
-
-  const intervalSlider = useBatchedSlider<number>(
-    'audioControls',
-    (v) => setTempIntervalSeconds(Math.round(v * UI_INTERVAL_SLIDER.MAX)),
-    onIntervalChange
-      ? (v) => onIntervalChange(generatedSound.id, Math.round(v * UI_INTERVAL_SLIDER.MAX))
-      : undefined,
-  );
+  // Variant selector (post-gen only)
+  const variantSelector =
+    variants.length > 1 && onVariantChange ? (
+      <div
+        className="flex gap-1 overflow-x-auto flex-shrink-0"
+        style={{ scrollbarWidth: 'thin', scrollbarColor: 'var(--card-color, var(--color-primary)) transparent' }}
+      >
+        {variants.map((_, idx) => (
+          <button
+            key={idx}
+            onClick={() => onVariantChange(index, idx)}
+            className={`w-5 h-5 text-[10px] rounded transition-colors flex-shrink-0 ${
+              idx === selectedVariantIdx ? 'text-white' : 'bg-secondary text-secondary-light'
+            }`}
+            style={idx === selectedVariantIdx ? { backgroundColor: 'var(--card-color, var(--color-primary))' } : undefined}
+          >
+            {idx + 1}
+          </button>
+        ))}
+      </div>
+    ) : null;
 
   return (
-    <div className="flex gap-3 min-w-0">
-      {/* Waveform area */}
-      <div className="flex-1 min-w-0 overflow-hidden">
+    <SoundCardBody
+      mainContent={
         <SoundCardWaveSurfer
           audioUrl={generatedSound.url}
           volumeDb={currentVolumeDb}
@@ -115,129 +107,21 @@ export function SoundResultContent({
           onPlayPause={() => onPreviewPlayPause?.(generatedSound.id)}
           onStop={() => onPreviewStop?.(generatedSound.id)}
         />
-
-        {/* Bottom row: variant selector (left) + position inputs (right) */}
-        {(variants.length > 1 || onUpdatePosition) && (
-          <div className="flex flex-col items-start gap-2 mt-1 min-w-0">
-            {onUpdatePosition && (
-              <div className="flex items-center gap-1.5 flex-shrink-0">
-                {generatedSound.entity_index !== undefined && onUnlinkEntity && (
-                  <button
-                    onClick={onUnlinkEntity}
-                    title="Unlink from entity — position will become manually editable"
-                    className="flex-shrink-0 transition-opacity hover:opacity-70"
-                    style={{ color: 'var(--color-primary)' }}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 7L7 17" />
-                    </svg>
-                  </button>
-                )}
-                <div
-                  className="flex gap-1"
-                  title={generatedSound.entity_index !== undefined ? 'Position is controlled by the linked entity' : undefined}
-                >
-                {(['x', 'y', 'z'] as const).map((axis, axisIdx) => {
-                  const val = generatedSound.position?.[axisIdx] ?? 0;
-                  const isLinked = generatedSound.entity_index !== undefined;
-                  return (
-                    <div key={axis} className="flex flex-col gap-0" style={{ width: '55px', opacity: isLinked ? 0.4 : 1 }}>
-                      <span className="text-[9px] font-medium text-secondary-hover uppercase text-center leading-tight">{axis}</span>
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={parseFloat(val.toFixed(2))}
-                        disabled={isLinked}
-                        onChange={(e) => {
-                          const parsed = parseFloat(e.target.value);
-                          if (isNaN(parsed)) return;
-                          const newPos: [number, number, number] = [...(generatedSound.position ?? [0, 0, 0])] as [number, number, number];
-                          newPos[axisIdx] = parsed;
-                          onUpdatePosition(generatedSound.id, newPos);
-                        }}
-                        className="w-full text-[9px] text-center rounded px-1 py-0.5 outline-none bg-foreground text-background disabled:cursor-not-allowed "
-                        style={{ borderColor: 'var(--card-color, var(--color-primary))55' }}
-                      />
-                    </div>
-                  );
-                })}
-                </div>
-              </div>
-            )}
-
-            {variants.length > 1 && onVariantChange && (
-              <div
-                className="flex gap-1 overflow-x-auto flex-shrink-0"
-                style={{ scrollbarWidth: 'thin', scrollbarColor: 'var(--card-color, var(--color-primary)) transparent' }}
-              >
-                {variants.map((_, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => onVariantChange(index, idx)}
-                    className={`w-5 h-5 text-[10px] rounded transition-colors flex-shrink-0 ${
-                      idx === selectedVariantIdx ? 'text-white' : 'bg-secondary text-secondary-light'
-                    }`}
-                    style={idx === selectedVariantIdx ? { backgroundColor: 'var(--card-color, var(--color-primary))' } : undefined}
-                  >
-                    {idx + 1}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Vertical sliders container */}
-      <div className="flex gap-2">
-        {/* Interval slider — shown in 'interval' mode */}
-        {schedulingMode === 'interval' && onIntervalChange && (
-          <div
-            className="flex flex-col items-center"
-            title="Playback interval: Time between sound repetitions in the timeline. Set to 0 for continuous loop."
-          >
-            <span className="text-[10px] mb-1 text-secondary-hover">
-              {tempIntervalSeconds === 0 ? '∞' : `${tempIntervalSeconds}s`}
-            </span>
-            <VerticalVolumeSlider
-              value={tempIntervalSeconds / UI_INTERVAL_SLIDER.MAX}
-              onDragStart={intervalSlider.onDragStart}
-              onChange={intervalSlider.onChange}
-              onChangeCommitted={intervalSlider.onCommit}
-            />
-            <span className="text-[10px] mt-1 text-secondary-hover">Int.</span>
-          </div>
-        )}
-
-        {/* Timestamp list — shown in 'timestamps' mode */}
-        {schedulingMode === 'timestamps' && onTimestampsChange && (
-          <TimestampList
-            timestamps={currentTimestamps}
-            onChange={(ts) => onTimestampsChange(generatedSound.id, ts)}
-          />
-        )}
-
-        {/* Volume slider */}
-        {onVolumeChange && (
-          <div
-            className="flex flex-col items-center"
-            title="Volume level: Controls the sound pressure level (SPL) in decibels for spatial audio playback."
-          >
-            <span className="text-[10px] mb-1 text-secondary-hover">
-              {tempVolumeDb.toFixed(0)}dB
-            </span>
-            <VerticalVolumeSlider
-              value={(tempVolumeDb - UI_VOLUME_SLIDER.MIN) / (UI_VOLUME_SLIDER.MAX - UI_VOLUME_SLIDER.MIN)}
-              onDragStart={volumeSlider.onDragStart}
-              onChange={volumeSlider.onChange}
-              onChangeCommitted={volumeSlider.onCommit}
-            />
-            <span className="text-[10px] mt-1 text-secondary-hover">Vol.</span>
-          </div>
-        )}
-      </div>
-    </div>
+      }
+      extraContent={variantSelector}
+      volumeDb={currentVolumeDb}
+      intervalSeconds={currentIntervalSeconds}
+      schedulingMode={schedulingMode}
+      timestamps={currentTimestamps}
+      position={generatedSound.position}
+      entityIndex={generatedSound.entity_index}
+      onVolumeChange={onVolumeChange ? (db) => onVolumeChange(generatedSound.id, db) : undefined}
+      onIntervalChange={onIntervalChange ? (s) => onIntervalChange(generatedSound.id, s) : undefined}
+      onTimestampsChange={onTimestampsChange ? (ts) => onTimestampsChange(generatedSound.id, ts) : undefined}
+      onUpdatePosition={onUpdatePosition ? (pos) => onUpdatePosition(generatedSound.id, pos) : undefined}
+      onUnlinkEntity={onUnlinkEntity}
+      storeContext="audioControls"
+    />
   );
 }
 

@@ -377,18 +377,39 @@ class AnalyzeModelStreamRequest(BaseModel):
 async def analyze_3dmodel_stream(request: AnalyzeModelStreamRequest):
     """SSE endpoint: streams architectural object groups as LLM identifies them.
 
+    The task is queued through the unified backend queue so heavy LLM calls
+    are serialised alongside other backend jobs.
+
     Events:
-      - {"type":"start","analysis_id":"<uuid>"}  — sent before LLM call
+      - {"type":"queued","analysis_id":"<uuid>","queue_position":N,"queue_total":M}
+      - {"type":"start","analysis_id":"<uuid>"}  — LLM call begins
       - {"type":"object",...fields}               — one per identified group
       - {"type":"error","message":"..."}          — on failure
       - {"type":"done","total":n}                 — stream complete
       - data: [DONE]                              — sentinel
     """
+    import asyncio as _asyncio
+    analysis_id = str(uuid.uuid4())
+    loop = _asyncio.get_event_loop()
+    _pos, _total, ready_event, done_event = unified_queue.enqueue_with_ready_signal(
+        analysis_id, "analyze_stream", loop, LLM_TASK_CLEANUP_DELAY_SECONDS
+    )
+
     async def event_generator():
-        import re as _re
-        analysis_id = str(uuid.uuid4())
         objects: list[dict] = []
         try:
+            # ── Queue-position phase ──────────────────────────────────────
+            while not ready_event.is_set():
+                task = unified_queue.get_task(analysis_id)
+                if task and task.cancel_event.is_set():
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'Task cancelled'})}\n\n"
+                    return
+                q_pos, q_total = unified_queue.get_queue_status(analysis_id)
+                yield (
+                    f"data: {json.dumps({'type': 'queued', 'analysis_id': analysis_id, 'queue_position': q_pos, 'queue_total': q_total})}\n\n"
+                )
+                await _asyncio.sleep(1)
+
             yield f"data: {json.dumps({'type': 'start', 'analysis_id': analysis_id})}\n\n"
 
             async for obj in llm_service.stream_analyze_3dmodel(
@@ -405,6 +426,7 @@ async def analyze_3dmodel_stream(request: AnalyzeModelStreamRequest):
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
         finally:
+            done_event.set()  # release the consumer thread slot
             try:
                 analysis_dir = Path(TEMP_ANALYSIS_DIR)
                 analysis_dir.mkdir(parents=True, exist_ok=True)
@@ -453,6 +475,14 @@ async def analyze_3dmodel_stream(request: AnalyzeModelStreamRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.post("/api/cancel-analyze-3dmodel-stream/{analysis_id}")
+async def cancel_analyze_3dmodel_stream(analysis_id: str):
+    if not unified_queue.get_task(analysis_id):
+        raise HTTPException(status_code=404, detail="Analysis stream task not found")
+    unified_queue.cancel(analysis_id)
+    return {"cancelled": True}
 
 
 class UpdateAnalysisObjectRequest(BaseModel):
@@ -510,39 +540,61 @@ async def update_analysis_object(
 
 @router.post("/api/scenarist-stream")
 async def scenarist_stream(request: ScenaristStreamRequest):
-    """SSE endpoint: streams scenario text then yields structured result.
+    """SSE endpoint: yields structured scenario events as they are generated.
+
+    The task is queued through the unified backend queue.
 
     Events:
-      - {"type":"chunk","text":"..."}            — raw LLM text (typewriter)
+      - {"type":"queued","scenario_id":"<uuid>","queue_position":N,"queue_total":M}
+      - {"type":"scenario","scenario_index":i,...}
+      - {"type":"event","scenario_index":i,"event":{...}}
       - {"type":"error","message":"..."}          — on failure
-      - {"type":"done","result":{...},"scenario_id":"<uuid>"} — structured output
+      - {"type":"done","result":{...},"scenario_id":"<uuid>"}
       - data: [DONE]                              — sentinel
     """
+    import asyncio as _asyncio
     import re as _re
 
-    async def event_generator():
-        # Load furniture_list from analysis file if provided
-        furniture_list: dict | None = None
-        if request.analysis_id:
-            if not _re.match(r'^[0-9a-f-]+$', request.analysis_id):
-                yield f"data: {json.dumps({'type': 'error', 'message': 'Invalid analysis_id'})}\n\n"
-                yield "data: [DONE]\n\n"
-                return
-            analysis_file = Path(TEMP_ANALYSIS_DIR) / f"analysis_{request.analysis_id}.json"
-            if analysis_file.exists():
-                try:
-                    with open(analysis_file, "r", encoding="utf-8") as f:
-                        raw = json.load(f)
-                    # Convert to furniture_list format (objects list → architecturalObjects)
-                    _total_bounds = (raw.get("meta") or {}).get("total_bounds")
-                    furniture_list = {
-                        "architecturalObjects": raw.get("objects", []),
-                        **(({"meta": {"total_bounds": _total_bounds}}) if _total_bounds else {}),
-                    }
-                except Exception as load_err:
-                    print(f"[scenarist-stream] failed to load analysis: {load_err}")
+    scenario_id = str(uuid.uuid4())
+    loop = _asyncio.get_event_loop()
+    _pos, _total, ready_event, done_event = unified_queue.enqueue_with_ready_signal(
+        scenario_id, "scenarist_stream", loop, LLM_TASK_CLEANUP_DELAY_SECONDS
+    )
 
+    async def event_generator():
         try:
+            # ── Queue-position phase ──────────────────────────────────────
+            while not ready_event.is_set():
+                task = unified_queue.get_task(scenario_id)
+                if task and task.cancel_event.is_set():
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'Task cancelled'})}\n\n"
+                    return
+                q_pos, q_total = unified_queue.get_queue_status(scenario_id)
+                yield (
+                    f"data: {json.dumps({'type': 'queued', 'scenario_id': scenario_id, 'queue_position': q_pos, 'queue_total': q_total})}\n\n"
+                )
+                await _asyncio.sleep(1)
+
+            # ── Load furniture_list ───────────────────────────────────────
+            furniture_list: dict | None = None
+            if request.analysis_id:
+                if not _re.match(r'^[0-9a-f-]+$', request.analysis_id):
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'Invalid analysis_id'})}\n\n"
+                    return
+                analysis_file = Path(TEMP_ANALYSIS_DIR) / f"analysis_{request.analysis_id}.json"
+                if analysis_file.exists():
+                    try:
+                        with open(analysis_file, "r", encoding="utf-8") as f:
+                            raw = json.load(f)
+                        _total_bounds = (raw.get("meta") or {}).get("total_bounds")
+                        furniture_list = {
+                            "architecturalObjects": raw.get("objects", []),
+                            **(({"meta": {"total_bounds": _total_bounds}}) if _total_bounds else {}),
+                        }
+                    except Exception as load_err:
+                        print(f"[scenarist-stream] failed to load analysis: {load_err}")
+
+            # ── Run LLM ──────────────────────────────────────────────────
             async for event in llm_service.stream_scenarist_agent(
                 user_context=request.user_context,
                 llm_model=request.llm_model,
@@ -552,10 +604,12 @@ async def scenarist_stream(request: ScenaristStreamRequest):
                 likeliness=request.likeliness,
             ):
                 yield f"data: {json.dumps(event)}\n\n"
+
         except Exception as e:
             traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
         finally:
+            done_event.set()
             yield "data: [DONE]\n\n"
 
     return StreamingResponse(
@@ -565,16 +619,28 @@ async def scenarist_stream(request: ScenaristStreamRequest):
     )
 
 
+@router.post("/api/cancel-scenarist-stream/{scenario_id}")
+async def cancel_scenarist_stream(scenario_id: str):
+    if not unified_queue.get_task(scenario_id):
+        raise HTTPException(status_code=404, detail="Scenarist stream task not found")
+    unified_queue.cancel(scenario_id)
+    return {"cancelled": True}
+
+
 @router.post("/api/foley-artist-stream")
 async def foley_artist_stream(request: FoleyArtistRequest):
     """SSE endpoint: streams foley sound events one by one.
 
+    The task is queued through the unified backend queue.
+
     Events:
+      - {"type":"queued","foley_id":"<uuid>","queue_position":N,"queue_total":M}
       - {"type":"sound","scenario_title":"...","scenario_index":int,"sound":{...}}
       - {"type":"error","message":"..."}          — on failure
       - {"type":"done","result":{...},"foley_id":"<uuid>"}
       - data: [DONE]                              — sentinel
     """
+    import asyncio as _asyncio
     import re as _re
 
     async def make_error_stream(msg: str):
@@ -627,8 +693,27 @@ async def foley_artist_stream(request: FoleyArtistRequest):
             except Exception as load_err:
                 print(f"[foley-artist-stream] failed to load analysis: {load_err}")
 
+    foley_id = str(uuid.uuid4())
+    loop = _asyncio.get_event_loop()
+    _pos, _total, ready_event, done_event = unified_queue.enqueue_with_ready_signal(
+        foley_id, "foley_stream", loop, LLM_TASK_CLEANUP_DELAY_SECONDS
+    )
+
     async def event_generator():
         try:
+            # ── Queue-position phase ──────────────────────────────────────
+            while not ready_event.is_set():
+                task = unified_queue.get_task(foley_id)
+                if task and task.cancel_event.is_set():
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'Task cancelled'})}\n\n"
+                    return
+                q_pos, q_total = unified_queue.get_queue_status(foley_id)
+                yield (
+                    f"data: {json.dumps({'type': 'queued', 'foley_id': foley_id, 'queue_position': q_pos, 'queue_total': q_total})}\n\n"
+                )
+                await _asyncio.sleep(1)
+
+            # ── Run LLM ──────────────────────────────────────────────────
             async for event in llm_service.stream_foley_artist(
                 scenarist_agent_result=scenario_data,
                 furniture_list=furniture_list,
@@ -640,6 +725,7 @@ async def foley_artist_stream(request: FoleyArtistRequest):
             traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
         finally:
+            done_event.set()
             yield "data: [DONE]\n\n"
 
     return StreamingResponse(
@@ -647,6 +733,14 @@ async def foley_artist_stream(request: FoleyArtistRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.post("/api/cancel-foley-artist-stream/{foley_id}")
+async def cancel_foley_artist_stream(foley_id: str):
+    if not unified_queue.get_task(foley_id):
+        raise HTTPException(status_code=404, detail="Foley stream task not found")
+    unified_queue.cancel(foley_id)
+    return {"cancelled": True}
 
 
 @router.put("/api/scenarist-result/{scenario_id}")

@@ -568,6 +568,11 @@ export class SpeckleAudioCoordinator {
     return this.eventBridge?.hasCustomObjectAt(clientX, clientY) ?? false;
   }
 
+  /** Returns true if the last pointer gesture was a drag (orbit/pan), regardless of button. */
+  public getWasOrbiting(): boolean {
+    return this.eventBridge?.getWasOrbiting() ?? false;
+  }
+
   public getDragHandler(): SpeckleDragHandler | null {
     return this.dragHandler;
   }

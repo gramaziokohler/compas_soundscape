@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { toPng } from 'html-to-image';
 import type { AnalyzeModelConfig } from '@/types/analysis';
-import { useSpeckleStore, useAnalysisStore } from '@/store';
+import { useSpeckleStore, useAnalysisStore, useUIStore } from '@/store';
 import { getRootNodesForModel } from '@/hooks/useSpeckleTree';
 
 /**
@@ -51,21 +51,45 @@ export function AnalyzeModelContent({
       const entities: any[] = [];
       let idx = 0;
 
-      const processNode = (node: any) => {
+      // Layer names whose entire subtree must be excluded from the entity list
+      const _EXCLUDED_MODEL_LAYERS = new Set(['acoustics', 'soundscape']);
+
+      const processNode = (node: any, excludeSubtree = false, parentLayer = '') => {
         if (!node) return;
         const hasRV = node.model?.renderView || node.renderView;
         const raw = node.raw || node.model?.raw || {};
         const id = raw.id || node.model?.id || node.id || `node-${idx}`;
         const speckleType = raw.speckle_type || raw.speckle?.type || 'Object';
         const name = raw.name || node.model?.name || speckleType.split('.').pop() || 'Object';
-        if (hasRV || raw.speckle_type) {
-          entities.push({ id, index: idx++, type: speckleType, name, speckle_type: speckleType, raw, nodeId: id });
+
+        // Skip this node and its entire subtree if it belongs to an excluded layer
+        const isExcluded = excludeSubtree || _EXCLUDED_MODEL_LAYERS.has(name.toLowerCase().trim());
+
+        // Collection/Layer nodes set the layer context for their children
+        const isContainer = speckleType.includes('Collection') || speckleType.includes('Layer');
+        const currentLayer = isContainer && name !== 'Object' ? name : parentLayer;
+
+        if (!isExcluded && (hasRV || raw.speckle_type)) {
+          // Extract bounding box from the viewer's render view (raw.bbox is an
+          // unresolved Speckle reference and is always null at this stage)
+          const aabb = (node.model?.renderView || node.renderView)?.aabb;
+          const bbox = aabb
+            ? { min: { x: aabb.min.x, y: aabb.min.y, z: aabb.min.z },
+                max: { x: aabb.max.x, y: aabb.max.y, z: aabb.max.z } }
+            : null;
+          entities.push({
+            id, index: idx++, type: speckleType, name, speckle_type: speckleType,
+            layer: raw.layer || (isContainer ? '' : currentLayer),
+            raw, nodeId: id, bbox,
+          });
         }
         const children = node.model?.children || node.children;
-        if (children && Array.isArray(children)) children.forEach(processNode);
+        if (children && Array.isArray(children)) {
+          children.forEach((child: any) => processNode(child, isExcluded, currentLayer));
+        }
       };
 
-      rootNodes.forEach(processNode);
+      rootNodes.forEach((node: any) => processNode(node));
 
       if (entities.length > 0 && entities.length !== config.modelEntities.length) {
         useAnalysisStore.temporal.getState().pause();
@@ -168,7 +192,14 @@ function CaptureViewSection({ index, screenshots, onUpdateConfig }: CaptureViewS
     if (!container) { setError('Viewer not found'); return; }
     setIsCapturing(true);
     setError(null);
+    const { showGroundGrid, setShowGroundGrid } = useUIStore.getState();
+    const wasShowingGrid = showGroundGrid;
     try {
+      if (!wasShowingGrid) {
+        setShowGroundGrid(true);
+        // Wait for the useSpeckleGroundGrid effect to run and the viewer to render
+        await new Promise<void>((resolve) => setTimeout(resolve, 300));
+      }
       const dataUrl = await toPng(container, { cacheBust: true });
       const res = await fetch('/api/screenshot', {
         method: 'POST',
@@ -181,6 +212,9 @@ function CaptureViewSection({ index, screenshots, onUpdateConfig }: CaptureViewS
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Capture failed');
     } finally {
+      if (!wasShowingGrid) {
+        setShowGroundGrid(false);
+      }
       setIsCapturing(false);
     }
   }, [index, screenshots, onUpdateConfig]);

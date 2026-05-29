@@ -1,29 +1,76 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
-import Image from "next/image";
-import { AnalysisSection } from "./sidebar/AnalysisSection";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { ContextSection } from "./sidebar/ContextSection";
+import { UsageSection } from "./sidebar/UsageSection";
 import { SoundGenerationSection } from "./sidebar/SoundGenerationSection";
-import { AcousticsSection } from "./sidebar/AcousticsSection";
-import { ListenersSection } from "./sidebar/ListenersSection";
-import { AdvancedSettingsSection } from "./sidebar/AdvancedSettingsSection";
-import { VerticalTabButton } from "@/components/ui/VerticalTabButton";
-import { Icon } from "@/components/ui/Icon";
-import { UI_VERTICAL_TABS, UI_SIDEBAR_RESIZE } from "@/utils/constants";
+import { UI_SIDEBAR_RESIZE } from "@/utils/constants";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useTextGenerationStore } from "@/store/textGenerationStore";
+import { useCardFlowStore } from "@/store/cardFlowStore";
+import { useUIStore } from "@/store/uiStore";
 import type { SidebarProps } from "@/types/components";
-import type { ActiveTab } from "@/types";
+
+type Step = 0 | 1 | 2;
 
 export function Sidebar(props: SidebarProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [currentStep, setCurrentStep] = useState<Step>(0);
   const [isHandleHovered, setIsHandleHovered] = useState(false);
+  const [contextExpandedOriginalIndex, setContextExpandedOriginalIndex] = useState<number | null>(null);
+  const [usageExpandedOriginalIndex, setUsageExpandedOriginalIndex] = useState<number | null>(null);
+  // Whether we navigated Context→Sounds directly (audio), bypassing the Usage step
+  const [bypassedUsage, setBypassedUsage] = useState(false);
+  // Active parent indices — used to filter child cards in each section
+  const [activeContextOriginalIndex, setActiveContextOriginalIndex] = useState<number | null>(null);
+  const [activeUsageOriginalIndex, setActiveUsageOriginalIndex] = useState<number | null>(null);
+  // Refs that remember which card was open before leaving each section
+  const savedContextExpandedRef = useRef<number | null>(null);
+  const savedUsageExpandedRef = useRef<number | null>(null);
+
+  const cardFlowStore = useCardFlowStore();
+
+  // Breadcrumb labels derived reactively — ALL navigation paths update the same index
+  // state, so labels are always consistent (FAB, breadcrumb click, or skip).
+  // We replicate getCardDefaultName logic: display_name > file name > type label.
+  function getConfigLabel(config: import('@/types/analysis').AnalysisConfig | undefined, fallback: string): string {
+    if (!config) return fallback;
+    if (config.display_name) return config.display_name;
+    if ('audioFile' in config && (config as any).audioFile?.name) return (config as any).audioFile.name;
+    if ('modelFile' in config && (config as any).modelFile?.name) return (config as any).modelFile.name;
+    return fallback;
+  }
+
+  const contextBreadcrumbLabel =
+    currentStep > 0 && activeContextOriginalIndex !== null
+      ? getConfigLabel(props.analysisConfigs[activeContextOriginalIndex], 'Context')
+      : currentStep === 0 && contextExpandedOriginalIndex !== null
+      ? getConfigLabel(props.analysisConfigs[contextExpandedOriginalIndex], 'Context')
+      : 'Context';
+
+  const usageBreadcrumbLabel =
+    !bypassedUsage && currentStep > 1 && activeUsageOriginalIndex !== null
+      ? getConfigLabel(props.analysisConfigs[activeUsageOriginalIndex], 'Usage')
+      : currentStep === 1 && usageExpandedOriginalIndex !== null
+      ? getConfigLabel(props.analysisConfigs[usageExpandedOriginalIndex], 'Usage')
+      : 'Usage';
 
   // Expand sidebar when "Configure API tokens" is triggered from anywhere
   const tokenSettingsTrigger = useTextGenerationStore(s => s.tokenSettingsTrigger);
   useEffect(() => {
     if (tokenSettingsTrigger > 0) setIsExpanded(true);
   }, [tokenSettingsTrigger]);
+
+  // Advance to step 2 (Sounds) when stepAdvanceTrigger increments
+  const prevTriggerRef = useRef(props.stepAdvanceTrigger ?? 0);
+  useEffect(() => {
+    const trigger = props.stepAdvanceTrigger ?? 0;
+    if (trigger > prevTriggerRef.current) {
+      prevTriggerRef.current = trigger;
+      setCurrentStep(2);
+      setIsExpanded(true);
+    }
+  }, [props.stepAdvanceTrigger]);
 
   const { width: contentWidth, isResizing, handleMouseDown: handleResizeMouseDown } = useSidebarResize({
     initialWidth: UI_SIDEBAR_RESIZE.LEFT_DEFAULT_WIDTH,
@@ -38,134 +85,103 @@ export function Sidebar(props: SidebarProps) {
     props.onExpandedChange?.(isExpanded);
   }, [isExpanded, props.onExpandedChange]);
 
-  // Note: FilteringExtension colors are now auto-applied by the context
-  // whenever linked objects or diverse selection changes - no tab dependency
+  // Step navigation helpers
+  const advanceToUsage = useCallback((originalIndex: number, _title: string) => {
+    useCardFlowStore.getState().recordContextAdvance(originalIndex);
+    savedContextExpandedRef.current = null;
+    setContextExpandedOriginalIndex(null);
+    setActiveContextOriginalIndex(originalIndex);
+    setBypassedUsage(false);
+    useUIStore.getState().setActiveSoundParentIndex(null);
+    setCurrentStep(1);
+    setIsExpanded(true);
+  }, []);
 
-  // Handle tab clicks: toggle collapse/expand when clicking active tab, or switch tabs
-  const handleTabClick = useCallback((tab: ActiveTab) => {
-    if (props.activeAiTab === tab) {
-      // Clicking the same tab - toggle collapsed state
-      setIsExpanded(prev => !prev);
-    } else {
-      // Clicking a different tab - switch to it and expand if collapsed
-      props.setActiveAiTab(tab);
-      if (!isExpanded) {
-        setIsExpanded(true);
-      }
+  const handleContextSendToSounds = useCallback((originalIndex: number, _title: string) => {
+    useCardFlowStore.getState().recordContextAdvance(originalIndex);
+    savedContextExpandedRef.current = null;
+    setContextExpandedOriginalIndex(null);
+    setActiveContextOriginalIndex(originalIndex);
+    // Audio context bypasses Usage — use negative namespace key so sounds filter correctly.
+    const audioParentKey = -(originalIndex + 1);
+    setBypassedUsage(true);
+    setActiveUsageOriginalIndex(audioParentKey); // needed so SoundGenerationSection shows the right cards
+    useUIStore.getState().setActiveSoundParentIndex(audioParentKey);
+    setCurrentStep(2);
+    setIsExpanded(true);
+  }, []);
+
+  const handleUsageSendToSounds = useCallback((originalIndex: number, _title: string) => {
+    useCardFlowStore.getState().recordUsageAdvance(originalIndex);
+    savedUsageExpandedRef.current = null;
+    setUsageExpandedOriginalIndex(null);
+    setActiveUsageOriginalIndex(originalIndex);
+    setBypassedUsage(false);
+    props.onSendToSoundGeneration(originalIndex);
+    useUIStore.getState().setActiveSoundParentIndex(originalIndex);
+    setCurrentStep(2);
+    setIsExpanded(true);
+  }, [props.onSendToSoundGeneration]);
+
+  const skipStep = useCallback(() => {
+    if (currentStep === 0) {
+      savedContextExpandedRef.current = contextExpandedOriginalIndex;
+      setContextExpandedOriginalIndex(null);
+    } else if (currentStep === 1) {
+      savedUsageExpandedRef.current = usageExpandedOriginalIndex;
+      setUsageExpandedOriginalIndex(null);
+      // Skipping from Usage to Sounds without a proper parent — clear so scene stays empty
+      useUIStore.getState().setActiveSoundParentIndex(null);
     }
-  }, [props.activeAiTab, props.setActiveAiTab, isExpanded]);
+    setCurrentStep(s => (Math.min(s + 1, 2) as Step));
+    setIsExpanded(true);
+  }, [currentStep, contextExpandedOriginalIndex, usageExpandedOriginalIndex]);
 
   return (
-    <div className="fixed left-0 top-0 h-screen flex flex-row border-r border-secondary-light shadow-lg transition-all duration-300 ease-in-out z-10">
-      {/* Vertical Tab Navigation */}
-      <div
-        className="flex-shrink-0 bg-secondary-lighter border-r border-secondary-light flex flex-col items-center pt-6 gap-1"
-        style={{ width: `${UI_VERTICAL_TABS.WIDTH}px` }}
-      >
-        {/* Context Tab */}
-        <VerticalTabButton
-          icon={
-            <Icon size={`${UI_VERTICAL_TABS.ICON_SIZE}px`} color="currentColor">
-              {/* File Text Icon */}
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <polyline points="14 2 14 8 20 8" />
-              <line x1="16" y1="13" x2="8" y2="13" />
-              <line x1="16" y1="17" x2="8" y2="17" />
-              <polyline points="10 9 9 9 8 9" />
-            </Icon>
-          }
-          label="Context"
-          isActive={props.activeAiTab === 'text'}
-          onClick={() => handleTabClick('text')}
-          buttonColor="var(--color-success)"
-        />
-
-        {/* Sounds Tab */}
-        <VerticalTabButton
-          icon={
-            <Icon size={`${UI_VERTICAL_TABS.ICON_SIZE}px`} color="currentColor">
-              {/* Volume 2 Icon */}
-              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-              <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-              <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-            </Icon>
-          }
-          label="Sounds"
-          isActive={props.activeAiTab === 'sound'}
-          onClick={() => handleTabClick('sound')}
-        />
-
-        {/* Listeners Tab */}
-        <VerticalTabButton
-          icon={
-            <Icon size={`${UI_VERTICAL_TABS.ICON_SIZE}px`} color="currentColor">
-              {/* Headphones / Listener Icon */}
-              <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
-              <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z" />
-              <path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" />
-            </Icon>
-          }
-          label="Listeners"
-          isActive={props.activeAiTab === 'listeners'}
-          onClick={() => handleTabClick('listeners')}
-          buttonColor='var(--color-warning)'
-        />
-
-        {/* Acoustics Tab */}
-        <VerticalTabButton
-          icon={
-            <Icon size={`${UI_VERTICAL_TABS.ICON_SIZE}px`} color="currentColor">
-              {/* Radio Icon */}
-              <circle cx="12" cy="12" r="2" />
-              <path d="M16.24 7.76a6 6 0 0 1 0 8.49" />
-              <path d="M7.76 16.24a6 6 0 0 1 0-8.49" />
-              <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-              <path d="M4.93 19.07a10 10 0 0 1 0-14.14" />
-            </Icon>
-          }
-          label="Acoustics"
-          isActive={props.activeAiTab === 'acoustics'}
-          onClick={() => handleTabClick('acoustics')}
-          buttonColor='var(--color-info)'
-        />
-
-        {/* Spacer - pushes settings to bottom */}
-        <div className="flex-1" />
-
-        {/* Settings Tab - Bottom */}
-        <VerticalTabButton
-          icon={
-            <Icon size={`${UI_VERTICAL_TABS.ICON_SIZE}px`} color="currentColor">
-              {/* Settings/Sliders Icon */}
-              <path d="M4 21v-7" />
-              <path d="M4 10V3" />
-              <path d="M12 21v-9" />
-              <path d="M12 8V3" />
-              <path d="M20 21v-5" />
-              <path d="M20 12V3" />
-              <path d="M2 14h4" />
-              <path d="M10 8h4" />
-              <path d="M18 16h4" />
-            </Icon>
-          }
-          label="Settings"
-          isActive={props.activeAiTab === 'settings'}
-          onClick={() => handleTabClick('settings')}
-        />
-      </div>
-
-      {/* Main Content Area */}
-      <aside
-        className="flex-shrink-0 flex flex-col gap-4 bg-background transition-all duration-300 ease-in-out relative"
+    <>
+      {/* Toggle button — floats at the right edge of the sidebar content */}
+      <button
+        onClick={() => setIsExpanded(prev => !prev)}
+        title={isExpanded ? 'Collapse panel' : 'Open panel'}
         style={{
-          width: isExpanded ? `${contentWidth}px` : '0',
-          padding: isExpanded ? '1.5rem 1rem' : '0',
-          overflow: isExpanded ? 'auto' : 'hidden',
+          position: 'fixed',
+          left: isExpanded ? `${contentWidth}px` : '0px',
+          top: '50%',
+          transform: 'translateY(-50%)',
+          zIndex: 15,
+          transition: 'left 300ms ease-in-out',
+        }}
+        className="flex flex-col items-center justify-center w-5 py-3 gap-1.5 bg-background border border-secondary-light rounded-r-md shadow-md hover:bg-secondary-lighter"
+      >
+        <svg width="10" height="16" viewBox="0 0 10 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          {isExpanded ? (
+            <path d="M7 3L2 8L7 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          ) : (
+            <path d="M3 3L8 8L3 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          )}
+        </svg>
+        {!isExpanded && (
+          <span
+            style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', fontSize: '10px', letterSpacing: '0.05em' }}
+            className="text-secondary-hover font-medium select-none"
+          >
+            Soundscape
+          </span>
+        )}
+      </button>
+
+      {/* Sidebar content panel */}
+      <aside
+        className="fixed top-0 left-0 h-screen flex flex-col transition-all duration-300 ease-in-out bg-background border-r border-secondary-light shadow-lg"
+        style={{
+          width: isExpanded ? `${contentWidth}px` : '0px',
+          overflow: 'hidden',
           opacity: isExpanded ? 0.95 : 0,
+          zIndex: 10,
           userSelect: isResizing ? 'none' : undefined,
         }}
       >
-        {/* Resize handle — right edge of the content panel */}
+        {/* Resize handle — right edge */}
         {isExpanded && (
           <div
             onMouseDown={handleResizeMouseDown}
@@ -195,181 +211,261 @@ export function Sidebar(props: SidebarProps) {
             />
           </div>
         )}
-        {/* Fixed header - prevents wrapping issues
-        <div className="flex items-center gap-4 flex-shrink-0 min-h-[50px]">
-          <Image className="dark:invert flex-shrink-0" src="/compas_icon_white.png" alt="compas logo" width={50} height={50} priority />
-        </div> */}
 
-        {/* Generative AI Section with Tabs */}
-        <div className="flex flex-col gap-4 w-full my-4">
-
-        {/* Analysis Tab */}
-        <div className="flex flex-col gap-4" style={{ display: props.activeAiTab === 'text' ? 'flex' : 'none' }}>
-          <AnalysisSection
-            analysisConfigs={props.analysisConfigs}
-            activeTab={props.activeAnalysisTab}
-            isRunning={props.isAnalyzing}
-            error={props.analysisError}
-            analysisResult={props.analysisResult}
-            hasGlobalModelLoaded={props.hasGlobalModelLoaded}
-            onAddConfig={props.onAddAnalysisConfig}
-            onRemoveConfig={props.onRemoveAnalysisConfig}
-            onUpdateConfig={props.onUpdateAnalysisConfig}
-            onSetActiveTab={props.onSetActiveAnalysisTab}
-            onRun={props.onAnalyze}
-            onStop={props.onStop}
-            onTogglePromptSelection={props.onTogglePromptSelection}
-            onSendToSoundGeneration={props.onSendToSoundGeneration}
-            onReset={props.onResetAnalysis}
-          />
+        <div className="flex-shrink-0 px-4 pt-4 pb-2 border-b border-secondary-light">
+          <nav className="flex items-center gap-1 text-xs select-none" aria-label="Steps">
+            {/* Context step */}
+            <button
+              className={`font-medium transition-colors flex-1 min-w-0 truncate ${
+                currentStep === 0
+                  ? 'text-primary'
+                  : 'text-secondary-hover hover:text-foreground underline cursor-pointer'
+              }`}
+              onClick={() => {
+                setUsageExpandedOriginalIndex(null);
+                setContextExpandedOriginalIndex(savedContextExpandedRef.current);
+                setBypassedUsage(false);
+                useUIStore.getState().setActiveSoundParentIndex(null);
+                setCurrentStep(0);
+              }}
+              aria-current={currentStep === 0 ? 'step' : undefined}
+              title={currentStep > 0 && contextBreadcrumbLabel !== 'Context' ? contextBreadcrumbLabel : undefined}
+            >
+              {contextBreadcrumbLabel}
+            </button>
+            <span className="text-secondary-hover shrink-0" aria-hidden="true">›</span>
+            {/* Usage step — greyed out when audio context bypassed it, or no advancement yet */}
+            {(() => {
+              // Audio context cards bypass Usage — grey it out whenever one is active/expanded.
+              const expandedIsAudio =
+                contextExpandedOriginalIndex !== null &&
+                props.analysisConfigs[contextExpandedOriginalIndex]?.type === 'audio';
+              const activeIsAudio =
+                currentStep > 0 &&
+                activeContextOriginalIndex !== null &&
+                props.analysisConfigs[activeContextOriginalIndex]?.type === 'audio';
+              const usageClickable =
+                !bypassedUsage &&
+                !expandedIsAudio &&
+                !activeIsAudio &&
+                (currentStep > 0 ||
+                  (contextExpandedOriginalIndex !== null &&
+                    cardFlowStore.hasContextAdvanced(contextExpandedOriginalIndex)));
+              const usageActive = currentStep === 1;
+              return (
+                <button
+                  className={`font-medium transition-colors flex-1 min-w-0 truncate ${
+                    usageActive
+                      ? 'text-primary'
+                      : usageClickable
+                      ? 'text-primary hover:underline cursor-pointer'
+                      : 'text-secondary-hover opacity-50 cursor-default'
+                  }`}
+                  onClick={() => {
+                    if (!usageClickable) return;
+                    if (currentStep === 0 && contextExpandedOriginalIndex !== null) {
+                      setActiveContextOriginalIndex(contextExpandedOriginalIndex);
+                      savedContextExpandedRef.current = contextExpandedOriginalIndex;
+                      setContextExpandedOriginalIndex(null);
+                    }
+                    useUIStore.getState().setActiveSoundParentIndex(null);
+                    setBypassedUsage(false);
+                    setUsageExpandedOriginalIndex(savedUsageExpandedRef.current);
+                    setCurrentStep(1);
+                  }}
+                  aria-current={usageActive ? 'step' : undefined}
+                  title={currentStep > 1 && usageBreadcrumbLabel !== 'Usage' ? usageBreadcrumbLabel : undefined}
+                >
+                  {usageBreadcrumbLabel}
+                </button>
+              );
+            })()}
+            <span className="text-secondary-hover shrink-0" aria-hidden="true">›</span>
+            {/* Sounds step — clickable when at step 2, when a usage card has sounds, or when an audio/non-audio context has sent sounds */}
+            {(() => {
+              // Non-audio context with usage children that advanced to Sounds
+              const soundsClickableFromUsageChildren =
+                currentStep === 0 &&
+                contextExpandedOriginalIndex !== null &&
+                props.analysisConfigs.some(
+                  (cfg, idx) =>
+                    cfg.parentContextOriginalIndex === contextExpandedOriginalIndex &&
+                    cardFlowStore.hasUsageAdvanced(idx),
+                );
+              // Audio context that already sent sounds (bypassed Usage)
+              const soundsClickableFromAudioContext =
+                currentStep === 0 &&
+                contextExpandedOriginalIndex !== null &&
+                props.analysisConfigs[contextExpandedOriginalIndex]?.type === 'audio' &&
+                cardFlowStore.hasContextAdvanced(contextExpandedOriginalIndex);
+              const soundsClickableFromContext = soundsClickableFromUsageChildren || soundsClickableFromAudioContext;
+              const soundsClickable =
+                currentStep === 2 ||
+                soundsClickableFromContext ||
+                (currentStep === 1 &&
+                  usageExpandedOriginalIndex !== null &&
+                  cardFlowStore.hasUsageAdvanced(usageExpandedOriginalIndex));
+              const soundsActive = currentStep === 2;
+              return (
+                <button
+                  className={`font-medium transition-colors flex-1 min-w-0 truncate ${
+                    soundsActive
+                      ? 'text-primary'
+                      : soundsClickable
+                      ? 'text-primary hover:underline cursor-pointer'
+                      : 'text-secondary-hover opacity-50 cursor-default'
+                  }`}
+                  onClick={() => {
+                    if (!soundsClickable) return;
+                    if (currentStep === 1) {
+                      // Update active parent to whichever usage card is expanded NOW
+                      if (usageExpandedOriginalIndex !== null) {
+                        setActiveUsageOriginalIndex(usageExpandedOriginalIndex);
+                        useUIStore.getState().setActiveSoundParentIndex(usageExpandedOriginalIndex);
+                      }
+                      savedUsageExpandedRef.current = usageExpandedOriginalIndex;
+                      setUsageExpandedOriginalIndex(null);
+                    }
+                    if (soundsClickableFromContext && contextExpandedOriginalIndex !== null) {
+                      const ctxCfg = props.analysisConfigs[contextExpandedOriginalIndex];
+                      setActiveContextOriginalIndex(contextExpandedOriginalIndex);
+                      savedContextExpandedRef.current = contextExpandedOriginalIndex;
+                      setContextExpandedOriginalIndex(null);
+                      if (ctxCfg?.type === 'audio') {
+                        const audioParentKey = -(contextExpandedOriginalIndex + 1);
+                        setBypassedUsage(true);
+                        setActiveUsageOriginalIndex(audioParentKey);
+                        useUIStore.getState().setActiveSoundParentIndex(audioParentKey);
+                      } else {
+                        const lastUsageIdx = props.analysisConfigs.reduce<number | null>((found, cfg, idx) => {
+                          if (cfg.parentContextOriginalIndex === contextExpandedOriginalIndex &&
+                              cardFlowStore.hasUsageAdvanced(idx)) return idx;
+                          return found;
+                        }, null);
+                        setActiveUsageOriginalIndex(lastUsageIdx);
+                        setBypassedUsage(false);
+                        if (lastUsageIdx !== null) useUIStore.getState().setActiveSoundParentIndex(lastUsageIdx);
+                      }
+                    }
+                    setCurrentStep(2);
+                  }}
+                  aria-current={soundsActive ? 'step' : undefined}
+                >
+                  Sounds
+                </button>
+              );
+            })()}
+          </nav>
         </div>
 
-        {/* Sound Generation Tab */}
-        <div className="flex flex-col gap-4" style={{ display: props.activeAiTab === 'sound' ? 'flex' : 'none' }}>
-          <SoundGenerationSection
-            soundConfigs={props.soundConfigs}
-            activeSoundConfigTab={props.activeSoundConfigTab}
-            isSoundGenerating={props.isSoundGenerating}
-            soundGenError={props.soundGenError}
-            generatedSounds={props.generatedSounds}
-            globalDuration={props.globalDuration}
-            globalSteps={props.globalSteps}
-            globalNegativePrompt={props.globalNegativePrompt}
-            applyDenoising={props.applyDenoising}
-            audioModel={props.audioModel}
-            onSetActiveTab={props.setActiveSoundConfigTab}
-            onAddConfig={props.onAddSoundConfig}
-            onBatchAddConfigs={props.onBatchAddSoundConfigs}
-            onRemoveConfig={props.onRemoveSoundConfig}
-            onUpdateConfig={props.onUpdateSoundConfig}
-            onTypeChange={props.onSoundTypeChange}
-            onGenerate={props.onGenerateSounds}
-            onStopGeneration={props.onStopSoundGeneration}
-            onGlobalDurationChange={props.onGlobalDurationChange}
-            onGlobalStepsChange={props.onGlobalStepsChange}
-            onGlobalNegativePromptChange={props.onGlobalNegativePromptChange}
-            onApplyDenoisingChange={props.onApplyDenoisingChange}
-            onAudioModelChange={props.onAudioModelChange}
-            onReprocessSounds={props.onReprocessSounds}
-            onUploadAudio={props.onUploadAudio}
-            onClearUploadedAudio={props.onClearUploadedAudio}
-            onLibrarySearch={props.onLibrarySearch}
-            onLibrarySoundSelect={props.onLibrarySoundSelect}
-            modelEntities={props.modelEntities}
-            onStartLinkingEntity={props.onStartLinkingEntity}
-            onCancelLinkingEntity={props.onCancelLinkingEntity}
-            isLinkingEntity={props.isLinkingEntity}
-            linkingConfigIndex={props.linkingConfigIndex}
-            useSpeckleViewer={props.useSpeckleViewer}
-            onResetSound={props.onResetSound}
-            onDuplicateConfig={props.onDuplicateConfig}
-            onSelectSoundCard={props.onSelectSoundCard}
-            selectedCardIndex={props.selectedCardIndex}
-            onCatalogSoundSelect={props.onCatalogSoundSelect}                                        
-          />
+        {/* Scrollable step content */}
+        <div className="flex-1 overflow-y-auto px-4 py-4">
+          {currentStep === 0 && (
+            <ContextSection
+              analysisConfigs={props.analysisConfigs}
+              isRunning={props.isAnalyzing}
+              error={props.analysisError}
+              analysisResult={props.analysisResult}
+              hasGlobalModelLoaded={props.hasGlobalModelLoaded}
+              onAddConfig={props.onAddAnalysisConfig}
+              onRemoveConfig={props.onRemoveAnalysisConfig}
+              onUpdateConfig={props.onUpdateAnalysisConfig}
+              onRun={props.onAnalyze}
+              onStop={props.onStop}
+              onReset={props.onResetAnalysis}
+              onTogglePromptSelection={props.onTogglePromptSelection}
+              onSendToSoundGeneration={props.onSendToSoundGeneration}
+              onAdvanceToUsage={advanceToUsage}
+              onAdvanceToSounds={handleContextSendToSounds}
+              onAudioExtract={props.onAudioExtract}
+              expandedOriginalIndex={contextExpandedOriginalIndex}
+              onExpandedOriginalIndexChange={setContextExpandedOriginalIndex}
+            />
+          )}
+
+          {currentStep === 1 && (
+            <UsageSection
+              analysisConfigs={props.analysisConfigs}
+              isRunning={props.isAnalyzing}
+              error={props.analysisError}
+              analysisResult={props.analysisResult}
+              hasGlobalModelLoaded={props.hasGlobalModelLoaded}
+              onAddConfig={props.onAddAnalysisConfig}
+              onRemoveConfig={props.onRemoveAnalysisConfig}
+              onUpdateConfig={props.onUpdateAnalysisConfig}
+              onRun={props.onAnalyze}
+              onStop={props.onStop}
+              onReset={props.onResetAnalysis}
+              onTogglePromptSelection={props.onTogglePromptSelection}
+              onSendToSoundGeneration={props.onSendToSoundGeneration}
+              onAdvanceToSounds={handleUsageSendToSounds}
+              expandedOriginalIndex={usageExpandedOriginalIndex}
+              onExpandedOriginalIndexChange={setUsageExpandedOriginalIndex}
+              activeContextOriginalIndex={activeContextOriginalIndex}
+            />
+          )}
+
+          {currentStep === 2 && (
+            <SoundGenerationSection
+              soundConfigs={props.soundConfigs}
+              activeSoundConfigTab={props.activeSoundConfigTab}
+              isSoundGenerating={props.isSoundGenerating}
+              soundGenError={props.soundGenError}
+              generatedSounds={props.generatedSounds}
+              globalDuration={props.globalDuration}
+              globalSteps={props.globalSteps}
+              globalNegativePrompt={props.globalNegativePrompt}
+              applyDenoising={props.applyDenoising}
+              audioModel={props.audioModel}
+              onSetActiveTab={props.setActiveSoundConfigTab}
+              onAddConfig={props.onAddSoundConfig}
+              onBatchAddConfigs={props.onBatchAddSoundConfigs}
+              onRemoveConfig={props.onRemoveSoundConfig}
+              onUpdateConfig={props.onUpdateSoundConfig}
+              onTypeChange={props.onSoundTypeChange}
+              onGenerate={props.onGenerateSounds}
+              onStopGeneration={props.onStopSoundGeneration}
+              onGlobalDurationChange={props.onGlobalDurationChange}
+              onGlobalStepsChange={props.onGlobalStepsChange}
+              onGlobalNegativePromptChange={props.onGlobalNegativePromptChange}
+              onApplyDenoisingChange={props.onApplyDenoisingChange}
+              onAudioModelChange={props.onAudioModelChange}
+              onReprocessSounds={props.onReprocessSounds}
+              onUploadAudio={props.onUploadAudio}
+              onClearUploadedAudio={props.onClearUploadedAudio}
+              onLibrarySearch={props.onLibrarySearch}
+              onLibrarySoundSelect={props.onLibrarySoundSelect}
+              modelEntities={props.modelEntities}
+              onStartLinkingEntity={props.onStartLinkingEntity}
+              onCancelLinkingEntity={props.onCancelLinkingEntity}
+              isLinkingEntity={props.isLinkingEntity}
+              linkingConfigIndex={props.linkingConfigIndex}
+              useSpeckleViewer={props.useSpeckleViewer}
+              onResetSound={props.onResetSound}
+              onDuplicateConfig={props.onDuplicateConfig}
+              onSelectSoundCard={props.onSelectSoundCard}
+              selectedCardIndex={props.selectedCardIndex}
+              onCatalogSoundSelect={props.onCatalogSoundSelect}
+              visibleParentUsageIndex={activeUsageOriginalIndex}
+            />
+          )}
         </div>
 
-        {/* Listeners Tab */}
-        <div className="flex flex-col gap-4" style={{ display: props.activeAiTab === 'listeners' ? 'flex' : 'none' }}>
-          <ListenersSection
-            receivers={props.receivers}
-            gridListeners={props.gridListeners}
-            onAddReceiver={props.onAddReceiver}
-            onDeleteReceiver={props.onDeleteReceiver}
-            onUpdateReceiverName={props.onUpdateReceiverName}
-            onUpdateReceiverPosition={props.onUpdateReceiverPosition}
-            onGoToReceiver={props.onGoToReceiver}
-            onToggleReceiverHiddenForSimulation={props.onToggleReceiverHiddenForSimulation}
-            onAddGridListener={props.onAddGridListener}
-            onDeleteGridListener={props.onDeleteGridListener}
-            onComputeBounds={props.onComputeBounds}
-            expandedGridListenerId={props.expandedGridListenerId}
-            onExpandedGridListenerChange={props.onExpandedGridListenerChange}
-            onExitFPS={props.onExitFPS}
-            forcedExpandedId={props.forcedExpandedListenerId}
-            collapseAllTrigger={props.collapseListenerCardTrigger}
-          />
-        </div>
-
-        {/* Acoustics Tab */}
-        <div style={{ display: props.activeAiTab === 'acoustics' ? 'block' : 'none' }}>
-          <AcousticsSection
-            onSelectIRFromLibrary={props.onSelectIRFromLibrary}
-            onClearIR={props.onClearIR}
-            selectedIRId={props.selectedIRId}
-            auralizationConfig={props.auralizationConfig}
-            resonanceAudioConfig={props.resonanceAudioConfig}
-            onToggleResonanceAudio={props.onToggleResonanceAudio}
-            onUpdateRoomMaterials={props.onUpdateRoomMaterials}
-            hasGeometry={props.hasGeometry}
-            showBoundingBox={props.showBoundingBox}
-            onToggleBoundingBox={props.onToggleBoundingBox}
-            onRefreshBoundingBox={props.onRefreshBoundingBox}
-            roomScale={props.roomScale}
-            onRoomScaleChange={props.onRoomScaleChange}
-            audioRenderingMode={props.audioRenderingMode}
-            onAudioRenderingModeChange={props.onAudioRenderingModeChange}
-            modelEntities={props.modelEntities}
-            modelType={props.modelType}
-            geometryData={props.geometryData}
-            selectedGeometry={props.selectedGeometry}
-            onSelectGeometry={props.onSelectGeometry}
-            onHoverGeometry={props.onHoverGeometry}
-            onAssignMaterial={props.onAssignMaterial}
-            modelFile={props.modelFile}
-            speckleData={props.speckleData}
-            soundscapeData={props.soundscapeData}
-            onIRImported={props.onIRImported}
-            irRefreshTrigger={props.irRefreshTrigger}
-            simulationConfigs={props.simulationConfigs}
-            activeSimulationIndex={props.activeSimulationIndex}
-            onIRHover={props.onIRHover}
-            onAddSimulationConfig={props.onAddSimulationConfig}
-            onRemoveSimulationConfig={props.onRemoveSimulationConfig}
-            onUpdateSimulationConfig={props.onUpdateSimulationConfig}
-            onSetActiveSimulation={props.onSetActiveSimulation}
-            onUpdateSimulationName={props.onUpdateSimulationName}
-            onGoToReceiver={props.onGoToReceiver}
-            fpsExitTrigger={props.collapseListenerCardTrigger}
-            isFPSModeActive={props.isFPSModeActive}
-            forcedActiveGroupId={props.forcedActiveGroupId}
-          />
-        </div>
-
-        {/* Settings Tab */}
-        <div className="flex flex-col gap-4" style={{ display: props.activeAiTab === 'settings' ? 'flex' : 'none' }}>
-          <AdvancedSettingsSection
-            globalDuration={props.globalDuration}
-            globalSteps={props.globalSteps}
-            globalNegativePrompt={props.globalNegativePrompt}
-            applyDenoising={props.applyDenoising}
-            normalizeImpulseResponses={props.normalizeImpulseResponses}
-            audioModel={props.audioModel}
-            llmModel={props.llmModel}
-            onGlobalDurationChange={props.onGlobalDurationChange}
-            onGlobalStepsChange={props.onGlobalStepsChange}
-            onGlobalNegativePromptChange={props.onGlobalNegativePromptChange}
-            onApplyDenoisingChange={props.onApplyDenoisingChange}
-            onNormalizeImpulseResponsesChange={props.onNormalizeImpulseResponsesChange}
-            onAudioModelChange={props.onAudioModelChange}
-            onLlmModelChange={props.onLlmModelChange}
-            onResetToDefaults={props.onResetAdvancedSettings}
-            showAxesHelper={props.showAxesHelper}
-            onShowAxesHelperChange={props.onShowAxesHelperChange}
-            showLabelSprites={props.showLabelSprites}
-            onShowLabelSpritesChange={props.onShowLabelSpritesChange}
-            showHoveringHighlight={props.showHoveringHighlight}
-            onShowHoveringHighlightChange={props.onShowHoveringHighlightChange}
-            showSoundSpheres={props.showSoundSpheres}
-            onShowSoundSpheresChange={props.onShowSoundSpheresChange}
-            showSceneListeners={props.showSceneListeners}
-            onShowSceneListenersChange={props.onShowSceneListenersChange}
-            listenerOrientation={props.listenerOrientation}
-            onListenerOrientationChange={props.onListenerOrientationChange}
-          />
-        </div>
-      </div>
+        {/* Skip button — fixed at the bottom */}
+        {currentStep < 2 && (
+          <div className="flex-shrink-0 px-4 pb-4 pt-2 border-t border-secondary-light flex justify-end">
+            <button
+              onClick={skipStep}
+              className="text-xs text-secondary-hover hover:text-foreground transition-colors"
+            >
+              Skip →
+            </button>
+          </div>
+        )}
       </aside>
-    </div>
+    </>
   );
 }
+
+
+

@@ -145,7 +145,7 @@ export interface SoundscapeStoreState {
     spl_db?: number;
     interval_seconds?: number;
     variants: Array<{ url: string; duration: number }>;
-  }>) => void;
+  }>, parentUsageOriginalIndex?: number) => void;
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -784,24 +784,44 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             return;
           }
 
-          const newPrompts = prompts.filter(
-            (newConfig) =>
-              !soundConfigs.some((existing) => {
-                const samePrompt =
-                  existing.prompt.trim().toLowerCase() ===
-                  newConfig.prompt.trim().toLowerCase();
-                const sameEntity =
-                  (!existing.entity && !newConfig.entity) ||
-                  (existing.entity?.index !== undefined &&
-                    newConfig.entity?.index !== undefined &&
-                    existing.entity.index === newConfig.entity.index);
-                return samePrompt && sameEntity;
-              }),
-          );
+          // Dedup + update: match by prompt text + display_name (display_name = soundName, deterministic)
+          let updated = [...soundConfigs];
+          const toAppend: any[] = [];
+          let didUpdate = false;
+          for (const newConfig of prompts) {
+            const existingIdx = updated.findIndex((existing) => {
+              const samePrompt =
+                existing.prompt.trim().toLowerCase() ===
+                newConfig.prompt.trim().toLowerCase();
+              const sameDisplayName =
+                (existing.display_name || '') === (newConfig.display_name || '');
+              return samePrompt && sameDisplayName;
+            });
+            if (existingIdx >= 0) {
+              // Update metadata fields, preserve generation settings and any user-dragged position
+              updated[existingIdx] = {
+                ...updated[existingIdx],
+                spl_db: newConfig.spl_db,
+                interval_seconds: newConfig.interval_seconds,
+                timestamps: newConfig.timestamps,
+                duration: newConfig.duration,
+                ...(newConfig.parentUsageOriginalIndex !== undefined
+                  ? { parentUsageOriginalIndex: newConfig.parentUsageOriginalIndex }
+                  : {}),
+                // Only set position if this config doesn't already have one (first-load case)
+                ...(!updated[existingIdx].position && newConfig.position
+                  ? { position: newConfig.position }
+                  : {}),
+              };
+              didUpdate = true;
+            } else {
+              toAppend.push(newConfig);
+            }
+          }
 
-          if (newPrompts.length > 0) {
+          if (toAppend.length > 0 || didUpdate) {
             set(
-              { soundConfigs: [...soundConfigs, ...newPrompts] },
+              { soundConfigs: [...updated, ...toAppend] },
               false,
               'soundscape/appendFromPrompts',
             );
@@ -1176,45 +1196,82 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           );
         },
 
-        injectExtractedSEDSounds: (sounds) => {
+        injectExtractedSEDSounds: (sounds, parentUsageOriginalIndex) => {
           const { soundConfigs, generatedSounds, soundscapeData, globalDuration, globalSteps } = get();
-          const startIndex = soundConfigs.length;
 
-          const newConfigs: SoundGenerationConfig[] = sounds.map((s) => ({
-            prompt: s.name,
-            duration: s.variants[0]?.duration ?? globalDuration,
-            guidance_scale: undefined,
-            negative_prompt: '',
-            seed_copies: 1,
-            steps: globalSteps,
-            type: 'upload' as import('@/types').CardType,
-            display_name: s.name,
-            spl_db: s.spl_db,
-            interval_seconds: s.interval_seconds,
-          }));
+          // Dedup: match by name (prompt) + parentUsageOriginalIndex, update if found
+          const isSingleEmpty =
+            soundConfigs.length === 1 &&
+            !soundConfigs[0].prompt &&
+            !soundConfigs[0].uploadedAudioUrl &&
+            !soundConfigs[0].selectedLibrarySound;
 
-          const newEvents: any[] = sounds.flatMap((s, si) => {
-            const promptIndex = startIndex + si;
-            return s.variants.map((v, vi) => ({
-              id: `sed-${promptIndex}-${vi}-${Date.now()}`,
-              url: v.url,
-              position: [0, 0, 0] as [number, number, number],
-              geometry: { vertices: [], faces: [] },
-              display_name: s.variants.length > 1 ? `${s.name}_${vi + 1}` : s.name,
-              prompt: s.name,
-              prompt_index: promptIndex,
-              total_copies: 1,
-              volume_db: s.spl_db ?? 70,
-              interval_seconds: s.interval_seconds ?? 30,
-              isUploaded: true,
-            }));
+          let updatedConfigs = isSingleEmpty ? [] : [...soundConfigs];
+          const existingEvents = soundscapeData ? [...soundscapeData] : [...generatedSounds];
+          const toAppendConfigs: SoundGenerationConfig[] = [];
+          const toAppendEvents: any[] = [];
+
+          sounds.forEach((s) => {
+            const existingIdx = updatedConfigs.findIndex(
+              (c) =>
+                c.prompt.trim().toLowerCase() === s.name.trim().toLowerCase() &&
+                c.parentUsageOriginalIndex === parentUsageOriginalIndex,
+            );
+
+            if (existingIdx >= 0) {
+              // Update metadata only — preserve generation state
+              updatedConfigs[existingIdx] = {
+                ...updatedConfigs[existingIdx],
+                spl_db: s.spl_db ?? updatedConfigs[existingIdx].spl_db,
+                interval_seconds: s.interval_seconds ?? updatedConfigs[existingIdx].interval_seconds,
+              };
+              // Update variant URLs in existing events
+              s.variants.forEach((v, vi) => {
+                const evIdx = existingEvents.findIndex(
+                  (e) => e.prompt_index === existingIdx && e.total_copies === vi,
+                );
+                if (evIdx >= 0) {
+                  existingEvents[evIdx] = { ...existingEvents[evIdx], url: v.url };
+                }
+              });
+            } else {
+              const promptIndex = updatedConfigs.length + toAppendConfigs.length;
+              toAppendConfigs.push({
+                prompt: s.name,
+                duration: s.variants[0]?.duration ?? globalDuration,
+                guidance_scale: undefined,
+                negative_prompt: '',
+                seed_copies: 1,
+                steps: globalSteps,
+                type: 'upload' as import('@/types').CardType,
+                display_name: s.name,
+                spl_db: s.spl_db,
+                interval_seconds: s.interval_seconds,
+                parentUsageOriginalIndex,
+              });
+              s.variants.forEach((v, vi) => {
+                toAppendEvents.push({
+                  id: `sed-${promptIndex}-${vi}-${Date.now()}`,
+                  url: v.url,
+                  position: [0, 0, 0] as [number, number, number],
+                  geometry: { vertices: [], faces: [] },
+                  display_name: s.variants.length > 1 ? `${s.name}_${vi + 1}` : s.name,
+                  prompt: s.name,
+                  prompt_index: promptIndex,
+                  total_copies: vi,
+                  volume_db: s.spl_db ?? 70,
+                  interval_seconds: s.interval_seconds ?? 30,
+                  isUploaded: true,
+                });
+              });
+            }
           });
 
-          const existing = soundscapeData ? [...soundscapeData] : [...generatedSounds];
-          const allEvents = [...existing, ...newEvents];
+          const allConfigs = [...updatedConfigs, ...toAppendConfigs];
+          const allEvents = [...existingEvents, ...toAppendEvents];
           set(
             {
-              soundConfigs: [...soundConfigs, ...newConfigs],
+              soundConfigs: allConfigs,
               generatedSounds: allEvents,
               soundscapeData: allEvents.length > 0 ? allEvents : null,
             },

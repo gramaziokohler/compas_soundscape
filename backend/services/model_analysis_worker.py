@@ -49,12 +49,23 @@ def _normalize_objects(raw: list) -> list[dict]:
             continue
         try:
             confidence = max(0.0, min(1.0, float(obj.get("confidence", 0.5))))
+            # object_ids comes in as dict[str, dict] (already resolved by analyze_3dmodel)
+            # or as list[str] (legacy / fallback — convert to empty-bounds dict)
+            raw_oids = obj.get("object_ids", {})
+            if isinstance(raw_oids, dict):
+                object_ids: dict[str, dict] = {
+                    str(k): v if isinstance(v, dict) else {}
+                    for k, v in raw_oids.items()
+                }
+            else:
+                object_ids = {str(x): {} for x in raw_oids}
+
             out.append({
                 "name":        str(obj.get("name", "Unknown")),
                 "description": str(obj.get("description", "")),
                 "material":    str(obj.get("material", "")),
                 "quantity":    max(1, int(obj.get("quantity", 1))),
-                "object_ids":  [str(x) for x in obj.get("object_ids", [])],
+                "object_ids":  object_ids,
                 "confidence":  round(confidence, 3),
             })
         except (ValueError, TypeError):
@@ -113,6 +124,7 @@ def run_model_analysis(
             user_context=user_context,
             llm_model=llm_model,
         )
+        # object_ids are already resolved and filled with bounds by analyze_3dmodel.
         objects = _normalize_objects(raw_result.get("objects", []))
 
         _write_progress(progress_file, 90, "Classifying confidence levels...")

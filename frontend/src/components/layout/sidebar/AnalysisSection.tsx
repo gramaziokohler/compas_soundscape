@@ -48,7 +48,7 @@ function AnalysisGroupColorSync({ config, isExpanded }: { config: AnalyzeModelCo
     if (objects.length === 0) return;
 
     const colorGroups = objects
-      .map((obj, i) => ({ objectIds: obj.object_ids ?? [], color: getAnalysisGroupColor(i) }))
+      .map((obj, i) => ({ objectIds: Object.keys(obj.object_ids ?? {}), color: getAnalysisGroupColor(i) }))
       .filter((g) => g.objectIds.length > 0);
 
     useSpeckleStore.getState().setAnalysisObjectGroups(colorGroups, objects);

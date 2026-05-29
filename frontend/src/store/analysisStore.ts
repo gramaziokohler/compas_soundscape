@@ -140,7 +140,7 @@ function extractSpeckleEntities(worldTree: any): any[] {
   let nodeIndex = 0;
   let processedCount = 0;
 
-  const processNode = (node: any) => {
+  const processNode = (node: any, parentLayer: string = '') => {
     if (!node) return;
     processedCount++;
 
@@ -149,9 +149,17 @@ function extractSpeckleEntities(worldTree: any): any[] {
 
     const id = raw.id || node.model?.id || node.id || `node-${nodeIndex}`;
     const speckleType = raw.speckle_type || raw.speckle?.type || 'Object';
-    const name = raw.name || node.model?.name || extractNameFromType(speckleType);
+    // Only treat an explicit name (not the speckle_type fallback) as a layer signal
+    const explicitName = raw.name || node.model?.name || null;
+    const name = explicitName || extractNameFromType(speckleType);
 
-    if (hasRenderView || raw.speckle_type) {
+    const isGeometry = !!(hasRenderView || raw.speckle_type);
+
+    // Container/layer nodes: have an explicit name but no geometry of their own.
+    // Their name becomes the layer context propagated to all descendants.
+    const currentLayer = (!isGeometry && explicitName) ? explicitName : parentLayer;
+
+    if (isGeometry) {
       const nodeBounds =
         raw.bounds ||
         node.model?.bounds ||
@@ -184,7 +192,8 @@ function extractSpeckleEntities(worldTree: any): any[] {
         index: nodeIndex++,
         type: speckleType,
         name,
-        layer: raw.layer || '',
+        // Prefer the raw layer property; fall back to the propagated parent layer.
+        layer: raw.layer || currentLayer,
         speckle_type: speckleType,
         raw,
         nodeId: id,
@@ -193,18 +202,18 @@ function extractSpeckleEntities(worldTree: any): any[] {
     }
 
     const children = node.model?.children || node.children;
-    if (children && Array.isArray(children)) children.forEach(processNode);
+    if (children && Array.isArray(children)) children.forEach((child: any) => processNode(child, currentLayer));
   };
 
   try {
     if (worldTree.tree?._root?.children) {
-      worldTree.tree._root.children.forEach(processNode);
+      worldTree.tree._root.children.forEach((child: any) => processNode(child));
     } else if (worldTree._root?.children) {
-      worldTree._root.children.forEach(processNode);
+      worldTree._root.children.forEach((child: any) => processNode(child));
     } else if (worldTree.root?.children) {
-      worldTree.root.children.forEach(processNode);
+      worldTree.root.children.forEach((child: any) => processNode(child));
     } else if (worldTree.children) {
-      worldTree.children.forEach(processNode);
+      worldTree.children.forEach((child: any) => processNode(child));
     }
   } catch (error) {
     console.error('[analysisStore] extractSpeckleEntities error:', error);
@@ -250,7 +259,7 @@ export interface AnalysisStoreState {
   handleReorderConfigs: (from: number, to: number) => void;
 
   handleTogglePromptSelection: (configIndex: number, promptId: string) => void;
-  handleSendToSoundGeneration: (onSuccess?: (prompts: TextPromptResult[]) => void) => TextPromptResult[];
+  handleSendToSoundGeneration: (onSuccess?: (prompts: TextPromptResult[]) => void, onlyConfigIndex?: number) => TextPromptResult[];
   handleReset: (index: number) => void;
 
   handleUpdateEntitiesFromWorldTree: (index: number, worldTree: any) => void;
@@ -843,15 +852,20 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             'analysis/togglePrompt',
           ),
 
-        handleSendToSoundGeneration: (onSuccess) => {
+        handleSendToSoundGeneration: (onSuccess, onlyConfigIndex) => {
           const { analysisResults, analysisConfigs } = get();
-          const allSelected = analysisResults.flatMap((result) =>
-            result.prompts.filter((p) => p.selected),
-          );
+
+          // When onlyConfigIndex is set, only collect prompts from that specific card
+          const allSelected = analysisResults
+            .filter((r) => onlyConfigIndex === undefined || r.configIndex === onlyConfigIndex)
+            .flatMap((result) => result.prompts.filter((p) => p.selected));
 
           // Also collect selected foley sounds from scenario configs
           const foleyPrompts: TextPromptResult[] = [];
-          analysisConfigs.forEach((config) => {
+          const configsToScan = onlyConfigIndex !== undefined
+            ? (analysisConfigs[onlyConfigIndex] ? [analysisConfigs[onlyConfigIndex]] : [])
+            : analysisConfigs;
+          configsToScan.forEach((config) => {
             if (config.type !== 'scenario') return;
             const sc = config as ScenarioConfig;
             if (!sc.foleyResult) return;
@@ -914,6 +928,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           });
 
           const combined = [...allSelected, ...foleyPrompts];
+          console.log('[handleSendToSoundGeneration] pushing', combined.length, 'prompts',
+            onlyConfigIndex !== undefined ? `from config ${onlyConfigIndex}` : 'from all configs');
           if (onSuccess) onSuccess(combined);
           return combined;
         },
@@ -979,10 +995,19 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           let analysisId = '';
 
           try {
+            // Use speckleStore's explorer hidden IDs — kept in sync by
+            // useSpeckleFiltering.hideObjects → trackExplorerHide, which is what
+            // the ObjectExplorer uses. objectExplorerStore._viewerRef is never
+            // set so its syncFromExtension() is a no-op.
+            const hiddenIdsForAnalysis = useSpeckleStore.getState().getExplorerHiddenIds();
+            const visibleEntitiesForAnalysis = config.modelEntities.filter(
+              (e: any) => !hiddenIdsForAnalysis.has(e.id),
+            );
+
             for await (const event of streamPrompts(
               `${API_BASE_URL}/api/analyze-3dmodel-stream`,
               {
-                entities: config.modelEntities,
+                entities: visibleEntitiesForAnalysis,
                 screenshots: config.liveScreenshots,
                 user_context: config.userContext,
                 llm_model: useSoundscapeStore.getState().llmModel,
@@ -997,7 +1022,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 objects.push(archObj);
                 const idx = objects.length - 1;
                 const color = getAnalysisGroupColor(idx);
-                const ids = archObj.object_ids ?? [];
+                const ids = Object.keys(archObj.object_ids ?? {});
                 if (ids.length > 0) {
                   colorGroups.push({ objectIds: ids, color });
                 }
@@ -1048,7 +1073,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
 
           // Refresh viewer colors with updated names (object_ids unchanged)
           const colorGroups = updatedObjects.map((obj, i) => ({
-            objectIds: obj.object_ids ?? [],
+            objectIds: Object.keys(obj.object_ids ?? {}),
             color: getAnalysisGroupColor(i),
           })).filter((g) => g.objectIds.length > 0);
           useSpeckleStore.getState().setAnalysisObjectGroups(colorGroups, updatedObjects);

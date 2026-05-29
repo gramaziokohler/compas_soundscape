@@ -11,6 +11,13 @@ export type { SoundConfigContentProps } from './SoundConfigContent';
 export { SoundResultContent } from './SoundResultContent';
 export type { SoundResultContentProps } from './SoundResultContent';
 
+// Shared layout body (used by both SoundPreContent and SoundResultContent)
+export { SoundCardBody } from './SoundCardBody';
+export type { SoundCardBodyProps } from './SoundCardBody';
+
+// Pre-generation card content (beforeContent for Card)
+export { SoundPreContent } from './SoundPreContent';
+
 // Mode-specific components
 export { TextToAudioMode } from './TextToAudioMode';
 export type { TextToAudioModeProps } from './TextToAudioMode';

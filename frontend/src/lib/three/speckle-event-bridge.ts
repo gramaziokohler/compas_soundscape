@@ -570,6 +570,11 @@ export class SpeckleEventBridge {
     this.onGridListenerDoubleClicked = callback;
   }
 
+  /** Returns true if the last pointer gesture was a drag (orbit/pan), regardless of button. */
+  public getWasOrbiting(): boolean {
+    return this.wasOrbiting;
+  }
+
   /** Returns true if a custom object (sound/receiver/grid-receiver) is under the given screen position. */
   public hasCustomObjectAt(clientX: number, clientY: number): boolean {
     const canvas = this.viewer.getRenderer().renderer.domElement;

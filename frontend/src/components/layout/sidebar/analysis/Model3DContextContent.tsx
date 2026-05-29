@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { toPng } from 'html-to-image';
 import type { ModelAnalysisConfig } from '@/types/analysis';
-import { useSpeckleStore, useAnalysisStore } from '@/store';
+import { useSpeckleStore, useAnalysisStore, useUIStore } from '@/store';
 import { getRootNodesForModel } from '@/hooks/useSpeckleTree';
 import { NUM_SOUNDS_MIN, NUM_SOUNDS_MAX } from '@/utils/constants';
 import { RangeSlider } from '@/components/ui/RangeSlider';
@@ -298,7 +298,16 @@ function CaptureViewSection({ index, screenshots, onUpdateConfig }: CaptureViewS
     setIsCapturing(true);
     setError(null);
 
+    const { showGroundGrid, setShowGroundGrid } = useUIStore.getState();
+    const wasShowingGrid = showGroundGrid;
+
     try {
+      if (!wasShowingGrid) {
+        setShowGroundGrid(true);
+        // Wait for the useSpeckleGroundGrid effect to run and the viewer to render
+        await new Promise<void>((resolve) => setTimeout(resolve, 300));
+      }
+
       const dataUrl = await toPng(container, { cacheBust: true });
 
       const res = await fetch('/api/screenshot', {
@@ -315,6 +324,9 @@ function CaptureViewSection({ index, screenshots, onUpdateConfig }: CaptureViewS
       console.error('[CaptureViewSection] Capture failed:', err);
       setError(err instanceof Error ? err.message : 'Capture failed');
     } finally {
+      if (!wasShowingGrid) {
+        setShowGroundGrid(false);
+      }
       setIsCapturing(false);
     }
   }, [index, screenshots, onUpdateConfig]);

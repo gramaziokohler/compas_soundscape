@@ -19,6 +19,8 @@ import type { CardBaseConfig, CardType } from './card';
  */
 export interface AnalysisBaseConfig extends CardBaseConfig {
   type: CardType;
+  /** Original index of the context card that generated this usage card (for parent-child filtering) */
+  parentContextOriginalIndex?: number;
 }
 
 /**
@@ -51,6 +53,8 @@ export interface AudioAnalysisConfig extends AnalysisBaseConfig {
   audioInfo: SEDAudioInfo | null;
   audioBuffer: AudioBuffer | null;
   analysisOptions: SEDAnalysisOptions;
+  /** Whether to apply noise reduction when extracting SED audio segments */
+  applyNoiseReduction?: boolean;
 }
 
 /**
@@ -71,7 +75,9 @@ export interface ArchitecturalObject {
   material: string;
   confidence: number;
   quantity: number;
-  object_ids: string[];
+  /** Dict keyed by Speckle hex ID → optional bounds from backend.
+   *  Use Object.keys(object_ids) to obtain the flat ID list. */
+  object_ids: Record<string, { min_bounds?: number[]; max_bounds?: number[] }>;
 }
 
 /**

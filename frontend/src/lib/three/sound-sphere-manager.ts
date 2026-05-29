@@ -323,9 +323,32 @@ export class SoundSphereManager {
       const sharedPromptPosition = this.promptPositions.get(promptIdx);
       const storedPosition = sharedPromptPosition ?? this.spherePositions.get(soundEvent.id);
       if (storedPosition) {
-        // Use stored position (from previous drag) — preserves dragged positions
-        position = storedPosition;
-        this.spherePositions.set(soundEvent.id, position);
+        // For pending spheres, the UI position widget may have been edited.
+        // If soundEvent.position differs from the stored (spiral-placed) position, use the explicit one.
+        // Generated sounds use the early-return path for position sync, so this branch is safe.
+        if ((soundEvent as any).isPending && soundEvent.position) {
+          const explicit = soundEvent.position as [number, number, number];
+          // Only override when position is non-zero — [0,0,0] is the default
+          // placeholder value (config.position ?? [0,0,0]) and should not
+          // override a spiral-placed position.
+          const isNonZero = explicit[0] !== 0 || explicit[1] !== 0 || explicit[2] !== 0;
+          const differs =
+            explicit[0] !== storedPosition[0] ||
+            explicit[1] !== storedPosition[1] ||
+            explicit[2] !== storedPosition[2];
+          if (isNonZero && differs) {
+            position = explicit;
+            this.spherePositions.set(soundEvent.id, explicit);
+            this.promptPositions.set(promptIdx, explicit);
+          } else {
+            position = storedPosition;
+            this.spherePositions.set(soundEvent.id, position);
+          }
+        } else {
+          // Use stored position (from previous drag) — preserves dragged positions
+          position = storedPosition;
+          this.spherePositions.set(soundEvent.id, position);
+        }
       } else {
         const spiralPosition = spiralPositionMap.get(soundEvent.id);
         if (spiralPosition) {
@@ -336,7 +359,7 @@ export class SoundSphereManager {
           newlyPlacedPositions.set(soundEvent.id, position);
         } else {
           // Use event position (from backend or default)
-          position = soundEvent.position as [number, number, number];
+          position = (soundEvent.position as [number, number, number] | undefined) ?? [0, 0, 0];
           this.spherePositions.set(soundEvent.id, position);
           this.promptPositions.set(promptIdx, position);
         }
@@ -404,6 +427,10 @@ export class SoundSphereManager {
     visibleSounds.forEach(soundEvent => {
       if (this.soundMetadata.has(soundEvent.id)) {
         return; // Audio already loaded for this sound
+      }
+      // Skip audio for pending (pre-generation) placeholder spheres
+      if (soundEvent.isPending) {
+        return;
       }
 
       this.loadAudioForSound(soundEvent);
@@ -533,8 +560,10 @@ export class SoundSphereManager {
       sphereGeom = new THREE.SphereGeometry(sphereRadius, 32, 32);
     }
 
-    // Use electric blue color when dark mode is active, otherwise primary pink
-    const sphereColor = this.darkModeEnabled ? getCssColorHex('--color-primary') : getCssColorHex('--color-primary');
+    // Use lighter color for pending (pre-generation) spheres
+    const sphereColor = soundEvent.isPending
+      ? getCssColorHex('--color-primary-light')
+      : getCssColorHex('--color-primary');
 
     const material = new THREE.MeshBasicMaterial({
       color: sphereColor,
@@ -742,7 +771,7 @@ export class SoundSphereManager {
     for (const sounds of entityGroups.values()) {
       const groupSize = sounds.length;
       sounds.forEach((soundEvent, slotIdx) => {
-        const text = trimDisplayName(soundEvent.display_name) || soundEvent.id;
+        const text = trimDisplayName(soundEvent.display_name ?? '') || soundEvent.id;
         const existing = this.entityLabelSprites.get(soundEvent.id);
 
         // Recreate when text, slot index, or group size has changed

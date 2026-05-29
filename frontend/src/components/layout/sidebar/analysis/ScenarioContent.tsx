@@ -85,71 +85,57 @@ function formatTimestampRange(ts: string): string {
 
 export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; index: number }) {
   const handleAnalyze = useAnalysisStore((s) => s.handleAnalyze);
-  const handleToggleFoleySound = useAnalysisStore((s) => s.handleToggleFoleySound);
   const analyzingConfigIndex = useAnalysisStore((s) => s.analyzingConfigIndex);
 
   const isOperationRunning = analyzingConfigIndex === index;
-  // Scenarist is complete once scenarioId is set (set on the 'done' SSE event)
   const scenarioCompleted = !!config.scenarioId;
-  // Foley loading: an operation is running, scenarist is done, but no foley result yet
   const isFoleyLoading = isOperationRunning && scenarioCompleted && !config.foleyResult;
-  // Scenarist is streaming events: operation running but scenarist not yet done
-  const isScenaristStreaming = isOperationRunning && !scenarioCompleted;
+  const isFoleyStreaming = isOperationRunning && !!config.foleyResult;
 
-  // Foley loading state (spinner while awaiting LLM response for foley)
-  if (isFoleyLoading) {
-    return (
-      <div className="px-4 pb-3 flex items-center gap-2">
-        <span
-          className="inline-block w-1.5 h-1.5 rounded-full animate-pulse flex-shrink-0"
-          style={{ backgroundColor: 'var(--color-primary)' }}
-        />
-        <span className="text-xs" style={{ color: 'var(--color-background)' }}>
-          Crafting sound prompts…
-        </span>
-      </div>
-    );
-  }
-
-  // Foley result — show sounds list (progressively updated during streaming)
-  if (config.foleyResult) {
-    return (
-      <ScenarioResultContent
-        foleyResult={config.foleyResult}
-        selectedKeys={config.selectedFoleyKeys ?? []}
-        onToggle={(key) => handleToggleFoleySound(index, key)}
-      />
-    );
-  }
-
-  // Scenario events list (builds up progressively during scenarist streaming)
+  // Always show scenario events — foley sounds are shown in the Sounds step, not here
   const scenarios = config.scenarioResult?.scenarios ?? [];
   return (
     <div className="space-y-3 px-4 pb-3 leading-relaxed whitespace-pre-wrap max-h-80 overflow-y-auto">
-        {scenarios.map((scenario, si) => (
-          <div key={si} className="space-y-1">
-            {/* Title — only shown when multiple scenarios
-            {scenarios.length >= 1 && (
-              <p className="text-[10px] text-background font-semibold pt-1 pb-0.5 opacity-70 uppercase tracking-wide">
-                {scenario.title}
-              </p>
-            )} */}
-            {scenario.events.map((event, ei) => (
-              <p key={ei} className="text-xs leading-relaxed text-secondary-light">
-                <span
-                  className="font-mono"
-                  style={{ color: 'var(--color-primary)', fontSize: '10px', backgroundColor: 'var(--color-secondary-light)', borderRadius: '4px', marginRight: '4px' }}
-                >
-                  {formatTimestampRange(event.timestamp)}
-                </span>{' '}
-                <ScenarioTextRenderer text={event.description} />
-              </p>
-            ))}
-          </div>
-        ))}
+      {scenarios.map((scenario, si) => (
+        <div key={si} className="space-y-1">
+          {scenario.events.map((event, ei) => (
+            <p key={ei} className="text-xs leading-relaxed text-secondary-light">
+              <span
+                className="font-mono"
+                style={{ color: 'var(--color-primary)', fontSize: '10px', backgroundColor: 'var(--color-secondary-light)', borderRadius: '4px', marginRight: '4px' }}
+              >
+                {formatTimestampRange(event.timestamp)}
+              </span>{' '}
+              <ScenarioTextRenderer text={event.description} />
+            </p>
+          ))}
+        </div>
+      ))}
 
-      {/* Call Foley Artist — only shown when scenarist is fully done and no operation running */}
-      {scenarioCompleted && !isOperationRunning && (
+      {/* Foley loading indicator */}
+      {isFoleyLoading && (
+        <div className="flex items-center gap-2 pt-1">
+          <span
+            className="inline-block w-1.5 h-1.5 rounded-full animate-pulse flex-shrink-0"
+            style={{ backgroundColor: 'var(--color-primary)' }}
+          />
+          <span className="text-xs" style={{ color: 'var(--color-background)' }}>Crafting sound prompts…</span>
+        </div>
+      )}
+
+      {/* Foley streaming indicator */}
+      {isFoleyStreaming && (
+        <div className="flex items-center gap-2 pt-1">
+          <span
+            className="inline-block w-1.5 h-1.5 rounded-full animate-pulse flex-shrink-0"
+            style={{ backgroundColor: 'var(--color-success, #22c55e)' }}
+          />
+          <span className="text-xs" style={{ color: 'var(--color-background)' }}>Sound prompts ready…</span>
+        </div>
+      )}
+
+      {/* Call Foley Artist — only shown when scenarist done, foley not yet started, not running */}
+      {scenarioCompleted && !isOperationRunning && !config.foleyResult && (
         <button
           onClick={() => handleAnalyze(index)}
           className="w-full py-1.5 px-3 text-xs font-medium rounded hover:opacity-80 transition-opacity"

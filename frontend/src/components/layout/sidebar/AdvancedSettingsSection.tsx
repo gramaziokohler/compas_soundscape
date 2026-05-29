@@ -46,7 +46,7 @@ function isProviderInstalled(modelKey: string, llmProviders: LLMProviders | null
   return llmProviders[key as keyof LLMProviders]?.installed ?? true;
 }
 
-interface AdvancedSettingsSectionProps {
+export interface AdvancedSettingsSectionProps {
   globalDuration: number;
   globalSteps: number;
   globalNegativePrompt: string;
@@ -72,6 +72,12 @@ interface AdvancedSettingsSectionProps {
   onShowSoundSpheresChange: (value: boolean) => void;
   showSceneListeners: boolean;
   onShowSceneListenersChange: (value: boolean) => void;
+  showGroundGrid: boolean;
+  onShowGroundGridChange: (value: boolean) => void;
+  groundGridSpacing: number;
+  onGroundGridSpacingChange: (value: number) => void;
+  groundGridColor: string;
+  onGroundGridColorChange: (value: string) => void;
   listenerOrientation: { x: number; y: number; z: number };
   onListenerOrientationChange: (orientation: { x: number; y: number; z: number }) => void;
 }
@@ -394,6 +400,12 @@ export function AdvancedSettingsSection({
   onShowSoundSpheresChange,
   showSceneListeners,
   onShowSceneListenersChange,
+  showGroundGrid,
+  onShowGroundGridChange,
+  groundGridSpacing,
+  onGroundGridSpacingChange,
+  groundGridColor,
+  onGroundGridColorChange,
   listenerOrientation,
   onListenerOrientationChange,
 }: AdvancedSettingsSectionProps) {
@@ -447,6 +459,32 @@ export function AdvancedSettingsSection({
           <CheckboxField checked={showHoveringHighlight} onChange={onShowHoveringHighlightChange} label="Hovering highlight" />
           <CheckboxField checked={showSoundSpheres} onChange={onShowSoundSpheresChange} label="Show sound spheres" />
           <CheckboxField checked={showSceneListeners} onChange={onShowSceneListenersChange} label="Show listeners" />
+          <CheckboxField checked={showGroundGrid} onChange={onShowGroundGridChange} label="Show ground grid" />
+          {showGroundGrid && (
+            <div className="flex flex-col gap-1 pl-3 border-l border-secondary-light">
+              <RangeSlider
+                label="Spacing (m): "
+                value={groundGridSpacing}
+                min={0.5}
+                max={50}
+                step={0.5}
+                onChange={onGroundGridSpacingChange}
+                defaultValue={5}
+                formatValue={(v) => `${v} m`}
+                hoverText="Distance between grid lines in metres. Double-click to reset to 5 m."
+              />
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-[10px] font-medium text-foreground">Color</label>
+                <input
+                  type="color"
+                  value={groundGridColor}
+                  onChange={(e) => onGroundGridColorChange(e.target.value)}
+                  className="w-8 h-5 cursor-pointer rounded border border-secondary-light bg-transparent"
+                  title="Grid line color"
+                />
+              </div>
+            </div>
+          )}
         </div>
       </AccordionSection>
 

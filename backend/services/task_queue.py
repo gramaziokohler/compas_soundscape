@@ -116,6 +116,40 @@ class UnifiedTaskQueue:
                 pass
         return True
 
+    def enqueue_with_ready_signal(
+        self,
+        task_id: str,
+        task_type: str,
+        loop: "asyncio.AbstractEventLoop",
+        cleanup_delay: int = 600,
+    ) -> "Tuple[int, int, asyncio.Event, threading.Event]":
+        """Enqueue an inline async-stream task without a subprocess.
+
+        The consumer thread will:
+          1. Signal *ready_event* (asyncio-safe) when the task's turn arrives.
+          2. Block on *done_event* until the SSE handler sets it on completion.
+
+        Returns:
+            (1-based queue position, queue total, ready_event, done_event)
+        """
+        import asyncio as _asyncio
+
+        ready_event = _asyncio.Event()
+        done_event = threading.Event()
+
+        def run_fn(task: UnifiedTask) -> None:
+            # Wake up the SSE generator waiting in the asyncio loop.
+            loop.call_soon_threadsafe(ready_event.set)
+            # Block the consumer until the SSE generator finishes (or is cancelled).
+            while not done_event.wait(timeout=1.0):
+                if task.cancel_event.is_set():
+                    break
+            task.completed = True
+            task.status = "Cancelled" if task.cancel_event.is_set() else "Completed"
+
+        pos, total = self.enqueue(task_id, task_type, run_fn, cleanup_delay)
+        return pos, total, ready_event, done_event
+
     # ── Consumer ───────────────────────────────────────────────────────────────
 
     def _consumer(self) -> None:

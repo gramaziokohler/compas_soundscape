@@ -141,6 +141,33 @@ export class SpeckleSceneAdapter {
   }
 
   /**
+   * Raycast against custom objects (sound spheres + receivers) from an NDC mouse
+   * position. Returns the first hit with its object type and Three.js object.
+   * Mirrors the logic in SpeckleEventBridge.raycastCustomObjects() but accepts
+   * an external NDC vector so it can be called outside the event bridge.
+   */
+  public raycastCustomObjectsAt(
+    mouseNDC: THREE.Vector2,
+  ): { type: 'sound' | 'receiver'; object: THREE.Object3D } | null {
+    const camera = this.getCamera();
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouseNDC, camera);
+    const intersects = raycaster.intersectObjects(this.customObjectsGroup.children, true);
+
+    for (const intersect of intersects) {
+      let current: THREE.Object3D | null = intersect.object;
+      while (current) {
+        const t = current.userData.customObjectType;
+        if (t === 'sound' || t === 'receiver') {
+          return { type: t, object: current };
+        }
+        current = current.parent;
+      }
+    }
+    return null;
+  }
+
+  /**
    * Get the custom objects group
    */
   public getCustomObjectsGroup(): THREE.Group {

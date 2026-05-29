@@ -62,9 +62,9 @@ export type CardType =
  * Default display names for each card type
  */
 export const CARD_TYPE_LABELS: Record<CardType, string> = {
-  '3d-model': '3D Model Context',
+  '3d-model': 'Select sonic objects',
   'audio': 'Audio Context',
-  'text': 'Text Context',
+  'text': 'Usage typology',
   'text-to-audio': 'Text-to-Audio',
   'upload': 'Uploaded Audio',
   'library': 'Library Sound',
@@ -76,8 +76,8 @@ export const CARD_TYPE_LABELS: Record<CardType, string> = {
   'import-irs': 'Import IRs',
   'listener': 'Listener',
   'grid-listener': 'Grid Listener',
-  'model-analysis': 'Analyze 3D Model',
-  'scenario': 'Scenario',
+  'model-analysis': 'Identify groups',
+  'scenario': 'Usage scenario',
 };
 
 // ============================================================================

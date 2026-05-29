@@ -431,13 +431,15 @@ export function EntityInfoPanel({
   if (selectedEntity?.objectType === 'Receiver' && selectedEntity.receiverData) {
     const receiverColor = 'var(--color-receiver)';
     return (
-      <div className="flex flex-col">
-        {/* Header with Go To button */}
-        <div className="my-8 mb-0 text-sm font-semibold flex-shrink-0 text-secondary flex items-center justify-between"
-              style={{
-                color: receiverColor
-              }}  >        
-          <span>{selectedEntity.objectName}</span>
+      <div className="flex flex-col gap-2 text-xs">
+        {/* ID row + go-to button */}
+        <div className="flex items-center justify-between text-secondary">
+          <div className="flex items-center gap-1 min-w-0">
+            <span className="flex-shrink-0">ID:</span>
+            <span className="mx-1 truncate" title={selectedEntity.objectId}>
+              {selectedEntity.objectId}
+            </span>
+          </div>
           {onGoToReceiver && (
             <button
               onClick={() => onGoToReceiver(selectedEntity.objectId)}
@@ -449,38 +451,16 @@ export function EntityInfoPanel({
                 e.currentTarget.style.color = receiverColor;
                 e.currentTarget.style.backgroundColor = 'transparent';
               }}
-              className="w-7 h-7 flex items-center justify-center rounded transition-colors"
-              style={{
-                color: receiverColor,
-                borderRadius: '6px'
-              }}
+              className="w-7 h-7 flex-shrink-0 flex items-center justify-center rounded transition-colors"
+              style={{ color: receiverColor, borderRadius: '6px' }}
               title="Go to receiver (first-person view)"
             >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="10" />
                 <circle cx="12" cy="12" r="3" />
               </svg>
             </button>
           )}
-        </div>
-
-        {/* Receiver Details */}
-        <div className="space-y-2 text-xs flex-1">
-          <div className="flex text-secondary">
-            <span>ID:</span>
-            <span className="mx-2 max-w-[180px] truncate" title={selectedEntity.objectId}>
-              {selectedEntity.objectId}
-            </span>
-          </div>
         </div>
       </div>
     );
@@ -497,29 +477,21 @@ export function EntityInfoPanel({
       const isMuted = mutedSounds?.has(generatedSound.id) ?? false;
 
       return (
-        <div className="flex flex-col bg-secondary rounded-lg p-2">
-        <div className="pb-2 mb-1 text-xs font-sans flex-shrink-0">
-          <span className="text-primary">Sound: </span>
-          <span className="text-white">{selectedEntity.objectName}</span>
-        </div>
-          <div className="flex-1 overflow-hidden">
-            <SoundResultContent
-              generatedSound={generatedSound}
-              index={promptIndex}
-              variants={variants}
-              selectedVariantIdx={selectedVariantIdx}
-              isPreviewPlaying={localPreviewId === generatedSound.id}
-              isMuted={isMuted}
-              soundVolumes={soundVolumes ?? {}}
-              soundIntervals={soundIntervals ?? {}}
-              onPreviewPlayPause={handleLocalPlayPause}
-              onPreviewStop={handleLocalStop}
-              onVolumeChange={onVolumeChange}
-              onIntervalChange={onIntervalChange}
-              onVariantChange={onVariantChange}
-            />
-          </div>
-        </div>
+        <SoundResultContent
+          generatedSound={generatedSound}
+          index={promptIndex}
+          variants={variants}
+          selectedVariantIdx={selectedVariantIdx}
+          isPreviewPlaying={localPreviewId === generatedSound.id}
+          isMuted={isMuted}
+          soundVolumes={soundVolumes ?? {}}
+          soundIntervals={soundIntervals ?? {}}
+          onPreviewPlayPause={handleLocalPlayPause}
+          onPreviewStop={handleLocalStop}
+          onVolumeChange={onVolumeChange}
+          onIntervalChange={onIntervalChange}
+          onVariantChange={onVariantChange}
+        />
       );
     }
   }
@@ -703,7 +675,7 @@ function AnalysisGroupSection({ objectId }: { objectId: string }) {
 
   const matchedGroup = useMemo(() => {
     const groups = getAnalysisResultGroups();
-    const idx = groups.findIndex((g) => g.object_ids?.includes(objectId));
+    const idx = groups.findIndex((g) => g.object_ids != null && objectId in g.object_ids);
     if (idx === -1) return null;
     return { group: groups[idx], index: idx };
   // eslint-disable-next-line react-hooks/exhaustive-deps

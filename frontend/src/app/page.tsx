@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { SpeckleScene } from "@/components/scene/SpeckleScene";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { RightSidebar } from "@/components/layout/RightSidebar";
+import { AdvancedSettingsPanel } from "@/components/scene/AdvancedSettingsPanel";
 import { ErrorToast } from "@/components/ui/ErrorToast";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
 import {
@@ -32,6 +33,7 @@ import { apiService } from "@/services/api";
 import { API_BASE_URL, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION } from "@/utils/constants";
 import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
 import type { LoadTab, SoundGenerationConfig } from "@/types";
+import type { AudioAnalysisConfig } from "@/types/analysis";
 import type { SelectedGeometry, AcousticMaterial } from "@/types/materials";
 import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSelector";
 import { buildSoundscapeSavePayload, restoreSoundscapeState, getBlobUrlSounds } from "@/utils/soundscape-serializer";
@@ -196,6 +198,10 @@ function HomeContent() {
     showHoveringHighlight, setShowHoveringHighlight,
     showSoundSpheres, setShowSoundSpheres,
     showSceneListeners, setShowSceneListeners,
+    showAdvancedSettings, setShowAdvancedSettings,
+    showGroundGrid, setShowGroundGrid,
+    groundGridSpacing, setGroundGridSpacing,
+    groundGridColor, setGroundGridColor,
     setGlobalSoundSpeed,
     setGlobalMeshLc,
   } = useUIStore();
@@ -416,6 +422,9 @@ function HomeContent() {
   // Active IR group to highlight/scroll in the simulation card
   const [activeIRGroupId, setActiveIRGroupId] = useState<string | null>(null);
 
+  // Step advance trigger for left sidebar (increment to advance to Sounds step)
+  const [stepAdvanceTrigger, setStepAdvanceTrigger] = useState(0);
+
   // FPS mode programmatic exit trigger (increment to exit first-person mode)
   const [exitFPSTrigger, setExitFPSTrigger] = useState(0);
 
@@ -552,13 +561,110 @@ function HomeContent() {
   const handleLoadSoundsToGeneration = useCallback(() => {
     if (textGen.pendingSoundConfigs.length > 0) {
       soundGen.setSoundConfigsFromPrompts(textGen.pendingSoundConfigs);
-      textGen.setActiveAiTab('sound');
+      setStepAdvanceTrigger(t => t + 1);
       // Don't clear pendingSoundConfigs - allow loading multiple times
     }
-  }, [textGen.pendingSoundConfigs, soundGen, textGen]);
+  }, [textGen.pendingSoundConfigs, soundGen]);
 
-  // Handler: Send analysis prompts to sound generation
-  const handleSendAnalysisToGeneration = useCallback(() => {
+  // Active parent filter from UIStore (set by Sidebar when Sounds step is active)
+  const activeSoundParentIndex = useUIStore((s) => s.activeSoundParentIndex);
+
+  // Re-apply Speckle entity highlight colors when the Sounds step is entered or exited.
+  // applyFilterColors internally reads activeSoundParentIndex from UIStore to decide
+  // whether to show entity link colors.
+  useEffect(() => {
+    useSpeckleStore.getState().applyFilterColors();
+  }, [activeSoundParentIndex]);
+
+  // ── Unified soundscape data ────────────────────────────────────────────────────
+  // One entry per visible sound config for the active parent.
+  // Before generation: lightweight isPending placeholder (light-colored sphere).
+  // After generation: the real SoundEvent from the server.
+  // Returns [] when not in the Sounds step (activeSoundParentIndex is null) so
+  // the scene shows no sound spheres outside the Sounds step.
+  const unifiedSoundscapeData = useMemo(() => {
+    if (activeSoundParentIndex === null || activeSoundParentIndex === undefined) return [];
+
+    const generatedMap = new Map<number, any>();
+    (soundGen.soundscapeData ?? []).forEach((s: any) => {
+      if (s.prompt_index !== undefined) generatedMap.set(s.prompt_index, s);
+    });
+
+    return soundGen.soundConfigs
+      .map((config, index) => {
+        if (config.parentUsageOriginalIndex !== activeSoundParentIndex) return null;
+
+        if (generatedMap.has(index)) return generatedMap.get(index);
+
+        // Pending placeholder — resolve position with same priority as handleAttachSoundToEntity:
+        //   1. Entity bounding-box center  2. Explicit config.position  3. [0,0,0]
+        let position: [number, number, number] = [0, 0, 0];
+        if (config.entity) {
+          const ec = config.entity;
+          if (ec.bounds?.center) {
+            position = [ec.bounds.center[0], ec.bounds.center[1], ec.bounds.center[2]];
+          } else if (ec.position?.length >= 3) {
+            position = [ec.position[0], ec.position[1], ec.position[2]];
+          }
+        } else if (config.position) {
+          position = config.position as [number, number, number];
+        }
+
+        // entity_index: non-undefined routes sphere manager to label-only branch (no mesh).
+        // Use -(index+1) as a sentinel for foley entities with no numeric index.
+        const entity_index: number | undefined = config.entity
+          ? (config.entity.index ?? -(index + 1))
+          : undefined;
+
+        return {
+          id: `pending_${index}`,
+          url: '',
+          position,
+          geometry: { vertices: [] as number[][], faces: [] as number[][] },
+          display_name: config.display_name || config.prompt || `Sound ${index + 1}`,
+          prompt_index: index,
+          isPending: true,
+          entity_index,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+  }, [soundGen.soundConfigs, soundGen.soundscapeData, activeSoundParentIndex]);
+
+  // Handler: Extract SED audio segments and inject them as upload-type sound cards
+  const handleAudioExtract = useCallback(async (config: AudioAnalysisConfig, originalIndex: number) => {
+    if (!config.audioFile) return;
+    const result = analysis.analysisResults.find((r) => r.configIndex === originalIndex);
+    if (!result) return;
+    const selectedPrompts = result.prompts.filter((p) => p.selected);
+    if (selectedPrompts.length === 0) return;
+
+    const segmentsList = selectedPrompts
+      .map((p) => ({ name: p.text, detection_segments: p.metadata?.detection_segments ?? [] }))
+      .filter((s) => s.detection_segments.length > 0);
+    if (segmentsList.length === 0) return;
+
+    const formData = new FormData();
+    formData.append('file', config.audioFile);
+    formData.append('segments_json', JSON.stringify(segmentsList));
+    formData.append('apply_noise_reduction', String(config.applyNoiseReduction ?? false));
+    formData.append('target_spl_db', String(selectedPrompts[0]?.metadata?.spl_db ?? 70));
+
+    const res = await fetch(`${API_BASE_URL}/api/extract-sed-segments`, { method: 'POST', body: formData });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error((err as any).detail || 'Extraction failed');
+    }
+    const data = await res.json();
+    const sounds = (data.sounds as any[]).map((s: any, si: number) => ({
+      name: s.name,
+      spl_db: selectedPrompts[si]?.metadata?.spl_db,
+      interval_seconds: selectedPrompts[si]?.metadata?.interval_seconds,
+      variants: s.variants,
+    }));
+    soundGen.injectExtractedSEDSounds(sounds, -(originalIndex + 1));
+    console.log(`[handleAudioExtract] Injected ${sounds.length} sounds from audio card ${originalIndex} (parentKey=${-(originalIndex + 1)})`);
+  }, [analysis.analysisResults, soundGen]);
+  const handleSendAnalysisToGeneration = useCallback((parentUsageIndex?: number) => {
     analysis.handleSendToSoundGeneration((prompts) => {
       // Resolve a full entity object from a Speckle tree ID by searching the world tree.
       // objectsInvolved from the foley LLM contains Speckle tree IDs, so we can search directly.
@@ -653,12 +759,17 @@ function HomeContent() {
         interval_seconds: p.metadata?.interval_seconds ?? 5, // Default interval if not provided
         display_name: p.displayName || (p.text.length > 50 ? p.text.substring(0, 47) + '...' : p.text),
         // Resolve entity from world tree when available; pass foley position as bounds fallback.
-        // Non-entity sounds get no entity object — SoundSphereManager places them at camera-front.
+        // Non-entity sounds get no entity object — SoundSphereManager uses the explicit position.
         entity: p.entity?.id
           ? resolveEntityFromTreeId(p.entity.id, p.entity.foleyPosition)
           : undefined,
+        // Forward explicit position for non-entity sounds (e.g. HVAC Hum with [x,y,z] from foley).
+        // Camera-front placement is the fallback only when position is absent or [0,0,0].
+        ...(p.position && !p.entity?.id ? { position: p.position } : {}),
         // Pass foley timestamps through so they can be applied after generation
         ...(p.metadata?.timestamps?.length ? { timestamps: p.metadata.timestamps } : {}),
+        // Tag with parent usage card so Sounds section can filter by parent
+        ...(parentUsageIndex !== undefined ? { parentUsageOriginalIndex: parentUsageIndex } : {}),
       }));
 
       console.log('[Analysis→SoundGen] Converted configs with metadata:', 
@@ -667,12 +778,12 @@ function HomeContent() {
       // Add to sound generation
       soundGen.setSoundConfigsFromPrompts(newConfigs);
       
-      // Switch to sound generation tab
-      textGen.setActiveAiTab('sound');
+      // Advance to Sounds step in sidebar
+      setStepAdvanceTrigger(t => t + 1);
 
       console.log(`Loaded ${newConfigs.length} prompts from analysis to sound generation`);
-    });
-  }, [analysis, soundGen, textGen]);
+    }, parentUsageIndex);
+  }, [analysis, soundGen]);
 
   // Handler: Analyze with context data (passes diverse selection + viewerRef to useAnalysis)
   const handleAnalyzeWithContext = useCallback((index: number) => {
@@ -713,8 +824,8 @@ function HomeContent() {
     // Add the sound configs (appends to existing configs)
     soundGen.setSoundConfigsFromPrompts(newConfigs);
 
-    // Switch to sound generation tab
-    textGen.setActiveAiTab('sound');
+    // Advance to Sounds step in sidebar
+    setStepAdvanceTrigger(t => t + 1);
 
     console.log(`Loaded ${newConfigs.length} sounds from SED analysis`);
   }, [sed, soundGen, textGen]);
@@ -1101,10 +1212,8 @@ function HomeContent() {
 
   // Handle sound card selection from ThreeScene (sound sphere click)
   const handleSelectSoundCard = useCallback((promptIndex: number) => {
-    // Only expand the card in the left sidebar if already on the Sounds tab
-    if (textGen.activeAiTab === 'sound') {
-      setSelectedCardIndex(promptIndex);
-    }
+    // Expand the card in the left sidebar
+    setSelectedCardIndex(promptIndex);
 
     // Set selectedEntity with objectType 'Sound' → triggers right sidebar expansion
     const sound = soundGen.generatedSounds.find(s => s.prompt_index === promptIndex);
@@ -1116,7 +1225,7 @@ function HomeContent() {
       objectType: 'Sound',
       soundData: { promptIndex },
     });
-  }, [textGen.activeAiTab, soundGen.generatedSounds, setSelectedEntity]);
+  }, [soundGen.generatedSounds, setSelectedEntity]);
 
   /**
    * Helper: Get current selectedDiverseEntities from analysis config
@@ -1870,8 +1979,8 @@ function HomeContent() {
             audioRenderingMode={audioRenderingMode}
             selectedIRId={selectedIRId}
             auralizationConfig={auralizationConfig}
-            // Soundscape data
-            soundscapeData={soundGen.soundscapeData}
+            // Soundscape data (filtered to active parent when Sounds step is active)
+            soundscapeData={unifiedSoundscapeData}
             scaleForSounds={fileUpload.scaleForSounds}
             // Receivers
             receivers={receivers.receivers}
@@ -1887,14 +1996,22 @@ function HomeContent() {
             expandedGridListenerId={expandedGridListenerId}
             listenerOrientation={listenerOrientation}
             // Sound sphere position update (for simulation sync when dragging)
-            onUpdateSoundPosition={soundGen.updateSoundPosition}
+            onUpdateSoundPosition={(soundId, position) => {
+              if (soundId.startsWith('pending_')) {
+                const idx = parseInt(soundId.slice('pending_'.length), 10);
+                if (!isNaN(idx)) soundGen.handleUpdateConfig(idx, 'position', position);
+              } else {
+                soundGen.updateSoundPosition(soundId, position);
+              }
+            }}
             // Sound Linking (entity linking from SoundCard to Speckle object)
             entitiesWithLinkedSounds={(() => {
-              // Build set of entity indices that have sounds linked
               const linked = new Set<number>();
+              // Only highlight entities when in the Sounds step (activeSoundParentIndex is set)
+              if (activeSoundParentIndex === null || activeSoundParentIndex === undefined) return linked;
               soundGen.soundConfigs.forEach((config) => {
+                if (config.parentUsageOriginalIndex !== activeSoundParentIndex) return;
                 if (config.entity && config.entity.id !== undefined) {
-                  // Parse entity index from entity.id if numeric
                   const entityIndex = typeof config.entity.id === 'number'
                     ? config.entity.id
                     : parseInt(config.entity.id, 10);
@@ -1959,18 +2076,7 @@ function HomeContent() {
       {/* Left Sidebar - Overlays on top of scene */}
       <Sidebar
         // File upload props
-        modelFile={fileUpload.modelFile}
-        speckleData={(() => {
-          // Priority: config with speckleData > globalSpeckleData
-          const modelConfigs = analysis.analysisConfigs.filter(c => c.type === '3d-model') as import('@/types/analysis').ModelAnalysisConfig[];
-          const configWithSpeckle = [...modelConfigs].reverse().find(c => c.speckleData !== undefined);
-          if (configWithSpeckle?.speckleData) {
-            return configWithSpeckle.speckleData;
-          }
-          return globalSpeckleData;
-        })()}
         audioFile={fileUpload.audioFile}
-        geometryData={fileUpload.geometryData}
         uploadError={fileUpload.uploadError}
         isUploading={fileUpload.isUploading}
         isDragging={fileUpload.isDragging}
@@ -2058,19 +2164,95 @@ function HomeContent() {
         onDuplicateConfig={soundGen.handleDuplicateConfig}
         onSelectSoundCard={handleSelectSoundCard}
         selectedCardIndex={selectedCardIndex}
-        // AI tab props
-        activeAiTab={textGen.activeAiTab}
-        setActiveAiTab={textGen.setActiveAiTab}
+        // Analysis props
+        analysisConfigs={analysis.analysisConfigs}
+        stepAdvanceTrigger={stepAdvanceTrigger}
+        isAnalyzing={analysis.isAnalyzing}
+        analysisError={analysis.analysisError}
+        analysisResult={analysis.analysisResults}
+        hasGlobalModelLoaded={globalSpeckleData !== null}
+        onAddAnalysisConfig={handleAddAnalysisConfig}
+        onRemoveAnalysisConfig={analysis.handleRemoveConfig}
+        onUpdateAnalysisConfig={analysis.handleUpdateConfig}
+        onAnalyze={handleAnalyzeWithContext}
+        onStop={analysis.handleStopAnalysis}
+        onTogglePromptSelection={analysis.handleTogglePromptSelection}
+        onSendToSoundGeneration={handleSendAnalysisToGeneration}
+        onResetAnalysis={analysis.handleReset}
+        onAudioExtract={handleAudioExtract}
+        
+        // Advanced settings props
+        normalizeImpulseResponses={auralizationConfig.normalize}
+        showAxesHelper={showAxesHelper}
+        onNormalizeImpulseResponsesChange={handleToggleNormalize}
+        onShowAxesHelperChange={setShowAxesHelper}
+        showLabelSprites={showLabelSprites}
+        onShowLabelSpritesChange={setShowLabelSprites}
+        showHoveringHighlight={showHoveringHighlight}
+        onShowHoveringHighlightChange={setShowHoveringHighlight}
+        showSoundSpheres={showSoundSpheres}
+        onShowSoundSpheresChange={setShowSoundSpheres}
+        showSceneListeners={showSceneListeners}
+        onShowSceneListenersChange={setShowSceneListeners}
+        showGroundGrid={showGroundGrid}
+        onShowGroundGridChange={setShowGroundGrid}
+        groundGridSpacing={groundGridSpacing}
+        onGroundGridSpacingChange={setGroundGridSpacing}
+        groundGridColor={groundGridColor}
+        onGroundGridColorChange={setGroundGridColor}
+        onResetAdvancedSettings={handleResetAdvancedSettings}
+        listenerOrientation={listenerOrientation}
+        onListenerOrientationChange={setListenerOrientation}
+      />
 
-        // Soundscape data
-        soundscapeData={soundGen.soundscapeData}
+      {/* Advanced Settings floating panel */}
+      <AdvancedSettingsPanel
+        isVisible={showAdvancedSettings}
+        onClose={() => setShowAdvancedSettings(false)}
+        globalDuration={soundGen.globalDuration}
+        globalSteps={soundGen.globalSteps}
+        globalNegativePrompt={soundGen.globalNegativePrompt}
+        applyDenoising={soundGen.applyDenoising}
+        normalizeImpulseResponses={auralizationConfig.normalize}
+        audioModel={soundGen.audioModel}
+        llmModel={soundGen.llmModel}
+        onGlobalDurationChange={soundGen.handleGlobalDurationChange}
+        onGlobalStepsChange={soundGen.handleGlobalStepsChange}
+        onGlobalNegativePromptChange={soundGen.setGlobalNegativePrompt}
+        onApplyDenoisingChange={soundGen.setApplyDenoising}
+        onNormalizeImpulseResponsesChange={handleToggleNormalize}
+        onAudioModelChange={soundGen.setAudioModel}
+        onLlmModelChange={soundGen.setLlmModel}
+        onResetToDefaults={handleResetAdvancedSettings}
+        showAxesHelper={showAxesHelper}
+        onShowAxesHelperChange={setShowAxesHelper}
+        showLabelSprites={showLabelSprites}
+        onShowLabelSpritesChange={setShowLabelSprites}
+        showHoveringHighlight={showHoveringHighlight}
+        onShowHoveringHighlightChange={setShowHoveringHighlight}
+        showSoundSpheres={showSoundSpheres}
+        onShowSoundSpheresChange={setShowSoundSpheres}
+        showSceneListeners={showSceneListeners}
+        onShowSceneListenersChange={setShowSceneListeners}
+        showGroundGrid={showGroundGrid}
+        onShowGroundGridChange={setShowGroundGrid}
+        groundGridSpacing={groundGridSpacing}
+        onGroundGridSpacingChange={setGroundGridSpacing}
+        groundGridColor={groundGridColor}
+        onGroundGridColorChange={setGroundGridColor}
+        listenerOrientation={listenerOrientation}
+        onListenerOrientationChange={setListenerOrientation}
+      />
 
+      {/* Right Sidebar - Acoustics + Listeners */}
+      <RightSidebar
+        isVisible={useSpeckleViewer}
+        onWidthChange={setRightSidebarWidth}
         // IR Library props
         onSelectIRFromLibrary={handleSelectIRFromLibrary}
         onClearIR={handleClearIR}
         selectedIRId={selectedIRId}
         auralizationConfig={auralizationConfig}
-
         // Receiver props
         receivers={receivers.receivers}
         onAddReceiver={handleAddReceiver}
@@ -2091,10 +2273,9 @@ function HomeContent() {
         onComputeBounds={computeBoundsForObjectIds}
         expandedGridListenerId={expandedGridListenerId}
         onExpandedGridListenerChange={setExpandedGridListenerId}
-
         // ShoeBox Acoustics props
         resonanceAudioConfig={resonanceAudioConfig}
-        onToggleResonanceAudio={() => {}} // No-op: mode switching handled by audioRenderingMode
+        onToggleResonanceAudio={() => {}}
         onUpdateRoomMaterials={handleUpdateRoomMaterials}
         hasGeometry={fileUpload.geometryData !== null}
         showBoundingBox={showBoundingBox}
@@ -2102,76 +2283,37 @@ function HomeContent() {
         onRefreshBoundingBox={handleRefreshBoundingBox}
         roomScale={roomScale}
         onRoomScaleChange={setRoomScale}
-
-        // Audio Orchestrator props (TODO: Phase 1-6)
+        // Audio Orchestrator props
         audioRenderingMode={audioRenderingMode}
         onAudioRenderingModeChange={handleAudioRenderingModeChange}
-
-        // Material assignment props (NEW)
+        // Material assignment props
         modelType={modelType}
+        modelEntities={fileUpload.modelEntities}
+        geometryData={fileUpload.geometryData}
         selectedGeometry={selectedGeometry}
         onSelectGeometry={handleSelectGeometry}
         onHoverGeometry={handleHoverGeometry}
         onAssignMaterial={handleAssignMaterial}
+        modelFile={fileUpload.modelFile}
+        speckleData={(() => {
+          const modelConfigs = analysis.analysisConfigs.filter(c => c.type === '3d-model') as import('@/types/analysis').ModelAnalysisConfig[];
+          const configWithSpeckle = [...modelConfigs].reverse().find(c => c.speckleData !== undefined);
+          if (configWithSpeckle?.speckleData) return configWithSpeckle.speckleData;
+          return globalSpeckleData;
+        })()}
+        soundscapeData={soundGen.soundscapeData}
         onIRImported={handleIRImported}
         irRefreshTrigger={irRefreshTrigger}
-
-        // Acoustics simulation state (passed down to avoid duplicate hook calls)
+        // Acoustics simulation state
         simulationConfigs={acousticsSimulation.simulationConfigs}
         activeSimulationIndex={acousticsSimulation.activeSimulationIndex}
-        expandedTabIndex={acousticsSimulation.expandedTabIndex}
         onAddSimulationConfig={acousticsSimulation.handleAddConfig}
         onRemoveSimulationConfig={acousticsSimulation.handleRemoveConfig}
         onUpdateSimulationConfig={acousticsSimulation.handleUpdateConfig}
         onSetActiveSimulation={acousticsSimulation.handleSetActiveSimulation}
         onUpdateSimulationName={acousticsSimulation.handleUpdateSimulationName}
-        onToggleExpandSimulation={acousticsSimulation.handleToggleExpand}
         onIRHover={handleIRHover}
-
-        // Analysis props
-        analysisConfigs={analysis.analysisConfigs}
-        activeAnalysisTab={analysis.activeAnalysisTab}
-        isAnalyzing={analysis.isAnalyzing}
-        analysisError={analysis.analysisError}
-        analysisResult={analysis.analysisResults}
-        hasGlobalModelLoaded={globalSpeckleData !== null}
-        onAddAnalysisConfig={handleAddAnalysisConfig}
-        onRemoveAnalysisConfig={analysis.handleRemoveConfig}
-        onUpdateAnalysisConfig={analysis.handleUpdateConfig}
-        onSetActiveAnalysisTab={analysis.setActiveAnalysisTab}
-        onAnalyze={handleAnalyzeWithContext}
-        onStop={analysis.handleStopAnalysis}
-        onTogglePromptSelection={analysis.handleTogglePromptSelection}
-        onSendToSoundGeneration={handleSendAnalysisToGeneration}
-        onResetAnalysis={analysis.handleReset}
-        
-        // Advanced settings props
-        normalizeImpulseResponses={auralizationConfig.normalize}
-        showAxesHelper={showAxesHelper}
-        onNormalizeImpulseResponsesChange={handleToggleNormalize}
-        onShowAxesHelperChange={setShowAxesHelper}
-        showLabelSprites={showLabelSprites}
-        onShowLabelSpritesChange={setShowLabelSprites}
-        showHoveringHighlight={showHoveringHighlight}
-        onShowHoveringHighlightChange={setShowHoveringHighlight}
-        showSoundSpheres={showSoundSpheres}
-        onShowSoundSpheresChange={setShowSoundSpheres}
-        showSceneListeners={showSceneListeners}
-        onShowSceneListenersChange={setShowSceneListeners}
-        onResetAdvancedSettings={handleResetAdvancedSettings}
-        listenerOrientation={listenerOrientation}
-        onListenerOrientationChange={setListenerOrientation}
-        // Sidebar expanded state callback
-        onExpandedChange={setIsLeftSidebarExpanded}
-        onWidthChange={setLeftSidebarContentWidth}
-      />
-
-      {/* Right Sidebar - 3D Model Import / Object Explorer */}
-      <RightSidebar
-        isVisible={useSpeckleViewer}
-        onGoToReceiver={handleGoToReceiver}
-        generatedSounds={soundGen.generatedSounds}
-        onWidthChange={setRightSidebarWidth}
+        fpsExitTrigger={collapseListenerCardTrigger}
       />
     </div>
   );

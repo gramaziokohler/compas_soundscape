@@ -17,6 +17,8 @@ import { devtools } from 'zustand/middleware';
 import { FilteringExtension, CameraController, type Viewer } from '@speckle/viewer';
 import type React from 'react';
 import type { ArchitecturalObject } from '@/types/analysis';
+import { useUIStore } from './uiStore';
+import { useSoundscapeStore } from './soundscapeStore';
 
 // ─── Types (re-exported for consumers) ───────────────────────────────────────
 
@@ -122,6 +124,8 @@ export interface SpeckleStoreState {
   trackExplorerHide: (ids: string[]) => void;
   trackExplorerShow: (ids: string[]) => void;
   clearExplorerHidden: () => void;
+  /** Returns the live set of object IDs hidden via the ObjectExplorer. */
+  getExplorerHiddenIds: () => Set<string>;
   // Object Explorer isolation tracking (so applyFilterColors can suppress colors for non-isolated objects)
   trackExplorerIsolate: (ids: string[]) => void;
   /** Remove specific IDs from the isolation set (un-isolate without clearing all isolation) */
@@ -378,30 +382,52 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         if (diverseOnlyIds.length > 0)
           colorGroups.push({ objectIds: diverseOnlyIds, color: 'var(--color-success)' });
 
-        const pendingLinkedIds = Array.from(currentLinks.keys()).filter(
-          (id) => !currentGenerated.has(id) && !isExcluded(id),
-        );
-        const pendingColor = getComputedStyle(document.documentElement)
-          .getPropertyValue('--color-primary-light')
-          .trim();
-        const generatedColor = getComputedStyle(document.documentElement)
-          .getPropertyValue('--color-primary')
-          .trim();                       
-        
-        if (pendingLinkedIds.length > 0)
-          colorGroups.push({
-            objectIds: pendingLinkedIds,
-            color: pendingColor,
-          });
+        // Only color entity-linked objects when in the Sounds step (activeSoundParentIndex is set),
+        // AND only for the objects whose sound prompt belongs to the active parent.
+        const activeSoundParentIndex = useUIStore.getState().activeSoundParentIndex;
+        const inSoundsStep = activeSoundParentIndex !== null && activeSoundParentIndex !== undefined;
 
-        const generatedLinkedIds = Array.from(currentLinks.keys()).filter(
-          (id) => currentGenerated.has(id) && !isExcluded(id),
-        );
-        if (generatedLinkedIds.length > 0)
-          colorGroups.push({
-            objectIds: generatedLinkedIds,
-            color: generatedColor,
-          });
+        if (inSoundsStep) {
+          // Build the set of promptIndices that belong to the active parent.
+          const soundConfigs = useSoundscapeStore.getState().soundConfigs;
+          const activePromptIndices = new Set<number>(
+            soundConfigs.reduce<number[]>((acc, cfg, idx) => {
+              if (cfg.parentUsageOriginalIndex === activeSoundParentIndex) acc.push(idx);
+              return acc;
+            }, []),
+          );
+
+          // Only include links whose promptIndex is in the active parent's set.
+          const isActiveLink = (id: string) => {
+            const promptIndex = currentLinks.get(id);
+            return promptIndex !== undefined && activePromptIndices.has(promptIndex);
+          };
+
+          const pendingLinkedIds = Array.from(currentLinks.keys()).filter(
+            (id) => !currentGenerated.has(id) && !isExcluded(id) && isActiveLink(id),
+          );
+          const pendingColor = getComputedStyle(document.documentElement)
+            .getPropertyValue('--color-primary-light')
+            .trim();
+          const generatedColor = getComputedStyle(document.documentElement)
+            .getPropertyValue('--color-primary')
+            .trim();
+
+          if (pendingLinkedIds.length > 0)
+            colorGroups.push({
+              objectIds: pendingLinkedIds,
+              color: pendingColor,
+            });
+
+          const generatedLinkedIds = Array.from(currentLinks.keys()).filter(
+            (id) => currentGenerated.has(id) && !isExcluded(id) && isActiveLink(id),
+          );
+          if (generatedLinkedIds.length > 0)
+            colorGroups.push({
+              objectIds: generatedLinkedIds,
+              color: generatedColor,
+            });
+        }
 
         // Hover highlight (scenario object reference hover)
         // Resolve the CSS variable to a concrete color string — the Speckle viewer's
@@ -506,6 +532,21 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
       // ── Object Explorer hide tracking ─────────────────────────────────────
       // These keep _explorerHiddenIdsRef in sync so applyFilterColors can suppress
       // colors for hidden objects without relying on filteringState (which may be stale).
+      getExplorerHiddenIds: () => {
+        // Read from FilteringExtension for the complete expanded set — includes all
+        // descendants that were hidden via includeDescendants=true (e.g. hiding a
+        // parent layer also populates child mesh IDs in filteringState.hiddenObjects).
+        // Fall back to the locally-tracked ref when the viewer is not yet ready.
+        if (_viewerRef) {
+          try {
+            const ext = _viewerRef.getExtension(FilteringExtension);
+            const hidden = ext?.filteringState?.hiddenObjects;
+            if (hidden) return new Set<string>(hidden);
+          } catch { /* fall through */ }
+        }
+        return _explorerHiddenIdsRef;
+      },
+
       trackExplorerHide: (ids) => {
         ids.forEach((id) => _explorerHiddenIdsRef.add(id));
         get().applyFilterColors();

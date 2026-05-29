@@ -99,6 +99,8 @@ export interface SoundEvent {
   timestamps?: string[];
   /** Default scheduling mode hint carried from source data. */
   scheduling_mode?: 'interval' | 'timestamps';
+  /** True for pre-generation placeholder spheres (no audio, lighter color). */
+  isPending?: boolean;
 }
 
 export interface UIOverlay {
@@ -154,6 +156,8 @@ export interface SoundGenerationConfig {
   error?: string | null; // Per-card error message
   /** Explicit playback timestamps in "MM:SS" format (from foley/scenario JSON). */
   timestamps?: string[];
+  /** Manual position override for pre-generation sphere placement. */
+  position?: [number, number, number];
   // Uploaded audio fields (when bypassing generation)
   uploadedAudioBuffer?: AudioBuffer; // Audio buffer for playback
   uploadedAudioInfo?: SEDAudioInfo; // Audio metadata for display
@@ -164,6 +168,8 @@ export interface SoundGenerationConfig {
   // Catalog (Google Sound Library) fields
   selectedCatalogSound?: CatalogSoundSelection; // Selected sound from catalog
   catalogSelectedCategory?: { id: string; name: string }; // Persisted category selection for undo
+  /** Original index of the usage card that generated this sound config (for parent-child filtering) */
+  parentUsageOriginalIndex?: number;
 }
 
 /** A sound selected from the Google Sound Library catalog */

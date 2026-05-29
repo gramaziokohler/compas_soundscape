@@ -81,12 +81,16 @@ class UnifiedPromptGenerationRequest(BaseModel):
 # ─── 3D Model Analysis Schemas ────────────────────────────────────────────────
 
 class ModelObjectResult(BaseModel):
-    """A single identified object/group from a 3D model analysis."""
+    """A single identified object/group from a 3D model analysis.
+
+    object_ids maps each Speckle hex ID → {"min_bounds": [x,y,z], "max_bounds": [x,y,z]}
+    in metres, derived from entity bbox data after LLM analysis.
+    """
     name: str
     description: str
     material: str
     quantity: int
-    object_ids: list[str]
+    object_ids: dict[str, dict]  # {speckle_hex_id: {"min_bounds": [x,y,z], "max_bounds": [x,y,z]}}
     confidence: float
 
 
@@ -482,9 +486,22 @@ class SoundscapeLoadResponse(BaseModel):
 
 # ── LLM Analysis Output Schemas ───────────────────────────────────────────────
 
+class ModelObjectResultRaw(BaseModel):
+    """Raw LLM output for a single object group — object_ids are a flat list of hex strings.
+    Used only as the structured-output schema for _call_llm; post-processing converts
+    this to ModelObjectResult (with dict-format object_ids).
+    """
+    name: str
+    description: str
+    material: str
+    quantity: int
+    object_ids: list[str]
+    confidence: float
+
+
 class ModelAnalysisOutput(BaseModel):
     """Wrapper for 3D model analysis output (all providers require object root, not bare array)."""
-    objects: list[ModelObjectResult]
+    objects: list[ModelObjectResultRaw]
 
 
 class ScenarioEvent(BaseModel):

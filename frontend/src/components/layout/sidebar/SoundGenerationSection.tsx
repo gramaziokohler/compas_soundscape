@@ -8,7 +8,7 @@ import type { CardTypeOption } from "@/components/ui/CardSection";
 import type { CustomMenuItem } from "@/types/card";
 import { CardSection } from "@/components/ui/CardSection";
 import { Card } from "@/components/ui/Card";
-import { SoundConfigContent, SoundResultContent } from "./sound";
+import { SoundPreContent, SoundResultContent } from "./sound";
 import { apiService } from "@/services/api";
 import { useAudioControlsStore, useSoundscapeStore } from "@/store";
 import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
@@ -52,6 +52,8 @@ function getSoundSourceName(sound: SoundEvent | undefined, config: SoundGenerati
 interface SoundCardConfig extends CardBaseConfig {
   type: CardType;
   originalConfig: SoundGenerationConfig;
+  /** Original index of this config in the full soundConfigs array (used for correct store access when filtering) */
+  originalIndex: number;
 }
 
 export function SoundGenerationSection({
@@ -84,12 +86,20 @@ export function SoundGenerationSection({
   selectedCardIndex = null,
   onDuplicateConfig,
   audioModel = AUDIO_MODEL_TANGOFLUX,
+  visibleParentUsageIndex,
 }: SoundGenerationSectionProps) {
   const serviceVersions = useServiceVersions();
 
   // ── UI store for sidebar→scene communication ──
   const setExpandedSoundCardIndex = useUIStore(s => s.setExpandedSoundCardIndex);
   const triggerZoomToSoundCard    = useUIStore(s => s.triggerZoomToSoundCard);
+
+  // Clear entity highlight in 3D scene when Sounds section unmounts (user navigates away)
+  useEffect(() => {
+    return () => {
+      setExpandedSoundCardIndex(null);
+    };
+  }, [setExpandedSoundCardIndex]);
 
   // ── Sound generation progress from store ──
   const soundGenProgress          = useSoundscapeStore((s) => s.soundGenProgress);
@@ -224,19 +234,24 @@ export function SoundGenerationSection({
 
   // Handle type selection from dropdown
   const handleTypeSelect = useCallback(async (type: CardType) => {
+    const newOriginalIndex = soundConfigs.length; // new config will be appended at this index
     onAddConfig(type);
+
+    // Tag new sound with parent usage index if we have a filter active
+    if (visibleParentUsageIndex !== null && visibleParentUsageIndex !== undefined) {
+      onUpdateConfig(newOriginalIndex, 'parentUsageOriginalIndex', visibleParentUsageIndex);
+    }
 
     // If sample-audio type, auto-load the sample file
     if (type === 'sample-audio') {
       try {
-        const newIndex = soundConfigs.length;
         const sampleFile = await apiService.loadSampleAudio();
-        await onUploadAudio(newIndex, sampleFile);
+        await onUploadAudio(newOriginalIndex, sampleFile);
       } catch (error) {
         console.error('[SoundGenerationSection] Failed to load sample audio:', error);
       }
     }
-  }, [soundConfigs.length, onAddConfig, onUploadAudio]);
+  }, [soundConfigs.length, onAddConfig, onUploadAudio, visibleParentUsageIndex, onUpdateConfig]);
 
   // Handle card type switching - uses the hook's handleTypeChange for proper state management
   const handleSwitchCardType = useCallback(async (index: number, newType: CardType) => {
@@ -249,15 +264,39 @@ export function SoundGenerationSection({
     }
   }, [soundConfigs, onTypeChange]);
 
-  // Auto-expand newly added items (controlled mode)
-  const prevConfigsLength = useRef(soundConfigs.length);
+  // Convert SoundGenerationConfig to SoundCardConfig for CardSection
+  const cardItems: SoundCardConfig[] = useMemo(() => {
+    return soundConfigs.map((config, i) => ({
+      type: config.type || 'text-to-audio',
+      display_name: config.display_name,
+      originalConfig: config,
+      originalIndex: i,
+    }));
+  }, [soundConfigs]);
+
+  // Filter by active parent usage index when set
+  const filteredCardItems: SoundCardConfig[] = useMemo(() => {
+    if (visibleParentUsageIndex === null || visibleParentUsageIndex === undefined) return cardItems;
+    return cardItems.filter(
+      (item) => item.originalConfig.parentUsageOriginalIndex === visibleParentUsageIndex,
+    );
+  }, [cardItems, visibleParentUsageIndex]);
+
+  // Auto-expand newly added items (controlled mode) — track filteredCardItems length
+  // Note: initialized as null so first render is treated as "baseline" (no auto-expand on mount)
+  const prevConfigsLength = useRef<number | null>(null);
   useEffect(() => {
-    if (soundConfigs.length > prevConfigsLength.current) {
-      // New item was added, expand it
-      setExpandedIndex(soundConfigs.length - 1);
+    if (prevConfigsLength.current === null) {
+      // First render — record baseline, do not auto-expand existing items
+      prevConfigsLength.current = filteredCardItems.length;
+      return;
     }
-    prevConfigsLength.current = soundConfigs.length;
-  }, [soundConfigs.length]);
+    if (filteredCardItems.length > prevConfigsLength.current) {
+      // New item was added that is visible in the current filter, expand it
+      setExpandedIndex(filteredCardItems.length - 1);
+    }
+    prevConfigsLength.current = filteredCardItems.length;
+  }, [filteredCardItems.length]);
 
   // Keep a ref to soundConfigs.length so the selection effect below can bounds-check
   // without listing soundConfigs.length as a dependency (which would cause the effect
@@ -266,12 +305,13 @@ export function SoundGenerationSection({
   soundConfigsLengthRef.current = soundConfigs.length;
 
   // When a card is selected externally (from ThreeScene / sphere click), expand it.
-  // Only re-runs when selectedCardIndex changes — NOT when soundConfigs.length changes.
+  // Map original index → filtered position first.
   useEffect(() => {
-    if (selectedCardIndex !== null && selectedCardIndex >= 0 && selectedCardIndex < soundConfigsLengthRef.current) {
-      setExpandedIndex(selectedCardIndex);
+    if (selectedCardIndex !== null && selectedCardIndex >= 0) {
+      const filteredIdx = filteredCardItems.findIndex(item => item.originalIndex === selectedCardIndex);
+      if (filteredIdx >= 0) setExpandedIndex(filteredIdx);
     }
-  }, [selectedCardIndex]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedCardIndex, filteredCardItems]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-name cards when sounds are generated
   const autoNamedIndices = useRef<Set<number>>(new Set());
@@ -301,13 +341,17 @@ export function SoundGenerationSection({
   // Note: does NOT call onSelectSoundCard — that callback is only for scene-to-sidebar
   // communication (sound sphere / linked object click) and would trigger right sidebar expansion.
   // Instead, we write directly to uiStore so SpeckleScene can highlight the sphere.
-  const handleExpandedIndexChange = useCallback((newIndex: number | null) => {
+  const handleExpandedIndexChange = useCallback((newFilteredIndex: number | null) => {
     if (previewingSoundId) {
       onPreviewStop?.(previewingSoundId);
     }
-    setExpandedIndex(newIndex);
-    setExpandedSoundCardIndex(newIndex);
-  }, [previewingSoundId, onPreviewStop, setExpandedSoundCardIndex]);
+    setExpandedIndex(newFilteredIndex);
+    // Map filtered position → original index for 3D scene sync
+    const originalIdx = newFilteredIndex !== null
+      ? (filteredCardItems[newFilteredIndex]?.originalIndex ?? null)
+      : null;
+    setExpandedSoundCardIndex(originalIdx);
+  }, [previewingSoundId, onPreviewStop, setExpandedSoundCardIndex, filteredCardItems]);
 
   // Available card types for add button dropdown (sound types only)
   const availableTypes: CardTypeOption[] = useMemo(() => [
@@ -320,7 +364,7 @@ export function SoundGenerationSection({
 
   // Calculate pending count
   const getPendingCount = useCallback((items: SoundCardConfig[]) => {
-    return items.filter((_, index) => !isSoundGenerated(index)).length;
+    return items.filter((item) => !isSoundGenerated(item.originalIndex)).length;
   }, [isSoundGenerated]);
 
   // Get collapsed info for a config
@@ -346,19 +390,11 @@ export function SoundGenerationSection({
     return '';
   }, [isSoundGenerated, getVariantsForPrompt, isSoundGenerating, soundConfigs]);
 
-  // Convert SoundGenerationConfig to SoundCardConfig for CardSection
-  const cardItems: SoundCardConfig[] = useMemo(() => {
-    return soundConfigs.map((config) => ({
-      type: config.type || 'text-to-audio',
-      display_name: config.display_name,
-      originalConfig: config,
-    }));
-  }, [soundConfigs]);
-
   // Handle config update (bridge between Card's partial update and original update signature)
-  const handleUpdateConfig = useCallback((index: number, updates: Partial<SoundCardConfig>) => {
+  // Note: `originalIndex` is passed explicitly; the `index` arg from Card is ignored.
+  const handleUpdateConfig = useCallback((originalIndex: number, updates: Partial<SoundCardConfig>) => {
     if (updates.display_name !== undefined) {
-      onUpdateConfig(index, 'display_name', updates.display_name);
+      onUpdateConfig(originalIndex, 'display_name', updates.display_name);
     }
   }, [onUpdateConfig]);
 
@@ -369,11 +405,14 @@ export function SoundGenerationSection({
     isExpanded: boolean,
     onToggleExpandFn: (index: number) => void
   ) => {
+    // originalIndex = position in the full soundConfigs array (used for all store ops)
+    // index        = position in filteredCardItems (used for expand/collapse display)
+    const originalIndex = item.originalIndex;
     const config = item.originalConfig;
-    const isGenerated = isSoundGenerated(index);
-    const generatedSound = getGeneratedSound(index);
-    const variants = getVariantsForPrompt(index);
-    const selectedVariantIdx = getSelectedVariantIdx(index);
+    const isGenerated = isSoundGenerated(originalIndex);
+    const generatedSound = getGeneratedSound(originalIndex);
+    const variants = getVariantsForPrompt(originalIndex);
+    const selectedVariantIdx = getSelectedVariantIdx(originalIndex);
     const isMuted = generatedSound ? mutedSounds.has(generatedSound.id) : false;
     const isSoloed = generatedSound ? soloedSound === generatedSound.id : false;
     // When any sound is soloed, dim all other generated cards the same way as muted
@@ -399,7 +438,7 @@ export function SoundGenerationSection({
           disabled: option.type === item.type,
           onClick: (e: React.MouseEvent) => {
             e.stopPropagation();
-            if (option.type !== item.type) handleSwitchCardType(index, option.type);
+            if (option.type !== item.type) handleSwitchCardType(originalIndex, option.type);
           },
         })),
       });
@@ -407,7 +446,7 @@ export function SoundGenerationSection({
 
     // Link button (if entities available or Speckle viewer active)
     if (modelEntities.length > 0 || useSpeckleViewer) {
-      const isCurrentlyLinking = isLinkingEntity && linkingConfigIndex === index;
+      const isCurrentlyLinking = isLinkingEntity && linkingConfigIndex === originalIndex;
       customButtons.push({
         key: 'link',
         icon: (
@@ -426,7 +465,7 @@ export function SoundGenerationSection({
           if (isCurrentlyLinking) {
             onCancelLinkingEntity?.();
           } else {
-            onStartLinkingEntity?.(index);
+            onStartLinkingEntity?.(originalIndex);
           }
         },
       });
@@ -504,7 +543,7 @@ export function SoundGenerationSection({
           </svg>
         ),
         label: 'Duplicate sound',
-        onClick: (e) => { e.stopPropagation(); onDuplicateConfig(index); },
+        onClick: (e) => { e.stopPropagation(); onDuplicateConfig(originalIndex); },
       });
     }
 
@@ -536,36 +575,36 @@ export function SoundGenerationSection({
         isExpanded={isExpanded}
         hasResult={isGenerated}
         result={generatedSound}
-        isRunning={isSoundGenerating && index === currentGeneratingCardIndex}
-        progress={index === currentGeneratingCardIndex ? soundGenProgressValue : 0}
+        isRunning={isSoundGenerating && originalIndex === currentGeneratingCardIndex}
+        progress={originalIndex === currentGeneratingCardIndex ? soundGenProgressValue : 0}
         status={
-          index === currentGeneratingCardIndex
+          originalIndex === currentGeneratingCardIndex
             ? 'Generating...'
             : !isGenerated && isSoundGenerating
               ? 'Queued'
               : undefined
         }
         defaultName={undefined}
-        collapsedInfo={getCollapsedInfo(config, index)}
+        collapsedInfo={getCollapsedInfo(config, originalIndex)}
         showIndex={true}
         canRemove={true}
         closeButtonTitle="Remove sound"
         resetButtonTitle="Reset to configuration UI"
         customButtons={customButtons.length > 0 ? customButtons : undefined}
         error={config.error || null}
-        onDismissError={() => onUpdateConfig(index, 'error', null)}
+        onDismissError={() => onUpdateConfig(originalIndex, 'error', '')}
         onToggleExpand={onToggleExpandFn}
-        onDoubleClickCard={(i) => triggerZoomToSoundCard(i)}
-        onUpdateConfig={handleUpdateConfig}
-        onRemove={onRemoveConfig}
-        onReset={handleReset}
+        onDoubleClickCard={() => triggerZoomToSoundCard(originalIndex)}
+        onUpdateConfig={(_i, updates) => handleUpdateConfig(originalIndex, updates)}
+        onRemove={() => onRemoveConfig(originalIndex)}
+        onReset={() => handleReset(originalIndex)}
         color="primary"
         version={cardVersion}
         dimmed={isEffectivelyMuted}
         beforeContent={
-          <SoundConfigContent
+          <SoundPreContent
             config={config}
-            index={index}
+            index={originalIndex}
             isSoundGenerating={isSoundGenerating}
             isLinkingEntity={isLinkingEntity}
             linkingConfigIndex={linkingConfigIndex}
@@ -575,14 +614,13 @@ export function SoundGenerationSection({
             onLibrarySearch={onLibrarySearch}
             onLibrarySoundSelect={onLibrarySoundSelect}
             onCatalogSoundSelect={onCatalogSoundSelect}
-            
           />
         }
         afterContent={
           generatedSound ? (
             <SoundResultContent
               generatedSound={generatedSound}
-              index={index}
+              index={originalIndex}
               variants={variants}
               selectedVariantIdx={selectedVariantIdx}
               isPreviewPlaying={previewingSoundId === generatedSound.id}
@@ -599,7 +637,7 @@ export function SoundGenerationSection({
               onTimestampsChange={onTimestampsChange}
               onVariantChange={onVariantChange}
               onUpdatePosition={handleUpdateSoundPosition}
-              onUnlinkEntity={() => handleDetachSoundFromEntity(index)}
+              onUnlinkEntity={() => handleDetachSoundFromEntity(originalIndex)}
             />
           ) : null
         }
@@ -717,7 +755,7 @@ export function SoundGenerationSection({
 
   return (
     <CardSection
-      items={cardItems}
+      items={filteredCardItems}
       availableTypes={availableTypes}
       emptyMessage="No sounds yet. Click + to add a sound configuration."
       statusLabel="sound"
