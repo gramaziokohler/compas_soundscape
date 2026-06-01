@@ -56,7 +56,8 @@ export type CardType =
   | 'listener'
   | 'grid-listener'
   | 'model-analysis'
-  | 'scenario';
+  | 'scenario'
+  | 'freeform';
 
 /**
  * Default display names for each card type
@@ -78,6 +79,7 @@ export const CARD_TYPE_LABELS: Record<CardType, string> = {
   'grid-listener': 'Grid Listener',
   'model-analysis': 'Identify groups',
   'scenario': 'Usage scenario',
+  'freeform': 'Untitled',
 };
 
 // ============================================================================
@@ -248,6 +250,8 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   loadingContent?: ReactNode;
   /** When true, dims the card title and body (but not the action buttons / kebab menu) */
   dimmed?: boolean;
+  /** Optional element rendered to the left of the card title in the header (e.g., entity link button) */
+  headerPrefix?: ReactNode;
 }
 
 

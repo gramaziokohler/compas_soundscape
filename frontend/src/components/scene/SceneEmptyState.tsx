@@ -42,17 +42,19 @@ export function SceneEmptyState({
     <div className="absolute inset-0 flex items-center justify-center bg-background/50">
       <div className="flex flex-col items-center gap-6 p-8" style={{ maxWidth: '400px' }}>
         <div className="text-center">
-          <div className="flex items-center gap-4 flex-shrink-0 mb-4 justify-center">
+          {/* <div className="flex items-center gap-4 flex-shrink-0 mb-4 justify-center">
             <Image
-              className="invert flex-shrink-0"
+              className="flex-shrink-0"
               src="/compas_icon_white.png"
               alt="compas logo"
               width={100}
               height={100}
               priority
             />
-          </div>
-          <h3 className="text-xl font-semibold mb-2">Compas Soundscape</h3>
+          </div> */}
+<h3 className="text-5xl md:text-7xl font-extrabold tracking-tight mb-3 text-primary">
+  Sound is blue
+</h3>
         </div>
 
         {speckleTokenSet === true ? (

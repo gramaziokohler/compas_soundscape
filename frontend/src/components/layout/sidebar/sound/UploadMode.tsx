@@ -85,20 +85,15 @@ export function UploadMode({
   }
 
   return (
-    <div className="space-y-2">
+    <>
       {config.uploadedAudioBuffer && config.uploadedAudioInfo && (
         <AudioWaveformDisplay
           audioBuffer={config.uploadedAudioBuffer}
           audioInfo={config.uploadedAudioInfo}
+          onClear={handleClearAudio}
+          compact
         />
       )}
-
-      <button
-        onClick={handleClearAudio}
-        className="w-full text-xs py-1.5 px-3 text-white rounded-lg bg-secondary-hover hover:opacity-80 transition-colors"
-      >
-        Clear Uploaded Audio
-      </button>
-    </div>
+    </>
   );
 }

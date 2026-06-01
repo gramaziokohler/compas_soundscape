@@ -7,8 +7,7 @@ import { CARD_TYPE_LABELS } from "@/types";
 import type { CardTypeOption } from "@/components/ui/CardSection";
 import type { CustomMenuItem } from "@/types/card";
 import { CardSection } from "@/components/ui/CardSection";
-import { Card } from "@/components/ui/Card";
-import { SoundPreContent, SoundResultContent } from "./sound";
+import { Card } from "@/components/ui/Card";import { CircularFAB } from '@/components/ui/CircularFAB';import { SoundPreContent, SoundResultContent } from "./sound";
 import { apiService } from "@/services/api";
 import { useAudioControlsStore, useSoundscapeStore } from "@/store";
 import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
@@ -68,6 +67,8 @@ export function SoundGenerationSection({
   onTypeChange,
   onSetActiveTab,
   onGenerate,
+  onGenerateSingle,
+  onGenerateFiltered,
   onStopGeneration,
   generatedSounds,
   onUploadAudio,
@@ -104,6 +105,7 @@ export function SoundGenerationSection({
   // ── Sound generation progress from store ──
   const soundGenProgress          = useSoundscapeStore((s) => s.soundGenProgress);
   const soundGenProgressValue     = useSoundscapeStore((s) => s.soundGenProgressValue);
+  const soundGenTargetIndices     = useSoundscapeStore((s) => s.soundGenTargetIndices);
   const handleReorderSoundConfigs   = useSoundscapeStore((s) => s.handleReorderSoundConfigs);
   const updateSoundPosition         = useSoundscapeStore((s) => s.updateSoundPosition);
   const handleDetachSoundFromEntity = useSoundscapeStore((s) => s.handleDetachSoundFromEntity);
@@ -121,7 +123,11 @@ export function SoundGenerationSection({
 
   useEffect(() => {
     if (isSoundGenerating) {
-      const pendingConfigs = soundConfigs.filter((_, i) => !isSoundGenerated(i));
+      // For single-card generation, only include the targeted card in the pending snapshot.
+      // For global generation (soundGenTargetIndex === null), include all pending configs.
+      const pendingConfigs = soundConfigs.filter((_, i) =>
+        !isSoundGenerated(i) && (soundGenTargetIndices === null || soundGenTargetIndices.includes(i))
+      );
       pendingAtStartRef.current = pendingConfigs.length;
       pendingConfigOrderRef.current = pendingConfigs;
     }
@@ -222,16 +228,6 @@ export function SoundGenerationSection({
     }
   }, []);
 
-  // Check if all pending configs have valid settings
-  const allPendingConfigsValid = useMemo(() => {
-    const pendingConfigs = soundConfigs.filter((_, index) => !isSoundGenerated(index));
-    if (pendingConfigs.length === 0) return true;
-    return pendingConfigs.every(isConfigValid);
-  }, [soundConfigs, isSoundGenerated, isConfigValid]);
-
-  // Determine if generate button should be disabled
-  const shouldDisableGenerateButton = isSoundGenerating || soundConfigs.length === 0 || !allPendingConfigsValid;
-
   // Handle type selection from dropdown
   const handleTypeSelect = useCallback(async (type: CardType) => {
     const newOriginalIndex = soundConfigs.length; // new config will be appended at this index
@@ -282,6 +278,18 @@ export function SoundGenerationSection({
     );
   }, [cardItems, visibleParentUsageIndex]);
 
+  // Check if all visible pending configs have valid settings
+  const allPendingConfigsValid = useMemo(() => {
+    const pendingConfigs = filteredCardItems
+      .filter((item) => !isSoundGenerated(item.originalIndex))
+      .map((item) => item.originalConfig);
+    if (pendingConfigs.length === 0) return true;
+    return pendingConfigs.every(isConfigValid);
+  }, [filteredCardItems, isSoundGenerated, isConfigValid]);
+
+  // Determine if generate button should be disabled
+  const shouldDisableGenerateButton = isSoundGenerating || filteredCardItems.length === 0 || !allPendingConfigsValid;
+
   // Auto-expand newly added items (controlled mode) — track filteredCardItems length
   // Note: initialized as null so first render is treated as "baseline" (no auto-expand on mount)
   const prevConfigsLength = useRef<number | null>(null);
@@ -304,14 +312,23 @@ export function SoundGenerationSection({
   const soundConfigsLengthRef = useRef(soundConfigs.length);
   soundConfigsLengthRef.current = soundConfigs.length;
 
+  // Stable ref to the latest filteredCardItems — avoids re-running the selection
+  // effect on every config update (e.g. slider moves that change the soundConfigs
+  // reference and therefore regenerate cardItems / filteredCardItems).
+  const filteredCardItemsRef = useRef(filteredCardItems);
+  filteredCardItemsRef.current = filteredCardItems;
+
   // When a card is selected externally (from ThreeScene / sphere click), expand it.
   // Map original index → filtered position first.
+  // Intentionally only depends on selectedCardIndex; filteredCardItems is accessed
+  // via ref so that slider-driven config updates don't re-trigger this effect and
+  // override the user's manually expanded card.
   useEffect(() => {
     if (selectedCardIndex !== null && selectedCardIndex >= 0) {
-      const filteredIdx = filteredCardItems.findIndex(item => item.originalIndex === selectedCardIndex);
+      const filteredIdx = filteredCardItemsRef.current.findIndex(item => item.originalIndex === selectedCardIndex);
       if (filteredIdx >= 0) setExpandedIndex(filteredIdx);
     }
-  }, [selectedCardIndex, filteredCardItems]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedCardIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-name cards when sounds are generated
   const autoNamedIndices = useRef<Set<number>>(new Set());
@@ -421,56 +438,6 @@ export function SoundGenerationSection({
     // Build custom menu items
     const customButtons: CustomMenuItem[] = [];
 
-    // Card type switch sub-menu (only when not generated)
-    if (!isGenerated) {
-      customButtons.push({
-        key: 'switch-type',
-        icon: (
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-          </svg>
-        ),
-        label: 'Switch type',
-        subItems: availableTypes.map(option => ({
-          key: option.type,
-          label: option.label,
-          isActive: option.type === item.type,
-          disabled: option.type === item.type,
-          onClick: (e: React.MouseEvent) => {
-            e.stopPropagation();
-            if (option.type !== item.type) handleSwitchCardType(originalIndex, option.type);
-          },
-        })),
-      });
-    }
-
-    // Link button (if entities available or Speckle viewer active)
-    if (modelEntities.length > 0 || useSpeckleViewer) {
-      const isCurrentlyLinking = isLinkingEntity && linkingConfigIndex === originalIndex;
-      customButtons.push({
-        key: 'link',
-        icon: (
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-          </svg>
-        ),
-        label: isCurrentlyLinking
-          ? 'Cancel linking'
-          : config.entity
-            ? `Linked to entity ${config.entity.index}`
-            : 'Link to entity',
-        isActive: isCurrentlyLinking || !!config.entity,
-        onClick: (e) => {
-          e.stopPropagation();
-          if (isCurrentlyLinking) {
-            onCancelLinkingEntity?.();
-          } else {
-            onStartLinkingEntity?.(originalIndex);
-          }
-        },
-      });
-    }
-
     // Mute button (only if generated)
     if (isGenerated && onMute && generatedSound) {
       customButtons.push({
@@ -568,7 +535,57 @@ export function SoundGenerationSection({
       return undefined;
     })();
 
+    // Link button rendered in the card header prefix (pre-gen and post-gen)
+    const isCurrentlyLinking = isLinkingEntity && linkingConfigIndex === originalIndex;
+    const showLinkButton = modelEntities.length > 0 || useSpeckleViewer
+      || !!config.entity
+      || (isGenerated && generatedSound?.entity_index !== undefined);
+
+    const linkedEntityLabel = isGenerated
+      ? (generatedSound?.entity_index !== undefined
+          ? `Entity ${generatedSound.entity_index}`
+          : undefined)
+      : (config.entity
+          ? (config.entity.name || (config.entity.index !== undefined
+              ? `Entity ${config.entity.index}`
+              : config.entity.id?.slice(0, 8) || 'Object'))
+          : undefined);
+    const isLinkedInHeader = isGenerated
+      ? generatedSound?.entity_index !== undefined
+      : !!config.entity;
+
+    const linkHeaderPrefix = showLinkButton ? (
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          if (isCurrentlyLinking) {
+            onCancelLinkingEntity?.();
+          } else if (isLinkedInHeader && isGenerated) {
+            handleDetachSoundFromEntity(originalIndex);
+          } else {
+            onStartLinkingEntity?.(originalIndex);
+          }
+        }}
+        title={
+          isCurrentlyLinking
+            ? 'Linking active — click an entity in the 3D view (click here to cancel)'
+            : linkedEntityLabel
+              ? `Linked to: ${linkedEntityLabel}${isGenerated ? ' — click to unlink' : ''}`
+              : 'Link to entity'
+        }
+        className={`flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full transition-all opacity-80 hover:opacity-100 ${
+          isCurrentlyLinking ? 'animate-pulse' : ''
+        }`}
+        style={{ color: (isCurrentlyLinking || isLinkedInHeader) ? 'var(--color-primary-hover)' : undefined , backgroundColor: (isCurrentlyLinking || isLinkedInHeader) ? 'var(--color-foreground)' : undefined}}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+        </svg>
+      </button>
+    ) : undefined;
+
     return (
+      <div key={originalIndex} style={{ position: 'relative' }}>
       <Card
         config={item}
         index={index}
@@ -580,7 +597,7 @@ export function SoundGenerationSection({
         status={
           originalIndex === currentGeneratingCardIndex
             ? 'Generating...'
-            : !isGenerated && isSoundGenerating
+            : !isGenerated && isSoundGenerating && (soundGenTargetIndices === null || soundGenTargetIndices.includes(originalIndex))
               ? 'Queued'
               : undefined
         }
@@ -601,6 +618,7 @@ export function SoundGenerationSection({
         color="primary"
         version={cardVersion}
         dimmed={isEffectivelyMuted}
+        headerPrefix={linkHeaderPrefix}
         beforeContent={
           <SoundPreContent
             config={config}
@@ -614,6 +632,8 @@ export function SoundGenerationSection({
             onLibrarySearch={onLibrarySearch}
             onLibrarySoundSelect={onLibrarySoundSelect}
             onCatalogSoundSelect={onCatalogSoundSelect}
+            availableTypes={availableTypes}
+            onSwitchType={handleSwitchCardType}
           />
         }
         afterContent={
@@ -642,7 +662,15 @@ export function SoundGenerationSection({
           ) : null
         }
       />
-    );
+      {isExpanded && !isGenerated && (
+        <CircularFAB
+          label={isSoundGenerating && (soundGenTargetIndices === null || soundGenTargetIndices.includes(originalIndex)) ? 'Generating…' : 'Generate Sound'}
+          onClick={() => onGenerateSingle(originalIndex)}
+          isLoading={isSoundGenerating && (soundGenTargetIndices === null || soundGenTargetIndices.includes(originalIndex))}
+        />
+      )}
+    </div>
+  );
   }, [
     isSoundGenerated,
     getGeneratedSound,
@@ -656,6 +684,7 @@ export function SoundGenerationSection({
     isLinkingEntity,
     linkingConfigIndex,
     isSoundGenerating,
+    soundGenTargetIndices,
     soundVolumes,
     soundIntervals,
     previewingSoundId,
@@ -691,7 +720,9 @@ export function SoundGenerationSection({
     triggerZoomToSoundCard,
     currentGeneratingCardIndex,
     soundGenProgressValue,
-  ]);
+    onGenerateSingle,
+    isConfigValid,
+  ]);  
 
   // Footer with generate button
   const footer = (
@@ -718,7 +749,12 @@ export function SoundGenerationSection({
         </div>
       ) : (
         <button
-          onClick={onGenerate}
+          onClick={() => {
+            const pendingIndices = filteredCardItems
+              .filter((item) => !isSoundGenerated(item.originalIndex))
+              .map((item) => item.originalIndex);
+            onGenerateFiltered(pendingIndices);
+          }}
           disabled={shouldDisableGenerateButton}
           className={`flex-1 py-2 px-4 rounded-lg text-white text-xs font-medium transition-colors ${
             shouldDisableGenerateButton

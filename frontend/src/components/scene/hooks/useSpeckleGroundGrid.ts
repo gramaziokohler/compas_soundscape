@@ -125,19 +125,49 @@ export function useSpeckleGroundGrid({ isViewerReady }: { isViewerReady: boolean
     lines.renderOrder = RENDER_ORDER;
     group.add(lines);
 
+    // Resolve --color-primary from CSS custom properties at runtime
+    const primaryColor = getComputedStyle(document.documentElement)
+      .getPropertyValue('--color-primary')
+      .trim() || '#2F2FE4';
+
     // Numeric labels on both axes — show absolute world coordinates
     const labelScale = Math.max(spacing * 0.55, 0.5);
+    const labelOffset = labelScale * 0.25;
     for (let i = -gridCount; i <= gridCount; i++) {
       const v = i * spacing;
 
-      const lx = makeLabel(`${Math.round(cx + v)}`, groundGridColor, labelScale);
-      lx.position.set(v, 0, 0.05);
-      group.add(lx);
+      if (i !== 0) {
+        // Y-axis labels sit on the Y axis; at i=0 offset to avoid overlapping the X label
+        const ly = makeLabel(`${Math.round(cy + v)}`, groundGridColor, labelScale);
+        ly.position.set(0, v, 0.05);
+        group.add(ly);
 
-      const ly = makeLabel(`${Math.round(cy + v)}`, groundGridColor, labelScale);
-      ly.position.set(0, v, 0.05);
-      group.add(ly);
+        // X-axis labels sit on the X axis
+        const lx = makeLabel(`${Math.round(cx + v)}`, groundGridColor, labelScale);
+        lx.position.set(v, 0, 0.05);
+        group.add(lx);
+
+      } else {
+        const ly = makeLabel(`${Math.round(cy)}`, groundGridColor, labelScale);
+        ly.position.set(labelOffset, -labelOffset, 0.05);
+        group.add(ly);
+
+        const lx = makeLabel(`${Math.round(cx + v)}`, groundGridColor, labelScale);
+        lx.position.set(-labelOffset, labelOffset, 0.05);
+        group.add(lx);
+
+      }
     }
+
+    // Axis name labels at the positive ends of each axis
+    const axisLabelScale = labelScale * 1.4;
+    const xAxisLabel = makeLabel('X', primaryColor, axisLabelScale);
+    xAxisLabel.position.set(extent + labelScale, 0, 0.05);
+    group.add(xAxisLabel);
+
+    const yAxisLabel = makeLabel('Y', primaryColor, axisLabelScale);
+    yAxisLabel.position.set(0, extent + labelScale, 0.05);
+    group.add(yAxisLabel);
 
     // CRITICAL: enable Speckle overlay layers on the group and every child.
     // The Speckle viewer rendering pipeline only draws objects that have

@@ -16,10 +16,16 @@ export interface TextToAudioModeProps {
   config: SoundGenerationConfig;
   index: number;
   onUpdateConfig: (index: number, field: keyof SoundGenerationConfig, value: any) => void;
+  /** When true, only renders the textarea (sliders are omitted — rendered separately as collapsible). */
+  hideSliders?: boolean;
 }
 
-export function TextToAudioMode({ config, index, onUpdateConfig }: TextToAudioModeProps) {
-  // Batched sliders — one undo step per drag gesture
+/** Standalone sliders panel — duration, guidance, variants. Used in the collapsible section. */
+export function TextToAudioSliders({
+  config,
+  index,
+  onUpdateConfig,
+}: Omit<TextToAudioModeProps, 'hideSliders'>) {
   const durationSlider = useBatchedSlider<number>('soundscape', (v) =>
     onUpdateConfig(index, 'duration', v),
   );
@@ -32,30 +38,6 @@ export function TextToAudioMode({ config, index, onUpdateConfig }: TextToAudioMo
 
   return (
     <>
-      <textarea
-        value={config.prompt}
-        onChange={(e) => onUpdateConfig(index, 'prompt', e.target.value)}
-        onFocus={() => pauseStore('soundscape')}
-        onBlur={() => setTimeout(() => commitStore('soundscape'), 0)}
-        onKeyDown={(e) => {
-          if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {
-            e.preventDefault();
-            commitStore('soundscape');
-            globalUndo();
-            pauseStore('soundscape');
-          }
-          if ((e.ctrlKey || e.metaKey) && (e.shiftKey ? e.key === 'z' : e.key === 'y')) {
-            e.preventDefault();
-            commitStore('soundscape');
-            globalRedo();
-            pauseStore('soundscape');
-          }
-        }}
-        placeholder="e.g., Hammer hitting wooden table"
-        className="w-full h-16 p-2 text-xs rounded-lg bg-secondary-lighter text-foreground border border-secondary-light focus:border-primary focus:ring-1 focus:ring-primary outline-none"
-        rows={2}
-      />
-
       <div className="grid grid-cols-2 gap-2">
         <RangeSlider
           label="Duration (s): "
@@ -98,3 +80,38 @@ export function TextToAudioMode({ config, index, onUpdateConfig }: TextToAudioMo
     </>
   );
 }
+
+export function TextToAudioMode({ config, index, onUpdateConfig, hideSliders }: TextToAudioModeProps) {
+  return (
+    <>
+      <textarea
+        value={config.prompt}
+        onChange={(e) => onUpdateConfig(index, 'prompt', e.target.value)}
+        onFocus={() => pauseStore('soundscape')}
+        onBlur={() => setTimeout(() => commitStore('soundscape'), 0)}
+        onKeyDown={(e) => {
+          if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {
+            e.preventDefault();
+            commitStore('soundscape');
+            globalUndo();
+            pauseStore('soundscape');
+          }
+          if ((e.ctrlKey || e.metaKey) && (e.shiftKey ? e.key === 'z' : e.key === 'y')) {
+            e.preventDefault();
+            commitStore('soundscape');
+            globalRedo();
+            pauseStore('soundscape');
+          }
+        }}
+        placeholder="e.g., Hammer hitting wooden table"
+        className="w-full h-16 p-2 text-xs rounded-lg bg-secondary-lighter text-foreground border border-secondary-light focus:border-primary focus:ring-1 focus:ring-primary outline-none"
+        rows={2}
+      />
+
+      {!hideSliders && (
+        <TextToAudioSliders config={config} index={index} onUpdateConfig={onUpdateConfig} />
+      )}
+    </>
+  );
+}
+

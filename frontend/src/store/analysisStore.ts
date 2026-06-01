@@ -23,6 +23,7 @@ import type {
   ScenarioConfig,
   ScenarioResult,
   FoleyResult,
+  FreeformConfig,
 } from '@/types/analysis';
 import type { CardType } from '@/types/card';
 import {
@@ -341,6 +342,11 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                   foleyResult: null,
                   selectedFoleyKeys: [],
                 } as ScenarioConfig)
+              : type === 'freeform'
+              ? ({
+                  type: 'freeform',
+                  display_name: `Untitled ${analysisConfigs.filter(c => c.type === 'freeform').length + 1}`,
+                } as FreeformConfig)
               : {
                     type: 'text',
                     numSounds: 5,

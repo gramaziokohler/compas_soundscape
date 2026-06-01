@@ -568,22 +568,24 @@ function HomeContent() {
 
   // Active parent filter from UIStore (set by Sidebar when Sounds step is active)
   const activeSoundParentIndex = useUIStore((s) => s.activeSoundParentIndex);
+  const isInSoundsStep = useUIStore((s) => s.isInSoundsStep);
 
   // Re-apply Speckle entity highlight colors when the Sounds step is entered or exited.
   // applyFilterColors internally reads activeSoundParentIndex from UIStore to decide
   // whether to show entity link colors.
   useEffect(() => {
     useSpeckleStore.getState().applyFilterColors();
-  }, [activeSoundParentIndex]);
+  }, [activeSoundParentIndex, isInSoundsStep]);
 
   // ── Unified soundscape data ────────────────────────────────────────────────────
   // One entry per visible sound config for the active parent.
   // Before generation: lightweight isPending placeholder (light-colored sphere).
   // After generation: the real SoundEvent from the server.
-  // Returns [] when not in the Sounds step (activeSoundParentIndex is null) so
-  // the scene shows no sound spheres outside the Sounds step.
+  // Returns [] when not in the Sounds step so the scene shows no sound spheres
+  // outside the Sounds step. When in Sounds step with no parent (skipped flow),
+  // shows sounds with parentUsageOriginalIndex === undefined.
   const unifiedSoundscapeData = useMemo(() => {
-    if (activeSoundParentIndex === null || activeSoundParentIndex === undefined) return [];
+    if (!isInSoundsStep) return [];
 
     const generatedMap = new Map<number, any>();
     (soundGen.soundscapeData ?? []).forEach((s: any) => {
@@ -592,7 +594,11 @@ function HomeContent() {
 
     return soundGen.soundConfigs
       .map((config, index) => {
-        if (config.parentUsageOriginalIndex !== activeSoundParentIndex) return null;
+        // When activeSoundParentIndex is null (skipped flow), show only unparented sounds.
+        if (activeSoundParentIndex !== null
+          ? config.parentUsageOriginalIndex !== activeSoundParentIndex
+          : config.parentUsageOriginalIndex !== undefined && config.parentUsageOriginalIndex !== null
+        ) return null;
 
         if (generatedMap.has(index)) return generatedMap.get(index);
 
@@ -628,7 +634,7 @@ function HomeContent() {
         };
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
-  }, [soundGen.soundConfigs, soundGen.soundscapeData, activeSoundParentIndex]);
+  }, [soundGen.soundConfigs, soundGen.soundscapeData, activeSoundParentIndex, isInSoundsStep]);
 
   // Handler: Extract SED audio segments and inject them as upload-type sound cards
   const handleAudioExtract = useCallback(async (config: AudioAnalysisConfig, originalIndex: number) => {
@@ -1476,9 +1482,13 @@ function HomeContent() {
     setGlobalSoundSpeed(343);
     setGlobalMeshLc(1.5);
     useAudioControlsStore.getState().resetGlobalBaseSplDb();
+    setShowGroundGrid(false);
+    setGroundGridSpacing(2);
+    setGroundGridColor('#888888');
   }, [soundGen.handleResetToDefaults, audioNormalization.reset,
       setShowLabelSprites, setShowHoveringHighlight, setShowSoundSpheres, setShowSceneListeners,
-      setGlobalSoundSpeed, setGlobalMeshLc]);
+      setGlobalSoundSpeed, setGlobalMeshLc,
+      setShowGroundGrid, setGroundGridSpacing, setGroundGridColor]);
 
   // Handler: Material assignment selection (NEW)
   const handleSelectGeometry = useCallback((selection: SelectedGeometry | null) => {
@@ -1951,7 +1961,7 @@ function HomeContent() {
   }, []);
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-neutral-100 dark:bg-neutral-900">
+    <div className="relative w-screen h-screen overflow-hidden bg-background">
       {/* Main 3D Scene - Fixed at screen center, full size, lowest z-index */}
       <main className="absolute inset-0 z-0">
         {/* Viewer Toggle Button - Top Left */}
@@ -2007,10 +2017,14 @@ function HomeContent() {
             // Sound Linking (entity linking from SoundCard to Speckle object)
             entitiesWithLinkedSounds={(() => {
               const linked = new Set<number>();
-              // Only highlight entities when in the Sounds step (activeSoundParentIndex is set)
-              if (activeSoundParentIndex === null || activeSoundParentIndex === undefined) return linked;
+              // Only highlight entities when in the Sounds step
+              if (!isInSoundsStep) return linked;
               soundGen.soundConfigs.forEach((config) => {
-                if (config.parentUsageOriginalIndex !== activeSoundParentIndex) return;
+                // Match same parent logic as unifiedSoundscapeData
+                if (activeSoundParentIndex !== null
+                  ? config.parentUsageOriginalIndex !== activeSoundParentIndex
+                  : config.parentUsageOriginalIndex !== undefined && config.parentUsageOriginalIndex !== null
+                ) return;
                 if (config.entity && config.entity.id !== undefined) {
                   const entityIndex = typeof config.entity.id === 'number'
                     ? config.entity.id
@@ -2142,6 +2156,8 @@ function HomeContent() {
         onUpdateSoundConfig={handleUpdateSoundConfig}
         onSoundTypeChange={soundGen.handleTypeChange}
         onGenerateSounds={soundGen.handleGenerate}
+        onGenerateSingleSound={soundGen.handleGenerateSingle}
+        onGenerateFilteredSounds={soundGen.handleGenerateFiltered}
         onStopSoundGeneration={soundGen.handleStopGeneration}
         onGlobalDurationChange={soundGen.handleGlobalDurationChange}
         onGlobalStepsChange={soundGen.handleGlobalStepsChange}

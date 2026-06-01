@@ -173,7 +173,7 @@ export function RightSidebar({
           zIndex: 15,
           transition: 'right 300ms ease-in-out',
         }}
-        className="flex flex-col items-center justify-center w-5 py-3 gap-1.5 bg-background border border-secondary-light rounded-l-md shadow-md hover:bg-secondary-lighter"
+        className="flex flex-col items-center justify-center w-5 py-3 gap-1.5 bg-primary border border-secondary-light rounded-l-md shadow-md hover:bg-primary-hover"
       >
         <svg width="10" height="16" viewBox="0 0 10 16" fill="none" xmlns="http://www.w3.org/2000/svg">
           {isExpanded ? (
@@ -184,8 +184,8 @@ export function RightSidebar({
         </svg>
         {!isExpanded && (
           <span
-            style={{ writingMode: 'vertical-rl', fontSize: '10px', letterSpacing: '0.05em' }}
-            className="text-secondary-hover font-medium select-none"
+            style={{ writingMode: 'vertical-rl', fontSize: '12px', letterSpacing: '0.05em' }}
+            className="text-secondary-light-static font-medium select-none"
           >
             Acoustics
           </span>

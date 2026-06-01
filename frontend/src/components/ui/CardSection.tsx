@@ -308,7 +308,7 @@ export function CardSection<TItem extends CardBaseConfig>({
 
   return (
     <div className="flex flex-col gap-3" style={sectionColorStyle}>
-      {header}
+      {/* {header} */}
 
       {/* Status bar + add button */}
       <div className="flex items-center text-xs w-full gap-1 text-secondary-hover">

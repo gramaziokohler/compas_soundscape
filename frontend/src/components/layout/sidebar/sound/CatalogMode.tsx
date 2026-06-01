@@ -76,7 +76,7 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
           disabled={!selectedCategory}
           className={`transition-colors ${
             selectedCategory
-              ? 'text-primary hover:underline cursor-pointer'
+              ? 'text-secondary-hover hover:underline cursor-pointer'
               : 'font-medium text-foreground cursor-default'
           }`}
         >
@@ -121,7 +121,7 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
               <button
                 key={cat.id}
                 onClick={() => handleSelectCategory(cat)}
-                className="w-full text-left px-2 py-1.5 rounded-lg text-xs transition-colors bg-primary-lighter text-foreground hover:bg-secondary-lighter"
+                className="w-full text-left px-2 py-1 rounded-lg text-xs transition-colors bg-secondary-light text-secondary hover:bg-primary"
               >
                 {cat.name}
               </button>

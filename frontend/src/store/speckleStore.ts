@@ -382,17 +382,20 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         if (diverseOnlyIds.length > 0)
           colorGroups.push({ objectIds: diverseOnlyIds, color: 'var(--color-success)' });
 
-        // Only color entity-linked objects when in the Sounds step (activeSoundParentIndex is set),
-        // AND only for the objects whose sound prompt belongs to the active parent.
-        const activeSoundParentIndex = useUIStore.getState().activeSoundParentIndex;
-        const inSoundsStep = activeSoundParentIndex !== null && activeSoundParentIndex !== undefined;
+        // Only color entity-linked objects when in the Sounds step, and only for
+        // the active parent's sounds. When activeSoundParentIndex is null (skipped flow),
+        // show all unparented sounds.
+        const { activeSoundParentIndex, isInSoundsStep } = useUIStore.getState();
 
-        if (inSoundsStep) {
+        if (isInSoundsStep) {
           // Build the set of promptIndices that belong to the active parent.
           const soundConfigs = useSoundscapeStore.getState().soundConfigs;
           const activePromptIndices = new Set<number>(
             soundConfigs.reduce<number[]>((acc, cfg, idx) => {
-              if (cfg.parentUsageOriginalIndex === activeSoundParentIndex) acc.push(idx);
+              const matches = activeSoundParentIndex !== null
+                ? cfg.parentUsageOriginalIndex === activeSoundParentIndex
+                : cfg.parentUsageOriginalIndex === undefined || cfg.parentUsageOriginalIndex === null;
+              if (matches) acc.push(idx);
               return acc;
             }, []),
           );

@@ -22,6 +22,8 @@ export interface SoundConfigContentProps {
   isSoundGenerating: boolean;
   isLinkingEntity: boolean;
   linkingConfigIndex: number | null;
+  /** When true, TextToAudioMode renders only the textarea (sliders shown separately as collapsible). */
+  hideTextToAudioSliders?: boolean;
   onUpdateConfig: (index: number, field: keyof SoundGenerationConfig, value: any) => void;
   onUploadAudio?: (index: number, file: File) => Promise<void>;
   onClearUploadedAudio?: (index: number) => void;
@@ -42,30 +44,19 @@ export function SoundConfigContent({
   onLibrarySearch,
   onLibrarySoundSelect,
   onCatalogSoundSelect,
+  hideTextToAudioSliders,
 }: SoundConfigContentProps) {
   const cardType = config.type || 'text-to-audio';
 
   return (
     <div className="space-y-3">
-      {/* Entity linking status */}
-      {isLinkingEntity && linkingConfigIndex === index && (
-        <EntityLinkingStatus />
-      )}
-
-      {/* Linked entity info — only shown when entity has an actual Speckle object ID */}
-      {config.entity && (config.entity.nodeId || config.entity.id || config.entity.applicationId) && (
-        <LinkedEntityInfo
-          entity={config.entity}
-          onUnlink={() => onUpdateConfig(index, 'entity' as any, undefined as any)}
-        />
-      )}
-
       {/* Type-specific UI based on CardType */}
       {cardType === 'text-to-audio' && (
         <TextToAudioMode
           config={config}
           index={index}
           onUpdateConfig={onUpdateConfig}
+          hideSliders={hideTextToAudioSliders}
         />
       )}
 
@@ -111,43 +102,3 @@ export function SoundConfigContent({
 // ============================================================================
 // Helper sub-components
 // ============================================================================
-
-function EntityLinkingStatus() {
-  return (
-    <div className="rounded-lg p-2 text-xs bg-info-light border border-info text-info">
-      <div className="flex items-center gap-2">
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        <span>Click on an entity in the 3D view to link this sound</span>
-      </div>
-    </div>
-  );
-}
-
-interface LinkedEntityInfoProps {
-  entity: { name?: string; index?: number; id?: string; [key: string]: any };
-  onUnlink: () => void;
-}
-
-function LinkedEntityInfo({ entity, onUnlink }: LinkedEntityInfoProps) {
-  return (
-    <div className="rounded-lg p-2 text-xs bg-success-light border border-success text-success">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-          </svg>
-          <span>Linked to entity: {entity.name || (entity.index !== undefined ? `Entity ${entity.index}` : entity.id?.slice(0, 8) || 'Object')}</span>
-        </div>
-        <button
-          onClick={onUnlink}
-          className="text-success hover:opacity-70"
-          title="Unlink entity"
-        >
-          ×
-        </button>
-      </div>
-    </div>
-  );
-}

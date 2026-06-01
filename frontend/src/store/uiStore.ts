@@ -118,9 +118,12 @@ export interface UIStoreState {
   /** Incremented each time the user double-clicks a sound card to zoom to its sphere. */
   zoomToSoundCardTrigger: { index: number; version: number } | null;
   triggerZoomToSoundCard: (index: number) => void;
-  /** Active parent (usage or context) index filtering the Sounds section. Null = show all. */
+  /** Active parent (usage or context) index filtering the Sounds section. Null = no filter. */
   activeSoundParentIndex: number | null;
   setActiveSoundParentIndex: (index: number | null) => void;
+  /** True while the Sounds step is active — allows showing unparented sounds when no parent was set. */
+  isInSoundsStep: boolean;
+  setIsInSoundsStep: (v: boolean) => void;
 }
 
 export type GradientMetric = 'rt60' | 'edt' | 'd50' | 'c50' | 'spl';
@@ -218,7 +221,7 @@ export const useUIStore = create<UIStoreState>()(
       // ── Ground grid ──────────────────────────────────────────────────────
       showGroundGrid: false,
       setShowGroundGrid: (v) => set({ showGroundGrid: v }, false, 'ui/setShowGroundGrid'),
-      groundGridSpacing: 5,
+      groundGridSpacing: 2,
       setGroundGridSpacing: (v) => set({ groundGridSpacing: v }, false, 'ui/setGroundGridSpacing'),
       groundGridColor: '#888888',
       setGroundGridColor: (v) => set({ groundGridColor: v }, false, 'ui/setGroundGridColor'),
@@ -256,7 +259,16 @@ export const useUIStore = create<UIStoreState>()(
         ),
       activeSoundParentIndex: null,
       setActiveSoundParentIndex: (index) =>
-        set({ activeSoundParentIndex: index }, false, 'ui/setActiveSoundParentIndex'),
+        // Setting a non-null parent implicitly enters the Sounds step.
+        // Setting null explicitly marks leaving Sounds (caller must separately set isInSoundsStep=true
+        // when entering Sounds with no parent, e.g. after skipping context/usage).
+        set(
+          { activeSoundParentIndex: index, ...(index !== null ? { isInSoundsStep: true } : { isInSoundsStep: false }) },
+          false,
+          'ui/setActiveSoundParentIndex',
+        ),
+      isInSoundsStep: false,
+      setIsInSoundsStep: (v) => set({ isInSoundsStep: v }, false, 'ui/setIsInSoundsStep'),
     }),
     { name: 'uiStore' },
   ),

@@ -324,6 +324,7 @@ export function SpeckleScene({
   // Hover preview — shown after 2 s of dwelling over a Speckle object
   const [hoverPreview, setHoverPreview] = useState<{ x: number; y: number; objectName: string; objectType: string } | null>(null);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hoverHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Ref so timer callbacks can read contextMenuPos without stale closure
   const contextMenuPosRef = useRef<{ x: number; y: number } | null>(null);
   useEffect(() => { contextMenuPosRef.current = contextMenuPos; }, [contextMenuPos]);
@@ -591,14 +592,33 @@ export function SpeckleScene({
       }
     };
 
+    const clearHoverHideTimer = () => {
+      if (hoverHideTimerRef.current) {
+        clearTimeout(hoverHideTimerRef.current);
+        hoverHideTimerRef.current = null;
+      }
+    };
+
+    const scheduleHide = () => {
+      clearHoverHideTimer();
+      hoverHideTimerRef.current = setTimeout(() => {
+        setHoverPreview(null);
+      }, 600);
+    };
+
     const handlePointerMove = (e: PointerEvent) => {
       // Only track idle hover — no buttons held, not in FPS mode
       if (e.buttons !== 0 || isFirstPersonModeRef.current) {
         clearHoverTimer();
+        clearHoverHideTimer();
         setHoverPreview(null);
         return;
       }
 
+      // If the preview is already visible, schedule a hide on movement
+      // (checked via ref so we don't depend on stale closure)
+      clearHoverHideTimer();
+      scheduleHide();
       clearHoverTimer();
       const clientX = e.clientX;
       const clientY = e.clientY;
@@ -706,16 +726,27 @@ export function SpeckleScene({
 
     const handlePointerLeave = () => {
       clearHoverTimer();
+      clearHoverHideTimer();
       setHoverPreview(null);
+    };
+
+    // Left-click: hide preview after short delay
+    const handlePointerDown = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      clearHoverTimer();
+      scheduleHide();
     };
 
     container.addEventListener('pointermove', handlePointerMove);
     container.addEventListener('pointerleave', handlePointerLeave);
+    container.addEventListener('pointerdown', handlePointerDown);
 
     return () => {
       clearHoverTimer();
+      clearHoverHideTimer();
       container.removeEventListener('pointermove', handlePointerMove);
       container.removeEventListener('pointerleave', handlePointerLeave);
+      container.removeEventListener('pointerdown', handlePointerDown);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [containerRef]);
@@ -1341,7 +1372,7 @@ export function SpeckleScene({
         onStopAll={handleStopAll}
         onToggleAuralization={handleToggleAuralization}
         isAnyPlaying={isAnyPlaying}
-        hasSounds={soundscapeData !== null && soundscapeData.length > 0}
+        hasSounds={soundscapeData !== null && soundscapeData.some((s: any) => !s.isPending)}
         isLeftSidebarExpanded={isLeftSidebarExpanded}
         isRightSidebarExpanded={isRightSidebarExpanded}
         leftSidebarContentWidth={leftSidebarContentWidth}

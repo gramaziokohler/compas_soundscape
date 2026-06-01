@@ -96,7 +96,7 @@ export function RangeSlider({
       {/* Label and Value */}
       <div className={`flex items-center gap-1 text-xs text-secondary-hover`}>
         <span>{label}</span>
-        <span className="text-xs font-bold" style={{ color: color? color : 'var(--card-color, var(--color-primary))' }}>
+        <span className="text-xs font-bold text-secondary">
           {formatValue(value)}
         </span>
       </div>

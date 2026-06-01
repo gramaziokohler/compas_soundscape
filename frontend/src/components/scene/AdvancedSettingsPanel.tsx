@@ -5,9 +5,6 @@ import { AdvancedSettingsSection } from '@/components/layout/sidebar/AdvancedSet
 import type { AdvancedSettingsSectionProps } from '@/components/layout/sidebar/AdvancedSettingsSection';
 
 const MIN_WIDTH = 300;
-const MIN_HEIGHT = 300;
-const DEFAULT_WIDTH = 380;
-const DEFAULT_HEIGHT = 600;
 const PANEL_MARGIN = 12;
 
 interface AdvancedSettingsPanelProps extends AdvancedSettingsSectionProps {
@@ -17,14 +14,18 @@ interface AdvancedSettingsPanelProps extends AdvancedSettingsSectionProps {
 
 export function AdvancedSettingsPanel({ isVisible, onClose, ...settingsProps }: AdvancedSettingsPanelProps) {
   // SSR-safe: start offscreen, correct after mount
-  const [position, setPosition] = useState({ x: -DEFAULT_WIDTH, y: -DEFAULT_HEIGHT });
-  const [size, setSize] = useState({ width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT });
+  const [position, setPosition] = useState({ x: -9999, y: -9999 });
+  const [width, setWidth] = useState(MIN_WIDTH);
   const [positionReady, setPositionReady] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    const el = contentRef.current;
+    const naturalWidth = el ? Math.max(MIN_WIDTH, el.scrollWidth + 24) : MIN_WIDTH;
+    setWidth(naturalWidth);
     setPosition({
-      x: Math.max(PANEL_MARGIN, window.innerWidth / 2 - DEFAULT_WIDTH / 2),
-      y: Math.max(PANEL_MARGIN, window.innerHeight / 2 - DEFAULT_HEIGHT / 2),
+      x: Math.max(PANEL_MARGIN, window.innerWidth / 2 - naturalWidth / 2),
+      y: Math.max(PANEL_MARGIN, window.innerHeight / 4),
     });
     setPositionReady(true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -33,13 +34,8 @@ export function AdvancedSettingsPanel({ isVisible, onClose, ...settingsProps }: 
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ mouseX: 0, mouseY: 0, panelX: 0, panelY: 0 });
 
-  const isResizingRef = useRef(false);
-  const resizeStartRef = useRef({ mouseX: 0, mouseY: 0, width: 0, height: 0 });
-
   const positionRef = useRef(position);
-  const sizeRef = useRef(size);
   useEffect(() => { positionRef.current = position; }, [position]);
-  useEffect(() => { sizeRef.current = size; }, [size]);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -50,19 +46,11 @@ export function AdvancedSettingsPanel({ isVisible, onClose, ...settingsProps }: 
           x: dragStartRef.current.panelX + dx,
           y: dragStartRef.current.panelY + dy,
         });
-      } else if (isResizingRef.current) {
-        const dx = e.clientX - resizeStartRef.current.mouseX;
-        const dy = e.clientY - resizeStartRef.current.mouseY;
-        setSize({
-          width: Math.max(MIN_WIDTH, resizeStartRef.current.width + dx),
-          height: Math.max(MIN_HEIGHT, resizeStartRef.current.height + dy),
-        });
       }
     };
 
     const handleMouseUp = () => {
       isDraggingRef.current = false;
-      isResizingRef.current = false;
     };
 
     document.addEventListener('mousemove', handleMouseMove);
@@ -85,26 +73,13 @@ export function AdvancedSettingsPanel({ isVisible, onClose, ...settingsProps }: 
     e.preventDefault();
   }, []);
 
-  const handleResizeStart = useCallback((e: React.MouseEvent) => {
-    isResizingRef.current = true;
-    resizeStartRef.current = {
-      mouseX: e.clientX,
-      mouseY: e.clientY,
-      width: sizeRef.current.width,
-      height: sizeRef.current.height,
-    };
-    e.preventDefault();
-    e.stopPropagation();
-  }, []);
-
   return (
     <div
       className="fixed flex flex-col backdrop-blur-sm shadow-2xl"
       style={{
         left: position.x,
         top: position.y,
-        width: size.width,
-        height: size.height,
+        width: width,
         zIndex: 9999,
         display: (isVisible && positionReady) ? 'flex' : 'none',
         backgroundColor: 'var(--background)',
@@ -147,30 +122,9 @@ export function AdvancedSettingsPanel({ isVisible, onClose, ...settingsProps }: 
         </button>
       </div>
 
-      {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto" style={{ padding: '12px' }}>
+      {/* Content */}
+      <div ref={contentRef} style={{ padding: '12px' }}>
         <AdvancedSettingsSection {...settingsProps} />
-      </div>
-
-      {/* Resize handle */}
-      <div
-        style={{
-          position: 'absolute',
-          bottom: 0,
-          right: 0,
-          width: '18px',
-          height: '18px',
-          cursor: 'nwse-resize',
-          display: 'flex',
-          alignItems: 'flex-end',
-          justifyContent: 'flex-end',
-          padding: '3px',
-        }}
-        onMouseDown={handleResizeStart}
-      >
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-          <path d="M9 1L1 9M9 5L5 9" stroke="var(--color-secondary-hover)" strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
       </div>
     </div>
   );

@@ -94,6 +94,7 @@ export interface SoundscapeStoreState {
   soundConfigs: SoundGenerationConfig[];
   activeSoundConfigTab: number;
   isSoundGenerating: boolean;
+  soundGenTargetIndices: number[] | null;
   soundGenError: string | null;
   soundGenProgress: string;
   soundGenProgressValue: number;
@@ -114,6 +115,9 @@ export interface SoundscapeStoreState {
   handleGlobalDurationChange: (duration: number) => void;
   handleGlobalStepsChange: (steps: number) => void;
   handleGenerate: () => Promise<void>;
+  handleGenerateSingle: (targetIndex: number) => Promise<void>;
+  handleGenerateFiltered: (targetIndices: number[]) => Promise<void>;
+  handleGenerateInternal: (targetIndices?: number[]) => Promise<void>;
   handleStopGeneration: () => void;
   handleReprocessSounds: (applyDenoising: boolean) => Promise<void>;
   setActiveSoundConfigTab: (tab: number) => void;
@@ -366,7 +370,13 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           );
         },
 
-        handleGenerate: async () => {
+        handleGenerateSingle: (targetIndex) => get().handleGenerateInternal([targetIndex]),
+
+        handleGenerateFiltered: (targetIndices) => get().handleGenerateInternal(targetIndices),
+
+        handleGenerate: async () => get().handleGenerateInternal(),
+
+        handleGenerateInternal: async (targetIndices?: number[]) => {
           const {
             soundConfigs,
             soundscapeData,
@@ -384,7 +394,9 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             });
           }
 
-          const withIndices = soundConfigs.map((config, idx) => ({ config, originalIndex: idx }));
+          const withIndices = soundConfigs
+            .map((config, idx) => ({ config, originalIndex: idx }))
+            .filter(({ originalIndex }) => targetIndices === undefined || targetIndices.includes(originalIndex));
 
           const uploadedConfigs = withIndices.filter(
             ({ config, originalIndex }) =>
@@ -437,7 +449,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           }
 
           set(
-            { soundGenError: null, isSoundGenerating: true, soundGenProgress: '', soundGenProgressValue: 0 },
+            { soundGenError: null, isSoundGenerating: true, soundGenTargetIndices: targetIndices ?? null, soundGenProgress: '', soundGenProgressValue: 0 },
             false,
             'soundscape/generateStart',
           );
@@ -706,7 +718,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               useErrorsStore.getState().addError(err.message, isQuota ? 'warning' : 'error');
             }
           } finally {
-            set({ isSoundGenerating: false, soundGenProgress: '', soundGenProgressValue: 0 }, false, 'soundscape/generateEnd');
+            set({ isSoundGenerating: false, soundGenTargetIndices: null, soundGenProgress: '', soundGenProgressValue: 0 }, false, 'soundscape/generateEnd');
             _abortController = null;
             _currentGenerationId = null;
             if (_soundPollInterval) {

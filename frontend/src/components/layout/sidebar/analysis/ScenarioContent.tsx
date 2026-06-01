@@ -12,12 +12,16 @@ import { ScenarioResultContent } from './ScenarioResultContent';
 // ─── Object-reference renderer ────────────────────────────────────────────────
 
 /**
- * Matches a capitalized name followed by one or more IDs in parentheses.
- * e.g. "Office Chair (id:abc...)" or "Laptops (id:abc..., id:def..., id:ghi...)"
- * Captures group 1 = name, group 2 = first ID (used for hover/zoom).
+ * Matches an optional-quoted name followed by one or more IDs in parentheses.
+ * e.g. "Office Chair (id:abc...)" or "table (id:abc...)" or "Laptops (id:abc..., id:def...)"
+ * Also handles LLM-quoted names: "Carpet Flooring" (id: abc...) or "Tables" (id: abc...)
+ * Captures group 1 = name (without quotes), group 2 = first ID (used for hover/zoom).
  * Additional IDs are consumed but not captured, so the whole token is replaced.
+ * The first word may be any letter case; subsequent words must be capitalized (to avoid
+ * greedily consuming preceding lowercase words like "the", "a", "large", etc.).
+ * Handles optional space after "id:" e.g. (id: abc...).
  */
-const OBJECT_REF_RE = /([A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*)*)\s*\(id:\s*([0-9a-fA-F]+)(?:,\s*id:\s*[0-9a-fA-F]+)*\)/g;
+const OBJECT_REF_RE = /"?([A-Za-z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*)*)"?\s*\(id:\s*([0-9a-fA-F]+)(?:,\s*id:\s*[0-9a-fA-F]+)*\)/g;
 
 function ScenarioTextRenderer({ text }: { text: string }) {
   const { highlightObjectForHover, clearHoverHighlight, zoomToObjectById } = useSpeckleStore();
@@ -99,10 +103,10 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
       {scenarios.map((scenario, si) => (
         <div key={si} className="space-y-1">
           {scenario.events.map((event, ei) => (
-            <p key={ei} className="text-xs leading-relaxed text-secondary-light">
+            <p key={ei} className="text-xs leading-relaxed text-secondary">
               <span
                 className="font-mono"
-                style={{ color: 'var(--color-primary)', fontSize: '10px', backgroundColor: 'var(--color-secondary-light)', borderRadius: '4px', marginRight: '4px' }}
+                style={{ color: 'var(--color-secondary-hover)', fontSize: '10px', borderRadius: '4px', marginRight: '4px' }}
               >
                 {formatTimestampRange(event.timestamp)}
               </span>{' '}

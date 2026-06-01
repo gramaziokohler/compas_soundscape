@@ -110,7 +110,20 @@ export interface AnalyzeModelConfig extends AnalysisBaseConfig {
 /**
  * Union type for all analysis configs
  */
-export type AnalysisConfig = ModelAnalysisConfig | AudioAnalysisConfig | TextAnalysisConfig | AnalyzeModelConfig | ScenarioConfig;
+export type AnalysisConfig = ModelAnalysisConfig | AudioAnalysisConfig | TextAnalysisConfig | AnalyzeModelConfig | ScenarioConfig | FreeformConfig;
+
+// ============================================================================
+// Freeform Config
+// ============================================================================
+
+/**
+ * Freeform (placeholder) config — no analysis, just a named card that lets
+ * the user proceed directly through the workflow without running any analysis.
+ * Used for "Skip context" (context section) and "Skip usage" (usage section).
+ */
+export interface FreeformConfig extends AnalysisBaseConfig {
+  type: 'freeform';
+}
 
 // ============================================================================
 // Scenario Types

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { ContextSection } from "./sidebar/ContextSection";
 import { UsageSection } from "./sidebar/UsageSection";
 import { SoundGenerationSection } from "./sidebar/SoundGenerationSection";
@@ -10,8 +10,23 @@ import { useTextGenerationStore } from "@/store/textGenerationStore";
 import { useCardFlowStore } from "@/store/cardFlowStore";
 import { useUIStore } from "@/store/uiStore";
 import type { SidebarProps } from "@/types/components";
+import { CARD_TYPE_LABELS } from "@/types/card";
+import type { CardType } from "@/types/card";
 
 type Step = 0 | 1 | 2;
+
+// ─── Module-level tooltip helpers ────────────────────────────────────────────
+
+const SIDEBAR_CONTEXT_TYPES: CardType[] = ['model-analysis', '3d-model', 'audio', 'freeform'];
+const SIDEBAR_USAGE_TYPES: CardType[] = ['scenario', 'text', 'freeform'];
+
+function cardLabelHelper(config: any, fallback: string): string {
+  if (!config) return fallback;
+  if (config.display_name) return config.display_name;
+  if (config.audioFile?.name) return config.audioFile.name;
+  if (config.modelFile?.name) return config.modelFile.name;
+  return CARD_TYPE_LABELS[config.type as CardType] || fallback;
+}
 
 export function Sidebar(props: SidebarProps) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -55,6 +70,83 @@ export function Sidebar(props: SidebarProps) {
       ? getConfigLabel(props.analysisConfigs[usageExpandedOriginalIndex], 'Usage')
       : 'Usage';
 
+  // ─── Breadcrumb tooltips ─────────────────────────────────────────────────
+  const contextTooltip = useMemo(() => {
+    const cards = props.analysisConfigs
+      .map((c, idx) => ({ c, idx }))
+      .filter(({ c }) =>
+        SIDEBAR_CONTEXT_TYPES.includes(c.type as CardType) &&
+        !(c.type === 'freeform' && (c as any).parentContextOriginalIndex !== undefined)
+      );
+    if (cards.length === 0) return undefined;
+    return cards
+      .map(({ c, idx }) => {
+        const label = cardLabelHelper(c, `Context ${idx + 1}`);
+        const pending =
+          c.type === 'freeform'
+            ? false
+            : c.type === 'model-analysis'
+            ? ((c as any).analysisResult?.architecturalObjects?.length ?? 0) === 0
+            : !props.analysisResult.some((r: any) => r.configIndex === idx);
+        return `• ${label}${pending ? ' (pending)' : ''}`;
+      })
+      .join('\n');
+  }, [props.analysisConfigs, props.analysisResult]);
+
+  const usageTooltip = useMemo(() => {
+    const cards = props.analysisConfigs
+      .map((c, idx) => ({ c, idx }))
+      .filter(({ c }) =>
+        SIDEBAR_USAGE_TYPES.includes(c.type as CardType) &&
+        !(c.type === 'freeform' && (c as any).parentContextOriginalIndex === undefined)
+      );
+    if (cards.length === 0) return undefined;
+    return cards
+      .map(({ c, idx }) => {
+        const label = cardLabelHelper(c, `Usage ${idx + 1}`);
+        const pending =
+          c.type === 'freeform'
+            ? false
+            : c.type === 'scenario'
+            ? !(c as any).foleyResult
+            : !props.analysisResult.some((r: any) => r.configIndex === idx);
+        return `• ${label}${pending ? ' (pending)' : ''}`;
+      })
+      .join('\n');
+  }, [props.analysisConfigs, props.analysisResult]);
+
+  const soundsTooltip = useMemo(() => {
+    if (props.soundConfigs.length === 0) return undefined;
+    // Group sound configs by their parent usage index
+    const groups = new Map<number | null, typeof props.soundConfigs>();
+    props.soundConfigs.forEach((s) => {
+      const key = s.parentUsageOriginalIndex ?? null;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(s);
+    });
+    const lines: string[] = [];
+    groups.forEach((sounds, usageIdx) => {
+      let groupLabel: string;
+      if (usageIdx === null) {
+        groupLabel = 'Unlinked';
+      } else if (usageIdx < 0) {
+        // Negative index: audio context bypassed usage
+        const ctxIdx = -(usageIdx + 1);
+        groupLabel = cardLabelHelper(props.analysisConfigs[ctxIdx], 'Audio context');
+      } else {
+        groupLabel = cardLabelHelper(props.analysisConfigs[usageIdx], `Usage ${usageIdx + 1}`);
+      }
+      lines.push(`${groupLabel}:`);
+      sounds.forEach((s, si) => {
+        const soundLabel = s.display_name || s.prompt || `Sound ${si + 1}`;
+        const soundOrigIdx = props.soundConfigs.indexOf(s);
+        const pending = !props.generatedSounds.some((g: any) => g.prompt_index === soundOrigIdx);
+        lines.push(`  • ${soundLabel}${pending ? ' (pending)' : ''}`);
+      });
+    });
+    return lines.length > 0 ? lines.join('\n') : undefined;
+  }, [props.analysisConfigs, props.soundConfigs, props.generatedSounds]);
+
   // Expand sidebar when "Configure API tokens" is triggered from anywhere
   const tokenSettingsTrigger = useTextGenerationStore(s => s.tokenSettingsTrigger);
   useEffect(() => {
@@ -67,6 +159,11 @@ export function Sidebar(props: SidebarProps) {
     const trigger = props.stepAdvanceTrigger ?? 0;
     if (trigger > prevTriggerRef.current) {
       prevTriggerRef.current = trigger;
+      // If no parent was set yet, mark that we're in Sounds step with no filter
+      // (so unparented sounds become visible).
+      if (useUIStore.getState().activeSoundParentIndex === null) {
+        useUIStore.getState().setIsInSoundsStep(true);
+      }
       setCurrentStep(2);
       setIsExpanded(true);
     }
@@ -130,8 +227,10 @@ export function Sidebar(props: SidebarProps) {
     } else if (currentStep === 1) {
       savedUsageExpandedRef.current = usageExpandedOriginalIndex;
       setUsageExpandedOriginalIndex(null);
-      // Skipping from Usage to Sounds without a proper parent — clear so scene stays empty
+      // Skipping from Usage to Sounds with no parent — keep activeSoundParentIndex null
+      // but flag that we ARE in the Sounds step so unparented sounds are shown.
       useUIStore.getState().setActiveSoundParentIndex(null);
+      useUIStore.getState().setIsInSoundsStep(true);
     }
     setCurrentStep(s => (Math.min(s + 1, 2) as Step));
     setIsExpanded(true);
@@ -151,7 +250,7 @@ export function Sidebar(props: SidebarProps) {
           zIndex: 15,
           transition: 'left 300ms ease-in-out',
         }}
-        className="flex flex-col items-center justify-center w-5 py-3 gap-1.5 bg-background border border-secondary-light rounded-r-md shadow-md hover:bg-secondary-lighter"
+        className="flex flex-col items-center justify-center w-5 py-3 gap-1.5 bg-primary border border-secondary-light rounded-r-md shadow-md hover:bg-primary-hover"
       >
         <svg width="10" height="16" viewBox="0 0 10 16" fill="none" xmlns="http://www.w3.org/2000/svg">
           {isExpanded ? (
@@ -162,8 +261,8 @@ export function Sidebar(props: SidebarProps) {
         </svg>
         {!isExpanded && (
           <span
-            style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', fontSize: '10px', letterSpacing: '0.05em' }}
-            className="text-secondary-hover font-medium select-none"
+            style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', fontSize: '12px', letterSpacing: '0.05em' }}
+            className="text-secondary-light-static select-none"
           >
             Soundscape
           </span>
@@ -212,11 +311,11 @@ export function Sidebar(props: SidebarProps) {
           </div>
         )}
 
-        <div className="flex-shrink-0 px-4 pt-4 pb-2 border-b border-secondary-light">
-          <nav className="flex items-center gap-1 text-xs select-none" aria-label="Steps">
+        <div className="flex-shrink-0 px-4 pt-4 pb-2">
+          <nav className="flex font-semibold items-center gap-1 text-xs select-none" aria-label="Steps">
             {/* Context step */}
             <button
-              className={`font-medium transition-colors flex-1 min-w-0 truncate ${
+              className={`transition-colors flex-1 min-w-0 truncate ${
                 currentStep === 0
                   ? 'text-primary'
                   : 'text-secondary-hover hover:text-foreground underline cursor-pointer'
@@ -229,7 +328,7 @@ export function Sidebar(props: SidebarProps) {
                 setCurrentStep(0);
               }}
               aria-current={currentStep === 0 ? 'step' : undefined}
-              title={currentStep > 0 && contextBreadcrumbLabel !== 'Context' ? contextBreadcrumbLabel : undefined}
+              title={contextTooltip}
             >
               {contextBreadcrumbLabel}
             </button>
@@ -254,12 +353,12 @@ export function Sidebar(props: SidebarProps) {
               const usageActive = currentStep === 1;
               return (
                 <button
-                  className={`font-medium transition-colors flex-1 min-w-0 truncate ${
+                  className={`transition-colors flex-1 min-w-0 truncate ${
                     usageActive
                       ? 'text-primary'
                       : usageClickable
                       ? 'text-primary hover:underline cursor-pointer'
-                      : 'text-secondary-hover opacity-50 cursor-default'
+                      : 'text-secondary-hover opacity-70 cursor-default'
                   }`}
                   onClick={() => {
                     if (!usageClickable) return;
@@ -274,7 +373,7 @@ export function Sidebar(props: SidebarProps) {
                     setCurrentStep(1);
                   }}
                   aria-current={usageActive ? 'step' : undefined}
-                  title={currentStep > 1 && usageBreadcrumbLabel !== 'Usage' ? usageBreadcrumbLabel : undefined}
+                  title={usageTooltip}
                 >
                   {usageBreadcrumbLabel}
                 </button>
@@ -308,12 +407,12 @@ export function Sidebar(props: SidebarProps) {
               const soundsActive = currentStep === 2;
               return (
                 <button
-                  className={`font-medium transition-colors flex-1 min-w-0 truncate ${
+                  className={`transition-colors flex-1 min-w-0 truncate ${
                     soundsActive
                       ? 'text-primary'
                       : soundsClickable
                       ? 'text-primary hover:underline cursor-pointer'
-                      : 'text-secondary-hover opacity-50 cursor-default'
+                      : 'text-secondary-hover opacity-70 cursor-default'
                   }`}
                   onClick={() => {
                     if (!soundsClickable) return;
@@ -322,6 +421,12 @@ export function Sidebar(props: SidebarProps) {
                       if (usageExpandedOriginalIndex !== null) {
                         setActiveUsageOriginalIndex(usageExpandedOriginalIndex);
                         useUIStore.getState().setActiveSoundParentIndex(usageExpandedOriginalIndex);
+                      } else if (activeUsageOriginalIndex !== null) {
+                        // No card expanded — restore the previously active parent
+                        useUIStore.getState().setActiveSoundParentIndex(activeUsageOriginalIndex);
+                      } else {
+                        // Fully unparented (skip flow)
+                        useUIStore.getState().setIsInSoundsStep(true);
                       }
                       savedUsageExpandedRef.current = usageExpandedOriginalIndex;
                       setUsageExpandedOriginalIndex(null);
@@ -344,12 +449,17 @@ export function Sidebar(props: SidebarProps) {
                         }, null);
                         setActiveUsageOriginalIndex(lastUsageIdx);
                         setBypassedUsage(false);
-                        if (lastUsageIdx !== null) useUIStore.getState().setActiveSoundParentIndex(lastUsageIdx);
+                        if (lastUsageIdx !== null) {
+                          useUIStore.getState().setActiveSoundParentIndex(lastUsageIdx);
+                        } else {
+                          useUIStore.getState().setIsInSoundsStep(true);
+                        }
                       }
                     }
                     setCurrentStep(2);
                   }}
                   aria-current={soundsActive ? 'step' : undefined}
+                  title={soundsTooltip}
                 >
                   Sounds
                 </button>
@@ -424,6 +534,8 @@ export function Sidebar(props: SidebarProps) {
               onUpdateConfig={props.onUpdateSoundConfig}
               onTypeChange={props.onSoundTypeChange}
               onGenerate={props.onGenerateSounds}
+              onGenerateSingle={props.onGenerateSingleSound}
+              onGenerateFiltered={props.onGenerateFilteredSounds}
               onStopGeneration={props.onStopSoundGeneration}
               onGlobalDurationChange={props.onGlobalDurationChange}
               onGlobalStepsChange={props.onGlobalStepsChange}
@@ -451,17 +563,7 @@ export function Sidebar(props: SidebarProps) {
           )}
         </div>
 
-        {/* Skip button — fixed at the bottom */}
-        {currentStep < 2 && (
-          <div className="flex-shrink-0 px-4 pb-4 pt-2 border-t border-secondary-light flex justify-end">
-            <button
-              onClick={skipStep}
-              className="text-xs text-secondary-hover hover:text-foreground transition-colors"
-            >
-              Skip →
-            </button>
-          </div>
-        )}
+
       </aside>
     </>
   );

@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #171717;
+  --foreground: #ffffff;
 
   --background-static: #ffffff;
   --foreground-static: #171717;
@@ -16,15 +16,20 @@
 
   /* Primary brand color */
   --color-primary: #2F2FE4;
-  --color-primary-hover: #5151e3;
-  --color-primary-light: #c2c2ff;
-  --color-primary-lighter: #c6c6fb;
+  --color-primary-hover: #3535ff;
+  --color-primary-light: #4949ff85;
+  --color-primary-lighter: #f1f1ffef;
   
   /* Secondary color */
-  --color-secondary: #1f1f1f;
+  /* --color-secondary: #1f1f1f;
   --color-secondary-hover: #787878;
   --color-secondary-light: #dbdbdb;
-  --color-secondary-lighter: #f3f3f3;
+  --color-secondary-lighter: #f3f3f3; */
+
+  --color-secondary: #dbdbdb;
+  --color-secondary-hover: #909090;
+  --color-secondary-light: #2a2a2a;
+  --color-secondary-lighter: #141414;
 
   /* Secondary color */
   --color-secondary-static: #1f1f1f;
@@ -107,18 +112,18 @@
 
 }
 
-@media (prefers-color-scheme: dark) {
+/* @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;
     --foreground: #ededed;
 
-    /* Secondary scale flips: dark bg tones for cards/borders, medium for muted text */
+    /* Secondary scale flips: dark bg tones for cards/borders, medium for muted text 
     --color-secondary: #dbdbdb;
     --color-secondary-hover: #909090;
     --color-secondary-light: #2a2a2a;
     --color-secondary-lighter: #141414;
   }
-}
+} */
 
 body {
   background: var(--background);

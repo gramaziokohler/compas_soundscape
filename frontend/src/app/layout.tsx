@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "COMPAS Soundscape",
+  title: "Sound is blue",
   description: "Populate your architectural model with contextualized sound events",
   icons: {
     icon: '/compas_icon_white.png',

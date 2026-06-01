@@ -1,21 +1,38 @@
 'use client';
 
+import type { CardType } from '@/types';
 import { SoundConfigContent, type SoundConfigContentProps } from './SoundConfigContent';
+import { TextToAudioSliders } from './TextToAudioMode';
 import { SoundCardBody } from './SoundCardBody';
+
+interface MethodOption {
+  type: CardType;
+  label: string;
+  enabled: boolean;
+}
+
+interface SoundPreContentProps extends SoundConfigContentProps {
+  availableTypes?: MethodOption[];
+  onSwitchType?: (index: number, type: CardType) => void;
+}
 
 /**
  * SoundPreContent
  *
  * Pre-generation sound card content. Wraps the mode-specific configuration UI
- * (TextToAudioMode, UploadMode, LibraryMode, etc.) with the same shared controls
- * layout used by SoundResultContent: volume slider, interval slider/timestamps,
- * and position x/y/z widget.
+ * (TextToAudioMode, UploadMode, LibraryMode, etc.) with the shared controls
+ * layout: volume slider, interval slider/timestamps, and position x/y/z widget.
+ *
+ * Layout (left column):
+ *   1. x/y/z position widget (always visible)
+ *   2. Method selector row: "Method: <dropdown> v"  (collapsed by default)
+ *   3. Collapsible panel with the type-specific UI
  *
  * This is the `beforeContent` for the Sound Card component.
  * SoundResultContent is the `afterContent`.
  */
-export function SoundPreContent(props: SoundConfigContentProps) {
-  const { config, index, onUpdateConfig } = props;
+export function SoundPreContent(props: SoundPreContentProps) {
+  const { config, index, onUpdateConfig, availableTypes, onSwitchType, ...configProps } = props;
 
   // ── Derive shared-control values from config ──────────────────────────────
   const volumeDb = config.spl_db ?? 70;
@@ -30,15 +47,12 @@ export function SoundPreContent(props: SoundConfigContentProps) {
   const schedulingMode: 'interval' | 'timestamps' =
     timestamps.length > 0 ? 'timestamps' : 'interval';
 
-  // Entity is linked when config.entity exists — foley entities have string id/applicationId
-  // but no numeric index. Use existence of config.entity as the signal.
-  // SoundCardBody uses entityIndex !== undefined to disable position inputs.
+  // Entity is linked when config.entity exists
   const entityIndex: number | undefined = config.entity
     ? (typeof config.entity.index === 'number' ? config.entity.index : -1)
     : undefined;
 
   // Position to display: entity bbox center when linked, explicit override otherwise.
-  // This keeps the position widget read-only and shows the correct value.
   const displayedPosition: [number, number, number] | undefined = config.entity
     ? (() => {
         const ec = config.entity!;
@@ -52,7 +66,6 @@ export function SoundPreContent(props: SoundConfigContentProps) {
   // ── Callbacks ─────────────────────────────────────────────────────────────
 
   const handleVolumeChange = (db: number) => onUpdateConfig(index, 'spl_db', db);
-
   const handleIntervalChange = (sec: number) => onUpdateConfig(index, 'interval_seconds', sec);
 
   const handleTimestampsChange = (ts: number[]) => {
@@ -67,20 +80,47 @@ export function SoundPreContent(props: SoundConfigContentProps) {
   const handleUpdatePosition = (pos: [number, number, number]) =>
     onUpdateConfig(index, 'position', pos);
 
+  const handleUnlinkEntity = () =>
+    onUpdateConfig(index, 'entity' as any, undefined as any);
+
+  const currentType = config.type || 'text-to-audio';
+
+  // For text-to-audio: render just the textarea in mainContent; sliders go in collapsible panel.
+  // For other types: render the full mode UI, no collapsible.
+  const isTextToAudio = currentType === 'text-to-audio';
+
+  const collapsibleContent = isTextToAudio ? (
+    <TextToAudioSliders config={config} index={index} onUpdateConfig={onUpdateConfig} />
+  ) : undefined;
+
   return (
     <SoundCardBody
-      mainContent={<SoundConfigContent {...props} />}
+      mainContent={
+        <SoundConfigContent
+          config={config}
+          index={index}
+          onUpdateConfig={onUpdateConfig}
+          hideTextToAudioSliders={isTextToAudio}
+          {...configProps}
+        />
+      }
+      collapsibleContent={collapsibleContent}
       volumeDb={volumeDb}
       intervalSeconds={intervalSeconds}
       schedulingMode={schedulingMode}
       timestamps={timestamps}
       position={displayedPosition}
       entityIndex={entityIndex}
+      methodType={config.type || 'text-to-audio'}
+      availableTypes={availableTypes}
+      onSwitchType={onSwitchType ? (t) => onSwitchType(index, t) : undefined}
       onVolumeChange={handleVolumeChange}
       onIntervalChange={handleIntervalChange}
       onTimestampsChange={handleTimestampsChange}
       onUpdatePosition={handleUpdatePosition}
+      onUnlinkEntity={handleUnlinkEntity}
       storeContext="soundscape"
     />
   );
 }
+

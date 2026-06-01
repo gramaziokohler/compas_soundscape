@@ -82,58 +82,20 @@ export interface AdvancedSettingsSectionProps {
   onListenerOrientationChange: (orientation: { x: number; y: number; z: number }) => void;
 }
 
-// ── Accordion wrapper ─────────────────────────────────────────────────────────
+// ── Section key type ──────────────────────────────────────────────────────────
 
-function AccordionSection({
-  title,
-  expanded,
-  onToggle,
-  children,
-}: {
-  title: string;
-  expanded: boolean;
-  onToggle: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      className="border border-secondary-light"
-      style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
-    >
-      <button
-        onClick={onToggle}
-        className="w-full flex items-center justify-between px-2 py-1.5 text-left bg-primary hover:bg-primary-hover transition-colors"
-        style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
-      >
-        <h4 className="text-[10px] font-bold text-white uppercase tracking-wider">
-          {title}
-        </h4>
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="10"
-          height="10"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="transition-transform"
-          style={{
-            transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
-          }}
-        >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      </button>
-      {expanded && (
-        <div className="px-2 pb-2 pt-1 border-t border-secondary-light">
-          {children}
-        </div>
-      )}
-    </div>
-  );
-}
+type SectionKey = 'viewer' | 'acoustic' | 'tokens' | 'llm' | 'rendering' | 'audio';
+
+const SECTION_LABELS: Record<SectionKey, string> = {
+  viewer: 'Viewer',
+  acoustic: 'Acoustic',
+  tokens: 'API Tokens',
+  llm: 'LLM Models',
+  rendering: 'Sound Rendering',
+  audio: 'Audio Models',
+};
+
+const SECTION_KEYS: SectionKey[] = ['viewer', 'acoustic', 'tokens', 'llm', 'rendering', 'audio'];
 
 // ── Token input ───────────────────────────────────────────────────────────────
 
@@ -409,20 +371,14 @@ export function AdvancedSettingsSection({
   listenerOrientation,
   onListenerOrientationChange,
 }: AdvancedSettingsSectionProps) {
-  const [viewerExpanded, setViewerExpanded] = useState(false);
-  const [acousticExpanded, setAcousticExpanded] = useState(false);
-  const [tokensExpanded, setTokensExpanded] = useState(false);
-  const [llmExpanded, setLlmExpanded] = useState(false);
-  const [audioExpanded, setAudioExpanded] = useState(false);
-  const [soundRenderingExpanded, setSoundRenderingExpanded] = useState(false);
-
+  const [activeSection, setActiveSection] = useState<SectionKey>(SECTION_KEYS[0]);
 
   const serviceVersions = useServiceVersions();
   const llmProviders = serviceVersions?.llm_providers ?? null;
 
   const tokenSettingsTrigger = useTextGenerationStore((s) => s.tokenSettingsTrigger);
   useEffect(() => {
-    if (tokenSettingsTrigger > 0) setTokensExpanded(true);
+    if (tokenSettingsTrigger > 0) setActiveSection('tokens');
   }, [tokenSettingsTrigger]);
 
   const intervalJitterSeconds = useAudioControlsStore((s) => s.intervalJitterSeconds);
@@ -440,260 +396,277 @@ export function AdvancedSettingsSection({
   const setGlobalMeshLc = useUIStore((s) => s.setGlobalMeshLc);
 
   return (
-    <div className="flex flex-col gap-2 w-full">
-      <div className="flex items-center justify-between">
-        <h3 className="text-xs font-medium text-foreground">Advanced Settings</h3>
+    <div className="flex flex-col gap-1.5 w-full">
+      <div className="flex items-center justify-between mb-0.5">
+        <h3 className="text-xs font-medium text-foreground">  </h3>
         <button
           onClick={onResetToDefaults}
-          className="text-xs transition-colors hover:opacity-80 text-primary"
+          className="text-[10px] transition-opacity hover:opacity-60 text-secondary-hover"
           title="Reset to defaults"
         >
           Reset
         </button>
       </div>
 
-      <AccordionSection title="Viewer" expanded={viewerExpanded} onToggle={() => setViewerExpanded((e) => !e)}>
-        <div className="flex flex-col gap-1 pt-1">
-          <CheckboxField checked={showAxesHelper} onChange={onShowAxesHelperChange} label="Show axes helper" />
-          <CheckboxField checked={showLabelSprites} onChange={onShowLabelSpritesChange} label="Show label sprites" />
-          <CheckboxField checked={showHoveringHighlight} onChange={onShowHoveringHighlightChange} label="Hovering highlight" />
-          <CheckboxField checked={showSoundSpheres} onChange={onShowSoundSpheresChange} label="Show sound spheres" />
-          <CheckboxField checked={showSceneListeners} onChange={onShowSceneListenersChange} label="Show listeners" />
-          <CheckboxField checked={showGroundGrid} onChange={onShowGroundGridChange} label="Show ground grid" />
-          {showGroundGrid && (
-            <div className="flex flex-col gap-1 pl-3 border-l border-secondary-light">
-              <RangeSlider
-                label="Spacing (m): "
-                value={groundGridSpacing}
-                min={0.5}
-                max={50}
-                step={0.5}
-                onChange={onGroundGridSpacingChange}
-                defaultValue={5}
-                formatValue={(v) => `${v} m`}
-                hoverText="Distance between grid lines in metres. Double-click to reset to 5 m."
-              />
-              <div className="flex items-center justify-between gap-2">
-                <label className="text-[10px] font-medium text-foreground">Color</label>
-                <input
-                  type="color"
-                  value={groundGridColor}
-                  onChange={(e) => onGroundGridColorChange(e.target.value)}
-                  className="w-8 h-5 cursor-pointer rounded border border-secondary-light bg-transparent"
-                  title="Grid line color"
-                />
-              </div>
-            </div>
-          )}
-        </div>
-      </AccordionSection>
+      {/* Two-column layout: left nav + right content */}
+      <div className="flex gap-2 w-full min-h-0">
 
-      <AccordionSection title="Acoustic simulation" expanded={acousticExpanded} onToggle={() => setAcousticExpanded((e) => !e)}>
-        <div className="flex flex-col gap-2 pt-1">
-          <RangeSlider
-            label="Sound speed (m/s): "
-            value={globalSoundSpeed}
-            min={SPEED_OF_SOUND_MIN}
-            max={SPEED_OF_SOUND_MAX}
-            step={1}
-            onChange={setGlobalSoundSpeed}
-            defaultValue={DEFAULT_SPEED_OF_SOUND}
-            formatValue={(v) => `${v} m/s`}
-            hoverText="Applied to all simulation engines (Choras DE/DG, pyroomacoustics, Resonance Audio). Double-click to reset to 343 m/s."
-          />
-          <RangeSlider
-            label="Mesh length (lc): "
-            value={globalMeshLc}
-            min={CHORAS_DE_LC_MIN}
-            max={CHORAS_DE_LC_MAX}
-            step={0.1}
-            onChange={setGlobalMeshLc}
-            defaultValue={CHORAS_DE_DEFAULT_LC}
-            formatValue={(v) => `${v.toFixed(1)} m`}
-            hoverText="Characteristic mesh length for DE method. Double-click to reset to 1.5 m."
-          />
-        </div>
-      </AccordionSection>
-
-      <AccordionSection title="API Tokens" expanded={tokensExpanded} onToggle={() => setTokensExpanded((e) => !e)}>
-        <TokensSection />
-      </AccordionSection>
-
-      <AccordionSection title="LLM Models" expanded={llmExpanded} onToggle={() => setLlmExpanded((e) => !e)}>
-        <select
-          value={llmModel}
-          onChange={(e) => onLlmModelChange(e.target.value)}
-          className="w-full px-2 py-1.5 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light cursor-pointer hover:border-secondary-hover transition-colors focus:outline-none focus:ring-1"
-          style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px`, accentColor: 'var(--color-primary)' }}
-        >
-          {[
-            LLM_MODEL_GEMINI_3_PRO,
-            LLM_MODEL_GEMINI_3_FLASH,
-            LLM_MODEL_GEMINI_PRO,
-            LLM_MODEL_GEMINI_FLASH,
-            LLM_MODEL_OPENAI,
-            LLM_MODEL_ANTHROPIC,
-          ].map((m) => {
-            const installed = isProviderInstalled(m, llmProviders);
+        {/* Left: vertical menu */}
+        <nav className="flex flex-col gap-0.5 shrink-0">
+          {SECTION_KEYS.map((key) => {
+            const isActive = activeSection === key;
             return (
-              <option key={m} value={m} disabled={!installed}>
-                {LLM_MODEL_NAMES[m]}{!installed ? " (not installed)" : ""}
-              </option>
+              <button
+                key={key}
+                onClick={() => { if (!isActive) setActiveSection(key); }}
+                className="text-left px-1 py-0.5 text-[10px] transition-colors rounded-sm whitespace-nowrap"
+                style={{
+                  color: isActive ? 'var(--color-primary)' : 'var(--color-secondary-hover)',
+                  fontWeight: isActive ? 700 : 400,
+                }}
+              >
+                {SECTION_LABELS[key]}
+              </button>
             );
           })}
-        </select>
-      </AccordionSection>
+        </nav>
 
-      <AccordionSection title="Sound Rendering" expanded={soundRenderingExpanded} onToggle={() => setSoundRenderingExpanded((e) => !e)}>
-        <div className="flex flex-col gap-3 pt-1">
-          <div className="flex flex-col gap-1.5">
-            <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
-              Listener orientation
-            </h4>
-            <div className="flex gap-2">
-              {(['x', 'y', 'z'] as const).map((axis) => (
-                <div
-                  key={axis}
-                  className="flex-1 flex flex-col gap-0.5"
-                  title={`Double-click to reset (default: ${DEFAULT_LISTENER_ORIENTATION[axis]})`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-medium text-secondary-hover uppercase">{axis}</span>
-                    <span className="text-[10px] font-bold text-primary">
-                      {listenerOrientation[axis].toFixed(1)}
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min={-1}
-                    max={1}
-                    step={0.1}
-                    value={listenerOrientation[axis]}
-                    onChange={(e) =>
-                      onListenerOrientationChange({ ...listenerOrientation, [axis]: parseFloat(e.target.value) })
-                    }
-                    onDoubleClick={() =>
-                      onListenerOrientationChange({ ...listenerOrientation, [axis]: DEFAULT_LISTENER_ORIENTATION[axis] })
-                    }
-                    className="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-secondary-light"
-                    style={{ accentColor: 'var(--color-primary)' }}
+        {/* Divider */}
+        <div className="w-px bg-secondary-light shrink-0 self-stretch" />
+
+        {/* Right: content */}
+        <div className="flex-1 min-w-0">
+          {activeSection === 'viewer' && (
+            <div className="flex flex-col gap-1">
+              {/* <CheckboxField checked={showAxesHelper} onChange={onShowAxesHelperChange} label="Show axes helper" /> */}
+              <CheckboxField checked={showLabelSprites} onChange={onShowLabelSpritesChange} label="Show label sprites" />
+              <CheckboxField checked={showHoveringHighlight} onChange={onShowHoveringHighlightChange} label="Hovering highlight" />
+              <CheckboxField checked={showSoundSpheres} onChange={onShowSoundSpheresChange} label="Show sound spheres" />
+              <CheckboxField checked={showSceneListeners} onChange={onShowSceneListenersChange} label="Show listeners" />
+              <CheckboxField checked={showGroundGrid} onChange={onShowGroundGridChange} label="Show ground grid" />
+              {showGroundGrid && (
+                <div className="flex flex-col gap-1 pl-2 border-l border-secondary-light">
+                  <RangeSlider
+                    label="Spacing (m): "
+                    value={groundGridSpacing}
+                    min={0.5}
+                    max={50}
+                    step={0.5}
+                    onChange={onGroundGridSpacingChange}
+                    defaultValue={5}
+                    formatValue={(v) => `${v} m`}
+                    hoverText="Distance between grid lines in metres. Double-click to reset to 5 m."
                   />
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-[10px] text-foreground">Color</label>
+                    <input
+                      type="color"
+                      value={groundGridColor}
+                      onChange={(e) => onGroundGridColorChange(e.target.value)}
+                      className="w-8 h-5 cursor-pointer rounded border border-secondary-light bg-transparent"
+                      title="Grid line color"
+                    />
+                  </div>
                 </div>
-              ))}
+              )}
             </div>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
-              Playback timing
-            </h4>
-            <RangeSlider
-              label="Interval Jitter (s): "
-              value={intervalJitterSeconds}
-              min={0}
-              max={15}
-              step={0.5}
-              onChange={setIntervalJitter}
-              defaultValue={AUDIO_PLAYBACK.DEFAULT_INTERVAL_JITTER_SECONDS}
-              hoverText="Each iteration fires at its base interval ± a random offset drawn from [0, jitter]. Also controls the stagger between sounds on Play All. Double-click to reset."
-            />
-            <RangeSlider
-              label="Timeline Length (s): "
-              value={timelineDurationMs / 1_000}
-              min={30}
-              max={600}
-              step={30}
-              onChange={(v) => setTimelineDurationMs(v * 1_000)}
-              defaultValue={AUDIO_PLAYBACK.TIMELINE_FIXED_DURATION_MS / 1_000}
-              hoverText="Fixed length of the visual and audio timeline in seconds. Sounds that extend past this boundary are trimmed. Double-click to reset to 180 s (3 min)."
-            />
-          </div>
-        </div>
-      </AccordionSection>
-
-      <AccordionSection title="Audio Models" expanded={audioExpanded} onToggle={() => setAudioExpanded((e) => !e)}>
-        <div className="flex flex-col gap-2">
-          <RangeSlider
-            label="Base SPL (dB): "
-            value={globalBaseSplDb}
-            min={SPL_MIN}
-            max={SPL_MAX}
-            step={1}
-            onChange={setGlobalBaseSplDb}
-            defaultValue={DEFAULT_SPL_DB}
-            hoverText="Reference SPL level used in audio calibration for all generated sounds. Double-click to reset to 70 dB."
-          />
-          <select
-            value={audioModel}
-            onChange={(e) => onAudioModelChange(e.target.value)}
-            className="w-full px-2 py-1.5 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light cursor-pointer hover:border-secondary-hover transition-colors focus:outline-none focus:ring-1"
-            style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px`, accentColor: 'var(--color-primary)' }}
-          >
-            <option value={AUDIO_MODEL_TANGOFLUX}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_TANGOFLUX]}</option>
-            <option value={AUDIO_MODEL_AUDIOLDM2}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_AUDIOLDM2]}</option>
-            <option value={AUDIO_MODEL_ELEVENLABS}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_ELEVENLABS]}</option>
-          </select>
-          <p className="text-[10px] text-secondary-hover leading-tight">
-            {audioModel === AUDIO_MODEL_TANGOFLUX
-              ? "Fast, high-quality text-to-audio generation (default)"
-              : audioModel === AUDIO_MODEL_ELEVENLABS
-              ? "Cloud-based sound effects via ElevenLabs — requires NEXT_PUBLIC_ELEVENLABS_API_KEY"
-              : "Alternative model with different characteristics"}
-          </p>
-
-          <RangeSlider
-            label="Global Duration (s): "
-            value={globalDuration}
-            min={1}
-            max={30}
-            step={1}
-            onChange={onGlobalDurationChange}
-            hoverText={
-              audioModel === AUDIO_MODEL_ELEVENLABS
-                ? "ElevenLabs accepts 0.5–22 s; values outside this range use auto-detect"
-                : "Applies to all sound tabs"
-            }
-          />
-
-          {audioModel !== AUDIO_MODEL_ELEVENLABS && (
-            <>
-              <RangeSlider
-                label="Diffusion Steps: "
-                value={globalSteps}
-                min={10}
-                max={100}
-                step={5}
-                onChange={onGlobalStepsChange}
-                hoverText="Higher steps = better quality but slower"
-              />
-              <div>
-                <label className="block text-[10px] font-medium mb-1 text-foreground">
-                  Global Negative Prompt
-                </label>
-                <textarea
-                  value={globalNegativePrompt}
-                  onChange={(e) => onGlobalNegativePromptChange(e.target.value)}
-                  placeholder="e.g., distorted, reverb, echo"
-                  className="w-full px-2 py-1.5 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light resize-none placeholder:text-secondary-hover focus:border-primary focus:outline-none transition-colors"
-                  style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
-                  rows={2}
-                />
-              </div>
-            </>
           )}
 
-          <RangeSlider
-            id="max-foley-sounds"
-            label="Max Foley Sounds"
-            min={MAXIMUM_FOLEY_SOUNDS_MIN}
-            max={MAXIMUM_FOLEY_SOUNDS_MAX}
-            step={1}
-            value={maximumFoleySounds}
-            onChange={setMaximumFoleySounds}
-            hoverText="Maximum number of foley sound events generated by the AI foley artist"
-          />
+          {activeSection === 'acoustic' && (
+            <div className="flex flex-col gap-2">
+              <RangeSlider
+                label="Sound speed (m/s): "
+                value={globalSoundSpeed}
+                min={SPEED_OF_SOUND_MIN}
+                max={SPEED_OF_SOUND_MAX}
+                step={1}
+                onChange={setGlobalSoundSpeed}
+                defaultValue={DEFAULT_SPEED_OF_SOUND}
+                formatValue={(v) => `${v} m/s`}
+                hoverText="Applied to all simulation engines (Choras DE/DG, pyroomacoustics, Resonance Audio). Double-click to reset to 343 m/s."
+              />
+              <RangeSlider
+                label="Mesh length (lc): "
+                value={globalMeshLc}
+                min={CHORAS_DE_LC_MIN}
+                max={CHORAS_DE_LC_MAX}
+                step={0.1}
+                onChange={setGlobalMeshLc}
+                defaultValue={CHORAS_DE_DEFAULT_LC}
+                formatValue={(v) => `${v.toFixed(1)} m`}
+                hoverText="Characteristic mesh length for DE method. Double-click to reset to 1.5 m."
+              />
+            </div>
+          )}
+
+          {activeSection === 'tokens' && <TokensSection />}
+
+          {activeSection === 'llm' && (
+            <select
+              value={llmModel}
+              onChange={(e) => onLlmModelChange(e.target.value)}
+              className="w-full px-2 py-1.5 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light cursor-pointer hover:border-secondary-hover transition-colors focus:outline-none focus:ring-1"
+              style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px`, accentColor: 'var(--color-primary)' }}
+            >
+              {[
+                LLM_MODEL_GEMINI_3_PRO,
+                LLM_MODEL_GEMINI_3_FLASH,
+                LLM_MODEL_GEMINI_PRO,
+                LLM_MODEL_GEMINI_FLASH,
+                LLM_MODEL_OPENAI,
+                LLM_MODEL_ANTHROPIC,
+              ].map((m) => {
+                const installed = isProviderInstalled(m, llmProviders);
+                return (
+                  <option key={m} value={m} disabled={!installed}>
+                    {LLM_MODEL_NAMES[m]}{!installed ? " (not installed)" : ""}
+                  </option>
+                );
+              })}
+            </select>
+          )}
+
+          {activeSection === 'rendering' && (
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[9px] uppercase tracking-wider text-secondary-hover">Listener orientation</span>
+                <div className="flex gap-2">
+                  {(['x', 'y', 'z'] as const).map((axis) => (
+                    <div
+                      key={axis}
+                      className="flex-1 flex flex-col gap-0.5"
+                      title={`Double-click to reset (default: ${DEFAULT_LISTENER_ORIENTATION[axis]})`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-secondary-hover uppercase">{axis}</span>
+                        <span className="text-[10px] font-bold text-primary">
+                          {listenerOrientation[axis].toFixed(1)}
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={-1}
+                        max={1}
+                        step={0.1}
+                        value={listenerOrientation[axis]}
+                        onChange={(e) =>
+                          onListenerOrientationChange({ ...listenerOrientation, [axis]: parseFloat(e.target.value) })
+                        }
+                        onDoubleClick={() =>
+                          onListenerOrientationChange({ ...listenerOrientation, [axis]: DEFAULT_LISTENER_ORIENTATION[axis] })
+                        }
+                        className="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-secondary-light"
+                        style={{ accentColor: 'var(--color-primary)' }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[9px] uppercase tracking-wider text-secondary-hover">Playback timing</span>
+                <RangeSlider
+                  label="Jitter (s): "
+                  value={intervalJitterSeconds}
+                  min={0}
+                  max={15}
+                  step={0.5}
+                  onChange={setIntervalJitter}
+                  defaultValue={AUDIO_PLAYBACK.DEFAULT_INTERVAL_JITTER_SECONDS}
+                  hoverText="Each iteration fires at its base interval ± a random offset drawn from [0, jitter]. Also controls the stagger between sounds on Play All. Double-click to reset."
+                />
+                <RangeSlider
+                  label="Timeline (s): "
+                  value={timelineDurationMs / 1_000}
+                  min={30}
+                  max={600}
+                  step={30}
+                  onChange={(v) => setTimelineDurationMs(v * 1_000)}
+                  defaultValue={AUDIO_PLAYBACK.TIMELINE_FIXED_DURATION_MS / 1_000}
+                  hoverText="Fixed length of the visual and audio timeline in seconds. Sounds that extend past this boundary are trimmed. Double-click to reset to 180 s (3 min)."
+                />
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'audio' && (
+            <div className="flex flex-col gap-2">
+              <RangeSlider
+                label="Base SPL (dB): "
+                value={globalBaseSplDb}
+                min={SPL_MIN}
+                max={SPL_MAX}
+                step={1}
+                onChange={setGlobalBaseSplDb}
+                defaultValue={DEFAULT_SPL_DB}
+                hoverText="Reference SPL level used in audio calibration for all generated sounds. Double-click to reset to 70 dB."
+              />
+              <select
+                value={audioModel}
+                onChange={(e) => onAudioModelChange(e.target.value)}
+                className="w-full px-2 py-1.5 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light cursor-pointer hover:border-secondary-hover transition-colors focus:outline-none focus:ring-1"
+                style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px`, accentColor: 'var(--color-primary)' }}
+              >
+                <option value={AUDIO_MODEL_TANGOFLUX}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_TANGOFLUX]}</option>
+                <option value={AUDIO_MODEL_AUDIOLDM2}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_AUDIOLDM2]}</option>
+                <option value={AUDIO_MODEL_ELEVENLABS}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_ELEVENLABS]}</option>
+              </select>
+              <p className="text-[10px] text-secondary-hover leading-tight">
+                {audioModel === AUDIO_MODEL_TANGOFLUX
+                  ? "Fast, high-quality text-to-audio generation (default)"
+                  : audioModel === AUDIO_MODEL_ELEVENLABS
+                  ? "Cloud-based sound effects via ElevenLabs — requires NEXT_PUBLIC_ELEVENLABS_API_KEY"
+                  : "Alternative model with different characteristics"}
+              </p>
+              <RangeSlider
+                label="Duration (s): "
+                value={globalDuration}
+                min={1}
+                max={30}
+                step={1}
+                onChange={onGlobalDurationChange}
+                hoverText={
+                  audioModel === AUDIO_MODEL_ELEVENLABS
+                    ? "ElevenLabs accepts 0.5–22 s; values outside this range use auto-detect"
+                    : "Applies to all sound tabs"
+                }
+              />
+              {audioModel !== AUDIO_MODEL_ELEVENLABS && (
+                <>
+                  <RangeSlider
+                    label="Diffusion Steps: "
+                    value={globalSteps}
+                    min={10}
+                    max={100}
+                    step={5}
+                    onChange={onGlobalStepsChange}
+                    hoverText="Higher steps = better quality but slower"
+                  />
+                  <div>
+                    <label className="block text-[10px] mb-1 text-foreground">Negative Prompt</label>
+                    <textarea
+                      value={globalNegativePrompt}
+                      onChange={(e) => onGlobalNegativePromptChange(e.target.value)}
+                      placeholder="e.g., distorted, reverb, echo"
+                      className="w-full px-2 py-1.5 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light resize-none placeholder:text-secondary-hover focus:border-primary focus:outline-none transition-colors"
+                      style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
+                      rows={2}
+                    />
+                  </div>
+                </>
+              )}
+              <RangeSlider
+                label="Max Foley: "
+                min={MAXIMUM_FOLEY_SOUNDS_MIN}
+                max={MAXIMUM_FOLEY_SOUNDS_MAX}
+                step={1}
+                value={maximumFoleySounds}
+                onChange={setMaximumFoleySounds}
+                hoverText="Maximum number of foley sound events generated by the AI foley artist"
+              />
+            </div>
+          )}
         </div>
-      </AccordionSection>
+      </div>
     </div>
   );
 }

@@ -91,6 +91,7 @@ export function Card<TConfig extends CardBaseConfig>({
   closeButtonTitle = 'Remove',
   resetButtonTitle = 'Reset to configuration',
   customButtons,
+  headerPrefix,
   // Simulation action button props
   onRun,
   onCancel,
@@ -144,10 +145,10 @@ export function Card<TConfig extends CardBaseConfig>({
   const cardClassName = [
     'relative rounded-lg border-0 transition-all duration-200',
     // isExpanded ? `p-2 bg-${color}-light border-0` : hasResult ? `p-1.5 bg-${color}-light` : 'p-1.5 bg-secondary-lighter',
-    isExpanded && hasResult ? `p-2 bg-secondary` : '',
+    isExpanded && hasResult ? `p-2 bg-primary-light` : '',
     isExpanded && !hasResult ? 'p-2 border-0' : '',
-    !isExpanded && hasResult ? `p-2 bg-secondary` : '',
-    !isExpanded && !hasResult ? `p-2 bg-secondary-lighter` : '',        
+    !isExpanded && hasResult ? `p-2 bg-primary-light` : '',
+    !isExpanded && !hasResult ? `p-2 bg-secondary-light` : '',        
 
     error ? 'border-error bg-error-light' : '',
   ].filter(Boolean).join(' ');
@@ -244,7 +245,7 @@ export function Card<TConfig extends CardBaseConfig>({
       onDoubleClick={handleCardDoubleClick}
       style={{
         ...cardColorStyle,
-        ...(isExpanded && !hasResult && !error ? { borderColor: `var(--color-${color})`, backgroundColor: 'var(--card-color-light)' } : {}),
+        ...(isExpanded && !hasResult && !error ? { borderColor: `var(--color-${color})`, backgroundColor: 'var(--color-secondary-light)' } : {}),
         ...(dimmed ? { filter: 'brightness(0.55)' } : {}),
       }}
     >
@@ -277,6 +278,13 @@ export function Card<TConfig extends CardBaseConfig>({
         onDoubleClick={e => e.stopPropagation()}
         style={{ userSelect: 'none' }}
       >
+        {/* Header prefix slot — e.g., entity link button */}
+        {headerPrefix && (
+          <div className="flex-shrink-0" onClick={e => e.stopPropagation()}>
+            {headerPrefix}
+          </div>
+        )}
+
         {/* Title + pen */}
         <div className="flex items-center gap-2 flex-1 min-w-0">
           {/* Title / edit input */}
@@ -519,7 +527,7 @@ export function Card<TConfig extends CardBaseConfig>({
                     style={{
                       backgroundColor: 'var(--color-secondary-hover)',
                       color: 'white',
-                      backgroundImage: `linear-gradient(to right, var(--card-color) ${progress}%, var(--color-secondary-hover) ${progress}%)`,
+                      backgroundImage: `linear-gradient(to right, var(--color-primary) ${progress}%, var(--color-secondary-hover) ${progress}%)`,
                       transition: 'background-image 0.3s ease'
                     }}
                   >

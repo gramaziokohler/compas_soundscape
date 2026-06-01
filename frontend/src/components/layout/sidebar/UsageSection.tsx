@@ -6,6 +6,7 @@ import type {
   AnalysisResult,
   TextAnalysisConfig,
   ScenarioConfig,
+  AnalysisBaseConfig,
 } from '@/types/analysis';
 import type { CardTypeOption } from '@/components/ui/CardSection';
 import { CARD_TYPE_LABELS } from '@/types/card';
@@ -19,62 +20,7 @@ import { useAnalysisStore, useSoundscapeStore, useAreaDrawingStore } from '@/sto
 import { useServiceVersions } from '@/hooks/useServiceVersions';
 import { LLM_MODEL_TO_PROVIDER } from '@/utils/constants';
 import type { CustomMenuItem } from '@/types/card';
-
-// ─── CircularFAB ──────────────────────────────────────────────────────────────
-
-interface CircularFABProps {
-  label: string;
-  onClick: () => void;
-  isLoading?: boolean;
-}
-
-function CircularFAB({ label, onClick, isLoading }: CircularFABProps) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={isLoading}
-      title={isLoading ? 'Working…' : label}
-      aria-label={isLoading ? 'Working…' : label}
-      style={{
-        position: 'absolute',
-        right: '-14px',
-        top: '50%',
-        transform: 'translateY(-50%)',
-        width: '32px',
-        height: '32px',
-        borderRadius: '50%',
-        backgroundColor: 'var(--color-primary)',
-        zIndex: 20,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.35)',
-        cursor: isLoading ? 'not-allowed' : 'pointer',
-        border: 'none',
-        flexShrink: 0,
-        opacity: isLoading ? 0.7 : 1,
-        transition: 'transform 150ms ease, box-shadow 150ms ease, opacity 150ms ease',
-      }}
-      onMouseEnter={(e) => {
-        if (!isLoading) (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-50%) scale(1.12)';
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-50%)';
-      }}
-    >
-      {isLoading ? (
-        <span
-          className="inline-block w-3 h-3 rounded-full border-2 border-white border-t-transparent animate-spin"
-          aria-hidden="true"
-        />
-      ) : (
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-          <path d="M3 7h8M7.5 3.5L11 7l-3.5 3.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      )}
-    </button>
-  );
-}
+import { CircularFAB } from '@/components/ui/CircularFAB';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -103,7 +49,7 @@ export interface UsageSectionProps {
   activeContextOriginalIndex?: number | null;
 }
 
-const USAGE_CARD_TYPES: CardType[] = ['scenario', 'text'];
+const USAGE_CARD_TYPES: CardType[] = ['scenario', 'text', 'freeform'];
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -129,17 +75,20 @@ export function UsageSection({
   const [filteredExpandedIndex, setFilteredExpandedIndex] = useState<number | null>(null);
   const serviceVersions = useServiceVersions();
   const llmModel = useSoundscapeStore((s) => s.llmModel);
+  const soundConfigs = useSoundscapeStore((s) => s.soundConfigs);
   const analysisStatus = useAnalysisStore((s) => s.analysisStatus);
   const analyzingConfigIndex = useAnalysisStore((s) => s.analyzingConfigIndex);
   const handleReorderConfigs = useAnalysisStore((s) => s.handleReorderConfigs);
   const areaDrawing = useAreaDrawingStore();
 
   // Filter to usage card types only, then by active parent context if set
+  // Freeform cards without parentContextOriginalIndex belong to Context, exclude them here.
   const usageConfigs = useMemo(
     () => analysisConfigs.filter((c) => {
       if (!USAGE_CARD_TYPES.includes(c.type as CardType)) return false;
+      if (c.type === 'freeform' && (c as AnalysisBaseConfig).parentContextOriginalIndex === undefined) return false;
       if (activeContextOriginalIndex !== null && activeContextOriginalIndex !== undefined) {
-        return (c as import('@/types/analysis').AnalysisBaseConfig).parentContextOriginalIndex === activeContextOriginalIndex;
+        return (c as AnalysisBaseConfig).parentContextOriginalIndex === activeContextOriginalIndex;
       }
       return true;
     }),
@@ -163,17 +112,26 @@ export function UsageSection({
     }
   }, [expandedOriginalIndex, indexMap]);
 
-  // Auto-expand newly added usage cards
-  const prevUsageLength = useRef(0);
+  // Auto-expand newly added usage cards; auto-advance for freeform cards
+  // Initialize to current length so existing cards don't re-trigger auto-advance on remount
+  const prevUsageLength = useRef(usageConfigs.length);
   useEffect(() => {
     if (usageConfigs.length > prevUsageLength.current) {
       const lastFi = usageConfigs.length - 1;
-      setFilteredExpandedIndex(lastFi);
       const originalIndex = indexMap[lastFi];
-      if (originalIndex !== undefined) onExpandedOriginalIndexChange?.(originalIndex);
+      const newConfig = usageConfigs[lastFi];
+
+      if (newConfig?.type === 'freeform') {
+        // Skip expansion — jump straight to Sounds step
+        const name = newConfig.display_name || 'Untitled usage';
+        if (originalIndex !== undefined) onAdvanceToSounds(originalIndex, name);
+      } else {
+        setFilteredExpandedIndex(lastFi);
+        if (originalIndex !== undefined) onExpandedOriginalIndexChange?.(originalIndex);
+      }
     }
     prevUsageLength.current = usageConfigs.length;
-  }, [usageConfigs.length, indexMap, onExpandedOriginalIndexChange]);
+  }, [usageConfigs.length, indexMap, onExpandedOriginalIndexChange, onAdvanceToSounds]);
 
   const handleCardSectionExpandedChange = useCallback(
     (fi: number | null) => {
@@ -206,7 +164,7 @@ export function UsageSection({
       console.log('[UsageSection] Auto-advancing to Sounds for config', originalIndex, 'with', soundCount, 'sounds, selectedKeys:', sc.selectedFoleyKeys?.length ?? 0);
       const scenarioTitle =
         sc.scenarioResult?.scenarios?.[0]?.title ||
-        config.displayName ||
+        config.display_name ||
         CARD_TYPE_LABELS['scenario'] ||
         'Scenario';
       // onAdvanceToSounds → handleUsageSendToSounds → props.onSendToSoundGeneration(originalIndex)
@@ -274,6 +232,9 @@ export function UsageSection({
   const handleAddConfig = useCallback((type: CardType) => {
     const nextIndex = analysisConfigs.length; // new card will be appended at this index
     onAddConfig(type);
+    if (type === 'freeform') {
+      onUpdateConfig(nextIndex, { display_name: 'Untitled usage' } as Partial<AnalysisConfig>);
+    }
     if (activeContextOriginalIndex !== null && activeContextOriginalIndex !== undefined) {
       onUpdateConfig(nextIndex, { parentContextOriginalIndex: activeContextOriginalIndex });
     }
@@ -283,6 +244,7 @@ export function UsageSection({
     () => [
       { type: 'scenario', label: CARD_TYPE_LABELS['scenario'], enabled: true },
       { type: 'text', label: CARD_TYPE_LABELS['text'], enabled: true },
+      { type: 'freeform', label: 'Skip usage', enabled: true },
     ],
     [],
   );
@@ -308,11 +270,35 @@ export function UsageSection({
               onUpdateConfig={onUpdateConfig}
             />
           );
+        case 'freeform': {
+          const childSounds = soundConfigs.filter(
+            (s) => s.parentUsageOriginalIndex === originalIndex,
+          );
+          return (
+            <div className="px-1 py-2 text-xs text-secondary-hover space-y-1">
+              {childSounds.length === 0 ? (
+                <p>No sounds linked. Click &quot;Go to Sounds&quot; to create sounds for this usage.</p>
+              ) : (
+                <>
+                  <p className="font-medium text-foreground mb-1">Linked sounds:</p>
+                  <ul className="space-y-0.5">
+                    {childSounds.map((s, i) => (
+                      <li key={i} className="flex items-center gap-1">
+                        <span>•</span>
+                        <span>{s.display_name || s.prompt || `Sound ${i + 1}`}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+          );
+        }
         default:
           return null;
       }
     },
-    [isRunning, analyzingConfigIndex, onUpdateConfig],
+    [isRunning, analyzingConfigIndex, onUpdateConfig, soundConfigs],
   );
 
   const getCardVersion = useCallback(
@@ -350,7 +336,7 @@ export function UsageSection({
         config.type === 'scenario'
           ? (config as ScenarioConfig).scenarioResult?.scenarios?.[0]?.title
           : null;
-      const title = config.displayName || scenarioTitle || CARD_TYPE_LABELS[config.type as CardType] || 'Card';
+      const title = config.display_name || scenarioTitle || CARD_TYPE_LABELS[config.type as CardType] || 'Card';
 
       // Floating action logic per card type
       let showFloatingAction = false;
@@ -402,6 +388,11 @@ export function UsageSection({
         if (result && result.prompts.filter((p) => p.selected).length === 0) {
           floatingLabel = 'Select prompts to send';
         }
+      } else if (config.type === 'freeform') {
+        // Freeform card — no analysis needed, FAB shows immediately when expanded
+        showFloatingAction = isExpanded;
+        floatingLabel = 'Go to Sounds';
+        handleFloatingAction = () => onAdvanceToSounds(originalIndex, title);
       }
 
       // Action button for text cards - draw area custom button
@@ -535,7 +526,7 @@ export function UsageSection({
     <CardSection
       items={usageConfigs}
       availableTypes={availableTypes}
-      emptyMessage="No usage cards yet. Add a Usage scenario or Usage typology card."
+      emptyMessage="No usage cards yet. Add a scenario or typology card, or choose 'Skip usage' to go straight to sounds."
       statusLabel="usage"
       addButtonTitle="Add usage card"
       onAddItem={handleAddConfig}

@@ -17,6 +17,10 @@ interface AudioWaveformDisplayProps {
   channelLabels?: string[];
   /** Optional: Hide the text info below the waveform */
   hideTextInfo?: boolean;
+  /** Optional: Callback to remove/clear this audio — shows an X button top-right */
+  onClear?: () => void;
+  /** Optional: Compact mode — reduces waveform height to fit tighter layouts */
+  compact?: boolean;
 }
 
 /**
@@ -37,7 +41,9 @@ export function AudioWaveformDisplay({
   audioInfo,
   enableWaveform = AUDIO_VISUALIZATION.ENABLE_WAVEFORM_DISPLAY,
   channelLabels,
-  hideTextInfo = false
+  hideTextInfo = false,
+  onClear,
+  compact = false,
 }: AudioWaveformDisplayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -58,14 +64,18 @@ export function AudioWaveformDisplay({
     // Dynamic height based on channel count
     // Base height for 1-2 channels, scale up for multi-channel (FOA/TOA)
     const numChannels = audioBuffer.numberOfChannels;
-    let height: number = AUDIO_VISUALIZATION.WAVEFORM_HEIGHT;
-    
-    if (numChannels === 4) {
+    let height: number;
+
+    if (compact) {
+      height = numChannels === 4 ? 120 : numChannels >= 8 ? 160 : 72;
+    } else if (numChannels === 4) {
       // FOA (4-channel): Increase height for better readability
       height = Math.min(600, AUDIO_VISUALIZATION.WAVEFORM_HEIGHT * 1.5);
     } else if (numChannels >= 8) {
       // TOA (16-channel) or multi-channel: Significantly taller
       height = Math.min(800, AUDIO_VISUALIZATION.WAVEFORM_HEIGHT * 2);
+    } else {
+      height = AUDIO_VISUALIZATION.WAVEFORM_HEIGHT;
     }
 
     // Set canvas size with device pixel ratio for crisp rendering
@@ -113,39 +123,42 @@ export function AudioWaveformDisplay({
     );
   }
 
+  const hoverTitle = !hideTextInfo
+    ? `${audioInfo.filename}\n${audioInfo.sample_rate} Hz · ${audioInfo.duration.toFixed(2)}s · ${audioInfo.channels}ch`
+    : undefined;
+
   return (
-    <div ref={containerRef} className="bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded-lg overflow-hidden">
-      {/* Waveform canvas container with reset button */}
-      <div className="relative">
-        <canvas
-          ref={canvasRef}
-          className="w-full"
-          style={{ cursor: isDragging ? 'grabbing' : viewport.zoom > 1 ? 'grab' : 'default' }}
-        />
+    <div
+      ref={containerRef}
+      className="relative overflow-hidden rounded"
+      title={hoverTitle}
+    >
+      <canvas
+        ref={canvasRef}
+        className="w-full block"
+        style={{ cursor: isDragging ? 'grabbing' : viewport.zoom > 1 ? 'grab' : 'default' }}
+      />
 
-        {/* Reset zoom button - top right corner */}
-        {viewport.zoom > 1 && (
-          <button
-            onClick={resetViewport}
-            className="absolute top-2 right-2 bg-black/70 hover:bg-black/90 text-white p-1.5 rounded text-xs transition-colors"
-            title="Reset zoom (or double-click)"
-          >
-            Reset
-          </button>
-        )}
-      </div>
+      {/* Reset zoom button */}
+      {viewport.zoom > 1 && (
+        <button
+          onClick={resetViewport}
+          className={`absolute top-1 bg-black/70 hover:bg-black/90 text-white p-1 rounded text-xs transition-colors ${onClear ? 'right-7' : 'right-1'}`}
+          title="Reset zoom (or double-click)"
+        >
+          Reset
+        </button>
+      )}
 
-      {/* Minimal text info - 2 lines (conditionally rendered) */}
-      {!hideTextInfo && (
-        <div className="px-3 py-2 text-xs text-neutral-700 dark:text-neutral-400 space-y-0.5">
-          <div className="truncate" title={audioInfo.filename}>
-            {audioInfo.filename}
-          </div>
-          <div className="flex gap-4">
-            <span>{audioInfo.sample_rate} Hz</span>
-            <span>{audioInfo.duration.toFixed(2)}s</span>
-          </div>
-        </div>
+      {/* Clear / X button */}
+      {onClear && (
+        <button
+          onClick={onClear}
+          className="absolute top-1 right-1 bg-black/70 hover:bg-red-600 text-white w-5 h-5 flex items-center justify-center rounded text-xs transition-colors"
+          title="Remove audio"
+        >
+          ✕
+        </button>
       )}
     </div>
   );

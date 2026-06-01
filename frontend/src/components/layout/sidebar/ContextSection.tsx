@@ -7,6 +7,7 @@ import type {
   ModelAnalysisConfig,
   AudioAnalysisConfig,
   AnalyzeModelConfig,
+  AnalysisBaseConfig,
 } from '@/types/analysis';
 import type { CardTypeOption } from '@/components/ui/CardSection';
 import { CARD_TYPE_LABELS } from '@/types/card';
@@ -22,6 +23,7 @@ import { useSpeckleStore, useAnalysisStore, useSoundscapeStore } from '@/store';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
 import { LLM_MODEL_TO_PROVIDER } from '@/utils/constants';
 import { getAnalysisGroupColor } from '@/utils/utils';
+import { CircularFAB } from '@/components/ui/CircularFAB';
 
 // ─── AnalysisGroupColorSync ───────────────────────────────────────────────────
 // Applies/clears viewer color groups when a model-analysis card is expanded.
@@ -62,60 +64,6 @@ function AnalysisGroupColorSync({
   return null;
 }
 
-// ─── CircularFAB ──────────────────────────────────────────────────────────────
-
-interface CircularFABProps {
-  label: string;
-  onClick: () => void;
-  isLoading?: boolean;
-}
-
-function CircularFAB({ label, onClick, isLoading }: CircularFABProps) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={isLoading}
-      title={isLoading ? 'Analyzing\u2026' : label}
-      aria-label={isLoading ? 'Analyzing\u2026' : label}
-      style={{
-        position: 'absolute',
-        right: '-14px',
-        top: '50%',
-        transform: 'translateY(-50%)',
-        width: '32px',
-        height: '32px',
-        borderRadius: '50%',
-        backgroundColor: 'var(--color-primary)',
-        zIndex: 20,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.35)',
-        cursor: isLoading ? 'not-allowed' : 'pointer',
-        border: 'none',
-        flexShrink: 0,
-        opacity: isLoading ? 0.7 : 1,
-        transition: 'transform 150ms ease, box-shadow 150ms ease, opacity 150ms ease',
-      }}
-      onMouseEnter={(e) => {
-        if (!isLoading) (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-50%) scale(1.12)';
-      }}
-      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-50%)'; }}
-    >
-      {isLoading ? (
-        <span
-          className="inline-block w-3 h-3 rounded-full border-2 border-white border-t-transparent animate-spin"
-          aria-hidden="true"
-        />
-      ) : (
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-          <path d="M3 7h8M7.5 3.5L11 7l-3.5 3.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      )}
-    </button>
-  );
-}
-
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 export interface ContextSectionProps {
@@ -145,7 +93,7 @@ export interface ContextSectionProps {
   onExpandedOriginalIndexChange?: (originalIndex: number | null) => void;
 }
 
-const CONTEXT_CARD_TYPES: CardType[] = ['model-analysis', '3d-model', 'audio'];
+const CONTEXT_CARD_TYPES: CardType[] = ['model-analysis', '3d-model', 'audio', 'freeform'];
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -182,8 +130,13 @@ export function ContextSection({
   const handleReorderConfigs = useAnalysisStore((s) => s.handleReorderConfigs);
 
   // Filter to context card types only, maintaining original indices
+  // Freeform cards with parentContextOriginalIndex belong to Usage, exclude them here.
   const contextConfigs = useMemo(
-    () => analysisConfigs.filter((c) => CONTEXT_CARD_TYPES.includes(c.type as CardType)),
+    () => analysisConfigs.filter((c) => {
+      if (!CONTEXT_CARD_TYPES.includes(c.type as CardType)) return false;
+      if (c.type === 'freeform' && (c as AnalysisBaseConfig).parentContextOriginalIndex !== undefined) return false;
+      return true;
+    }),
     [analysisConfigs],
   );
 
@@ -204,17 +157,26 @@ export function ContextSection({
     }
   }, [expandedOriginalIndex, indexMap]);
 
-  // Auto-expand newly added context cards
-  const prevContextLength = useRef(0);
+  // Auto-expand newly added context cards; auto-advance for freeform cards
+  // Initialize to current length so existing cards don't re-trigger auto-advance on remount
+  const prevContextLength = useRef(contextConfigs.length);
   useEffect(() => {
     if (contextConfigs.length > prevContextLength.current) {
       const lastFi = contextConfigs.length - 1;
-      setFilteredExpandedIndex(lastFi);
       const originalIndex = indexMap[lastFi];
-      if (originalIndex !== undefined) onExpandedOriginalIndexChange?.(originalIndex);
+      const newConfig = contextConfigs[lastFi];
+
+      if (newConfig?.type === 'freeform') {
+        // Skip expansion — jump straight to Usage step
+        const name = newConfig.display_name || 'Untitled context';
+        if (originalIndex !== undefined) onAdvanceToUsage(originalIndex, name);
+      } else {
+        setFilteredExpandedIndex(lastFi);
+        if (originalIndex !== undefined) onExpandedOriginalIndexChange?.(originalIndex);
+      }
     }
     prevContextLength.current = contextConfigs.length;
-  }, [contextConfigs.length, indexMap, onExpandedOriginalIndexChange]);
+  }, [contextConfigs.length, indexMap, onExpandedOriginalIndexChange, onAdvanceToUsage]);
 
   const handleCardSectionExpandedChange = useCallback(
     (fi: number | null) => {
@@ -228,6 +190,8 @@ export function ContextSection({
   const hasResult = useCallback(
     (originalIndex: number): boolean => {
       const config = analysisConfigs[originalIndex];
+      // Freeform cards need no analysis — FAB shows immediately.
+      if (config?.type === 'freeform') return true;
       if (config?.type === 'model-analysis') {
         return (
           ((config as AnalyzeModelConfig).analysisResult?.architecturalObjects?.length ?? 0) > 0
@@ -266,6 +230,17 @@ export function ContextSection({
     [getResult],
   );
 
+  // Wrap onAddConfig: freeform cards get named and the effect handles auto-advance
+  const handleAddContextConfig = useCallback((type: CardType) => {
+    if (type === 'freeform') {
+      const nextIndex = analysisConfigs.length;
+      onAddConfig('freeform');
+      onUpdateConfig(nextIndex, { display_name: 'Untitled context' } as Partial<AnalysisConfig>);
+    } else {
+      onAddConfig(type);
+    }
+  }, [analysisConfigs.length, onAddConfig, onUpdateConfig]);
+
   const hasModelLoaded = useMemo(() => {
     if (hasGlobalModelLoaded) return true;
     return analysisConfigs.some(
@@ -284,17 +259,22 @@ export function ContextSection({
         type: 'model-analysis',
         label: CARD_TYPE_LABELS['model-analysis'],
         enabled: hasModelLoaded,
-        disabledTooltip: 'Import a 3D model first (right sidebar)',
+        disabledTooltip: 'Import a 3D model first',
       },
       {
         type: '3d-model',
         label: CARD_TYPE_LABELS['3d-model'],
         enabled: hasModelLoaded,
-        disabledTooltip: 'Import a 3D model first (right sidebar)',
+        disabledTooltip: 'Import a 3D model first',
       },
       {
         type: 'audio',
         label: CARD_TYPE_LABELS['audio'],
+        enabled: true,
+      },
+      {
+        type: 'freeform',
+        label: 'Skip context',
         enabled: true,
       },
     ],
@@ -331,11 +311,38 @@ export function ContextSection({
               onUpdateConfig={onUpdateConfig}
             />
           );
+        case 'freeform': {
+          const USAGE_TYPES_CHECK = ['scenario', 'text', 'freeform'];
+          const childUsage = analysisConfigs.filter(
+            (c) =>
+              USAGE_TYPES_CHECK.includes(c.type as CardType) &&
+              (c as AnalysisBaseConfig).parentContextOriginalIndex === originalIndex,
+          );
+          return (
+            <div className="px-1 py-2 text-xs text-secondary-hover space-y-1">
+              {childUsage.length === 0 ? (
+                <p>No usage cards linked. Click &quot;Next: Usage&quot; to add usage scenarios.</p>
+              ) : (
+                <>
+                  <p className="font-medium text-foreground mb-1">Linked usage cards:</p>
+                  <ul className="space-y-0.5">
+                    {childUsage.map((c, i) => (
+                      <li key={i} className="flex items-center gap-1">
+                        <span>•</span>
+                        <span>{(c as AnalysisBaseConfig).display_name || CARD_TYPE_LABELS[c.type as CardType] || 'Card'}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+          );
+        }
         default:
           return null;
       }
     },
-    [isRunning, onUpdateConfig],
+    [isRunning, onUpdateConfig, analysisConfigs],
   );
 
   const getAfterContent = useCallback(
@@ -407,7 +414,7 @@ export function ContextSection({
           };
         }
         default:
-          return { label: 'Run', disabled: false, disabledReason: undefined, color: 'success' };
+          return { label: 'Run', disabled: true, disabledReason: 'No analysis for this card type', color: 'success' };
       }
     },
     [],
@@ -452,15 +459,17 @@ export function ContextSection({
       onToggleExpand: (index: number) => void,
     ) => {
       const originalIndex = indexMap[filteredIndex] ?? filteredIndex;
-      const configHasResult = hasResult(originalIndex);
+      const configHasResult = config.type === 'freeform' ? true : hasResult(originalIndex);
       const showFloatingAction = configHasResult && isExpanded;
       const actionBtn = getActionButton(config, originalIndex);
-      const title = config.displayName || CARD_TYPE_LABELS[config.type as CardType] || 'Card';
+      const title = config.display_name || CARD_TYPE_LABELS[config.type as CardType] || 'Card';
 
       // Floating action: audio extracts & sends to Sounds; others advance to Usage
       const floatingLabel =
         config.type === 'audio'
           ? (extractingAudioIndices.has(originalIndex) ? 'Extracting…' : 'Extract & go to Sounds')
+          : config.type === 'freeform'
+          ? 'Next: Usage'
           : 'Next: Usage';
       const handleFloatingAction =
         config.type === 'audio'
@@ -576,10 +585,10 @@ export function ContextSection({
       <CardSection
         items={contextConfigs}
         availableTypes={availableTypes}
-        emptyMessage="No context cards yet. Import a 3D model from the right sidebar to get started."
+        emptyMessage="No context cards yet. Add a context card to analyse your scene, or choose 'Skip context' to create sounds directly."
         statusLabel="context"
         addButtonTitle="Add context card"
-        onAddItem={onAddConfig}
+        onAddItem={handleAddContextConfig}
         renderCard={renderCard}
         header={header}
         getPendingCount={getPendingCount}
