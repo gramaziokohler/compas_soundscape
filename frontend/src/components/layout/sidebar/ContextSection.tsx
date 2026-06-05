@@ -604,6 +604,14 @@ export function ContextSection({
             handleReorderConfigs(fromOriginal, toOriginal);
           }
         }}
+        emptyAction={
+          <button
+            onClick={() => handleAddContextConfig('freeform')}
+            className="text-primary hover:underline cursor-pointer text-xs font-medium"
+          >
+            Skip context
+          </button>
+        }
       />
 
       {/* Diverse selection indicator */}

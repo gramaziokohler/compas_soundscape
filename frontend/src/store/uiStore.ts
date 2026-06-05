@@ -105,6 +105,10 @@ export interface UIStoreState {
   showAdvancedSettings: boolean;
   setShowAdvancedSettings: (v: boolean) => void;
 
+  // ── Timeline disabled flag (user closed the DAW panel) ─────────────────────
+  isTimelineDisabled: boolean;
+  setIsTimelineDisabled: (v: boolean) => void;
+
   // ── Global acoustic simulation ────────────────────────────────────────────
   globalSoundSpeed: number;
   setGlobalSoundSpeed: (v: number) => void;
@@ -239,6 +243,9 @@ export const useUIStore = create<UIStoreState>()(
       // ── Panel toggles ────────────────────────────────────────────────────
       showAdvancedSettings: false,
       setShowAdvancedSettings: (v) => set({ showAdvancedSettings: v }, false, 'ui/setShowAdvancedSettings'),
+
+      isTimelineDisabled: false,
+      setIsTimelineDisabled: (v) => set({ isTimelineDisabled: v }, false, 'ui/setIsTimelineDisabled'),
 
       // ── Global acoustic simulation ───────────────────────────────────────
       globalSoundSpeed: DEFAULT_SPEED_OF_SOUND,

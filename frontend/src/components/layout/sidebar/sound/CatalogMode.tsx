@@ -153,7 +153,7 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
                   className={`w-full text-left px-2 py-1.5 rounded-lg text-xs transition-colors ${
                     isSelected
                       ? 'bg-primary text-white'
-                      : 'bg-primary-lighter text-foreground hover:bg-secondary-lighter'
+                      : 'secondary-light text-foreground hover:bg-secondary-lighter'
                   }`}
                 >
                   <span className="truncate block">{sound.name}</span>
@@ -171,20 +171,6 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
         </p>
       )}
 
-      {/* Selected sound confirmation */}
-      {selectedSound && (
-        <div
-          className="rounded-lg p-2 text-xs border"
-          style={{
-            backgroundColor: 'var(--color-primary-lighter)',
-            borderColor: 'var(--color-primary-light)',
-            color: 'var(--color-primary)',
-          }}
-        >
-          <div className="font-medium truncate">{selectedSound.name}</div>
-          <div className="opacity-75 text-[10px]">{selectedSound.category}</div>
-        </div>
-      )}
     </div>
   );
 }

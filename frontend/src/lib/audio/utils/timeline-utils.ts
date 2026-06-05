@@ -280,6 +280,16 @@ export function extractTimelineSoundsFromData(
     // Extract audio URL from metadata (for WaveSurfer waveform visualization)
     const audioUrl = metadata.soundEvent.url;
 
+    // Map category → soundGroup for DAW grouping
+    const rawCategory = eventOverride?.category ?? metadata.soundEvent.category;
+    let soundGroup: 'background' | 'sound_event' | 'speech' | undefined;
+    if (rawCategory) {
+      const cat = rawCategory.toLowerCase().replace(/[\s-]+/g, '_');
+      if (cat === 'background' || cat === 'background_sound') soundGroup = 'background';
+      else if (cat === 'sound_event' || cat === 'sound event') soundGroup = 'sound_event';
+      else if (cat === 'speech') soundGroup = 'speech';
+    }
+
     timelineSounds.push({
       id: soundId,
       displayName,
@@ -293,6 +303,7 @@ export function extractTimelineSoundsFromData(
       initialDelayMs,
       iterationOffsets,
       schedulingMode,
+      soundGroup,
     });
   });
 

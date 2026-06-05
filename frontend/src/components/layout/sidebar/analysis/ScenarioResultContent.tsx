@@ -17,13 +17,13 @@ interface FoleySoundItemProps {
 
 function FoleySoundItem({ sound, checked, onToggle }: FoleySoundItemProps) {
   const { highlightObjectForHover, clearHoverHighlight } = useSpeckleStore();
-  const firstObjectId = sound.objectsInvolved?.[0] ?? null;
+  const involvedIds = sound.objectsInvolved ?? [];
 
   return (
     <div
       className="flex items-start gap-2 py-1.5 px-2 rounded-md transition-colors cursor-default"
       style={{ borderRadius: '6px' }}
-      onMouseEnter={() => firstObjectId && highlightObjectForHover(firstObjectId)}
+      onMouseEnter={() => involvedIds.length > 0 && highlightObjectForHover(involvedIds)}
       onMouseLeave={() => clearHoverHighlight()}
     >
       {/* Checkbox */}

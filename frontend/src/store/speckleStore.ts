@@ -71,7 +71,7 @@ let _worldTreeVersion = 0;
 
 // Debounce handle for applyFilterColors
 let _applyColorsTimer: ReturnType<typeof setTimeout> | null = null;
-let _hoverHighlightId: string | null = null;
+let _hoverHighlightIds: string[] = [];
 
 // ─── Store state/actions interface ───────────────────────────────────────────
 
@@ -155,7 +155,7 @@ export interface SpeckleStoreState {
   };
 
   // Scenario hover/zoom helpers
-  highlightObjectForHover: (objectId: string) => void;
+  highlightObjectForHover: (objectId: string | string[]) => void;
   clearHoverHighlight: () => void;
   zoomToObjectById: (objectId: string | string[]) => void;
 }
@@ -435,17 +435,36 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         // Hover highlight (scenario object reference hover)
         // Resolve the CSS variable to a concrete color string — the Speckle viewer's
         // THREE.js-based color parser cannot handle var() syntax and defaults to white.
-        // Also remove the hover ID from any earlier color group so Speckle doesn't keep
+        // Also remove each hover ID from any earlier color group so Speckle doesn't keep
         // whichever assignment it sees first for a given object ID.
-        if (_hoverHighlightId && !isExcluded(_hoverHighlightId)) {
-          for (const g of colorGroups) {
-            const idx = g.objectIds.indexOf(_hoverHighlightId);
-            if (idx !== -1) g.objectIds.splice(idx, 1);
+        const hoverIds = _hoverHighlightIds.filter((id) => !isExcluded(id));
+        if (hoverIds.length > 0) {
+          // Expand hover IDs to their full analysis groups so that hovering over
+          // a single object reference highlights ALL objects in the same group.
+          const expandedHoverSet = new Set<string>();
+          for (const hid of hoverIds) {
+            expandedHoverSet.add(hid);
+            for (const group of _analysisResultGroupsRef) {
+              const groupIds = Object.keys(group.object_ids ?? {});
+              if (groupIds.includes(hid)) {
+                for (const gid of groupIds) {
+                  if (!isExcluded(gid)) expandedHoverSet.add(gid);
+                }
+              }
+            }
+          }
+          const expandedHoverIds = Array.from(expandedHoverSet);
+
+          for (const hoverId of expandedHoverIds) {
+            for (const g of colorGroups) {
+              const idx = g.objectIds.indexOf(hoverId);
+              if (idx !== -1) g.objectIds.splice(idx, 1);
+            }
           }
           const successColor = getComputedStyle(document.documentElement)
             .getPropertyValue('--color-success')
             .trim();
-          colorGroups.push({ objectIds: [_hoverHighlightId], color: successColor });
+          colorGroups.push({ objectIds: expandedHoverIds, color: successColor });
         }
 
         const sanitised = colorGroups
@@ -618,12 +637,12 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
       },
 
       highlightObjectForHover: (objectId) => {
-        _hoverHighlightId = objectId;
+        _hoverHighlightIds = Array.isArray(objectId) ? objectId : [objectId];
         get().applyFilterColors();
       },
 
       clearHoverHighlight: () => {
-        _hoverHighlightId = null;
+        _hoverHighlightIds = [];
         get().applyFilterColors();
       },
 

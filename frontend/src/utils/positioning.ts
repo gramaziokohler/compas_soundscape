@@ -47,8 +47,8 @@ export function calculateSoundPosition(
   geometryBounds?: GeometryBounds
 ): [number, number, number] {
   // Priority 1: Use entity position if available
-  if (config.entity?.position) {
-    return config.entity.position;
+  if (config.entities?.[0]?.position) {
+    return config.entities[0].position as [number, number, number];
   }
 
   // Priority 2: Use geometry center if bounds available
@@ -115,8 +115,8 @@ export function calculateSoundPositionWithSpacing(
   geometryBounds?: GeometryBounds
 ): [number, number, number] {
   // Priority 1: Use entity position if available
-  if (config.entity?.position) {
-    return config.entity.position;
+  if (config.entities?.[0]?.position) {
+    return config.entities[0].position as [number, number, number];
   }
 
   // Priority 2: Random position within bounding box

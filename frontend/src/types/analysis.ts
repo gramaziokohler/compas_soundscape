@@ -203,7 +203,9 @@ export interface TextPromptResult {
   /** Optional display name override (e.g. soundName from foley, separate from prompt text) */
   displayName?: string;
   selected: boolean;
+  /** @deprecated use entities[] instead */
   entity?: any;
+  entities?: any[]; // All linked entities (multi-entity support)
   /** Pre-computed position from area drawing (overrides random placement) */
   position?: [number, number, number];
   metadata?: {
@@ -214,6 +216,8 @@ export interface TextPromptResult {
     detection_segments?: Array<{ start_sec: number; end_sec: number }>;
     /** Explicit playback timestamps in "MM:SS" format (from foley/scenario JSON). */
     timestamps?: string[];
+    /** Sound category from foley analysis (e.g. "background", "sound_event", "speech") */
+    category?: string;
   };
 }
 

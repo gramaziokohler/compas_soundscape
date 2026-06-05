@@ -238,10 +238,7 @@ export function SoundCardBody({
           </div>
         )}
 
-        {/* Timestamp list (timestamps mode) */}
-        {schedulingMode === 'timestamps' && onTimestampsChange && (
-          <TimestampList timestamps={timestamps} onChange={onTimestampsChange} />
-        )}
+        {/* Timestamp list removed — the DAW timeline manages timestamps in timestamp mode */}
 
         {/* Volume slider */}
         {onVolumeChange && (

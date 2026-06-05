@@ -222,17 +222,26 @@ export class SoundSphereManager {
           const posChanged = !oldPos ||
             oldPos[0] !== newPos[0] || oldPos[1] !== newPos[1] || oldPos[2] !== newPos[2];
           if (posChanged) {
-            this.spherePositions.set(soundEvent.id, newPos);
-            this.promptPositions.set(promptIdx, newPos);
-            // Update 3D mesh position so the viewer reflects undo/redo
-            if (mesh) {
-              mesh.position.set(newPos[0], newPos[1], newPos[2]);
-            }
-            if (this.audioOrchestrator) {
-              this.audioOrchestrator.updateSourcePosition(
-                soundEvent.id,
-                new THREE.Vector3(newPos[0], newPos[1], newPos[2])
-              );
+            // Guard against [0,0,0] overwriting a valid non-zero stored position.
+            // This can happen when a generated SoundEvent carries position [0,0,0]
+            // from the backend/factory, but the sphere manager has already assigned
+            // it a camera-front spiral position (or a position inherited from the
+            // pending placeholder via promptPositions).
+            const isZero = newPos[0] === 0 && newPos[1] === 0 && newPos[2] === 0;
+            const hasValidStored = oldPos && (oldPos[0] !== 0 || oldPos[1] !== 0 || oldPos[2] !== 0);
+            if (!(isZero && hasValidStored)) {
+              this.spherePositions.set(soundEvent.id, newPos);
+              this.promptPositions.set(promptIdx, newPos);
+              // Update 3D mesh position so the viewer reflects undo/redo
+              if (mesh) {
+                mesh.position.set(newPos[0], newPos[1], newPos[2]);
+              }
+              if (this.audioOrchestrator) {
+                this.audioOrchestrator.updateSourcePosition(
+                  soundEvent.id,
+                  new THREE.Vector3(newPos[0], newPos[1], newPos[2])
+                );
+              }
             }
           }
         }

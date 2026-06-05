@@ -131,48 +131,28 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
-/* Hide scrollbar for horizontally scrollable tabs */
-.scrollbar-hide {
-  -ms-overflow-style: none;  /* IE and Edge */
-  scrollbar-width: none;  /* Firefox */
+/* Global scrollbar styling */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-secondary-hover) transparent;
+  -ms-overflow-style: auto;
 }
 
-.scrollbar-hide::-webkit-scrollbar {
-  display: none;  /* Chrome, Safari, Opera */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
 }
 
-/* Hide all vertical scrollbars globally */
-* {
-  scrollbar-width: none;  /* Firefox */
-  -ms-overflow-style: none;  /* IE and Edge */
-}
-
-*::-webkit-scrollbar {
-  display: none;  /* Chrome, Safari, Opera */
-}
-
-/* Opt-in horizontal scrollbar for timeline — overrides the global hide above */
-.timeline-hscroll {
-  scrollbar-width: thin;           /* Firefox */
-  scrollbar-color: var(--color-secondary-hover) var(--color-secondary); /* thumb / track */
-  -ms-overflow-style: auto;        /* IE / Edge */
-}
-
-.timeline-hscroll::-webkit-scrollbar {
-  display: block;
-  height: 6px;                     /* horizontal bar height */
-}
-
-.timeline-hscroll::-webkit-scrollbar-track {
+::-webkit-scrollbar-track {
   background: var(--color-secondary);
 }
 
-.timeline-hscroll::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-thumb {
   background: var(--color-secondary-hover);
-  border-radius: 3px;
+  border-radius: 2px;
 }
 
-.timeline-hscroll::-webkit-scrollbar-thumb:hover {
+::-webkit-scrollbar-thumb:hover {
   background: var(--color-secondary-hover);
   filter: brightness(1.3);
 }

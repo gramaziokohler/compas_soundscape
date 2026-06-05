@@ -608,7 +608,7 @@ export function WaveSurferTimeline({
           componentWidth > 60vw (the outer div's maxWidth). */}
       <div
         ref={scrollContainerRef}
-        className="relative overflow-x-auto overflow-y-auto timeline-hscroll"
+        className="relative overflow-x-auto overflow-y-auto"
         style={{
           maxHeight: `${WAVESURFER_TIMELINE.TOTAL_HEIGHT + 30}px`,
           backgroundColor: 'var(--foreground-static)',

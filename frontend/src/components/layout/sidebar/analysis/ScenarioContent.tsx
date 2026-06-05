@@ -13,21 +13,28 @@ import { ScenarioResultContent } from './ScenarioResultContent';
 
 /**
  * Matches an optional-quoted name followed by one or more IDs in parentheses.
- * e.g. "Office Chair (id:abc...)" or "table (id:abc...)" or "Laptops (id:abc..., id:def...)"
- * Also handles LLM-quoted names: "Carpet Flooring" (id: abc...) or "Tables" (id: abc...)
- * Captures group 1 = name (without quotes), group 2 = first ID (used for hover/zoom).
- * Additional IDs are consumed but not captured, so the whole token is replaced.
- * The first word may be any letter case; subsequent words must be capitalized (to avoid
- * greedily consuming preceding lowercase words like "the", "a", "large", etc.).
+ * Handles both comma-separated and " and "-separated multiple IDs, plus "e.g.," prefix:
+ *   "Office Chair (id:abc...)"                         — single ID
+ *   "Chairs (id:abc..., id:def...)"                   — comma-separated
+ *   "Chairs (id:abc... and id:def...)"                — and-separated (LLM output style)
+ *   "Chairs and Stools (e.g., id:abc..., id:def...)"  — "and" in name + e.g. prefix
+ * The first word may be any letter case; subsequent words must be capitalized OR connected
+ * via "and" to a capitalized word (to avoid greedily consuming lowercase words like "the").
  * Handles optional space after "id:" e.g. (id: abc...).
  */
-const OBJECT_REF_RE = /"?([A-Za-z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*)*)"?\s*\(id:\s*([0-9a-fA-F]+)(?:,\s*id:\s*[0-9a-fA-F]+)*\)/g;
+const OBJECT_REF_RE = /"?([A-Za-z][A-Za-z]*(?:\s+(?:and\s+[A-Z][A-Za-z]*|[A-Z][A-Za-z]*))*)"?\s*\((?:e\.g\.,\s*)?(?:ids?:\s*)?[0-9a-fA-F]+(?:\s*(?:,|and)\s*(?:ids?:\s*)?[0-9a-fA-F]+)*\)/g;
+const ID_HEX_RE = /[0-9a-fA-F]{8,}/g;
+
+/** Extract all hex IDs from the full matched token (including the parenthesised id-list). */
+function extractIdsFromToken(raw: string): string[] {
+  return Array.from(raw.matchAll(ID_HEX_RE), (m) => m[0]);
+}
 
 function ScenarioTextRenderer({ text }: { text: string }) {
   const { highlightObjectForHover, clearHoverHighlight, zoomToObjectById } = useSpeckleStore();
 
   const parts = useMemo(() => {
-    const result: Array<{ type: 'text'; value: string } | { type: 'ref'; name: string; id: string }> = [];
+    const result: Array<{ type: 'text'; value: string } | { type: 'ref'; name: string; ids: string[] }> = [];
     let lastIndex = 0;
     let match: RegExpExecArray | null;
     const re = new RegExp(OBJECT_REF_RE.source, 'g');
@@ -35,8 +42,9 @@ function ScenarioTextRenderer({ text }: { text: string }) {
       if (match.index > lastIndex) {
         result.push({ type: 'text', value: text.slice(lastIndex, match.index) });
       }
-      // Group 1 = name (capitalized words), group 2 = 32-char hex ID
-      result.push({ type: 'ref', name: match[1].trim(), id: match[2] ?? '' });
+      // match[1] = name (capitalized words); all hex IDs are extracted from the full token
+      const ids = extractIdsFromToken(match[0]);
+      result.push({ type: 'ref', name: match[1].trim(), ids });
       lastIndex = match.index + match[0].length;
     }
     if (lastIndex < text.length) result.push({ type: 'text', value: text.slice(lastIndex) });
@@ -53,10 +61,10 @@ function ScenarioTextRenderer({ text }: { text: string }) {
             key={i}
             className="cursor-pointer font-medium underline decoration-dotted"
             style={{ color: 'var(--color-success)' }}
-            onMouseEnter={() => part.id && highlightObjectForHover(part.id)}
+            onMouseEnter={() => part.ids.length > 0 && highlightObjectForHover(part.ids)}
             onMouseLeave={() => clearHoverHighlight()}
-            onClick={() => part.id && zoomToObjectById(part.id)}
-            title="Click to zoom to object"
+            onClick={() => part.ids.length > 0 && zoomToObjectById(part.ids)}
+            title={`Click to zoom to ${part.ids.length > 1 ? `${part.ids.length} objects` : 'object'}`}
           >
             {part.name}
           </span>

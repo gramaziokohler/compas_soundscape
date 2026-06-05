@@ -94,13 +94,16 @@ export interface SoundEvent {
   interval_seconds?: number; // Playback interval in seconds
   current_interval_seconds?: number; // Current interval override (user-adjustable)
   isUploaded?: boolean; // Flag indicating this sound was uploaded (not generated)
-  entity_index?: number; // Index of the entity this sound is linked to (for entity-based sounds)
+  entity_index?: number; // Primary entity index (entities[0].index) — kept for sphere-manager backward compat
+  entity_indices?: number[]; // All linked entity indices (multi-entity support)
   /** Explicit playback timestamps in "MM:SS" format (from foley/scenario JSON). */
   timestamps?: string[];
   /** Default scheduling mode hint carried from source data. */
   scheduling_mode?: 'interval' | 'timestamps';
   /** True for pre-generation placeholder spheres (no audio, lighter color). */
   isPending?: boolean;
+  /** Sound category from foley/scenario analysis (e.g. "background", "sound_event", "speech") */
+  category?: string;
 }
 
 export interface UIOverlay {
@@ -132,6 +135,27 @@ export interface EntityData {
   };
 }
 
+/** Shape of a linked 3D entity (Speckle object or Three.js entity) */
+export interface SoundEntity {
+  index?: number;
+  type?: string;
+  name?: string;
+  position?: number[];
+  bounds?: {
+    min?: number[];
+    max?: number[];
+    center?: number[];
+  };
+  nodeId?: string;
+  id?: string;
+  applicationId?: string;
+  speckle_type?: string;
+  geometry?: any;
+  /** Foley fallback position used when viewer can't resolve bounds */
+  foleyPosition?: [number, number, number];
+  [key: string]: any;
+}
+
 export interface EntityOverlay {
   x: number;
   y: number;
@@ -148,7 +172,9 @@ export interface SoundGenerationConfig {
   negative_prompt: string;
   seed_copies: number;
   steps: number;
+  /** @deprecated use entities[] instead */
   entity?: any;
+  entities?: SoundEntity[];
   display_name?: string;
   spl_db?: number; // SPL level from LLM estimation
   interval_seconds?: number; // Playback interval from LLM estimation
@@ -170,6 +196,8 @@ export interface SoundGenerationConfig {
   catalogSelectedCategory?: { id: string; name: string }; // Persisted category selection for undo
   /** Original index of the usage card that generated this sound config (for parent-child filtering) */
   parentUsageOriginalIndex?: number;
+  /** Sound category from foley/scenario analysis (e.g. "background", "sound_event", "speech") */
+  category?: string;
 }
 
 /** A sound selected from the Google Sound Library catalog */

@@ -50,6 +50,7 @@ export interface AudioControlsStoreState {
   handleIntervalChange: (soundId: string, intervalSeconds: number) => void;
   handleSchedulingModeChange: (soundId: string, mode: 'interval' | 'timestamps', soundDurationSeconds?: number) => void;
   handleTimestampsChange: (soundId: string, timestamps: number[]) => void;
+  handleRemoveTimestamp: (soundId: string, iterationIndex: number) => void;
   handleMute: (soundId: string) => void;
   handleSolo: (soundId: string) => void;
   setSoundTrim: (soundId: string, trim: { start: number; end: number }) => void;
@@ -238,6 +239,17 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             'audio/handleTimestampsChange',
           );
         },
+
+        handleRemoveTimestamp: (soundId, iterationIndex) =>
+          set(
+            (state) => {
+              const timestamps = state.soundTimestamps[soundId] ?? [];
+              const newTimestamps = timestamps.filter((_, i) => i !== iterationIndex);
+              return { soundTimestamps: { ...state.soundTimestamps, [soundId]: newTimestamps } };
+            },
+            false,
+            'audio/handleRemoveTimestamp',
+          ),
 
         handleMute: (soundId) =>
           set(

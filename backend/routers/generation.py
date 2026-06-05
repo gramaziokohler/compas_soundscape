@@ -101,12 +101,14 @@ async def generate_prompts(request: UnifiedPromptGenerationRequest):
             )
             entity_prompts = []
             for sound_data in sound_list:
-                entity_idx = sound_data.get("entity_index")
-                entity_data = None
-                if entity_idx is not None and 0 <= entity_idx < len(entities_to_use):
-                    entity_data = entities_to_use[entity_idx]
+                entity_indices = sound_data.get("entity_indices", [])
+                entity_objects = [
+                    entities_to_use[i]
+                    for i in entity_indices
+                    if 0 <= i < len(entities_to_use)
+                ]
                 entity_prompts.append({
-                    "entity": entity_data,
+                    "entities": entity_objects,
                     "prompt": sound_data["prompt"],
                     "display_name": sound_data["display_name"],
                     "spl_db": sound_data.get("spl_db", DEFAULT_SPL_DB),
@@ -158,6 +160,14 @@ async def generate_prompts_stream(request: UnifiedPromptGenerationRequest):
                 async for sound in llm_service.stream_generate_prompts_for_entities(
                     entities_to_use, request.num_sounds, request.context, llm_model=request.llm_model
                 ):
+                    # Resolve entity_indices → fully-hydrated entities list so the frontend
+                    # doesn't need to re-resolve from an index cache.
+                    entity_indices = sound.get("entity_indices", [])
+                    sound["entities"] = [
+                        entities_to_use[i]
+                        for i in entity_indices
+                        if 0 <= i < len(entities_to_use)
+                    ]
                     sound["type"] = "sound"
                     yield f"data: {json.dumps(sound)}\n\n"
 

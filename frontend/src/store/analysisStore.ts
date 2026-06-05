@@ -569,7 +569,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                     id: `${index}-${soundIdx++}`,
                     text: p.prompt,
                     selected: true,
-                    entity: p.entity || null,
+                    entities: p.entities || (p.entity ? [p.entity] : undefined),
+                    entity: p.entities?.[0] || p.entity || null, // backward compat
                     metadata: {
                       spl_db: p.spl_db || DEFAULT_SPL_DB,
                       interval_seconds: p.interval_seconds || LLM_SUGGESTED_INTERVAL_SECONDS,
@@ -753,7 +754,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                   id: `${index}-${soundIdx++}`,
                   text: p.prompt,
                   selected: true,
-                  entity: p.entity || null,
+                  entities: p.entities || (p.entity ? [p.entity] : undefined),
+                  entity: p.entities?.[0] || p.entity || null, // backward compat
                   metadata: {
                     spl_db: p.spl_db || DEFAULT_SPL_DB,
                     interval_seconds: p.interval_seconds || LLM_SUGGESTED_INTERVAL_SECONDS,
@@ -779,12 +781,12 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
 
               const drawnArea = useAreaDrawingStore.getState().getArea(index);
               if (drawnArea) {
-                const needingPositions = prompts.filter((p) => !p.entity?.position);
+                const needingPositions = prompts.filter((p) => !(p.entities?.[0]?.position || p.entity?.position));
                 if (needingPositions.length > 0) {
                   const positions = generatePositionsInArea(drawnArea, needingPositions.length);
                   let posIdx = 0;
                   for (const prompt of prompts) {
-                    if (!prompt.entity?.position && posIdx < positions.length) {
+                    if (!(prompt.entities?.[0]?.position || prompt.entity?.position) && posIdx < positions.length) {
                       (prompt as any).position = positions[posIdx++];
                     }
                   }
@@ -911,12 +913,23 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                     !linkedObjectId && Array.isArray(pos) && pos.length >= 3
                       ? [pos[0], pos[1], pos[2]]
                       : undefined,
-                  // Set entity with the linked Speckle object ID and foley position as fallback
-                  entity: linkedObjectId
+                  // Set entities[] with the linked Speckle object ID and foley position as fallback
+                  entities: linkedObjectId
+                    ? [
+                        {
+                          applicationId: linkedObjectId,
+                          id: linkedObjectId,
+                          // Foley position used as fallback when viewer can't resolve entity bounds
+                          foleyPosition: Array.isArray(pos) && pos.length >= 3
+                            ? ([pos[0], pos[1], pos[2]] as [number, number, number])
+                            : undefined,
+                        },
+                      ]
+                    : undefined,
+                  entity: linkedObjectId // backward compat
                     ? {
                         applicationId: linkedObjectId,
                         id: linkedObjectId,
-                        // Foley position used as fallback when viewer can't resolve entity bounds
                         foleyPosition: Array.isArray(pos) && pos.length >= 3
                           ? ([pos[0], pos[1], pos[2]] as [number, number, number])
                           : undefined,
@@ -927,6 +940,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                     duration_seconds: durationSec,
                     interval_seconds: LLM_SUGGESTED_INTERVAL_SECONDS,
                     timestamps: sound.timestamps?.length ? sound.timestamps : undefined,
+                    category: sound.category,
                   },
                 });
               });

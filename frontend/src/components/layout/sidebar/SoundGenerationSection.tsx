@@ -472,33 +472,7 @@ export function SoundGenerationSection({
       });
     }
 
-    // Scheduling mode toggle (only if generated)
-    if (isGenerated && generatedSound) {
-      const currentSchedulingMode = soundSchedulingModes[generatedSound.id] ?? 'interval';
-      const isTimestampsMode = currentSchedulingMode === 'timestamps';
-      customButtons.push({
-        key: 'scheduling-mode',
-        icon: (
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-        ),
-        label: isTimestampsMode ? 'Switch to interval mode' : 'Switch to timestamp mode',
-        isActive: isTimestampsMode,
-        onClick: (e) => {
-          e.stopPropagation();
-          const newMode: 'interval' | 'timestamps' = isTimestampsMode ? 'interval' : 'timestamps';
-          // Look up the buffer duration so auto-timestamps are spaced by sound length
-          let soundDurationSec: number | undefined;
-          try {
-            const { coordinator } = useSpeckleEngineStore.getState();
-            const meta = coordinator?.getSoundSphereManager?.()?.getAllAudioSources?.()?.get(generatedSound.id);
-            if (meta?.buffer?.duration) soundDurationSec = meta.buffer.duration;
-          } catch { /* ignore */ }
-          onSchedulingModeChange(generatedSound.id, newMode, soundDurationSec);
-        },
-      });
-    }
+    // Scheduling mode toggle removed from kebab — use the lock icon in the DAW timeline instead.
 
     // Duplicate button (only if generated)
     if (isGenerated && onDuplicateConfig) {
@@ -538,21 +512,21 @@ export function SoundGenerationSection({
     // Link button rendered in the card header prefix (pre-gen and post-gen)
     const isCurrentlyLinking = isLinkingEntity && linkingConfigIndex === originalIndex;
     const showLinkButton = modelEntities.length > 0 || useSpeckleViewer
-      || !!config.entity
+      || !!config.entities?.length
       || (isGenerated && generatedSound?.entity_index !== undefined);
 
     const linkedEntityLabel = isGenerated
       ? (generatedSound?.entity_index !== undefined
           ? `Entity ${generatedSound.entity_index}`
           : undefined)
-      : (config.entity
-          ? (config.entity.name || (config.entity.index !== undefined
-              ? `Entity ${config.entity.index}`
-              : config.entity.id?.slice(0, 8) || 'Object'))
+      : (config.entities?.length
+          ? config.entities.map((e: any) => e.name || (e.index !== undefined
+              ? `Entity ${e.index}`
+              : (e.id as string)?.slice(0, 8) || 'Object')).join(', ')
           : undefined);
     const isLinkedInHeader = isGenerated
       ? generatedSound?.entity_index !== undefined
-      : !!config.entity;
+      : !!config.entities?.length;
 
     const linkHeaderPrefix = showLinkButton ? (
       <button
@@ -582,6 +556,32 @@ export function SoundGenerationSection({
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
         </svg>
       </button>
+    ) : undefined;
+
+    // Category badge (if available from foley analysis)
+    const categoryBadge = config.category ? (
+      <span
+        style={{
+          fontSize: '9px',
+          padding: '1px 5px',
+          borderRadius: '3px',
+          backgroundColor: 'var(--color-secondary-light)',
+          color: 'var(--color-secondary-hover)',
+          textTransform: 'capitalize',
+          letterSpacing: '0.02em',
+          flexShrink: 0,
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {config.category.replace(/_/g, ' ')}
+      </span>
+    ) : null;
+
+    const headerPrefix = (linkHeaderPrefix || categoryBadge) ? (
+      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+        {linkHeaderPrefix}
+        {categoryBadge}
+      </div>
     ) : undefined;
 
     return (
@@ -618,7 +618,7 @@ export function SoundGenerationSection({
         color="primary"
         version={cardVersion}
         dimmed={isEffectivelyMuted}
-        headerPrefix={linkHeaderPrefix}
+        headerPrefix={headerPrefix}
         beforeContent={
           <SoundPreContent
             config={config}

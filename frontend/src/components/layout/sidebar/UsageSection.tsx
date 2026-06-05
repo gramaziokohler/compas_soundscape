@@ -545,6 +545,14 @@ export function UsageSection({
           handleReorderConfigs(fromOriginal, toOriginal);
         }
       }}
+      emptyAction={
+        <button
+          onClick={() => handleAddConfig('freeform')}
+          className="text-primary hover:underline cursor-pointer text-xs font-medium"
+        >
+          Skip usage
+        </button>
+      }
     />
   );
 }

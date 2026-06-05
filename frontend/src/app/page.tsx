@@ -404,6 +404,19 @@ function HomeContent() {
   const [linkingConfigIndex, setLinkingConfigIndex] = useState<number | null>(null);
   const [selectedCardIndex, setSelectedCardIndex] = useState<number | null>(null);
 
+  // Track shift-key for append-entity mode (shift+click adds to entities[], plain click replaces)
+  const isShiftHeldRef = useRef(false);
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Shift') isShiftHeldRef.current = true; };
+    const onKeyUp = (e: KeyboardEvent) => { if (e.key === 'Shift') isShiftHeldRef.current = false; };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    };
+  }, []);
+
   // Material assignment state (NEW)
   const [selectedGeometry, setSelectedGeometry] = useState<SelectedGeometry | null>(null);
   const [hoveredGeometry, setHoveredGeometry] = useState<SelectedGeometry | null>(null);
@@ -495,19 +508,22 @@ function HomeContent() {
       if (!stillInSoundscape) return;
 
       const config = soundGen.soundConfigs[promptIndex];
-      if (!config?.entity) return;
+      if (!config?.entities?.length) return;
 
-      // Resolve the object ID: if the entity has an applicationId (Rhino GUID from saved data),
-      // remap it to the current Speckle tree ID. Speckle IDs change on every commit.
-      let objectId = config.entity.nodeId || config.entity.id;
-      if (config.entity.applicationId && appIdToTreeIdMap.size > 0) {
-        objectId = appIdToTreeIdMap.get(config.entity.applicationId) || objectId;
+      // Resolve and register each entity in the config
+      for (const ent of config.entities) {
+        // Resolve the object ID: if the entity has an applicationId (Rhino GUID from saved data),
+        // remap it to the current Speckle tree ID. Speckle IDs change on every commit.
+        let objectId = ent.nodeId || ent.id;
+        if (ent.applicationId && appIdToTreeIdMap.size > 0) {
+          objectId = appIdToTreeIdMap.get(ent.applicationId) || objectId;
+        }
+        if (!objectId) continue;
+
+        // Register the entity-sound link in SpeckleSelectionModeContext
+        // Pass hasGeneratedSound=true since this effect runs for generated sounds
+        linkObjectToSound(objectId, promptIndex, true);
       }
-      if (!objectId) return;
-
-      // Register the entity-sound link in SpeckleSelectionModeContext
-      // Pass hasGeneratedSound=true since this effect runs for generated sounds
-      linkObjectToSound(objectId, promptIndex, true);
     });
   }, [soundGen.generatedSounds, soundGen.soundConfigs, soundGen.soundscapeData, linkObjectToSound, appIdToTreeIdMap]);
 
@@ -518,15 +534,17 @@ function HomeContent() {
   // ============================================================================
   useEffect(() => {
     soundGen.soundConfigs.forEach((config, index) => {
-      if (!config.entity) return;
-      // Resolve applicationId (Rhino GUID) to current Speckle tree ID
-      let objectId = config.entity.nodeId || config.entity.id;
-      if (config.entity.applicationId && appIdToTreeIdMap.size > 0) {
-        objectId = appIdToTreeIdMap.get(config.entity.applicationId) || objectId;
+      if (!config.entities?.length) return;
+      for (const ent of config.entities) {
+        // Resolve applicationId (Rhino GUID) to current Speckle tree ID
+        let objectId = ent.nodeId || ent.id;
+        if (ent.applicationId && appIdToTreeIdMap.size > 0) {
+          objectId = appIdToTreeIdMap.get(ent.applicationId) || objectId;
+        }
+        if (!objectId || linkedObjectIds.has(objectId)) continue;
+        // Register as pending (no generated sound yet) → light pink
+        linkObjectToSound(objectId, index);
       }
-      if (!objectId || linkedObjectIds.has(objectId)) return;
-      // Register as pending (no generated sound yet) → light pink
-      linkObjectToSound(objectId, index);
     });
   }, [soundGen.soundConfigs, linkedObjectIds, linkObjectToSound, appIdToTreeIdMap]);
 
@@ -539,13 +557,16 @@ function HomeContent() {
     const currentObjectSoundLinks = useSpeckleStore.getState().objectSoundLinks;
     currentObjectSoundLinks.forEach((tabIndex, objectId) => {
       const config = soundGen.soundConfigs[tabIndex];
-      let configObjectId = config?.entity?.nodeId || config?.entity?.id;
-      // Resolve applicationId to current tree ID for comparison
-      if (config?.entity?.applicationId && appIdToTreeIdMap.size > 0) {
-        configObjectId = appIdToTreeIdMap.get(config.entity.applicationId) || configObjectId;
-      }
-      // If the config is gone or its entity no longer matches, unlink
-      if (!config || !configObjectId || configObjectId !== objectId) {
+      // Check if any entity in config.entities matches this objectId
+      const hasMatchingEntity = config?.entities?.some((ent: any) => {
+        let configObjectId = ent.nodeId || ent.id;
+        if (ent.applicationId && appIdToTreeIdMap.size > 0) {
+          configObjectId = appIdToTreeIdMap.get(ent.applicationId) || configObjectId;
+        }
+        return configObjectId === objectId;
+      });
+      // If the config is gone or no entity matches, unlink
+      if (!config || !hasMatchingEntity) {
         unlinkObjectFromSound(objectId);
       }
     });
@@ -605,12 +626,12 @@ function HomeContent() {
         // Pending placeholder — resolve position with same priority as handleAttachSoundToEntity:
         //   1. Entity bounding-box center  2. Explicit config.position  3. [0,0,0]
         let position: [number, number, number] = [0, 0, 0];
-        if (config.entity) {
-          const ec = config.entity;
+        if (config.entities?.length) {
+          const ec = config.entities[0];
           if (ec.bounds?.center) {
             position = [ec.bounds.center[0], ec.bounds.center[1], ec.bounds.center[2]];
-          } else if (ec.position?.length >= 3) {
-            position = [ec.position[0], ec.position[1], ec.position[2]];
+          } else if (ec.position && ec.position.length >= 3) {
+            position = [ec.position[0], ec.position[1], ec.position[2]] as [number, number, number];
           }
         } else if (config.position) {
           position = config.position as [number, number, number];
@@ -618,8 +639,8 @@ function HomeContent() {
 
         // entity_index: non-undefined routes sphere manager to label-only branch (no mesh).
         // Use -(index+1) as a sentinel for foley entities with no numeric index.
-        const entity_index: number | undefined = config.entity
-          ? (config.entity.index ?? -(index + 1))
+        const entity_index: number | undefined = config.entities?.length
+          ? (config.entities[0].index ?? -(index + 1))
           : undefined;
 
         return {
@@ -765,21 +786,30 @@ function HomeContent() {
         interval_seconds: p.metadata?.interval_seconds ?? 5, // Default interval if not provided
         display_name: p.displayName || (p.text.length > 50 ? p.text.substring(0, 47) + '...' : p.text),
         // Resolve entity from world tree when available; pass foley position as bounds fallback.
-        // Non-entity sounds get no entity object — SoundSphereManager uses the explicit position.
-        entity: p.entity?.id
-          ? resolveEntityFromTreeId(p.entity.id, p.entity.foleyPosition)
-          : undefined,
+        // Non-entity sounds get no entities — SoundSphereManager uses the explicit position.
+        // Support both new entities[] and legacy entity field from TextPromptResult.
+        entities: (() => {
+          const primaryRaw = p.entities?.[0] ?? p.entity;
+          if (!primaryRaw?.id) return undefined;
+          const resolved = resolveEntityFromTreeId(primaryRaw.id, primaryRaw.foleyPosition);
+          return resolved ? [resolved] : undefined;
+        })(),
         // Forward explicit position for non-entity sounds (e.g. HVAC Hum with [x,y,z] from foley).
         // Camera-front placement is the fallback only when position is absent or [0,0,0].
-        ...(p.position && !p.entity?.id ? { position: p.position } : {}),
+        ...(() => {
+          const primaryRaw = p.entities?.[0] ?? p.entity;
+          return p.position && !primaryRaw?.id ? { position: p.position } : {};
+        })(),
         // Pass foley timestamps through so they can be applied after generation
         ...(p.metadata?.timestamps?.length ? { timestamps: p.metadata.timestamps } : {}),
+        // Pass foley category through for DAW grouping and badge display
+        ...(p.metadata?.category ? { category: p.metadata.category } : {}),
         // Tag with parent usage card so Sounds section can filter by parent
         ...(parentUsageIndex !== undefined ? { parentUsageOriginalIndex: parentUsageIndex } : {}),
       }));
 
       console.log('[Analysis→SoundGen] Converted configs with metadata:', 
-        newConfigs.map(c => ({ prompt: c.prompt.substring(0, 30), duration: c.duration, spl_db: c.spl_db, interval_seconds: c.interval_seconds, hasEntity: !!c.entity })));
+        newConfigs.map(c => ({ prompt: c.prompt.substring(0, 30), duration: c.duration, spl_db: c.spl_db, interval_seconds: c.interval_seconds, hasEntities: !!c.entities?.length })));
 
       // Add to sound generation
       soundGen.setSoundConfigsFromPrompts(newConfigs);
@@ -1172,16 +1202,14 @@ function HomeContent() {
 
   // Handle sound config removal — unlinks entity color before deleting the card
   const handleRemoveSoundConfig = useCallback((index: number) => {
-    // Unlink entity from Speckle filtering before removing the config
+    // Unlink all entities from Speckle filtering before removing the config
     const config = soundGen.soundConfigs[index];
-    if (config?.entity) {
-      let objectId = config.entity.nodeId || config.entity.id;
-      if (config.entity.applicationId && appIdToTreeIdMap.size > 0) {
-        objectId = appIdToTreeIdMap.get(config.entity.applicationId) || objectId;
+    for (const ent of config?.entities || []) {
+      let objectId = ent.nodeId || ent.id;
+      if (ent.applicationId && appIdToTreeIdMap.size > 0) {
+        objectId = appIdToTreeIdMap.get(ent.applicationId) || objectId;
       }
-      if (objectId) {
-        unlinkObjectFromSound(objectId);
-      }
+      if (objectId) unlinkObjectFromSound(objectId);
     }
     soundGen.handleRemoveConfig(index);
   }, [soundGen.soundConfigs, soundGen.handleRemoveConfig, unlinkObjectFromSound, appIdToTreeIdMap]);
@@ -1192,10 +1220,10 @@ function HomeContent() {
 
     // Downgrade entity color from generated (full pink) to pending (light pink)
     const config = soundGen.soundConfigs[promptIndex];
-    if (config?.entity) {
-      let objectId = config.entity.nodeId || config.entity.id;
-      if (config.entity.applicationId && appIdToTreeIdMap.size > 0) {
-        objectId = appIdToTreeIdMap.get(config.entity.applicationId) || objectId;
+    for (const ent of config?.entities || []) {
+      let objectId = ent.nodeId || ent.id;
+      if (ent.applicationId && appIdToTreeIdMap.size > 0) {
+        objectId = appIdToTreeIdMap.get(ent.applicationId) || objectId;
       }
       if (objectId) {
         // Re-link with hasGeneratedSound=false to downgrade color
@@ -1265,61 +1293,56 @@ function HomeContent() {
   const handleEntityLinked = useCallback((entity: any) => {
     if (linkingConfigIndex !== null) {
       const currentConfig = soundGen.soundConfigs[linkingConfigIndex];
-      const previousEntity = currentConfig?.entity;
+      const previousEntities = currentConfig?.entities || [];
 
       // If entity is null (clicked on empty space)
       if (entity === null) {
-        // If there's a currently linked entity, unlink it
-        if (previousEntity) {
-          // Detach sound from entity (creates sound sphere, updates soundscapeData)
+        // If there are currently linked entities, unlink them all
+        if (previousEntities.length) {
           soundGen.handleDetachSoundFromEntity(linkingConfigIndex);
-          
-          // Unlink from Speckle context if it's a Speckle object
-          const objectId = previousEntity.nodeId || previousEntity.id;
-          if (objectId) {
-            unlinkObjectFromSound(objectId);
+
+          for (const prevEnt of previousEntities) {
+            const objectId = prevEnt.nodeId || prevEnt.id;
+            if (objectId) unlinkObjectFromSound(objectId);
           }
 
-          // Remove the previous entity from highlights
+          // Remove all previous entities from highlights
           const selectedEntities = getSelectedDiverseEntities();
           const updatedEntities = selectedEntities.filter(
-            e => e.index !== previousEntity.index
+            (e: any) => !previousEntities.some((pe: any) => pe.index === e.index)
           );
           updateSelectedDiverseEntities(updatedEntities);
         }
 
-        // Exit linking mode (whether we unlinked or not)
         setIsLinkingEntity(false);
         setLinkingConfigIndex(null);
         return;
       }
 
-      // Entity is not null - link the new entity
-      // This will destroy sound sphere (if exists) and move overlay to entity
-      soundGen.handleAttachSoundToEntity(linkingConfigIndex, entity);
-      
+      // Determine whether to append (shift+click) or replace (plain click)
+      const isAppend = isShiftHeldRef.current;
+
+      // Attach entity (append or replace)
+      soundGen.handleAttachSoundToEntity(linkingConfigIndex, entity, isAppend);
+
       // Link in Speckle context if it's a Speckle object
       const objectId = entity.nodeId || entity.id;
-      if (objectId) {
-        linkObjectToSound(objectId, linkingConfigIndex);
-      }
+      if (objectId) linkObjectToSound(objectId, linkingConfigIndex);
 
-      // Update diverse selection to highlight the new entity
+      // Update diverse selection highlights
       let updatedEntities = [...getSelectedDiverseEntities()];
 
-      // Remove the previous entity from highlights if it exists
-      if (previousEntity) {
-        updatedEntities = updatedEntities.filter(e => e.index !== previousEntity.index);
-        
-        // Unlink previous Speckle object
-        const prevObjectId = previousEntity.nodeId || previousEntity.id;
-        if (prevObjectId) {
-          unlinkObjectFromSound(prevObjectId);
+      if (!isAppend) {
+        // Replace: unlink all previous entities that are no longer in the new config
+        for (const prevEnt of previousEntities) {
+          updatedEntities = updatedEntities.filter((e: any) => e.index !== prevEnt.index);
+          const prevObjectId = prevEnt.nodeId || prevEnt.id;
+          if (prevObjectId) unlinkObjectFromSound(prevObjectId);
         }
       }
 
-      // Add the new entity to highlights if not already present
-      if (!updatedEntities.find(e => e.index === entity.index)) {
+      // Add new entity to highlights if not already present
+      if (!updatedEntities.find((e: any) => e.index === entity.index)) {
         updatedEntities.push(entity);
       }
 
@@ -1369,7 +1392,9 @@ function HomeContent() {
    */
   const handleDetachSound = useCallback((entity: any) => {
     // Find the config linked to this entity
-    const configIndex = soundGen.soundConfigs.findIndex(config => config.entity?.index === entity.index);
+    const configIndex = soundGen.soundConfigs.findIndex(config =>
+      config.entities?.some((e: any) => e.index === entity.index)
+    );
 
     if (configIndex === -1) {
       console.warn('[handleDetachSound] No sound config found for entity', entity.index);
@@ -1392,16 +1417,16 @@ function HomeContent() {
    * When an entity is unlinked (set to undefined), also remove it from highlights
    */
   const handleUpdateSoundConfig = useCallback((index: number, field: keyof SoundGenerationConfig, value: any) => {
-    // Check if we're unlinking an entity
-    if (field === 'entity' && value === undefined) {
+    // Check if we're unlinking entities
+    if (field === 'entities' && (!value || (Array.isArray(value) && value.length === 0))) {
       const currentConfig = soundGen.soundConfigs[index];
-      const previousEntity = currentConfig?.entity;
+      const previousEntities = currentConfig?.entities || [];
 
-      // If there was a previous entity, remove it from highlights
-      if (previousEntity) {
+      // Remove all previous entities from highlights
+      if (previousEntities.length) {
         const selectedEntities = getSelectedDiverseEntities();
         const updatedEntities = selectedEntities.filter(
-          e => e.index !== previousEntity.index
+          (e: any) => !previousEntities.some((pe: any) => pe.index === e.index)
         );
         updateSelectedDiverseEntities(updatedEntities);
       }

@@ -530,15 +530,16 @@ class LLMService:
             text: Raw text that may contain PROMPT:, NAME:, SPL:, INTERVAL:, DURATION:, and ENTITY: markers
 
         Returns:
-            dict: {"prompt": str, "display_name": str, "spl_db": float, "interval_seconds": float, "duration_seconds": float, "entity_index": int or None} or None if parsing fails
+            dict: {"prompt": str, "display_name": str, "spl_db": float, "interval_seconds": float, "duration_seconds": float, "entity_indices": list[int]} or None if parsing fails
         """
         # Try to parse PROMPT: ... NAME: ... SPL: ... INTERVAL: ... DURATION: ... ENTITY: ... format
-        prompt_match = re.search(r'PROMPT:\s*(.+?)(?=\s*NAME:|$)', text, re.DOTALL)
-        name_match = re.search(r'NAME:\s*(.+?)(?=\s*SPL:|$)', text, re.DOTALL | re.MULTILINE)
+        _SOUND_FIELD = r'(?:PROMPT|NAME|SPL|INTERVAL|DURATION|ENTITY)'
+        prompt_match = re.search(rf'PROMPT:\s*(.*?)(?=\s*{_SOUND_FIELD}:|$)', text, re.DOTALL)
+        name_match = re.search(rf'NAME:\s*(.*?)(?=\s*{_SOUND_FIELD}:|$)', text, re.DOTALL | re.MULTILINE)
         spl_match = re.search(r'SPL:\s*(\d+(?:\.\d+)?)', text, re.IGNORECASE)
         interval_match = re.search(r'INTERVAL:\s*(\d+(?:\.\d+)?)', text, re.IGNORECASE)
         duration_match = re.search(r'DURATION:\s*(\d+(?:\.\d+)?)', text, re.IGNORECASE)
-        entity_match = re.search(r'ENTITY:\s*(\d+|NONE|none|None)', text, re.IGNORECASE)
+        entity_match = re.search(r'ENTITY:\s*([\d,\s]+|NONE|none|None)', text, re.IGNORECASE)
 
         if prompt_match and name_match:
             sound_prompt = prompt_match.group(1).strip()
@@ -582,16 +583,19 @@ class LLMService:
                 except ValueError:
                     pass
 
-            # Extract entity index (1-based from LLM, convert to 0-based, or None)
-            entity_index = None
+            # Extract entity indices (1-based from LLM, convert to 0-based)
+            entity_indices = []
             if entity_match:
                 entity_str = entity_match.group(1).strip()
                 if entity_str.lower() != 'none':
-                    try:
-                        # LLM returns 1-based index, convert to 0-based
-                        entity_index = int(entity_str) - 1
-                    except ValueError:
-                        pass
+                    for part in re.split(r'[,\s]+', entity_str):
+                        part = part.strip()
+                        if part:
+                            try:
+                                # LLM returns 1-based index, convert to 0-based
+                                entity_indices.append(int(part) - 1)
+                            except ValueError:
+                                pass
 
             return {
                 "prompt": sound_prompt,
@@ -599,7 +603,7 @@ class LLMService:
                 "spl_db": spl_db,
                 "interval_seconds": interval_seconds,
                 "duration_seconds": duration_seconds,
-                "entity_index": entity_index
+                "entity_indices": entity_indices
             }
 
         return None
@@ -754,7 +758,7 @@ NAME: [your 2-3 word display name here]
 SPL: [estimated dB value, e.g., 75]
 INTERVAL: [estimated interval in seconds, e.g., 120]
 DURATION: [estimated duration in seconds with 0.1 precision, e.g., 3.5]
-ENTITY: [entity number from the list above (e.g., 1, 2, 3) if this sound is linked to that entity, or NONE if it's a non-entity context sound]
+ENTITY: [comma-separated entity numbers (e.g., 1 or 1,3) if this sound is linked to those entities, or NONE if it's a non-entity context sound]
 2.
 ...and so on
 
@@ -804,7 +808,7 @@ For the duration estimation (in seconds with 0.1 precision):
             context: Optional context description
 
         Returns:
-            list[dict]: List of {"prompt": str, "display_name": str, "spl_db": float, "interval_seconds": float, "duration_seconds": float, "entity_index": int or None}
+            list[dict]: List of {"prompt": str, "display_name": str, "spl_db": float, "interval_seconds": float, "duration_seconds": float, "entity_indices": list[int]}
         """
         if num_sounds <= 0:
             return []
@@ -861,7 +865,7 @@ For the duration estimation (in seconds with 0.1 precision):
                             "spl_db": DEFAULT_SPL_DB,
                             "interval_seconds": LLM_SUGGESTED_INTERVAL_SECONDS,
                             "duration_seconds": DEFAULT_DURATION_SECONDS,
-                            "entity_index": None  # Fallback case: no entity linkage
+                            "entity_indices": []  # Fallback case: no entity linkage
                         })
 
             return sound_list
@@ -874,7 +878,7 @@ For the duration estimation (in seconds with 0.1 precision):
         """Generate sound prompts with display names from text description only
 
         Returns:
-            tuple: (raw_text, list of {"prompt": str, "display_name": str, "spl_db": float, "interval_seconds": float, "duration_seconds": float, "entity_index": None})
+            tuple: (raw_text, list of {"prompt": str, "display_name": str, "spl_db": float, "interval_seconds": float, "duration_seconds": float, "entity_indices": []})
         """
         # Use unified base prompt (no entities)
         enhanced_prompt = self._create_base_sound_prompt(context, num_sounds, entities=None)
@@ -919,7 +923,7 @@ For the duration estimation (in seconds with 0.1 precision):
                         "spl_db": DEFAULT_SPL_DB,
                         "interval_seconds": LLM_SUGGESTED_INTERVAL_SECONDS,
                         "duration_seconds": DEFAULT_DURATION_SECONDS,
-                        "entity_index": None  # Text-based prompts have no entity linkage
+                        "entity_indices": []  # Text-based prompts have no entity linkage
                     })
 
         return raw_text, sound_list
@@ -999,12 +1003,13 @@ For the duration estimation (in seconds with 0.1 precision):
             dict with keys name, description, material, confidence, quantity, object_ids
             or None if NAME: is missing.
         """
-        name_match = re.search(r'NAME:\s*(.+?)(?=\s*DESCRIPTION:|$)', text, re.DOTALL | re.IGNORECASE)
+        _FIELD = r'(?:NAME|DESCRIPTION|MATERIAL|CONFIDENCE|QUANTITY|IDS)'
+        name_match = re.search(rf'NAME:\s*(.*?)(?=\s*{_FIELD}:|$)', text, re.DOTALL | re.IGNORECASE)
         if not name_match:
             return None
 
-        desc_match = re.search(r'DESCRIPTION:\s*(.+?)(?=\s*MATERIAL:|$)', text, re.DOTALL | re.IGNORECASE)
-        mat_match = re.search(r'MATERIAL:\s*(.+?)(?=\s*CONFIDENCE:|$)', text, re.DOTALL | re.IGNORECASE)
+        desc_match = re.search(rf'DESCRIPTION:\s*(.*?)(?=\s*{_FIELD}:|$)', text, re.DOTALL | re.IGNORECASE)
+        mat_match = re.search(rf'MATERIAL:\s*(.*?)(?=\s*{_FIELD}:|$)', text, re.DOTALL | re.IGNORECASE)
         conf_match = re.search(r'CONFIDENCE:\s*(\d+(?:\.\d+)?)', text, re.IGNORECASE)
         qty_match = re.search(r'QUANTITY:\s*(\d+)', text, re.IGNORECASE)
         ids_match = re.search(r'IDS:\s*(.+?)$', text, re.DOTALL | re.IGNORECASE)
@@ -1012,6 +1017,8 @@ For the duration estimation (in seconds with 0.1 precision):
         name = name_match.group(1).strip()
         description = desc_match.group(1).strip() if desc_match else ''
         material = mat_match.group(1).strip() if mat_match else ''
+        if re.search(rf'{_FIELD}:', material, re.IGNORECASE):
+            material = ''
 
         confidence = 0.0
         if conf_match:
@@ -1131,10 +1138,11 @@ For the duration estimation (in seconds with 0.1 precision):
     def _normalize_object_refs(text: str) -> str:
         """Normalize object ID references in parentheses to the (id:hexid) format.
 
-        Handles three patterns:
+        Handles:
         - ``(e03387f2...)``                         → ``(id:e03387f2...)``
         - ``(id:aaa... to bbb...)``                 → ``(id:aaa...) to (id:bbb...)``
         - ``(aaa... to bbb...)``                    → ``(id:aaa...) to (id:bbb...)``
+        - ``(aaa..., bbb..., ccc...)``              → ``(id:aaa..., id:bbb..., id:ccc...)``
         """
         HEX = r'[0-9a-f]{24,64}'
         # Expand range with id: prefix on the first ID: (id:HEX to HEX)
@@ -1149,8 +1157,13 @@ For the duration estimation (in seconds with 0.1 precision):
             r'(id:\1) to (id:\2)',
             text,
         )
-        # Normalise remaining bare hex singles: (HEX)
-        text = re.sub(rf'\((?!id:)({HEX})\)', r'(id:\1)', text)
+        # Normalise all bare hex IDs inside parentheses to id:hexid format.
+        # Handles singles, comma-separated lists, and mixed (id:HEX, HEX, HEX).
+        def _prefix_bare_ids(m: re.Match) -> str:
+            inner = m.group(1)
+            inner = re.sub(r'(?<!\bid:)(' + HEX + ')', r'id:\1', inner)
+            return '(' + inner + ')'
+        text = re.sub(r'\(([^)]+)\)', _prefix_bare_ids, text)
         return text
 
     # ── Private prompt/entity helpers (source of truth) ──────────────────────
@@ -1384,7 +1397,7 @@ For the duration estimation (in seconds with 0.1 precision):
             "- events: array of timestamped events (each 5-30 seconds)\n"
             "  - timestamp: \"MM:SS-MM:SS\" format\n"
             "  - description: detailed action description with references to "
-            "objects as object.name (id:{objectId})\n"
+            "objects as object.name (ids:ALL hex keys from that object's object_ids, comma-separated)\n"
             f"Now create {len(scenario_parameters)} scenario(s) of approximately "
             f"{duration_mmss} approximately ({duration} seconds) each.\n"
             f"Scenario(s) requested (number of people, likeliness): {scenario_parameters}\n"

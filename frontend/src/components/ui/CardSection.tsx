@@ -53,6 +53,8 @@ export interface CardSectionProps<TItem extends CardBaseConfig> {
   color?: CardColor;
   /** Reorder callback — called with (fromIndex, toIndex) after a drag-drop. */
   onReorder?: (from: number, to: number) => void;
+  /** Optional action rendered below the empty message (when items.length === 0) */
+  emptyAction?: ReactNode;
 }
 
 // ============================================================================
@@ -97,6 +99,7 @@ export function CardSection<TItem extends CardBaseConfig>({
   onExpandedIndexChange,
   color = 'primary' as const,
   onReorder,
+  emptyAction,
 }: CardSectionProps<TItem>) {
   const isControlled = controlledExpandedIndex !== undefined;
 
@@ -360,8 +363,11 @@ export function CardSection<TItem extends CardBaseConfig>({
       {/* Card list */}
       <div ref={listRef} className="flex flex-col gap-2">
         {items.length === 0 ? (
-          <div className="rounded-lg p-4 text-xs text-center bg-secondary-light text-secondary-hover">
-            {emptyMessage}
+          <div className="rounded-lg p-4 text-xs bg-secondary-light text-secondary-hover">
+            <p className="text-center">{emptyMessage}</p>
+            {emptyAction && (
+              <div className="mt-2 text-right">{emptyAction}</div>
+            )}
           </div>
         ) : (
           <>

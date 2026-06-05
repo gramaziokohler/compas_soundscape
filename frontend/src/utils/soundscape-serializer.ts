@@ -93,26 +93,40 @@ export function buildSoundscapeSavePayload(
       display_name: config.display_name || undefined,
       spl_db: config.spl_db,
       interval_seconds: config.interval_seconds,
-      entity_index: config.entity?.id !== undefined
-        ? (typeof config.entity.id === 'number'
-          ? config.entity.id
-          : parseInt(config.entity.id, 10))
+      // Legacy single-entity fields (kept for backward compat with older saves)
+      entity_index: config.entities?.[0]?.id !== undefined
+        ? (typeof config.entities[0].id === 'number'
+          ? config.entities[0].id as number
+          : parseInt(config.entities[0].id as string, 10))
         : undefined,
-      // Prefer stable applicationId (Rhino GUID) over Speckle nodeId for cross-session persistence.
-      // Speckle object IDs change on every commit, but applicationId (Rhino GUID) is stable.
-      entity_node_id: config.entity?.applicationId
-        || config.entity?.nodeId
-        || (typeof config.entity?.id === 'string' ? config.entity.id : undefined),
+      entity_node_id: config.entities?.[0]?.applicationId
+        || config.entities?.[0]?.nodeId
+        || (typeof config.entities?.[0]?.id === 'string' ? config.entities[0].id as string : undefined),
+      // Multi-entity fields (new format)
+      entity_indices: config.entities?.length
+        ? (config.entities
+            .map((e: any) => e.id !== undefined
+              ? (typeof e.id === 'number' ? e.id as number : parseInt(e.id as string, 10))
+              : undefined)
+            .filter((i: number | undefined): i is number => i !== undefined))
+        : undefined,
+      entity_node_ids: config.entities?.length
+        ? (config.entities
+            .map((e: any) => e.applicationId || e.nodeId || (typeof e.id === 'string' ? e.id as string : undefined))
+            .filter((id: string | undefined): id is string => !!id))
+        : undefined,
       seed_copies: config.seed_copies,
       steps: config.steps,
     })
   );
 
-  // Build a lookup: prompt_index → entity_node_id (for event serialization)
-  const configEntityNodeIds: Record<number, string> = {};
-  serializedConfigs.forEach((c) => {
-    if (c.entity_node_id) configEntityNodeIds[c.index] = c.entity_node_id;
-  });
+      // Build a lookup: prompt_index → entity_node_ids[] (for event serialization)
+      const configEntityNodeIds: Record<number, string> = {};
+      serializedConfigs.forEach((c) => {
+        // Use first entity_node_id for each config index (event matching only needs one)
+        const firstId = c.entity_node_ids?.[0] || c.entity_node_id;
+        if (firstId) configEntityNodeIds[c.index] = firstId;
+      });
 
   // Map runtime sound events to serializable events and collect audio URLs
   const audioUrls: string[] = [];
@@ -151,6 +165,7 @@ export function buildSoundscapeSavePayload(
         is_uploaded: event.isUploaded || false,
         entity_index: event.entity_index,
         entity_node_id: eventEntityNodeId,
+        entity_indices: event.entity_indices,
       };
     }
   );
@@ -326,17 +341,30 @@ export function restoreSoundscapeState(
       spl_db: saved.spl_db,
       interval_seconds: saved.interval_seconds,
       type: saved.type as SoundGenerationConfig['type'],
-      entity: saved.entity_index !== undefined && saved.entity_index !== null
-        ? {
-            // entity_node_id is now a stable applicationId (Rhino GUID) —
+      entity: undefined, // deprecated — use entities[] below
+      entities: (() => {
+        // New multi-entity format: entity_indices[] array
+        if (saved.entity_indices?.length) {
+          return saved.entity_indices.map((idx: number, i: number) => ({
+            id: saved.entity_node_ids?.[i] || String(idx),
+            nodeId: saved.entity_node_ids?.[i],
+            applicationId: saved.entity_node_ids?.[i],
+            index: idx,
+          }));
+        }
+        // Backward compat: old single entity_index format
+        if (saved.entity_index != null) {
+          return [{
+            // entity_node_id is a stable applicationId (Rhino GUID) —
             // the actual Speckle tree ID must be resolved at runtime via appIdToTreeIdMap.
-            // Store it as applicationId so the link effects can remap it.
-            id: saved.entity_node_id || saved.entity_index,
+            id: saved.entity_node_id || String(saved.entity_index),
             nodeId: saved.entity_node_id,
             applicationId: saved.entity_node_id,
             index: saved.entity_index,
-          }
-        : undefined,
+          }];
+        }
+        return undefined;
+      })(),
     })
   );
 
@@ -384,6 +412,12 @@ export function restoreSoundscapeState(
     // so that the sphere manager's `=== undefined` check works correctly
     if (saved.entity_index != null) {
       event.entity_index = saved.entity_index;
+    }
+    // Restore multi-entity indices
+    if (saved.entity_indices?.length) {
+      event.entity_indices = saved.entity_indices;
+    } else if (saved.entity_index != null) {
+      event.entity_indices = [saved.entity_index];
     }
 
     return event;

@@ -42,16 +42,17 @@ export function createSoundEventFromUpload(
   geometryBounds?: any, // Kept for API compatibility; no longer used for positioning
   idPrefix: string = 'uploaded'
 ): SoundEvent {
-  // Determine position: entity-linked sounds use the entity's center.
-  // Non-entity sounds use [0,0,0] — SoundSphereManager places them in front of the camera.
+  // Position priority:
+  // 1. Entity bounding-box center  2. Entity position  3. Explicit config.position
+  // 4. [0,0,0] (SoundSphereManager handles camera-front spiral placement)
   let position: [number, number, number];
-  if (config.entity?.bounds?.center) {
-    position = config.entity.bounds.center as [number, number, number];
-  } else if (config.entity?.position) {
-    position = config.entity.position as [number, number, number];
+  if (config.entities?.[0]?.bounds?.center) {
+    position = config.entities[0].bounds.center as [number, number, number];
+  } else if (config.entities?.[0]?.position) {
+    position = config.entities[0].position as [number, number, number];
+  } else if (config.position) {
+    position = config.position as [number, number, number];
   } else {
-    // No entity: camera-front placement (handled by SoundSphereManager)
-    // position = calculateSoundPositionWithSpacing(...); // Bounding-box positioning removed
     position = [0, 0, 0];
   }
 
@@ -92,7 +93,7 @@ export function createSoundEventFromUpload(
     id: generateSoundId(idPrefix, originalIndex, 0),
     url,
     position,
-    geometry: config.entity?.geometry || createEmptyGeometry(),
+    geometry: config.entities?.[0]?.geometry || createEmptyGeometry(),
     display_name: displayName,
     prompt,
     prompt_index: originalIndex,
@@ -100,19 +101,21 @@ export function createSoundEventFromUpload(
     volume_db: config.spl_db ?? DEFAULT_SOUND_CONFIG.spl_db, // Default to 70 dB
     interval_seconds: config.interval_seconds ?? DEFAULT_SOUND_CONFIG.interval_seconds, // Default to 5 seconds
     isUploaded: true, // Mark as uploaded/library sound
-    // Include entity_index if entity is present.
+    // Include entity_index (primary) and entity_indices (all) if entities are present.
     // For entities with a Speckle ID but no numeric index, use originalIndex as a sentinel
     // so SoundSphereManager treats the sound as entity-linked (no floating sphere).
-    ...(config.entity?.index !== undefined
-      ? { entity_index: config.entity.index }
-      : (config.entity?.nodeId || config.entity?.id)
-        ? { entity_index: originalIndex }
+    ...(config.entities?.[0]?.index !== undefined
+      ? { entity_index: config.entities[0].index, entity_indices: config.entities.map((e: any) => e.index).filter((i: any) => i !== undefined) }
+      : (config.entities?.[0]?.nodeId || config.entities?.[0]?.id)
+        ? { entity_index: originalIndex, entity_indices: [originalIndex] }
         : {}),
     // Carry foley timestamps through to the SoundEvent
     ...(config.timestamps?.length && {
       timestamps: config.timestamps,
       scheduling_mode: 'timestamps' as const,
     }),
+    // Carry foley category through for DAW grouping
+    ...(config.category ? { category: config.category } : {}),
   };
 }
 

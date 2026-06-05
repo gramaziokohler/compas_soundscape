@@ -1362,6 +1362,12 @@ export function SpeckleScene({
           onSeek={handleSeek}
           onRefresh={handleRefreshTimeline}
           onDownload={handleDownloadTimeline}
+          onPlay={handlePlayAll}
+          onPause={handlePauseAll}
+          onStop={handleStopAll}
+          onClose={() => setShowTimeline(false)}
+          isAnyPlaying={isAnyPlaying}
+          onSelectSoundCard={onSelectSoundCard}
         />
       )}
 

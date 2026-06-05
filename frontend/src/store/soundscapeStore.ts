@@ -137,7 +137,7 @@ export interface SoundscapeStoreState {
   handleReorderSoundConfigs: (from: number, to: number) => void;
   handleDuplicateConfig: (index: number) => void;
   handleDetachSoundFromEntity: (index: number) => void;
-  handleAttachSoundToEntity: (index: number, entity: any) => void;
+  handleAttachSoundToEntity: (index: number, entity: any, append?: boolean) => void;
   updateSoundPosition: (soundId: string, position: [number, number, number]) => void;
   restoreSoundscape: (
     configs: SoundGenerationConfig[],
@@ -191,7 +191,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             librarySearchState: undefined,
             selectedCatalogSound: undefined,
             display_name: undefined,
-            entity: undefined,
+            entities: undefined,
           };
           set(
             { soundConfigs: [...soundConfigs, newConfig], activeSoundConfigTab: soundConfigs.length },
@@ -460,7 +460,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
 
             // ── Backend ML generation (async submit + poll) ───────────────────
             if (generationConfigs.length > 0) {
-              const hasEntities = generationConfigs.some(({ config }) => config.entity);
+              const hasEntities = generationConfigs.some(({ config }) => config.entities?.length);
               const configsWithNeg = generationConfigs.map(({ config }) => ({
                 ...config,
                 negative_prompt: globalNegativePrompt,
@@ -485,9 +485,9 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 const originalConfig = generationConfigs[backendIndex]?.config;
                 let entityIndex = sound.entity_index;
                 if (entityIndex === undefined) {
-                  if (originalConfig?.entity?.index !== undefined) {
-                    entityIndex = originalConfig.entity.index;
-                  } else if (originalConfig?.entity?.nodeId || originalConfig?.entity?.id) {
+                  if (originalConfig?.entities?.[0]?.index !== undefined) {
+                    entityIndex = originalConfig.entities[0].index;
+                  } else if (originalConfig?.entities?.[0]?.nodeId || originalConfig?.entities?.[0]?.id) {
                     // Entity has a Speckle ID but no numeric index — use actualIndex as a
                     // sentinel so SoundSphereManager treats this as entity-linked (no sphere).
                     entityIndex = actualIndex;
@@ -495,10 +495,12 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 }
 
                 let position: number[] = [0, 0, 0];
-                if (originalConfig?.entity?.bounds?.center) {
-                  position = originalConfig.entity.bounds.center;
-                } else if (originalConfig?.entity?.position) {
-                  position = originalConfig.entity.position;
+                if (originalConfig?.entities?.[0]?.bounds?.center) {
+                  position = originalConfig.entities[0].bounds.center as number[];
+                } else if (originalConfig?.entities?.[0]?.position) {
+                  position = originalConfig.entities[0].position as number[];
+                } else if (originalConfig?.position) {
+                  position = originalConfig.position as number[];
                 }
 
                 // Carry foley timestamps from the original config to the SoundEvent
@@ -514,6 +516,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                     timestamps: configTimestamps,
                     scheduling_mode: 'timestamps' as const,
                   }),
+                  // Carry foley category for DAW grouping
+                  ...(originalConfig?.category ? { category: originalConfig.category } : {}),
                 };
               };
 
@@ -1066,7 +1070,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           const newConfig: SoundGenerationConfig = {
             ...config,
             display_name: config.display_name ? `${config.display_name} (copy)` : undefined,
-            entity: undefined,
+            entities: undefined,
           };
 
           const newPromptIndex = soundConfigs.length;
@@ -1107,12 +1111,12 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         handleDetachSoundFromEntity: (index) => {
           const { soundConfigs, soundscapeData, generatedSounds } = get();
           const newConfigs = soundConfigs.map((c, i) =>
-            i === index ? { ...c, entity: undefined } : c,
+            i === index ? { ...c, entities: undefined } : c,
           );
           const detach = (sounds: any[]) =>
             sounds.map((s) => {
               if (s.prompt_index !== index) return s;
-              const { entity_index, ...rest } = s;
+              const { entity_index, entity_indices, ...rest } = s;
               return rest;
             });
           set(
@@ -1126,25 +1130,33 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           );
         },
 
-        handleAttachSoundToEntity: (index, entity) => {
+        handleAttachSoundToEntity: (index, entity, append = false) => {
           const { soundConfigs, soundscapeData, generatedSounds } = get();
+          const currentConfig = soundConfigs[index];
+          const newEntities = append
+            ? [...(currentConfig?.entities || []), entity]
+            : [entity];
           const newConfigs = soundConfigs.map((c, i) =>
-            i === index ? { ...c, entity } : c,
+            i === index ? { ...c, entities: newEntities } : c,
           );
-          const entityPosition: [number, number, number] = entity.bounds?.center
+          const primaryEntity = newEntities[0];
+          const entityPosition: [number, number, number] = primaryEntity.bounds?.center
             ? [
-                entity.bounds.center[0],
-                entity.bounds.center[1],
-                entity.bounds.center[2],
+                primaryEntity.bounds.center[0],
+                primaryEntity.bounds.center[1],
+                primaryEntity.bounds.center[2],
               ]
-            : entity.position?.length >= 3
-              ? [entity.position[0], entity.position[1], entity.position[2]]
+            : primaryEntity.position?.length >= 3
+              ? [primaryEntity.position[0], primaryEntity.position[1], primaryEntity.position[2]]
               : [0, 0, 0];
+          const entityIndices = newEntities
+            .map((e: any) => e.index)
+            .filter((i: any) => i !== undefined);
 
           const attach = (sounds: any[]) =>
             sounds.map((s) =>
               s.prompt_index === index
-                ? { ...s, entity_index: entity.index, position: entityPosition }
+                ? { ...s, entity_index: primaryEntity.index, entity_indices: entityIndices, position: entityPosition }
                 : s,
             );
           set(

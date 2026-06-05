@@ -22,8 +22,12 @@ export interface SoundscapeSoundConfig {
   display_name?: string;
   spl_db?: number;
   interval_seconds?: number;
+  /** @deprecated use entity_indices instead */
   entity_index?: number;
+  /** @deprecated use entity_node_ids instead */
   entity_node_id?: string; // Full Speckle object hash ID for entity matching
+  entity_indices?: number[];     // All linked entity indices
+  entity_node_ids?: string[];    // Stable applicationIds for all linked entities
   seed_copies: number;
   steps: number;
 }
@@ -41,8 +45,10 @@ export interface SoundscapeSoundEvent {
   interval_seconds?: number;
   current_interval_seconds?: number;
   is_uploaded: boolean;
+  /** @deprecated use entity_indices instead */
   entity_index?: number;
   entity_node_id?: string; // Full Speckle object hash ID for entity matching
+  entity_indices?: number[];  // All linked entity indices
 }
 
 /** Serializable receiver position */

@@ -82,6 +82,10 @@ export interface TimelineSound {
   iterationOffsets?: number[]; // Array of pre-generated random offsets for each iteration
   /** Scheduling mode for this sound ('interval' = default, 'timestamps' = explicit). */
   schedulingMode?: 'interval' | 'timestamps';
+  /** Prompt index — links this timeline sound back to the sound card in the sidebar. */
+  promptIndex?: number;
+  /** Sound group for DAW track grouping. */
+  soundGroup?: 'background' | 'sound_event' | 'speech';
 }
 
 export interface TimelinePlaybackState {
