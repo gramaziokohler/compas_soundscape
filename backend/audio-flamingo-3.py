@@ -16,7 +16,7 @@ DEVICE = "cuda"
 DTYPE = torch.bfloat16 
 
 print("Downloading/Locating model...")
-local_id = snapshot_download(model_id, token=HF_TOKEN)
+local_id = snapshot_download(model_id)
 
 # --- 2. LOAD PROCESSOR & BASE MODEL ---
 print("Loading processor and base model...")
