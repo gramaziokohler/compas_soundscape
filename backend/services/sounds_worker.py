@@ -20,6 +20,8 @@ import sys
 import time
 import traceback
 
+import torch
+
 # Ensure absolute imports work when run as __main__
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -83,6 +85,7 @@ def run_sound_generation(
     audio_model: str,
     output_dir: str,
     base_spl_db: float = None,
+    url_prefix: str = GENERATED_SOUND_URL_PREFIX,
 ) -> None:
     """
     Full sound generation pipeline, runs in a subprocess.
@@ -197,7 +200,7 @@ def run_sound_generation(
                     "prompt": prompt,
                     "prompt_index": idx,
                     "display_name": display_name,
-                    "url": f"{GENERATED_SOUND_URL_PREFIX}/{filename}",
+                    "url": f"{url_prefix}/{filename}",
                     "duration": duration,
                     "copy_index": copy_idx,
                     "total_copies": seed_copies,
@@ -218,3 +221,5 @@ def run_sound_generation(
         tb = traceback.format_exc()
         print(f"[sounds_worker] Error: {exc}\n{tb}", file=sys.stderr)
         _write_result(result_file, {"type": "error", "message": str(exc), "traceback": tb})
+    finally:
+        torch.cuda.empty_cache()

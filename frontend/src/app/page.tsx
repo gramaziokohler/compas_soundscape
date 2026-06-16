@@ -36,7 +36,7 @@ import type { LoadTab, SoundGenerationConfig } from "@/types";
 import type { AudioAnalysisConfig } from "@/types/analysis";
 import type { SelectedGeometry, AcousticMaterial } from "@/types/materials";
 import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSelector";
-import { buildSoundscapeSavePayload, restoreSoundscapeState, getBlobUrlSounds } from "@/utils/soundscape-serializer";
+import { buildSoundscapeSavePayload, restoreSoundscapeState, getBlobUrlSounds, buildAnalysisStateSave, restoreAnalysisState } from "@/utils/soundscape-serializer";
 
 /**
  * Build a map from applicationId (Rhino GUID) → current Speckle tree ID.
@@ -1075,6 +1075,20 @@ function HomeContent() {
           `[page.tsx] Restored ${restored.soundConfigs.length} configs, ` +
           `${restored.soundEvents.length} events`
         );
+
+        // Restore analysis state (cards, results, pending sound configs)
+        if (loadResponse.soundscape_data.analysis_state) {
+          const analysisRestored = restoreAnalysisState(loadResponse.soundscape_data.analysis_state);
+          analysis.restoreAnalysisState({
+            analysisConfigs: analysisRestored.analysisConfigs,
+            analysisResults: analysisRestored.analysisResults,
+            activeTab: analysisRestored.activeTab,
+          });
+          if (analysisRestored.pendingSoundConfigs.length > 0) {
+            textGen.setPendingSoundConfigs(analysisRestored.pendingSoundConfigs);
+          }
+          console.log(`[page.tsx] Restored analysis state: ${analysisRestored.analysisConfigs.length} cards, active tab ${analysisRestored.activeTab}`);
+        }
       }
     } catch (err) {
       console.warn('[page.tsx] Failed to auto-load soundscape:', err);
@@ -1083,6 +1097,8 @@ function HomeContent() {
     soundGen.restoreSoundscape,
     receivers.restoreReceivers,
     acousticsSimulation.restoreSimulationState,
+    analysis.restoreAnalysisState,
+    textGen.setPendingSoundConfigs,
   ]);
 
   // Save current soundscape state to Speckle + local storage
@@ -1113,7 +1129,15 @@ function HomeContent() {
         await Promise.all(uploadPromises);
       }
 
-      // 2. Build save payload (with server filenames for blob sounds + simulation state)
+      // 2. Build analysis state (serialize cards, results, pending configs)
+      const analysisStateData = buildAnalysisStateSave(
+        analysis.analysisConfigs,
+        analysis.analysisResults,
+        textGen.pendingSoundConfigs,
+        analysis.activeAnalysisTab,
+      );
+
+      // 3. Build save payload (with server filenames for blob sounds + simulation state)
       const payload = buildSoundscapeSavePayload(
         modelId,
         modelId, // model_name - use model_id as fallback
@@ -1134,7 +1158,14 @@ function HomeContent() {
         acousticsSimulation.activeSimulationIndex,
       );
 
-      // 3. Save to Speckle + local
+      // Embed analysis state in the soundscape data
+      payload.soundscape_data.analysis_state = analysisStateData.analysis_state;
+
+      // Attach analysis/scenario IDs for backend file persistence
+      payload.analysis_ids = analysisStateData.analysis_ids.length > 0 ? analysisStateData.analysis_ids : undefined;
+      payload.scenario_ids = analysisStateData.scenario_ids.length > 0 ? analysisStateData.scenario_ids : undefined;
+
+      // 4. Save to Speckle + local
       const result = await apiService.saveSoundscapeToSpeckle(payload);
       console.log('[page.tsx] Soundscape saved:', result.message);
     } catch (err) {
@@ -1157,6 +1188,10 @@ function HomeContent() {
     acousticsSimulation.activeSimulationIndex,
     isSavingSoundscape,
     handleApiError,
+    analysis.analysisConfigs,
+    analysis.analysisResults,
+    analysis.activeAnalysisTab,
+    textGen.pendingSoundConfigs,
   ]);
 
   // Wrapped file change handler to clear SED results and load audio info

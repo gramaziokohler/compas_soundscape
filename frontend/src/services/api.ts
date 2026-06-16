@@ -30,7 +30,7 @@ function handleApiError(error: unknown, context: string): never {
 }
 
 /**
- * Wrapper for fetch calls with consistent error handling
+ * Wrapper for fetch calls with consistent error handling and session cookie.
  */
 async function fetchWithErrorHandling(
   url: string,
@@ -38,7 +38,10 @@ async function fetchWithErrorHandling(
   context: string = 'API request'
 ): Promise<Response> {
   try {
-    const response = await fetch(url, options);
+    const response = await fetch(url, {
+      ...options,
+      credentials: 'include',
+    });
     return response;
   } catch (error) {
     handleApiError(error, context);
@@ -1141,10 +1144,14 @@ export const apiService = {
   // ── SED analysis (queued) ─────────────────────────────────────────────────
 
   async startSEDAnalysis(formData: FormData): Promise<{ task_id: string }> {
-    const response = await fetch(`${API_BASE_URL}/api/analyze-sound-events`, {
-      method: 'POST',
-      body: formData,
-    });
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/analyze-sound-events`,
+      {
+        method: 'POST',
+        body: formData,
+      },
+      'Start SED analysis',
+    );
     if (!response.ok) {
       const err = await response.json().catch(() => ({ detail: 'Failed to start SED analysis' }));
       throw new Error(err.detail || 'Failed to start SED analysis');
@@ -1163,13 +1170,21 @@ export const apiService = {
     queue_position?: number;
     queue_total?: number;
   }> {
-    const response = await fetch(`${API_BASE_URL}/api/sed-analysis-status/${taskId}`);
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/sed-analysis-status/${taskId}`,
+      undefined,
+      'SED analysis status',
+    );
     if (!response.ok) throw new Error('Failed to get SED analysis status');
     return response.json();
   },
 
   async cancelSEDAnalysis(taskId: string): Promise<void> {
-    await fetch(`${API_BASE_URL}/api/cancel-sed-analysis/${taskId}`, { method: 'POST' });
+    await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/cancel-sed-analysis/${taskId}`,
+      { method: 'POST' },
+      'Cancel SED analysis',
+    );
   },
 
   // ─── 3D Model Analysis ─────────────────────────────────────────────────────

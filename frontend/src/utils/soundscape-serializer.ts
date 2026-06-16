@@ -15,8 +15,11 @@ import type {
   SoundscapeReceiver,
   SoundscapeSimulationConfig,
   SoundscapeIRMetadata,
+  SerializedAnalysisConfig,
+  AnalysisState,
 } from '@/types/soundscape';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from '@/types/audio';
+import type { AnalysisConfig, AnalysisResult, TextPromptResult } from '@/types/analysis';
 
 /**
  * Extract the filename from a sound URL path.
@@ -495,6 +498,7 @@ export function restoreSoundscapeState(
     }
 
     const hasSettings = !!saved.settings;
+    const settings = saved.settings!;
 
     // Build the runtime SimulationConfig
     const restoredConfig: SimulationConfig = {
@@ -505,12 +509,12 @@ export function restoreSoundscapeState(
       createdAt: Date.now(),
       simulationInstanceId: saved.simulation_instance_id,
       settings: hasSettings ? {
-        max_order: saved.settings.max_order,
-        ray_tracing: saved.settings.ray_tracing,
-        air_absorption: saved.settings.air_absorption,
-        n_rays: saved.settings.n_rays,
-        simulation_mode: saved.settings.simulation_mode,
-        enable_grid: saved.settings.enable_grid,
+        max_order: settings.max_order,
+        ray_tracing: settings.ray_tracing,
+        air_absorption: settings.air_absorption,
+        n_rays: settings.n_rays,
+        simulation_mode: settings.simulation_mode,
+        enable_grid: settings.enable_grid,
       } : {
         max_order: 3,
         ray_tracing: false,
@@ -557,5 +561,183 @@ export function restoreSoundscapeState(
     selectedReceiverId,
     simulationConfigs: restoredSimConfigs,
     activeSimulationIndex,
+  };
+}
+
+// ============================================================================
+// Analysis State Serialization (Hierarchical)
+// ============================================================================
+
+function stripEntityRaw(entity: any): any {
+  if (!entity) return entity;
+  const { raw, ...rest } = entity;
+  return rest;
+}
+
+export function buildAnalysisStateSave(
+  analysisConfigs: AnalysisConfig[],
+  analysisResults: AnalysisResult[],
+  pendingSoundConfigs: any[],
+  activeTab: number,
+): { analysis_state: AnalysisState; analysis_ids: string[]; scenario_ids: string[] } {
+  const resultsByIndex = new Map<number, AnalysisResult>();
+  for (const r of analysisResults) {
+    resultsByIndex.set(r.configIndex, r);
+  }
+
+  const configs: SerializedAnalysisConfig[] = analysisConfigs.map((config, configIndex) => {
+    const base: SerializedAnalysisConfig = {
+      type: config.type,
+      display_name: (config as any).display_name,
+    };
+
+    if ('numSounds' in config) base.numSounds = (config as any).numSounds;
+    if ('textInput' in config) base.textInput = (config as any).textInput;
+    if ('userContext' in config) base.userContext = (config as any).userContext;
+    if ('useModelAsContext' in config) base.useModelAsContext = (config as any).useModelAsContext;
+    if ('useAnalysisResult' in config) base.useAnalysisResult = (config as any).useAnalysisResult;
+    if ('peopleCount' in config) base.peopleCount = (config as any).peopleCount;
+    if ('likeliness' in config) base.likeliness = (config as any).likeliness;
+    if ('analysisOptions' in config) base.analysisOptions = (config as any).analysisOptions;
+    if ('applyNoiseReduction' in config) base.applyNoiseReduction = (config as any).applyNoiseReduction;
+
+    const result = resultsByIndex.get(configIndex);
+    if (result && result.prompts.length > 0) {
+      base.prompts = result.prompts.map((p) => ({
+        id: p.id,
+        text: p.text,
+        displayName: p.displayName,
+        selected: p.selected,
+        entities: p.entities?.map(stripEntityRaw),
+        position: p.position,
+        metadata: p.metadata as Record<string, unknown> | undefined,
+      }));
+    }
+
+    if (config.type === 'model-analysis') {
+      const mc = config as any;
+      if (mc.analysisResult?.architecturalObjects) {
+        base.analysisResult = {
+          analysisId: mc.analysisResult.analysisId,
+          architecturalObjects: mc.analysisResult.architecturalObjects,
+        };
+      }
+    }
+
+    if (config.type === '3d-model') {
+      const tc = config as any;
+      if (tc.selectedDiverseEntities?.length) {
+        base.selectedDiverseEntities = tc.selectedDiverseEntities.map(stripEntityRaw);
+      }
+    }
+
+    if (config.type === 'scenario') {
+      const sc = config as any;
+      if (sc.scenarioResult) base.scenarioResult = sc.scenarioResult;
+      if (sc.scenarioId) base.scenarioId = sc.scenarioId;
+      if (sc.foleyResult) base.foleyResult = sc.foleyResult;
+      if (sc.selectedFoleyKeys?.length) base.selectedFoleyKeys = [...sc.selectedFoleyKeys];
+    }
+
+    return base;
+  });
+
+  const analysis_ids: string[] = [];
+  const scenario_ids: string[] = [];
+  for (const config of analysisConfigs) {
+    if (config.type === 'model-analysis') {
+      const mc = config as any;
+      if (mc.analysisResult?.analysisId) analysis_ids.push(mc.analysisResult.analysisId);
+    }
+    if (config.type === 'scenario') {
+      const sc = config as any;
+      if (sc.scenarioId) scenario_ids.push(sc.scenarioId);
+      if (sc.foleyResult?.foleyId) scenario_ids.push(sc.foleyResult.foleyId);
+    }
+  }
+
+  return {
+    analysis_state: {
+      active_tab: activeTab,
+      configs,
+      pending_sound_configs: pendingSoundConfigs.length > 0 ? pendingSoundConfigs : undefined,
+    },
+    analysis_ids,
+    scenario_ids,
+  };
+}
+
+export function restoreAnalysisState(analysisState: AnalysisState): {
+  analysisConfigs: AnalysisConfig[];
+  analysisResults: AnalysisResult[];
+  activeTab: number;
+  pendingSoundConfigs: any[];
+} {
+  const analysisResults: AnalysisResult[] = [];
+
+  const analysisConfigs: AnalysisConfig[] = analysisState.configs.map((saved, configIndex) => {
+    const config: any = {
+      type: saved.type,
+      display_name: saved.display_name,
+    };
+
+    if (saved.numSounds !== undefined) config.numSounds = saved.numSounds;
+    if (saved.textInput !== undefined) config.textInput = saved.textInput;
+    if (saved.userContext !== undefined) config.userContext = saved.userContext;
+    if (saved.useModelAsContext !== undefined) config.useModelAsContext = saved.useModelAsContext;
+    if (saved.useAnalysisResult !== undefined) config.useAnalysisResult = saved.useAnalysisResult;
+    if (saved.peopleCount !== undefined) config.peopleCount = saved.peopleCount;
+    if (saved.likeliness !== undefined) config.likeliness = saved.likeliness;
+    if (saved.analysisOptions) config.analysisOptions = saved.analysisOptions;
+    if (saved.applyNoiseReduction !== undefined) config.applyNoiseReduction = saved.applyNoiseReduction;
+
+    if (saved.type === 'model-analysis') {
+      config.liveScreenshots = [];
+      config.modelEntities = [];
+      if (saved.analysisResult) config.analysisResult = saved.analysisResult;
+    }
+    if (saved.type === '3d-model') {
+      config.modelFile = null;
+      config.modelEntities = [];
+      config.geometryData = undefined;
+      config.selectedDiverseEntities = saved.selectedDiverseEntities || [];
+      config.useModelAsContext = saved.useModelAsContext ?? true;
+    }
+    if (saved.type === 'audio') {
+      config.audioFile = null;
+      config.audioInfo = null;
+      config.audioBuffer = null;
+    }
+    if (saved.type === 'scenario') {
+      config.scenarioRawText = '';
+      config.scenarioResult = saved.scenarioResult || null;
+      config.scenarioId = saved.scenarioId ?? null;
+      config.foleyResult = saved.foleyResult || null;
+      config.selectedFoleyKeys = saved.selectedFoleyKeys || [];
+    }
+
+    if (saved.prompts && saved.prompts.length > 0) {
+      analysisResults.push({
+        configIndex,
+        prompts: saved.prompts.map((p) => ({
+          id: p.id,
+          text: p.text,
+          displayName: p.displayName,
+          selected: p.selected,
+          entities: p.entities,
+          position: p.position,
+          metadata: p.metadata as any,
+        })) as TextPromptResult[],
+      });
+    }
+
+    return config as AnalysisConfig;
+  });
+
+  return {
+    analysisConfigs,
+    analysisResults,
+    activeTab: analysisState.active_tab,
+    pendingSoundConfigs: analysisState.pending_sound_configs || [],
   };
 }

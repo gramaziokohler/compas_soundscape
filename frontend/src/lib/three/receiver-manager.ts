@@ -156,21 +156,11 @@ export class ReceiverManager {
     loadHeadphonesGeometry(this.scaleForSounds)
       .then((result) => {
         this.headphonesGeomResult = result;
-        // Force disposal of any fallback cube meshes so the next updateReceivers
-        // call creates fresh OBJ-based meshes.
         if (this.receiverMeshes.length > 0) {
-          const target = this.parentGroup || this.scene;
           this.receiverMeshes.forEach((m) => {
-            disposeMesh(m);
-            target.remove(m);
+            m.geometry.dispose();
+            m.geometry = result.geometry.clone();
           });
-          this.receiverMeshes = [];
-          this.draggableObjects = [];
-          this.labelSprites.forEach((sprite) => {
-            target.remove(sprite);
-            disposeLabelSprite(sprite);
-          });
-          this.labelSprites.clear();
         }
       })
       .catch((err) => {

@@ -119,6 +119,8 @@ export interface SoundscapeData {
   selected_receiver_id?: string;
   simulation_configs?: SoundscapeSimulationConfig[];
   active_simulation_index?: number;
+  // Analysis state persistence
+  analysis_state?: AnalysisState;
 }
 
 /** Request payload for POST /api/speckle/soundscape/save */
@@ -126,6 +128,8 @@ export interface SoundscapeSavePayload {
   soundscape_data: SoundscapeData;
   audio_urls: string[];
   ir_urls: string[];
+  analysis_ids?: string[];
+  scenario_ids?: string[];
 }
 
 /** Response from POST /api/speckle/soundscape/save */
@@ -144,4 +148,71 @@ export interface SoundscapeLoadResponse {
   audio_base_url: string;
   ir_base_url: string;
   found: boolean;
+}
+
+// ============================================================================
+// Analysis State Persistence Types
+// ============================================================================
+
+/** Serializable subset of an AnalysisConfig for save/restore within soundscape.json */
+export interface SerializedAnalysisConfig {
+  type: string;
+  display_name?: string;
+  numSounds?: number;
+  textInput?: string;
+  userContext?: string;
+  useModelAsContext?: boolean;
+  useAnalysisResult?: boolean;
+  peopleCount?: number;
+  likeliness?: number;
+  analysisOptions?: Record<string, boolean>;
+  applyNoiseReduction?: boolean;
+  // 3D model analysis result (strip raw from entities)
+  analysisResult?: {
+    analysisId: string;
+    architecturalObjects: Array<{
+      name: string;
+      description: string;
+      material: string;
+      confidence: number;
+      quantity: number;
+      object_ids: Record<string, { min_bounds?: number[]; max_bounds?: number[] }>;
+    }>;
+  };
+  // 3D-model card: selected diverse entities (strip raw)
+  selectedDiverseEntities?: Array<{
+    id: string;
+    index: number;
+    type: string;
+    name: string;
+    layer: string;
+    speckle_type: string;
+    nodeId: string;
+    bounds?: { min: number[]; max: number[]; center: number[] };
+  }>;
+  // Scenario/foley state
+  scenarioResult?: any;
+  scenarioId?: string | null;
+  foleyResult?: any;
+  selectedFoleyKeys?: string[];
+  // Hierarchical: generated prompts for this analysis card
+  prompts?: Array<{
+    id: string;
+    text: string;
+    displayName?: string;
+    selected: boolean;
+    entities?: any[];
+    position?: [number, number, number];
+    metadata?: Record<string, unknown>;
+  }>;
+  // Direct sound configs created from this analysis card's prompts
+  // (indices into the top-level soundscape.sound_configs array)
+  sound_config_indices?: number[];
+}
+
+/** Analysis state stored inside soundscape.json */
+export interface AnalysisState {
+  active_tab: number;
+  configs: SerializedAnalysisConfig[];
+  pending_sound_configs?: any[];
 }

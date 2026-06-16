@@ -19,10 +19,10 @@ aiofiles==24.1.0
 
 # --- Audio: Generation & Processing ---
 # Mac will fetch standard wheels, Windows will fetch cu121 wheels
-torch==2.4.0+cu121 ; sys_platform != 'darwin'
-torchaudio==2.4.0+cu121 ; sys_platform != 'darwin'
-torch==2.4.0 ; sys_platform == 'darwin'
-torchaudio==2.4.0 ; sys_platform == 'darwin'
+torch==2.4.1+cu121 ; sys_platform != 'darwin'
+torchaudio==2.4.1+cu121 ; sys_platform != 'darwin'
+torch==2.4.1 ; sys_platform == 'darwin'
+torchaudio==2.4.1 ; sys_platform == 'darwin'
 
 diffusers==0.30.0
 safetensors==0.4.4

@@ -62,6 +62,7 @@ async function* streamPrompts(
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify(body),
     signal,
   });
@@ -277,6 +278,12 @@ export interface AnalysisStoreState {
   handleScenarioAnalyze: (index: number) => Promise<void>;
   handleFoleyArtist: (index: number) => Promise<void>;
   handleToggleFoleySound: (index: number, key: string) => void;
+
+  restoreAnalysisState: (state: {
+    analysisConfigs: AnalysisConfig[];
+    analysisResults: AnalysisResult[];
+    activeTab: number;
+  }) => void;
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -650,7 +657,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
 
               const formData = new FormData();
               formData.append('file', audioConfig.audioFile);
-              formData.append('num_sounds', config.numSounds.toString());
+              formData.append('num_sounds', (config.numSounds ?? 5).toString());
               formData.append(
                 'analyze_amplitudes',
                 audioConfig.analysisOptions.analyze_amplitudes.toString(),
@@ -1185,6 +1192,18 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           get().handleUpdateConfig(index, { selectedFoleyKeys: next } as Partial<ScenarioConfig>);
         },
 
+        restoreAnalysisState: ({ analysisConfigs, analysisResults, activeTab }) => {
+          set({
+            analysisConfigs,
+            analysisResults,
+            activeAnalysisTab: activeTab,
+            isAnalyzing: false,
+            analysisError: null,
+            analysisStatus: '',
+            analyzingConfigIndex: null,
+          });
+        },
+
         handleScenarioAnalyze: async (index) => {
           const { analysisConfigs, handleUpdateConfig } = get();
           const config = analysisConfigs[index] as ScenarioConfig;
@@ -1202,8 +1221,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           let analysisId: string | undefined;
           if (config.useAnalysisResult) {
             const analyzeConfig = analysisConfigs.find(
-              (c) => c.type === 'model-analysis' && (c as ModelAnalysisConfig).analysisResult?.analysisId,
-            ) as ModelAnalysisConfig | undefined;
+              (c) => c.type === 'model-analysis' && (c as AnalyzeModelConfig).analysisResult?.analysisId,
+            ) as AnalyzeModelConfig | undefined;
             analysisId = analyzeConfig?.analysisResult?.analysisId ?? undefined;
           }
 
@@ -1289,8 +1308,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           let analysisId: string | undefined;
           if (config.useAnalysisResult) {
             const analyzeConfig = analysisConfigs.find(
-              (c) => c.type === 'model-analysis' && (c as ModelAnalysisConfig).analysisResult?.analysisId,
-            ) as ModelAnalysisConfig | undefined;
+              (c) => c.type === 'model-analysis' && (c as AnalyzeModelConfig).analysisResult?.analysisId,
+            ) as AnalyzeModelConfig | undefined;
             analysisId = analyzeConfig?.analysisResult?.analysisId ?? undefined;
           }
 

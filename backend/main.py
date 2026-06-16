@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from middleware.session import SessionMiddleware
 from dotenv import load_dotenv, find_dotenv
 # Import services
 from services.llm_service import LLMService
@@ -21,7 +22,8 @@ from utils.file_operations import cleanup_all_temp_directories, ensure_all_temp_
 
 # Import constants
 from config.constants import (
-    CORS_ALLOW_ALL,
+    CORS_ORIGIN_FRONTEND,
+    CORS_ORIGIN_NETWORK,
     STATIC_MOUNT_PATH,
     STATIC_FILES_DIRECTORY,
     IMPULSE_RESPONSE_DIR,
@@ -130,13 +132,13 @@ app.mount(
     name="choras_rir"
 )
 
+# --- Session Middleware (before CORS) ---
+app.add_middleware(SessionMiddleware)
+
 # --- CORS Middleware ---
-# Allow all origins for network access (development mode)
-# For production, restrict to specific origins: [CORS_ORIGIN_LOCALHOST, CORS_ORIGIN_FRONTEND, CORS_ORIGIN_NETWORK]
-origins = [CORS_ALLOW_ALL]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=[CORS_ORIGIN_FRONTEND, CORS_ORIGIN_NETWORK],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -186,3 +188,10 @@ def get_service_versions(llm_model: str = None):
         "acousticDE": ChorasService.get_de_version_info(),
         "edg_acoustics": ChorasService.get_dg_version_info(),
     }
+
+
+@app.get("/api/queue/status")
+async def queue_status():
+    """Return pending task counts per pool."""
+    from services.task_queue import unified_queue
+    return unified_queue.get_pool_depths()

@@ -20,12 +20,13 @@ import traceback
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse
 
 from services.audio_service import AudioService
 from services.sounds_worker import run_sound_generation
 from services.task_queue import unified_queue, make_subprocess_runner
+from services.paths import user_sounds_dir
 from models.schemas import (
     SoundGenerationRequest,
     SoundGenerationStartResponse,
@@ -57,7 +58,7 @@ def init_sounds_router(service: AudioService):
 # ─── Generate sounds (async) ──────────────────────────────────────────────────
 
 @router.post("/api/generate-sounds", response_model=SoundGenerationStartResponse)
-async def generate_sounds(request: SoundGenerationRequest):
+async def generate_sounds(request: SoundGenerationRequest, req: Request):
     """
     Enqueue ML sound generation.  Returns generation_id immediately.
     Poll GET /api/sound-generation-status/{generation_id} for updates.
@@ -72,6 +73,15 @@ async def generate_sounds(request: SoundGenerationRequest):
         progress_file = str(TEMP_DIR / f"sound_progress_{generation_id}.json")
         result_file   = str(TEMP_DIR / f"sound_result_{generation_id}.json")
 
+        # Per-session output directory
+        session_id = getattr(getattr(req, "state", None), "session_id", None)
+        if not session_id:
+            raise HTTPException(status_code=400, detail="No session cookie")
+
+        sounds_out = user_sounds_dir(session_id)
+        sounds_out.mkdir(parents=True, exist_ok=True)
+        url_prefix = f"{GENERATED_SOUND_URL_PREFIX}/{session_id}"
+
         worker_kwargs = dict(
             generation_id=generation_id,
             progress_file=progress_file,
@@ -81,7 +91,8 @@ async def generate_sounds(request: SoundGenerationRequest):
             trim_silence=request.trim_silence,
             audio_model=request.audio_model or DEFAULT_AUDIO_MODEL,
             base_spl_db=request.base_spl_db,
-            output_dir=GENERATED_SOUNDS_DIR,
+            output_dir=str(sounds_out),
+            url_prefix=url_prefix,
         )
 
         run_fn = make_subprocess_runner(
@@ -147,9 +158,14 @@ async def cancel_sound_generation(generation_id: str):
 # ─── Other sound endpoints ─────────────────────────────────────────────────────
 
 @router.post("/api/cleanup-generated-sounds")
-async def cleanup_generated_sounds():
+async def cleanup_generated_sounds(req: Request):
     try:
-        audio_service.cleanup_generated_sounds()
+        session_id = getattr(getattr(req, "state", None), "session_id", None)
+        if session_id:
+            session_dir = str(user_sounds_dir(session_id))
+        else:
+            session_dir = GENERATED_SOUNDS_DIR
+        audio_service.cleanup_generated_sounds(output_dir=session_dir)
         return {"message": "Cleanup successful"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error during cleanup: {str(e)}")
@@ -161,6 +177,7 @@ async def calibrate_audio(
     spl_db: float = Form(DEFAULT_SPL_DB),
     apply_denoising: bool = Form(False),
     trim_silence: bool = Form(False),
+    req: Request = None,
 ):
     """
     Normalize RMS + apply SPL calibration to any uploaded audio file.
@@ -173,9 +190,15 @@ async def calibrate_audio(
         tmp_input.write(await audio.read())
         tmp_input.close()
 
+        session_id = getattr(getattr(req, "state", None), "session_id", None)
+        if session_id:
+            out_dir = str(user_sounds_dir(session_id))
+        else:
+            out_dir = GENERATED_SOUNDS_DIR
+        os.makedirs(out_dir, exist_ok=True)
+
         filename = f"calibrated_{uuid.uuid4().hex}_{int(spl_db)}dB.wav"
-        output_path = os.path.join(GENERATED_SOUNDS_DIR, filename)
-        os.makedirs(GENERATED_SOUNDS_DIR, exist_ok=True)
+        output_path = os.path.join(out_dir, filename)
 
         audio_service.calibrate_audio_file(
             tmp_input.name,
@@ -185,7 +208,8 @@ async def calibrate_audio(
             trim_silence=trim_silence,
         )
 
-        return {"url": f"{GENERATED_SOUND_URL_PREFIX}/{filename}"}
+        url_prefix = f"{GENERATED_SOUND_URL_PREFIX}/{session_id}" if session_id else GENERATED_SOUND_URL_PREFIX
+        return {"url": f"{url_prefix}/{filename}"}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Calibration failed: {str(e)}")

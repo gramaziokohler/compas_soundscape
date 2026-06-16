@@ -134,6 +134,7 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
             const res = await fetch(`${API_BASE_URL}/api/select-entities`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
               body: JSON.stringify({ entities: modelEntities, max_sounds: numSounds, llm_model: useSoundscapeStore.getState().llmModel }),
               signal: _abortController.signal,
             });
@@ -237,6 +238,7 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
                 const selRes = await fetch(`${API_BASE_URL}/api/select-entities`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
+                  credentials: 'include',
                   body: JSON.stringify({ entities: modelEntities, max_sounds: numSounds, llm_model: useSoundscapeStore.getState().llmModel }),
                   signal: _abortController.signal,
                 });

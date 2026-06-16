@@ -1302,10 +1302,7 @@ export function SpeckleScene({
 
       {/* View Mode Toolbar */}
       {isViewerReady && (
-        <SceneViewModeToolbar
-          isRightSidebarExpanded={isRightSidebarExpanded}
-          rightSidebarWidth={rightSidebarWidth}
-        />
+        <SceneViewModeToolbar />
       )}
 
       {/* First-person overlay */}

@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react';
 import type { ScenarioConfig } from '@/types/analysis';
-import type { ModelAnalysisConfig } from '@/types/analysis';
+import type { AnalyzeModelConfig } from '@/types/analysis';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { CheckboxField } from '@/components/ui/CheckboxField';
 import { useAnalysisStore, useAudioControlsStore, useSpeckleStore } from '@/store';
@@ -191,7 +191,7 @@ export function ScenarioContent({
   const hasAnalysisResult = useMemo(
     () =>
       analysisConfigs.some(
-        (c) => c.type === 'model-analysis' && (c as ModelAnalysisConfig).analysisResult?.analysisId,
+        (c) => c.type === 'model-analysis' && (c as AnalyzeModelConfig).analysisResult?.analysisId,
       ),
     [analysisConfigs],
   );
@@ -202,7 +202,6 @@ export function ScenarioContent({
     <div className="space-y-3">
       {hasAnalysisResult && (
         <CheckboxField
-          id={`scenario-use-analysis-${index}`}
           label="Use 3D model analysis as context"
           checked={config.useAnalysisResult}
           onChange={(checked) => onUpdateConfig(index, { useAnalysisResult: checked })}
@@ -239,7 +238,6 @@ export function ScenarioContent({
       <div className="flex gap-4">
         <div className="flex-1">
           <RangeSlider
-            id={`scenario-people-${index}`}
             label="People"
             min={0}
             max={20}
@@ -251,7 +249,6 @@ export function ScenarioContent({
         </div>
         <div className="flex-1">
           <RangeSlider
-            id={`scenario-likeliness-${index}`}
             label="Plausibility"
             min={1}
             max={10}

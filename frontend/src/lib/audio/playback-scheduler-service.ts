@@ -432,7 +432,7 @@ export class PlaybackSchedulerService {
             isScheduled: true,
             iterationOffsets: ts.iterationOffsets,
             currentIteration: isWithinSound ? activeIterIndex + 1 : activeIterIndex + 1,
-            initialDelayMs: ts.initialDelayMs
+            initialDelayMs: ts.initialDelayMs ?? 0
           });
         } else {
           isWithinSound = false;

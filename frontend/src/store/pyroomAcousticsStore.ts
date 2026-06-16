@@ -150,7 +150,7 @@ export interface PyroomAcousticsStoreState {
 function patchInstance(
   set: (
     partial: Partial<PyroomAcousticsStoreState> | ((s: PyroomAcousticsStoreState) => Partial<PyroomAcousticsStoreState>),
-    replace?: boolean,
+    replace?: false,
     action?: string,
   ) => void,
   instanceId: string,
@@ -462,7 +462,7 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
                     }
                   }
 
-                  const resultsText = await buildSimulationResultsText(result.simulation_id, irImportResult);
+                  const resultsText = await buildSimulationResultsText(result.simulation_id);
 
                   patchInstance(
                     set,

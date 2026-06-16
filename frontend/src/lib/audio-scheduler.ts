@@ -357,7 +357,7 @@ export class AudioScheduler {
    * Get read-only access to scheduled sounds for visualization
    * Used by AudioTimeline component to extract timeline data
    */
-  getScheduledSounds(): ReadonlyMap<string, ScheduledSound> {
+  getScheduledSounds(): Map<string, ScheduledSound> {
     return this.scheduledSounds;
   }
 

@@ -77,13 +77,13 @@ export async function generateSoundEffect(
   const stream = await client.textToSoundEffects.convert({
     text,
     // Only pass duration_seconds when it is within the accepted range
-    duration_seconds:
+    durationSeconds:
       durationSeconds !== undefined &&
       durationSeconds >= 0.5 &&
       durationSeconds <= 22
         ? durationSeconds
         : undefined,
-    prompt_influence: promptInfluence,
+    promptInfluence: promptInfluence,
   });
 
   // Collect all chunks from the ReadableStream into a single Blob
@@ -96,6 +96,6 @@ export async function generateSoundEffect(
     if (value) chunks.push(value);
   }
 
-  const blob = new Blob(chunks, { type: "audio/mpeg" });
+  const blob = new Blob(chunks as BlobPart[], { type: "audio/mpeg" });
   return URL.createObjectURL(blob);
 }

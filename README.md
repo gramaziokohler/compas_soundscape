@@ -41,6 +41,8 @@ pip install openai
 
 ### 3. Frontend Setup
 
+install nodeJS from https://nodejs.org
+
 ```bash
 cd frontend
 npm install

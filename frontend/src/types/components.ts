@@ -96,6 +96,7 @@ export interface SidebarProps {
   onApplyDenoisingChange: (apply: boolean) => void;
   onTrimSilenceChange: (value: boolean) => void;
   onApplyNoiseReductionChange: (apply: boolean) => void;
+  onNormalizeImpulseResponsesChange: (value: boolean) => void;
   onAudioModelChange: (model: string) => void;
   onLlmModelChange: (model: string) => void;
   onShowAxesHelperChange: (show: boolean) => void;

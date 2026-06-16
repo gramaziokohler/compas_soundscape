@@ -6,7 +6,7 @@ import { CheckboxField } from "@/components/ui/CheckboxField";
 import { apiService } from "@/services/api";
 import type { TokenStatus, LLMProviders } from "@/services/api";
 import { useTextGenerationStore } from "@/store/textGenerationStore";
-import { setElevenLabsApiKey, isElevenLabsKeySet } from "@/services/elevenlabs.mts";
+import { setElevenLabsApiKey, isElevenLabsKeySet } from "@/services/elevenlabs";
 import { useServiceVersions } from "@/hooks/useServiceVersions";
 import { useAudioControlsStore } from "@/store/audioControlsStore";
 import { useUIStore } from "@/store/uiStore";
@@ -257,7 +257,7 @@ function TokensSection() {
         <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
           Speckle
           <a href="https://app.speckle.systems" target="_blank" rel="noopener noreferrer"
-            className="ml-1 normal-case font-normal hover:underline text-primary" target="_blank" rel="noopener noreferrer">
+            className="ml-1 normal-case font-normal hover:underline text-primary">
             app.speckle.systems ↗
           </a>
         </h4>
@@ -279,7 +279,7 @@ function TokensSection() {
         <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
           Google AI
           <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer"
-            className="ml-1 normal-case font-normal hover:underline text-primary" target="_blank" rel="noopener noreferrer">
+            className="ml-1 normal-case font-normal hover:underline text-primary">
             aistudio.google.com ↗
           </a>
         </h4>
@@ -290,7 +290,7 @@ function TokensSection() {
         <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
           OpenAI
           <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer"
-            className="ml-1 normal-case font-normal hover:underline text-primary" target="_blank" rel="noopener noreferrer">
+            className="ml-1 normal-case font-normal hover:underline text-primary">
             platform.openai.com ↗
           </a>
         </h4>
@@ -301,7 +301,7 @@ function TokensSection() {
         <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
           Anthropic
           <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer"
-            className="ml-1 normal-case font-normal hover:underline text-primary" target="_blank" rel="noopener noreferrer">
+            className="ml-1 normal-case font-normal hover:underline text-primary">
             console.anthropic.com ↗
           </a>
         </h4>
@@ -312,7 +312,7 @@ function TokensSection() {
         <h4 className="text-[10px] font-bold text-secondary-hover uppercase tracking-wider">
           ElevenLabs
           <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank" rel="noopener noreferrer"
-            className="ml-1 normal-case font-normal hover:underline text-primary" target="_blank" rel="noopener noreferrer">
+            className="ml-1 normal-case font-normal hover:underline text-primary">
             elevenlabs.io ↗
           </a>
         </h4>

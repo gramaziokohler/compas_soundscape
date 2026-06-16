@@ -20,17 +20,9 @@
  */
 
 import type { TemporalState } from 'zundo';
+import type { StoreApi } from 'zustand';
 
-type AnyTemporalStore = {
-  getState: () => TemporalState<unknown>;
-  setState: (partial: Partial<TemporalState<unknown>> | ((s: TemporalState<unknown>) => Partial<TemporalState<unknown>>)) => void;
-  subscribe: (
-    listener: (
-      state: TemporalState<unknown>,
-      prev: TemporalState<unknown>,
-    ) => void,
-  ) => () => void;
-};
+type AnyTemporalStore = StoreApi<TemporalState<unknown>>;
 
 interface _StoreEntry {
   temporal: AnyTemporalStore;

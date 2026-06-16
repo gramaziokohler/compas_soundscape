@@ -579,7 +579,7 @@ export class ResonanceMode implements IAudioMode {
 
     // Re-add sources
     for (const [id, src] of existingSources) {
-      await this.addSource(id, src.buffer, src.position);
+      this.createSource(id, src.buffer, src.position as Position);
     }
   }
 

@@ -12,7 +12,7 @@ import type { CardBaseConfig, CardType, CardExecutionState } from './card';
 /**
  * Acoustic simulation modes
  */
-export type AcousticSimulationMode = 'resonance' | 'choras' | 'pyroomacoustics';
+export type AcousticSimulationMode = 'resonance' | 'choras' | 'pyroomacoustics' | 'import-irs';
 
 /**
  * Simulation states for UI display

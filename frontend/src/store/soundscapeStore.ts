@@ -31,7 +31,7 @@ import {
 import { loadAudioFile, revokeAudioUrl } from '@/lib/audio/utils/audio-upload';
 import { calculateSoundPosition, type GeometryBounds } from '@/utils/positioning';
 import { createSoundEventFromUpload } from '@/utils/event-factory';
-import { generateSoundEffect } from '@/services/elevenlabs.mts';
+import { generateSoundEffect } from '@/services/elevenlabs';
 import { apiService } from '@/services/api';
 import { useErrorsStore } from './errorsStore';
 import { useFileUploadStore } from './fileUploadStore';
@@ -152,7 +152,7 @@ export interface SoundscapeStoreState {
   restoreSoundscape: (
     configs: SoundGenerationConfig[],
     events: any[],
-    settings?: { negativePrompt?: string; audioModel?: string },
+    settings?: { negativePrompt?: string; audioModel?: string; llmModel?: string },
   ) => void;
   injectExtractedSEDSounds: (sounds: Array<{
     name: string;
@@ -611,9 +611,11 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             const globalBaseSplDb = useAudioControlsStore.getState().globalBaseSplDb;
             const uploadedEvents: any[] = [];
             for (const { config, originalIndex } of uploadedConfigs) {
+              const audioFileUrl = config.uploadedAudioUrl;
+              if (!audioFileUrl) continue;
               const resolvedSpl = config.spl_db ?? globalBaseSplDb;
               const audioUrl = await calibrateBlobUrl(
-                config.uploadedAudioUrl,
+                audioFileUrl,
                 resolvedSpl,
                 applyDenoising,
                 trimSilence,
@@ -711,7 +713,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               });
               const resolvedSpl = config.spl_db ?? globalBaseSplDb;
                 const audioUrl = await calibrateBlobUrl(
-                  await dlRes.blob(),
+                  rawUrl,
                   resolvedSpl,
                   applyDenoising,
                   trimSilence,

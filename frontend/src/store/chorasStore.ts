@@ -160,7 +160,7 @@ export interface ChorasStoreState {
 function _patch(
   set: (
     partial: Partial<ChorasStoreState> | ((s: ChorasStoreState) => Partial<ChorasStoreState>),
-    replace?: boolean,
+    replace?: false,
     action?: string,
   ) => void,
   instanceId: string,

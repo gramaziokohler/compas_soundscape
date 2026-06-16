@@ -378,6 +378,8 @@ class SoundscapeData(BaseModel):
     selected_receiver_id: Optional[str] = None
     simulation_configs: list[SoundscapeSimulationConfig] = []
     active_simulation_index: Optional[int] = None
+    # Analysis state persistence
+    analysis_state: Optional[dict] = None
 
 
 class SoundscapeSaveRequest(BaseModel):
@@ -385,6 +387,8 @@ class SoundscapeSaveRequest(BaseModel):
     soundscape_data: SoundscapeData
     audio_urls: list[str] = []  # Audio file URLs to copy
     ir_urls: list[str] = []  # IR file URLs to copy
+    analysis_ids: list[str] = []  # Analysis result IDs to persist
+    scenario_ids: list[str] = []  # Scenario IDs to persist
 
 
 # ============================================================================
@@ -483,6 +487,7 @@ class SoundscapeLoadResponse(BaseModel):
     soundscape_data: Optional[SoundscapeData] = None
     audio_base_url: str = ""
     ir_base_url: str = ""
+    found: bool = False
 
 
 # ── LLM Analysis Output Schemas ───────────────────────────────────────────────

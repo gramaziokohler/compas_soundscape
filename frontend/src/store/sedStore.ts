@@ -167,15 +167,15 @@ export const useSEDStore = create<SEDStoreState>()(
         formatForSoundGeneration: () => {
           const { sedDetectedSounds } = get();
           return sedDetectedSounds.map((sound) => ({
-            prompt: sound.label,
-            duration: sound.duration ?? DEFAULT_DURATION_SECONDS,
+            prompt: sound.name,
+            duration: DEFAULT_DURATION_SECONDS,
             guidance_scale: 3.5,
             negative_prompt: '',
             seed_copies: 1,
             steps: DEFAULT_DIFFUSION_STEPS,
             type: 'text-to-audio',
             spl_db: DEFAULT_SPL_DB,
-            interval_seconds: sound.interval_seconds ?? LLM_SUGGESTED_INTERVAL_SECONDS,
+            interval_seconds: LLM_SUGGESTED_INTERVAL_SECONDS,
           }));
         },
 

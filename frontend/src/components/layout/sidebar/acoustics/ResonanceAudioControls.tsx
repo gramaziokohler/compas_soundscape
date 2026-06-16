@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from 'react';
 import { ResonanceAudioMaterialUI } from '@/components/acoustics/ResonanceAudioMaterialUI';
 import { CheckboxField } from '@/components/ui/CheckboxField';
+import type { ResonanceAudioConfig, ResonanceRoomMaterial } from '@/types/audio';
 
 export interface RoomScale {
   x: number;
