@@ -5,7 +5,6 @@ from peft import PeftModel
 from transformers import AudioFlamingo3ForConditionalGeneration, AutoProcessor
 
 # --- 1. SETUP & AUTHENTICATION ---
-HF_TOKEN = "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"
 model_id = "nvidia/audio-flamingo-3-hf"
 
 # Verify CUDA is available before proceeding
