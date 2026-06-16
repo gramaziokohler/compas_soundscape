@@ -194,3 +194,7 @@ canvas {
   pointer-events: auto !important;
   z-index: 1 !important;
 }
+
+.text-xxs {
+  font-size: 10px;
+}

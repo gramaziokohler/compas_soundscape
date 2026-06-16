@@ -4,6 +4,7 @@ import { useCallback, useRef, useState, useEffect, type ReactNode } from 'react'
 import type { CardProps, CardBaseConfig } from '@/types/card';
 import { CARD_TYPE_LABELS } from '@/types/card';
 import { useNameEditing } from '@/utils/useNameEditing';
+import { CircularFAB } from '@/components/ui/CircularFAB';
 
 /**
  * Card Component
@@ -110,8 +111,6 @@ export function Card<TConfig extends CardBaseConfig>({
   loadingContent,
   dimmed = false,
 }: CardProps<TConfig>) {
-  // Resolve action button color: explicit prop overrides card color
-  const resolvedActionColor = actionButtonColor || color;
   // Compute default name if not provided
   const computedDefaultName = defaultName || getCardDefaultName(config, index);
   const baseName = config.display_name || computedDefaultName;
@@ -162,22 +161,16 @@ export function Card<TConfig extends CardBaseConfig>({
   // so we can restore the original state when the second click fires.
   const stateAtFirstClickRef = useRef<boolean | null>(null);
 
-  // Kebab menu state
-  const [menuOpen, setMenuOpen] = useState(false);
+  // Right-click context menu state
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [expandedSubKey, setExpandedSubKey] = useState<string | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!menuOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-        setExpandedSubKey(null);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [menuOpen]);
+    if (!contextMenu) return;
+    const close = () => { setContextMenu(null); setExpandedSubKey(null); };
+    window.addEventListener('pointerdown', close);
+    return () => window.removeEventListener('pointerdown', close);
+  }, [contextMenu]);
 
   // Button handlers
   // Single click (e.detail=1): toggle expand/collapse.
@@ -220,6 +213,14 @@ export function Card<TConfig extends CardBaseConfig>({
     onDoubleClickCard(index);
   }, [index, onDoubleClickCard]);
 
+  // Right-click on the card → show context menu
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setExpandedSubKey(null);
+    setContextMenu({ x: e.clientX, y: e.clientY });
+  }, []);
+
   // Render content based on state
   // Note: Error display is handled at the Card level (shown before content)
   // to keep all configuration visible when errors occur.
@@ -243,6 +244,7 @@ export function Card<TConfig extends CardBaseConfig>({
     <div
       className={cardClassName}
       onDoubleClick={handleCardDoubleClick}
+      onContextMenu={handleContextMenu}
       style={{
         ...cardColorStyle,
         ...(isExpanded && !hasResult && !error ? { borderColor: `var(--color-${color})`, backgroundColor: 'var(--color-secondary-light)' } : {}),
@@ -268,6 +270,16 @@ export function Card<TConfig extends CardBaseConfig>({
             }}
           />
         </div>
+      )}
+
+      {/* CircularFAB — floating action button shown in expanded mode before generation starts */}
+      {isExpanded && onRun && !hasResult && !isRunning && !error && (
+        <CircularFAB
+          label={actionButtonLabel}
+          onClick={() => onRun()}
+          disabled={actionButtonDisabled}
+          disabledReason={actionButtonDisabledReason}
+        />
       )}
 
       {/* Header - Click anywhere (except buttons) to expand/collapse.
@@ -332,130 +344,10 @@ export function Card<TConfig extends CardBaseConfig>({
               )}
             </div>
           )}
-
-          {/* Pen icon - always visible, click to edit name */}
-          {!isEditingName && (
-            <button
-              onClick={(e) => { e.stopPropagation(); startEdit(); }}
-              className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-secondary-hover opacity-40 hover:opacity-100 hover:bg-secondary-light hover:text-foreground transition-all cursor-pointer"
-              title="Click to edit name"
-              aria-label="Edit name"
-            >
-              <PenIcon />
-            </button>
-          )}
         </div>
 
         {/* Action buttons */}
         <div className="flex items-center gap-1 flex-shrink-0">
-          {/* Single custom button — render directly as icon */}
-          {customButtons && customButtons.length === 1 && (() => {
-            const item = customButtons[0];
-            return (
-              <CardButton
-                icon={item.icon}
-                title={item.label}
-                onClick={(e) => { e.stopPropagation(); item.onClick?.(e); }}
-                disabled={item.disabled}
-                variant={item.isActive ? 'primary' : 'default'}
-              />
-            );
-          })()}
-
-          {/* Kebab menu — only when 2+ custom buttons */}
-          {customButtons && customButtons.length > 1 && (
-            <div className="relative" ref={menuRef}>
-              <CardButton
-                icon={<KebabIcon />}
-                title="More options"
-                onClick={(e) => { e.stopPropagation(); setMenuOpen(prev => !prev); setExpandedSubKey(null); }}
-                variant={menuOpen || customButtons.some(b => b.isActive) ? 'primary' : 'default'}
-              />
-              {menuOpen && (
-                <div
-                  className="absolute right-0 top-full mt-1 z-50 rounded-lg shadow-lg border border-secondary-light min-w-[160px] overflow-hidden py-1"
-                  style={{ backgroundColor: 'var(--background)' }}
-                  onClick={e => e.stopPropagation()}
-                >
-                  {customButtons.map(item => (
-                    <div key={item.key}>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (item.disabled) return;
-                          if (item.subItems) {
-                            setExpandedSubKey(prev => prev === item.key ? null : item.key);
-                          } else {
-                            item.onClick?.(e);
-                            setMenuOpen(false);
-                          }
-                        }}
-                        disabled={item.disabled && !item.subItems}
-                        className={`flex items-center gap-2 w-full text-left px-3 py-2 text-xs transition-colors ${
-                          item.disabled && !item.subItems
-                            ? 'opacity-40 cursor-not-allowed text-secondary-hover'
-                            : item.isActive
-                              ? 'cursor-pointer'
-                              : 'text-foreground cursor-pointer hover:bg-secondary-light'
-                        }`}
-                        style={item.isActive ? {
-                          backgroundColor: 'var(--card-color-lighter, var(--color-primary-light))',
-                          color: 'var(--card-color, var(--color-primary))',
-                        } : undefined}
-                      >
-                        <span className="flex-shrink-0 w-3 h-3 flex items-center justify-center">
-                          {item.icon}
-                        </span>
-                        <span className="flex-1">{item.label}</span>
-                        {item.subItems && (
-                          <span className="text-secondary-hover text-[10px]">
-                            {expandedSubKey === item.key ? '▾' : '▸'}
-                          </span>
-                        )}
-                      </button>
-
-                      {/* Sub-items accordion */}
-                      {item.subItems && expandedSubKey === item.key && (
-                        <div className="border-t border-secondary-light">
-                          {item.subItems.map(sub => (
-                            <button
-                              key={sub.key}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (!sub.disabled) {
-                                  sub.onClick(e);
-                                  setMenuOpen(false);
-                                  setExpandedSubKey(null);
-                                }
-                              }}
-                              disabled={sub.disabled}
-                              className={`flex items-center gap-2 w-full text-left pl-8 pr-3 py-2 text-xs transition-colors ${
-                                sub.disabled
-                                  ? 'opacity-40 cursor-not-allowed text-secondary-hover'
-                                  : sub.isActive
-                                    ? 'cursor-pointer'
-                                    : 'text-foreground cursor-pointer hover:bg-secondary-light'
-                              }`}
-                              style={sub.isActive ? {
-                                backgroundColor: 'var(--card-color-lighter, var(--color-primary-light))',
-                                color: 'var(--card-color, var(--color-primary))',
-                              } : undefined}
-                            >
-                              <span className="flex-1">{sub.label}</span>
-                              {sub.isActive && (
-                                <span className="text-[10px] opacity-60">✓</span>
-                              )}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
           {/* Reset button - only show if result exists */}
           {hasResult && (
             <CardButton
@@ -499,59 +391,152 @@ export function Card<TConfig extends CardBaseConfig>({
             </div>
           )}
 
-          {/* Action Button / Progress Bar Section (for simulation cards) */}
-          {onRun && !hasResult && (
-            <>
-              {/* Action Button - Show when not running */}
-              {!isRunning && (
+          {/* Progress Bar with Stop Button - Show when running */}
+          {isRunning && onRun && !hasResult && (
+            <div className="flex gap-2 items-center">
+              <div
+                className="flex-1 px-3 py-2 rounded-lg text-xs"
+                style={{
+                  backgroundColor: 'var(--color-secondary-hover)',
+                  color: 'white',
+                  backgroundImage: `linear-gradient(to right, var(--color-primary) ${progress}%, var(--color-secondary-hover) ${progress}%)`,
+                  transition: 'background-image 0.3s ease'
+                }}
+              >
+                <div className="flex justify-between items-center">
+                  <span className="font-medium">{status || 'Calculating...'}</span>
+                  <span className="font-bold">{progress}%</span>
+                </div>
+              </div>
+              
+              {/* Stop button */}
+              {onCancel && (
                 <button
-                  onClick={onRun}
-                  disabled={actionButtonDisabled}
-                  className="block mx-auto py-2 px-4 rounded-lg text-xs font-medium transition-all text-white"
-                  style={{
-                    backgroundColor: actionButtonDisabled ? 'var(--color-secondary-hover)' : `var(--color-${resolvedActionColor})`,
-                    cursor: actionButtonDisabled ? 'not-allowed' : 'pointer',
-                    opacity: actionButtonDisabled ? 0.4 : 1
-                  }}
-                  title={actionButtonDisabled ? actionButtonDisabledReason : undefined}
+                  onClick={onCancel}
+                  className="w-8 h-8 rounded-lg text-white font-bold transition-colors flex items-center justify-center flex-shrink-0 bg-error hover:bg-error-hover"
+                  title="Stop"
+                  aria-label="Stop"
                 >
-                  {actionButtonLabel}
+                  <span className="text-lg leading-none">■</span>
                 </button>
               )}
+            </div>
+          )}
+        </div>
+      )}
 
-              {/* Progress Bar with Stop Button - Show when running */}
-              {isRunning && (
-                <div className="flex gap-2 items-center">
-                  <div
-                    className="flex-1 px-3 py-2 rounded-lg text-xs"
-                    style={{
-                      backgroundColor: 'var(--color-secondary-hover)',
-                      color: 'white',
-                      backgroundImage: `linear-gradient(to right, var(--color-primary) ${progress}%, var(--color-secondary-hover) ${progress}%)`,
-                      transition: 'background-image 0.3s ease'
-                    }}
-                  >
-                    <div className="flex justify-between items-center">
-                      <span className="font-medium">{status || 'Calculating...'}</span>
-                      <span className="font-bold">{progress}%</span>
-                    </div>
-                  </div>
-                  
-                  {/* Stop button */}
-                  {onCancel && (
+      {/* Right-click context menu */}
+      {contextMenu && (
+        <div
+          onPointerDown={e => e.stopPropagation()}
+          onClick={e => e.stopPropagation()}
+          onDoubleClick={e => e.stopPropagation()}
+          style={{
+            position: 'fixed',
+            left: `${contextMenu.x}px`,
+            top: `${contextMenu.y}px`,
+            zIndex: 9999,
+            backgroundColor: 'var(--background)',
+            border: '1px solid rgba(255,255,255,0.15)',
+            borderRadius: '6px',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+            minWidth: '150px',
+            padding: '4px 0',
+            fontSize: '11px',
+          }}
+        >
+          {/* Rename option */}
+          {!isEditingName && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setContextMenu(null);
+                startEdit();
+              }}
+              className="flex items-center gap-2 w-full text-left px-3 py-2 text-xs text-foreground cursor-pointer hover:bg-secondary-light transition-colors"
+            >
+              <span className="flex-shrink-0 w-3 h-3 flex items-center justify-center">
+                <PenIcon />
+              </span>
+              <span className="flex-1">Rename</span>
+            </button>
+          )}
+
+          {/* Custom buttons */}
+          {customButtons && customButtons.map(item => (
+            <div key={item.key}>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (item.disabled) return;
+                  if (item.subItems) {
+                    setExpandedSubKey(prev => prev === item.key ? null : item.key);
+                  } else {
+                    item.onClick?.(e);
+                    setContextMenu(null);
+                  }
+                }}
+                disabled={item.disabled && !item.subItems}
+                className={`flex items-center gap-2 w-full text-left px-3 py-2 text-xs transition-colors ${
+                  item.disabled && !item.subItems
+                    ? 'opacity-40 cursor-not-allowed text-secondary-hover'
+                    : item.isActive
+                      ? 'cursor-pointer'
+                      : 'text-foreground cursor-pointer hover:bg-secondary-light'
+                }`}
+                style={item.isActive ? {
+                  backgroundColor: 'var(--card-color-lighter, var(--color-primary-light))',
+                  color: 'var(--card-color, var(--color-primary))',
+                } : undefined}
+              >
+                <span className="flex-shrink-0 w-3 h-3 flex items-center justify-center">
+                  {item.icon}
+                </span>
+                <span className="flex-1">{item.label}</span>
+                {item.subItems && (
+                  <span className="text-secondary-hover text-[10px]">
+                    {expandedSubKey === item.key ? '▾' : '▸'}
+                  </span>
+                )}
+              </button>
+
+              {/* Sub-items accordion */}
+              {item.subItems && expandedSubKey === item.key && (
+                <div className="border-t border-secondary-light">
+                  {item.subItems.map(sub => (
                     <button
-                      onClick={onCancel}
-                      className="w-8 h-8 rounded-lg text-white font-bold transition-colors flex items-center justify-center flex-shrink-0 bg-error hover:bg-error-hover"
-                      title="Stop"
-                      aria-label="Stop"
+                      key={sub.key}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!sub.disabled) {
+                          sub.onClick(e);
+                          setContextMenu(null);
+                          setExpandedSubKey(null);
+                        }
+                      }}
+                      disabled={sub.disabled}
+                      className={`flex items-center gap-2 w-full text-left pl-8 pr-3 py-2 text-xs transition-colors ${
+                        sub.disabled
+                          ? 'opacity-40 cursor-not-allowed text-secondary-hover'
+                          : sub.isActive
+                            ? 'cursor-pointer'
+                            : 'text-foreground cursor-pointer hover:bg-secondary-light'
+                      }`}
+                      style={sub.isActive ? {
+                        backgroundColor: 'var(--card-color-lighter, var(--color-primary-light))',
+                        color: 'var(--card-color, var(--color-primary))',
+                      } : undefined}
                     >
-                      <span className="text-lg leading-none">■</span>
+                      <span className="flex-1">{sub.label}</span>
+                      {sub.isActive && (
+                        <span className="text-[10px] opacity-60">✓</span>
+                      )}
                     </button>
-                  )}
+                  ))}
                 </div>
               )}
-            </>
-          )}
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -628,12 +613,3 @@ function PenIcon() {
   );
 }
 
-function KebabIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
-      <circle cx="12" cy="5" r="2" />
-      <circle cx="12" cy="12" r="2" />
-      <circle cx="12" cy="19" r="2" />
-    </svg>
-  );
-}

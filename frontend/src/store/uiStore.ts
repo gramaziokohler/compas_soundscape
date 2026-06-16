@@ -109,6 +109,14 @@ export interface UIStoreState {
   isTimelineDisabled: boolean;
   setIsTimelineDisabled: (v: boolean) => void;
 
+  // ── Spectrogram display (replaces amplitude waveform in WaveSurfer components)
+  showSpectrograms: boolean;
+  setShowSpectrograms: (v: boolean) => void;
+
+  // ── Waveform height (px) for WaveSurfer players — resizable by user
+  waveformHeight: number;
+  setWaveformHeight: (v: number) => void;
+
   // ── Global acoustic simulation ────────────────────────────────────────────
   globalSoundSpeed: number;
   setGlobalSoundSpeed: (v: number) => void;
@@ -246,6 +254,12 @@ export const useUIStore = create<UIStoreState>()(
 
       isTimelineDisabled: false,
       setIsTimelineDisabled: (v) => set({ isTimelineDisabled: v }, false, 'ui/setIsTimelineDisabled'),
+
+      showSpectrograms: false,
+      setShowSpectrograms: (v) => set({ showSpectrograms: v }, false, 'ui/setShowSpectrograms'),
+
+      waveformHeight: 50,
+      setWaveformHeight: (v) => set({ waveformHeight: v }, false, 'ui/setWaveformHeight'),
 
       // ── Global acoustic simulation ───────────────────────────────────────
       globalSoundSpeed: DEFAULT_SPEED_OF_SOUND,

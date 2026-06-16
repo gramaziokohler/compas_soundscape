@@ -9,6 +9,7 @@ const VIEWPORT_MARGIN = 4;
 interface HoverEntityInfo {
   objectName: string;
   objectType: string;
+  parentName?: string;
 }
 
 interface SceneHoverPreviewProps {
@@ -69,7 +70,7 @@ export function SceneHoverPreview({ x, y, entity }: SceneHoverPreviewProps) {
       >
         {title}
       </span>
-      {entity.objectType && entity.objectType !== entity.objectName && (
+      {(entity.parentName || (entity.objectType && entity.objectType !== entity.objectName)) && (
         <span
           style={{
             fontSize: '10px',
@@ -79,7 +80,7 @@ export function SceneHoverPreview({ x, y, entity }: SceneHoverPreviewProps) {
             whiteSpace: 'nowrap',
           }}
         >
-          {entity.objectType}
+          {entity.parentName || entity.objectType}
         </span>
       )}
       <span

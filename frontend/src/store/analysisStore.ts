@@ -258,6 +258,8 @@ export interface AnalysisStoreState {
   handleStopAnalysis: () => void;
 
   handleReorderConfigs: (from: number, to: number) => void;
+  /** Ctrl+drag duplicate — deep-clones the config at `from` (and its result) and inserts at `toInsertion`. */
+  duplicateConfigAt: (from: number, toInsertion: number) => void;
 
   handleTogglePromptSelection: (configIndex: number, promptId: string) => void;
   handleSendToSoundGeneration: (onSuccess?: (prompts: TextPromptResult[]) => void, onlyConfigIndex?: number) => TextPromptResult[];
@@ -407,6 +409,52 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             { analysisConfigs: newConfigs, analysisResults: newResults, activeAnalysisTab: newTab },
             false,
             'analysis/reorderConfigs',
+          );
+        },
+
+        duplicateConfigAt: (from, toInsertion) => {
+          const { analysisConfigs, analysisResults, activeAnalysisTab } = get();
+          const config = analysisConfigs[from];
+          if (!config) return;
+
+          const cloned: AnalysisConfig = structuredClone(config);
+          cloned.display_name = cloned.display_name
+            ? `${cloned.display_name} (copy)`
+            : undefined;
+
+          // Insert the clone — toInsertion is the gap index (0 = before first, n = after last).
+          // If the clone lands at or after the source, shift by -1 since the clone is inserted
+          // before the source shifts.
+          const newConfigs = [...analysisConfigs];
+          const insertAt = toInsertion > from ? toInsertion - 1 : toInsertion;
+          newConfigs.splice(insertAt, 0, cloned);
+
+          // Duplicate the linked analysis result if one exists for this config
+          const newResults = [...analysisResults];
+          const existingResult = analysisResults.find((r) => r.configIndex === from);
+          if (existingResult) {
+            // Shift result config indices: all results with index >= insertAt get +1
+            const shifted = newResults.map((r) => ({
+              ...r,
+              configIndex: r.configIndex >= insertAt ? r.configIndex + 1 : r.configIndex,
+            }));
+            shifted.push({
+              configIndex: insertAt,
+              prompts: structuredClone(existingResult.prompts),
+              generatedAt: existingResult.generatedAt,
+            });
+            newResults.length = 0;
+            newResults.push(...shifted);
+          }
+
+          // Adjust active tab
+          let newTab = activeAnalysisTab;
+          if (newTab >= insertAt && from !== newTab) newTab++;
+          else if (insertAt <= newTab && from > newTab) { /* no shift needed */ }
+          set(
+            { analysisConfigs: newConfigs, analysisResults: newResults, activeAnalysisTab: newTab },
+            false,
+            'analysis/duplicateConfigAt',
           );
         },
 
@@ -902,6 +950,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 const linkedObjectId = involvedIds.length > 0
                   ? involvedIds[Math.floor(Math.random() * involvedIds.length)]
                   : null;
+                const normalizedCategory = (sound.category || '').toLowerCase().replace(/[\s-]+/g, '_');
+                const isBgFoley = normalizedCategory === 'background' || normalizedCategory === 'background_sound';
                 foleyPrompts.push({
                   id: `foley-${sc.foleyResult!.foleyId}-${si}-${ei}`,
                   // Use only description as the generation prompt; soundName goes to displayName
@@ -937,9 +987,9 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                     : undefined,
                   metadata: {
                     spl_db: splDb,
-                    duration_seconds: durationSec,
+                    duration_seconds: isBgFoley ? 10 : durationSec,
                     interval_seconds: LLM_SUGGESTED_INTERVAL_SECONDS,
-                    timestamps: sound.timestamps?.length ? sound.timestamps : undefined,
+                    timestamps: isBgFoley ? undefined : (sound.timestamps?.length ? sound.timestamps : undefined),
                     category: sound.category,
                   },
                 });

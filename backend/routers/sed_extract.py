@@ -13,6 +13,7 @@ import numpy as np
 import soundfile as sf
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form
 from typing import Optional
+from utils.audio_processing import ensure_mono
 
 router = APIRouter()
 
@@ -84,9 +85,10 @@ async def extract_sed_segments(
         with open(source_path, "wb") as f_out:
             f_out.write(content)
 
-        # Read audio once for slicing
+        # Read audio once for slicing — force mono
         audio_np, sample_rate = sf.read(source_path)
-        total_samples = audio_np.shape[0] if audio_np.ndim == 1 else audio_np.shape[0]
+        audio_np = ensure_mono(audio_np)
+        total_samples = audio_np.shape[0]
 
         output_sounds = []
 
@@ -107,11 +109,8 @@ async def extract_sed_segments(
                 if end_sample <= start_sample:
                     continue
 
-                # Slice audio
-                if audio_np.ndim == 1:
-                    segment_audio = audio_np[start_sample:end_sample]
-                else:
-                    segment_audio = audio_np[start_sample:end_sample, :]
+                # Slice audio (always mono now)
+                segment_audio = audio_np[start_sample:end_sample]
 
                 # Write raw segment to temp file
                 safe_name = "".join(c for c in name if c.isalnum() or c in "_- ")[:30].strip().replace(" ", "_")

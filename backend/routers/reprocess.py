@@ -19,6 +19,7 @@ def init_reprocess_router(service: AudioService):
 class ReprocessRequest(BaseModel):
     sound_urls: list[str]
     apply_denoising: bool
+    trim_silence: bool = False
 
 
 @router.post("/api/reprocess-sounds")
@@ -41,7 +42,7 @@ async def reprocess_sounds(request: ReprocessRequest):
             
             # Reprocess the audio file
             try:
-                audio_service.reprocess_audio_file(file_path, request.apply_denoising)
+                audio_service.reprocess_audio_file(file_path, request.apply_denoising, trim_silence=request.trim_silence)
                 reprocessed_sounds.append(url)
             except Exception as e:
                 print(f"Error reprocessing {filename}: {str(e)}")

@@ -2,6 +2,11 @@ import * as THREE from 'three';
 import { SpeckleStandardMaterial } from '@speckle/viewer';
 import { RECEIVER_CONFIG } from '@/utils/constants';
 import { getCssColorHex } from '@/utils/utils';
+import {
+  loadHeadphonesGeometry,
+  invalidateHeadphonesCache,
+  type HeadphonesGeometryResult,
+} from '@/lib/three/headphones-loader';
 
 const MAX_GRID_INSTANCES = 5000;
 
@@ -20,18 +25,48 @@ export class GridReceiverManager {
   private pointIds: string[] = [];
   private readonly dummy = new THREE.Object3D();
   private gridListenerId: string | null = null;
+  private headphonesGeomResult: HeadphonesGeometryResult | null = null;
+  private headphonesLoadInitiated = false;
 
   constructor(scene: THREE.Scene, scaleForSounds: number, parentGroup?: THREE.Group) {
     this.scene = scene;
     this.scaleForSounds = scaleForSounds;
     this.parentGroup = parentGroup || null;
+    this.ensureHeadphonesGeometry();
+  }
+
+  private ensureHeadphonesGeometry(): void {
+    if (this.headphonesGeomResult || this.headphonesLoadInitiated) return;
+    this.headphonesLoadInitiated = true;
+    loadHeadphonesGeometry(this.scaleForSounds)
+      .then((result) => {
+        this.headphonesGeomResult = result;
+        // If the InstancedMesh was already created with a cube fallback,
+        // dispose it so the next updatePoints rebuilds with the OBJ geometry.
+        if (this.instancedMesh) {
+          const target = this.parentGroup || this.scene;
+          target.remove(this.instancedMesh);
+          this.instancedMesh.geometry.dispose();
+          (this.instancedMesh.material as THREE.Material).dispose();
+          this.instancedMesh = null;
+        }
+      })
+      .catch((err) => {
+        console.warn('[GridReceiverManager] Headphones.obj load failed, using cube fallback:', err);
+      });
   }
 
   private ensureInstancedMesh(): THREE.InstancedMesh {
     if (this.instancedMesh) return this.instancedMesh;
 
-    const cubeSize = RECEIVER_CONFIG.CUBE_SIZE_MULTIPLIER * this.scaleForSounds;
-    const geom = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+    const baseHalfSize = RECEIVER_CONFIG.CUBE_SIZE_MULTIPLIER * this.scaleForSounds;
+    let geom: THREE.BufferGeometry;
+
+    if (this.headphonesGeomResult) {
+      geom = this.headphonesGeomResult.geometry;
+    } else {
+      geom = new THREE.BoxGeometry(baseHalfSize * 2, baseHalfSize * 2, baseHalfSize * 2);
+    }
 
     const mat = new SpeckleStandardMaterial({
       color: getCssColorHex('--color-receiver'),
@@ -92,6 +127,7 @@ export class GridReceiverManager {
     for (let i = 0; i < count; i++) {
       this.dummy.position.fromArray(points[i]);
       this.dummy.scale.setScalar(1);
+      this.dummy.rotation.set(0, 0, Math.PI); // yaw=0 → OBJ Y-axis faces -Y (forward)
       this.dummy.updateMatrix();
       mesh.setMatrixAt(i, this.dummy.matrix);
     }
@@ -102,7 +138,9 @@ export class GridReceiverManager {
   public updateScreenSpaceScale(camera: THREE.PerspectiveCamera): void {
     if (!this.instancedMesh || this.positions.length === 0) return;
 
-    const baseHalfSize = RECEIVER_CONFIG.CUBE_SIZE_MULTIPLIER * this.scaleForSounds;
+    const baseHalfSize = this.headphonesGeomResult
+      ? this.headphonesGeomResult.baseHalfSize
+      : RECEIVER_CONFIG.CUBE_SIZE_MULTIPLIER * this.scaleForSounds;
     const count = this.instancedMesh.count;
 
     for (let i = 0; i < count; i++) {
@@ -117,6 +155,7 @@ export class GridReceiverManager {
       const scale = Math.max(RECEIVER_CONFIG.MIN_SCALE, Math.min(RECEIVER_CONFIG.MAX_SCALE, raw));
       this.dummy.position.fromArray(pos);
       this.dummy.scale.setScalar(scale);
+      this.dummy.rotation.set(0, 0, Math.PI); // yaw=0
       this.dummy.updateMatrix();
       this.instancedMesh.setMatrixAt(i, this.dummy.matrix);
     }
@@ -125,6 +164,10 @@ export class GridReceiverManager {
 
   public updateScale(scaleForSounds: number): void {
     this.scaleForSounds = scaleForSounds;
+    this.headphonesGeomResult = null;
+    this.headphonesLoadInitiated = false;
+    invalidateHeadphonesCache();
+    this.ensureHeadphonesGeometry();
     if (this.instancedMesh) {
       const target = this.parentGroup || this.scene;
       target.remove(this.instancedMesh);

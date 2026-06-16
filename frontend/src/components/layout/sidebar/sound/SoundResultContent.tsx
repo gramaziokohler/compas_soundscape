@@ -88,7 +88,7 @@ export function SoundResultContent({
             }`}
             style={idx === selectedVariantIdx ? { backgroundColor: 'var(--card-color, var(--color-primary))' } : undefined}
           >
-            {idx + 1}
+            {String.fromCharCode(65 + idx)}
           </button>
         ))}
       </div>

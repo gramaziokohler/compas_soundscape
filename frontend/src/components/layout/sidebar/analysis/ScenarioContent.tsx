@@ -22,8 +22,10 @@ import { ScenarioResultContent } from './ScenarioResultContent';
  * via "and" to a capitalized word (to avoid greedily consuming lowercase words like "the").
  * Handles optional space after "id:" e.g. (id: abc...).
  */
-const OBJECT_REF_RE = /"?([A-Za-z][A-Za-z]*(?:\s+(?:and\s+[A-Z][A-Za-z]*|[A-Z][A-Za-z]*))*)"?\s*\((?:e\.g\.,\s*)?(?:ids?:\s*)?[0-9a-fA-F]+(?:\s*(?:,|and)\s*(?:ids?:\s*)?[0-9a-fA-F]+)*\)/g;
+const OBJECT_REF_RE = /"?([A-Za-z][A-Za-z]*(?:\s+(?:and\s+[A-Z][A-Za-z]*|[A-Z][A-Za-z]*))*)"?(?:\s*\([^)]*\))?\s*\((?:e\.g\.,\s*)?(?:ids?:\s*(?:id:\s*)?)?[0-9a-fA-F]+(?:\s*(?:,|and)\s*(?:ids?:\s*(?:id:\s*)?)?[0-9a-fA-F]+)*\)/g;
 const ID_HEX_RE = /[0-9a-fA-F]{8,}/g;
+/** Normalize dot-separated object refs (LLM hallucination): Doors.hexid → Doors (id:hexid) */
+const ID_HEX_DOT_RE = /\b([A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+)*)\.([0-9a-fA-F]{24,64})\b/g;
 
 /** Extract all hex IDs from the full matched token (including the parenthesised id-list). */
 function extractIdsFromToken(raw: string): string[] {
@@ -34,20 +36,22 @@ function ScenarioTextRenderer({ text }: { text: string }) {
   const { highlightObjectForHover, clearHoverHighlight, zoomToObjectById } = useSpeckleStore();
 
   const parts = useMemo(() => {
+    // Pre-normalize dot-separated refs to parenthesized format for unified matching
+    const normalizedText = text.replace(ID_HEX_DOT_RE, '$1 (id:$2)');
     const result: Array<{ type: 'text'; value: string } | { type: 'ref'; name: string; ids: string[] }> = [];
     let lastIndex = 0;
     let match: RegExpExecArray | null;
     const re = new RegExp(OBJECT_REF_RE.source, 'g');
-    while ((match = re.exec(text)) !== null) {
+    while ((match = re.exec(normalizedText)) !== null) {
       if (match.index > lastIndex) {
-        result.push({ type: 'text', value: text.slice(lastIndex, match.index) });
+        result.push({ type: 'text', value: normalizedText.slice(lastIndex, match.index) });
       }
       // match[1] = name (capitalized words); all hex IDs are extracted from the full token
       const ids = extractIdsFromToken(match[0]);
       result.push({ type: 'ref', name: match[1].trim(), ids });
       lastIndex = match.index + match[0].length;
     }
-    if (lastIndex < text.length) result.push({ type: 'text', value: text.slice(lastIndex) });
+    if (lastIndex < normalizedText.length) result.push({ type: 'text', value: normalizedText.slice(lastIndex) });
     return result;
   }, [text]);
 
@@ -248,7 +252,7 @@ export function ScenarioContent({
         <div className="flex-1">
           <RangeSlider
             id={`scenario-likeliness-${index}`}
-            label="Likeliness"
+            label="Plausibility"
             min={1}
             max={10}
             step={1}

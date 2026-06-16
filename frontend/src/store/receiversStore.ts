@@ -20,6 +20,7 @@ export const receiversPartialize = (state: ReceiversStoreState) => ({
     name: r.name,
     position: r.position,
     hiddenForSimulation: r.hiddenForSimulation,
+    yaw: r.yaw,
     // mesh is not serializable → omit from history
   })),
   selectedReceiverId: state.selectedReceiverId,
@@ -31,9 +32,11 @@ export interface ReceiversStoreState {
   receivers: ReceiverData[];
   selectedReceiverId: string | null;
 
-  addReceiver: (type?: string, position?: [number, number, number]) => void;
+  addReceiver: (type?: string, position?: [number, number, number], yaw?: number) => void;
   removeReceiver: (id: string) => void;
   reorderReceivers: (from: number, to: number) => void;
+  /** Ctrl+drag duplicate — deep-clones the receiver at `from` and inserts at `toInsertion`. */
+  duplicateReceiverAt: (from: number, toInsertion: number) => void;
   updateReceiverPosition: (id: string, position: [number, number, number]) => void;
   updateReceiverName: (id: string, name: string) => void;
   toggleReceiverHiddenForSimulation: (id: string) => void;
@@ -61,7 +64,7 @@ export const useReceiversStore = create<ReceiversStoreState>()(
         receivers: [],
         selectedReceiverId: null,
 
-        addReceiver: (type = 'single', position) => {
+        addReceiver: (type = 'single', position, yaw) => {
           const { receivers } = get();
           const newPosition: [number, number, number] =
             position ?? calculateDefaultPosition(receivers.length);
@@ -69,6 +72,7 @@ export const useReceiversStore = create<ReceiversStoreState>()(
             id: `receiver-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             name: `Listener ${receivers.length + 1}`,
             position: newPosition,
+            yaw: yaw ?? 0,
           };
           set(
             { receivers: [...receivers, newReceiver] },
@@ -90,6 +94,28 @@ export const useReceiversStore = create<ReceiversStoreState>()(
           const [removed] = next.splice(from, 1);
           next.splice(to, 0, removed);
           set({ receivers: next }, false, 'receivers/reorderReceivers');
+        },
+
+        duplicateReceiverAt: (from, toInsertion) => {
+          const { receivers } = get();
+          const receiver = receivers[from];
+          if (!receiver) return;
+
+          const cloned: ReceiverData = {
+            ...structuredClone(receiver),
+            id: `receiver-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            name: `${receiver.name} (copy)`,
+          };
+
+          const next = [...receivers];
+          const insertAt = toInsertion > from ? toInsertion - 1 : toInsertion;
+          next.splice(insertAt, 0, cloned);
+
+          set(
+            { receivers: next },
+            false,
+            'receivers/duplicateReceiverAt',
+          );
         },
 
         updateReceiverPosition: (id, position) =>

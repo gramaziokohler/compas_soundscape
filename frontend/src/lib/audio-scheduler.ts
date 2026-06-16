@@ -5,6 +5,7 @@ import type { ScheduledSound, SoundMetadata } from '@/types/audio';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 import { scheduledSoundsLogger } from '@/lib/audio/utils/scheduled-sounds-logger';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
+import * as THREE from 'three';
 
 export class AudioScheduler {
   private scheduledSounds: Map<string, ScheduledSound> = new Map();
@@ -88,6 +89,9 @@ export class AudioScheduler {
     
     // Use pre-generated iteration offset if available, otherwise fallback to on-the-fly random
     const currentIteration = scheduled.currentIteration || 0;
+    // Capture the NEXT iteration index before mutating the counter so the timer
+    // closure uses the correct (incremented) value rather than the current one.
+    const nextIteration = currentIteration + 1;
     let randomOffset = 0;
     if (scheduled.iterationOffsets && currentIteration < scheduled.iterationOffsets.length) {
       randomOffset = scheduled.iterationOffsets[currentIteration];
@@ -96,7 +100,7 @@ export class AudioScheduler {
     }
     
     // Increment iteration counter
-    scheduled.currentIteration = currentIteration + 1;
+    scheduled.currentIteration = nextIteration;
 
     // Clamp the GAP between plays (not the total cycle) to >= 0
     // intervalMs = soundDurationMs + gap, so actualInterval = soundDurationMs + max(0, gap + randomOffset)
@@ -108,7 +112,7 @@ export class AudioScheduler {
     scheduledSoundsLogger.updateNextPlayback(soundId, performance.now() + actualInterval);
 
     const timerId = setTimeout(() => {
-      this.playOnce(metadata, soundId);
+      this.playOnce(metadata, soundId, nextIteration);
       scheduledSoundsLogger.markPlaying(soundId, performance.now() + intervalMs);
       this.scheduleNextPlayback(soundId, metadata, intervalMs);
     }, actualInterval);
@@ -134,7 +138,9 @@ export class AudioScheduler {
     this.unscheduleSound(soundId);
 
     const displayName = metadata.soundEvent.display_name || soundId;
-    const futureTimestamps = timestampsMs.filter((t) => t >= currentTimeMs);
+    const futureTimestamps = timestampsMs
+      .map((ts, originalIdx) => ({ ts, originalIdx }))
+      .filter(({ ts }) => ts >= currentTimeMs);
 
     if (futureTimestamps.length === 0) {
       console.log(`[AudioScheduler] No future timestamps for ${soundId} at currentTime=${currentTimeMs}ms`);
@@ -148,18 +154,18 @@ export class AudioScheduler {
       intervalMs: 0,
       timerId: null,
       isScheduled: true,
-      initialDelayMs: Math.max(0, futureTimestamps[0] - currentTimeMs),
+      initialDelayMs: Math.max(0, futureTimestamps[0].ts - currentTimeMs),
       timestampsMs,
       timestampTimers: timers,
       currentIteration: 0,
     });
 
-    scheduledSoundsLogger.addSound(soundId, displayName, 0, performance.now() + (futureTimestamps[0] - currentTimeMs));
+    scheduledSoundsLogger.addSound(soundId, displayName, 0, performance.now() + (futureTimestamps[0].ts - currentTimeMs));
 
-    futureTimestamps.forEach((tsMs) => {
+    futureTimestamps.forEach(({ ts: tsMs, originalIdx }) => {
       const delay = tsMs - currentTimeMs;
       const timer = setTimeout(() => {
-        this.playOnce(metadata, soundId);
+        this.playOnce(metadata, soundId, originalIdx);
       }, delay);
       timers.push(timer);
     });
@@ -251,8 +257,10 @@ export class AudioScheduler {
   /**
    * Play a sound once (helper method)
    * Routes playback through AudioOrchestrator
+   * @param iterationIndex - for per-iteration variant resolution (explicit in timestamps mode,
+   *   read from scheduledSounds.currentIteration in interval mode)
    */
-  private playOnce(metadata: SoundMetadata, soundId: string): void {
+  private playOnce(metadata: SoundMetadata, soundId: string, iterationIndex?: number): void {
     if (!metadata.buffer || !this.audioContext) {
       return;
     }
@@ -260,17 +268,18 @@ export class AudioScheduler {
     // Resume audio context if suspended
     if (this.audioContext.state === 'suspended') {
       this.audioContext.resume().then(() => {
-        this.triggerPlayback(metadata, soundId);
+        this.triggerPlayback(metadata, soundId, iterationIndex);
       });
     } else {
-      this.triggerPlayback(metadata, soundId);
+      this.triggerPlayback(metadata, soundId, iterationIndex);
     }
   }
 
   /**
-   * Trigger actual playback through orchestrator
+   * Trigger actual playback through orchestrator.
+   * Resolves per-iteration variant overrides from iterationLinks in the store.
    */
-  private triggerPlayback(metadata: SoundMetadata, soundId: string): void {
+  private triggerPlayback(metadata: SoundMetadata, soundId: string, iterationIndex?: number): void {
     // Check if sound is still scheduled (prevents race with unscheduleSound)
     if (!this.scheduledSounds.has(soundId)) {
       return;
@@ -278,14 +287,59 @@ export class AudioScheduler {
 
     if (this.audioOrchestrator) {
       try {
-        // Apply trim: read current trim from store
-        const trim = useAudioControlsStore.getState().soundTrims[soundId];
+        // Determine which iteration we are playing
+        const iterIdx =
+          iterationIndex !== undefined
+            ? iterationIndex
+            : (this.scheduledSounds.get(soundId)?.currentIteration ?? 0);
+
+        // Check for a per-iteration variant override
+        const { iterationLinks, soundTrims } = useAudioControlsStore.getState();
+        const link = iterationLinks[`${soundId}-${iterIdx}`];
+        let actualSourceId = soundId;
+        if (link?.variantIndex !== undefined) {
+          // Derive the variant source ID: generated_X_Y → generated_X_<variantIndex>
+          const parts = soundId.split('_');
+          if (parts.length >= 3 && parts[0] === 'generated') {
+            parts[parts.length - 1] = String(link.variantIndex);
+            actualSourceId = parts.join('_');
+          }
+        }
+
+        const trim = soundTrims[soundId];
         const bufferDuration = metadata.buffer?.duration ?? 0;
         const startOffset = trim ? trim.start * bufferDuration : 0;
         const playDuration = trim ? (trim.end - trim.start) * bufferDuration : undefined;
 
-        this.audioOrchestrator.stopSource(soundId);
-        this.audioOrchestrator.playSource(soundId, false, startOffset, playDuration);
+        this.audioOrchestrator.stopSource(actualSourceId);
+
+        // Apply per-iteration entity position override (after stop, before play).
+        // When a link has an explicit entityPosition, move the source there.
+        // When there is NO link (or no entityPosition), always reset to the sound's
+        // default registered position so that previous iteration overrides don't
+        // bleed into un-linked iterations.
+        const allLinks = useAudioControlsStore.getState().iterationLinks;
+        console.log(`[AudioScheduler] 🎯 triggerPlayback — soundId="${soundId}" iterIdx=${iterIdx}`);
+        console.log(`  link key: "${soundId}-${iterIdx}"`, '→ link:', link ?? '(none)');
+        console.log(`  all iterationLinks keys:`, Object.keys(allLinks).filter(k => k.startsWith(soundId)));
+        if (link?.entityPosition) {
+          const pos = link.entityPosition;
+          console.log(`  ✅ Using link.entityPosition: [${pos[0].toFixed(2)}, ${pos[1].toFixed(2)}, ${pos[2].toFixed(2)}]`);
+          this.audioOrchestrator.updateSourcePosition(
+            actualSourceId,
+            new THREE.Vector3(pos[0], pos[1], pos[2]),
+          );
+        } else if (metadata.position) {
+          console.log(`  ⚠️ No entityPosition on link — resetting to metadata.position: [${metadata.position.x.toFixed(2)}, ${metadata.position.y.toFixed(2)}, ${metadata.position.z.toFixed(2)}]`);
+          this.audioOrchestrator.updateSourcePosition(
+            actualSourceId,
+            new THREE.Vector3(metadata.position.x, metadata.position.y, metadata.position.z),
+          );
+        } else {
+          console.log(`  ⚠️ No entityPosition and no metadata.position — position unchanged`);
+        }
+
+        this.audioOrchestrator.playSource(actualSourceId, false, startOffset, playDuration);
       } catch (error) {
         console.warn(`[AudioScheduler] Failed to play via orchestrator:`, error);
       }

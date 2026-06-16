@@ -53,6 +53,8 @@ export interface CardSectionProps<TItem extends CardBaseConfig> {
   color?: CardColor;
   /** Reorder callback — called with (fromIndex, toIndex) after a drag-drop. */
   onReorder?: (from: number, to: number) => void;
+  /** Ctrl+drag duplicate callback — called with (fromIndex, toInsertionIndex) when Ctrl is held during drag. */
+  onDuplicate?: (fromIndex: number, toInsertionIndex: number) => void;
   /** Optional action rendered below the empty message (when items.length === 0) */
   emptyAction?: ReactNode;
 }
@@ -68,6 +70,8 @@ interface DragData {
   hasMoved: boolean;
   insertionIndex: number;
   ghostRect: { top: number; left: number; width: number; height: number };
+  /** True when Ctrl key is held — duplicates instead of moving. */
+  isCopyMode: boolean;
 }
 
 interface DragVisual {
@@ -76,6 +80,8 @@ interface DragVisual {
   currentY: number;
   insertionIndex: number;
   ghostRect: { top: number; left: number; width: number; height: number };
+  /** True when Ctrl key is held — duplicates instead of moving. */
+  isCopyMode: boolean;
 }
 
 // ============================================================================
@@ -99,6 +105,7 @@ export function CardSection<TItem extends CardBaseConfig>({
   onExpandedIndexChange,
   color = 'primary' as const,
   onReorder,
+  onDuplicate,
   emptyAction,
 }: CardSectionProps<TItem>) {
   const isControlled = controlledExpandedIndex !== undefined;
@@ -129,6 +136,9 @@ export function CardSection<TItem extends CardBaseConfig>({
 
   const onReorderRef = useRef(onReorder);
   onReorderRef.current = onReorder;
+
+  const onDuplicateRef = useRef(onDuplicate);
+  onDuplicateRef.current = onDuplicate;
 
   const isControlledRef = useRef(isControlled);
   isControlledRef.current = isControlled;
@@ -169,7 +179,7 @@ export function CardSection<TItem extends CardBaseConfig>({
   // ── Drag start (mousedown on grip) ────────────────────────────────────────────
 
   const handleDragStart = useCallback((e: React.MouseEvent, index: number) => {
-    if (!onReorder) return;
+    if (!onReorder && !onDuplicate) return;
     e.preventDefault();
     e.stopPropagation();
 
@@ -184,11 +194,12 @@ export function CardSection<TItem extends CardBaseConfig>({
       hasMoved: false,
       insertionIndex: index + 1,
       ghostRect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height },
+      isCopyMode: e.ctrlKey || e.metaKey,
     };
 
-    document.body.style.cursor = 'grabbing';
+    document.body.style.cursor = dragDataRef.current.isCopyMode ? 'copy' : 'grabbing';
     document.body.style.userSelect = 'none';
-  }, [onReorder]);
+  }, [onReorder, onDuplicate]);
 
   // ── Global mouse event handlers (mounted once) ────────────────────────────────
 
@@ -198,6 +209,10 @@ export function CardSection<TItem extends CardBaseConfig>({
       if (!drag) return;
 
       drag.currentY = e.clientY;
+      // Update copy mode based on current modifier state
+      const ctrlHeld = e.ctrlKey || e.metaKey;
+      drag.isCopyMode = ctrlHeld;
+      document.body.style.cursor = ctrlHeld ? 'copy' : 'grabbing';
       if (!drag.hasMoved && Math.abs(e.clientY - drag.startY) > 4) drag.hasMoved = true;
       if (!drag.hasMoved) return;
 
@@ -208,6 +223,7 @@ export function CardSection<TItem extends CardBaseConfig>({
         currentY: drag.currentY,
         insertionIndex: drag.insertionIndex,
         ghostRect: drag.ghostRect,
+        isCopyMode: drag.isCopyMode,
       });
     };
 
@@ -221,6 +237,14 @@ export function CardSection<TItem extends CardBaseConfig>({
       if (!drag?.hasMoved) return;
 
       const ins = drag.insertionIndex;
+
+      // Ctrl+drag: duplicate instead of reorder
+      if (drag.isCopyMode && onDuplicateRef.current) {
+        const targetInsertion = ins;
+        onDuplicateRef.current(drag.index, targetInsertion);
+        return;
+      }
+
       // No-op: dropping in place
       if (ins === drag.index || ins === drag.index + 1) return;
 
@@ -387,20 +411,21 @@ export function CardSection<TItem extends CardBaseConfig>({
                     opacity: isDraggingMoved && dragVisual.index === index ? 0.25 : 1,
                     transition: isDraggingMoved ? 'none' : 'opacity 0.15s',
                   }}
-                  onMouseDown={onReorder ? (e) => {
+                  onMouseDown={(onReorder || onDuplicate) ? (e) => {
                     const target = e.target as HTMLElement;
                     if (target.closest('button, input, select, textarea, a')) return;
                     const rect = e.currentTarget.getBoundingClientRect();
                     if (e.clientY - rect.top > DRAG_HEADER_PX) return;
                     handleDragStart(e, index);
                   } : undefined}
-                  onMouseMove={onReorder ? (e) => {
+                  onMouseMove={(onReorder || onDuplicate) ? (e) => {
                     const rect = e.currentTarget.getBoundingClientRect();
                     const inHeader = e.clientY - rect.top <= DRAG_HEADER_PX;
                     const isBtn = !!(e.target as HTMLElement).closest('button, input, select, textarea, a');
-                    e.currentTarget.style.cursor = (inHeader && !isBtn) ? 'grab' : '';
+                    const ctrlHeld = e.ctrlKey || e.metaKey;
+                    e.currentTarget.style.cursor = (inHeader && !isBtn) ? (ctrlHeld ? 'copy' : 'grab') : '';
                   } : undefined}
-                  onMouseLeave={onReorder ? (e) => { e.currentTarget.style.cursor = ''; } : undefined}
+                  onMouseLeave={(onReorder || onDuplicate) ? (e) => { e.currentTarget.style.cursor = ''; } : undefined}
                 >
                   {renderCard(item, index, expandedIndex === index, handleToggleExpand)}
                 </div>
@@ -456,7 +481,32 @@ export function CardSection<TItem extends CardBaseConfig>({
             border: `1.5px solid var(--color-${color})`,
             backgroundColor: 'var(--color-background)',
           }}
-        />
+        >
+          {/* "+" badge shown during copy (Ctrl+drag) mode */}
+          {dragVisual.isCopyMode && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '-8px',
+                right: '-8px',
+                width: '18px',
+                height: '18px',
+                borderRadius: '50%',
+                backgroundColor: `var(--color-${color})`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '12px',
+                fontWeight: 700,
+                color: 'white',
+                boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
+                zIndex: 1,
+              }}
+            >
+              +
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

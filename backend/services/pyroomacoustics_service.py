@@ -95,20 +95,26 @@ class PyroomacousticsService:
                         orientation=DirectionVector(azimuth=0, colatitude=0, degrees=True),
                         p=1.0, gain=1.0
                     ),
-                    # ACN 1 - Y: Figure-of-8 along mesh -X (Left in Speckle = +Y in AmbiX)
+                    # ACN 1 - Y: Figure-of-8 oriented toward +X (Speckle Right).
+                    # A source at Speckle Left (-X) sends a wave whose pressure
+                    # gradient at the receiver points +X (source → receiver).
+                    # Dot product (+X)·(+X) = +1 → LEFT source → +Y  ✓
                     CardioidFamily(
-                        orientation=DirectionVector(azimuth=180, colatitude=90, degrees=True),
+                        orientation=DirectionVector(azimuth=0, colatitude=90, degrees=True),
                         p=0.0, gain=1.0
                     ),
-                    # ACN 2 - Z: Figure-of-8 along mesh +Z (Up in both Speckle and AmbiX)
+                    # ACN 2 - Z: Figure-of-8 oriented toward -Z (Speckle Down).
+                    # A source above (+Z) sends a wave whose gradient points -Z.
+                    # Dot product (-Z)·(-Z) = +1 → UP source → +Z  ✓
                     CardioidFamily(
-                        orientation=DirectionVector(azimuth=0, colatitude=0, degrees=True),
+                        orientation=DirectionVector(azimuth=0, colatitude=180, degrees=True),
                         p=0.0, gain=1.0
                     ),
-                    # ACN 3 - X: Figure-of-8 along mesh -Y (Forward in Speckle = +X in AmbiX)
-                    # azimuth=270 → direction (0, -1, 0) = -Y = Speckle Forward
+                    # ACN 3 - X: Figure-of-8 oriented toward +Y (Speckle Back).
+                    # A source in Front (-Y) sends a wave whose gradient points +Y.
+                    # Dot product (+Y)·(+Y) = +1 → FRONT source → +X  ✓
                     CardioidFamily(
-                        orientation=DirectionVector(azimuth=270, colatitude=90, degrees=True),
+                        orientation=DirectionVector(azimuth=90, colatitude=90, degrees=True),
                         p=0.0, gain=1.0
                     ),
                 ]

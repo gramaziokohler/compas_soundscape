@@ -51,6 +51,8 @@ export interface AdvancedSettingsSectionProps {
   globalSteps: number;
   globalNegativePrompt: string;
   applyDenoising: boolean;
+  trimSilence: boolean;
+  applyNoiseReduction: boolean;
   normalizeImpulseResponses: boolean;
   audioModel: string;
   llmModel: string;
@@ -58,6 +60,8 @@ export interface AdvancedSettingsSectionProps {
   onGlobalStepsChange: (value: number) => void;
   onGlobalNegativePromptChange: (value: string) => void;
   onApplyDenoisingChange: (value: boolean) => void;
+  onTrimSilenceChange: (value: boolean) => void;
+  onApplyNoiseReductionChange: (value: boolean) => void;
   onNormalizeImpulseResponsesChange: (value: boolean) => void;
   onAudioModelChange: (value: string) => void;
   onLlmModelChange: (value: string) => void;
@@ -341,6 +345,8 @@ export function AdvancedSettingsSection({
   globalSteps,
   globalNegativePrompt,
   applyDenoising,
+  trimSilence,
+  applyNoiseReduction,
   normalizeImpulseResponses,
   audioModel,
   llmModel,
@@ -348,6 +354,8 @@ export function AdvancedSettingsSection({
   onGlobalStepsChange,
   onGlobalNegativePromptChange,
   onApplyDenoisingChange,
+  onTrimSilenceChange,
+  onApplyNoiseReductionChange,
   onNormalizeImpulseResponsesChange,
   onAudioModelChange,
   onLlmModelChange,
@@ -394,6 +402,8 @@ export function AdvancedSettingsSection({
   const setGlobalSoundSpeed = useUIStore((s) => s.setGlobalSoundSpeed);
   const globalMeshLc = useUIStore((s) => s.globalMeshLc);
   const setGlobalMeshLc = useUIStore((s) => s.setGlobalMeshLc);
+  const showSpectrograms = useUIStore((s) => s.showSpectrograms);
+  const setShowSpectrograms = useUIStore((s) => s.setShowSpectrograms);
 
   return (
     <div className="flex flex-col gap-1.5 w-full">
@@ -585,6 +595,11 @@ export function AdvancedSettingsSection({
                   hoverText="Fixed length of the visual and audio timeline in seconds. Sounds that extend past this boundary are trimmed. Double-click to reset to 180 s (3 min)."
                 />
               </div>
+              <CheckboxField
+                checked={showSpectrograms}
+                onChange={setShowSpectrograms}
+                label="Show spectrograms"
+              />
             </div>
           )}
 
@@ -653,6 +668,18 @@ export function AdvancedSettingsSection({
                     />
                   </div>
                 </>
+              )}
+              <CheckboxField
+                checked={applyNoiseReduction}
+                onChange={onApplyNoiseReductionChange}
+                label="Apply noise reduction to text-to-audio"
+              />
+              {applyNoiseReduction && (
+                <CheckboxField
+                  checked={trimSilence}
+                  onChange={onTrimSilenceChange}
+                  label="Trim silence"
+                />
               )}
               <RangeSlider
                 label="Max Foley: "

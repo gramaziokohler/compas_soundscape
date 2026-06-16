@@ -3,7 +3,7 @@
 import { useCallback, useState } from 'react';
 import { DAWIteration } from './DAWIteration';
 import type { IterationContextMenuData } from './DAWIteration';
-import type { TimelineSound } from '@/types/audio';
+import type { TimelineSound, IterationLink } from '@/types/audio';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { WAVESURFER_TIMELINE } from '@/utils/constants';
 
@@ -41,6 +41,7 @@ interface DAWTrackProps {
   onDragEnd: (iterationIndex: number, newStartMs: number) => void;
   onDuplicate: (newStartMs: number) => void;
   onSelectSoundCard?: () => void;
+  onDoubleClickSoundCard?: () => void;
   onIterationContextMenu: (data: IterationContextMenuData) => void;
 }
 
@@ -56,10 +57,12 @@ export function DAWTrack({
   onDragEnd,
   onDuplicate,
   onSelectSoundCard,
+  onDoubleClickSoundCard,
   onIterationContextMenu,
 }: DAWTrackProps) {
   const soundSchedulingModes = useAudioControlsStore((s) => s.soundSchedulingModes);
   const handleSchedulingModeChange = useAudioControlsStore((s) => s.handleSchedulingModeChange);
+  const iterationLinks = useAudioControlsStore((s) => s.iterationLinks);
   const schedulingMode = soundSchedulingModes[sound.id] ?? 'interval';
   const isDraggable = schedulingMode === 'timestamps';
 
@@ -106,6 +109,7 @@ export function DAWTrack({
         <span
           title={sound.displayName}
           onClick={onSelectSoundCard}
+          onDoubleClick={onDoubleClickSoundCard}
           style={{
             fontSize: '10px',
             color: 'var(--foreground)',
@@ -217,6 +221,9 @@ export function DAWTrack({
             .filter((s) => s.idx !== i)
             .map(({ startMs: sMs, durationMs }) => ({ startMs: sMs, durationMs }));
 
+          const iterationLink: IterationLink | undefined =
+            iterationLinks[`${sound.id}-${i}`];
+
           return (
             <DAWIteration
               key={`${sound.id}-${i}-${startMs}`}
@@ -231,8 +238,10 @@ export function DAWTrack({
               isDraggable={isDraggable}
               timelineDurationMs={timelineDurationMs}
               siblings={siblings}
+              iterationLink={iterationLink}
               onDelete={() => onDeleteIteration(i)}
               onClick={() => onSelectSoundCard?.()}
+              onDoubleClick={onDoubleClickSoundCard}
               onDragEnd={(newStartMs) => onDragEnd(i, newStartMs)}
               onDuplicate={onDuplicate}
               onContextMenu={onIterationContextMenu}

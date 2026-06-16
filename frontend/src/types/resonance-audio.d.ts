@@ -33,9 +33,15 @@ declare module 'resonance-audio' {
     });
 
     /**
-     * Output audio node (connect to destination)
+     * Output audio node (connect to destination) - binaural stereo
      */
     output: GainNode;
+
+    /**
+     * Ambisonic (multichannel) output audio node for external processing.
+     * Carries FOA (4ch), SOA (9ch), or TOA (16ch) depending on ambisonicOrder.
+     */
+    ambisonicOutput: GainNode;
 
     /**
      * Create a new audio source

@@ -58,10 +58,10 @@ export function AudioAnalysisAfterContent({
 
       {/* Sound list header */}
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-success">
+        <span className="text-xs font-semibold text-secondary">
           Detected Sounds
         </span>
-        <span className="text-xs text-neutral-300">
+        <span className="text-xs text-secondary-hover">
           {selectedCount} / {analysisResult.prompts.length} selected
         </span>
       </div>
@@ -73,16 +73,16 @@ export function AudioAnalysisAfterContent({
             key={prompt.id}
             className="flex items-start gap-0 p-1 rounded cursor-pointer transition-colors"
             style={{
-              backgroundColor: prompt.selected ? 'color-mix(in srgb, var(--color-success-hover) 30%, transparent)' : 'transparent',
+              backgroundColor: prompt.selected ? 'color-mix(in srgb, var(--color-secondary) 30%, transparent)' : 'transparent',
               borderRadius: '6px',
             }}
             onMouseEnter={(e) => {
               setHoveredIndex(i);
-              if (!prompt.selected) e.currentTarget.style.backgroundColor = 'var(--color-secondary-hover)';
+              e.currentTarget.style.backgroundColor = 'var(--color-primary)';
             }}
             onMouseLeave={(e) => {
               setHoveredIndex(null);
-              if (!prompt.selected) e.currentTarget.style.backgroundColor = 'transparent';
+               e.currentTarget.style.backgroundColor = prompt.selected? 'color-mix(in srgb, var(--color-secondary) 30%, transparent)' : 'transparent';
             }}
           >
             <CheckboxField

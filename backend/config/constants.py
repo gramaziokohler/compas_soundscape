@@ -107,6 +107,15 @@ AUDIO_SAMPLE_RATE = 44100  # Browser default AudioContext sample rate in Hz (mat
 AUDIO_RMS_EPSILON = 1e-8  # Epsilon threshold for RMS calculation
 DENOISING_REDUCTION_STRENGTH = 0.8  # Noise reduction strength (prop_decrease)
 
+# Denoising – onset-based noise-profile detection
+DENOISING_NOISE_PROFILE_DURATION = 0.5  # Desired duration (seconds) of noise profile to extract
+DENOISING_NOISE_PROFILE_MIN_DURATION = 0.1  # Minimum silence before first onset to consider it usable
+DENOISING_NOISE_PROFILE_RATIO = 0.1  # Noise clip is valid if its RMS < this fraction of overall peak amplitude
+DENOISING_MIN_PEAK_AMPLITUDE = 0.001  # Below this peak the whole signal is silent — skip denoising
+DENOISING_ONSET_HOP_LENGTH = 512  # Hop length (samples) for onset detection
+DENOISING_ONSET_PRE_MARGIN = 0.02  # Seconds before first onset to exclude (avoids onset bleed)
+DENOISING_TRIM_MERGE_THRESHOLD = 0.2  # Max silence (seconds) between SFX to merge into one continuous region
+
 # ============================================================================
 # Audio Generation Configuration
 # ============================================================================

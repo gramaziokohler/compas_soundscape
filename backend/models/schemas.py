@@ -18,6 +18,7 @@ class SoundGenerationRequest(BaseModel):
     sounds: list[dict]
     bounding_box: dict | None = None
     apply_denoising: bool = False
+    trim_silence: bool = False
     audio_model: str = DEFAULT_AUDIO_MODEL
     base_spl_db: float = DEFAULT_SPL_DB
 

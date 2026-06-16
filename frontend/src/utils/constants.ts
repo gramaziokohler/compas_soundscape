@@ -369,10 +369,10 @@ export const AUDIO_PLAYBACK = {
 
   // Default absolute jitter applied to each iteration's interval (seconds).
   // Each iteration fires at intervalMs ± random(0, jitter), clamped to ≥ 0.
-  DEFAULT_INTERVAL_JITTER_SECONDS: 2,
+  DEFAULT_INTERVAL_JITTER_SECONDS: 0,
 
   // Fixed timeline length in milliseconds (visual + audio are both bounded to this).
-  TIMELINE_FIXED_DURATION_MS: 150_000, // 2.5 minutes
+  TIMELINE_FIXED_DURATION_MS: 60_000, // 1 minute
 } as const;
 
 // ============================================================================
@@ -1260,14 +1260,14 @@ export const WAVESURFER_TIMELINE = {
   BAR_RADIUS: 2,
 
   // Timeline plugin config
-  TIME_INTERVAL: 15,                 // Time markers every 15s
+  TIME_INTERVAL: 10,                 // Time markers every 15s
   PRIMARY_LABEL_INTERVAL: 30,        // Bold labels every 30s
 
   // Track layout
   TRACK_SPACING: 5,
 
   // Width calculation
-  PIXELS_PER_SECOND: 5,              // Pixels per second — fixed (no zoom)
+  PIXELS_PER_SECOND: 10,              // Pixels per second — fixed (no zoom)
   MIN_WIDTH: 420,                    // Minimum component width (keeps header controls readable)
 } as const;
 

@@ -100,7 +100,7 @@ export function AdvancedSettingsPanel({ isVisible, onClose, ...settingsProps }: 
         }}
         onMouseDown={handleDragStart}
       >
-        <span className="text-sm font-semibold text-foreground">Advanced Settings</span>
+        <span className="text-sm font-semibold text-foreground">Settings</span>
         <button
           data-no-drag
           onClick={onClose}

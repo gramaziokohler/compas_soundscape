@@ -40,7 +40,7 @@ export function TextContextContent({
     <div className="space-y-0.5">
       {/* Text input field */}
       <div>
-        <label htmlFor={`text-input-${index}`} className="text-xs font-medium block mb-2 text-neutral-500">
+        <label htmlFor={`text-input-${index}`} className="text-xxs font-medium block mb-2 text-neutral-500">
           Text Description
         </label>
         <textarea

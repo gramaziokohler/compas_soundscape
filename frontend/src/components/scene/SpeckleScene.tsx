@@ -1,7 +1,6 @@
 ﻿'use client';
 
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { PlaybackControls } from '@/components/controls/PlaybackControls';
 import { ControlsInfo } from '@/components/layout/sidebar/ControlsInfo';
 import { SpeckleAudioCoordinator } from '@/lib/three/speckle-audio-coordinator';
 import { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
@@ -49,7 +48,7 @@ import { SceneControlButtons } from '@/components/scene/SceneControlButtons';
 import { ObjectExplorerPanel } from '@/components/scene/ObjectExplorerPanel';
 import { SceneControlButton } from '@/components/ui/SceneControlButton';
 import { UndoRedoToolbar } from '@/components/ui/UndoRedoToolbar';
-import { UI_RIGHT_SIDEBAR, UI_VERTICAL_TABS } from '@/utils/constants';
+import { UI_RIGHT_SIDEBAR, UI_SCENE_BUTTON } from '@/utils/constants';
 import type { SoundEvent, ReceiverData } from '@/types';
 import type { AuralizationConfig } from '@/types/audio';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
@@ -322,7 +321,7 @@ export function SpeckleScene({
   const savedPrevEntityRef = useRef<import('@/store/speckleStore').SelectedEntityInfo | null>(null);
 
   // Hover preview — shown after 2 s of dwelling over a Speckle object
-  const [hoverPreview, setHoverPreview] = useState<{ x: number; y: number; objectName: string; objectType: string } | null>(null);
+  const [hoverPreview, setHoverPreview] = useState<{ x: number; y: number; objectName: string; objectType: string; parentName?: string } | null>(null);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hoverHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Ref so timer callbacks can read contextMenuPos without stale closure
@@ -525,34 +524,39 @@ export function SpeckleScene({
         };
         const tree = worldTreeRef.current;
         if (tree) {
-          const checkNode = (node: any, id: string): any => {
-            const nodeId = node?.raw?.id || node?.model?.id || node?.id;
-            if (nodeId === id) return node;
-            const children = node?.model?.children || node?.children;
-            if (children) {
-              for (const child of children) {
-                const found = checkNode(child, id);
-                if (found) return found;
-              }
-            }
-            return null;
-          };
           const rootChildren =
             tree.tree?._root?.children ||
             tree._root?.children ||
             tree.root?.children ||
             tree.children;
-          let foundNode: any = null;
+
+          const findNodeWithParent = (node: any, id: string, parent: any): { node: any; parent: any } | null => {
+            const nodeId = node?.raw?.id || node?.model?.id || node?.id;
+            if (nodeId === id) return { node, parent };
+            const children = node?.model?.children || node?.children;
+            if (children) {
+              for (const child of children) {
+                const found = findNodeWithParent(child, id, node);
+                if (found) return found;
+              }
+            }
+            return null;
+          };
+
+          let result: { node: any; parent: any } | null = null;
           if (rootChildren) {
             for (const child of rootChildren) {
-              foundNode = checkNode(child, foundId);
-              if (foundNode) break;
+              result = findNodeWithParent(child, foundId, null);
+              if (result) break;
             }
           }
-          if (foundNode) {
-            const objectName = foundNode.model?.name || foundNode.raw?.name || 'Unnamed';
-            const objectType = foundNode.raw?.speckle_type || 'Speckle Object';
-            entityData = { objectId: foundId, objectName, objectType };
+          if (result) {
+            const objectName = result.node.model?.name || result.node.raw?.name || 'Unnamed';
+            const objectType = result.node.raw?.speckle_type || 'Speckle Object';
+            const parentName = result.parent
+              ? (result.parent.model?.name || result.parent.raw?.name || undefined)
+              : undefined;
+            entityData = { objectId: foundId, objectName, objectType, parentName };
           }
         }
 
@@ -682,38 +686,44 @@ export function SpeckleScene({
             // Resolve name from world tree
             let objectName = 'Speckle Object';
             let objectType = 'Speckle Object';
+            let parentName: string | undefined;
             const tree = worldTreeRef.current;
             if (tree) {
-              const checkNode = (node: any, id: string): any => {
-                const nodeId = node?.raw?.id || node?.model?.id || node?.id;
-                if (nodeId === id) return node;
-                const children = node?.model?.children || node?.children;
-                if (children) {
-                  for (const child of children) {
-                    const found = checkNode(child, id);
-                    if (found) return found;
-                  }
-                }
-                return null;
-              };
               const rootChildren =
                 tree.tree?._root?.children ||
                 tree._root?.children ||
                 tree.root?.children ||
                 tree.children;
+
+              const findNodeWithParent = (node: any, id: string, parent: any): { node: any; parent: any } | null => {
+                const nodeId = node?.raw?.id || node?.model?.id || node?.id;
+                if (nodeId === id) return { node, parent };
+                const children = node?.model?.children || node?.children;
+                if (children) {
+                  for (const child of children) {
+                    const found = findNodeWithParent(child, id, node);
+                    if (found) return found;
+                  }
+                }
+                return null;
+              };
+
               if (rootChildren) {
                 for (const child of rootChildren) {
-                  const node = checkNode(child, objectId);
-                  if (node) {
-                    objectName = node.model?.name || node.raw?.name || 'Unnamed';
-                    objectType = node.raw?.speckle_type || 'Speckle Object';
+                  const result = findNodeWithParent(child, objectId, null);
+                  if (result) {
+                    objectName = result.node.model?.name || result.node.raw?.name || 'Unnamed';
+                    objectType = result.node.raw?.speckle_type || 'Speckle Object';
+                    if (result.parent) {
+                      parentName = result.parent.model?.name || result.parent.raw?.name || undefined;
+                    }
                     break;
                   }
                 }
               }
             }
 
-            setHoverPreview({ x: clientX, y: clientY, objectName, objectType });
+            setHoverPreview({ x: clientX, y: clientY, objectName, objectType, parentName });
             return;
           }
         } catch {
@@ -1368,53 +1378,29 @@ export function SpeckleScene({
           onClose={() => setShowTimeline(false)}
           isAnyPlaying={isAnyPlaying}
           onSelectSoundCard={onSelectSoundCard}
+          originalIRChannelCount={audioOrchestrator?.getIRState().channelCount ?? 0}
         />
       )}
 
-      {/* Playback Controls */}
-      <PlaybackControls
-        onPlayAll={handlePlayAll}
-        onPauseAll={handlePauseAll}
-        onStopAll={handleStopAll}
-        onToggleAuralization={handleToggleAuralization}
-        isAnyPlaying={isAnyPlaying}
-        hasSounds={soundscapeData !== null && soundscapeData.some((s: any) => !s.isPending)}
-        isLeftSidebarExpanded={isLeftSidebarExpanded}
-        isRightSidebarExpanded={isRightSidebarExpanded}
-        leftSidebarContentWidth={leftSidebarContentWidth}
-        rightSidebarWidth={rightSidebarWidth}
-      />
 
-      {/* Object Explorer + Advanced Settings toggles — top-right */}
+      {/* Advanced Settings toggle — top-right */}
       {isViewerReady && (
         <div
           className="absolute pointer-events-auto z-20 transition-all duration-300 flex gap-2"
           style={{
             top: '16px',
-            right: isRightSidebarExpanded ? `${(rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH) + 16}px` : '16px',
+            right: isRightSidebarExpanded ? `${(rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH) + 10}px` : '10px',
           }}
         >
           <UndoRedoToolbar />
           <SceneControlButton
             onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
             isActive={showAdvancedSettings}
-            title={showAdvancedSettings ? 'Close Advanced Settings' : 'Open Advanced Settings'}
+            title={showAdvancedSettings ? 'Close Settings' : 'Open Settings'}
             icon={
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="3" />
                 <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
-            }
-          />
-          <SceneControlButton
-            onClick={() => setShowObjectExplorer((v) => !v)}
-            isActive={showObjectExplorer}
-            title={showObjectExplorer ? 'Close Object Explorer' : 'Open Object Explorer'}
-            icon={
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="3" y1="6" x2="21" y2="6" />
-                <line x1="3" y1="12" x2="21" y2="12" />
-                <line x1="3" y1="18" x2="21" y2="18" />
               </svg>
             }
           />
@@ -1448,12 +1434,36 @@ export function SpeckleScene({
         onToggleTimeline={() => setShowTimeline(!showTimeline)}
       />
 
+      {/* Object Explorer toggle — bottom right */}
+      {isViewerReady && (
+        <div
+          className="absolute bottom-4 flex flex-col items-center pointer-events-auto z-20 transition-all duration-300"
+          style={{
+            gap: UI_SCENE_BUTTON.GAP,
+            right: isRightSidebarExpanded ? `${(rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH) + 10}px` : '10px',
+          }}
+        >
+          <SceneControlButton
+            onClick={() => setShowObjectExplorer((v) => !v)}
+            isActive={showObjectExplorer}
+            title={showObjectExplorer ? 'Close Object Explorer' : 'Open Object Explorer'}
+            icon={
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+              </svg>
+            }
+          />
+        </div>
+      )}
+
       {/* Hover preview — shown after 2 s dwell, dismissed on right-click */}
       {hoverPreview && !contextMenuPos && (
         <SceneHoverPreview
           x={hoverPreview.x}
           y={hoverPreview.y}
-          entity={{ objectName: hoverPreview.objectName, objectType: hoverPreview.objectType }}
+          entity={{ objectName: hoverPreview.objectName, objectType: hoverPreview.objectType, parentName: hoverPreview.parentName }}
         />
       )}
 
@@ -1479,6 +1489,7 @@ export function SpeckleScene({
             savedPrevEntityRef.current = null;
             savedPrevObjectIdsRef.current = [];
           }}
+          onOpenExplorer={() => setShowObjectExplorer(true)}
           generatedSounds={soundscapeData ?? undefined}
         />
       )}

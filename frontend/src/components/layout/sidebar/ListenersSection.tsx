@@ -60,8 +60,9 @@ export function ListenersSection({
   forcedExpandedId,
   collapseAllTrigger,
 }: ListenersSectionProps) {
-  const { updateGridListener, toggleGridListenerHiddenForSimulation, reorderGridListeners } = useGridListenersStore();
+  const { updateGridListener, toggleGridListenerHiddenForSimulation, reorderGridListeners, duplicateGridListenerAt } = useGridListenersStore();
   const reorderReceivers = useReceiversStore((s) => s.reorderReceivers);
+  const duplicateReceiverAt = useReceiversStore((s) => s.duplicateReceiverAt);
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const prevGridCountRef = useRef(gridListeners.length);
@@ -171,6 +172,25 @@ export function ListenersSection({
     }
   }, [receivers.length, reorderReceivers, reorderGridListeners]);
 
+  // Ctrl+drag duplicate — within-type only, cross-type drops are silently ignored
+  const handleDuplicate = useCallback((from: number, toInsertion: number) => {
+    const nReceivers = receivers.length;
+    const nGrid = gridListeners.length;
+    const fromIsReceiver = from < nReceivers;
+
+    if (fromIsReceiver) {
+      // Only allow insert within receiver range
+      if (toInsertion > nReceivers) return;
+      duplicateReceiverAt(from, toInsertion);
+    } else {
+      // Grid listener: only allow insert within grid range
+      const fromGrid = from - nReceivers;
+      const toGridInsertion = toInsertion - nReceivers;
+      if (toGridInsertion < 0 || toGridInsertion > nGrid) return;
+      duplicateGridListenerAt(fromGrid, toGridInsertion);
+    }
+  }, [receivers.length, gridListeners.length, duplicateReceiverAt, duplicateGridListenerAt]);
+
   const handlePositionChange = useCallback((
     id: string, axis: 0 | 1 | 2, raw: string, currentPos: [number, number, number],
   ) => {
@@ -278,6 +298,7 @@ export function ListenersSection({
       header={header}
       onExpandedIndexChange={handleExpandedIndexChange}
       onReorder={handleReorder}
+      onDuplicate={handleDuplicate}
     />
   );
 }

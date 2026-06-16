@@ -17,6 +17,7 @@ import { create } from 'zustand';
 import { temporal } from 'zundo';
 import { devtools } from 'zustand/middleware';
 import type { SoundState } from '@/types';
+import type { IterationLink } from '@/types/audio';
 import { AUDIO_PLAYBACK, DEFAULT_SPL_DB, DEFAULT_MAXIMUM_FOLEY_SOUNDS } from '@/utils/constants';
 
 export interface AudioControlsStoreState {
@@ -39,6 +40,11 @@ export interface AudioControlsStoreState {
   soundSchedulingModes: Record<string, 'interval' | 'timestamps'>;
   /** Per-sound explicit playback timestamps in seconds (used when mode is 'timestamps'). */
   soundTimestamps: Record<string, number[]>;
+  /**
+   * Per-iteration overrides.  Key = `${soundId}-${iterationIndex}`.
+   * Stores variant and/or entity overrides for individual DAW blocks.
+   */
+  iterationLinks: Record<string, IterationLink>;
 
   // ── Sync ──
   syncGeneratedSounds: (sounds: any[]) => void;
@@ -51,6 +57,9 @@ export interface AudioControlsStoreState {
   handleSchedulingModeChange: (soundId: string, mode: 'interval' | 'timestamps', soundDurationSeconds?: number) => void;
   handleTimestampsChange: (soundId: string, timestamps: number[]) => void;
   handleRemoveTimestamp: (soundId: string, iterationIndex: number) => void;
+  setIterationLink: (soundId: string, iterationIndex: number, link: Partial<IterationLink>) => void;
+  clearIterationLink: (soundId: string, iterationIndex: number) => void;
+  clearAllIterationLinksForSound: (soundId: string) => void;
   handleMute: (soundId: string) => void;
   handleSolo: (soundId: string) => void;
   setSoundTrim: (soundId: string, trim: { start: number; end: number }) => void;
@@ -115,6 +124,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         _generatedSounds: [],
         soundSchedulingModes: {},
         soundTimestamps: {},
+        iterationLinks: {},
 
         // ── Sync ──
         syncGeneratedSounds: (sounds) =>
@@ -137,8 +147,11 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           ),
 
         handleVariantChange: (promptIdx, variantIdx) => {
-          const { _generatedSounds, selectedVariants, previewingSoundId, individualSoundStates } =
-            get();
+          // Timeline playback is intentionally decoupled from the card variant selector.
+          // Only update selectedVariants (drives sphere display + card preview) and
+          // transfer the preview sound ID if the user was previewing the old variant.
+          // individualSoundStates is NOT touched so the timeline keeps playing variant 0.
+          const { _generatedSounds, selectedVariants, previewingSoundId } = get();
 
           const byPrompt: Record<number, any[]> = {};
           _generatedSounds.forEach((s) => {
@@ -155,14 +168,8 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           const newSound = sounds[variantIdx];
           const wasPreviewPlaying = oldSound && previewingSoundId === oldSound.id;
 
-          const newStates = { ...individualSoundStates };
-          const wasTimelinePlaying = Boolean(oldSound && newStates[oldSound.id] === 'playing');
-          sounds.forEach((s) => { newStates[s.id] = 'stopped'; });
-          if (wasTimelinePlaying && newSound) newStates[newSound.id] = 'playing';
-
           set(
             {
-              individualSoundStates: newStates,
               selectedVariants: { ...selectedVariants, [promptIdx]: variantIdx },
               previewingSoundId:
                 wasPreviewPlaying && newSound ? newSound.id : previewingSoundId,
@@ -251,6 +258,41 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             'audio/handleRemoveTimestamp',
           ),
 
+        setIterationLink: (soundId, iterationIndex, link) =>
+          set(
+            (state) => {
+              const key = `${soundId}-${iterationIndex}`;
+              const existing = state.iterationLinks[key] ?? {};
+              return { iterationLinks: { ...state.iterationLinks, [key]: { ...existing, ...link } } };
+            },
+            false,
+            'audio/setIterationLink',
+          ),
+
+        clearIterationLink: (soundId, iterationIndex) =>
+          set(
+            (state) => {
+              const key = `${soundId}-${iterationIndex}`;
+              const { [key]: _removed, ...rest } = state.iterationLinks;
+              return { iterationLinks: rest };
+            },
+            false,
+            'audio/clearIterationLink',
+          ),
+
+        clearAllIterationLinksForSound: (soundId) =>
+          set(
+            (state) => {
+              const prefix = `${soundId}-`;
+              const filtered = Object.fromEntries(
+                Object.entries(state.iterationLinks).filter(([k]) => !k.startsWith(prefix)),
+              );
+              return { iterationLinks: filtered };
+            },
+            false,
+            'audio/clearAllIterationLinksForSound',
+          ),
+
         handleMute: (soundId) =>
           set(
             (state) => {
@@ -335,8 +377,9 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           set({ previewingSoundId: null }, false, 'audio/stopSoundcardPreview'),
 
         playAll: () => {
-          const { _generatedSounds, selectedVariants } = get();
           set({ previewingSoundId: null }, false, 'audio/playAll/clearPreview');
+
+          const { _generatedSounds } = get();
 
           const byPrompt: Record<number, any[]> = {};
           _generatedSounds.forEach((s) => {
@@ -345,18 +388,23 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             byPrompt[idx].push(s);
           });
 
+          // Always play copy-index 0 (variant A) per prompt so that timeline playback
+          // is completely independent of the sound card's variant selector.
+          // The copy index is the trailing number in the sound ID (e.g. "generated_0_1" → 1).
+          const copyIndexOf = (id: string): number => {
+            const n = parseInt(id.split('_').pop() ?? '', 10);
+            return isNaN(n) ? 0 : n;
+          };
+
           set(
             (state) => {
               const newStates = { ...state.individualSoundStates };
-              Object.entries(byPrompt).forEach(([promptIdxStr, sounds]) => {
-                const promptIdx = parseInt(promptIdxStr);
-                if (sounds.length === 1 && sounds[0].total_copies === 1) {
-                  newStates[sounds[0].id] = 'playing';
-                } else {
-                  const selectedIdx = selectedVariants[promptIdx] || 0;
-                  const sel = sounds[selectedIdx] || sounds[0];
-                  if (sel) newStates[sel.id] = 'playing';
-                }
+              Object.entries(byPrompt).forEach(([, sounds]) => {
+                // Stop all variants for this prompt first.
+                sounds.forEach((s) => { newStates[s.id] = 'stopped'; });
+                // Play the variant with the lowest copy index (variant A / the default).
+                const sel = [...sounds].sort((a, b) => copyIndexOf(a.id) - copyIndexOf(b.id))[0];
+                if (sel) newStates[sel.id] = 'playing';
               });
               return { individualSoundStates: newStates };
             },

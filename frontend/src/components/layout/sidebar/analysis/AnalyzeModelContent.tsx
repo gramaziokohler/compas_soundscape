@@ -134,17 +134,17 @@ export function AnalyzeModelContent({
       )}
 
       {hasModel && (
-        <div className="space-y-3">
-          {/* Entity count */}
-          <div className="mx-4 text-xs" style={{ color: 'var(--color-secondary-hover)' }}>
-            {entityCount > 0
-              ? `${entityCount} object${entityCount !== 1 ? 's' : ''} detected`
-              : 'Loading model objects…'}
-          </div>
+        <div className="space-y-1">
+          {/* Capture view section */}
+          <CaptureViewSection
+            index={index}
+            screenshots={config.liveScreenshots}
+            onUpdateConfig={onUpdateConfig}
+          />
 
           {/* Optional user context */}
-          <div className="px-4 space-y-1">
-            <label className="text-xs font-medium" style={{ color: 'var(--color-secondary-hover)' }}>
+          <div className="px-2 space-y-1">
+            <label className="text-xxs font-medium" style={{ color: 'var(--color-secondary-hover)' }}>
               Context (optional)
             </label>
             <textarea
@@ -163,12 +163,13 @@ export function AnalyzeModelContent({
             />
           </div>
 
-          {/* Capture view section */}
-          <CaptureViewSection
-            index={index}
-            screenshots={config.liveScreenshots}
-            onUpdateConfig={onUpdateConfig}
-          />
+          {/* Entity count */}
+          <div className="mx-2 text-xxs" style={{ color: 'var(--color-secondary-hover)' }}>
+            {entityCount > 0
+              ? `${entityCount} object${entityCount !== 1 ? 's' : ''} detected`
+              : 'Loading model objects…'}
+          </div>
+
         </div>
       )}
     </div>
@@ -197,7 +198,6 @@ function CaptureViewSection({ index, screenshots, onUpdateConfig }: CaptureViewS
     try {
       if (!wasShowingGrid) {
         setShowGroundGrid(true);
-        // Wait for the useSpeckleGroundGrid effect to run and the viewer to render
         await new Promise<void>((resolve) => setTimeout(resolve, 300));
       }
       const dataUrl = await toPng(container, { cacheBust: true });
@@ -225,31 +225,36 @@ function CaptureViewSection({ index, screenshots, onUpdateConfig }: CaptureViewS
   );
 
   return (
-    <div className="px-4 space-y-2">
-      <button
-        onClick={handleCapture}
-        disabled={isCapturing}
-        className="w-full text-xs py-1.5 px-3 rounded flex items-center justify-center gap-1.5"
-        style={{
-          backgroundColor: 'var(--color-secondary-lighter)',
-          color: screenshots.length > 0 ? 'var(--color-success, #4ade80)' : 'var(--color-secondary-hover)',
-          opacity: isCapturing ? 0.6 : 1,
-          cursor: isCapturing ? 'wait' : 'pointer',
-        }}
-      >
-        {isCapturing
-          ? 'Capturing…'
-          : screenshots.length > 0
-            ? `+ Capture view (${screenshots.length} captured)`
-            : 'Capture current view'}
-      </button>
-      {screenshots.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {screenshots.map((src, i) => (
-            <Thumbnail key={i} src={src} onRemove={() => handleRemove(i)} />
-          ))}
-        </div>
-      )}
+    <div className="px-2 space-y-1">
+      <label className="text-xxs font-medium" style={{ color: 'var(--color-secondary-hover)' }}>
+        Screenshots (optional)
+      </label>
+      <div className="flex flex-wrap gap-1.5">
+        {screenshots.map((src, i) => (
+          <Thumbnail key={i} src={src} onRemove={() => handleRemove(i)} />
+        ))}
+        <button
+          onClick={handleCapture}
+          disabled={isCapturing}
+          className="rounded flex items-center justify-center flex-shrink-0"
+          style={{
+            width: screenshots.length > 0 ? 52 : 26,
+            height: screenshots.length > 0 ? 52 : 26,
+            border: '1px dashed var(--color-secondary-light)',
+            backgroundColor: 'var(--color-secondary-lighter)',
+            color: 'var(--color-secondary-hover)',
+            cursor: isCapturing ? 'wait' : 'pointer',
+            opacity: isCapturing ? 0.6 : 1,
+          }}
+          title="Capture current view"
+        >
+          {isCapturing ? (
+            <span style={{ fontSize: 10 }}>…</span>
+          ) : (
+            <span style={{ fontSize: screenshots.length > 0 ? 18 : 12, lineHeight: 1 }}>+</span>
+          )}
+        </button>
+      </div>
       {error && (
         <p className="text-xs" style={{ color: 'var(--color-error, #f87171)' }}>{error}</p>
       )}

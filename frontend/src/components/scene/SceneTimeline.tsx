@@ -13,13 +13,14 @@ interface SceneTimelineProps {
   rightSidebarWidth?: number;
   onSeek: (timeMs: number) => void;
   onRefresh?: () => void;
-  onDownload?: () => Promise<void>;
+  onDownload?: (format: import('@/lib/audio/SoundscapeExporter').ExportFormat) => Promise<void>;
   onPlay: () => void;
   onPause: () => void;
   onStop: () => void;
   onClose: () => void;
   isAnyPlaying?: boolean;
   onSelectSoundCard?: (promptIndex: number) => void;
+  originalIRChannelCount?: number;
 }
 
 export function SceneTimeline({
@@ -34,6 +35,7 @@ export function SceneTimeline({
   onClose,
   isAnyPlaying,
   onSelectSoundCard,
+  originalIRChannelCount,
 }: SceneTimelineProps) {
   return (
     <DAWTimeline
@@ -49,6 +51,7 @@ export function SceneTimeline({
       onStop={onStop}
       onClose={onClose}
       onSelectSoundCard={onSelectSoundCard}
+      originalIRChannelCount={originalIRChannelCount}
     />
   );
 }

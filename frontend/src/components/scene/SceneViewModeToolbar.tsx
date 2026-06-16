@@ -14,19 +14,19 @@ export function SceneViewModeToolbar() {
       <div
         className="flex items-center rounded-md overflow-hidden"
         style={{
-          backgroundColor: 'rgba(0,0,0,0.45)',
-          border: '1px solid rgba(255,255,255,0.15)',
+          backgroundColor: 'var(--color-background)',
+          border: '1px solid var(--color-secondary-light)',
         }}
         role="radiogroup"
         aria-label="View mode"
       >
         {([
-          { mode: 'dark', label: 'Sounds', title: 'Sounds mode: sound source lighting' },
-          { mode: 'default', label: 'Default', title: 'Default mode: normal view' },
-          { mode: 'acoustic', label: 'Acoustic', title: 'Acoustic mode: layer isolation + material colors' },
+          { mode: 'dark', label: 'Sounds', title: 'Sound events are represented as blue light' },
+          { mode: 'default', label: 'Default', title: 'Architectural viewmode with ambient light' },
+          { mode: 'acoustic', label: 'Acoustics', title: 'Acoustic materials layer isolation (needs a simulation tab expanded)' },
         ] as const).map(({ mode, label, title }) => {
           const isActive = viewMode === mode;
-          const accentColor = mode === 'dark' ? 'var(--color-primary)' : 'var(--color-info)';
+          const accentColor = 'var(--color-secondary)';
           return (
             <button
               key={mode}
@@ -37,9 +37,7 @@ export function SceneViewModeToolbar() {
               className="px-2.5 py-1 text-[10px] font-medium transition-colors"
               style={{
                 backgroundColor: isActive
-                  ? mode === 'dark'
-                    ? 'rgba(0,212,255,0.18)'
-                    : 'rgba(0,212,255,0.13)'
+                  ? 'var(--color-primary-hover)'
                   : 'transparent',
                 color: isActive ? accentColor : 'rgba(255,255,255,0.55)',
                 borderRight: mode !== 'acoustic' ? '1px solid rgba(255,255,255,0.12)' : undefined,

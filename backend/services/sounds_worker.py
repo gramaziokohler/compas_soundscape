@@ -79,6 +79,7 @@ def run_sound_generation(
     result_file: str,
     sound_configs: list,
     apply_denoising: bool,
+    trim_silence: bool,
     audio_model: str,
     output_dir: str,
     base_spl_db: float = None,
@@ -172,6 +173,7 @@ def run_sound_generation(
                             steps=steps,
                             spl_db=spl_db,
                             apply_denoising=apply_denoising,
+                            trim_silence=trim_silence,
                             negative_prompt=negative_prompt or "Low quality, distorted",
                             progress_callback=step_cb,
                         )
@@ -184,6 +186,7 @@ def run_sound_generation(
                             steps=steps,
                             spl_db=spl_db,
                             apply_denoising=apply_denoising,
+                            trim_silence=trim_silence,
                             audio_model=audio_model,
                             negative_prompt=negative_prompt,
                             progress_callback=step_cb,

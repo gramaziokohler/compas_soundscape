@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { AudioAnalysisConfig } from '@/types/analysis';
 import { FileUploadArea } from '@/components/controls/FileUploadArea';
-import { AudioWaveformDisplay } from '@/components/audio/AudioWaveformDisplay';
-import { AUDIO_FILE_EXTENSIONS, AUDIO_VISUALIZATION, NUM_SOUNDS_MAX, NUM_SOUNDS_MIN } from '@/utils/constants';
+import { WaveSurferPlayer } from '@/components/audio/WaveSurferPlayer';
+import { AUDIO_FILE_EXTENSIONS, NUM_SOUNDS_MAX, NUM_SOUNDS_MIN } from '@/utils/constants';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { useBatchedSlider } from '@/hooks/useBatchedSlider';
 
@@ -30,8 +30,20 @@ export function AudioContextContent({
 }: AudioContextContentProps) {
   // File upload state
   const [isDragging, setIsDragging] = useState(false);
+  const [audioUrl, setAudioUrl] = useState<string>('');
+  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
 
   const hasAudioFile = config.audioFile !== null;
+
+  // Create blob URL from audio file for WaveSurfer
+  useEffect(() => {
+    if (config.audioFile) {
+      const url = URL.createObjectURL(config.audioFile);
+      setAudioUrl(url);
+      return () => URL.revokeObjectURL(url);
+    }
+    setAudioUrl('');
+  }, [config.audioFile]);
 
   // Batched slider — one undo step per drag gesture
   const numSoundsSlider = useBatchedSlider<number>('analysis', (v) =>
@@ -94,11 +106,17 @@ export function AudioContextContent({
       {/* Audio loaded UI */}
       {hasAudioFile && (
         <div className="space-y-2">
-          {/* Show waveform if available */}
-          {config.audioBuffer && config.audioInfo && AUDIO_VISUALIZATION.ENABLE_WAVEFORM_DISPLAY && (
-            <AudioWaveformDisplay
-              audioBuffer={config.audioBuffer}
-              audioInfo={config.audioInfo}
+          {/* Show WaveSurfer waveform/spectrogram */}
+          {audioUrl && config.audioInfo && (
+            <WaveSurferPlayer
+              audioUrl={audioUrl}
+              volumeDb={70}
+              isPlaying={isPreviewPlaying}
+              onPlayPause={() => setIsPreviewPlaying((v) => !v)}
+              onStop={(ws) => {
+                if (ws) ws.seekTo(0);
+                setIsPreviewPlaying(false);
+              }}
             />
           )}
 

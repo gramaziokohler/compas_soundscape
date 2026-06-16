@@ -10,7 +10,8 @@ from contextlib import contextmanager
 from utils.audio_processing import (
     normalize_audio_rms,
     apply_spl_calibration,
-    apply_denoising as denoise_audio
+    apply_denoising as denoise_audio,
+    ensure_mono
 )
 from config.constants import (
     TANGOFLUX_MODEL_NAME,
@@ -163,6 +164,7 @@ class AudioService:
         steps: int = DEFAULT_DIFFUSION_STEPS,
         spl_db: float = DEFAULT_SPL_DB,
         apply_denoising: bool = False,
+        trim_silence: bool = False,
         audio_model: str = DEFAULT_AUDIO_MODEL,
         negative_prompt: str = "",
         progress_callback: callable = None,
@@ -196,6 +198,7 @@ class AudioService:
                     steps=steps,
                     spl_db=spl_db,
                     apply_denoising=apply_denoising,
+                    trim_silence=trim_silence,
                     negative_prompt=negative_prompt or "Low quality, distorted",
                     progress_callback=progress_callback,
                 )
@@ -254,10 +257,14 @@ class AudioService:
             # Step 2: Apply denoising if requested
             if apply_denoising:
                 print("Applying noise reduction...")
-                audio = denoise_audio(audio, sample_rate=AUDIO_SAMPLE_RATE)
+                audio = denoise_audio(audio, sample_rate=AUDIO_SAMPLE_RATE, trim_silence=trim_silence)
 
             # Step 3: Apply SPL calibration
             audio = apply_spl_calibration(audio, target_spl_db=spl_db)
+
+            # Safety: ensure mono before writing
+            if audio.shape[0] > 1:
+                audio = audio.mean(dim=0, keepdim=True)
 
             torchaudio.save(output_path, audio.cpu(), AUDIO_SAMPLE_RATE)
             print(f"Saved to: {output_path} (calibrated to {spl_db} dB SPL{denoise_suffix})")
@@ -268,6 +275,7 @@ class AudioService:
         output_dir: str,
         bounding_box: dict = None,
         apply_denoising: bool = False,
+        trim_silence: bool = False,
         audio_model: str = DEFAULT_AUDIO_MODEL
     ) -> list[dict]:
         """Generate multiple audio files from a list of sound configurations"""
@@ -351,6 +359,7 @@ class AudioService:
                     steps=steps,
                     spl_db=spl_db,
                     apply_denoising=apply_denoising,
+                    trim_silence=trim_silence,
                     audio_model=audio_model,
                     negative_prompt=negative_prompt
                 )
@@ -377,7 +386,7 @@ class AudioService:
 
         return generated_files
 
-    def reprocess_audio_file(self, file_path: str, apply_denoising: bool):
+    def reprocess_audio_file(self, file_path: str, apply_denoising: bool, trim_silence: bool = False):
         """Reprocess an existing audio file to add or remove denoising
         
         Args:
@@ -390,28 +399,22 @@ class AudioService:
         
         # Read the existing audio file
         audio_np, sample_rate = sf.read(file_path)
+
+        # Force mono — all generated sounds are mono, but reprocessing
+        # may be called on files that were inadvertently saved as stereo.
+        audio_np = ensure_mono(audio_np)
         
         if apply_denoising:
             # Apply denoising
             print(f"Applying denoising to: {file_path}")
             
-            # Convert numpy to torch tensor (handle mono/stereo)
-            if audio_np.ndim == 1:
-                # Mono: (samples,) -> (1, samples)
-                audio_tensor = torch.from_numpy(audio_np).unsqueeze(0)
-            else:
-                # Stereo: (samples, channels) -> (channels, samples)
-                audio_tensor = torch.from_numpy(audio_np.T)
+            # Convert numpy to torch tensor (mono: (samples,) -> (1, samples))
+            audio_tensor = torch.from_numpy(audio_np).unsqueeze(0)
             
             # Apply denoising
-            audio_tensor = denoise_audio(audio_tensor, sample_rate=sample_rate)
-            
+            audio_tensor = denoise_audio(audio_tensor, sample_rate=sample_rate, trim_silence=trim_silence)
             # Convert back to numpy
             audio_np = audio_tensor.squeeze().cpu().numpy()
-            
-            # If stereo, transpose back to (samples, channels)
-            if audio_tensor.shape[0] > 1:
-                audio_np = audio_np.T
         else:
             # To remove denoising, we would need the original file
             # Since we can't truly "remove" denoising from an already processed file,
@@ -429,6 +432,7 @@ class AudioService:
         output_path: str,
         target_spl_db: float = DEFAULT_SPL_DB,
         apply_denoising: bool = False,
+        trim_silence: bool = False,
     ):
         """Normalize RMS, optionally denoise, then apply SPL calibration to any audio file.
 
@@ -446,11 +450,11 @@ class AudioService:
 
         audio_np, sample_rate = sf.read(input_path)
 
-        # (samples,) → (1, samples) ; (samples, channels) → (channels, samples)
-        if audio_np.ndim == 1:
-            audio_tensor = torch.from_numpy(audio_np).float().unsqueeze(0)
-        else:
-            audio_tensor = torch.from_numpy(audio_np.T).float()
+        # Force mono — merge channels if the source is stereo or multi-channel.
+        audio_np = ensure_mono(audio_np)
+
+        # (samples,) → (1, samples)
+        audio_tensor = torch.from_numpy(audio_np).float().unsqueeze(0)
 
         # Step 1: Normalize to base RMS level
         audio_tensor = normalize_audio_rms(audio_tensor, target_rms=TARGET_RMS)
@@ -458,7 +462,7 @@ class AudioService:
         # Step 2: Apply denoising if requested
         if apply_denoising:
             print("Applying denoising during calibration...")
-            audio_tensor = denoise_audio(audio_tensor, sample_rate=sample_rate)
+            audio_tensor = denoise_audio(audio_tensor, sample_rate=sample_rate, trim_silence=trim_silence)
 
         # Step 3: Apply SPL calibration
         audio_tensor = apply_spl_calibration(audio_tensor, target_spl_db=target_spl_db)

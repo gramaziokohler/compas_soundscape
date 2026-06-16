@@ -23,6 +23,8 @@ export interface ReceiverData {
   position: [number, number, number];
   mesh?: THREE.Mesh; // Populated by ThreeScene, not serializable
   hiddenForSimulation?: boolean;
+  /** Listener yaw orientation in radians. OBJ Y-axis maps to front/back direction. */
+  yaw?: number;
 }
 
 /**

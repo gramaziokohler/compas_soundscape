@@ -40,4 +40,7 @@ class TangoFluxInference:
             wave = self.vae.decode(latents.transpose(2, 1)).sample.cpu()[0]
         waveform_end = int(duration * self.vae.config.sampling_rate)
         wave = wave[:, :waveform_end]
+        # Oobleck VAE outputs stereo; average to mono
+        if wave.shape[0] == 2:
+            wave = wave.mean(dim=0, keepdim=True)
         return wave

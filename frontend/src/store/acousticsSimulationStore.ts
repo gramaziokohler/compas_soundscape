@@ -68,6 +68,8 @@ export interface AcousticsSimulationStoreState {
   handleAddConfig: (mode: AcousticSimulationMode) => void;
   handleRemoveConfig: (index: number) => void;
   handleReorderConfigs: (from: number, to: number) => void;
+  /** Ctrl+drag duplicate — deep-clones the config at `from` and inserts at `toInsertion`. */
+  duplicateConfigAt: (from: number, toInsertion: number) => void;
   handleUpdateConfig: (index: number, updates: Partial<SimulationConfig>) => void;
   handleSetActiveSimulation: (index: number | null) => void;
   handleUpdateSimulationName: (index: number, name: string) => void;
@@ -210,6 +212,69 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
             { simulationConfigs: newConfigs, activeSimulationIndex: remap(activeSimulationIndex), expandedTabIndex: remap(expandedTabIndex) },
             false,
             'acousticsSim/reorderConfigs',
+          );
+        },
+
+        duplicateConfigAt: (from, toInsertion) => {
+          const { simulationConfigs, activeSimulationIndex, expandedTabIndex, simulationCounter } = get();
+          const config = simulationConfigs[from];
+          if (!config) return;
+
+          const cloned = structuredClone(config) as SimulationConfig;
+          const simCount = simulationCounter + 1;
+
+          set({ simulationCounter: simCount }, false, 'acousticsSim/incrementCounter');
+
+          cloned.id = `${cloned.type}-${simCount}`;
+          cloned.display_name = cloned.display_name
+            ? `${cloned.display_name} (copy)`
+            : cloned.type === 'resonance'
+              ? `${CARD_TYPE_LABELS[cloned.type]} ${simCount}`
+              : undefined;
+
+          // Reset execution state; preserve config settings
+          if (cloned.type !== 'resonance') {
+            const sim = cloned as any;
+            sim.state = 'before-simulation';
+            sim.isRunning = false;
+            sim.progress = 0;
+            sim.status = '';
+            sim.error = null;
+            sim.simulationResults = null;
+            sim.currentSimulationId = null;
+            sim.currentSimulationRunId = null;
+            sim.importedIRMetadata = undefined;
+            sim.importedIRIds = undefined;
+            sim.sourceReceiverIRMapping = undefined;
+            if (sim.savedSettings) {
+              sim.settings = { ...sim.savedSettings.settings };
+              if (sim.savedSettings.faceToMaterialMap) {
+                sim.faceToMaterialMap = new Map(sim.savedSettings.faceToMaterialMap);
+              }
+              sim.expandedMaterialItems = sim.savedSettings.expandedMaterialItems;
+              sim.excludedLayers = sim.savedSettings.excludedLayers;
+              sim.savedSettings = undefined;
+            }
+          }
+
+          const newConfigs = [...simulationConfigs];
+          const insertAt = toInsertion > from ? toInsertion - 1 : toInsertion;
+          newConfigs.splice(insertAt, 0, cloned);
+
+          const remap = (idx: number | null): number | null => {
+            if (idx === null) return null;
+            if (idx >= insertAt) return idx + 1;
+            return idx;
+          };
+
+          set(
+            {
+              simulationConfigs: newConfigs,
+              activeSimulationIndex: remap(activeSimulationIndex),
+              expandedTabIndex: remap(expandedTabIndex),
+            },
+            false,
+            'acousticsSim/duplicateConfigAt',
           );
         },
 

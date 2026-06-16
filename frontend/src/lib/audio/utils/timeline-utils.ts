@@ -151,6 +151,7 @@ export function extractTimelineSounds(
         audioUrl: audioUrl || undefined,
         initialDelayMs,
         schedulingMode,
+        promptIndex: metadata.soundEvent.prompt_index,
       });
     });
   });
@@ -219,7 +220,26 @@ export function extractTimelineSoundsFromData(
 ): TimelineSound[] {
   const timelineSounds: TimelineSound[] = [];
 
+  // For multi-variant sounds (generated_X_0, generated_X_1, …) only render one track per
+  // prompt_index — the variant with the lowest copy-index (i.e. variant A / the default).
+  // All variants remain loaded in the AudioOrchestrator so per-iteration overrides still work.
+  const copyIdxOf = (id: string): number => {
+    const n = parseInt(id.split('_').pop() ?? '', 10);
+    return isNaN(n) ? 0 : n;
+  };
+  const primarySoundIds = new Set<string>();
+  const promptPrimary = new Map<number, { id: string; copyIdx: number }>();
   soundMetadata.forEach((metadata, soundId) => {
+    const pi = metadata.soundEvent.prompt_index;
+    if (pi === undefined) { primarySoundIds.add(soundId); return; }
+    const copyIdx = copyIdxOf(soundId);
+    const existing = promptPrimary.get(pi);
+    if (!existing || copyIdx < existing.copyIdx) promptPrimary.set(pi, { id: soundId, copyIdx });
+  });
+  promptPrimary.forEach(({ id }) => primarySoundIds.add(id));
+
+  soundMetadata.forEach((metadata, soundId) => {
+    if (!primarySoundIds.has(soundId)) return; // skip non-primary variants
     if (!metadata.buffer) return; // Skip sounds without buffers
 
     const bufferDurationMs = metadata.buffer.duration * 1000;
@@ -263,7 +283,7 @@ export function extractTimelineSoundsFromData(
       const baseGapMs = intervalSeconds * 1000;
       iterations = [];
       iterationOffsets = [];
-      let currentTime = 0;
+      let currentTime = initialDelayMs;
 
       while (
         currentTime < timelineDuration &&
@@ -304,6 +324,7 @@ export function extractTimelineSoundsFromData(
       iterationOffsets,
       schedulingMode,
       soundGroup,
+      promptIndex: eventOverride?.prompt_index,
     });
   });
 

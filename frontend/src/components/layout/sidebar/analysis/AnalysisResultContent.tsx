@@ -26,10 +26,10 @@ export function AnalysisResultContent({
     <div className="space-y-2">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="text-xs font-semibold text-success">
+        <div className="text-xs font-semibold text-secondary">
         Generated Prompts
         </div>
-        <div className="text-xs text-neutral-300">
+        <div className="text-xs text-secondary-hover">
           {selectedCount} / {analysisResult.prompts.length} selected
         </div>
       </div>
@@ -43,12 +43,12 @@ export function AnalysisResultContent({
             key={prompt.id}
             className="flex items-start gap-0 p-1 rounded cursor-pointer transition-colors"
             style={{
-              backgroundColor: prompt.selected ? 'color-mix(in srgb, var(--color-success-hover) 30%, transparent)' : 'transparent',
+              backgroundColor: prompt.selected ? 'color-mix(in srgb, var(--color-secondary) 30%, transparent)' : 'transparent',
               borderRadius: '6px'
             }}
             onMouseEnter={(e) => {
               if (!prompt.selected) {
-                e.currentTarget.style.backgroundColor = 'var(--color-secondary-hover)';
+                e.currentTarget.style.backgroundColor = 'var(--color-secondary-lighter)';
               }
             }}
             onMouseLeave={(e) => {
@@ -62,12 +62,12 @@ export function AnalysisResultContent({
               onChange={() => onTogglePromptSelection(analysisResult.configIndex, prompt.id)}
               label=""
             />
-            <div className="flex-1 text-xs text-neutral-200">
+            <div className="flex-1 text-xs text-secondary">
               {prompt.text}
               
               {/* Metadata display (if available) */}
               {prompt.metadata && (
-                <div className="flex gap-3 mt-1 text-[10px] text-neutral-400">
+                <div className="flex gap-3 mt-1 text-[10px] text-secondary-hover">
                   {prompt.metadata.spl_db !== undefined && (
                     <span>SPL: {prompt.metadata.spl_db}dB</span>
                   )}

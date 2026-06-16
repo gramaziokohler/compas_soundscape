@@ -80,6 +80,8 @@ export interface GridListenersStoreState {
   addGridListener: () => string;
   removeGridListener: (id: string) => void;
   reorderGridListeners: (from: number, to: number) => void;
+  /** Ctrl+drag duplicate — deep-clones the grid listener at `from` and inserts at `toInsertion`. */
+  duplicateGridListenerAt: (from: number, toInsertion: number) => void;
   /**
    * Update fields on a grid listener.
    * When xSpacing / ySpacing / zOffset change and a bounding box exists,
@@ -145,6 +147,27 @@ export const useGridListenersStore = create<GridListenersStoreState>()(
             },
             false,
             'gridListeners/reorder',
+          ),
+
+        duplicateGridListenerAt: (from, toInsertion) =>
+          set(
+            (s) => {
+              const gl = s.gridListeners[from];
+              if (!gl) return {};
+
+              const cloned: GridListenerData = {
+                ...structuredClone(gl),
+                id: `grid-listener-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                name: `${gl.name} (copy)`,
+              };
+
+              const next = [...s.gridListeners];
+              const insertAt = toInsertion > from ? toInsertion - 1 : toInsertion;
+              next.splice(insertAt, 0, cloned);
+              return { gridListeners: next };
+            },
+            false,
+            'gridListeners/duplicateAt',
           ),
 
         updateGridListener: (id, updates) =>

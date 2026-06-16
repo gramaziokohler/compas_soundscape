@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import type { SoundGenerationConfig } from '@/types';
 import { FileUploadArea } from '@/components/controls/FileUploadArea';
-import { AudioWaveformDisplay } from '@/components/audio/AudioWaveformDisplay';
+import { WaveSurferPlayer } from '@/components/audio/WaveSurferPlayer';
 
 /**
  * UploadMode Component
@@ -27,6 +27,7 @@ export function UploadMode({
 }: UploadModeProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
 
   const hasUploadedAudio = config.uploadedAudioInfo !== undefined;
 
@@ -86,13 +87,29 @@ export function UploadMode({
 
   return (
     <>
-      {config.uploadedAudioBuffer && config.uploadedAudioInfo && (
-        <AudioWaveformDisplay
-          audioBuffer={config.uploadedAudioBuffer}
-          audioInfo={config.uploadedAudioInfo}
-          onClear={handleClearAudio}
-          compact
-        />
+      {config.uploadedAudioUrl && config.uploadedAudioInfo && (
+        <div className="relative">
+          <WaveSurferPlayer
+            audioUrl={config.uploadedAudioUrl}
+            volumeDb={70}
+            isPlaying={isPreviewPlaying}
+            onPlayPause={() => setIsPreviewPlaying((v) => !v)}
+            onStop={(ws) => {
+              if (ws) ws.seekTo(0);
+              setIsPreviewPlaying(false);
+            }}
+          />
+          <button
+            onClick={() => {
+              setIsPreviewPlaying(false);
+              handleClearAudio();
+            }}
+            className="absolute top-1 right-1 bg-black/70 hover:bg-red-600 text-white w-5 h-5 flex items-center justify-center rounded text-xs transition-colors z-10"
+            title="Remove audio"
+          >
+            ✕
+          </button>
+        </div>
       )}
     </>
   );

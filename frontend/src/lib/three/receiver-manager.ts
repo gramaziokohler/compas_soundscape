@@ -8,6 +8,11 @@ import type { ReceiverData } from "@/types";
 import { RECEIVER_CONFIG, OBJECT_LABEL } from "@/utils/constants";
 import { getCssColorHex } from "@/utils/utils";
 import { createLabelSprite, disposeLabelSprite } from "@/lib/three/label-sprite-factory";
+import {
+  loadHeadphonesGeometry,
+  invalidateHeadphonesCache,
+  type HeadphonesGeometryResult,
+} from "@/lib/three/headphones-loader";
 
 /**
  * ReceiverManager
@@ -40,6 +45,10 @@ export class ReceiverManager {
   // Label sprites — one per receiver, keyed by receiver ID
   private labelSprites: Map<string, THREE.Sprite> = new Map();
 
+  // Headphones OBJ geometry — loaded asynchronously, shared across all meshes
+  private headphonesGeomResult: HeadphonesGeometryResult | null = null;
+  private headphonesLoadInitiated = false;
+
   // Bounding box (retained for potential future use; not used by current placement strategy)
   // private boundingBox: BoundingBoxBounds | null = null;
 
@@ -50,6 +59,7 @@ export class ReceiverManager {
     this.scene = scene;
     this.scaleForSounds = scaleForSounds;
     this.parentGroup = parentGroup || null;
+    this.ensureHeadphonesGeometry();
   }
 
   // setBoundingBox removed — spiral/bounding-box placement replaced by camera-based placement.
@@ -137,14 +147,48 @@ export class ReceiverManager {
   }
 
   /**
-   * Create a single receiver cube
+   * Initiate asynchronous Headphones.obj loading.
+   * Once loaded the geometry is cached and reused for all receiver meshes.
+   */
+  private ensureHeadphonesGeometry(): void {
+    if (this.headphonesGeomResult || this.headphonesLoadInitiated) return;
+    this.headphonesLoadInitiated = true;
+    loadHeadphonesGeometry(this.scaleForSounds)
+      .then((result) => {
+        this.headphonesGeomResult = result;
+        // Force disposal of any fallback cube meshes so the next updateReceivers
+        // call creates fresh OBJ-based meshes.
+        if (this.receiverMeshes.length > 0) {
+          const target = this.parentGroup || this.scene;
+          this.receiverMeshes.forEach((m) => {
+            disposeMesh(m);
+            target.remove(m);
+          });
+          this.receiverMeshes = [];
+          this.draggableObjects = [];
+          this.labelSprites.forEach((sprite) => {
+            target.remove(sprite);
+            disposeLabelSprite(sprite);
+          });
+          this.labelSprites.clear();
+        }
+      })
+      .catch((err) => {
+        console.warn('[ReceiverManager] Headphones.obj load failed, using cube fallback:', err);
+      });
+  }
+
+  /**
+   * Create a single receiver mesh.
+   * Uses Headphones.obj geometry when available, falls back to a cube.
    */
   private createReceiverCube(receiver: ReceiverData): THREE.Mesh {
-    // Use same sizing logic as sound spheres (0.3 * scaleForSounds)
-    const cubeSize = 0.3 * this.scaleForSounds;
-    const cubeGeom = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+    const baseHalfSize = RECEIVER_CONFIG.CUBE_SIZE_MULTIPLIER * this.scaleForSounds;
 
-  
+    const geom = this.headphonesGeomResult
+      ? this.headphonesGeomResult.geometry.clone()
+      : new THREE.BoxGeometry(baseHalfSize * 2, baseHalfSize * 2, baseHalfSize * 2);
+
     const material = new SpeckleStandardMaterial({
       color: getCssColorHex('--color-receiver'),
       emissive: getCssColorHex('--color-receiver'),
@@ -169,8 +213,14 @@ export class ReceiverManager {
       }
     };
 
-    const cubeMesh = new THREE.Mesh(cubeGeom, material);
+    const cubeMesh = new THREE.Mesh(geom, material);
     cubeMesh.position.fromArray(receiver.position);
+
+    // Orientation: OBJ Y-axis = front/back. Rotate around Z so that the model
+    // faces the listener's forward direction. yaw=0 → faces -Y (world north).
+    const yaw = receiver.yaw ?? 0;
+    cubeMesh.rotation.z = Math.PI - yaw;
+
     cubeMesh.userData.receiverId = receiver.id;
     cubeMesh.userData.receiverName = receiver.name;
     cubeMesh.userData.isReceiver = true;
@@ -205,8 +255,10 @@ export class ReceiverManager {
   public enablePreview(): void {
     if (this.previewReceiver) return; // Already enabled
 
-    const cubeSize = 0.3 * this.scaleForSounds;
-    const cubeGeom = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+    const baseHalfSize = RECEIVER_CONFIG.CUBE_SIZE_MULTIPLIER * this.scaleForSounds;
+    const geom = this.headphonesGeomResult
+      ? this.headphonesGeomResult.geometry
+      : new THREE.BoxGeometry(baseHalfSize * 2, baseHalfSize * 2, baseHalfSize * 2);
 
     const material = new SpeckleStandardMaterial({
       color: getCssColorHex('--color-receiver'),
@@ -233,8 +285,9 @@ export class ReceiverManager {
       }
     };
 
-    const previewMesh = new THREE.Mesh(cubeGeom, material);
+    const previewMesh = new THREE.Mesh(geom, material);
     previewMesh.position.set(0, 1.6, 0); // Default ear height
+    previewMesh.rotation.z = Math.PI; // yaw=0 → face -Y (forward)
     previewMesh.userData.isPreview = true;
     previewMesh.userData.speckleType = 'ReceiverPreview';
     previewMesh.userData.customObjectType = 'receiver'; // CRITICAL: Required for drag handler
@@ -305,6 +358,10 @@ export class ReceiverManager {
    */
   public updateScale(scaleForSounds: number): void {
     this.scaleForSounds = scaleForSounds;
+    this.headphonesGeomResult = null;
+    this.headphonesLoadInitiated = false;
+    invalidateHeadphonesCache();
+    this.ensureHeadphonesGeometry();
   }
 
   // ============================================================================
@@ -359,7 +416,9 @@ export class ReceiverManager {
    * Called by SpeckleAudioCoordinator's per-frame callback.
    */
   public updateScreenSpaceScale(camera: THREE.PerspectiveCamera): void {
-    const baseHalfSize = RECEIVER_CONFIG.CUBE_SIZE_MULTIPLIER * this.scaleForSounds;
+    const baseHalfSize = this.headphonesGeomResult
+      ? this.headphonesGeomResult.baseHalfSize
+      : RECEIVER_CONFIG.CUBE_SIZE_MULTIPLIER * this.scaleForSounds;
     const target = this.parentGroup || this.scene;
 
     this.receiverMeshes.forEach(mesh => {
@@ -414,6 +473,10 @@ export class ReceiverManager {
 
     // Clear position tracking
     this.receiverPositions.clear();
+
+    // Note: headphonesGeomResult geometry is cached and shared — disposed
+    // via invalidateHeadphonesCache when scale changes or app is torn down.
+    this.headphonesGeomResult = null;
 
     // Remove preview cube
     this.disablePreview();

@@ -128,6 +128,7 @@ export function ContextSection({
   const analysisStatus = useAnalysisStore((s) => s.analysisStatus);
   const analyzingConfigIndex = useAnalysisStore((s) => s.analyzingConfigIndex);
   const handleReorderConfigs = useAnalysisStore((s) => s.handleReorderConfigs);
+  const duplicateConfigAt = useAnalysisStore((s) => s.duplicateConfigAt);
 
   // Filter to context card types only, maintaining original indices
   // Freeform cards with parentContextOriginalIndex belong to Usage, exclude them here.
@@ -604,10 +605,17 @@ export function ContextSection({
             handleReorderConfigs(fromOriginal, toOriginal);
           }
         }}
+        onDuplicate={(from, toInsertion) => {
+          const fromOriginal = indexMap[from];
+          const toOriginal = toInsertion < indexMap.length ? indexMap[toInsertion] : analysisConfigs.length;
+          if (fromOriginal !== undefined && toOriginal !== undefined) {
+            duplicateConfigAt(fromOriginal, toOriginal);
+          }
+        }}
         emptyAction={
           <button
             onClick={() => handleAddContextConfig('freeform')}
-            className="text-primary hover:underline cursor-pointer text-xs font-medium"
+            className="text-secondary bg-primary-hover hover:bg-primary cursor-pointer text-xs font-medium rounded px-1.5 py-0.5"
           >
             Skip context
           </button>

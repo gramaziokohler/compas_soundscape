@@ -63,6 +63,10 @@ export class ResonanceMode implements IAudioMode {
   private currentRoomDimensions: any = DEFAULT_ROOM_DIMENSIONS;
   private currentRoomMaterials: any = DEFAULT_ROOM_MATERIALS;
 
+  /** Snapshot of the last listener state, read by getExportState(). */
+  listenerPosition = { x: 0, y: 0, z: 0 } as unknown as Position;
+  listenerOrientation: Orientation = { yaw: 0, pitch: 0, roll: 0 };
+
   /**
    * Offset applied to all positions so that the bounding box center maps to the
    * Resonance Audio room origin.  Resonance Audio always centers its room at (0,0,0),
@@ -337,6 +341,9 @@ export class ResonanceMode implements IAudioMode {
    * Update listener position and orientation
    */
   updateListener(position: Position, orientation: Orientation): void {
+    this.listenerPosition = position;
+    this.listenerOrientation = orientation;
+
     if (!this.resonanceAudioScene) {
       return;
     }

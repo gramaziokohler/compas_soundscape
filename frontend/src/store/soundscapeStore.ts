@@ -49,10 +49,11 @@ async function calibrateBlobUrl(
   blobOrUrl: Blob | string,
   splDb: number,
   applyDenoising: boolean,
+  trimSilence: boolean = false,
 ): Promise<string> {
   const blob =
     typeof blobOrUrl === 'string' ? await fetch(blobOrUrl).then((r) => r.blob()) : blobOrUrl;
-  const { url } = await apiService.calibrateAudio(blob, splDb, applyDenoising);
+  const { url } = await apiService.calibrateAudio(blob, splDb, applyDenoising, trimSilence);
   return url;
 }
 
@@ -84,6 +85,8 @@ export const soundscapePartialize = (state: SoundscapeStoreState) => ({
   globalSteps: state.globalSteps,
   globalNegativePrompt: state.globalNegativePrompt,
   applyDenoising: state.applyDenoising,
+  trimSilence: state.trimSilence,
+  applyNoiseReduction: state.applyNoiseReduction,
   audioModel: state.audioModel,
   llmModel: state.llmModel,
 });
@@ -104,6 +107,8 @@ export interface SoundscapeStoreState {
   globalSteps: number;
   globalNegativePrompt: string;
   applyDenoising: boolean;
+  trimSilence: boolean;
+  applyNoiseReduction: boolean;
   audioModel: string;
   llmModel: string;
 
@@ -125,6 +130,8 @@ export interface SoundscapeStoreState {
   setSoundscapeData: (data: any[] | null) => void;
   setGlobalNegativePrompt: (val: string) => void;
   setApplyDenoising: (val: boolean) => void;
+  setTrimSilence: (val: boolean) => void;
+  setApplyNoiseReduction: (val: boolean) => void;
   setAudioModel: (model: string) => void;
   setLlmModel: (model: string) => void;
   handleUploadAudio: (index: number, file: File) => Promise<void>;
@@ -136,9 +143,12 @@ export interface SoundscapeStoreState {
   handleResetSoundConfig: (index: number) => void;
   handleReorderSoundConfigs: (from: number, to: number) => void;
   handleDuplicateConfig: (index: number) => void;
+  /** Ctrl+drag duplicate — deep-clones the config at `from` (and soundscape data) and inserts at `toInsertion`. */
+  duplicateConfigAt: (from: number, toInsertion: number) => void;
   handleDetachSoundFromEntity: (index: number) => void;
   handleAttachSoundToEntity: (index: number, entity: any, append?: boolean) => void;
   updateSoundPosition: (soundId: string, position: [number, number, number]) => void;
+  selectLinkedEntity: (soundId: string, entityIndex: number, position: [number, number, number]) => void;
   restoreSoundscape: (
     configs: SoundGenerationConfig[],
     events: any[],
@@ -171,6 +181,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         globalNegativePrompt:
           'distorted, reverb, echo, background noise, hall, spaciousness',
         applyDenoising: false,
+        trimSilence: false,
+        applyNoiseReduction: true,
         llmModel: DEFAULT_LLM_MODEL,
         audioModel: DEFAULT_AUDIO_MODEL,
 
@@ -382,6 +394,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             soundscapeData,
             globalNegativePrompt,
             applyDenoising,
+            trimSilence,
+            applyNoiseReduction,
             audioModel,
           } = get();
           const { geometryBounds } = useFileUploadStore.getState();
@@ -470,7 +484,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               const { generation_id } = await apiService.generateSounds({
                 sounds: configsWithNeg,
                 bounding_box: hasEntities ? null : geometryBounds,
-                apply_denoising: applyDenoising,
+                apply_denoising: applyNoiseReduction,
+                trim_silence: trimSilence,
                 audio_model: audioModel,
                 base_spl_db: useAudioControlsStore.getState().globalBaseSplDb,
               });
@@ -483,6 +498,15 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 const actualIndex =
                   generationConfigs[backendIndex]?.originalIndex ?? backendIndex;
                 const originalConfig = generationConfigs[backendIndex]?.config;
+
+                // Re-key the ID so it encodes the *config* index, not the batch index.
+                // Backend assigns batch-relative IDs ("generated_0_x" for the first
+                // sound in the batch).  When only a subset of configs is generated
+                // (e.g. only config 1), the batch index is 0 but the config index is 1.
+                // Without remapping, the new ID collides with a previously generated
+                // sound at config 0, causing the merge to silently delete it.
+                const copyIdx = parseInt(sound.id?.split('_').pop() ?? '0', 10);
+                const remappedId = `generated_${actualIndex}_${isNaN(copyIdx) ? 0 : copyIdx}`;
                 let entityIndex = sound.entity_index;
                 if (entityIndex === undefined) {
                   if (originalConfig?.entities?.[0]?.index !== undefined) {
@@ -505,9 +529,13 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
 
                 // Carry foley timestamps from the original config to the SoundEvent
                 const configTimestamps = originalConfig?.timestamps;
+                const configCategory = originalConfig?.category;
+                const normalizedCategory = (configCategory || '').toLowerCase().replace(/[\s-]+/g, '_');
+                const isBg = normalizedCategory === 'background' || normalizedCategory === 'background_sound';
 
-                return {
+                const event = {
                   ...sound,
+                  id: remappedId,
                   prompt_index: actualIndex,
                   position,
                   geometry: sound.geometry || { vertices: [], faces: [] },
@@ -518,7 +546,13 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   }),
                   // Carry foley category for DAW grouping
                   ...(originalConfig?.category ? { category: originalConfig.category } : {}),
+                  // Background sounds: force interval mode (no timestamps, no timestamp scheduling)
+                  ...(isBg ? {
+                    timestamps: undefined as any,
+                    scheduling_mode: 'interval' as const,
+                  } : {}),
                 };
+                return event;
               };
 
               // Poll until done, streaming each completed sound into the UI immediately
@@ -579,9 +613,10 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             for (const { config, originalIndex } of uploadedConfigs) {
               const resolvedSpl = config.spl_db ?? globalBaseSplDb;
               const audioUrl = await calibrateBlobUrl(
-                config.uploadedAudioUrl!,
+                config.uploadedAudioUrl,
                 resolvedSpl,
                 applyDenoising,
+                trimSilence,
               );
               uploadedEvents.push(
                 createSoundEventFromUpload(
@@ -645,6 +680,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   await dlRes.blob(),
                   resolvedSpl,
                   applyDenoising,
+                  trimSilence,
                 );
                 catalogEvents.push(
                   createSoundEventFromUpload(
@@ -674,11 +710,12 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   duration >= 0.5 && duration <= 22 ? duration : undefined,
               });
               const resolvedSpl = config.spl_db ?? globalBaseSplDb;
-              const audioUrl = await calibrateBlobUrl(
-                rawUrl,
-                resolvedSpl,
-                applyDenoising,
-              );
+                const audioUrl = await calibrateBlobUrl(
+                  await dlRes.blob(),
+                  resolvedSpl,
+                  applyDenoising,
+                  trimSilence,
+                );
               elevenLabsEvents.push(
                 createSoundEventFromUpload(
                   { ...config, spl_db: resolvedSpl },
@@ -752,7 +789,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           );
         },
 
-        handleReprocessSounds: async (applyDenoising) => {
+        handleReprocessSounds: async (applyDenoising, trimSilence = false) => {
           const { soundscapeData } = get();
           if (!soundscapeData || soundscapeData.length === 0) return;
 
@@ -761,7 +798,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             const response = await fetch(`${API_BASE_URL}/api/reprocess-sounds`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ sound_urls: soundUrls, apply_denoising: applyDenoising }),
+              body: JSON.stringify({ sound_urls: soundUrls, apply_denoising: applyDenoising, trim_silence: trimSilence }),
             });
 
             if (!response.ok) {
@@ -821,6 +858,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 interval_seconds: newConfig.interval_seconds,
                 timestamps: newConfig.timestamps,
                 duration: newConfig.duration,
+                category: newConfig.category,
                 ...(newConfig.parentUsageOriginalIndex !== undefined
                   ? { parentUsageOriginalIndex: newConfig.parentUsageOriginalIndex }
                   : {}),
@@ -857,6 +895,12 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
 
         setApplyDenoising: (val) =>
           set({ applyDenoising: val }, false, 'soundscape/setDenoising'),
+
+        setTrimSilence: (val) =>
+          set({ trimSilence: val }, false, 'soundscape/setTrimSilence'),
+
+        setApplyNoiseReduction: (val) =>
+          set({ applyNoiseReduction: val }, false, 'soundscape/setApplyNoiseReduction'),
 
         setAudioModel: (model) =>
           set({ audioModel: model }, false, 'soundscape/setModel'),
@@ -1026,6 +1070,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               globalSteps: DEFAULT_DIFFUSION_STEPS,
               globalNegativePrompt: 'distorted, reverb, echo, background noise, hall, spaciousness',
               applyDenoising: false,
+              trimSilence: false,
+              applyNoiseReduction: true,
               audioModel: DEFAULT_AUDIO_MODEL,
               llmModel: DEFAULT_LLM_MODEL,
             },
@@ -1105,6 +1151,74 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             },
             false,
             'soundscape/duplicateConfig',
+          );
+        },
+
+        duplicateConfigAt: (from, toInsertion) => {
+          const { soundConfigs, soundscapeData, activeSoundConfigTab } = get();
+          const config = soundConfigs[from];
+          if (!config) return;
+
+          const newConfig: SoundGenerationConfig = {
+            ...config,
+            display_name: config.display_name ? `${config.display_name} (copy)` : undefined,
+            entities: config.entities ? [...config.entities] : undefined,
+          };
+
+          const newConfigs = [...soundConfigs];
+          const insertAt = toInsertion > from ? toInsertion - 1 : toInsertion;
+          newConfigs.splice(insertAt, 0, newConfig);
+
+          // Remap active tab
+          let newTab: number;
+          if (activeSoundConfigTab === from) {
+            newTab = insertAt;
+          } else if (activeSoundConfigTab >= insertAt) {
+            newTab = activeSoundConfigTab + 1;
+          } else {
+            newTab = activeSoundConfigTab;
+          }
+
+          // Duplicate linked soundscape events and remap prompt_index values
+          let newSoundscape = soundscapeData;
+          if (soundscapeData) {
+            // Shift prompt_index for events that come after the insertion point
+            const shifted = soundscapeData.map((event: any) => {
+              if (event.prompt_index >= insertAt) {
+                return { ...event, prompt_index: event.prompt_index + 1 };
+              }
+              return event;
+            });
+
+            // Duplicate events from the source card
+            const origEvents = soundscapeData.filter((s: any) => s.prompt_index === from);
+            if (origEvents.length > 0) {
+              const duped = origEvents.map((event: any, vIdx: number) => ({
+                ...event,
+                id: `duplicate-${insertAt}-${vIdx}-${Date.now()}`,
+                prompt_index: insertAt,
+                position: [
+                  (event.position as [number, number, number])[0] + DUPLICATE_POSITION_OFFSET,
+                  (event.position as [number, number, number])[1],
+                  (event.position as [number, number, number])[2],
+                ] as [number, number, number],
+                display_name: newConfig.display_name || event.display_name,
+              }));
+              newSoundscape = [...shifted, ...duped];
+            } else {
+              newSoundscape = shifted;
+            }
+          }
+
+          set(
+            {
+              soundConfigs: newConfigs,
+              activeSoundConfigTab: newTab,
+              soundscapeData: newSoundscape,
+              generatedSounds: newSoundscape ?? [],
+            },
+            false,
+            'soundscape/duplicateConfigAt',
           );
         },
 
@@ -1199,6 +1313,30 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             },
             false,
             'soundscape/updatePosition',
+          );
+        },
+
+        selectLinkedEntity: (soundId, entityIndex, position) => {
+          const { soundscapeData, generatedSounds } = get();
+          const existing = soundscapeData?.find((s) => s.id === soundId);
+          const promptIndex = existing?.prompt_index;
+          const update = (sounds: any[]) =>
+            sounds.map((s) => {
+              if (promptIndex !== undefined && s.prompt_index === promptIndex) {
+                return { ...s, position, entity_index: entityIndex };
+              }
+              if (promptIndex === undefined && s.id === soundId) {
+                return { ...s, position, entity_index: entityIndex };
+              }
+              return s;
+            });
+          set(
+            {
+              soundscapeData: soundscapeData ? update(soundscapeData) : null,
+              generatedSounds: update(generatedSounds),
+            },
+            false,
+            'soundscape/selectLinkedEntity',
           );
         },
 

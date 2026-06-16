@@ -6,6 +6,9 @@
  * When a usage card advances to Sounds, we record its original index.
  * This lets the breadcrumb highlight the "next step" as a clickable blue link
  * whenever the expanded parent card has generated children.
+ *
+ * Also maintains parent→child index mappings for ctrl+drag copy support —
+ * when a card is duplicated with linked results, we can find its children.
  */
 import { create } from 'zustand';
 
@@ -15,8 +18,24 @@ interface CardFlowState {
   /** Original indices of usage cards that have been used to advance to the Sounds step. */
   usageAdvanced: Set<number>;
 
+  /** Maps a context index → usage indices created from it (for ctrl+drag copy). */
+  contextToUsageMap: Map<number, number[]>;
+  /** Maps a usage index → sound indices created from it (for ctrl+drag copy). */
+  usageToSoundMap: Map<number, number[]>;
+
   recordContextAdvance: (originalIndex: number) => void;
   recordUsageAdvance: (originalIndex: number) => void;
+
+  /** Record that a specific usage card was created from a context card. */
+  recordContextAdvanceWithChild: (contextIndex: number, usageIndex: number) => void;
+  /** Record that a specific sound card was created from a usage card. */
+  recordUsageAdvanceWithChild: (usageIndex: number, soundIndex: number) => void;
+
+  /** Get usage indices linked to a context card. */
+  getContextChildren: (contextIndex: number) => number[];
+  /** Get sound indices linked to a usage card. */
+  getUsageChildren: (usageIndex: number) => number[];
+
   hasContextAdvanced: (originalIndex: number) => boolean;
   hasUsageAdvanced: (originalIndex: number) => boolean;
   reset: () => void;
@@ -25,6 +44,8 @@ interface CardFlowState {
 export const useCardFlowStore = create<CardFlowState>()((set, get) => ({
   contextAdvanced: new Set(),
   usageAdvanced: new Set(),
+  contextToUsageMap: new Map(),
+  usageToSoundMap: new Map(),
 
   recordContextAdvance: (originalIndex) =>
     set((state) => ({
@@ -36,8 +57,43 @@ export const useCardFlowStore = create<CardFlowState>()((set, get) => ({
       usageAdvanced: new Set([...state.usageAdvanced, originalIndex]),
     })),
 
+  recordContextAdvanceWithChild: (contextIndex, usageIndex) =>
+    set((state) => {
+      const newMap = new Map(state.contextToUsageMap);
+      const existing = newMap.get(contextIndex) || [];
+      newMap.set(contextIndex, [...existing, usageIndex]);
+      return {
+        contextToUsageMap: newMap,
+        contextAdvanced: new Set([...state.contextAdvanced, contextIndex]),
+      };
+    }),
+
+  recordUsageAdvanceWithChild: (usageIndex, soundIndex) =>
+    set((state) => {
+      const newMap = new Map(state.usageToSoundMap);
+      const existing = newMap.get(usageIndex) || [];
+      newMap.set(usageIndex, [...existing, soundIndex]);
+      return {
+        usageToSoundMap: newMap,
+        usageAdvanced: new Set([...state.usageAdvanced, usageIndex]),
+      };
+    }),
+
+  getContextChildren: (contextIndex) => {
+    return get().contextToUsageMap.get(contextIndex) || [];
+  },
+
+  getUsageChildren: (usageIndex) => {
+    return get().usageToSoundMap.get(usageIndex) || [];
+  },
+
   hasContextAdvanced: (originalIndex) => get().contextAdvanced.has(originalIndex),
   hasUsageAdvanced: (originalIndex) => get().usageAdvanced.has(originalIndex),
 
-  reset: () => set({ contextAdvanced: new Set(), usageAdvanced: new Set() }),
+  reset: () => set({
+    contextAdvanced: new Set(),
+    usageAdvanced: new Set(),
+    contextToUsageMap: new Map(),
+    usageToSoundMap: new Map(),
+  }),
 }));

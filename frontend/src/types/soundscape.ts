@@ -57,6 +57,7 @@ export interface SoundscapeReceiver {
   name: string;
   position: number[]; // [x, y, z]
   type?: string;
+  yaw?: number;
 }
 
 /** Serializable impulse response metadata for persistence */

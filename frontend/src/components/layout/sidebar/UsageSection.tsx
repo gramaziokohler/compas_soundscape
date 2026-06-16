@@ -16,6 +16,7 @@ import { Card } from '@/components/ui/Card';
 import { TextContextContent } from '@/components/layout/sidebar/analysis/TextContextContent';
 import { ScenarioContent } from '@/components/layout/sidebar/analysis/ScenarioContent';
 import { ScenarioAfterView } from '@/components/layout/sidebar/analysis/ScenarioContent';
+import { AnalysisResultContent } from '@/components/layout/sidebar/analysis/AnalysisResultContent';
 import { useAnalysisStore, useSoundscapeStore, useAreaDrawingStore } from '@/store';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
 import { LLM_MODEL_TO_PROVIDER } from '@/utils/constants';
@@ -79,6 +80,7 @@ export function UsageSection({
   const analysisStatus = useAnalysisStore((s) => s.analysisStatus);
   const analyzingConfigIndex = useAnalysisStore((s) => s.analyzingConfigIndex);
   const handleReorderConfigs = useAnalysisStore((s) => s.handleReorderConfigs);
+  const duplicateConfigAt = useAnalysisStore((s) => s.duplicateConfigAt);
   const areaDrawing = useAreaDrawingStore();
 
   // Filter to usage card types only, then by active parent context if set
@@ -187,7 +189,12 @@ export function UsageSection({
       // Text cards: show analysis result prompts if any
       const result = analysisResult.find((r) => r.configIndex === originalIndex);
       if (!result) return null;
-      return null; // text cards use AnalysisResultContent in beforeContent area via ScenarioContent
+      return (
+        <AnalysisResultContent
+          analysisResult={result}
+          onTogglePromptSelection={onTogglePromptSelection}
+        />
+      );
     },
     [analysisResult],
   );
@@ -389,10 +396,7 @@ export function UsageSection({
           floatingLabel = 'Select prompts to send';
         }
       } else if (config.type === 'freeform') {
-        // Freeform card — no analysis needed, FAB shows immediately when expanded
-        showFloatingAction = isExpanded;
-        floatingLabel = 'Go to Sounds';
-        handleFloatingAction = () => onAdvanceToSounds(originalIndex, title);
+        showFloatingAction = false;
       }
 
       // Action button for text cards - draw area custom button
@@ -440,6 +444,8 @@ export function UsageSection({
       let actionButtonLabel = 'Generate Sound Prompts';
       if (config.type === 'scenario') {
         actionButtonLabel = 'Generate Scenario';
+      } else if (config.type === 'freeform') {
+        actionButtonLabel = 'Go to Sounds';
       }
 
       const card = (
@@ -473,7 +479,7 @@ export function UsageSection({
           onReset={() => onReset(originalIndex)}
           beforeContent={getBeforeContent(config, originalIndex)}
           afterContent={getAfterContent(config, originalIndex)}
-          onRun={async () => onRun(originalIndex)}
+          onRun={config.type === 'freeform' ? async () => onAdvanceToSounds(originalIndex, title) : async () => onRun(originalIndex)}
           onCancel={onStop}
           actionButtonLabel={actionButtonLabel}
           actionButtonDisabled={false}
@@ -545,10 +551,17 @@ export function UsageSection({
           handleReorderConfigs(fromOriginal, toOriginal);
         }
       }}
+      onDuplicate={(from, toInsertion) => {
+        const fromOriginal = indexMap[from];
+        const toOriginal = toInsertion < indexMap.length ? indexMap[toInsertion] : analysisConfigs.length;
+        if (fromOriginal !== undefined && toOriginal !== undefined) {
+          duplicateConfigAt(fromOriginal, toOriginal);
+        }
+      }}
       emptyAction={
         <button
           onClick={() => handleAddConfig('freeform')}
-          className="text-primary hover:underline cursor-pointer text-xs font-medium"
+          className="text-secondary bg-primary-hover hover:bg-primary cursor-pointer text-xs font-medium rounded px-1.5 py-0.5"
         >
           Skip usage
         </button>

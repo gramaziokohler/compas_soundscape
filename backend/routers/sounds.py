@@ -78,6 +78,7 @@ async def generate_sounds(request: SoundGenerationRequest):
             result_file=result_file,
             sound_configs=ml_configs,
             apply_denoising=request.apply_denoising,
+            trim_silence=request.trim_silence,
             audio_model=request.audio_model or DEFAULT_AUDIO_MODEL,
             base_spl_db=request.base_spl_db,
             output_dir=GENERATED_SOUNDS_DIR,
@@ -159,6 +160,7 @@ async def calibrate_audio(
     audio: UploadFile = File(...),
     spl_db: float = Form(DEFAULT_SPL_DB),
     apply_denoising: bool = Form(False),
+    trim_silence: bool = Form(False),
 ):
     """
     Normalize RMS + apply SPL calibration to any uploaded audio file.
@@ -180,6 +182,7 @@ async def calibrate_audio(
             output_path,
             target_spl_db=spl_db,
             apply_denoising=apply_denoising,
+            trim_silence=trim_silence,
         )
 
         return {"url": f"{GENERATED_SOUND_URL_PREFIX}/{filename}"}

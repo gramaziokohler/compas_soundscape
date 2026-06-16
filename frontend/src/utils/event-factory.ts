@@ -116,6 +116,14 @@ export function createSoundEventFromUpload(
     }),
     // Carry foley category through for DAW grouping
     ...(config.category ? { category: config.category } : {}),
+    // Background sounds: force interval mode (no timestamps, no timestamp scheduling)
+    ...((() => {
+      const normalized = (config.category || '').toLowerCase().replace(/[\s-]+/g, '_');
+      return normalized === 'background' || normalized === 'background_sound';
+    })() ? {
+      timestamps: undefined as any,
+      scheduling_mode: undefined as any,
+    } : {}),
   };
 }
 

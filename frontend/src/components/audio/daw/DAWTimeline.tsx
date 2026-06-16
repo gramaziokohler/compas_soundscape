@@ -11,6 +11,9 @@ import { DAWGroup } from './DAWGroup';
 import { DAWTrack } from './DAWTrack';
 import type { IterationContextMenuData } from './DAWIteration';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
+import { useSoundscapeStore } from '@/store/soundscapeStore';
+import { useSpeckleStore } from '@/store/speckleStore';
+import { useUIStore } from '@/store/uiStore';
 import { WAVESURFER_TIMELINE } from '@/utils/constants';
 import type { TimelineSound } from '@/types/audio';
 
@@ -19,8 +22,9 @@ import type { TimelineSound } from '@/types/audio';
  * ============================================================ */
 const LABEL_WIDTH = 120; // px — label gutter
 const PANEL_DEFAULT_WIDTH = 800;
-const PANEL_DEFAULT_HEIGHT = 340;
+const PANEL_MIN_HEIGHT = 200;
 const RULER_HEIGHT = 24; // px
+const GROUP_HEADER_HEIGHT = 22;
 
 /* ============================================================
  * Helper: format seconds → "M:SS"
@@ -94,42 +98,47 @@ function DAWRuler({
 
       {/* Tick marks */}
       <div style={{ position: 'relative', flex: 1 }}>
-        {ticks.map(({ x, label, isPrimary }) => (
-          <div
-            key={x}
-            style={{ position: 'absolute', left: `${x}px`, top: 0, height: '100%' }}
-          >
+        {ticks.map(({ x, label, isPrimary }, i) => {
+          const isLast = i === ticks.length - 1;
+          return (
             <div
-              style={{
-                position: 'absolute',
-                bottom: 0,
-                left: 0,
-                width: '1px',
-                height: isPrimary ? '100%' : '40%',
-                backgroundColor: isPrimary
-                  ? 'var(--color-secondary-hover)'
-                  : 'var(--color-secondary-light)',
-              }}
-            />
-            {isPrimary && (
-              <span
+              key={x}
+              style={{ position: 'absolute', left: `${x}px`, top: 0, height: '100%' }}
+            >
+              <div
                 style={{
                   position: 'absolute',
-                  top: '3px',
-                  left: '3px',
-                  fontSize: '9px',
-                  color: 'var(--color-secondary-hover)',
-                  fontFamily: 'monospace',
-                  lineHeight: 1,
-                  pointerEvents: 'none',
-                  whiteSpace: 'nowrap',
+                  bottom: 0,
+                  left: 0,
+                  width: '1px',
+                  height: isPrimary ? '100%' : '40%',
+                  backgroundColor: isPrimary
+                    ? 'var(--color-secondary-hover)'
+                    : 'var(--color-secondary-light)',
                 }}
-              >
-                {label}
-              </span>
-            )}
-          </div>
-        ))}
+              />
+              {isPrimary && (
+                <span
+                  style={{
+                    position: 'absolute',
+                    top: '3px',
+                    ...(isLast
+                      ? { right: '0px', textAlign: 'right' as const }
+                      : { left: '3px' }),
+                    fontSize: '9px',
+                    color: 'var(--color-secondary-hover)',
+                    fontFamily: 'monospace',
+                    lineHeight: 1,
+                    pointerEvents: 'none',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {label}
+                </span>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -185,12 +194,14 @@ export interface DAWTimelineProps {
   isAnyPlaying?: boolean;
   onSeek: (timeMs: number) => void;
   onRefresh?: () => void;
-  onDownload?: () => Promise<void>;
+  onDownload?: (format: import('@/lib/audio/SoundscapeExporter').ExportFormat) => Promise<void>;
   onPlay: () => void;
   onPause: () => void;
   onStop: () => void;
   onClose: () => void;
   onSelectSoundCard?: (promptIndex: number) => void;
+  /** Current IR channel count (0 if no IR active). Greys out incompatible download formats. */
+  originalIRChannelCount?: number;
 }
 
 /* ============================================================
@@ -208,6 +219,7 @@ export function DAWTimeline({
   onStop,
   onClose,
   onSelectSoundCard,
+  originalIRChannelCount,
 }: DAWTimelineProps) {
   /* ---- Store subscriptions ---- */
   const timelineDurationMs = useAudioControlsStore((s) => s.timelineDurationMs);
@@ -219,23 +231,46 @@ export function DAWTimeline({
   const handleMute = useAudioControlsStore((s) => s.handleMute);
   const handleSolo = useAudioControlsStore((s) => s.handleSolo);
 
+  const triggerZoomToSoundCard = useUIStore((s) => s.triggerZoomToSoundCard);
+
+  /* ---- Dynamic minimum panel height based on track count ---- */
+  const TRACK_HEIGHT_TOTAL = WAVESURFER_TIMELINE.TRACK_HEIGHT + WAVESURFER_TIMELINE.TRACK_SPACING;
+
+  const minPanelHeight = useMemo(() => {
+    const groups = new Set<string>();
+    for (const s of sounds) {
+      groups.add(s.soundGroup ?? 'sounds');
+    }
+    const groupCount = groups.size;
+    const trackCount = sounds.length;
+    const tracksContentHeight = groupCount * GROUP_HEADER_HEIGHT + trackCount * TRACK_HEIGHT_TOTAL;
+    return Math.max(PANEL_MIN_HEIGHT, 38 + RULER_HEIGHT + tracksContentHeight + 20 + 8);
+  }, [sounds]);
+
   /* ---- Panel drag/resize state ---- */
   const [panelPos, setPanelPos] = useState<{ x: number; y: number } | null>(null);
   const [panelSize, setPanelSize] = useState({
     width: PANEL_DEFAULT_WIDTH,
-    height: PANEL_DEFAULT_HEIGHT,
+    height: PANEL_MIN_HEIGHT,
   });
 
   // Initialise position on first render (centered at bottom of viewport)
   const panelRef = useRef<HTMLDivElement>(null);
+  const isInitialized = useRef(false);
   useEffect(() => {
-    if (panelPos !== null) return;
+    if (isInitialized.current) return;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
+    const totalDurationSec = timelineDurationMs / 1000;
+    const pxPerSec = WAVESURFER_TIMELINE.PIXELS_PER_SECOND;
+    const contentBasedWidth = LABEL_WIDTH + totalDurationSec * pxPerSec + 2; // +2px for panel borders
+    const panelWidth = Math.max(contentBasedWidth, PANEL_DEFAULT_WIDTH);
     setPanelPos({
-      x: Math.max(0, (vw - PANEL_DEFAULT_WIDTH) / 2),
-      y: Math.max(0, vh - PANEL_DEFAULT_HEIGHT - 20),
+      x: Math.max(0, vw/2 - panelWidth/2),
+      y: Math.max(0, vh - minPanelHeight - 20),
     });
+    setPanelSize({ width: panelWidth, height: minPanelHeight });
+    isInitialized.current = true;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -268,7 +303,14 @@ export function DAWTimeline({
   );
 
   /* ---- Resize handle ---- */
-  const resizeStartRef = useRef<{ mouseX: number; mouseY: number; w: number; h: number } | null>(null);
+  const resizeStartRef = useRef<{
+    mouseX: number;
+    mouseY: number;
+    w: number;
+    h: number;
+  } | null>(null);
+
+  const durationSecRef = useRef(0);
 
   const handleResizePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
@@ -281,11 +323,27 @@ export function DAWTimeline({
         h: panelSize.height,
       };
       const handleMove = (ev: PointerEvent) => {
-        if (!resizeStartRef.current) return;
-        setPanelSize({
-          width: Math.max(500, resizeStartRef.current.w + (ev.clientX - resizeStartRef.current.mouseX)),
-          height: Math.max(200, resizeStartRef.current.h + (ev.clientY - resizeStartRef.current.mouseY)),
-        });
+        const ref = resizeStartRef.current;
+        if (!ref) return;
+        const targetW = ref.w + (ev.clientX - ref.mouseX);
+        const clampedW = Math.max(500, targetW);
+        const curPps = pxPerSecondRef.current;
+        const durSec = durationSecRef.current;
+        const maxContentW = LABEL_WIDTH + durSec * curPps;
+        if (clampedW > maxContentW && clampedW - LABEL_WIDTH > 0) {
+          const newPps = Math.max(1, Math.min(200, (clampedW - LABEL_WIDTH) / durSec));
+          pxPerSecondRef.current = newPps;
+          setPxPerSecond(newPps);
+          setPanelSize((prev) => ({
+            width: clampedW,
+            height: Math.max(100, ref.h + (ev.clientY - ref.mouseY)),
+          }));
+        } else {
+          setPanelSize((prev) => ({
+            width: Math.min(clampedW, maxContentW),
+            height: Math.max(100, ref.h + (ev.clientY - ref.mouseY)),
+          }));
+        }
       };
       const handleUp = () => {
         resizeStartRef.current = null;
@@ -300,15 +358,41 @@ export function DAWTimeline({
 
   /* ---- Zoom (Ctrl+wheel) ---- */
   const [pxPerSecond, setPxPerSecond] = useState<number>(WAVESURFER_TIMELINE.PIXELS_PER_SECOND);
+  const pxPerSecondRef = useRef(pxPerSecond);
+  pxPerSecondRef.current = pxPerSecond;
+
+  /* ---- Store: iteration links ---- */
+  const iterationLinks = useAudioControlsStore((s) => s.iterationLinks);
+  const setIterationLink = useAudioControlsStore((s) => s.setIterationLink);
+  const clearIterationLink = useAudioControlsStore((s) => s.clearIterationLink);
+
+  /* ---- Store: generated sounds (for variant submenu) ---- */
+  const generatedSounds = useSoundscapeStore((s) => s.generatedSounds);
+
+  /* ---- Store: sound configs (to resolve entity positions) ---- */
+  const soundConfigs = useSoundscapeStore((s) => s.soundConfigs);
+
+  /* ---- Store: object→sound links (for entity submenu) ---- */
+  const objectSoundLinks = useSpeckleStore((s) => s.objectSoundLinks);
 
   /* ---- Context menu ---- */
   const [contextMenu, setContextMenu] = useState<{
-    x: number; y: number; soundId: string; iterationIndex: number;
+    x: number;
+    y: number;
+    soundId: string;
+    iterationIndex: number;
+    submenuOpen: 'variants' | 'entities' | null;
   } | null>(null);
 
   const handleIterationContextMenu = useCallback(
     (soundId: string, data: IterationContextMenuData) => {
-      setContextMenu({ x: data.x, y: data.y, soundId, iterationIndex: data.iterationIndex });
+      setContextMenu({
+        x: data.x,
+        y: data.y,
+        soundId,
+        iterationIndex: data.iterationIndex,
+        submenuOpen: null,
+      });
     },
     [],
   );
@@ -323,6 +407,7 @@ export function DAWTimeline({
 
   /* ---- Derived dimensions ---- */
   const totalDurationSec = timelineDurationMs / 1000;
+  durationSecRef.current = totalDurationSec;
   const contentWidth = totalDurationSec * pxPerSecond;
 
   /* ---- Cursor position ---- */
@@ -341,20 +426,46 @@ export function DAWTimeline({
     }
   }, [currentTime, isPlaying, pxPerSecond]);
 
-  /* ---- Ctrl+wheel zoom on scroll container ---- */
+  /* ---- Ctrl+wheel zoom ---- */
+  // Registered on `document` (non-passive) so browsers can't intercept ctrl+wheel for
+  // their own page-zoom before we do. We bail out if the event doesn't originate inside
+  // our panel.
   useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
     const handleWheel = (e: WheelEvent) => {
       if (!e.ctrlKey && !e.metaKey) return;
+      const panel = panelRef.current;
+      if (!panel || !panel.contains(e.target as Node)) return;
       e.preventDefault();
-      setPxPerSecond((prev) =>
-        Math.max(1, Math.min(80, prev * (e.deltaY < 0 ? 1.15 : 0.87))),
-      );
+      const container = scrollContainerRef.current;
+      // Capture scroll state before the async state update
+      const scrollLeft = container?.scrollLeft ?? 0;
+      const containerLeft = container?.getBoundingClientRect().left ?? 0;
+      const cursorOffset = e.clientX - containerLeft - LABEL_WIDTH;
+      const factor = e.deltaY < 0 ? 1.15 : 0.87;
+      setPxPerSecond((prev) => {
+        const next = Math.max(1, Math.min(200, prev * factor));
+        if (container && prev > 0) {
+          // Keep the time point under the cursor stationary
+          const timeAtCursor = (scrollLeft + cursorOffset) / prev;
+          requestAnimationFrame(() => {
+            container.scrollLeft = timeAtCursor * next - cursorOffset;
+          });
+        }
+        return next;
+      });
     };
-    container.addEventListener('wheel', handleWheel, { passive: false });
-    return () => container.removeEventListener('wheel', handleWheel);
+    document.addEventListener('wheel', handleWheel, { passive: false });
+    return () => document.removeEventListener('wheel', handleWheel);
   }, []);
+
+  // Auto-shrink panel width when zoom-out makes content narrower than panel
+  useEffect(() => {
+    const maxW = LABEL_WIDTH + totalDurationSec * pxPerSecond + 2; // +2px for panel borders
+    if (panelSize.width > maxW) {
+      setPanelSize((prev) => ({ ...prev, width: maxW }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pxPerSecond, totalDurationSec]);
 
   /* ---- Group sounds by soundGroup ---- */
   const GROUP_ORDER = ['background', 'sound_event', 'speech'];
@@ -420,10 +531,13 @@ export function DAWTimeline({
 
   /* ---- Download handler ---- */
   const [isDownloading, setIsDownloading] = useState(false);
-  const handleDownload = useCallback(async () => {
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
+
+  const handleDownload = useCallback(async (format: import('@/lib/audio/SoundscapeExporter').ExportFormat) => {
     if (!onDownload) return;
     setIsDownloading(true);
-    try { await onDownload(); } finally { setIsDownloading(false); }
+    setDownloadMenuOpen(false);
+    try { await onDownload(format); } finally { setIsDownloading(false); }
   }, [onDownload]);
 
   if (panelPos === null) return null; // Wait for position init
@@ -478,7 +592,7 @@ export function DAWTimeline({
             flexShrink: 0,
           }}
         >
-          DAW Timeline
+          Timeline
         </span>
 
         {/* Spacer */}
@@ -553,28 +667,83 @@ export function DAWTimeline({
             </button>
           )}
 
-          {/* Download */}
+          {/* Download dropdown */}
           {onDownload && (
-            <button
-              onClick={handleDownload}
-              disabled={isDownloading}
-              title="Download timeline mix"
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: isDownloading ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.5)',
-                cursor: isDownloading ? 'wait' : 'pointer',
-                padding: '4px',
-                borderRadius: '4px',
-                display: 'flex',
-                alignItems: 'center',
-              }}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
-            </button>
+            <div style={{ position: 'relative' }}>
+              <button
+                onClick={() => setDownloadMenuOpen((prev) => !prev)}
+                disabled={isDownloading}
+                title="Download timeline mix"
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: isDownloading ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.5)',
+                  cursor: isDownloading ? 'wait' : 'pointer',
+                  padding: '4px',
+                  borderRadius: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+              </button>
+              {downloadMenuOpen && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    right: 0,
+                    top: '100%',
+                    backgroundColor: 'var(--background)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    borderRadius: '6px',
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+                    padding: '4px 0',
+                    zIndex: 9999,
+                    width: 'fit-content',
+                    marginTop: '4px',
+                  }}
+                  onMouseLeave={() => setDownloadMenuOpen(false)}
+                >
+                  {(() => {
+                    const irChan = originalIRChannelCount ?? 0;
+                    // No IR (Anechoic): all formats available. With IR: cap at IR's ambisonic order.
+                    const maxOrder = irChan > 0 ? Math.floor(Math.sqrt(irChan)) - 1 : 3;
+
+                    const formats = [
+                      { fmt: 'mono' as const, label: 'Mono', desc: 'W channel from ambisonic mix at camera position (24-bit)', minOrder: 0 },
+                      { fmt: 'binaural' as const, label: 'Binaural', desc: 'HRTF spatialized binaural decoding at camera position (2ch, 24-bit)', minOrder: 1 },
+                      { fmt: 'foa' as const, label: '1st Order Ambisonics', desc: 'Raw B-format ACN FOA at camera position (4ch, 24-bit)', minOrder: 1 },
+                      { fmt: 'toa' as const, label: '3rd Order Ambisonics', desc: 'Raw B-format ACN TOA at camera position (16ch, 24-bit)', minOrder: 3 },
+                    ] as const;
+
+                    return formats.map(({ fmt, label, desc, minOrder }) => {
+                      const disabled = minOrder > maxOrder;
+                      return (
+                        <div
+                          key={fmt}
+                          onClick={disabled ? undefined : () => handleDownload(fmt)}
+                          title={desc}
+                          style={{
+                            padding: '6px 12px',
+                            cursor: disabled ? 'not-allowed' : 'pointer',
+                            whiteSpace: 'nowrap',
+                            fontSize: '11px',
+                            color: disabled ? 'rgba(255,255,255,0.2)' : 'var(--foreground)',
+                          }}
+                          onMouseEnter={disabled ? undefined : (e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.07)')}
+                          onMouseLeave={disabled ? undefined : (e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                        >
+                          <div style={{ fontWeight: 500 }}>{label}</div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              )}
+            </div>
           )}
 
           {/* Close */}
@@ -648,6 +817,11 @@ export function DAWTimeline({
                       ? () => onSelectSoundCard(sound.promptIndex!)
                       : undefined
                   }
+                  onDoubleClickSoundCard={
+                    sound.promptIndex !== undefined
+                      ? () => triggerZoomToSoundCard(sound.promptIndex!)
+                      : undefined
+                  }
                   onIterationContextMenu={(data) => handleIterationContextMenu(sound.id, data)}
                 />
               ))}
@@ -673,61 +847,295 @@ export function DAWTimeline({
       </div>
 
       {/* ============================================
+          Keyboard / mouse shortcut hints (footer row)
+          ============================================ */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'left-align',
+          gap: '14px',
+          paddingLeft: 10,
+          paddingRight: 20,
+          height: '20px',
+          flexShrink: 0,
+          backgroundColor: 'var(--background)',
+          pointerEvents: 'none',
+        }}
+      >
+        {(
+          [
+            [ 'Zoom', 'Ctrl + Scroll'],
+            ['Pan','Shift + Scroll'],
+            ['Duplicate','Alt + Drag (in unlocked mode only)'],
+            ['Options', 'Right-click'],
+          ] as [string, string][]
+        ).map(([key, desc]) => (
+          <span
+            key={key}
+            style={{
+              fontSize: '9px',
+              color: 'var(--color-secondary-hover)',
+              whiteSpace: 'nowrap',
+              opacity: 0.65,
+            }}
+          >
+            <span style={{ fontWeight: 600 }}>{key}</span>
+            {' : '}
+            {desc}
+          </span>
+        ))}
+      </div>
+
+      {/* ============================================
           Iteration context menu
           ============================================ */}
-      {contextMenu && (
-        <div
-          onPointerDown={(e) => e.stopPropagation()}
-          style={{
-            position: 'fixed',
-            left: `${contextMenu.x}px`,
-            top: `${contextMenu.y}px`,
-            zIndex: 9999,
-            backgroundColor: 'var(--background)',
-            border: '1px solid rgba(255,255,255,0.15)',
-            borderRadius: '6px',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
-            minWidth: '140px',
-            padding: '4px 0',
-            fontSize: '11px',
-          }}
-        >
-          {/* Linked entities */}
+      {contextMenu && (() => {
+        const { soundId, iterationIndex, submenuOpen } = contextMenu;
+        const linkKey = `${soundId}-${iterationIndex}`;
+        const currentLink = iterationLinks[linkKey] ?? {};
+
+        // Derive promptIndex for this sound from the timeline sounds list
+        const timelineSound = sounds.find((s) => s.id === soundId);
+        const promptIndex = timelineSound?.promptIndex;
+
+        // Variants for this promptIndex
+        const variants = promptIndex !== undefined
+          ? generatedSounds.filter((s: any) => s.prompt_index === promptIndex)
+          : [];
+
+        // Entities linked to this promptIndex
+        const linkedEntities: string[] = promptIndex !== undefined
+          ? [...objectSoundLinks.entries()]
+              .filter(([, pi]) => pi === promptIndex)
+              .map(([objectId]) => objectId)
+          : [];
+
+        const MENU_WIDTH = 150;
+        const SUBMENU_WIDTH = 160;
+
+        return (
           <div
+            onPointerDown={(e) => e.stopPropagation()}
             style={{
-              padding: '6px 12px',
-              cursor: 'default',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              color: 'var(--foreground)',
-              opacity: 0.8,
+              position: 'fixed',
+              left: `${contextMenu.x}px`,
+              top: `${contextMenu.y}px`,
+              zIndex: 9999,
+              backgroundColor: 'var(--background)',
+              border: '1px solid rgba(255,255,255,0.15)',
+              borderRadius: '6px',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+              width: `${MENU_WIDTH}px`,
+              padding: '4px 0',
+              fontSize: '11px',
             }}
-            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.07)')}
-            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
           >
-            <span>Linked entities</span>
-            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6"/></svg>
+            {/* ── Variants item — only when multiple variants exist ── */}
+            {variants.length > 1 && (
+            <div
+              style={{
+                padding: '6px 12px',
+                cursor: 'pointer',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                color: 'var(--foreground)',
+                position: 'relative',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.07)';
+                setContextMenu((prev) => prev ? { ...prev, submenuOpen: 'variants' } : prev);
+              }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+            >
+              <span>Variants</span>
+              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M9 18l6-6-6-6"/>
+              </svg>
+
+              {/* Variants submenu */}
+              {submenuOpen === 'variants' && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: `${MENU_WIDTH - 2}px`,
+                    top: 0,
+                    width: 80,
+                    backgroundColor: 'var(--background)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    borderRadius: '6px',
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+                    padding: '4px 0',
+                    zIndex: 10000,
+                  }}
+                >
+                  {variants.map((v: any, vi: number) => {
+                    const letter = String.fromCharCode(65 + vi);
+                    const isActive = currentLink.variantIndex === vi;
+                    return (
+                      <div
+                        key={v.id}
+                        style={{
+                          padding: '5px 12px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          color: 'var(--foreground)',
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.07)')}
+                        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                        onClick={() => {
+                          setIterationLink(soundId, iterationIndex, { variantIndex: vi });
+                          setContextMenu(null);
+                        }}
+                      >
+                        <span style={{ width: 10, flexShrink: 0, color: 'var(--color-primary)', fontSize: '10px' }}>
+                          {isActive ? '✓' : ''}
+                        </span>
+                        <span
+                          style={{
+                            fontFamily: 'monospace',
+                            fontWeight: 600,
+                            fontSize: '11px',
+                          }}
+                        >
+                          {letter}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            )}
+
+            {/* ── Empty state: no variants or linked entities ── */}
+            {variants.length <= 1 && linkedEntities.length === 0 && (
+              <div
+                style={{
+                  padding: '8px 12px',
+                  color: 'rgba(255,255,255,0.35)',
+                  fontStyle: 'italic',
+                  cursor: 'default',
+                  textAlign: 'center',
+                }}
+              >
+                No variants or linked objects
+              </div>
+            )}
+
+            {/* ── Linked entities item — only when entities exist ── */}
+            {linkedEntities.length > 0 && (
+            <div
+              style={{
+                padding: '6px 12px',
+                cursor: 'pointer',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                color: 'var(--foreground)',
+                position: 'relative',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.07)';
+                setContextMenu((prev) => prev ? { ...prev, submenuOpen: 'entities' } : prev);
+              }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+            >
+              <span>Linked entities</span>
+              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M9 18l6-6-6-6"/>
+              </svg>
+
+              {/* Entities submenu */}
+              {submenuOpen === 'entities' && (() => {
+                  // Build entity-id → index-in-entities-array map for consistent numbering
+                  const configEntities = promptIndex !== undefined ? soundConfigs[promptIndex]?.entities ?? [] : [];
+                  const entityIdxMap = new Map<string, number>();
+                  configEntities.forEach((e: any, ei: number) => {
+                    const eid = e.nodeId || e.id;
+                    if (eid) entityIdxMap.set(eid, ei);
+                  });
+                  return (
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: `${MENU_WIDTH - 2}px`,
+                    top: 0,
+                    width: 80,
+                    backgroundColor: 'var(--background)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    borderRadius: '6px',
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+                    padding: '4px 0',
+                    zIndex: 10000,
+                  }}
+                >
+                    {linkedEntities.map((entityId) => {
+                      const isActive = currentLink.entityNodeId === entityId;
+                      const entityArrayIdx = entityIdxMap.get(entityId);
+                      const displayNumber = entityArrayIdx !== undefined ? entityArrayIdx + 1 : 1;
+                      return (
+                        <div
+                          key={entityId}
+                          style={{
+                            padding: '5px 12px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            color: 'var(--foreground)',
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.07)')}
+                          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                          onClick={() => {
+                            if (isActive) {
+                              clearIterationLink(soundId, iterationIndex);
+                              setContextMenu(null);
+                              return;
+                            }
+                            let entityPosition: [number, number, number] | undefined;
+                            if (promptIndex !== undefined) {
+                              const config = soundConfigs[promptIndex];
+                              const entity = config?.entities?.find((e: any) =>
+                                (e.nodeId || e.id) === entityId
+                              );
+                              if (entity) {
+                                entityPosition = entity.bounds?.center
+                                  ? [entity.bounds.center[0], entity.bounds.center[1], entity.bounds.center[2]]
+                                  : entity.position && entity.position.length >= 3
+                                    ? [entity.position[0], entity.position[1], entity.position[2]]
+                                    : undefined;
+                              }
+                            }
+                            setIterationLink(soundId, iterationIndex, { entityNodeId: entityId, entityPosition, entityIndex: entityArrayIdx });
+                            setContextMenu(null);
+                          }}
+                        >
+                        <span style={{ width: 10, flexShrink: 0, color: 'var(--color-primary)', fontSize: '10px' }}>
+                          {isActive ? '✓' : ''}
+                        </span>
+                        <span
+                          style={{
+                            fontFamily: 'monospace',
+                            fontWeight: 600,
+                            fontSize: '11px',
+                          }}
+                        >
+                          {displayNumber}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                  );
+              })()}
+            </div>
+            )}
           </div>
-          {/* Variants */}
-          <div
-            style={{
-              padding: '6px 12px',
-              cursor: 'default',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              color: 'var(--foreground)',
-              opacity: 0.8,
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.07)')}
-            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-          >
-            <span>Variants</span>
-            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6"/></svg>
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ============================================
           Resize handle (bottom-right corner)

@@ -65,6 +65,22 @@ export interface WAVParseResult {
 }
 
 /**
+ * Iteration Link
+ * Per-iteration override: which variant and/or which Speckle entity drives this block.
+ * Key in the store is `${soundId}-${iterationIndex}`.
+ */
+export interface IterationLink {
+  /** Zero-based index of the variant override for this iteration. */
+  variantIndex?: number;
+  /** Speckle object/node ID linked to this iteration. */
+  entityNodeId?: string;
+  /** Resolved position of the linked entity (for per-iteration spatial playback). */
+  entityPosition?: [number, number, number];
+  /** Zero-based index in the sound config's entities array (for consistent numbering). */
+  entityIndex?: number;
+}
+
+/**
  * Timeline Types
  */
 

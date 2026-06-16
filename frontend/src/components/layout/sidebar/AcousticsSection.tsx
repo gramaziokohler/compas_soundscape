@@ -190,6 +190,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
   const { getViewerRef, clearMaterialColors, filteringEnabled, viewMode, setViewMode, worldTreeVersion } = useSpeckleStore();
   const handleReorderSimulationConfigs = useAcousticsSimulationStore((s) => s.handleReorderConfigs);
+  const duplicateConfigAt = useAcousticsSimulationStore((s) => s.duplicateConfigAt);
   const viewerRef = useMemo<{ current: any }>(() => ({ get current() { return getViewerRef(); } }), [getViewerRef]);
 
   // Read listeners/receivers from global store (no longer passed as props)
@@ -1444,6 +1445,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
           expandedIndex={expandedCardIndex}
           onExpandedIndexChange={handleExpandedIndexChange}
           onReorder={handleReorderSimulationConfigs}
+          onDuplicate={(from, toInsertion) => {
+            duplicateConfigAt(from, toInsertion);
+          }}
         />
      </div>
 

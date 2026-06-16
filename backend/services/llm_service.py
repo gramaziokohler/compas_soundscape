@@ -1045,6 +1045,8 @@ For the duration estimation (in seconds with 0.1 precision):
                 tok = re.sub(r'^[`\'"*\[\]\s]+|[`\'"*\[\]\s]+$', '', tok)
                 if not tok:
                     continue
+                # Strip any id: / ids: prefix the LLM may have hallucinated
+                tok = re.sub(r'^(?:ids?:)?\s*(?:id:)?\s*', '', tok, count=1)
                 # Keep only tokens that look like a Speckle ID (hex ≥20 chars)
                 # or a plain/bracket integer (handled later by _resolve_object_ids)
                 if re.fullmatch(r'[0-9a-fA-F]{20,}', tok) or re.fullmatch(r'\d+', tok):
@@ -1145,6 +1147,12 @@ For the duration estimation (in seconds with 0.1 precision):
         - ``(aaa..., bbb..., ccc...)``              → ``(id:aaa..., id:bbb..., id:ccc...)``
         """
         HEX = r'[0-9a-f]{24,64}'
+        # Normalize dot-separated object refs: ObjectName.hexid → ObjectName (id:hexid)
+        text = re.sub(
+            r'\b([A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+)*)\.(' + HEX + r')\b',
+            r'\1 (id:\2)',
+            text,
+        )
         # Expand range with id: prefix on the first ID: (id:HEX to HEX)
         text = re.sub(
             rf'\(id:({HEX})\s+to\s+({HEX})\)',
@@ -1157,11 +1165,22 @@ For the duration estimation (in seconds with 0.1 precision):
             r'(id:\1) to (id:\2)',
             text,
         )
-        # Normalise all bare hex IDs inside parentheses to id:hexid format.
-        # Handles singles, comma-separated lists, and mixed (id:HEX, HEX, HEX).
+        # Normalise all hex IDs inside parentheses to id:hexid format.
+        # Handles singles, comma-separated lists, mixed (id:HEX, HEX, HEX),
+        # and doubled prefixes the LLM sometimes produces (ids:id:HEX).
         def _prefix_bare_ids(m: re.Match) -> str:
             inner = m.group(1)
-            inner = re.sub(r'(?<!\bid:)(' + HEX + ')', r'id:\1', inner)
+            # Skip parenthesized groups that contain no hex IDs
+            # (e.g. descriptive qualifiers like "Chair (EmbruHassenpflug Style)")
+            if not re.search(HEX, inner):
+                return '(' + inner + ')'
+            # Fix doubled prefix: ids:id: -> id: (LLM hallucinated "{prompt's ids:}{its own id:}")
+            inner = re.sub(r'\bids:\s*id:', 'id:', inner)
+            # Fix bare ids: prefix -> id: (prompt instruction says "(ids:...)" )
+            inner = re.sub(r'\bids:\s*', 'id:', inner)
+            # Normalise every hex ID to id:HEX regardless of existing prefix.
+            # (?:id:\s*)? consumes optional id: prefix; always outputs id:HEX.
+            inner = re.sub(r'(?:id:\s*)?(' + HEX + ')', r'id:\1', inner)
             return '(' + inner + ')'
         text = re.sub(r'\(([^)]+)\)', _prefix_bare_ids, text)
         return text

@@ -6,6 +6,7 @@ import { computeInitialDelay } from "@/lib/audio/utils/timeline-utils";
 import type { SoundState } from "@/types";
 import type { SoundMetadata, TimelineSound } from "@/types/audio";
 import { useAudioControlsStore } from "@/store/audioControlsStore";
+import * as THREE from 'three';
 
 /**
  * PlaybackSchedulerService
@@ -40,12 +41,6 @@ export class PlaybackSchedulerService {
   constructor(audioOrchestrator?: AudioOrchestrator | null, audioContext?: AudioContext | null) {
     this.audioOrchestrator = audioOrchestrator || null;
     this.audioContext = audioContext || null;
-
-    console.log('[PlaybackSchedulerService] 🎬 Constructed with:', {
-      hasOrchestrator: !!audioOrchestrator,
-      hasContext: !!audioContext,
-      orchestratorType: audioOrchestrator?.constructor.name
-    });
   }
 
   /**
@@ -62,27 +57,20 @@ export class PlaybackSchedulerService {
     // CRITICAL: Resume audio context if suspended (required for playback to start)
     // This must happen BEFORE scheduling sounds, otherwise they won't play
     // MUST AWAIT to ensure context is ready before sounds are scheduled
-    console.log('[PlaybackScheduler] 🔍 Audio context state:', this.audioContext?.state, 'Has context:', !!this.audioContext);
 
     if (this.audioContext && this.audioContext.state === 'suspended') {
-      console.log('[PlaybackScheduler] ⚠️ Audio context suspended - resuming...');
       try {
         await this.audioContext.resume();
-        console.log('[PlaybackScheduler] ✅ Audio context resumed - ready to play');
       } catch (error) {
-        console.error('[PlaybackScheduler] ❌ Failed to resume audio context:', error);
+        console.error('[PlaybackScheduler] Failed to resume audio context:', error);
         return; // Don't schedule sounds if resume failed
       }
     } else if (this.audioContext && this.audioContext.state !== 'running') {
-      console.warn('[PlaybackScheduler] ⚠️ Audio context state is:', this.audioContext.state, '- attempting resume anyway');
       try {
         await this.audioContext.resume();
-        console.log('[PlaybackScheduler] ✅ Audio context resumed from state:', this.audioContext.state);
       } catch (error) {
-        console.error('[PlaybackScheduler] ❌ Failed to resume audio context:', error);
+        console.error('[PlaybackScheduler] Failed to resume audio context:', error);
       }
-    } else {
-      console.log('[PlaybackScheduler] ℹ️ Audio context already running or no context available');
     }
 
     const prevStates = this.prevIndividualSoundStates;
@@ -137,10 +125,7 @@ export class PlaybackSchedulerService {
         return;
       }
 
-      console.log(`[PlaybackScheduler] ${displayName}: Processing - stateChanged=${stateChanged}, intervalChanged=${intervalChanged}`);
-
       if (!metadata.buffer) {
-        console.log(`[PlaybackScheduler] ${displayName}: ❌ No buffer`);
         return;
       }
 
@@ -175,7 +160,6 @@ export class PlaybackSchedulerService {
 
               if (ts?.schedulingMode === 'timestamps' && ts.scheduledIterations.length > 0) {
                 scheduler.scheduleSoundAtTimestamps(soundId, metadata, ts.scheduledIterations, 0);
-                console.log(`[PlaybackScheduler] ✅ Scheduled "${displayName}" via timestamps (${ts.scheduledIterations.length} events)`);
               } else {
                 if (ts && ts.initialDelayMs !== undefined) {
                   initialDelayMs = ts.initialDelayMs;
@@ -184,11 +168,9 @@ export class PlaybackSchedulerService {
 
                 if (!timelineSounds && this.isPlayAll) {
                   initialDelayMs = computeInitialDelay(soundId, jitterMs);
-                  console.log(`[PlaybackScheduler] 🎭 Play All - "${displayName}" start in ${(initialDelayMs / 1000).toFixed(1)}s`);
                 }
 
                 scheduler.scheduleSound(soundId, metadata, intervalSeconds, initialDelayMs, iterationOffsets);
-                console.log(`[PlaybackScheduler] ✅ Scheduled "${displayName}" interval=${intervalSeconds}s delay=${(initialDelayMs / 1000).toFixed(1)}s`);
               }
             }
             break;
@@ -212,7 +194,6 @@ export class PlaybackSchedulerService {
             if (pauseSeekTimer) {
               clearTimeout(pauseSeekTimer);
               this.seekTimers.delete(soundId);
-              console.log(`[PlaybackScheduler] Cleared seek timer for ${displayName} (paused)`);
             }
             break;
 
@@ -225,7 +206,6 @@ export class PlaybackSchedulerService {
             if (this.audioOrchestrator) {
               try {
                 this.audioOrchestrator.stopSource(soundId);
-                console.log(`[PlaybackScheduler] Stopped orchestrator source for ${displayName}`);
               } catch (error) {
                 console.warn(`[PlaybackScheduler] Failed to stop source ${soundId}:`, error);
               }
@@ -237,7 +217,6 @@ export class PlaybackSchedulerService {
             if (seekTimer) {
               clearTimeout(seekTimer);
               this.seekTimers.delete(soundId);
-              console.log(`[PlaybackScheduler] Cleared seek timer for ${displayName}`);
             }
             break;
         }
@@ -266,8 +245,6 @@ export class PlaybackSchedulerService {
    * Called when variants change or when stopping all playback
    */
   public async stopAllSounds(): Promise<void> {
-    console.log('[PlaybackScheduler] STOP ALL - Emergency kill activated');
-
     // CRITICAL: Clear seek timers FIRST to prevent delayed playback
     // This prevents the bug where sounds restart after being stopped
     this.seekTimers.forEach((timer) => {
@@ -278,7 +255,6 @@ export class PlaybackSchedulerService {
     // CRITICAL: Stop all sources through the orchestrator FIRST
     // This ensures the actual audio buffers are stopped immediately
     if (this.audioOrchestrator) {
-      console.log('[PlaybackScheduler] Stopping all orchestrator sources');
       this.audioOrchestrator.stopAllSources();
     }
 
@@ -302,8 +278,6 @@ export class PlaybackSchedulerService {
     // Restore audio system (ready for next play)
     // MUST await to ensure audio context is resumed before next playback
     await restoreAudioAfterKill(this.audioContext);
-
-    console.log('[PlaybackScheduler] STOP ALL - Complete');
   }
 
   /**
@@ -349,8 +323,6 @@ export class PlaybackSchedulerService {
     soundIntervals: { [key: string]: number },
     timelineSounds?: TimelineSound[]
   ): Promise<void> {
-
-    console.log('[PlaybackScheduler] 🔄 SEEK - Nuclear cleanup started');
 
     // NUCLEAR STEP 1: Clear ALL seek timers
     this.seekTimers.forEach((timer) => {
@@ -418,6 +390,8 @@ export class PlaybackSchedulerService {
       let nextIterationDelayMs = 0;
       let isWithinSound = false;
       let iterationOffsets: number[] | undefined = undefined;
+      // Track the active iteration index so we can apply per-iteration position on seek.
+      let seekIterIdx = 0;
 
       const ts = timelineSounds?.find(t => t.id === soundId);
       if (ts && ts.scheduledIterations && ts.scheduledIterations.length > 0) {
@@ -425,10 +399,9 @@ export class PlaybackSchedulerService {
 
         let activeIterIndex = -1;
         let actualIterationStart = 0;
-        const initialDelay = ts.initialDelayMs || 0;
 
         for (let i = 0; i < ts.scheduledIterations.length; i++) {
-          const iterVisualStart = initialDelay + ts.scheduledIterations[i];
+          const iterVisualStart = ts.scheduledIterations[i];
           if (iterVisualStart <= seekTimeMs) {
             activeIterIndex = i;
             actualIterationStart = iterVisualStart;
@@ -440,10 +413,11 @@ export class PlaybackSchedulerService {
         if (activeIterIndex >= 0) {
           timeIntoIteration = seekTimeMs - actualIterationStart;
           isWithinSound = timeIntoIteration < ts.soundDurationMs;
+          seekIterIdx = activeIterIndex;
 
           if (!isWithinSound) {
             if (activeIterIndex + 1 < ts.scheduledIterations.length) {
-              const nextIterVisualStart = initialDelay + ts.scheduledIterations[activeIterIndex + 1];
+              const nextIterVisualStart = ts.scheduledIterations[activeIterIndex + 1];
               nextIterationDelayMs = nextIterVisualStart - seekTimeMs;
             } else {
               nextIterationDelayMs = totalIntervalMs - timeIntoIteration;
@@ -462,7 +436,7 @@ export class PlaybackSchedulerService {
           });
         } else {
           isWithinSound = false;
-          const firstIterVisualStart = initialDelay + ts.scheduledIterations[0];
+          const firstIterVisualStart = ts.scheduledIterations[0];
           nextIterationDelayMs = firstIterVisualStart - seekTimeMs;
 
           scheduler.getScheduledSounds().set(soundId, {
@@ -485,6 +459,7 @@ export class PlaybackSchedulerService {
 
         timeIntoIteration = seekTimeMs - iterationStartTime;
         isWithinSound = timeIntoIteration < soundDurationMs;
+        seekIterIdx = iterationIndex;
         if (!isWithinSound) {
           nextIterationDelayMs = totalIntervalMs - timeIntoIteration;
         }
@@ -497,22 +472,37 @@ export class PlaybackSchedulerService {
 
         if (this.audioOrchestrator) {
           try {
+            // Apply per-iteration entity position before resuming playback after seek.
+            // This mirrors the same logic in AudioScheduler.triggerPlayback.
+            const { iterationLinks } = useAudioControlsStore.getState();
+            const seekLink = iterationLinks[`${soundId}-${seekIterIdx}`];
+            if (seekLink?.entityPosition) {
+              const pos = seekLink.entityPosition;
+              this.audioOrchestrator.updateSourcePosition(
+                soundId,
+                new THREE.Vector3(pos[0], pos[1], pos[2]),
+              );
+            } else if (metadata.position) {
+              this.audioOrchestrator.updateSourcePosition(
+                soundId,
+                new THREE.Vector3(metadata.position.x, metadata.position.y, metadata.position.z),
+              );
+            }
+
             this.audioOrchestrator.playSource(soundId, false, offsetSeconds, trimDurationSec !== undefined ? trimDurationSec - (timeIntoIteration / 1000) : undefined);
-            console.log(`[PlaybackScheduler] ✅ Playing "${displayName}" via orchestrator from offset ${offsetSeconds.toFixed(2)}s`);
           } catch (error) {
             console.warn(`[PlaybackScheduler] ❌ Orchestrator playback failed for "${displayName}":`, error);
           }
-        } else {
-          console.error(`[PlaybackScheduler] ❌ No orchestrator available for "${displayName}"`);
-        }
+          } else {
+            console.error(`[PlaybackScheduler] No orchestrator available for "${displayName}"`);
+          }
 
         let preciseDelayUntilNextStart = 0;
         let currentIteration = 0;
 
         if (ts && ts.scheduledIterations) {
-           const initialDelay = ts.initialDelayMs || 0;
            for (let i = 0; i < ts.scheduledIterations.length; i++) {
-             if (initialDelay + ts.scheduledIterations[i] <= seekTimeMs) {
+             if (ts.scheduledIterations[i] <= seekTimeMs) {
                currentIteration = i + 1;
              } else {
                break;
@@ -520,7 +510,7 @@ export class PlaybackSchedulerService {
            }
 
            if (ts.scheduledIterations.length > currentIteration) {
-             const nextVisualStart = initialDelay + ts.scheduledIterations[currentIteration];
+             const nextVisualStart = ts.scheduledIterations[currentIteration];
              if (nextVisualStart > seekTimeMs) {
                preciseDelayUntilNextStart = nextVisualStart - seekTimeMs;
              } else {
@@ -545,7 +535,6 @@ export class PlaybackSchedulerService {
           const timer = setTimeout(() => {
             const currentScheduler = this.audioSchedulers.get(soundId);
             if (!currentScheduler) {
-              console.log(`[PlaybackScheduler] ⏹️ Skipping seek timer - scheduler disposed`);
               return;
             }
 
@@ -561,14 +550,13 @@ export class PlaybackSchedulerService {
 
         let gapIter = 0;
         if (ts && ts.scheduledIterations) {
-           const initialDelay = ts.initialDelayMs || 0;
            for (let i = 0; i < ts.scheduledIterations.length; i++) {
-             if (initialDelay + ts.scheduledIterations[i] > seekTimeMs) {
+             if (ts.scheduledIterations[i] > seekTimeMs) {
                gapIter = i;
                break;
              }
            }
-           if (gapIter >= ts.scheduledIterations.length || (gapIter === 0 && initialDelay + ts.scheduledIterations[0] <= seekTimeMs)) {
+           if (gapIter >= ts.scheduledIterations.length || (gapIter === 0 && ts.scheduledIterations[0] <= seekTimeMs)) {
              seekResults[displayName] = `🛑 PAST VISUAL DURATION; stopping`;
              return;
            }
@@ -584,7 +572,5 @@ export class PlaybackSchedulerService {
     // sees no diff and skips rescheduling (prevents double-scheduling after seek).
     this.prevIndividualSoundStates = { ...individualSoundStates };
     this.prevSoundIntervals = { ...soundIntervals };
-
-    console.log('[PlaybackScheduler] ✅ SEEK - Complete, fresh schedulers created');
   }
 }

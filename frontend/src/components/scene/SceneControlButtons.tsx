@@ -57,10 +57,10 @@ export function SceneControlButtons({
 
   return (
     <div
-      className="absolute bottom-6 flex flex-col items-center pointer-events-auto z-20 transition-all duration-300"
+      className="absolute bottom-12 flex flex-col items-center pointer-events-auto z-20 transition-all duration-300"
       style={{
         gap: UI_SCENE_BUTTON.GAP,
-        right: isRightSidebarExpanded ? `${(rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH) + 20}px` : '20px',
+        right: isRightSidebarExpanded ? `${(rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH) + 10}px` : '10px',
       }}
     >
       {/* Global Volume Control with Hover Slider */}

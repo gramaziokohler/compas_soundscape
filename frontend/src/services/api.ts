@@ -257,6 +257,7 @@ export const apiService = {
     sounds: SoundGenerationConfig[];
     bounding_box: { min: number[]; max: number[] } | null;
     apply_denoising?: boolean;
+    trim_silence?: boolean;
     audio_model?: string;
     base_spl_db?: number;
   }): Promise<{ generation_id: string }> {
@@ -328,13 +329,15 @@ export const apiService = {
   async calibrateAudio(
     audioBlob: Blob,
     splDb: number,
-    applyDenoising: boolean = false
+    applyDenoising: boolean = false,
+    trimSilence: boolean = false
   ): Promise<{ url: string }> {
     try {
       const formData = new FormData();
       formData.append('audio', audioBlob, 'audio.wav');
       formData.append('spl_db', splDb.toString());
       formData.append('apply_denoising', applyDenoising.toString());
+      formData.append('trim_silence', trimSilence.toString());
 
       const response = await fetchWithErrorHandling(
         `${API_BASE_URL}/api/calibrate-audio`,

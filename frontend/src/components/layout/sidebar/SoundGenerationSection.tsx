@@ -79,6 +79,9 @@ export function SoundGenerationSection({
   modelEntities = [],
   onStartLinkingEntity,
   onCancelLinkingEntity,
+  onFinishLinkingEntity,
+  onSelectLinkedEntity,
+  onClearLinkedEntities,
   isLinkingEntity = false,
   linkingConfigIndex = null,
   useSpeckleViewer = false,
@@ -107,6 +110,7 @@ export function SoundGenerationSection({
   const soundGenProgressValue     = useSoundscapeStore((s) => s.soundGenProgressValue);
   const soundGenTargetIndices     = useSoundscapeStore((s) => s.soundGenTargetIndices);
   const handleReorderSoundConfigs   = useSoundscapeStore((s) => s.handleReorderSoundConfigs);
+  const duplicateConfigAt           = useSoundscapeStore((s) => s.duplicateConfigAt);
   const updateSoundPosition         = useSoundscapeStore((s) => s.updateSoundPosition);
   const handleDetachSoundFromEntity = useSoundscapeStore((s) => s.handleDetachSoundFromEntity);
 
@@ -177,6 +181,10 @@ export function SoundGenerationSection({
   const soundTimestamps      = useAudioControlsStore((s) => s.soundTimestamps);
   const onSchedulingModeChange = useAudioControlsStore((s) => s.handleSchedulingModeChange);
   const onTimestampsChange   = useAudioControlsStore((s) => s.handleTimestampsChange);
+  const iterationLinks       = useAudioControlsStore((s) => s.iterationLinks);
+
+  // Track active linked entity index per card via state (for reactive selector highlighting)
+  const [activeLinkedEntityIdx, setActiveLinkedEntityIdx] = useState<Record<number, number>>({});
 
   // Track expanded index for controlled mode (CardSection)
   const [expandedIndex, setExpandedIndex] = useState<number | null>(
@@ -528,26 +536,138 @@ export function SoundGenerationSection({
       ? generatedSound?.entity_index !== undefined
       : !!config.entities?.length;
 
+    // Determine active entity index in config.entities array (for selector highlighting)
+    const activeEntityArrayIdx = (() => {
+      if (!config.entities?.length) return 0;
+      // Local state takes priority (most recent user click)
+      if (activeLinkedEntityIdx[originalIndex] !== undefined) {
+        return activeLinkedEntityIdx[originalIndex];
+      }
+      // Fall back to store (generated sound entity_index)
+      if (isGenerated && generatedSound?.entity_index !== undefined) {
+        const idx = config.entities.findIndex((e: any) => e.index === generatedSound.entity_index);
+        return idx >= 0 ? idx : 0;
+      }
+      return 0;
+    })();
+
+    const hasMultipleEntities = config.entities && config.entities.length > 1;
+    const hasEntities = config.entities && config.entities.length > 0;
+
+    // Check if timeline iteration links manage DIFFERENT entity assignments
+    const timelineEntityId = isGenerated && generatedSound ? (
+      (() => {
+        const linkedEntityIds = new Set<string>();
+        for (const [k, v] of Object.entries(iterationLinks)) {
+          if (k.startsWith(`${generatedSound.id}-`) && v.entityNodeId) {
+            linkedEntityIds.add(v.entityNodeId);
+          }
+        }
+        if (linkedEntityIds.size === 0) return null;
+        if (linkedEntityIds.size === 1) return [...linkedEntityIds][0];
+        return '__multiple__';
+      })()
+    ) : null;
+    const isTimelineManaged = timelineEntityId === '__multiple__';
+
+    // When all iteration links point to the same entity, find its array index
+    const timelineCommonEntityIdx = (timelineEntityId && timelineEntityId !== '__multiple__' && config.entities)
+      ? config.entities.findIndex((e: any) => (e.nodeId || e.id) === timelineEntityId)
+      : -1;
+
+    // Effective active index: timeline common entity takes priority
+    const effectiveActiveIdx = timelineCommonEntityIdx >= 0
+      ? timelineCommonEntityIdx
+      : activeEntityArrayIdx;
+
+    // Linked entities display (shown inside card body when entities are linked)
+    const linkedEntitiesDisplay = hasEntities ? (
+      <div className="flex items-center gap-2 mt-2">
+        <span className="text-[10px] text-secondary whitespace-nowrap">
+          Linked entities:
+        </span>
+          {hasMultipleEntities ? (
+          <div
+            className="flex gap-1 overflow-x-auto flex-shrink-0"
+            style={{
+              scrollbarWidth: 'thin',
+              scrollbarColor: timelineEntityId !== null ? 'var(--color-secondary-light) transparent' : 'var(--color-primary) transparent',
+              opacity: isTimelineManaged ? 0.4 : 1,
+            }}
+            title={isTimelineManaged ? 'Managed by timeline' : undefined}
+          >
+            {config.entities!.map((entity: any, idx: number) => (
+              <button
+                key={idx}
+                onClick={(e) => {
+                  if (timelineEntityId !== null) return;
+                  e.stopPropagation();
+                  setActiveLinkedEntityIdx(prev => ({ ...prev, [originalIndex]: idx }));
+                  onSelectLinkedEntity?.(originalIndex, idx);
+                }}
+                className={`w-5 h-5 text-[10px] rounded transition-colors flex-shrink-0 ${
+                  timelineEntityId !== null ? 'cursor-not-allowed' : ''
+                } ${idx === effectiveActiveIdx && timelineEntityId === null ? 'text-white' : ''}`}
+                style={isTimelineManaged
+                  ? { backgroundColor: 'var(--color-secondary-light)', color: 'var(--color-secondary-hover)', cursor: 'not-allowed' }
+                  : idx === effectiveActiveIdx
+                    ? { backgroundColor: 'var(--color-primary)', cursor: timelineEntityId !== null ? 'not-allowed' : undefined }
+                    : { backgroundColor: 'var(--color-secondary)', color: 'var(--color-secondary-light)', cursor: timelineEntityId !== null ? 'not-allowed' : undefined }}
+                title={
+                  isTimelineManaged
+                    ? 'Managed by timeline — different entities per iteration'
+                    : timelineEntityId !== null
+                      ? 'Assigned via timeline — select a different entity from the DAW'
+                      : (entity.name || `Entity ${entity.index !== undefined ? entity.index : idx + 1}`)
+                }
+              >
+                {idx + 1}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <span className="text-[10px] text-secondary-hover truncate"
+            style={{ opacity: isTimelineManaged ? 0.4 : 1 }}
+            title={isTimelineManaged ? 'Managed by timeline — different entities per iteration' : linkedEntityLabel}
+          >
+            {linkedEntityLabel}
+          </span>
+        )}
+        {onClearLinkedEntities && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onClearLinkedEntities(originalIndex);
+            }}
+            className="text-[10px] text-warning hover:text-error cursor-pointer whitespace-nowrap ml-auto"
+            title="Remove all linked entities"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+    ) : null;
+
     const linkHeaderPrefix = showLinkButton ? (
       <button
         onClick={(e) => {
           e.stopPropagation();
           if (isCurrentlyLinking) {
-            onCancelLinkingEntity?.();
-          } else if (isLinkedInHeader && isGenerated) {
-            handleDetachSoundFromEntity(originalIndex);
+            onFinishLinkingEntity?.();
+          } else if (isLinkedInHeader) {
+            onStartLinkingEntity?.(originalIndex);
           } else {
             onStartLinkingEntity?.(originalIndex);
           }
         }}
         title={
           isCurrentlyLinking
-            ? 'Linking active — click an entity in the 3D view (click here to cancel)'
+            ? 'Multi-select active — click entities in the 3D view (click here to finish)'
             : linkedEntityLabel
-              ? `Linked to: ${linkedEntityLabel}${isGenerated ? ' — click to unlink' : ''}`
-              : 'Link to entity'
+              ? `Linked to: ${linkedEntityLabel} — click to edit links`
+              : 'Link to entities'
         }
-        className={`flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full transition-all opacity-80 hover:opacity-100 ${
+        className={`flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full transition-all opacity-80 hover:bg-secondary hover:text-primary ${
           isCurrentlyLinking ? 'animate-pulse' : ''
         }`}
         style={{ color: (isCurrentlyLinking || isLinkedInHeader) ? 'var(--color-primary-hover)' : undefined , backgroundColor: (isCurrentlyLinking || isLinkedInHeader) ? 'var(--color-foreground)' : undefined}}
@@ -557,6 +677,28 @@ export function SoundGenerationSection({
         </svg>
       </button>
     ) : undefined;
+
+    // Linking mode tip bar (reused in both before/after content)
+    const linkingTipBar = isCurrentlyLinking ? (
+      <div
+        className="text-xs p-2 rounded-md flex items-start justify-between gap-2 mb-2"
+        style={{ backgroundColor: 'color-mix(in srgb, var(--color-warning) 40%, transparent)', color: 'var(--color-secondary)' }}
+      >
+        <span>
+          Select one or multiple objects in the 3D view to link them.
+        </span>
+        <button
+          onClick={(e) => { e.stopPropagation(); onFinishLinkingEntity?.(); }}
+          className="shrink-0 px-2 py-0.5 rounded text-xs font-medium cursor-pointer"
+          style={{
+            backgroundColor: 'var(--color-secondary)',
+            color: 'var(--color-primary)',
+          }}
+        >
+          Done
+        </button>
+      </div>
+    ) : null;
 
     // Category badge (if available from foley analysis)
     const categoryBadge = config.category ? (
@@ -577,10 +719,9 @@ export function SoundGenerationSection({
       </span>
     ) : null;
 
-    const headerPrefix = (linkHeaderPrefix || categoryBadge) ? (
+    const headerPrefix = linkHeaderPrefix ? (
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
         {linkHeaderPrefix}
-        {categoryBadge}
       </div>
     ) : undefined;
 
@@ -619,25 +760,32 @@ export function SoundGenerationSection({
         version={cardVersion}
         dimmed={isEffectivelyMuted}
         headerPrefix={headerPrefix}
-        beforeContent={
-          <SoundPreContent
-            config={config}
-            index={originalIndex}
-            isSoundGenerating={isSoundGenerating}
-            isLinkingEntity={isLinkingEntity}
-            linkingConfigIndex={linkingConfigIndex}
-            onUpdateConfig={onUpdateConfig}
-            onUploadAudio={onUploadAudio}
-            onClearUploadedAudio={onClearUploadedAudio}
-            onLibrarySearch={onLibrarySearch}
-            onLibrarySoundSelect={onLibrarySoundSelect}
-            onCatalogSoundSelect={onCatalogSoundSelect}
-            availableTypes={availableTypes}
-            onSwitchType={handleSwitchCardType}
-          />
-        }
-        afterContent={
-          generatedSound ? (
+        beforeContent={isGenerated ? undefined : (
+          <>
+            {categoryBadge}
+            {linkingTipBar}
+            <SoundPreContent
+              config={config}
+              index={originalIndex}
+              isSoundGenerating={isSoundGenerating}
+              isLinkingEntity={isLinkingEntity}
+              linkingConfigIndex={linkingConfigIndex}
+              onUpdateConfig={onUpdateConfig}
+              onUploadAudio={onUploadAudio}
+              onClearUploadedAudio={onClearUploadedAudio}
+              onLibrarySearch={onLibrarySearch}
+              onLibrarySoundSelect={onLibrarySoundSelect}
+              onCatalogSoundSelect={onCatalogSoundSelect}
+              availableTypes={availableTypes}
+              onSwitchType={handleSwitchCardType}
+            />
+            {linkedEntitiesDisplay}
+          </>
+        )}
+        afterContent={!isGenerated || !generatedSound ? undefined : (
+          <>
+            {categoryBadge}
+            {linkingTipBar}
             <SoundResultContent
               generatedSound={generatedSound}
               index={originalIndex}
@@ -659,8 +807,9 @@ export function SoundGenerationSection({
               onUpdatePosition={handleUpdateSoundPosition}
               onUnlinkEntity={() => handleDetachSoundFromEntity(originalIndex)}
             />
-          ) : null
-        }
+            {linkedEntitiesDisplay}
+          </>
+        )}
       />
       {isExpanded && !isGenerated && (
         <CircularFAB
@@ -701,6 +850,11 @@ export function SoundGenerationSection({
     onCatalogSoundSelect,
     onStartLinkingEntity,
     onCancelLinkingEntity,
+    onFinishLinkingEntity,
+    onSelectLinkedEntity,
+    onClearLinkedEntities,
+    activeLinkedEntityIdx,
+    iterationLinks,
     onMute,
     onSolo,
     onDuplicateConfig,
@@ -807,6 +961,16 @@ export function SoundGenerationSection({
       onExpandedIndexChange={handleExpandedIndexChange}
       color="primary"
       onReorder={handleReorderSoundConfigs}
+      onDuplicate={(from, toInsertion) => {
+        const fromOriginal = filteredCardItems[from]?.originalIndex;
+        if (fromOriginal === undefined) return;
+        const toOriginal = toInsertion < filteredCardItems.length
+          ? filteredCardItems[toInsertion]?.originalIndex
+          : soundConfigs.length;
+        if (toOriginal !== undefined) {
+          duplicateConfigAt(fromOriginal, toOriginal);
+        }
+      }}
 
     />
   );

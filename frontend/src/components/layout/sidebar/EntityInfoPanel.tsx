@@ -75,10 +75,6 @@ export function EntityInfoPanel({
   const {
     selectedEntity,
     selectedObjectIds,
-    linkVersion,
-    getObjectLinkState,
-    addToDiverseSelection,
-    removeFromDiverseSelection
   } = useSpeckleStore();
 
   const explorerIsolatedIds = useSpeckleStore((s) => s.explorerIsolatedIds);
@@ -524,69 +520,8 @@ export function EntityInfoPanel({
     );
   }
 
-  // Get current state for this object (re-query on linkVersion change)
-  const { isLinked, isDiverse, linkedSoundIndex } = getObjectLinkState(selectedEntity.objectId);
-
-  // Link button config
-  const getLinkButtonConfig = () => {
-    if (isLinked) {
-      return {
-        color: 'var(--color-primary)',
-        hoverColor: 'var(--color-primary)',
-        title: `Linked to Sound #${linkedSoundIndex! + 1} (unlink from Sound tab)`,
-        action: () => {}
-      };
-    } else if (isDiverse) {
-      return {
-        color: 'var(--color-success)',
-        hoverColor: 'var(--color-primary-hover)',
-        title: 'Remove from diverse selection',
-        action: () => removeFromDiverseSelection(selectedEntity.objectId)
-      };
-    } else {
-      return {
-        color: 'var(--color-secondary-hover)',
-        hoverColor: 'var(--color-secondary)',
-        title: 'Add to diverse selection',
-        action: () => addToDiverseSelection(selectedEntity.objectId)
-      };
-    }
-  };
-
-  const linkButtonConfig = getLinkButtonConfig();
-
   return (
     <div className="h-full flex flex-col">
-      {/* Entity Title with action button */}
-      <div
-        className="my-2 pb-0 mb-0 text-sm text-info font-semibold flex items-center justify-between flex-shrink-0"
-      >
-        <span>Entity Information</span>
-
-        {/* Link button - toggles diverse selection */}
-        <button
-          onClick={linkButtonConfig.action}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = `${linkButtonConfig.hoverColor}20`;
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = 'transparent';
-          }}
-          disabled={isLinked}
-          className="w-7 h-7 flex items-center justify-center rounded-full transition-colors"
-          style={{
-            backgroundColor: 'transparent',
-            color: linkButtonConfig.color,
-            opacity: isLinked ? 0.6 : 1,
-            cursor: isLinked ? 'not-allowed' : 'pointer'
-          }}
-          title={linkButtonConfig.title}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-          </svg>
-        </button>
-      </div>
 
       {/* Analysis Group Information */}
       <AnalysisGroupSection objectId={selectedEntity.objectId} />              
@@ -633,31 +568,6 @@ export function EntityInfoPanel({
             </span>
           </div>
         )}
-
-        {/* Linked Sound Information */}
-        {isLinked && linkedSoundIndex !== undefined && (
-          <div className="pt-2 mt-2" style={{ borderTop: `1px solid var(--color-secondary-light)` }}>
-            <div className="flex justify-between items-center">
-              <span>Linked to:</span>
-              <span className="font-medium" style={{ color: 'var(--color-primary)' }}>
-                Sound #{linkedSoundIndex + 1}
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* Diverse Selection Information */}
-        {isDiverse && !isLinked && (
-          <div className="pt-2 mt-2" style={{ borderTop: `1px solid var(--color-secondary-light)` }}>
-            <div className="flex justify-between items-center">
-              <span>Status:</span>
-              <span className="font-medium" style={{ color: 'var(--color-success)' }}>
-                Diverse Selection
-              </span>
-            </div>
-          </div>
-        )}
-
       </div>
     </div>
   );

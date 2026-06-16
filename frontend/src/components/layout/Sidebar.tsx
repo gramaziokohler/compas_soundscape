@@ -317,8 +317,8 @@ export function Sidebar(props: SidebarProps) {
             <button
               className={`transition-colors flex-1 min-w-0 truncate ${
                 currentStep === 0
-                  ? 'text-primary'
-                  : 'text-secondary-hover hover:text-foreground underline cursor-pointer'
+                  ? 'bg-primary text-secondary px-0.5 py-0.5'
+                  : 'text-primary hover:bg-secondary-light cursor-pointer'
               }`}
               onClick={() => {
                 setUsageExpandedOriginalIndex(null);
@@ -355,9 +355,9 @@ export function Sidebar(props: SidebarProps) {
                 <button
                   className={`transition-colors flex-1 min-w-0 truncate ${
                     usageActive
-                      ? 'text-primary'
+                      ? 'bg-primary text-secondary px-0.5 py-0.5'
                       : usageClickable
-                      ? 'text-primary hover:underline cursor-pointer'
+                      ? 'text-primary hover:bg-secondary-light cursor-pointer'
                       : 'text-secondary-hover opacity-70 cursor-default'
                   }`}
                   onClick={() => {
@@ -409,9 +409,9 @@ export function Sidebar(props: SidebarProps) {
                 <button
                   className={`transition-colors flex-1 min-w-0 truncate ${
                     soundsActive
-                      ? 'text-primary'
+                      ? 'bg-primary text-secondary px-0.5 py-0.5'
                       : soundsClickable
-                      ? 'text-primary hover:underline cursor-pointer'
+                      ? 'text-primary hover:bg-secondary-light cursor-pointer'
                       : 'text-secondary-hover opacity-70 cursor-default'
                   }`}
                   onClick={() => {
@@ -526,6 +526,8 @@ export function Sidebar(props: SidebarProps) {
               globalSteps={props.globalSteps}
               globalNegativePrompt={props.globalNegativePrompt}
               applyDenoising={props.applyDenoising}
+              trimSilence={props.trimSilence}
+              applyNoiseReduction={props.applyNoiseReduction}
               audioModel={props.audioModel}
               onSetActiveTab={props.setActiveSoundConfigTab}
               onAddConfig={props.onAddSoundConfig}
@@ -541,6 +543,8 @@ export function Sidebar(props: SidebarProps) {
               onGlobalStepsChange={props.onGlobalStepsChange}
               onGlobalNegativePromptChange={props.onGlobalNegativePromptChange}
               onApplyDenoisingChange={props.onApplyDenoisingChange}
+              onTrimSilenceChange={props.onTrimSilenceChange}
+              onApplyNoiseReductionChange={props.onApplyNoiseReductionChange}
               onAudioModelChange={props.onAudioModelChange}
               onReprocessSounds={props.onReprocessSounds}
               onUploadAudio={props.onUploadAudio}
@@ -550,6 +554,9 @@ export function Sidebar(props: SidebarProps) {
               modelEntities={props.modelEntities}
               onStartLinkingEntity={props.onStartLinkingEntity}
               onCancelLinkingEntity={props.onCancelLinkingEntity}
+              onFinishLinkingEntity={props.onFinishLinkingEntity}
+              onSelectLinkedEntity={props.onSelectLinkedEntity}
+              onClearLinkedEntities={props.onClearLinkedEntities}
               isLinkingEntity={props.isLinkingEntity}
               linkingConfigIndex={props.linkingConfigIndex}
               useSpeckleViewer={props.useSpeckleViewer}

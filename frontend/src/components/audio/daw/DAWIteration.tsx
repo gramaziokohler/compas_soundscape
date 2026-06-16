@@ -3,6 +3,7 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import { API_BASE_URL } from '@/utils/constants';
+import type { IterationLink } from '@/types/audio';
 
 export interface IterationContextMenuData {
   x: number;
@@ -24,8 +25,11 @@ export interface DAWIterationProps {
   timelineDurationMs: number;
   /** Sibling iterations for overlap clamping — excludes self */
   siblings: Array<{ startMs: number; durationMs: number }>;
+  /** Optional per-iteration override (variant letter badge + entity link icon). */
+  iterationLink?: IterationLink;
   onDelete: () => void;
   onClick: () => void;
+  onDoubleClick?: () => void;
   onDragEnd: (newStartMs: number) => void;
   onDuplicate: (newStartMs: number) => void;
   onContextMenu: (data: IterationContextMenuData) => void;
@@ -42,8 +46,10 @@ export function DAWIteration({
   isDraggable,
   timelineDurationMs,
   siblings,
+  iterationLink,
   onDelete,
   onClick,
+  onDoubleClick,
   onDragEnd,
   onDuplicate,
   onContextMenu,
@@ -58,7 +64,9 @@ export function DAWIteration({
   const wsRef = useRef<WaveSurfer | null>(null);
 
   const leftPx = ((startMs + dragOffsetMs) / 1000) * pxPerSecond;
-  const widthPx = Math.max((durationMs / 1000) * pxPerSecond, 4);
+  const clippedEndMs = Math.min(startMs + dragOffsetMs + durationMs, timelineDurationMs);
+  const clippedWidthMs = Math.max(clippedEndMs - Math.max(startMs + dragOffsetMs, 0), 0);
+  const widthPx = Math.max((clippedWidthMs / 1000) * pxPerSecond, 4);
 
   // ── Clamp so block doesn't overlap siblings ─────────────────────────────
   const clampToFree = useCallback(
@@ -175,6 +183,7 @@ export function DAWIteration({
     <div
       onPointerDown={handlePointerDown}
       onClick={isDraggable ? undefined : onClick}
+      onDoubleClick={onDoubleClick}
       onContextMenu={handleContextMenuEvt}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
@@ -210,59 +219,64 @@ export function DAWIteration({
         style={{ width: '100%', height: '100%', pointerEvents: 'none', opacity: 0.75 }}
       />
 
-      {/* Index badge */}
-      <span
+      {/* Top-right badge row — always rendered (badges + hover controls) */}
+      <div
         style={{
           position: 'absolute',
           top: 2,
-          left: 3,
-          fontSize: '8px',
-          color: 'rgba(255,255,255,0.75)',
-          lineHeight: 1,
-          pointerEvents: 'none',
-          fontFamily: 'monospace',
+          right: 2,
+          display: 'flex',
+          gap: '2px',
+          alignItems: 'center',
+          zIndex: 31,
         }}
       >
-        {iterationIndex + 1}
-      </span>
-
-      {/* Hover icons row (top-right) */}
-      {isHovered && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 2,
-            right: 2,
-            display: 'flex',
-            gap: '2px',
-            alignItems: 'center',
-            zIndex: 31,
-          }}
-        >
-          {/* Context menu trigger */}
+        {/* Variant letter badge — only when a variant override is explicitly assigned */}
+        {iterationLink?.variantIndex !== undefined && (
           <span
-            title="Linked entities / Variants (right-click)"
+            title={`Variant ${String.fromCharCode(65 + iterationLink.variantIndex)}`}
             style={{
-              width: 13,
-              height: 13,
+              pointerEvents: 'none',
+              fontSize: '7px',
+              fontWeight: 700,
+              lineHeight: 1,
+              color: 'rgba(255,255,255,0.92)',
+              backgroundColor: 'rgba(0,0,0,0.65)',
               borderRadius: '2px',
-              backgroundColor: 'rgba(0,0,0,0.55)',
+              padding: '1px 2px',
+              flexShrink: 0,
+            }}
+          >
+            {String.fromCharCode(65 + iterationLink.variantIndex)}
+          </span>
+        )}
+
+        {/* Entity link badge — numbered like the sound card entity buttons */}
+        {iterationLink?.entityNodeId && (
+          <span
+            title={`Linked: ${iterationLink.entityNodeId}`}
+            style={{
+              pointerEvents: 'none',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              cursor: 'context-menu',
-            }}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              onContextMenu({ x: e.clientX, y: e.clientY, iterationIndex });
+              backgroundColor: 'rgba(0,0,0,0.65)',
+              borderRadius: '2px',
+              padding: '1px 2px',
+              flexShrink: 0,
+              fontSize: '7px',
+              fontWeight: 700,
+              lineHeight: 1,
+              color: 'rgba(255,255,255,0.92)',
             }}
           >
-            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.8)" strokeWidth="2.5">
-              <circle cx="12" cy="8" r="3" />
-              <path d="M6 20v-2a6 6 0 0 1 12 0v2" />
-            </svg>
+            {iterationLink.entityIndex !== undefined ? iterationLink.entityIndex + 1 : ''}
           </span>
+        )}
+
+        {/* Context-menu trigger + delete — shown only on hover */}
+        {isHovered && (
+          <>
 
           {/* Delete — only in timestamps mode */}
           {isDraggable && (
@@ -292,8 +306,9 @@ export function DAWIteration({
               ×
             </button>
           )}
-        </div>
-      )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

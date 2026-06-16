@@ -94,7 +94,7 @@ export function RangeSlider({
       title={hoverText} 
     >
       {/* Label and Value */}
-      <div className={`flex items-center gap-1 text-xs text-secondary-hover`}>
+      <div className={`flex items-center gap-1 text-xxs text-secondary-hover`}>
         <span>{label}</span>
         <span className="text-xs font-bold text-secondary">
           {formatValue(value)}
@@ -113,7 +113,7 @@ export function RangeSlider({
         onPointerUp={handlePointerUp}
         onDoubleClick={handleDoubleClick}
         disabled={disabled}
-        className={`w-full h-2 rounded-lg appearance-none cursor-pointer bg-secondary-light-static ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+        className={`w-full h-1.5 rounded-lg range-sm appearance-none cursor-pointer bg-secondary-hover ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
         style={{ accentColor: color? color : 'var(--card-color, var(--color-primary))' }}
         title={defaultValue !== undefined ? `Double-click to reset (${formatValue(defaultValue)})` : hoverText}
       />

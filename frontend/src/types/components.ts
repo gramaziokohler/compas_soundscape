@@ -47,6 +47,8 @@ export interface SidebarProps {
   globalSteps: number;
   globalNegativePrompt: string;
   applyDenoising: boolean;
+  trimSilence: boolean;
+  applyNoiseReduction: boolean;
   normalizeImpulseResponses: boolean;
   audioModel: string;
   llmModel: string;
@@ -92,7 +94,8 @@ export interface SidebarProps {
   onGlobalStepsChange: (steps: number) => void;
   onGlobalNegativePromptChange: (prompt: string) => void;
   onApplyDenoisingChange: (apply: boolean) => void;
-  onNormalizeImpulseResponsesChange: (normalize: boolean) => void;
+  onTrimSilenceChange: (value: boolean) => void;
+  onApplyNoiseReductionChange: (apply: boolean) => void;
   onAudioModelChange: (model: string) => void;
   onLlmModelChange: (model: string) => void;
   onShowAxesHelperChange: (show: boolean) => void;
@@ -113,7 +116,7 @@ export interface SidebarProps {
   onResetAdvancedSettings: () => void;
   listenerOrientation: { x: number; y: number; z: number };
   onListenerOrientationChange: (orientation: { x: number; y: number; z: number }) => void;
-  onReprocessSounds?: (applyDenoising: boolean) => Promise<void>;
+  onReprocessSounds?: (applyDenoising: boolean, trimSilence?: boolean) => Promise<void>;
   setUseModelAsContext: (value: boolean) => void;
   onUploadAudio: (index: number, file: File) => Promise<void>;
   onClearUploadedAudio: (index: number) => void;
@@ -123,6 +126,9 @@ export interface SidebarProps {
   // Entity linking props
   onStartLinkingEntity?: (configIndex: number) => void;
   onCancelLinkingEntity?: () => void;
+  onFinishLinkingEntity?: () => void;
+  onSelectLinkedEntity?: (configIndex: number, entityArrayIdx: number) => void;
+  onClearLinkedEntities?: (configIndex: number) => void;
   isLinkingEntity?: boolean;
   linkingConfigIndex?: number | null;
   // Speckle viewer mode - enables entity linking for Speckle objects
@@ -236,13 +242,17 @@ export interface SoundGenerationSectionProps {
   globalSteps: number;
   globalNegativePrompt: string;
   applyDenoising: boolean;
+  trimSilence: boolean;
+  applyNoiseReduction: boolean;
   audioModel: string;
   onGlobalDurationChange: (duration: number) => void;
   onGlobalStepsChange: (steps: number) => void;
   onGlobalNegativePromptChange: (prompt: string) => void;
   onApplyDenoisingChange: (apply: boolean) => void;
+  onTrimSilenceChange: (value: boolean) => void;
+  onApplyNoiseReductionChange: (apply: boolean) => void;
   onAudioModelChange: (model: string) => void;
-  onReprocessSounds?: (applyDenoising: boolean) => Promise<void>;
+  onReprocessSounds?: (applyDenoising: boolean, trimSilence?: boolean) => Promise<void>;
   onUploadAudio: (index: number, file: File) => Promise<void>;
   onClearUploadedAudio: (index: number) => void;
   onLibrarySearch: (index: number) => Promise<void>;
@@ -252,6 +262,9 @@ export interface SoundGenerationSectionProps {
   modelEntities: any[];
   onStartLinkingEntity?: (configIndex: number) => void;
   onCancelLinkingEntity?: () => void;
+  onFinishLinkingEntity?: () => void;
+  onSelectLinkedEntity?: (configIndex: number, entityArrayIdx: number) => void;
+  onClearLinkedEntities?: (configIndex: number) => void;
   isLinkingEntity?: boolean;
   linkingConfigIndex?: number | null;
   // Speckle viewer mode - enables entity Entity linking for Speckle objects

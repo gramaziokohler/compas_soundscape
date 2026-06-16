@@ -397,7 +397,9 @@ export function ImpulseResponseUpload({
     setHoveredIRId(ir.id);
     if (IR_HOVER_LINE.ENABLED && onIRHover) onIRHover(sourceId, receiverId);
     const rect = e.currentTarget.getBoundingClientRect();
-    setOverlayPosition({ top: rect.top + rect.height / 2, left: rect.right + 16, width: 0 });
+    const sidebar = document.querySelector('aside.fixed.right-0');
+    const sidebarLeft = sidebar ? sidebar.getBoundingClientRect().left : rect.left;
+    setOverlayPosition({ top: rect.top + rect.height / 2, left: sidebarLeft - 16, width: 0 });
     const buffer = await loadIRBuffer(ir);
     setHoveredIRBuffer(buffer);
   }, [onIRHover]);
@@ -680,7 +682,9 @@ export function ImpulseResponseUpload({
                       setHoveredIRId(ir.id);
                       if (IR_HOVER_LINE.ENABLED && onIRHover) onIRHover(null, null);
                       const rect = e.currentTarget.getBoundingClientRect();
-                      setOverlayPosition({ top: rect.top + rect.height / 2, left: rect.right + 16, width: 0 });
+                      const sidebar = document.querySelector('aside.fixed.right-0');
+                      const sidebarLeft = sidebar ? sidebar.getBoundingClientRect().left : rect.left;
+                      setOverlayPosition({ top: rect.top + rect.height / 2, left: sidebarLeft - 16, width: 0 });
                       const buffer = await loadIRBuffer(ir);
                       setHoveredIRBuffer(buffer);
                     }}
@@ -721,8 +725,8 @@ export function ImpulseResponseUpload({
       {/* Waveform Overlay */}
       {hoveredIRId && hoveredIRBuffer && overlayPosition && hoveredIR && (
         <div
-          className="fixed shadow-2xl -translate-y-1/2 z-[9999] w-fit max-w-[90vw]"
-          style={{ top: `${overlayPosition.top}px`, left: `${overlayPosition.left}px` }}
+          className="fixed shadow-2xl z-[9999] w-fit max-w-[90vw]"
+          style={{ top: `${overlayPosition.top}px`, left: `${overlayPosition.left}px`, transform: 'translate(-100%, -50%)' }}
           onMouseEnter={() => setIsOverlayHovered(true)}
           onMouseLeave={() => {
             setIsOverlayHovered(false);

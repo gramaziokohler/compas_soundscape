@@ -183,6 +183,7 @@ export function buildSoundscapeSavePayload(
     name: r.name,
     position: [...r.position],
     type: (r as any).type || undefined,
+    yaw: r.yaw,
   }));
 
   // Serialize simulation configs and collect IR URLs
@@ -446,6 +447,7 @@ export function restoreSoundscapeState(
     id: saved.id,
     name: saved.name,
     position: (simReceiverPositions[saved.id] ?? saved.position) as [number, number, number],
+    yaw: (saved as any).yaw ?? 0,
   }));
 
   const selectedReceiverId = loadedData.selected_receiver_id ?? null;

@@ -18,6 +18,7 @@ interface SceneContextMenuProps {
   onClose: () => void;
   generatedSounds?: SoundEvent[];
   onGoToReceiver?: (receiverId: string) => void;
+  onOpenExplorer?: () => void;
 }
 
 /**
@@ -35,6 +36,7 @@ export function SceneContextMenu({
   onClose,
   generatedSounds,
   onGoToReceiver,
+  onOpenExplorer,
 }: SceneContextMenuProps) {
   // Initialise position clamped to viewport
   const [pos, setPos] = useState<{ x: number; y: number }>(() => {
@@ -163,25 +165,51 @@ export function SceneContextMenu({
         >
           {panelTitle}
         </span>
-        <button
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={onClose}
-          style={{
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-            color: 'var(--color-muted, #888)',
-            fontSize: '20px',
-            lineHeight: 1,
-            padding: '2px 6px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-          aria-label="Close"
-        >
-          ×
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <button
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => onOpenExplorer?.()}
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              color: 'var(--color-secondary-hover)',
+              fontSize: '18px',
+              lineHeight: 1,
+              padding: '2px 4px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            title="Object Explorer"
+            aria-label="Open Object Explorer"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
+          </button>
+          <button
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={onClose}
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              color: 'var(--color-muted, #888)',
+              fontSize: '20px',
+              lineHeight: 1,
+              padding: '2px 6px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
       </div>
 
       {/* EntityInfoPanel content */}

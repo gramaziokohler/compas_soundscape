@@ -70,6 +70,8 @@ function HomeContent() {
 
   // Sync generated sounds to store so audioControlsStore can access them
   const syncGeneratedSounds = useAudioControlsStore((s) => s.syncGeneratedSounds);
+  const iterationLinks = useAudioControlsStore((s) => s.iterationLinks);
+  const soundTimestampsForCount = useAudioControlsStore((s) => s.soundTimestamps);
   useEffect(() => {
     syncGeneratedSounds(soundGen.generatedSounds);
   }, [soundGen.generatedSounds, syncGeneratedSounds]);
@@ -528,6 +530,34 @@ function HomeContent() {
   }, [soundGen.generatedSounds, soundGen.soundConfigs, soundGen.soundscapeData, linkObjectToSound, appIdToTreeIdMap]);
 
   // ============================================================================
+  // Effect - Apply Pre-Gen Entity Selection After Generation
+  // When the user selected a non-default entity in pre-gen mode, correct
+  // entity_index on the generated sound to match the selection.
+  // ============================================================================
+  useEffect(() => {
+    if (!soundGen.generatedSounds || soundGen.generatedSounds.length === 0) return;
+    const pending = { ...preGenActiveEntityRef.current };
+    if (Object.keys(pending).length === 0) return;
+
+    for (const [configIdxStr, entityArrIdx] of Object.entries(pending)) {
+      const configIdx = Number(configIdxStr);
+      const config = soundGen.soundConfigs[configIdx];
+      const entity = config?.entities?.[entityArrIdx];
+      if (!entity) continue;
+      const pos: [number, number, number] = entity.bounds?.center
+        ? [entity.bounds.center[0], entity.bounds.center[1], entity.bounds.center[2]]
+        : entity.position && entity.position.length >= 3
+          ? [entity.position[0], entity.position[1], entity.position[2]]
+          : [0, 0, 0];
+      const genSound = soundGen.generatedSounds.find(s => s.prompt_index === configIdx);
+      if (genSound) {
+        soundGen.selectLinkedEntity(genSound.id, entity.index ?? entityArrIdx, pos);
+      }
+      delete preGenActiveEntityRef.current[configIdx];
+    }
+  }, [soundGen.generatedSounds, soundGen.soundConfigs]);
+
+  // ============================================================================
   // Effect - Register Pending Entity Links for Sound Configs (light pink)
   // When configs arrive with pre-attached entity data (e.g. from Analysis tab),
   // register them as pending links so the entity gets light pink coloring.
@@ -608,33 +638,92 @@ function HomeContent() {
   const unifiedSoundscapeData = useMemo(() => {
     if (!isInSoundsStep) return [];
 
-    const generatedMap = new Map<number, any>();
+    // Collect ALL generated events per prompt (all variants), not just the last one.
+    // Previously a plain Map.set() kept only the last event (last-wins), so the
+    // SoundSphereManager only ever received one variant per prompt and could not
+    // register the others.  This caused playAll to target a source ID that was
+    // never loaded in the orchestrator.
+    const generatedByPrompt = new Map<number, any[]>();
     (soundGen.soundscapeData ?? []).forEach((s: any) => {
-      if (s.prompt_index !== undefined) generatedMap.set(s.prompt_index, s);
+      if (s.prompt_index !== undefined) {
+        if (!generatedByPrompt.has(s.prompt_index)) generatedByPrompt.set(s.prompt_index, []);
+        generatedByPrompt.get(s.prompt_index)!.push(s);
+      }
     });
 
+    // flatMap so that prompts with multiple variants expand to N entries while
+    // prompts still pending produce exactly one placeholder entry.
     return soundGen.soundConfigs
-      .map((config, index) => {
+      .flatMap((config, index) => {
         // When activeSoundParentIndex is null (skipped flow), show only unparented sounds.
         if (activeSoundParentIndex !== null
           ? config.parentUsageOriginalIndex !== activeSoundParentIndex
           : config.parentUsageOriginalIndex !== undefined && config.parentUsageOriginalIndex !== null
-        ) return null;
+        ) return [];
 
-        if (generatedMap.has(index)) return generatedMap.get(index);
+        if (generatedByPrompt.has(index)) {
+          const events = generatedByPrompt.get(index)!;
+          const extraEntries: any[] = [];
+          let extraLabelCounter = 0;
+          for (const event of events) {
+            const linkedIterEntries = Object.entries(iterationLinks)
+              .filter(([k, v]) => k.startsWith(`${event.id}-`) && v.entityPosition);
 
-        // Pending placeholder — resolve position with same priority as handleAttachSoundToEntity:
-        //   1. Entity bounding-box center  2. Explicit config.position  3. [0,0,0]
+            const seenPositions = new Set<string>();
+            const defaultPosKey = event.position
+              ? `${event.position[0]},${event.position[1]},${event.position[2]}`
+              : '';
+
+            for (const [iterKey, link] of linkedIterEntries) {
+              if (!link.entityPosition) continue;
+              const posKey = `${link.entityPosition![0]},${link.entityPosition![1]},${link.entityPosition![2]}`;
+              if (seenPositions.has(posKey)) continue;
+              seenPositions.add(posKey);
+
+              extraEntries.push({
+                ...event,
+                id: `${event.id}_iter_${(link.entityNodeId || iterKey).slice(0, 8)}`,
+                position: link.entityPosition,
+                entity_index: link.entityIndex !== undefined
+                  ? link.entityIndex
+                  : -(10000 + index * 100 + extraLabelCounter++),
+              });
+            }
+
+            // If iterations are linked, determine if there are unlinked ones.
+            // Only add default .pos1 when unlinked iterations exist.
+            if (linkedIterEntries.length > 0 && defaultPosKey && !seenPositions.has(defaultPosKey)) {
+              const timestampsCount = soundTimestampsForCount[event.id]?.length;
+              const totalIters = timestampsCount != null && timestampsCount > 0
+                ? timestampsCount
+                : linkedIterEntries.length;
+              if (linkedIterEntries.length < totalIters) {
+                seenPositions.add(defaultPosKey);
+                extraEntries.push({
+                  ...event,
+                  id: `${event.id}_iter_default`,
+                  position: event.position,
+                  entity_index: 0,
+                });
+              }
+            }
+          }
+
+          return [...events, ...extraEntries];
+        }
+
+        // Pending placeholder — resolve position:
+        //   1. Explicit config.position (set by user entity selection)  2. Entity bounding-box center  3. [0,0,0]
         let position: [number, number, number] = [0, 0, 0];
-        if (config.entities?.length) {
+        if (config.position) {
+          position = config.position as [number, number, number];
+        } else if (config.entities?.length) {
           const ec = config.entities[0];
           if (ec.bounds?.center) {
             position = [ec.bounds.center[0], ec.bounds.center[1], ec.bounds.center[2]];
           } else if (ec.position && ec.position.length >= 3) {
             position = [ec.position[0], ec.position[1], ec.position[2]] as [number, number, number];
           }
-        } else if (config.position) {
-          position = config.position as [number, number, number];
         }
 
         // entity_index: non-undefined routes sphere manager to label-only branch (no mesh).
@@ -643,7 +732,7 @@ function HomeContent() {
           ? (config.entities[0].index ?? -(index + 1))
           : undefined;
 
-        return {
+        return [{
           id: `pending_${index}`,
           url: '',
           position,
@@ -652,10 +741,9 @@ function HomeContent() {
           prompt_index: index,
           isPending: true,
           entity_index,
-        };
-      })
-      .filter((x): x is NonNullable<typeof x> => x !== null);
-  }, [soundGen.soundConfigs, soundGen.soundscapeData, activeSoundParentIndex, isInSoundsStep]);
+        }];
+      });
+  }, [soundGen.soundConfigs, soundGen.soundscapeData, activeSoundParentIndex, isInSoundsStep, iterationLinks, soundTimestampsForCount]);
 
   // Handler: Extract SED audio segments and inject them as upload-type sound cards
   const handleAudioExtract = useCallback(async (config: AudioAnalysisConfig, originalIndex: number) => {
@@ -775,38 +863,42 @@ function HomeContent() {
       };
 
       // Convert text prompts to sound configs
-      const newConfigs = prompts.map(p => ({
-        prompt: p.text,
-        duration: p.metadata?.duration_seconds ?? 10, // Use duration from metadata
-        guidance_scale: 4.5,
-        negative_prompt: '',
-        seed_copies: 1,
-        steps: 100,
-        spl_db: p.metadata?.spl_db ?? 60, // Default SPL if not provided
-        interval_seconds: p.metadata?.interval_seconds ?? 5, // Default interval if not provided
-        display_name: p.displayName || (p.text.length > 50 ? p.text.substring(0, 47) + '...' : p.text),
-        // Resolve entity from world tree when available; pass foley position as bounds fallback.
-        // Non-entity sounds get no entities — SoundSphereManager uses the explicit position.
-        // Support both new entities[] and legacy entity field from TextPromptResult.
-        entities: (() => {
-          const primaryRaw = p.entities?.[0] ?? p.entity;
-          if (!primaryRaw?.id) return undefined;
-          const resolved = resolveEntityFromTreeId(primaryRaw.id, primaryRaw.foleyPosition);
-          return resolved ? [resolved] : undefined;
-        })(),
-        // Forward explicit position for non-entity sounds (e.g. HVAC Hum with [x,y,z] from foley).
-        // Camera-front placement is the fallback only when position is absent or [0,0,0].
-        ...(() => {
-          const primaryRaw = p.entities?.[0] ?? p.entity;
-          return p.position && !primaryRaw?.id ? { position: p.position } : {};
-        })(),
-        // Pass foley timestamps through so they can be applied after generation
-        ...(p.metadata?.timestamps?.length ? { timestamps: p.metadata.timestamps } : {}),
-        // Pass foley category through for DAW grouping and badge display
-        ...(p.metadata?.category ? { category: p.metadata.category } : {}),
-        // Tag with parent usage card so Sounds section can filter by parent
-        ...(parentUsageIndex !== undefined ? { parentUsageOriginalIndex: parentUsageIndex } : {}),
-      }));
+      const newConfigs = prompts.map(p => {
+        const normalizedCategory = (p.metadata?.category || '').toLowerCase().replace(/[\s-]+/g, '_');
+        const isBackground = normalizedCategory === 'background' || normalizedCategory === 'background_sound';
+        return {
+          prompt: p.text,
+          duration: isBackground ? 10 : (p.metadata?.duration_seconds ?? 10), // Background sounds forced to 10s
+          guidance_scale: 4.5,
+          negative_prompt: '',
+          seed_copies: 1,
+          steps: 100,
+          spl_db: p.metadata?.spl_db ?? 60, // Default SPL if not provided
+          interval_seconds: isBackground ? 0 : (p.metadata?.interval_seconds ?? 5), // Background = continuous (0), no timestamp mode
+          display_name: p.displayName || (p.text.length > 50 ? p.text.substring(0, 47) + '...' : p.text),
+          // Resolve entity from world tree when available; pass foley position as bounds fallback.
+          // Non-entity sounds get no entities — SoundSphereManager uses the explicit position.
+          // Support both new entities[] and legacy entity field from TextPromptResult.
+          entities: (() => {
+            const primaryRaw = p.entities?.[0] ?? p.entity;
+            if (!primaryRaw?.id) return undefined;
+            const resolved = resolveEntityFromTreeId(primaryRaw.id, primaryRaw.foleyPosition);
+            return resolved ? [resolved] : undefined;
+          })(),
+          // Forward explicit position for non-entity sounds (e.g. HVAC Hum with [x,y,z] from foley).
+          // Camera-front placement is the fallback only when position is absent or [0,0,0].
+          ...(() => {
+            const primaryRaw = p.entities?.[0] ?? p.entity;
+            return p.position && !primaryRaw?.id ? { position: p.position } : {};
+          })(),
+          // Pass foley timestamps through so they can be applied after generation (skipped for background sounds)
+          ...(!isBackground && p.metadata?.timestamps?.length ? { timestamps: p.metadata.timestamps } : {}),
+          // Pass foley category through for DAW grouping and badge display
+          ...(p.metadata?.category ? { category: p.metadata.category } : {}),
+          // Tag with parent usage card so Sounds section can filter by parent
+          ...(parentUsageIndex !== undefined ? { parentUsageOriginalIndex: parentUsageIndex } : {}),
+        };
+      });
 
       console.log('[Analysis→SoundGen] Converted configs with metadata:', 
         newConfigs.map(c => ({ prompt: c.prompt.substring(0, 30), duration: c.duration, spl_db: c.spl_db, interval_seconds: c.interval_seconds, hasEntities: !!c.entities?.length })));
@@ -1283,9 +1375,15 @@ function HomeContent() {
   const handleStartLinkingEntity = useCallback((configIndex: number) => {
     setIsLinkingEntity(true);
     setLinkingConfigIndex(configIndex);
+    delete preGenActiveEntityRef.current[configIndex];
   }, []);
 
   const handleCancelLinkingEntity = useCallback(() => {
+    setIsLinkingEntity(false);
+    setLinkingConfigIndex(null);
+  }, []);
+
+  const handleFinishLinkingEntity = useCallback(() => {
     setIsLinkingEntity(false);
     setLinkingConfigIndex(null);
   }, []);
@@ -1295,63 +1393,101 @@ function HomeContent() {
       const currentConfig = soundGen.soundConfigs[linkingConfigIndex];
       const previousEntities = currentConfig?.entities || [];
 
-      // If entity is null (clicked on empty space)
-      if (entity === null) {
-        // If there are currently linked entities, unlink them all
-        if (previousEntities.length) {
+      // If entity is null (clicked on empty space) — ignore in multi-select mode
+      if (entity === null) return;
+
+      const objectId = entity.nodeId || entity.id;
+
+      // Check if this entity is already linked — toggle it off
+      const existingIdx = previousEntities.findIndex(
+        (e: any) => (e.nodeId || e.id) === objectId
+      );
+
+      if (existingIdx >= 0) {
+        // Unlink this specific entity
+        const updatedEntities = previousEntities.filter((_, i) => i !== existingIdx);
+        if (updatedEntities.length === 0) {
           soundGen.handleDetachSoundFromEntity(linkingConfigIndex);
-
-          for (const prevEnt of previousEntities) {
-            const objectId = prevEnt.nodeId || prevEnt.id;
-            if (objectId) unlinkObjectFromSound(objectId);
+        } else {
+          soundGen.handleUpdateConfig(linkingConfigIndex, 'entities', updatedEntities);
+          // If we removed the first entity (primary position), reposition to new first
+          if (existingIdx === 0) {
+            const newFirst = updatedEntities[0];
+            const pos: [number, number, number] = newFirst.bounds?.center
+              ? [newFirst.bounds.center[0], newFirst.bounds.center[1], newFirst.bounds.center[2]]
+              : newFirst.position && newFirst.position.length >= 3
+                ? [newFirst.position[0], newFirst.position[1], newFirst.position[2]]
+                : [0, 0, 0];
+            const generatedSound = soundGen.generatedSounds.find(s => s.prompt_index === linkingConfigIndex);
+            if (generatedSound) {
+              soundGen.selectLinkedEntity(generatedSound.id, newFirst.index ?? 0, pos);
+            }
           }
-
-          // Remove all previous entities from highlights
-          const selectedEntities = getSelectedDiverseEntities();
-          const updatedEntities = selectedEntities.filter(
-            (e: any) => !previousEntities.some((pe: any) => pe.index === e.index)
-          );
-          updateSelectedDiverseEntities(updatedEntities);
         }
-
-        setIsLinkingEntity(false);
-        setLinkingConfigIndex(null);
+        if (objectId) unlinkObjectFromSound(objectId);
+        // Remove from diverse highlights
+        const selectedEntities = getSelectedDiverseEntities();
+        const updated = selectedEntities.filter(
+          (e: any) => (e.nodeId || e.id) !== objectId
+        );
+        updateSelectedDiverseEntities(updated);
         return;
       }
 
-      // Determine whether to append (shift+click) or replace (plain click)
-      const isAppend = isShiftHeldRef.current;
-
-      // Attach entity (append or replace)
-      soundGen.handleAttachSoundToEntity(linkingConfigIndex, entity, isAppend);
+      // Append this entity (multi-select by default)
+      soundGen.handleAttachSoundToEntity(linkingConfigIndex, entity, true);
 
       // Link in Speckle context if it's a Speckle object
-      const objectId = entity.nodeId || entity.id;
       if (objectId) linkObjectToSound(objectId, linkingConfigIndex);
 
-      // Update diverse selection highlights
-      let updatedEntities = [...getSelectedDiverseEntities()];
-
-      if (!isAppend) {
-        // Replace: unlink all previous entities that are no longer in the new config
-        for (const prevEnt of previousEntities) {
-          updatedEntities = updatedEntities.filter((e: any) => e.index !== prevEnt.index);
-          const prevObjectId = prevEnt.nodeId || prevEnt.id;
-          if (prevObjectId) unlinkObjectFromSound(prevObjectId);
-        }
+      // Add new entity to diverse selection highlights
+      const selectedEntities = getSelectedDiverseEntities();
+      if (!selectedEntities.find((e: any) => (e.nodeId || e.id) === objectId)) {
+        updateSelectedDiverseEntities([...selectedEntities, entity]);
       }
-
-      // Add new entity to highlights if not already present
-      if (!updatedEntities.find((e: any) => e.index === entity.index)) {
-        updatedEntities.push(entity);
-      }
-
-      updateSelectedDiverseEntities(updatedEntities);
-
-      setIsLinkingEntity(false);
-      setLinkingConfigIndex(null);
     }
   }, [linkingConfigIndex, soundGen, getSelectedDiverseEntities, updateSelectedDiverseEntities, linkObjectToSound, unlinkObjectFromSound]);
+
+  // Track pre-gen entity selections to preserve after generation
+  const preGenActiveEntityRef = useRef<Record<number, number>>({});
+
+  const handleSelectLinkedEntity = useCallback((configIndex: number, entityArrayIdx: number) => {
+    const config = soundGen.soundConfigs[configIndex];
+    if (!config?.entities || entityArrayIdx >= config.entities.length) return;
+    const entity = config.entities[entityArrayIdx];
+    if (!entity) return;
+    const pos: [number, number, number] = entity.bounds?.center
+      ? [entity.bounds.center[0], entity.bounds.center[1], entity.bounds.center[2]]
+      : entity.position && entity.position.length >= 3
+        ? [entity.position[0], entity.position[1], entity.position[2]]
+        : [0, 0, 0];
+    const generatedSound = soundGen.generatedSounds.find(s => s.prompt_index === configIndex);
+    if (generatedSound) {
+      soundGen.selectLinkedEntity(generatedSound.id, entity.index ?? entityArrayIdx, pos);
+    } else {
+      soundGen.handleUpdateConfig(configIndex, 'position', pos);
+      preGenActiveEntityRef.current[configIndex] = entityArrayIdx;
+    }
+  }, [soundGen]);
+
+  const handleClearLinkedEntities = useCallback((configIndex: number) => {
+    const config = soundGen.soundConfigs[configIndex];
+    if (!config?.entities?.length) return;
+    for (const ent of config.entities) {
+      let objectId = ent.nodeId || ent.id;
+      if (ent.applicationId && appIdToTreeIdMap.size > 0) {
+        objectId = appIdToTreeIdMap.get(ent.applicationId) || objectId;
+      }
+      if (objectId) unlinkObjectFromSound(objectId);
+    }
+    soundGen.handleDetachSoundFromEntity(configIndex);
+    delete preGenActiveEntityRef.current[configIndex];
+    // Also clear iteration links so link icons disappear from timeline
+    const genSound = soundGen.generatedSounds.find(s => s.prompt_index === configIndex);
+    if (genSound) {
+      useAudioControlsStore.getState().clearAllIterationLinksForSound(genSound.id);
+    }
+  }, [soundGen, unlinkObjectFromSound, appIdToTreeIdMap]);
 
   /**
    * Toggle entity in diverse selection (for LLM prompts)
@@ -1866,8 +2002,15 @@ function HomeContent() {
         // Camera not ready — fall through to hook default
       }
     }
-    receivers.addReceiver(type, position);
-  }, [viewerRef, receivers.addReceiver]);
+
+    // Derive yaw from the current listenerOrientation (look-at direction vector).
+    // listenerOrientation.{x,y,z} = look-at offset from receiver position.
+    const { x: lx, y: ly, z: lz } = listenerOrientation;
+    const dirLen = Math.sqrt(lx * lx + ly * ly + lz * lz) || 1;
+    const yaw = Math.atan2(-lx / dirLen, -ly / dirLen);
+
+    receivers.addReceiver(type, position, yaw);
+  }, [viewerRef, receivers.addReceiver, listenerOrientation]);
 
   // Reset go-to triggers after being processed (allows re-triggering same receiver)
   useEffect(() => {
@@ -2172,6 +2315,8 @@ function HomeContent() {
         globalSteps={soundGen.globalSteps}
         globalNegativePrompt={soundGen.globalNegativePrompt}
         applyDenoising={soundGen.applyDenoising}
+        trimSilence={soundGen.trimSilence}
+        applyNoiseReduction={soundGen.applyNoiseReduction}
         audioModel={soundGen.audioModel}
         llmModel={soundGen.llmModel}
         setActiveSoundConfigTab={soundGen.setActiveSoundConfigTab}
@@ -2188,6 +2333,8 @@ function HomeContent() {
         onGlobalStepsChange={soundGen.handleGlobalStepsChange}
         onGlobalNegativePromptChange={soundGen.setGlobalNegativePrompt}
         onApplyDenoisingChange={soundGen.setApplyDenoising}
+        onTrimSilenceChange={soundGen.setTrimSilence}
+        onApplyNoiseReductionChange={soundGen.setApplyNoiseReduction}
         onAudioModelChange={soundGen.setAudioModel}
         onLlmModelChange={soundGen.setLlmModel}
         onReprocessSounds={soundGen.handleReprocessSounds}
@@ -2198,6 +2345,9 @@ function HomeContent() {
         onCatalogSoundSelect={soundGen.handleCatalogSoundSelect}
         onStartLinkingEntity={handleStartLinkingEntity}
         onCancelLinkingEntity={handleCancelLinkingEntity}
+        onFinishLinkingEntity={handleFinishLinkingEntity}
+        onSelectLinkedEntity={handleSelectLinkedEntity}
+        onClearLinkedEntities={handleClearLinkedEntities}
         isLinkingEntity={isLinkingEntity}
         linkingConfigIndex={linkingConfigIndex}
         useSpeckleViewer={useSpeckleViewer}
@@ -2254,6 +2404,8 @@ function HomeContent() {
         globalSteps={soundGen.globalSteps}
         globalNegativePrompt={soundGen.globalNegativePrompt}
         applyDenoising={soundGen.applyDenoising}
+        trimSilence={soundGen.trimSilence}
+        applyNoiseReduction={soundGen.applyNoiseReduction}
         normalizeImpulseResponses={auralizationConfig.normalize}
         audioModel={soundGen.audioModel}
         llmModel={soundGen.llmModel}
@@ -2261,6 +2413,8 @@ function HomeContent() {
         onGlobalStepsChange={soundGen.handleGlobalStepsChange}
         onGlobalNegativePromptChange={soundGen.setGlobalNegativePrompt}
         onApplyDenoisingChange={soundGen.setApplyDenoising}
+        onTrimSilenceChange={soundGen.setTrimSilence}
+        onApplyNoiseReductionChange={soundGen.setApplyNoiseReduction}
         onNormalizeImpulseResponsesChange={handleToggleNormalize}
         onAudioModelChange={soundGen.setAudioModel}
         onLlmModelChange={soundGen.setLlmModel}

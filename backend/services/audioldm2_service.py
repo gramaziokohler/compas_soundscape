@@ -65,6 +65,7 @@ class AudioLDM2Service:
         steps: int = AUDIOLDM2_INFERENCE_STEPS,
         spl_db: float = DEFAULT_SPL_DB,
         apply_denoising: bool = False,
+        trim_silence: bool = False,
         negative_prompt: str = "Low quality, distorted",
         progress_callback: callable = None
     ) -> None:
@@ -122,10 +123,14 @@ class AudioLDM2Service:
         # Step 2: Apply denoising if requested
         if apply_denoising:
             print("Applying noise reduction...")
-            audio = denoise_audio(audio, sample_rate=AUDIO_SAMPLE_RATE)
+            audio = denoise_audio(audio, sample_rate=AUDIO_SAMPLE_RATE, trim_silence=trim_silence)
 
         # Step 3: Apply SPL calibration
         audio = apply_spl_calibration(audio, target_spl_db=spl_db)
+
+        # Safety: ensure mono before writing
+        if audio.shape[0] > 1:
+            audio = audio.mean(dim=0, keepdim=True)
 
         torchaudio.save(output_path, audio.cpu(), AUDIO_SAMPLE_RATE)
         print(f"Saved to: {output_path} (calibrated to {spl_db} dB SPL{denoise_suffix})")

@@ -64,9 +64,9 @@ export function VirtualTreeItem({
 
   const getItemBackgroundClass = (): string => {
     if (isSelected) {
-      return 'bg-info-light hover:bg-info/20 rounded-sm';
+      return 'bg-primary-hover/80 hover:bg-primary-hover/20 rounded-sm';
     }
-    return 'bg-background hover:bg-neutral-50 hover:rounded-sm';
+    return 'bg-background hover:bg-primary-hover/50 hover:rounded-sm';
   };
 
   const handleClick = (e: React.MouseEvent) => {
@@ -176,7 +176,7 @@ export function VirtualTreeItem({
           {/* Hide/Show button */}
           <button
             className={`p-1 hover:bg-neutral-200 rounded transition-colors ${
-              isHidden ? 'text-neutral-400' : 'text-neutral-700'
+              isHidden ? 'text-primary' : 'text-neutral-700'
             }`}
             onClick={handleToggleVisibility}
             title={isHidden ? 'Show' : 'Hide'}
@@ -199,7 +199,7 @@ export function VirtualTreeItem({
           {/* Isolate button */}
           <button
             className={`p-1 hover:bg-neutral-200 rounded transition-colors ${
-              isIsolated ? 'text-neutral-700' : 'text-neutral-600'
+              isIsolated ? 'text-primary' : 'text-neutral-600'
             }`}
             onClick={handleToggleIsolation}
             title={isIsolated ? 'Un-isolate' : 'Isolate'}
@@ -258,7 +258,8 @@ export function VirtualTreeItem({
               </svg>
             )}
           </button>
-        </div>        )}      </div>
+        </div>        )}      
+      </div>
     </div>
   );
 }

@@ -4,6 +4,7 @@ import type { SoundGenerationConfig } from '@/types';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { pauseStore, commitStore, globalUndo, globalRedo } from '@/store';
 import { useBatchedSlider } from '@/hooks/useBatchedSlider';
+import { useSoundscapeStore } from '@/store';
 
 /**
  * TextToAudioMode Component
@@ -82,6 +83,8 @@ export function TextToAudioSliders({
 }
 
 export function TextToAudioMode({ config, index, onUpdateConfig, hideSliders }: TextToAudioModeProps) {
+  const applyNoiseReduction = useSoundscapeStore((s) => s.applyNoiseReduction);
+
   return (
     <>
       <textarea

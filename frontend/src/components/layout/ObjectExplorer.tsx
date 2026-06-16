@@ -20,7 +20,12 @@ import { UI_RIGHT_SIDEBAR } from '@/utils/constants';
  * Extracted from Model3DContextContent to live in the right sidebar.
  */
 
-export function ObjectExplorer() {
+interface ObjectExplorerProps {
+  resetAllRef?: React.MutableRefObject<(() => void) | null>;
+  onItemCountChange?: (count: number) => void;
+}
+
+export function ObjectExplorer({ resetAllRef, onItemCountChange }: ObjectExplorerProps = {}) {
   const { modelFileName, worldTreeVersion, getViewerRef, setSelectedEntity } = useSpeckleStore();
   // Stable RefObject-like shim so hooks that expect RefObject<Viewer> keep working
   const viewerRef = useMemo<React.RefObject<any>>(() => ({
@@ -106,6 +111,24 @@ export function ObjectExplorer() {
       return true;
     });
   }, [virtualItems]);
+
+  // Report item count to parent panel
+  useEffect(() => {
+    onItemCountChange?.(filteredVirtualItems.length);
+  }, [filteredVirtualItems.length, onItemCountChange]);
+
+  // Expose reset-all function to parent panel
+  useEffect(() => {
+    if (resetAllRef) {
+      resetAllRef.current = () => {
+        clearFilters();
+        clearSelection();
+      };
+    }
+    return () => {
+      if (resetAllRef) resetAllRef.current = null;
+    };
+  }, [resetAllRef, clearFilters, clearSelection]);
 
   /**
    * Find a node by name in the tree (searches recursively)
@@ -473,25 +496,6 @@ export function ObjectExplorer() {
   
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <label className="text-xs font-medium text-neutral-700">
-          {filteredVirtualItems.length > 0 && `${filteredVirtualItems.length} items`}
-        </label>
-        {(hiddenObjects.size > 0 || isolatedObjects.size > 0 || selectedObjectIds.length > 0) && (
-          <button
-            onClick={() => {
-              clearFilters();
-              clearSelection();
-            }}
-            className="text-xs px-2 py-1 rounded hover:bg-secondary-light transition-colors"
-            style={{ color: 'var(--color-primary)' }}
-            title="Clear all filters and selection"
-          >
-            🔄 Reset All
-          </button>
-        )}
-      </div>
-
       {filteredVirtualItems.length > 0 ? (
         <>
           {/* Scrolling Tree List */}
@@ -609,7 +613,6 @@ export function ObjectExplorer() {
               cursor: 'pointer'
             }}
           >
-            🔄 Refresh Tree
           </button>
         </div>
       )}

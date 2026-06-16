@@ -116,9 +116,6 @@ export class SoundSphereManager {
    */
   public setAudioOrchestrator(audioOrchestrator: AudioOrchestrator | null): void {
     this.audioOrchestrator = audioOrchestrator;
-    if (audioOrchestrator) {
-      console.log('[SoundSphereManager] AudioOrchestrator updated');
-    }
   }
 
   /**
@@ -159,9 +156,16 @@ export class SoundSphereManager {
       return new Map();
     }
 
-    // Compute visible sounds BEFORE any teardown to check if recreation is needed
+    // Separate iteration-label-only entries (produced by page.tsx for per-iteration entity
+    // position visualization) from real sound events.  They carry '_iter_' in their ID.
+    // They must NOT enter the variant-selection or audio-loading pipelines — only labels.
+    const iterationLabels = soundscapeData.filter(s => s.id.includes('_iter_'));
+    const realSoundData   = soundscapeData.filter(s => !s.id.includes('_iter_'));
+
+    // Compute visible sounds BEFORE any teardown to check if recreation is needed.
+    // Use only real sound data so iteration-label entries don't corrupt variant selection.
     const soundsByPromptIndex: { [key: number]: SoundEvent[] } = {};
-    soundscapeData.forEach(sound => {
+    realSoundData.forEach(sound => {
       const promptIdx = (sound as any).prompt_index ?? 0;
       if (!soundsByPromptIndex[promptIdx]) {
         soundsByPromptIndex[promptIdx] = [];
@@ -182,7 +186,7 @@ export class SoundSphereManager {
 
     // Keep prompt-level positions bounded to prompts that still exist.
     const visiblePromptIndices = new Set(
-      soundscapeData.map((s) => ((s as any).prompt_index ?? 0) as number)
+      realSoundData.map((s) => ((s as any).prompt_index ?? 0) as number)
     );
     for (const promptIdx of this.promptPositions.keys()) {
       if (!visiblePromptIndices.has(promptIdx)) {
@@ -246,8 +250,19 @@ export class SoundSphereManager {
           }
         }
       });
+      // Register iteration label positions so updateScreenSpaceScale can scale them.
+      // The set may change even when real sounds are unchanged (when the user links a
+      // new entity to a DAW iteration), so always sync them in the fast path too.
+      iterationLabels.forEach(label => {
+        if (label.position) {
+          this.spherePositions.set(label.id, label.position as [number, number, number]);
+        }
+      });
       this.syncLabelSprites(this.soundMeshes);
-      this.syncEntityLabelSprites(visibleSounds.filter(s => s.entity_index !== undefined));
+      this.syncEntityLabelSprites([
+        ...visibleSounds.filter(s => s.entity_index !== undefined),
+        ...iterationLabels,
+      ]);
       return new Map();
     }
 
@@ -404,10 +419,39 @@ export class SoundSphereManager {
       this.spherePositions.set(soundEvent.id, position);
       this.promptPositions.set(promptIdx, position);
     });
-    this.syncEntityLabelSprites(entitySounds);
 
-    // Sync audio sources: create new, remove stale
-    this.syncAudioSources(visibleSounds);
+    // Register per-iteration label positions so updateScreenSpaceScale can find them.
+    // These entries are label-only (no audio source, no mesh) and were excluded from the
+    // variant-selection pipeline to avoid corrupting audio scheduling.
+    iterationLabels.forEach(label => {
+      if (label.position) {
+        this.spherePositions.set(label.id, label.position as [number, number, number]);
+      }
+    });
+
+    this.syncEntityLabelSprites([...entitySounds, ...iterationLabels]);
+
+    // Register audio sources for ALL non-pending variants (not just the visible/selected one).
+    // This decouples the sound card's variant selector from timeline playback — the
+    // orchestrator always has every variant's buffer loaded so that playAll (which always
+    // schedules copy-index 0) and per-iteration iterationLinks can both find their target
+    // without the card selection affecting what plays on the timeline.
+    const allNonPendingSounds = Object.values(soundsByPromptIndex)
+      .flat()
+      .filter((s) => !(s as any).isPending);
+
+    // Non-selected variants don't go through the mesh/position pipeline above, so they
+    // may lack entries in spherePositions.  Give them the prompt-level position so that
+    // loadAudioForSound can spatialise them correctly.
+    allNonPendingSounds.forEach((sound) => {
+      if (!this.spherePositions.has(sound.id)) {
+        const promptIdx = (sound as any).prompt_index ?? 0;
+        const pos = this.promptPositions.get(promptIdx);
+        if (pos) this.spherePositions.set(sound.id, pos);
+      }
+    });
+
+    this.syncAudioSources(allNonPendingSounds);
 
     return newlyPlacedPositions;
   }
@@ -611,8 +655,6 @@ export class SoundSphereManager {
       this.addPointLightToMesh(sphereMesh);
     }
 
-    console.log(`[SoundSphereManager] Created sound sphere: ${promptKey}`);
-
     // Note: Scene.add() is handled by updateDraggableMeshes utility
     return sphereMesh;
   }
@@ -759,54 +801,106 @@ export class SoundSphereManager {
   private syncEntityLabelSprites(entitySounds: SoundEvent[]): void {
     const currentIds = new Set(entitySounds.map(s => s.id));
 
-    // Remove labels whose entity sound is no longer visible
+    // Separate iteration labels from regular entity-linked sounds.
+    const iterationLabels: SoundEvent[] = [];
+    const regularEntitySounds: SoundEvent[] = [];
+    for (const s of entitySounds) {
+      if (s.id.includes('_iter_')) {
+        iterationLabels.push(s);
+      } else {
+        regularEntitySounds.push(s);
+      }
+    }
+
+    // Build set of base sound IDs that have iteration labels (i.e. multiple entities linked).
+    // Regular entity labels for these sounds are converted to .pos1 (default entity)
+    // instead of being suppressed, so unlinked iterations show as linked to entity 1.
+    const iterBaseIds = new Set(iterationLabels.map(s => s.id.replace(/_iter_.*$/, '')));
+
+    // Remove labels whose entity sound is no longer visible,
+    // AND regular entity labels suppressed because iteration labels exist.
     for (const [id, sprite] of this.entityLabelSprites) {
-      if (!currentIds.has(id)) {
+      if (!currentIds.has(id) || iterBaseIds.has(id)) {
         this.soundSpheresGroup.remove(sprite);
         disposeLabelSprite(sprite);
         this.entityLabelSprites.delete(id);
       }
     }
 
-    // Group sounds by entity_index to assign per-entity slot indices
-    const entityGroups = new Map<number, SoundEvent[]>();
-    for (const s of entitySounds) {
-      const idx = s.entity_index!;
-      if (!entityGroups.has(idx)) entityGroups.set(idx, []);
-      entityGroups.get(idx)!.push(s);
+    // Group-1: regular entity-linked sounds — by entity_index (co-located at same entity)
+    const entityIndexGroups = new Map<number, SoundEvent[]>();
+    for (const s of regularEntitySounds) {
+      const idx = s.entity_index ?? 0;
+      if (!entityIndexGroups.has(idx)) entityIndexGroups.set(idx, []);
+      entityIndexGroups.get(idx)!.push(s);
     }
 
-    // Create (or recreate on text/slot/group-size change) labels
-    for (const sounds of entityGroups.values()) {
+    // Group-2: iteration labels — by base sound ID (all iterations of the same sound)
+    const iterationGroups = new Map<string, SoundEvent[]>();
+    for (const s of iterationLabels) {
+      const baseId = s.id.replace(/_iter_.*$/, '');
+      if (!iterationGroups.has(baseId)) iterationGroups.set(baseId, []);
+      iterationGroups.get(baseId)!.push(s);
+    }
+
+    // Create (or recreate) labels for regular entity groups.
+    // Suppress regular labels when iteration labels exist (multi-entity).
+    // The default .pos1 label is provided as an explicit iteration label.
+    for (const sounds of entityIndexGroups.values()) {
       const groupSize = sounds.length;
       sounds.forEach((soundEvent, slotIdx) => {
-        const text = trimDisplayName(soundEvent.display_name ?? '') || soundEvent.id;
-        const existing = this.entityLabelSprites.get(soundEvent.id);
-
-        // Recreate when text, slot index, or group size has changed
-        const needsRebuild = existing && (
-          existing.userData.labelText !== text ||
-          existing.userData.entitySlot !== slotIdx ||
-          existing.userData.entityGroupSize !== groupSize
-        );
-
-        if (existing && !needsRebuild) return; // up-to-date
-
-        if (existing) {
-          this.soundSpheresGroup.remove(existing);
-          disposeLabelSprite(existing);
-          this.entityLabelSprites.delete(soundEvent.id);
-        }
-
-        const pos = this.spherePositions.get(soundEvent.id) ?? soundEvent.position as [number, number, number];
-        const sprite = createLabelSprite(text);
-        sprite.position.set(pos[0], pos[1], pos[2]);
-        sprite.userData.entitySlot = slotIdx;
-        sprite.userData.entityGroupSize = groupSize;
-        this.soundSpheresGroup.add(sprite);
-        this.entityLabelSprites.set(soundEvent.id, sprite);
+        if (iterBaseIds.has(soundEvent.id)) return;
+        const baseText = trimDisplayName(soundEvent.display_name ?? '') || soundEvent.id;
+        const text = groupSize > 1 ? `${baseText}.pos${slotIdx + 1}` : baseText;
+        this.upsertEntityLabel(soundEvent, slotIdx, groupSize, text);
       });
     }
+
+    // Create (or recreate) labels for iteration groups.
+    // Each iteration label carries the real entity index (from the config.entities array)
+    // so the pos suffix matches the sound card's numbered entity buttons.
+    for (const sounds of iterationGroups.values()) {
+      const groupSize = sounds.length;
+      sounds.forEach((soundEvent, slotIdx) => {
+        const baseText = trimDisplayName(soundEvent.display_name ?? '') || soundEvent.id;
+        const entityIdx = soundEvent.entity_index ?? -1;
+        const posNum = entityIdx >= 0 ? entityIdx + 1 : slotIdx + 1;
+        const text = `${baseText}.pos${posNum}`;
+        this.upsertEntityLabel(soundEvent, slotIdx, groupSize, text);
+      });
+    }
+  }
+
+  private upsertEntityLabel(
+    soundEvent: SoundEvent,
+    slotIdx: number,
+    groupSize: number,
+    text: string,
+  ): void {
+    const existing = this.entityLabelSprites.get(soundEvent.id);
+
+    // Recreate when text, slot index, or group size has changed
+    const needsRebuild = existing && (
+      existing.userData.labelText !== text ||
+      existing.userData.entitySlot !== slotIdx ||
+      existing.userData.entityGroupSize !== groupSize
+    );
+
+    if (existing && !needsRebuild) return;
+
+    if (existing) {
+      this.soundSpheresGroup.remove(existing);
+      disposeLabelSprite(existing);
+      this.entityLabelSprites.delete(soundEvent.id);
+    }
+
+    const pos = this.spherePositions.get(soundEvent.id) ?? soundEvent.position as [number, number, number];
+    const sprite = createLabelSprite(text);
+    sprite.position.set(pos[0], pos[1], pos[2]);
+    sprite.userData.entitySlot = slotIdx;
+    sprite.userData.entityGroupSize = groupSize;
+    this.soundSpheresGroup.add(sprite);
+    this.entityLabelSprites.set(soundEvent.id, sprite);
   }
 
   /**
@@ -914,7 +1008,6 @@ export class SoundSphereManager {
       }
     });
 
-    console.log(`[SoundSphereManager] Re-registered ${registeredCount}/${this.soundMetadata.size} sources`);
   }
 
   // ============================================================================
@@ -939,8 +1032,6 @@ export class SoundSphereManager {
       // Add point light as child (follows mesh during drag)
       this.addPointLightToMesh(mesh);
     });
-
-    console.log(`[SoundSphereManager] Dark mode enabled on ${this.soundMeshes.length} spheres`);
   }
 
   /**
@@ -964,8 +1055,6 @@ export class SoundSphereManager {
       material.opacity = 0.7;
       material.needsUpdate = true;
     });
-
-    console.log('[SoundSphereManager] Dark mode disabled');
   }
 
   /** Add a point light as a child of a sound sphere mesh */

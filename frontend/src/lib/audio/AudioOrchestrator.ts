@@ -56,7 +56,7 @@ import {
   getAudioBufferInfo,
   formatAudioBufferInfo
 } from './utils/audio-file-decoder';
-import { AUDIO_CONTROL, AMBISONIC, DEFAULT_SPEED_OF_SOUND } from '@/utils/constants';
+import { AUDIO_CONTROL, AMBISONIC, DEFAULT_SPEED_OF_SOUND, HRTF } from '@/utils/constants';
 
 export class AudioOrchestrator implements IAudioOrchestrator {
   private audioContext: AudioContext | null = null;
@@ -195,6 +195,18 @@ export class AudioOrchestrator implements IAudioOrchestrator {
         logAudioError(audioError, 'AudioOrchestrator');
         this.hrtfLoadFailed = true;
         this.warnings.push('HRTF data unavailable - using basic panning');
+      }
+
+      // Load actual HRTFs for physically accurate binaural rendering.
+      // OmnitoneFOADecoder has built-in HRTFs; BinauralDecoder defaults to
+      // cardioid virtual mics (fake amplitude coefficients).
+      if (!useOmnitone && this.binauralDecoder instanceof BinauralDecoder) {
+        try {
+          await (this.binauralDecoder as BinauralDecoder).loadHRTFs(HRTF.DEFAULT_HRTF_PATH);
+          console.log('[AudioOrchestrator] HRTFs loaded for real-time binaural');
+        } catch {
+          console.warn('[AudioOrchestrator] HRTFs unavailable for real-time — using cardioid fallback');
+        }
       }
 
       // Initialize default mode based on preferences
@@ -1090,6 +1102,10 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     irBuffer: AudioBuffer | null;
     perSourceIRBuffers: Map<string, AudioBuffer>;
     originalIRChannelCount: number;
+    roomDimensions: { width: number; height: number; depth: number } | null;
+    roomMaterials: Record<string, string> | null;
+    roomCenterOffset: { x: number; y: number; z: number } | null;
+    speedOfSound: number;
   } {
     // Extract listener state from current mode instance
     let listenerPosition: Position = { x: 0, y: 0, z: 0 } as Position;
@@ -1110,6 +1126,19 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       perSourceIRBuffers = this.ambisonicIRMode.getSourceIRBuffers();
     }
 
+    // Resonance-specific data
+    let roomDimensions: { width: number; height: number; depth: number } | null = null;
+    let roomMaterials: Record<string, string> | null = null;
+    let roomCenterOffset: { x: number; y: number; z: number } | null = null;
+    let speedOfSound = 343;
+
+    if (this.resonanceMode) {
+      roomDimensions = this.resonanceMode.getRoomDimensions();
+      roomMaterials = this.resonanceMode.getRoomMaterials();
+      roomCenterOffset = (this.resonanceMode as any).roomCenterOffset ?? null;
+      speedOfSound = (this.resonanceMode as any).speedOfSound ?? 343;
+    }
+
     return {
       mode: this.currentMode,
       ambisonicOrder: this.ambisonicOrder,
@@ -1120,6 +1149,10 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       irBuffer,
       perSourceIRBuffers,
       originalIRChannelCount: this.irState.channelCount ?? 0,
+      roomDimensions,
+      roomMaterials,
+      roomCenterOffset,
+      speedOfSound,
     };
   }
 
