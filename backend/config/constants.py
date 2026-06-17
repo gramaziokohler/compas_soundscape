@@ -310,9 +310,11 @@ SAMPLE_IFC_FILE_PATH = "data/Duplex_A_20110907.ifc"  # Sample IFC file for testi
 # ============================================================================
 
 # CORS Configuration
+# For local development, default origin is http://localhost:3000.
+# Set FRONTEND_ORIGIN in .env to override (e.g., http://192.168.1.100:3000 for network access).
+# Set CORS_ALLOW_ALL=true in .env to allow all origins (development only).
 CORS_ORIGIN_LOCALHOST = "http://localhost"
 CORS_ORIGIN_FRONTEND = "http://localhost:3000"
-CORS_ORIGIN_NETWORK = "http://129.132.205.138:3000"  # Network access for frontend
 CORS_ALLOW_ALL = "*"  # Allow all origins (use for development with dynamic network IPs)
 
 # Static Files

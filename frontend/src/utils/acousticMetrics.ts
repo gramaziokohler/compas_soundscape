@@ -7,9 +7,7 @@
 
 import { apiService } from '@/services/api';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from '@/types/audio';
-
-// API base URL constant
-const API_BASE_URL = 'http://localhost:8000';
+import { API_BASE_URL } from '@/utils/constants';
 
 /**
  * Acoustic parameters from simulation results

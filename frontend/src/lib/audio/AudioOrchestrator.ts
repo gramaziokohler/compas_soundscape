@@ -56,7 +56,7 @@ import {
   getAudioBufferInfo,
   formatAudioBufferInfo
 } from './utils/audio-file-decoder';
-import { AUDIO_CONTROL, AMBISONIC, DEFAULT_SPEED_OF_SOUND, HRTF } from '@/utils/constants';
+import { AUDIO_CONTROL, AMBISONIC, DEFAULT_SPEED_OF_SOUND, HRTF, API_BASE_URL } from '@/utils/constants';
 
 export class AudioOrchestrator implements IAudioOrchestrator {
   private audioContext: AudioContext | null = null;
@@ -635,7 +635,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
 
     try {
       // Build full URL (metadata.url is relative like "/static/impulse_responses/file.wav")
-      const fullUrl = `http://localhost:8000${irMetadata.url}`;
+      const fullUrl = `${API_BASE_URL}${irMetadata.url}`;
 
       // Download the IR file
       const response = await fetch(fullUrl);

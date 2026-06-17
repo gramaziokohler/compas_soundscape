@@ -20,6 +20,7 @@ import type {
 } from '@/types/soundscape';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from '@/types/audio';
 import type { AnalysisConfig, AnalysisResult, TextPromptResult } from '@/types/analysis';
+import { API_BASE_URL } from '@/utils/constants';
 
 /**
  * Extract the filename from a sound URL path.
@@ -31,7 +32,7 @@ function extractFilename(url: string): string {
   if (!url || url.startsWith('blob:')) return '';
   try {
     // Handle full URLs
-    const urlObj = new URL(url, 'http://localhost');
+    const urlObj = new URL(url, API_BASE_URL);
     const pathname = urlObj.pathname;
     return pathname.split('/').pop() || '';
   } catch {

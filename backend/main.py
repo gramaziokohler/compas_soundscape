@@ -22,8 +22,6 @@ from utils.file_operations import cleanup_all_temp_directories, ensure_all_temp_
 
 # Import constants
 from config.constants import (
-    CORS_ORIGIN_FRONTEND,
-    CORS_ORIGIN_NETWORK,
     STATIC_MOUNT_PATH,
     STATIC_FILES_DIRECTORY,
     IMPULSE_RESPONSE_DIR,
@@ -135,11 +133,23 @@ app.mount(
 # --- Session Middleware (before CORS) ---
 app.add_middleware(SessionMiddleware)
 
+# --- Build CORS origins from environment ---
+cors_origins: list[str]
+allow_credentials: bool
+allow_all = os.getenv("CORS_ALLOW_ALL", "").lower() in ("true", "1", "yes")
+if allow_all:
+    cors_origins = ["*"]
+    allow_credentials = False
+else:
+    frontend_origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
+    cors_origins = [frontend_origin]
+    allow_credentials = True
+
 # --- CORS Middleware ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[CORS_ORIGIN_FRONTEND, CORS_ORIGIN_NETWORK],
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials=allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )

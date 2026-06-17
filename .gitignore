@@ -161,7 +161,6 @@ node_modules/
 dist/
 .next/
 .env.local
-.env.example
 .editorconfig
 .mcp.json
 .gitignore
