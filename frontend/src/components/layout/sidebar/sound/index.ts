@@ -22,6 +22,9 @@ export { SoundPreContent } from './SoundPreContent';
 export { TextToAudioMode } from './TextToAudioMode';
 export type { TextToAudioModeProps } from './TextToAudioMode';
 
+export { TextToSpeechMode } from './TextToSpeechMode';
+export type { TextToSpeechModeProps } from './TextToSpeechMode';
+
 export { UploadMode } from './UploadMode';
 export type { UploadModeProps } from './UploadMode';
 

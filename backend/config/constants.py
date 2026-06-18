@@ -123,6 +123,7 @@ DENOISING_TRIM_MERGE_THRESHOLD = 0.2  # Max silence (seconds) between SFX to mer
 # Audio Generation Models
 AUDIO_MODEL_TANGOFLUX = "tangoflux"
 AUDIO_MODEL_AUDIOLDM2 = "audioldm2"
+AUDIO_MODEL_TTS = "gemini-tts"
 DEFAULT_AUDIO_MODEL = AUDIO_MODEL_TANGOFLUX  # Default model to use
 
 # Device Configuration
@@ -137,6 +138,22 @@ AUDIOLDM2_MODEL_NAME = "cvssp/audioldm2-large"
 AUDIOLDM2_INFERENCE_STEPS = 200  # Default number of inference steps for AudioLDM2
 AUDIOLDM2_NUM_WAVEFORMS = 1  # Number of waveforms to generate per prompt
 AUDIOLDM2_SAMPLE_RATE = 16000  # AudioLDM2 output sample rate
+
+# Gemini TTS Configuration
+TTS_MODEL_NAME = "gemini-2.5-flash-preview-tts"
+TTS_SAMPLE_RATE = 24000
+TTS_DEFAULT_VOICE = "Kore"
+TTS_AVAILABLE_VOICES = [
+    "Kore",
+    "Fenrir",
+    "Puck",
+    "Charon",
+    "Leda",
+    "Orus",
+]
+TTS_OUTPUT_DIR = "./temp/static/sounds/generated/tts"
+TTS_OUTPUT_URL_PREFIX = "/static/sounds/generated/tts"
+TTS_TASK_CLEANUP_DELAY_SECONDS = 600
 
 # Default Generation Parameters (TangoFlux)
 DEFAULT_GUIDANCE_SCALE = 4.5  # Default guidance scale for generation

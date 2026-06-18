@@ -292,6 +292,7 @@ class SoundscapeSoundConfig(BaseModel):
     entity_node_id: Optional[str] = None  # Full Speckle object hash ID
     seed_copies: int = 1
     steps: int = 25
+    parent_usage_original_index: Optional[int] = None
 
 
 class SoundscapeSoundEvent(BaseModel):
@@ -566,3 +567,30 @@ class FoleyArtistRequest(BaseModel):
     analysis_id: str | None = None
     llm_model: str = "gemini-2.5-flash"
     maximum_sounds: int = 20
+
+
+# ============================================================================
+# Text-to-Speech (TTS) Schemas
+# ============================================================================
+
+class TTSGenerationRequest(BaseModel):
+    texts: list[dict]
+    output_dir: str = "./temp/static/sounds/generated/tts"
+    url_prefix: str = "/static/sounds/generated/tts"
+
+
+class TTSGenerationStartResponse(BaseModel):
+    generation_id: str
+
+
+class TTSGenerationStatusResponse(BaseModel):
+    generation_id: str
+    progress: int
+    status: str
+    completed: bool
+    cancelled: bool
+    error: Optional[str] = None
+    result: Optional[list[dict]] = None
+    partial_sounds: Optional[list[dict]] = None
+    queue_position: Optional[int] = None
+    queue_total: Optional[int] = None

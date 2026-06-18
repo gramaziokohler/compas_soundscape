@@ -260,6 +260,14 @@ export function SpeckleSurfaceMaterialsSection({
 
     console.log('[SpeckleSurfaceMaterialsSection] Remapped', materialAssignments.size, 'saved assignments →', remappedMaterial.size, 'current assignments');
 
+    // If every saved ID was stale (no matches), keep the original assignments.
+    // Overwriting the store with an empty map causes handleSpeckleMaterialAssignments
+    // to detect a false "materialsChanged" and reset the simulation card back to
+    // before-simulation state, losing the completed results.
+    if (remappedMaterial.size === 0 && materialAssignments.size > 0) {
+      return;
+    }
+
     skipNextNotifyRef.current = true;
     loadAssignments(remappedMaterial, remappedScattering);
     useAcousticMaterialStore.temporal.getState().clear();

@@ -24,6 +24,7 @@ import {
   useUIStore,
   useGridListenersStore,
   useErrorsStore,
+  useCardFlowStore,
 } from "@/store";
 import * as THREE from "three";
 import { useAudioNormalization } from "@/hooks/useAudioNormalization";
@@ -93,6 +94,8 @@ function HomeContent() {
   }, [soundGen.generatedSounds]);
 
   const analysis = useAnalysisStore();
+
+  const cardFlow = useCardFlowStore();
 
   // Speckle store — replaces SpeckleViewerContext + SpeckleSelectionModeContext
   const {
@@ -655,10 +658,11 @@ function HomeContent() {
     // prompts still pending produce exactly one placeholder entry.
     return soundGen.soundConfigs
       .flatMap((config, index) => {
-        // When activeSoundParentIndex is null (skipped flow), show only unparented sounds.
+        // When activeSoundParentIndex is set, only show sounds matching that parent.
+        // When null (e.g., after auto-advance from restore), show all sounds
+        // including parented ones — otherwise restored soundscapes lose their 3D spheres.
         if (activeSoundParentIndex !== null
-          ? config.parentUsageOriginalIndex !== activeSoundParentIndex
-          : config.parentUsageOriginalIndex !== undefined && config.parentUsageOriginalIndex !== null
+            && config.parentUsageOriginalIndex !== activeSoundParentIndex
         ) return [];
 
         if (generatedByPrompt.has(index)) {
@@ -1087,6 +1091,33 @@ function HomeContent() {
           if (analysisRestored.pendingSoundConfigs.length > 0) {
             textGen.setPendingSoundConfigs(analysisRestored.pendingSoundConfigs);
           }
+          // Rebuild parentUsageOriginalIndex on sound configs from hierarchical save data
+          if (analysisRestored.soundConfigParentIndices.size > 0) {
+            const storeState = useSoundscapeStore.getState();
+            const configs = storeState.soundConfigs.map((c, i) => {
+              const parent = analysisRestored.soundConfigParentIndices.get(i);
+              return parent !== undefined ? { ...c, parentUsageOriginalIndex: parent } as typeof c : c;
+            });
+            useSoundscapeStore.setState({ soundConfigs: configs });
+          }
+          // Restore breadcrumb navigation state and auto-navigate to the first
+          // context→usage→sounds chain so only relevant child cards are shown.
+          if (analysisRestored.cardFlowState) {
+            const cf = analysisRestored.cardFlowState;
+            useCardFlowStore.setState({
+              contextAdvanced: new Set(cf.contextAdvanced),
+              usageAdvanced: new Set(cf.usageAdvanced),
+              contextToUsageMap: new Map(Object.entries(cf.contextToUsage).map(([k, v]) => [Number(k), v])),
+              usageToSoundMap: new Map(Object.entries(cf.usageToSound).map(([k, v]) => [Number(k), v])),
+            });
+            // Find the first context card that has usage children and pre-set it
+            // as the active sound parent so the sidebar filters to only its children.
+            if (cf.contextAdvanced.length > 0) {
+              useUIStore.getState().setActiveSoundParentIndex(cf.contextAdvanced[0]);
+            }
+            // Auto-advance to Sounds step — sidebar will pick up activeSoundParentIndex
+            setStepAdvanceTrigger(t => t + 1);
+          }
           console.log(`[page.tsx] Restored analysis state: ${analysisRestored.analysisConfigs.length} cards, active tab ${analysisRestored.activeTab}`);
         }
       }
@@ -1130,11 +1161,19 @@ function HomeContent() {
       }
 
       // 2. Build analysis state (serialize cards, results, pending configs)
+      const cardFlowState = useCardFlowStore.getState();
       const analysisStateData = buildAnalysisStateSave(
         analysis.analysisConfigs,
         analysis.analysisResults,
         textGen.pendingSoundConfigs,
         analysis.activeAnalysisTab,
+        soundGen.soundConfigs.map(c => ({ parentUsageOriginalIndex: (c as any).parentUsageOriginalIndex })),
+        {
+          contextAdvanced: [...cardFlowState.contextAdvanced],
+          usageAdvanced: [...cardFlowState.usageAdvanced],
+          contextToUsage: Object.fromEntries(cardFlowState.contextToUsageMap),
+          usageToSound: Object.fromEntries(cardFlowState.usageToSoundMap),
+        },
       );
 
       // 3. Build save payload (with server filenames for blob sounds + simulation state)

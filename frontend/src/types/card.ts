@@ -45,6 +45,7 @@ export type CardType =
   | 'audio'
   | 'text'
   | 'text-to-audio'
+  | 'text-to-speech'
   | 'upload'
   | 'library'
   | 'catalog'
@@ -67,6 +68,7 @@ export const CARD_TYPE_LABELS: Record<CardType, string> = {
   'audio': 'Audio Context',
   'text': 'Usage typology',
   'text-to-audio': 'Text-to-Audio',
+  'text-to-speech': 'Text-to-Speech',
   'upload': 'Uploaded Audio',
   'library': 'Library Sound',
   'catalog': 'Catalog Sound',

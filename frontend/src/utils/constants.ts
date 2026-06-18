@@ -305,6 +305,7 @@ export const SPIRAL_PLACEMENT = {
 export const AUDIO_MODEL_TANGOFLUX = "tangoflux";
 export const AUDIO_MODEL_AUDIOLDM2 = "audioldm2";
 export const AUDIO_MODEL_ELEVENLABS = "elevenlabs";
+export const AUDIO_MODEL_TTS = "gemini-tts";
 export const DEFAULT_AUDIO_MODEL = AUDIO_MODEL_TANGOFLUX;
 
 // LLM Models
@@ -326,7 +327,19 @@ export const AUDIO_MODEL_NAMES: Record<string, string> = {
   [AUDIO_MODEL_TANGOFLUX]: "TangoFlux",
   [AUDIO_MODEL_AUDIOLDM2]: "AudioLDM2",
   [AUDIO_MODEL_ELEVENLABS]: "ElevenLabs",
+  [AUDIO_MODEL_TTS]: "Gemini TTS",
 };
+
+// TTS Voice options
+export const TTS_VOICES = [
+  { value: "Kore", label: "Kore" },
+  { value: "Fenrir", label: "Fenrir" },
+  { value: "Puck", label: "Puck" },
+  { value: "Charon", label: "Charon" },
+  { value: "Leda", label: "Leda" },
+  { value: "Orus", label: "Orus" },
+] as const;
+export const TTS_DEFAULT_VOICE = "Kore";
 
 export const LLM_MODEL_NAMES: Record<string, string> = {
   [LLM_MODEL_GEMINI_FLASH]: "Gemini 2.5 Flash",

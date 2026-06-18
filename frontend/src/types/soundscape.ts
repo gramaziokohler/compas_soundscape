@@ -30,6 +30,8 @@ export interface SoundscapeSoundConfig {
   entity_node_ids?: string[];    // Stable applicationIds for all linked entities
   seed_copies: number;
   steps: number;
+  /** Parent analysis card index (links this sound config back to its context/usage card) */
+  parent_usage_original_index?: number;
 }
 
 /** Serializable sound event (generated/uploaded sound placed in 3D) */
@@ -158,6 +160,7 @@ export interface SoundscapeLoadResponse {
 export interface SerializedAnalysisConfig {
   type: string;
   display_name?: string;
+  parentContextOriginalIndex?: number;
   numSounds?: number;
   textInput?: string;
   userContext?: string;
@@ -215,4 +218,11 @@ export interface AnalysisState {
   active_tab: number;
   configs: SerializedAnalysisConfig[];
   pending_sound_configs?: any[];
+  /** Breadcrumb navigation state: which context/usage cards have children */
+  card_flow?: {
+    contextAdvanced: number[];
+    usageAdvanced: number[];
+    contextToUsageMap: Record<number, number[]>;
+    usageToSoundMap: Record<number, number[]>;
+  };
 }

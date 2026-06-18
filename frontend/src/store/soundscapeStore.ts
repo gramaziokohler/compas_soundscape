@@ -27,6 +27,7 @@ import {
   LIBRARY_MAX_SEARCH_RESULTS,
   DUPLICATE_POSITION_OFFSET,
   DEFAULT_SPL_DB,
+  TTS_DEFAULT_VOICE,
 } from '@/utils/constants';
 import { loadAudioFile, revokeAudioUrl } from '@/lib/audio/utils/audio-upload';
 import { calculateSoundPosition, type GeometryBounds } from '@/utils/positioning';
@@ -42,6 +43,8 @@ import { useAudioControlsStore } from './audioControlsStore';
 let _abortController: AbortController | null = null;
 let _currentGenerationId: string | null = null;
 let _soundPollInterval: ReturnType<typeof setInterval> | null = null;
+let _ttsPollInterval: ReturnType<typeof setInterval> | null = null;
+let _currentTtsGenerationId: string | null = null;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -204,6 +207,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             selectedCatalogSound: undefined,
             display_name: undefined,
             entities: undefined,
+            ...(type === 'text-to-speech' ? { voice_name: TTS_DEFAULT_VOICE } : {}),
           };
           set(
             { soundConfigs: [...soundConfigs, newConfig], activeSoundConfigTab: soundConfigs.length },
@@ -325,13 +329,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
 
           if (type === 'sample-audio') {
             try {
-              const response = await fetch(`${API_BASE_URL}/api/sample-audio`);
-              if (!response.ok) throw new Error('Failed to load sample audio');
-              const blob = await response.blob();
-              const file = new File([blob], 'Le Corbeau et le Renard (french).wav', {
-                type: 'audio/wav',
-              });
-              const result = await loadAudioFile(file);
+              const sampleFile = await apiService.loadSampleAudio();
+              const result = await loadAudioFile(sampleFile);
               set(
                 (s) => ({
                   soundConfigs: s.soundConfigs.map((c, i) =>
@@ -446,12 +445,20 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           const elevenLabsConfigs =
             audioModel === AUDIO_MODEL_ELEVENLABS ? elevenLabsConfigs2 : [];
 
+          const ttsConfigs = withIndices.filter(
+            ({ config, originalIndex }) =>
+              !alreadyGenerated.has(originalIndex) &&
+              config.type === 'text-to-speech' &&
+              config.prompt.trim() !== '',
+          );
+
           const total =
             generationConfigs.length +
             uploadedConfigs.length +
             libraryConfigs.length +
             catalogConfigs.length +
-            elevenLabsConfigs.length;
+            elevenLabsConfigs.length +
+            ttsConfigs.length;
 
           if (total === 0) {
             set(
@@ -702,6 +709,106 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               }
             }
 
+            // ── TTS (Gemini Text-to-Speech) ────────────────────────────────────
+            let ttsEvents: any[] = [];
+            if (ttsConfigs.length > 0) {
+              const ttsMeta: { _originalIndex: number }[] = [];
+              const ttsTexts = ttsConfigs.map(({ config, originalIndex }) => {
+                ttsMeta.push({ _originalIndex: originalIndex });
+                return {
+                  text: config.prompt,
+                  voice_name: config.voice_name,
+                  display_name: config.display_name || config.prompt,
+                  position: config.position,
+                  spl_db: config.spl_db ?? globalBaseSplDb,
+                };
+              });
+
+              const { generation_id } = await apiService.generateTTS({
+                texts: ttsTexts,
+              });
+              _currentTtsGenerationId = generation_id;
+
+              const mapTtsSound = (sound: any) => {
+                const matched = ttsMeta[sound.prompt_index ?? 0];
+                const actualIndex = matched?._originalIndex ?? sound.prompt_index;
+                const originalConfig = ttsConfigs.find(
+                  ({ originalIndex }) => originalIndex === actualIndex,
+                )?.config;
+
+                let position: number[] = [0, 0, 0];
+                if (originalConfig?.entities?.[0]?.bounds?.center) {
+                  position = originalConfig.entities[0].bounds.center as number[];
+                } else if (originalConfig?.entities?.[0]?.position) {
+                  position = originalConfig.entities[0].position as number[];
+                } else if (originalConfig?.position) {
+                  position = originalConfig.position as number[];
+                }
+
+                const voice = sound.voice_name || originalConfig?.voice_name || 'TTS';
+                const remappedId = `tts_${actualIndex}_${voice}`;
+
+                return {
+                  ...sound,
+                  id: remappedId,
+                  prompt_index: actualIndex,
+                  position,
+                  geometry: sound.geometry || { vertices: [], faces: [] },
+                  isUploaded: true,
+                  volume_db: sound.volume_db ?? originalConfig?.spl_db ?? globalBaseSplDb,
+                };
+              };
+
+              const ttsResult = await new Promise<any[]>((resolve, reject) => {
+                let lastPartialCount = 0;
+                _ttsPollInterval = setInterval(async () => {
+                  try {
+                    const s = await apiService.getTTSGenerationStatus(generation_id);
+                    set(
+                      {
+                        soundGenProgress: s.status,
+                        soundGenProgressValue: s.progress,
+                      },
+                      false,
+                      'soundscape/ttsPoll',
+                    );
+
+                    if (s.partial_sounds && s.partial_sounds.length > lastPartialCount) {
+                      const newPartials = s.partial_sounds.slice(lastPartialCount).map(mapTtsSound);
+                      lastPartialCount = s.partial_sounds.length;
+                      const { generatedSounds: current } = get();
+                      const newIds = new Set(newPartials.map((e: any) => e.id));
+                      const merged = [
+                        ...(current || []).filter((e: any) => !newIds.has(e.id)),
+                        ...newPartials,
+                      ];
+                      set({ generatedSounds: merged }, false, 'soundscape/ttsPartial');
+                    }
+
+                    if (s.cancelled) {
+                      clearInterval(_ttsPollInterval!);
+                      _ttsPollInterval = null;
+                      reject(new Error('AbortError'));
+                    } else if (s.error) {
+                      clearInterval(_ttsPollInterval!);
+                      _ttsPollInterval = null;
+                      reject(new Error(s.error));
+                    } else if (s.completed && s.result) {
+                      clearInterval(_ttsPollInterval!);
+                      _ttsPollInterval = null;
+                      resolve(s.result);
+                    }
+                  } catch (pollErr: any) {
+                    clearInterval(_ttsPollInterval!);
+                    _ttsPollInterval = null;
+                    reject(pollErr);
+                  }
+                }, 1500);
+              });
+
+              ttsEvents = ttsResult.map(mapTtsSound);
+            }
+
             // ── ElevenLabs ────────────────────────────────────────────────────
             const elevenLabsEvents: any[] = [];
             for (const { config, originalIndex } of elevenLabsConfigs) {
@@ -737,6 +844,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               ...uploadedEvents,
               ...libraryEvents,
               ...catalogEvents,
+              ...ttsEvents,
               ...elevenLabsEvents,
             ];
             const newEventIds = new Set(newEvents.map((e) => e.id));
@@ -768,6 +876,11 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               clearInterval(_soundPollInterval);
               _soundPollInterval = null;
             }
+            if (_ttsPollInterval) {
+              clearInterval(_ttsPollInterval);
+              _ttsPollInterval = null;
+            }
+            _currentTtsGenerationId = null;
           }
         },
 
@@ -776,6 +889,10 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             clearInterval(_soundPollInterval);
             _soundPollInterval = null;
           }
+          if (_ttsPollInterval) {
+            clearInterval(_ttsPollInterval);
+            _ttsPollInterval = null;
+          }
           if (_abortController) {
             _abortController.abort();
             _abortController = null;
@@ -783,6 +900,10 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           if (_currentGenerationId) {
             apiService.cancelSoundGeneration(_currentGenerationId);
             _currentGenerationId = null;
+          }
+          if (_currentTtsGenerationId) {
+            apiService.cancelTTSGeneration(_currentTtsGenerationId);
+            _currentTtsGenerationId = null;
           }
           set(
             { isSoundGenerating: false, soundGenError: 'Sound generation stopped by user.', soundGenProgress: '', soundGenProgressValue: 0 },

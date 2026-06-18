@@ -129,6 +129,9 @@ export type { FileUploadStoreState } from './fileUploadStore';
 export { useSpeckleStore, getAnalysisResultGroups } from './speckleStore';
 export type { SpeckleStoreState } from './speckleStore';
 
+export { useCardFlowStore } from './cardFlowStore';
+export type { CardFlowState } from './cardFlowStore';
+
 export { useAreaDrawingStore } from './areaDrawingStore';
 export type { AreaDrawingStoreState } from './areaDrawingStore';
 

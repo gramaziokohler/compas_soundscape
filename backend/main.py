@@ -12,10 +12,11 @@ from dotenv import load_dotenv, find_dotenv
 from services.llm_service import LLMService
 from services.audio_service import AudioService
 from services.impulse_response_service import ImpulseResponseService
+from services.tts_service import TTSService
 # from services.modal_analysis_service import ModalAnalysisService
 
 # Import routers
-from routers import upload, generation, sounds, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, speckle, soundscape, tokens
+from routers import upload, generation, sounds, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, speckle, soundscape, tokens, tts
 
 # Import utilities
 from utils.file_operations import cleanup_all_temp_directories, ensure_all_temp_directories
@@ -63,6 +64,7 @@ else:
 llm_service = LLMService(client)
 audio_service = AudioService()
 ir_service = ImpulseResponseService()
+tts_service_instance = TTSService()
 # modal_service = ModalAnalysisService()
 
 # Initialize routers with services
@@ -71,6 +73,7 @@ sounds.init_sounds_router(audio_service)
 reprocess.init_reprocess_router(audio_service)
 impulse_responses.init_impulse_response_router(ir_service)
 sed_extract.init_sed_extract_router(audio_service)
+tts.init_tts_router(tts_service_instance)
 # modal_analysis.init_modal_analysis_router(modal_service)
 
 # --- Ensure all directories exist before mounting static files ---
@@ -170,6 +173,7 @@ app.include_router(pyroomacoustics.router)
 app.include_router(speckle.router)
 app.include_router(soundscape.router)
 app.include_router(tokens.router)
+app.include_router(tts.router)
 
 
 @app.get("/")
@@ -187,6 +191,7 @@ def get_service_versions(llm_model: str = None):
     from services.llm_service import LLMService
     from services.sed_service import SEDService
     from services.choras_service import ChorasService
+    from services.tts_service import TTSService
 
     return {
         "pyroomacoustics": PyroomacousticsService.get_service_version_info(),
@@ -197,6 +202,7 @@ def get_service_versions(llm_model: str = None):
         "yamnet": SEDService.get_service_version_info(),
         "acousticDE": ChorasService.get_de_version_info(),
         "edg_acoustics": ChorasService.get_dg_version_info(),
+        "gemini-tts": TTSService.get_service_version_info(),
     }
 
 

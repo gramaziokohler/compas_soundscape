@@ -75,6 +75,7 @@ export interface ServiceVersions {
   yamnet: ServiceVersionInfo;
   acousticDE: ServiceVersionInfo;
   edg_acoustics: ServiceVersionInfo;
+  'gemini-tts': ServiceVersionInfo;
 }
 
 export interface TokenStatus {
@@ -152,33 +153,18 @@ export const apiService = {
 
   // Load Sample Audio
   async loadSampleAudio(): Promise<File> {
+    const filename = 'Le Corbeau et le Renard (french).wav';
+    const sampleAudioPath = `/samples/${filename}`;
+
     try {
-      const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/sample-audio`,
-        undefined,
-        'Load sample audio'
-      );
+      const response = await fetch(sampleAudioPath);
 
       if (!response.ok) {
-        const err = await response.json().catch(() => ({ detail: 'Failed to load sample audio' }));
-        throw new Error(err.detail || 'Failed to load sample audio');
+        throw new Error(`Failed to load sample audio: ${response.status} ${response.statusText}`);
       }
 
-      // Get the blob from the response
       const blob = await response.blob();
-
-      // Extract filename from Content-Disposition header or use default
-      const contentDisposition = response.headers.get('content-disposition');
-      let filename = 'sample-audio.wav';
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/i);
-        if (filenameMatch) {
-          filename = filenameMatch[1];
-        }
-      }
-
-      // Create a File object from the blob
-      return new File([blob], filename, { type: blob.type });
+      return new File([blob], filename, { type: blob.type || 'audio/wav' });
     } catch (error) {
       handleApiError(error, 'Load sample audio');
     }
@@ -322,6 +308,72 @@ export const apiService = {
         `${API_BASE_URL}/api/cancel-sound-generation/${generationId}`,
         { method: 'POST' },
         'Cancel sound generation'
+      );
+    } catch {
+      // Silently fail — cancel is best-effort
+    }
+  },
+
+  // Generate TTS (async — returns generation_id for polling)
+  async generateTTS(data: {
+    texts: { text: string; voice_name?: string; display_name?: string; position?: number[]; spl_db?: number }[];
+  }): Promise<{ generation_id: string }> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/generate-tts`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        },
+        'Generate TTS'
+      );
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: 'Failed to generate TTS' }));
+        throw new Error(err.detail || 'Failed to generate TTS');
+      }
+      return await response.json();
+    } catch (error) {
+      handleApiError(error, 'Generate TTS');
+    }
+  },
+
+  // Poll TTS generation status
+  async getTTSGenerationStatus(generationId: string): Promise<{
+    generation_id: string;
+    progress: number;
+    status: string;
+    completed: boolean;
+    cancelled: boolean;
+    error: string | null;
+    result?: any[] | null;
+    partial_sounds?: any[] | null;
+    queue_position?: number | null;
+    queue_total?: number | null;
+  }> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/tts-generation-status/${generationId}`,
+        undefined,
+        'TTS generation status'
+      );
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: 'Failed to get TTS status' }));
+        throw new Error(err.detail || 'Failed to get TTS generation status');
+      }
+      return await response.json();
+    } catch (error) {
+      handleApiError(error, 'TTS generation status');
+    }
+  },
+
+  // Cancel TTS generation
+  async cancelTTSGeneration(generationId: string): Promise<void> {
+    try {
+      await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/cancel-tts-generation/${generationId}`,
+        { method: 'POST' },
+        'Cancel TTS generation'
       );
     } catch {
       // Silently fail — cancel is best-effort

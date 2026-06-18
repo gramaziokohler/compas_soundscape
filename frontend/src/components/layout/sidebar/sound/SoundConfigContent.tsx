@@ -2,6 +2,7 @@
 
 import type { SoundGenerationConfig, LibrarySearchResult, CatalogSoundSelection } from '@/types';
 import { TextToAudioMode } from './TextToAudioMode';
+import { TextToSpeechMode } from './TextToSpeechMode';
 import { UploadMode } from './UploadMode';
 import { LibraryMode } from './LibraryMode';
 import { CatalogMode } from './CatalogMode';
@@ -57,6 +58,14 @@ export function SoundConfigContent({
           index={index}
           onUpdateConfig={onUpdateConfig}
           hideSliders={hideTextToAudioSliders}
+        />
+      )}
+
+      {cardType === 'text-to-speech' && (
+        <TextToSpeechMode
+          config={config}
+          index={index}
+          onUpdateConfig={onUpdateConfig}
         />
       )}
 

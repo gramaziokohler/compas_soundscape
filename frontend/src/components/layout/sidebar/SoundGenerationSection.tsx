@@ -9,7 +9,7 @@ import type { CustomMenuItem } from "@/types/card";
 import { CardSection } from "@/components/ui/CardSection";
 import { Card } from "@/components/ui/Card";import { CircularFAB } from '@/components/ui/CircularFAB';import { SoundPreContent, SoundResultContent } from "./sound";
 import { apiService } from "@/services/api";
-import { useAudioControlsStore, useSoundscapeStore } from "@/store";
+import { useAudioControlsStore, useErrorsStore, useSoundscapeStore } from "@/store";
 import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
 import { useUIStore } from "@/store/uiStore";
 import { useServiceVersions } from "@/hooks/useServiceVersions";
@@ -222,6 +222,7 @@ export function SoundGenerationSection({
     const cardType = config.type || 'text-to-audio';
     switch (cardType) {
       case 'text-to-audio':
+      case 'text-to-speech':
         return config.prompt.trim().length > 0;
       case 'upload':
         return !!(config.uploadedAudioBuffer || config.uploadedAudioInfo);
@@ -252,6 +253,8 @@ export function SoundGenerationSection({
         const sampleFile = await apiService.loadSampleAudio();
         await onUploadAudio(newOriginalIndex, sampleFile);
       } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to load sample audio';
+        useErrorsStore.getState().addError(message, 'error');
         console.error('[SoundGenerationSection] Failed to load sample audio:', error);
       }
     }
@@ -381,6 +384,7 @@ export function SoundGenerationSection({
   // Available card types for add button dropdown (sound types only)
   const availableTypes: CardTypeOption[] = useMemo(() => [
     { type: 'text-to-audio', label: CARD_TYPE_LABELS['text-to-audio'], enabled: true },
+    { type: 'text-to-speech', label: CARD_TYPE_LABELS['text-to-speech'], enabled: true },
     { type: 'upload', label: CARD_TYPE_LABELS['upload'], enabled: true },
     { type: 'library', label: CARD_TYPE_LABELS['library'], enabled: true },
     { type: 'catalog', label: CARD_TYPE_LABELS['catalog'], enabled: true },
@@ -508,6 +512,10 @@ export function SoundGenerationSection({
         }
         const v = serviceVersions.tangoflux;
         return v.version && v.version !== 'unknown' ? `${v.name} ${v.version}` : v.name;
+      }
+      if (cardType === 'text-to-speech') {
+        const v = serviceVersions['gemini-tts'];
+        return v && v.version && v.version !== 'unknown' ? `${v.name} ${v.version}` : v?.name;
       }
       if (cardType === 'library') {
         const v = serviceVersions.bbc;

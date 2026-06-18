@@ -121,6 +121,7 @@ export function buildSoundscapeSavePayload(
         : undefined,
       seed_copies: config.seed_copies,
       steps: config.steps,
+      parent_usage_original_index: (config as any).parentUsageOriginalIndex,
     })
   );
 
@@ -346,6 +347,7 @@ export function restoreSoundscapeState(
       spl_db: saved.spl_db,
       interval_seconds: saved.interval_seconds,
       type: saved.type as SoundGenerationConfig['type'],
+      parentUsageOriginalIndex: (saved as any).parent_usage_original_index,
       entity: undefined, // deprecated — use entities[] below
       entities: (() => {
         // New multi-entity format: entity_indices[] array
@@ -580,6 +582,8 @@ export function buildAnalysisStateSave(
   analysisResults: AnalysisResult[],
   pendingSoundConfigs: any[],
   activeTab: number,
+  soundConfigs?: Array<{ parentUsageOriginalIndex?: number }>,
+  cardFlowState?: { contextAdvanced: number[]; usageAdvanced: number[]; contextToUsage: Record<number, number[]>; usageToSound: Record<number, number[]> },
 ): { analysis_state: AnalysisState; analysis_ids: string[]; scenario_ids: string[] } {
   const resultsByIndex = new Map<number, AnalysisResult>();
   for (const r of analysisResults) {
@@ -590,6 +594,7 @@ export function buildAnalysisStateSave(
     const base: SerializedAnalysisConfig = {
       type: config.type,
       display_name: (config as any).display_name,
+      parentContextOriginalIndex: (config as any).parentContextOriginalIndex,
     };
 
     if ('numSounds' in config) base.numSounds = (config as any).numSounds;
@@ -640,6 +645,19 @@ export function buildAnalysisStateSave(
       if (sc.selectedFoleyKeys?.length) base.selectedFoleyKeys = [...sc.selectedFoleyKeys];
     }
 
+    // Hierarchical: link child sound configs by matching parentUsageOriginalIndex
+    if (soundConfigs && (config.type === 'model-analysis' || config.type === 'text' || config.type === 'audio' || config.type === '3d-model' || config.type === 'scenario')) {
+      const childIndices: number[] = [];
+      soundConfigs.forEach((sc, si) => {
+        if (sc.parentUsageOriginalIndex === configIndex) {
+          childIndices.push(si);
+        }
+      });
+      if (childIndices.length > 0) {
+        base.sound_config_indices = childIndices;
+      }
+    }
+
     return base;
   });
 
@@ -657,12 +675,23 @@ export function buildAnalysisStateSave(
     }
   }
 
+  const analysisState: AnalysisState = {
+    active_tab: activeTab,
+    configs,
+    pending_sound_configs: pendingSoundConfigs.length > 0 ? pendingSoundConfigs : undefined,
+  };
+
+  if (cardFlowState) {
+    analysisState.card_flow = {
+      contextAdvanced: cardFlowState.contextAdvanced,
+      usageAdvanced: cardFlowState.usageAdvanced,
+      contextToUsageMap: cardFlowState.contextToUsage,
+      usageToSoundMap: cardFlowState.usageToSound,
+    };
+  }
+
   return {
-    analysis_state: {
-      active_tab: activeTab,
-      configs,
-      pending_sound_configs: pendingSoundConfigs.length > 0 ? pendingSoundConfigs : undefined,
-    },
+    analysis_state: analysisState,
     analysis_ids,
     scenario_ids,
   };
@@ -673,6 +702,13 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
   analysisResults: AnalysisResult[];
   activeTab: number;
   pendingSoundConfigs: any[];
+  soundConfigParentIndices: Map<number, number>;
+  cardFlowState: {
+    contextAdvanced: number[];
+    usageAdvanced: number[];
+    contextToUsage: Record<number, number[]>;
+    usageToSound: Record<number, number[]>;
+  } | null;
 } {
   const analysisResults: AnalysisResult[] = [];
 
@@ -680,6 +716,7 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
     const config: any = {
       type: saved.type,
       display_name: saved.display_name,
+      parentContextOriginalIndex: saved.parentContextOriginalIndex,
     };
 
     if (saved.numSounds !== undefined) config.numSounds = saved.numSounds;
@@ -740,5 +777,26 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
     analysisResults,
     activeTab: analysisState.active_tab,
     pendingSoundConfigs: analysisState.pending_sound_configs || [],
+    soundConfigParentIndices: buildParentIndexMap(analysisState.configs),
+    cardFlowState: analysisState.card_flow
+      ? {
+          contextAdvanced: analysisState.card_flow.contextAdvanced,
+          usageAdvanced: analysisState.card_flow.usageAdvanced,
+          contextToUsage: analysisState.card_flow.contextToUsageMap,
+          usageToSound: analysisState.card_flow.usageToSoundMap,
+        }
+      : null,
   };
+}
+
+function buildParentIndexMap(configs: SerializedAnalysisConfig[]): Map<number, number> {
+  const map = new Map<number, number>();
+  configs.forEach((saved, configIndex) => {
+    if (saved.sound_config_indices) {
+      for (const si of saved.sound_config_indices) {
+        map.set(si, configIndex);
+      }
+    }
+  });
+  return map;
 }

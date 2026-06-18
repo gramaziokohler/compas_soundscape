@@ -159,11 +159,13 @@ export function Sidebar(props: SidebarProps) {
     const trigger = props.stepAdvanceTrigger ?? 0;
     if (trigger > prevTriggerRef.current) {
       prevTriggerRef.current = trigger;
-      // If no parent was set yet, mark that we're in Sounds step with no filter
-      // (so unparented sounds become visible).
-      if (useUIStore.getState().activeSoundParentIndex === null) {
-        useUIStore.getState().setIsInSoundsStep(true);
+      const parentIndex = useUIStore.getState().activeSoundParentIndex;
+      if (parentIndex !== null) {
+        // A specific parent was pre-set (e.g. during soundscape restore) —
+        // sync the sidebar filter so only that parent's children are shown.
+        setActiveUsageOriginalIndex(parentIndex);
       }
+      useUIStore.getState().setIsInSoundsStep(true);
       setCurrentStep(2);
       setIsExpanded(true);
     }

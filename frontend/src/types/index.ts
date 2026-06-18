@@ -198,6 +198,8 @@ export interface SoundGenerationConfig {
   parentUsageOriginalIndex?: number;
   /** Sound category from foley/scenario analysis (e.g. "background", "sound_event", "speech") */
   category?: string;
+  /** TTS voice name (Gemini prebuilt voices: Kore, Fenrir, Puck, etc.) */
+  voice_name?: string;
 }
 
 /** A sound selected from the Google Sound Library catalog */

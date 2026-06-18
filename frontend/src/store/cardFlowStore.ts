@@ -12,7 +12,7 @@
  */
 import { create } from 'zustand';
 
-interface CardFlowState {
+export interface CardFlowState {
   /** Original indices of context cards that have been used to advance to the Usage step. */
   contextAdvanced: Set<number>;
   /** Original indices of usage cards that have been used to advance to the Sounds step. */

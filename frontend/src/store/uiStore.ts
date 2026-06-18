@@ -280,11 +280,8 @@ export const useUIStore = create<UIStoreState>()(
         ),
       activeSoundParentIndex: null,
       setActiveSoundParentIndex: (index) =>
-        // Setting a non-null parent implicitly enters the Sounds step.
-        // Setting null explicitly marks leaving Sounds (caller must separately set isInSoundsStep=true
-        // when entering Sounds with no parent, e.g. after skipping context/usage).
         set(
-          { activeSoundParentIndex: index, ...(index !== null ? { isInSoundsStep: true } : { isInSoundsStep: false }) },
+          { activeSoundParentIndex: index, ...(index !== null ? { isInSoundsStep: true } : {}) },
           false,
           'ui/setActiveSoundParentIndex',
         ),
