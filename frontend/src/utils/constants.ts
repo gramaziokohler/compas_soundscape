@@ -39,7 +39,7 @@ export const API_BASE_URL = getApiBaseUrl();
 
 // API Endpoints
 export const SED_ANALYZE_ENDPOINT = `${API_BASE_URL}/api/analyze-sound-events`;
-export const PYROOMACOUSTICS_API_URL = `${API_BASE_URL}/pyroomacoustics`;
+export const PYROOMACOUSTICS_API_URL = `${API_BASE_URL}/api/pyroomacoustics`;
 
 // ============================================================================
 // Sidebar Tab Configuration

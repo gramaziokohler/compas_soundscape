@@ -46,7 +46,7 @@ from config.constants import (
     DEFAULT_SPEED_OF_SOUND,
 )
 
-router = APIRouter()
+router = APIRouter(prefix="/api")
 
 RIR_OUTPUT_DIR = Path(PYROOMACOUSTICS_RIR_DIR)
 RIR_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

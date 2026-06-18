@@ -56,7 +56,7 @@ from config.constants import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(prefix="/api")
 
 # Ensure output directories exist at import time
 Path(CHORAS_RIR_DIR).mkdir(parents=True, exist_ok=True)

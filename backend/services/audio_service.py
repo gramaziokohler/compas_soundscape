@@ -468,7 +468,7 @@ class AudioService:
         audio_tensor = apply_spl_calibration(audio_tensor, target_spl_db=target_spl_db)
 
         torchaudio.save(output_path, audio_tensor.cpu(), sample_rate)
-        print(f"Calibrated: {output_path} → {target_spl_db} dB SPL")
+        print(f"Calibrated: {output_path} -> {target_spl_db} dB SPL")
 
     @staticmethod
     def cleanup_generated_sounds(output_dir: str = GENERATED_SOUNDS_DIR):

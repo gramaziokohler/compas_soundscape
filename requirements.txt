@@ -34,6 +34,7 @@ noisereduce==3.0.3
 tensorflow==2.18.1
 tensorflow-hub==0.16.1
 setuptools==78.1.1
+importlib
 
 # --- Room Acoustics ---
 pyroomacoustics==0.9.0

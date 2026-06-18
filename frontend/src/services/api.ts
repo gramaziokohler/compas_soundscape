@@ -567,7 +567,7 @@ export const apiService = {
   }>> {
     try {
       const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/pyroomacoustics/materials`,
+        `${API_BASE_URL}/api/pyroomacoustics/materials`,
         undefined,
         'Get Pyroomacoustics materials'
       );
@@ -639,7 +639,7 @@ export const apiService = {
       }
 
       const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/pyroomacoustics/run-simulation`,
+        `${API_BASE_URL}/api/pyroomacoustics/run-simulation`,
         {
           method: 'POST',
           body: formData
@@ -720,7 +720,7 @@ export const apiService = {
       formData.append('source_receiver_pairs', JSON.stringify(sourceReceiverPairs));
 
       const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/pyroomacoustics/run-simulation-speckle`,
+        `${API_BASE_URL}/api/pyroomacoustics/run-simulation-speckle`,
         {
           method: 'POST',
           body: formData
@@ -761,7 +761,7 @@ export const apiService = {
   }> {
     try {
       const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/pyroomacoustics/simulation-status/${simulationId}`,
+        `${API_BASE_URL}/api/pyroomacoustics/simulation-status/${simulationId}`,
         undefined,
         'Get Pyroomacoustics simulation status'
       );
@@ -781,7 +781,7 @@ export const apiService = {
   async cancelPyroomacousticsSimulation(simulationId: string): Promise<void> {
     try {
       await fetchWithErrorHandling(
-        `${API_BASE_URL}/pyroomacoustics/cancel-simulation/${simulationId}`,
+        `${API_BASE_URL}/api/pyroomacoustics/cancel-simulation/${simulationId}`,
         { method: 'POST' },
         'Cancel Pyroomacoustics simulation'
       );
@@ -803,7 +803,7 @@ export const apiService = {
     irFilename: string
   ): Promise<Blob> {
     try {
-      const url = new URL(`${API_BASE_URL}/pyroomacoustics/get-result-file/${simulationId}/wav`);
+      const url = new URL(`${API_BASE_URL}/api/pyroomacoustics/get-result-file/${simulationId}/wav`);
       url.searchParams.append('ir_filename', irFilename);
 
       const response = await fetchWithErrorHandling(
@@ -838,7 +838,7 @@ export const apiService = {
   }>> {
     try {
       const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/choras/materials`,
+        `${API_BASE_URL}/api/choras/materials`,
         undefined,
         'Get Choras materials'
       );
@@ -910,7 +910,7 @@ export const apiService = {
       formData.append('source_receiver_pairs', JSON.stringify(sourceReceiverPairs));
 
       const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/choras/run-simulation-speckle`,
+        `${API_BASE_URL}/api/choras/run-simulation-speckle`,
         { method: 'POST', body: formData },
         'Start Choras Speckle simulation'
       );
@@ -946,7 +946,7 @@ export const apiService = {
   }> {
     try {
       const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/choras/simulation-status/${simulationId}`,
+        `${API_BASE_URL}/api/choras/simulation-status/${simulationId}`,
         undefined,
         'Get Choras simulation status'
       );
@@ -967,7 +967,7 @@ export const apiService = {
   async cancelChorasSimulation(simulationId: string): Promise<void> {
     try {
       await fetchWithErrorHandling(
-        `${API_BASE_URL}/choras/cancel-simulation/${simulationId}`,
+        `${API_BASE_URL}/api/choras/cancel-simulation/${simulationId}`,
         { method: 'POST' },
         'Cancel Choras simulation'
       );
@@ -982,7 +982,7 @@ export const apiService = {
    */
   async getChorasIRFile(simulationId: string, irFilename: string): Promise<Blob> {
     try {
-      const url = new URL(`${API_BASE_URL}/choras/get-result-file/${simulationId}/wav`);
+      const url = new URL(`${API_BASE_URL}/api/choras/get-result-file/${simulationId}/wav`);
       url.searchParams.append('ir_filename', irFilename);
 
       const response = await fetchWithErrorHandling(

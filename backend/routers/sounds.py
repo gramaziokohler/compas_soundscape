@@ -39,6 +39,7 @@ from config.constants import (
     DEFAULT_AUDIO_MODEL,
     SOUND_GENERATION_TASK_CLEANUP_DELAY_SECONDS,
     TEMP_SIMULATIONS_DIR,
+    TEMP_PARENT_DIR,
 )
 
 router = APIRouter()
@@ -232,3 +233,73 @@ async def get_sample_audio():
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving sample audio: {str(e)}")
+
+
+# ─── Screenshots ──────────────────────────────────────────────────────────────
+
+SCREENSHOT_CAPTURE_PREFIX = "live_capture_"
+SCREENSHOTS_DIR = TEMP_PARENT_DIR
+
+
+def _list_screenshot_files() -> list[str]:
+    if not os.path.isdir(SCREENSHOTS_DIR):
+        return []
+    return sorted(
+        f for f in os.listdir(SCREENSHOTS_DIR)
+        if f.startswith(SCREENSHOT_CAPTURE_PREFIX) and f.endswith(".png")
+    )
+
+
+@router.post("/api/screenshot")
+async def save_screenshot(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    image = body.get("image", "")
+    if not isinstance(image, str) or not image.startswith("data:image/"):
+        raise HTTPException(status_code=400, detail='Body must contain an "image" field with a data URI')
+
+    base64_data = image.split(",", 1)[-1] if "," in image else image
+    filename = f"{SCREENSHOT_CAPTURE_PREFIX}{uuid.uuid4().hex[:8]}.png"
+    filepath = os.path.join(SCREENSHOTS_DIR, filename)
+
+    os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
+    try:
+        with open(filepath, "wb") as f:
+            f.write(__import__("base64").b64decode(base64_data))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save screenshot: {str(e)}")
+
+    return {"image": image, "savedPath": filepath}
+
+
+@router.get("/api/screenshot")
+async def list_screenshots():
+    files = _list_screenshot_files()
+    if not files:
+        return {"images": [], "count": 0}
+    images = []
+    for f in files:
+        filepath = os.path.join(SCREENSHOTS_DIR, f)
+        try:
+            with open(filepath, "rb") as fh:
+                data = __import__("base64").b64encode(fh.read()).decode("ascii")
+            images.append(f"data:image/png;base64,{data}")
+        except Exception:
+            pass
+    return {"images": images, "count": len(images)}
+
+
+@router.delete("/api/screenshot")
+async def delete_screenshots():
+    files = _list_screenshot_files()
+    deleted = 0
+    for f in files:
+        try:
+            os.unlink(os.path.join(SCREENSHOTS_DIR, f))
+            deleted += 1
+        except Exception:
+            pass
+    return {"deleted": deleted}
