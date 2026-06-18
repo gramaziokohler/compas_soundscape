@@ -51,10 +51,10 @@ class AudioEngine:
             self.Basic_Material = PA_Env.Basic_Material
             
             self._is_loaded = True
-            print("✅ AudioEngine Loaded Successfully.")
+            print("[OK] AudioEngine Loaded Successfully.")
 
         except Exception as e:
-            print(f"❌ AudioEngine Load Error: {e}")
+            print(f"[FAIL] AudioEngine Load Error: {e}")
             self._is_loaded = False
 
     def run_simulation(self):
@@ -65,7 +65,7 @@ class AudioEngine:
             # Constructor: (Temp, Hum, Pa, Air_Choice, EdgeCorrection, IsAcoustic)
             # This creates a valid, empty container.
             scene = self.Empty_Scene(20.0, 50.0, 101325.0, 0, False, True)
-            print("✅ Empty_Scene created.")
+            print("[OK] Empty_Scene created.")
 
             print("\n--- 2. ADDING MATERIAL ---")
             # We must define what the walls are made of.
@@ -82,7 +82,7 @@ class AudioEngine:
             # This returns the ID (index) of the material, which is likely 0
             scene.Materials.Add(material)
             mat_id = 0 
-            print("✅ Material 'Concrete' added.")
+            print("[OK] Material 'Concrete' added.")
 
             print("\n--- 3. ADDING GEOMETRY ---")
             # Create Points
@@ -109,7 +109,7 @@ class AudioEngine:
             # Hare_Data.Polygons is a list of Arb_Poly objects.
             scene.Hare_Data.Polygons[poly_index].Layer = mat_id
             
-            print("✅ Geometry added and linked to Material.")
+            print("[OK] Geometry added and linked to Material.")
 
             print("\n--- 4. SETUP SIMULATION ---")
             src_loc = self.Point3d(5.0, 5.0, 2.0)
@@ -138,12 +138,12 @@ class AudioEngine:
             print("\n--- 5. RUNNING TRACE ---")
             tracer.Do_Trace()
             
-            print("\n✅✅✅ TRACE FINISHED SUCCESSFULLY! ✅✅✅")
+            print("\n[OK][OK][OK] TRACE FINISHED SUCCESSFULLY! [OK][OK][OK]")
             
             return {"status": "success"}
 
         except Exception as e:
-            print(f"\n❌ Simulation Failed: {e}")
+            print(f"\n[FAIL] Simulation Failed: {e}")
             return {"error": str(e)}
 
 engine = AudioEngine()

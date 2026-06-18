@@ -217,14 +217,14 @@ class ChorasService:
 
         csv_path = str(json_path).replace(".json", "_pressure.csv")
         if not Path(csv_path).exists():
-            logger.warning(f"[DE→WAV] Pressure CSV not found: {csv_path}")
+            logger.warning(f"[DE->WAV] Pressure CSV not found: {csv_path}")
             return None
 
         try:
             df = pd.read_csv(csv_path)
             freq_cols = [c for c in df.columns if c != "t"]
             if not freq_cols:
-                logger.warning("[DE→WAV] No frequency columns found in pressure CSV.")
+                logger.warning("[DE->WAV] No frequency columns found in pressure CSV.")
                 return None
 
             # Parse centre frequencies from column headers ("125Hz" → 125)
@@ -237,7 +237,7 @@ class ChorasService:
                 except ValueError:
                     pass
             if not valid_cols:
-                logger.warning("[DE→WAV] Could not parse any frequency columns.")
+                logger.warning("[DE->WAV] Could not parse any frequency columns.")
                 return None
             nBands = len(valid_cols)
 
@@ -297,7 +297,7 @@ class ChorasService:
                 spl_1k = float(spl_t0[3])
                 p_scale = p_ref * (10 ** (spl_1k / 20.0))  # [Pa]
             except Exception as _e:
-                logger.warning(f"[DE→WAV] Could not read spl_t0_freq, falling back to unit scale: {_e}")
+                logger.warning(f"[DE->WAV] Could not read spl_t0_freq, falling back to unit scale: {_e}")
                 p_scale = 1.0
 
             # Normalise stochastic IR to ±1 first, then apply physical scale [Pa]
@@ -310,13 +310,13 @@ class ChorasService:
             wav_path = Path(CHORAS_RIR_DIR) / f"choras_{pair_key}.wav"
             wavfile.write(str(wav_path), _FS_OUT, ir.astype(np.float32))
             logger.info(
-                f"[DE→WAV] Wrote {len(ir)} samples @ {_FS_OUT} Hz "
+                f"[DE->WAV] Wrote {len(ir)} samples @ {_FS_OUT} Hz "
                 f"(peak {p_scale:.4e} Pa) to {wav_path}"
             )
             return wav_path
 
         except Exception as exc:
-            logger.error(f"[DE→WAV] Failed to export WAV: {exc}")
+            logger.error(f"[DE->WAV] Failed to export WAV: {exc}")
             return None
 
     @staticmethod
@@ -344,12 +344,12 @@ class ChorasService:
 
             responses = data.get("results", [{}])[0].get("responses", [])
             if receiver_index >= len(responses):
-                logger.warning(f"[DG→WAV] Receiver index {receiver_index} out of range ({len(responses)} responses).")
+                logger.warning(f"[DG->WAV] Receiver index {receiver_index} out of range ({len(responses)} responses).")
                 return None
 
             ir_raw = responses[receiver_index].get("receiverResults", [])
             if not ir_raw:
-                logger.warning(f"[DG→WAV] receiverResults empty for receiver {receiver_index}.")
+                logger.warning(f"[DG->WAV] receiverResults empty for receiver {receiver_index}.")
                 return None
 
             ir = np.array(ir_raw, dtype=np.float64)
@@ -367,13 +367,13 @@ class ChorasService:
             wav_path = Path(CHORAS_RIR_DIR) / f"choras_{pair_key}.wav"
             wavfile.write(str(wav_path), CHORAS_DG_SAMPLE_RATE, ir.astype(np.float32))
             logger.info(
-                f"[DG→WAV] Wrote {len(ir)} samples to {wav_path} "
+                f"[DG->WAV] Wrote {len(ir)} samples to {wav_path} "
                 f"(peak {np.max(np.abs(ir)):.4e})"
             )
             return wav_path
 
         except Exception as exc:
-            logger.error(f"[DG→WAV] Failed to export WAV: {exc}")
+            logger.error(f"[DG->WAV] Failed to export WAV: {exc}")
             return None
 
     # ─── Acoustic parameter extraction ───────────────────────────────────────

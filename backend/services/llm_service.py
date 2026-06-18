@@ -414,7 +414,7 @@ class LLMService:
                     raise
 
                 if attempt >= LLM_MAX_RETRIES:
-                    print(f"❌ {operation_name} failed after {LLM_MAX_RETRIES} attempts")
+                    print(f"[FAIL] {operation_name} failed after {LLM_MAX_RETRIES} attempts")
                     raise
 
                 wait_time = min(delay, LLM_MAX_RETRY_DELAY)
@@ -425,7 +425,7 @@ class LLMService:
                         delay=wait_time,
                         error_msg=error_str,
                     )
-                print(f"\n⏳ {operation_name} failed (attempt {attempt}/{LLM_MAX_RETRIES}): {type(e).__name__}: {error_str}")
+                print(f"\n[RETRY] {operation_name} failed (attempt {attempt}/{LLM_MAX_RETRIES}): {type(e).__name__}: {error_str}")
                 print(f"   Retrying in {wait_time:.1f} seconds...")
                 await asyncio.sleep(wait_time)
                 delay *= LLM_BACKOFF_MULTIPLIER

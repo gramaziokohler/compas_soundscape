@@ -99,7 +99,7 @@ def resolve_project_and_version(base_url: str, model_name_hint: str | None = Non
     models = result.get("models") or []
 
     if not models:
-        print("✗ No models found in the configured Speckle project.", file=sys.stderr)
+        print("[ERR] No models found in the configured Speckle project.", file=sys.stderr)
         sys.exit(1)
 
     # Pick model: substring match on name, otherwise first available
@@ -112,7 +112,7 @@ def resolve_project_and_version(base_url: str, model_name_hint: str | None = Non
                 break
         if not chosen:
             print(
-                f"  ⚠  No model matched '{model_name_hint}'; using first available model.",
+                f"  [WARN] No model matched '{model_name_hint}'; using first available model.",
             )
 
     if not chosen:
@@ -124,7 +124,7 @@ def resolve_project_and_version(base_url: str, model_name_hint: str | None = Non
 
     if not version_id:
         print(
-            f"✗ Could not determine a version ID for model '{model_name}'.",
+            f"[ERR] Could not determine a version ID for model '{model_name}'.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -142,7 +142,7 @@ def fetch_entities(base_url: str, project_id: str, version_id: str) -> list:
     url = _api(base_url, "/api/speckle/model-entities")
     result = post_json(url, {"project_id": project_id, "version_id": version_id})
     entities = result.get("entities", [])
-    print(f"      ✓ {len(entities)} entities received")
+    print(f"      [OK] {len(entities)} entities received")
     if entities:
         # Print first 5 as preview
         for e in entities[:5]:
@@ -161,7 +161,7 @@ def fetch_preview(base_url: str, project_id: str, version_id: str) -> str:
     result = post_json(url, {"project_id": project_id, "version_id": version_id})
     preview = result.get("preview", "")
     snippet = preview[:60] + "…" if len(preview) > 60 else preview
-    print(f"      ✓ model preview fetched: {snippet}")
+    print(f"      [OK] model preview fetched: {snippet}")
     return preview
 
 
@@ -175,7 +175,7 @@ def fetch_live_screenshots(frontend_url: str) -> list[str]:
     images = result.get("images", [])
     if not images:
         raise ValueError("No images returned from GET /api/screenshot")
-    print(f"      ✓ {len(images)} live screenshot(s) fetched")
+    print(f"      [OK] {len(images)} live screenshot(s) fetched")
     return images
 
 
@@ -291,7 +291,7 @@ def save_results_json(
     with open(output_path, "w", encoding="utf-8") as fh:
         json.dump(output, fh, indent=2, ensure_ascii=False)
 
-    print(f"\n  ✓ Results saved → {output_path}")
+    print(f"\n  [OK] Results saved -> {output_path}")
     return output_path
 
 
@@ -299,7 +299,7 @@ def save_results_json(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="End-to-end test: Speckle entities + model preview → analyze_3dmodel()"
+        description="End-to-end test: Speckle entities + model preview -> analyze_3dmodel()"
     )
     parser.add_argument(
         "--model-name",
@@ -368,7 +368,7 @@ def main() -> None:
             print(f"Server reachable at {args.base_url}")
         except Exception as exc:
             print(
-                f"\n✗ Cannot reach {args.base_url} — is the FastAPI server running?\n  {exc}",
+                f"\n[ERR] Cannot reach {args.base_url} -- is the FastAPI server running?\n  {exc}",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -382,7 +382,7 @@ def main() -> None:
     entities = fetch_entities(args.base_url, project_id, version_id)
 
     if not entities:
-        print("\n✗ No entities returned — check Speckle auth and model content.", file=sys.stderr)
+        print("\n[ERR] No entities returned -- check Speckle auth and model content.", file=sys.stderr)
         sys.exit(1)
 
     preview: str | None = None
@@ -390,14 +390,14 @@ def main() -> None:
         try:
             preview = fetch_preview(args.base_url, project_id, version_id)
         except Exception as exc:
-            print(f"\n  ⚠  Model preview fetch failed ({exc}); continuing metadata-only.")
+            print(f"\n  [WARN] Model preview fetch failed ({exc}); continuing metadata-only.")
 
     extra_screenshots: list[str] = []
     if args.live_screenshot:
         try:
             extra_screenshots.extend(fetch_live_screenshots(args.frontend_url))
         except Exception as exc:
-            print(f"\n  ⚠  Live screenshots fetch failed ({exc}); skipping.")
+            print(f"\n  [WARN] Live screenshots fetch failed ({exc}); skipping.")
 
     # Collect screenshots list
     screenshots: list[str] = []
@@ -456,7 +456,7 @@ def main() -> None:
     out_path   = os.path.join(_THIS_DIR, f"scenarios_{safe_name}_{timestamp}.json")
     with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(raw_scenarios, fh, indent=2, ensure_ascii=False)
-    print(f"\n  ✓ Scenarios saved → {out_path}")
+    print(f"\n  [OK] Scenarios saved -> {out_path}")
 
     print(f"\n[5/5] Running foley_artist (provider={llm_model}, max_sounds={args.max_sounds}) …")
     raw_foley = service.foley_artist(
@@ -492,7 +492,7 @@ def main() -> None:
     foley_path = os.path.join(_THIS_DIR, f"foley_{safe_name}_{timestamp}.json")
     with open(foley_path, "w", encoding="utf-8") as fh:
         json.dump(raw_foley, fh, indent=2, ensure_ascii=False)
-    print(f"\n  ✓ Foley events saved → {foley_path}")
+    print(f"\n  [OK] Foley events saved -> {foley_path}")
 
 
 if __name__ == "__main__":

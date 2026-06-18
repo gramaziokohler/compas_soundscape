@@ -555,7 +555,7 @@ class SpeckleService:
         vertex_offset = 0
         face_count = 0
 
-        # Unit conversion: Speckle unit string → scale factor to meters
+        # Unit conversion: Speckle unit string -> scale factor to meters
         _UNIT_TO_METERS = {
             "m": 1.0, "meters": 1.0, "metre": 1.0, "metres": 1.0,
             "mm": 0.001, "millimeters": 0.001, "millimetres": 0.001,
@@ -569,7 +569,7 @@ class SpeckleService:
         root_units = str(getattr(root_object, 'units', None) or 'm').lower()
         root_scale = _UNIT_TO_METERS.get(root_units, 1.0)
         if root_units != 'm':
-            logger.info(f"Root object units: '{root_units}' (scale {root_scale} → meters)")
+            logger.info(f"Root object units: '{root_units}' (scale {root_scale} -> meters)")
 
         def extract_mesh_data(mesh):
             """Extract vertices and faces from a Speckle Mesh object, scaling to meters."""
@@ -583,7 +583,7 @@ class SpeckleService:
             mesh_units = str(getattr(mesh, 'units', None) or root_units).lower()
             scale = _UNIT_TO_METERS.get(mesh_units, 1.0)
             if scale != 1.0:
-                logger.info(f"  Mesh units: '{mesh_units}' → scale {scale} to meters")
+                logger.info(f"  Mesh units: '{mesh_units}' -> scale {scale} to meters")
 
             # Vertices are stored as flat list [x, y, z, x, y, z, ...]
             verts = []

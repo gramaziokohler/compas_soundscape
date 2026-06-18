@@ -275,9 +275,9 @@ class PyroomacousticsService:
         removed_verts = original_vert_count - len(unique_verts)
         removed_faces = original_face_count - len(welded_faces)
         print(
-            f"Mesh weld: {original_vert_count} → {len(unique_verts)} vertices "
+            f"Mesh weld: {original_vert_count} -> {len(unique_verts)} vertices "
             f"(removed {removed_verts} duplicates), "
-            f"{original_face_count} → {len(welded_faces)} faces "
+            f"{original_face_count} -> {len(welded_faces)} faces "
             f"(removed {n_degenerate} degenerate, {n_duplicate} duplicate, "
             f"{n_non_manifold_removed} non-manifold)"
         )
