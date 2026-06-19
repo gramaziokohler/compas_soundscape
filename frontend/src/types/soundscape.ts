@@ -62,6 +62,7 @@ export interface SoundscapeReceiver {
   yaw?: number;
   pitch?: number;
   roll?: number;
+  orientation_saved?: boolean;
 }
 
 /** Serializable impulse response metadata for persistence */

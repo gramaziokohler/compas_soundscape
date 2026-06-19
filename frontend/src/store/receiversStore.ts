@@ -23,6 +23,7 @@ export const receiversPartialize = (state: ReceiversStoreState) => ({
     yaw: r.yaw,
     pitch: r.pitch,
     roll: r.roll,
+    orientationSaved: r.orientationSaved,
     // mesh is not serializable → omit from history
   })),
   selectedReceiverId: state.selectedReceiverId,
@@ -136,7 +137,7 @@ export const useReceiversStore = create<ReceiversStoreState>()(
           set(
             (s) => ({
               receivers: s.receivers.map((r) =>
-                r.id === id ? { ...r, yaw, pitch, roll } : r,
+                r.id === id ? { ...r, yaw, pitch, roll, orientationSaved: yaw !== 0 || pitch !== 0 || roll !== 0 } : r,
               ),
             }),
             false,

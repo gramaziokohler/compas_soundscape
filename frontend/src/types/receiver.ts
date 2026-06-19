@@ -29,6 +29,8 @@ export interface ReceiverData {
   pitch?: number;
   /** Listener roll orientation in radians (head tilt). */
   roll?: number;
+  /** Whether the user has explicitly saved a per-listener orientation. */
+  orientationSaved?: boolean;
 }
 
 /**

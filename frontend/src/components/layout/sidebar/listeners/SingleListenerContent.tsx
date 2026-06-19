@@ -25,10 +25,10 @@ export function SingleListenerContent({ receiver, color, onUpdatePosition }: Sin
   const storedYaw = receiver.yaw ?? 0;
   const storedPitch = receiver.pitch ?? 0;
   const storedRoll = receiver.roll ?? 0;
-  const hasStoredOrientation = storedYaw !== 0 || storedPitch !== 0 || storedRoll !== 0;
+  const orientationSaved = receiver.orientationSaved ?? false;
 
-  const [saved, setSaved] = useState(hasStoredOrientation);
-  const savedRef = useRef(hasStoredOrientation);
+  const [saved, setSaved] = useState(orientationSaved);
+  const savedRef = useRef(orientationSaved);
 
   const liveYaw = cameraOri.yaw;
   const livePitch = cameraOri.pitch;

@@ -100,7 +100,7 @@ export function SceneControlButtons({
       </div>
 
       {/* Save Soundscape */}
-      {soundscapeData && soundscapeData.length > 0 && speckleData && onSaveSoundscape && (
+      {speckleData && onSaveSoundscape && (
         <SceneControlButton
           onClick={onSaveSoundscape}
           isActive={isSavingSoundscape}

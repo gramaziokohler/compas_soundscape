@@ -193,6 +193,7 @@ export function buildSoundscapeSavePayload(
     yaw: r.yaw,
     pitch: r.pitch,
     roll: r.roll,
+    orientation_saved: r.orientationSaved,
   }));
 
   // Serialize simulation configs and collect IR URLs
@@ -489,6 +490,7 @@ export function restoreSoundscapeState(
     yaw: (saved as any).yaw ?? 0,
     pitch: (saved as any).pitch ?? 0,
     roll: (saved as any).roll ?? 0,
+    orientationSaved: (saved as any).orientation_saved ?? false,
   }));
 
   const selectedReceiverId = loadedData.selected_receiver_id ?? null;
