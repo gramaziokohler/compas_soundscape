@@ -99,12 +99,12 @@ export function SceneControlButtons({
         </div>
       </div>
 
-      {/* Save Soundscape to Speckle */}
+      {/* Save Soundscape */}
       {soundscapeData && soundscapeData.length > 0 && speckleData && onSaveSoundscape && (
         <SceneControlButton
           onClick={onSaveSoundscape}
           isActive={isSavingSoundscape}
-          title={isSavingSoundscape ? 'Saving soundscape...' : 'Save soundscape to Speckle'}
+          title={isSavingSoundscape ? 'Saving progress...' : 'Save progress'}
           icon={
             isSavingSoundscape ? (
               <Icon>
@@ -121,9 +121,9 @@ export function SceneControlButtons({
               </Icon>
             ) : (
               <Icon>
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="17 8 12 3 7 8" />
-                <line x1="12" y1="3" x2="12" y2="15" />
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                <polyline points="17 21 17 13 7 13 7 21" />
+                <polyline points="7 3 7 8 15 8" />
               </Icon>
             )
           }

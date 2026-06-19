@@ -1124,10 +1124,12 @@ function HomeContent() {
               contextToUsageMap: new Map(Object.entries(cf.contextToUsage).map(([k, v]) => [Number(k), v])),
               usageToSoundMap: new Map(Object.entries(cf.usageToSound).map(([k, v]) => [Number(k), v])),
             });
-            // Find the first context card that has usage children and pre-set it
+            // Find the first usage card that has child sounds and pre-set it
             // as the active sound parent so the sidebar filters to only its children.
-            if (cf.contextAdvanced.length > 0) {
-              useUIStore.getState().setActiveSoundParentIndex(cf.contextAdvanced[0]);
+            // usageAdvanced holds usage card indices, which match parentUsageOriginalIndex
+            // on sound configs (contextAdvanced holds context card indices, which don't match).
+            if (cf.usageAdvanced.length > 0) {
+              useUIStore.getState().setActiveSoundParentIndex(cf.usageAdvanced[0]);
             }
             // Auto-advance to Sounds step — sidebar will pick up activeSoundParentIndex
             setStepAdvanceTrigger(t => t + 1);

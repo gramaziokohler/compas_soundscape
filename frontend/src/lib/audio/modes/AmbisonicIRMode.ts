@@ -761,7 +761,10 @@ export class AmbisonicIRMode implements IAudioMode {
   }
 
   /**
-   * Enable playback for all sources
+   * Enable the mode (connects audio graph, unmutes master gain).
+   * Does NOT auto-start sources — the scheduler is solely responsible for
+   * starting playback via playSource(). Auto-starting here bypasses the
+   * scheduler and would cause audio to play even when the timeline is stopped.
    */
   enable(): void {
     if (this.enabled) {
@@ -769,12 +772,6 @@ export class AmbisonicIRMode implements IAudioMode {
     }
     
     this.enabled = true;
-    
-    // Start playback for all sources
-    this.sourceChains.forEach((chain) => {
-      this.startSourcePlayback(chain);
-    });
-    
     console.log(`[AmbisonicIRMode] Enabled (${this.sourceChains.size} sources, order ${this.ambisonicOrder})`);
   }
 
@@ -911,30 +908,6 @@ export class AmbisonicIRMode implements IAudioMode {
       Math.min(AUDIO_CONTROL.MASTER_VOLUME.MAX, volume)
     );
     this.masterGain.gain.setValueAtTime(clampedVolume, this.audioContext.currentTime);
-  }
-
-  /**
-   * Start playback for a source chain
-   */
-  private startSourcePlayback(chain: SourceChain): void {
-    if (!this.audioContext || chain.isPlaying) {
-      return;
-    }
-    
-    // Create buffer source
-    const bufferSource = this.audioContext.createBufferSource();
-    bufferSource.buffer = chain.audioBuffer;
-    bufferSource.loop = true; // Loop for continuous playback
-
-    // Connect to JSAmbisonics convolver
-    // Graph: bufferSource → gainNode → muteGain → convolver → decoder
-    bufferSource.connect(chain.gainNode);
-
-    // Start playback
-    bufferSource.start(0);
-
-    chain.bufferSource = bufferSource;
-    chain.isPlaying = true;
   }
 
   /**
