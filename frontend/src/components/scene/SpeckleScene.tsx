@@ -175,7 +175,7 @@ interface SpeckleSceneProps {
     display_name?: string;
   }) => void;
 
-  // Soundscape persistence (save to Speckle)
+  // Soundscape persistence
   onSaveSoundscape?: () => void;
   isSavingSoundscape?: boolean;
 

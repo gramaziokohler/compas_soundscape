@@ -327,6 +327,7 @@ export function Sidebar(props: SidebarProps) {
                 setContextExpandedOriginalIndex(savedContextExpandedRef.current);
                 setBypassedUsage(false);
                 useUIStore.getState().setActiveSoundParentIndex(null);
+                useUIStore.getState().setIsInSoundsStep(false);
                 setCurrentStep(0);
               }}
               aria-current={currentStep === 0 ? 'step' : undefined}
@@ -370,6 +371,7 @@ export function Sidebar(props: SidebarProps) {
                       setContextExpandedOriginalIndex(null);
                     }
                     useUIStore.getState().setActiveSoundParentIndex(null);
+                    useUIStore.getState().setIsInSoundsStep(false);
                     setBypassedUsage(false);
                     setUsageExpandedOriginalIndex(savedUsageExpandedRef.current);
                     setCurrentStep(1);

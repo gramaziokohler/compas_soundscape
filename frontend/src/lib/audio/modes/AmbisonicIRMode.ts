@@ -45,7 +45,7 @@ import type { IBinauralDecoder } from '../core/interfaces/IBinauralDecoder';
 import { AudioMode } from '@/types/audio';
 import { BinauralDecoder } from '../decoders/BinauralDecoder';
 import { OmnitoneFOADecoder } from '../decoders/OmnitoneFOADecoder';
-import { AUDIO_CONTROL, AMBISONIC } from '@/utils/constants';
+import { AUDIO_CONTROL, AMBISONIC, IMPULSE_RESPONSE } from '@/utils/constants';
 import { convertSN3DtoN3D } from '../utils/ambisonic-utils';
 
 // Lazy load ambisonics to avoid SSR issues (window is not defined)
@@ -67,11 +67,14 @@ interface SourceChain {
 
   // Volume and mute control
   gainNode: GainNode;
+  normGainNode: GainNode;
   muteGainNode: GainNode;
+  irGainNode: GainNode;
 
   // JSAmbisonics convolver (handles all orders)
   convolver: any; // ambisonics.convolver
   sourceIRBuffer: AudioBuffer | null; // Per-source IR buffer (for simulation mode)
+  normGainValue: number; // Peak-normalization gain factor (1.0 = no normalization)
 
   // Source state
   position: Position;
@@ -107,6 +110,15 @@ export class AmbisonicIRMode implements IAudioMode {
   
   // Receiver mode lock (position fixed, only rotation allowed)
   private receiverPosition: Position | null = null;
+
+  // Current IR gain in dB (applied to new source chains)
+  private currentIRGainDb: number = 0;
+
+  // Normalization toggle state
+  private normalizeEnabled: boolean = false;
+
+  // Global normalization gain from irBuffer (setIr = global, setSourceIr = per-source)
+  private globalNormGain: number = 1.0;
 
   /**
    * Initialize ambisonic IR mode
@@ -178,6 +190,9 @@ export class AmbisonicIRMode implements IAudioMode {
     this.irBuffer = processedBuffer;
     this.ambisonicOrder = order;
     this.numAmbisonicChannels = processedBuffer.numberOfChannels;
+
+    // Compute global normalization gain from the raw IR peak
+    this.globalNormGain = this.computeNormGain(processedBuffer);
 
     console.log(`[AmbisonicIRMode] IR buffer set (order ${order}, ${channels}ch → ${processedBuffer.numberOfChannels}ch, ${processedBuffer.sampleRate}Hz, ${processedBuffer.length} samples)`);
 
@@ -385,8 +400,14 @@ export class AmbisonicIRMode implements IAudioMode {
     const gainNode = this.audioContext.createGain();
     gainNode.gain.value = 1.0; // Unity gain for physically accurate convolution
 
+    const normGainNode = this.audioContext.createGain();
+    normGainNode.gain.value = this.normalizeEnabled ? this.globalNormGain : 1.0;
+
     const muteGainNode = this.audioContext.createGain();
     muteGainNode.gain.value = 1.0; // Unmuted by default
+
+    const irGainNode = this.audioContext.createGain();
+    irGainNode.gain.value = Math.pow(10, this.currentIRGainDb / 20);
 
     // Create JSAmbisonics convolver for multi-channel IR
     const convolver = new ambisonics.convolver(this.audioContext, this.ambisonicOrder);
@@ -398,9 +419,11 @@ export class AmbisonicIRMode implements IAudioMode {
       convolver.updateFilters(this.getConvolverIR(this.irBuffer));
     }
 
-    // Connect: GainNode → MuteGain → Convolver → Decoder (direct connection, no mix bus)
-    gainNode.connect(muteGainNode);
-    muteGainNode.connect(convolver.in);
+    // Connect: GainNode → NormGain → MuteGain → IRGain → Convolver → Decoder
+    gainNode.connect(normGainNode);
+    normGainNode.connect(muteGainNode);
+    muteGainNode.connect(irGainNode);
+    irGainNode.connect(convolver.in);
     
     // Connect convolver directly to decoder input (Web Audio automatically sums)
     // This matches JSAmbisonics approach and avoids GainNode channel routing issues
@@ -419,9 +442,12 @@ export class AmbisonicIRMode implements IAudioMode {
       audioBuffer,
       bufferSource: null,
       gainNode,
+      normGainNode,
       muteGainNode,
+      irGainNode,
       convolver,
       sourceIRBuffer: null, // No per-source IR yet (will be set in simulation mode)
+      normGainValue: this.globalNormGain,
       position,
       isPlaying: false,
       isMuted: false
@@ -538,6 +564,12 @@ export class AmbisonicIRMode implements IAudioMode {
     // Convert SN3D → N3D if JSAmbisonics decoder is active
     chain.convolver.updateFilters(this.getConvolverIR(processedBuffer));
     chain.sourceIRBuffer = processedBuffer;
+
+    // Compute per-source normalization gain
+    chain.normGainValue = this.computeNormGain(processedBuffer);
+    if (this.normalizeEnabled && this.audioContext) {
+      chain.normGainNode.gain.setValueAtTime(chain.normGainValue, this.audioContext.currentTime);
+    }
 
     console.log(`[AmbisonicIRMode] ✅ Updated IR for source "${sourceId}" (${channels}ch → ${bufferToProcess.numberOfChannels}ch, ${bufferToProcess.length} samples @ ${bufferToProcess.sampleRate}Hz)`);
   }
@@ -817,6 +849,55 @@ export class AmbisonicIRMode implements IAudioMode {
     chain.isMuted = muted;
     const gainValue = muted ? AUDIO_CONTROL.DEFAULTS.MUTED_GAIN : AUDIO_CONTROL.DEFAULTS.UNMUTED_GAIN;
     chain.muteGainNode.gain.setValueAtTime(gainValue, this.audioContext.currentTime);
+  }
+
+  /**
+   * Set IR gain (dB) applied uniformly to all source chains.
+   * Positive values amplify, negative values attenuate.
+   * Range: -12 to +12 dB.
+   */
+  setIRGain(dB: number): void {
+    if (!this.audioContext) return;
+    this.currentIRGainDb = Math.max(-12, Math.min(12, dB));
+    const linearGain = Math.pow(10, this.currentIRGainDb / 20);
+    for (const chain of this.sourceChains.values()) {
+      chain.irGainNode.gain.setValueAtTime(linearGain, this.audioContext.currentTime);
+    }
+  }
+
+  /**
+   * Enable or disable IR peak normalization.
+   * When enabled, the IR is scaled so its peak amplitude equals NORMALIZATION_SCALE.
+   */
+  setNormalize(enabled: boolean): void {
+    this.normalizeEnabled = enabled;
+    if (!this.audioContext) return;
+    for (const chain of this.sourceChains.values()) {
+      chain.normGainNode.gain.setValueAtTime(
+        enabled ? chain.normGainValue : 1.0,
+        this.audioContext.currentTime
+      );
+    }
+  }
+
+  /**
+   * Compute peak-normalization gain for an IR buffer.
+   * Finds the global peak across all channels and returns the factor needed
+   * to scale it to NORMALIZATION_SCALE. Returns 1.0 if peak is below threshold.
+   */
+  private computeNormGain(buffer: AudioBuffer): number {
+    let peak = 0;
+    for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+      const data = buffer.getChannelData(ch);
+      for (let i = 0; i < data.length; i++) {
+        const abs = Math.abs(data[i]);
+        if (abs > peak) peak = abs;
+      }
+    }
+    if (peak > IMPULSE_RESPONSE.MIN_AMPLITUDE_THRESHOLD) {
+      return IMPULSE_RESPONSE.NORMALIZATION_SCALE / peak;
+    }
+    return 1.0;
   }
 
   /**

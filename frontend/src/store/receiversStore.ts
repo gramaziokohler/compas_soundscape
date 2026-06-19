@@ -21,6 +21,8 @@ export const receiversPartialize = (state: ReceiversStoreState) => ({
     position: r.position,
     hiddenForSimulation: r.hiddenForSimulation,
     yaw: r.yaw,
+    pitch: r.pitch,
+    roll: r.roll,
     // mesh is not serializable → omit from history
   })),
   selectedReceiverId: state.selectedReceiverId,
@@ -38,6 +40,7 @@ export interface ReceiversStoreState {
   /** Ctrl+drag duplicate — deep-clones the receiver at `from` and inserts at `toInsertion`. */
   duplicateReceiverAt: (from: number, toInsertion: number) => void;
   updateReceiverPosition: (id: string, position: [number, number, number]) => void;
+  updateReceiverOrientation: (id: string, yaw: number, pitch: number, roll: number) => void;
   updateReceiverName: (id: string, name: string) => void;
   toggleReceiverHiddenForSimulation: (id: string) => void;
   selectReceiver: (id: string | null) => void;
@@ -127,6 +130,17 @@ export const useReceiversStore = create<ReceiversStoreState>()(
             }),
             false,
             'receivers/updateReceiverPosition',
+          ),
+
+        updateReceiverOrientation: (id, yaw, pitch, roll) =>
+          set(
+            (s) => ({
+              receivers: s.receivers.map((r) =>
+                r.id === id ? { ...r, yaw, pitch, roll } : r,
+              ),
+            }),
+            false,
+            'receivers/updateReceiverOrientation',
           ),
 
         updateReceiverName: (id, name) =>

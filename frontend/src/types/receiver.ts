@@ -25,6 +25,10 @@ export interface ReceiverData {
   hiddenForSimulation?: boolean;
   /** Listener yaw orientation in radians. OBJ Y-axis maps to front/back direction. */
   yaw?: number;
+  /** Listener pitch orientation in radians (up/down tilt). */
+  pitch?: number;
+  /** Listener roll orientation in radians (head tilt). */
+  roll?: number;
 }
 
 /**

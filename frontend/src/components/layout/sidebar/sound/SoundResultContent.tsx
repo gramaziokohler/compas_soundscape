@@ -37,6 +37,7 @@ export interface SoundResultContentProps {
   onVariantChange?: (promptIdx: number, variantIdx: number) => void;
   onUpdatePosition?: (soundId: string, position: [number, number, number]) => void;
   onUnlinkEntity?: () => void;
+  onMute?: (soundId: string) => void;
 }
 
 export function SoundResultContent({
@@ -60,6 +61,7 @@ export function SoundResultContent({
   onVariantChange,
   onUpdatePosition,
   onUnlinkEntity,
+  onMute,
 }: SoundResultContentProps) {
   // Volume and interval from live state
   const currentVolumeDb = soundVolumes[generatedSound.id] ?? generatedSound.volume_db ?? 70;
@@ -120,6 +122,10 @@ export function SoundResultContent({
       onTimestampsChange={onTimestampsChange ? (ts) => onTimestampsChange(generatedSound.id, ts) : undefined}
       onUpdatePosition={onUpdatePosition ? (pos) => onUpdatePosition(generatedSound.id, pos) : undefined}
       onUnlinkEntity={onUnlinkEntity}
+      isMuted={isMuted}
+      onMuteChange={onMute ? (muted: boolean) => {
+        if (muted !== isMuted) onMute(generatedSound.id);
+      } : undefined}
       storeContext="audioControls"
     />
   );

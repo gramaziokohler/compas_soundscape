@@ -135,11 +135,16 @@ export class ReceiverManager {
     this.receiverMeshes = result.meshes;
     this.draggableObjects = result.draggableObjects;
 
-    // Propagate name changes onto existing (reused) meshes so syncLabelSprites
-    // detects the change and recreates the sprite text.
+    // Propagate name and orientation changes onto existing (reused) meshes
+    // so syncLabelSprites detects the change and recreates the sprite text.
     result.meshes.forEach(mesh => {
       const receiver = updatedReceivers.find(r => r.id === mesh.userData.receiverId);
-      if (receiver) mesh.userData.receiverName = receiver.name;
+      if (!receiver) return;
+      mesh.userData.receiverName = receiver.name;
+      const yaw = receiver.yaw ?? 0;
+      const ptch = receiver.pitch ?? 0;
+      const rll = receiver.roll ?? 0;
+      mesh.rotation.set(ptch, rll, Math.PI - yaw);
     });
 
     // Sync label sprites with the current receiver set
@@ -209,7 +214,9 @@ export class ReceiverManager {
     // Orientation: OBJ Y-axis = front/back. Rotate around Z so that the model
     // faces the listener's forward direction. yaw=0 → faces -Y (world north).
     const yaw = receiver.yaw ?? 0;
-    cubeMesh.rotation.z = Math.PI - yaw;
+    const pitch = receiver.pitch ?? 0;
+    const roll = receiver.roll ?? 0;
+    cubeMesh.rotation.set(pitch, roll, Math.PI - yaw);
 
     cubeMesh.userData.receiverId = receiver.id;
     cubeMesh.userData.receiverName = receiver.name;

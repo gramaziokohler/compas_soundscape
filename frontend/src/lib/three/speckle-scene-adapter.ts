@@ -15,6 +15,7 @@
 import * as THREE from 'three';
 import type { Viewer } from '@speckle/viewer';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
+import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 
 /**
  * Custom object types that can be added to the Speckle scene
@@ -235,6 +236,16 @@ export class SpeckleSceneAdapter {
           const orientation = { yaw, pitch, roll: 0 };
 
           this.audioOrchestrator.updateListener(position, orientation);
+
+          // Update live camera orientation store
+          const prevOri = useSpeckleEngineStore.getState().currentCameraOrientation;
+          if (
+            Math.abs(prevOri.yaw - yaw) > 0.0001 ||
+            Math.abs(prevOri.pitch - pitch) > 0.0001||
+            Math.abs(prevOri.roll - 0) > 0.0001
+          ) {
+            useSpeckleEngineStore.getState().setCurrentCameraOrientation({ yaw, pitch, roll: 0 });
+          }
         } catch (error) {
           console.warn('[SpeckleSceneAdapter] Failed to update audio listener:', error);
         }

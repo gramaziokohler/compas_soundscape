@@ -105,6 +105,9 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   // Mute registry - persists mute state across mode switches
   private muteRegistry: Map<string, boolean> = new Map();
 
+  // Pending volumes - caches volume values for sources not yet created (async loading)
+  private pendingVolumes: Map<string, number> = new Map();
+
   // IR cache - prevents double downloads of same IR (keyed by IR metadata id)
   private irCache: Map<string, AudioBuffer> = new Map();
 
@@ -1013,9 +1016,19 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    */
   setNormalize(normalize: boolean): void {
     console.log(`[AudioOrchestrator] Setting normalize: ${normalize}`);
-    // TODO: Store normalize preference and apply to IR modes when they are created
-    // For now, this is a placeholder for future implementation
-    // The IR modes would need to expose a setNormalize method
+    if (this.ambisonicIRMode) {
+      (this.ambisonicIRMode as any).setNormalize(normalize);
+    }
+  }
+
+  /**
+   * Set IR gain in dB applied uniformly to all source chains in AmbisonicIRMode.
+   * @param dB - Gain in decibels (-12 to +12)
+   */
+  setIRGain(dB: number): void {
+    if (this.ambisonicIRMode) {
+      (this.ambisonicIRMode as any).setIRGain?.(dB);
+    }
   }
 
   /**
@@ -1202,6 +1215,12 @@ export class AudioOrchestrator implements IAudioOrchestrator {
 
     this.currentModeInstance.createSource(sourceId, audioBuffer, position);
 
+    // Apply any pending volume that was set before the source was created
+    const pendingVolume = this.pendingVolumes.get(sourceId);
+    if (pendingVolume !== undefined) {
+      this.currentModeInstance.setSourceVolume(sourceId, pendingVolume);
+    }
+
     // If in simulation mode with active receiver, apply source-specific IR immediately
     if (this.sourceReceiverIRMapping && this.activeReceiverId && this.simulationMode !== 'none') {
       const irMetadata = this.sourceReceiverIRMapping[sourceId]?.[this.activeReceiverId];
@@ -1286,6 +1305,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     // Remove from registries regardless of mode state
     this.sourceRegistry.delete(sourceId);
     this.muteRegistry.delete(sourceId);
+    this.pendingVolumes.delete(sourceId);
 
     if (!this.currentModeInstance) {
       // No mode active — source was only registered, nothing to tear down
@@ -1369,6 +1389,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * Routes to current mode implementation
    */
   setSourceVolume(sourceId: string, volume: number): void {
+    this.pendingVolumes.set(sourceId, volume);
     if (!this.currentModeInstance) {
       return;
     }

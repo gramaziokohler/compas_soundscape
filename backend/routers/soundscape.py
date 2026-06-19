@@ -1,5 +1,5 @@
 # backend/routers/soundscape.py
-# Soundscape Data Persistence Endpoints (Local-First Save/Load + Optional Speckle)
+# Soundscape Data Persistence Endpoints (Local-First Save/Load)
 
 import json
 import os
@@ -9,9 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
 
-from services.speckle_service import SpeckleService
 from services.paths import (
-    user_data_dir,
     user_audio_dir,
     user_model_dir,
 )
@@ -35,8 +33,6 @@ from config.constants import (
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/speckle/soundscape", tags=["soundscape"])
 
-speckle_service = SpeckleService()
-
 SOUNDSCAPE_JSON_FILENAME = "soundscape.json"
 
 
@@ -45,22 +41,6 @@ def _get_session_id(request: Request) -> str:
     if not sid:
         raise HTTPException(status_code=400, detail="No session cookie")
     return sid
-
-
-def _ensure_authenticated() -> None:
-    if not speckle_service.client:
-        if not speckle_service.authenticate():
-            raise HTTPException(
-                status_code=503, detail="Failed to authenticate with Speckle"
-            )
-        speckle_service.get_or_create_project()
-
-    if not speckle_service.project_id:
-        speckle_service.get_or_create_project()
-        if not speckle_service.project_id:
-            raise HTTPException(
-                status_code=503, detail="Speckle project not available"
-            )
 
 
 def _copy_audio_files(session_id: str, model_id: str, audio_urls: list[str]) -> int:
@@ -197,13 +177,12 @@ def _restore_analysis_files(session_id: str, model_id: str) -> int:
 @router.post("/save", response_model=SoundscapeSaveResponse)
 async def save_soundscape(request: SoundscapeSaveRequest, req: Request):
     """
-    Save soundscape data locally (primary) + optionally to Speckle (secondary).
+    Save soundscape data locally.
 
     1. Create session-keyed paths under data/soundscapes/{sid}/
     2. Copy audio files to session-level audio dir
     3. Copy IR files to model-linked ir_files dir
-    4. Write soundscape.json as primary source of truth
-    5. Attempt Speckle write (non-blocking, failure doesn't fail the request)
+    4. Write soundscape.json as source of truth
     """
     session_id = _get_session_id(req)
     data = request.soundscape_data
@@ -249,25 +228,11 @@ async def save_soundscape(request: SoundscapeSaveRequest, req: Request):
         logger.error(f"Failed to write soundscape.json: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to save soundscape: {e}")
 
-    # Attempt Speckle write (non-blocking secondary)
-    speckle_object_id = None
-    speckle_ok = True
-    try:
-        _ensure_authenticated()
-        speckle_object_id = speckle_service.send_soundscape_data(
-            model_id=model_id,
-            soundscape_data=soundscape_dict,
-        )
-    except Exception as e:
-        speckle_ok = False
-        logger.warning(f"Speckle upload failed (local save succeeded): {e}")
-
     audio_base_url = f"{SOUNDSCAPE_DATA_URL_PREFIX}/{session_id}/audio"
     ir_base_url = f"{SOUNDSCAPE_DATA_URL_PREFIX}/{session_id}/{model_id}/ir_files"
 
     return SoundscapeSaveResponse(
         success=True,
-        speckle_object_id=speckle_object_id,
         local_folder=str(model_dir),
         audio_files_copied=audio_copied,
         ir_files_copied=ir_copied,
@@ -277,7 +242,6 @@ async def save_soundscape(request: SoundscapeSaveRequest, req: Request):
             f"{audio_copied} audio files, "
             f"{ir_copied} IR files, "
             f"{len(data.simulation_configs)} simulations"
-            + (f" (Speckle: {speckle_object_id})" if speckle_ok else " (Speckle upload failed)")
         ),
     )
 
@@ -285,7 +249,7 @@ async def save_soundscape(request: SoundscapeSaveRequest, req: Request):
 @router.get("/{model_id}", response_model=SoundscapeLoadResponse)
 async def load_soundscape(model_id: str, req: Request):
     """
-    Load soundscape data for a model — local JSON first, Speckle fallback.
+    Load soundscape data for a model — local JSON.
 
     Also restores IR files and analysis files from persistent storage back to temp.
     """
@@ -350,22 +314,6 @@ async def load_soundscape(model_id: str, req: Request):
                 ir_base_url=legacy_ir_base,
                 found=True,
             )
-
-    # FALLBACK: Try Speckle (for backward compat with old saves)
-    try:
-        _ensure_authenticated()
-        speckle_data = speckle_service.get_soundscape_data(model_id)
-        if speckle_data:
-            soundscape = SoundscapeData(**speckle_data)
-            logger.info("Loaded soundscape from Speckle (fallback)")
-            return SoundscapeLoadResponse(
-                soundscape_data=soundscape,
-                audio_base_url=audio_base_url,
-                ir_base_url=ir_base_url,
-                found=True,
-            )
-    except Exception as e:
-        logger.warning(f"Speckle soundscape lookup failed: {e}")
 
     return SoundscapeLoadResponse(
         soundscape_data=None,

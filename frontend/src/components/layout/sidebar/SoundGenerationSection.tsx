@@ -812,6 +812,7 @@ export function SoundGenerationSection({
               onSchedulingModeChange={onSchedulingModeChange}
               onTimestampsChange={onTimestampsChange}
               onVariantChange={onVariantChange}
+              onMute={onMute}
               onUpdatePosition={handleUpdateSoundPosition}
               onUnlinkEntity={() => handleDetachSoundFromEntity(originalIndex)}
             />

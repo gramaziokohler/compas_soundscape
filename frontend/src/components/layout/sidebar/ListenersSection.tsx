@@ -33,6 +33,7 @@ interface ListenersSectionProps {
   onExitFPS?: () => void;
   forcedExpandedId?: string | null;
   collapseAllTrigger?: number;
+  listenerOrientation: { x: number; y: number; z: number };
 }
 
 const LISTENER_COLOR = 'var(--color-receiver)';
@@ -59,6 +60,7 @@ export function ListenersSection({
   onExitFPS,
   forcedExpandedId,
   collapseAllTrigger,
+  listenerOrientation,
 }: ListenersSectionProps) {
   const { updateGridListener, toggleGridListenerHiddenForSimulation, reorderGridListeners, duplicateGridListenerAt } = useGridListenersStore();
   const reorderReceivers = useReceiversStore((s) => s.reorderReceivers);
@@ -245,6 +247,7 @@ export function ListenersSection({
         receiver={item}
         color={LISTENER_COLOR}
         onUpdatePosition={handlePositionChange}
+        listenerOrientation={listenerOrientation}
       />
     ) : (
       <GridListenerContent
@@ -282,6 +285,7 @@ export function ListenersSection({
     handleUpdateConfig,
     handleRemove,
     onComputeBounds,
+    listenerOrientation,
   ]);
 
   return (

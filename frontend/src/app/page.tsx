@@ -1075,6 +1075,20 @@ function HomeContent() {
           );
         }
 
+        // Restore resonance audio config (room materials, dimensions, ambisonic order)
+        if (restored.resonanceAudioConfig) {
+          const rac = restored.resonanceAudioConfig;
+          useRoomMaterialsStore.getState().updateRoomMaterials(rac.roomMaterials);
+          useRoomMaterialsStore.getState().updateRoomDimensions(rac.roomDimensions);
+          if (rac.ambisonicOrder) {
+            await audioOrchestrator.setAmbisonicOrder(rac.ambisonicOrder as 1 | 2 | 3);
+          }
+          if (rac.enabled) {
+            audioOrchestrator.setNoIRPreference('resonance');
+          }
+          console.log('[page.tsx] Restored resonance audio config');
+        }
+
         console.log(
           `[page.tsx] Restored ${restored.soundConfigs.length} configs, ` +
           `${restored.soundEvents.length} events`
@@ -1130,6 +1144,21 @@ function HomeContent() {
     acousticsSimulation.restoreSimulationState,
     analysis.restoreAnalysisState,
     textGen.setPendingSoundConfigs,
+    audioOrchestrator.setAmbisonicOrder,
+    audioOrchestrator.setNoIRPreference,
+  ]);
+
+  // Memoized resonance audio config (used by save/restore, derived from multiple stores)
+  const resonanceAudioConfig = useMemo(() => ({
+    enabled: audioOrchestrator.status?.currentMode === 'no_ir_resonance',
+    ambisonicOrder: audioOrchestrator.status?.ambisonicOrder || 1,
+    roomDimensions: roomMaterials.roomDimensions,
+    roomMaterials: roomMaterials.roomMaterials,
+  }), [
+    audioOrchestrator.status?.currentMode,
+    audioOrchestrator.status?.ambisonicOrder,
+    roomMaterials.roomDimensions,
+    roomMaterials.roomMaterials,
   ]);
 
   // Save current soundscape state to Speckle + local storage
@@ -1195,6 +1224,7 @@ function HomeContent() {
         receivers.selectedReceiverId,
         acousticsSimulation.simulationConfigs,
         acousticsSimulation.activeSimulationIndex,
+        resonanceAudioConfig,
       );
 
       // Embed analysis state in the soundscape data
@@ -1204,7 +1234,7 @@ function HomeContent() {
       payload.analysis_ids = analysisStateData.analysis_ids.length > 0 ? analysisStateData.analysis_ids : undefined;
       payload.scenario_ids = analysisStateData.scenario_ids.length > 0 ? analysisStateData.scenario_ids : undefined;
 
-      // 4. Save to Speckle + local
+      // 4. Save Soundscape
       const result = await apiService.saveSoundscapeToSpeckle(payload);
       console.log('[page.tsx] Soundscape saved:', result.message);
     } catch (err) {
@@ -1231,6 +1261,7 @@ function HomeContent() {
     analysis.analysisResults,
     analysis.activeAnalysisTab,
     textGen.pendingSoundConfigs,
+    resonanceAudioConfig,
   ]);
 
   // Wrapped file change handler to clear SED results and load audio info
@@ -1699,6 +1730,23 @@ function HomeContent() {
   }, [audioOrchestrator]);
 
   /**
+   * Handle IR gain changes from import-irs advanced settings.
+   */
+  const handleIRGainChange = useCallback((_index: number, gainDb: number) => {
+    const orchestrator = orchestratorRef.current;
+    if (orchestrator && typeof (orchestrator as any).setIRGain === 'function') {
+      (orchestrator as any).setIRGain(gainDb);
+    }
+  }, []);
+
+  const handleIRNormalizeChange = useCallback((_index: number, enabled: boolean) => {
+    const orchestrator = orchestratorRef.current;
+    if (orchestrator && typeof (orchestrator as any).setNormalize === 'function') {
+      (orchestrator as any).setNormalize(enabled);
+    }
+  }, []);
+
+  /**
    * Toggle IR normalization
    */
   const handleToggleNormalize = useCallback((enabled: boolean) => {
@@ -1907,13 +1955,6 @@ function HomeContent() {
     impulseResponseBuffer: irState.buffer || null,
     impulseResponseFilename: irState.filename || null,
     normalize: audioNormalization.normalize
-  };
-
-  const resonanceAudioConfig = {
-    enabled: audioOrchestrator.status?.currentMode === 'no_ir_resonance',
-    ambisonicOrder: audioOrchestrator.status?.ambisonicOrder || 1,
-    roomDimensions: roomMaterials.roomDimensions,
-    roomMaterials: roomMaterials.roomMaterials
   };
 
   // Handler: Room materials update
@@ -2583,6 +2624,9 @@ function HomeContent() {
         onUpdateSimulationName={acousticsSimulation.handleUpdateSimulationName}
         onIRHover={handleIRHover}
         fpsExitTrigger={collapseListenerCardTrigger}
+        onIRGainChange={handleIRGainChange}
+        onIRNormalizeChange={handleIRNormalizeChange}
+        listenerOrientation={listenerOrientation}
       />
     </div>
   );

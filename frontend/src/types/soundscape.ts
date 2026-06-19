@@ -60,6 +60,8 @@ export interface SoundscapeReceiver {
   position: number[]; // [x, y, z]
   type?: string;
   yaw?: number;
+  pitch?: number;
+  roll?: number;
 }
 
 /** Serializable impulse response metadata for persistence */
@@ -92,7 +94,7 @@ export interface SoundscapeSimulationSettings {
 export interface SoundscapeSimulationConfig {
   id: string;
   display_name: string;
-  type: string; // "pyroomacoustics", "choras", "resonance"
+  type: string; // "pyroomacoustics", "choras", "resonance", "import-irs"
   state: string;
   simulation_instance_id?: string;
   settings?: SoundscapeSimulationSettings;
@@ -105,6 +107,17 @@ export interface SoundscapeSimulationConfig {
   imported_ir_ids?: string[];
   source_receiver_ir_mapping?: Record<string, Record<string, SoundscapeIRMetadata>>;
   receiver_positions?: Record<string, number[]>; // receiverId -> [x, y, z]
+  ir_gain_db?: number;
+  ir_normalize_enabled?: boolean;
+  material_assignments_enabled?: boolean;
+}
+
+/** ShoeBox Acoustics room configuration (global) */
+export interface SoundscapeResonanceAudioConfig {
+  enabled: boolean;
+  ambisonic_order?: number;
+  room_dimensions: { width: number; height: number; depth: number };
+  room_materials: { left: string; right: string; front: string; back: string; down: string; up: string };
 }
 
 /** Full soundscape data package */
@@ -123,6 +136,8 @@ export interface SoundscapeData {
   active_simulation_index?: number;
   // Analysis state persistence
   analysis_state?: AnalysisState;
+  // Resonance audio persistence
+  resonance_audio_config?: SoundscapeResonanceAudioConfig;
 }
 
 /** Request payload for POST /api/speckle/soundscape/save */

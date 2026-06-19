@@ -381,6 +381,8 @@ class SoundscapeData(BaseModel):
     active_simulation_index: Optional[int] = None
     # Analysis state persistence
     analysis_state: Optional[dict] = None
+    # Resonance audio persistence
+    resonance_audio_config: Optional[dict] = None
 
 
 class SoundscapeSaveRequest(BaseModel):

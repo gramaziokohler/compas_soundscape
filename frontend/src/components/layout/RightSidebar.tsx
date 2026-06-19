@@ -67,6 +67,8 @@ interface RightSidebarProps {
   fpsExitTrigger?: number;
   isFPSModeActive?: boolean;
   forcedActiveGroupId?: string | null;
+  onIRGainChange?: (index: number, gainDb: number) => void;
+  onIRNormalizeChange?: (index: number, enabled: boolean) => void;
 
   // === ListenersSection props ===
   receivers: ReceiverData[];
@@ -84,6 +86,7 @@ interface RightSidebarProps {
   onExitFPS?: () => void;
   forcedExpandedListenerId?: string | null;
   collapseListenerCardTrigger?: number;
+  listenerOrientation: { x: number; y: number; z: number };
 }
 
 export function RightSidebar({
@@ -129,6 +132,8 @@ export function RightSidebar({
   fpsExitTrigger,
   isFPSModeActive,
   forcedActiveGroupId,
+  onIRGainChange,
+  onIRNormalizeChange,
   // Listeners
   receivers,
   gridListeners,
@@ -145,6 +150,7 @@ export function RightSidebar({
   onExitFPS,
   forcedExpandedListenerId,
   collapseListenerCardTrigger,
+  listenerOrientation,
 }: RightSidebarProps) {
   const { isExpanded, requestExpand, requestCollapse } = useRightSidebarStore();
   const [isHandleHovered, setIsHandleHovered] = useState(false);
@@ -277,6 +283,8 @@ export function RightSidebar({
             fpsExitTrigger={fpsExitTrigger}
             isFPSModeActive={isFPSModeActive}
             forcedActiveGroupId={forcedActiveGroupId}
+            onIRGainChange={onIRGainChange}
+            onIRNormalizeChange={onIRNormalizeChange}
           />
         </div>
 
@@ -305,6 +313,7 @@ export function RightSidebar({
             onExitFPS={onExitFPS}
             forcedExpandedId={forcedExpandedListenerId}
             collapseAllTrigger={collapseListenerCardTrigger}
+            listenerOrientation={listenerOrientation}
           />
         </div>
       </aside>

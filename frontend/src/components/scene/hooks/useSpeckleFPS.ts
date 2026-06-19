@@ -178,11 +178,29 @@ export function useSpeckleFPS({
 
     const receiverPosition = receiverMesh.position.clone();
 
-    const initialTarget = new THREE.Vector3(
-      receiverPosition.x + listenerOrientation.x,
-      receiverPosition.y + listenerOrientation.y,
-      receiverPosition.z + listenerOrientation.z
-    );
+    // Check for per-receiver saved orientation
+    const receiverData = receivers.find(r => r.id === goToReceiverId);
+    const savedYaw = receiverData?.yaw ?? 0;
+    const savedPitch = receiverData?.pitch ?? 0;
+    const hasSavedOrientation = savedYaw !== 0 || savedPitch !== 0;
+
+    let initialTarget: THREE.Vector3;
+    if (hasSavedOrientation) {
+      const dx = -Math.sin(savedYaw) * Math.cos(savedPitch);
+      const dy = -Math.cos(savedYaw) * Math.cos(savedPitch);
+      const dz = Math.sin(savedPitch);
+      initialTarget = new THREE.Vector3(
+        receiverPosition.x + dx,
+        receiverPosition.y + dy,
+        receiverPosition.z + dz
+      );
+    } else {
+      initialTarget = new THREE.Vector3(
+        receiverPosition.x + listenerOrientation.x,
+        receiverPosition.y + listenerOrientation.y,
+        receiverPosition.z + listenerOrientation.z
+      );
+    }
 
     coordinator.enableFirstPersonMode(receiverPosition, initialTarget);
     setIsFirstPersonMode(true);

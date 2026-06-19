@@ -18,7 +18,7 @@ import type {
   SerializedAnalysisConfig,
   AnalysisState,
 } from '@/types/soundscape';
-import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from '@/types/audio';
+import type { ImpulseResponseMetadata, SourceReceiverIRMapping, ResonanceAudioConfig } from '@/types/audio';
 import type { AnalysisConfig, AnalysisResult, TextPromptResult } from '@/types/analysis';
 import { API_BASE_URL } from '@/utils/constants';
 
@@ -86,6 +86,8 @@ export function buildSoundscapeSavePayload(
   simulationConfigs?: SimulationConfig[],
   /** Active simulation tab index */
   activeSimulationIndex?: number | null,
+  /** Resonance Audio global config */
+  resonanceAudioConfig?: ResonanceAudioConfig,
 ): SoundscapeSavePayload {
   // Map runtime configs to serializable configs
   const serializedConfigs: SoundscapeSoundConfig[] = soundConfigs.map(
@@ -189,6 +191,8 @@ export function buildSoundscapeSavePayload(
     position: [...r.position],
     type: (r as any).type || undefined,
     yaw: r.yaw,
+    pitch: r.pitch,
+    roll: r.roll,
   }));
 
   // Serialize simulation configs and collect IR URLs
@@ -196,9 +200,21 @@ export function buildSoundscapeSavePayload(
   const serializedSimConfigs: SoundscapeSimulationConfig[] = [];
 
   for (const config of simulationConfigs || []) {
-    if (config.type !== 'pyroomacoustics' && config.type !== 'import-irs') continue;
+    if (config.type !== 'pyroomacoustics' && config.type !== 'import-irs' && config.type !== 'resonance') continue;
 
     const pyConfig = config as any;
+
+    // Resonance cards: save minimal data only (settings live in resonance_audio_config)
+    if (config.type === 'resonance') {
+      serializedSimConfigs.push({
+        id: config.id,
+        display_name: config.display_name || config.id,
+        type: config.type,
+        state: config.state,
+        simulation_instance_id: config.simulationInstanceId,
+      });
+      continue;
+    }
 
     // Serialize source-receiver IR mapping and collect IR URLs
     let serializedMapping: Record<string, Record<string, SoundscapeIRMetadata>> | undefined;
@@ -284,6 +300,9 @@ export function buildSoundscapeSavePayload(
       imported_ir_ids: pyConfig.importedIRIds,
       source_receiver_ir_mapping: serializedMapping,
       receiver_positions: Object.keys(receiverPositions).length > 0 ? receiverPositions : undefined,
+      ir_gain_db: pyConfig.irGainDb ?? undefined,
+      ir_normalize_enabled: pyConfig.irNormalizeEnabled ?? undefined,
+      material_assignments_enabled: pyConfig.materialAssignmentsEnabled ?? undefined,
     });
   }
 
@@ -299,6 +318,19 @@ export function buildSoundscapeSavePayload(
     selected_receiver_id: selectedReceiverId ?? undefined,
     simulation_configs: serializedSimConfigs.length > 0 ? serializedSimConfigs : undefined,
     active_simulation_index: activeSimulationIndex ?? undefined,
+    resonance_audio_config: resonanceAudioConfig ? {
+      enabled: resonanceAudioConfig.enabled,
+      ambisonic_order: resonanceAudioConfig.ambisonicOrder,
+      room_dimensions: resonanceAudioConfig.roomDimensions,
+      room_materials: {
+        left: resonanceAudioConfig.roomMaterials.left,
+        right: resonanceAudioConfig.roomMaterials.right,
+        front: resonanceAudioConfig.roomMaterials.front,
+        back: resonanceAudioConfig.roomMaterials.back,
+        down: resonanceAudioConfig.roomMaterials.down,
+        up: resonanceAudioConfig.roomMaterials.up,
+      },
+    } : undefined,
   };
 
   return {
@@ -334,6 +366,7 @@ export function restoreSoundscapeState(
   selectedReceiverId: string | null;
   simulationConfigs: SimulationConfig[];
   activeSimulationIndex: number | null;
+  resonanceAudioConfig: ResonanceAudioConfig | null;
 } {
   // Rebuild SoundGenerationConfig[] from saved configs
   const soundConfigs: SoundGenerationConfig[] = loadedData.sound_configs.map(
@@ -454,6 +487,8 @@ export function restoreSoundscapeState(
     name: saved.name,
     position: (simReceiverPositions[saved.id] ?? saved.position) as [number, number, number],
     yaw: (saved as any).yaw ?? 0,
+    pitch: (saved as any).pitch ?? 0,
+    roll: (saved as any).roll ?? 0,
   }));
 
   const selectedReceiverId = loadedData.selected_receiver_id ?? null;
@@ -542,6 +577,10 @@ export function restoreSoundscapeState(
       speckleLayerName: saved.speckle_layer_name,
       speckleGeometryObjectIds: saved.speckle_geometry_object_ids,
       speckleScatteringAssignments: saved.speckle_scattering_assignments,
+      // Import-IRs advanced settings
+      irGainDb: saved.ir_gain_db ?? undefined,
+      irNormalizeEnabled: saved.ir_normalize_enabled ?? undefined,
+      materialAssignmentsEnabled: saved.material_assignments_enabled ?? undefined,
     } as any;
 
     if (!hasSettings) {
@@ -554,6 +593,13 @@ export function restoreSoundscapeState(
 
   const activeSimulationIndex = loadedData.active_simulation_index ?? null;
 
+  const resonanceAudioConfig: ResonanceAudioConfig | null = loadedData.resonance_audio_config ? {
+    enabled: loadedData.resonance_audio_config.enabled,
+    ambisonicOrder: loadedData.resonance_audio_config.ambisonic_order,
+    roomDimensions: loadedData.resonance_audio_config.room_dimensions,
+    roomMaterials: loadedData.resonance_audio_config.room_materials,
+  } : null;
+
   return {
     soundConfigs,
     soundEvents,
@@ -564,6 +610,7 @@ export function restoreSoundscapeState(
     selectedReceiverId,
     simulationConfigs: restoredSimConfigs,
     activeSimulationIndex,
+    resonanceAudioConfig,
   };
 }
 

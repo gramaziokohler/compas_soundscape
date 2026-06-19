@@ -48,6 +48,10 @@ export interface SoundCardBodyProps {
   /** Called when the user selects a different method */
   onSwitchType?: (type: CardType) => void;
 
+  // ── Mute state ─────────────────────────────────────────────────────────────
+  isMuted?: boolean;
+  onMuteChange?: (muted: boolean) => void;
+
   // ── Callbacks ─────────────────────────────────────────────────────────────
   onVolumeChange?: (db: number) => void;
   onIntervalChange?: (sec: number) => void;
@@ -72,6 +76,8 @@ export function SoundCardBody({
   methodType,
   availableTypes,
   onSwitchType,
+  isMuted = false,
+  onMuteChange,
   onVolumeChange,
   onIntervalChange,
   onTimestampsChange,
@@ -98,7 +104,15 @@ export function SoundCardBody({
   const volumeSlider = useBatchedSlider<number>(
     storeContext,
     (v) => setTempVolumeDb(sliderToDb(v)),
-    onVolumeChange ? (v) => onVolumeChange(sliderToDb(v)) : undefined,
+    (v) => {
+      const db = sliderToDb(v);
+      onVolumeChange?.(db);
+      if (db <= UI_VOLUME_SLIDER.MIN) {
+        onMuteChange?.(true);
+      } else if (isMuted) {
+        onMuteChange?.(false);
+      }
+    },
   );
 
   const intervalSlider = useBatchedSlider<number>(
@@ -247,7 +261,7 @@ export function SoundCardBody({
             title="Volume level: Controls the sound pressure level (SPL) in decibels for spatial audio playback."
           >
             <span className="text-[10px] mb-1 text-secondary-hover">
-              {tempVolumeDb.toFixed(0)}dB
+              {isMuted || tempVolumeDb <= UI_VOLUME_SLIDER.MIN ? 'Mute' : `${tempVolumeDb.toFixed(0)}dB`}
             </span>
             <VerticalVolumeSlider
               value={dbToSlider(tempVolumeDb)}

@@ -25,6 +25,9 @@ interface SpeckleEngineState {
   isAcousticMode: boolean;
   showHoveringHighlight: boolean;
 
+  // Live camera orientation (updated every frame from animation loop)
+  currentCameraOrientation: { yaw: number; pitch: number; roll: number };
+
   // Actions
   setViewer: (viewer: Viewer | null) => void;
   setCoordinator: (coordinator: SpeckleAudioCoordinator | null) => void;
@@ -40,6 +43,7 @@ interface SpeckleEngineState {
   setIsFirstPersonMode: (isFirstPersonMode: boolean) => void;
   setIsAcousticMode: (isAcousticMode: boolean) => void;
   setShowHoveringHighlight: (showHoveringHighlight: boolean) => void;
+  setCurrentCameraOrientation: (orientation: { yaw: number; pitch: number; roll: number }) => void;
 }
 
 export const useSpeckleEngineStore = create<SpeckleEngineState>((set) => ({
@@ -57,6 +61,7 @@ export const useSpeckleEngineStore = create<SpeckleEngineState>((set) => ({
   isFirstPersonMode: false,
   isAcousticMode: false,
   showHoveringHighlight: true,
+  currentCameraOrientation: { yaw: 0, pitch: 0, roll: 0 },
 
   setViewer: (viewer) => set({ viewer }),
   setCoordinator: (coordinator) => set({ coordinator }),
@@ -72,4 +77,5 @@ export const useSpeckleEngineStore = create<SpeckleEngineState>((set) => ({
   setIsFirstPersonMode: (isFirstPersonMode) => set({ isFirstPersonMode }),
   setIsAcousticMode: (isAcousticMode) => set({ isAcousticMode }),
   setShowHoveringHighlight: (showHoveringHighlight) => set({ showHoveringHighlight }),
+  setCurrentCameraOrientation: (currentCameraOrientation) => set({ currentCameraOrientation }),
 }));

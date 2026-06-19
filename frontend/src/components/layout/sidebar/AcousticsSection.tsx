@@ -24,7 +24,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
-import { Power } from 'lucide-react';
+import { Power, ChevronDown, ChevronRight } from 'lucide-react';
 import { CardSection, type CardTypeOption } from '@/components/ui/CardSection';
 import { Card } from '@/components/ui/Card';
 import { apiService } from '@/services/api';
@@ -36,6 +36,7 @@ import { useUIStore } from '@/store/uiStore';
 import { ResonanceContent } from '@/components/layout/sidebar/acoustics/ResonanceContent';
 import { SimulationResultContent, SimulationSettingsSection } from '@/components/layout/sidebar/acoustics/SimulationResultContent';
 import { SimulationSetupContent } from '@/components/layout/sidebar/acoustics/SimulationSetupContent';
+import { SpeckleSurfaceMaterialsSection } from '@/components/acoustics/SpeckleSurfaceMaterialsSection';
 
 // Hooks
 import { useAcousticsMaterials } from '@/hooks/useAcousticsMaterials';
@@ -74,7 +75,8 @@ import type { RoomScale } from '@/components/layout/sidebar/acoustics/ResonanceA
 
 // Constants
 import {
-  MAX_FACES_FOR_LAYER_AUTO_EXCLUDE
+  MAX_FACES_FOR_LAYER_AUTO_EXCLUDE,
+  IMPULSE_RESPONSE
 } from '@/utils/constants';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
 
@@ -142,6 +144,10 @@ interface AcousticsSectionProps {
 
   // World Tree (Special for Speckle)
   worldTree?: any;
+
+  // Import-IRs advanced settings
+  onIRGainChange?: (index: number, gainDb: number) => void;
+  onIRNormalizeChange?: (index: number, enabled: boolean) => void;
 }
 
 export function AcousticsSection(props: AcousticsSectionProps) {
@@ -180,6 +186,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     fpsExitTrigger,
     isFPSModeActive = false,
     forcedActiveGroupId,
+    onIRGainChange,
+    onIRNormalizeChange,
   } = props;
 
   // ==========================================================================
@@ -198,6 +206,11 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   const updateReceiverPosition = useReceiversStore((s) => s.updateReceiverPosition);
   const gridListeners = useGridListenersStore((s) => s.gridListeners);
   const updateSoundPosition = useSoundscapeStore((s) => s.updateSoundPosition);
+
+  // Active sound parent index from UIStore (controls which sound section is active)
+  const activeSoundParentIndex = useUIStore((s) => s.activeSoundParentIndex);
+  const isInSoundsStep = useUIStore((s) => s.isInSoundsStep);
+  const soundConfigsFromStore = useSoundscapeStore((s) => s.soundConfigs);
 
   // Muted sounds from audio controls store
   const mutedSounds = useAudioControlsStore((s) => s.mutedSounds);
@@ -222,15 +235,26 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     return list;
   }, [receivers, gridListeners]);
 
-  // Active soundscape: exclude muted sounds from simulation
-  const activeSoundscapeData = useMemo(
-    () => (soundscapeData ?? []).filter((s) => !mutedSounds.has(s.id)),
-    [soundscapeData, mutedSounds],
-  );
+  // Active soundscape: exclude muted sounds and limit to the active sound section
+  const activeSoundscapeData = useMemo(() => {
+    const unmuted = (soundscapeData ?? []).filter((s) => !mutedSounds.has(s.id));
+    if (activeSoundParentIndex === null || activeSoundParentIndex === undefined) {
+      return unmuted;
+    }
+    // Build a set of prompt_indices whose parent usage matches the active section
+    const matchingPromptIndices = new Set<number>();
+    (soundConfigsFromStore ?? []).forEach((config, idx) => {
+      if (config.parentUsageOriginalIndex === activeSoundParentIndex) {
+        matchingPromptIndices.add(idx);
+      }
+    });
+    return unmuted.filter((s) => s.prompt_index !== undefined && matchingPromptIndices.has(s.prompt_index));
+  }, [soundscapeData, mutedSounds, activeSoundParentIndex, isInSoundsStep, soundConfigsFromStore]);
 
   // Only fetch materials when a card of that type exists
   const hasChorasCard = simulationConfigs.some(c => c.type === 'choras');
   const hasPyroomCard = simulationConfigs.some(c => c.type === 'pyroomacoustics');
+  const hasImportIrsCard = simulationConfigs.some(c => c.type === 'import-irs');
 
   const { materials: chorasMaterials } = useAcousticsMaterials({
     fetchMaterials: () => apiService.getChorasMaterials(),
@@ -241,7 +265,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   const { materials: pyroomMaterials } = useAcousticsMaterials({
     fetchMaterials: () => apiService.getPyroomacousticsMaterials(),
     idPrefix: 'pyroom',
-    enabled: hasPyroomCard
+    enabled: hasPyroomCard || hasImportIrsCard
   });
 
   // Clear material colors when layer isolation is disabled (filteringEnabled comes from context,
@@ -1158,6 +1182,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         ? chorasMaterials
         : config.type === 'pyroomacoustics'
         ? pyroomMaterials
+        : config.type === 'import-irs'
+        ? pyroomMaterials
         : [];
 
     // Simulation setup component — always rendered for non-resonance types
@@ -1232,9 +1258,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     });
 
     const pairDefinitions = allReceivers.flatMap(({ id: receiverId }) =>
-      (soundscapeData ?? []).map((sound) => ({ sourceId: sound.id, receiverId }))
+      (activeSoundscapeData ?? []).map((sound) => ({ sourceId: sound.id, receiverId }))
     );
-    const availableSourceCount = soundscapeData?.length ?? 0;
+    const availableSourceCount = activeSoundscapeData?.length ?? 0;
     const availableReceiverCount = allReceivers.length;
 
     const importIRMapping = (config as any).sourceReceiverIRMapping as Record<string, Record<string, ImpulseResponseMetadata>> | undefined;
@@ -1308,8 +1334,27 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       }
     };
 
+    // Detect sound section mismatch: this simulation was generated with sounds from a
+    // different parent usage than the one currently active in the Sounds step.
+    const activeSourceIds = new Set(activeSoundscapeData.map((s) => s.id));
+    const simSourceIds = Object.keys(((config as any).simulationPositions?.sources ?? {}));
+    const mismatchedSourceCount = activeSoundParentIndex !== null && activeSoundParentIndex !== undefined
+      ? simSourceIds.filter((id) => !activeSourceIds.has(id) && (soundscapeData ?? []).some(s => s.id === id)).length
+      : 0;
+    const hasSoundSectionMismatch = mismatchedSourceCount > 0;
+
+    const soundSectionMismatchWarning = hasSoundSectionMismatch ? (
+      <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-warning/10 border border-warning/40 text-warning text-xs">
+        <span className="font-bold shrink-0 mt-0.5">!</span>
+        <span>
+          This simulation was generated with sound sources from a different sound section. The impulse responses remain accessible for the available source-receiver pairs.
+        </span>
+      </div>
+    ) : null;
+
     const afterContent = isCompleted ? (
         <>
+          {soundSectionMismatchWarning}
           {/* FPS mode warning: shown when this card is active, audio is actually playing, and user is not in listener view */}
           {index === activeSimulationIndex && isExpanded && isAudioActuallyPlaying && !isFPSModeActive && (
             <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-error/10 border border-error/40 text-error text-xs">
@@ -1348,6 +1393,96 @@ export function AcousticsSection(props: AcousticsSectionProps) {
                 onPairAssignmentCleared={config.type === 'import-irs' ? handlePairAssignmentCleared : undefined}
           />
               {config.type !== 'import-irs' && <SimulationSettingsSection config={config} />}
+          {config.type === 'import-irs' && (
+            <div className="mt-3">
+              <button
+                onClick={() => handleUpdateConfig(index, { advancedSettingsExpanded: !(config as any).advancedSettingsExpanded } as any)}
+                className="flex items-center gap-1.5 w-full text-left text-xs text-secondary-light hover:text-neutral-300 transition-colors"
+              >
+                {(config as any).advancedSettingsExpanded ? <ChevronDown size={11} className="shrink-0" /> : <ChevronRight size={11} className="shrink-0" />}
+                <span>Advanced Settings</span>
+              </button>
+              {(config as any).advancedSettingsExpanded && (
+                <div className="mt-2 space-y-3">
+                  <label className="flex items-center gap-2 text-xs text-neutral-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!(config as any).materialAssignmentsEnabled}
+                      onChange={(e) => handleUpdateConfig(index, { materialAssignmentsEnabled: e.target.checked } as any)}
+                      className="rounded accent-info"
+                    />
+                    Enable material assignment
+                  </label>
+                  {(config as any).materialAssignmentsEnabled && (
+                    <SpeckleSurfaceMaterialsSection
+                      viewerRef={viewerRef}
+                      worldTree={localWorldTree}
+                      availableMaterials={currentMaterials}
+                      filteringEnabled={filteringEnabled}
+                      isReadOnly={false}
+                      onMaterialAssignmentsChange={(assignments, layerName, geometryObjectIds, scatteringAssignments) => {
+                        handleUpdateConfig(index, {
+                          speckleMaterialAssignments: assignments,
+                          speckleLayerName: layerName,
+                          speckleGeometryObjectIds: geometryObjectIds,
+                          speckleScatteringAssignments: scatteringAssignments,
+                        } as any);
+                      }}
+                      initialAssignments={(config as any).speckleMaterialAssignments}
+                      initialLayerName={(config as any).speckleLayerName}
+                      initialScatteringAssignments={(config as any).speckleScatteringAssignments}
+                      initialIsolatedObjectIds={(config as any).speckleIsolatedObjectIds}
+                      onIsolationChange={(ids) => handleUpdateConfig(index, { speckleIsolatedObjectIds: ids } as any)}
+                    />
+                  )}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-neutral-400">IR Gain</span>
+                      <span className="text-xs text-neutral-300 tabular-nums">{((config as any).irGainDb ?? 0) > 0 ? '+' : ''}{((config as any).irGainDb ?? 0).toFixed(1)} dB</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={-12}
+                      max={12}
+                      step={0.1}
+                      value={(config as any).irGainDb ?? 0}
+                      onChange={(e) => {
+                        const value = parseFloat(e.target.value);
+                        handleUpdateConfig(index, { irGainDb: value } as any);
+                        if (onIRGainChange && index === activeSimulationIndex) {
+                          onIRGainChange(index, value);
+                        }
+                      }}
+                      className="w-full h-1.5 rounded-full appearance-none bg-neutral-700 cursor-pointer"
+                      style={{
+                        background: `linear-gradient(to right, #3b82f6 ${((((config as any).irGainDb ?? 0) + 12) / 24) * 100}%, #374151 ${((((config as any).irGainDb ?? 0) + 12) / 24) * 100}%)`,
+                      }}
+                    />
+                    <div className="flex justify-between text-[9px] text-neutral-500">
+                      <span>-12 dB</span>
+                      <span>0 dB</span>
+                      <span>+12 dB</span>
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2 text-xs text-neutral-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!(config as any).irNormalizeEnabled}
+                      onChange={(e) => {
+                        const enabled = e.target.checked;
+                        handleUpdateConfig(index, { irNormalizeEnabled: enabled } as any);
+                        if (onIRNormalizeChange && index === activeSimulationIndex) {
+                          onIRNormalizeChange(index, enabled);
+                        }
+                      }}
+                      className="rounded accent-info"
+                    />
+                    Normalize IR (peak to {IMPULSE_RESPONSE.NORMALIZATION_SCALE})
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
           {/* Hidden: keeps SpeckleSurfaceMaterialsSection mounted for filtering/coloring effects */}
           <div className="hidden">{simulationSetup}</div>
         </>

@@ -132,6 +132,16 @@ export interface ImportIRsSimulationConfig extends BaseSimulationConfig {
     sources: Record<string, [number, number, number]>;
     receivers: Record<string, [number, number, number]>;
   };
+  /** Advanced settings */
+  advancedSettingsExpanded?: boolean;
+  materialAssignmentsEnabled?: boolean;
+  speckleMaterialAssignments?: Record<string, string>;
+  speckleLayerName?: string;
+  speckleGeometryObjectIds?: string[];
+  speckleScatteringAssignments?: Record<string, number>;
+  speckleIsolatedObjectIds?: string[];
+  irGainDb?: number;
+  irNormalizeEnabled?: boolean;
 }
 
 /**
