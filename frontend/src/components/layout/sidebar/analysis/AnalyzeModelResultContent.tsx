@@ -18,45 +18,48 @@ interface Props {
 export function AnalyzeModelResultContent({ config }: Props) {
   const result = config.analysisResult;
   const objects = result?.architecturalObjects ?? [];
+  const spaceDescription = result?.spaceDescription;
 
   const stats = useMemo(() => {
-    const highConf = objects.filter((o) => o.confidence >= 0.7).length;
-    const lowConf = objects.filter((o) => o.confidence < 0.5).length;
-    return { total: objects.length, highConf, lowConf };
+    const total = objects.length;
+    return { total };
   }, [objects]);
 
   if (!result || objects.length === 0) return null;
 
   return (
     <div className="space-y-2 px-4 pb-2">
+      {/* Space description */}
+      {spaceDescription && (
+        <div
+          className="rounded px-2 py-2 max-h-28 overflow-y-auto"
+          style={{
+            borderLeft: '2px solid var(--color-primary)',
+            backgroundColor: 'var(--color-secondary-hover)',
+            scrollbarWidth: 'thin',
+            scrollbarColor: 'var(--color-secondary-light) transparent',
+          }}
+        >
+          <p
+            className="text-xs leading-relaxed"
+            style={{ color: 'var(--color-background)', opacity: 0.85 }}
+          >
+            {spaceDescription}
+          </p>
+        </div>
+      )}
+
       {/* Summary row */}
       <div className="flex items-center gap-3 text-xs" style={{ color: 'var(--color-secondary-hover)' }}>
         <span>
           <span style={{ color: 'var(--color-background-static)', fontWeight: 600 }}>{stats.total}</span> groups
         </span>
-        {stats.highConf > 0 && (
-          <span>
-            <span style={{ color: 'var(--color-success, #4ade80)', fontWeight: 600 }}>{stats.highConf}</span> high confidence
-          </span>
-        )}
-        {stats.lowConf > 0 && (
-          <span>
-            <span style={{ color: 'var(--color-warning, #fbbf24)', fontWeight: 600 }}>{stats.lowConf}</span> low confidence
-          </span>
-        )}
       </div>
 
       {/* Object group list */}
       <div className="space-y-1.5 max-h-56 overflow-y-auto pr-0.5">
         {objects.map((obj, i) => {
           const color = getAnalysisGroupColor(i);
-          const confPct = Math.round(obj.confidence * 100);
-          const confColor =
-            obj.confidence >= 0.7
-              ? 'var(--color-success, #4ade80)'
-              : obj.confidence >= 0.5
-                ? 'var(--color-warning, #fbbf24)'
-                : 'var(--color-error, #f87171)';
 
           return (
             <div
@@ -93,12 +96,6 @@ export function AnalyzeModelResultContent({ config }: Props) {
                       ×{obj.quantity}
                     </span>
                   )}
-                  <span
-                    className="text-xs px-1 rounded ml-auto flex-shrink-0"
-                    style={{ backgroundColor: 'var(--color-secondary-hover)', color: confColor }}
-                  >
-                    {confPct}%
-                  </span>
                 </div>
                 {obj.material && (
                   <span

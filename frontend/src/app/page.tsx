@@ -69,13 +69,17 @@ function HomeContent() {
   const textGen = useTextGenerationStore();
   const soundGen = useSoundscapeStore();
 
-  // Sync generated sounds to store so audioControlsStore can access them
+  // Sync generated sounds and configs to audioControlsStore
   const syncGeneratedSounds = useAudioControlsStore((s) => s.syncGeneratedSounds);
+  const syncSoundConfigs = useAudioControlsStore((s) => s.syncSoundConfigs);
   const iterationLinks = useAudioControlsStore((s) => s.iterationLinks);
   const soundTimestampsForCount = useAudioControlsStore((s) => s.soundTimestamps);
   useEffect(() => {
     syncGeneratedSounds(soundGen.generatedSounds);
   }, [soundGen.generatedSounds, syncGeneratedSounds]);
+  useEffect(() => {
+    syncSoundConfigs(soundGen.soundConfigs);
+  }, [soundGen.soundConfigs, syncSoundConfigs]);
 
   // Auto-initialize timestamp scheduling for sounds that carry foley timestamps.
   // Runs whenever generatedSounds changes; uses getState() to avoid store subscriptions.
@@ -91,6 +95,23 @@ function HomeContent() {
       audioStore.handleSchedulingModeChange(sound.id, 'timestamps');
       audioStore.handleTimestampsChange(sound.id, timestampsSec);
     });
+  }, [soundGen.generatedSounds]);
+
+  // Re-bake orchestrate schedule and iteration links whenever sounds finish generating.
+  // Both operations need the generated sound IDs which only exist post-generation.
+  // Explicitly sync BOTH _generatedSounds and _soundConfigs before running the bake so that
+  // the results are not affected by whether the separate syncGeneratedSounds effect has run yet.
+  useEffect(() => {
+    if (!soundGen.generatedSounds.length) return;
+    const hasOrchestrate = soundGen.soundConfigs.some((c: SoundGenerationConfig) => c.orchestrateMeta);
+    if (hasOrchestrate) {
+      const audioStore = useAudioControlsStore.getState();
+      audioStore.syncGeneratedSounds(soundGen.generatedSounds);
+      audioStore.syncSoundConfigs(soundGen.soundConfigs);
+      audioStore.bakeOrchestrateSchedule();
+      audioStore.setOrchestrateIterationLinks(soundGen.soundConfigs);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [soundGen.generatedSounds]);
 
   const analysis = useAnalysisStore();
@@ -647,7 +668,7 @@ function HomeContent() {
     // register the others.  This caused playAll to target a source ID that was
     // never loaded in the orchestrator.
     const generatedByPrompt = new Map<number, any[]>();
-    (soundGen.soundscapeData ?? []).forEach((s: any) => {
+    (soundGen.generatedSounds ?? []).forEach((s: any) => {
       if (s.prompt_index !== undefined) {
         if (!generatedByPrompt.has(s.prompt_index)) generatedByPrompt.set(s.prompt_index, []);
         generatedByPrompt.get(s.prompt_index)!.push(s);
@@ -747,7 +768,7 @@ function HomeContent() {
           entity_index,
         }];
       });
-  }, [soundGen.soundConfigs, soundGen.soundscapeData, activeSoundParentIndex, isInSoundsStep, iterationLinks, soundTimestampsForCount]);
+  }, [soundGen.soundConfigs, soundGen.generatedSounds, soundGen.soundscapeData, activeSoundParentIndex, isInSoundsStep, iterationLinks, soundTimestampsForCount]);
 
   // Handler: Extract SED audio segments and inject them as upload-type sound cards
   const handleAudioExtract = useCallback(async (config: AudioAnalysisConfig, originalIndex: number) => {
@@ -870,38 +891,59 @@ function HomeContent() {
       const newConfigs = prompts.map(p => {
         const normalizedCategory = (p.metadata?.category || '').toLowerCase().replace(/[\s-]+/g, '_');
         const isBackground = normalizedCategory === 'background' || normalizedCategory === 'background_sound';
-        return {
-          prompt: p.text,
-          duration: isBackground ? 10 : (p.metadata?.duration_seconds ?? 10), // Background sounds forced to 10s
+        const orchestrateMeta = p.metadata?.orchestrateMeta;
+        const isSpeech = orchestrateMeta?.isSpeech || normalizedCategory === 'speech';
+        const variantCount = orchestrateMeta?.variants?.length
+          ? Math.max(...orchestrateMeta.variants, 1)
+          : 1;
+
+        // Resolve entities: for orchestrateMeta with allObjectIds, resolve all of them
+        const resolvedEntities = (() => {
+          if (orchestrateMeta?.allObjectIds?.length) {
+            return orchestrateMeta.allObjectIds.map((objId: string) => {
+              const primaryRaw = { id: objId, foleyPosition: p.position };
+              return resolveEntityFromTreeId(objId, primaryRaw.foleyPosition);
+            }).filter(Boolean);
+          }
+          const primaryRaw = p.entities?.[0] ?? p.entity;
+          if (!primaryRaw?.id) return undefined;
+          const resolved = resolveEntityFromTreeId(primaryRaw.id, primaryRaw.foleyPosition);
+          return resolved ? [resolved] : undefined;
+        })();
+
+        const config: SoundGenerationConfig = {
+          prompt: isSpeech ? (orchestrateMeta?.speechLines?.[0] || p.text) : p.text,
+          duration: isBackground ? 10 : (p.metadata?.duration_seconds ?? 10),
           guidance_scale: 4.5,
           negative_prompt: '',
-          seed_copies: 1,
+          seed_copies: variantCount,
           steps: 100,
-          spl_db: p.metadata?.spl_db ?? 60, // Default SPL if not provided
-          interval_seconds: isBackground ? 0 : (p.metadata?.interval_seconds ?? 5), // Background = continuous (0), no timestamp mode
+          spl_db: p.metadata?.spl_db ?? 60,
+          interval_seconds: isBackground ? 0 : (p.metadata?.interval_seconds ?? 5),
           display_name: p.displayName || (p.text.length > 50 ? p.text.substring(0, 47) + '...' : p.text),
-          // Resolve entity from world tree when available; pass foley position as bounds fallback.
-          // Non-entity sounds get no entities — SoundSphereManager uses the explicit position.
-          // Support both new entities[] and legacy entity field from TextPromptResult.
-          entities: (() => {
-            const primaryRaw = p.entities?.[0] ?? p.entity;
-            if (!primaryRaw?.id) return undefined;
-            const resolved = resolveEntityFromTreeId(primaryRaw.id, primaryRaw.foleyPosition);
-            return resolved ? [resolved] : undefined;
-          })(),
-          // Forward explicit position for non-entity sounds (e.g. HVAC Hum with [x,y,z] from foley).
-          // Camera-front placement is the fallback only when position is absent or [0,0,0].
-          ...(() => {
-            const primaryRaw = p.entities?.[0] ?? p.entity;
-            return p.position && !primaryRaw?.id ? { position: p.position } : {};
-          })(),
-          // Pass foley timestamps through so they can be applied after generation (skipped for background sounds)
+          entities: resolvedEntities,
+          entity: resolvedEntities?.[0], // backward compat
+          type: isSpeech ? 'text-to-speech' : undefined,
+          voice_name: isSpeech ? (orchestrateMeta?.voiceName || 'Kore') : undefined,
+          ...(p.position && !resolvedEntities?.length ? { position: p.position } : {}),
           ...(!isBackground && p.metadata?.timestamps?.length ? { timestamps: p.metadata.timestamps } : {}),
-          // Pass foley category through for DAW grouping and badge display
           ...(p.metadata?.category ? { category: p.metadata.category } : {}),
-          // Tag with parent usage card so Sounds section can filter by parent
           ...(parentUsageIndex !== undefined ? { parentUsageOriginalIndex: parentUsageIndex } : {}),
+          ...(orchestrateMeta ? {
+            orchestrateMeta: {
+              orchestrateId: orchestrateMeta.orchestrateId,
+              entryId: orchestrateMeta.entryId,
+              trigger: orchestrateMeta.trigger,
+              variants: orchestrateMeta.variants,
+              allObjectIds: orchestrateMeta.allObjectIds,
+              speechLines: orchestrateMeta.speechLines,
+              isSpeech: orchestrateMeta.isSpeech,
+              voiceName: orchestrateMeta.voiceName,
+              timestamps: orchestrateMeta.timestamps,
+            },
+          } : {}),
         };
+        return config;
       });
 
       console.log('[Analysis→SoundGen] Converted configs with metadata:', 
@@ -909,6 +951,15 @@ function HomeContent() {
 
       // Add to sound generation
       soundGen.setSoundConfigsFromPrompts(newConfigs);
+      
+      // Set up orchestrate iteration links and initial schedule bake
+      const hasOrchestrateMeta = newConfigs.some(c => c.orchestrateMeta);
+      if (hasOrchestrateMeta) {
+        const audioStore = useAudioControlsStore.getState();
+        audioStore.syncSoundConfigs(newConfigs);
+        audioStore.setOrchestrateIterationLinks(newConfigs);
+        audioStore.bakeOrchestrateSchedule();
+      }
       
       // Advance to Sounds step in sidebar
       setStepAdvanceTrigger(t => t + 1);
@@ -1039,6 +1090,13 @@ function HomeContent() {
         useAudioControlsStore.getState().restoreVolumeAndIntervals(
           restored.soundVolumes,
           restored.soundIntervals,
+        );
+
+        // Restore per-track timeline scheduling modes + timestamps (defaults to
+        // "timestamps" mode for any track whose mode wasn't saved).
+        useAudioControlsStore.getState().restoreSchedulingModes(
+          restored.soundSchedulingModes,
+          restored.soundTimestamps,
         );
 
         // Restore receivers
@@ -1227,6 +1285,8 @@ function HomeContent() {
         acousticsSimulation.simulationConfigs,
         acousticsSimulation.activeSimulationIndex,
         resonanceAudioConfig,
+        useAudioControlsStore.getState().soundSchedulingModes,
+        useAudioControlsStore.getState().soundTimestamps,
       );
 
       // Embed analysis state in the soundscape data
@@ -2248,7 +2308,7 @@ function HomeContent() {
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-background">
       {/* Main 3D Scene - Fixed at screen center, full size, lowest z-index */}
-      <main className="absolute inset-0 z-0">
+      <main className="absolute inset-0">
         {/* Viewer Toggle Button - Top Left */}
         <div className="absolute top-4 left-4 z-50">
         </div>

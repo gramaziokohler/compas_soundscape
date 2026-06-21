@@ -51,6 +51,10 @@ export interface SoundscapeSoundEvent {
   entity_index?: number;
   entity_node_id?: string; // Full Speckle object hash ID for entity matching
   entity_indices?: number[];  // All linked entity indices
+  /** Per-track timeline scheduling mode (defaults to "timestamps" on load when absent). */
+  scheduling_mode?: 'interval' | 'timestamps';
+  /** Explicit per-track start times in seconds (used when scheduling_mode is "timestamps"). */
+  timestamps?: number[];
 }
 
 /** Serializable receiver position */

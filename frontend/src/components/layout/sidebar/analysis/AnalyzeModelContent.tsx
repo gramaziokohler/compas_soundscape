@@ -139,6 +139,7 @@ export function AnalyzeModelContent({
           <CaptureViewSection
             index={index}
             screenshots={config.liveScreenshots}
+            screenshotFilenames={config.liveScreenshotFilenames ?? []}
             onUpdateConfig={onUpdateConfig}
           />
 
@@ -181,10 +182,11 @@ export function AnalyzeModelContent({
 interface CaptureViewSectionProps {
   index: number;
   screenshots: string[];
+  screenshotFilenames: string[];
   onUpdateConfig: (index: number, updates: Partial<AnalyzeModelConfig>) => void;
 }
 
-function CaptureViewSection({ index, screenshots, onUpdateConfig }: CaptureViewSectionProps) {
+function CaptureViewSection({ index, screenshots, screenshotFilenames, onUpdateConfig }: CaptureViewSectionProps) {
   const [isCapturing, setIsCapturing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -207,8 +209,11 @@ function CaptureViewSection({ index, screenshots, onUpdateConfig }: CaptureViewS
         body: JSON.stringify({ image: dataUrl }),
       });
       if (!res.ok) throw new Error(`Server error: ${res.status}`);
-      const { image } = (await res.json()) as { image: string };
-      onUpdateConfig(index, { liveScreenshots: [...screenshots, image] });
+      const { image, filename } = (await res.json()) as { image: string; filename: string };
+      onUpdateConfig(index, {
+        liveScreenshots: [...screenshots, image],
+        liveScreenshotFilenames: [...screenshotFilenames, filename],
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Capture failed');
     } finally {
@@ -217,11 +222,20 @@ function CaptureViewSection({ index, screenshots, onUpdateConfig }: CaptureViewS
       }
       setIsCapturing(false);
     }
-  }, [index, screenshots, onUpdateConfig]);
+  }, [index, screenshots, screenshotFilenames, onUpdateConfig]);
 
   const handleRemove = useCallback(
-    (i: number) => onUpdateConfig(index, { liveScreenshots: screenshots.filter((_, idx) => idx !== i) }),
-    [index, screenshots, onUpdateConfig],
+    (i: number) => {
+      const filename = screenshotFilenames[i];
+      if (filename) {
+        fetch(`/api/screenshot?filename=${encodeURIComponent(filename)}`, { method: 'DELETE' }).catch(() => {});
+      }
+      onUpdateConfig(index, {
+        liveScreenshots: screenshots.filter((_, idx) => idx !== i),
+        liveScreenshotFilenames: screenshotFilenames.filter((_, idx) => idx !== i),
+      });
+    },
+    [index, screenshots, screenshotFilenames, onUpdateConfig],
   );
 
   return (

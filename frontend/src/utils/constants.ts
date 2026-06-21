@@ -332,13 +332,39 @@ export const AUDIO_MODEL_NAMES: Record<string, string> = {
 
 // TTS Voice options
 export const TTS_VOICES = [
-  { value: "Kore", label: "Kore" },
-  { value: "Fenrir", label: "Fenrir" },
-  { value: "Puck", label: "Puck" },
-  { value: "Charon", label: "Charon" },
-  { value: "Leda", label: "Leda" },
-  { value: "Orus", label: "Orus" },
+  { value: "Kore", label: "Chloe" }, // Femme
+  { value: "Fenrir", label: "Felix" }, // Homme
+  { value: "Puck", label: "Max" }, // Homme
+  { value: "Charon", label: "Leo" }, // Homme
+  { value: "Leda", label: "Emma" }, // Femme
+  { value: "Orus", label: "Lucas" }, // Homme
+  { value: "Achird", label: "Alex" }, // Homme
+  { value: "Achernar", label: "Sofia" }, // Femme
+  { value: "Algenib", label: "David" }, // Homme
+  { value: "Algieba", label: "Oliver" }, // Homme
+  { value: "Alnilam", label: "Thomas" }, // Homme
+  { value: "Aoede", label: "Mia" }, // Femme
+  { value: "Autonoe", label: "Anna" }, // Femme
+  { value: "Callirrhoe", label: "Elena" }, // Femme
+  { value: "Despina", label: "Clara" }, // Femme
+  { value: "Encelade", label: "Gabriel" }, // Homme
+  { value: "Erinome", label: "Eva" }, // Femme
+  { value: "Gacrux", label: "Luna" }, // Femme
+  { value: "Iapetus", label: "Victor" }, // Homme
+  { value: "Laomedeia", label: "Lara" }, // Femme
+  { value: "Léda", label: "Sara" }, // Femme
+  { value: "Pulcherrima", label: "Julia" }, // Femme
+  { value: "Rasalgethi", label: "Oscar" }, // Homme
+  { value: "Sadachbia", label: "Arthur" }, // Homme
+  { value: "Sadaltager", label: "Louis" }, // Homme
+  { value: "Schedar", label: "Marcus" }, // Homme
+  { value: "Sulafat", label: "Maya" }, // Femme
+  { value: "Umbriel", label: "Simon" }, // Homme
+  { value: "Vindemiatrix", label: "Nina" }, // Femme
+  { value: "Zephyr", label: "Zoe" }, // Femme
+  { value: "Zubenelgenubi", label: "Benjamin" }, // Homme
 ] as const;
+
 export const TTS_DEFAULT_VOICE = "Kore";
 
 export const LLM_MODEL_NAMES: Record<string, string> = {

@@ -23,7 +23,10 @@ import type {
   AnalysisConfig,
   TextPromptResult,
   AnalysisResult,
-  AnalysisSectionProps
+  AnalysisSectionProps,
+  SpeechResult,
+  OrchestrateResult,
+  OrchestrateEntry,
 } from './analysis';
 export type {
   ModelAnalysisConfig,
@@ -32,7 +35,10 @@ export type {
   AnalysisConfig,
   TextPromptResult,
   AnalysisResult,
-  AnalysisSectionProps
+  AnalysisSectionProps,
+  SpeechResult,
+  OrchestrateResult,
+  OrchestrateEntry,
 };
 
 // Import and re-export Acoustics types
@@ -200,6 +206,19 @@ export interface SoundGenerationConfig {
   category?: string;
   /** TTS voice name (Gemini prebuilt voices: Kore, Fenrir, Puck, etc.) */
   voice_name?: string;
+  /** Orchestration metadata from the pipeline (foley+speech → orchestrate) */
+  orchestrateMeta?: {
+    orchestrateId: string;
+    entryId: string;
+    trigger: { type: string; expression: string[]; delay: number[] };
+    variants: number[];
+    allObjectIds: string[];
+    speechLines?: string[];
+    isSpeech?: boolean;
+    voiceName?: string;
+    /** Original foley/speech timestamps (MM:SS) — fallback when trigger resolution fails. */
+    timestamps?: string[];
+  };
 }
 
 /** A sound selected from the Google Sound Library catalog */

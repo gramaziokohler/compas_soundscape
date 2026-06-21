@@ -407,6 +407,7 @@ async def analyze_3dmodel_stream(request: AnalyzeModelStreamRequest):
 
     async def event_generator():
         objects: list[dict] = []
+        space_description = ""
         try:
             # ── Queue-position phase ──────────────────────────────────────
             while not ready_event.is_set():
@@ -422,14 +423,18 @@ async def analyze_3dmodel_stream(request: AnalyzeModelStreamRequest):
 
             yield f"data: {json.dumps({'type': 'start', 'analysis_id': analysis_id})}\n\n"
 
-            async for obj in llm_service.stream_analyze_3dmodel(
+            async for event in llm_service.stream_analyze_3dmodel(
                 request.entities,
                 screenshots=request.screenshots or None,
                 user_context=request.user_context or None,
                 llm_model=request.llm_model,
             ):
-                objects.append(obj)
-                yield f"data: {json.dumps({'type': 'object', **obj})}\n\n"
+                if event.get("type") == "space_description":
+                    space_description = event.get("text", "")
+                    yield f"data: {json.dumps({'type': 'space_description', 'text': space_description})}\n\n"
+                else:
+                    objects.append(event)
+                    yield f"data: {json.dumps(event)}\n\n"
 
         except Exception as e:
             traceback.print_exc()
@@ -469,6 +474,8 @@ async def analyze_3dmodel_stream(request: AnalyzeModelStreamRequest):
                 except Exception:
                     pass
                 payload: dict = {"analysis_id": analysis_id, "objects": objects}
+                if space_description:
+                    payload["space_description"] = space_description
                 if total_bounds:
                     payload["meta"] = {"total_bounds": total_bounds}
                 with open(tmp_file, "w", encoding="utf-8") as f:
@@ -777,3 +784,252 @@ async def update_scenarist_result(
         raise HTTPException(status_code=500, detail=f"Failed to save scenario: {str(e)}")
 
     return {"ok": True}
+
+
+class SpeechAgentRequest(BaseModel):
+    scenario_id: str
+    analysis_id: str | None = None
+    llm_model: str = DEFAULT_LLM_MODEL
+
+
+@router.post("/api/speech-agent-stream")
+async def speech_agent_stream(request: SpeechAgentRequest):
+    """SSE endpoint: streams speech entries one by one.
+
+    Events:
+      - {"type":"queued","speech_id":"<uuid>","queue_position":N,"queue_total":M}
+      - {"type":"speech","speech":{...}}
+      - {"type":"error","message":"..."}
+      - {"type":"done","result":{...},"speech_id":"<uuid>"}
+      - data: [DONE]
+    """
+    import asyncio as _asyncio
+    import re as _re
+
+    async def make_error_stream(msg: str):
+        yield f"data: {json.dumps({'type': 'error', 'message': msg})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    if not _re.match(r'^[0-9a-f-]+$', request.scenario_id):
+        return StreamingResponse(
+            make_error_stream("Invalid scenario_id"),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    scenario_file = Path(TEMP_ANALYSIS_DIR) / f"scenarios_{request.scenario_id}.json"
+    if not scenario_file.exists():
+        return StreamingResponse(
+            make_error_stream("Scenario not found"),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    try:
+        with open(scenario_file, "r", encoding="utf-8") as f:
+            scenario_data = json.load(f)
+    except Exception as e:
+        return StreamingResponse(
+            make_error_stream(f"Failed to load scenario: {e}"),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    furniture_list: dict | None = None
+    if request.analysis_id:
+        if not _re.match(r'^[0-9a-f-]+$', request.analysis_id):
+            return StreamingResponse(
+                make_error_stream("Invalid analysis_id"),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        analysis_file = Path(TEMP_ANALYSIS_DIR) / f"analysis_{request.analysis_id}.json"
+        if analysis_file.exists():
+            try:
+                with open(analysis_file, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+                _total_bounds = (raw.get("meta") or {}).get("total_bounds")
+                furniture_list = {
+                    "architecturalObjects": raw.get("objects", []),
+                    **(({"meta": {"total_bounds": _total_bounds}}) if _total_bounds else {}),
+                }
+            except Exception as load_err:
+                print(f"[speech-agent-stream] failed to load analysis: {load_err}")
+
+    speech_id = str(uuid.uuid4())
+    loop = _asyncio.get_event_loop()
+    _pos, _total, ready_event, done_event = unified_queue.enqueue_with_ready_signal(
+        speech_id, "speech_stream", loop, LLM_TASK_CLEANUP_DELAY_SECONDS
+    )
+
+    async def event_generator():
+        try:
+            while not ready_event.is_set():
+                task = unified_queue.get_task(speech_id)
+                if task and task.cancel_event.is_set():
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'Task cancelled'})}\n\n"
+                    return
+                q_pos, q_total = unified_queue.get_queue_status(speech_id)
+                yield (
+                    f"data: {json.dumps({'type': 'queued', 'speech_id': speech_id, 'queue_position': q_pos, 'queue_total': q_total})}\n\n"
+                )
+                await _asyncio.sleep(1)
+
+            async for event in llm_service.stream_speech_agent(
+                scenarist_agent_result=scenario_data,
+                furniture_list=furniture_list,
+                llm_model=request.llm_model,
+            ):
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as e:
+            traceback.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        finally:
+            done_event.set()
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post("/api/cancel-speech-agent-stream/{speech_id}")
+async def cancel_speech_agent_stream(speech_id: str):
+    if not unified_queue.get_task(speech_id):
+        raise HTTPException(status_code=404, detail="Speech stream task not found")
+    unified_queue.cancel(speech_id)
+    return {"cancelled": True}
+
+
+class OrchestrateStreamRequest(BaseModel):
+    scenario_id: str
+    foley_id: str
+    speech_id: str
+    llm_model: str = DEFAULT_LLM_MODEL
+
+
+@router.post("/api/orchestrate-stream")
+async def orchestrate_stream(request: OrchestrateStreamRequest):
+    """SSE endpoint: streams orchestrated playlist entries one by one.
+
+    Loads scenario, foley, and speech JSON files from disk, then calls the
+    orchestrate agent to compile the final parametric audio playlist.
+
+    Events:
+      - {"type":"queued","orchestrate_id":"<uuid>","queue_position":N,"queue_total":M}
+      - {"type":"entry","entry":{...}}
+      - {"type":"error","message":"..."}
+      - {"type":"done","result":{...},"orchestrate_id":"<uuid>"}
+      - data: [DONE]
+    """
+    import asyncio as _asyncio
+    import re as _re
+
+    async def make_error_stream(msg: str):
+        yield f"data: {json.dumps({'type': 'error', 'message': msg})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    if not _re.match(r'^[0-9a-f-]+$', request.scenario_id):
+        return StreamingResponse(
+            make_error_stream("Invalid scenario_id"),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    if not _re.match(r'^[0-9a-f-]+$', request.foley_id):
+        return StreamingResponse(
+            make_error_stream("Invalid foley_id"),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    if not _re.match(r'^[0-9a-f-]+$', request.speech_id):
+        return StreamingResponse(
+            make_error_stream("Invalid speech_id"),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    scenario_file = Path(TEMP_ANALYSIS_DIR) / f"scenarios_{request.scenario_id}.json"
+    foley_file = Path(TEMP_ANALYSIS_DIR) / f"foley_{request.foley_id}.json"
+    speech_file = Path(TEMP_ANALYSIS_DIR) / f"speech_{request.speech_id}.json"
+
+    if not scenario_file.exists():
+        return StreamingResponse(
+            make_error_stream("Scenario not found"),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    if not foley_file.exists():
+        return StreamingResponse(
+            make_error_stream("Foley result not found"),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    if not speech_file.exists():
+        return StreamingResponse(
+            make_error_stream("Speech result not found"),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    try:
+        with open(scenario_file, "r", encoding="utf-8") as f:
+            scenario_data = json.load(f)
+        with open(foley_file, "r", encoding="utf-8") as f:
+            foley_data = json.load(f)
+        with open(speech_file, "r", encoding="utf-8") as f:
+            speech_data = json.load(f)
+    except Exception as e:
+        return StreamingResponse(
+            make_error_stream(f"Failed to load data: {e}"),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    orchestrate_id = str(uuid.uuid4())
+    loop = _asyncio.get_event_loop()
+    _pos, _total, ready_event, done_event = unified_queue.enqueue_with_ready_signal(
+        orchestrate_id, "orchestrate_stream", loop, LLM_TASK_CLEANUP_DELAY_SECONDS
+    )
+
+    async def event_generator():
+        try:
+            while not ready_event.is_set():
+                task = unified_queue.get_task(orchestrate_id)
+                if task and task.cancel_event.is_set():
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'Task cancelled'})}\n\n"
+                    return
+                q_pos, q_total = unified_queue.get_queue_status(orchestrate_id)
+                yield (
+                    f"data: {json.dumps({'type': 'queued', 'orchestrate_id': orchestrate_id, 'queue_position': q_pos, 'queue_total': q_total})}\n\n"
+                )
+                await _asyncio.sleep(1)
+
+            async for event in llm_service.stream_orchestrate_agent(
+                scenarist_agent_result=scenario_data,
+                foley_result=foley_data,
+                speech_result=speech_data,
+                llm_model=request.llm_model,
+            ):
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as e:
+            traceback.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        finally:
+            done_event.set()
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post("/api/cancel-orchestrate-stream/{orchestrate_id}")
+async def cancel_orchestrate_stream(orchestrate_id: str):
+    if not unified_queue.get_task(orchestrate_id):
+        raise HTTPException(status_code=404, detail="Orchestrate stream task not found")
+    unified_queue.cancel(orchestrate_id)
+    return {"cancelled": True}

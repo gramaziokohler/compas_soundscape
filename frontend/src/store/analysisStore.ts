@@ -23,6 +23,8 @@ import type {
   ScenarioConfig,
   ScenarioResult,
   FoleyResult,
+  SpeechResult,
+  OrchestrateResult,
   FreeformConfig,
 } from '@/types/analysis';
 import type { CardType } from '@/types/card';
@@ -30,6 +32,7 @@ import {
   API_BASE_URL,
   DEFAULT_SPL_DB,
   LLM_SUGGESTED_INTERVAL_SECONDS,
+  TTS_VOICES,
 } from '@/utils/constants';
 import { loadAudioFileWithBuffer } from '@/lib/audio/utils/audio-info';
 import { apiService } from '@/services/api';
@@ -120,11 +123,11 @@ export const analysisPartialize = (state: AnalysisStoreState) => ({
       return { ...config, modelFile: null, geometryData: undefined };
     }
     if (config.type === 'model-analysis') {
-      return { ...config, liveScreenshots: [] };
+      return { ...config, liveScreenshots: [], liveScreenshotFilenames: [] };
     }
     if (config.type === 'scenario') {
       // Don't persist streaming state in undo history
-      return { ...config, scenarioRawText: '' };
+      return { ...config, scenarioRawText: '', speechResult: null, speechId: null, orchestrateResult: null, orchestrateId: null };
     }
     return config;
   }),
@@ -309,6 +312,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                   type: 'model-analysis',
                   numSounds: 5,
                   liveScreenshots: [],
+                  liveScreenshotFilenames: [],
                   userContext: '',
                   modelEntities: [],
                   speckleData: initialSpeckleData,
@@ -350,6 +354,10 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                   scenarioId: null,
                   foleyResult: null,
                   selectedFoleyKeys: [],
+                  speechResult: null,
+                  speechId: null,
+                  orchestrateResult: null,
+                  orchestrateId: null,
                 } as ScenarioConfig)
               : type === 'freeform'
               ? ({
@@ -565,8 +573,15 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               return;
             } else if (config.type === 'scenario') {
               const sc = config as ScenarioConfig;
-              if (sc.scenarioResult) {
-                // Scenario already generated → call foley artist
+              if (sc.orchestrateResult) {
+                // Full pipeline already completed — re-send to generation
+                get().handleSendToSoundGeneration(undefined, index);
+                return;
+              } else if (sc.foleyResult && sc.speechResult) {
+                // Foley + speech done → run orchestrate
+                await get().handleFoleyArtist(index);
+              } else if (sc.scenarioResult) {
+                // Scenario generated → call foley artist
                 await get().handleFoleyArtist(index);
               } else {
                 await get().handleScenarioAnalyze(index);
@@ -931,7 +946,116 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           configsToScan.forEach((config) => {
             if (config.type !== 'scenario') return;
             const sc = config as ScenarioConfig;
-            if (!sc.foleyResult) return;
+
+            // Orchestrate pipeline path (preferred when available)
+            if (sc.orchestrateResult?.playlist?.length) {
+              const voiceMap = new Map<string, string>();
+              let voiceIdx = 0;
+
+              sc.orchestrateResult.playlist.forEach((entry) => {
+                const normalizedCategory = (entry.category || '').toLowerCase().replace(/[\s-]+/g, '_');
+                const isSpeech = normalizedCategory === 'speech';
+
+                const splMatch = entry.spl?.match(/(\d+(?:\.\d+)?)/);
+                const splDb = splMatch ? parseFloat(splMatch[1]) : DEFAULT_SPL_DB;
+
+                const durationSec = (() => {
+                  const d = entry.duration ?? '';
+                  const colonIdx = d.indexOf(':');
+                  if (colonIdx !== -1) {
+                    const mm = parseFloat(d.slice(0, colonIdx)) || 0;
+                    const ss = parseFloat(d.slice(colonIdx + 1)) || 0;
+                    return mm * 60 + ss;
+                  }
+                  const n = parseFloat(d);
+                  return isNaN(n) ? (isSpeech ? 5 : 10) : n;
+                })();
+
+                const pos = entry.position;
+                const involvedIds = entry.objectsInvolved?.filter(Boolean) ?? [];
+                const variantCount = Math.max(...entry.variants, 1);
+
+                const speechLines = isSpeech
+                  ? entry.description.split(';').map((s) => s.trim()).filter(Boolean)
+                  : [];
+
+                const promptText = isSpeech && speechLines.length > 0
+                  ? speechLines[0]
+                  : entry.description || entry.soundName;
+
+                let voiceName: string | undefined;
+                if (isSpeech) {
+                  // Prefer the character chosen by the speech agent: it is a TTS voice
+                  // label (e.g. "Clara") — map it back to its Gemini voice value.
+                  const character = (entry.character || '').trim();
+                  const matched = character
+                    ? TTS_VOICES.find(
+                        (v) => v.label.toLowerCase() === character.toLowerCase(),
+                      )
+                    : undefined;
+                  if (matched) {
+                    voiceName = matched.value;
+                  } else {
+                    // Fallback: round-robin a stable voice per character/sound.
+                    const key = character || entry.soundName || entry.id;
+                    if (!voiceMap.has(key)) {
+                      voiceMap.set(key, TTS_VOICES[voiceIdx % TTS_VOICES.length].value);
+                      voiceIdx++;
+                    }
+                    voiceName = voiceMap.get(key);
+                  }
+                }
+
+                foleyPrompts.push({
+                  id: `orch-${sc.orchestrateResult!.orchestrateId}-${entry.id}`,
+                  text: promptText,
+                  displayName: entry.soundName,
+                  selected: true,
+                  position: involvedIds.length === 0 && Array.isArray(pos) && pos.length >= 3
+                    ? [pos[0], pos[1], pos[2]]
+                    : undefined,
+                  entities: involvedIds.length > 0
+                    ? involvedIds.map((objId) => ({
+                        applicationId: objId,
+                        id: objId,
+                        foleyPosition: Array.isArray(pos) && pos.length >= 3
+                          ? ([pos[0], pos[1], pos[2]] as [number, number, number])
+                          : undefined,
+                      }))
+                    : undefined,
+                  entity: involvedIds.length > 0
+                    ? {
+                        applicationId: involvedIds[0],
+                        id: involvedIds[0],
+                        foleyPosition: Array.isArray(pos) && pos.length >= 3
+                          ? ([pos[0], pos[1], pos[2]] as [number, number, number])
+                          : undefined,
+                      }
+                    : undefined,
+                  metadata: {
+                    spl_db: splDb,
+                    duration_seconds: durationSec,
+                    interval_seconds: LLM_SUGGESTED_INTERVAL_SECONDS,
+                    timestamps: entry.trigger?.type === 'absolute'
+                      ? entry.trigger.expression.filter((e) => /^\d/.test(e))
+                      : undefined,
+                    category: entry.category,
+                    orchestrateMeta: {
+                      orchestrateId: sc.orchestrateResult!.orchestrateId,
+                      entryId: entry.id,
+                      trigger: entry.trigger,
+                      variants: entry.variants,
+                      allObjectIds: involvedIds,
+                      isSpeech,
+                      voiceName,
+                      speechLines: isSpeech ? speechLines : undefined,
+                      timestamps: entry.timestamps,
+                    },
+                  },
+                });
+              });
+            } else if (sc.foleyResult) {
+            // Legacy foley path (fallback when orchestrate is not available)
             const selectedKeys = new Set(sc.selectedFoleyKeys ?? []);
             sc.foleyResult.scenarios.forEach((scenario, si) => {
               scenario.sound_events.forEach((sound, ei) => {
@@ -939,7 +1063,6 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 if (!selectedKeys.has(key)) return;
                 const splMatch = sound.spl?.match(/(\d+(?:\.\d+)?)/);
                 const splDb = splMatch ? parseFloat(splMatch[1]) : DEFAULT_SPL_DB;
-                // Parse duration from "MM:SS" format to seconds
                 const durationSec = (() => {
                   const d = sound.duration ?? '';
                   const colonIdx = d.indexOf(':');
@@ -952,7 +1075,6 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                   return isNaN(n) ? 5 : n;
                 })();
                 const pos = sound.position;
-                // Pick a random Speckle object ID from objectsInvolved for entity linking
                 const involvedIds = sound.objectsInvolved?.filter(Boolean) ?? [];
                 const linkedObjectId = involvedIds.length > 0
                   ? involvedIds[Math.floor(Math.random() * involvedIds.length)]
@@ -961,29 +1083,25 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 const isBgFoley = normalizedCategory === 'background' || normalizedCategory === 'background_sound';
                 foleyPrompts.push({
                   id: `foley-${sc.foleyResult!.foleyId}-${si}-${ei}`,
-                  // Use only description as the generation prompt; soundName goes to displayName
                   text: sound.description || sound.soundName,
                   displayName: sound.soundName,
                   selected: true,
-                  // Only set position when there is no entity link (mutually exclusive per foley spec)
                   position:
                     !linkedObjectId && Array.isArray(pos) && pos.length >= 3
                       ? [pos[0], pos[1], pos[2]]
                       : undefined,
-                  // Set entities[] with the linked Speckle object ID and foley position as fallback
                   entities: linkedObjectId
                     ? [
                         {
                           applicationId: linkedObjectId,
                           id: linkedObjectId,
-                          // Foley position used as fallback when viewer can't resolve entity bounds
                           foleyPosition: Array.isArray(pos) && pos.length >= 3
                             ? ([pos[0], pos[1], pos[2]] as [number, number, number])
                             : undefined,
                         },
                       ]
                     : undefined,
-                  entity: linkedObjectId // backward compat
+                  entity: linkedObjectId
                     ? {
                         applicationId: linkedObjectId,
                         id: linkedObjectId,
@@ -1002,6 +1120,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 });
               });
             });
+            }
           });
 
           const combined = [...allSelected, ...foleyPrompts];
@@ -1014,22 +1133,40 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
         handleReset: (index) => {
           const config = get().analysisConfigs[index];
 
-          // Scenario: two-step reset
+          // Scenario: three-step reset
           if (config?.type === 'scenario') {
             const sc = config as ScenarioConfig;
-            if (sc.foleyResult) {
-              // Step 1: clear foley only, keep scenario
+            if (sc.orchestrateResult) {
+              // Step 1: clear orchestrate only, keep foley + speech
+              get().handleUpdateConfig(index, {
+                orchestrateResult: null,
+                orchestrateId: null,
+              } as Partial<ScenarioConfig>);
+            } else if (sc.foleyResult && sc.speechResult) {
+              // Step 2: clear foley + speech only, keep scenario
+              get().handleUpdateConfig(index, {
+                foleyResult: null,
+                speechResult: null,
+                speechId: null,
+                selectedFoleyKeys: [],
+              } as Partial<ScenarioConfig>);
+            } else if (sc.foleyResult) {
+              // Step 3: clear foley only
               get().handleUpdateConfig(index, {
                 foleyResult: null,
                 selectedFoleyKeys: [],
               } as Partial<ScenarioConfig>);
             } else {
-              // Step 2: clear entire scenario
+              // Step 4: clear entire scenario
               get().handleUpdateConfig(index, {
                 scenarioRawText: '',
                 scenarioResult: null,
                 scenarioId: null,
                 foleyResult: null,
+                speechResult: null,
+                speechId: null,
+                orchestrateResult: null,
+                orchestrateId: null,
                 selectedFoleyKeys: [],
               } as Partial<ScenarioConfig>);
             }
@@ -1070,6 +1207,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           const objects: ArchitecturalObject[] = [];
           const colorGroups: { objectIds: string[]; color: string }[] = [];
           let analysisId = '';
+          let spaceDescription = '';
 
           try {
             // Use speckleStore's explorer hidden IDs — kept in sync by
@@ -1093,6 +1231,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             )) {
               if (event.type === 'start') {
                 analysisId = event.analysis_id;
+              } else if (event.type === 'space_description') {
+                spaceDescription = event.text || '';
               } else if (event.type === 'object') {
                 const { type: _t, ...obj } = event;
                 const archObj = obj as ArchitecturalObject;
@@ -1116,6 +1256,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             const resultData: ModelAnalysisResultData = {
               analysisId,
               architecturalObjects: objects,
+              spaceDescription: spaceDescription || undefined,
             };
             handleUpdateConfig(index, { analysisResult: resultData } as Partial<AnalyzeModelConfig>);
             useSpeckleStore.getState().setAnalysisObjectGroups(colorGroups, objects);
@@ -1215,6 +1356,11 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             scenarioResult: null,
             scenarioId: null,
             foleyResult: null,
+            speechResult: null,
+            speechId: null,
+            orchestrateResult: null,
+            orchestrateId: null,
+            selectedFoleyKeys: [],
           } as Partial<ScenarioConfig>);
 
           // Find analysis_id from the most recent 'model-analysis' config with a result
@@ -1299,12 +1445,10 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           const config = analysisConfigs[index] as ScenarioConfig;
           if (config?.type !== 'scenario' || !config.scenarioId) return;
 
-          // Import audioControlsStore lazily to avoid circular deps
           const { maximumFoleySounds } = await import('@/store/audioControlsStore').then(
             (m) => m.useAudioControlsStore.getState(),
           );
 
-          // Find analysis_id
           let analysisId: string | undefined;
           if (config.useAnalysisResult) {
             const analyzeConfig = analysisConfigs.find(
@@ -1313,61 +1457,165 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             analysisId = analyzeConfig?.analysisResult?.analysisId ?? undefined;
           }
 
-          const body = {
+          // ── Step 1: Foley + Speech in parallel, then check state after each ──
+
+          // If foley already done and speech is missing, only run speech.
+          // If speech already done and foley is missing, only run foley.
+          // If both done, skip to step 2 (orchestrate).
+          const hasFoley = !!config.foleyResult;
+          const hasSpeech = !!config.speechResult;
+
+          if (!hasFoley || !hasSpeech) {
+            const foleyBody = {
+              scenario_id: config.scenarioId,
+              analysis_id: analysisId,
+              llm_model: 'gemini-2.5-flash',
+              maximum_sounds: maximumFoleySounds,
+            };
+            const speechBody = {
+              scenario_id: config.scenarioId,
+              analysis_id: analysisId,
+              llm_model: 'gemini-2.5-flash',
+            };
+
+            const foleyPromise = hasFoley ? null : (async () => {
+              const controller = new AbortController();
+              let workingResult: FoleyResult = config.foleyResult || { scenarios: [], foleyId: '' };
+              const workingKeys: string[] = [...(config.selectedFoleyKeys ?? [])];
+              try {
+                for await (const event of streamPrompts(
+                  `${API_BASE_URL}/api/foley-artist-stream`,
+                  foleyBody,
+                  controller.signal,
+                )) {
+                  if (event.type === 'sound') {
+                    const { scenario_title, sound } = event as {
+                      scenario_title: string; scenario_index: number; sound: FoleyResult['scenarios'][number]['sound_events'][number];
+                    };
+                    const key = `${scenario_title}__${sound.soundName}`;
+                    workingKeys.push(key);
+                    const newScenarios = [...workingResult.scenarios];
+                    const si = newScenarios.findIndex((s) => s.scenario_title === scenario_title);
+                    if (si === -1) {
+                      newScenarios.push({ scenario_title, sound_events: [sound] });
+                    } else {
+                      newScenarios[si] = {
+                        ...newScenarios[si],
+                        sound_events: [...newScenarios[si].sound_events, sound],
+                      };
+                    }
+                    workingResult = { ...workingResult, scenarios: newScenarios };
+                    handleUpdateConfig(index, {
+                      foleyResult: workingResult,
+                      selectedFoleyKeys: [...workingKeys],
+                    } as Partial<ScenarioConfig>);
+                  } else if (event.type === 'done') {
+                    const finalResult: FoleyResult = {
+                      scenarios: event.result?.scenarios ?? workingResult.scenarios,
+                      foleyId: (event.foley_id as string) ?? '',
+                    };
+                    const selectedFoleyKeys = finalResult.scenarios.flatMap((s) =>
+                      s.sound_events.map((e) => `${s.scenario_title}__${e.soundName}`),
+                    );
+                    handleUpdateConfig(index, { foleyResult: finalResult, selectedFoleyKeys } as Partial<ScenarioConfig>);
+                  } else if (event.type === 'error') {
+                    console.error('[handleFoleyArtist] Foley SSE error:', event.message);
+                  }
+                }
+              } catch (e) {
+                console.error('[handleFoleyArtist] Foley stream error:', e);
+              }
+            })();
+
+            const speechPromise = hasSpeech ? null : (async () => {
+              const controller = new AbortController();
+              let workingSpeechResult: SpeechResult = config.speechResult || { speeches: [], speechId: '' };
+              try {
+                for await (const event of streamPrompts(
+                  `${API_BASE_URL}/api/speech-agent-stream`,
+                  speechBody,
+                  controller.signal,
+                )) {
+                  if (event.type === 'speech') {
+                    const { speech } = event;
+                    const newSpeeches = [...workingSpeechResult.speeches, speech];
+                    workingSpeechResult = { ...workingSpeechResult, speeches: newSpeeches };
+                    handleUpdateConfig(index, {
+                      speechResult: workingSpeechResult,
+                    } as Partial<ScenarioConfig>);
+                  } else if (event.type === 'done') {
+                    const finalResult: SpeechResult = {
+                      speeches: event.result?.speeches ?? workingSpeechResult.speeches,
+                      speechId: (event.speech_id as string) ?? '',
+                    };
+                    handleUpdateConfig(index, { speechResult: finalResult, speechId: finalResult.speechId } as Partial<ScenarioConfig>);
+                  } else if (event.type === 'error') {
+                    console.error('[handleFoleyArtist] Speech SSE error:', event.message);
+                  }
+                }
+              } catch (e) {
+                console.error('[handleFoleyArtist] Speech stream error:', e);
+              }
+            })();
+
+            await Promise.all([foleyPromise, speechPromise]);
+          }
+
+          // ── Step 2: Orchestrate (foley + speech → playlist) ──
+          const updatedConfig = get().analysisConfigs[index] as ScenarioConfig;
+          const foleyId = updatedConfig.foleyResult?.foleyId;
+          const speechId = updatedConfig.speechResult?.speechId;
+
+          if (!foleyId || !speechId) {
+            console.error('[handleFoleyArtist] Missing foley or speech result for orchestrate');
+            return;
+          }
+
+          const orchestrateBody = {
             scenario_id: config.scenarioId,
-            analysis_id: analysisId,
+            foley_id: foleyId,
+            speech_id: speechId,
             llm_model: 'gemini-2.5-flash',
-            maximum_sounds: maximumFoleySounds,
           };
 
-          // SSE streaming: sounds appear progressively as they arrive
-          const controller = new AbortController();
-          let workingResult: FoleyResult = { scenarios: [], foleyId: '' };
-          const workingKeys: string[] = [];
+          const orchestrator = new AbortController();
+          let workingOrchestrate: OrchestrateResult = { playlist: [], orchestrateId: '' };
 
           try {
             for await (const event of streamPrompts(
-              `${API_BASE_URL}/api/foley-artist-stream`,
-              body,
-              controller.signal,
+              `${API_BASE_URL}/api/orchestrate-stream`,
+              orchestrateBody,
+              orchestrator.signal,
             )) {
-              if (event.type === 'sound') {
-                const { scenario_title, sound } = event as {
-                  scenario_title: string; scenario_index: number; sound: FoleyResult['scenarios'][number]['sound_events'][number];
+              if (event.type === 'entry') {
+                const entry = event.entry as OrchestrateResult['playlist'][number];
+                workingOrchestrate = {
+                  ...workingOrchestrate,
+                  playlist: [...workingOrchestrate.playlist, entry],
                 };
-                const key = `${scenario_title}__${sound.soundName}`;
-                workingKeys.push(key);
-                const newScenarios = [...workingResult.scenarios];
-                const si = newScenarios.findIndex((s) => s.scenario_title === scenario_title);
-                if (si === -1) {
-                  newScenarios.push({ scenario_title, sound_events: [sound] });
-                } else {
-                  newScenarios[si] = {
-                    ...newScenarios[si],
-                    sound_events: [...newScenarios[si].sound_events, sound],
-                  };
-                }
-                workingResult = { ...workingResult, scenarios: newScenarios };
                 handleUpdateConfig(index, {
-                  foleyResult: workingResult,
-                  selectedFoleyKeys: [...workingKeys],
+                  orchestrateResult: workingOrchestrate,
                 } as Partial<ScenarioConfig>);
               } else if (event.type === 'done') {
-                const finalResult: FoleyResult = {
-                  scenarios: event.result?.scenarios ?? workingResult.scenarios,
-                  foleyId: (event.foley_id as string) ?? '',
+                const finalResult: OrchestrateResult = {
+                  playlist: event.result?.playlist ?? workingOrchestrate.playlist,
+                  orchestrateId: (event.orchestrate_id as string) ?? '',
                 };
-                const selectedFoleyKeys = finalResult.scenarios.flatMap((s) =>
-                  s.sound_events.map((e) => `${s.scenario_title}__${e.soundName}`),
-                );
-                handleUpdateConfig(index, { foleyResult: finalResult, selectedFoleyKeys } as Partial<ScenarioConfig>);
+                handleUpdateConfig(index, {
+                  orchestrateResult: finalResult,
+                  orchestrateId: finalResult.orchestrateId,
+                } as Partial<ScenarioConfig>);
               } else if (event.type === 'error') {
-                console.error('[handleFoleyArtist] SSE error:', event.message);
+                console.error('[handleFoleyArtist] Orchestrate SSE error:', event.message);
               }
             }
           } catch (e) {
-            console.error('[handleFoleyArtist] stream error:', e);
+            console.error('[handleFoleyArtist] Orchestrate stream error:', e);
+            return;
           }
+
+          // ── Step 3: Send orchestrate results to sound generation ──
+          get().handleSendToSoundGeneration(undefined, index);
         },
       }),
       { name: 'analysisStore' },

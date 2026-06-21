@@ -712,16 +712,26 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             // ── TTS (Gemini Text-to-Speech) ────────────────────────────────────
             let ttsEvents: any[] = [];
             if (ttsConfigs.length > 0) {
-              const ttsMeta: { _originalIndex: number }[] = [];
-              const ttsTexts = ttsConfigs.map(({ config, originalIndex }) => {
-                ttsMeta.push({ _originalIndex: originalIndex });
-                return {
-                  text: config.prompt,
-                  voice_name: config.voice_name,
-                  display_name: config.display_name || config.prompt,
-                  position: config.position,
-                  spl_db: config.spl_db ?? globalBaseSplDb,
-                };
+              const ttsTexts: any[] = [];
+              ttsConfigs.forEach(({ config, originalIndex }) => {
+                const copies = Math.max(1, config.seed_copies ?? 1);
+                const speechLines = (config as any).orchestrateMeta?.speechLines as string[] | undefined;
+                for (let copyIdx = 0; copyIdx < copies; copyIdx++) {
+                  const lineText = speechLines?.[copyIdx] || config.prompt;
+                  ttsTexts.push({
+                    text: lineText,
+                    voice_name: config.voice_name,
+                    display_name: config.display_name || lineText,
+                    position: config.position,
+                    spl_db: config.spl_db ?? globalBaseSplDb,
+                    // Carry the card's config index + variant index so the backend can
+                    // echo them back. Mirrors the text-to-audio flow (sounds_worker),
+                    // making variant grouping robust to backend re-indexing/filtering.
+                    prompt_index: originalIndex,
+                    copy_index: copyIdx,
+                    total_copies: copies,
+                  });
+                }
               });
 
               const { generation_id } = await apiService.generateTTS({
@@ -730,8 +740,12 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               _currentTtsGenerationId = generation_id;
 
               const mapTtsSound = (sound: any) => {
-                const matched = ttsMeta[sound.prompt_index ?? 0];
-                const actualIndex = matched?._originalIndex ?? sound.prompt_index;
+                // Read the config index + variant index straight from the backend
+                // response (echoed from our request), exactly like the text-to-audio
+                // flow does with prompt_index / copy_index. This is robust to the
+                // backend filtering/re-indexing the flat texts list.
+                const actualIndex = sound.prompt_index ?? 0;
+                const copyIdx = sound.copy_index ?? 0;
                 const originalConfig = ttsConfigs.find(
                   ({ originalIndex }) => originalIndex === actualIndex,
                 )?.config;
@@ -746,16 +760,18 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 }
 
                 const voice = sound.voice_name || originalConfig?.voice_name || 'TTS';
-                const remappedId = `tts_${actualIndex}_${voice}`;
+                const remappedId = `tts_${actualIndex}_${copyIdx}_${voice}`;
 
                 return {
                   ...sound,
                   id: remappedId,
                   prompt_index: actualIndex,
+                  copy_index: copyIdx,
                   position,
                   geometry: sound.geometry || { vertices: [], faces: [] },
                   isUploaded: true,
                   volume_db: sound.volume_db ?? originalConfig?.spl_db ?? globalBaseSplDb,
+                  category: originalConfig?.category || 'speech',
                 };
               };
 

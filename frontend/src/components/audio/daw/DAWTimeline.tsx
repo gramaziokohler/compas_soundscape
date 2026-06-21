@@ -226,6 +226,7 @@ export function DAWTimeline({
   const mutedSounds = useAudioControlsStore((s) => s.mutedSounds);
   const soloedSound = useAudioControlsStore((s) => s.soloedSound);
   const soundTimestamps = useAudioControlsStore((s) => s.soundTimestamps);
+  const isBakingSchedule = useAudioControlsStore((s) => s.isBakingSchedule);
   const handleTimestampsChange = useAudioControlsStore((s) => s.handleTimestampsChange);
   const handleRemoveTimestamp = useAudioControlsStore((s) => s.handleRemoveTimestamp);
   const handleMute = useAudioControlsStore((s) => s.handleMute);
@@ -796,13 +797,63 @@ export function DAWTimeline({
             onSeekClick={onSeek}
           />
 
+          {/* Parametric schedule loading indicator */}
+          {isBakingSchedule && (
+            <div
+              style={{
+                position: 'sticky',
+                left: 0,
+                zIndex: 20,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '4px 12px',
+                backgroundColor: 'rgba(var(--color-primary-rgb, 99,102,241), 0.12)',
+                borderBottom: '1px solid rgba(var(--color-primary-rgb, 99,102,241), 0.25)',
+                fontSize: 11,
+                color: 'rgba(255,255,255,0.7)',
+                backdropFilter: 'blur(2px)',
+              }}
+            >
+              <span
+                style={{
+                  display: 'inline-block',
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  backgroundColor: 'rgba(var(--color-primary-rgb, 99,102,241), 0.9)',
+                  animation: 'daw-bake-pulse 1s ease-in-out infinite',
+                }}
+              />
+              Computing parametric schedule…
+              <style>{`
+                @keyframes daw-bake-pulse {
+                  0%, 100% { opacity: 1; transform: scale(1); }
+                  50% { opacity: 0.3; transform: scale(0.7); }
+                }
+              `}</style>
+            </div>
+          )}
+
           {/* Tracks (always grouped) */}
           {groupKeys.map((g) => (
             <DAWGroup key={g} groupName={GROUP_LABELS[g] ?? g} soundCount={grouped[g].length}>
-              {grouped[g].map((sound) => (
+              {grouped[g].map((sound) => {
+                // Keep the timeline track label in sync with the sound card title,
+                // which is authoritatively config.display_name (e.g. the speech
+                // character name). Fall back to the sound's own displayName.
+                const cardTitle =
+                  sound.promptIndex !== undefined
+                    ? soundConfigs[sound.promptIndex]?.display_name
+                    : undefined;
+                const trackSound =
+                  cardTitle && cardTitle !== sound.displayName
+                    ? { ...sound, displayName: cardTitle }
+                    : sound;
+                return (
                 <DAWTrack
                   key={sound.id}
-                  sound={sound}
+                  sound={trackSound}
                   pxPerSecond={pxPerSecond}
                   timelineDurationMs={timelineDurationMs}
                   isMuted={mutedSounds.has(sound.id)}
@@ -824,7 +875,8 @@ export function DAWTimeline({
                   }
                   onIterationContextMenu={(data) => handleIterationContextMenu(sound.id, data)}
                 />
-              ))}
+                );
+              })}
             </DAWGroup>
           ))}
 
@@ -894,21 +946,23 @@ export function DAWTimeline({
         const linkKey = `${soundId}-${iterationIndex}`;
         const currentLink = iterationLinks[linkKey] ?? {};
 
-        // Derive promptIndex for this sound from the timeline sounds list
         const timelineSound = sounds.find((s) => s.id === soundId);
         const promptIndex = timelineSound?.promptIndex;
 
-        // Variants for this promptIndex
         const variants = promptIndex !== undefined
           ? generatedSounds.filter((s: any) => s.prompt_index === promptIndex)
           : [];
 
-        // Entities linked to this promptIndex
         const linkedEntities: string[] = promptIndex !== undefined
           ? [...objectSoundLinks.entries()]
               .filter(([, pi]) => pi === promptIndex)
               .map(([objectId]) => objectId)
           : [];
+
+        const orchestrateMeta = promptIndex !== undefined ? soundConfigs[promptIndex]?.orchestrateMeta : undefined;
+        const triggerExpressionForIteration = orchestrateMeta
+          ? `${orchestrateMeta.trigger?.expression?.[iterationIndex] ?? '-'}${orchestrateMeta.trigger?.delay?.[iterationIndex] ? ` +${orchestrateMeta.trigger.delay[iterationIndex]}s` : ''}`
+          : null;
 
         const MENU_WIDTH = 150;
         const SUBMENU_WIDTH = 160;
@@ -1008,6 +1062,30 @@ export function DAWTimeline({
                 </div>
               )}
             </div>
+            )}
+
+            {/* ── Trigger expression (from orchestrateMeta) ── */}
+            {triggerExpressionForIteration && (
+              <div
+                style={{
+                  padding: '6px 12px',
+                  color: 'rgba(255,255,255,0.5)',
+                  fontSize: '10px',
+                  fontFamily: 'monospace',
+                  borderBottom: '1px solid rgba(255,255,255,0.08)',
+                  cursor: 'default',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                }}
+              >
+                <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0, opacity: 0.5 }}>
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {triggerExpressionForIteration}
+                </span>
+              </div>
             )}
 
             {/* ── Empty state: no variants or linked entities ── */}

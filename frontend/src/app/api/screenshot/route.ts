@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Failed to save screenshot to disk' }, { status: 500 });
   }
 
-  return NextResponse.json({ image, savedPath: filePath });
+  return NextResponse.json({ image, savedPath: filePath, filename });
 }
 
 export async function GET() {
@@ -94,7 +94,20 @@ export async function GET() {
   }
 }
 
-export async function DELETE() {
+export async function DELETE(req: NextRequest) {
+  const requestedFilename = req.nextUrl.searchParams.get('filename');
+  if (requestedFilename) {
+    const filePath = path.join(SCREENSHOTS_DIR, requestedFilename);
+    if (!fs.existsSync(filePath)) {
+      return NextResponse.json({ deleted: 0 });
+    }
+    try {
+      fs.unlinkSync(filePath);
+      return NextResponse.json({ deleted: 1 });
+    } catch {
+      return NextResponse.json({ error: 'Failed to delete screenshot' }, { status: 500 });
+    }
+  }
   const files = listCaptureFiles();
   for (const f of files) {
     try {

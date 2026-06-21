@@ -316,7 +316,7 @@ export const apiService = {
 
   // Generate TTS (async — returns generation_id for polling)
   async generateTTS(data: {
-    texts: { text: string; voice_name?: string; display_name?: string; position?: number[]; spl_db?: number }[];
+    texts: { text: string; voice_name?: string; display_name?: string; position?: number[]; spl_db?: number; prompt_index?: number; copy_index?: number; total_copies?: number }[];
   }): Promise<{ generation_id: string }> {
     try {
       const response = await fetchWithErrorHandling(

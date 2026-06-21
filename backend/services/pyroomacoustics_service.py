@@ -346,12 +346,18 @@ class PyroomacousticsService:
             from config.constants import PYROOMACOUSTICS_DEFAULT_SCATTERING, PYROOMACOUSTICS_SAMPLE_RATE, PYROOMACOUSTICS_USE_RAND_ISM
 
             fs = PYROOMACOUSTICS_SAMPLE_RATE
-            # Number of frequency bands for absorption/scattering
-            n_bands = 7
 
-            # Define Frequency bands for absorption/scattering
-            # factory = pra.acoustics.OctaveBandsFactory(fs=fs, base_frequency=125)
-            # print(f"  Number of frequency bands: {factory.n_bands}")
+            # Number of frequency bands for absorption/scattering.
+            # This MUST match the octave-band count that pyroomacoustics derives
+            # internally from the sample rate when it builds its filter bank /
+            # air-absorption coefficients. pra uses:
+            #   n_bands = floor(log2(fs / octave_bands_base_freq))
+            # Hardcoding a value (e.g. 7) only works for one sample rate; at
+            # higher fs the room produces 8 bands for air absorption while the
+            # walls stay at 7, causing a broadcasting error in compute_ism_rir
+            # (operands (7, N) vs (8, N)). Derive it dynamically instead.
+            base_freq = pra.constants.get("octave_bands_base_freq")
+            n_bands = int(np.floor(np.log2(fs / base_freq)))
 
             # Build face_materials dict based on input mode
             if face_materials is None:

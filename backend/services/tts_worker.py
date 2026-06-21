@@ -60,6 +60,7 @@ def run_tts_generation(
         tts_service = TTSService()
 
         completed_sounds: list[dict] = []
+        errors: list[str] = []
         n_total = len(texts)
 
         voice_counters: dict[str, int] = {}
@@ -68,6 +69,13 @@ def run_tts_generation(
             text = (item.get("text") or "").strip()
             voice_name = item.get("voice_name", TTS_DEFAULT_VOICE)
             display_name = item.get("display_name") or text
+
+            # Use the caller-supplied config index + variant index when present so
+            # variant grouping survives any filtering/re-indexing of this flat list.
+            # Mirrors the text-to-audio flow (sounds_worker) which echoes these back.
+            prompt_index = item.get("prompt_index", idx)
+            copy_index = item.get("copy_index", 0)
+            total_copies = item.get("total_copies", 1)
 
             voice_counters[voice_name] = voice_counters.get(voice_name, 0) + 1
             voice_num = voice_counters[voice_name]
@@ -107,6 +115,7 @@ def run_tts_generation(
                     voice_name=voice_name,
                 )
             except Exception as exc:
+                errors.append(f"{display_short}: {exc}")
                 _write_progress(
                     progress_file,
                     int((idx + 1) / n_total * 100) if n_total else 100,
@@ -121,9 +130,11 @@ def run_tts_generation(
             voice_display = f"{voice_name} speech {voice_num}"
 
             sound_data: dict = {
-                "id": f"tts_{idx}_{voice_name}_{voice_num}",
+                "id": f"tts_{prompt_index}_{copy_index}_{voice_name}",
                 "prompt": text,
-                "prompt_index": idx,
+                "prompt_index": prompt_index,
+                "copy_index": copy_index,
+                "total_copies": total_copies,
                 "display_name": voice_display,
                 "url": f"{url_prefix}/{filename}",
                 "duration": item.get("duration", 5),
@@ -132,6 +143,16 @@ def run_tts_generation(
                 "voice_name": voice_name,
             }
             completed_sounds.append(sound_data)
+
+        # Consistency with the text-to-audio flow (sounds_worker): if nothing could
+        # be generated, surface the failure instead of returning an empty "done"
+        # result (which the frontend would render as "nothing generated").
+        if not completed_sounds and errors:
+            _write_result(
+                result_file,
+                {"type": "error", "message": "TTS generation failed — " + "; ".join(errors[:3])},
+            )
+            return
 
         _write_progress(progress_file, 98, "Finalizing...", completed_sounds)
         _write_result(result_file, {"type": "done", "result": completed_sounds})

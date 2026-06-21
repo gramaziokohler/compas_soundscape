@@ -4,6 +4,7 @@
 import type { ScheduledSound, SoundMetadata } from '@/types/audio';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 import { scheduledSoundsLogger } from '@/lib/audio/utils/scheduled-sounds-logger';
+import { resolveVariantSoundId } from '@/lib/audio/utils/variant-sound-id';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
 import * as THREE from 'three';
 
@@ -138,9 +139,11 @@ export class AudioScheduler {
     this.unscheduleSound(soundId);
 
     const displayName = metadata.soundEvent.display_name || soundId;
+    // Filter: must be in the future AND not an unresolved sentinel (999_999 s = 999_999_000 ms).
+    const SENTINEL_THRESHOLD_MS = 999_000_000; // 11.5 days — no real sound can be this late
     const futureTimestamps = timestampsMs
       .map((ts, originalIdx) => ({ ts, originalIdx }))
-      .filter(({ ts }) => ts >= currentTimeMs);
+      .filter(({ ts }) => ts >= currentTimeMs && ts < SENTINEL_THRESHOLD_MS);
 
     if (futureTimestamps.length === 0) {
       console.log(`[AudioScheduler] No future timestamps for ${soundId} at currentTime=${currentTimeMs}ms`);
@@ -298,11 +301,16 @@ export class AudioScheduler {
         const link = iterationLinks[`${soundId}-${iterIdx}`];
         let actualSourceId = soundId;
         if (link?.variantIndex !== undefined) {
-          // Derive the variant source ID: generated_X_Y → generated_X_<variantIndex>
-          const parts = soundId.split('_');
-          if (parts.length >= 3 && parts[0] === 'generated') {
-            parts[parts.length - 1] = String(link.variantIndex);
-            actualSourceId = parts.join('_');
+          const candidate = resolveVariantSoundId(soundId, link.variantIndex);
+          // Only use the variant source if it actually exists; otherwise fall back
+          // to the primary source (copy 0) so playback isn't silently skipped
+          // while variant buffers are still loading.
+          if (this.audioOrchestrator?.hasSource(candidate)) {
+            actualSourceId = candidate;
+          } else if (candidate !== soundId) {
+            console.warn(
+              `[AudioScheduler] Variant source "${candidate}" not yet loaded — falling back to "${soundId}"`,
+            );
           }
         }
 

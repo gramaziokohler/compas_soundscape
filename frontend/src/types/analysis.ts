@@ -73,7 +73,6 @@ export interface ArchitecturalObject {
   name: string;
   description: string;
   material: string;
-  confidence: number;
   quantity: number;
   /** Dict keyed by Speckle hex ID → optional bounds from backend.
    *  Use Object.keys(object_ids) to obtain the flat ID list. */
@@ -86,6 +85,7 @@ export interface ArchitecturalObject {
 export interface ModelAnalysisResultData {
   analysisId: string;
   architecturalObjects: ArchitecturalObject[];
+  spaceDescription?: string;
 }
 
 /**
@@ -94,6 +94,7 @@ export interface ModelAnalysisResultData {
 export interface AnalyzeModelConfig extends AnalysisBaseConfig {
   type: 'model-analysis';
   liveScreenshots: string[];
+  liveScreenshotFilenames: string[];
   userContext: string;
   modelEntities: any[];
   speckleData?: {
@@ -168,6 +169,47 @@ export interface FoleyResult {
   foleyId: string;
 }
 
+export interface SpeechEntry {
+  id: string;
+  timestamps: string[];
+  character: string;
+  script: string;
+  position: number[];
+}
+
+export interface SpeechResult {
+  speeches: SpeechEntry[];
+  speechId: string;
+}
+
+export interface OrchestrateTrigger {
+  type: string;
+  expression: string[];
+  delay: number[];
+}
+
+export interface OrchestrateEntry {
+  id: string;
+  soundName: string;
+  description: string;
+  category: string;
+  duration: string;
+  trigger: OrchestrateTrigger;
+  /** Original foley/speech timestamps (MM:SS), one per trigger expression slot. */
+  timestamps: string[];
+  /** TTS voice label for speech entries (e.g. "Clara"); empty for foley. */
+  character: string;
+  objectsInvolved: string[];
+  position: number[];
+  variants: number[];
+  spl: string;
+}
+
+export interface OrchestrateResult {
+  playlist: OrchestrateEntry[];
+  orchestrateId: string;
+}
+
 /**
  * Scenario Config — streams a scenario from scenarist agent, then calls foley artist
  */
@@ -188,6 +230,14 @@ export interface ScenarioConfig extends AnalysisBaseConfig {
   foleyResult: FoleyResult | null;
   /** Keys of foley sounds currently selected for sound generation */
   selectedFoleyKeys: string[];
+  /** Speech result after calling speech agent */
+  speechResult: SpeechResult | null;
+  /** UUID of the saved speech file */
+  speechId: string | null;
+  /** Orchestrate result after calling orchestrate agent */
+  orchestrateResult: OrchestrateResult | null;
+  /** UUID of the saved orchestrate file */
+  orchestrateId: string | null;
 }
 
 // ============================================================================
@@ -218,6 +268,19 @@ export interface TextPromptResult {
     timestamps?: string[];
     /** Sound category from foley analysis (e.g. "background", "sound_event", "speech") */
     category?: string;
+    /** Orchestration metadata from the full pipeline (foley+speech → orchestrate) */
+    orchestrateMeta?: {
+      orchestrateId: string;
+      entryId: string;
+      trigger: { type: string; expression: string[]; delay: number[] };
+      variants: number[];
+      allObjectIds: string[];
+      isSpeech: boolean;
+      voiceName?: string;
+      speechLines?: string[];
+      /** Original foley/speech timestamps (MM:SS) — fallback when trigger resolution fails. */
+      timestamps?: string[];
+    };
   };
 }
 

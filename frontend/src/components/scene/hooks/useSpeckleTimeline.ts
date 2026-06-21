@@ -38,6 +38,7 @@ interface TimelineResult {
   setShowTimeline: React.Dispatch<React.SetStateAction<boolean>>;
   handleRefreshTimeline: () => void;
   handleDownloadTimeline: (format: ExportFormat) => Promise<void>;
+  isBakingSchedule: boolean;
 }
 
 export function useSpeckleTimeline({
@@ -59,9 +60,12 @@ export function useSpeckleTimeline({
   const [showTimeline, setShowTimeline] = useState(true);
 
   // Subscribe to scheduling mode + timestamps so the timeline rerenders when they change
-  const soundSchedulingModes = useAudioControlsStore((s) => s.soundSchedulingModes);
-  const soundTimestamps       = useAudioControlsStore((s) => s.soundTimestamps);
-  const iterationLinks        = useAudioControlsStore((s) => s.iterationLinks);
+  const soundSchedulingModes    = useAudioControlsStore((s) => s.soundSchedulingModes);
+  const soundTimestamps         = useAudioControlsStore((s) => s.soundTimestamps);
+  const soundIterationDurations = useAudioControlsStore((s) => s.soundIterationDurations);
+  const isBakingSchedule        = useAudioControlsStore((s) => s.isBakingSchedule);
+  const iterationLinks          = useAudioControlsStore((s) => s.iterationLinks);
+  const soundBufferDurations    = useAudioControlsStore((s) => s.soundBufferDurations);
   const setIterationLink      = useAudioControlsStore((s) => s.setIterationLink);
   const soundConfigs          = useSoundscapeStore((s) => s.soundConfigs);
 
@@ -81,9 +85,10 @@ export function useSpeckleTimeline({
 
       if (soundSphereManager) {
         const soundMetadata = soundSphereManager.getAllAudioSources();
-        const uniquePromptCount = new Set(soundscapeData.map(s => s.prompt_index ?? 0)).size;
+        const generatedPrompts = soundscapeData.filter((s: any) => !s.isPending);
+        const generatedPromptCount = new Set(generatedPrompts.map((s: any) => s.prompt_index ?? 0)).size;
 
-        if (soundMetadata && soundMetadata.size >= uniquePromptCount) {
+        if (generatedPromptCount === 0 || (soundMetadata && soundMetadata.size >= generatedPromptCount)) {
           const sounds = extractTimelineSoundsFromData(
             soundMetadata,
             soundIntervals,
@@ -92,7 +97,9 @@ export function useSpeckleTimeline({
             soundTrims,
             intervalJitterSeconds,
             soundSchedulingModes,
-            soundTimestamps
+            soundTimestamps,
+            soundIterationDurations,
+            iterationLinks,
           );
           setTimelineSounds(sounds);
           setSoundMetadataReady(true);
@@ -105,7 +112,7 @@ export function useSpeckleTimeline({
     return () => clearTimeout(timeoutId);
     // soundMetadataReady is included so the effect re-runs when polling marks it ready.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [soundscapeData, selectedVariants, soundIntervals, soundTrims, soundMetadataReady, intervalJitterSeconds, timelineDurationMs, soundSchedulingModes, soundTimestamps]);
+  }, [soundscapeData, selectedVariants, soundIntervals, soundTrims, soundMetadataReady, intervalJitterSeconds, timelineDurationMs, soundSchedulingModes, soundTimestamps, soundIterationDurations, isBakingSchedule, iterationLinks, soundBufferDurations]);
 
   // ============================================================================
   // Effect - Poll for Sound Metadata Readiness
@@ -119,8 +126,9 @@ export function useSpeckleTimeline({
       const soundSphereManager = coordinator?.getSoundSphereManager();
       if (soundSphereManager) {
         const soundMetadata = soundSphereManager.getAllAudioSources();
-        const uniquePromptCount = new Set(soundscapeData.map(s => s.prompt_index ?? 0)).size;
-        if (soundMetadata && soundMetadata.size >= uniquePromptCount) {
+        const generatedPrompts = soundscapeData.filter((s: any) => !(s as any).isPending);
+        const generatedPromptCount = new Set(generatedPrompts.map((s: any) => s.prompt_index ?? 0)).size;
+        if (generatedPromptCount === 0 || (soundMetadata && soundMetadata.size >= generatedPromptCount)) {
           setSoundMetadataReady(true);
           clearInterval(intervalId);
         }
@@ -155,11 +163,12 @@ export function useSpeckleTimeline({
       if (!nodeId) continue;
 
       for (let i = 0; i < sound.scheduledIterations.length; i++) {
-        const linkKey = `${sound.id}-${i}`;
+        const originalIdx = sound.scheduledIterationOriginalIndices?.[i] ?? i;
+        const linkKey = `${sound.id}-${originalIdx}`;
         const existingLink = iterationLinks[linkKey];
         if (existingLink?.entityNodeId) continue;
 
-        setIterationLink(sound.id, i, {
+        setIterationLink(sound.id, originalIdx, {
           entityNodeId: nodeId,
           entityPosition,
           entityIndex: 0,
@@ -196,12 +205,14 @@ export function useSpeckleTimeline({
         soundTrims,
         intervalJitterSeconds,
         soundSchedulingModes,
-        soundTimestamps
+        soundTimestamps,
+        soundIterationDurations,
+        iterationLinks,
       );
       setTimelineSounds(sounds);
       console.log('[useSpeckleTimeline] 🔄 Timeline refreshed:', sounds.length, 'sounds');
     }
-  }, [soundIntervals, soundTrims, soundscapeData, intervalJitterSeconds, timelineDurationMs, soundSchedulingModes, soundTimestamps]);
+  }, [soundIntervals, soundTrims, soundscapeData, intervalJitterSeconds, timelineDurationMs, soundSchedulingModes, soundTimestamps, soundIterationDurations, iterationLinks]);
 
   // ============================================================================
   // Callback - Download Soundscape as WAV
@@ -265,5 +276,6 @@ export function useSpeckleTimeline({
     setShowTimeline,
     handleRefreshTimeline,
     handleDownloadTimeline,
+    isBakingSchedule,
   };
 }

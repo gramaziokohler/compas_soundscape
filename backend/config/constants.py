@@ -140,7 +140,8 @@ AUDIOLDM2_NUM_WAVEFORMS = 1  # Number of waveforms to generate per prompt
 AUDIOLDM2_SAMPLE_RATE = 16000  # AudioLDM2 output sample rate
 
 # Gemini TTS Configuration
-TTS_MODEL_NAME = "gemini-2.5-flash-preview-tts"
+# TTS_MODEL_NAME = "gemini-2.5-flash-preview-tts"
+TTS_MODEL_NAME = "gemini-2.5-pro-preview-tts"
 TTS_SAMPLE_RATE = 24000
 TTS_DEFAULT_VOICE = "Kore"
 TTS_AVAILABLE_VOICES = [
@@ -150,7 +151,70 @@ TTS_AVAILABLE_VOICES = [
     "Charon",
     "Leda",
     "Orus",
+    "Achird",
+    "Achernar",
+    "Algenib",
+    "Algieba",
+    "Alnilam",
+    "Aoede",
+    "Autonoe",
+    "Callirrhoe",
+    "Despina",
+    "Encelade",
+    "Erinome",
+    "Gacrux",
+    "Iapetus",
+    "Laomedeia",
+    "Léda",
+    "Pulcherrima",
+    "Rasalgethi",
+    "Sadachbia",
+    "Sadaltager",
+    "Schedar",
+    "Sulafat",
+    "Umbriel",
+    "Vindemiatrix",
+    "Zephyr",
+    "Zubenelgenubi",
 ]
+# Character display names (labels) paired with their Gemini TTS voice value.
+# Mirrors TTS_VOICES in frontend/src/utils/constants.ts — keep the two in sync.
+# The speech agent picks character names EXCLUSIVELY from these labels.
+TTS_VOICE_CHARACTERS = {
+    "Chloe": "Kore",
+    "Felix": "Fenrir",
+    "Max": "Puck",
+    "Leo": "Charon",
+    "Emma": "Leda",
+    "Lucas": "Orus",
+    "Alex": "Achird",
+    "Sofia": "Achernar",
+    "David": "Algenib",
+    "Oliver": "Algieba",
+    "Thomas": "Alnilam",
+    "Mia": "Aoede",
+    "Anna": "Autonoe",
+    "Elena": "Callirrhoe",
+    "Clara": "Despina",
+    "Gabriel": "Encelade",
+    "Eva": "Erinome",
+    "Luna": "Gacrux",
+    "Victor": "Iapetus",
+    "Lara": "Laomedeia",
+    "Sara": "Léda",
+    "Julia": "Pulcherrima",
+    "Oscar": "Rasalgethi",
+    "Arthur": "Sadachbia",
+    "Louis": "Sadaltager",
+    "Marcus": "Schedar",
+    "Maya": "Sulafat",
+    "Simon": "Umbriel",
+    "Nina": "Vindemiatrix",
+    "Zoe": "Zephyr",
+    "Benjamin": "Zubenelgenubi",
+}
+# Allowed character names the speech agent may assign (the TTS voice labels).
+TTS_CHARACTER_NAMES = list(TTS_VOICE_CHARACTERS.keys())
 TTS_OUTPUT_DIR = "./temp/static/sounds/generated/tts"
 TTS_OUTPUT_URL_PREFIX = "/static/sounds/generated/tts"
 TTS_TASK_CLEANUP_DELAY_SECONDS = 600

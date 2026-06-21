@@ -350,6 +350,12 @@ export function SoundGenerationSection({
         !autoNamedIndices.current.has(index)
         // !config.display_name // Only auto-name if user hasn't set a custom name
       ) {
+        // Keep an inherited custom name on TTS cards instead of overwriting it
+        // with the spoken text when the sound is generated.
+        if (config.type === 'text-to-speech' && config.display_name) {
+          autoNamedIndices.current.add(index);
+          return;
+        }
         const generatedSound = getGeneratedSound(index);
         const sourceName = getSoundSourceName(generatedSound, config);
         if (sourceName) {
@@ -727,6 +733,26 @@ export function SoundGenerationSection({
       </span>
     ) : null;
 
+    // Trigger badge (if available from orchestrateMeta with param or mixed trigger)
+    const triggerBadge = config.orchestrateMeta?.trigger?.type && config.orchestrateMeta.trigger.type !== 'absolute' ? (
+      <span
+        style={{
+          fontSize: '9px',
+          padding: '1px 5px',
+          borderRadius: '3px',
+          backgroundColor: 'color-mix(in srgb, var(--color-warning) 30%, transparent)',
+          color: 'var(--color-warning)',
+          textTransform: 'capitalize',
+          letterSpacing: '0.02em',
+          flexShrink: 0,
+          whiteSpace: 'nowrap',
+        }}
+        title={config.orchestrateMeta.trigger.expression.join(', ')}
+      >
+        {config.orchestrateMeta.trigger.type === 'param' ? 'Param' : 'Mixed'}
+      </span>
+    ) : null;
+
     const headerPrefix = linkHeaderPrefix ? (
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
         {linkHeaderPrefix}
@@ -771,6 +797,7 @@ export function SoundGenerationSection({
         beforeContent={isGenerated ? undefined : (
           <>
             {categoryBadge}
+            {triggerBadge}
             {linkingTipBar}
             <SoundPreContent
               config={config}
@@ -793,6 +820,7 @@ export function SoundGenerationSection({
         afterContent={!isGenerated || !generatedSound ? undefined : (
           <>
             {categoryBadge}
+            {triggerBadge}
             {linkingTipBar}
             <SoundResultContent
               generatedSound={generatedSound}

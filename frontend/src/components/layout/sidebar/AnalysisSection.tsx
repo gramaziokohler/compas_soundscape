@@ -14,7 +14,7 @@ import { AnalysisResultContent } from "@/components/layout/sidebar/analysis/Anal
 import { AudioAnalysisAfterContent } from "@/components/layout/sidebar/analysis/AudioAnalysisAfterContent";
 import { AnalyzeModelContent } from "@/components/layout/sidebar/analysis/AnalyzeModelContent";
 import { AnalyzeModelResultContent } from "@/components/layout/sidebar/analysis/AnalyzeModelResultContent";
-import { ScenarioContent, ScenarioAfterView } from "@/components/layout/sidebar/analysis/ScenarioContent";
+import { ScenarioContent, ScenarioAfterView, getScenarioPipelineStatus } from "@/components/layout/sidebar/analysis/ScenarioContent";
 import { ScenarioResultContent } from "@/components/layout/sidebar/analysis/ScenarioResultContent";
 import { useSpeckleStore, useAnalysisStore, useSoundscapeStore } from '@/store';
 import { useAreaDrawingStore } from '@/store';
@@ -409,7 +409,18 @@ export function AnalysisSection({
         hasResult={configHasResult}
         result={getResult(index)}
         isRunning={isRunning && analyzingConfigIndex === index}
-        status={analyzingConfigIndex === index ? (config.type === 'scenario' ? 'Imagining usage scenarios…' : analysisStatus) : undefined}
+        status={
+          analyzingConfigIndex === index
+            ? config.type === 'scenario'
+              ? getScenarioPipelineStatus(config as ScenarioConfig, true).status
+              : analysisStatus
+            : undefined
+        }
+        progress={
+          config.type === 'scenario'
+            ? getScenarioPipelineStatus(config as ScenarioConfig, analyzingConfigIndex === index).progress
+            : 0
+        }
         collapsedInfo={getCollapsedInfo(config, index)}
         defaultName={config.type === 'scenario' ? ((config as ScenarioConfig).scenarioResult?.scenarios?.[0]?.title ?? undefined) : undefined}
         showIndex={true}

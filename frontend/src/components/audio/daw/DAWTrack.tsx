@@ -216,30 +216,43 @@ export function DAWTrack({
         }}
       >
         {sound.scheduledIterations.map((startMs, i) => {
+          // Per-iteration duration: use the variant's actual buffer length when available,
+          // falling back to the primary copy's duration (soundDurationMs).
+          const iterDurationMs = sound.iterationDurationsMs?.[i] ?? sound.soundDurationMs;
+
           const siblings = sound.scheduledIterations
-            .map((s, idx) => ({ startMs: s, durationMs: sound.soundDurationMs, idx }))
+            .map((s, idx) => ({
+              startMs: s,
+              durationMs: sound.iterationDurationsMs?.[idx] ?? sound.soundDurationMs,
+              idx,
+            }))
             .filter((s) => s.idx !== i)
             .map(({ startMs: sMs, durationMs }) => ({ startMs: sMs, durationMs }));
 
+          // Use the original iteration index (before filtering out unresolved timestamps)
+          // so that the correct iterationLink badge is shown even when some earlier iterations
+          // were skipped because they were out-of-range or still unresolved.
+          const originalIdx = sound.scheduledIterationOriginalIndices?.[i] ?? i;
           const iterationLink: IterationLink | undefined =
-            iterationLinks[`${sound.id}-${i}`];
+            iterationLinks[`${sound.id}-${originalIdx}`];
+          const iterAudioUrl = sound.iterationAudioUrls?.[i] ?? sound.audioUrl;
 
           return (
             <DAWIteration
-              key={`${sound.id}-${i}-${startMs}`}
+              key={`${sound.id}-${originalIdx}-${startMs}-${iterAudioUrl ?? 'default'}`}
               soundId={sound.id}
-              iterationIndex={i}
+              iterationIndex={originalIdx}
               startMs={startMs}
-              durationMs={sound.soundDurationMs}
+              durationMs={iterDurationMs}
               pxPerSecond={pxPerSecond}
-              audioUrl={sound.audioUrl}
+              audioUrl={iterAudioUrl}
               color={sound.color}
               isMuted={isMuted}
               isDraggable={isDraggable}
               timelineDurationMs={timelineDurationMs}
               siblings={siblings}
               iterationLink={iterationLink}
-              onDelete={() => onDeleteIteration(i)}
+              onDelete={() => onDeleteIteration(originalIdx)}
               onClick={() => onSelectSoundCard?.()}
               onDoubleClick={onDoubleClickSoundCard}
               onDragEnd={(newStartMs) => onDragEnd(i, newStartMs)}

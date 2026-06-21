@@ -88,6 +88,10 @@ export function buildSoundscapeSavePayload(
   activeSimulationIndex?: number | null,
   /** Resonance Audio global config */
   resonanceAudioConfig?: ResonanceAudioConfig,
+  /** Per-track timeline scheduling mode keyed by sound ID (from audioControls) */
+  soundSchedulingModes?: Record<string, 'interval' | 'timestamps'>,
+  /** Per-track explicit timestamps (seconds) keyed by sound ID (from audioControls) */
+  soundTimestamps?: Record<string, number[]>,
 ): SoundscapeSavePayload {
   // Map runtime configs to serializable configs
   const serializedConfigs: SoundscapeSoundConfig[] = soundConfigs.map(
@@ -153,6 +157,11 @@ export function buildSoundscapeSavePayload(
       const adjustedVolume = soundVolumes?.[event.id] ?? event.current_volume_db;
       const adjustedInterval = soundIntervals?.[event.id] ?? event.current_interval_seconds;
 
+      // Per-track timeline scheduling — prefer the live audioControls maps
+      // (authoritative after baking / user edits), fall back to the event's own hint.
+      const schedulingMode = soundSchedulingModes?.[event.id] ?? event.scheduling_mode;
+      const trackTimestamps = soundTimestamps?.[event.id];
+
       // Resolve entity_node_id from the matching config (events only have entity_index)
       const eventEntityNodeId = event.prompt_index !== undefined
         ? configEntityNodeIds[event.prompt_index]
@@ -173,6 +182,8 @@ export function buildSoundscapeSavePayload(
         entity_index: event.entity_index,
         entity_node_id: eventEntityNodeId,
         entity_indices: event.entity_indices,
+        scheduling_mode: schedulingMode,
+        timestamps: trackTimestamps,
       };
     }
   );
@@ -357,6 +368,8 @@ export function restoreSoundscapeState(
   soundEvents: SoundEvent[];
   soundVolumes: Record<string, number>;
   soundIntervals: Record<string, number>;
+  soundSchedulingModes: Record<string, 'interval' | 'timestamps'>;
+  soundTimestamps: Record<string, number[]>;
   globalSettings: {
     duration: number;
     steps: number;
@@ -415,6 +428,10 @@ export function restoreSoundscapeState(
   // Rebuild user-adjusted volume/interval maps (keyed by sound ID)
   const soundVolumes: Record<string, number> = {};
   const soundIntervals: Record<string, number> = {};
+  // Rebuild per-track scheduling maps (keyed by sound ID).
+  // When a saved event has no scheduling_mode (older saves), default to "timestamps".
+  const soundSchedulingModes: Record<string, 'interval' | 'timestamps'> = {};
+  const soundTimestamps: Record<string, number[]> = {};
 
   // Rebuild SoundEvent[] with resolved audio URLs
   // Include events with empty audio_filename (uploaded/sample sounds) —
@@ -429,6 +446,14 @@ export function restoreSoundscapeState(
     }
     if (saved.current_interval_seconds != null) {
       soundIntervals[saved.id] = saved.current_interval_seconds;
+    }
+
+    // Restore the per-track scheduling mode; default to "timestamps" when the
+    // save predates this field (so loaded soundscapes no longer fall back to interval).
+    const restoredMode: 'interval' | 'timestamps' = saved.scheduling_mode ?? 'timestamps';
+    soundSchedulingModes[saved.id] = restoredMode;
+    if (saved.timestamps?.length) {
+      soundTimestamps[saved.id] = saved.timestamps;
     }
 
     // Build the event — only include entity_index when it's a real number.
@@ -447,6 +472,7 @@ export function restoreSoundscapeState(
       interval_seconds: saved.interval_seconds,
       current_interval_seconds: saved.current_interval_seconds ?? undefined,
       isUploaded: saved.is_uploaded,
+      scheduling_mode: restoredMode,
     };
 
     // Only set entity_index when it's a real number (not null/undefined)
@@ -607,6 +633,8 @@ export function restoreSoundscapeState(
     soundEvents,
     soundVolumes,
     soundIntervals,
+    soundSchedulingModes,
+    soundTimestamps,
     globalSettings,
     receivers: restoredReceivers,
     selectedReceiverId,
@@ -780,6 +808,7 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
 
     if (saved.type === 'model-analysis') {
       config.liveScreenshots = [];
+      config.liveScreenshotFilenames = [];
       config.modelEntities = [];
       if (saved.analysisResult) config.analysisResult = saved.analysisResult;
     }

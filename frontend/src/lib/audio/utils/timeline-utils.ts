@@ -6,9 +6,41 @@
  */
 
 import { AUDIO_TIMELINE } from '@/utils/constants';
-import type { TimelineSound, ScheduledSound, SoundMetadata } from '@/types/audio';
+import type { TimelineSound, ScheduledSound, SoundMetadata, IterationLink } from '@/types/audio';
 import type { SoundEvent } from '@/types';
 import type { AudioScheduler } from '@/lib/audio-scheduler';
+import { resolveVariantSoundId } from '@/lib/audio/utils/variant-sound-id';
+
+/** Per-iteration audio URL + duration derived from the assigned variant's loaded buffer. */
+function getIterationVariantInfo(
+  primarySoundId: string,
+  iterationIndex: number,
+  soundMetadata: Map<string, SoundMetadata>,
+  primaryMetadata: SoundMetadata,
+  iterationLinks: Record<string, IterationLink> | undefined,
+  soundTrims: Record<string, { start: number; end: number }> | undefined,
+  fallbackDurationMs: number,
+  soundEvents?: SoundEvent[],
+): { audioUrl: string; durationMs: number } {
+  const link = iterationLinks?.[`${primarySoundId}-${iterationIndex}`];
+  const variantIdx = link?.variantIndex ?? 0;
+  const variantId = resolveVariantSoundId(primarySoundId, variantIdx);
+  const variantMeta = soundMetadata.get(variantId);
+  const eventOverride = soundEvents?.find((e) => e.id === variantId);
+
+  const trim = soundTrims?.[primarySoundId];
+  let durationMs = fallbackDurationMs;
+  if (variantMeta?.buffer) {
+    const bufMs = variantMeta.buffer.duration * 1000;
+    durationMs = trim ? bufMs * (trim.end - trim.start) : bufMs;
+  }
+
+  const audioUrl =
+    eventOverride?.url ??
+    variantMeta?.soundEvent.url ??
+    primaryMetadata.soundEvent.url;
+  return { audioUrl, durationMs };
+}
 
 /**
  * Compute a deterministic stagger delay for a sound based on its ID.
@@ -118,13 +150,25 @@ export function extractTimelineSounds(
       const schedulingMode = soundSchedulingModes?.[schedSoundId] ?? 'interval';
 
       let iterations: number[];
+      let iterationOriginalIndices: number[] | undefined;
 
       if (schedulingMode === 'timestamps' && soundTimestamps?.[schedSoundId]) {
-        // Timestamps mode: use explicit timestamps directly (converted to ms)
-        iterations = soundTimestamps[schedSoundId]
-          .map((s) => s * 1000)
-          .filter((ms) => ms + soundDurationMs <= timelineDuration)
-          .slice(0, AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY);
+        // Timestamps mode: use explicit timestamps directly (converted to ms).
+        // Filter on START time only (not end) so that sounds starting near the boundary
+        // are still visible even if they clip. The sentinel 999_999_000 for unresolved
+        // iterations is naturally excluded because 999_999_000 >= timelineDuration.
+        // We also track the ORIGINAL iteration index so that DAWTrack can still look up
+        // the correct iterationLink badge even when some earlier iterations are filtered out.
+        const rawMs = soundTimestamps[schedSoundId].map((s) => s * 1000);
+        iterations = [];
+        iterationOriginalIndices = [];
+        for (let idx = 0; idx < rawMs.length && iterations.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY; idx++) {
+          const ms = rawMs[idx];
+          if (ms >= 0 && ms < timelineDuration) {
+            iterations.push(ms);
+            iterationOriginalIndices.push(idx);
+          }
+        }
       } else {
         // Interval mode: calculate iterations from interval (original logic)
         iterations = [];
@@ -148,6 +192,7 @@ export function extractTimelineSounds(
         intervalMs,
         soundDurationMs,
         scheduledIterations: iterations,
+        scheduledIterationOriginalIndices: iterationOriginalIndices,
         audioUrl: audioUrl || undefined,
         initialDelayMs,
         schedulingMode,
@@ -216,7 +261,9 @@ export function extractTimelineSoundsFromData(
   soundTrims?: Record<string, { start: number; end: number }>,
   intervalJitterSeconds: number = 3,
   soundSchedulingModes?: Record<string, 'interval' | 'timestamps'>,
-  soundTimestamps?: Record<string, number[]>
+  soundTimestamps?: Record<string, number[]>,
+  soundIterationDurations?: Record<string, number[]>,
+  iterationLinks?: Record<string, IterationLink>,
 ): TimelineSound[] {
   const timelineSounds: TimelineSound[] = [];
 
@@ -267,14 +314,42 @@ export function extractTimelineSoundsFromData(
 
     let iterations: number[];
     let iterationOffsets: number[];
+    let iterationOriginalIndices: number[] | undefined;
+    let iterationDurationsMs: number[] | undefined;
+    let iterationAudioUrls: string[] | undefined;
 
     if (schedulingMode === 'timestamps' && soundTimestamps?.[soundId]) {
       // Timestamps mode: use explicit timestamps (converted to ms), filtered to timeline bounds.
-      // Keep only iterations whose start fits within the timeline (end is allowed to clip).
-      iterations = soundTimestamps[soundId]
-        .map((s) => s * 1000)
-        .filter((ms) => ms < timelineDuration)
-        .slice(0, AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY);
+      // ms >= 0 guards against the UNRESOLVED sentinel (999_999 s) and any negative values.
+      // Track original index so DAWTrack can look up the correct iterationLink badge even when
+      // earlier iterations are filtered out (e.g. unresolved parametric references).
+      const rawMs = soundTimestamps[soundId].map((s) => s * 1000);
+      const rawDurs = soundIterationDurations?.[soundId];
+      iterations = [];
+      iterationOriginalIndices = [];
+      iterationDurationsMs = [];
+      iterationAudioUrls = [];
+      for (let idx = 0; idx < rawMs.length && iterations.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY; idx++) {
+        const ms = rawMs[idx];
+        if (ms >= 0 && ms < timelineDuration) {
+          iterations.push(ms);
+          iterationOriginalIndices.push(idx);
+          const storeDur = rawDurs?.[idx];
+          const fallbackDur = storeDur && storeDur > 0 ? storeDur : soundDurationMs;
+          const variantInfo = getIterationVariantInfo(
+            soundId,
+            idx,
+            soundMetadata,
+            metadata,
+            iterationLinks,
+            soundTrims,
+            fallbackDur,
+            soundEvents,
+          );
+          iterationDurationsMs.push(variantInfo.durationMs);
+          iterationAudioUrls.push(variantInfo.audioUrl);
+        }
+      }
       // No jitter offsets for timestamps mode
       iterationOffsets = [];
     } else {
@@ -283,7 +358,10 @@ export function extractTimelineSoundsFromData(
       const baseGapMs = intervalSeconds * 1000;
       iterations = [];
       iterationOffsets = [];
+      iterationDurationsMs = [];
+      iterationAudioUrls = [];
       let currentTime = initialDelayMs;
+      let iterIdx = 0;
 
       while (
         currentTime < timelineDuration &&
@@ -292,12 +370,25 @@ export function extractTimelineSoundsFromData(
         iterations.push(currentTime);
         const randomOffset = computeIterationJitter(soundId, iterations.length - 1, jitterMs);
         iterationOffsets.push(randomOffset);
+        const variantInfo = getIterationVariantInfo(
+          soundId,
+          iterIdx,
+          soundMetadata,
+          metadata,
+          iterationLinks,
+          soundTrims,
+          soundDurationMs,
+          soundEvents,
+        );
+        iterationDurationsMs.push(variantInfo.durationMs);
+        iterationAudioUrls.push(variantInfo.audioUrl);
         const actualGapMs = Math.max(0, baseGapMs + randomOffset);
-        currentTime += soundDurationMs + actualGapMs;
+        currentTime += variantInfo.durationMs + actualGapMs;
+        iterIdx++;
       }
     }
 
-    // Extract audio URL from metadata (for WaveSurfer waveform visualization)
+    // Primary copy URL — used as fallback when iterationAudioUrls is absent
     const audioUrl = metadata.soundEvent.url;
 
     // Map category → soundGroup for DAW grouping
@@ -317,6 +408,9 @@ export function extractTimelineSoundsFromData(
       intervalMs,
       soundDurationMs,
       scheduledIterations: iterations,
+      scheduledIterationOriginalIndices: iterationOriginalIndices,
+      iterationDurationsMs,
+      iterationAudioUrls,
       audioUrl: audioUrl || undefined,
       trimStartFraction: trim?.start,
       trimEndFraction: trim?.end,

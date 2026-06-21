@@ -159,7 +159,13 @@ export class PlaybackSchedulerService {
               const ts = timelineSounds?.find(t => t.id === soundId);
 
               if (ts?.schedulingMode === 'timestamps' && ts.scheduledIterations.length > 0) {
-                scheduler.scheduleSoundAtTimestamps(soundId, metadata, ts.scheduledIterations, 0);
+                // Use the FULL timestamps array from the store (seconds → ms) so that
+                // scheduleSoundAtTimestamps can compute the correct originalIdx even when
+                // some earlier iterations are unresolved (sentinel 999_999 s) and have been
+                // filtered out of ts.scheduledIterations.
+                const { soundTimestamps: storeTimestamps } = useAudioControlsStore.getState();
+                const fullTsMs = storeTimestamps[soundId]?.map((s) => s * 1000) ?? ts.scheduledIterations;
+                scheduler.scheduleSoundAtTimestamps(soundId, metadata, fullTsMs, 0);
               } else {
                 if (ts && ts.initialDelayMs !== undefined) {
                   initialDelayMs = ts.initialDelayMs;

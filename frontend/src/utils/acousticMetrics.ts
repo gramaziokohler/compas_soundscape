@@ -53,7 +53,7 @@ function calculateAverage(allParams: any[], key: string): number | null {
 export async function fetchPyroomAcousticMetrics(simulationId: string): Promise<AcousticParameters | null> {
   try {
     const jsonResponse = await fetch(
-      `${API_BASE_URL}/pyroomacoustics/get-result-file/${simulationId}/json`
+      `${API_BASE_URL}/api/pyroomacoustics/get-result-file/${simulationId}/json`
     );
     
     if (!jsonResponse.ok) {
@@ -217,8 +217,8 @@ export async function fetchPerReceiverMetrics(
   try {
     const url =
       type === 'choras'
-        ? `${API_BASE_URL}/choras/get-result-file/${simulationId}/json`
-        : `${API_BASE_URL}/pyroomacoustics/get-result-file/${simulationId}/json`;
+        ? `${API_BASE_URL}/api/choras/get-result-file/${simulationId}/json`
+        : `${API_BASE_URL}/api/pyroomacoustics/get-result-file/${simulationId}/json`;
 
     const response = await fetch(url);
     if (!response.ok) return {};
@@ -294,7 +294,7 @@ export async function fetchChorasAcousticMetrics(
 ): Promise<AcousticParameters | null> {
   try {
     const response = await fetch(
-      `${API_BASE_URL}/choras/get-result-file/${simulationId}/json`,
+      `${API_BASE_URL}/api/choras/get-result-file/${simulationId}/json`,
     );
     if (!response.ok) return null;
 

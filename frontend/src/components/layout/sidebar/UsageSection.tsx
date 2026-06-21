@@ -15,7 +15,7 @@ import { CardSection } from '@/components/ui/CardSection';
 import { Card } from '@/components/ui/Card';
 import { TextContextContent } from '@/components/layout/sidebar/analysis/TextContextContent';
 import { ScenarioContent } from '@/components/layout/sidebar/analysis/ScenarioContent';
-import { ScenarioAfterView } from '@/components/layout/sidebar/analysis/ScenarioContent';
+import { ScenarioAfterView, getScenarioPipelineStatus } from '@/components/layout/sidebar/analysis/ScenarioContent';
 import { AnalysisResultContent } from '@/components/layout/sidebar/analysis/AnalysisResultContent';
 import { useAnalysisStore, useSoundscapeStore, useAreaDrawingStore } from '@/store';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
@@ -459,9 +459,14 @@ export function UsageSection({
           status={
             analyzingConfigIndex === originalIndex
               ? config.type === 'scenario'
-                ? 'Imagining usage scenarios…'
+                ? getScenarioPipelineStatus(config as ScenarioConfig, true).status
                 : analysisStatus
               : undefined
+          }
+          progress={
+            config.type === 'scenario'
+              ? getScenarioPipelineStatus(config as ScenarioConfig, analyzingConfigIndex === originalIndex).progress
+              : 0
           }
           collapsedInfo={getCollapsedInfo(config, originalIndex)}
           defaultName={

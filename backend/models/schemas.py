@@ -92,7 +92,6 @@ class ModelObjectResult(BaseModel):
     material: str
     quantity: int
     object_ids: dict[str, dict]  # {speckle_hex_id: {"min_bounds": [x,y,z], "max_bounds": [x,y,z]}}
-    confidence: float
 
 
 class ModelAnalysisRequest(BaseModel):
@@ -104,8 +103,6 @@ class ModelAnalysisRequest(BaseModel):
 
 class ModelAnalysisResponse(BaseModel):
     objects: list[ModelObjectResult]
-    high_confidence: list[ModelObjectResult]   # confidence > 0.7
-    low_confidence: list[ModelObjectResult]    # confidence <= 0.7
 
 
 class ModelAnalysisStartResponse(BaseModel):
@@ -310,6 +307,10 @@ class SoundscapeSoundEvent(BaseModel):
     is_uploaded: bool = False
     entity_index: Optional[int] = None
     entity_node_id: Optional[str] = None  # Full Speckle object hash ID
+    # Per-track timeline scheduling, persisted so the timeline restores the same
+    # mode/positions instead of falling back to interval mode.
+    scheduling_mode: Optional[str] = None  # "interval" | "timestamps"
+    timestamps: Optional[list[float]] = None  # explicit start times (seconds) for timestamps mode
 
 
 class SoundscapeReceiver(BaseModel):
@@ -505,11 +506,11 @@ class ModelObjectResultRaw(BaseModel):
     material: str
     quantity: int
     object_ids: list[str]
-    confidence: float
 
 
 class ModelAnalysisOutput(BaseModel):
     """Wrapper for 3D model analysis output (all providers require object root, not bare array)."""
+    space_description: str = ""
     objects: list[ModelObjectResultRaw]
 
 
@@ -531,26 +532,87 @@ class ScenarioResponse(BaseModel):
 
 
 class FoleySoundEvent(BaseModel):
-    """A single foley sound event generated for a scenario."""
+    """A single deduplicated foley sound type extracted from a scenario."""
+    id: str                      # snake_case identifier, e.g. sound_01
     soundName: str
     description: str
-    duration: str
-    timestamps: list[str]
-    category: str  # 'background sound' | 'sound event' | 'speech'
+    category: str = "sound event"  # "background sound" | "sound event"
+    duration: str = ""           # MM:SS duration of a single sound occurrence
+    timestamps: list[str]        # starting positions in MM:SS format
+    objectsInvolved: list[str]   # hex IDs chronologically ordered
+    position: list[float] = []   # [x,y,z]; empty when objectsInvolved is populated
+
+
+class FoleyOutput(BaseModel):
+    """Flat list of deduplicated sound types from the foley agent."""
+    sounds: list[FoleySoundEvent]
+
+
+# Keep legacy alias so existing imports (FoleyResponse) still resolve
+FoleyResponse = FoleyOutput
+
+
+# ── Speech Agent Schemas ───────────────────────────────────────────────────────
+
+class SpeechEntry(BaseModel):
+    """A single character's spoken lines extracted from a scenario."""
+    id: str                  # snake_case identifier, e.g. speech_01
+    timestamps: list[str]    # starting positions in MM:SS format
+    character: str
+    script: str              # "CharacterName: line1; line2"
+    position: list[float] = []  # [x,y,z] mouth-height position within the room
+
+
+class SpeechOutput(BaseModel):
+    """Output of the speech scripting agent."""
+    speeches: list[SpeechEntry]
+
+
+# ── Orchestrate Agent Schemas ──────────────────────────────────────────────────
+
+class OrchestrateTrigger(BaseModel):
+    type: str        # "absolute" | "param" | "mixed"
+    expression: list[str]
+    delay: list[float] = [0.0]
+
+
+class OrchestrateEntry(BaseModel):
+    """A single entry in the final parametric audio playlist."""
+    id: str
+    soundName: str
+    description: str
+    category: str    # "background sound" | "sound event" | "speech"
+    duration: str    # MM:SS; empty string for speech
+    trigger: OrchestrateTrigger
+    timestamps: list[str] = []   # starting positions in MM:SS (passed through from foley/speech)
+    character: str = ""          # TTS voice label for speech entries; empty for foley
     objectsInvolved: list[str]
-    position: list[float]
-    spl: str
+    position: list[float]   # [x, y, z]; empty when objectsInvolved is populated
+    variants: list[int]
+    spl: str         # e.g. "75 dB"
 
 
-class FoleyScenario(BaseModel):
-    """Foley sound events for a single scenario."""
-    scenario_title: str
-    sound_events: list[FoleySoundEvent]
+class OrchestrateOutput(BaseModel):
+    """Final parametric playlist compiled by the orchestrate agent."""
+    playlist: list[OrchestrateEntry]
 
 
-class FoleyResponse(BaseModel):
-    """Wrapper for foley artist output — one entry per scenario."""
-    scenarios: list[FoleyScenario]
+class OrchestrateLLMEntry(BaseModel):
+    """Fields the orchestrate LLM is responsible for: timeline dynamics + levels.
+
+    All descriptive fields (soundName, description, category, duration,
+    objectsInvolved, position) are merged in afterwards from the foley/speech
+    inputs by code — the LLM only reasons about triggers, variants and SPL.
+    """
+    id: str                      # base id from foley/speech input (e.g. sound_01)
+    trigger: OrchestrateTrigger
+    variants: list[int]
+    spl: str                     # e.g. "75 dB"
+
+
+class OrchestrateLLMOutput(BaseModel):
+    """Reduced orchestrate-agent LLM response (dynamics + levels only)."""
+    playlist: list[OrchestrateLLMEntry]
 
 
 # ── Scenarist / Foley request schemas ─────────────────────────────────────────

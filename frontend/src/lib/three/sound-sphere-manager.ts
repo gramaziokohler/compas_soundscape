@@ -11,6 +11,7 @@ import type { SoundEvent } from "@/types";
 import type { AuralizationConfig, SoundMetadata } from "@/types/audio";
 import type { AudioOrchestrator } from "@/lib/audio/AudioOrchestrator";
 import { trimDisplayName } from "@/utils/utils";
+import { useAudioControlsStore } from "@/store/audioControlsStore";
 // import type { BoundingBoxBounds } from "@/lib/three/BoundingBoxManager"; // Bounding-box placement removed
 
 /**
@@ -60,6 +61,13 @@ export class SoundSphereManager {
 
   // Sound metadata tracking (replaces legacy PositionalAudio)
   private soundMetadata: Map<string, SoundMetadata> = new Map();
+  // Sounds whose buffer is currently being fetched/decoded. Guards syncAudioSources from
+  // calling loadAudioForSound again for the same ID while a load is already in flight,
+  // which would cause duplicate AudioOrchestrator sources and the "already exists" loop.
+  private pendingLoads: Set<string> = new Set();
+  // Latest non-pending sounds passed to syncAudioSources — used by buffer load callbacks
+  // to sync _generatedSounds before re-baking the orchestrate schedule.
+  private latestSounds: SoundEvent[] = [];
   // Track which sounds are entity-linked (for change detection in updateSounds)
   private entityLinkedIds: Set<string> = new Set();
   private audioLoader: THREE.AudioLoader;
@@ -463,6 +471,7 @@ export class SoundSphereManager {
    * Audio lifecycle is decoupled from mesh lifecycle.
    */
   private syncAudioSources(visibleSounds: SoundEvent[]): void {
+    this.latestSounds = visibleSounds; // snapshot for buffer-load callbacks
     const visibleSoundIds = new Set(visibleSounds.map(s => s.id));
 
     // Remove audio sources and stale positions for sounds no longer visible
@@ -473,19 +482,15 @@ export class SoundSphereManager {
         }
         this.soundMetadata.delete(soundId);
         this.spherePositions.delete(soundId);
+        this.pendingLoads.delete(soundId); // clear any stale in-flight marker
       }
     }
 
-    // Create audio sources for new sounds (not already in metadata)
+    // Create audio sources for new sounds (not already in metadata or currently loading)
     visibleSounds.forEach(soundEvent => {
-      if (this.soundMetadata.has(soundEvent.id)) {
-        return; // Audio already loaded for this sound
-      }
-      // Skip audio for pending (pre-generation) placeholder spheres
-      if (soundEvent.isPending) {
-        return;
-      }
-
+      if (this.soundMetadata.has(soundEvent.id)) return; // already loaded
+      if (this.pendingLoads.has(soundEvent.id)) return;  // load in-flight — don't duplicate
+      if (soundEvent.isPending) return; // pre-generation placeholder
       this.loadAudioForSound(soundEvent);
     });
   }
@@ -507,12 +512,22 @@ export class SoundSphereManager {
     const isUploadedSound = soundEvent.url.startsWith('blob:') || soundEvent.url.startsWith('http');
     const fullUrl = isUploadedSound ? soundEvent.url : `${API_BASE_URL}${soundEvent.url}`;
 
+    // Mark as in-flight so concurrent syncAudioSources calls don't start a second load
+    this.pendingLoads.add(soundEvent.id);
+
     // Load audio buffer and create source
     this.audioLoader.load(
       fullUrl,
       (buffer) => {
-        // For sphere-linked sounds, check if sphere still exists
-        if (!isEntityLinked) {
+        this.pendingLoads.delete(soundEvent.id); // load complete
+
+        // For sphere-linked sounds, verify the sphere is still in the scene before
+        // registering the buffer.  Non-primary copies (copy_index >= 1) never have
+        // a visible mesh — they exist purely for audio playback — so we must NOT
+        // abort them here; otherwise variant B / C buffers are never loaded.
+        const copyIndex = (soundEvent as any).copy_index ?? 0;
+        const isPrimaryOrEntity = isEntityLinked || copyIndex === 0;
+        if (isPrimaryOrEntity && !isEntityLinked) {
           const meshStillExists = this.soundMeshes.some(
             m => m.userData.soundEvent?.id === soundEvent.id
           );
@@ -551,9 +566,23 @@ export class SoundSphereManager {
         };
 
         this.soundMetadata.set(soundEvent.id, metadata);
+
+        // Store buffer duration and re-bake the orchestrate schedule so that
+        // after() / alignEnd() expressions resolve using the real buffer length.
+        // Note: syncGeneratedSounds is intentionally NOT called here — it is already
+        // dispatched from the page.tsx useEffect and calling it from every buffer
+        // callback caused a store-update storm that re-triggered syncAudioSources
+        // repeatedly (compounding the pending-load race that pendingLoads now guards).
+        const audioStore = useAudioControlsStore.getState();
+        audioStore.setSoundBufferDuration(soundEvent.id, buffer.duration);
+        if (audioStore._soundConfigs.some((c: any) => c.orchestrateMeta)) {
+          audioStore.bakeOrchestrateSchedule();
+          audioStore.setOrchestrateIterationLinks(audioStore._soundConfigs);
+        }
       },
       undefined,
       (error) => {
+        this.pendingLoads.delete(soundEvent.id); // allow retry on next sync
         console.error('[SoundSphereManager] Error loading audio:', error);
       }
     );

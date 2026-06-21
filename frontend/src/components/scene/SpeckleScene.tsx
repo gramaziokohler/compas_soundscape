@@ -1186,6 +1186,14 @@ export function SpeckleScene({
   }, [pauseTimeline, storePauseAll]);
 
   const handleStopAll = useCallback(() => {
+    // Immediately kill all audio at the lowest level. This stops every active
+    // source node (including remapped variant source IDs) and suspends the
+    // AudioContext, so the currently-playing iteration is silenced instantly
+    // instead of running to its natural end. Fire-and-forget: the synchronous
+    // stopAllSources()/suspend() inside execute before the first await, so the
+    // kill takes effect immediately; the trailing await only restores the
+    // context for the next playback.
+    void playbackSchedulerRef.current?.stopAllSounds();
     // Notify store to update sound states FIRST
     storeStopAll();
     // Reset timeline cursor to start

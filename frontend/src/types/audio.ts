@@ -102,6 +102,27 @@ export interface TimelineSound {
   promptIndex?: number;
   /** Sound group for DAW track grouping. */
   soundGroup?: 'background' | 'sound_event' | 'speech';
+  /**
+   * Parallel array to scheduledIterations — stores the original 0-based iteration index for
+   * each entry in scheduledIterations.  When some logical iterations are filtered out (e.g.
+   * unresolved parametric timestamps or out-of-timeline entries), the rendered array is
+   * shorter than the full iteration count but the original index is needed to look up the
+   * correct iterationLink badge (variantIndex / entityIndex).
+   */
+  scheduledIterationOriginalIndices?: number[];
+  /**
+   * Per-iteration audio duration in milliseconds (parallel to scheduledIterations).
+   * Each value reflects the actual buffer length of the variant assigned to that iteration,
+   * so that DAW blocks for different variants show the correct visual width.
+   * Falls back to soundDurationMs when absent.
+   */
+  iterationDurationsMs?: number[];
+  /**
+   * Per-iteration audio URLs (parallel to scheduledIterations).
+   * Each entry points at the variant copy assigned to that iteration so WaveSurfer
+   * renders the correct waveform inside each block.
+   */
+  iterationAudioUrls?: string[];
 }
 
 export interface TimelinePlaybackState {

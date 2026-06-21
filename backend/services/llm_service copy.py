@@ -54,7 +54,6 @@ from config.constants import (
     LLM_PROVIDER_GOOGLE,
     LLM_PROVIDER_OPENAI,
     LLM_PROVIDER_ANTHROPIC,
-    TTS_CHARACTER_NAMES,
 )
 
 
@@ -1464,7 +1463,7 @@ For the duration estimation (in seconds with 0.1 precision):
             '3. It is STRICTLY FORBIDDEN to append personal names, character roles, or scene numbers to the '
             '"soundName" or "id" fields (e.g., "laptop_placement_sarah" or "footsteps_michael" are WRONG).\n'
             '4. The "description" must focus on a SINGLE generic instance of that acoustic profile, optimized '
-            "for a Text-to-Audio (TTA) generation model. "
+            "for a Text-to-Audio (TTA) generation model. Do not use plural nouns "
             '(e.g., use "An office chair" instead of "Multiple chairs").\n'
             '5. The "objectsInvolved" array must collect ALL the target object hex IDs from the spatial context '
             "that execute this specific sound type across the entire story timeline. "
@@ -1475,23 +1474,15 @@ For the duration estimation (in seconds with 0.1 precision):
             '   - "position": when objectsInvolved is empty (e.g. footsteps, ambient hum, HVAC), '
             "provide a plausible [x, y, z] centroid within the room using the bounding box and nearby object "
             "bounds as reference. Ambient/background sounds should be placed at the room centroid.\n"
-            "7. Always add at least one background sound that matches the space.\n"
-            '8. Classify each entry with a "category": use "background" for continuous/ambient '
-            'beds (HVAC, room tone, distant traffic) and "sound event" for discrete, punctual actions '
-            "(footsteps, door, object placement).\n"
-            '9. Estimate a realistic "duration" (MM:SS) for a SINGLE occurrence of the sound: short for '
-            "impacts (e.g. 00:02), longer for continuous beds (e.g. 00:20).\n\n"
+            "7. Always add at least one background sound that matches the space.\n\n"
             "Output Format — respond ONLY with a JSON array:\n"
             "[\n"
             "  {\n"
-            '    "id": "string — snake_case ROOT describing the sound itself plus a numeric '
-            'suffix, e.g. footsteps_1, door_close_1, chair_scrape_2. Derive the root from the sound '
-            "category; NEVER use generic \\\"sound_NN\\\" ids and NEVER append personal/character names.\",\n"
+            '    "id": "string (ordered snake_case identifier starting with \\"sound\\", '
+            'e.g., sound_01, sound_02)",\n'
             '    "soundName": "string (brief generic descriptive name of the sound profile)",\n'
             '    "description": "1-sentence (5 to 10 words) description of the sound. '
             'Do NOT include scenario character names.",\n'
-            '    "category": "\\"background sound\\" | \\"sound event\\"",\n'
-            '    "duration": "MM:SS duration of a single sound occurrence",\n'
             '    "timestamps": ["MM:SS", ...],\n'
             '    "objectsInvolved": ["hex IDs chronologically, or empty list []"],\n'
             '    "position": [x, y, z or empty list []]\n'
@@ -1915,9 +1906,7 @@ For the duration estimation (in seconds with 0.1 precision):
         Single source of truth used by async_speech_agent and stream_speech_agent.
         Each speech entry includes a guessed [x,y,z] mouth-height position using
         the room bounding box and nearby furniture bounds.
-        Character names are constrained to the allowed TTS voice labels.
         """
-        allowed_characters = ", ".join(TTS_CHARACTER_NAMES)
         system_prompt = (
             "You are an expert dialogue writer and narrative director. "
             "Your task is to analyze an architectural/spatial narrative scenario and extract "
@@ -1938,9 +1927,7 @@ For the duration estimation (in seconds with 0.1 precision):
             "6. Do not include any physical action descriptions, timing parameters, or formatting "
             "outside the requested JSON structure.\n"
             "7. Do not add spoken lines when not directly implied by the scenario script.\n"
-            "8. Character names MUST be chosen EXCLUSIVELY from this allowed voice list "
-            f"(pick the names that best fit each person, one distinct name per distinct person, "
-            f"and reuse the same name for the same person throughout): {allowed_characters}.\n"
+            "8. Use real character names.\n"
             "9. Spatial position: for each character, estimate a plausible [x, y, z] position "
             "where the character is standing or sitting when they speak. Use the object bounding boxes "
             "and room bounds as reference. Speech height is typically z = 1.25 m (seated) to 1.60 m "
@@ -1949,25 +1936,25 @@ For the duration estimation (in seconds with 0.1 precision):
             "Output Format — respond ONLY with a JSON array:\n"
             "[\n"
             "  {\n"
-            '    "id": "string — the chosen character name plus a numeric suffix for identification, '
-            'e.g. Clara_1, Marcus_1 (one entry per character speech block)",\n'
+            '    "id": "string (ordered snake_case identifier starting with \\"speech\\", '
+            'e.g., speech_01, speech_02)",\n'
             '    "timestamps": ["MM:SS", ...],\n'
-            '    "character": "string — one of the allowed voice names listed above",\n'
+            '    "character": "string (name of the person speaking)",\n'
             '    "script": "string (dialogue lines separated chronologically by semicolons)",\n'
             '    "position": [x, y, z]\n'
             "  }\n"
             "]\n\n"
             "Example input scenario:\n"
-            '"Clara walks into the conference room and says hello to Marcus near the entrance door. '
+            '"Alice walks into the conference room and says hello to Bob near the entrance door. '
             'Later, she stands at the projector screen and walks him through the third quarter drops."\n\n'
             "Example output:\n"
             "[\n"
             "  {\n"
-            '    "id": "Clara_1",\n'
-            '    "timestamps": ["00:21", "00:45", "00:54"],\n'
-            '    "character": "Clara",\n'
-            '    "script": "Morning Marcus, good to see you!; If you look closely at July, '
-            'that is exactly where our third quarter drops began to manifest.; Ok bye then!",\n'
+            '    "id": "speech_01",\n'
+            '    "timestamps": ["00:21", "00:45"],\n'
+            '    "character": "Alice",\n'
+            '    "script": "Morning Bob, good to see you!; If you look closely at July, '
+            'that is exactly where our third quarter drops began to manifest.",\n'
             '    "position": [1.2, 0.8, 1.55]\n'
             "  }\n"
             "]\n\n"
@@ -2079,30 +2066,20 @@ For the duration estimation (in seconds with 0.1 precision):
             """
             system_prompt = (
                 "You are a precision audio systems assembler and compiler. "
-                "You take the scripts from the Speech Agent, the asset lists from the Foley Agent, "
-                "and the original timeline narrative to compile the timeline dynamics of the final "
-                "parametric playlist for a Web Audio engine. "
-                "Every descriptive attribute of a sound (soundName, description, category, duration, "
-                "objectsInvolved, position) is already finalized by the upstream agents and will be "
-                "merged in by code — you MUST NOT output them. "
-                "Your sole responsibilities are:\n"
-                "  - trigger: orchestrate the soundtrack dynamics in a parametric way, deciding how each "
-                "sound is anchored in time and how many variants it needs to sound realistic.\n"
-                "  - spl: estimate coherent and realistic sound levels for all the sounds present in the "
-                "scene, balanced relative to one another.\n"
-                "You must globally reflect on the soundtrack to ensure a cohesive audio experience."
+                "Your job is to take the scripts from the Speech Agent, the asset lists from the "
+                "Foley Agent, and the original timeline narrative to compile the final parametric "
+                "playlist JSON for a Web Audio engine. You must globally reflect on the soundtrack "
+                "to ensure a cohesive audio experience: remove any duplicate sounds, decide how many variants "
+                "each sound should have to sound realistic."
             )
             user_prompt = (
-                "Each foley 'sound' and speech 'speech' input entry already carries a base 'id' and its "
-                "'timestamps'. For every input entry, output exactly one object keyed by that same 'id'. "
-                "Do NOT invent, drop, split or rename ids.\n"
-                "Use the timestamps to locate each sound in the timeline and correlate them with the "
-                "scenario script to understand sound dependencies.\n\n"
-                "TRIGGER (timeline dynamics)\n"
-                "1. Every entry must map cleanly to structural relationships using parametric trigger "
+                "1. Merge the 'speech' entries alongside the foley assets 'sounds' into single unique "
+                "IDs (e.g., sound_01, speech_01). Use the timestamps to locate them in the timeline and "
+                "correlate them with the scenario script to understand sound dependencies.\n"
+                "2. Every entry must map cleanly to structural relationships using parametric trigger "
                 "formulas. DO NOT use absolute timestamps (e.g., '00:15') for individual events unless "
                 "initializing an environment background loop or a primary scene arrival.\n"
-                "2. Formulate triggers using these strict string expressions. 'expression' is ALWAYS an "
+                "3. Formulate triggers using these strict string expressions. 'expression' is ALWAYS an "
                 "array, with exactly one string per timestamp in that entry's timestamps input. 'delay' is "
                 "ALWAYS an array of floats, with exactly one float per timestamp, index-aligned with "
                 "'expression':\n"
@@ -2117,36 +2094,45 @@ For the duration estimation (in seconds with 0.1 precision):
                 '   - For blocks where some occurrences anchor to a fixed point on the timeline and others anchor '
                 "to another sound: \"type\": \"mixed\", where 'expression' freely combines, element by element, "
                 "either a literal MM:SS timestamp OR a param formula string (after/alignEnd) — never both roles "
-                'inside the same string. Example: {"type": "mixed", "expression": ["00:15", "after(sound_05_1)", '
-                '"alignEnd(sound_05_2)"], "delay": [0.0, 0.0, 0.0]} \n'
-                "3. SINGLE INSTANCES ONLY WITH ITERATION ARRAYS: Do NOT split an asset into separate IDs per "
+                'inside the same string. Example: {"type": "mixed", "expression": ["00:15", "after(sound_05__1)", '
+                '"after(sound_05__2)"], "delay": [0.0, 0.0, 0.0]} — typical for a repeating background loop whose '
+                "first occurrence starts at a fixed timeline point and whose later occurrences simply chain off "
+                "the previous occurrence of that same sound.\n"
+                "4. SINGLE INSTANCES ONLY WITH ITERATION ARRAYS: Do NOT split an asset into separate IDs per "
                 "occurrence (NO sound_01_01, sound_01_02). Keep a single base entry (e.g., sound_01).\n"
-                "4. Inside the param-formula elements of a 'param' or 'mixed' trigger expression, point to "
-                "specific iterations of another sound when it has multiple timestamps by appending a second "
+                "5. Inside the param-formula elements of a 'param' or 'mixed' trigger expression, you can point to "
+                "specific iterations of another sound when it has multiple timestamps by appending a double "
                 "underscore and the iteration index (e.g., 'after(speech_02_1)', 'after(speech_02_2)', "
                 "'alignEnd(sound_01_3)'). Double underscores are ONLY allowed inside param-formula strings — never "
                 "inside an absolute MM:SS timestamp string.\n"
-                "5. Strict Array Alignment: 'trigger.expression', 'trigger.delay' and 'variants' MUST ALWAYS be "
-                "arrays whose length exactly equals the number of timestamps for that entry (never a bare string, "
-                "never a bare float, never a mismatched length).\n\n"
-                "VARIANTS\n"
-                "6. For each foley entry, estimate how many variants should be provided in the variants array "
-                "to create a realistic effect depending on repetitions, and order them in a list (e.g [1,2,1]). "
-                "For speech, create an arithmetic series of variants corresponding to the length of timestamps "
-                "[1,2,3,4,...].\n\n"
-                "SPL (sound levels)\n"
-                "7. Estimate a realistic 'spl' (sound pressure level) for every entry, expressed as a float "
-                "string with units (e.g. \"75 dB\"). Reason globally: levels must be coherent and balanced "
-                "relative to one another for the whole scene (e.g. background beds quieter than speech "
-                "or impacts), and realistic for the kind of source and the space.\n\n"
-                "Output Format — respond ONLY with a JSON array (timeline dynamics + levels only):\n"
+                "6. Strict Array Alignment: 'trigger.expression' and 'trigger.delay' MUST ALWAYS be arrays whose "
+                "length exactly equals the number of timestamps for that entry (never a bare string, never a bare "
+                "float, never a mismatched length). For multi-iteration entries, 'variants' and 'objectsInvolved' "
+                "(if not empty) MUST also be arrays of that same exact length, for index correlation.\n"
+                "7. Speech Description Integrity: For 'speech' category entries, 'description' is ALWAYS a "
+                "single string — the complete, untouched 'script' value copied verbatim from the speech input, "
+                "including all of its semicolon (';') separators. NEVER split it into an array, NEVER truncate it "
+                "to a single segment, and NEVER drop any part of it — even when that entry's 'trigger.expression', "
+                "'variants', etc. have multiple iterations.\n"
+                "8. For each sound foley entry, estimate how many variants should be provided in the variants array "
+                "to create a realistic effect depending on repetitions, and order them in a list (e.g [1,2,1])."
+                "For speech, create a arithmetic series of variants corresponding to the length of timestamps [1,2,3,4,...]\n"
+                "9. Position: copy the 'position' value directly from the input foley or speech entry. "
+                "Do NOT recompute or modify positions — they were already resolved by the upstream agents.\n\n"
+                "Output Format — respond ONLY with a JSON array:\n"
                 "[\n"
                 "  {\n"
-                '    "id": "input base id (e.g., sound_01, speech_01)",\n'
+                '    "id": "input base id (e.g., sound_01)",\n'
+                '    "soundName": "string",\n'
+                '    "description": "untouched from input",\n'
+                '    "category": "\\"background sound\\" | \\"sound event\\" | \\"speech\\"",\n'
+                '    "duration": "duration of the sound in MM:SS format, empty string if speech",\n'
                 '    "trigger": { "type": "\\"absolute\\" | \\"param\\" | \\"mixed\\"", "expression": ["array of '
                 "strings, one per input timestamp — MM:SS timestamps for 'absolute', param formulas for 'param', "
                 'a free per-element mix of both for \'mixed\'"], "delay": ["array of floats, one per input '
                 'timestamp, same length as expression"] },\n'
+                '    "objectsInvolved": "untouched from input"],\n'
+                '    "position": untouched from input,\n'
                 '    "variants": [1,2,1],\n'
                 '    "spl": "float as string, e.g. \\"75 dB\\""\n'
                 "  }\n"
@@ -2156,7 +2142,7 @@ For the duration estimation (in seconds with 0.1 precision):
                 f"Speech:\n{speech_json}\n\n"
                 "Before outputting the final JSON, verify silently against this checklist and fix"
                 "any violation you find — only then output the JSON:\n\n"
-                "- [ ] Every input id appears as exactly one object in the array, and no extra ids are invented.\n"
+                "- [ ] Every id appears as exactly one object in the array.\n"
                 "- [ ] trigger.expression is always an array (never a bare string).\n"
                 "- [ ] trigger.delay is always an array of floats (never a bare float).\n"
                 "- [ ] len(trigger.expression) == len(trigger.delay) == len(variants) == number of timestamps for "
@@ -2167,92 +2153,11 @@ For the duration estimation (in seconds with 0.1 precision):
                 "raw MM:SS timestamps.\n"
                 "- [ ] type \"mixed\" entries deliberately combine MM:SS timestamps and after( / alignEnd( "
                 "formulas, with each element matching the correct occurrence by index.\n"
-                "- [ ] spl values are present, realistic, and balanced relative to one another across the scene.\n"
+                "- [ ] objectsInvolved contains no after( or alignEnd( strings.\n"
+                "- [ ] Every speech description is one untouched string with its semicolons intact.\n"
                 "If any item fails, fix it and re-check before responding."
             )
             return system_prompt, user_prompt
-
-    @staticmethod
-    def _build_orchestrate_passthrough(foley_result: dict, speech_result: dict) -> dict[str, dict]:
-        """Index foley + speech entries by id with the fields orchestrate passes through.
-
-        These descriptive fields (soundName, description, category, duration,
-        objectsInvolved, position) are resolved by the upstream agents and merged
-        into the final playlist by code — the orchestrate LLM never produces them.
-        """
-        passthrough: dict[str, dict] = {}
-        for sound in (foley_result or {}).get("sounds", []):
-            if not isinstance(sound, dict):
-                continue
-            sid = sound.get("id")
-            if not sid:
-                continue
-            passthrough[sid] = {
-                "soundName": sound.get("soundName", ""),
-                "description": sound.get("description", ""),
-                "category": sound.get("category", "sound event"),
-                "duration": sound.get("duration", ""),
-                "timestamps": sound.get("timestamps", []) or [],
-                "character": "",
-                "objectsInvolved": sound.get("objectsInvolved", []) or [],
-                "position": sound.get("position", []) or [],
-            }
-        for speech in (speech_result or {}).get("speeches", []):
-            if not isinstance(speech, dict):
-                continue
-            sid = speech.get("id")
-            if not sid:
-                continue
-            character = speech.get("character", "") or "Speech"
-            passthrough[sid] = {
-                "soundName": character,
-                "description": speech.get("script", ""),
-                "category": "speech",
-                "duration": "",
-                "timestamps": speech.get("timestamps", []) or [],
-                "character": character,
-                "objectsInvolved": [],
-                "position": speech.get("position", []) or [],
-            }
-        return passthrough
-
-    def _merge_orchestrate_playlist(
-        self,
-        llm_result: dict,
-        foley_result: dict,
-        speech_result: dict,
-    ) -> dict:
-        """Combine the LLM dynamics output (id, trigger, variants, spl) with the
-        passthrough descriptive fields from the foley/speech inputs.
-
-        Returns a dict matching OrchestrateOutput ("playlist": list of full entries).
-        """
-        passthrough = self._build_orchestrate_passthrough(foley_result, speech_result)
-        playlist: list[dict] = []
-        for entry in (llm_result or {}).get("playlist", []):
-            if not isinstance(entry, dict):
-                continue
-            entry_id = entry.get("id")
-            base = passthrough.get(entry_id)
-            if base is None:
-                print(f"[orchestrate] skipping unknown id from LLM (no matching foley/speech input): {entry_id!r}")
-                continue
-            trigger = entry.get("trigger") or {"type": "absolute", "expression": [], "delay": [0.0]}
-            playlist.append({
-                "id": entry_id,
-                "soundName": base["soundName"],
-                "description": base["description"],
-                "category": base["category"],
-                "duration": base["duration"],
-                "trigger": trigger,
-                "timestamps": base["timestamps"],
-                "character": base["character"],
-                "objectsInvolved": base["objectsInvolved"],
-                "position": base["position"],
-                "variants": entry.get("variants", []) or [],
-                "spl": entry.get("spl", ""),
-            })
-        return {"playlist": playlist}
 
     async def async_orchestrate_agent(
         self,
@@ -2264,11 +2169,8 @@ For the duration estimation (in seconds with 0.1 precision):
     ) -> dict:
         """Compile the final parametric audio playlist from foley + speech + scenario.
 
-        The descriptive fields (id, soundName, description, category, duration,
-        objectsInvolved, position) are passed through in code from the foley and
-        speech results. The LLM only reasons about the timeline dynamics
-        (trigger, variants) and coherent sound levels (spl); those are merged
-        with the passthrough fields to build the final playlist.
+        Positions are already resolved in the foley and speech results — this agent
+        handles only timing, triggers, and variant counts.
 
         Args:
             scenarist_agent_result: Output from scenarist_agent containing "scenarios".
@@ -2279,13 +2181,10 @@ For the duration estimation (in seconds with 0.1 precision):
 
         Returns:
             dict with a "playlist" key — list of orchestrated sound entries each containing:
-            id, soundName, description, category, duration, trigger, timestamps, character,
-            objectsInvolved, position, variants, spl.
+            id, soundName, description, category, duration, trigger, objectsInvolved,
+            position, variants, spl.
         """
-        from models.schemas import (
-            OrchestrateOutput as _OrchestrateOutput,
-            OrchestrateLLMOutput as _OrchestrateLLMOutput,
-        )
+        from models.schemas import OrchestrateOutput as _OrchestrateOutput
 
         all_scenarios = scenarist_agent_result.get("scenarios", [])
         if not all_scenarios:
@@ -2299,19 +2198,16 @@ For the duration estimation (in seconds with 0.1 precision):
             scenarios_json, foley_json, speech_json
         )
 
-        llm_result = await self._call_llm(
+        result = await self._call_llm(
             user_prompt, system_prompt,
-            response_schema=_OrchestrateLLMOutput,
+            response_schema=_OrchestrateOutput,
             operation_name="Orchestrate agent",
             llm_model=llm_model,
             temperature=temperature,
         )
-        if not isinstance(llm_result, dict):
-            llm_result = llm_result.model_dump() if hasattr(llm_result, "model_dump") else dict(llm_result)
-
-        merged = self._merge_orchestrate_playlist(llm_result, foley_result, speech_result)
-        # Validate/normalise against the final schema before returning.
-        return _OrchestrateOutput(**merged).model_dump()
+        if not isinstance(result, dict):
+            result = result.model_dump() if hasattr(result, "model_dump") else dict(result)
+        return result
 
     async def stream_orchestrate_agent(
         self,

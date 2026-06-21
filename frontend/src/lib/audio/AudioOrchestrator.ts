@@ -1201,6 +1201,11 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * Create audio source at given position
    * Routes to current mode implementation
    */
+  /** Returns true if a source with the given ID has been registered (buffer loaded). */
+  hasSource(sourceId: string): boolean {
+    return this.sourceRegistry.has(sourceId);
+  }
+
   createSource(
     sourceId: string,
     audioBuffer: AudioBuffer,

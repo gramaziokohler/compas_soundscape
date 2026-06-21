@@ -601,13 +601,6 @@ function AnalysisGroupSection({ objectId }: { objectId: string }) {
 
   const { group, index } = matchedGroup;
   const color = getAnalysisGroupColor(index);
-  const confPct = Math.round((group.confidence ?? 0) * 100);
-  const confColor =
-    (group.confidence ?? 0) >= 0.7
-      ? 'var(--color-success, #4ade80)'
-      : (group.confidence ?? 0) >= 0.5
-        ? 'var(--color-warning, #fbbf24)'
-        : 'var(--color-error, #f87171)';
 
   const handleEditStart = () => {
     setEditName(group.name);
@@ -666,12 +659,6 @@ function AnalysisGroupSection({ objectId }: { objectId: string }) {
           >
             <span className="text-xs font-medium" style={{ color: 'var(--color-foreground)' }}>
               {group.name}
-            </span>
-            <span
-              className="text-xs px-1 rounded ml-auto"
-              style={{ backgroundColor: 'var(--color-secondary-light)', color: confColor }}
-            >
-              {confPct}%
             </span>
           </div>
           {group.description && (

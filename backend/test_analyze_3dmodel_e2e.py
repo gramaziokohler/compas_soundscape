@@ -1,16 +1,17 @@
 """
-End-to-end integration test for the 3D model analysis pipeline.
+End-to-end integration test for the full LLM soundscape pipeline.
 
-Fetches REAL entity metadata and a model preview from a live Speckle model via
-the two new API endpoints, then runs analyze_3dmodel() through the full
-async task queue.
-
-The project ID and model/version are resolved automatically from the backend's
-configured Speckle service — no need to supply them manually.
+Pipeline:
+  [1] Fetch Speckle entities + optional preview screenshot
+  [2] analyze_agent   → architectural object groups + space description
+  [3] scenario_agent  → 1 usage scenario
+  [4] foley_agent  ─┐
+                    ├─ parallel ─→ [5] orchestrate_agent → parametric playlist
+  [4] speech_agent ─┘
 
 Usage
 -----
-    # use the first available model
+    # use the first available model, default settings
     python test_analyze_3dmodel_e2e.py
 
     # choose LLM provider
@@ -22,14 +23,20 @@ Usage
     # skip model preview (metadata-only analysis)
     python test_analyze_3dmodel_e2e.py --no-preview
 
-    # include live browser screenshot captured from the frontend
+    # include a live browser screenshot captured from the frontend
     python test_analyze_3dmodel_e2e.py --live-screenshot
+
+    # tune scenario parameters
+    python test_analyze_3dmodel_e2e.py --people-count 3 --likeliness 8 --duration 120
+
+    # stop after a specific stage (analyze | scenario | foley | speech | orchestrate)
+    python test_analyze_3dmodel_e2e.py --stop-after scenario
 
     # point at a different server
     python test_analyze_3dmodel_e2e.py --base-url http://localhost:8001
 
 The script requires the FastAPI server to be running (default: http://localhost:8000).
-For --live-screenshot, the Next.js dev server must also be running (default: http://localhost:3000).
+For --live-screenshot the Next.js dev server must also be running (default: http://localhost:3000).
 """
 
 import argparse
@@ -49,16 +56,10 @@ if _THIS_DIR not in sys.path:
     sys.path.insert(0, _THIS_DIR)
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Helpers ────────────────────────────────────────────────────────────────────
 
 def load_env() -> None:
-    """Load .env then .env.local from backend/ and repo root (absolute paths).
-
-    Using absolute paths means the test can be run from any working directory
-    and still find the credentials — unlike relative load_dotenv calls which
-    depend on CWD.  The non-streaming path is immune to this because it talks
-    to the already-running uvicorn process, which has its env loaded at startup.
-    """
+    """Load .env then .env.local from backend/ and repo root."""
     for base_dir in (_THIS_DIR, os.path.dirname(_THIS_DIR)):
         for fname in (".env", ".env.local"):
             path = os.path.join(base_dir, fname)
@@ -82,19 +83,31 @@ def get_json(url: str) -> dict:
     return resp.json()
 
 
-# ── Step functions ────────────────────────────────────────────────────────────
+def _hr(char: str = "=", width: int = 70) -> str:
+    return char * width
 
-def resolve_project_and_version(base_url: str, model_name_hint: str | None = None) -> tuple[str, str, str]:
-    """
-    Resolve project_id and version_id automatically from the backend's
-    configured Speckle service via GET /api/speckle/models.
+
+def _save_json(data: dict, prefix: str, model_name: str) -> str:
+    safe_name = "".join(c if (c.isalnum() or c in "-_") else "_" for c in model_name)
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = os.path.join(_THIS_DIR, f"{prefix}_{safe_name}_{ts}.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2, ensure_ascii=False)
+    print(f"  [OK] Saved → {path}")
+    return path
+
+
+# ── Step 0 — server + project resolution ──────────────────────────────────────
+
+def resolve_project_and_version(
+    base_url: str, model_name_hint: str | None = None
+) -> tuple[str, str, str]:
+    """Resolve project_id and version_id from GET /api/speckle/models.
 
     Returns (project_id, version_id, model_name).
     """
-    print("\n[0/4] Resolving Speckle project and model from server …")
-    url = _api(base_url, "/api/speckle/models")
-    result = get_json(url)
-
+    print("\n[0] Resolving Speckle project and model …")
+    result = get_json(_api(base_url, "/api/speckle/models"))
     project_id = result.get("project_id") or ""
     models = result.get("models") or []
 
@@ -102,7 +115,6 @@ def resolve_project_and_version(base_url: str, model_name_hint: str | None = Non
         print("[ERR] No models found in the configured Speckle project.", file=sys.stderr)
         sys.exit(1)
 
-    # Pick model: substring match on name, otherwise first available
     chosen = None
     if model_name_hint:
         hint_lower = model_name_hint.lower()
@@ -111,334 +123,189 @@ def resolve_project_and_version(base_url: str, model_name_hint: str | None = Non
                 chosen = m
                 break
         if not chosen:
-            print(
-                f"  [WARN] No model matched '{model_name_hint}'; using first available model.",
-            )
+            print(f"  [WARN] No model matched '{model_name_hint}'; using first available.")
 
-    if not chosen:
-        chosen = models[0]
-
+    chosen = chosen or models[0]
     model_name = chosen.get("name", chosen.get("id", "unknown"))
-    latest     = chosen.get("latest_version") or {}
+    latest = chosen.get("latest_version") or {}
     version_id = latest.get("id") or chosen.get("id")
 
     if not version_id:
-        print(
-            f"[ERR] Could not determine a version ID for model '{model_name}'.",
-            file=sys.stderr,
-        )
+        print(f"[ERR] No version ID for model '{model_name}'.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"      project_id  = {project_id}")
-    print(f"      model       = {model_name!r}  (id: {chosen['id']})")
-    print(f"      version_id  = {version_id}")
-    print(f"      ({len(models)} model(s) available in project)")
+    print(f"  project_id  = {project_id}")
+    print(f"  model       = {model_name!r}  (id: {chosen['id']})")
+    print(f"  version_id  = {version_id}")
+    print(f"  ({len(models)} model(s) available)")
     return project_id, version_id, model_name
 
 
+# ── Step 1 — entity + screenshot fetch ────────────────────────────────────────
+
 def fetch_entities(base_url: str, project_id: str, version_id: str) -> list:
-    """Call POST /api/speckle/model-entities and return the entity list."""
-    print(f"\n[1/4] Fetching entity metadata from Speckle …")
-    url = _api(base_url, "/api/speckle/model-entities")
-    result = post_json(url, {"project_id": project_id, "version_id": version_id})
+    print("\n[1] Fetching entity metadata from Speckle …")
+    result = post_json(
+        _api(base_url, "/api/speckle/model-entities"),
+        {"project_id": project_id, "version_id": version_id},
+    )
     entities = result.get("entities", [])
-    print(f"      [OK] {len(entities)} entities received")
-    if entities:
-        # Print first 5 as preview
-        for e in entities[:5]:
-            layer    = e.get("layer")    or "—"
-            material = e.get("material") or "—"
-            print(f"        #{e['index']}  {e['name']!r}  [{e['speckle_type']}]  layer={layer}  mat={material}")
-        if len(entities) > 5:
-            print(f"        … and {len(entities) - 5} more")
+    print(f"  [OK] {len(entities)} entities received")
+    for e in entities[:5]:
+        print(
+            f"    #{e['index']}  {e['name']!r}  [{e['speckle_type']}]  "
+            f"layer={e.get('layer') or '—'}  mat={e.get('material') or '—'}"
+        )
+    if len(entities) > 5:
+        print(f"    … and {len(entities) - 5} more")
     return entities
 
 
 def fetch_preview(base_url: str, project_id: str, version_id: str) -> str:
-    """Call POST /api/speckle/model-preview and return a base64 data URI."""
-    print(f"\n[2/4] Fetching model preview from Speckle …")
-    url = _api(base_url, "/api/speckle/model-preview")
-    result = post_json(url, {"project_id": project_id, "version_id": version_id})
+    print("\n[1b] Fetching model preview …")
+    result = post_json(
+        _api(base_url, "/api/speckle/model-preview"),
+        {"project_id": project_id, "version_id": version_id},
+    )
     preview = result.get("preview", "")
     snippet = preview[:60] + "…" if len(preview) > 60 else preview
-    print(f"      [OK] model preview fetched: {snippet}")
+    print(f"  [OK] preview: {snippet}")
     return preview
 
 
 def fetch_live_screenshots(frontend_url: str) -> list[str]:
-    """Fetch all browser-captured screenshots from GET /api/screenshot (Next.js)."""
-    print(f"\n[2b] Fetching live browser screenshots from Next.js …")
+    print("\n[1c] Fetching live browser screenshots from Next.js …")
     url = frontend_url.rstrip("/") + "/api/screenshot"
     resp = requests.get(url, timeout=30)
     resp.raise_for_status()
-    result = resp.json()
-    images = result.get("images", [])
+    images = resp.json().get("images", [])
     if not images:
         raise ValueError("No images returned from GET /api/screenshot")
-    print(f"      [OK] {len(images)} live screenshot(s) fetched")
+    print(f"  [OK] {len(images)} screenshot(s) fetched")
     return images
 
 
-# ── Presentation ──────────────────────────────────────────────────────────────
+# ── Step 2 — analyze_agent ────────────────────────────────────────────────────
 
-def print_results(result: dict) -> None:
-    objects          = result.get("objects", [])
-    high_confidence  = result.get("high_confidence", [])
-    low_confidence   = result.get("low_confidence", [])
-
-    total = len(objects)
-    print(f"\n{'='*70}")
-    print(f"  ANALYSIS RESULTS  —  {total} objects identified")
-    print(f"{'='*70}")
-
-    if high_confidence:
-        print(f"\n  HIGH CONFIDENCE  (> 0.7)  [{len(high_confidence)} objects]")
-        print(f"  {'Name':<30}  {'Qty':>4}  {'Conf':>5}  Material")
-        print(f"  {'-'*60}")
-        for obj in high_confidence:
-            print(
-                f"  {obj['name']:<30}  {obj['quantity']:>4}  {obj['confidence']:>5.2f}  "
-                f"{obj.get('material') or '—'}"
-            )
-
-    if low_confidence:
-        print(f"\n  LOW CONFIDENCE  (<= 0.7)  [{len(low_confidence)} objects]")
-        print(f"  {'Name':<30}  {'Qty':>4}  {'Conf':>5}  Material")
-        print(f"  {'-'*60}")
-        for obj in low_confidence:
-            print(
-                f"  {obj['name']:<30}  {obj['quantity']:>4}  {obj['confidence']:>5.2f}  "
-                f"{obj.get('material') or '—'}"
-            )
-
-    print(f"\n{'='*70}")
-    print("\nFull JSON result:\n")
-    print(json.dumps(result, indent=2))
-
-
-def save_results_json(
-    result: dict,
-    model_name: str,
+def run_analyze(
+    service,
     entities: list,
-    output_path: str | None = None,
-) -> str:
-    """Write high-confidence objects + model metadata to a JSON file.
+    screenshots: list[str],
+    user_context: str | None,
+    llm_model: str,
+    model_name: str,
+) -> tuple[dict, str]:
+    """Run analyze_3dmodel, print results, save to disk.
 
-    Structure
-    ---------
-    {
-      "meta": { model info, room bounding box, counts, … },
-      "high_confidence_objects": [ { …, "object_ids": […] }, … ]
-    }
-
-    Returns the path of the written file.
+    Returns (furniture_list_for_downstream, json_path).
     """
+    from services.model_analysis_worker import _normalize_objects
 
-    high_confidence = result.get("high_confidence", [])
-    # low_confidence  = result.get("low_confidence",  [])
-    # objects         = result.get("objects",         [])
+    print(f"\n[2] analyze_agent  (provider={llm_model}, entities={len(entities)}, "
+          f"screenshots={len(screenshots)}) …")
+    t0 = time.time()
+    raw = service.analyze_3dmodel(
+        entities=entities,
+        screenshots=screenshots or None,
+        user_context=user_context,
+        llm_model=llm_model,
+    )
+    elapsed = time.time() - t0
 
-    # ── Compute overall bounding box from entity bounds ──────────────────
+    objects = _normalize_objects(raw.get("objects", []))
+    space_description = raw.get("space_description", "")
+
+    print(f"\n{_hr()}")
+    print(f"  ANALYZE RESULTS  —  {len(objects)} object group(s)  [{elapsed:.1f}s]")
+    print(_hr())
+    if space_description:
+        print(f"\n  SPACE: {space_description}\n")
+    print(f"  {'Name':<30}  {'Qty':>4}  Material")
+    print(f"  {_hr('-', 55)}")
+    for obj in objects:
+        print(f"  {obj['name']:<30}  {obj['quantity']:>4}  {obj.get('material') or '—'}")
+    print(_hr())
+
+    # Build total_bounds from entity bbox data
     total_bounds: dict | None = None
     try:
         xs_min, ys_min, zs_min = [], [], []
         xs_max, ys_max, zs_max = [], [], []
         for entity in entities:
-            bounds = entity.get("bounds")
-            if not bounds:
-                continue
+            bounds = entity.get("bounds") or entity.get("bbox") or {}
             mn = bounds.get("min") or []
             mx = bounds.get("max") or []
+            if isinstance(mn, dict):
+                mn = [mn.get("x", 0), mn.get("y", 0), mn.get("z", 0)]
+            if isinstance(mx, dict):
+                mx = [mx.get("x", 0), mx.get("y", 0), mx.get("z", 0)]
             if len(mn) >= 3 and len(mx) >= 3:
                 xs_min.append(mn[0]); ys_min.append(mn[1]); zs_min.append(mn[2])
                 xs_max.append(mx[0]); ys_max.append(mx[1]); zs_max.append(mx[2])
         if xs_min:
-            min_x, min_y, min_z = min(xs_min), min(ys_min), min(zs_min)
-            max_x, max_y, max_z = max(xs_max), max(ys_max), max(zs_max)
             total_bounds = {
-                "width":  round(max_x - min_x, 3),
-                "depth":  round(max_y - min_y, 3),
-                "height": round(max_z - min_z, 3),
-                }
-            
+                "width":  round(max(xs_max) - min(xs_min), 3),
+                "depth":  round(max(ys_max) - min(ys_min), 3),
+                "height": round(max(zs_max) - min(zs_min), 3),
+            }
     except Exception:
         pass
 
-    # ── Build output document ────────────────────────────────────────────
-    output: dict = {
+    furniture_list = {
         "meta": {
-            "model_name":            model_name,
+            "model_name": model_name,
             **({"total_bounds": total_bounds} if total_bounds else {}),
         },
+        "space_description": space_description,
         "architectural_objects": [
             {
                 "name":        obj["name"],
-                "description":        obj["description"],
+                "description": obj["description"],
                 "material":    obj.get("material", ""),
                 "quantity":    obj["quantity"],
-                "object_ids":  obj.get("object_ids", []),
+                "object_ids":  obj.get("object_ids", {}),
             }
-            for obj in high_confidence
+            for obj in objects
         ],
     }
 
-    # ── Resolve output path ──────────────────────────────────────────────
-    if output_path is None:
-        safe_name  = "".join(c if (c.isalnum() or c in "-_") else "_" for c in model_name)
-        timestamp  = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = os.path.join(_THIS_DIR, f"analysis_{safe_name}_{timestamp}.json")
-
-    with open(output_path, "w", encoding="utf-8") as fh:
-        json.dump(output, fh, indent=2, ensure_ascii=False)
-
-    print(f"\n  [OK] Results saved -> {output_path}")
-    return output_path
+    json_path = _save_json(furniture_list, "analysis", model_name)
+    return furniture_list, json_path
 
 
-# ── CLI ───────────────────────────────────────────────────────────────────────
+# ── Step 3 — scenario_agent ───────────────────────────────────────────────────
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="End-to-end test: Speckle entities + model preview -> analyze_3dmodel()"
-    )
-    parser.add_argument(
-        "--model-name",
-        default=None,
-        help=(
-            "Optional substring to match a model name in the project "
-            "(default: uses the first available model)"
-        ),
-    )
-    parser.add_argument(
-        "--provider",
-        choices=["gemini", "openai", "anthropic"],
-        default=None,
-        help="LLM provider (default: uses DEFAULT_LLM_MODEL from env/constants)",
-    )
-    parser.add_argument(
-        "--context",
-        default=None,
-        help='Optional free-text context for the analysis, e.g. "open-plan office"',
-    )
-    parser.add_argument(
-        "--base-url",
-        default="http://localhost:8000",
-        help="Base URL of the running FastAPI server (default: http://localhost:8000)",
-    )
-    parser.add_argument(
-        "--no-preview",
-        action="store_true",
-        help="Skip model preview fetch and run metadata-only analysis",
-    )
-    parser.add_argument(
-        "--live-screenshot",
-        action="store_true",
-        help="Fetch the last browser-captured screenshot from the Next.js frontend and include it in the analysis",
-    )
-    parser.add_argument(
-        "--frontend-url",
-        default="http://localhost:3000",
-        help="Base URL of the Next.js frontend (used with --live-screenshot, default: http://localhost:3000)",
-    )
-    parser.add_argument(
-        "--scenario-ids",
-        type=int,
-        nargs="+",
-        default=None,
-        help="Indices (0-based) of scenarios to process for foley (default: all scenarios)",
-    )
-    parser.add_argument(
-        "--max-sounds",
-        type=int,
-        default=20,
-        help="Maximum number of sound events for the foley artist (default: 20)",
-    )
-    args = parser.parse_args()
+def run_scenario(
+    service,
+    furniture_list: dict,
+    user_context: str | None,
+    people_count: int,
+    likeliness: int,
+    duration: int,
+    llm_model: str,
+    model_name: str,
+) -> dict:
+    """Run scenarist_agent, print results, save to disk.
 
-    load_env()
-
-    # ── Verify server is reachable ────────────────────────────────────────────
-    try:
-        resp = requests.get(_api(args.base_url, "/health"), timeout=5)
-        resp.raise_for_status()
-        print(f"Server reachable at {args.base_url}")
-    except Exception:
-        try:
-            requests.get(args.base_url, timeout=5).raise_for_status()
-            print(f"Server reachable at {args.base_url}")
-        except Exception as exc:
-            print(
-                f"\n[ERR] Cannot reach {args.base_url} -- is the FastAPI server running?\n  {exc}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-
-    # ── Auto-resolve project and version from backend ─────────────────────────
-    project_id, version_id, model_name = resolve_project_and_version(
-        args.base_url, args.model_name
-    )
-
-    # ── Run pipeline ──────────────────────────────────────────────────────────
-    entities = fetch_entities(args.base_url, project_id, version_id)
-
-    if not entities:
-        print("\n[ERR] No entities returned -- check Speckle auth and model content.", file=sys.stderr)
-        sys.exit(1)
-
-    preview: str | None = None
-    if not args.no_preview:
-        try:
-            preview = fetch_preview(args.base_url, project_id, version_id)
-        except Exception as exc:
-            print(f"\n  [WARN] Model preview fetch failed ({exc}); continuing metadata-only.")
-
-    extra_screenshots: list[str] = []
-    if args.live_screenshot:
-        try:
-            extra_screenshots.extend(fetch_live_screenshots(args.frontend_url))
-        except Exception as exc:
-            print(f"\n  [WARN] Live screenshots fetch failed ({exc}); skipping.")
-
-    # Collect screenshots list
-    screenshots: list[str] = []
-    if preview:
-        screenshots.append(preview)
-    if extra_screenshots:
-        screenshots.extend(extra_screenshots)
-
-    # ── Direct analysis call ──────────────────────────────────────────────────
-    from services.llm_service import LLMService
-    from services.model_analysis_worker import _normalize_objects
-    from config.constants import DEFAULT_LLM_MODEL
-
-    llm_model = args.provider or DEFAULT_LLM_MODEL
-    service = LLMService()
-    print(f"\n[3/5] Running analyze_3dmodel (provider={llm_model}, entities={len(entities)}, screenshots={len(screenshots)}) …")
-    raw = service.analyze_3dmodel(
-        entities=entities,
-        screenshots=screenshots or None,
-        user_context=args.context,
-        llm_model=llm_model,
-    )
-    objects = _normalize_objects(raw.get("objects", []))
-    high = [o for o in objects if o["confidence"] > 0.7]
-    low  = [o for o in objects if o["confidence"] <= 0.7]
-    result = {"objects": objects, "high_confidence": high, "low_confidence": low}
-    print_results(result)
-    json_path = save_results_json(result, model_name, entities)
-
-    print(f"\n[4/5] Running scenarist_agent (provider={llm_model}) …")
-    with open(json_path, encoding="utf-8") as fh:
-        furniture_list = json.load(fh)
+    Returns the raw scenario result dict.
+    """
+    print(f"\n[3] scenario_agent  (people={people_count}, likeliness={likeliness}, "
+          f"duration={duration}s, provider={llm_model}) …")
+    t0 = time.time()
     raw_scenarios = service.scenarist_agent(
-        user_context=args.context,
+        user_context=user_context,
         llm_model=llm_model,
         furniture_list=furniture_list,
+        duration=duration,
+        people_count=people_count,
+        likeliness=likeliness,
     )
+    elapsed = time.time() - t0
+
     scenarios = raw_scenarios.get("scenarios", [])
-    print(f"\n{'='*70}")
-    print(f"  SCENARIST RESULTS  —  {len(scenarios)} scenario(s) generated")
-    print(f"{'='*70}")
+    print(f"\n{_hr()}")
+    print(f"  SCENARIO RESULTS  —  {len(scenarios)} scenario(s)  [{elapsed:.1f}s]")
+    print(_hr())
     for i, sc in enumerate(scenarios, 1):
         print(
             f"\n  [{i}] {sc.get('title', 'Untitled')}  "
@@ -447,52 +314,233 @@ def main() -> None:
             f"likeliness={sc.get('likeliness', '?')})"
         )
         for ev in sc.get("events", []):
-            print(f"    {ev.get('timestamp', '?')}  {ev.get('description', '')}")
-    print(f"\n{'='*70}")
-    print("\nFull JSON result:\n")
-    print(json.dumps(raw_scenarios, indent=2))
-    safe_name  = "".join(c if (c.isalnum() or c in "-_") else "_" for c in model_name)
-    timestamp  = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_path   = os.path.join(_THIS_DIR, f"scenarios_{safe_name}_{timestamp}.json")
-    with open(out_path, "w", encoding="utf-8") as fh:
-        json.dump(raw_scenarios, fh, indent=2, ensure_ascii=False)
-    print(f"\n  [OK] Scenarios saved -> {out_path}")
+            print(f"    {ev.get('timestamp', '?')}  {ev.get('description', '')[:120]}")
+    print(_hr())
 
-    print(f"\n[5/5] Running foley_artist (provider={llm_model}, max_sounds={args.max_sounds}) …")
-    raw_foley = service.foley_artist(
+    _save_json(raw_scenarios, "scenarios", model_name)
+    return raw_scenarios
+
+
+# ── Steps 4a + 4b — foley_agent & speech_agent (parallel) ────────────────────
+
+async def run_foley_and_speech(
+    service,
+    raw_scenarios: dict,
+    furniture_list: dict,
+    llm_model: str,
+    model_name: str,
+) -> tuple[dict, dict]:
+    """Run foley_agent and speech_agent concurrently.
+
+    Returns (foley_result, speech_result).
+    """
+    print(f"\n[4] foley_agent + speech_agent  (parallel, provider={llm_model}) …")
+    t0 = time.time()
+
+    foley_task = asyncio.create_task(
+        service.async_foley_artist(
+            scenarist_agent_result=raw_scenarios,
+            furniture_list=furniture_list,
+            llm_model=llm_model,
+        )
+    )
+    speech_task = asyncio.create_task(
+        service.async_speech_agent(
+            scenarist_agent_result=raw_scenarios,
+            furniture_list=furniture_list,
+            llm_model=llm_model,
+        )
+    )
+
+    raw_foley, raw_speech = await asyncio.gather(foley_task, speech_task)
+    elapsed = time.time() - t0
+
+    # ── Print foley results ──────────────────────────────────────────────
+    sounds = raw_foley.get("sounds", [])
+    print(f"\n{_hr()}")
+    print(f"  FOLEY RESULTS  —  {len(sounds)} sound type(s)  [{elapsed:.1f}s]")
+    print(_hr())
+    for s in sounds:
+        ts = ", ".join(s.get("timestamps", []))
+        objs = s.get("objectsInvolved", [])
+        print(
+            f"  [{s.get('id', '?')}]  {s.get('soundName', 'Untitled')}\n"
+            f"    {s.get('description', '')}\n"
+            f"    timestamps: {ts or '—'}  |  objects: {len(objs)}"
+        )
+    print(_hr())
+    _save_json(raw_foley, "foley", model_name)
+
+    # ── Print speech results ─────────────────────────────────────────────
+    speeches = raw_speech.get("speeches", [])
+    print(f"\n{_hr()}")
+    print(f"  SPEECH RESULTS  —  {len(speeches)} speech entry(ies)")
+    print(_hr())
+    for sp in speeches:
+        ts = ", ".join(sp.get("timestamps", []))
+        print(
+            f"  [{sp.get('id', '?')}]  {sp.get('character', '?')}  @{ts}\n"
+            f"    {sp.get('script', '')[:200]}"
+        )
+    print(_hr())
+    _save_json(raw_speech, "speech", model_name)
+
+    return raw_foley, raw_speech
+
+
+# ── Step 5 — orchestrate_agent ────────────────────────────────────────────────
+
+async def run_orchestrate(
+    service,
+    raw_scenarios: dict,
+    raw_foley: dict,
+    raw_speech: dict,
+    furniture_list: dict,
+    llm_model: str,
+    model_name: str,
+) -> dict:
+    """Run orchestrate_agent, print results, save to disk."""
+    print(f"\n[5] orchestrate_agent  (provider={llm_model}) …")
+    t0 = time.time()
+    raw_playlist = await service.async_orchestrate_agent(
         scenarist_agent_result=raw_scenarios,
-        furniture_list=furniture_list,
-        scenario_ids=args.scenario_ids,
-        maximum_number_of_sounds=args.max_sounds,
+        foley_result=raw_foley,
+        speech_result=raw_speech,
         llm_model=llm_model,
     )
-    foley_scenarios = raw_foley.get("scenarios", [])
-    total_events = sum(len(s.get("sound_events", [])) for s in foley_scenarios)
-    print(f"\n{'='*70}")
-    print(f"  FOLEY ARTIST RESULTS  —  {len(foley_scenarios)} scenario(s), {total_events} total sound event(s)")
-    print(f"{'='*70}")
-    for i, sc in enumerate(foley_scenarios, 1):
-        sound_events = sc.get("sound_events", [])
-        print(f"\n  [{i}] {sc.get('scenario_title', 'Untitled')}  ({len(sound_events)} sound event(s))")
-        for ev in sound_events:
-            print(
-                f"    [{ev.get('category', '?')}] {ev.get('soundName', 'Untitled')}  "
-                f"(duration={ev.get('duration', '?')}, spl={ev.get('spl', '?')})"
-            )
-            print(f"      {ev.get('description', '')}")
-            if ev.get("timestamps"):
-                print(f"      Timestamps: {', '.join(ev.get('timestamps', []))}")
-            if ev.get("objectsInvolved"):
-                print(f"      Objects: {ev.get('objectsInvolved', [])}")
-    print(f"\n{'='*70}")
-    print("\nFull JSON result:\n")
-    print(json.dumps(raw_foley, indent=2))
-    safe_name  = ".".join(c if (c.isalnum() or c in "-_") else "_" for c in model_name)
-    timestamp  = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    foley_path = os.path.join(_THIS_DIR, f"foley_{safe_name}_{timestamp}.json")
-    with open(foley_path, "w", encoding="utf-8") as fh:
-        json.dump(raw_foley, fh, indent=2, ensure_ascii=False)
-    print(f"\n  [OK] Foley events saved -> {foley_path}")
+    elapsed = time.time() - t0
+
+    playlist = raw_playlist.get("playlist", [])
+    print(f"\n{_hr()}")
+    print(f"  ORCHESTRATE RESULTS  —  {len(playlist)} playlist entry(ies)  [{elapsed:.1f}s]")
+    print(_hr())
+    for entry in playlist:
+        trigger = entry.get("trigger", {})
+        expr = trigger.get("expression", "")
+        delay = trigger.get("delay", 0.0)
+        trigger_str = f"{trigger.get('type', '?')}({expr})" + (f" +{delay}s" if delay else "")
+        print(
+            f"  [{entry.get('id', '?')}]  [{entry.get('category', '?')}]  "
+            f"{entry.get('soundName', 'Untitled')}\n"
+            f"    trigger: {trigger_str}\n"
+            f"    variants: {entry.get('variants', [])}  spl: {entry.get('spl', '?')}  "
+            f"duration: {entry.get('duration', '?')}"
+        )
+    print(_hr())
+    _save_json(raw_playlist, "orchestrate", model_name)
+    return raw_playlist
+
+
+# ── Main ───────────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="E2E test: Speckle model → analyze → scenario → foley + speech → orchestrate"
+    )
+    parser.add_argument("--model-name", default=None,
+                        help="Substring to match a Speckle model name (default: first available)")
+    parser.add_argument("--provider", choices=["gemini", "openai", "anthropic"], default=None,
+                        help="LLM provider (default: DEFAULT_LLM_MODEL from env/constants)")
+    parser.add_argument("--context", default=None,
+                        help='Optional free-text context, e.g. "open-plan office"')
+    parser.add_argument("--base-url", default="http://localhost:8000",
+                        help="FastAPI server base URL (default: http://localhost:8000)")
+    parser.add_argument("--no-preview", action="store_true",
+                        help="Skip model preview fetch (metadata-only analysis)")
+    parser.add_argument("--live-screenshot", action="store_true",
+                        help="Fetch last browser screenshot from Next.js frontend")
+    parser.add_argument("--frontend-url", default="http://localhost:3000",
+                        help="Next.js frontend URL (used with --live-screenshot)")
+    parser.add_argument("--people-count", type=int, default=5,
+                        help="Number of people in the scenario (default: 5)")
+    parser.add_argument("--likeliness", type=int, default=9,
+                        help="Likeliness score 1–10 (default: 9)")
+    parser.add_argument("--duration", type=int, default=150,
+                        help="Approximate scenario duration in seconds (default: 150)")
+    parser.add_argument(
+        "--stop-after",
+        choices=["analyze", "scenario", "foley", "speech", "orchestrate"],
+        default=None,
+        help="Stop the pipeline after the given stage",
+    )
+    args = parser.parse_args()
+
+    load_env()
+
+    # ── Verify server is reachable ─────────────────────────────────────────────
+    try:
+        requests.get(_api(args.base_url, "/health"), timeout=5).raise_for_status()
+        print(f"Server reachable at {args.base_url}")
+    except Exception:
+        try:
+            requests.get(args.base_url, timeout=5).raise_for_status()
+            print(f"Server reachable at {args.base_url}")
+        except Exception as exc:
+            print(f"\n[ERR] Cannot reach {args.base_url} — is the FastAPI server running?\n  {exc}",
+                  file=sys.stderr)
+            sys.exit(1)
+
+    # ── Resolve project ────────────────────────────────────────────────────────
+    project_id, version_id, model_name = resolve_project_and_version(
+        args.base_url, args.model_name
+    )
+
+    # ── Fetch Speckle data ─────────────────────────────────────────────────────
+    entities = fetch_entities(args.base_url, project_id, version_id)
+    if not entities:
+        print("\n[ERR] No entities returned — check Speckle auth and model content.", file=sys.stderr)
+        sys.exit(1)
+
+    screenshots: list[str] = []
+    if not args.no_preview:
+        try:
+            screenshots.append(fetch_preview(args.base_url, project_id, version_id))
+        except Exception as exc:
+            print(f"\n  [WARN] Preview fetch failed ({exc}); continuing metadata-only.")
+
+    if args.live_screenshot:
+        try:
+            screenshots.extend(fetch_live_screenshots(args.frontend_url))
+        except Exception as exc:
+            print(f"\n  [WARN] Live screenshot fetch failed ({exc}); skipping.")
+
+    # ── Import service ─────────────────────────────────────────────────────────
+    from services.llm_service import LLMService
+    from config.constants import DEFAULT_LLM_MODEL
+
+    llm_model = args.provider or DEFAULT_LLM_MODEL
+    service = LLMService()
+
+    # ── [2] analyze_agent ──────────────────────────────────────────────────────
+    furniture_list, _ = run_analyze(
+        service, entities, screenshots, args.context, llm_model, model_name
+    )
+    if args.stop_after == "analyze":
+        return
+
+    # ── [3] scenario_agent ─────────────────────────────────────────────────────
+    raw_scenarios = run_scenario(
+        service, furniture_list, args.context,
+        args.people_count, args.likeliness, args.duration,
+        llm_model, model_name,
+    )
+    if args.stop_after == "scenario":
+        return
+
+    # ── [4] foley_agent + speech_agent (parallel) ──────────────────────────────
+    raw_foley, raw_speech = asyncio.run(
+        run_foley_and_speech(service, raw_scenarios, furniture_list, llm_model, model_name)
+    )
+    if args.stop_after in ("foley", "speech"):
+        return
+
+    # ── [5] orchestrate_agent ──────────────────────────────────────────────────
+    asyncio.run(
+        run_orchestrate(
+            service, raw_scenarios, raw_foley, raw_speech,
+            furniture_list, llm_model, model_name,
+        )
+    )
 
 
 if __name__ == "__main__":

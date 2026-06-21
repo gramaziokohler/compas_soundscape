@@ -22,7 +22,7 @@ import { ScenarioResultContent } from './ScenarioResultContent';
  * via "and" to a capitalized word (to avoid greedily consuming lowercase words like "the").
  * Handles optional space after "id:" e.g. (id: abc...).
  */
-const OBJECT_REF_RE = /"?([A-Za-z][A-Za-z]*(?:\s+(?:and\s+[A-Z][A-Za-z]*|[A-Z][A-Za-z]*))*)"?(?:\s*\([^)]*\))?\s*\((?:e\.g\.,\s*)?(?:ids?:\s*(?:id:\s*)?)?[0-9a-fA-F]+(?:\s*(?:,|and)\s*(?:ids?:\s*(?:id:\s*)?)?[0-9a-fA-F]+)*\)/g;
+const OBJECT_REF_RE = /"?([A-Za-z][A-Za-z]*(?:\s+(?:and\s+[A-Z][A-Za-z]*|[A-Z][A-Za-z]*))*)"?(?:\s*\([^)]*\))?\s*\((?:e\.g\.,\s*)?(?:\w+:\s*(?:id:\s*)?)?[0-9a-fA-F]+(?:\s*(?:,|and)\s*(?:\w+:\s*(?:id:\s*)?)?[0-9a-fA-F]+)*\)/g;
 const ID_HEX_RE = /[0-9a-fA-F]{8,}/g;
 /** Normalize dot-separated object refs (LLM hallucination): Doors.hexid → Doors (id:hexid) */
 const ID_HEX_DOT_RE = /\b([A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+)*)\.([0-9a-fA-F]{24,64})\b/g;
@@ -91,13 +91,69 @@ function formatTimestampRange(ts: string): string {
   return ts;
 }
 
+// ─── Pipeline status / progress ───────────────────────────────────────────────
+// Maps the scenario→foley→speech→orchestrate pipeline to a single status line
+// and a monotonic progress value, surfaced in the Card's collapsed progress bar
+// (the "reduced" card). Replaces the inline text helpers that used to live in
+// the expanded card body.
+//   scenarist streaming  → "Imagining usage scenarios…"            (10%)
+//   scenarist done       → "Crafting foley + speech prompts…"      (35%)
+//   foley ready          → "Foley ready (N sounds) · …speech…"     (55%)
+//   speech ready         → "Speech ready (N characters) · …"       (80%)
+//   orchestrate done     → "Playlist ready (N entries) — sent…"    (100%)
+
+export function getScenarioPipelineStatus(
+  config: ScenarioConfig,
+  isOperationRunning: boolean,
+): { status: string | undefined; progress: number } {
+  if (!isOperationRunning) return { status: undefined, progress: 0 };
+
+  const scenarioCompleted = !!config.scenarioId;
+  const hasFoley = !!config.foleyResult;
+  const hasSpeech = !!config.speechResult;
+  const hasOrchestrate = !!config.orchestrateResult;
+
+  const foleyCount = config.foleyResult?.scenarios?.reduce(
+    (sum, s) => sum + (s.sound_events?.length ?? 0), 0,
+  ) ?? 0;
+  const speechCount = config.speechResult?.speeches?.length ?? 0;
+  const playlistCount = config.orchestrateResult?.playlist?.length ?? 0;
+
+  if (hasOrchestrate) {
+    return {
+      status: `Playlist ready${playlistCount ? ` (${playlistCount} entries)` : ''} — sent to generation`,
+      progress: 100,
+    };
+  }
+  if (hasSpeech) {
+    return {
+      status: `Speech ready${speechCount ? ` (${speechCount} characters)` : ''} · compiling playlist…`,
+      progress: 80,
+    };
+  }
+  if (hasFoley) {
+    return {
+      status: `Foley ready${foleyCount ? ` (${foleyCount} sounds)` : ''} · generating speech…`,
+      progress: 55,
+    };
+  }
+  if (scenarioCompleted) {
+    return { status: 'Crafting foley + speech prompts…', progress: 35 };
+  }
+  return { status: 'Imagining usage scenarios…', progress: 10 };
+}
+
 // ─── ScenarioAfterView ────────────────────────────────────────────────────────
 // Rendered as afterContent (Card's "completed" dark-bg mode).
 // State machine:
 //   scenarist streaming  → events build up progressively (scenarioId still null)
 //   scenarist done       → scenario events + "Call Foley Artist" button
-//   foley loading        → spinner (scenarioId set, foleyResult null, operation running)
-//   foley streaming      → foley sounds appear progressively
+//   foley+speech loading → spinner (scenarioId set, no foley/speech yet)
+//   speech loading       → foley done, waiting for speech
+//   orchestrate loading  → foley+speech done, waiting for orchestrate
+//   orchestrate done     → auto-sent to sound generation
+// Step-by-step progress is surfaced in the collapsed Card progress bar via
+// getScenarioPipelineStatus — not as inline text in the expanded body.
 
 export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; index: number }) {
   const handleAnalyze = useAnalysisStore((s) => s.handleAnalyze);
@@ -105,8 +161,9 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
 
   const isOperationRunning = analyzingConfigIndex === index;
   const scenarioCompleted = !!config.scenarioId;
-  const isFoleyLoading = isOperationRunning && scenarioCompleted && !config.foleyResult;
-  const isFoleyStreaming = isOperationRunning && !!config.foleyResult;
+  const hasFoley = !!config.foleyResult;
+  const hasSpeech = !!config.speechResult;
+  const hasOrchestrate = !!config.orchestrateResult;
 
   // Always show scenario events — foley sounds are shown in the Sounds step, not here
   const scenarios = config.scenarioResult?.scenarios ?? [];
@@ -128,30 +185,8 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
         </div>
       ))}
 
-      {/* Foley loading indicator */}
-      {isFoleyLoading && (
-        <div className="flex items-center gap-2 pt-1">
-          <span
-            className="inline-block w-1.5 h-1.5 rounded-full animate-pulse flex-shrink-0"
-            style={{ backgroundColor: 'var(--color-primary)' }}
-          />
-          <span className="text-xs" style={{ color: 'var(--color-background)' }}>Crafting sound prompts…</span>
-        </div>
-      )}
-
-      {/* Foley streaming indicator */}
-      {isFoleyStreaming && (
-        <div className="flex items-center gap-2 pt-1">
-          <span
-            className="inline-block w-1.5 h-1.5 rounded-full animate-pulse flex-shrink-0"
-            style={{ backgroundColor: 'var(--color-success, #22c55e)' }}
-          />
-          <span className="text-xs" style={{ color: 'var(--color-background)' }}>Sound prompts ready…</span>
-        </div>
-      )}
-
-      {/* Call Foley Artist — only shown when scenarist done, foley not yet started, not running */}
-      {scenarioCompleted && !isOperationRunning && !config.foleyResult && (
+      {/* Call Foley Artist — only shown when scenarist done, pipeline not yet started */}
+      {scenarioCompleted && !isOperationRunning && !hasFoley && !hasSpeech && !hasOrchestrate && (
         <button
           onClick={() => handleAnalyze(index)}
           className="w-full py-1.5 px-3 text-xs font-medium rounded hover:opacity-80 transition-opacity"
@@ -161,7 +196,37 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
             borderRadius: '6px',
           }}
         >
-          Call Foley Artist
+          Generate Sound Pipeline
+        </button>
+      )}
+
+      {/* Continue orchestrate — shown when foley+speech done but orchestrator not started yet (was interrupted) */}
+      {scenarioCompleted && !isOperationRunning && hasFoley && hasSpeech && !hasOrchestrate && (
+        <button
+          onClick={() => handleAnalyze(index)}
+          className="w-full py-1.5 px-3 text-xs font-medium rounded hover:opacity-80 transition-opacity"
+          style={{
+            backgroundColor: 'var(--color-info, #3b82f6)',
+            color: '#fff',
+            borderRadius: '6px',
+          }}
+        >
+          Compile Playlist
+        </button>
+      )}
+
+      {/* Re-generate — shown when pipeline completed, clicking re-runs orchestrate */}
+      {scenarioCompleted && !isOperationRunning && hasOrchestrate && (
+        <button
+          onClick={() => handleAnalyze(index)}
+          className="w-full py-1.5 px-3 text-xs font-medium rounded hover:opacity-80 transition-opacity"
+          style={{
+            backgroundColor: 'var(--color-success, #22c55e)',
+            color: '#fff',
+            borderRadius: '6px',
+          }}
+        >
+          Re-send to Sound Generation
         </button>
       )}
     </div>

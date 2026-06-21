@@ -8,7 +8,7 @@ Progress file  (temp_dir/model_analysis_progress_{analysis_id}.json):
     {"value": 0-100, "status": "<human text>"}
 
 Result file  (temp_dir/model_analysis_result_{analysis_id}.json):
-    {"type": "done",  "result": {"objects": [...], "high_confidence": [...], "low_confidence": [...]}}
+    {"type": "done",  "result": {"objects": [...], "space_description": "..."}}
  or {"type": "error", "message": "<str>", "traceback": "<str>"}
 """
 from __future__ import annotations
@@ -48,7 +48,6 @@ def _normalize_objects(raw: list) -> list[dict]:
         if not isinstance(obj, dict):
             continue
         try:
-            confidence = max(0.0, min(1.0, float(obj.get("confidence", 0.5))))
             # object_ids comes in as dict[str, dict] (already resolved by analyze_3dmodel)
             # or as list[str] (legacy / fallback — convert to empty-bounds dict)
             raw_oids = obj.get("object_ids", {})
@@ -66,7 +65,6 @@ def _normalize_objects(raw: list) -> list[dict]:
                 "material":    str(obj.get("material", "")),
                 "quantity":    max(1, int(obj.get("quantity", 1))),
                 "object_ids":  object_ids,
-                "confidence":  round(confidence, 3),
             })
         except (ValueError, TypeError):
             continue
@@ -126,18 +124,13 @@ def run_model_analysis(
         )
         # object_ids are already resolved and filled with bounds by analyze_3dmodel.
         objects = _normalize_objects(raw_result.get("objects", []))
-
-        _write_progress(progress_file, 90, "Classifying confidence levels...")
-
-        high_confidence = [o for o in objects if o["confidence"] > 0.7]
-        low_confidence  = [o for o in objects if o["confidence"] <= 0.7]
+        space_description = raw_result.get("space_description", "")
 
         _write_progress(progress_file, 95, "Finalizing...")
 
         result_payload = {
-            "objects":         objects,
-            "high_confidence": high_confidence,
-            "low_confidence":  low_confidence,
+            "objects":           objects,
+            "space_description": space_description,
         }
         _write_result(result_file, {"type": "done", "result": result_payload})
 
