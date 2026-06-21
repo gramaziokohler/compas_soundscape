@@ -290,6 +290,9 @@ class SoundscapeSoundConfig(BaseModel):
     seed_copies: int = 1
     steps: int = 25
     parent_usage_original_index: Optional[int] = None
+    # Orchestration metadata (parametric trigger links between sounds), persisted so the
+    # parametric schedule can be reconstructed/re-baked/edited after load.
+    orchestrate_meta: Optional[dict] = None
 
 
 class SoundscapeSoundEvent(BaseModel):
@@ -384,6 +387,8 @@ class SoundscapeData(BaseModel):
     analysis_state: Optional[dict] = None
     # Resonance audio persistence
     resonance_audio_config: Optional[dict] = None
+    # Per-iteration variant/entity links (keyed by f"{sound_id}-{iteration_index}")
+    iteration_links: Optional[dict] = None
 
 
 class SoundscapeSaveRequest(BaseModel):

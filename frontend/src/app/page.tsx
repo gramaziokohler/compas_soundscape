@@ -101,8 +101,16 @@ function HomeContent() {
   // Both operations need the generated sound IDs which only exist post-generation.
   // Explicitly sync BOTH _generatedSounds and _soundConfigs before running the bake so that
   // the results are not affected by whether the separate syncGeneratedSounds effect has run yet.
+  //
+  // When restoring a saved soundscape we already have the exact baked timestamps + iteration
+  // links, so a one-shot suppression flag skips the auto-rebake to avoid clobbering them.
+  const suppressOrchestrateBakeRef = useRef(false);
   useEffect(() => {
     if (!soundGen.generatedSounds.length) return;
+    if (suppressOrchestrateBakeRef.current) {
+      suppressOrchestrateBakeRef.current = false;
+      return;
+    }
     const hasOrchestrate = soundGen.soundConfigs.some((c: SoundGenerationConfig) => c.orchestrateMeta);
     if (hasOrchestrate) {
       const audioStore = useAudioControlsStore.getState();
@@ -1076,6 +1084,14 @@ function HomeContent() {
         const irBaseUrl = loadResponse.ir_base_url || undefined;
         const restored = restoreSoundscapeState(loadResponse.soundscape_data, audioBaseUrl, irBaseUrl);
 
+        // We restore the exact baked timestamps + iteration links below, so suppress the
+        // one-shot auto-rebake that the generatedSounds change would otherwise trigger.
+        // Only arm it when there are events to restore, so the bake effect is guaranteed
+        // to run (and consume the flag) instead of leaving it armed for a later generation.
+        if (restored.soundEvents.length > 0) {
+          suppressOrchestrateBakeRef.current = true;
+        }
+
         // Atomically restore all soundscape state (configs + events + settings)
         soundGen.restoreSoundscape(
           restored.soundConfigs,
@@ -1097,6 +1113,11 @@ function HomeContent() {
         useAudioControlsStore.getState().restoreSchedulingModes(
           restored.soundSchedulingModes,
           restored.soundTimestamps,
+        );
+
+        // Restore the parametric per-iteration variant/entity links between sounds.
+        useAudioControlsStore.getState().restoreIterationLinks(
+          restored.iterationLinks,
         );
 
         // Restore receivers
@@ -1287,6 +1308,7 @@ function HomeContent() {
         resonanceAudioConfig,
         useAudioControlsStore.getState().soundSchedulingModes,
         useAudioControlsStore.getState().soundTimestamps,
+        useAudioControlsStore.getState().iterationLinks,
       );
 
       // Embed analysis state in the soundscape data
@@ -2408,6 +2430,7 @@ function HomeContent() {
             // Model file upload (for empty state in scene)
             modelFile={globalModelFile}
             onModelFileChange={handleRightSidebarModelUpload}
+            isUploadingModel={isUploadingGlobalModel}
             // Load existing Speckle model (for empty state model browser)
             onSpeckleModelSelect={handleSpeckleModelSelect}
             // Soundscape persistence

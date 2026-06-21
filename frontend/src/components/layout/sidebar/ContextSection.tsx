@@ -263,19 +263,13 @@ export function ContextSection({
         disabledTooltip: 'Import a 3D model first',
       },
       {
-        type: '3d-model',
-        label: CARD_TYPE_LABELS['3d-model'],
-        enabled: hasModelLoaded,
-        disabledTooltip: 'Import a 3D model first',
-      },
-      {
         type: 'audio',
         label: CARD_TYPE_LABELS['audio'],
         enabled: true,
       },
       {
         type: 'freeform',
-        label: 'Skip context',
+        label: 'Placeholder context',
         enabled: true,
       },
     ],
@@ -612,14 +606,6 @@ export function ContextSection({
             duplicateConfigAt(fromOriginal, toOriginal);
           }
         }}
-        emptyAction={
-          <button
-            onClick={() => handleAddContextConfig('freeform')}
-            className="text-secondary bg-primary-hover hover:bg-primary cursor-pointer text-xs font-medium rounded px-1.5 py-0.5"
-          >
-            Skip context
-          </button>
-        }
       />
 
       {/* Diverse selection indicator */}

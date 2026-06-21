@@ -251,7 +251,7 @@ export function UsageSection({
     () => [
       { type: 'scenario', label: CARD_TYPE_LABELS['scenario'], enabled: true },
       { type: 'text', label: CARD_TYPE_LABELS['text'], enabled: true },
-      { type: 'freeform', label: 'Skip usage', enabled: true },
+      { type: 'freeform', label: 'Placeholder usage', enabled: true },
     ],
     [],
   );
@@ -563,14 +563,6 @@ export function UsageSection({
           duplicateConfigAt(fromOriginal, toOriginal);
         }
       }}
-      emptyAction={
-        <button
-          onClick={() => handleAddConfig('freeform')}
-          className="text-secondary bg-primary-hover hover:bg-primary cursor-pointer text-xs font-medium rounded px-1.5 py-0.5"
-        >
-          Skip usage
-        </button>
-      }
     />
   );
 }

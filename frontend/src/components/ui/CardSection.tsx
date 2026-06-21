@@ -57,6 +57,8 @@ export interface CardSectionProps<TItem extends CardBaseConfig> {
   onDuplicate?: (fromIndex: number, toInsertionIndex: number) => void;
   /** Optional action rendered below the empty message (when items.length === 0) */
   emptyAction?: ReactNode;
+  /** Label shown on the add-card button. Defaults to `Add a ${statusLabel} card`. */
+  addButtonLabel?: string;
 }
 
 // ============================================================================
@@ -107,6 +109,7 @@ export function CardSection<TItem extends CardBaseConfig>({
   onReorder,
   onDuplicate,
   emptyAction,
+  addButtonLabel,
 }: CardSectionProps<TItem>) {
   const isControlled = controlledExpandedIndex !== undefined;
 
@@ -317,6 +320,7 @@ export function CardSection<TItem extends CardBaseConfig>({
 
   const totalCount = items.length;
   const pendingCount = getPendingCount ? getPendingCount(items) : 0;
+  const addCardLabel = addButtonLabel ?? `Add a ${statusLabel} card`;
 
   const sectionColorStyle = {
     '--card-color': `var(--color-${color})`,
@@ -337,106 +341,97 @@ export function CardSection<TItem extends CardBaseConfig>({
     <div className="flex flex-col gap-3" style={sectionColorStyle}>
       {/* {header} */}
 
-      {/* Status bar + add button */}
-      <div className="flex items-center text-xs w-full gap-1 text-secondary-hover">
-        {totalCount} {statusLabel}{totalCount !== 1 ? 's' : ''}
-        {pendingCount > 0 && <span> ({pendingCount} pending)</span>}
-
-        <div className="ml-auto relative" ref={typeSelectorRef}>
-          <button
-            onClick={() => setShowTypeSelector(!showTypeSelector)}
-            className="w-8 h-8 rounded-lg text-white font-bold transition-colors flex items-center justify-center"
-            style={{ backgroundColor: 'var(--card-color)' }}
-            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--card-color-hover)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--card-color)'; }}
-            title={addButtonTitle}
-            aria-label={addButtonTitle}
-          >
-            <span className="text-lg leading-none">+</span>
-          </button>
-
-          {showTypeSelector && (
-            <div className="absolute right-0 mt-1 z-[100] rounded-lg shadow-lg bg-background border border-secondary-light min-w-[200px] overflow-hidden">
-              {availableTypes.map((option, idx) => {
-                const isFirst = idx === 0;
-                const isLast = idx === availableTypes.length - 1;
-                const roundedClass = isFirst && isLast ? 'rounded-lg' : isFirst ? 'rounded-t-lg' : isLast ? 'rounded-b-lg' : '';
-                return (
-                  <button
-                    key={option.type}
-                    onClick={() => option.enabled ? handleTypeSelect(option.type) : null}
-                    disabled={!option.enabled}
-                    className={`w-full text-left px-3 py-2 text-xs transition-colors ${roundedClass} ${
-                      option.enabled
-                        ? 'text-foreground cursor-pointer hover:text-white'
-                        : 'text-secondary-hover cursor-not-allowed opacity-60'
-                    }`}
-                    onMouseEnter={(e) => { if (option.enabled) e.currentTarget.style.backgroundColor = 'var(--card-color)'; }}
-                    onMouseLeave={(e) => { if (option.enabled) e.currentTarget.style.backgroundColor = ''; }}
-                    title={option.enabled ? option.label : option.disabledTooltip}
-                  >
-                    {option.label}
-                  </button>
-                );
-              })}
-            </div>
-          )}
+      {/* Status bar (count only) */}
+      {totalCount > 0 && (
+        <div className="flex items-center text-xs w-full gap-1 text-secondary-hover">
+          {totalCount} {statusLabel}{totalCount !== 1 ? 's' : ''}
+          {pendingCount > 0 && <span> ({pendingCount} pending)</span>}
         </div>
-      </div>
+      )}
 
       {/* Card list */}
       <div ref={listRef} className="flex flex-col gap-2">
-        {items.length === 0 ? (
-          <div className="rounded-lg p-4 text-xs bg-secondary-light text-secondary-hover">
-            <p className="text-center">{emptyMessage}</p>
-            {emptyAction && (
-              <div className="mt-2 text-right">{emptyAction}</div>
-            )}
-          </div>
-        ) : (
-          <>
-            {/* Insertion line before first card */}
-            {isDraggingMoved && !isNoOpInsertion && dragVisual.insertionIndex === 0 && (
+        {/* Insertion line before first card */}
+        {isDraggingMoved && !isNoOpInsertion && dragVisual.insertionIndex === 0 && (
+          <InsertionLine color={color} />
+        )}
+
+        {items.map((item, index) => (
+          <Fragment key={index}>
+            <div
+              ref={(el) => {
+                if (el) cardRefs.current.set(index, el);
+                else cardRefs.current.delete(index);
+              }}
+              style={{
+                opacity: isDraggingMoved && dragVisual.index === index ? 0.25 : 1,
+                transition: isDraggingMoved ? 'none' : 'opacity 0.15s',
+              }}
+              onMouseDown={(onReorder || onDuplicate) ? (e) => {
+                const target = e.target as HTMLElement;
+                if (target.closest('button, input, select, textarea, a')) return;
+                const rect = e.currentTarget.getBoundingClientRect();
+                if (e.clientY - rect.top > DRAG_HEADER_PX) return;
+                handleDragStart(e, index);
+              } : undefined}
+              onMouseMove={(onReorder || onDuplicate) ? (e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                const inHeader = e.clientY - rect.top <= DRAG_HEADER_PX;
+                const isBtn = !!(e.target as HTMLElement).closest('button, input, select, textarea, a');
+                const ctrlHeld = e.ctrlKey || e.metaKey;
+                e.currentTarget.style.cursor = (inHeader && !isBtn) ? (ctrlHeld ? 'copy' : 'grab') : '';
+              } : undefined}
+              onMouseLeave={(onReorder || onDuplicate) ? (e) => { e.currentTarget.style.cursor = ''; } : undefined}
+            >
+              {renderCard(item, index, expandedIndex === index, handleToggleExpand)}
+            </div>
+
+            {/* Insertion line after this card */}
+            {isDraggingMoved && !isNoOpInsertion && dragVisual.insertionIndex === index + 1 && (
               <InsertionLine color={color} />
             )}
+          </Fragment>
+        ))}
+      </div>
 
-            {items.map((item, index) => (
-              <Fragment key={index}>
-                <div
-                  ref={(el) => {
-                    if (el) cardRefs.current.set(index, el);
-                    else cardRefs.current.delete(index);
-                  }}
-                  style={{
-                    opacity: isDraggingMoved && dragVisual.index === index ? 0.25 : 1,
-                    transition: isDraggingMoved ? 'none' : 'opacity 0.15s',
-                  }}
-                  onMouseDown={(onReorder || onDuplicate) ? (e) => {
-                    const target = e.target as HTMLElement;
-                    if (target.closest('button, input, select, textarea, a')) return;
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    if (e.clientY - rect.top > DRAG_HEADER_PX) return;
-                    handleDragStart(e, index);
-                  } : undefined}
-                  onMouseMove={(onReorder || onDuplicate) ? (e) => {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const inHeader = e.clientY - rect.top <= DRAG_HEADER_PX;
-                    const isBtn = !!(e.target as HTMLElement).closest('button, input, select, textarea, a');
-                    const ctrlHeld = e.ctrlKey || e.metaKey;
-                    e.currentTarget.style.cursor = (inHeader && !isBtn) ? (ctrlHeld ? 'copy' : 'grab') : '';
-                  } : undefined}
-                  onMouseLeave={(onReorder || onDuplicate) ? (e) => { e.currentTarget.style.cursor = ''; } : undefined}
+      {/* Add-card button (New button UI) + type selector */}
+      <div className="relative" ref={typeSelectorRef}>
+        <button
+          onClick={() => setShowTypeSelector(!showTypeSelector)}
+          title={addButtonTitle}
+          aria-label={addButtonTitle}
+          className={`w-full rounded-lg border-2 border-dashed flex flex-col items-center justify-center gap-1.5 py-6 opacity-60 hover:opacity-100 transition-all duration-150 cursor-pointer active:scale-95 ${showTypeSelector ? 'scale-95 opacity-100' : ''}`}
+          style={{ borderColor: 'var(--card-color)', backgroundColor: 'var(--color-secondary-light)' }}
+        >
+          <span className="text-2xl leading-none" style={{ color: 'var(--card-color)' }}>+</span>
+          <span className="text-xs font-medium text-secondary-hover">{addCardLabel}</span>
+        </button>
+
+        {showTypeSelector && (
+          <div className="absolute left-0 right-0 top-full mt-1 z-[100] rounded-lg shadow-lg bg-background border border-secondary-light overflow-hidden">
+            {availableTypes.map((option, idx) => {
+              const isFirst = idx === 0;
+              const isLast = idx === availableTypes.length - 1;
+              const roundedClass = isFirst && isLast ? 'rounded-lg' : isFirst ? 'rounded-t-lg' : isLast ? 'rounded-b-lg' : '';
+              return (
+                <button
+                  key={option.type}
+                  onClick={() => option.enabled ? handleTypeSelect(option.type) : null}
+                  disabled={!option.enabled}
+                  className={`w-full text-left px-3 py-2 text-xs transition-colors ${roundedClass} ${
+                    option.enabled
+                      ? 'text-foreground cursor-pointer hover:text-white'
+                      : 'text-secondary-hover cursor-not-allowed opacity-60'
+                  }`}
+                  onMouseEnter={(e) => { if (option.enabled) e.currentTarget.style.backgroundColor = 'var(--card-color)'; }}
+                  onMouseLeave={(e) => { if (option.enabled) e.currentTarget.style.backgroundColor = ''; }}
+                  title={option.enabled ? option.label : option.disabledTooltip}
                 >
-                  {renderCard(item, index, expandedIndex === index, handleToggleExpand)}
-                </div>
-
-                {/* Insertion line after this card */}
-                {isDraggingMoved && !isNoOpInsertion && dragVisual.insertionIndex === index + 1 && (
-                  <InsertionLine color={color} />
-                )}
-              </Fragment>
-            ))}
-          </>
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
         )}
       </div>
 

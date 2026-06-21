@@ -17,6 +17,7 @@ import type {
   SoundscapeIRMetadata,
   SerializedAnalysisConfig,
   AnalysisState,
+  SoundscapeIterationLink,
 } from '@/types/soundscape';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping, ResonanceAudioConfig } from '@/types/audio';
 import type { AnalysisConfig, AnalysisResult, TextPromptResult } from '@/types/analysis';
@@ -92,6 +93,8 @@ export function buildSoundscapeSavePayload(
   soundSchedulingModes?: Record<string, 'interval' | 'timestamps'>,
   /** Per-track explicit timestamps (seconds) keyed by sound ID (from audioControls) */
   soundTimestamps?: Record<string, number[]>,
+  /** Per-iteration variant/entity links keyed by `${soundId}-${iterationIndex}` (from audioControls) */
+  iterationLinks?: Record<string, { variantIndex?: number; entityNodeId?: string; entityPosition?: [number, number, number]; entityIndex?: number }>,
 ): SoundscapeSavePayload {
   // Map runtime configs to serializable configs
   const serializedConfigs: SoundscapeSoundConfig[] = soundConfigs.map(
@@ -128,6 +131,8 @@ export function buildSoundscapeSavePayload(
       seed_copies: config.seed_copies,
       steps: config.steps,
       parent_usage_original_index: (config as any).parentUsageOriginalIndex,
+      // Parametric trigger links between sounds (re-baked/edited after load)
+      orchestrate_meta: config.orchestrateMeta,
     })
   );
 
@@ -343,6 +348,7 @@ export function buildSoundscapeSavePayload(
         up: resonanceAudioConfig.roomMaterials.up,
       },
     } : undefined,
+    iteration_links: iterationLinks && Object.keys(iterationLinks).length > 0 ? iterationLinks : undefined,
   };
 
   return {
@@ -370,6 +376,7 @@ export function restoreSoundscapeState(
   soundIntervals: Record<string, number>;
   soundSchedulingModes: Record<string, 'interval' | 'timestamps'>;
   soundTimestamps: Record<string, number[]>;
+  iterationLinks: Record<string, SoundscapeIterationLink>;
   globalSettings: {
     duration: number;
     steps: number;
@@ -395,6 +402,7 @@ export function restoreSoundscapeState(
       interval_seconds: saved.interval_seconds,
       type: saved.type as SoundGenerationConfig['type'],
       parentUsageOriginalIndex: (saved as any).parent_usage_original_index,
+      orchestrateMeta: saved.orchestrate_meta as SoundGenerationConfig['orchestrateMeta'],
       entity: undefined, // deprecated — use entities[] below
       entities: (() => {
         // New multi-entity format: entity_indices[] array
@@ -635,6 +643,7 @@ export function restoreSoundscapeState(
     soundIntervals,
     soundSchedulingModes,
     soundTimestamps,
+    iterationLinks: loadedData.iteration_links ?? {},
     globalSettings,
     receivers: restoredReceivers,
     selectedReceiverId,

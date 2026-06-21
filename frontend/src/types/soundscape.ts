@@ -32,6 +32,30 @@ export interface SoundscapeSoundConfig {
   steps: number;
   /** Parent analysis card index (links this sound config back to its context/usage card) */
   parent_usage_original_index?: number;
+  /** Orchestration metadata (parametric trigger links between sounds) — persisted so the
+   *  parametric schedule can be reconstructed, re-baked and edited after load. */
+  orchestrate_meta?: SoundscapeOrchestrateMeta;
+}
+
+/** Serializable orchestration metadata (parametric trigger links). */
+export interface SoundscapeOrchestrateMeta {
+  orchestrateId: string;
+  entryId: string;
+  trigger: { type: string; expression: string[]; delay: number[] };
+  variants: number[];
+  allObjectIds: string[];
+  speechLines?: string[];
+  isSpeech?: boolean;
+  voiceName?: string;
+  timestamps?: string[];
+}
+
+/** Serializable per-iteration link (variant + entity), keyed by `${soundId}-${iterationIndex}`. */
+export interface SoundscapeIterationLink {
+  variantIndex?: number;
+  entityNodeId?: string;
+  entityPosition?: [number, number, number];
+  entityIndex?: number;
 }
 
 /** Serializable sound event (generated/uploaded sound placed in 3D) */
@@ -143,6 +167,8 @@ export interface SoundscapeData {
   analysis_state?: AnalysisState;
   // Resonance audio persistence
   resonance_audio_config?: SoundscapeResonanceAudioConfig;
+  // Per-iteration variant/entity links (keyed by `${soundId}-${iterationIndex}`)
+  iteration_links?: Record<string, SoundscapeIterationLink>;
 }
 
 /** Request payload for POST /api/speckle/soundscape/save */

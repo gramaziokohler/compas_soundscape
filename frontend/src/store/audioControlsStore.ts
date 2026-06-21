@@ -117,6 +117,7 @@ export interface AudioControlsStoreState {
     modes: Record<string, 'interval' | 'timestamps'>,
     timestamps: Record<string, number[]>,
   ) => void;
+  restoreIterationLinks: (links: Record<string, IterationLink>) => void;
 }
 
 // ─── Partialize (exported for snapshot registry) ───────────────────────────
@@ -1065,6 +1066,13 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             { soundSchedulingModes: modes, soundTimestamps: timestamps },
             false,
             'audio/restoreSchedulingModes',
+          ),
+
+        restoreIterationLinks: (links) =>
+          set(
+            { iterationLinks: links },
+            false,
+            'audio/restoreIterationLinks',
           ),
       }),
       { name: 'AudioControlsStore' },

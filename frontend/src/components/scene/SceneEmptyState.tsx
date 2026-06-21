@@ -26,6 +26,7 @@ interface SceneEmptyStateProps {
   onDragLeave: (e: React.DragEvent<HTMLDivElement>) => void;
   onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
   onSpeckleModelSelect?: (speckleData: SpeckleModelSelectData) => void;
+  isUploadingModel?: boolean;
 }
 
 export function SceneEmptyState({
@@ -37,6 +38,7 @@ export function SceneEmptyState({
   onDragLeave,
   onDrop,
   onSpeckleModelSelect,
+  isUploadingModel = false,
 }: SceneEmptyStateProps) {
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-background/50">
@@ -71,6 +73,7 @@ export function SceneEmptyState({
                 onDrop={onDrop}
                 inputId="scene-model-upload"
                 multiple={false}
+                isUploading={isUploadingModel}
               />
             </div>
             {onSpeckleModelSelect && (

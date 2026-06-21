@@ -14,6 +14,7 @@ interface FileUploadAreaProps {
   onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
   inputId?: string;
   multiple?: boolean;
+  isUploading?: boolean;
 }
 
 export function FileUploadArea({
@@ -26,7 +27,8 @@ export function FileUploadArea({
   onDragLeave,
   onDrop,
   inputId = 'file-upload',
-  multiple = false
+  multiple = false,
+  isUploading = false
 }: FileUploadAreaProps) {
   return (
     <div
@@ -47,7 +49,22 @@ export function FileUploadArea({
       onMouseLeave={(e) => { if (!isDragging) e.currentTarget.style.borderColor = 'var(--color-secondary-hover)'; }}
     >
       <div className="flex flex-col items-center gap-1">
-        {file ? (
+        {isUploading ? (
+          <>
+            <div
+              className="animate-spin rounded-full border-2 border-t-transparent"
+              style={{
+                width: '24px',
+                height: '24px',
+                borderColor: 'var(--color-primary)',
+                borderTopColor: 'transparent',
+              }}
+            />
+            <p className="text-xs font-medium text-neutral-300">
+              {file ? `Uploading ${file.name}...` : 'Uploading...'}
+            </p>
+          </>
+        ) : file ? (
           <>
             <svg className="w-6 h-6 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -89,7 +106,8 @@ export function FileUploadArea({
           onChange={onFileChange}
           accept={acceptedFormats}
           multiple={multiple}
-          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+          disabled={isUploading}
+          className={`absolute inset-0 w-full h-full opacity-0 z-10 ${isUploading ? 'cursor-default pointer-events-none' : 'cursor-pointer'}`}
         />
       </div>
     </div>

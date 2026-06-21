@@ -188,6 +188,9 @@ interface SpeckleSceneProps {
   // Callback fired when FPS mode is exited (Escape or dblclick)
   onFPSExited?: () => void;
 
+  /** True while the parent is uploading/converting the model file (before the viewer URL exists). */
+  isUploadingModel?: boolean;
+
   className?: string;
 }
 
@@ -249,6 +252,7 @@ export function SpeckleScene({
   exitFPSTrigger,
   onReceiverDoubleClicked,
   onFPSExited,
+  isUploadingModel = false,
   className,
 }: SpeckleSceneProps) {
   // Refs
@@ -337,6 +341,11 @@ export function SpeckleScene({
   // File upload drag state (for empty state)
   const [isDragging, setIsDragging] = useState(false);
   const [speckleTokenSet, setSpeckleTokenSet] = useState<boolean | null>(null);
+
+  // Instant loading feedback: set synchronously the moment a file is selected, before the
+  // parent kicks off upload/conversion. Cleared once the parent's upload flag takes over,
+  // the viewer becomes ready, or an error occurs.
+  const [isPreparingModel, setIsPreparingModel] = useState(false);
 
   const modelUrl = viewer_url || speckleData?.url;
 
@@ -988,15 +997,26 @@ export function SpeckleScene({
     setIsDragging(false);
     const files = Array.from(e.dataTransfer.files);
     if (files.length === 0) return;
+    setIsPreparingModel(true);
     onModelFileChange?.(files[0]);
   }, [onModelFileChange]);
 
   const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
+    setIsPreparingModel(true);
     onModelFileChange?.(files[0]);
     e.target.value = "";
   }, [onModelFileChange]);
+
+  // Clear the instant-feedback flag once the parent upload flag takes over, the viewer is
+  // ready, or an error occurred. The combined loading state below keeps the overlay visible
+  // throughout the handoff so there is no flicker back to the empty state.
+  useEffect(() => {
+    if (isUploadingModel || isViewerReady || error) {
+      setIsPreparingModel(false);
+    }
+  }, [isUploadingModel, isViewerReady, error]);
 
   // ============================================================================
   // Effect - Update Audio Orchestrator
@@ -1296,6 +1316,9 @@ export function SpeckleScene({
   // ============================================================================
   // Render
   // ============================================================================
+  // Combined loading state: viewer init, parent upload/conversion, or the instant
+  // post-selection feedback. Keeps the spinner up for the whole select→upload→load chain.
+  const isModelLoading = isLoading || isUploadingModel || isPreparingModel;
   return (
     <div
       className={`relative w-full h-full ${className || ''}`}
@@ -1323,7 +1346,7 @@ export function SpeckleScene({
       />
 
       {/* Loading overlay */}
-      {isLoading && (
+      {isModelLoading && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-background/50">
           <div className="flex flex-col items-center gap-3">
             <div
@@ -1335,7 +1358,7 @@ export function SpeckleScene({
                 borderTopColor: 'transparent',
               }}
             />
-            <p className="text-xs text-neutral-400">Loading model...</p>
+            <p className="text-xs text-neutral-400">{isLoading ? 'Loading model...' : 'Uploading model...'}</p>
           </div>
         </div>
       )}
@@ -1352,7 +1375,7 @@ export function SpeckleScene({
       )}
 
       {/* Empty state */}
-      {!modelUrl && !isLoading && !error && (
+      {!modelUrl && !isModelLoading && !error && (
         <SceneEmptyState
           modelFile={modelFile}
           isDragging={isDragging}
@@ -1362,6 +1385,7 @@ export function SpeckleScene({
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
           onSpeckleModelSelect={onSpeckleModelSelect}
+          isUploadingModel={isUploadingModel || isPreparingModel}
         />
       )}
 

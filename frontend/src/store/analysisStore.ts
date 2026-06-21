@@ -18,6 +18,7 @@ import type {
   AudioAnalysisConfig,
   TextAnalysisConfig,
   AnalyzeModelConfig,
+  AnalysisBaseConfig,
   ArchitecturalObject,
   ModelAnalysisResultData,
   ScenarioConfig,
@@ -1366,9 +1367,25 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           // Find analysis_id from the most recent 'model-analysis' config with a result
           let analysisId: string | undefined;
           if (config.useAnalysisResult) {
-            const analyzeConfig = analysisConfigs.find(
-              (c) => c.type === 'model-analysis' && (c as AnalyzeModelConfig).analysisResult?.analysisId,
-            ) as AnalyzeModelConfig | undefined;
+            // Prefer the model-analysis context card this usage card is parented to,
+            // so each usage card uses its own parent context's analysis result rather
+            // than always falling back to the first model-analysis card.
+            const parentIdx = (config as AnalysisBaseConfig).parentContextOriginalIndex;
+            let analyzeConfig: AnalyzeModelConfig | undefined;
+            if (parentIdx !== undefined) {
+              const parent = analysisConfigs[parentIdx];
+              if (
+                parent?.type === 'model-analysis' &&
+                (parent as AnalyzeModelConfig).analysisResult?.analysisId
+              ) {
+                analyzeConfig = parent as AnalyzeModelConfig;
+              }
+            }
+            if (!analyzeConfig && parentIdx === undefined) {
+              analyzeConfig = analysisConfigs.find(
+                (c) => c.type === 'model-analysis' && (c as AnalyzeModelConfig).analysisResult?.analysisId,
+              ) as AnalyzeModelConfig | undefined;
+            }
             analysisId = analyzeConfig?.analysisResult?.analysisId ?? undefined;
           }
 
@@ -1451,9 +1468,25 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
 
           let analysisId: string | undefined;
           if (config.useAnalysisResult) {
-            const analyzeConfig = analysisConfigs.find(
-              (c) => c.type === 'model-analysis' && (c as AnalyzeModelConfig).analysisResult?.analysisId,
-            ) as AnalyzeModelConfig | undefined;
+            // Prefer the model-analysis context card this usage card is parented to,
+            // so each usage card uses its own parent context's analysis result rather
+            // than always falling back to the first model-analysis card.
+            const parentIdx = (config as AnalysisBaseConfig).parentContextOriginalIndex;
+            let analyzeConfig: AnalyzeModelConfig | undefined;
+            if (parentIdx !== undefined) {
+              const parent = analysisConfigs[parentIdx];
+              if (
+                parent?.type === 'model-analysis' &&
+                (parent as AnalyzeModelConfig).analysisResult?.analysisId
+              ) {
+                analyzeConfig = parent as AnalyzeModelConfig;
+              }
+            }
+            if (!analyzeConfig && parentIdx === undefined) {
+              analyzeConfig = analysisConfigs.find(
+                (c) => c.type === 'model-analysis' && (c as AnalyzeModelConfig).analysisResult?.analysisId,
+              ) as AnalyzeModelConfig | undefined;
+            }
             analysisId = analyzeConfig?.analysisResult?.analysisId ?? undefined;
           }
 

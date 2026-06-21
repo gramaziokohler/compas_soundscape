@@ -65,8 +65,8 @@ export type CardType =
  */
 export const CARD_TYPE_LABELS: Record<CardType, string> = {
   '3d-model': 'Select sonic objects',
-  'audio': 'Audio Context',
-  'text': 'Usage typology',
+  'audio': 'Audio context',
+  'text': 'object-based',
   'text-to-audio': 'Text-to-Audio',
   'text-to-speech': 'Text-to-Speech',
   'upload': 'Uploaded Audio',
@@ -79,8 +79,8 @@ export const CARD_TYPE_LABELS: Record<CardType, string> = {
   'import-irs': 'Import IRs',
   'listener': 'Listener',
   'grid-listener': 'Grid Listener',
-  'model-analysis': 'Identify groups',
-  'scenario': 'Usage scenario',
+  'model-analysis': 'Spatial context',
+  'scenario': 'scenario-based',
   'freeform': 'Untitled',
 };
 
