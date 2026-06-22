@@ -412,6 +412,15 @@ export class SoundSphereManager {
     this.soundMeshes = result.meshes;
     this.draggableObjects = result.draggableObjects;
 
+    // Update userData.soundEvent on every mesh to reflect the latest data
+    // (e.g. display_name changes). updateDraggableMeshes reuses existing
+    // meshes but only updates position, not userData.
+    const meshById = new Map(result.meshes.map(m => [m.userData.soundEvent?.id as string, m]));
+    for (const data of meshSoundData) {
+      const mesh = meshById.get(data.id);
+      if (mesh) mesh.userData.soundEvent = data.soundEvent;
+    }
+
     // Sync label sprites with the current mesh set
     this.syncLabelSprites(result.meshes);
 

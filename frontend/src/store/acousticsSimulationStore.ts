@@ -179,6 +179,7 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
                 simulationResults: null,
                 importedIRIds: undefined,
                 sourceReceiverIRMapping: undefined,
+                irImportMode: 'per-pair',
               } as ImportIRsSimulationConfig;
               break;
 

@@ -20,6 +20,7 @@ import type { SoundState, SoundGenerationConfig } from '@/types';
 import type { IterationLink } from '@/types/audio';
 import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
 import { AUDIO_PLAYBACK, DEFAULT_SPL_DB, DEFAULT_MAXIMUM_FOLEY_SOUNDS } from '@/utils/constants';
+import { useSoundscapeStore } from './soundscapeStore';
 
 
 export interface AudioControlsStoreState {
@@ -75,6 +76,8 @@ export interface AudioControlsStoreState {
   setIterationLink: (soundId: string, iterationIndex: number, link: Partial<IterationLink>) => void;
   clearIterationLink: (soundId: string, iterationIndex: number) => void;
   clearAllIterationLinksForSound: (soundId: string) => void;
+  /** Break trigger link for a single iteration (clears iterationLink + orchestrateMeta trigger). */
+  breakIterationTriggerLink: (soundId: string, iterationIndex: number, promptIndex: number) => void;
   handleMute: (soundId: string) => void;
   handleSolo: (soundId: string) => void;
   setSoundTrim: (soundId: string, trim: { start: number; end: number }) => void;
@@ -342,6 +345,13 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             false,
             'audio/clearAllIterationLinksForSound',
           ),
+
+        breakIterationTriggerLink: (soundId, iterationIndex, promptIndex) => {
+          get().clearIterationLink(soundId, iterationIndex);
+          if (promptIndex >= 0) {
+            useSoundscapeStore.getState().clearOrchestrateTrigger(promptIndex, iterationIndex);
+          }
+        },
 
         handleMute: (soundId) =>
           set(
@@ -843,6 +853,15 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
               const ii = parseInt(iiStr, 10);
               const entry = entryMap.get(eid);
               if (!entry || entry.timestamps[ii] !== null) return;
+              // Priority 0 — existing manually-dragged timestamp preserved in soundTimestamps
+              if (entry.soundId && soundTimestamps[entry.soundId]?.[ii] != null) {
+                const existing = soundTimestamps[entry.soundId][ii];
+                if (existing < 99999 && existing >= 0) {
+                  entry.timestamps[ii] = existing;
+                  fallbackT = Math.max(fallbackT, existing);
+                  return;
+                }
+              }
               // Fallback 1 — original timestamp for this iteration (MM:SS → seconds).
               const fromTs = parseMMSS(entry.meta.timestamps?.[ii]);
               if (fromTs !== null) {
@@ -869,11 +888,15 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             const isIntervalType = meta.trigger.type === 'interval';
             if (isIntervalType && !timestamps.some(t => t !== null)) return;
 
-            // Use UNRESOLVED sentinel for null slots (keeps array length + iteration indices intact,
-            // but the sentinel value is filtered out by the timeline renderer)
-            const finalTs = timestamps.map(t =>
-              t !== null ? parseFloat(t.toFixed(3)) : UNRESOLVED,
-            );
+            // Build final timestamps: use resolved parametric values for non-empty
+            // expressions; for empty expressions (cleared by manual drag), preserve
+            // the existing concrete timestamp so dragged positions survive save/load.
+            const finalTs = timestamps.map((t, i) => {
+              if (t !== null) return parseFloat(t.toFixed(3));
+              const existingT = soundTimestamps[soundId]?.[i];
+              if (existingT != null && existingT < UNRESOLVED) return existingT;
+              return UNRESOLVED;
+            });
 
             // Track the furthest real timestamp to potentially extend the timeline
             finalTs.forEach((t, i) => {

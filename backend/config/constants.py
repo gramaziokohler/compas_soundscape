@@ -141,7 +141,8 @@ AUDIOLDM2_SAMPLE_RATE = 16000  # AudioLDM2 output sample rate
 
 # Gemini TTS Configuration
 # TTS_MODEL_NAME = "gemini-2.5-flash-preview-tts"
-TTS_MODEL_NAME = "gemini-2.5-pro-preview-tts"
+# TTS_MODEL_NAME = "gemini-2.5-pro-preview-tts"
+TTS_MODEL_NAME = "gemini-3.1-flash-tts-preview"
 TTS_SAMPLE_RATE = 24000
 TTS_DEFAULT_VOICE = "Kore"
 TTS_AVAILABLE_VOICES = [

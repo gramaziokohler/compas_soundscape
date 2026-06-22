@@ -39,6 +39,12 @@ interface ImpulseResponseUploadProps {
   allowPairUploads?: boolean;
   onPairIRUploaded?: (sourceId: string, receiverId: string, ir: ImpulseResponseMetadata) => void;
   onPairAssignmentCleared?: (sourceId: string, receiverId: string) => void;
+  /** When true, render a single IR upload slot per listener (applied to all its source pairs) */
+  singleIRPerListener?: boolean;
+  /** Called when a single IR is uploaded for a listener — applies to every pair under it */
+  onListenerIRUploaded?: (pairs: SourceReceiverPair[], ir: ImpulseResponseMetadata) => void;
+  /** Called when the single IR for a listener is cleared — clears every pair under it */
+  onListenerAssignmentCleared?: (pairs: SourceReceiverPair[]) => void;
 }
 
 type ReceiverGroup = {
@@ -67,6 +73,9 @@ export function ImpulseResponseUpload({
   allowPairUploads = false,
   onPairIRUploaded,
   onPairAssignmentCleared,
+  singleIRPerListener = false,
+  onListenerIRUploaded,
+  onListenerAssignmentCleared,
 }: ImpulseResponseUploadProps) {
   const handleError = useApiErrorHandler();
   const [impulseResponses, setImpulseResponses] = useState<ImpulseResponseMetadata[]>([]);
@@ -308,6 +317,46 @@ export function ImpulseResponseUpload({
     }
   };
 
+  // ── Single-IR-per-listener upload (applies one IR to all of a listener's pairs) ──
+  const uploadListenerIR = async (files: FileList | File[], pairs: SourceReceiverPair[]) => {
+    const file = Array.from(files)[0];
+    if (!file || pairs.length === 0) return;
+
+    setIsUploading(true);
+    setError(null);
+
+    try {
+      setUploadProgress('Uploading IR for listener...');
+      const uploaded = await apiService.uploadImpulseResponse(file, file.name.replace(/\.[^/.]+$/, ''));
+      onListenerIRUploaded?.(pairs, uploaded);
+      setUploadProgress('IR imported');
+      await loadImpulseResponses();
+      setTimeout(() => setUploadProgress(''), 2000);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Listener IR upload failed';
+      setError(errorMessage);
+      handleError(err, errorMessage);
+      setUploadProgress('');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleListenerFileChange = (pairs: SourceReceiverPair[]) => async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files?.length) {
+      await uploadListenerIR(e.target.files, pairs);
+      e.target.value = '';
+    }
+  };
+
+  const handleListenerDrop = (pairs: SourceReceiverPair[], pairKey: string) => async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (draggingPairKey === pairKey) setDraggingPairKey(null);
+    if (e.dataTransfer.files.length > 0) {
+      await uploadListenerIR(e.dataTransfer.files, pairs);
+    }
+  };
+
   const getFormatBadge = (format: string) => {
     const badges = {
       mono:     { color: 'bg-info-light text-info',         label: 'Mono' },
@@ -524,6 +573,58 @@ export function ImpulseResponseUpload({
     );
   };
 
+  // Single-IR-per-listener row: one upload slot for an entire receiver group,
+  // applied to every source pair under that listener.
+  const renderListenerUploadRow = (
+    groupId: string,
+    groupName: string,
+    sources: Array<{ sourceId: string; receiverId: string; ir: ImpulseResponseMetadata | null }>,
+  ) => {
+    const pairs: SourceReceiverPair[] = sources.map(({ sourceId, receiverId }) => ({ sourceId, receiverId }));
+    const assigned = sources.find((s) => s.ir)?.ir ?? null;
+    const groupKey = `listener::${groupId}`;
+
+    if (assigned) {
+      return renderSourceRow(
+        assigned,
+        pairs[0]?.sourceId ?? '',
+        pairs[0]?.receiverId ?? '',
+        groupName,
+        onListenerAssignmentCleared
+          ? {
+              onDelete: (e) => {
+                e.stopPropagation();
+                onListenerAssignmentCleared(pairs);
+              },
+              deleteTitle: 'Clear assigned IR',
+            }
+          : undefined,
+      );
+    }
+
+    return (
+      <div
+        key={groupKey}
+        className="rounded border px-2 py-2 border-neutral-700/50"
+      >
+        <div className="text-[10px] text-neutral-500 mb-2">
+          One IR for this listener — applied to all {pairs.length} source pair{pairs.length === 1 ? '' : 's'}.
+        </div>
+        <FileUploadArea
+          file={null}
+          isDragging={draggingPairKey === groupKey}
+          acceptedFormats=".wav,.flac,.aif,.aiff,.ogg"
+          acceptedExtensions="wav, flac, aiff, ogg"
+          onFileChange={handleListenerFileChange(pairs)}
+          onDragOver={handlePairDragOver(groupKey)}
+          onDragLeave={handlePairDragLeave(groupKey)}
+          onDrop={handleListenerDrop(pairs, groupKey)}
+          inputId={`listener-ir-${groupId}`}
+        />
+      </div>
+    );
+  };
+
   // Go-to icon (same concentric circles as EntityInfoPanel)
   const GoToIcon = () => (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -536,14 +637,17 @@ export function ImpulseResponseUpload({
   const hoveredIR = impulseResponses.find(ir => ir.id === hoveredIRId);
   const missingPairSetupMessage = (() => {
     if (!allowPairUploads) return null;
+    const slotDescription = singleIRPerListener
+      ? 'This card creates one IR upload slot for every listener, applied to all its source pairs.'
+      : 'This card creates one IR upload slot for every source-listener pair.';
     if (availableSourceCount === 0 && availableReceiverCount === 0) {
-      return 'Add at least one sound source and one listener first. This card creates one IR upload slot for every source-listener pair.';
+      return `Add at least one sound source and one listener first. ${slotDescription}`;
     }
     if (availableSourceCount === 0) {
-      return 'Add at least one sound source first. This card creates one IR upload slot for every source-listener pair.';
+      return `Add at least one sound source first. ${slotDescription}`;
     }
     if (availableReceiverCount === 0) {
-      return 'Add at least one listener first. This card creates one IR upload slot for every source-listener pair.';
+      return `Add at least one listener first. ${slotDescription}`;
     }
     return null;
   })();
@@ -574,7 +678,9 @@ export function ImpulseResponseUpload({
         <div>
           <div className="flex items-center justify-between mb-2">
             <h3 className={`text-xs font-semibol text-white`}>
-              {allowPairUploads ? 'Source-listener IRs' : `Impulse Responses (${impulseResponses.length})`}
+              {allowPairUploads
+                ? (singleIRPerListener ? 'Listener IRs' : 'Source-listener IRs')
+                : `Impulse Responses (${impulseResponses.length})`}
             </h3>
           </div>
 
@@ -628,15 +734,17 @@ export function ImpulseResponseUpload({
                       {/* Source rows */}
                       {!isCollapsed && (
                         <div className="ml-4 pl-2 border-l border-neutral-700/50 space-y-1 pb-1 pt-0.5">
-                          {sources.map(({ sourceId, receiverId, ir }) => {
-                            const sourceName = trimDisplayName(sourceDisplayNames?.[sourceId] ?? sourceId);
-                            if (allowPairUploads) {
-                              return renderPairUploadRow(sourceId, receiverId, sourceName, ir);
-                            }
-                            return ir
-                              ? renderSourceRow(ir, sourceId, receiverId, sourceName)
-                              : null;
-                          })}
+                          {allowPairUploads && singleIRPerListener
+                            ? renderListenerUploadRow(groupId, groupName, sources)
+                            : sources.map(({ sourceId, receiverId, ir }) => {
+                                const sourceName = trimDisplayName(sourceDisplayNames?.[sourceId] ?? sourceId);
+                                if (allowPairUploads) {
+                                  return renderPairUploadRow(sourceId, receiverId, sourceName, ir);
+                                }
+                                return ir
+                                  ? renderSourceRow(ir, sourceId, receiverId, sourceName)
+                                  : null;
+                              })}
                         </div>
                       )}
                     </div>

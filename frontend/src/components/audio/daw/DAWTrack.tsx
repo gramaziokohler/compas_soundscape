@@ -43,6 +43,8 @@ interface DAWTrackProps {
   onSelectSoundCard?: () => void;
   onDoubleClickSoundCard?: () => void;
   onIterationContextMenu: (data: IterationContextMenuData) => void;
+  onIterationHover?: (soundId: string, iterationIndex: number) => void;
+  onIterationHoverEnd?: () => void;
 }
 
 export function DAWTrack({
@@ -59,6 +61,8 @@ export function DAWTrack({
   onSelectSoundCard,
   onDoubleClickSoundCard,
   onIterationContextMenu,
+  onIterationHover,
+  onIterationHoverEnd,
 }: DAWTrackProps) {
   const soundSchedulingModes = useAudioControlsStore((s) => s.soundSchedulingModes);
   const handleSchedulingModeChange = useAudioControlsStore((s) => s.handleSchedulingModeChange);
@@ -255,9 +259,11 @@ export function DAWTrack({
               onDelete={() => onDeleteIteration(originalIdx)}
               onClick={() => onSelectSoundCard?.()}
               onDoubleClick={onDoubleClickSoundCard}
-              onDragEnd={(newStartMs) => onDragEnd(i, newStartMs)}
+              onDragEnd={(newStartMs) => onDragEnd(originalIdx, newStartMs)}
               onDuplicate={onDuplicate}
               onContextMenu={onIterationContextMenu}
+              onHover={onIterationHover}
+              onHoverEnd={onIterationHoverEnd}
             />
           );
         })}

@@ -324,6 +324,8 @@ export function extractTimelineSoundsFromData(
       // Track original index so DAWTrack can look up the correct iterationLink badge even when
       // earlier iterations are filtered out (e.g. unresolved parametric references).
       const rawMs = soundTimestamps[soundId].map((s) => s * 1000);
+      console.log('[timeline:extract] soundId:', soundId, 'timelineDurMs:', timelineDuration,
+        'rawTsMs:', rawMs.map(m => Math.round(m)));
       const rawDurs = soundIterationDurations?.[soundId];
       iterations = [];
       iterationOriginalIndices = [];

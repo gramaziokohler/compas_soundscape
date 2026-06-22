@@ -82,6 +82,9 @@ interface SimulationResultContentProps {
   allowPairUploads?: boolean;
   onPairIRUploaded?: (sourceId: string, receiverId: string, ir: ImpulseResponseMetadata) => void;
   onPairAssignmentCleared?: (sourceId: string, receiverId: string) => void;
+  singleIRPerListener?: boolean;
+  onListenerIRUploaded?: (pairs: Array<{ sourceId: string; receiverId: string }>, ir: ImpulseResponseMetadata) => void;
+  onListenerAssignmentCleared?: (pairs: Array<{ sourceId: string; receiverId: string }>) => void;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -109,6 +112,9 @@ export function SimulationResultContent({
   allowPairUploads = false,
   onPairIRUploaded,
   onPairAssignmentCleared,
+  singleIRPerListener = false,
+  onListenerIRUploaded,
+  onListenerAssignmentCleared,
 }: SimulationResultContentProps) {
   const simulationConfig = config as any;
   const results: string | null = simulationConfig.simulationResults;
@@ -398,6 +404,9 @@ export function SimulationResultContent({
         allowPairUploads={allowPairUploads}
         onPairIRUploaded={onPairIRUploaded}
         onPairAssignmentCleared={onPairAssignmentCleared}
+        singleIRPerListener={singleIRPerListener}
+        onListenerIRUploaded={onListenerIRUploaded}
+        onListenerAssignmentCleared={onListenerAssignmentCleared}
       />
     </div>
   );

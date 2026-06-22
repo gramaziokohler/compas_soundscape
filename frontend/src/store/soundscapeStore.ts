@@ -143,6 +143,7 @@ export interface SoundscapeStoreState {
   handleLibrarySoundSelect: (index: number, sound: LibrarySearchResult) => void;
   handleCatalogSoundSelect: (index: number, sound: CatalogSoundSelection) => void;
   handleResetToDefaults: () => void;
+  clearOrchestrateTrigger: (configIndex: number, iterationIndex: number) => void;
   handleResetSoundConfig: (index: number) => void;
   handleReorderSoundConfigs: (from: number, to: number) => void;
   handleDuplicateConfig: (index: number) => void;
@@ -762,6 +763,11 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 const voice = sound.voice_name || originalConfig?.voice_name || 'TTS';
                 const remappedId = `tts_${actualIndex}_${copyIdx}_${voice}`;
 
+                const ttsDisplayName = sound.display_name
+                  || originalConfig?.display_name
+                  || originalConfig?.prompt
+                  || `TTS ${actualIndex + 1}`;
+
                 return {
                   ...sound,
                   id: remappedId,
@@ -772,6 +778,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   isUploaded: true,
                   volume_db: sound.volume_db ?? originalConfig?.spl_db ?? globalBaseSplDb,
                   category: originalConfig?.category || 'speech',
+                  display_name: ttsDisplayName,
                 };
               };
 
@@ -1201,6 +1208,30 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             false,
             'soundscape/catalogSelect',
           ),
+
+        clearOrchestrateTrigger: (configIndex, iterationIndex) => {
+          const { soundConfigs } = get();
+          const config = soundConfigs[configIndex];
+          if (!config?.orchestrateMeta) return;
+          const meta = config.orchestrateMeta;
+          const newExpression = [...meta.trigger.expression];
+          const newDelay = [...(meta.trigger.delay ?? [])];
+          newExpression[iterationIndex] = '';
+          newDelay[iterationIndex] = 0;
+          const newMeta = {
+            ...meta,
+            trigger: { ...meta.trigger, expression: newExpression, delay: newDelay },
+          };
+          set(
+            (s) => ({
+              soundConfigs: s.soundConfigs.map((c, i) =>
+                i === configIndex ? { ...c, orchestrateMeta: newMeta } : c,
+              ),
+            }),
+            false,
+            'soundscape/clearOrchestrateTrigger',
+          );
+        },
 
         handleResetToDefaults: () =>
           set(

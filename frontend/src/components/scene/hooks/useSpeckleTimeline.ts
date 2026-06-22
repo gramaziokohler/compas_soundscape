@@ -126,9 +126,10 @@ export function useSpeckleTimeline({
       const soundSphereManager = coordinator?.getSoundSphereManager();
       if (soundSphereManager) {
         const soundMetadata = soundSphereManager.getAllAudioSources();
-        const generatedPrompts = soundscapeData.filter((s: any) => !(s as any).isPending);
-        const generatedPromptCount = new Set(generatedPrompts.map((s: any) => s.prompt_index ?? 0)).size;
-        if (generatedPromptCount === 0 || (soundMetadata && soundMetadata.size >= generatedPromptCount)) {
+        const generatedSounds = soundscapeData.filter((s: any) => !(s as any).isPending);
+        // Wait for ALL variant sources to be loaded (not just one per prompt),
+        // so that per-iteration variant waveform URLs resolve correctly.
+        if (generatedSounds.length === 0 || (soundMetadata && soundMetadata.size >= generatedSounds.length)) {
           setSoundMetadataReady(true);
           clearInterval(intervalId);
         }
@@ -248,6 +249,7 @@ export function useSpeckleTimeline({
         mutedSounds,
         soloedSound,
         soundTrims,
+        iterationLinks,
         simulationName: activeSimulation?.display_name ?? null,
       };
 

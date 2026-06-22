@@ -128,6 +128,12 @@ export interface ImportIRsSimulationConfig extends BaseSimulationConfig {
   simulationResults: string | null;
   importedIRIds?: string[];
   sourceReceiverIRMapping?: SourceReceiverIRMapping;
+  /**
+   * IR import granularity:
+   * - 'per-pair' (default): one IR upload slot per source-listener pair.
+   * - 'single': one IR upload slot per listener, applied to every source-listener pair.
+   */
+  irImportMode?: 'single' | 'per-pair';
   simulationPositions?: {
     sources: Record<string, [number, number, number]>;
     receivers: Record<string, [number, number, number]>;

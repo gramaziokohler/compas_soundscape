@@ -209,6 +209,28 @@ export function SoundGenerationSection({
     return selectedVariants[index] ?? 0;
   }, [selectedVariants]);
 
+  // Map: configIndex → primary generated sound ID (lowest copy_index)
+  // Used by the Param badge to look up variant letters from iterationLinks.
+  const configPrimarySoundIds = useMemo((): Map<number, string> => {
+    const map = new Map<number, string>();
+    const byConfig = new Map<number, any[]>();
+    generatedSounds.forEach((s: any) => {
+      const pi = s.prompt_index;
+      if (pi == null) return;
+      if (!byConfig.has(pi)) byConfig.set(pi, []);
+      byConfig.get(pi)!.push(s);
+    });
+    byConfig.forEach((sounds, ci) => {
+      const sorted = [...sounds].sort((a: any, b: any) => {
+        const ciA = (a.copy_index ?? parseInt(a.id?.split('_').pop() ?? '0', 10)) || 0;
+        const ciB = (b.copy_index ?? parseInt(b.id?.split('_').pop() ?? '0', 10)) || 0;
+        return ciA - ciB;
+      });
+      if (sorted[0]?.id) map.set(ci, sorted[0].id);
+    });
+    return map;
+  }, [generatedSounds]);
+
   // Handle reset (convert generated sound back to generation UI)
   const handleReset = useCallback((index: number) => {
     const sound = getGeneratedSound(index);
@@ -734,7 +756,21 @@ export function SoundGenerationSection({
     ) : null;
 
     // Trigger badge (if available from orchestrateMeta with param or mixed trigger)
-    const triggerBadge = config.orchestrateMeta?.trigger?.type && config.orchestrateMeta.trigger.type !== 'absolute' ? (
+    // Shows variant letters from active iterationLinks alongside each expression.
+    const totalExpressions = config.orchestrateMeta?.trigger?.expression?.length ?? 0;
+    const activeExpressions = (config.orchestrateMeta?.trigger?.expression ?? []).filter((e: string) => e?.trim());
+    const primarySoundId = configPrimarySoundIds.get(originalIndex) ?? '';
+    const expressionDetails = activeExpressions.map((expr: string, idx: number) => {
+      const linkKey = `${primarySoundId}-${idx}`;
+      const link = iterationLinks[linkKey];
+      const variantLetter = link?.variantIndex !== undefined
+        ? ` [${String.fromCharCode(65 + link.variantIndex)}]`
+        : '';
+      return `${expr}${variantLetter}`;
+    });
+    const triggerBadge = config.orchestrateMeta?.trigger?.type
+      && config.orchestrateMeta.trigger.type !== 'absolute'
+      && activeExpressions.length > 0 ? (
       <span
         style={{
           fontSize: '9px',
@@ -747,7 +783,7 @@ export function SoundGenerationSection({
           flexShrink: 0,
           whiteSpace: 'nowrap',
         }}
-        title={config.orchestrateMeta.trigger.expression.join(', ')}
+        title={`${activeExpressions.length}/${totalExpressions} active — ${expressionDetails.join(', ')}`}
       >
         {config.orchestrateMeta.trigger.type === 'param' ? 'Param' : 'Mixed'}
       </span>

@@ -167,6 +167,9 @@ export function buildSoundscapeSavePayload(
       const schedulingMode = soundSchedulingModes?.[event.id] ?? event.scheduling_mode;
       const trackTimestamps = soundTimestamps?.[event.id];
 
+      console.log('[serializer:save] event:', event.id, 'promptIdx:', event.prompt_index,
+        'schedMode:', schedulingMode, 'ts:', trackTimestamps?.length ?? 0);
+
       // Resolve entity_node_id from the matching config (events only have entity_index)
       const eventEntityNodeId = event.prompt_index !== undefined
         ? configEntityNodeIds[event.prompt_index]
@@ -189,6 +192,7 @@ export function buildSoundscapeSavePayload(
         entity_indices: event.entity_indices,
         scheduling_mode: schedulingMode,
         timestamps: trackTimestamps,
+        category: (event as any).category || undefined,
       };
     }
   );
@@ -320,6 +324,7 @@ export function buildSoundscapeSavePayload(
       ir_gain_db: pyConfig.irGainDb ?? undefined,
       ir_normalize_enabled: pyConfig.irNormalizeEnabled ?? undefined,
       material_assignments_enabled: pyConfig.materialAssignmentsEnabled ?? undefined,
+      ir_import_mode: (pyConfig as any).irImportMode ?? undefined,
     });
   }
 
@@ -462,6 +467,10 @@ export function restoreSoundscapeState(
     soundSchedulingModes[saved.id] = restoredMode;
     if (saved.timestamps?.length) {
       soundTimestamps[saved.id] = saved.timestamps;
+      console.log('[serializer:load] restored ts for', saved.id, 'promptIdx:', saved.prompt_index,
+        'mode:', restoredMode, 'ts:', saved.timestamps);
+    } else {
+      console.log('[serializer:load] no ts for', saved.id, 'promptIdx:', saved.prompt_index, 'mode:', restoredMode);
     }
 
     // Build the event — only include entity_index when it's a real number.
@@ -481,6 +490,7 @@ export function restoreSoundscapeState(
       current_interval_seconds: saved.current_interval_seconds ?? undefined,
       isUploaded: saved.is_uploaded,
       scheduling_mode: restoredMode,
+      category: (saved as any).category || undefined,
     };
 
     // Only set entity_index when it's a real number (not null/undefined)
@@ -617,6 +627,7 @@ export function restoreSoundscapeState(
       irGainDb: saved.ir_gain_db ?? undefined,
       irNormalizeEnabled: saved.ir_normalize_enabled ?? undefined,
       materialAssignmentsEnabled: saved.material_assignments_enabled ?? undefined,
+      irImportMode: saved.ir_import_mode ?? undefined,
     } as any;
 
     if (!hasSettings) {

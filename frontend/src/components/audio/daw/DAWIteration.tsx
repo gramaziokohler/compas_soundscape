@@ -33,9 +33,12 @@ export interface DAWIterationProps {
   onDragEnd: (newStartMs: number) => void;
   onDuplicate: (newStartMs: number) => void;
   onContextMenu: (data: IterationContextMenuData) => void;
+  onHover?: (soundId: string, iterationIndex: number) => void;
+  onHoverEnd?: () => void;
 }
 
 export function DAWIteration({
+  soundId,
   iterationIndex,
   startMs,
   durationMs,
@@ -53,6 +56,8 @@ export function DAWIteration({
   onDragEnd,
   onDuplicate,
   onContextMenu,
+  onHover,
+  onHoverEnd,
 }: DAWIterationProps) {
   const [isHovered, setIsHovered] = useState(false);
   const [dragOffsetMs, setDragOffsetMs] = useState(0);
@@ -185,8 +190,8 @@ export function DAWIteration({
       onClick={isDraggable ? undefined : onClick}
       onDoubleClick={onDoubleClick}
       onContextMenu={handleContextMenuEvt}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      onMouseEnter={() => { setIsHovered(true); if (iterationLink) onHover?.(soundId, iterationIndex); }}
+      onMouseLeave={() => { setIsHovered(false); onHoverEnd?.(); }}
       style={{
         position: 'absolute',
         left: `${leftPx}px`,

@@ -87,11 +87,15 @@ function HomeContent() {
     const audioStore = useAudioControlsStore.getState();
     soundGen.generatedSounds.forEach((sound: any) => {
       if (!sound.timestamps?.length) return;
-      if (audioStore.soundSchedulingModes[sound.id]) return; // already initialized
+      if (audioStore.soundSchedulingModes[sound.id]) {
+        console.log('[page:autoInit] SKIP — mode already set for', sound.id, 'mode:', audioStore.soundSchedulingModes[sound.id]);
+        return;
+      }
       const timestampsSec = (sound.timestamps as string[]).map((t) => {
         const [mm, ss] = t.split(':').map(Number);
         return (mm ?? 0) * 60 + (ss ?? 0);
       });
+      console.log('[page:autoInit] OVERWRITING ts for', sound.id, 'from foley timestamps:', timestampsSec);
       audioStore.handleSchedulingModeChange(sound.id, 'timestamps');
       audioStore.handleTimestampsChange(sound.id, timestampsSec);
     });
@@ -1115,6 +1119,27 @@ function HomeContent() {
           restored.soundTimestamps,
         );
 
+        // Extend timeline duration to accommodate all restored timestamps
+        // (bakeOrchestrateSchedule is suppressed during load, so auto-extend
+        //  doesn't fire — we must do it here so iterations beyond the default
+        //  60 s are not filtered out by extractTimelineSoundsFromData.)
+        let maxEndSec = 0;
+        for (const timestamps of Object.values(restored.soundTimestamps)) {
+          for (const ts of timestamps) {
+            maxEndSec = Math.max(maxEndSec, ts + 10); // 10 s default per-sound duration
+          }
+        }
+        if (maxEndSec > 0) {
+          const audioDurMs = Math.ceil((maxEndSec + 10) / 30) * 30 * 1000;
+          const currentDurMs = useAudioControlsStore.getState().timelineDurationMs;
+          console.log('[page:load] timeline — maxEndSec:', maxEndSec.toFixed(1),
+            'computedDurMs:', audioDurMs, 'currentDurMs:', currentDurMs);
+          if (audioDurMs > currentDurMs) {
+            useAudioControlsStore.getState().setTimelineDurationMs(audioDurMs);
+            console.log('[page:load] extended timeline from', currentDurMs, 'to', audioDurMs);
+          }
+        }
+
         // Restore the parametric per-iteration variant/entity links between sounds.
         useAudioControlsStore.getState().restoreIterationLinks(
           restored.iterationLinks,
@@ -1287,6 +1312,9 @@ function HomeContent() {
       );
 
       // 3. Build save payload (with server filenames for blob sounds + simulation state)
+      const saveTimestamps = useAudioControlsStore.getState().soundTimestamps;
+      console.log('[page:save] saving soundTimestamps, keys:', Object.keys(saveTimestamps).length,
+        'entries:', Object.entries(saveTimestamps).map(([k, v]) => `${k}:${v?.length ?? 0}ts`).join(' '));
       const payload = buildSoundscapeSavePayload(
         modelId,
         modelId, // model_name - use model_id as fallback

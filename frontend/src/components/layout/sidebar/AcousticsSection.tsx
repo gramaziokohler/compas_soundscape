@@ -792,6 +792,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         importedIRIds: (config as any).importedIRIds,
         simulationPositions: (config as any).simulationPositions,
         completedAt: (config as any).completedAt,
+        irImportMode: (config as any).irImportMode,
       } as any);
       return;
     }
@@ -982,14 +983,24 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       if (audioRenderingMode !== 'anechoic') changeMode('anechoic');
     } else if (activeConfigType === 'resonance') {
       if (audioRenderingMode !== 'resonance') changeMode('resonance');
-    } else if (activeConfigState === 'completed' && activeConfigIRId) {
-      if (selectedIRId !== activeConfigIRId) {
-        const activeSimConfig = simulationConfigs[activeSimulationIndex] as any;
-        if (activeSimConfig?.importedIRMetadata) {
-          selectIR(activeSimConfig.importedIRMetadata).catch(console.error);
+    } else if (activeConfigState === 'completed') {
+      const activeSimConfig = simulationConfigs[activeSimulationIndex] as any;
+      const hasPerSourceMapping =
+        activeSimConfig?.sourceReceiverIRMapping &&
+        Object.keys(activeSimConfig.sourceReceiverIRMapping).length > 0;
+
+      if (hasPerSourceMapping) {
+        // Per-source IRs are applied via page.tsx setSourceReceiverIRMapping.
+        // Loading a global IR here would reinit the decoder and overwrite per-source filters.
+        if (audioRenderingMode !== 'precise') changeMode('precise');
+      } else if (activeConfigIRId) {
+        if (selectedIRId !== activeConfigIRId) {
+          if (activeSimConfig?.importedIRMetadata) {
+            selectIR(activeSimConfig.importedIRMetadata).catch(console.error);
+          }
+        } else if (audioRenderingMode !== 'precise') {
+          changeMode('precise');
         }
-      } else if (audioRenderingMode !== 'precise') {
-        changeMode('precise');
       }
     }
   }, [activeSimulationIndex, activeConfigType, activeConfigState, activeConfigIRId, audioRenderingMode, selectedIRId, simulationConfigs]);
@@ -1162,6 +1173,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     const isCompleted = config.state === 'completed';
     const isRunning = config.type !== 'resonance' && (config as any).isRunning;
     const hasResult = isCompleted;
+    const singleIRMode = config.type === 'import-irs' && (config as any).irImportMode === 'single';
 
     // Simulation action button state
     const isSimulationType = config.type === 'choras' || config.type === 'pyroomacoustics';
@@ -1317,6 +1329,59 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       } as any);
     };
 
+    // Single-IR-per-listener: assign one IR to every source pair under a listener
+    const handleListenerIRUploaded = (pairs: Array<{ sourceId: string; receiverId: string }>, irMetadata: ImpulseResponseMetadata) => {
+      const prevMapping = ((config as any).sourceReceiverIRMapping ?? {}) as Record<string, Record<string, ImpulseResponseMetadata>>;
+      const nextMapping: Record<string, Record<string, ImpulseResponseMetadata>> = { ...prevMapping };
+      for (const { sourceId, receiverId } of pairs) {
+        nextMapping[sourceId] = { ...(nextMapping[sourceId] ?? {}), [receiverId]: irMetadata };
+      }
+
+      const usedIds = new Set<string>();
+      Object.values(nextMapping).forEach((receiverMap) => {
+        Object.values(receiverMap).forEach((ir) => usedIds.add(ir.id));
+      });
+
+      handleUpdateConfig(index, {
+        sourceReceiverIRMapping: nextMapping,
+        importedIRIds: Array.from(usedIds),
+        simulationResults: 'Manual IR import',
+        completedAt: Date.now(),
+        simulationPositions: {
+          sources: currentSourcePositions,
+          receivers: currentReceiverPositions,
+        },
+      } as any);
+
+      if (onIRImported) onIRImported();
+    };
+
+    const handleListenerAssignmentCleared = (pairs: Array<{ sourceId: string; receiverId: string }>) => {
+      const prevMapping = ((config as any).sourceReceiverIRMapping ?? {}) as Record<string, Record<string, ImpulseResponseMetadata>>;
+      const nextMapping: Record<string, Record<string, ImpulseResponseMetadata>> = { ...prevMapping };
+
+      for (const { sourceId, receiverId } of pairs) {
+        if (!nextMapping[sourceId]?.[receiverId]) continue;
+        const nextSourceMap = { ...nextMapping[sourceId] };
+        delete nextSourceMap[receiverId];
+        if (Object.keys(nextSourceMap).length > 0) {
+          nextMapping[sourceId] = nextSourceMap;
+        } else {
+          delete nextMapping[sourceId];
+        }
+      }
+
+      const usedIds = new Set<string>();
+      Object.values(nextMapping).forEach((receiverMap) => {
+        Object.values(receiverMap).forEach((ir) => usedIds.add(ir.id));
+      });
+
+      handleUpdateConfig(index, {
+        sourceReceiverIRMapping: Object.keys(nextMapping).length > 0 ? nextMapping : undefined,
+        importedIRIds: usedIds.size > 0 ? Array.from(usedIds) : undefined,
+      } as any);
+    };
+
     // Reset mismatched objects to their simulation-time positions
     const handleResetPositions = (sourceIds: string[], receiverIds: string[]) => {
       const simPositions = (config as any).simulationPositions as {
@@ -1346,9 +1411,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     const soundSectionMismatchWarning = hasSoundSectionMismatch ? (
       <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-warning/10 border border-warning/40 text-warning text-xs">
         <span className="font-bold shrink-0 mt-0.5">!</span>
-        <span>
+        {/* <span>
           This simulation was generated with sound sources from a different sound section. The impulse responses remain accessible for the available source-receiver pairs.
-        </span>
+        </span> */}
       </div>
     ) : null;
 
@@ -1356,7 +1421,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         <>
           {soundSectionMismatchWarning}
           {/* FPS mode warning: shown when this card is active, audio is actually playing, and user is not in listener view */}
-          {index === activeSimulationIndex && isExpanded && isAudioActuallyPlaying && !isFPSModeActive && (
+          {/* {index === activeSimulationIndex && isExpanded && isAudioActuallyPlaying && !isFPSModeActive && (
             <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-error/10 border border-error/40 text-error text-xs">
               <span className="font-bold shrink-0 mt-0.5">⚠</span>
               <span>Not in listener mode — use <strong>Go to Listener</strong> to auralize from a receiver&apos;s perspective.</span>
@@ -1366,6 +1431,32 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-warning/10 border border-warning/40 text-warning text-xs">
               <span className="font-bold shrink-0 mt-0.5">!</span>
               <span>{missingPairCount} source-listener pair{missingPairCount === 1 ? '' : 's'} still need an IR. Auralization stays disabled for listener groups with missing assignments.</span>
+            </div>
+          )} */}
+          {config.type === 'import-irs' && (
+            <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-neutral-800 border border-neutral-700">
+              {([
+                { mode: 'single', label: 'Single IR' },
+                { mode: 'per-pair', label: 'Per-pair IRs' },
+              ] as const).map(({ mode, label }) => {
+                const isActive = mode === 'single' ? singleIRMode : !singleIRMode;
+                return (
+                  <button
+                    key={mode}
+                    onClick={() => handleUpdateConfig(index, { irImportMode: mode } as any)}
+                    className={`flex-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${
+                      isActive
+                        ? 'bg-info text-white'
+                        : 'text-neutral-400 hover:text-neutral-200'
+                    }`}
+                    title={mode === 'single'
+                      ? 'One IR per listener, applied to all its source pairs'
+                      : 'One IR per source-listener pair'}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
             </div>
           )}
           <SimulationResultContent
@@ -1389,8 +1480,11 @@ export function AcousticsSection(props: AcousticsSectionProps) {
                 availableSourceCount={config.type === 'import-irs' ? availableSourceCount : undefined}
                 availableReceiverCount={config.type === 'import-irs' ? availableReceiverCount : undefined}
                 allowPairUploads={config.type === 'import-irs'}
+                singleIRPerListener={singleIRMode}
                 onPairIRUploaded={config.type === 'import-irs' ? handlePairIRUploaded : undefined}
                 onPairAssignmentCleared={config.type === 'import-irs' ? handlePairAssignmentCleared : undefined}
+                onListenerIRUploaded={config.type === 'import-irs' ? handleListenerIRUploaded : undefined}
+                onListenerAssignmentCleared={config.type === 'import-irs' ? handleListenerAssignmentCleared : undefined}
           />
               {config.type !== 'import-irs' && <SimulationSettingsSection config={config} />}
           {config.type === 'import-irs' && (

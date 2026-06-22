@@ -252,6 +252,16 @@ export class AmbisonicIRMode implements IAudioMode {
   }
 
   /**
+   * Clear the global IR buffer when using per-source (simulation) IR assignment.
+   * Per-source filters set via setSourceImpulseResponse are preserved.
+   */
+  clearGlobalImpulseResponse(): void {
+    this.irBuffer = null;
+    this.globalNormGain = 1.0;
+    console.log('[AmbisonicIRMode] Global IR cleared (per-source mode active)');
+  }
+
+  /**
    * Initialize the ambisonic processing pipeline
    */
   private async initializePipeline(): Promise<void> {
@@ -262,9 +272,44 @@ export class AmbisonicIRMode implements IAudioMode {
     // Increment counter to track this initialization (for race condition handling)
     const initId = ++this.pipelineInitCounter;
 
-    // Cleanup old pipeline
+    // Cleanup old pipeline — disconnect graph before dispose to avoid orphaned nodes
     if (this.binauralDecoder) {
-      this.binauralDecoder.dispose();
+      const oldDecoder = this.binauralDecoder;
+      let oldInput: AudioNode | null = null;
+      let oldOutput: AudioNode | null = null;
+      try {
+        oldInput = oldDecoder.getInputNode();
+        oldOutput = oldDecoder.getOutputNode();
+      } catch {
+        // Decoder may be partially initialized
+      }
+
+      this.sourceChains.forEach((chain) => {
+        if (!chain.convolver?.out) return;
+        try {
+          if (oldInput) {
+            chain.convolver.out.disconnect(oldInput);
+          } else {
+            chain.convolver.out.disconnect();
+          }
+        } catch {
+          // Already disconnected
+        }
+      });
+
+      if (oldOutput && this.masterGain) {
+        try {
+          oldOutput.disconnect(this.masterGain);
+        } catch {
+          try {
+            oldOutput.disconnect();
+          } catch {
+            // Already disconnected
+          }
+        }
+      }
+
+      oldDecoder.dispose();
       this.binauralDecoder = null;
     }
     // Create binaural decoder with rotation support
@@ -294,8 +339,18 @@ export class AmbisonicIRMode implements IAudioMode {
       return;
     }
 
+    // Reconnect convolvers to the new decoder input
+    const decoderInput = this.binauralDecoder.getInputNode();
+    this.sourceChains.forEach((chain) => {
+      if (!chain.convolver?.out) return;
+      try {
+        chain.convolver.out.connect(decoderInput);
+      } catch (e) {
+        console.warn('[AmbisonicIRMode] Failed to reconnect convolver after pipeline init:', e);
+      }
+    });
+
     // Connect pipeline: Convolvers → Decoder → Master Gain → Destination
-    // Each convolver connects directly to decoder input (Web Audio sums automatically)
     this.binauralDecoder.getOutputNode().connect(this.masterGain!);
 
     console.log(`[AmbisonicIRMode] Pipeline: Convolver(s) → SceneRotator → BinDecoder → MasterGain → Destination`);

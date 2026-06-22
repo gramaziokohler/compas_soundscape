@@ -501,6 +501,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     this.sourceReceiverIRMapping = mapping;
     this.simulationMode = simulationMode;
     this.activeReceiverId = initialReceiverId || null;
+    this.clearSimulationGlobalIR();
 
     console.log('[AudioOrchestrator] Source-Receiver IR mapping set:', {
       simulationMode,
@@ -687,6 +688,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     this.sourceReceiverIRMapping = mapping;
     this.simulationMode = simulationMode;
     this.activeReceiverId = activeReceiverId || this.activeReceiverId;
+    this.clearSimulationGlobalIR();
 
     console.log('[AudioOrchestrator] Hot-swapping IR mapping (no stop):', {
       simulationMode,
@@ -698,6 +700,14 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     if (this.activeReceiverId) {
       await this.updateSourceIRsForReceiver(this.activeReceiverId);
     }
+  }
+
+  /**
+   * Clear global IR in AmbisonicIRMode when using per-source simulation mapping.
+   * Prevents createSource/updateChainIR from overriding per-source filters.
+   */
+  private clearSimulationGlobalIR(): void {
+    this.ambisonicIRMode?.clearGlobalImpulseResponse();
   }
 
   /**

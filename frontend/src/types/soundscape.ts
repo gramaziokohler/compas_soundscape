@@ -79,6 +79,8 @@ export interface SoundscapeSoundEvent {
   scheduling_mode?: 'interval' | 'timestamps';
   /** Explicit per-track start times in seconds (used when scheduling_mode is "timestamps"). */
   timestamps?: number[];
+  /** Sound category from foley/scenario analysis (e.g. "background", "sound_event", "speech"). */
+  category?: string;
 }
 
 /** Serializable receiver position */
@@ -139,6 +141,7 @@ export interface SoundscapeSimulationConfig {
   ir_gain_db?: number;
   ir_normalize_enabled?: boolean;
   material_assignments_enabled?: boolean;
+  ir_import_mode?: 'single' | 'per-pair';
 }
 
 /** ShoeBox Acoustics room configuration (global) */

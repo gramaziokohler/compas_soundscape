@@ -366,12 +366,106 @@ export function DAWTimeline({
   const iterationLinks = useAudioControlsStore((s) => s.iterationLinks);
   const setIterationLink = useAudioControlsStore((s) => s.setIterationLink);
   const clearIterationLink = useAudioControlsStore((s) => s.clearIterationLink);
+  const bakeOrchestrateSchedule = useAudioControlsStore((s) => s.bakeOrchestrateSchedule);
 
   /* ---- Store: generated sounds (for variant submenu) ---- */
   const generatedSounds = useSoundscapeStore((s) => s.generatedSounds);
 
   /* ---- Store: sound configs (to resolve entity positions) ---- */
   const soundConfigs = useSoundscapeStore((s) => s.soundConfigs);
+  const clearOrchestrateTrigger = useSoundscapeStore((s) => s.clearOrchestrateTrigger);
+
+  /* ---- Trigger dependency graph (for connection lines + variant propagation) ---- */
+  interface TriggerDep {
+    soundId: string;
+    iterationIndex: number;
+  }
+
+  const triggerGraph = useMemo(() => {
+    const forward: Map<string, TriggerDep[]> = new Map();
+    const reverse: Map<string, TriggerDep[]> = new Map();
+
+    if (!soundConfigs.length || !sounds.length) return { forward, reverse };
+
+    const entryIdMap = new Map<string, { soundId: string; configIndex: number }>();
+    soundConfigs.forEach((config, ci) => {
+      const meta = config.orchestrateMeta;
+      if (!meta) return;
+      const timelineSound = sounds.find((s) => s.promptIndex === ci);
+      if (!timelineSound) return;
+      entryIdMap.set(meta.entryId, { soundId: timelineSound.id, configIndex: ci });
+    });
+
+    soundConfigs.forEach((config, ci) => {
+      const meta = config.orchestrateMeta;
+      if (!meta || !meta.trigger?.expression?.length) return;
+      const timelineSound = sounds.find((s) => s.promptIndex === ci);
+      if (!timelineSound) return;
+      const thisSoundId = timelineSound.id;
+
+      meta.trigger.expression.forEach((expr, i) => {
+        if (!expr) return;
+        const m = expr.match(/^(after|alignEnd)\((.+)_(\d+)\)$/);
+        if (!m) return;
+        const [, , refEntryId, iterStr] = m;
+        const refIterIdx = parseInt(iterStr, 10) - 1;
+
+        const ref = entryIdMap.get(refEntryId);
+        if (!ref) return;
+
+        const fromKey = `${thisSoundId}-${i}`;
+        if (!forward.has(fromKey)) forward.set(fromKey, []);
+        forward.get(fromKey)!.push({ soundId: ref.soundId, iterationIndex: refIterIdx });
+
+        const toKey = `${ref.soundId}-${refIterIdx}`;
+        if (!reverse.has(toKey)) reverse.set(toKey, []);
+        reverse.get(toKey)!.push({ soundId: thisSoundId, iterationIndex: i });
+      });
+    });
+
+    return { forward, reverse };
+  }, [soundConfigs, sounds]);
+
+  /* ---- Hover state for connection lines ---- */
+  const [hoveredIteration, setHoveredIteration] = useState<{ soundId: string; iterationIndex: number } | null>(null);
+
+  const handleIterationHover = useCallback((soundId: string, iterationIndex: number) => {
+    setHoveredIteration({ soundId, iterationIndex });
+  }, []);
+
+  const handleIterationHoverEnd = useCallback(() => {
+    setHoveredIteration(null);
+  }, []);
+
+  /** Schedule orchestrate re-bake after variant change (non-blocking). */
+  const scheduleBakeOrchestrate = useCallback(() => {
+    bakeOrchestrateSchedule();
+  }, [bakeOrchestrateSchedule]);
+
+  /* ---- Connected iteration pairs from hovered (forward + reverse, with relation) ---- */
+  const connectedPairs = useMemo((): Array<{ source: TriggerDep; dependent: TriggerDep; relation: 'forward' | 'reverse' }> => {
+    if (!hoveredIteration) return [];
+    const key = `${hoveredIteration.soundId}-${hoveredIteration.iterationIndex}`;
+    const pairs: Array<{ source: TriggerDep; dependent: TriggerDep; relation: 'forward' | 'reverse' }> = [];
+
+    // Forward deps: hovered depends on target → target is source, hovered is dependent
+    const fwd = triggerGraph.forward.get(key);
+    if (fwd) fwd.forEach((d) => pairs.push({
+      source: d,
+      dependent: { soundId: hoveredIteration.soundId, iterationIndex: hoveredIteration.iterationIndex },
+      relation: 'forward',
+    }));
+
+    // Reverse deps: target depends on hovered → hovered is source, target is dependent
+    const rev = triggerGraph.reverse.get(key);
+    if (rev) rev.forEach((d) => pairs.push({
+      source: { soundId: hoveredIteration.soundId, iterationIndex: hoveredIteration.iterationIndex },
+      dependent: d,
+      relation: 'reverse',
+    }));
+
+    return pairs;
+  }, [hoveredIteration, triggerGraph]);
 
   /* ---- Store: object→sound links (for entity submenu) ---- */
   const objectSoundLinks = useSpeckleStore((s) => s.objectSoundLinks);
@@ -499,17 +593,75 @@ export function DAWTimeline({
     });
   }, [grouped]);
 
+  /* ---- Compute pixel positions for all iterations (for connection lines) ---- */
+  const iterationPixelPositions = useMemo((): Map<string, { x: number; y: number; w: number }> => {
+    const positions = new Map<string, { x: number; y: number; w: number }>();
+    let trackY = 0;
+
+    groupKeys.forEach((g) => {
+      trackY += GROUP_HEADER_HEIGHT;
+      const groupSounds = grouped[g];
+
+      groupSounds.forEach((sound) => {
+        const centerY = trackY + TRACK_HEIGHT_TOTAL / 2;
+
+        const scheduled = sound.scheduledIterations || [];
+        const originalIndices = sound.scheduledIterationOriginalIndices || scheduled.map((_: number, i: number) => i);
+        const durations = sound.iterationDurationsMs || scheduled.map(() => sound.soundDurationMs);
+
+        scheduled.forEach((startMs, displayIdx) => {
+          const originalIdx = originalIndices[displayIdx] ?? displayIdx;
+          const durMs = durations[displayIdx] ?? sound.soundDurationMs;
+          const x = LABEL_WIDTH + (startMs / 1000) * pxPerSecond;
+          const w = Math.max((durMs / 1000) * pxPerSecond, 4);
+          positions.set(`${sound.id}-${originalIdx}`, { x: x + w / 2, y: centerY, w });
+        });
+
+        trackY += TRACK_HEIGHT_TOTAL;
+      });
+    });
+
+    return positions;
+  }, [grouped, groupKeys, pxPerSecond, TRACK_HEIGHT_TOTAL]);
+
   /* ---- Drag end handler (timestamps mode) ---- */
   const handleDragEnd = useCallback(
     (soundId: string, iterationIndex: number, newStartMs: number) => {
       const sound = sounds.find((s) => s.id === soundId);
       if (!sound) return;
       const currentTsSec = soundTimestamps[soundId] ?? [];
+      const oldStartMs = (currentTsSec[iterationIndex] ?? 0) * 1000;
+      const deltaMs = newStartMs - oldStartMs;
+
       const newTsSec = [...currentTsSec];
       newTsSec[iterationIndex] = parseFloat((newStartMs / 1000).toFixed(3));
       handleTimestampsChange(soundId, newTsSec);
+
+      const linkKey = `${soundId}-${iterationIndex}`;
+      if (iterationLinks[linkKey] && sound.promptIndex !== undefined) {
+        console.log('[DAWTimeline:drag] breaking trigger — soundId:', soundId, 'iter:', iterationIndex,
+          'oldMs:', oldStartMs.toFixed(0), 'newMs:', newStartMs.toFixed(0), 'delta:', deltaMs.toFixed(0));
+        clearOrchestrateTrigger(sound.promptIndex, iterationIndex);
+      }
+
+      if (Math.abs(deltaMs) > 0.5) {
+        const revKey = `${soundId}-${iterationIndex}`;
+        const deps = triggerGraph.reverse.get(revKey);
+        if (deps) {
+          deps.forEach((dep) => {
+            const depTsSec = soundTimestamps[dep.soundId] ?? [];
+            if (depTsSec[dep.iterationIndex] != null) {
+              const oldDepStartMs = (depTsSec[dep.iterationIndex] ?? 0) * 1000;
+              const newDepStartMs = Math.max(0, oldDepStartMs + deltaMs);
+              const newDepTs = [...depTsSec];
+              newDepTs[dep.iterationIndex] = parseFloat((newDepStartMs / 1000).toFixed(3));
+              handleTimestampsChange(dep.soundId, newDepTs);
+            }
+          });
+        }
+      }
     },
-    [sounds, soundTimestamps, handleTimestampsChange],
+    [sounds, soundTimestamps, handleTimestampsChange, iterationLinks, clearOrchestrateTrigger, triggerGraph],
   );
 
   /* ---- Delete iteration handler ---- */
@@ -874,11 +1026,90 @@ export function DAWTimeline({
                       : undefined
                   }
                   onIterationContextMenu={(data) => handleIterationContextMenu(sound.id, data)}
+                  onIterationHover={handleIterationHover}
+                  onIterationHoverEnd={handleIterationHoverEnd}
                 />
                 );
               })}
             </DAWGroup>
           ))}
+
+          {/* ---- Connection line SVG overlay ---- */}
+          {hoveredIteration && connectedPairs.length > 0 && (() => {
+            const hovKey = `${hoveredIteration.soundId}-${hoveredIteration.iterationIndex}`;
+            const hovPos = iterationPixelPositions.get(hovKey);
+            if (!hovPos) return null;
+            const hovY = hovPos.y + RULER_HEIGHT;
+            const hovTop = hovY - TRACK_HEIGHT_TOTAL / 2;
+            const hovBottom = hovY + TRACK_HEIGHT_TOTAL / 2;
+
+            const segments: Array<{ points: string; markerEnd?: string }> = [];
+
+            connectedPairs.forEach(({ source, dependent }) => {
+              const srcKey = `${source.soundId}-${source.iterationIndex}`;
+              const depKey = `${dependent.soundId}-${dependent.iterationIndex}`;
+              const srcPos = iterationPixelPositions.get(srcKey);
+              const depPos = iterationPixelPositions.get(depKey);
+              if (!srcPos || !depPos) return;
+
+              const srcY = srcPos.y + RULER_HEIGHT;
+              const srcTop = srcY - TRACK_HEIGHT_TOTAL / 2;
+              const srcBottom = srcY + TRACK_HEIGHT_TOTAL / 2;
+              const depY = depPos.y + RULER_HEIGHT;
+              const depRight = depPos.x + depPos.w / 2;
+              const depLeft = depPos.x - depPos.w / 2;
+
+              // Start from closer side (top or bottom) of the source iteration
+              const distToTop = Math.abs(srcTop - depY);
+              const distToBottom = Math.abs(srcBottom - depY);
+              const useTop = distToTop <= distToBottom;
+              const startY = useTop ? srcTop : srcBottom;
+
+              // End at dependent's border (nearest side)
+              const depIsRight = depPos.x > srcPos.x;
+              const endX = depIsRight ? depLeft : depRight;
+
+              segments.push({
+                points: `${srcPos.x},${startY} ${srcPos.x},${depY} ${endX},${depY}`,
+                markerEnd: 'url(#arrow-orange-daw)',
+              });
+            });
+
+            if (segments.length === 0) return null;
+
+            return (
+            <svg
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: '100%',
+                pointerEvents: 'none',
+                zIndex: 15,
+                overflow: 'visible',
+              }}
+            >
+              <defs>
+                <marker id="arrow-orange-daw" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                  <path d="M0,0 L6,3 L0,6 Z" fill="#f97316" />
+                </marker>
+              </defs>
+              {segments.map((seg, i) => (
+                <polyline
+                  key={i}
+                  points={seg.points}
+                  fill="none"
+                  stroke="#f97316"
+                  strokeWidth="1.5"
+                  strokeDasharray="4 3"
+                  opacity={0.7}
+                  markerEnd={seg.markerEnd}
+                />
+              ))}
+            </svg>
+            );
+          })()}
 
           {/* Playback cursor */}
           <div
@@ -1041,6 +1272,14 @@ export function DAWTimeline({
                         onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
                         onClick={() => {
                           setIterationLink(soundId, iterationIndex, { variantIndex: vi });
+                          const revKey = `${soundId}-${iterationIndex}`;
+                          const dependent = triggerGraph.reverse.get(revKey);
+                          if (dependent) {
+                            dependent.forEach((dep) => {
+                              setIterationLink(dep.soundId, dep.iterationIndex, { variantIndex: vi });
+                            });
+                          }
+                          scheduleBakeOrchestrate();
                           setContextMenu(null);
                         }}
                       >

@@ -256,12 +256,11 @@ export class OmnitoneFOADecoder implements IBinauralDecoder {
   dispose(): void {
     console.log('[OmnitoneFOADecoder] Disposing');
 
-    // Disconnect renderer nodes
     if (this.foaRenderer) {
       try {
         this.foaRenderer.setRenderingMode('off');
-        // Note: Omnitone doesn't expose a dispose() method,
-        // but setting mode to 'off' disables processing
+        this.foaRenderer.input?.disconnect();
+        this.foaRenderer.output?.disconnect();
       } catch (error) {
         console.warn('[OmnitoneFOADecoder] Error disposing renderer:', error);
       }
