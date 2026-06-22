@@ -10,6 +10,8 @@ import { SelectionExtension } from '@speckle/viewer';
 import type { VirtualTreeItem as TreeItem } from '@/hooks/useSpeckleTree';
 import { useAcousticMaterialStore } from '@/store';
 import { getHeaderAndSubheader } from '@/hooks/useSpeckleTree';
+import { getMaterialColorByAbsorption } from '@/utils/utils';
+import type { MaterialOption } from '@/components/ui/MaterialSelect';
 import { UI_RIGHT_SIDEBAR } from '@/utils/constants';
 
 /**
@@ -387,7 +389,25 @@ export function ObjectExplorer({ resetAllRef, onItemCountChange }: ObjectExplore
   // ===== Auto-expand/scroll to acoustic layer =====
   const expandToLayerId = useAcousticMaterialStore((s) => s.expandToLayerId);
   const isAcousticMaterialActive = useAcousticMaterialStore((s) => s.isActive);
+  const acousticCardType = useAcousticMaterialStore((s) => s.cardType);
+  const acousticMaterials = useAcousticMaterialStore((s) => s.availableMaterials);
   const lastProcessedLayerIdRef = useRef<string | null>(null);
+
+  // Material options + color map for the acoustic dropdown columns (memoized once)
+  const sortedMaterials = useMemo<MaterialOption[]>(() => {
+    if (!isAcousticMaterialActive) return [];
+    return [...acousticMaterials]
+      .filter((m: any) => typeof m.absorption === 'number' && !isNaN(m.absorption))
+      .sort((a: any, b: any) => a.absorption - b.absorption);
+  }, [isAcousticMaterialActive, acousticMaterials]);
+
+  const materialColors = useMemo(() => {
+    const colors = new Map<string, string>();
+    if (isAcousticMaterialActive) {
+      acousticMaterials.forEach((m: any) => colors.set(m.id, getMaterialColorByAbsorption(m.absorption)));
+    }
+    return colors;
+  }, [isAcousticMaterialActive, acousticMaterials]);
 
   useEffect(() => {
     if (!expandToLayerId || !isAcousticMaterialActive) {
@@ -538,6 +558,10 @@ export function ObjectExplorer({ resetAllRef, onItemCountChange }: ObjectExplore
                     onMouseLeave={handleMouseLeave}
                     onToggleVisibility={handleToggleVisibility}
                     onToggleIsolation={handleToggleIsolation}
+                    acousticActive={isAcousticMaterialActive}
+                    showScattering={acousticCardType === 'pyroomacoustics'}
+                    sortedMaterials={sortedMaterials}
+                    materialColors={materialColors}
                   />
                 );
               } catch (error) {

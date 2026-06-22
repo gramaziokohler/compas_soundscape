@@ -1178,24 +1178,10 @@ For the duration estimation (in seconds with 0.1 precision):
         Returns:
             (filtered_entities, entities_text)
         """
-        _EXCLUDED = frozenset({"soundscape", "acoustics"})
-
-        def _segments(text: str) -> set[str]:
-            """Split a hierarchical path into lowercase non-empty segments."""
-            return {p.strip() for p in re.split(r'[::/\\|]+', text) if p.strip()}
-
-        def _is_excluded(e: dict) -> bool:
-            name = (e.get("name") or "").lower().strip()
-            # Exact name match (e.g. a layer node that was itself captured as an entity)
-            if name in _EXCLUDED:
-                return True
-            # Layer path check — covers the entity's own layer and all ancestors
-            # e.g. "Acoustics", "Acoustics::SubGroup", "Soundscape::SoundSources"
-            raw_layer = (e.get("raw") or {}).get("layer") or ""
-            layer = ((e.get("layer") or "") or raw_layer).lower()
-            if _segments(layer) & _EXCLUDED:
-                return True
-            return False
+        # Note: hidden layers are already filtered out client-side (the Object
+        # Explorer's hidden IDs are removed before entities reach the backend),
+        # so no layer-name based auto-discarding is done here. In particular the
+        # "Acoustics" layer is intentionally kept and analyzed.
 
         # Build applicationId -> material name from RenderMaterialProxy objects.
         # Speckle v3 schema stores the RenderMaterial under raw.value; older schemas
@@ -1237,13 +1223,19 @@ For the duration estimation (in seconds with 0.1 precision):
                 if layer_name:
                     layer_material_map[layer_name] = material_map[aid]
 
-        # Keep only Mesh geometry; all other types (Collections, Proxies, etc.) are
-        # structural/relational and not meaningful for the LLM analysis.
-        def _is_mesh(e: dict) -> bool:
-            type_str = e.get("speckle_type") or e.get("type") or ""
-            return "Mesh" in type_str
+        # Keep all real geometry (Mesh, Brep, Extrusion, Surface, etc.) and drop
+        # only the structural/relational nodes (Collections, Proxies, DataChunks,
+        # RenderMaterial). Filtering on "Mesh" alone wrongly discarded sibling
+        # sub-layers whose objects are Breps/Extrusions/etc. rather than native meshes.
+        _NON_GEOMETRY = ("Collection", "Proxy", "DataChunk", "RenderMaterial")
 
-        filtered = [e for e in entities if not _is_excluded(e) and _is_mesh(e)]
+        def _is_geometry(e: dict) -> bool:
+            type_str = e.get("speckle_type") or e.get("type") or ""
+            if not type_str:
+                return False
+            return not any(token in type_str for token in _NON_GEOMETRY)
+
+        filtered = [e for e in entities if _is_geometry(e)]
 
         def _fmt_pt(pt: dict) -> str:
             x = round(float(pt.get("x") or pt.get("X") or 0), 2)

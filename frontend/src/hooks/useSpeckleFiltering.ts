@@ -33,7 +33,6 @@ export function useSpeckleFiltering(viewerRef: React.RefObject<Viewer | null>) {
   const trackExplorerShow      = useSpeckleStore((s) => s.trackExplorerShow);
   const clearExplorerHidden    = useSpeckleStore((s) => s.clearExplorerHidden);
   const trackExplorerIsolate      = useSpeckleStore((s) => s.trackExplorerIsolate);
-  const removeFromExplorerIsolation = useSpeckleStore((s) => s.removeFromExplorerIsolation);
   const clearExplorerIsolation    = useSpeckleStore((s) => s.clearExplorerIsolation);
 
   // Get FilteringExtension when viewer is available
@@ -174,14 +173,24 @@ export function useSpeckleFiltering(viewerRef: React.RefObject<Viewer | null>) {
 
       // Trigger re-render to read fresh state from extension
       triggerUpdate();
-      // Merge new IDs into the store's tracked isolation set
-      trackExplorerIsolate(objectIds);
+      // Sync the store's tracked isolation set to the RESOLVED state from the
+      // extension. includeDescendants:true expands a layer node into all its
+      // descendant mesh IDs, so tracking only `objectIds` would store just the
+      // layer node id — breaking mesh-level id matching (color suppression and
+      // model-analysis filtering). Mirror the full resolved set instead.
+      const resolvedIsolated = filteringExtension.filteringState?.isolatedObjects;
+      clearExplorerIsolation();
+      if (resolvedIsolated && resolvedIsolated.length > 0) {
+        trackExplorerIsolate(resolvedIsolated);
+      } else {
+        trackExplorerIsolate(objectIds);
+      }
 
       console.log('[useSpeckleFiltering] isolateObjects complete - New state:', filteringExtension.filteringState?.isolatedObjects);
     } catch (error) {
       console.error('[useSpeckleFiltering] Failed to isolate objects:', error);
     }
-  }, [filteringExtension, triggerUpdate, trackExplorerIsolate]);
+  }, [filteringExtension, triggerUpdate, trackExplorerIsolate, clearExplorerIsolation]);
 
   /**
    * Un-isolate specific objects using FilteringExtension
@@ -207,15 +216,20 @@ export function useSpeckleFiltering(viewerRef: React.RefObject<Viewer | null>) {
 
       // Trigger re-render to read fresh state from extension
       triggerUpdate();
-      // Remove only these IDs from the isolation set — remaining isolated objects still suppress colors
-      // for everything else (including the just-un-isolated objects which are now ghosted/hidden)
-      removeFromExplorerIsolation(objectIds);
+      // Mirror the resolved isolation state from the extension (descendant mesh
+      // IDs included). Clearing then re-tracking keeps the store in sync whether
+      // some objects remain isolated or isolation is now fully lifted.
+      const resolvedIsolated = filteringExtension.filteringState?.isolatedObjects;
+      clearExplorerIsolation();
+      if (resolvedIsolated && resolvedIsolated.length > 0) {
+        trackExplorerIsolate(resolvedIsolated);
+      }
 
       console.log('[useSpeckleFiltering] unIsolateObjects complete - New state:', filteringExtension.filteringState?.isolatedObjects);
     } catch (error) {
       console.error('[useSpeckleFiltering] Failed to un-isolate objects:', error);
     }
-  }, [filteringExtension, triggerUpdate, removeFromExplorerIsolation]);
+  }, [filteringExtension, triggerUpdate, clearExplorerIsolation, trackExplorerIsolate]);
 
   /**
    * Check if objects are hidden

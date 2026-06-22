@@ -14,9 +14,11 @@
 
 'use client';
 
-import React, { CSSProperties } from 'react';
-import { VirtualTreeItem as TreeItem, getHeaderAndSubheader, getTargetObjectIds, containsAll } from '@/hooks/useSpeckleTree';
+import React, { CSSProperties, useMemo } from 'react';
+import { VirtualTreeItem as TreeItem, getHeaderAndSubheader, getTargetObjectIds, getGeometryLeafIdsFromNode, containsAll } from '@/hooks/useSpeckleTree';
 import { useSpeckleStore } from '@/store';
+import { TreeItemAcousticControls } from '@/components/scene/TreeItemAcousticControls';
+import type { MaterialOption } from '@/components/ui/MaterialSelect';
 
 interface VirtualTreeItemProps {
   item: TreeItem;
@@ -31,6 +33,12 @@ interface VirtualTreeItemProps {
   onMouseLeave: (objectIds: string[]) => void;
   onToggleVisibility: (objectIds: string[]) => void;
   onToggleIsolation: (objectIds: string[]) => void;
+  /** When true, render the acoustic material + scattering columns. */
+  acousticActive?: boolean;
+  /** When true, render the scattering column (Pyroomacoustics only). */
+  showScattering?: boolean;
+  sortedMaterials?: MaterialOption[];
+  materialColors?: Map<string, string>;
 }
 
 export function VirtualTreeItem({
@@ -45,11 +53,16 @@ export function VirtualTreeItem({
   onMouseEnter,
   onMouseLeave,
   onToggleVisibility,
-  onToggleIsolation
+  onToggleIsolation,
+  acousticActive = false,
+  showScattering = false,
+  sortedMaterials,
+  materialColors,
 }: VirtualTreeItemProps) {
   const { modelFileName } = useSpeckleStore();
   const rawSpeckleData = item.data.raw;
   const objectIds = getTargetObjectIds(rawSpeckleData);
+  const geometryIds = useMemo(() => getGeometryLeafIdsFromNode(item.data), [item.data]);
   const isRootNode = item.indent === 0;
   const { header, subheader } = getHeaderAndSubheader(rawSpeckleData, modelFileName, isRootNode);
   
@@ -115,7 +128,7 @@ export function VirtualTreeItem({
         onMouseLeave={handleMouseLeave}
       >
         {/* Left side: indentation + expansion triangle + content */}
-        <div className="flex items-center gap-0.5 min-w-0">
+        <div className="flex flex-1 items-center gap-0.5 min-w-0">
           {/* Indentation */}
           <div
             className="shrink-0"
@@ -165,6 +178,16 @@ export function VirtualTreeItem({
             )}
           </div>
         </div>
+
+        {/* Acoustic material + scattering columns */}
+        {acousticActive && sortedMaterials && materialColors && (
+          <TreeItemAcousticControls
+            geometryIds={geometryIds}
+            sortedMaterials={sortedMaterials}
+            materialColors={materialColors}
+            showScattering={showScattering}
+          />
+        )}
 
         {/* Right side: hide/isolate buttons (hidden for root nodes) */}
         {!isRootNode && (

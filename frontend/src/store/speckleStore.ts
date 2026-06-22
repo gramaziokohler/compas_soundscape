@@ -616,8 +616,21 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
       },
 
       // ── Isolation state reader ────────────────────────────────────────────
-      getExplorerIsolatedIds: () =>
-        _explorerIsolatedIdsRef ? Array.from(_explorerIsolatedIdsRef) : null,
+      getExplorerIsolatedIds: () => {
+        // Read from FilteringExtension for the complete expanded set — includes all
+        // descendants isolated via includeDescendants=true (e.g. isolating a parent
+        // layer also populates child mesh IDs in filteringState.isolatedObjects, in
+        // the same ID namespace as the extracted entity IDs). Mirrors getExplorerHiddenIds.
+        // Preserve the "null means no isolation active" contract.
+        if (_viewerRef) {
+          try {
+            const ext = _viewerRef.getExtension(FilteringExtension);
+            const isolated = ext?.filteringState?.isolatedObjects;
+            if (isolated && isolated.length > 0) return Array.from(new Set<string>(isolated));
+          } catch { /* fall through */ }
+        }
+        return _explorerIsolatedIdsRef ? Array.from(_explorerIsolatedIdsRef) : null;
+      },
 
       // ── Selector helper ───────────────────────────────────────────────────
       getObjectLinkState: (objectId) => {

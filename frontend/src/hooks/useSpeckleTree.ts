@@ -72,6 +72,90 @@ export function getTargetObjectIds(speckleData: any): string[] {
 }
 
 /**
+ * Determine whether a raw Speckle node represents geometry (a surface/mesh/brep).
+ */
+function isGeometryRaw(raw: any): boolean {
+  if (!raw || typeof raw !== 'object') return false;
+  const t: string = raw.speckle_type || '';
+  if (t.includes('Mesh') || t.includes('Brep')) return true;
+  if (t.includes('Objects.Geometry')) return true;
+  if (raw.displayValue) return true;
+  return false;
+}
+
+/**
+ * Collect the raw Speckle IDs of all geometry (surface) descendants of a node,
+ * including the node itself when it is geometry. Container/layer nodes contribute
+ * only their geometry leaves — this is what acoustic material assignment keys off,
+ * so assigning at a parent/layer row cascades to all child surfaces.
+ */
+export function getGeometryLeafIds(raw: any): string[] {
+  const ids = new Set<string>();
+  const walk = (node: any) => {
+    if (!node || typeof node !== 'object') return;
+    if (node.id && isGeometryRaw(node)) ids.add(node.id);
+    if (Array.isArray(node.children)) node.children.forEach(walk);
+  };
+  walk(raw);
+  return Array.from(ids);
+}
+
+/**
+ * Like getGeometryLeafIds but walks an ExplorerNode's tree structure
+ * (model.children / children) rather than raw.children. Container/layer nodes
+ * keep their descendants under model.children, so this is what tree rows must
+ * use to find the geometry surfaces under a parent layer (and nested layers).
+ *
+ * Mirrors the backend's inclusion rule: an object is assignable geometry when it
+ * IS a Mesh OR HAS a `displayValue` (Brep/BIM objects). Geometry may hang off any
+ * property (`elements`, `displayValue`, …), not just `children`, so we also walk
+ * each raw object's full property graph.
+ */
+export function getGeometryLeafIdsFromNode(node: any): string[] {
+  const ids = new Set<string>();
+  const seen = new WeakSet<object>();
+
+  const rawHasGeometry = (raw: any): boolean => {
+    if (!raw || typeof raw !== 'object') return false;
+    if (raw.displayValue != null) return true; // Brep / BIM object carrying a mesh
+    const t: string = raw.speckle_type || '';
+    return t.includes('Mesh');
+  };
+
+  // Walk a raw Speckle object graph collecting assignable geometry ids.
+  const collectFromRaw = (raw: any) => {
+    if (!raw || typeof raw !== 'object' || seen.has(raw)) return;
+    seen.add(raw);
+    if (raw.id && rawHasGeometry(raw)) {
+      ids.add(raw.id);
+      return; // assignable unit — don't descend into its display meshes
+    }
+    for (const key of Object.keys(raw)) {
+      const v = (raw as any)[key];
+      if (!v || typeof v !== 'object') continue;
+      if (Array.isArray(v)) {
+        v.forEach((item) => { if (item && typeof item === 'object') collectFromRaw(item); });
+      } else {
+        collectFromRaw(v);
+      }
+    }
+  };
+
+  // Walk the ExplorerNode tree (viewer-known nodes) and inspect each node's raw.
+  const walkNode = (n: any) => {
+    if (!n || typeof n !== 'object' || seen.has(n)) return;
+    seen.add(n);
+    const raw = n.model?.raw || n.raw;
+    if (raw) collectFromRaw(raw);
+    const children = n.model?.children || n.children;
+    if (Array.isArray(children)) children.forEach(walkNode);
+  };
+
+  walkNode(node);
+  return Array.from(ids);
+}
+
+/**
  * Get header and subheader for Speckle object display
  * Adapted from getHeaderAndSubheaderForSpeckleObject helper
  */

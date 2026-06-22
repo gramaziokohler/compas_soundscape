@@ -1512,6 +1512,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
                       viewerRef={viewerRef}
                       worldTree={localWorldTree}
                       availableMaterials={currentMaterials}
+                      cardType="pyroomacoustics"
                       filteringEnabled={filteringEnabled}
                       isReadOnly={false}
                       onMaterialAssignmentsChange={(assignments, layerName, geometryObjectIds, scatteringAssignments) => {

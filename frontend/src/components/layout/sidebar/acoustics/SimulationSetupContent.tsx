@@ -74,6 +74,7 @@ export function SimulationSetupContent({
         viewerRef={viewerRef}
         worldTree={worldTree}
         availableMaterials={availableMaterials}
+        cardType={config.type === 'pyroomacoustics' ? 'pyroomacoustics' : 'choras'}
         filteringEnabled={filteringEnabled}
         isReadOnly={isReadOnly}
         onMaterialAssignmentsChange={onMaterialAssignmentsChange}
@@ -83,6 +84,11 @@ export function SimulationSetupContent({
         initialIsolatedObjectIds={initialIsolatedObjectIds}
         onIsolationChange={onIsolationChange}
       />
+
+      {/* Material assignment moved to the Object Explorer (two extra columns) */}
+      <p className="text-xs" style={{ color: 'var(--color-secondary-hover)', fontStyle: 'italic' }}>
+        Assign materials{config.type === 'pyroomacoustics' ? ' and scattering' : ''} per object in the Object Explorer.
+      </p>
 
       {/* Choras Settings */}
       {config.type === 'choras' && (

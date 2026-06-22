@@ -146,7 +146,7 @@ function extractSpeckleEntities(worldTree: any): any[] {
   let nodeIndex = 0;
   let processedCount = 0;
 
-  const processNode = (node: any, parentLayer: string = '') => {
+  const processNode = (node: any, parentLayer: string = '', ancestorIds: string[] = []) => {
     if (!node) return;
     processedCount++;
 
@@ -161,9 +161,35 @@ function extractSpeckleEntities(worldTree: any): any[] {
 
     const isGeometry = !!(hasRenderView || raw.speckle_type);
 
-    // Container/layer nodes: have an explicit name but no geometry of their own.
-    // Their name becomes the layer context propagated to all descendants.
-    const currentLayer = (!isGeometry && explicitName) ? explicitName : parentLayer;
+    // Collection/Layer nodes set the layer context for their descendants. They
+    // carry raw.speckle_type (so isGeometry is true), so we must detect them by
+    // type — not by "absence of geometry" — otherwise the layer never propagates.
+    const isContainer = speckleType.includes('Collection') || speckleType.includes('Layer');
+    const currentLayer = isContainer && explicitName ? explicitName : parentLayer;
+
+    // ─── DIAGNOSTIC: trace the "Backwall" subtree during extraction ──────────
+    const _inBackwall =
+      String(parentLayer).toLowerCase().includes('backwall') ||
+      String(explicitName ?? '').toLowerCase().includes('backwall') ||
+      String(raw.layer ?? '').toLowerCase().includes('backwall');
+    if (_inBackwall) {
+      console.log('[extractEntities][TRACE backwall]', {
+        name,
+        explicitName,
+        speckleType,
+        isGeometry,
+        parentLayer,
+        currentLayer,
+        rawLayer: raw.layer,
+        ids: {
+          'raw.id': raw.id,
+          'model.id': node.model?.id,
+          'node.id': node.id,
+          applicationId: raw.applicationId,
+        },
+        childCount: (node.model?.children || node.children || []).length,
+      });
+    }
 
     if (isGeometry) {
       const nodeBounds =
@@ -193,22 +219,57 @@ function extractSpeckleEntities(worldTree: any): any[] {
         boundsData = { min, max, center };
       }
 
+      // Bounding box in the OBJECT form the backend expects (entity.get("bbox")
+      // → {min:{x,y,z}, max:{x,y,z}}). raw.bbox is an unresolved Speckle reference
+      // at this stage, so read it from the viewer's renderView.aabb.
+      const aabb =
+        node.model?.renderView?.aabb || (node.renderView as any)?.aabb || (hasRenderView as any)?.aabb;
+      const bbox = aabb
+        ? {
+            min: { x: aabb.min.x, y: aabb.min.y, z: aabb.min.z },
+            max: { x: aabb.max.x, y: aabb.max.y, z: aabb.max.z },
+          }
+        : undefined;
+
+      // Best-effort per-entity material name (backend also falls back to this).
+      const material =
+        raw.renderMaterial?.name ||
+        raw['@renderMaterial']?.name ||
+        node.model?.renderView?.renderData?.renderMaterial?.name ||
+        (typeof raw.properties?.material === 'string' ? raw.properties.material : undefined) ||
+        undefined;
+
       entities.push({
         id,
         index: nodeIndex++,
         type: speckleType,
         name,
         // Prefer the raw layer property; fall back to the propagated parent layer.
-        layer: raw.layer || currentLayer,
+        // Container nodes themselves carry no layer label.
+        layer: raw.layer || (isContainer ? '' : currentLayer),
+        material,
         speckle_type: speckleType,
         raw,
         nodeId: id,
+        // The viewer's FilteringExtension reports WorldTree model.id values, which
+        // differ from raw.id (content hash) for duplicated geometry. Keep both
+        // (plus applicationId) so visibility/isolation matching can succeed.
+        modelId: node.model?.id ?? null,
+        applicationId: raw.applicationId ?? null,
+        // IDs of every ancestor container/layer node (raw.id / model.id namespaces).
+        // The viewer's hidden/isolated set reliably contains the layer node that was
+        // hidden/isolated, so matching an entity via its ancestor chain captures the
+        // whole layer subtree even when leaf-id enumeration is incomplete.
+        ancestorIds,
+        bbox,
         bounds: boundsData,
       });
     }
 
+    const nodeCandidateIds = [raw.id, node.model?.id, node.id, raw.applicationId].filter(Boolean) as string[];
+    const childAncestorIds = [...ancestorIds, ...nodeCandidateIds];
     const children = node.model?.children || node.children;
-    if (children && Array.isArray(children)) children.forEach((child: any) => processNode(child, currentLayer));
+    if (children && Array.isArray(children)) children.forEach((child: any) => processNode(child, currentLayer, childAncestorIds));
   };
 
   try {
@@ -1211,14 +1272,209 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           let spaceDescription = '';
 
           try {
+            // Prefer a FRESH extraction from the live worldTree. config.modelEntities
+            // can be stale/partial because Speckle loads layers lazily — entities
+            // captured at initial load may miss geometry (e.g. the Acoustics layer)
+            // that streamed in afterwards. Re-extracting guarantees the current,
+            // complete tree (with correct ancestor chains for layer matching).
+            let baseEntities: any[] = config.modelEntities;
+            try {
+              const viewerForExtract: any = useSpeckleStore.getState().getViewerRef?.();
+              const liveWorldTree: any = viewerForExtract?.getWorldTree?.();
+              if (liveWorldTree) {
+                const freshEntities = extractSpeckleEntities(liveWorldTree);
+                if (freshEntities.length >= baseEntities.length) {
+                  baseEntities = freshEntities;
+                  console.log('[analyzeModel] re-extracted entities from live worldTree:', freshEntities.length, '(was', config.modelEntities.length, ')');
+                }
+              }
+            } catch (extractErr) {
+              console.warn('[analyzeModel] live worldTree re-extraction failed, using config.modelEntities:', extractErr);
+            }
+
             // Use speckleStore's explorer hidden IDs — kept in sync by
             // useSpeckleFiltering.hideObjects → trackExplorerHide, which is what
             // the ObjectExplorer uses. objectExplorerStore._viewerRef is never
             // set so its syncFromExtension() is a no-op.
             const hiddenIdsForAnalysis = useSpeckleStore.getState().getExplorerHiddenIds();
-            const visibleEntitiesForAnalysis = config.modelEntities.filter(
-              (e: any) => !hiddenIdsForAnalysis.has(e.id),
+            // When a layer is isolated in the Object Explorer, only that layer and
+            // its descendants are "shown" — everything else is implicitly hidden.
+            // getExplorerIsolatedIds returns the resolved descendant object IDs, or
+            // null when no isolation is active.
+            const isolatedIdsForAnalysis = useSpeckleStore.getState().getExplorerIsolatedIds();
+            const isolatedSetForAnalysis = isolatedIdsForAnalysis
+              ? new Set(isolatedIdsForAnalysis)
+              : null;
+            // The viewer's filtering IDs and the extracted entity IDs don't always
+            // come from the same field (raw.id vs model.id vs applicationId), so
+            // match against every candidate ID an entity carries.
+            const entityIdCandidates = (e: any): string[] =>
+              [e?.id, e?.nodeId, e?.modelId, e?.applicationId, e?.raw?.id, e?.raw?.applicationId].filter(Boolean) as string[];
+            // Include the ancestor container/layer IDs so hiding/isolating a layer
+            // captures its whole subtree, even if the viewer's leaf-id enumeration
+            // is incomplete (the layer node itself is always in the set).
+            const entityMatchIds = (e: any): string[] =>
+              [...entityIdCandidates(e), ...((e?.ancestorIds ?? []) as string[])];
+            const isEntityHidden = (e: any) =>
+              entityMatchIds(e).some((id) => hiddenIdsForAnalysis.has(id));
+            const isEntityShownByIsolation = (e: any) =>
+              isolatedSetForAnalysis === null ||
+              entityMatchIds(e).some((id) => isolatedSetForAnalysis.has(id));
+            const visibleEntitiesForAnalysis = baseEntities.filter(
+              (e: any) => !isEntityHidden(e) && isEntityShownByIsolation(e),
             );
+
+            // ─── DIAGNOSTIC: trace "Backwall" layer + its children ───────────
+            {
+              const TRACE = 'backwall';
+              const layerCounts: Record<string, number> = {};
+              for (const e of baseEntities as any[]) {
+                const k = String(e?.layer ?? '(no layer)');
+                layerCounts[k] = (layerCounts[k] ?? 0) + 1;
+              }
+              const backwallEntities = (baseEntities as any[]).filter(
+                (e) =>
+                  String(e?.layer ?? '').toLowerCase().includes(TRACE) ||
+                  String(e?.name ?? '').toLowerCase().includes(TRACE),
+              );
+              const isolatedArr = isolatedSetForAnalysis
+                ? Array.from(isolatedSetForAnalysis)
+                : [];
+              // Does any candidate id of ANY entity appear in the isolated set?
+              const allEntityIds = new Set<string>();
+              for (const e of baseEntities as any[])
+                entityIdCandidates(e).forEach((id) => allEntityIds.add(id));
+              const isolatedIdsMatchingSomeEntity = isolatedArr.filter((id) =>
+                allEntityIds.has(id),
+              );
+              // Per-field breakdown: how many isolated ids are covered by each
+              // individual entity id field. Reveals which namespace the viewer uses.
+              const fieldSets: Record<string, Set<string>> = {
+                id: new Set(),
+                nodeId: new Set(),
+                modelId: new Set(),
+                applicationId: new Set(),
+                'raw.id': new Set(),
+                'raw.applicationId': new Set(),
+              };
+              for (const e of baseEntities as any[]) {
+                if (e?.id) fieldSets.id.add(e.id);
+                if (e?.nodeId) fieldSets.nodeId.add(e.nodeId);
+                if (e?.modelId) fieldSets.modelId.add(e.modelId);
+                if (e?.applicationId) fieldSets.applicationId.add(e.applicationId);
+                if (e?.raw?.id) fieldSets['raw.id'].add(e.raw.id);
+                if (e?.raw?.applicationId) fieldSets['raw.applicationId'].add(e.raw.applicationId);
+              }
+              const perFieldMatches = Object.fromEntries(
+                Object.entries(fieldSets).map(([field, set]) => [
+                  field,
+                  isolatedArr.filter((id) => set.has(id)).length,
+                ]),
+              );
+              console.log('[analyzeModel][TRACE] ===== entity filtering =====');
+              console.log('[analyzeModel][TRACE] total entities:', baseEntities.length);
+              console.log('[analyzeModel][TRACE] layers present (name -> count):', layerCounts);
+              console.log('[analyzeModel][TRACE] hidden set size:', hiddenIdsForAnalysis.size);
+              console.log(
+                '[analyzeModel][TRACE] isolated set:',
+                isolatedSetForAnalysis ? `${isolatedArr.length} ids` : 'none (null)',
+                '| sample:', isolatedArr.slice(0, 5),
+              );
+              console.log(
+                '[analyzeModel][TRACE] isolated ids that match SOME entity candidate id:',
+                isolatedIdsMatchingSomeEntity.length,
+                '/', isolatedArr.length,
+              );
+              console.log(
+                '[analyzeModel][TRACE] isolated-id matches per entity field:',
+                perFieldMatches,
+              );
+              console.log(
+                `[analyzeModel][TRACE] "${TRACE}" entities found:`, backwallEntities.length,
+              );
+              for (const e of backwallEntities.slice(0, 8)) {
+                const cands = entityIdCandidates(e);
+                console.log(`[analyzeModel][TRACE]   • name="${e?.name}" layer="${e?.layer}" type="${e?.speckle_type}"`, {
+                  candidateIds: cands,
+                  inIsolated: cands.map((id) => isolatedSetForAnalysis?.has(id) ?? null),
+                  inHidden: cands.map((id) => hiddenIdsForAnalysis.has(id)),
+                  shown: !isEntityHidden(e) && isEntityShownByIsolation(e),
+                });
+              }
+              // Ancestor-match confirmation: entities included only because an
+              // ancestor (layer) id — not their own id — is in the isolated set.
+              if (isolatedSetForAnalysis) {
+                let viaAncestorOnly = 0;
+                let viaLeaf = 0;
+                for (const e of baseEntities as any[]) {
+                  const leafHit = entityIdCandidates(e).some((id) => isolatedSetForAnalysis.has(id));
+                  const ancestorHit = ((e?.ancestorIds ?? []) as string[]).some((id) => isolatedSetForAnalysis.has(id));
+                  if (leafHit) viaLeaf++;
+                  else if (ancestorHit) viaAncestorOnly++;
+                }
+                console.log(
+                  '[analyzeModel][TRACE] isolation matches — via leaf id:', viaLeaf,
+                  '| via ancestor only:', viaAncestorOnly,
+                );
+              }
+              console.log('[analyzeModel][TRACE] visible after filter:', visibleEntitiesForAnalysis.length);
+
+              // ─── Live worldTree probe: inspect the isolated seed node subtree ──
+              try {
+                const viewer: any = useSpeckleStore.getState().getViewerRef?.();
+                const wt: any = viewer?.getWorldTree?.();
+                const roots: any[] =
+                  wt?.tree?._root?.children || wt?._root?.children || wt?.root?.children || wt?.children || [];
+                const seed = isolatedArr[0];
+                const entityIdSet = new Set<string>();
+                for (const e of baseEntities as any[]) {
+                  if (e?.id) entityIdSet.add(e.id);
+                  if (e?.raw?.id) entityIdSet.add(e.raw.id);
+                  if (e?.modelId) entityIdSet.add(e.modelId);
+                }
+                const nodeIdsOf = (n: any) => {
+                  const r = n?.raw || n?.model?.raw || {};
+                  return { rawId: r.id, modelId: n?.model?.id, nodeId: n?.id, type: r.speckle_type, name: r.name || n?.model?.name };
+                };
+                const findNode = (nodes: any[]): any => {
+                  for (const n of nodes) {
+                    const ids = nodeIdsOf(n);
+                    if (ids.rawId === seed || ids.modelId === seed || ids.nodeId === seed) return n;
+                    const kids = n?.model?.children || n?.children || [];
+                    const found = findNode(kids);
+                    if (found) return found;
+                  }
+                  return null;
+                };
+                const seedNode = findNode(roots);
+                console.log('[analyzeModel][PROBE] seed:', seed, '| seedNode found in worldTree:', !!seedNode);
+                if (seedNode) {
+                  const stats = { total: 0, geometry: 0, instance: 0, collection: 0, inModelEntities: 0, sampleGeom: [] as any[] };
+                  const walk = (n: any) => {
+                    stats.total++;
+                    const ids = nodeIdsOf(n);
+                    const t = String(ids.type || '');
+                    const isGeom = !!(n?.model?.renderView || n?.renderView);
+                    if (t.includes('Instance')) stats.instance++;
+                    else if (t.includes('Collection')) stats.collection++;
+                    if (isGeom) {
+                      stats.geometry++;
+                      if (ids.rawId && entityIdSet.has(ids.rawId) || ids.modelId && entityIdSet.has(ids.modelId)) stats.inModelEntities++;
+                      if (stats.sampleGeom.length < 5) stats.sampleGeom.push(ids);
+                    }
+                    const kids = n?.model?.children || n?.children || [];
+                    kids.forEach(walk);
+                  };
+                  walk(seedNode);
+                  console.log('[analyzeModel][PROBE] seed node:', nodeIdsOf(seedNode));
+                  console.log('[analyzeModel][PROBE] subtree stats:', stats);
+                }
+              } catch (err) {
+                console.log('[analyzeModel][PROBE] worldTree probe failed:', err);
+              }
+
+              console.log('[analyzeModel][TRACE] ============================');
+            }
 
             for await (const event of streamPrompts(
               `${API_BASE_URL}/api/analyze-3dmodel-stream`,

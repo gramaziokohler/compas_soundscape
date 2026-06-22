@@ -3,9 +3,9 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { ObjectExplorer } from '@/components/layout/ObjectExplorer';
 
-const MIN_WIDTH = 280;
+const MIN_WIDTH = 380;
 const MIN_HEIGHT = 200;
-const DEFAULT_WIDTH = 280;
+const DEFAULT_WIDTH = 460;
 const DEFAULT_HEIGHT = 500;
 
 const PANEL_MARGIN = 24;

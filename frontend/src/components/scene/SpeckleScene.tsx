@@ -8,6 +8,7 @@ import { BoundingBoxManager } from '@/lib/three/BoundingBoxManager';
 import { GradientMapManager } from '@/lib/three/gradient-map-manager';
 import { useTimelinePlayback } from '@/hooks/useTimelinePlayback';
 import { useSpeckleStore, useAcousticsSimulationStore, useGridListenersStore } from '@/store';
+import { useAcousticMaterialStore } from '@/store';
 import { useRightSidebarStore } from '@/store/rightSidebarStore';
 import { useUIStore } from '@/store/uiStore';
 import { useTextGenerationStore } from '@/store/textGenerationStore';
@@ -308,6 +309,18 @@ export function SpeckleScene({
 
   const [refreshKey, setRefreshKey] = useState(0);
   const [showObjectExplorer, setShowObjectExplorer] = useState(false);
+
+  // Auto-open the Object Explorer when acoustic material assignment activates,
+  // since material/scattering columns live there. Only on the rising edge so a
+  // manual close while active is respected.
+  const acousticAssignmentActive = useAcousticMaterialStore((s) => s.isActive);
+  const prevAcousticActiveRef = useRef(false);
+  useEffect(() => {
+    if (acousticAssignmentActive && !prevAcousticActiveRef.current) {
+      setShowObjectExplorer(true);
+    }
+    prevAcousticActiveRef.current = acousticAssignmentActive;
+  }, [acousticAssignmentActive]);
 
   // Derived: dark mode is active only in 'dark' view mode
   const isDarkMode = viewMode === 'dark';

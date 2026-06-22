@@ -39,9 +39,13 @@ interface LayerData {
   layerOptions: SpeckleLayerInfo[];
 }
 
+export type AcousticCardType = 'pyroomacoustics' | 'choras' | null;
+
 export interface AcousticMaterialStoreState {
   // ── Cross-component data (synced by SpeckleSurfaceMaterialsSection) ──
   isActive: boolean;
+  /** Active acoustic card type — drives scattering-column visibility (pyroom only). */
+  cardType: AcousticCardType;
   meshObjects: HierarchicalMeshObject[];
   /** objectId → materialId  ← undo/redo target */
   materialAssignments: Map<string, string>;
@@ -54,6 +58,11 @@ export interface AcousticMaterialStoreState {
   expandToLayerId: string | null;
 
   // ── Lifecycle ──
+  /**
+   * Activate acoustic material assignment for a card without binding to a
+   * single layer. Used by the Object-Explorer-driven (whole-tree) workflow.
+   */
+  activate: (data: { availableMaterials: AcousticMaterial[]; cardType: AcousticCardType }) => void;
   setLayerData: (data: LayerData) => void;
   deactivate: () => void;
   /** Clears viewer/layer state but preserves material + scattering assignments. */
@@ -99,6 +108,7 @@ export const useAcousticMaterialStore = create<AcousticMaterialStoreState>()(
       (set, get) => ({
         // ── Initial state ──
         isActive: false,
+        cardType: null,
         meshObjects: [],
         materialAssignments: new Map(),
         scatteringAssignments: new Map(),
@@ -108,6 +118,17 @@ export const useAcousticMaterialStore = create<AcousticMaterialStoreState>()(
         expandToLayerId: null,
 
         // ── Lifecycle ──
+        activate: (data) =>
+          set(
+            {
+              isActive: true,
+              cardType: data.cardType,
+              availableMaterials: data.availableMaterials,
+            },
+            false,
+            'acoustic/activate',
+          ),
+
         setLayerData: (data) =>
           set(
             {
@@ -126,6 +147,7 @@ export const useAcousticMaterialStore = create<AcousticMaterialStoreState>()(
           set(
             {
               isActive: false,
+              cardType: null,
               meshObjects: [],
               materialAssignments: new Map(),
               scatteringAssignments: new Map(),
@@ -142,6 +164,7 @@ export const useAcousticMaterialStore = create<AcousticMaterialStoreState>()(
           set(
             {
               isActive: false,
+              cardType: null,
               meshObjects: [],
               availableMaterials: [],
               selectedLayerId: null,
