@@ -68,7 +68,7 @@ def run_tts_generation(
     texts: list,
     output_dir: str,
     url_prefix: str = TTS_OUTPUT_URL_PREFIX,
-    language: str = "English with a slightly german accent",
+    language: Optional[str] = None,
 ) -> None:
     try:
         os.makedirs(output_dir, exist_ok=True)

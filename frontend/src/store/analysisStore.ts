@@ -1768,6 +1768,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               scenario_id: config.scenarioId,
               analysis_id: analysisId,
               llm_model: 'gemini-2.5-flash',
+              language: (await import('@/store/audioControlsStore')).useAudioControlsStore.getState().ttsLanguage,
             };
 
             const foleyPromise = hasFoley ? null : (async () => {

@@ -669,7 +669,7 @@ class TTSGenerationRequest(BaseModel):
     texts: list[dict]
     output_dir: str = "./temp/static/sounds/generated/tts"
     url_prefix: str = "/static/sounds/generated/tts"
-    language: str = "English with a slightly german accent"
+    language: Optional[str] = None
 
 
 class TTSGenerationStartResponse(BaseModel):

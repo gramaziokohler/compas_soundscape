@@ -790,6 +790,7 @@ class SpeechAgentRequest(BaseModel):
     scenario_id: str
     analysis_id: str | None = None
     llm_model: str = DEFAULT_LLM_MODEL
+    language: str | None = None
 
 
 @router.post("/api/speech-agent-stream")
@@ -879,6 +880,7 @@ async def speech_agent_stream(request: SpeechAgentRequest):
                 scenarist_agent_result=scenario_data,
                 furniture_list=furniture_list,
                 llm_model=request.llm_model,
+                language=request.language,
             ):
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception as e:

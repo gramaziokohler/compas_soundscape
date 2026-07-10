@@ -1900,7 +1900,8 @@ For the duration estimation (in seconds with 0.1 precision):
     def _build_speech_prompts(
         self,
         scenarios_json: str,
-        furniture_json: str = "{}"
+        furniture_json: str = "{}",
+        language: str | None = None,
     ) -> tuple[str, str]:
         """Build system and user prompts for the speech scripting agent.
 
@@ -1916,13 +1917,19 @@ For the duration estimation (in seconds with 0.1 precision):
             "or generate high-quality, creative, and contextually accurate spoken dialogue "
             "scripts for the characters involved. "
             "You also have access to the architectural space information to estimate where "
-            "each character is speaking from within the room."
+            "each character is speaking from within the room. "
             "Add audio tags when relevant to emphasize emotion, such as [whispers], [excitedly], [cough], ..."
         )
+        language_instruction = (
+            f"CRITICAL: Write ALL dialogue scripts in {language}. Never output scripts in any other language.\n\n"
+            if language
+            else ""
+        )
         user_prompt = (
+            f"{language_instruction}"
             "1. Identify all moments where a character speaks, greets, or when the narrative implies "
             "active conversation (e.g., 'the brainstorming intensifies', 'explaining an idea').\n"
-            "2. Write full, natural, realistic dialogue lines for these moments. Do not summarize speech.\n"
+            f"2. Write full, natural, realistic dialogue lines{' in ' + language if language else ''} for these moments. Do not summarize speech.\n"
             "3. Group all spoken lines belonging to a specific character into a single narrative block.\n"
             "4. Separate chronologically distinct spoken lines or speech events for that same character "
             "using a semicolon (;).\n"
@@ -1974,6 +1981,7 @@ For the duration estimation (in seconds with 0.1 precision):
         scenarist_agent_result: dict,
         furniture_list: dict | None = None,
         llm_model: str = DEFAULT_LLM_MODEL,
+        language: str | None = None,
     ) -> dict:
         """Extract and generate spoken dialogue from scenario events.
 
@@ -1983,6 +1991,7 @@ For the duration estimation (in seconds with 0.1 precision):
             furniture_list:         3D model analysis result used for spatial position
                                     guessing (optional but recommended).
             llm_model:              Provider key ("gemini", "openai", "anthropic").
+            language:               Language for the generated dialogue scripts.
 
         Returns:
             dict with a "speeches" key — list of speech entry dicts, each containing:
@@ -1997,7 +2006,7 @@ For the duration estimation (in seconds with 0.1 precision):
         scenarios_json = json.dumps({"scenarios": all_scenarios}, indent=2)
         furniture_json = json.dumps(furniture_list, indent=2) if furniture_list else "{}"
         system_prompt, user_prompt = self._build_speech_prompts(
-            scenarios_json, furniture_json
+            scenarios_json, furniture_json, language=language
         )
 
         result = await self._call_llm(
@@ -2015,6 +2024,7 @@ For the duration estimation (in seconds with 0.1 precision):
         scenarist_agent_result: dict,
         furniture_list: dict | None = None,
         llm_model: str = DEFAULT_LLM_MODEL,
+        language: str | None = None,
     ):
         """Async generator yielding speech entries one by one.
 
@@ -2028,6 +2038,7 @@ For the duration estimation (in seconds with 0.1 precision):
                 scenarist_agent_result=scenarist_agent_result,
                 furniture_list=furniture_list,
                 llm_model=llm_model,
+                language=language,
             )
         except Exception as e:
             yield {"type": "error", "message": str(e)}

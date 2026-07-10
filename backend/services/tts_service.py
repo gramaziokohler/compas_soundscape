@@ -45,7 +45,7 @@ class TTSService:
         text: str,
         output_path: str,
         voice_name: str = TTS_DEFAULT_VOICE,
-        language: str = "English with a slightly german accent",
+        language: Optional[str] = None,
     ) -> tuple[str, float]:
         """
         Generate speech audio from text and save as WAV.
@@ -72,11 +72,14 @@ class TTSService:
         # Fresh client per call — avoids Gemini TTS state accumulation.
         client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
-        formatted_text = (
-            f"Translate the following transcript to this language: {language}. And speak it aloud.\n"
-            f"#### TRANSCRIPT\n"
-            f"{text}"
-        )
+        if language:
+            formatted_text = (
+                f"Translate the following transcript to this language: {language}. And speak it aloud.\n"
+                f"#### TRANSCRIPT\n"
+                f"{text}"
+            )
+        else:
+            formatted_text = text
 
         response = client.models.generate_content(
             model=TTS_MODEL_NAME,
