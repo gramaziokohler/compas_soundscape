@@ -26,6 +26,9 @@ function getIterationVariantInfo(
   const variantIdx = link?.variantIndex ?? 0;
   const variantId = resolveVariantSoundId(primarySoundId, variantIdx);
   const variantMeta = soundMetadata.get(variantId);
+  if (link?.variantIndex !== undefined) {
+    console.log(`[DEBUG-TIMELINE-VARIANT] iterLink[${primarySoundId}-${iterationIndex}] variantIdx=${link.variantIndex} variantId=${variantId} metaFound=${variantMeta !== undefined} variantHasBuffer=${!!variantMeta?.buffer}`);
+  }
   const eventOverride = soundEvents?.find((e) => e.id === variantId);
 
   const trim = soundTrims?.[primarySoundId];
@@ -267,27 +270,53 @@ export function extractTimelineSoundsFromData(
 ): TimelineSound[] {
   const timelineSounds: TimelineSound[] = [];
 
+  console.log('[timeline:extract] === BEGIN === metadata.size:', soundMetadata.size,
+    'soundEvents.length:', soundEvents?.length ?? 0);
+  if (soundEvents?.length) {
+    console.log('[timeline:extract] soundEvent IDs (first 10):',
+      soundEvents.slice(0, 10).map((e: any) => ({ id: e.id, pi: e.prompt_index, sci: e.speech_card_index, cat: e.category })));
+  }
+  // Log metadata entries too
+  const metaEntries = Array.from(soundMetadata.entries());
+  if (metaEntries.length) {
+    console.log('[timeline:extract] metadata entries (first 10):',
+      metaEntries.slice(0, 10).map(([id, meta]) => ({
+        id,
+        pi: meta.soundEvent.prompt_index,
+        sci: (meta.soundEvent as any).speech_card_index,
+        cat: (meta.soundEvent as any).category,
+        hasBuffer: !!meta.buffer,
+      })));
+  }
+
   // For multi-variant sounds (generated_X_0, generated_X_1, …) only render one track per
   // prompt_index — the variant with the lowest copy-index (i.e. variant A / the default).
   // All variants remain loaded in the AudioOrchestrator so per-iteration overrides still work.
-  const copyIdxOf = (id: string): number => {
-    const n = parseInt(id.split('_').pop() ?? '', 10);
-    return isNaN(n) ? 0 : n;
-  };
   const primarySoundIds = new Set<string>();
   const promptPrimary = new Map<number, { id: string; copyIdx: number }>();
   soundMetadata.forEach((metadata, soundId) => {
     const pi = metadata.soundEvent.prompt_index;
     if (pi === undefined) { primarySoundIds.add(soundId); return; }
-    const copyIdx = copyIdxOf(soundId);
+    // Use the actual copy_index from the sound event metadata (not parsed from ID,
+    // which fails for TTS IDs like "tts_6_0_Kore" where the last segment is a voice name).
+    const copyIdx = (metadata.soundEvent as any).copy_index ?? 0;
     const existing = promptPrimary.get(pi);
     if (!existing || copyIdx < existing.copyIdx) promptPrimary.set(pi, { id: soundId, copyIdx });
   });
   promptPrimary.forEach(({ id }) => primarySoundIds.add(id));
+  console.log('[timeline:extract] dedup: promptPrimary.size:', promptPrimary.size,
+    'primarySoundIds.size:', primarySoundIds.size,
+    'keys:', [...promptPrimary.keys()]);
 
   soundMetadata.forEach((metadata, soundId) => {
-    if (!primarySoundIds.has(soundId)) return; // skip non-primary variants
-    if (!metadata.buffer) return; // Skip sounds without buffers
+    if (!primarySoundIds.has(soundId)) {
+      console.log('[timeline:extract] SKIP soundId:', soundId, 'reason: not primary');
+      return;
+    }
+    if (!metadata.buffer) {
+      console.log('[timeline:extract] SKIP soundId:', soundId, 'reason: no buffer');
+      return;
+    }
 
     const bufferDurationMs = metadata.buffer.duration * 1000;
     const trim = soundTrims?.[soundId];
@@ -305,6 +334,8 @@ export function extractTimelineSoundsFromData(
     const color = getSoundColor(metadata);
 
     const schedulingMode = soundSchedulingModes?.[soundId] ?? 'interval';
+
+    console.log(`[DEBUG-TIMELINE] soundId=${soundId} schedulingMode=${schedulingMode} (from store: ${soundSchedulingModes?.[soundId] ?? 'MISSING'}) cat="${(eventOverride as any)?.category ?? (metadata.soundEvent as any).category ?? 'MISSING'}" promptIdx=${eventOverride?.prompt_index ?? metadata.soundEvent.prompt_index}`);
 
     // Timestamps mode: no stagger delay, no jitter — iterations are absolute positions.
     // Interval mode: apply stagger delay so visual offset matches the audio scheduler.
@@ -394,7 +425,7 @@ export function extractTimelineSoundsFromData(
     const audioUrl = metadata.soundEvent.url;
 
     // Map category → soundGroup for DAW grouping
-    const rawCategory = eventOverride?.category ?? metadata.soundEvent.category;
+    const rawCategory = eventOverride?.category ?? (metadata.soundEvent as any).category;
     let soundGroup: 'background' | 'sound_event' | 'speech' | undefined;
     if (rawCategory) {
       const cat = rawCategory.toLowerCase().replace(/[\s-]+/g, '_');
@@ -402,6 +433,14 @@ export function extractTimelineSoundsFromData(
       else if (cat === 'sound_event' || cat === 'sound event') soundGroup = 'sound_event';
       else if (cat === 'speech') soundGroup = 'speech';
     }
+
+    // cardIndex  — always the 0-based config array position (even for speech-line
+    //               TTS sounds where prompt_index encodes line+card together).
+    // promptIndex — the sound's raw prompt_index from the backend, used for
+    //               deduplication and variant/entity filtering.
+    const rawPromptIndex = eventOverride?.prompt_index ?? metadata.soundEvent.prompt_index;
+    const speechCardIndex = (eventOverride as any)?.speech_card_index ?? (metadata.soundEvent as any).speech_card_index;
+    const cardIndex = (speechCardIndex != null) ? speechCardIndex : rawPromptIndex;
 
     timelineSounds.push({
       id: soundId,
@@ -420,9 +459,25 @@ export function extractTimelineSoundsFromData(
       iterationOffsets,
       schedulingMode,
       soundGroup,
-      promptIndex: eventOverride?.prompt_index,
+      promptIndex: rawPromptIndex,
+      cardIndex,
     });
+    console.log('[timeline:extract] ADDED soundId:', soundId,
+      'displayName:', displayName,
+      'promptIndex:', rawPromptIndex,
+      'cardIndex:', cardIndex,
+      'soundGroup:', soundGroup,
+      'category:', rawCategory,
+      'speechCardIndex:', speechCardIndex,
+      'eventOverride:', !!eventOverride,
+      'iterations:', iterations.length);
   });
+
+  console.log('[DEBUG-TIMELINE] === extractTimelineSoundsFromData summary ===');
+  console.log('[DEBUG-TIMELINE] total timelineSounds:', timelineSounds.length);
+  for (const ts of timelineSounds) {
+    console.log(`[DEBUG-TIMELINE]   sound id=${ts.id} name="${ts.displayName}" group=${ts.soundGroup} sched=${ts.schedulingMode} iterations=${ts.scheduledIterations.length}`);
+  }
 
   return timelineSounds;
 }

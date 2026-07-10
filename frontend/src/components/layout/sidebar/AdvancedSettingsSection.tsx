@@ -398,6 +398,9 @@ export function AdvancedSettingsSection({
   const maximumFoleySounds = useAudioControlsStore((s) => s.maximumFoleySounds);
   const setMaximumFoleySounds = useAudioControlsStore((s) => s.setMaximumFoleySounds);
 
+  const ttsLanguage = useAudioControlsStore((s) => s.ttsLanguage);
+  const setTtsLanguage = useAudioControlsStore((s) => s.setTtsLanguage);
+
   const globalSoundSpeed = useUIStore((s) => s.globalSoundSpeed);
   const setGlobalSoundSpeed = useUIStore((s) => s.setGlobalSoundSpeed);
   const globalMeshLc = useUIStore((s) => s.globalMeshLc);
@@ -615,6 +618,17 @@ export function AdvancedSettingsSection({
                 defaultValue={DEFAULT_SPL_DB}
                 hoverText="Reference SPL level used in audio calibration for all generated sounds. Double-click to reset to 70 dB."
               />
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[10px] font-medium text-foreground">TTS Language</label>
+                <input
+                  type="text"
+                  value={ttsLanguage}
+                  onChange={(e) => setTtsLanguage(e.target.value)}
+                  placeholder="e.g. English with a slightly german accent"
+                  className="w-full px-2 py-1 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light focus:outline-none focus:border-primary transition-colors"
+                  style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
+                />
+              </div>
               <select
                 value={audioModel}
                 onChange={(e) => onAudioModelChange(e.target.value)}

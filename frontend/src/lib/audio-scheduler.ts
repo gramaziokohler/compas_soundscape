@@ -302,6 +302,8 @@ export class AudioScheduler {
         let actualSourceId = soundId;
         if (link?.variantIndex !== undefined) {
           const candidate = resolveVariantSoundId(soundId, link.variantIndex);
+          const hasCandidate = this.audioOrchestrator?.hasSource(candidate);
+          console.log(`[DEBUG-SCHEDULER] triggerPlayback soundId="${soundId}" iterIdx=${iterIdx} link.variantIndex=${link.variantIndex} candidate="${candidate}" hasSource=${hasCandidate}`);
           // Only use the variant source if it actually exists; otherwise fall back
           // to the primary source (copy 0) so playback isn't silently skipped
           // while variant buffers are still loading.

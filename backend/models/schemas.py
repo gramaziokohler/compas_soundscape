@@ -293,6 +293,11 @@ class SoundscapeSoundConfig(BaseModel):
     # Orchestration metadata (parametric trigger links between sounds), persisted so the
     # parametric schedule can be reconstructed/re-baked/edited after load.
     orchestrate_meta: Optional[dict] = None
+    # Multi-entity support (new format)
+    entity_indices: Optional[list[int]] = None
+    entity_node_ids: Optional[list[str]] = None
+    # Sound category from foley/scenario analysis (e.g. "background", "sound_event", "speech")
+    category: Optional[str] = None
 
 
 class SoundscapeSoundEvent(BaseModel):
@@ -314,6 +319,12 @@ class SoundscapeSoundEvent(BaseModel):
     # mode/positions instead of falling back to interval mode.
     scheduling_mode: Optional[str] = None  # "interval" | "timestamps"
     timestamps: Optional[list[float]] = None  # explicit start times (seconds) for timestamps mode
+    # Multi-entity support
+    entity_indices: Optional[list[int]] = None
+    # Sound category from foley/scenario analysis (e.g. "background", "sound_event", "speech")
+    category: Optional[str] = None
+    # 0-based copy index for multi-variant sounds (distinguishes variants of the same prompt)
+    copy_index: Optional[int] = None
 
 
 class SoundscapeReceiver(BaseModel):
@@ -322,6 +333,10 @@ class SoundscapeReceiver(BaseModel):
     name: str
     position: list[float]  # [x, y, z]
     type: Optional[str] = None
+    yaw: Optional[float] = None
+    pitch: Optional[float] = None
+    roll: Optional[float] = None
+    orientation_saved: Optional[bool] = None
 
 
 class SoundscapeIRMetadata(BaseModel):
@@ -367,6 +382,10 @@ class SoundscapeSimulationConfig(BaseModel):
     imported_ir_ids: Optional[list[str]] = None
     source_receiver_ir_mapping: Optional[dict[str, dict[str, SoundscapeIRMetadata]]] = None
     receiver_positions: Optional[dict[str, list[float]]] = None  # receiverId -> [x, y, z]
+    ir_gain_db: Optional[float] = None
+    ir_normalize_enabled: Optional[bool] = None
+    material_assignments_enabled: Optional[bool] = None
+    ir_import_mode: Optional[str] = None  # "single" | "per-pair"
 
 
 class SoundscapeData(BaseModel):
@@ -389,6 +408,10 @@ class SoundscapeData(BaseModel):
     resonance_audio_config: Optional[dict] = None
     # Per-iteration variant/entity links (keyed by f"{sound_id}-{iteration_index}")
     iteration_links: Optional[dict] = None
+    # Sound IDs currently muted in the DAW timeline
+    muted_sounds: Optional[list[str]] = None
+    # Sound ID currently soloed in the DAW timeline (None = none)
+    soloed_sound: Optional[str] = None
 
 
 class SoundscapeSaveRequest(BaseModel):
@@ -646,6 +669,7 @@ class TTSGenerationRequest(BaseModel):
     texts: list[dict]
     output_dir: str = "./temp/static/sounds/generated/tts"
     url_prefix: str = "/static/sounds/generated/tts"
+    language: str = "English with a slightly german accent"
 
 
 class TTSGenerationStartResponse(BaseModel):

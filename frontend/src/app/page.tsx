@@ -120,7 +120,11 @@ function HomeContent() {
       const audioStore = useAudioControlsStore.getState();
       audioStore.syncGeneratedSounds(soundGen.generatedSounds);
       audioStore.syncSoundConfigs(soundGen.soundConfigs);
-      audioStore.bakeOrchestrateSchedule();
+      // During active generation, suppress mid-gen bakes — the final bake runs
+      // once when generation completes.
+      if (!audioStore._generationInProgress) {
+        audioStore.bakeOrchestrateSchedule();
+      }
       audioStore.setOrchestrateIterationLinks(soundGen.soundConfigs);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -585,7 +589,10 @@ function HomeContent() {
         : entity.position && entity.position.length >= 3
           ? [entity.position[0], entity.position[1], entity.position[2]]
           : [0, 0, 0];
-      const genSound = soundGen.generatedSounds.find(s => s.prompt_index === configIdx);
+      const genSound = soundGen.generatedSounds.find(s =>
+        s.prompt_index === configIdx ||
+        (s.prompt_index >= 10000 && Math.floor(s.prompt_index / 10000) === configIdx)
+      );
       if (genSound) {
         soundGen.selectLinkedEntity(genSound.id, entity.index ?? entityArrIdx, pos);
       }
@@ -684,6 +691,14 @@ function HomeContent() {
       if (s.prompt_index !== undefined) {
         if (!generatedByPrompt.has(s.prompt_index)) generatedByPrompt.set(s.prompt_index, []);
         generatedByPrompt.get(s.prompt_index)!.push(s);
+
+        // For speech-line TTS sounds (prompt_index = cardIndex * 10000 + lineIdx),
+        // also index by card index so the card-level lookup finds them.
+        if (s.prompt_index >= 10000) {
+          const cardIdx = Math.floor(s.prompt_index / 10000);
+          if (!generatedByPrompt.has(cardIdx)) generatedByPrompt.set(cardIdx, []);
+          generatedByPrompt.get(cardIdx)!.push(s);
+        }
       }
     });
 
@@ -929,7 +944,7 @@ function HomeContent() {
           guidance_scale: 4.5,
           negative_prompt: '',
           seed_copies: variantCount,
-          steps: 100,
+          steps: 25,
           spl_db: p.metadata?.spl_db ?? 60,
           interval_seconds: isBackground ? 0 : (p.metadata?.interval_seconds ?? 5),
           display_name: p.displayName || (p.text.length > 50 ? p.text.substring(0, 47) + '...' : p.text),
@@ -1118,6 +1133,14 @@ function HomeContent() {
           restored.soundSchedulingModes,
           restored.soundTimestamps,
         );
+        console.log('[DEBUG-LOAD] after restoreSchedulingModes:');
+        console.log('[DEBUG-LOAD]   modes:', JSON.stringify(useAudioControlsStore.getState().soundSchedulingModes));
+        console.log('[DEBUG-LOAD]   timestamps keys:', Object.keys(useAudioControlsStore.getState().soundTimestamps));
+        for (const [k, v] of Object.entries(useAudioControlsStore.getState().soundSchedulingModes)) {
+          if (v === 'interval') {
+            console.log(`[DEBUG-LOAD]   INTERVAL track: ${k} mode=${v} tsCount=${useAudioControlsStore.getState().soundTimestamps[k]?.length ?? 0}`);
+          }
+        }
 
         // Extend timeline duration to accommodate all restored timestamps
         // (bakeOrchestrateSchedule is suppressed during load, so auto-extend
@@ -1144,6 +1167,21 @@ function HomeContent() {
         useAudioControlsStore.getState().restoreIterationLinks(
           restored.iterationLinks,
         );
+
+        // Restore DAW mute/solo states
+        useAudioControlsStore.getState().restoreMuteSolo(
+          restored.mutedSounds,
+          restored.soloedSound,
+        );
+
+        console.log('[DEBUG-LOAD] after restoreIterationLinks + restoreMuteSolo:');
+        const postLinks = useAudioControlsStore.getState().iterationLinks;
+        console.log('[DEBUG-LOAD]   iterationLinks keys:', Object.keys(postLinks).length);
+        for (const [k, v] of Object.entries(postLinks)) {
+          console.log(`[DEBUG-LOAD]   link[${k}] = ${JSON.stringify(v)}`);
+        }
+        console.log('[DEBUG-LOAD]   mutedSounds:', [...useAudioControlsStore.getState().mutedSounds]);
+        console.log('[DEBUG-LOAD]   soloedSound:', useAudioControlsStore.getState().soloedSound);
 
         // Restore receivers
         if (restored.receivers.length > 0) {
@@ -1201,6 +1239,11 @@ function HomeContent() {
         // Restore analysis state (cards, results, pending sound configs)
         if (loadResponse.soundscape_data.analysis_state) {
           const analysisRestored = restoreAnalysisState(loadResponse.soundscape_data.analysis_state);
+          console.log('[DEBUG-LOAD-ANALYSIS] restored configs:', analysisRestored.analysisConfigs.length,
+            'results:', analysisRestored.analysisResults.length,
+            'pendingSounds:', analysisRestored.pendingSoundConfigs.length,
+            'parentIndices:', analysisRestored.soundConfigParentIndices.size,
+            'cardFlow:', analysisRestored.cardFlowState ? `${analysisRestored.cardFlowState.contextAdvanced.length}c/${analysisRestored.cardFlowState.usageAdvanced.length}u ctx→use:${Object.keys(analysisRestored.cardFlowState.contextToUsage).length} use→snd:${Object.keys(analysisRestored.cardFlowState.usageToSound).length}` : 'null');
           analysis.restoreAnalysisState({
             analysisConfigs: analysisRestored.analysisConfigs,
             analysisResults: analysisRestored.analysisResults,
@@ -1269,14 +1312,14 @@ function HomeContent() {
 
   // Save current soundscape state to Speckle + local storage
   const handleSaveSoundscape = useCallback(async () => {
-    if (!globalSpeckleData?.model_id || !soundGen.soundscapeData?.length) return;
+    if (!globalSpeckleData?.model_id) return;
     if (isSavingSoundscape) return;
 
     const modelId = globalSpeckleData.model_id;
     setIsSavingSoundscape(true);
     try {
       // 1. Upload blob-URL audio files (library/uploaded sounds) to the server
-      const blobSounds = getBlobUrlSounds(soundGen.soundscapeData);
+      const blobSounds = getBlobUrlSounds(soundGen.soundscapeData ?? []);
       const uploadedFilenames: Record<string, string> = {};
 
       if (blobSounds.length > 0) {
@@ -1315,11 +1358,34 @@ function HomeContent() {
       const saveTimestamps = useAudioControlsStore.getState().soundTimestamps;
       console.log('[page:save] saving soundTimestamps, keys:', Object.keys(saveTimestamps).length,
         'entries:', Object.entries(saveTimestamps).map(([k, v]) => `${k}:${v?.length ?? 0}ts`).join(' '));
+      const saveModes = useAudioControlsStore.getState().soundSchedulingModes;
+      const saveLinks = useAudioControlsStore.getState().iterationLinks;
+      const saveMuted = [...useAudioControlsStore.getState().mutedSounds];
+      const saveSoloed = useAudioControlsStore.getState().soloedSound;
+      console.log('[DEBUG-SAVE] === save payload debug ===');
+      console.log('[DEBUG-SAVE] mutedSounds:', JSON.stringify(saveMuted));
+      console.log('[DEBUG-SAVE] soloedSound:', JSON.stringify(saveSoloed));
+      console.log('[DEBUG-SAVE] soundSchedulingModes:', JSON.stringify(saveModes));
+      console.log('[DEBUG-SAVE] soundTimestamps keys:', Object.keys(saveTimestamps));
+      console.log('[DEBUG-SAVE] iterationLinks:', JSON.stringify(Object.keys(saveLinks)));
+      for (const [k, v] of Object.entries(saveLinks)) {
+        console.log(`[DEBUG-SAVE]   link[${k}] =`, JSON.stringify(v));
+      }
+      console.log('[DEBUG-SAVE] soundscapeData (events) count:', soundGen.soundscapeData?.length ?? 0);
+      if (soundGen.soundscapeData) {
+        for (const ev of soundGen.soundscapeData.slice(0, 5)) {
+          console.log(`[DEBUG-SAVE]   event id=${ev.id} promptIdx=${ev.prompt_index} category=${(ev as any).category} copy_index=${(ev as any).copy_index} sched=${ev.scheduling_mode}`);
+        }
+      }
+      console.log('[DEBUG-SAVE] soundConfigs count:', soundGen.soundConfigs.length);
+      for (const c of soundGen.soundConfigs) {
+        console.log(`[DEBUG-SAVE]   config prompt="${(c as any).prompt}" category="${(c as any).category}" type="${(c as any).type}"`);
+      }
       const payload = buildSoundscapeSavePayload(
         modelId,
         modelId, // model_name - use model_id as fallback
         soundGen.soundConfigs,
-        soundGen.soundscapeData,
+        soundGen.soundscapeData ?? [],
         {
           duration: soundGen.globalDuration,
           steps: soundGen.globalSteps,
@@ -1337,6 +1403,8 @@ function HomeContent() {
         useAudioControlsStore.getState().soundSchedulingModes,
         useAudioControlsStore.getState().soundTimestamps,
         useAudioControlsStore.getState().iterationLinks,
+        [...useAudioControlsStore.getState().mutedSounds],
+        useAudioControlsStore.getState().soloedSound,
       );
 
       // Embed analysis state in the soundscape data
@@ -1635,7 +1703,10 @@ function HomeContent() {
               : newFirst.position && newFirst.position.length >= 3
                 ? [newFirst.position[0], newFirst.position[1], newFirst.position[2]]
                 : [0, 0, 0];
-            const generatedSound = soundGen.generatedSounds.find(s => s.prompt_index === linkingConfigIndex);
+            const generatedSound = soundGen.generatedSounds.find(s =>
+              s.prompt_index === linkingConfigIndex ||
+              (s.prompt_index >= 10000 && Math.floor(s.prompt_index / 10000) === linkingConfigIndex)
+            );
             if (generatedSound) {
               soundGen.selectLinkedEntity(generatedSound.id, newFirst.index ?? 0, pos);
             }
@@ -1678,7 +1749,10 @@ function HomeContent() {
       : entity.position && entity.position.length >= 3
         ? [entity.position[0], entity.position[1], entity.position[2]]
         : [0, 0, 0];
-    const generatedSound = soundGen.generatedSounds.find(s => s.prompt_index === configIndex);
+    const generatedSound = soundGen.generatedSounds.find(s =>
+      s.prompt_index === configIndex ||
+      (s.prompt_index >= 10000 && Math.floor(s.prompt_index / 10000) === configIndex)
+    );
     if (generatedSound) {
       soundGen.selectLinkedEntity(generatedSound.id, entity.index ?? entityArrayIdx, pos);
     } else {
@@ -1700,7 +1774,10 @@ function HomeContent() {
     soundGen.handleDetachSoundFromEntity(configIndex);
     delete preGenActiveEntityRef.current[configIndex];
     // Also clear iteration links so link icons disappear from timeline
-    const genSound = soundGen.generatedSounds.find(s => s.prompt_index === configIndex);
+    const genSound = soundGen.generatedSounds.find(s =>
+      s.prompt_index === configIndex ||
+      (s.prompt_index >= 10000 && Math.floor(s.prompt_index / 10000) === configIndex)
+    );
     if (genSound) {
       useAudioControlsStore.getState().clearAllIterationLinksForSound(genSound.id);
     }

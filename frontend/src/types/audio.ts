@@ -98,8 +98,12 @@ export interface TimelineSound {
   iterationOffsets?: number[]; // Array of pre-generated random offsets for each iteration
   /** Scheduling mode for this sound ('interval' = default, 'timestamps' = explicit). */
   schedulingMode?: 'interval' | 'timestamps';
-  /** Prompt index — links this timeline sound back to the sound card in the sidebar. */
+  /** Prompt index — the sound's original prompt_index from the backend.
+   *  For speech-line TTS sounds this may be encoded (cardIndex * 10000 + lineIdx);
+   *  use cardIndex for config-array lookups. */
   promptIndex?: number;
+  /** Card index — always the 0-based config array position, even for speech-line sounds. */
+  cardIndex?: number;
   /** Sound group for DAW track grouping. */
   soundGroup?: 'background' | 'sound_event' | 'speech';
   /**

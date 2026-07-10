@@ -35,6 +35,8 @@ export interface SoundscapeSoundConfig {
   /** Orchestration metadata (parametric trigger links between sounds) — persisted so the
    *  parametric schedule can be reconstructed, re-baked and edited after load. */
   orchestrate_meta?: SoundscapeOrchestrateMeta;
+  /** Sound category from foley/scenario analysis (e.g. "background", "sound_event", "speech"). */
+  category?: string;
 }
 
 /** Serializable orchestration metadata (parametric trigger links). */
@@ -81,6 +83,8 @@ export interface SoundscapeSoundEvent {
   timestamps?: number[];
   /** Sound category from foley/scenario analysis (e.g. "background", "sound_event", "speech"). */
   category?: string;
+  /** 0-based copy index for multi-variant sounds (distinguishes variants of the same prompt). */
+  copy_index?: number;
 }
 
 /** Serializable receiver position */
@@ -172,6 +176,10 @@ export interface SoundscapeData {
   resonance_audio_config?: SoundscapeResonanceAudioConfig;
   // Per-iteration variant/entity links (keyed by `${soundId}-${iterationIndex}`)
   iteration_links?: Record<string, SoundscapeIterationLink>;
+  /** Sound IDs currently muted in the DAW timeline. */
+  muted_sounds?: string[];
+  /** Sound ID currently soloed in the DAW timeline (null = none). */
+  soloed_sound?: string | null;
 }
 
 /** Request payload for POST /api/speckle/soundscape/save */
@@ -230,6 +238,8 @@ export interface SerializedAnalysisConfig {
       quantity: number;
       object_ids: Record<string, { min_bounds?: number[]; max_bounds?: number[] }>;
     }>;
+    /** Natural-language description of the space from the analysis. */
+    spaceDescription?: string;
   };
   // 3D-model card: selected diverse entities (strip raw)
   selectedDiverseEntities?: Array<{

@@ -76,6 +76,7 @@ async def generate_tts(request: TTSGenerationRequest, req: Request):
             texts=valid_texts,
             output_dir=str(sounds_out),
             url_prefix=url_prefix,
+            language=request.language,
         )
 
         run_fn = make_subprocess_runner(
@@ -110,6 +111,19 @@ async def get_tts_generation_status(generation_id: str):
 
     q_pos, q_total = unified_queue.get_queue_status(generation_id)
     status_str = f"Queued — position {q_pos} of {q_total}" if q_pos is not None else task.status
+
+    if task.completed and not task.error and not task.cancelled and task.result:
+        durations = ", ".join(
+            f"{item.get('id')}={item.get('duration')}"
+            for item in task.result if isinstance(item, dict)
+        )
+        print(f"[duration-trace][routers/tts] returning result durations: {durations}", flush=True)
+    elif task.partial_sounds:
+        durations = ", ".join(
+            f"{item.get('id')}={item.get('duration')}"
+            for item in task.partial_sounds if isinstance(item, dict)
+        )
+        print(f"[duration-trace][routers/tts] returning partial_sounds durations: {durations}", flush=True)
 
     return TTSGenerationStatusResponse(
         generation_id=generation_id,

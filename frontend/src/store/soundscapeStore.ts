@@ -404,7 +404,13 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           const alreadyGenerated = new Set<number>();
           if (soundscapeData) {
             soundscapeData.forEach((s: any) => {
-              if (s.prompt_index !== undefined) alreadyGenerated.add(s.prompt_index);
+              if (s.prompt_index !== undefined) {
+                alreadyGenerated.add(s.prompt_index);
+                // Speech lines encode card_idx * 10000 + line_idx — also mark the card as done.
+                if (s.prompt_index >= 10000) {
+                  alreadyGenerated.add(Math.floor(s.prompt_index / 10000));
+                }
+              }
             });
           }
 
@@ -452,6 +458,13 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               config.type === 'text-to-speech' &&
               config.prompt.trim() !== '',
           );
+
+          console.log('[handleGenerateInternal] targetIndices:', targetIndices,
+            'withIndices.length:', withIndices.length,
+            'ttsConfigs.length:', ttsConfigs.length,
+            'generationConfigs.length:', generationConfigs.length,
+            'alreadyGenerated:', [...alreadyGenerated],
+            'soundscapeData exists:', !!soundscapeData);
 
           const total =
             generationConfigs.length +
@@ -713,42 +726,64 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             // ── TTS (Gemini Text-to-Speech) ────────────────────────────────────
             let ttsEvents: any[] = [];
             if (ttsConfigs.length > 0) {
+              console.log('[handleGenerateInternal] TTS block starting, ttsConfigs:',
+                ttsConfigs.map(c => ({ origIndex: c.originalIndex, type: c.config.type, promptLen: c.config.prompt?.length, speechLines: (c.config as any).orchestrateMeta?.speechLines?.length })));
               const ttsTexts: any[] = [];
               ttsConfigs.forEach(({ config, originalIndex }) => {
-                const copies = Math.max(1, config.seed_copies ?? 1);
                 const speechLines = (config as any).orchestrateMeta?.speechLines as string[] | undefined;
-                for (let copyIdx = 0; copyIdx < copies; copyIdx++) {
-                  const lineText = speechLines?.[copyIdx] || config.prompt;
-                  ttsTexts.push({
-                    text: lineText,
-                    voice_name: config.voice_name,
-                    display_name: config.display_name || lineText,
-                    position: config.position,
-                    spl_db: config.spl_db ?? globalBaseSplDb,
-                    // Carry the card's config index + variant index so the backend can
-                    // echo them back. Mirrors the text-to-audio flow (sounds_worker),
-                    // making variant grouping robust to backend re-indexing/filtering.
-                    prompt_index: originalIndex,
-                    copy_index: copyIdx,
-                    total_copies: copies,
+                if (speechLines && speechLines.length > 0) {
+                  // Each speech line is an independent dialogue sample — generate all
+                  // of them as variants of the same card (same prompt_index, different
+                  // copy_index).  This makes them appear as one DAW track with variant
+                  // selector letters A/B/C, matching how non-TTS seed_copies work.
+                  speechLines.forEach((lineText, lineIdx) => {
+                    ttsTexts.push({
+                      text: lineText,
+                      voice_name: config.voice_name,
+                      display_name: config.display_name || lineText,
+                      position: config.position,
+                      spl_db: config.spl_db ?? globalBaseSplDb,
+                      prompt_index: originalIndex,
+                      copy_index: lineIdx,
+                      total_copies: speechLines.length,
+                      speech_card_index: originalIndex,
+                    });
                   });
+                } else {
+                  // No speech lines: generate seed_copies variants of the same prompt.
+                  const copies = Math.max(1, config.seed_copies ?? 1);
+                  for (let copyIdx = 0; copyIdx < copies; copyIdx++) {
+                    ttsTexts.push({
+                      text: config.prompt,
+                      voice_name: config.voice_name,
+                      display_name: config.display_name || config.prompt,
+                      position: config.position,
+                      spl_db: config.spl_db ?? globalBaseSplDb,
+                      // Carry the card's config index + variant index so the backend can
+                      // echo them back. Mirrors the text-to-audio flow (sounds_worker),
+                      // making variant grouping robust to backend re-indexing/filtering.
+                      prompt_index: originalIndex,
+                      copy_index: copyIdx,
+                      total_copies: copies,
+                    });
+                  }
                 }
               });
 
               const { generation_id } = await apiService.generateTTS({
                 texts: ttsTexts,
+                language: useAudioControlsStore.getState().ttsLanguage,
               });
               _currentTtsGenerationId = generation_id;
 
               const mapTtsSound = (sound: any) => {
-                // Read the config index + variant index straight from the backend
-                // response (echoed from our request), exactly like the text-to-audio
-                // flow does with prompt_index / copy_index. This is robust to the
-                // backend filtering/re-indexing the flat texts list.
+                // prompt_index is the card index (same for all speech lines).
+                // copy_index distinguishes speech lines (0, 1, 2, …) as variants.
                 const actualIndex = sound.prompt_index ?? 0;
                 const copyIdx = sound.copy_index ?? 0;
+                const cardIdx = sound.speech_card_index ?? actualIndex;
                 const originalConfig = ttsConfigs.find(
-                  ({ originalIndex }) => originalIndex === actualIndex,
+                  ({ originalIndex }) => originalIndex === cardIdx,
                 )?.config;
 
                 let position: number[] = [0, 0, 0];
@@ -768,7 +803,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   || originalConfig?.prompt
                   || `TTS ${actualIndex + 1}`;
 
-                return {
+                const mapped = {
                   ...sound,
                   id: remappedId,
                   prompt_index: actualIndex,
@@ -780,6 +815,12 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   category: originalConfig?.category || 'speech',
                   display_name: ttsDisplayName,
                 };
+                console.log(
+                  '[duration-trace][soundscapeStore.mapTtsSound]',
+                  'incoming duration:', sound.duration,
+                  '→ mapped id:', mapped.id, 'mapped duration:', mapped.duration,
+                );
+                return mapped;
               };
 
               const ttsResult = await new Promise<any[]>((resolve, reject) => {
@@ -805,6 +846,10 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                         ...(current || []).filter((e: any) => !newIds.has(e.id)),
                         ...newPartials,
                       ];
+                      console.log(
+                        '[duration-trace][handleGenerateInternal] partial merge, newPartials durations:',
+                        newPartials.map((e: any) => ({ id: e.id, duration: e.duration })),
+                      );
                       set({ generatedSounds: merged }, false, 'soundscape/ttsPartial');
                     }
 
@@ -829,6 +874,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 }, 1500);
               });
 
+              console.log('[handleGenerateInternal] TTS polling completed, ttsResult.length:', ttsResult.length,
+                'samples:', ttsResult.slice(0, 3).map((s: any) => ({ id: s.id, pi: s.prompt_index, sci: s.speech_card_index })));
               ttsEvents = ttsResult.map(mapTtsSound);
             }
 
@@ -875,6 +922,23 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               ...existing.filter((e) => !newEventIds.has(e.id)),
               ...newEvents,
             ];
+
+            console.log('[handleGenerateInternal] merge: generated:', generatedEvents.length,
+              'uploaded:', uploadedEvents.length,
+              'library:', libraryEvents.length,
+              'catalog:', catalogEvents.length,
+              'tts:', ttsEvents.length,
+              'elevenLabs:', elevenLabsEvents.length,
+              'existing:', existing.length,
+              'allEvents:', allEvents.length);
+            if (ttsEvents.length > 0) {
+              console.log('[handleGenerateInternal] TTS events in final result:',
+                ttsEvents.map((e: any) => ({ id: e.id, pi: e.prompt_index, sci: e.speech_card_index, cat: e.category })));
+              console.log(
+                '[duration-trace][handleGenerateInternal] final ttsEvents durations:',
+                ttsEvents.map((e: any) => ({ id: e.id, duration: e.duration })),
+              );
+            }
 
             set(
               { generatedSounds: allEvents, soundscapeData: allEvents.length > 0 ? allEvents : null },

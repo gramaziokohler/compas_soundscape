@@ -83,22 +83,10 @@ export class PlaybackSchedulerService {
     ]);
 
     // Detect if this is a "Play All" scenario (multiple sounds changing to 'playing' at once)
-    const soundsChangingToPlaying = Array.from(allSoundIds).filter(soundId => {
-      const currentState = individualSoundStates[soundId];
-      const prevState = prevStates[soundId];
-      return currentState === 'playing' && prevState !== 'playing';
-    });
-
-    // Check if sounds are resuming from pause (not starting fresh from stopped)
-    const soundsResumingFromPause = soundsChangingToPlaying.filter(soundId => {
-      return prevStates[soundId] === 'paused';
-    });
-
-    // If 2 or more sounds are starting from stopped, it's "Play All" with stagger
-    // If sounds are resuming from pause, don't use stagger (continue where left off)
-    // If only 1 sound is starting, it's individual playback
-    if (soundsChangingToPlaying.length >= 2 && soundsResumingFromPause.length === 0) {
+    const storeState = useAudioControlsStore.getState();
+    if (storeState._pendingPlayAllStagger) {
       this.isPlayAll = true;
+      useAudioControlsStore.setState({ _pendingPlayAllStagger: false }, false);
     } else {
       this.isPlayAll = false;
     }
@@ -277,7 +265,11 @@ export class PlaybackSchedulerService {
 
     // CRITICAL: Clear previous state tracking to prevent re-scheduling
     // This ensures that after Stop All, updateSoundPlayback won't see any state changes
-    this.prevIndividualSoundStates = {};
+    const stoppedSnapshot: { [key: string]: SoundState } = {};
+    Object.keys(this.prevIndividualSoundStates).forEach(id => {
+      stoppedSnapshot[id] = 'stopped';
+    });
+    this.prevIndividualSoundStates = stoppedSnapshot;
     this.prevSoundIntervals = {};
     this.isPlayAll = false;
 

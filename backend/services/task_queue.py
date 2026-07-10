@@ -307,6 +307,16 @@ def make_subprocess_runner(
                     task.progress = 100
                     task.status = "Completed"
                     task.completed = True
+                    if error_prefix.startswith("TTS") and isinstance(task.result, list):
+                        durations = ", ".join(
+                            f"{item.get('id')}={item.get('duration')}"
+                            for item in task.result if isinstance(item, dict)
+                        )
+                        print(
+                            f"[duration-trace][task_queue] read result_file={result_file!r} "
+                            f"durations: {durations}",
+                            flush=True,
+                        )
                 elif result["type"] == "error":
                     task.error = result["message"]
                     task.status = "Error"

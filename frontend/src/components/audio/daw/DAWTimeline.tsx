@@ -268,12 +268,41 @@ export function DAWTimeline({
     const panelWidth = Math.max(contentBasedWidth, PANEL_DEFAULT_WIDTH);
     setPanelPos({
       x: Math.max(0, vw/2 - panelWidth/2),
-      y: Math.max(0, vh - minPanelHeight - 20),
+      y: Math.max(0, vh - Math.min(vh - 40, minPanelHeight) - 20),
     });
-    setPanelSize({ width: panelWidth, height: minPanelHeight });
+    setPanelSize({ width: panelWidth, height: Math.min(vh - 40, minPanelHeight) });
     isInitialized.current = true;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Grow panel upward when new tracks are added
+  const prevMinPanelHeightRef = useRef(minPanelHeight);
+  useEffect(() => {
+    const prev = prevMinPanelHeightRef.current;
+    const delta = minPanelHeight - prev;
+    prevMinPanelHeightRef.current = minPanelHeight;
+
+    if (delta <= 0) return;
+
+    const maxH = window.innerHeight - 40;
+    const newHeight = Math.min(panelSize.height + delta, maxH);
+    const actualDelta = newHeight - panelSize.height;
+
+    if (actualDelta > 0) {
+      setPanelSize((prev) => ({ ...prev, height: prev.height + actualDelta }));
+      setPanelPos((prev) => prev ? { ...prev, y: Math.max(0, prev.y - actualDelta) } : prev);
+    }
+
+    if (newHeight >= maxH) {
+      requestAnimationFrame(() => {
+        const container = scrollContainerRef.current;
+        if (container) {
+          container.scrollTop = container.scrollHeight;
+        }
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [minPanelHeight]);
 
   /* ---- Panel drag ---- */
   const dragStartRef = useRef<{ mouseX: number; mouseY: number; panelX: number; panelY: number } | null>(null);
@@ -391,7 +420,7 @@ export function DAWTimeline({
     soundConfigs.forEach((config, ci) => {
       const meta = config.orchestrateMeta;
       if (!meta) return;
-      const timelineSound = sounds.find((s) => s.promptIndex === ci);
+      const timelineSound = sounds.find((s) => (s.cardIndex ?? s.promptIndex) === ci);
       if (!timelineSound) return;
       entryIdMap.set(meta.entryId, { soundId: timelineSound.id, configIndex: ci });
     });
@@ -399,7 +428,7 @@ export function DAWTimeline({
     soundConfigs.forEach((config, ci) => {
       const meta = config.orchestrateMeta;
       if (!meta || !meta.trigger?.expression?.length) return;
-      const timelineSound = sounds.find((s) => s.promptIndex === ci);
+      const timelineSound = sounds.find((s) => (s.cardIndex ?? s.promptIndex) === ci);
       if (!timelineSound) return;
       const thisSoundId = timelineSound.id;
 
@@ -641,24 +670,45 @@ export function DAWTimeline({
       if (iterationLinks[linkKey] && sound.promptIndex !== undefined) {
         console.log('[DAWTimeline:drag] breaking trigger — soundId:', soundId, 'iter:', iterationIndex,
           'oldMs:', oldStartMs.toFixed(0), 'newMs:', newStartMs.toFixed(0), 'delta:', deltaMs.toFixed(0));
-        clearOrchestrateTrigger(sound.promptIndex, iterationIndex);
+        clearOrchestrateTrigger(sound.cardIndex ?? sound.promptIndex, iterationIndex);
       }
 
       if (Math.abs(deltaMs) > 0.5) {
-        const revKey = `${soundId}-${iterationIndex}`;
-        const deps = triggerGraph.reverse.get(revKey);
-        if (deps) {
-          deps.forEach((dep) => {
-            const depTsSec = soundTimestamps[dep.soundId] ?? [];
-            if (depTsSec[dep.iterationIndex] != null) {
-              const oldDepStartMs = (depTsSec[dep.iterationIndex] ?? 0) * 1000;
-              const newDepStartMs = Math.max(0, oldDepStartMs + deltaMs);
-              const newDepTs = [...depTsSec];
-              newDepTs[dep.iterationIndex] = parseFloat((newDepStartMs / 1000).toFixed(3));
-              handleTimestampsChange(dep.soundId, newDepTs);
-            }
-          });
+        const visited = new Set<string>();
+        const transitiveDeps: TriggerDep[] = [];
+        const queue: { soundId: string; iterationIndex: number }[] = [{ soundId, iterationIndex }];
+
+        while (queue.length > 0) {
+          const current = queue.shift()!;
+          const currentKey = `${current.soundId}-${current.iterationIndex}`;
+          const deps = triggerGraph.reverse.get(currentKey);
+          if (deps) {
+            deps.forEach((dep) => {
+              const depKey = `${dep.soundId}-${dep.iterationIndex}`;
+              if (!visited.has(depKey)) {
+                visited.add(depKey);
+                transitiveDeps.push(dep);
+                queue.push(dep);
+              }
+            });
+          }
         }
+
+        // Track locally-updated timestamps so deps on the same track see the latest values.
+        const localTsCache = new Map<string, number[]>();
+        localTsCache.set(soundId, newTsSec);
+
+        transitiveDeps.forEach((dep) => {
+          const baseTs = localTsCache.get(dep.soundId) ?? soundTimestamps[dep.soundId] ?? [];
+          if (baseTs[dep.iterationIndex] != null) {
+            const oldDepStartMs = (baseTs[dep.iterationIndex] ?? 0) * 1000;
+            const newDepStartMs = Math.max(0, oldDepStartMs + deltaMs);
+            const newDepTs = [...baseTs];
+            newDepTs[dep.iterationIndex] = parseFloat((newDepStartMs / 1000).toFixed(3));
+            localTsCache.set(dep.soundId, newDepTs);
+            handleTimestampsChange(dep.soundId, newDepTs);
+          }
+        });
       }
     },
     [sounds, soundTimestamps, handleTimestampsChange, iterationLinks, clearOrchestrateTrigger, triggerGraph],
@@ -994,9 +1044,10 @@ export function DAWTimeline({
                 // Keep the timeline track label in sync with the sound card title,
                 // which is authoritatively config.display_name (e.g. the speech
                 // character name). Fall back to the sound's own displayName.
+                const configIdx = sound.cardIndex ?? sound.promptIndex;
                 const cardTitle =
-                  sound.promptIndex !== undefined
-                    ? soundConfigs[sound.promptIndex]?.display_name
+                  configIdx !== undefined
+                    ? soundConfigs[configIdx]?.display_name
                     : undefined;
                 const trackSound =
                   cardTitle && cardTitle !== sound.displayName
@@ -1016,13 +1067,13 @@ export function DAWTimeline({
                   onDragEnd={(idx, newStartMs) => handleDragEnd(sound.id, idx, newStartMs)}
                   onDuplicate={(newStartMs) => handleDuplicate(sound.id, newStartMs)}
                   onSelectSoundCard={
-                    onSelectSoundCard && sound.promptIndex !== undefined
-                      ? () => onSelectSoundCard(sound.promptIndex!)
+                    onSelectSoundCard && configIdx !== undefined
+                      ? () => onSelectSoundCard(configIdx)
                       : undefined
                   }
                   onDoubleClickSoundCard={
-                    sound.promptIndex !== undefined
-                      ? () => triggerZoomToSoundCard(sound.promptIndex!)
+                    configIdx !== undefined
+                      ? () => triggerZoomToSoundCard(configIdx)
                       : undefined
                   }
                   onIterationContextMenu={(data) => handleIterationContextMenu(sound.id, data)}
@@ -1053,26 +1104,39 @@ export function DAWTimeline({
               if (!srcPos || !depPos) return;
 
               const srcY = srcPos.y + RULER_HEIGHT;
-              const srcTop = srcY - TRACK_HEIGHT_TOTAL / 2;
-              const srcBottom = srcY + TRACK_HEIGHT_TOTAL / 2;
               const depY = depPos.y + RULER_HEIGHT;
-              const depRight = depPos.x + depPos.w / 2;
-              const depLeft = depPos.x - depPos.w / 2;
 
-              // Start from closer side (top or bottom) of the source iteration
-              const distToTop = Math.abs(srcTop - depY);
-              const distToBottom = Math.abs(srcBottom - depY);
-              const useTop = distToTop <= distToBottom;
-              const startY = useTop ? srcTop : srcBottom;
+              if (source.soundId === dependent.soundId) {
+                // Same track: straight horizontal line from right border to left border
+                const [leftPos, rightPos] = srcPos.x <= depPos.x ? [srcPos, depPos] : [depPos, srcPos];
+                const startX = leftPos.x + leftPos.w / 2;
+                const endX = rightPos.x - rightPos.w / 2;
+                const midY = srcY;
+                segments.push({
+                  points: `${startX},${midY} ${endX},${midY}`,
+                  markerEnd: 'url(#arrow-orange-daw)',
+                });
+              } else {
+                const srcTop = srcY - TRACK_HEIGHT_TOTAL / 2;
+                const srcBottom = srcY + TRACK_HEIGHT_TOTAL / 2;
+                const depRight = depPos.x + depPos.w / 2;
+                const depLeft = depPos.x - depPos.w / 2;
 
-              // End at dependent's border (nearest side)
-              const depIsRight = depPos.x > srcPos.x;
-              const endX = depIsRight ? depLeft : depRight;
+                // Start from closer side (top or bottom) of the source iteration
+                const distToTop = Math.abs(srcTop - depY);
+                const distToBottom = Math.abs(srcBottom - depY);
+                const useTop = distToTop <= distToBottom;
+                const startY = useTop ? srcTop : srcBottom;
 
-              segments.push({
-                points: `${srcPos.x},${startY} ${srcPos.x},${depY} ${endX},${depY}`,
-                markerEnd: 'url(#arrow-orange-daw)',
-              });
+                // End at dependent's border (nearest side)
+                const depIsRight = depPos.x > srcPos.x;
+                const endX = depIsRight ? depLeft : depRight;
+
+                segments.push({
+                  points: `${srcPos.x},${startY} ${srcPos.x},${depY} ${endX},${depY}`,
+                  markerEnd: 'url(#arrow-orange-daw)',
+                });
+              }
             });
 
             if (segments.length === 0) return null;
@@ -1178,19 +1242,26 @@ export function DAWTimeline({
         const currentLink = iterationLinks[linkKey] ?? {};
 
         const timelineSound = sounds.find((s) => s.id === soundId);
-        const promptIndex = timelineSound?.promptIndex;
+        const cardIndex = timelineSound?.cardIndex ?? timelineSound?.promptIndex;
 
-        const variants = promptIndex !== undefined
-          ? generatedSounds.filter((s: any) => s.prompt_index === promptIndex)
+        const variants = cardIndex !== undefined
+          ? generatedSounds.filter((s: any) => {
+              // Direct match for non-speech-line sounds (prompt_index === cardIndex)
+              if (s.prompt_index === cardIndex) return true;
+              // Speech-line TTS: prompt_index = cardIndex * 10000 + lineIdx
+              if (s.prompt_index != null && s.prompt_index >= 10000 &&
+                  Math.floor(s.prompt_index / 10000) === cardIndex) return true;
+              return false;
+            })
           : [];
 
-        const linkedEntities: string[] = promptIndex !== undefined
+        const linkedEntities: string[] = cardIndex !== undefined
           ? [...objectSoundLinks.entries()]
-              .filter(([, pi]) => pi === promptIndex)
+              .filter(([, pi]) => pi === cardIndex)
               .map(([objectId]) => objectId)
           : [];
 
-        const orchestrateMeta = promptIndex !== undefined ? soundConfigs[promptIndex]?.orchestrateMeta : undefined;
+        const orchestrateMeta = cardIndex !== undefined ? soundConfigs[cardIndex]?.orchestrateMeta : undefined;
         const triggerExpressionForIteration = orchestrateMeta
           ? `${orchestrateMeta.trigger?.expression?.[iterationIndex] ?? '-'}${orchestrateMeta.trigger?.delay?.[iterationIndex] ? ` +${orchestrateMeta.trigger.delay[iterationIndex]}s` : ''}`
           : null;
@@ -1368,7 +1439,7 @@ export function DAWTimeline({
               {/* Entities submenu */}
               {submenuOpen === 'entities' && (() => {
                   // Build entity-id → index-in-entities-array map for consistent numbering
-                  const configEntities = promptIndex !== undefined ? soundConfigs[promptIndex]?.entities ?? [] : [];
+                  const configEntities = cardIndex !== undefined ? soundConfigs[cardIndex]?.entities ?? [] : [];
                   const entityIdxMap = new Map<string, number>();
                   configEntities.forEach((e: any, ei: number) => {
                     const eid = e.nodeId || e.id;
@@ -1413,8 +1484,8 @@ export function DAWTimeline({
                               return;
                             }
                             let entityPosition: [number, number, number] | undefined;
-                            if (promptIndex !== undefined) {
-                              const config = soundConfigs[promptIndex];
+                            if (cardIndex !== undefined) {
+                              const config = soundConfigs[cardIndex];
                               const entity = config?.entities?.find((e: any) =>
                                 (e.nodeId || e.id) === entityId
                               );

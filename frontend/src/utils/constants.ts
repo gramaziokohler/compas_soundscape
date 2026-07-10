@@ -332,40 +332,41 @@ export const AUDIO_MODEL_NAMES: Record<string, string> = {
 
 // TTS Voice options
 export const TTS_VOICES = [
-  { value: "Kore", label: "Chloe" }, // Femme
-  { value: "Fenrir", label: "Felix" }, // Homme
-  { value: "Puck", label: "Max" }, // Homme
-  { value: "Charon", label: "Leo" }, // Homme
-  { value: "Leda", label: "Emma" }, // Femme
-  { value: "Orus", label: "Lucas" }, // Homme
-  { value: "Achird", label: "Alex" }, // Homme
-  { value: "Achernar", label: "Sofia" }, // Femme
-  { value: "Algenib", label: "David" }, // Homme
-  { value: "Algieba", label: "Oliver" }, // Homme
-  { value: "Alnilam", label: "Thomas" }, // Homme
-  { value: "Aoede", label: "Mia" }, // Femme
-  { value: "Autonoe", label: "Anna" }, // Femme
-  { value: "Callirrhoe", label: "Elena" }, // Femme
-  { value: "Despina", label: "Clara" }, // Femme
-  { value: "Encelade", label: "Gabriel" }, // Homme
-  { value: "Erinome", label: "Eva" }, // Femme
-  { value: "Gacrux", label: "Luna" }, // Femme
-  { value: "Iapetus", label: "Victor" }, // Homme
-  { value: "Laomedeia", label: "Lara" }, // Femme
-  { value: "Léda", label: "Sara" }, // Femme
-  { value: "Pulcherrima", label: "Julia" }, // Femme
-  { value: "Rasalgethi", label: "Oscar" }, // Homme
-  { value: "Sadachbia", label: "Arthur" }, // Homme
-  { value: "Sadaltager", label: "Louis" }, // Homme
-  { value: "Schedar", label: "Marcus" }, // Homme
-  { value: "Sulafat", label: "Maya" }, // Femme
-  { value: "Umbriel", label: "Simon" }, // Homme
-  { value: "Vindemiatrix", label: "Nina" }, // Femme
-  { value: "Zephyr", label: "Zoe" }, // Femme
-  { value: "Zubenelgenubi", label: "Benjamin" }, // Homme
+  { value: "Kore", label: "Chloe (Firm)" }, // Femme
+  { value: "Fenrir", label: "Felix (Excitable)" }, // Homme
+  { value: "Puck", label: "Max (Upbeat)" }, // Homme
+  { value: "Charon", label: "Leo (Informative)" }, // Homme
+  { value: "Leda", label: "Emma (Young)" }, // Femme
+  { value: "Orus", label: "Lucas (Firm)" }, // Homme
+  { value: "Achird", label: "Alex (Friendly)" }, // Homme
+  { value: "Achernar", label: "Sofia (Soft)" }, // Femme
+  { value: "Algenib", label: "David (Gritty)" }, // Homme
+  { value: "Algieba", label: "Oliver (Smooth)" }, // Homme
+  { value: "Alnilam", label: "Thomas (Firm)" }, // Homme
+  { value: "Aoede", label: "Mia (Breezy)" }, // Femme
+  { value: "Autonoe", label: "Anna (Bright)" }, // Femme
+  { value: "Callirrhoe", label: "Elena (Calm)" }, // Femme
+  { value: "Despina", label: "Clara (Smooth)" }, // Femme
+  { value: "Encelade", label: "Gabriel (Breathy)" }, // Homme
+  { value: "Erinome", label: "Eva (Open)" }, // Femme
+  { value: "Gacrux", label: "Luna (Mature)" }, // Femme
+  { value: "Iapetus", label: "Victor (Clear)" }, // Homme
+  { value: "Laomedeia", label: "Lara (Upbeat)" }, // Femme
+  { value: "Léda", label: "Sara (Young)" }, // Femme
+  { value: "Pulcherrima", label: "Julia (Direct)" }, // Femme
+  { value: "Rasalgethi", label: "Oscar (Informative)" }, // Homme
+  { value: "Sadachbia", label: "Arthur (Lively)" }, // Homme
+  { value: "Sadaltager", label: "Louis (Knowledgeable)" }, // Homme
+  { value: "Schedar", label: "Marcus (Even)" }, // Homme
+  { value: "Sulafat", label: "Maya (Warm)" }, // Femme
+  { value: "Umbriel", label: "Simon (Casual)" }, // Homme
+  { value: "Vindemiatrix", label: "Nina (Sweet)" }, // Femme
+  { value: "Zephyr", label: "Zoe (Bright)" }, // Femme
+  { value: "Zubenelgenubi", label: "Benjamin (Relaxed)" }, // Homme
 ] as const;
 
 export const TTS_DEFAULT_VOICE = "Kore";
+export const TTS_DEFAULT_LANGUAGE = "Japanese";
 
 export const LLM_MODEL_NAMES: Record<string, string> = {
   [LLM_MODEL_GEMINI_FLASH]: "Gemini 2.5 Flash",

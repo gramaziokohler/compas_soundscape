@@ -317,6 +317,7 @@ export const apiService = {
   // Generate TTS (async — returns generation_id for polling)
   async generateTTS(data: {
     texts: { text: string; voice_name?: string; display_name?: string; position?: number[]; spl_db?: number; prompt_index?: number; copy_index?: number; total_copies?: number }[];
+    language?: string;
   }): Promise<{ generation_id: string }> {
     try {
       const response = await fetchWithErrorHandling(
@@ -361,7 +362,17 @@ export const apiService = {
         const err = await response.json().catch(() => ({ detail: 'Failed to get TTS status' }));
         throw new Error(err.detail || 'Failed to get TTS generation status');
       }
-      return await response.json();
+      const json = await response.json();
+      if (json.result || json.partial_sounds) {
+        const list = json.result || json.partial_sounds;
+        console.log(
+          '[duration-trace][api.getTTSGenerationStatus]',
+          json.result ? 'result' : 'partial_sounds',
+          'durations:',
+          list.map((s: any) => ({ id: s.id, duration: s.duration })),
+        );
+      }
+      return json;
     } catch (error) {
       handleApiError(error, 'TTS generation status');
     }
@@ -1070,7 +1081,12 @@ export const apiService = {
 
       if (!response.ok) {
         const error = await response.json().catch(() => ({ detail: 'Failed to save soundscape' }));
-        throw new Error(error.detail || 'Failed to save soundscape');
+        const detail = error.detail;
+        if (Array.isArray(detail)) {
+          const msgs = detail.map((d: any) => `${d.loc?.join('.') ?? '?'}: ${d.msg}`).join('; ');
+          throw new Error(msgs || 'Failed to save soundscape');
+        }
+        throw new Error(detail || 'Failed to save soundscape');
       }
 
       return response.json();

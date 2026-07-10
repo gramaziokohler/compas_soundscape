@@ -170,6 +170,20 @@ export class SoundSphereManager {
     const iterationLabels = soundscapeData.filter(s => s.id.includes('_iter_'));
     const realSoundData   = soundscapeData.filter(s => !s.id.includes('_iter_'));
 
+    console.log('[SoundSphereManager:update] soundscapeData.length:', soundscapeData.length,
+      'realSoundData.length:', realSoundData.length,
+      'iterationLabels:', iterationLabels.length);
+    if (realSoundData.length) {
+      console.log('[SoundSphereManager:update] realSoundData (first 15):',
+        realSoundData.slice(0, 15).map(s => ({
+          id: s.id,
+          pi: (s as any).prompt_index,
+          sci: (s as any).speech_card_index,
+          cat: (s as any).category,
+          url: s.url?.substring(0, 50),
+        })));
+    }
+
     // Compute visible sounds BEFORE any teardown to check if recreation is needed.
     // Use only real sound data so iteration-label entries don't corrupt variant selection.
     const soundsByPromptIndex: { [key: number]: SoundEvent[] } = {};
@@ -483,6 +497,20 @@ export class SoundSphereManager {
     this.latestSounds = visibleSounds; // snapshot for buffer-load callbacks
     const visibleSoundIds = new Set(visibleSounds.map(s => s.id));
 
+    console.log('[SoundSphereManager:syncAudio] visibleSounds.length:', visibleSounds.length,
+      'existing metadata.size:', this.soundMetadata.size,
+      'pendingLoads:', this.pendingLoads.size);
+    if (visibleSounds.length) {
+      const ttsSounds = visibleSounds.filter(s => s.id.startsWith('tts_'));
+      const genSounds = visibleSounds.filter(s => s.id.startsWith('generated_'));
+      console.log('[SoundSphereManager:syncAudio] tts:', ttsSounds.length, 'generated:', genSounds.length);
+      if (ttsSounds.length) {
+        console.log('[SoundSphereManager:syncAudio] TTS sounds:', ttsSounds.map(s => ({
+          id: s.id, pi: (s as any).prompt_index, sci: (s as any).speech_card_index, url: s.url?.substring(0, 60)
+        })));
+      }
+    }
+
     // Remove audio sources and stale positions for sounds no longer visible
     for (const [soundId] of this.soundMetadata) {
       if (!visibleSoundIds.has(soundId)) {
@@ -511,7 +539,7 @@ export class SoundSphereManager {
   private loadAudioForSound(soundEvent: SoundEvent): void {
     const audioPosition = this.spherePositions.get(soundEvent.id);
     if (!audioPosition) {
-      console.warn(`[SoundSphereManager] No position for sound ${soundEvent.id}, skipping audio load`);
+      console.warn(`[SoundSphereManager] No position for sound ${soundEvent.id} (pi:${(soundEvent as any).prompt_index} sci:${(soundEvent as any).speech_card_index}), skipping audio load`);
       return;
     }
 
@@ -570,7 +598,10 @@ export class SoundSphereManager {
             prompt_index: (soundEvent as any).prompt_index,
             url: soundEvent.url,
             isUploaded: soundEvent.isUploaded,
-            interval_seconds: soundEvent.interval_seconds
+            interval_seconds: soundEvent.interval_seconds,
+            copy_index: (soundEvent as any).copy_index,
+            speech_card_index: (soundEvent as any).speech_card_index,
+            category: (soundEvent as any).category,
           }
         };
 
@@ -578,16 +609,23 @@ export class SoundSphereManager {
 
         // Store buffer duration and re-bake the orchestrate schedule so that
         // after() / alignEnd() expressions resolve using the real buffer length.
+        console.log('[SoundSphereManager] metadata registered:', soundEvent.id,
+          'prompt_index:', (soundEvent as any).prompt_index,
+          'speech_card_index:', (soundEvent as any).speech_card_index,
+          'category:', (soundEvent as any).category,
+          'copy_index:', (soundEvent as any).copy_index,
+          'display_name:', soundEvent.display_name);
         // Note: syncGeneratedSounds is intentionally NOT called here — it is already
         // dispatched from the page.tsx useEffect and calling it from every buffer
         // callback caused a store-update storm that re-triggered syncAudioSources
         // repeatedly (compounding the pending-load race that pendingLoads now guards).
+        console.log(
+          `[duration-trace][SoundSphereManager] decoded buffer for ${soundEvent.id}: ` +
+          `buffer.duration=${buffer.duration.toFixed(3)}s (this is the REAL length — ` +
+          `compare against the "duration" field the sound arrived with)`,
+        );
         const audioStore = useAudioControlsStore.getState();
         audioStore.setSoundBufferDuration(soundEvent.id, buffer.duration);
-        if (audioStore._soundConfigs.some((c: any) => c.orchestrateMeta)) {
-          audioStore.bakeOrchestrateSchedule();
-          audioStore.setOrchestrateIterationLinks(audioStore._soundConfigs);
-        }
       },
       undefined,
       (error) => {

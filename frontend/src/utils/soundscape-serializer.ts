@@ -95,10 +95,18 @@ export function buildSoundscapeSavePayload(
   soundTimestamps?: Record<string, number[]>,
   /** Per-iteration variant/entity links keyed by `${soundId}-${iterationIndex}` (from audioControls) */
   iterationLinks?: Record<string, { variantIndex?: number; entityNodeId?: string; entityPosition?: [number, number, number]; entityIndex?: number }>,
+  /** Sound IDs currently muted in the DAW timeline (from audioControls) */
+  mutedSounds?: string[],
+  /** Sound ID currently soloed in the DAW timeline (from audioControls) */
+  soloedSound?: string | null,
 ): SoundscapeSavePayload {
   // Map runtime configs to serializable configs
+  console.log('[DEBUG-SERIALIZE-SAVE] configs count:', soundConfigs.length);
   const serializedConfigs: SoundscapeSoundConfig[] = soundConfigs.map(
-    (config, index) => ({
+    (config, index) => {
+      const cat = (config as any).category;
+      if (cat) console.log(`[DEBUG-SERIALIZE-SAVE] config[${index}] category="${cat}" prompt="${config.prompt?.substring(0, 30)}"`);
+      return {
       index,
       prompt: config.prompt || '',
       type: config.type || undefined,
@@ -121,7 +129,7 @@ export function buildSoundscapeSavePayload(
             .map((e: any) => e.id !== undefined
               ? (typeof e.id === 'number' ? e.id as number : parseInt(e.id as string, 10))
               : undefined)
-            .filter((i: number | undefined): i is number => i !== undefined))
+            .filter((i: number | undefined): i is number => i !== undefined && !isNaN(i)))
         : undefined,
       entity_node_ids: config.entities?.length
         ? (config.entities
@@ -133,8 +141,10 @@ export function buildSoundscapeSavePayload(
       parent_usage_original_index: (config as any).parentUsageOriginalIndex,
       // Parametric trigger links between sounds (re-baked/edited after load)
       orchestrate_meta: config.orchestrateMeta,
-    })
-  );
+      category: (config as any).category || undefined,
+    };
+  });
+
 
       // Build a lookup: prompt_index → entity_node_ids[] (for event serialization)
       const configEntityNodeIds: Record<number, string> = {};
@@ -169,6 +179,11 @@ export function buildSoundscapeSavePayload(
 
       console.log('[serializer:save] event:', event.id, 'promptIdx:', event.prompt_index,
         'schedMode:', schedulingMode, 'ts:', trackTimestamps?.length ?? 0);
+      const evCat = (event as any).category;
+      const evCopyIdx = (event as any).copy_index;
+      if (evCat || evCopyIdx != null) {
+        console.log(`[DEBUG-SERIALIZE-SAVE] event ${event.id} category="${evCat}" copy_index=${evCopyIdx} schedMode=${schedulingMode} tsCount=${trackTimestamps?.length ?? 0}`);
+      }
 
       // Resolve entity_node_id from the matching config (events only have entity_index)
       const eventEntityNodeId = event.prompt_index !== undefined
@@ -193,6 +208,7 @@ export function buildSoundscapeSavePayload(
         scheduling_mode: schedulingMode,
         timestamps: trackTimestamps,
         category: (event as any).category || undefined,
+        copy_index: (event as any).copy_index ?? undefined,
       };
     }
   );
@@ -354,6 +370,8 @@ export function buildSoundscapeSavePayload(
       },
     } : undefined,
     iteration_links: iterationLinks && Object.keys(iterationLinks).length > 0 ? iterationLinks : undefined,
+    muted_sounds: mutedSounds && mutedSounds.length > 0 ? mutedSounds : undefined,
+    soloed_sound: soloedSound ?? undefined,
   };
 
   return {
@@ -393,7 +411,25 @@ export function restoreSoundscapeState(
   simulationConfigs: SimulationConfig[];
   activeSimulationIndex: number | null;
   resonanceAudioConfig: ResonanceAudioConfig | null;
+  mutedSounds: string[];
+  soloedSound: string | null;
 } {
+  console.log('[DEBUG-DESERIALIZE] === restore begin ===');
+  console.log('[DEBUG-DESERIALIZE] loadedData.muted_sounds:', JSON.stringify(loadedData.muted_sounds));
+  console.log('[DEBUG-DESERIALIZE] loadedData.soloed_sound:', JSON.stringify(loadedData.soloed_sound));
+  console.log('[DEBUG-DESERIALIZE] loadedData.iteration_links keys:', loadedData.iteration_links ? Object.keys(loadedData.iteration_links).length : 0);
+  console.log('[DEBUG-DESERIALIZE] loadedData.sound_configs count:', loadedData.sound_configs?.length);
+  console.log('[DEBUG-DESERIALIZE] loadedData.sound_events count:', loadedData.sound_events?.length);
+  if (loadedData.sound_events) {
+    for (const se of loadedData.sound_events.slice(0, 5)) {
+      console.log(`[DEBUG-DESERIALIZE]   event id=${se.id} pi=${se.prompt_index} cat="${se.category}" copyIdx=${se.copy_index} schedMode="${se.scheduling_mode}" ts=${se.timestamps?.length ?? 0}`);
+    }
+  }
+  if (loadedData.sound_configs) {
+    for (const sc of loadedData.sound_configs) {
+      console.log(`[DEBUG-DESERIALIZE]   config pi=${sc.index} cat="${sc.category}" prompt="${sc.prompt?.substring(0, 30)}"`);
+    }
+  }
   // Rebuild SoundGenerationConfig[] from saved configs
   const soundConfigs: SoundGenerationConfig[] = loadedData.sound_configs.map(
     (saved) => ({
@@ -408,6 +444,7 @@ export function restoreSoundscapeState(
       type: saved.type as SoundGenerationConfig['type'],
       parentUsageOriginalIndex: (saved as any).parent_usage_original_index,
       orchestrateMeta: saved.orchestrate_meta as SoundGenerationConfig['orchestrateMeta'],
+      category: saved.category,
       entity: undefined, // deprecated — use entities[] below
       entities: (() => {
         // New multi-entity format: entity_indices[] array
@@ -472,6 +509,10 @@ export function restoreSoundscapeState(
     } else {
       console.log('[serializer:load] no ts for', saved.id, 'promptIdx:', saved.prompt_index, 'mode:', restoredMode);
     }
+    const cat = (saved as any).category;
+    if (cat || restoredMode === 'interval') {
+      console.log(`[DEBUG-DESERIALIZE] event ${saved.id} restored: schedMode=${restoredMode} cat="${cat}" tsCount=${saved.timestamps?.length ?? 0} copyIdx=${saved.copy_index}`);
+    }
 
     // Build the event — only include entity_index when it's a real number.
     // In JS, null !== undefined and the sphere manager checks
@@ -492,6 +533,7 @@ export function restoreSoundscapeState(
       scheduling_mode: restoredMode,
       category: (saved as any).category || undefined,
     };
+    (event as any).copy_index = saved.copy_index ?? undefined;
 
     // Only set entity_index when it's a real number (not null/undefined)
     // so that the sphere manager's `=== undefined` check works correctly
@@ -661,6 +703,8 @@ export function restoreSoundscapeState(
     simulationConfigs: restoredSimConfigs,
     activeSimulationIndex,
     resonanceAudioConfig,
+    mutedSounds: loadedData.muted_sounds ?? [],
+    soloedSound: loadedData.soloed_sound ?? null,
   };
 }
 
@@ -724,6 +768,9 @@ export function buildAnalysisStateSave(
           analysisId: mc.analysisResult.analysisId,
           architecturalObjects: mc.analysisResult.architecturalObjects,
         };
+        if (mc.analysisResult.spaceDescription) {
+          base.analysisResult.spaceDescription = mc.analysisResult.spaceDescription;
+        }
       }
     }
 
@@ -743,7 +790,7 @@ export function buildAnalysisStateSave(
     }
 
     // Hierarchical: link child sound configs by matching parentUsageOriginalIndex
-    if (soundConfigs && (config.type === 'model-analysis' || config.type === 'text' || config.type === 'audio' || config.type === '3d-model' || config.type === 'scenario')) {
+    if (soundConfigs && (config.type === 'model-analysis' || config.type === 'text' || config.type === 'audio' || config.type === '3d-model' || config.type === 'scenario' || config.type === 'freeform')) {
       const childIndices: number[] = [];
       soundConfigs.forEach((sc, si) => {
         if (sc.parentUsageOriginalIndex === configIndex) {
@@ -786,6 +833,69 @@ export function buildAnalysisStateSave(
       usageToSoundMap: cardFlowState.usageToSound,
     };
   }
+
+  // ── Rebuild card-flow Maps from config data ──────────────────────────────
+  // The cardFlowStore Maps may be empty if recordContextAdvanceWithChild /
+  // recordUsageAdvanceWithChild were never called.  Rebuild them from the
+  // parent-child indices embedded in the config data so the hierarchy always
+  // survives a round-trip.
+  const rebuiltContextToUsage: Record<number, number[]> = {};
+  const rebuiltUsageToSound: Record<number, number[]> = {};
+  const rebuiltContextAdvanced = new Set<number>(cardFlowState?.contextAdvanced ?? []);
+  const rebuiltUsageAdvanced = new Set<number>(cardFlowState?.usageAdvanced ?? []);
+
+  for (const config of analysisConfigs) {
+    const pci = (config as any).parentContextOriginalIndex as number | undefined;
+    const configIndex = analysisConfigs.indexOf(config);
+    if (pci !== undefined && pci >= 0) {
+      if (!rebuiltContextToUsage[pci]) rebuiltContextToUsage[pci] = [];
+      if (!rebuiltContextToUsage[pci].includes(configIndex)) {
+        rebuiltContextToUsage[pci].push(configIndex);
+      }
+      rebuiltContextAdvanced.add(pci);
+      rebuiltUsageAdvanced.add(configIndex);
+    }
+  }
+
+  for (const sc of (soundConfigs ?? [])) {
+    const pui = (sc as any).parentUsageOriginalIndex as number | undefined;
+    if (pui !== undefined && pui >= 0) {
+      if (!rebuiltUsageToSound[pui]) rebuiltUsageToSound[pui] = [];
+      const si = (soundConfigs ?? []).indexOf(sc as any);
+      if (!rebuiltUsageToSound[pui].includes(si)) {
+        rebuiltUsageToSound[pui].push(si);
+      }
+      rebuiltUsageAdvanced.add(pui);
+    }
+  }
+
+  // Merge with store-provided data (store wins on keys, but rebuilt fills gaps)
+  const mergedContextToUsage: Record<number, number[]> = { ...rebuiltContextToUsage };
+  if (cardFlowState?.contextToUsage) {
+    for (const [k, v] of Object.entries(cardFlowState.contextToUsage)) {
+      const nk = Number(k);
+      mergedContextToUsage[nk] = v;
+    }
+  }
+  const mergedUsageToSound: Record<number, number[]> = { ...rebuiltUsageToSound };
+  if (cardFlowState?.usageToSound) {
+    for (const [k, v] of Object.entries(cardFlowState.usageToSound)) {
+      const nk = Number(k);
+      mergedUsageToSound[nk] = v;
+    }
+  }
+
+  const mergedContextAdvanced = [...rebuiltContextAdvanced];
+  const mergedUsageAdvanced = [...rebuiltUsageAdvanced];
+
+  analysisState.card_flow = {
+    contextAdvanced: mergedContextAdvanced,
+    usageAdvanced: mergedUsageAdvanced,
+    contextToUsageMap: mergedContextToUsage,
+    usageToSoundMap: mergedUsageToSound,
+  };
+
+  console.log('[DEBUG-ANALYSIS-SAVE] card_flow:', JSON.stringify(analysisState.card_flow, null, 2));
 
   return {
     analysis_state: analysisState,
@@ -844,6 +954,13 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
       config.audioInfo = null;
       config.audioBuffer = null;
     }
+    if (saved.type === 'text') {
+      config.isGenerating = false;
+      config.generationError = null;
+    }
+    if (saved.type === 'freeform') {
+      config.isEditing = false;
+    }
     if (saved.type === 'scenario') {
       config.scenarioRawText = '';
       config.scenarioResult = saved.scenarioResult || null;
@@ -870,12 +987,18 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
     return config as AnalysisConfig;
   });
 
+  const parentIndices = buildParentIndexMap(analysisState.configs);
+  console.log('[DEBUG-ANALYSIS-LOAD] configs count:', analysisConfigs.length,
+    'results:', analysisResults.length,
+    'cardFlow:', analysisState.card_flow ? `${analysisState.card_flow.contextAdvanced.length}c/${analysisState.card_flow.usageAdvanced.length}u` : 'null',
+    'parentIndices:', parentIndices.size);
+
   return {
     analysisConfigs,
     analysisResults,
     activeTab: analysisState.active_tab,
     pendingSoundConfigs: analysisState.pending_sound_configs || [],
-    soundConfigParentIndices: buildParentIndexMap(analysisState.configs),
+    soundConfigParentIndices: parentIndices,
     cardFlowState: analysisState.card_flow
       ? {
           contextAdvanced: analysisState.card_flow.contextAdvanced,

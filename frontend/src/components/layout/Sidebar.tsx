@@ -10,6 +10,7 @@ import { useTextGenerationStore } from "@/store/textGenerationStore";
 import { useCardFlowStore } from "@/store/cardFlowStore";
 import { useUIStore } from "@/store/uiStore";
 import type { SidebarProps } from "@/types/components";
+import type { AnalysisConfig } from "@/types/analysis";
 import { CARD_TYPE_LABELS } from "@/types/card";
 import type { CardType } from "@/types/card";
 
@@ -39,16 +40,39 @@ export function Sidebar(props: SidebarProps) {
   // Active parent indices — used to filter child cards in each section
   const [activeContextOriginalIndex, setActiveContextOriginalIndex] = useState<number | null>(null);
   const [activeUsageOriginalIndex, setActiveUsageOriginalIndex] = useState<number | null>(null);
-  // Refs that remember which card was open before leaving each section
-  const savedContextExpandedRef = useRef<number | null>(null);
-  const savedUsageExpandedRef = useRef<number | null>(null);
 
   const cardFlowStore = useCardFlowStore();
+
+  // Navigation never restores previous expansion state. When entering a section
+  // we always expand a deterministic card: the first child when moving down,
+  // or the corresponding parent card when moving back up.
+  function getFirstContextIndex(): number | null {
+    const idx = props.analysisConfigs.findIndex(
+      (c) =>
+        SIDEBAR_CONTEXT_TYPES.includes(c.type as CardType) &&
+        !(c.type === 'freeform' && (c as any).parentContextOriginalIndex !== undefined)
+    );
+    return idx >= 0 ? idx : null;
+  }
+
+  function getFirstUsageChildIndex(parentContextIndex: number | null): number | null {
+    const isUsage = (c: AnalysisConfig) =>
+      SIDEBAR_USAGE_TYPES.includes(c.type as CardType) &&
+      !(c.type === 'freeform' && (c as any).parentContextOriginalIndex === undefined);
+    if (parentContextIndex === null) {
+      const idx = props.analysisConfigs.findIndex(isUsage);
+      return idx >= 0 ? idx : null;
+    }
+    const idx = props.analysisConfigs.findIndex(
+      (c) => isUsage(c) && (c as any).parentContextOriginalIndex === parentContextIndex
+    );
+    return idx >= 0 ? idx : null;
+  }
 
   // Breadcrumb labels derived reactively — ALL navigation paths update the same index
   // state, so labels are always consistent (FAB, breadcrumb click, or skip).
   // We replicate getCardDefaultName logic: display_name > file name > type label.
-  function getConfigLabel(config: import('@/types/analysis').AnalysisConfig | undefined, fallback: string): string {
+  function getConfigLabel(config: AnalysisConfig | undefined, fallback: string): string {
     if (!config) return fallback;
     if (config.display_name) return config.display_name;
     if ('audioFile' in config && (config as any).audioFile?.name) return (config as any).audioFile.name;
@@ -163,13 +187,29 @@ export function Sidebar(props: SidebarProps) {
       if (parentIndex !== null) {
         // A specific parent was pre-set (e.g. during soundscape restore) —
         // sync the sidebar filter so only that parent's children are shown.
+        if (parentIndex < 0) {
+          // Audio context bypassed Usage
+          const ctxIdx = -(parentIndex + 1);
+          setActiveContextOriginalIndex(ctxIdx);
+          setBypassedUsage(true);
+        } else {
+          // Normal usage parent — also sync the corresponding context parent
+          setBypassedUsage(false);
+          const usageCfg = props.analysisConfigs[parentIndex];
+          if (usageCfg && (usageCfg as any).parentContextOriginalIndex !== undefined) {
+            setActiveContextOriginalIndex((usageCfg as any).parentContextOriginalIndex);
+          }
+        }
         setActiveUsageOriginalIndex(parentIndex);
+      } else {
+        setActiveUsageOriginalIndex(null);
+        setBypassedUsage(false);
       }
       useUIStore.getState().setIsInSoundsStep(true);
       setCurrentStep(2);
       setIsExpanded(true);
     }
-  }, [props.stepAdvanceTrigger]);
+  }, [props.stepAdvanceTrigger, props.analysisConfigs]);
 
   const { width: contentWidth, isResizing, handleMouseDown: handleResizeMouseDown } = useSidebarResize({
     initialWidth: UI_SIDEBAR_RESIZE.LEFT_DEFAULT_WIDTH,
@@ -187,18 +227,17 @@ export function Sidebar(props: SidebarProps) {
   // Step navigation helpers
   const advanceToUsage = useCallback((originalIndex: number, _title: string) => {
     useCardFlowStore.getState().recordContextAdvance(originalIndex);
-    savedContextExpandedRef.current = null;
     setContextExpandedOriginalIndex(null);
     setActiveContextOriginalIndex(originalIndex);
     setBypassedUsage(false);
     useUIStore.getState().setActiveSoundParentIndex(null);
+    setUsageExpandedOriginalIndex(getFirstUsageChildIndex(originalIndex));
     setCurrentStep(1);
     setIsExpanded(true);
-  }, []);
+  }, [props.analysisConfigs]);
 
   const handleContextSendToSounds = useCallback((originalIndex: number, _title: string) => {
     useCardFlowStore.getState().recordContextAdvance(originalIndex);
-    savedContextExpandedRef.current = null;
     setContextExpandedOriginalIndex(null);
     setActiveContextOriginalIndex(originalIndex);
     // Audio context bypasses Usage — use negative namespace key so sounds filter correctly.
@@ -212,7 +251,6 @@ export function Sidebar(props: SidebarProps) {
 
   const handleUsageSendToSounds = useCallback((originalIndex: number, _title: string) => {
     useCardFlowStore.getState().recordUsageAdvance(originalIndex);
-    savedUsageExpandedRef.current = null;
     setUsageExpandedOriginalIndex(null);
     setActiveUsageOriginalIndex(originalIndex);
     setBypassedUsage(false);
@@ -224,10 +262,9 @@ export function Sidebar(props: SidebarProps) {
 
   const skipStep = useCallback(() => {
     if (currentStep === 0) {
-      savedContextExpandedRef.current = contextExpandedOriginalIndex;
       setContextExpandedOriginalIndex(null);
+      setUsageExpandedOriginalIndex(getFirstUsageChildIndex(activeContextOriginalIndex));
     } else if (currentStep === 1) {
-      savedUsageExpandedRef.current = usageExpandedOriginalIndex;
       setUsageExpandedOriginalIndex(null);
       // Skipping from Usage to Sounds with no parent — keep activeSoundParentIndex null
       // but flag that we ARE in the Sounds step so unparented sounds are shown.
@@ -236,7 +273,22 @@ export function Sidebar(props: SidebarProps) {
     }
     setCurrentStep(s => (Math.min(s + 1, 2) as Step));
     setIsExpanded(true);
-  }, [currentStep, contextExpandedOriginalIndex, usageExpandedOriginalIndex]);
+  }, [currentStep, activeContextOriginalIndex, props.analysisConfigs]);
+
+  // Adds a placeholder/freeform card just like the "Add placeholder card" buttons
+  // in ContextSection and UsageSection, then lets those sections auto-advance.
+  const handleAddPlaceholder = useCallback(() => {
+    const nextIndex = props.analysisConfigs.length;
+    props.onAddAnalysisConfig('freeform');
+    if (currentStep === 0) {
+      props.onUpdateAnalysisConfig(nextIndex, { display_name: 'Untitled context' } as Partial<AnalysisConfig>);
+    } else if (currentStep === 1) {
+      props.onUpdateAnalysisConfig(nextIndex, { display_name: 'Untitled usage' } as Partial<AnalysisConfig>);
+      if (activeContextOriginalIndex !== null && activeContextOriginalIndex !== undefined) {
+        props.onUpdateAnalysisConfig(nextIndex, { parentContextOriginalIndex: activeContextOriginalIndex } as Partial<AnalysisConfig>);
+      }
+    }
+  }, [props.analysisConfigs.length, props.onAddAnalysisConfig, props.onUpdateAnalysisConfig, currentStep, activeContextOriginalIndex]);
 
   return (
     <>
@@ -324,7 +376,11 @@ export function Sidebar(props: SidebarProps) {
               }`}
               onClick={() => {
                 setUsageExpandedOriginalIndex(null);
-                setContextExpandedOriginalIndex(savedContextExpandedRef.current);
+                setContextExpandedOriginalIndex(
+                  activeContextOriginalIndex !== null && activeContextOriginalIndex < props.analysisConfigs.length
+                    ? activeContextOriginalIndex
+                    : getFirstContextIndex()
+                );
                 setBypassedUsage(false);
                 useUIStore.getState().setActiveSoundParentIndex(null);
                 useUIStore.getState().setIsInSoundsStep(false);
@@ -367,13 +423,18 @@ export function Sidebar(props: SidebarProps) {
                     if (!usageClickable) return;
                     if (currentStep === 0 && contextExpandedOriginalIndex !== null) {
                       setActiveContextOriginalIndex(contextExpandedOriginalIndex);
-                      savedContextExpandedRef.current = contextExpandedOriginalIndex;
                       setContextExpandedOriginalIndex(null);
                     }
                     useUIStore.getState().setActiveSoundParentIndex(null);
                     useUIStore.getState().setIsInSoundsStep(false);
                     setBypassedUsage(false);
-                    setUsageExpandedOriginalIndex(savedUsageExpandedRef.current);
+                    setUsageExpandedOriginalIndex(
+                      activeUsageOriginalIndex !== null &&
+                        activeUsageOriginalIndex >= 0 &&
+                        activeUsageOriginalIndex < props.analysisConfigs.length
+                        ? activeUsageOriginalIndex
+                        : getFirstUsageChildIndex(activeContextOriginalIndex)
+                    );
                     setCurrentStep(1);
                   }}
                   aria-current={usageActive ? 'step' : undefined}
@@ -425,6 +486,10 @@ export function Sidebar(props: SidebarProps) {
                       if (usageExpandedOriginalIndex !== null) {
                         setActiveUsageOriginalIndex(usageExpandedOriginalIndex);
                         useUIStore.getState().setActiveSoundParentIndex(usageExpandedOriginalIndex);
+                        const usageCfg = props.analysisConfigs[usageExpandedOriginalIndex];
+                        if (usageCfg && (usageCfg as any).parentContextOriginalIndex !== undefined) {
+                          setActiveContextOriginalIndex((usageCfg as any).parentContextOriginalIndex);
+                        }
                       } else if (activeUsageOriginalIndex !== null) {
                         // No card expanded — restore the previously active parent
                         useUIStore.getState().setActiveSoundParentIndex(activeUsageOriginalIndex);
@@ -432,13 +497,11 @@ export function Sidebar(props: SidebarProps) {
                         // Fully unparented (skip flow)
                         useUIStore.getState().setIsInSoundsStep(true);
                       }
-                      savedUsageExpandedRef.current = usageExpandedOriginalIndex;
                       setUsageExpandedOriginalIndex(null);
                     }
                     if (soundsClickableFromContext && contextExpandedOriginalIndex !== null) {
                       const ctxCfg = props.analysisConfigs[contextExpandedOriginalIndex];
                       setActiveContextOriginalIndex(contextExpandedOriginalIndex);
-                      savedContextExpandedRef.current = contextExpandedOriginalIndex;
                       setContextExpandedOriginalIndex(null);
                       if (ctxCfg?.type === 'audio') {
                         const audioParentKey = -(contextExpandedOriginalIndex + 1);
@@ -574,7 +637,17 @@ export function Sidebar(props: SidebarProps) {
           )}
         </div>
 
-
+        {/* Skip placeholder button */}
+        {currentStep !== 2 && (
+          <div className="flex-shrink-0 px-4 py-3 flex justify-end">
+            <button
+              onClick={handleAddPlaceholder}
+              className="text-xs px-3 py-1.5 rounded bg-primary text-secondary hover:bg-primary-hover transition-colors cursor-pointer"
+            >
+              Skip
+            </button>
+          </div>
+        )}
       </aside>
     </>
   );

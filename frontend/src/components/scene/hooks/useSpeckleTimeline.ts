@@ -88,7 +88,13 @@ export function useSpeckleTimeline({
         const generatedPrompts = soundscapeData.filter((s: any) => !s.isPending);
         const generatedPromptCount = new Set(generatedPrompts.map((s: any) => s.prompt_index ?? 0)).size;
 
+        console.log('[useSpeckleTimeline] soundMetadata.size:', soundMetadata.size,
+          'soundscapeData.length:', soundscapeData?.length ?? 0,
+          'generatedPromptCount:', generatedPromptCount,
+          'generatedTotal:', generatedPrompts.length);
+
         if (generatedPromptCount === 0 || (soundMetadata && soundMetadata.size >= generatedPromptCount)) {
+          console.log('[useSpeckleTimeline] condition met, extracting...');
           const sounds = extractTimelineSoundsFromData(
             soundMetadata,
             soundIntervals,
@@ -101,9 +107,12 @@ export function useSpeckleTimeline({
             soundIterationDurations,
             iterationLinks,
           );
+          console.log('[useSpeckleTimeline] extracted', sounds.length, 'sounds');
           setTimelineSounds(sounds);
           setSoundMetadataReady(true);
         } else {
+          console.log('[useSpeckleTimeline] NOT ready — soundMetadata.size',
+            soundMetadata.size, '< generatedPromptCount', generatedPromptCount);
           setSoundMetadataReady(false);
         }
       }
@@ -146,10 +155,10 @@ export function useSpeckleTimeline({
     if (timelineSounds.length === 0) return;
 
     for (const sound of timelineSounds) {
-      const promptIndex = sound.promptIndex;
-      if (promptIndex === undefined) continue;
+      const configIdx = sound.cardIndex ?? sound.promptIndex;
+      if (configIdx === undefined) continue;
 
-      const config = soundConfigs[promptIndex];
+      const config = soundConfigs[configIdx];
       if (!config?.entities || config.entities.length <= 1) continue;
 
       const firstEntity = config.entities[0];

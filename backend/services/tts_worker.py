@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -29,6 +30,20 @@ from config.constants import (
 )
 
 
+def _atomic_replace(tmp: str, dest: str, retries: int = 5, delay: float = 0.05) -> None:
+    """os.replace() can raise PermissionError on Windows when the destination
+    is transiently locked by a reader.  Retry a few times before giving up."""
+    import time
+    for attempt in range(retries):
+        try:
+            os.replace(tmp, dest)
+            return
+        except PermissionError:
+            if attempt == retries - 1:
+                raise
+            time.sleep(delay)
+
+
 def _write_progress(progress_file: str, value: int, status: str, completed: list | None = None) -> None:
     tmp = progress_file + ".tmp"
     data: dict = {"value": value, "status": status}
@@ -36,14 +51,14 @@ def _write_progress(progress_file: str, value: int, status: str, completed: list
         data["partial_sounds"] = completed
     with open(tmp, "w") as f:
         json.dump(data, f)
-    os.replace(tmp, progress_file)
+    _atomic_replace(tmp, progress_file)
 
 
 def _write_result(result_file: str, payload: dict) -> None:
     tmp = result_file + ".tmp"
     with open(tmp, "w") as f:
         json.dump(payload, f)
-    os.replace(tmp, result_file)
+    _atomic_replace(tmp, result_file)
 
 
 def run_tts_generation(
@@ -53,6 +68,7 @@ def run_tts_generation(
     texts: list,
     output_dir: str,
     url_prefix: str = TTS_OUTPUT_URL_PREFIX,
+    language: str = "English with a slightly german accent",
 ) -> None:
     try:
         os.makedirs(output_dir, exist_ok=True)
@@ -62,6 +78,16 @@ def run_tts_generation(
         completed_sounds: list[dict] = []
         errors: list[str] = []
         n_total = len(texts)
+
+        print(f"[tts_worker] Starting — {n_total} item(s)", file=sys.stderr, flush=True)
+        for i, item in enumerate(texts):
+            print(
+                f"[tts_worker] item[{i}]: text={repr(item.get('text') or '')!r} "
+                f"voice={item.get('voice_name')!r} "
+                f"prompt_index={item.get('prompt_index')!r} "
+                f"speech_card_index={item.get('speech_card_index')!r}",
+                file=sys.stderr, flush=True,
+            )
 
         voice_counters: dict[str, int] = {}
 
@@ -109,12 +135,43 @@ def run_tts_generation(
             output_path = os.path.normpath(os.path.join(output_dir, filename))
 
             try:
-                tts_service.generate_speech(
-                    text=text,
-                    output_path=output_path,
-                    voice_name=voice_name,
-                )
+                # Retry with exponential backoff: the Gemini TTS API can return
+                # 400 INVALID_ARGUMENT or empty content when rate-limited (rather
+                # than a clean 429).  Wait before retrying so the quota resets.
+                MAX_RETRIES = 4
+                RETRY_DELAYS = [3, 6, 12, 24]  # seconds between attempts
+                last_exc: Exception | None = None
+                real_duration_seconds: float = 5.0
+                for attempt in range(MAX_RETRIES):
+                    if attempt > 0:
+                        delay = RETRY_DELAYS[attempt - 1]
+                        print(
+                            f"[tts_worker] item[{idx}] retry {attempt}/{MAX_RETRIES - 1} "
+                            f"after {delay}s (prev error: {last_exc})",
+                            file=sys.stderr, flush=True,
+                        )
+                        time.sleep(delay)
+                    try:
+                        _, real_duration_seconds = tts_service.generate_speech(
+                            text=text,
+                            output_path=output_path,
+                            voice_name=voice_name,
+                            language=language,
+                        )
+                        print(
+                            f"[duration-trace][tts_worker] item[{idx}] prompt_index={prompt_index} "
+                            f"copy_index={copy_index} voice={voice_name!r} "
+                            f"real_duration_seconds={real_duration_seconds:.3f}",
+                            file=sys.stderr, flush=True,
+                        )
+                        last_exc = None
+                        break  # success
+                    except Exception as exc:
+                        last_exc = exc
+                if last_exc is not None:
+                    raise last_exc
             except Exception as exc:
+                print(f"[tts_worker] item[{idx}] FAILED: {exc}", file=sys.stderr, flush=True)
                 errors.append(f"{display_short}: {exc}")
                 _write_progress(
                     progress_file,
@@ -135,14 +192,30 @@ def run_tts_generation(
                 "prompt_index": prompt_index,
                 "copy_index": copy_index,
                 "total_copies": total_copies,
+                # Echo back the original card index for speech lines so the frontend
+                # can look up the correct SoundGenerationConfig via speech_card_index.
+                "speech_card_index": item.get("speech_card_index"),
                 "display_name": voice_display,
                 "url": f"{url_prefix}/{filename}",
-                "duration": item.get("duration", 5),
+                # Real measured length of the generated clip — NOT a nominal/
+                # placeholder guess. The frontend's bakeOrchestrateSchedule uses
+                # this to space out dependent sounds/dialogue via after()/
+                # alignEnd() links, so it must reflect the actual audio length.
+                "duration": round(real_duration_seconds, 3),
                 "position": position,
                 "volume_db": spl_db,
                 "voice_name": voice_name,
             }
+            print(
+                f"[duration-trace][tts_worker] appending sound_data id={sound_data['id']!r} "
+                f"duration={sound_data['duration']} prompt_index={prompt_index} copy_index={copy_index}",
+                file=sys.stderr, flush=True,
+            )
             completed_sounds.append(sound_data)
+            # Brief pause after each successful call so the Gemini TTS quota
+            # has time to recover before the next request.
+            if idx < n_total - 1:
+                time.sleep(2)
 
         # Consistency with the text-to-audio flow (sounds_worker): if nothing could
         # be generated, surface the failure instead of returning an empty "done"
@@ -154,6 +227,11 @@ def run_tts_generation(
             )
             return
 
+        print(
+            "[duration-trace][tts_worker] FINAL completed_sounds durations: " +
+            ", ".join(f"{s['id']}={s.get('duration')}" for s in completed_sounds),
+            file=sys.stderr, flush=True,
+        )
         _write_progress(progress_file, 98, "Finalizing...", completed_sounds)
         _write_result(result_file, {"type": "done", "result": completed_sounds})
 

@@ -122,7 +122,7 @@ export function createSoundEventFromUpload(
       return normalized === 'background' || normalized === 'background_sound';
     })() ? {
       timestamps: undefined as any,
-      scheduling_mode: undefined as any,
+      scheduling_mode: 'interval' as const,
     } : {}),
   };
 }

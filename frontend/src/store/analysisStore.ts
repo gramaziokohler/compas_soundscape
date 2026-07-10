@@ -1490,6 +1490,9 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 analysisId = event.analysis_id;
               } else if (event.type === 'space_description') {
                 spaceDescription = event.text || '';
+                handleUpdateConfig(index, {
+                  analysisResult: { analysisId, architecturalObjects: [...objects], spaceDescription },
+                } as Partial<AnalyzeModelConfig>);
               } else if (event.type === 'object') {
                 const { type: _t, ...obj } = event;
                 const archObj = obj as ArchitecturalObject;
@@ -1503,7 +1506,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 // Partial update
                 useSpeckleStore.getState().setAnalysisObjectGroups([...colorGroups], [...objects]);
                 handleUpdateConfig(index, {
-                  analysisResult: { analysisId, architecturalObjects: [...objects] },
+                  analysisResult: { analysisId, architecturalObjects: [...objects], spaceDescription },
                 } as Partial<AnalyzeModelConfig>);
               } else if (event.type === 'done') {
                 // Final update handled below

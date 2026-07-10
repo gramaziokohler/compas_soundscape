@@ -116,7 +116,15 @@ export function SoundGenerationSection({
 
   // Helper to check if a sound is generated (defined early for use in other callbacks)
   const isSoundGenerated = useCallback((index: number): boolean => {
-    return generatedSounds.some(s => s.prompt_index === index);
+    return generatedSounds.some(s => {
+      const pi = s.prompt_index;
+      if (pi === index) return true;
+      // Speech-line TTS sounds encode card index as prompt_index / 10000
+      if (pi != null && pi >= 10000) {
+        return Math.floor(pi / 10000) === index;
+      }
+      return false;
+    });
   }, [generatedSounds]);
 
   // Snapshot the total number of pending configs (all types) when generation starts.
@@ -138,11 +146,48 @@ export function SoundGenerationSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSoundGenerating]); // intentionally snapshot once when generation starts
 
+  // ── Detect generation completion → trigger final parametric bake ──
+  const prevGeneratingRef = useRef(false);
+  useEffect(() => {
+    if (!isSoundGenerating && prevGeneratingRef.current) {
+      // Generation just completed — wait one tick for store state to settle
+      // then run the final bake with real WAV durations.
+      const audioStore = useAudioControlsStore.getState();
+      audioStore.setGenerationInProgress(false);
+      // Sync the latest sound configs before the final bake so that generated
+      // sound IDs and durations are available.
+      if (soundConfigs.some(c => c.orchestrateMeta)) {
+        console.log(
+          '[duration-trace][SoundGenerationSection] Phase 3 final bake — generatedSounds durations:',
+          generatedSounds.map((s: any) => ({ id: s.id, prompt_index: s.prompt_index, copy_index: s.copy_index, duration: s.duration })),
+        );
+        audioStore.syncSoundConfigs(soundConfigs);
+        audioStore.syncGeneratedSounds(generatedSounds);
+        audioStore.setOrchestrateIterationLinks(soundConfigs);
+        setTimeout(() => {
+          audioStore.bakeOrchestrateSchedule();
+        }, 0);
+      }
+    }
+    prevGeneratingRef.current = isSoundGenerating;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSoundGenerating]);
+
   // Find the current generating card index by matching config object references.
   // This is stable even if the user reorders cards, since the reference stays the same.
   const getCurrentGeneratingCardIndex = useCallback((): number | null => {
     if (!isSoundGenerating || pendingConfigOrderRef.current.length === 0) return null;
-    const generatedIndices = new Set(generatedSounds.map(s => s.prompt_index));
+    const generatedIndices = new Set<number>();
+    generatedSounds.forEach(s => {
+      const pi = s.prompt_index;
+      if (pi != null) {
+        generatedIndices.add(pi);
+        // Speech-line TTS sounds encode card index as prompt_index / 10000
+        if (pi >= 10000) {
+          generatedIndices.add(Math.floor(pi / 10000));
+        }
+      }
+    });
     // Walk the original generation order; find the first not yet generated
     for (const pendingConfig of pendingConfigOrderRef.current) {
       // Find where this config object lives in the current soundConfigs array
@@ -182,6 +227,7 @@ export function SoundGenerationSection({
   const onSchedulingModeChange = useAudioControlsStore((s) => s.handleSchedulingModeChange);
   const onTimestampsChange   = useAudioControlsStore((s) => s.handleTimestampsChange);
   const iterationLinks       = useAudioControlsStore((s) => s.iterationLinks);
+  const isDeferredCycleBakePending = useAudioControlsStore(s => s.isDeferredCycleBakePending);
 
   // Track active linked entity index per card via state (for reactive selector highlighting)
   const [activeLinkedEntityIdx, setActiveLinkedEntityIdx] = useState<Record<number, number>>({});
@@ -191,9 +237,16 @@ export function SoundGenerationSection({
     soundConfigs.length > 0 ? 0 : null
   );
 
+  const _soundMatchesCard = (sound: any, index: number): boolean => {
+    if (sound.prompt_index === index) return true;
+    const pi = sound.prompt_index;
+    if (pi != null && pi >= 10000 && Math.floor(pi / 10000) === index) return true;
+    return false;
+  };
+
   // Helper to get generated sound for a config index (returns selected variant)
   const getGeneratedSound = useCallback((index: number): SoundEvent | undefined => {
-    const variants = generatedSounds.filter(s => s.prompt_index === index);
+    const variants = generatedSounds.filter(s => _soundMatchesCard(s, index));
     if (variants.length === 0) return undefined;
     const selectedIdx = selectedVariants[index] ?? 0;
     return variants[selectedIdx] || variants[0];
@@ -201,7 +254,7 @@ export function SoundGenerationSection({
 
   // Helper to get all variants for a prompt index
   const getVariantsForPrompt = useCallback((index: number): SoundEvent[] => {
-    return generatedSounds.filter(s => s.prompt_index === index);
+    return generatedSounds.filter(s => _soundMatchesCard(s, index));
   }, [generatedSounds]);
 
   // Helper to get selected variant index for a prompt
@@ -974,12 +1027,32 @@ export function SoundGenerationSection({
             )}
           </div>
         </div>
+      ) : (isDeferredCycleBakePending && generatedSounds.length > 0) ? (
+        <div
+          className="flex-1 px-3 py-2 rounded-lg text-xs"
+          style={{
+            backgroundColor: 'var(--color-secondary-hover)',
+            color: 'white',
+          }}
+        >
+          <div className="flex justify-between items-center">
+            <span className="font-medium">⏳ Finalising parametric schedule…</span>
+          </div>
+        </div>
       ) : (
         <button
           onClick={() => {
             const pendingIndices = filteredCardItems
               .filter((item) => !isSoundGenerated(item.originalIndex))
               .map((item) => item.originalIndex);
+            const hasOrchestrate = soundConfigs.some(
+              (_, i) => pendingIndices.includes(i) && soundConfigs[i].orchestrateMeta
+            );
+            if (hasOrchestrate) {
+              const audioStore = useAudioControlsStore.getState();
+              audioStore.setGenerationInProgress(true);
+              audioStore.bakeOrchestrateSchedule();
+            }
             onGenerateFiltered(pendingIndices);
           }}
           disabled={shouldDisableGenerateButton}

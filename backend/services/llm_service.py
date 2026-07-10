@@ -1320,7 +1320,7 @@ For the duration estimation (in seconds with 0.1 precision):
             f"their height, footprint, etc.).\n\n"
             f"First, output at the beginning of the response:\n"
             f"SPACE: [description of the architectural typology and general layout of the space "
-            f"(minimalist, a few sentences)]\n\n"
+            f"(10 to 20 words)]\n\n"
             f"Then, for EACH identified group, output ONE numbered entry using EXACTLY this format:\n\n"
             f"1. NAME: [standardized object name]\n"
             f"DESCRIPTION: [brief functional description]\n"
@@ -1917,6 +1917,7 @@ For the duration estimation (in seconds with 0.1 precision):
             "scripts for the characters involved. "
             "You also have access to the architectural space information to estimate where "
             "each character is speaking from within the room."
+            "Add audio tags when relevant to emphasize emotion, such as [whispers], [excitedly], [cough], ..."
         )
         user_prompt = (
             "1. Identify all moments where a character speaks, greets, or when the narrative implies "
@@ -1958,8 +1959,8 @@ For the duration estimation (in seconds with 0.1 precision):
             '    "id": "Clara_1",\n'
             '    "timestamps": ["00:21", "00:45", "00:54"],\n'
             '    "character": "Clara",\n'
-            '    "script": "Morning Marcus, good to see you!; If you look closely at July, '
-            'that is exactly where our third quarter drops began to manifest.; Ok bye then!",\n'
+            '    "script": "Morning Marcus, [cough] good to see you!; If you look closely at July, '
+            'that is exactly where our third quarter drops began to manifest.; [excitedly] Ok bye then!",\n'
             '    "position": [1.2, 0.8, 1.55]\n'
             "  }\n"
             "]\n\n"
@@ -2110,7 +2111,7 @@ For the duration estimation (in seconds with 0.1 precision):
                 "to another sound: \"type\": \"mixed\", where 'expression' freely combines, element by element, "
                 "either a literal MM:SS timestamp OR a param formula string (after/alignEnd) — never both roles "
                 'inside the same string. Example: {"type": "mixed", "expression": ["00:15", "after(sound_05_1)", '
-                '"alignEnd(sound_05_2)"], "delay": [0.0, 0.0, 0.0]} \n'
+                '"alignEnd(sound_05_2)"], "delay": [0.0, 0.4, 0.0]} \n'
                 "3. SINGLE INSTANCES ONLY WITH ITERATION ARRAYS: Do NOT split an asset into separate IDs per "
                 "occurrence (NO sound_01_01, sound_01_02). Keep a single base entry (e.g., sound_01).\n"
                 "4. Inside the param-formula elements of a 'param' or 'mixed' trigger expression, point to "
@@ -2132,6 +2133,8 @@ For the duration estimation (in seconds with 0.1 precision):
                 "relative to one another for the whole scene (e.g. background beds quieter than speech "
                 "or impacts), and realistic for the kind of source and the space.\n\n"
                 "Output Format — respond ONLY with a JSON array (timeline dynamics + levels only):\n"
+                "7. For trigger.delay , estimate realistic relative pauses between the two related sounds. "
+                "Speech sounds should have no delays or low delays for the conversation to feel natural. "                
                 "[\n"
                 "  {\n"
                 '    "id": "input base id (e.g., sound_01, speech_01)",\n'
