@@ -1,0 +1,117 @@
+---
+description: Sidebar wizard flow, card linkage system, generation states, page.tsx orchestration
+globs: frontend/src/components/layout/**,frontend/src/store/cardFlowStore.ts,frontend/src/store/uiStore.ts,frontend/src/app/page.tsx
+---
+
+# Frontend UX Rules
+
+## Sidebar 3-Step Wizard
+
+**Flow:** Context (step 0) → Usage (step 1) → Sounds (step 2)
+
+Implemented in `frontend/src/components/layout/Sidebar.tsx`.
+
+### Step Definitions
+
+| Step | Section component | Valid card types | Prerequisite |
+| ---- | ----------------- | ---------------- | ------------ |
+| 0 — Context | `ContextSection` | `model-analysis`, `3d-model`, `audio`, `freeform` | — |
+| 1 — Usage | `UsageSection` | `scenario`, `text`, `freeform` | `parentContextOriginalIndex` set |
+| 2 — Sounds | `SoundGenerationSection` | sound configs | `parentUsageOriginalIndex` set |
+
+### Key State (Sidebar.tsx)
+
+| Variable | Type | Purpose |
+| -------- | ---- | ------- |
+| `currentStep` | `0 \| 1 \| 2` | Active wizard step |
+| `activeContextOriginalIndex` | `number \| null` | Which context card is active / expanded |
+| `activeUsageOriginalIndex` | `number \| null` | Which usage card is active |
+| `bypassedUsage` | `boolean` | User skipped the usage step entirely |
+
+### UIStore Fields
+
+| Field | Purpose |
+| ----- | ------- |
+| `activeSoundParentIndex` | `null` = skip flow, show all sounds regardless of step |
+| `isInSoundsStep` | Gates `unifiedSoundscapeData` — sounds must not render before this is `true` |
+
+## Card Linkage System
+
+Cards use **original index fields** that never change even when cards are reordered:
+
+- `parentContextOriginalIndex` — links a usage card to its parent context card
+- `parentUsageOriginalIndex` — links a sound to its parent usage card
+
+Usage cards are filtered in step 1 by `activeContextOriginalIndex`.
+Sound cards are filtered in step 2 by `activeUsageOriginalIndex`.
+
+### Negative Index Namespace
+
+Audio-type context cards (type `audio`) use:
+```
+parentUsageOriginalIndex = -(N + 1)
+```
+where `N` is the context card's original index. This distinguishes audio context linkage from
+normal usage linkage (which uses non-negative integers).
+
+## Freeform (Bypass) Cards
+
+| Trigger | Card type | Effect |
+| ------- | --------- | ------ |
+| "Skip context" | `freeform` context | No `parentContextOriginalIndex`; auto-advances to step 1 on creation |
+| "Skip usage" | `freeform` usage | Has `parentContextOriginalIndex`; auto-advances to step 2 on creation |
+
+Default names: `"Untitled context"` / `"Untitled usage"` — editable inline via `display_name`.
+
+## Navigation Guard Pattern
+
+`prevContextLength` and `prevUsageLength` are `useRef` values initialised to the **current card
+count at component mount**:
+
+```typescript
+const prevContextLength = useRef(contextCards.length)   // init to current count
+```
+
+This prevents re-triggering auto-advance when a section remounts during back-navigation.
+
+**Do not convert these refs to state.** They must be non-reactive to work correctly — reactive
+state would re-run the effect and falsely trigger navigation.
+
+## FAB Navigation Rules
+
+- Context FAB → advances to Usage (or directly to Sounds for `audio`/`freeform` context cards)
+- Usage FAB → advances to Sounds
+- FABs are hidden when the target step has no valid destination card
+
+## Breadcrumb Tooltips
+
+| Breadcrumb | Shows |
+| ---------- | ----- |
+| Context | All context card `display_name` + `(pending)` if not yet analysed |
+| Usage | All usage card `display_name` + `(pending)` if no result/foley |
+| Sounds | Grouped by usage parent; each sound name + `(pending)` if not in `generatedSounds` |
+
+## Card Expand / Reduce
+
+Expanded card view shows linked child cards and sounds as a placeholder list.
+Expand state is **local component state** — do not persist it in any Zustand store.
+
+## Before / After Generation States
+
+Components should render differently based on whether a sound has been generated:
+
+| State | Condition | UI |
+| ----- | --------- | -- |
+| Before generation | Sound ID not in `generatedSounds` (soundscapeStore) | Generation button + pending badge |
+| After generation | Sound ID in `generatedSounds` | WaveSurfer waveform player + re-generate option |
+
+`isInSoundsStep` (uiStore) must be `true` before rendering any generated sound content.
+
+## page.tsx — Intentionally Large
+
+`frontend/src/app/page.tsx` imports 17+ stores and wires all global effects and callbacks.
+This is the **orchestration layer** by design — it owns the single-mount lifecycle contract for
+the entire app.
+
+Do not decompose store subscriptions into child components to "clean it up". Distributing them
+would scatter ownership, break mount ordering, and make global side effects unpredictable.

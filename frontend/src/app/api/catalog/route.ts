@@ -115,11 +115,18 @@ async function fetchSoundsForCategory(categorySlug: string): Promise<SoundInfo[]
     if (seen.has(fullUrl)) continue;
     seen.add(fullUrl);
 
+    if (!fullUrl.startsWith(CATALOG_CDN_BASE)) continue;
+
     const filename = oggMatch[2];
+    if (!filename) continue;
+
     const name = filename
       .split('_')
+      .filter(Boolean)
       .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
       .join(' ');
+
+    if (!name) continue;
 
     sounds.push({ name, url: fullUrl });
   }
@@ -137,13 +144,17 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const category = searchParams.get('category');
 
+    const cacheHeaders = {
+      'Cache-Control': `public, max-age=${CATALOG_CACHE_TTL_MS / 1000}, s-maxage=${CATALOG_CACHE_TTL_MS / 1000}`,
+    };
+
     if (category) {
       const sounds = await fetchSoundsForCategory(category);
-      return NextResponse.json({ category, sounds });
+      return NextResponse.json({ category, sounds }, { headers: cacheHeaders });
     }
 
     const categories = await fetchCategories();
-    return NextResponse.json({ categories });
+    return NextResponse.json({ categories }, { headers: cacheHeaders });
   } catch (error) {
     console.error('[Catalog API]', error);
     return NextResponse.json(

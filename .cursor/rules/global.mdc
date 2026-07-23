@@ -1,0 +1,96 @@
+---
+description: Global rules for compas_soundscape — always active across all files
+alwaysApply: true
+---
+
+# Global Rules — compas_soundscape
+
+## Backend Architecture Law
+
+Layer order is strict: **routers → services → utils**
+
+- **Routers**: validate input (Pydantic schemas from `models/schemas.py`), read session ID, dispatch to service, return response. No business logic.
+- **Services**: own all business logic, ML calls, and external API calls.
+- **Utils**: stateless pure helpers. No service imports, no FastAPI imports.
+
+### Dependency Injection
+
+Services are instantiated in `main.py` and injected into routers via module-level globals:
+
+```python
+# main.py
+llm_service = LLMService(client)
+generation.init_generation_router(llm_service)
+
+# routers/generation.py
+_llm_service = None
+def init_generation_router(service):
+    global _llm_service
+    _llm_service = service
+```
+
+Never instantiate services inside routers or utils.
+
+### Constants & Schemas
+
+- ALL backend magic numbers and paths → `backend/config/constants.py`. Never hardcode literals in routers or services.
+- ALL Pydantic request/response types → `backend/models/schemas.py`.
+
+### Session & File Persistence
+
+- Session ID available as `request.state.session_id` (injected by `middleware/session.py`)
+- ALL generated files must be scoped under `backend/temp/`:
+  - Generated audio: `temp/static/sounds/generated/<session_id>/`
+  - Uploaded IRs: `temp/static/impulse_responses/`
+  - Simulation results + progress: `temp/simulations/<job_id>.json`
+  - Staged uploads: `temp/uploads/`
+- Never write files outside `temp/` from a request handler.
+
+### Heavy Jobs — Never Block
+
+See `task-queue.mdc` for detail. Short version: **never** call ML inference, an LLM API, or acoustic
+simulation synchronously inside a request handler. Always enqueue via `task_queue.py` and return a job ID.
+
+---
+
+## Frontend Architecture Law
+
+### State Management
+
+- Always import stores from `@/store` (barrel at `frontend/src/store/index.ts`).
+- Never import a store file directly (e.g. `from '@/store/soundscapeStore'`).
+- See `zustand-stores.mdc` for how to add or modify stores.
+
+### API Calls
+
+- All backend calls use `fetchWithErrorHandling()` from `frontend/src/services/api.ts`.
+- Always include `credentials: 'include'` (session cookie auth).
+- Add typed methods to the `apiService` object — never call raw `fetch` for backend routes.
+
+### Styling
+
+- Colors via CSS custom properties from `frontend/src/app/globals.css` only.
+- Never write hex, rgba, or named colors in component files or `constants.ts`.
+- Tailwind classes (`text-primary`, `bg-secondary-light`, `shadow-md`) work via `@theme inline` in `globals.css`.
+- See `ui-conventions.mdc` for Three.js and Canvas 2D color patterns.
+
+### TypeScript
+
+- Strict mode. `pnpm build` (from `frontend/`) must pass with 0 errors before any commit.
+- No `any`. Use type assertions only at verified system boundaries with an explanatory comment.
+- Path alias: always `@/*` → `src/*`. Avoid relative `../../` imports more than one level up.
+- Domain types in `src/types/<domain>.ts`, exported from `src/types/index.ts`.
+
+---
+
+## Verification
+
+```bash
+mamba activate compas-toy
+
+# Backend import sanity
+cd backend && python -c "from main import app; print('OK')"
+
+# Frontend strict TypeScript gate
+cd frontend && pnpm build
+```

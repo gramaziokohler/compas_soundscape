@@ -13,6 +13,7 @@
     "@speckle/viewer": "^2.26.9",
     "ambisonics": "^0.4.0",
     "dotenv": "^17.2.4",
+    "fuse.js": "^7.5.0",
     "html-to-image": "^1.11.13",
     "lodash-es": "^4.18.1",
     "lucide-react": "^0.563.0",

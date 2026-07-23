@@ -1,0 +1,209 @@
+---
+description: Room acoustics simulation — pyroomacoustics and Choras FEM/DG solver
+globs: backend/services/pyroomacoustics_service.py,backend/services/choras_service.py,backend/choras_backend/**,backend/routers/pyroomacoustics.py,backend/routers/choras.py,backend/utils/acoustic_measurement.py,backend/utils/speckle_geometry_mapper.py,backend/services/pyroomacoustics_worker.py
+---
+
+# Acoustic Simulation Rules
+
+## Geometry Source — Always Speckle
+
+Room geometry is **never** a parametric box. It always comes from a live Speckle model fetched at
+simulation time. The frontend user selects specific object IDs in the 3D viewer (or uses the whole
+layer) and assigns materials per object in the UI before submitting the simulation.
+
+### What the frontend sends
+
+Both routers receive identical geometry inputs as `multipart/form-data`:
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `speckle_project_id` | str | Speckle project ID |
+| `speckle_version_id` | str | Speckle version/commit ID |
+| `layer_name` | str | Which Speckle layer to extract (default `"Acoustics"`) |
+| `geometry_object_ids` | JSON str or null | Optional filter: object IDs selected in the viewer |
+| `object_materials` | JSON str | `{"speckleObjectId": "materialId"}` per visible surface |
+| `source_receiver_pairs` | JSON str | `[{source_id, source_position, receiver_id, receiver_position}]` — positions come from receiver objects placed in the Speckle 3D viewer |
+
+---
+
+## Pyroomacoustics Pipeline
+
+### End-to-End Flow
+
+```
+POST /api/pyroomacoustics/run-simulation-speckle
+  └─ router: validate → enqueue via unified_queue (make_subprocess_runner) → return simulation_id
+
+  subprocess: pyroomacoustics_worker.run_pyroomacoustics_simulation()
+    1. SpeckleService.get_model_geometry()   # vertices, faces, object_face_ranges, units
+    2. Build face_material_map              # object_id → face range → absorption coefficient
+    3. PyroomacousticsService.weld_mesh()   # deduplicate verts, drop degenerate/non-manifold faces
+    4. Group source-receiver pairs by source_id
+    5. For each unique source:
+       PyroomacousticsService.create_room_from_mesh()  # build pra.Room from triangulated mesh
+       PyroomacousticsService.add_receiver_to_room()   # add mono mic or FOA MicrophoneArray
+       room.add_source(source_position)
+       if ray_tracing: room.enable_ray_tracing(n_rays=n_rays)
+       room.compute_rir()
+       → WAV file per source-receiver pair → temp/static/pyroomacoustics_rir/
+
+GET /api/pyroomacoustics/simulation-status/{simulation_id}   # polls progress JSON
+GET /api/pyroomacoustics/get-result-file/{simulation_id}/{file_type}  # download WAV / JSON
+```
+
+### Room Creation — Mesh, Not ShoeBox
+
+The room is built face-by-face from the welded Speckle mesh using `pra.wall_factory()`:
+
+```python
+# PyroomacousticsService.create_room_from_mesh() — key loop
+for face_idx, face in enumerate(welded_faces):
+    mat_value = face_materials.get(face_idx, "rough_concrete")
+    # Custom materials (in PYROOMACOUSTICS_CUSTOM_MATERIALS) resolve to {coeffs, center_freqs}
+    material = pra.Material(energy_absorption=mat_value)
+
+    corners = vertices_np[face].T   # shape [3, n_corners] (float64)
+    wall = pra.wall_factory(corners, absorption_bands, scattering_bands, f"face_{face_idx}")
+    walls.append(wall)
+
+room = pra.Room(walls, fs=fs, max_order=max_order, ...)
+```
+
+**Never** use `pra.ShoeBox` — it only supports rectangular rooms. The real rooms are arbitrary
+architectural meshes from Rhino/Revit via Speckle.
+
+### Mesh Weld
+
+`PyroomacousticsService.weld_mesh()` is mandatory before room creation. It:
+1. Quantizes vertices to a tolerance grid → deduplicates shared boundary verts
+2. Drops degenerate faces (< 3 unique vertices after remapping)
+3. Drops duplicate faces (same vertex set in different order)
+4. Iteratively removes the worst non-manifold edges (edges shared by 3+ faces) until the mesh is
+   2-manifold (each edge shared by exactly 2 faces)
+
+Material and scattering dicts are re-indexed through each removal step to stay aligned.
+
+### Receiver Types
+
+| Mode | Microphone | ACN / normalization |
+| ---- | ---------- | ------------------- |
+| `"mono"` | Single omnidirectional mic at receiver position | — |
+| `"foa"` | `pra.MicrophoneArray` — 4 coincident `CardioidFamily` mics | ACN W(0), Y(1), Z(2), X(3) with N3D |
+
+FOA directivity is aligned to the **Speckle Z-up coordinate system** (+X=Right, -Y=Forward, +Z=Up).
+Directivity applies to ISM only; ray tracing always uses an omnidirectional fallback.
+
+### Acoustic Metrics (`utils/acoustic_measurement.py`)
+
+| Metric | Description |
+| ------ | ----------- |
+| RT60 | `pra.measure_rt60(rir, fs)` — reverberation time |
+| EDT | Early decay time — first 10 dB drop |
+| C80 | Clarity index (< 0 = reverberant, > 0 = clear) |
+
+Computed from the WAV IR after `compute_rir()`, reported in the result JSON.
+
+### Output Paths
+
+- IR WAVs: `backend/temp/static/pyroomacoustics_rir/sim_<simulation_id>_src_<id>_rcv_<id>.wav`
+- Progress: `backend/temp/simulations/progress_<simulation_id>.json`
+- Result: `backend/temp/simulations/result_<simulation_id>.json`
+- Dispatched via **`CPU_POOL`** subprocess — never run synchronously in the router.
+
+---
+
+## Choras (DE / DG) Pipeline
+
+### End-to-End Flow
+
+```
+POST /api/choras/run-simulation-speckle
+  └─ router (synchronous setup — fail fast):
+       1. SpeckleService.get_model_geometry()   # same as pyroomacoustics
+       2. build_choras_temp_dir(simulation_id)  # temp/choras_sims/<simulation_id>/
+       3. write_geo_from_mesh(...)              # write shared room.geo
+       4. build_material_absorption_dict()      # object_id → per-frequency absorption coefficients
+       5. unified_queue.enqueue(...)            # IO_POOL thread, return simulation_id immediately
+
+  IO_POOL thread: _run_simulation_in_thread()
+    DE method (per source-receiver pair):
+      pair_dir = sim_dir / pair_<src>_<rcv>/
+      copy room.geo → pair_dir/room.geo
+      build_de_json_input() → pair_dir/input_de.json
+      ChorasService.run_de_simulation()  # de_method(json_path) via DEinterface.py
+        → gmsh generates MSH from GEO, FVM solver runs, writes *_pressure.csv
+      ChorasService.de_results_to_wav()  # synthesizes stochastic IR from energy-decay envelopes
+
+    DG method (per unique source, all receivers together):
+      source_dir = sim_dir / src_<source_id>/
+      copy room.geo → source_dir/room.geo
+      build_dg_json_input() → source_dir/input_dg.json
+      ChorasService.run_dg_simulation()  # dg_method(json_path) via DGinterface.py
+        → gmsh meshes from GEO, time-domain DG solver runs, outputs IR WAV
+
+GET /api/choras/simulation-status/{simulation_id}   # polls task.progress / task.status in real time
+```
+
+### Method Choice
+
+| Method | Interface | Best for |
+| ------ | --------- | -------- |
+| DE (Diffusion Equation FVM) | `DEinterface.de_method()` | Statistical energy diffusion, per-octave-band decay, large rooms |
+| DG (Discontinuous Galerkin) | `DGinterface.dg_method()` | Wave-accurate time-domain simulation, smaller rooms, higher fidelity |
+
+### The .geo File
+
+The `.geo` file is a **Gmsh geometry description** of the architectural room. It is created
+**synchronously in the router** before queuing (so errors surface immediately), then copied to each
+pair/source subdirectory before the solver runs.
+
+Created by `utils/speckle_geometry_mapper.write_geo_from_mesh()`:
+1. Deduplicate vertices (6 decimal place tolerance)
+2. BFS re-orient triangles for consistent winding — **required** for Gmsh to form a valid
+   Surface Loop from which it generates interior tetrahedra
+3. Build unique undirected edges → assign Gmsh `Line(id)` IDs with signed direction
+4. Per face: `Line Loop(s_id) = {±l0, ±l1, ±l2}; Plane Surface(s_id) = {s_id};`
+5. Group surfaces by Speckle object ID → `Physical Surface("speckleObjectId") = {s1, s2, ...};`
+   This is how Choras maps absorption coefficients back to surfaces: **the Physical Surface
+   name must match the key in `absorption_coefficients`.**
+6. `Surface Loop(1) = {all surface IDs};  Volume(1) = {1};  Physical Volume("RoomVolume") = {1};`
+7. Append Gmsh mesh algorithm settings
+
+Do not modify the Physical Surface naming convention without also updating
+`build_material_absorption_dict()`.
+
+### Choras JSON Input (`build_de_json_input` / `build_dg_json_input`)
+
+The JSON payload consumed by `de_method()` / `dg_method()`:
+
+```json
+{
+  "geo_path": "/abs/path/to/room.geo",
+  "source_position": [x, y, z],
+  "receiver_position": [x, y, z],
+  "absorption_coefficients": {
+    "speckleObjectId_1": [0.1, 0.1, 0.15, 0.2, 0.25, 0.3],
+    "speckleObjectId_2": [0.8, 0.8, 0.7, 0.65, 0.6, 0.55]
+  },
+  "frequencies": [125, 250, 500, 1000, 2000, 4000]
+}
+```
+
+### Choras Progress — Real-time stdout Capture
+
+Unlike pyroomacoustics (progress file polling), Choras progress is updated in real time by
+`_ProgressCapture`, a thread-local `sys.stdout` wrapper that parses solver output:
+- Gmsh meshing lines → `"Meshing: N pts, M elements..."`
+- DE: `"40% of main calculation completed"` → maps to task.progress
+- DG: `"Current/Total step N/M"` and `"Percentage done: P %"` → task.progress
+
+**Do not add `print()` calls inside the Choras simulation thread** — they will be parsed as
+progress events and may confuse the frontend progress bar.
+
+### Output Paths
+
+- Choras temp dir: `backend/temp/choras_sims/<simulation_id>/`
+- IR WAVs: `backend/temp/choras_rirs/<simulation_id>_<pair_key>.wav`
+- Dispatched via **`IO_POOL`** thread (not a subprocess — gmsh `initialize()`/`finalize()` must run
+  in the same process; `_gmsh_initialize()` in `choras_service.py` handles SIGINT safety for
+  non-main threads).

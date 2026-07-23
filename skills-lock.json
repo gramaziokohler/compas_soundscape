@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": {
+    "run-app": {
+      "source": "C:\\Users\\tbouizargan\\repos\\compas_soundscape",
+      "sourceType": "local",
+      "computedHash": "4873462de65097898258b2e28a297827f12ee6424955bffda4ff904b6970f330"
+    },
+    "ui-verify": {
+      "source": "C:\\Users\\tbouizargan\\repos\\compas_soundscape",
+      "sourceType": "local",
+      "computedHash": "333a081bebb745ea5485bbd98cf6a6f378aefeb01e901d1baba3781f737ec6b4"
+    }
+  }
+}

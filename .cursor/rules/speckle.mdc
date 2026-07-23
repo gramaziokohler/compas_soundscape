@@ -1,0 +1,168 @@
+---
+description: Speckle 3D platform — auth, ID hierarchy, fetch/send, geometry traversal, viewer
+globs: backend/routers/speckle.py,backend/services/speckle_service.py,frontend/src/components/scene/SpeckleScene.tsx,frontend/src/store/speckleStore.ts
+---
+
+# Speckle Rules
+
+## Auth & Initialisation
+
+```python
+from specklepy.api.client import SpeckleClient
+
+client = SpeckleClient(host="app.speckle.systems")
+client.authenticate_with_token(os.getenv("SPECKLE_TOKEN"))
+```
+
+`SpeckleService` in `backend/services/speckle_service.py` is a singleton — always use it.
+Call `service.authenticate()` then `service.get_or_create_project()` before any other operation.
+
+## ID Hierarchy
+
+```
+project_id   (str)  — stable, set in env / project settings
+  └── model_id     (str)  — stable per branch / model name
+        └── version_id   (str)  — changes every commit
+              └── referenced_object  (str)  — root hash to pass to receive()
+```
+
+## Fetching Models & Versions
+
+```python
+# All models in a project
+models_collection = client.model.get_models(project_id=pid)
+items = models_collection.items   # list of Model objects
+
+# Model with latest version
+mwv = client.model.get_with_versions(model_id=mid, project_id=pid, versions_limit=1)
+versions = mwv.versions.items     # list of Version objects
+```
+
+## Resolving version_id → Object Hash
+
+```python
+# Preferred — direct version lookup
+version = client.version.get(version_id=vid, project_id=pid)
+ref_obj = getattr(version, "referenced_object", None) or getattr(version, "referencedObject", None)
+# ⚠️ Modern specklepy uses snake_case referenced_object.
+#    version.referencedObject raises AttributeError from Pydantic — never access it directly.
+
+# Fallback — latest version of a model
+versions = client.version.get_versions(model_id=mid, project_id=pid, limit=1)
+ref_obj = getattr(versions.items[0], "referenced_object", None)
+```
+
+## Receiving the Object Tree
+
+```python
+from specklepy.api import operations
+from specklepy.transports.server import ServerTransport
+
+transport = ServerTransport(stream_id=project_id, client=client)
+root_object = operations.receive(obj_id=ref_obj, remote_transport=transport)
+# root_object is a specklepy Base; iterate with root_object.get_member_names()
+```
+
+`operations.receive()` is **synchronous and blocking** — always run it in an executor for async routes.
+
+## Sending / Publishing
+
+```python
+from specklepy.objects.data_objects import DataObject
+from specklepy.core.api.inputs.version_inputs import CreateVersionInput
+
+obj = DataObject(data={"key": "value"})
+obj_id = operations.send(obj, [transport])
+
+version_input = CreateVersionInput(
+    objectId=obj_id,
+    modelId=model_id,
+    projectId=project_id,
+    message="description",
+    sourceApplication="Python",
+)
+version = client.version.create(version_input)
+```
+
+## Traversing the Object Tree
+
+```python
+from specklepy.objects.geometry import Mesh
+from specklepy.objects import Base
+
+def traverse(obj, current_layer=None):
+    if not isinstance(obj, Base):
+        return
+    if hasattr(obj, 'name') and obj.name and not isinstance(obj, Mesh):
+        current_layer = obj.name             # named non-Mesh = layer/group node
+    has_display = hasattr(obj, 'displayValue') and obj.displayValue is not None
+    if has_display or isinstance(obj, Mesh):
+        process(obj)
+    for prop in obj.get_member_names():
+        val = getattr(obj, prop, None)
+        if isinstance(val, Base):
+            traverse(val, current_layer)
+        elif isinstance(val, list):
+            for item in val:
+                if isinstance(item, Base):
+                    traverse(item, current_layer)
+```
+
+- BIM objects: `obj.displayValue` → list of `Mesh`
+- Rhino / 3dm objects: ARE `Mesh` directly
+- Mesh vertices: flat `[x,y,z, x,y,z, ...]`
+- Mesh faces: count-prefixed `[n, v0..vn-1, m, v0..vm-1, ...]`
+
+## Geometry Extraction
+
+```python
+# Vertices → list of [x, y, z]
+verts = [[mv[i], mv[i+1], mv[i+2]] for i in range(0, len(mesh.vertices), 3)]
+
+# Faces → triangulate
+i = 0
+while i < len(mesh.faces):
+    n = mesh.faces[i]
+    face_verts = [mesh.faces[i+j] for j in range(1, n+1)]
+    # triangulate quads/ngons as needed
+    i += n + 1
+```
+
+Units: `getattr(mesh, 'units', None) or getattr(root, 'units', 'm')`.
+Scale to metres: `mm=0.001, cm=0.01, ft=0.3048, in=0.0254`.
+
+## High-Level Service Methods
+
+| Method | What it does |
+| ------ | ------------ |
+| `get_model_geometry(project_id, version_id)` | Returns `{vertices, faces, object_ids, object_names, object_face_ranges, units}` |
+| `get_model_entities(project_id, version_id)` | Derives entity dicts `{id, index, name, type, speckle_type, layer, material, bounds}` |
+| `get_project_models_detailed(project_id)` | Returns project + all models with `latest_version` |
+| `upload_model(file_path, file_type, model_name)` | Converts file → Speckle objects, sends, creates version |
+
+## REST Endpoints
+
+- `GET  /api/speckle/models` → project + all models with `latest_version`
+- `POST /api/speckle/model-entities` `{project_id, version_id}` → entity list
+- `POST /api/speckle/model-screenshots` `{project_id, version_id}` → 3 base64 PNGs
+
+## Frontend Viewer — Color Rendering
+
+`FilteringExtension.setUserObjectColors(groups)` requires **resolved hex strings**, not CSS variables:
+
+```typescript
+// ✅ correct — resolved at call time
+const hex = getComputedStyle(document.documentElement)
+  .getPropertyValue('--color-warning').trim()
+filteringExtension.setUserObjectColors([{ objectIds, color: hex }])
+
+// ❌ wrong — Three.js cannot parse CSS var() references, defaults to white
+filteringExtension.setUserObjectColors([{ objectIds, color: 'var(--color-warning)' }])
+```
+
+## Common Pitfalls
+
+- `version.referencedObject` → **AttributeError** in modern specklepy. Use `getattr(version, "referenced_object", None)`.
+- Passing a `version_id` as `model_id` to `get_versions()` → `BRANCH_NOT_FOUND` GraphQL error.
+- `operations.receive()` blocks — run in `asyncio.get_event_loop().run_in_executor(None, ...)` for async routes.
+- `get_member_names()` skips `@`-prefixed members by default; `@` prefix = detached chunks (large arrays).

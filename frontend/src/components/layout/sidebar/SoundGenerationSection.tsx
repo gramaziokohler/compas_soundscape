@@ -1027,18 +1027,6 @@ export function SoundGenerationSection({
             )}
           </div>
         </div>
-      ) : (isDeferredCycleBakePending && generatedSounds.length > 0) ? (
-        <div
-          className="flex-1 px-3 py-2 rounded-lg text-xs"
-          style={{
-            backgroundColor: 'var(--color-secondary-hover)',
-            color: 'white',
-          }}
-        >
-          <div className="flex justify-between items-center">
-            <span className="font-medium">⏳ Finalising parametric schedule…</span>
-          </div>
-        </div>
       ) : (
         <button
           onClick={() => {

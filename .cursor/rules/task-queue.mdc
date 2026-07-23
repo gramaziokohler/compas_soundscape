@@ -1,0 +1,78 @@
+---
+description: Background job system — task queue, worker pools, subprocess pattern
+globs: backend/services/task_queue.py,backend/**/*_worker.py,backend/routers/sounds.py,backend/routers/pyroomacoustics.py,backend/routers/choras.py,backend/routers/sed_analysis.py,backend/routers/modal_analysis.py
+---
+
+# Task Queue Rules
+
+## The Prime Rule
+
+**Never call ML inference, LLM APIs, or acoustic simulation synchronously inside a request handler.**
+
+Always enqueue, return a job ID immediately, and expose a polling endpoint.
+Violating this freezes the Uvicorn worker, blocks all other requests, and can OOM the GPU.
+
+## Three Worker Pools
+
+| Pool       | Workers | Use for                                                               |
+| ---------- | ------- | --------------------------------------------------------------------- |
+| `GPU_POOL` | 1       | TangoFlux, AudioLDM2 — single worker prevents CUDA OOM crashes        |
+| `IO_POOL`  | 6       | Gemini / OpenAI / Anthropic, TTS, Freesound / BBC API, SSE streaming  |
+| `CPU_POOL` | 2       | pyroomacoustics, Choras, YAMNet SED — CPU-bound                       |
+
+Pools are defined and exported from `backend/services/task_queue.py`.
+
+## Subprocess Pattern
+
+GPU and CPU-intensive jobs run in a **child process** (not just a thread) to isolate CUDA memory
+and prevent import-time side effects from polluting the main process:
+
+```python
+# In a router — correct enqueue pattern
+from services.task_queue import GPU_POOL, make_subprocess_runner
+
+@router.post("/generate-sounds")
+async def generate_sounds(req: GenerateSoundsRequest, request: Request):
+    generation_id = str(uuid.uuid4())
+    GPU_POOL.submit(
+        make_subprocess_runner(
+            target=audio_service.run_generation,
+            kwargs={
+                "prompt": req.prompt,
+                "session_id": request.state.session_id,
+                "generation_id": generation_id,
+            }
+        )
+    )
+    return {"generation_id": generation_id}
+```
+
+## Progress Polling Convention
+
+1. Worker writes progress JSON to `backend/temp/simulations/<type>_progress_<id>.json`
+2. Expose `GET /api/<domain>/status/<id>` that reads and returns that JSON
+3. Frontend polls this endpoint (no WebSocket needed)
+
+Standard progress JSON shape — follow this across all job types:
+
+```json
+{
+  "status": "in_progress | completed | failed",
+  "progress": 0.0,
+  "result": null,
+  "error": null
+}
+```
+
+## Which Pool to Use
+
+| Task type                            | Pool       |
+| ------------------------------------ | ---------- |
+| Text-to-audio (TangoFlux / AudioLDM2) | `GPU_POOL` |
+| LLM API call (Gemini / OpenAI)       | `IO_POOL`  |
+| TTS generation                       | `IO_POOL`  |
+| Sound library search (Freesound/BBC) | `IO_POOL`  |
+| pyroomacoustics simulation           | `CPU_POOL` |
+| Choras FEM/DG simulation             | `CPU_POOL` |
+| YAMNet SED analysis                  | `CPU_POOL` |
+| Mixed LLM → GPU pipeline             | `IO_POOL` for LLM step, hand off result to `GPU_POOL` |

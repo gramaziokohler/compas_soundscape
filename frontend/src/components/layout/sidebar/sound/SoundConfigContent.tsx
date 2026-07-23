@@ -6,6 +6,7 @@ import { TextToSpeechMode } from './TextToSpeechMode';
 import { UploadMode } from './UploadMode';
 import { LibraryMode } from './LibraryMode';
 import { CatalogMode } from './CatalogMode';
+import type { CatalogBrowseState, CatalogBrowseActions } from '@/hooks/useCatalogBrowse';
 import { SampleAudioMode } from './SampleAudioMode';
 
 /**
@@ -31,6 +32,8 @@ export interface SoundConfigContentProps {
   onLibrarySearch?: (index: number) => Promise<void>;
   onLibrarySoundSelect?: (index: number, sound: LibrarySearchResult) => void;
   onCatalogSoundSelect?: (index: number, sound: CatalogSoundSelection) => void;
+  /** Shared catalog search state from SoundPreContent, so SearchBar renders full-width. */
+  catalogState?: CatalogBrowseState & CatalogBrowseActions;
 }
 
 export function SoundConfigContent({
@@ -46,6 +49,7 @@ export function SoundConfigContent({
   onLibrarySoundSelect,
   onCatalogSoundSelect,
   hideTextToAudioSliders,
+  catalogState,
 }: SoundConfigContentProps) {
   const cardType = config.type || 'text-to-audio';
 
@@ -94,6 +98,7 @@ export function SoundConfigContent({
           index={index}
           onUpdateConfig={onUpdateConfig}
           onCatalogSoundSelect={onCatalogSoundSelect}
+          catalogState={catalogState}
         />
       )}
 

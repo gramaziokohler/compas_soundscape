@@ -1,0 +1,120 @@
+---
+description: UI styling conventions — CSS color tokens, Tailwind, Three.js, component patterns
+globs: frontend/src/components/**,frontend/src/app/globals.css
+---
+
+# UI Conventions
+
+## Color System — Single Source of Truth
+
+All colors live in `frontend/src/app/globals.css` as CSS custom properties.
+**Never write hex, rgba, or named colors in component files, `constants.ts`, or anywhere else.**
+
+### Token Reference
+
+| Token | Value | Use |
+| ----- | ----- | --- |
+| `--color-primary` | `#2F2FE4` | Brand, buttons, active states |
+| `--color-primary-hover` | `#5151e3` | Button hover |
+| `--color-primary-light` | `#c2c2ff` | Light accent |
+| `--color-secondary` | `#1f1f1f` | Dark text, Three.js dark geometry |
+| `--color-secondary-hover` | `#787878` | Muted text |
+| `--color-secondary-light` | `#dbdbdb` | Borders, dividers |
+| `--color-secondary-lighter` | `#f3f3f3` | Backgrounds |
+| `--color-success` | `#10B981` | |
+| `--color-error` | `#EF4444` | |
+| `--color-warning` | `#F59E0B` | |
+| `--color-info` | `#3B82F6` | |
+| `--color-material-start/mid/end` | `#67bfb4` / `#ffbf6d` / `#eb5c52` | Acoustic absorption gradient |
+| `--color-receiver` | `#f0a938` | Three.js receiver cube |
+| `--color-overlay-bg` | `rgba(0,0,0,0.8)` | Glass panels on 3D canvas |
+| `--color-overlay-border` | `rgba(255,255,255,0.2)` | |
+| `--shadow-sm/md/lg/xl/overlay` | CSS box-shadow strings | |
+
+`-static` variants exist for `--background`, `--foreground`, `--color-secondary*` — use them where
+dark-mode overrides must not apply.
+
+### How to Use Colors by Context
+
+**Tailwind (React components):**
+```tsx
+// CSS vars are bridged into Tailwind via @theme inline in globals.css
+<button className="bg-primary text-white hover:bg-primary-hover" />
+// ❌ never: style={{ backgroundColor: '#2F2FE4' }}
+```
+
+**Three.js numeric hex:**
+```typescript
+import { getCssColorHex } from '@/utils/utils'
+// Call at render time, NOT at module load
+mesh.material.color.set(getCssColorHex('--color-receiver'))
+// ❌ never: mesh.material.color.set(0xf0a938)
+```
+
+**Canvas 2D:**
+```typescript
+const color = getComputedStyle(document.documentElement)
+  .getPropertyValue('--color-primary').trim()
+ctx.fillStyle = color
+```
+
+**Speckle FilteringExtension** — resolved hex only (Three.js cannot parse `var(--color-*)`):
+```typescript
+const hex = getComputedStyle(document.documentElement).getPropertyValue('--color-warning').trim()
+filteringExtension.setUserObjectColors([{ objectIds, color: hex }])
+```
+
+**Acoustic material gradient:**
+```typescript
+import { getMaterialColorByAbsorption } from '@/utils/utils'
+const hex = getMaterialColorByAbsorption(0.4)   // → '#hex' between start, mid, end
+```
+
+### Rules
+
+1. No alias CSS vars — never `--foo: var(--bar)`.
+2. No color constants in `constants.ts` — never `const MY_COLOR = 'var(--color-primary)'`.
+3. New colors: reuse the closest existing token. Only add to `globals.css` if truly unique.
+
+### Allowed Color-Adjacent Fields in constants.ts
+
+- `UI_SHADOWS.*` → `"var(--shadow-*)"` strings ✓
+- `UI_OVERLAY.BACKDROP_BLUR`, `BORDER_RADIUS` ✓
+- Three.js scene constants (`SCENE_GRID`, `SCENE_FOG`) — **no color fields**; call `getCssColorHex` inline ✓
+
+---
+
+## Component Patterns
+
+### Slot-Based Card Composition
+
+`Card.tsx` accepts `beforeContent` / `afterContent` render props for flexible layouts:
+
+```tsx
+<Card
+  beforeContent={<CustomHeader />}
+  afterContent={<ActionFooter />}
+>
+  {mainContent}
+</Card>
+```
+
+### Domain-Scoped Hooks
+
+Complex side-effectful logic belongs in `frontend/src/hooks/`, not in component bodies:
+
+- `useSpeckleInteractions` — 3D picking, hover, selection
+- `useAudioOrchestrator` — audio playback
+- `useUndoRedo` — Ctrl+Z / Ctrl+Y
+- `useTimelinePlayback` — DAW timeline
+- `useBatchedSlider` — debounced slider with pause/commit for undo
+
+### Debouncing Speckle Color Updates
+
+When Zustand state changes drive `FilteringExtension.applyFilterColors`, debounce 50ms to batch
+rapid sequential updates:
+
+```typescript
+const debouncedApply = useMemo(() => debounce(applyFilterColors, 50), [])
+useEffect(() => { debouncedApply(colorGroups) }, [colorGroups])
+```

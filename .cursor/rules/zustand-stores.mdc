@@ -1,0 +1,133 @@
+---
+description: Zustand store patterns — adding stores, temporal undo/redo, non-serializable state, pause/commit
+globs: frontend/src/store/**
+---
+
+# Zustand Store Rules
+
+## Adding a New Store
+
+```typescript
+// frontend/src/store/myDomainStore.ts
+import { create } from 'zustand'
+import { devtools } from 'zustand/middleware'
+import { temporal } from 'zundo'
+
+interface MyDomainState {
+  // state fields
+}
+interface MyDomainActions {
+  setFoo: (val: string) => void
+  reset: () => void
+}
+
+const initialState: MyDomainState = { /* ... */ }
+
+export const useMyDomainStore = create<MyDomainState & MyDomainActions>()(
+  devtools(
+    temporal(
+      (set) => ({
+        ...initialState,
+        setFoo: (val) => set({ foo: val }),
+        reset: () => set(initialState),
+      }),
+      { limit: 100 }            // max undo history depth
+    ),
+    { name: 'myDomainStore' }   // Redux DevTools label — must be unique
+  )
+)
+```
+
+**Only add `temporal` if the state is user-facing and undo-able** (e.g. sound configs, material
+assignments, receiver positions). Background/async state (loading flags, job IDs, progress) should
+use plain `create()` without `temporal`.
+
+## Registering for Global Undo/Redo
+
+If the store uses `temporal`, register it in `frontend/src/store/undoRedoRegistry.ts` so
+Ctrl+Z / Ctrl+Y works across all stores in order:
+
+```typescript
+// In undoRedoRegistry.ts — add one line
+registerTemporalStore('myDomain', useMyDomainStore)
+```
+
+## Barrel Export — Required
+
+Always export from `frontend/src/store/index.ts`:
+
+```typescript
+export { useMyDomainStore } from './myDomainStore'
+```
+
+Consumers **must** import from `@/store`, never from the store file directly:
+
+```typescript
+// ✅ correct
+import { useMyDomainStore } from '@/store'
+// ❌ wrong — breaks the barrel contract
+import { useMyDomainStore } from '@/store/myDomainStore'
+```
+
+## Non-Serializable State (Module-Level Refs)
+
+Web Audio nodes, Speckle `Viewer`, Three.js objects, and ES6 `Map`s cannot be serialized by
+Zustand or zundo. Store them in module-level `let` refs, not in Zustand state:
+
+```typescript
+// Pattern: module-level ref + getter function
+let _audioContext: AudioContext | null = null
+
+export function getAudioContext(): AudioContext | null {
+  return _audioContext
+}
+
+// Set via a Zustand action so components can react to readiness:
+export const useAudioStore = create<...>()((set) => ({
+  isReady: false,
+  init: () => {
+    _audioContext = new AudioContext()
+    set({ isReady: true })
+  },
+}))
+```
+
+## Pause / Commit Pattern (Continuous Gestures)
+
+Sliders, Three.js drag handles, and any input that fires many times per second must use the
+pause/commit pattern to prevent flooding undo history:
+
+```typescript
+import { pauseStore, commitStore } from '@/store/undoRedoRegistry'
+
+// On drag start (onPointerDown / onMouseDown)
+pauseStore('myDomain')
+
+// Update state freely during drag — these are NOT recorded individually
+store.setFoo(newValue)
+
+// On drag end (onPointerUp / onMouseUp)
+commitStore('myDomain')   // records a single undo step
+```
+
+**Always pair `pauseStore` with `commitStore`.** A missing `commitStore` will freeze the undo
+history for that store for the rest of the session.
+
+## Current Stores Overview
+
+| Store | Domain | Temporal? |
+| ----- | ------ | --------- |
+| `speckleStore` | 3D scene, Speckle viewer, object selection | ✓ |
+| `soundscapeStore` | Sound configs, generation status, blob URLs | ✓ |
+| `audioControlsStore` | Playback: volumes, variants, intervals, mute/solo | ✓ |
+| `cardFlowStore` | Sidebar card wizard state | ✓ |
+| `uiStore` | UI state: active step, modal visibility | ✓ |
+| `acousticsSimulationStore` | Pyroomacoustics & Choras simulation state | ✓ |
+| `receiversStore` | Receiver positions in 3D scene | ✓ |
+| `roomMaterialsStore` | Material absorption assignments | ✓ |
+| `pyroomAcousticsStore` | PyRoom config: room geometry, method | ✓ |
+| `chorasStore` | Choras solver config | ✓ |
+| `sedStore` | SED detection regions | ✓ |
+| `analysisStore` | Analysis config (SED, modal) | ✓ |
+| `modalImpactStore` | Modal synthesis config | ✓ |
+| `acousticMaterialStore` | Material library selections | ✓ |

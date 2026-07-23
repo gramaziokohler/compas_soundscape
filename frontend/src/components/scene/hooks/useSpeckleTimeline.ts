@@ -39,6 +39,8 @@ interface TimelineResult {
   handleRefreshTimeline: () => void;
   handleDownloadTimeline: (format: ExportFormat) => Promise<void>;
   isBakingSchedule: boolean;
+  handleCloseTimeline: () => void;
+  handleToggleTimeline: () => void;
 }
 
 export function useSpeckleTimeline({
@@ -58,6 +60,21 @@ export function useSpeckleTimeline({
   const [timelineSounds, setTimelineSounds] = useState<TimelineSound[]>([]);
   const [soundMetadataReady, setSoundMetadataReady] = useState(false);
   const [showTimeline, setShowTimeline] = useState(true);
+  const userClosedTimelineRef = useRef(false);
+
+  const handleCloseTimeline = useCallback(() => {
+    userClosedTimelineRef.current = true;
+    setShowTimeline(false);
+  }, []);
+
+  const handleToggleTimeline = useCallback(() => {
+    setShowTimeline((prev) => {
+      if (!prev) {
+        userClosedTimelineRef.current = false;
+      }
+      return !prev;
+    });
+  }, []);
 
   // Subscribe to scheduling mode + timestamps so the timeline rerenders when they change
   const soundSchedulingModes    = useAudioControlsStore((s) => s.soundSchedulingModes);
@@ -190,9 +207,10 @@ export function useSpeckleTimeline({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timelineSounds, soundConfigs, setIterationLink]);
 
-  // Auto-open the timeline whenever sounds become available
+  // Auto-open the timeline whenever sounds become available,
+  // but only if the user hasn't explicitly closed it.
   useEffect(() => {
-    if (timelineSounds.length > 0) {
+    if (timelineSounds.length > 0 && !userClosedTimelineRef.current) {
       setShowTimeline(true);
     }
   }, [timelineSounds.length]);
@@ -288,5 +306,7 @@ export function useSpeckleTimeline({
     handleRefreshTimeline,
     handleDownloadTimeline,
     isBakingSchedule,
+    handleCloseTimeline,
+    handleToggleTimeline,
   };
 }

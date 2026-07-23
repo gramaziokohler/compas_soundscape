@@ -310,13 +310,37 @@ export function SpeckleScene({
   const [refreshKey, setRefreshKey] = useState(0);
   const [showObjectExplorer, setShowObjectExplorer] = useState(false);
 
+  // Track whether the user explicitly closed the Object Explorer so we don't
+  // re-open it automatically when expanding another acoustic simulation card.
+  const userClosedExplorerRef = useRef(false);
+
+  const handleCloseExplorer = useCallback(() => {
+    userClosedExplorerRef.current = true;
+    setShowObjectExplorer(false);
+  }, []);
+
+  const handleToggleExplorer = useCallback(() => {
+    setShowObjectExplorer((prev) => {
+      if (!prev) {
+        userClosedExplorerRef.current = false;
+      }
+      return !prev;
+    });
+  }, []);
+
+  const handleOpenExplorer = useCallback(() => {
+    userClosedExplorerRef.current = false;
+    setShowObjectExplorer(true);
+  }, []);
+
   // Auto-open the Object Explorer when acoustic material assignment activates,
   // since material/scattering columns live there. Only on the rising edge so a
-  // manual close while active is respected.
+  // manual close while active is respected — and never re-opens if the user
+  // previously closed it.
   const acousticAssignmentActive = useAcousticMaterialStore((s) => s.isActive);
   const prevAcousticActiveRef = useRef(false);
   useEffect(() => {
-    if (acousticAssignmentActive && !prevAcousticActiveRef.current) {
+    if (acousticAssignmentActive && !prevAcousticActiveRef.current && !userClosedExplorerRef.current) {
       setShowObjectExplorer(true);
     }
     prevAcousticActiveRef.current = acousticAssignmentActive;
@@ -803,6 +827,7 @@ export function SpeckleScene({
   const {
     timelineSounds, soundMetadataReady, showTimeline, setShowTimeline,
     handleRefreshTimeline, handleDownloadTimeline,
+    handleCloseTimeline, handleToggleTimeline,
   } = useSpeckleTimeline({
     isViewerReady,
     soundscapeData,
@@ -1417,7 +1442,7 @@ export function SpeckleScene({
           onPlay={handlePlayAll}
           onPause={handlePauseAll}
           onStop={handleStopAll}
-          onClose={() => setShowTimeline(false)}
+          onClose={handleCloseTimeline}
           isAnyPlaying={isAnyPlaying}
           onSelectSoundCard={onSelectSoundCard}
           originalIRChannelCount={audioOrchestrator?.getIRState().channelCount ?? 0}
@@ -1452,7 +1477,7 @@ export function SpeckleScene({
       {/* Object Explorer floating panel — always mounted so ObjectExplorer initializes (auto-hides Acoustics layer) on load */}
       <ObjectExplorerPanel
         isVisible={showObjectExplorer}
-        onClose={() => setShowObjectExplorer(false)}
+        onClose={handleCloseExplorer}
         isRightSidebarExpanded={isRightSidebarExpanded}
         rightSidebarWidth={rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH}
       />
@@ -1473,7 +1498,7 @@ export function SpeckleScene({
         onSaveSoundscape={onSaveSoundscape}
         onResetZoom={handleResetZoom}
         onRefreshScene={handleRefreshScene}
-        onToggleTimeline={() => setShowTimeline(!showTimeline)}
+        onToggleTimeline={handleToggleTimeline}
       />
 
       {/* Object Explorer toggle — bottom right */}
@@ -1486,7 +1511,7 @@ export function SpeckleScene({
           }}
         >
           <SceneControlButton
-            onClick={() => setShowObjectExplorer((v) => !v)}
+            onClick={handleToggleExplorer}
             isActive={showObjectExplorer}
             title={showObjectExplorer ? 'Close Object Explorer' : 'Open Object Explorer'}
             icon={
@@ -1531,7 +1556,7 @@ export function SpeckleScene({
             savedPrevEntityRef.current = null;
             savedPrevObjectIdsRef.current = [];
           }}
-          onOpenExplorer={() => setShowObjectExplorer(true)}
+          onOpenExplorer={handleOpenExplorer}
           generatedSounds={soundscapeData ?? undefined}
         />
       )}

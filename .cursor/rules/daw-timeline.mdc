@@ -1,0 +1,89 @@
+---
+description: DAW timeline, WaveSurfer integration, playback sync, export formats
+globs: frontend/src/components/audio/daw/**,frontend/src/components/audio/WaveSurferPlayer.tsx,frontend/src/components/audio/SoundCardWaveSurfer.tsx,frontend/src/hooks/useTimelinePlayback.ts,frontend/src/hooks/useWaveformInteraction.ts,frontend/src/store/audioControlsStore.ts
+---
+
+# DAW Timeline Rules
+
+## Component Hierarchy
+
+```
+DAWTimeline.tsx              ← main container: ruler, export buttons, global playback controls
+  └─ DAWGroup.tsx            ← groups sounds by usage parent
+       └─ DAWTrack.tsx       ← one track per sound; mute/solo state; drag-to-reorder iterations
+            └─ DAWIteration.tsx  ← one WaveSurfer instance per audio iteration
+```
+
+All files: `frontend/src/components/audio/daw/`
+
+## WaveSurfer — One Instance Per Iteration
+
+**Never share a WaveSurfer instance between iterations or tracks.**
+Each `DAWIteration` creates and owns its own instance:
+
+```typescript
+// DAWIteration.tsx — standard lifecycle
+const wsRef = useRef<WaveSurfer | null>(null)
+
+useEffect(() => {
+  wsRef.current = WaveSurfer.create({
+    container: containerRef.current,
+    ...WAVESURFER_TIMELINE,            // constants from utils/constants.ts
+  })
+  wsRef.current.load(audioUrl)
+  return () => {
+    wsRef.current?.destroy()
+    wsRef.current = null
+  }
+}, [audioUrl])
+```
+
+WaveSurfer config constants: `frontend/src/utils/constants.ts` → `WAVESURFER_TIMELINE`
+
+## Timeline Playback Sync
+
+`useTimelinePlayback` is the single source of playback time:
+
+- Returns `{ isPlaying, currentTime, duration, play, pause, stop, seek }`
+- Uses a `requestAnimationFrame` loop while playing — updates `currentTime` at ≈60fps
+- Each `DAWIteration` reads `currentTime` and calls `ws.seekTo(currentTime / duration)`
+
+**Do not** create secondary `requestAnimationFrame` loops inside individual track or iteration
+components. All time updates must flow from `useTimelinePlayback`.
+
+## audioControlsStore — Playback Control State
+
+Single source of truth for all runtime playback state.
+Import from `@/store` barrel: `const { soundVolumes, mutedSounds } = useAudioControlsStore()`
+
+| Field | Type | Purpose |
+| ----- | ---- | ------- |
+| `soundVolumes` | `Record<soundId, number>` | Per-sound volume 0–1 |
+| `selectedVariants` | `Record<soundId, variantId>` | Active audio variant per sound |
+| `soundIntervals` | `Record<soundId, IntervalConfig>` | Loop interval / start offset per sound |
+| `mutedSounds` | `Set<soundId>` | Muted sound IDs |
+| `soloedSound` | `soundId \| null` | Exclusively audible sound (`null` = none) |
+| `timelineDurationMs` | `number` | Total timeline length in milliseconds |
+
+## Export Formats
+
+`frontend/src/lib/audio/SoundscapeExporter.ts` handles all export formats:
+
+| Format | Channels | Use for |
+| ------ | -------- | ------- |
+| Mono | 1 | Basic reference / checking mix |
+| Binaural | 2 | Headphone listening |
+| FOA | 4 | 1st-order ambisonics (VR, spatial audio) |
+| TOA | 16 | 3rd-order ambisonics (high-quality spatial) |
+
+Exporter accepts an optional limiter flag to prevent clipping on multi-sound mixdowns.
+
+## Adding New DAW Features
+
+| Feature type | Where to edit |
+| ------------ | ------------- |
+| Per-track UI (e.g. record button) | `DAWTrack.tsx` |
+| Per-iteration visual (e.g. waveform colour) | `DAWIteration.tsx` |
+| Global control (e.g. master tempo) | `DAWTimeline.tsx` + new field in `audioControlsStore` |
+| New export format | `SoundscapeExporter.ts` + expose option in `DAWTimeline.tsx` |
+| Playback behaviour change | `useTimelinePlayback.ts` only — do not split logic across components |

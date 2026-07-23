@@ -366,7 +366,7 @@ export const TTS_VOICES = [
 ] as const;
 
 export const TTS_DEFAULT_VOICE = "Kore";
-export const TTS_DEFAULT_LANGUAGE = "Japanese";
+export const TTS_DEFAULT_LANGUAGE = "Chinese";
 
 export const LLM_MODEL_NAMES: Record<string, string> = {
   [LLM_MODEL_GEMINI_FLASH]: "Gemini 2.5 Flash",

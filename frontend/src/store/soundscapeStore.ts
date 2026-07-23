@@ -1265,7 +1265,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             (s) => ({
               soundConfigs: s.soundConfigs.map((c, i) =>
                 i === index
-                  ? { ...c, selectedCatalogSound: sound, display_name: c.display_name || sound.name }
+                  ? { ...c, selectedCatalogSound: sound, display_name: sound.name }
                   : c,
               ),
             }),

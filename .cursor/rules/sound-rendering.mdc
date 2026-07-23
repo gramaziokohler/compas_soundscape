@@ -1,0 +1,117 @@
+---
+description: Spatial audio pipeline — AudioOrchestrator, audio modes, ambisonics, binaural decoding, HRTF
+globs: frontend/src/lib/audio/**,frontend/src/hooks/useAudioOrchestrator.ts,frontend/src/hooks/useAudioNormalization.ts,frontend/src/components/audio/AudioRenderingModeSelector.tsx
+---
+
+# Sound Rendering Rules
+
+## The Three Audio Modes
+
+| Mode | Enum | Signal chain | DOF |
+| ---- | ---- | ------------ | --- |
+| Anechoic | `AudioMode.ANECHOIC` | Dry source → monoEncoder → sceneRotator → BinauralDecoder | 6DOF (position + rotation) |
+| Ambisonic IR | `AudioMode.AMBISONIC_IR` | Source → IR convolution → sceneRotator → BinauralDecoder | 3DOF (rotation only — receiver position locked) |
+| Resonance | `AudioMode.NO_IR_RESONANCE` | Resonance Audio synthetic room (early reflections + reverb) | 6DOF (position + rotation) |
+
+Mode enum and type definitions: `frontend/src/types/audio.ts`
+
+## AudioOrchestrator — Single Coordinator
+
+`frontend/src/lib/audio/AudioOrchestrator.ts` is the **only** entry point for audio playback.
+
+- **Never** call `AnechoicMode`, `AmbisonicIRMode`, or `ResonanceMode` directly from components.
+- **Never** bypass `AudioOrchestrator` to manage Web Audio nodes manually.
+- React components access the orchestrator via `useAudioOrchestrator` hook:
+  `frontend/src/hooks/useAudioOrchestrator.ts`
+
+## Mode Auto-Selection
+
+`frontend/src/lib/audio/utils/mode-selector.ts` selects the active mode based on:
+1. IR availability (is a room IR currently loaded?)
+2. IR channel count: 1→mono/stereo, 4→FOA, 9→SOA, 16→TOA
+3. User preference override (from `audioControlsStore`)
+
+**Do not override the mode selector** from outside `AudioOrchestrator`. It is the contract between
+the UI layer and the audio engine.
+
+## Ambisonic Signal Chain
+
+```
+Sound source (mono)
+  └─ JSAmbisonics monoEncoder       # encode point source to B-format (order 1/2/3)
+        └─ [AMBISONIC_IR] convolver  # convolve with room IR (JSAmbisonics)
+              └─ sceneRotator        # apply head/receiver rotation (quaternion input)
+                    └─ BinauralDecoder  # HRTF convolution → stereo headphone output
+```
+
+### Normalization — SN3D ↔ N3D
+
+IR files may use SN3D or N3D normalization. Convert before feeding the convolver.
+Coefficients are in `frontend/src/utils/constants.ts` → `AMBISONIC.SN3D_TO_N3D`:
+
+```typescript
+// Multiply channel n of an SN3D signal by this factor to get N3D
+AMBISONIC.SN3D_TO_N3D[order][channelIndex]
+```
+
+### Ambisonic Order Constants
+
+```typescript
+AMBISONIC.ORDER    = { FOA: 1, SOA: 2, TOA: 3 }
+AMBISONIC.CHANNELS = { FOA: 4, SOA: 9, TOA: 16 }
+```
+
+Always use these constants — never hardcode channel counts.
+
+## Decoder Selection for FOA
+
+Two decoders are available for 1st-order ambisonics (FOA):
+
+| Decoder | File | HRTFs |
+| ------- | ---- | ----- |
+| JSAmbisonics `BinauralDecoder` | `decoders/BinauralDecoder.ts` | Loaded from `public/hrtf/` |
+| Omnitone `OmnitoneFOADecoder` | `decoders/OmnitoneFOADecoder.ts` | Built-in Google SADIE HRTFs |
+
+Toggle via: `frontend/src/utils/constants.ts` → `AMBISONIC.USE_OMNITONE_FOR_FOA`
+
+When adding custom HRTF support, only modify `BinauralDecoder.ts` — Omnitone manages its own internal HRTFs and cannot be customised.
+
+## HRTF Loading (BinauralDecoder)
+
+```typescript
+// BinauralDecoder.ts — loading path
+async loadHRTFs(path?: string): Promise<void>
+// → ambisonics.HRIRloader_ircam(audioContext, order, callback)
+// → loader.load(hrtfPath)          // must be under /public/hrtf/
+// → callback(hoaBuffer) → binDecoder.updateFilters(hoaBuffer)
+```
+
+Config: `frontend/src/utils/constants.ts` → `HRTF.DEFAULT_HRTF_PATH`
+HRTF files: `frontend/public/hrtf/` — do not move or rename without updating the constant.
+
+Available HRTF datasets:
+- `IRC_1076_C_HRIR_48000.sofa.json` — full sphere, IRCAM
+- `HRTF_KEMAR_front.sofa.json` — front hemisphere, optimised
+- `D1_48K_24bit_256tap_FIR_SOFA.json` — high-quality 256-tap FIR
+
+## Resonance Audio — SSR Safety
+
+```typescript
+// ✅ correct — dynamic import prevents Next.js SSR crash
+const { ResonanceAudio } = await import('resonance-audio')
+
+// ❌ wrong — static import crashes on server render
+import { ResonanceAudio } from 'resonance-audio'
+```
+
+This pattern applies to any package that accesses `window` or `AudioContext` at module load time
+(`ambisonics`, `omnitone`, `resonance-audio`).
+
+## Implementing a New Audio Mode
+
+1. Implement `IAudioMode` interface: `frontend/src/lib/audio/core/interfaces/IAudioMode.ts`
+2. Place the mode file in `frontend/src/lib/audio/modes/`
+3. Register it in `AudioOrchestrator.ts` mode factory
+4. Add the corresponding `AudioMode` enum value in `frontend/src/types/audio.ts`
+5. Update `mode-selector.ts` selection logic
+6. Add a UI option in `AudioRenderingModeSelector.tsx`

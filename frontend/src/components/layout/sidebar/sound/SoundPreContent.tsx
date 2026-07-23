@@ -4,6 +4,8 @@ import type { CardType } from '@/types';
 import { SoundConfigContent, type SoundConfigContentProps } from './SoundConfigContent';
 import { TextToAudioSliders } from './TextToAudioMode';
 import { SoundCardBody } from './SoundCardBody';
+import { SearchBar } from '@/components/ui/SearchBar';
+import { useCatalogBrowse, type CatalogBrowseState, type CatalogBrowseActions } from '@/hooks/useCatalogBrowse';
 
 interface MethodOption {
   type: CardType;
@@ -70,6 +72,20 @@ export function SoundPreContent(props: SoundPreContentProps) {
 
   const currentType = config.type || 'text-to-audio';
 
+  // ── Catalog search state (lifted so SearchBar can render full-width) ───────
+  const catalogBrowse = useCatalogBrowse();
+  const isCatalog = currentType === 'catalog';
+  const catalogSearchState: (CatalogBrowseState & CatalogBrowseActions) | undefined = isCatalog ? catalogBrowse : undefined;
+
+  const fullWidthHeader = isCatalog ? (
+    <SearchBar
+      value={catalogBrowse.searchQuery}
+      onChange={(v) => catalogBrowse.setSearchQuery(v)}
+      placeholder="Search sounds..."
+      isLoading={catalogBrowse.isSearchingAll}
+    />
+  ) : undefined;
+
   // For text-to-audio: render just the textarea in mainContent; sliders go in collapsible panel.
   // For other types: render the full mode UI, no collapsible.
   const isTextToAudio = currentType === 'text-to-audio';
@@ -80,12 +96,14 @@ export function SoundPreContent(props: SoundPreContentProps) {
 
   return (
     <SoundCardBody
+      fullWidthHeader={fullWidthHeader}
       mainContent={
         <SoundConfigContent
           config={config}
           index={index}
           onUpdateConfig={onUpdateConfig}
           hideTextToAudioSliders={isTextToAudio}
+          catalogState={catalogSearchState}
           {...configProps}
         />
       }

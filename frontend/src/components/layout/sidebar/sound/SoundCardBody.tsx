@@ -26,6 +26,8 @@ import { useBatchedSlider } from '@/hooks/useBatchedSlider';
 export interface SoundCardBodyProps {
   /** Left slot: WaveSurfer (post-gen) or mode-specific UI (pre-gen) */
   mainContent: ReactNode;
+  /** Rendered full-width above the flex row — use for headers that span both columns. */
+  fullWidthHeader?: ReactNode;
   /** Optional content rendered in the collapsible panel (text-to-audio sliders). */
   collapsibleContent?: ReactNode;
   /** Optional content below the position widget (e.g. variant selector buttons) */
@@ -65,6 +67,7 @@ export interface SoundCardBodyProps {
 
 export function SoundCardBody({
   mainContent,
+  fullWidthHeader,
   collapsibleContent,
   extraContent,
   volumeDb,
@@ -126,7 +129,14 @@ export function SoundCardBody({
   const hasCollapsible = !!collapsibleContent;
 
   return (
-    <div className="flex gap-3 min-w-0">
+    <div>
+      {/* Full-width header slot — rendered outside the flex layout */}
+      {fullWidthHeader && (
+        <div className="mb-2">
+          {fullWidthHeader}
+        </div>
+      )}
+      <div className="flex gap-3 min-w-0">
       {/* ── Left column ── */}
       <div className="flex-1 min-w-0 overflow-hidden flex flex-col gap-1.5">
 
@@ -274,6 +284,7 @@ export function SoundCardBody({
         )}
       </div>
     </div>
+  </div>
   );
 }
 
