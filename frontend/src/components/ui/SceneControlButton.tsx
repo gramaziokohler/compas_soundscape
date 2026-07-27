@@ -10,6 +10,7 @@ interface SceneControlButtonProps {
   isActive?: boolean;
   activeColor?: string;
   inactiveBackground?: string;
+  border?: boolean
 }
 
 /**
@@ -40,7 +41,8 @@ export function SceneControlButton({
   title,
   isActive = false,
   activeColor = 'var(--color-primary)',
-  inactiveBackground = 'var(--color-secondary-lighter)'
+  inactiveBackground = 'var(--color-secondary-lighter)',
+  border = true
 }: SceneControlButtonProps) {
   return (
     <button
@@ -52,7 +54,7 @@ export function SceneControlButton({
         borderRadius: UI_SCENE_BUTTON.BORDER_RADIUS,
         backgroundColor: isActive ? activeColor : inactiveBackground,
         borderColor: isActive ? activeColor : 'var(--color-overlay-border)',
-        borderWidth: '1px',
+        borderWidth: border? '1px': '0px',
         borderStyle: 'solid'
       }}
       onMouseEnter={(e) => {

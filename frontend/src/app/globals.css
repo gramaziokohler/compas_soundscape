@@ -62,6 +62,9 @@
   /* Three.js receiver cube color */
   --color-receiver: #f0a938;
 
+  /* Mixed material indicator */
+  --color-mixed: #e91e90;
+
   /* Elevation shadows */
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
@@ -107,6 +110,7 @@
   --color-material-mid: var(--color-material-mid);
   --color-material-end: var(--color-material-end);
   --color-receiver: var(--color-receiver);
+  --color-mixed: var(--color-mixed);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 

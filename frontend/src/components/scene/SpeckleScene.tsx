@@ -1503,6 +1503,17 @@ export function SpeckleScene({
             </svg>
           }
         />
+        <SceneControlButton
+          onClick={() => { window.location.href = window.location.origin; }}
+          activeColor="var(--color-primary)"
+          title="Home"
+          border = {false}
+          icon={
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="var(--color-primary)" stroke="none">
+              <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2L3 9v11a2 2 0 0 0 2 2h4v-10h6v10h4a2 2 0 0 0 2-2V9l-9-7z" />
+            </svg>
+          }
+        />
       </div>
 
 

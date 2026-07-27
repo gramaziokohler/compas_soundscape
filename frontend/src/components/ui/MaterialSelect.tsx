@@ -32,6 +32,8 @@ interface MaterialSelectProps {
   placeholder?: string;
   /** Applied to the trigger only, matching the original <select> opacity behaviour */
   opacity?: number;
+  /** When true and no value selected, show the trigger in pink instead of grey */
+  isMixed?: boolean;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -49,6 +51,7 @@ export function MaterialSelect({
   materialColors,
   placeholder = 'Select...',
   opacity = 1,
+  isMixed = false,
 }: MaterialSelectProps) {
   const [isOpen, setIsOpen]       = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
@@ -61,7 +64,11 @@ export function MaterialSelect({
   const canvasRef    = useRef<HTMLCanvasElement | null>(null);
 
   const selectedMat  = materials.find((m) => m.id === value);
-  const triggerBg    = value ? (materialColors.get(value) ?? 'var(--color-secondary-hover)') : 'var(--color-secondary-hover)';
+  const triggerBg    = value
+    ? (materialColors.get(value) ?? 'var(--color-secondary-hover)')
+    : isMixed
+      ? 'var(--color-mixed)'
+      : 'var(--color-secondary-hover)';
   const triggerLabel = selectedMat
     ? `${selectedMat.name} (${(selectedMat.absorption * 100).toFixed(0)}%)`
     : placeholder;
