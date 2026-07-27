@@ -22,7 +22,7 @@ ambisonic / binaural spatial audio rendering.
 mamba activate compas-toy
 
 # Backend (from repo root)
-cd backend && uvicorn main:app --reload
+cd backend && uvicorn main:app --reload --log-config log_config.json
 
 # Frontend (from repo root)
 cd frontend && pnpm dev
@@ -71,6 +71,17 @@ frontend/src/
 4. **TypeScript strict** — `pnpm build` must pass with 0 errors. No `any`.
 5. **One source of truth per layer** — constants in `config/constants.py` (backend) or
    `utils/constants.ts` (frontend); never duplicate magic numbers.
+6. **Refresh survival is three separate problems — never treat them as one.**
+   Domain state (configs/events/receivers/simulations) → backend
+   `data/soundscapes/<session>/<model_id>/soundscape.json`, loaded via `?model_id=` URL param,
+   autosaved every 3s. UI/session state (camera, panels, wizard step) → `localStorage` via
+   Zustand `persist` (`skipHydration: true` + manual `rehydrate()`); camera bypasses `persist`
+   entirely (direct `localStorage.setItem` before `beforeunload`). In-flight jobs (ML/LLM/sim) →
+   `sessionStorage` key `compas-inflight-jobs`, resumed by `useJobRecovery`. Mechanics, pitfalls,
+   and code patterns: `.cursor/rules/persistence.mdc`.
+7. **Debug systematically, not speculatively.** When behavior is unexpected, add `[dbg:*]`-prefixed
+   logs at write/read/set sites *before* writing any fix — don't guess-and-check with speculative
+   changes (delays, gating, reordering). Full discipline: `global.mdc` § Debugging Discipline.
 
 ## Scoped Rules
 
@@ -80,6 +91,7 @@ touch matching files (Cursor by glob, Opencode via `opencode.json`, Claude Code 
 | File                  | Domain                        | Key paths                                                             |
 | --------------------- | ----------------------------- | --------------------------------------------------------------------- |
 | `global.mdc`          | Always loaded                 | All files                                                             |
+| `persistence.mdc`     | Refresh survival, save/load   | `page.tsx`, `soundscape-serializer.ts`, `soundscape.py`, stores with persist |
 | `acoustic-sim.mdc`    | Room acoustics simulation     | `backend/services/pyroomacoustics_service.py`, `choras_backend/**`    |
 | `zustand-stores.mdc`  | State management              | `frontend/src/store/**`                                               |
 | `task-queue.mdc`      | Background job system         | `backend/services/task_queue.py`, `**/*_worker.py`                    |

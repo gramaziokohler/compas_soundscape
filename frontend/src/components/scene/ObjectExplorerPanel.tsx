@@ -2,11 +2,14 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { ObjectExplorer } from '@/components/layout/ObjectExplorer';
+import { useUIStore } from '@/store/uiStore';
 
 const MIN_WIDTH = 380;
 const MIN_HEIGHT = 200;
 const DEFAULT_WIDTH = 460;
-const DEFAULT_HEIGHT = 500;
+const DEFAULT_HEIGHT = 1000;
+const HEADER_HEIGHT = 40;
+const CONTENT_PADDING = 8;
 
 const PANEL_MARGIN = 24;
 
@@ -21,21 +24,37 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
   const [itemCount, setItemCount] = useState(0);
   const resetAllRef = useRef<(() => void) | null>(null);
 
-  // Use a safe SSR-stable initial position; corrected after mount via useEffect
+  const panelRef = useRef<HTMLDivElement>(null);
+
   const [position, setPosition] = useState({ x: -DEFAULT_WIDTH, y: 72 });
   const [positionReady, setPositionReady] = useState(false);
+  const [size, setSize] = useState({ width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT });
 
-  // Set real initial position after mount (avoids SSR/client mismatch)
   useEffect(() => {
+    const saved = useUIStore.getState().objectExplorerPanel;
+    if (saved) {
+      const onScreen = saved.x >= -saved.width + 100
+        && saved.y >= 0
+        && saved.x < window.innerWidth
+        && saved.y < window.innerHeight;
+      if (onScreen) {
+        setPosition({ x: saved.x, y: saved.y });
+        setSize({ width: saved.width, height: saved.height });
+        setPositionReady(true);
+        return;
+      }
+    }
     const sidebarOffset = isRightSidebarExpanded ? rightSidebarWidth + PANEL_MARGIN : PANEL_MARGIN;
     setPosition({
-      x: window.innerWidth - DEFAULT_WIDTH - sidebarOffset,
+      x: window.innerWidth - (saved?.width ?? DEFAULT_WIDTH) - sidebarOffset,
       y: 72,
     });
+    if (saved) {
+      setSize({ width: saved.width, height: saved.height });
+    }
     setPositionReady(true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const [size, setSize] = useState({ width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT });
 
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ mouseX: 0, mouseY: 0, panelX: 0, panelY: 0 });
@@ -43,7 +62,6 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
   const isResizingRef = useRef(false);
   const resizeStartRef = useRef({ mouseX: 0, mouseY: 0, width: 0, height: 0 });
 
-  // Store latest position/size in refs so the effect closure doesn't need them as deps
   const positionRef = useRef(position);
   const sizeRef = useRef(size);
   useEffect(() => { positionRef.current = position; }, [position]);
@@ -69,6 +87,11 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
     };
 
     const handleMouseUp = () => {
+      if (isDraggingRef.current || isResizingRef.current) {
+        const p = positionRef.current;
+        const s = sizeRef.current;
+        useUIStore.getState().setObjectExplorerPanel({ x: p.x, y: p.y, width: s.width, height: s.height });
+      }
       isDraggingRef.current = false;
       isResizingRef.current = false;
     };
@@ -94,12 +117,13 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
   }, []);
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    const rect = panelRef.current?.getBoundingClientRect();
     isResizingRef.current = true;
     resizeStartRef.current = {
       mouseX: e.clientX,
       mouseY: e.clientY,
-      width: sizeRef.current.width,
-      height: sizeRef.current.height,
+      width: rect?.width ?? sizeRef.current.width,
+      height: rect?.height ?? sizeRef.current.height,
     };
     e.preventDefault();
     e.stopPropagation();
@@ -107,25 +131,40 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
 
   return (
     <div
-      className="fixed flex flex-col backdrop-blur-sm shadow-2xl"
+      ref={panelRef}
+      className="fixed flex flex-col shadow-2xl"
       style={{
         left: position.x,
         top: position.y,
         width: size.width,
-        height: size.height,
+        height: 'auto',
+        maxHeight: size.height,
         zIndex: 9999,
         display: (isVisible && positionReady) ? 'flex' : 'none',
         backgroundColor: 'var(--background)',
-        border: '1px solid var(--color-secondary-light)',
+        border: '1.5px solid var(--color-primary)',
         borderRadius: '8px',
         overflow: 'hidden',
       }}
     >
+      {/* Blur backdrop layer rendered as a pseudo-backdrop via box-shadow on a sibling */}
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          borderRadius: '8px',
+          backdropFilter: 'blur(4px)',
+          WebkitBackdropFilter: 'blur(4px)',
+          pointerEvents: 'none',
+          zIndex: -1,
+        }}
+      />
+
       {/* Header — drag handle */}
       <div
         className="flex items-center justify-between px-3 flex-shrink-0"
         style={{
-          height: '40px',
+          height: `${HEADER_HEIGHT}px`,
           borderBottom: '1px solid var(--color-secondary-light)',
           cursor: 'grab',
           userSelect: 'none',
@@ -182,7 +221,17 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
       </div>
 
       {/* Content */}
-      <ObjectExplorer resetAllRef={resetAllRef} onItemCountChange={setItemCount} />
+      <div
+        style={{
+          padding: `0 ${CONTENT_PADDING}px ${CONTENT_PADDING}px`,
+        }}
+      >
+        <ObjectExplorer
+          resetAllRef={resetAllRef}
+          onItemCountChange={setItemCount}
+          maxTreeHeight={Math.max(MIN_HEIGHT - HEADER_HEIGHT - CONTENT_PADDING * 2, size.height - HEADER_HEIGHT - CONTENT_PADDING * 2)}
+        />
+      </div>
 
       {/* Resize handle */}
       <div

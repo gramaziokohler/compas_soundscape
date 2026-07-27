@@ -37,6 +37,7 @@ import { apiService } from '@/services/api';
 import { useErrorsStore } from './errorsStore';
 import { useFileUploadStore } from './fileUploadStore';
 import { useAudioControlsStore } from './audioControlsStore';
+import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
 
 // ─── Module-level refs ────────────────────────────────────────────────────────
 
@@ -511,6 +512,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 base_spl_db: useAudioControlsStore.getState().globalBaseSplDb,
               });
               _currentGenerationId = generation_id;
+              recordInflightJob(generation_id, 'sound');
 
               // Map a raw backend sound object to a SoundEvent, resolving the
               // actual prompt_index and entity position from generationConfigs.
@@ -775,6 +777,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 language: useAudioControlsStore.getState().ttsLanguage,
               });
               _currentTtsGenerationId = generation_id;
+              recordInflightJob(generation_id, 'tts');
 
               const mapTtsSound = (sound: any) => {
                 // prompt_index is the card index (same for all speech lines).
@@ -957,6 +960,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             }
           } finally {
             set({ isSoundGenerating: false, soundGenTargetIndices: null, soundGenProgress: '', soundGenProgressValue: 0 }, false, 'soundscape/generateEnd');
+            if (_currentGenerationId) { removeInflightJob(_currentGenerationId); }
+            if (_currentTtsGenerationId) { removeInflightJob(_currentTtsGenerationId); }
             _abortController = null;
             _currentGenerationId = null;
             if (_soundPollInterval) {
@@ -986,10 +991,12 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           }
           if (_currentGenerationId) {
             apiService.cancelSoundGeneration(_currentGenerationId);
+            removeInflightJob(_currentGenerationId);
             _currentGenerationId = null;
           }
           if (_currentTtsGenerationId) {
             apiService.cancelTTSGeneration(_currentTtsGenerationId);
+            removeInflightJob(_currentTtsGenerationId);
             _currentTtsGenerationId = null;
           }
           set(

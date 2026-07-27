@@ -15,7 +15,7 @@
 
 import { create } from 'zustand';
 import { temporal } from 'zundo';
-import { devtools } from 'zustand/middleware';
+import { devtools, persist, createJSONStorage } from 'zustand/middleware';
 import type { SoundState, SoundGenerationConfig } from '@/types';
 import type { IterationLink } from '@/types/audio';
 import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
@@ -158,8 +158,9 @@ export const audioControlsPartialize = (state: AudioControlsStoreState) => ({
 let _pendingBakeId = 0;
 
 export const useAudioControlsStore = create<AudioControlsStoreState>()(
-  temporal(
-    devtools(
+  persist(
+    temporal(
+      devtools(
       (set, get) => ({
         // ── Initial state ──
         individualSoundStates: {},
@@ -1384,4 +1385,24 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         JSON.stringify(past.soundTimestamps) === JSON.stringify(current.soundTimestamps),
     },
   ),
+  {
+    name: 'compas-audio-controls',
+    storage: createJSONStorage(() => localStorage),
+    skipHydration: true,
+    partialize: (state: AudioControlsStoreState) => {
+      const { individualSoundStates, previewingSoundId, _generatedSounds, _soundConfigs,
+        soundBufferDurations, isBakingSchedule, isDeferredCycleBakePending,
+        _pendingPlayAllStagger, _generationInProgress, ...persistable } = state;
+      return {
+        ...persistable,
+        mutedSounds: [...(state.mutedSounds || [])],
+      } as any;
+    },
+    merge: (persisted: any, current: AudioControlsStoreState) => ({
+      ...current,
+      ...persisted,
+      mutedSounds: new Set<string>(persisted.mutedSounds || []),
+    }),
+  },
+),
 );

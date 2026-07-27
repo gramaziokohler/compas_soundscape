@@ -255,16 +255,53 @@ export function DAWTimeline({
     height: PANEL_MIN_HEIGHT,
   });
 
-  // Initialise position on first render (centered at bottom of viewport)
+  // Refs for saving latest pos/size on drag/resize end (avoids stale closure)
+  const panelPosRef = useRef(panelPos);
+  const panelSizeRef = useRef(panelSize);
+  useEffect(() => { panelPosRef.current = panelPos; }, [panelPos]);
+  useEffect(() => { panelSizeRef.current = panelSize; }, [panelSize]);
+
+  // Save panel state to uiStore for refresh survival
+  const savePanelState = useCallback(() => {
+    const p = panelPosRef.current;
+    const s = panelSizeRef.current;
+    if (p) {
+      console.log('[dbg:timelinePanel:save] saving:', JSON.stringify({ x: p.x, y: p.y, width: s.width, height: s.height }));
+      useUIStore.getState().setTimelinePanel({ x: p.x, y: p.y, width: s.width, height: s.height });
+    } else {
+      console.log('[dbg:timelinePanel:save] SKIPPED — panelPosRef is null');
+    }
+  }, []);
+
+  // Initialise position on first render (centered at bottom of viewport).
+  // Restore saved panel state from uiStore if available.
   const panelRef = useRef<HTMLDivElement>(null);
   const isInitialized = useRef(false);
   useEffect(() => {
     if (isInitialized.current) return;
+    const saved = useUIStore.getState().timelinePanel;
+    console.log('[dbg:timelinePanel:init] saved panel state:', saved ? JSON.stringify(saved) : 'null');
+    if (saved) {
+      // Validate saved position is on-screen
+      const onScreen = saved.x >= -saved.width + 100
+        && saved.y >= 0
+        && saved.x < window.innerWidth
+        && saved.y < window.innerHeight;
+      console.log('[dbg:timelinePanel:init] onScreen check:', { onScreen, saved, vw: window.innerWidth, vh: window.innerHeight });
+      if (onScreen) {
+        console.log('[dbg:timelinePanel:init] RESTORING saved position/size');
+        setPanelPos({ x: saved.x, y: saved.y });
+        setPanelSize({ width: saved.width, height: saved.height });
+        isInitialized.current = true;
+        return;
+      }
+      console.log('[dbg:timelinePanel:init] saved position off-screen, using default');
+    }
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     const totalDurationSec = timelineDurationMs / 1000;
     const pxPerSec = WAVESURFER_TIMELINE.PIXELS_PER_SECOND;
-    const contentBasedWidth = LABEL_WIDTH + totalDurationSec * pxPerSec + 2; // +2px for panel borders
+    const contentBasedWidth = LABEL_WIDTH + totalDurationSec * pxPerSec + 2;
     const panelWidth = Math.max(contentBasedWidth, PANEL_DEFAULT_WIDTH);
     setPanelPos({
       x: Math.max(0, vw/2 - panelWidth/2),
@@ -323,13 +360,14 @@ export function DAWTimeline({
       };
       const handleUp = () => {
         dragStartRef.current = null;
+        savePanelState();
         window.removeEventListener('pointermove', handleMove);
         window.removeEventListener('pointerup', handleUp);
       };
       window.addEventListener('pointermove', handleMove);
       window.addEventListener('pointerup', handleUp);
     },
-    [panelPos],
+    [panelPos, savePanelState],
   );
 
   /* ---- Resize handle ---- */
@@ -377,13 +415,14 @@ export function DAWTimeline({
       };
       const handleUp = () => {
         resizeStartRef.current = null;
+        savePanelState();
         window.removeEventListener('pointermove', handleMove);
         window.removeEventListener('pointerup', handleUp);
       };
       window.addEventListener('pointermove', handleMove);
       window.addEventListener('pointerup', handleUp);
     },
-    [panelSize],
+    [panelSize.width, panelSize.height, savePanelState],
   );
 
   /* ---- Zoom (Ctrl+wheel) ---- */

@@ -159,7 +159,6 @@ def run_tts_generation(
                             language=language,
                         )
                         print(
-                            f"[duration-trace][tts_worker] item[{idx}] prompt_index={prompt_index} "
                             f"copy_index={copy_index} voice={voice_name!r} "
                             f"real_duration_seconds={real_duration_seconds:.3f}",
                             file=sys.stderr, flush=True,
@@ -207,7 +206,6 @@ def run_tts_generation(
                 "voice_name": voice_name,
             }
             print(
-                f"[duration-trace][tts_worker] appending sound_data id={sound_data['id']!r} "
                 f"duration={sound_data['duration']} prompt_index={prompt_index} copy_index={copy_index}",
                 file=sys.stderr, flush=True,
             )
@@ -227,11 +225,6 @@ def run_tts_generation(
             )
             return
 
-        print(
-            "[duration-trace][tts_worker] FINAL completed_sounds durations: " +
-            ", ".join(f"{s['id']}={s.get('duration')}" for s in completed_sounds),
-            file=sys.stderr, flush=True,
-        )
         _write_progress(progress_file, 98, "Finalizing...", completed_sounds)
         _write_result(result_file, {"type": "done", "result": completed_sounds})
 

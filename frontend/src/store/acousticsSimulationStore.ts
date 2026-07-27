@@ -53,6 +53,7 @@ export const acousticsSimulationPartialize = (state: AcousticsSimulationStoreSta
     currentSimulationRunId: null,
   })),
   activeSimulationIndex: state.activeSimulationIndex,
+  expandedTabIndex: state.expandedTabIndex,
   roomScale: state.roomScale,
 });
 

@@ -94,3 +94,30 @@ cd backend && python -c "from main import app; print('OK')"
 # Frontend strict TypeScript gate
 cd frontend && pnpm build
 ```
+
+---
+
+## Debugging Discipline
+
+Applies to any unexpected-behavior bug (state sync, timing/race conditions, stale values) — not
+just persistence.
+
+1. **Instrument before you fix.** Add targeted logs at the write site, the read site, and every
+   place the value is set — *before* writing fix code. A speculative fix (delay, reorder, extra
+   gate) that isn't grounded in a log trace burns a round trip whether or not it happens to work.
+2. **Verify the actual source of truth before wiring anything to it.** Before adding persistence,
+   a sync effect, or a fix to a store field/prop/context value, grep the consuming component to
+   confirm it actually reads from that source — not a local `useState` or a different field.
+   With 24 stores plus local state coexisting, assuming the "obvious" owner is correct is the
+   most common trap in this codebase.
+3. **Fix the root cause, not the observed symptom.** A `setTimeout`/delay/reorder that makes a
+   symptom disappear means you haven't found the cause yet. When a value changes unexpectedly,
+   grep for *every* setter/caller of it — not just the one you noticed — before calling it fixed.
+4. **For timing bugs, check structure before adding timing patches.** Check Suspense boundaries,
+   effect ordering, and mount order first. A structural fix (e.g. moving code outside a Suspense
+   boundary) is more likely correct than an ad hoc delay, and often resolves several symptoms at
+   once instead of one.
+5. **Gate mount-time side effects that write shared state.** Any effect that fires on mount and
+   writes to shared/persisted state (auto-save, auto-advance, sync effects) must be gated behind
+   a ref/flag that starts `false` and flips `true` only after init/restore completes — otherwise
+   it can clobber a value just restored from storage, props, or the server.

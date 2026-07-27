@@ -1,5 +1,5 @@
 import { API_BASE_URL } from '@/utils/constants';
-import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse } from '@/types';
+import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType } from '@/types';
 import type { ImpulseResponseMetadata } from '@/types/audio';
 import type { ModalAnalysisRequest, ModalAnalysisResult } from '@/types/modal';
 import type { SpeckleProjectModelsResponse } from '@/types/speckle-models';
@@ -1302,5 +1302,51 @@ export const apiService = {
     } catch {
       // Silently fail — cancel is best-effort
     }
+  },
+
+  // ─── Job Recovery ───────────────────────────────────────────────────────
+
+  /**
+   * Generic job status polling — dispatches to the correct endpoint based on jobType.
+   * Used by useJobRecovery to resume polling for in-flight jobs after a page refresh.
+   *
+   * Returns a JobStatus envelope. The `result` field shape varies by job type;
+   * callers handle it based on jobType.
+   */
+  async getJobStatus(jobType: JobType, jobId: string): Promise<{
+    completed: boolean;
+    cancelled: boolean;
+    error: string | null;
+    progress: number;
+    status: string;
+    result?: any;
+    partial_sounds?: any[];
+  }> {
+    const endpointMap: Record<JobType, string> = {
+      sound: `${API_BASE_URL}/api/sound-generation-status/${jobId}`,
+      tts: `${API_BASE_URL}/api/tts-generation-status/${jobId}`,
+      llm: `${API_BASE_URL}/api/text-generation-status/${jobId}`,
+      sed: `${API_BASE_URL}/api/sed-analysis-status/${jobId}`,
+      choras: `${API_BASE_URL}/api/choras/simulation-status/${jobId}`,
+      pyroom: `${API_BASE_URL}/api/pyroomacoustics/simulation-status/${jobId}`,
+      model_analysis: `${API_BASE_URL}/api/analyze-3dmodel-status/${jobId}`,
+    };
+
+    const url = endpointMap[jobType];
+    if (!url) {
+      throw new Error(`Unknown job type: ${jobType}`);
+    }
+
+    const response = await fetchWithErrorHandling(
+      url,
+      undefined,
+      `Get job status for ${jobType}/${jobId}`,
+    );
+
+    if (!response.ok) {
+      return { completed: false, cancelled: false, error: 'Job not found or expired', progress: 0, status: 'unknown' };
+    }
+
+    return response.json();
   },
 };

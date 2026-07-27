@@ -1,0 +1,172 @@
+---
+description: Refresh-survival architecture — save/load, Zustand persist, URL bootstrap, job recovery, camera POV
+globs: frontend/src/utils/soundscape-serializer.ts,frontend/src/app/page.tsx,frontend/src/store/uiStore.ts,frontend/src/store/cardFlowStore.ts,frontend/src/store/audioControlsStore.ts,frontend/src/store/rightSidebarStore.ts,frontend/src/hooks/useJobRecovery.ts,frontend/src/lib/job-tracker.ts,frontend/src/components/layout/Sidebar.tsx,backend/routers/soundscape.py,backend/models/schemas.py
+---
+
+# Refresh-Survival Architecture
+
+See AGENTS.md Hard Rule 6 for the three-layer overview (domain state / UI state / in-flight jobs).
+This file covers the backend persistence map, the failure modes behind each layer, and the code
+patterns to implement them correctly.
+
+## Backend Persistence Map
+
+```
+data/soundscapes/<session_id>/     ← SURVIVES RESTART (not in temp/)
+  audio/                           ← session-level audio copies
+  <model_id>/
+    soundscape.json                ← PRIMARY source of truth
+    ir_files/                      ← copied IR WAVs
+    analysis/                      ← analysis JSONs
+
+temp/                               ← DESTROYED on backend startup
+  static/sounds/generated/<sid>/
+  static/impulse_responses/
+  static/pyroomacoustics_rir/
+  simulations/
+```
+
+Save copies audio/IR/analysis from `temp/` → `data/soundscapes/`. Load restores them back to `temp/`
+so the running session can use them. `SoundscapeData` schema holds `project_id`, `version_id`, and
+`auth_token` so the frontend can reconstruct the Speckle viewer on URL bootstrap.
+
+## Critical Pitfalls
+
+### 1. `useSearchParams` is unreliable on cold page refresh
+Next.js SSR/hydration can return empty params on the first render. Use `window.location.search`
+directly inside a `useEffect` on mount, never `useSearchParams()` for bootstrap.
+
+### 2. `beforeunload` + Zustand `persist` write does not survive
+React 18 automatic batch-updates delay the persist subscriber. On `beforeunload`, the store updates
+but the persist write to localStorage may not complete before the page dies.
+**Camera state must write directly to `localStorage.setItem('compas-camera-state', ...)`**
+in addition to the store update, bypassing the persist middleware.
+
+### 3. `useState` initializer runs before `persist.rehydrate()`
+`useState(() => getState().foo)` captures the DEFAULT value because rehydration happens later in
+a `useEffect`. Always sync persisted values via `useEffect(() => setFoo(getState().foo), [])`
+AFTER mount, not via the useState initializer.
+
+### 4. Model-bound UI toggles must be excluded from persist `partialize`
+`showBoundingBox`, `expandedSoundCardIndex` (sound cards that don't exist in a different model),
+and any flag that only makes sense in the context of the CURRENT model must be excluded
+from the persist `partialize` function. Otherwise they bleed across model sessions after refresh.
+
+### 5. Cleanup on mount must be guarded during bootstrap
+The mount-time cleanup effect deletes IRs and generated sounds from `temp/`. When a soundscape is
+being restored from URL (bootstrap), the load endpoint just copied those files to `temp/`.
+If cleanup runs after load, the restored files are deleted.
+**Guard:** check `bootstrappedRef.current` or `hasInflightJobs` before running cleanup.
+
+### 6. `project_id` / `version_id` / `auth_token` must be in the save payload
+Without them, the frontend cannot reconstruct `SpeckleData` on URL bootstrap. Extract `project_id`
+from `globalSpeckleData.url` via regex `/\/projects\/([^/]+)\/models\/.../` and patch the payload
+after `buildSoundscapeSavePayload()` returns.
+
+### 7. `<Suspense>` defers `rehydrate()` — it runs AFTER child mount effects
+`page.tsx` wraps `HomeContent` in `<Suspense fallback={null}>`. React defers effects inside
+Suspense boundaries, so child mount effects (Sidebar, ObjectExplorerPanel, DAWTimeline) ran
+BEFORE the `persist.rehydrate()` inside `HomeContent`. All children read default store values.
+**Fix**: move `rehydrate()` to the top-level `Home()` component, OUTSIDE `<Suspense>`.
+This applies to any `<Suspense>` wrapper around a component that calls `rehydrate()`.
+
+### 8. Store sync effects overwrite persisted values on mount
+When a `useEffect` syncs a store field to another persisted store on every change, the
+initial mount value (e.g. `null`, `'default'`) overwrites the previously saved non-default
+value before the restore effect can read it. **Use one of**:
+- Skip syncing `null` / default values: `if (value === null) return;`
+- Gate the sync behind a ref that is only enabled AFTER the restore completes:
+  `if (!saveEnabledRef.current) return;`
+- Save directly to a separate localStorage key (camera / viewMode pattern) instead of
+  syncing through a Zustand persist store.
+
+### 9. Components may use LOCAL state, not the store field
+Before persisting a value, verify whether the component uses the **store field** or a
+**local `useState`**. Example: `AcousticsSection` manages `expandedCardIndex` as local
+`useState`, NOT `acousticsSimulationStore.expandedTabIndex`. A sync effect watching the
+store never fires because the component uses its own copy. **Fix**: wire the local state
+to the persisted store in the component's change handler and mount effect.
+
+### 10. Component auto-advance effects fire on async data load
+Components like `ContextSection` have effects that auto-advance when data arrays grow
+(e.g. `if (contextConfigs.length > prevContextLength.current)`). During bootstrap,
+analysis configs load asynchronously AFTER mount — the effect sees "new cards" and
+advances the wizard step away from the persisted value. **Fix**: wrap advancing
+callbacks (`advanceToUsage`, `handleContextSendToSounds`) with an `isInitializingRef`
+guard that blocks them for ~1s after mount.
+
+### 11. Homepage vs project page panel states
+On the homepage (no `?model_id=` URL param, no `globalSpeckleData`), panels must be
+forced collapsed. On a project page, persisted panel states are restored. To avoid
+the homepage overwriting project-session values in localStorage, force the store
+values in `Home()` (outside Suspense) AFTER rehydrate — the persist middleware will
+write them, but the next project load also runs through `Home()` which does NOT
+force-collapse when `urlModelId` is present, so the project-session values from the
+last manual user interaction are restored from localStorage.
+
+## Zustand Persist Pattern (Skip Hydration)
+
+```typescript
+import { persist, createJSONStorage } from 'zustand/middleware'
+
+create<State>()(
+  persist(
+    devtools((set) => ({ ... })),
+    {
+      name: 'compas-<domain>-state',
+      storage: createJSONStorage(() => localStorage),
+      skipHydration: true,
+      partialize: (state) => {
+        // Destructure fields that must NOT persist:
+        const { modelBoundField, transientAsyncFlag, ...persistable } = state;
+        return persistable;
+      },
+    },
+  ),
+)
+
+// In page.tsx useEffect:
+(useStore as any).persist?.rehydrate?.();
+```
+
+## Map / Set Serialization
+
+`JSON.stringify` cannot serialize `Map` or `Set`. Provide a custom `PersistStorage` wrapper:
+
+```typescript
+const storage: PersistStorage<State> = {
+  getItem: (name) => {
+    const parsed = JSON.parse(localStorage.getItem(name));
+    return { ...parsed, state: { ...parsed.state, mySet: new Set(parsed.state.mySet) } };
+  },
+  setItem: (name, value) => {
+    const serialized = { ...value, state: { ...value.state, mySet: [...value.state.mySet] } };
+    localStorage.setItem(name, JSON.stringify(serialized));
+  },
+  removeItem: (name) => localStorage.removeItem(name),
+};
+```
+
+## Stores with `persist` Middleware
+
+| Store | Key | Notes |
+|-------|-----|-------|
+| `uiStore` | `compas-ui-state` | Partialize excludes model-bound fields. Also persists: `isLeftSidebarExpanded`, `sidebarWizardStep`, `showTimeline`, `showObjectExplorer`, `expandedSimulationTabIndex`, `objectExplorerPanel`, `timelinePanel`, `expandedSoundCardIndex`. |
+| `cardFlowStore` | `compas-cardflow-state` | Custom storage for Map/Set. Also persists: `activeContextOriginalIndex`, `activeUsageOriginalIndex`. |
+| `audioControlsStore` | `compas-audio-controls` | Converts `mutedSounds` Set ↔ array |
+| `rightSidebarStore` | `compas-right-sidebar` | Only persists `isExpanded` |
+
+## Direct localStorage Keys (bypass persist middleware)
+
+| Key | Format | Purpose |
+|-----|--------|---------|
+| `compas-camera-state` | `{ pos, target, up, orbitTarget }` | Camera POV survival |
+| `compas-view-mode` | `'default' \| 'acoustic' \| 'dark'` | View mode survival |
+
+## SessionStorage Job Recovery
+
+- `lib/job-tracker.ts`: `recordInflightJob(id, type)`, `removeInflightJob(id)`, `getStoredJobs()`
+- `hooks/useJobRecovery.ts`: Reads stored job IDs on mount, polls backend status,
+  processes completed results or resumes polling for in-progress jobs
+- Job recording is wired in `soundscapeStore.ts` and `textGenerationStore.ts` where
+  module-level `_currentGenerationId` / `_currentTtsGenerationId` are set

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo, Suspense } from "react";
+import { useRouter } from "next/navigation";
 import { SpeckleScene } from "@/components/scene/SpeckleScene";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { RightSidebar } from "@/components/layout/RightSidebar";
@@ -18,6 +19,7 @@ import {
   useModalImpactStore,
   useAcousticsSimulationStore,
   usePyroomAcousticsStore,
+  useChorasStore,
   useSEDStore,
   useRoomMaterialsStore,
   useRightSidebarStore,
@@ -26,10 +28,12 @@ import {
   useErrorsStore,
   useCardFlowStore,
 } from "@/store";
+import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
 import * as THREE from "three";
 import { useAudioNormalization } from "@/hooks/useAudioNormalization";
 import { useAudioOrchestrator } from "@/hooks/useAudioOrchestrator";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
+import { useJobRecovery } from "@/hooks/useJobRecovery";
 import { apiService } from "@/services/api";
 import { API_BASE_URL, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION } from "@/utils/constants";
 import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
@@ -38,6 +42,7 @@ import type { AudioAnalysisConfig } from "@/types/analysis";
 import type { SelectedGeometry, AcousticMaterial } from "@/types/materials";
 import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSelector";
 import { buildSoundscapeSavePayload, restoreSoundscapeState, getBlobUrlSounds, buildAnalysisStateSave, restoreAnalysisState } from "@/utils/soundscape-serializer";
+import { recordInflightJob } from "@/lib/job-tracker";
 
 /**
  * Build a map from applicationId (Rhino GUID) → current Speckle tree ID.
@@ -62,6 +67,186 @@ function buildAppIdMap(node: any, map: Map<string, string> = new Map()): Map<str
 
 function HomeContent() {
   useUndoRedo();
+
+  // ── Refresh survival ─────────────────────────────────────────────────────
+  // Use window.location.search directly (not useSearchParams) because
+  // useSearchParams can return empty values during SSR/hydration in Next.js,
+  // causing the bootstrap to never fire on a cold page refresh.
+  const router = useRouter();
+  const bootstrappedRef = useRef(false);
+
+  // 2. Job recovery — resume in-flight jobs that survived a page refresh
+  const { hasInflightJobs } = useJobRecovery();
+
+  useEffect(() => {
+    if (bootstrappedRef.current) return;
+    // Only read the URL on the client — window is not available during SSR
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const urlModelId = params.get('model_id');
+    if (!urlModelId) return;
+
+    const gsd = useUIStore.getState().globalSpeckleData;
+    if (gsd !== null) return; // model already loaded via normal flow
+    bootstrappedRef.current = true;
+
+    console.log('[page:bootstrap] Loading soundscape for model_id from URL:', urlModelId);
+    apiService.loadSoundscapeFromSpeckle(urlModelId).then(loadResponse => {
+      if (!loadResponse.found || !loadResponse.soundscape_data) {
+        console.log('[page:bootstrap] No saved soundscape found for', urlModelId);
+        return;
+      }
+
+      const data = loadResponse.soundscape_data;
+      const audioBaseUrl = `${API_BASE_URL}${loadResponse.audio_base_url}`;
+      const irBaseUrl = loadResponse.ir_base_url || undefined;
+
+      // Reconstruct SpeckleData from the saved fields so the viewer can load geometry
+      if (data.project_id) {
+        const speckleData = {
+          model_id: data.model_id,
+          version_id: data.version_id || '',
+          file_id: '',
+          url: `https://app.speckle.systems/projects/${data.project_id}/models/${data.model_id}`,
+          object_id: '',
+          display_name: data.model_name || data.model_id,
+          auth_token: data.auth_token || undefined,
+        };
+        useUIStore.getState().setGlobalSpeckleData(speckleData);
+        useUIStore.getState().setSpeckleModelUrl(speckleData.url);
+        if (speckleData.display_name) {
+          setModelFileName(speckleData.display_name);
+        }
+      }
+
+      // Mirror handleSpeckleModelSelect restore flow
+      const restored = restoreSoundscapeState(data, audioBaseUrl, irBaseUrl);
+      if (restored.soundEvents.length > 0) {
+        suppressOrchestrateBakeRef.current = true;
+      }
+      soundGen.restoreSoundscape(restored.soundConfigs, restored.soundEvents, {
+        negativePrompt: restored.globalSettings.negativePrompt,
+        audioModel: restored.globalSettings.audioModel,
+      });
+      useAudioControlsStore.getState().restoreVolumeAndIntervals(restored.soundVolumes, restored.soundIntervals);
+      useAudioControlsStore.getState().restoreSchedulingModes(restored.soundSchedulingModes, restored.soundTimestamps);
+
+      let maxEndSec = 0;
+      for (const timestamps of Object.values(restored.soundTimestamps)) {
+        for (const ts of timestamps) maxEndSec = Math.max(maxEndSec, ts + 10);
+      }
+      if (maxEndSec > 0) {
+        const audioDurMs = Math.ceil((maxEndSec + 10) / 30) * 30 * 1000;
+        const currentDurMs = useAudioControlsStore.getState().timelineDurationMs;
+        if (audioDurMs > currentDurMs) {
+          useAudioControlsStore.getState().setTimelineDurationMs(audioDurMs);
+        }
+      }
+
+      useAudioControlsStore.getState().restoreIterationLinks(restored.iterationLinks);
+      useAudioControlsStore.getState().restoreMuteSolo(restored.mutedSounds, restored.soloedSound);
+
+      if (restored.receivers.length > 0) {
+        receivers.restoreReceivers(restored.receivers, restored.selectedReceiverId);
+      }
+      if (restored.simulationConfigs.length > 0) {
+        restored.simulationConfigs.forEach(config => {
+          if (config.type === 'pyroomacoustics' && config.simulationInstanceId) {
+            usePyroomAcousticsStore.getState().seedInstance(config.simulationInstanceId, {});
+          }
+          if (config.type === 'choras' && config.simulationInstanceId) {
+            useChorasStore.getState().seedInstance(config.simulationInstanceId, {});
+          }
+        });
+        acousticsSimulation.restoreSimulationState(
+          restored.simulationConfigs,
+          restored.activeSimulationIndex,
+        );
+      }
+      if (data.analysis_state) {
+        const analysisRestored = restoreAnalysisState(data.analysis_state);
+        analysis.restoreAnalysisState({
+          analysisConfigs: analysisRestored.analysisConfigs,
+          analysisResults: analysisRestored.analysisResults,
+          activeTab: analysisRestored.activeTab,
+        });
+        if (analysisRestored.pendingSoundConfigs.length > 0) {
+          textGen.setPendingSoundConfigs(analysisRestored.pendingSoundConfigs);
+        }
+        if (analysisRestored.soundConfigParentIndices.size > 0) {
+          const storeState = useSoundscapeStore.getState();
+          const configs = storeState.soundConfigs.map((c: any, i: number) => {
+            const parent = analysisRestored.soundConfigParentIndices.get(i);
+            return parent !== undefined ? { ...c, parentUsageOriginalIndex: parent } : c;
+          });
+          useSoundscapeStore.setState({ soundConfigs: configs });
+        }
+        if (analysisRestored.cardFlowState) {
+          const cf = analysisRestored.cardFlowState;
+          useCardFlowStore.setState({
+            contextAdvanced: new Set(cf.contextAdvanced),
+            usageAdvanced: new Set(cf.usageAdvanced),
+            contextToUsageMap: new Map(Object.entries(cf.contextToUsage).map(([k, v]) => [Number(k), v])),
+            usageToSoundMap: new Map(Object.entries(cf.usageToSound).map(([k, v]) => [Number(k), v])),
+          });
+          if (cf.usageAdvanced.length > 0) {
+            useUIStore.getState().setActiveSoundParentIndex(cf.usageAdvanced[0]);
+          }
+        }
+      }
+      if (restored.resonanceAudioConfig) {
+        const rcfg = restored.resonanceAudioConfig;
+        useRoomMaterialsStore.setState({
+          roomDimensions: rcfg.roomDimensions,
+          roomMaterials: rcfg.roomMaterials,
+        });
+      }
+      console.log('[page:bootstrap] Soundscape restored from URL param');
+    }).catch(err => {
+      console.error('[page:bootstrap] Failed to load soundscape:', err);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 4. Autosave — debounced save on domain state mutations
+  // Uses a ref for the save handler so it can be called before it's defined
+  const saveSoundscapeRef = useRef<(() => Promise<void>) | null>(null);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autosaveEnabledRef = useRef(true);
+  const lastSaveSourceRef = useRef<string>('manual');
+  useEffect(() => {
+    const unsubUI = useUIStore.subscribe((_state, _prev) => {
+      autosaveEnabledRef.current = _state.enableAutoSave;
+    });
+    const scheduleAutosave = (source?: string) => {
+      // Read live store state instead of the render closure — this effect only
+      // runs once at mount (deps=[]), so a captured `globalSpeckleData` variable
+      // would be frozen at its mount-time value (null on a cold refresh) forever.
+      const liveModelId = useUIStore.getState().globalSpeckleData?.model_id ?? null;
+      if (!autosaveEnabledRef.current) return;
+      if (!liveModelId) return;
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = setTimeout(() => {
+        lastSaveSourceRef.current = 'autosave';
+        saveSoundscapeRef.current?.();
+      }, 3000);
+    };
+    const unsubSoundscape = useSoundscapeStore.subscribe(() => scheduleAutosave('soundscapeStore'));
+    const unsubAudio = useAudioControlsStore.subscribe(() => scheduleAutosave('audioControlsStore'));
+    const unsubReceivers = useReceiversStore.subscribe(() => scheduleAutosave('receiversStore'));
+    const unsubSim = useAcousticsSimulationStore.subscribe(() => scheduleAutosave('acousticsSimulationStore'));
+    const unsubAnalysis = useAnalysisStore.subscribe(() => scheduleAutosave('analysisStore'));
+    return () => {
+      unsubUI();
+      unsubSoundscape();
+      unsubAudio();
+      unsubReceivers();
+      unsubSim();
+      unsubAnalysis();
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fileUpload = useFileUploadStore();
   const handleApiError = useApiErrorHandler();
@@ -290,11 +475,158 @@ function HomeContent() {
     } | undefined) ?? null;
   }, [acousticsSimulation.activeSimulationIndex, acousticsSimulation.simulationConfigs]);
 
+  // Shared camera save helper — called by both autosave and beforeunload.
+  // Writes directly to localStorage because Zustand's persist middleware
+  // subscriber may not fire in time during page unload (React 18 batching).
+  const CAMERA_STORAGE_KEY = 'compas-camera-state';
+  const saveCameraToStore = useCallback(() => {
+    const engine = useSpeckleEngineStore.getState();
+    const viewer = engine.viewer;
+    if (!viewer) {
+      console.log('[page:camera:save] Skipped — no viewer');
+      return;
+    }
+    try {
+      const cam = viewer.getRenderer().renderingCamera as THREE.PerspectiveCamera;
+      if (!cam || !(cam as any).isPerspectiveCamera) {
+        console.log('[page:camera:save] Skipped — camera not available or not PerspectiveCamera', !!cam, (cam as any)?.isPerspectiveCamera);
+        return;
+      }
+      const pos: [number, number, number] = [cam.position.x, cam.position.y, cam.position.z];
+      const dir = new THREE.Vector3();
+      cam.getWorldDirection(dir);
+      const target: [number, number, number] = [
+        cam.position.x + dir.x * 10,
+        cam.position.y + dir.y * 10,
+        cam.position.z + dir.z * 10,
+      ];
+      const up: [number, number, number] = [cam.up.x, cam.up.y, cam.up.z];
+
+      // Capture orbit target from CameraController so restore preserves orbit center
+      let orbitTarget: [number, number, number] | null = null;
+      const cc = engine.cameraController;
+      if (cc) {
+        const t = (cc as any).controls?.target;
+        if (t) orbitTarget = [t.x, t.y, t.z];
+      }
+
+      // Write to Zustand + directly to localStorage for reliability
+      useUIStore.getState().setCameraState(pos, target);
+      try {
+        localStorage.setItem(CAMERA_STORAGE_KEY, JSON.stringify({ pos, target, up, orbitTarget }));
+      } catch (e) {
+        // localStorage may be full or unavailable
+      }
+      console.log('[page:camera:save] Saved camera pos:', pos.map(v => v.toFixed(1)), 'target:', target.map(v => v.toFixed(1)));
+    } catch (e) {
+      console.warn('[page:camera:save] Error:', e);
+    }
+  }, []);
+
+  // Periodically save camera state (every 5s) so it's always recent even
+  // if no autosave or beforeunload fires.
+  useEffect(() => {
+    const interval = setInterval(saveCameraToStore, 5000);
+    return () => clearInterval(interval);
+  }, [saveCameraToStore]);
+
+  // Save camera POV on beforeunload so it survives a page refresh
+  useEffect(() => {
+    window.addEventListener('beforeunload', saveCameraToStore);
+    return () => window.removeEventListener('beforeunload', saveCameraToStore);
+  }, [saveCameraToStore]);
+
   // Callback when Speckle viewer is loaded
   const handleSpeckleViewerLoaded = useCallback((viewer: import('@speckle/viewer').Viewer) => {
-    console.log('Speckle viewer loaded:', viewer);
+    console.log('[page:camera:restore] Viewer loaded');
+    // Try Zustand store first (may have been rehydrated), then fall back to direct localStorage
+    let savedPos = useUIStore.getState().cameraPosition;
+    let savedTarget = useUIStore.getState().cameraTarget;
+    let savedUp: [number, number, number] | undefined;
+    let savedOrbitTarget: [number, number, number] | undefined;
+    if (!savedPos || !savedTarget) {
+      try {
+        const raw = localStorage.getItem('compas-camera-state');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          savedPos = parsed.pos;
+          savedTarget = parsed.target;
+          savedUp = parsed.up;
+          savedOrbitTarget = parsed.orbitTarget;
+          if (savedPos && savedTarget) {
+            useUIStore.getState().setCameraState(savedPos, savedTarget);
+            console.log('[page:camera:restore] Read camera from direct localStorage');
+          }
+        }
+      } catch (e) { /* ignore */ }
+    }
+    console.log('[page:camera:restore] Final state:', {
+      hasPosition: !!savedPos,
+      position: savedPos,
+      hasTarget: !!savedTarget,
+      target: savedTarget,
+    });
+    if (savedPos && savedTarget) {
+      setTimeout(() => {
+        try {
+          const cam = viewer.getRenderer().renderingCamera;
+          if (!cam) {
+            console.warn('[page:camera:restore] renderingCamera is null');
+            return;
+          }
+          if (!(cam as any).isPerspectiveCamera) {
+            console.warn('[page:camera:restore] Camera is not PerspectiveCamera, type:', (cam as any).type);
+            return;
+          }
+
+          // Use fromPositionAndTarget to sync both the Three.js camera and the
+          // Speckle CameraController's internal orbit controls state. Using
+          // controls.fromPositionAndTarget() instead of manual cam.position.set() +
+          // cam.lookAt() fixes two bugs:
+          //   1. Roll: cam.lookAt() uses camera.up = (0,1,0) (Three.js Y-up default)
+          //      but Speckle models are Z-up (0,0,1). fromPositionAndTarget respects
+          //      the controls' internal up which is Z-up.
+          //   2. Click-reset: manual camera changes don't sync the CameraController's
+          //      internal spherical coordinates. On first click, the controller
+          //      recalculates from stale state and snaps back to the bounding-box fit.
+          const cc = useSpeckleEngineStore.getState().cameraController;
+          const ccControls = (cc as any)?.controls;
+          if (ccControls?.fromPositionAndTarget) {
+            const ot = savedOrbitTarget || savedTarget;
+            ccControls.fromPositionAndTarget(
+              new THREE.Vector3(savedPos[0], savedPos[1], savedPos[2]),
+              new THREE.Vector3(ot[0], ot[1], ot[2])
+            );
+            // Ensure camera.up is restored for edge cases where the controls' up
+            // doesn't match the saved orientation
+            if (savedUp) {
+              cam.up.set(savedUp[0], savedUp[1], savedUp[2]);
+            }
+          } else {
+            // Fallback: direct camera manipulation (backward compat)
+            if (savedUp) {
+              cam.up.set(savedUp[0], savedUp[1], savedUp[2]);
+            }
+            cam.position.set(savedPos[0], savedPos[1], savedPos[2]);
+            const dx = savedTarget[0] - savedPos[0];
+            const dy = savedTarget[1] - savedPos[1];
+            const dz = savedTarget[2] - savedPos[2];
+            if (Math.sqrt(dx * dx + dy * dy + dz * dz) > 0.001) {
+              (cam as any).lookAt(savedTarget[0], savedTarget[1], savedTarget[2]);
+            }
+          }
+
+          viewer.requestRender(8);
+          console.log('[page:camera:restore] Applied camera — pos:', savedPos.map((v: number) => v.toFixed(1)), 'target:', savedTarget.map((v: number) => v.toFixed(1)));
+        } catch (e) {
+          console.warn('[page:camera:restore] Error:', e);
+        }
+      }, 800);
+    } else {
+      console.log('[page:camera:restore] No saved camera state — skipping');
+    }
   }, []);
-  
+   
   // Sync audioRenderingMode with orchestrator only when IR state changes
   useEffect(() => {
     if (!audioOrchestrator.status) return;
@@ -1063,6 +1395,7 @@ function HomeContent() {
         console.log('[page.tsx] Model uploaded to Speckle:', speckleData.url);
         setGlobalSpeckleData(speckleData);
         setSpeckleModelUrl(speckleData.url);
+        router.replace(`/?model_id=${encodeURIComponent(speckleData.model_id)}`, { scroll: false });
       } else {
         console.warn('[page.tsx] No Speckle data in upload response');
       }
@@ -1091,6 +1424,9 @@ function HomeContent() {
     if (speckleData.display_name) {
       setModelFileName(speckleData.display_name);
     }
+
+    // Persist model_id in URL so a page refresh can restore this session
+    router.replace(`/?model_id=${encodeURIComponent(speckleData.model_id)}`, { scroll: false });
 
     // Auto-load saved soundscape for this model
     try {
@@ -1312,6 +1648,10 @@ function HomeContent() {
 
   // Save current soundscape state to Speckle + local storage
   const handleSaveSoundscape = useCallback(async () => {
+    const saveSource = lastSaveSourceRef.current;
+    lastSaveSourceRef.current = 'manual';
+    // Save camera POV alongside every soundscape save
+    saveCameraToStore();
     if (!globalSpeckleData?.model_id) return;
     if (isSavingSoundscape) return;
 
@@ -1410,6 +1750,19 @@ function HomeContent() {
       // Embed analysis state in the soundscape data
       payload.soundscape_data.analysis_state = analysisStateData.analysis_state;
 
+      // Persist project_id and version_id so the URL bootstrap can reconstruct the viewer
+      if (globalSpeckleData?.url) {
+        const urlMatch = globalSpeckleData.url.match(/\/projects\/([^/]+)\/models\/([^/@]+)(?:@([^/?]+))?/);
+        if (urlMatch) {
+          payload.soundscape_data.project_id = urlMatch[1] || '';
+          payload.soundscape_data.version_id = globalSpeckleData.version_id || urlMatch[3] || '';
+        }
+      }
+      // Persist auth_token for non-public Speckle streams
+      if (globalSpeckleData?.auth_token) {
+        payload.soundscape_data.auth_token = globalSpeckleData.auth_token;
+      }
+
       // Attach analysis/scenario IDs for backend file persistence
       payload.analysis_ids = analysisStateData.analysis_ids.length > 0 ? analysisStateData.analysis_ids : undefined;
       payload.scenario_ids = analysisStateData.scenario_ids.length > 0 ? analysisStateData.scenario_ids : undefined;
@@ -1443,6 +1796,9 @@ function HomeContent() {
     textGen.pendingSoundConfigs,
     resonanceAudioConfig,
   ]);
+
+  // Keep the autosave ref in sync with the latest save handler
+  saveSoundscapeRef.current = handleSaveSoundscape;
 
   // Wrapped file change handler to clear SED results and load audio info
   const handleFileChangeWithSEDClear = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2407,8 +2763,18 @@ function HomeContent() {
     audioOrchestrator.setReceiverMode(isReceiverModeActive, undefined, hasReceivers);
   }, [receivers.receivers.length, audioOrchestrator.isInitialized]);
 
-  // Cleanup on unmount
+  // Cleanup on unmount — skip destructive cleanup when recovering in-flight jobs
+  // or when restoring a saved soundscape (bootstrap). The load endpoint already
+  // restores IR/audio files to temp, and cleanup would delete them.
   useEffect(() => {
+    if (hasInflightJobs) {
+      console.log('[page:cleanup] Skipping cleanup — in-flight jobs being recovered');
+      return;
+    }
+    if (bootstrappedRef.current) {
+      console.log('[page:cleanup] Skipping cleanup — soundscape restored from URL');
+      return;
+    }
     apiService.cleanupGeneratedSounds();
     // Also cleanup impulse responses on page load/refresh
     fetch(`${API_BASE_URL}/api/impulse-responses`).then(async (response) => {
@@ -2823,10 +3189,35 @@ function HomeContent() {
 }
 
 export default function Home() {
+  // Zustand persist rehydration — must run OUTSIDE Suspense so it fires
+  // BEFORE child mount effects (Sidebar, Timeline, Explorer on mount read
+  // the store and expect rehydration to have completed).
+  useEffect(() => {
+    console.log('[dbg:rehydrate] Starting Zustand persist rehydration (Home, outside Suspense)');
+    console.log('[dbg:rehydrate] uiStore.persist:', !!(useUIStore as any).persist, 'rehydrate:', typeof (useUIStore as any).persist?.rehydrate);
+    (useUIStore as any).persist?.rehydrate?.();
+    (useCardFlowStore as any).persist?.rehydrate?.();
+    (useAudioControlsStore as any).persist?.rehydrate?.();
+    (useRightSidebarStore as any).persist?.rehydrate?.();
+    console.log('[dbg:rehydrate] AFTER — ui.isLeftSidebarExpanded:', useUIStore.getState().isLeftSidebarExpanded, 'ui.showTimeline:', useUIStore.getState().showTimeline, 'ui.viewMode:', (useUIStore.getState() as any).viewMode, 'ui.objectExplorerPanel:', useUIStore.getState().objectExplorerPanel, 'ui.timelinePanel:', useUIStore.getState().timelinePanel, 'ui.expandedSimulationTabIndex:', useUIStore.getState().expandedSimulationTabIndex);
+
+    // On homepage (no model_id URL), force panels collapsed/hidden.
+    const urlModelId = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('model_id') : null;
+    if (!urlModelId) {
+      console.log('[dbg:rehydrate] HOMEPAGE — forcing panels collapsed');
+      useUIStore.getState().setIsLeftSidebarExpanded(false);
+      useUIStore.getState().setShowTimeline(false);
+      useUIStore.getState().setShowObjectExplorer(false);
+      useRightSidebarStore.getState().requestCollapse();
+    }
+  }, []);
+
   return (
     <>
       <ErrorToast />
-      <HomeContent />
+      <Suspense fallback={null}>
+        <HomeContent />
+      </Suspense>
     </>
   );
 }

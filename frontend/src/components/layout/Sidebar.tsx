@@ -35,13 +35,82 @@ export function Sidebar(props: SidebarProps) {
   const [isHandleHovered, setIsHandleHovered] = useState(false);
   const [contextExpandedOriginalIndex, setContextExpandedOriginalIndex] = useState<number | null>(null);
   const [usageExpandedOriginalIndex, setUsageExpandedOriginalIndex] = useState<number | null>(null);
-  // Whether we navigated Context→Sounds directly (audio), bypassing the Usage step
   const [bypassedUsage, setBypassedUsage] = useState(false);
-  // Active parent indices — used to filter child cards in each section
   const [activeContextOriginalIndex, setActiveContextOriginalIndex] = useState<number | null>(null);
   const [activeUsageOriginalIndex, setActiveUsageOriginalIndex] = useState<number | null>(null);
 
   const cardFlowStore = useCardFlowStore();
+
+  // Guard ref that prevents advanceToUsage/advanceToSounds from firing
+  // during initial load. ContextSection auto-advances when analysis configs
+  // load asynchronously after mount, which would clobber the persisted step.
+  const isInitializingRef = useRef(true);
+
+  // Trace currentStep changes for debugging refresh state
+  useEffect(() => {
+    console.log('[dbg:sidebar:currentStep] changed to:', currentStep, '  (stack:', new Error().stack?.split('\n')[2]?.trim(), ')');
+  }, [currentStep]);
+
+  // After persist rehydration, pull the saved sidebar state from stores.
+  // Falls back to direct localStorage read in case Zustand rehydrate hasn't completed yet.
+  useEffect(() => {
+    isInitializingRef.current = true;
+
+    // Check if a project is loaded — on homepage, force everything collapsed
+    const urlModelId = new URLSearchParams(window.location.search).get('model_id');
+    const hasProject = !!useUIStore.getState().globalSpeckleData || !!urlModelId;
+    console.log('[dbg:sidebar:mount] hasProject:', hasProject);
+
+    let sidebarExpanded: boolean | null = null;
+    // Try direct localStorage first (most reliable, bypasses rehydrate timing)
+    try {
+      const raw = localStorage.getItem('compas-ui-state');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed?.state?.isLeftSidebarExpanded === 'boolean') {
+          sidebarExpanded = parsed.state.isLeftSidebarExpanded;
+        }
+      }
+    } catch {}
+    if (sidebarExpanded === null) {
+      sidebarExpanded = useUIStore.getState().isLeftSidebarExpanded;
+    }
+    // On homepage, force sidebar collapsed regardless of persisted state
+    if (!hasProject) {
+      sidebarExpanded = false;
+    }
+    setIsExpanded(sidebarExpanded);
+    console.log('[dbg:sidebar:mount] sidebarExpanded:', sidebarExpanded);
+
+    const savedStep = useUIStore.getState().sidebarWizardStep;
+    setCurrentStep(savedStep);
+    const ctxIdx = useCardFlowStore.getState().activeContextOriginalIndex;
+    setActiveContextOriginalIndex(ctxIdx);
+    const usgIdx = useCardFlowStore.getState().activeUsageOriginalIndex;
+    setActiveUsageOriginalIndex(usgIdx);
+    console.log('[dbg:sidebar:mount] step:', savedStep, 'ctxIdx:', ctxIdx, 'usgIdx:', usgIdx);
+    if (savedStep === 0 && ctxIdx !== null) {
+      setContextExpandedOriginalIndex(ctxIdx);
+    } else if (savedStep === 1 && usgIdx !== null) {
+      setUsageExpandedOriginalIndex(usgIdx);
+    }
+
+    // Clear the initializing guard after a delay so ContextSection's
+    // auto-advance can work normally for user-added cards after load.
+    setTimeout(() => { isInitializingRef.current = false; }, 1000);
+  }, []);
+
+  // Sync currentStep → uiStore for refresh survival
+  useEffect(() => {
+    useUIStore.getState().setSidebarWizardStep(currentStep);
+  }, [currentStep]);
+  // Sync active context/usage indices → cardFlowStore for refresh survival
+  useEffect(() => {
+    useCardFlowStore.getState().setActiveContextOriginalIndex(activeContextOriginalIndex);
+  }, [activeContextOriginalIndex]);
+  useEffect(() => {
+    useCardFlowStore.getState().setActiveUsageOriginalIndex(activeUsageOriginalIndex);
+  }, [activeUsageOriginalIndex]);
 
   // Navigation never restores previous expansion state. When entering a section
   // we always expand a deterministic card: the first child when moving down,
@@ -226,6 +295,10 @@ export function Sidebar(props: SidebarProps) {
 
   // Step navigation helpers
   const advanceToUsage = useCallback((originalIndex: number, _title: string) => {
+    if (isInitializingRef.current) {
+      console.log('[dbg:sidebar:advanceToUsage] SKIPPED — still initializing');
+      return;
+    }
     useCardFlowStore.getState().recordContextAdvance(originalIndex);
     setContextExpandedOriginalIndex(null);
     setActiveContextOriginalIndex(originalIndex);
@@ -237,6 +310,10 @@ export function Sidebar(props: SidebarProps) {
   }, [props.analysisConfigs]);
 
   const handleContextSendToSounds = useCallback((originalIndex: number, _title: string) => {
+    if (isInitializingRef.current) {
+      console.log('[dbg:sidebar:handleContextSendToSounds] SKIPPED — still initializing');
+      return;
+    }
     useCardFlowStore.getState().recordContextAdvance(originalIndex);
     setContextExpandedOriginalIndex(null);
     setActiveContextOriginalIndex(originalIndex);
@@ -250,6 +327,10 @@ export function Sidebar(props: SidebarProps) {
   }, []);
 
   const handleUsageSendToSounds = useCallback((originalIndex: number, _title: string) => {
+    if (isInitializingRef.current) {
+      console.log('[dbg:sidebar:handleUsageSendToSounds] SKIPPED — still initializing');
+      return;
+    }
     useCardFlowStore.getState().recordUsageAdvance(originalIndex);
     setUsageExpandedOriginalIndex(null);
     setActiveUsageOriginalIndex(originalIndex);
@@ -294,7 +375,7 @@ export function Sidebar(props: SidebarProps) {
     <>
       {/* Toggle button — floats at the right edge of the sidebar content */}
       <button
-        onClick={() => setIsExpanded(prev => !prev)}
+        onClick={() => { const v = !isExpanded; console.log('[dbg:sidebar:toggle] isExpanded:', isExpanded, '→ new:', v, 'writing to store'); setIsExpanded(v); useUIStore.getState().setIsLeftSidebarExpanded(v); console.log('[dbg:sidebar:toggle] store value after write:', useUIStore.getState().isLeftSidebarExpanded); console.log('[dbg:sidebar:toggle] direct localStorage check:', localStorage.getItem('compas-ui-state')?.substring(0, 200)); }}
         title={isExpanded ? 'Collapse panel' : 'Open panel'}
         style={{
           position: 'fixed',

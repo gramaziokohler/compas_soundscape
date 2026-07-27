@@ -83,7 +83,7 @@ export function AdvancedSettingsPanel({ isVisible, onClose, ...settingsProps }: 
         zIndex: 9999,
         display: (isVisible && positionReady) ? 'flex' : 'none',
         backgroundColor: 'var(--background)',
-        border: '1px solid var(--color-secondary-light)',
+        border: '1.5px solid var(--color-primary)',
         borderRadius: '8px',
         overflow: 'hidden',
       }}

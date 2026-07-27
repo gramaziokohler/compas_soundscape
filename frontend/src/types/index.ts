@@ -228,6 +228,16 @@ export interface CatalogSoundSelection {
   category: string;
 }
 
+// ─── Job persistence types ────────────────────────────────────────────────────
+
+export type JobType = 'sound' | 'tts' | 'llm' | 'sed' | 'choras' | 'pyroom' | 'model_analysis';
+
+export interface JobRecord {
+  jobId: string;
+  jobType: JobType;
+  timestamp: number;
+}
+
 export type SoundState = 'playing' | 'paused' | 'stopped';
 
 // Import SidebarTabValue from constants for single source of truth

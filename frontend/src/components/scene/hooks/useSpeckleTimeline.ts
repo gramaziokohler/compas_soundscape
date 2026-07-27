@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
-import { useAcousticsSimulationStore, useAudioControlsStore, useSoundscapeStore } from '@/store';
+import { useAcousticsSimulationStore, useAudioControlsStore, useSoundscapeStore, useUIStore } from '@/store';
 import {
   extractTimelineSoundsFromData,
 } from '@/lib/audio/utils/timeline-utils';
@@ -35,7 +35,7 @@ interface TimelineResult {
   timelineSounds: TimelineSound[];
   soundMetadataReady: boolean;
   showTimeline: boolean;
-  setShowTimeline: React.Dispatch<React.SetStateAction<boolean>>;
+  setShowTimeline: (v: boolean) => void;
   handleRefreshTimeline: () => void;
   handleDownloadTimeline: (format: ExportFormat) => Promise<void>;
   isBakingSchedule: boolean;
@@ -59,22 +59,37 @@ export function useSpeckleTimeline({
 }: TimelineProps): TimelineResult {
   const [timelineSounds, setTimelineSounds] = useState<TimelineSound[]>([]);
   const [soundMetadataReady, setSoundMetadataReady] = useState(false);
-  const [showTimeline, setShowTimeline] = useState(true);
+  const showTimeline = useUIStore((s) => s.showTimeline);
+  const setShowTimeline = useUIStore((s) => s.setShowTimeline);
   const userClosedTimelineRef = useRef(false);
 
-  const handleCloseTimeline = useCallback(() => {
-    userClosedTimelineRef.current = true;
-    setShowTimeline(false);
+  // Sync userClosedTimelineRef with persisted state after rehydration.
+  // If the timeline was hidden at persist time, treat it as user-closed to
+  // prevent the auto-open effect from firing on refresh.
+  useEffect(() => {
+    const persisted = useUIStore.getState().showTimeline;
+    console.log('[dbg:timeline:init] persisted showTimeline:', persisted);
+    if (!persisted) {
+      userClosedTimelineRef.current = true;
+      console.log('[dbg:timeline:init] set userClosedTimelineRef = true (timeline was hidden)');
+    }
   }, []);
 
+  const handleCloseTimeline = useCallback(() => {
+    console.log('[dbg:timeline:close] user closed timeline');
+    userClosedTimelineRef.current = true;
+    setShowTimeline(false);
+  }, [setShowTimeline]);
+
   const handleToggleTimeline = useCallback(() => {
-    setShowTimeline((prev) => {
-      if (!prev) {
-        userClosedTimelineRef.current = false;
-      }
-      return !prev;
-    });
-  }, []);
+    console.log('[dbg:timeline:toggle] current showTimeline:', showTimeline);
+    if (showTimeline) {
+      setShowTimeline(false);
+    } else {
+      userClosedTimelineRef.current = false;
+      setShowTimeline(true);
+    }
+  }, [showTimeline, setShowTimeline]);
 
   // Subscribe to scheduling mode + timestamps so the timeline rerenders when they change
   const soundSchedulingModes    = useAudioControlsStore((s) => s.soundSchedulingModes);
@@ -210,7 +225,9 @@ export function useSpeckleTimeline({
   // Auto-open the timeline whenever sounds become available,
   // but only if the user hasn't explicitly closed it.
   useEffect(() => {
-    if (timelineSounds.length > 0 && !userClosedTimelineRef.current) {
+    const shouldAutoOpen = timelineSounds.length > 0 && !userClosedTimelineRef.current;
+    console.log('[dbg:timeline:autoOpen] timelineSounds:', timelineSounds.length, 'userClosed:', userClosedTimelineRef.current, 'showTimeline:', showTimeline, 'shouldAutoOpen:', shouldAutoOpen);
+    if (shouldAutoOpen) {
       setShowTimeline(true);
     }
   }, [timelineSounds.length]);

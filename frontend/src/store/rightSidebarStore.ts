@@ -6,7 +6,7 @@
  */
 
 import { create } from 'zustand';
-import { devtools } from 'zustand/middleware';
+import { devtools, persist, createJSONStorage } from 'zustand/middleware';
 
 export interface RightSidebarStoreState {
   isExpanded: boolean;
@@ -18,15 +18,25 @@ export interface RightSidebarStoreState {
 }
 
 export const useRightSidebarStore = create<RightSidebarStoreState>()(
-  devtools(
-    (set) => ({
-      isExpanded: false,
-      rightClickActive: false,
-      requestExpand: () => set({ isExpanded: true }, false, 'rightSidebar/expand'),
-      requestCollapse: () => set({ isExpanded: false }, false, 'rightSidebar/collapse'),
-      setRightClickActive: (active) =>
-        set({ rightClickActive: active }, false, 'rightSidebar/setRightClickActive'),
-    }),
-    { name: 'rightSidebarStore' },
+  persist(
+    devtools(
+      (set) => ({
+        isExpanded: false,
+        rightClickActive: false,
+        requestExpand: () => set({ isExpanded: true }, false, 'rightSidebar/expand'),
+        requestCollapse: () => set({ isExpanded: false }, false, 'rightSidebar/collapse'),
+        setRightClickActive: (active) =>
+          set({ rightClickActive: active }, false, 'rightSidebar/setRightClickActive'),
+      }),
+      { name: 'rightSidebarStore' },
+    ),
+    {
+      name: 'compas-right-sidebar',
+      storage: createJSONStorage(() => localStorage),
+      skipHydration: true,
+      partialize: (state: RightSidebarStoreState) => ({
+        isExpanded: state.isExpanded,
+      }),
+    },
   ),
 );

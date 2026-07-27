@@ -22,7 +22,7 @@ import { ScenarioResultContent } from './ScenarioResultContent';
  * via "and" to a capitalized word (to avoid greedily consuming lowercase words like "the").
  * Handles optional space after "id:" e.g. (id: abc...).
  */
-const OBJECT_REF_RE = /"?([A-Za-z][A-Za-z]*(?:\s+(?:and\s+[A-Z][A-Za-z]*|[A-Z][A-Za-z]*))*)"?(?:\s*\([^)]*\))?\s*\((?:e\.g\.,\s*)?(?:\w+:\s*(?:id:\s*)?)?[0-9a-fA-F]+(?:\s*(?:,|and)\s*(?:\w+:\s*(?:id:\s*)?)?[0-9a-fA-F]+)*\)/g;
+const OBJECT_REF_RE = /['"]?([A-Za-z][A-Za-z]*(?:\s+(?:and\s+[A-Z][A-Za-z]*|[A-Z][A-Za-z]*))*)['"]?(?:\s*\([^)]*\))?\s*\((?:e\.g\.,\s*)?(?:\w+:\s*(?:id:\s*)?)?[0-9a-fA-F]+(?:\s*(?:,|and)\s*(?:\w+:\s*(?:id:\s*)?)?[0-9a-fA-F]+)*\)/g;
 const ID_HEX_RE = /[0-9a-fA-F]{8,}/g;
 /** Normalize dot-separated object refs (LLM hallucination): Doors.hexid → Doors (id:hexid) */
 const ID_HEX_DOT_RE = /\b([A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+)*)\.([0-9a-fA-F]{24,64})\b/g;

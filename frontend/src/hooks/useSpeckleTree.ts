@@ -9,7 +9,7 @@
  * - speckle-frontend/Panel.vue
  */
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 
 /**
  * Explorer Node - represents a node in the Speckle object tree
@@ -156,6 +156,18 @@ export function getGeometryLeafIdsFromNode(node: any): string[] {
 }
 
 /**
+ * Extract a short human-readable type from a full Speckle dotted type path.
+ * "Objects.Geometry.Mesh" → "Mesh"
+ * "Objects.Other.Instance:Objects.BuiltElements.Wall" → "Wall"
+ */
+export function extractShortType(speckleType: string): string {
+  if (!speckleType) return '';
+  const afterColon = speckleType.includes(':') ? speckleType.split(':').pop()! : speckleType;
+  const short = afterColon.split('.').pop() || '';
+  return short;
+}
+
+/**
  * Get header and subheader for Speckle object display
  * Adapted from getHeaderAndSubheaderForSpeckleObject helper
  */
@@ -173,7 +185,7 @@ export function getHeaderAndSubheader(speckleData: any, modelFileName?: string |
 
   return {
     header: name,
-    subheader: speckleType
+    subheader: extractShortType(speckleType)
   };
 }
 
@@ -245,7 +257,8 @@ export function flattenModelTree(
 
     // Check for children in both possible locations
     const children = node.model?.children || node.children;
-    const hasChildren = !!(children && children.length > 0);
+    const visibleChildren = children ?? [];
+    const hasChildren = visibleChildren.length > 0;
     const isExpanded = expandedNodes.has(nodeId);
 
     // Check if this node is selected
@@ -255,6 +268,35 @@ export function flattenModelTree(
     const isDescendantOfSelected = selectedObjectIds.some(selectedId => {
       return nodeId.startsWith(selectedId) && nodeId !== selectedId;
     });
+
+    // When a layer contains exactly one item, hide its child by merging:
+    // skip the parent row, promote the sole child to the same indent level.
+    // Override the promoted child's display name to show the parent's name.
+    if (visibleChildren.length === 1) {
+      const childItems = flattenModelTree(
+        children as ExplorerNode[],
+        expandedNodes,
+        selectedObjectIds,
+        indent
+      );
+      const parentName = node.raw?.name || node.model?.name;
+      if (parentName) {
+        for (const item of childItems) {
+          if (item.indent === indent) {
+            item.data = {
+              ...item.data,
+              raw: {
+                ...item.data.raw,
+                name: parentName,
+              },
+            };
+            break;
+          }
+        }
+      }
+      items.push(...childItems);
+      continue;
+    }
 
     items.push({
       id: nodeId,
@@ -316,22 +358,17 @@ export function getRootNodesForModel(worldTree: any, modelFileName?: string | nu
     return [];
   }
   
-  // Replace "Unknown" name in root nodes with model filename if available
+  // Always set root node name to the model/project filename when available
   if (modelFileName && rootNodes.length > 0) {
     rootNodes = rootNodes.map(node => {
-      const nodeName = node.model?.raw?.name || node.raw?.name;
-      
-      if (nodeName === 'Unknown') {
-        const updatedNode = { ...node };
-        if (updatedNode.model?.raw) {
-          updatedNode.model = { ...updatedNode.model, raw: { ...updatedNode.model.raw, name: modelFileName } };
-        }
-        if (updatedNode.raw) {
-          updatedNode.raw = { ...updatedNode.raw, name: modelFileName };
-        }
-        return updatedNode;
+      const updatedNode = { ...node };
+      if (updatedNode.model?.raw) {
+        updatedNode.model = { ...updatedNode.model, raw: { ...updatedNode.model.raw, name: modelFileName } };
       }
-      return node;
+      if (updatedNode.raw) {
+        updatedNode.raw = { ...updatedNode.raw, name: modelFileName };
+      }
+      return updatedNode;
     });
   }
   
@@ -390,17 +427,66 @@ export function expandNodesToShowObject(
 }
 
 /**
+ * Walk the tree and return a Set of node IDs that should be auto-expanded.
+ * Expands through chains of single-child nodes until a node with 2+ children
+ * or a leaf is reached. The first multi-child node in each chain is also
+ * expanded so its children are visible on panel open.
+ */
+export function getAutoExpandedNodes(
+  nodes: ExplorerNode[]
+): Set<string> {
+  const result = new Set<string>();
+
+  function walk(nodeList: ExplorerNode[]) {
+    for (const node of nodeList) {
+      const nodeId = node.raw?.id || node.model?.id || node.id;
+      if (!nodeId) continue;
+
+      const children = node.model?.children || node.children;
+      if (!children || children.length === 0) continue;
+
+      if (children.length === 1) {
+        result.add(nodeId);
+        walk(children as ExplorerNode[]);
+      } else {
+        // Expand the first "interesting" multi-child node so children are visible
+        result.add(nodeId);
+      }
+    }
+  }
+
+  walk(nodes);
+  return result;
+}
+
+/**
  * Hook for managing Speckle tree state
  */
 export function useSpeckleTree(worldTree: any, updateTrigger?: number, modelFileName?: string | null) {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [selectedObjectIds, setSelectedObjectIds] = useState<string[]>([]);
+  const didAutoExpandRef = useRef(false);
 
   const rootNodes = useMemo(() => {
     const nodes = getRootNodesForModel(worldTree, modelFileName);
     console.log('[useSpeckleTree] useMemo recalculating rootNodes:', nodes.length, 'trigger:', updateTrigger);
     return nodes;
   }, [worldTree, updateTrigger, modelFileName]);
+
+  // Auto-expand single-child chains on initial tree load
+  useEffect(() => {
+    if (didAutoExpandRef.current) return;
+    if (!rootNodes || rootNodes.length === 0) return;
+    didAutoExpandRef.current = true;
+    const autoExpand = getAutoExpandedNodes(rootNodes);
+    if (autoExpand.size > 0) {
+      setExpandedNodes(prev => {
+        const next = new Set(prev);
+        autoExpand.forEach(id => next.add(id));
+        return next;
+      });
+    }
+  }, [rootNodes]);
 
   const virtualItems = useMemo(() => {
     const items = flattenModelTree(rootNodes, expandedNodes, selectedObjectIds);

@@ -25,9 +25,10 @@ import { UI_RIGHT_SIDEBAR } from '@/utils/constants';
 interface ObjectExplorerProps {
   resetAllRef?: React.MutableRefObject<(() => void) | null>;
   onItemCountChange?: (count: number) => void;
+  maxTreeHeight?: number;
 }
 
-export function ObjectExplorer({ resetAllRef, onItemCountChange }: ObjectExplorerProps = {}) {
+export function ObjectExplorer({ resetAllRef, onItemCountChange, maxTreeHeight }: ObjectExplorerProps = {}) {
   const { modelFileName, worldTreeVersion, getViewerRef, setSelectedEntity } = useSpeckleStore();
   // Stable RefObject-like shim so hooks that expect RefObject<Viewer> keep working
   const viewerRef = useMemo<React.RefObject<any>>(() => ({
@@ -461,10 +462,11 @@ export function ObjectExplorer({ resetAllRef, onItemCountChange }: ObjectExplore
       // Immediately update selectedEntity so the EntityInfoPanel reacts without
       // requiring a canvas interaction to trigger SpeckleEventBridge.checkSpeckleSelection()
       const { header, subheader } = getHeaderAndSubheader(item.data.raw, modelFileName);
+      const displayType = item.hasChildren ? 'Layer' : (subheader || 'Speckle Object');
       setSelectedEntity({
         objectId,
         objectName: header,
-        objectType: subheader || 'Speckle Object',
+        objectType: displayType,
       });
 
       if (item.hasChildren && !item.isExpanded) {
@@ -515,17 +517,17 @@ export function ObjectExplorer({ resetAllRef, onItemCountChange }: ObjectExplore
   }
   
   return (
-    <div className="space-y-2">
+    <div className="flex flex-col min-h-0 space-y-2">
       {filteredVirtualItems.length > 0 ? (
         <>
           {/* Scrolling Tree List */}
           <div
             ref={treeContainerRef}
-            className="border rounded"
+            className="border rounded flex-1 min-h-0"
             style={{
               borderColor: 'var(--color-secondary-light)',
               backgroundColor: 'var(--background)',
-              maxHeight: `${UI_RIGHT_SIDEBAR.TREE_MAX_HEIGHT}px`,
+              maxHeight: maxTreeHeight ?? undefined,
               overflowY: 'auto'
             }}
           >
@@ -606,7 +608,7 @@ export function ObjectExplorer({ resetAllRef, onItemCountChange }: ObjectExplore
       ) : (
         /* Loading/Empty state */
         <div
-          className="border rounded p-4 text-center text-xs"
+          className="border rounded p-4 text-center text-xs flex-1"
           style={{
             borderColor: 'var(--color-secondary-light)',
             backgroundColor: 'var(--background)',

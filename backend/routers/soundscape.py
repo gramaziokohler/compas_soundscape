@@ -191,6 +191,12 @@ async def save_soundscape(request: SoundscapeSaveRequest, req: Request):
     if not model_id:
         raise HTTPException(status_code=400, detail="model_id is required")
 
+    # Persist project_id and version_id from the request payload so the
+    # frontend can reconstruct the Speckle geometry viewer on reload without
+    # needing the user to re-pick the model.
+    data.project_id = data.project_id or ""
+    data.version_id = data.version_id or ""
+
     if not data.created_at:
         data.created_at = datetime.now(timezone.utc).isoformat()
 

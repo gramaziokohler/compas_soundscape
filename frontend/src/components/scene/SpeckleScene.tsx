@@ -308,7 +308,7 @@ export function SpeckleScene({
   const storeStopAll  = useAudioControlsStore((s) => s.stopAll);
 
   const [refreshKey, setRefreshKey] = useState(0);
-  const [showObjectExplorer, setShowObjectExplorer] = useState(false);
+  const showObjectExplorer = useUIStore((s) => s.showObjectExplorer);
 
   // Track whether the user explicitly closed the Object Explorer so we don't
   // re-open it automatically when expanding another acoustic simulation card.
@@ -316,21 +316,19 @@ export function SpeckleScene({
 
   const handleCloseExplorer = useCallback(() => {
     userClosedExplorerRef.current = true;
-    setShowObjectExplorer(false);
+    useUIStore.getState().setShowObjectExplorer(false);
   }, []);
 
   const handleToggleExplorer = useCallback(() => {
-    setShowObjectExplorer((prev) => {
-      if (!prev) {
-        userClosedExplorerRef.current = false;
-      }
-      return !prev;
-    });
+    useUIStore.getState().setShowObjectExplorer(!useUIStore.getState().showObjectExplorer);
+    if (useUIStore.getState().showObjectExplorer) {
+      userClosedExplorerRef.current = false;
+    }
   }, []);
 
   const handleOpenExplorer = useCallback(() => {
     userClosedExplorerRef.current = false;
-    setShowObjectExplorer(true);
+    useUIStore.getState().setShowObjectExplorer(true);
   }, []);
 
   // Auto-open the Object Explorer when acoustic material assignment activates,
@@ -341,7 +339,7 @@ export function SpeckleScene({
   const prevAcousticActiveRef = useRef(false);
   useEffect(() => {
     if (acousticAssignmentActive && !prevAcousticActiveRef.current && !userClosedExplorerRef.current) {
-      setShowObjectExplorer(true);
+      useUIStore.getState().setShowObjectExplorer(true);
     }
     prevAcousticActiveRef.current = acousticAssignmentActive;
   }, [acousticAssignmentActive]);
@@ -968,8 +966,42 @@ export function SpeckleScene({
   useSpeckleGroundGrid({ isViewerReady });
 
   // ============================================================================
-  // Effect - Sync viewMode → filteringEnabled in context
+  // Effect - Save viewMode to localStorage for refresh survival.
+  // Gated behind a ref that is only enabled AFTER the restore effect completes,
+  // so the initial 'default' from Speckle init doesn't overwrite the saved value.
   // ============================================================================
+  const viewModeSaveEnabledRef = useRef(false);
+  useEffect(() => {
+    if (!viewModeSaveEnabledRef.current) return;
+    console.log('[dbg:viewMode:save] saving viewMode:', viewMode);
+    try { localStorage.setItem('compas-view-mode', viewMode); } catch {}
+  }, [viewMode]);
+
+  // ============================================================================
+  // Effect - Restore saved viewMode from localStorage on mount (after viewer ready).
+  // Delay the switch by 300ms so Speckle filtering initializes in default mode first.
+  // ============================================================================
+  useEffect(() => {
+    if (!isViewerReady) return;
+    try {
+      const saved = localStorage.getItem('compas-view-mode');
+      console.log('[dbg:viewMode:restore] isViewerReady=true, localStorage saved:', saved, 'current viewMode:', viewMode);
+      if (saved && saved !== 'default') {
+        console.log('[dbg:viewMode:restore] scheduling RESTORE to:', saved, 'in 300ms');
+        const timer = setTimeout(() => {
+          console.log('[dbg:viewMode:restore] applying RESTORE to:', saved);
+          setViewMode(saved as any);
+        }, 300);
+        // Enable save tracking after restore timer fires, not before
+        viewModeSaveEnabledRef.current = true;
+        return () => clearTimeout(timer);
+      } else {
+        console.log('[dbg:viewMode:restore] skipping restore (saved is default or null)');
+      }
+    } catch {}
+    viewModeSaveEnabledRef.current = true;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isViewerReady]);
   useEffect(() => {
     setFilteringEnabled(viewMode === 'acoustic');
   }, [viewMode, setFilteringEnabled]);

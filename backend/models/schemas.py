@@ -393,6 +393,9 @@ class SoundscapeData(BaseModel):
     version: str = "1.0"
     model_id: str
     model_name: str = ""
+    project_id: str = ""
+    version_id: str = ""
+    auth_token: str = ""
     created_at: str = ""  # ISO datetime
     global_settings: SoundscapeGlobalSettings = SoundscapeGlobalSettings()
     sound_configs: list[SoundscapeSoundConfig] = []

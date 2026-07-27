@@ -15,7 +15,7 @@
 'use client';
 
 import React, { CSSProperties, useMemo } from 'react';
-import { VirtualTreeItem as TreeItem, getHeaderAndSubheader, getTargetObjectIds, getGeometryLeafIdsFromNode, containsAll } from '@/hooks/useSpeckleTree';
+import { VirtualTreeItem as TreeItem, getHeaderAndSubheader, getTargetObjectIds, getGeometryLeafIdsFromNode } from '@/hooks/useSpeckleTree';
 import { useSpeckleStore } from '@/store';
 import { TreeItemAcousticControls } from '@/components/scene/TreeItemAcousticControls';
 import type { MaterialOption } from '@/components/ui/MaterialSelect';
@@ -65,6 +65,7 @@ export function VirtualTreeItem({
   const geometryIds = useMemo(() => getGeometryLeafIdsFromNode(item.data), [item.data]);
   const isRootNode = item.indent === 0;
   const { header, subheader } = getHeaderAndSubheader(rawSpeckleData, modelFileName, isRootNode);
+  const displaySubheader = item.hasChildren ? 'Layer' : subheader;
   
   // Replace "Unknown" with model filename for display
   const displayHeader = (header === 'Unknown' && modelFileName) ? modelFileName : header;
@@ -171,9 +172,9 @@ export function VirtualTreeItem({
             >
               {displayHeader}
             </div>
-            {subheader && (
+            {displaySubheader && (
               <div className="truncate text-[10px] text-neutral-500">
-                {subheader}
+                {displaySubheader}
               </div>
             )}
           </div>

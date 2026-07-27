@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { RangeSlider } from "@/components/ui/RangeSlider";
 import { CheckboxField } from "@/components/ui/CheckboxField";
+import { SearchBar } from "@/components/ui/SearchBar";
 import { apiService } from "@/services/api";
 import type { TokenStatus, LLMProviders } from "@/services/api";
 import { useTextGenerationStore } from "@/store/textGenerationStore";
@@ -100,6 +101,55 @@ const SECTION_LABELS: Record<SectionKey, string> = {
 };
 
 const SECTION_KEYS: SectionKey[] = ['viewer', 'acoustic', 'tokens', 'llm', 'rendering', 'audio'];
+
+type SettingKey =
+  | 'label-sprites' | 'hovering-highlight' | 'sound-spheres' | 'listeners' | 'ground-grid'
+  | 'grid-spacing' | 'grid-color'
+  | 'sound-speed' | 'mesh-length'
+  | 'tokens'
+  | 'llm-model'
+  | 'listener-orientation' | 'jitter' | 'timeline' | 'spectrograms' | 'auto-save'
+  | 'base-spl' | 'tts-language' | 'audio-model' | 'duration'
+  | 'diffusion-steps' | 'negative-prompt' | 'noise-reduction' | 'trim-silence' | 'max-foley';
+
+interface SettingEntry {
+  section: SectionKey;
+  key: SettingKey;
+  terms: string[];
+}
+
+const SETTINGS: SettingEntry[] = [
+  { section: 'viewer', key: 'label-sprites', terms: ['label sprites', 'label', 'sprite'] },
+  { section: 'viewer', key: 'hovering-highlight', terms: ['hovering highlight', 'hover', 'highlight'] },
+  { section: 'viewer', key: 'sound-spheres', terms: ['sound spheres', 'sphere'] },
+  { section: 'viewer', key: 'listeners', terms: ['listeners', 'listener'] },
+  { section: 'viewer', key: 'ground-grid', terms: ['ground grid', 'grid'] },
+  { section: 'viewer', key: 'grid-spacing', terms: ['grid spacing', 'spacing', 'grid'] },
+  { section: 'viewer', key: 'grid-color', terms: ['grid color', 'color', 'grid'] },
+
+  { section: 'acoustic', key: 'sound-speed', terms: ['sound speed', 'speed', 'velocity'] },
+  { section: 'acoustic', key: 'mesh-length', terms: ['mesh length', 'lc', 'characteristic length', 'mesh'] },
+
+  { section: 'tokens', key: 'tokens', terms: ['speckle', 'google', 'openai', 'anthropic', 'elevenlabs', 'token', 'api key', 'project name', 'apply tokens'] },
+
+  { section: 'llm', key: 'llm-model', terms: ['llm', 'model', 'language model', 'gemini', 'openai', 'anthropic'] },
+
+  { section: 'rendering', key: 'listener-orientation', terms: ['listener orientation', 'orientation', 'listener', 'x', 'y', 'z'] },
+  { section: 'rendering', key: 'jitter', terms: ['jitter', 'interval jitter', 'time', 'stagger'] },
+  { section: 'rendering', key: 'timeline', terms: ['timeline', 'duration', 'time'] },
+  { section: 'rendering', key: 'spectrograms', terms: ['spectrograms', 'spectrogram'] },
+  { section: 'rendering', key: 'auto-save', terms: ['auto-save', 'soundscape', 'auto save', 'persist'] },
+
+  { section: 'audio', key: 'base-spl', terms: ['base spl', 'spl', 'volume', 'db', 'decibel'] },
+  { section: 'audio', key: 'tts-language', terms: ['tts', 'language', 'tts language', 'voice'] },
+  { section: 'audio', key: 'audio-model', terms: ['audio model', 'tangoflux', 'audiod', 'elevenlabs', 'generator'] },
+  { section: 'audio', key: 'duration', terms: ['duration', 'seconds', 'length', 'time'] },
+  { section: 'audio', key: 'diffusion-steps', terms: ['diffusion steps', 'steps', 'inference'] },
+  { section: 'audio', key: 'negative-prompt', terms: ['negative prompt', 'prompt'] },
+  { section: 'audio', key: 'noise-reduction', terms: ['noise reduction', 'denoising', 'noise', 'reduction'] },
+  { section: 'audio', key: 'trim-silence', terms: ['trim silence', 'silence', 'trim'] },
+  { section: 'audio', key: 'max-foley', terms: ['foley', 'max foley', 'maximum foley'] },
+];
 
 // ── Token input ───────────────────────────────────────────────────────────────
 
@@ -380,6 +430,51 @@ export function AdvancedSettingsSection({
   onListenerOrientationChange,
 }: AdvancedSettingsSectionProps) {
   const [activeSection, setActiveSection] = useState<SectionKey>(SECTION_KEYS[0]);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const isSearchActive = searchQuery.trim().length > 0;
+
+  const { matchingSections, visibleKeys } = useMemo(() => {
+    if (!isSearchActive) {
+      return { matchingSections: SECTION_KEYS, visibleKeys: new Set<SettingKey>() };
+    }
+    const q = searchQuery.toLowerCase().trim();
+    const words = q.split(/\s+/);
+    const sections = new Set<SectionKey>();
+    const keys = new Set<SettingKey>();
+
+    for (const entry of SETTINGS) {
+      const label = SECTION_LABELS[entry.section].toLowerCase();
+      const entryMatches =
+        words.some((w) => label.includes(w)) ||
+        entry.terms.some((t) => words.some((w) => t.toLowerCase().includes(w)));
+
+      if (entryMatches) {
+        sections.add(entry.section);
+        keys.add(entry.key);
+      }
+    }
+
+    return {
+      matchingSections: Array.from(sections),
+      visibleKeys: keys,
+    };
+  }, [searchQuery, isSearchActive]);
+
+  useEffect(() => {
+    if (isSearchActive && matchingSections.length > 0 && !matchingSections.includes(activeSection)) {
+      setActiveSection(matchingSections[0]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchingSections, isSearchActive]);
+
+  const isVisible = useCallback(
+    (...keys: SettingKey[]) => {
+      if (!isSearchActive) return true;
+      return keys.some((k) => visibleKeys.has(k));
+    },
+    [isSearchActive, visibleKeys],
+  );
 
   const serviceVersions = useServiceVersions();
   const llmProviders = serviceVersions?.llm_providers ?? null;
@@ -407,14 +502,21 @@ export function AdvancedSettingsSection({
   const setGlobalMeshLc = useUIStore((s) => s.setGlobalMeshLc);
   const showSpectrograms = useUIStore((s) => s.showSpectrograms);
   const setShowSpectrograms = useUIStore((s) => s.setShowSpectrograms);
+  const enableAutoSave = useUIStore((s) => s.enableAutoSave);
+  const setEnableAutoSave = useUIStore((s) => s.setEnableAutoSave);
 
   return (
     <div className="flex flex-col gap-1.5 w-full">
-      <div className="flex items-center justify-between mb-0.5">
-        <h3 className="text-xs font-medium text-foreground">  </h3>
+      <div className="flex items-center justify-between mb-0.5 gap-2">
+        <SearchBar
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder="Search settings..."
+          className="flex-1 min-w-0"
+        />
         <button
           onClick={onResetToDefaults}
-          className="text-[10px] transition-opacity hover:opacity-60 text-secondary-hover"
+          className="text-[10px] transition-opacity hover:opacity-60 text-secondary-hover shrink-0"
           title="Reset to defaults"
         >
           Reset
@@ -426,7 +528,7 @@ export function AdvancedSettingsSection({
 
         {/* Left: vertical menu */}
         <nav className="flex flex-col gap-0.5 shrink-0">
-          {SECTION_KEYS.map((key) => {
+          {SECTION_KEYS.filter((k) => matchingSections.includes(k)).map((key) => {
             const isActive = activeSection === key;
             return (
               <button
@@ -452,34 +554,48 @@ export function AdvancedSettingsSection({
           {activeSection === 'viewer' && (
             <div className="flex flex-col gap-1">
               {/* <CheckboxField checked={showAxesHelper} onChange={onShowAxesHelperChange} label="Show axes helper" /> */}
-              <CheckboxField checked={showLabelSprites} onChange={onShowLabelSpritesChange} label="Show label sprites" />
-              <CheckboxField checked={showHoveringHighlight} onChange={onShowHoveringHighlightChange} label="Hovering highlight" />
-              <CheckboxField checked={showSoundSpheres} onChange={onShowSoundSpheresChange} label="Show sound spheres" />
-              <CheckboxField checked={showSceneListeners} onChange={onShowSceneListenersChange} label="Show listeners" />
-              <CheckboxField checked={showGroundGrid} onChange={onShowGroundGridChange} label="Show ground grid" />
-              {showGroundGrid && (
+              {isVisible('label-sprites') && (
+                <CheckboxField checked={showLabelSprites} onChange={onShowLabelSpritesChange} label="Show label sprites" />
+              )}
+              {isVisible('hovering-highlight') && (
+                <CheckboxField checked={showHoveringHighlight} onChange={onShowHoveringHighlightChange} label="Hovering highlight" />
+              )}
+              {isVisible('sound-spheres') && (
+                <CheckboxField checked={showSoundSpheres} onChange={onShowSoundSpheresChange} label="Show sound spheres" />
+              )}
+              {isVisible('listeners') && (
+                <CheckboxField checked={showSceneListeners} onChange={onShowSceneListenersChange} label="Show listeners" />
+              )}
+              {isVisible('ground-grid') && (
+                <CheckboxField checked={showGroundGrid} onChange={onShowGroundGridChange} label="Show ground grid" />
+              )}
+              {showGroundGrid && isVisible('grid-spacing', 'grid-color') && (
                 <div className="flex flex-col gap-1 pl-2 border-l border-secondary-light">
-                  <RangeSlider
-                    label="Spacing (m): "
-                    value={groundGridSpacing}
-                    min={0.5}
-                    max={50}
-                    step={0.5}
-                    onChange={onGroundGridSpacingChange}
-                    defaultValue={5}
-                    formatValue={(v) => `${v} m`}
-                    hoverText="Distance between grid lines in metres. Double-click to reset to 5 m."
-                  />
-                  <div className="flex items-center justify-between gap-2">
-                    <label className="text-[10px] text-foreground">Color</label>
-                    <input
-                      type="color"
-                      value={groundGridColor}
-                      onChange={(e) => onGroundGridColorChange(e.target.value)}
-                      className="w-8 h-5 cursor-pointer rounded border border-secondary-light bg-transparent"
-                      title="Grid line color"
+                  {isVisible('grid-spacing') && (
+                    <RangeSlider
+                      label="Spacing (m): "
+                      value={groundGridSpacing}
+                      min={0.5}
+                      max={50}
+                      step={0.5}
+                      onChange={onGroundGridSpacingChange}
+                      defaultValue={5}
+                      formatValue={(v) => `${v} m`}
+                      hoverText="Distance between grid lines in metres. Double-click to reset to 5 m."
                     />
-                  </div>
+                  )}
+                  {isVisible('grid-color') && (
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-[10px] text-foreground">Color</label>
+                      <input
+                        type="color"
+                        value={groundGridColor}
+                        onChange={(e) => onGroundGridColorChange(e.target.value)}
+                        className="w-8 h-5 cursor-pointer rounded border border-secondary-light bg-transparent"
+                        title="Grid line color"
+                      />
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -487,34 +603,40 @@ export function AdvancedSettingsSection({
 
           {activeSection === 'acoustic' && (
             <div className="flex flex-col gap-2">
-              <RangeSlider
-                label="Sound speed (m/s): "
-                value={globalSoundSpeed}
-                min={SPEED_OF_SOUND_MIN}
-                max={SPEED_OF_SOUND_MAX}
-                step={1}
-                onChange={setGlobalSoundSpeed}
-                defaultValue={DEFAULT_SPEED_OF_SOUND}
-                formatValue={(v) => `${v} m/s`}
-                hoverText="Applied to all simulation engines (Choras DE/DG, pyroomacoustics, Resonance Audio). Double-click to reset to 343 m/s."
-              />
-              <RangeSlider
-                label="Mesh length (lc): "
-                value={globalMeshLc}
-                min={CHORAS_DE_LC_MIN}
-                max={CHORAS_DE_LC_MAX}
-                step={0.1}
-                onChange={setGlobalMeshLc}
-                defaultValue={CHORAS_DE_DEFAULT_LC}
-                formatValue={(v) => `${v.toFixed(1)} m`}
-                hoverText="Characteristic mesh length for DE method. Double-click to reset to 1.5 m."
-              />
+              {isVisible('sound-speed') && (
+                <RangeSlider
+                  label="Sound speed (m/s): "
+                  value={globalSoundSpeed}
+                  min={SPEED_OF_SOUND_MIN}
+                  max={SPEED_OF_SOUND_MAX}
+                  step={1}
+                  onChange={setGlobalSoundSpeed}
+                  defaultValue={DEFAULT_SPEED_OF_SOUND}
+                  formatValue={(v) => `${v} m/s`}
+                  hoverText="Applied to all simulation engines (Choras DE/DG, pyroomacoustics, Resonance Audio). Double-click to reset to 343 m/s."
+                />
+              )}
+              {isVisible('mesh-length') && (
+                <RangeSlider
+                  label="Mesh length (lc): "
+                  value={globalMeshLc}
+                  min={CHORAS_DE_LC_MIN}
+                  max={CHORAS_DE_LC_MAX}
+                  step={0.1}
+                  onChange={setGlobalMeshLc}
+                  defaultValue={CHORAS_DE_DEFAULT_LC}
+                  formatValue={(v) => `${v.toFixed(1)} m`}
+                  hoverText="Characteristic mesh length for DE method. Double-click to reset to 1.5 m."
+                />
+              )}
             </div>
           )}
 
-          {activeSection === 'tokens' && <TokensSection />}
+          {activeSection === 'tokens' && (
+            isVisible('tokens') && <TokensSection />
+          )}
 
-          {activeSection === 'llm' && (
+          {activeSection === 'llm' && isVisible('llm-model') && (
             <select
               value={llmModel}
               onChange={(e) => onLlmModelChange(e.target.value)}
@@ -541,169 +663,208 @@ export function AdvancedSettingsSection({
 
           {activeSection === 'rendering' && (
             <div className="flex flex-col gap-3">
-              <div className="flex flex-col gap-1.5">
-                <span className="text-[9px] uppercase tracking-wider text-secondary-hover">Listener orientation</span>
-                <div className="flex gap-2">
-                  {(['x', 'y', 'z'] as const).map((axis) => (
-                    <div
-                      key={axis}
-                      className="flex-1 flex flex-col gap-0.5"
-                      title={`Double-click to reset (default: ${DEFAULT_LISTENER_ORIENTATION[axis]})`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-secondary-hover uppercase">{axis}</span>
-                        <span className="text-[10px] font-bold text-primary">
-                          {listenerOrientation[axis].toFixed(1)}
-                        </span>
+              {isVisible('listener-orientation') && (
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-[9px] uppercase tracking-wider text-secondary-hover">Listener orientation</span>
+                  <div className="flex gap-2">
+                    {(['x', 'y', 'z'] as const).map((axis) => (
+                      <div
+                        key={axis}
+                        className="flex-1 flex flex-col gap-0.5"
+                        title={`Double-click to reset (default: ${DEFAULT_LISTENER_ORIENTATION[axis]})`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] text-secondary-hover uppercase">{axis}</span>
+                          <span className="text-[10px] font-bold text-primary">
+                            {listenerOrientation[axis].toFixed(1)}
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={-1}
+                          max={1}
+                          step={0.1}
+                          value={listenerOrientation[axis]}
+                          onChange={(e) =>
+                            onListenerOrientationChange({ ...listenerOrientation, [axis]: parseFloat(e.target.value) })
+                          }
+                          onDoubleClick={() =>
+                            onListenerOrientationChange({ ...listenerOrientation, [axis]: DEFAULT_LISTENER_ORIENTATION[axis] })
+                          }
+                          className="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-secondary-light"
+                          style={{ accentColor: 'var(--color-primary)' }}
+                        />
                       </div>
-                      <input
-                        type="range"
-                        min={-1}
-                        max={1}
-                        step={0.1}
-                        value={listenerOrientation[axis]}
-                        onChange={(e) =>
-                          onListenerOrientationChange({ ...listenerOrientation, [axis]: parseFloat(e.target.value) })
-                        }
-                        onDoubleClick={() =>
-                          onListenerOrientationChange({ ...listenerOrientation, [axis]: DEFAULT_LISTENER_ORIENTATION[axis] })
-                        }
-                        className="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-secondary-light"
-                        style={{ accentColor: 'var(--color-primary)' }}
-                      />
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <span className="text-[9px] uppercase tracking-wider text-secondary-hover">Playback timing</span>
-                <RangeSlider
-                  label="Jitter (s): "
-                  value={intervalJitterSeconds}
-                  min={0}
-                  max={15}
-                  step={0.5}
-                  onChange={setIntervalJitter}
-                  defaultValue={AUDIO_PLAYBACK.DEFAULT_INTERVAL_JITTER_SECONDS}
-                  hoverText="Each iteration fires at its base interval ± a random offset drawn from [0, jitter]. Also controls the stagger between sounds on Play All. Double-click to reset."
+              )}
+              {isVisible('jitter', 'timeline') && (
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-[9px] uppercase tracking-wider text-secondary-hover">Playback timing</span>
+                  {isVisible('jitter') && (
+                    <RangeSlider
+                      label="Jitter (s): "
+                      value={intervalJitterSeconds}
+                      min={0}
+                      max={15}
+                      step={0.5}
+                      onChange={setIntervalJitter}
+                      defaultValue={AUDIO_PLAYBACK.DEFAULT_INTERVAL_JITTER_SECONDS}
+                      hoverText="Each iteration fires at its base interval ± a random offset drawn from [0, jitter]. Also controls the stagger between sounds on Play All. Double-click to reset."
+                    />
+                  )}
+                  {isVisible('timeline') && (
+                    <RangeSlider
+                      label="Timeline (s): "
+                      value={timelineDurationMs / 1_000}
+                      min={30}
+                      max={600}
+                      step={30}
+                      onChange={(v) => setTimelineDurationMs(v * 1_000)}
+                      defaultValue={AUDIO_PLAYBACK.TIMELINE_FIXED_DURATION_MS / 1_000}
+                      hoverText="Fixed length of the visual and audio timeline in seconds. Sounds that extend past this boundary are trimmed. Double-click to reset to 180 s (3 min)."
+                    />
+                  )}
+                </div>
+              )}
+              {isVisible('spectrograms') && (
+                <CheckboxField
+                  checked={showSpectrograms}
+                  onChange={setShowSpectrograms}
+                  label="Show spectrograms"
                 />
-                <RangeSlider
-                  label="Timeline (s): "
-                  value={timelineDurationMs / 1_000}
-                  min={30}
-                  max={600}
-                  step={30}
-                  onChange={(v) => setTimelineDurationMs(v * 1_000)}
-                  defaultValue={AUDIO_PLAYBACK.TIMELINE_FIXED_DURATION_MS / 1_000}
-                  hoverText="Fixed length of the visual and audio timeline in seconds. Sounds that extend past this boundary are trimmed. Double-click to reset to 180 s (3 min)."
+              )}
+              {isVisible('auto-save') && (
+                <CheckboxField
+                  checked={enableAutoSave}
+                  onChange={setEnableAutoSave}
+                  label="Auto-save soundscape"
                 />
-              </div>
-              <CheckboxField
-                checked={showSpectrograms}
-                onChange={setShowSpectrograms}
-                label="Show spectrograms"
-              />
+              )}
             </div>
           )}
 
           {activeSection === 'audio' && (
             <div className="flex flex-col gap-2">
-              <RangeSlider
-                label="Base SPL (dB): "
-                value={globalBaseSplDb}
-                min={SPL_MIN}
-                max={SPL_MAX}
-                step={1}
-                onChange={setGlobalBaseSplDb}
-                defaultValue={DEFAULT_SPL_DB}
-                hoverText="Reference SPL level used in audio calibration for all generated sounds. Double-click to reset to 70 dB."
-              />
-              <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] font-medium text-foreground">TTS Language</label>
-                <input
-                  type="text"
-                  value={ttsLanguage}
-                  onChange={(e) => setTtsLanguage(e.target.value)}
-                  placeholder="e.g. English with a slightly german accent"
-                  className="w-full px-2 py-1 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light focus:outline-none focus:border-primary transition-colors"
-                  style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
+              {isVisible('base-spl') && (
+                <RangeSlider
+                  label="Base SPL (dB): "
+                  value={globalBaseSplDb}
+                  min={SPL_MIN}
+                  max={SPL_MAX}
+                  step={1}
+                  onChange={setGlobalBaseSplDb}
+                  defaultValue={DEFAULT_SPL_DB}
+                  hoverText="Reference SPL level used in audio calibration for all generated sounds. Double-click to reset to 70 dB."
                 />
-              </div>
-              <select
-                value={audioModel}
-                onChange={(e) => onAudioModelChange(e.target.value)}
-                className="w-full px-2 py-1.5 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light cursor-pointer hover:border-secondary-hover transition-colors focus:outline-none focus:ring-1"
-                style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px`, accentColor: 'var(--color-primary)' }}
-              >
-                <option value={AUDIO_MODEL_TANGOFLUX}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_TANGOFLUX]}</option>
-                <option value={AUDIO_MODEL_AUDIOLDM2}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_AUDIOLDM2]}</option>
-                <option value={AUDIO_MODEL_ELEVENLABS}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_ELEVENLABS]}</option>
-              </select>
-              <p className="text-[10px] text-secondary-hover leading-tight">
-                {audioModel === AUDIO_MODEL_TANGOFLUX
-                  ? "Fast, high-quality text-to-audio generation (default)"
-                  : audioModel === AUDIO_MODEL_ELEVENLABS
-                  ? "Cloud-based sound effects via ElevenLabs — requires NEXT_PUBLIC_ELEVENLABS_API_KEY"
-                  : "Alternative model with different characteristics"}
-              </p>
-              <RangeSlider
-                label="Duration (s): "
-                value={globalDuration}
-                min={1}
-                max={30}
-                step={1}
-                onChange={onGlobalDurationChange}
-                hoverText={
-                  audioModel === AUDIO_MODEL_ELEVENLABS
-                    ? "ElevenLabs accepts 0.5–22 s; values outside this range use auto-detect"
-                    : "Applies to all sound tabs"
-                }
-              />
-              {audioModel !== AUDIO_MODEL_ELEVENLABS && (
-                <>
-                  <RangeSlider
-                    label="Diffusion Steps: "
-                    value={globalSteps}
-                    min={10}
-                    max={100}
-                    step={5}
-                    onChange={onGlobalStepsChange}
-                    hoverText="Higher steps = better quality but slower"
+              )}
+              {isVisible('tts-language') && (
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[10px] font-medium text-foreground">TTS Language</label>
+                  <input
+                    type="text"
+                    value={ttsLanguage}
+                    onChange={(e) => setTtsLanguage(e.target.value)}
+                    placeholder="e.g. English with a slightly german accent"
+                    className="w-full px-2 py-1 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light focus:outline-none focus:border-primary transition-colors"
+                    style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
                   />
-                  <div>
-                    <label className="block text-[10px] mb-1 text-foreground">Negative Prompt</label>
-                    <textarea
-                      value={globalNegativePrompt}
-                      onChange={(e) => onGlobalNegativePromptChange(e.target.value)}
-                      placeholder="e.g., distorted, reverb, echo"
-                      className="w-full px-2 py-1.5 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light resize-none placeholder:text-secondary-hover focus:border-primary focus:outline-none transition-colors"
-                      style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
-                      rows={2}
-                    />
-                  </div>
+                </div>
+              )}
+              {isVisible('audio-model') && (
+                <>
+                  <select
+                    value={audioModel}
+                    onChange={(e) => onAudioModelChange(e.target.value)}
+                    className="w-full px-2 py-1.5 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light cursor-pointer hover:border-secondary-hover transition-colors focus:outline-none focus:ring-1"
+                    style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px`, accentColor: 'var(--color-primary)' }}
+                  >
+                    <option value={AUDIO_MODEL_TANGOFLUX}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_TANGOFLUX]}</option>
+                    <option value={AUDIO_MODEL_AUDIOLDM2}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_AUDIOLDM2]}</option>
+                    <option value={AUDIO_MODEL_ELEVENLABS}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_ELEVENLABS]}</option>
+                  </select>
+                  <p className="text-[10px] text-secondary-hover leading-tight">
+                    {audioModel === AUDIO_MODEL_TANGOFLUX
+                      ? "Fast, high-quality text-to-audio generation (default)"
+                      : audioModel === AUDIO_MODEL_ELEVENLABS
+                      ? "Cloud-based sound effects via ElevenLabs — requires NEXT_PUBLIC_ELEVENLABS_API_KEY"
+                      : "Alternative model with different characteristics"}
+                  </p>
                 </>
               )}
-              <CheckboxField
-                checked={applyNoiseReduction}
-                onChange={onApplyNoiseReductionChange}
-                label="Apply noise reduction to text-to-audio"
-              />
-              {applyNoiseReduction && (
-                <CheckboxField
-                  checked={trimSilence}
-                  onChange={onTrimSilenceChange}
-                  label="Trim silence"
+              {isVisible('duration') && (
+                <RangeSlider
+                  label="Duration (s): "
+                  value={globalDuration}
+                  min={1}
+                  max={30}
+                  step={1}
+                  onChange={onGlobalDurationChange}
+                  hoverText={
+                    audioModel === AUDIO_MODEL_ELEVENLABS
+                      ? "ElevenLabs accepts 0.5–22 s; values outside this range use auto-detect"
+                      : "Applies to all sound tabs"
+                  }
                 />
               )}
-              <RangeSlider
-                label="Max Foley: "
-                min={MAXIMUM_FOLEY_SOUNDS_MIN}
-                max={MAXIMUM_FOLEY_SOUNDS_MAX}
-                step={1}
-                value={maximumFoleySounds}
-                onChange={setMaximumFoleySounds}
-                hoverText="Maximum number of foley sound events generated by the AI foley artist"
-              />
+              {(audioModel !== AUDIO_MODEL_ELEVENLABS) && isVisible('diffusion-steps', 'negative-prompt') && (
+                <>
+                  {isVisible('diffusion-steps') && (
+                    <RangeSlider
+                      label="Diffusion Steps: "
+                      value={globalSteps}
+                      min={10}
+                      max={100}
+                      step={5}
+                      onChange={onGlobalStepsChange}
+                      hoverText="Higher steps = better quality but slower"
+                    />
+                  )}
+                  {isVisible('negative-prompt') && (
+                    <div>
+                      <label className="block text-[10px] mb-1 text-foreground">Negative Prompt</label>
+                      <textarea
+                        value={globalNegativePrompt}
+                        onChange={(e) => onGlobalNegativePromptChange(e.target.value)}
+                        placeholder="e.g., distorted, reverb, echo"
+                        className="w-full px-2 py-1.5 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light resize-none placeholder:text-secondary-hover focus:border-primary focus:outline-none transition-colors"
+                        style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px` }}
+                        rows={2}
+                      />
+                    </div>
+                  )}
+                </>
+              )}
+              {isVisible('noise-reduction', 'trim-silence') && (
+                <>
+                  {isVisible('noise-reduction') && (
+                    <CheckboxField
+                      checked={applyNoiseReduction}
+                      onChange={onApplyNoiseReductionChange}
+                      label="Apply noise reduction to text-to-audio"
+                    />
+                  )}
+                  {applyNoiseReduction && isVisible('trim-silence') && (
+                    <CheckboxField
+                      checked={trimSilence}
+                      onChange={onTrimSilenceChange}
+                      label="Trim silence"
+                    />
+                  )}
+                </>
+              )}
+              {isVisible('max-foley') && (
+                <RangeSlider
+                  label="Max Foley: "
+                  min={MAXIMUM_FOLEY_SOUNDS_MIN}
+                  max={MAXIMUM_FOLEY_SOUNDS_MAX}
+                  step={1}
+                  value={maximumFoleySounds}
+                  onChange={setMaximumFoleySounds}
+                  hoverText="Maximum number of foley sound events generated by the AI foley artist"
+                />
+              )}
             </div>
           )}
         </div>

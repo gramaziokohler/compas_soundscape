@@ -32,6 +32,7 @@ import { useErrorsStore } from './errorsStore';
 import { useFileUploadStore } from './fileUploadStore';
 import { useSoundscapeStore } from './soundscapeStore';
 import { apiService } from '@/services/api';
+import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
 
 // ─── Module-level abort ref ───────────────────────────────────────────────────
 
@@ -269,6 +270,7 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
             set({ llmProgress: 'Submitting to LLM...' }, false, 'textGen/submitting');
             const { generation_id } = await apiService.generateText(requestBody);
             _currentGenerationId = generation_id;
+            recordInflightJob(generation_id, 'llm');
             set({ llmProgress: 'Queued...' }, false, 'textGen/queued');
 
             // Poll until done
@@ -420,6 +422,7 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
             }
           } finally {
             set({ isGenerating: false }, false, 'textGen/generateEnd');
+            if (_currentGenerationId) { removeInflightJob(_currentGenerationId); }
             _abortController = null;
             _currentGenerationId = null;
             if (_llmPollInterval) {
@@ -440,6 +443,7 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
           }
           if (_currentGenerationId) {
             apiService.cancelTextGeneration(_currentGenerationId);
+            removeInflightJob(_currentGenerationId);
             _currentGenerationId = null;
           }
           set(

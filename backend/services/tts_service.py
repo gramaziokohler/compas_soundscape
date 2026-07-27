@@ -108,9 +108,7 @@ class TTSService:
                 f"Gemini TTS returned empty content (finish_reason={finish})"
             )
         data = content.parts[0].inline_data.data
-        print(f"[duration-trace][tts_service] received {len(data)} PCM bytes for {output_path!r}", file=sys.stderr, flush=True)
         duration_seconds = self._write_wav(output_path, data)
-        print(f"[duration-trace][tts_service] measured duration_seconds={duration_seconds:.3f} for {output_path!r}", file=sys.stderr, flush=True)
         return output_path, duration_seconds
 
     @staticmethod
@@ -123,11 +121,6 @@ class TTSService:
             wf.writeframes(pcm)
         num_frames = len(pcm) / (channels * sample_width)
         duration = num_frames / rate
-        print(
-            f"[duration-trace][tts_service._write_wav] bytes={len(pcm)} channels={channels} "
-            f"rate={rate} sample_width={sample_width} num_frames={num_frames:.0f} duration={duration:.3f}s",
-            file=sys.stderr, flush=True,
-        )
         return duration
 
     @staticmethod

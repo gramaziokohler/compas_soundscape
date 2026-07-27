@@ -161,6 +161,9 @@ export interface SoundscapeData {
   version: string;
   model_id: string;
   model_name: string;
+  project_id?: string;
+  version_id?: string;
+  auth_token?: string;
   created_at: string; // ISO datetime
   global_settings: SoundscapeGlobalSettings;
   sound_configs: SoundscapeSoundConfig[];

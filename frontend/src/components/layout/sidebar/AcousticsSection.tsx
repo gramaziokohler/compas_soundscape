@@ -1065,6 +1065,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // Handle expand/collapse from CardSection
   const handleExpandedIndexChange = useCallback((index: number | null) => {
     setExpandedCardIndex(index);
+    useUIStore.getState().setExpandedSimulationTabIndex(index);
+    console.log('[dbg:simTab:sync] expandedCardIndex changed to:', index);
 
     if (index === null) {
       // Collapsing all cards → switch to Default mode (unless dark mode is active)
@@ -1133,6 +1135,20 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       }
     }
   }, [activeSimulationIndex, onSetActiveSimulation, simulationConfigs, viewMode, setViewMode, expandedCardIndex]);
+
+  // Restore expanded card from uiStore on mount (refresh survival)
+  const expandedRestoredRef = useRef(false);
+  useEffect(() => {
+    if (expandedRestoredRef.current) return;
+    if (simulationConfigs.length === 0) return;
+    const saved = useUIStore.getState().expandedSimulationTabIndex;
+    console.log('[dbg:simTab:restore] saved:', saved, 'configs:', simulationConfigs.length);
+    if (saved !== null && saved >= 0 && saved < simulationConfigs.length) {
+      console.log('[dbg:simTab:restore] RESTORING expanded to:', saved);
+      setExpandedCardIndex(saved);
+    }
+    expandedRestoredRef.current = true;
+  }, [simulationConfigs.length]);
 
   // ==========================================================================
   // Render Helpers

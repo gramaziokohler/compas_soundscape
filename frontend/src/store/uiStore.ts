@@ -7,10 +7,14 @@
  * sidebar expand states.
  *
  * No undo/redo needed — these are transient navigation/display choices.
+ *
+ * Added persist middleware (localStorage) so panel tabs, view toggles,
+ * and display preferences survive a page refresh. skipHydration + manual
+ * rehydrate() prevent Next.js SSR mismatches.
  */
 
 import { create } from 'zustand';
-import { devtools } from 'zustand/middleware';
+import { devtools, persist, createJSONStorage } from 'zustand/middleware';
 import type { LoadTab } from '@/types';
 import type { AudioRenderingMode } from '@/components/audio/AudioRenderingModeSelector';
 import {
@@ -136,6 +140,39 @@ export interface UIStoreState {
   /** True while the Sounds step is active — allows showing unparented sounds when no parent was set. */
   isInSoundsStep: boolean;
   setIsInSoundsStep: (v: boolean) => void;
+
+  // ── Autosave ────────────────────────────────────────────────────────────
+  enableAutoSave: boolean;
+  setEnableAutoSave: (v: boolean) => void;
+
+  // ── Camera POV (survives refresh) ──────────────────────────────────────────
+  cameraPosition: [number, number, number] | null;
+  cameraTarget: [number, number, number] | null;
+  setCameraState: (pos: [number, number, number] | null, target: [number, number, number] | null) => void;
+
+  // ── Sidebar wizard step (survives refresh) ─────────────────────────────────
+  sidebarWizardStep: 0 | 1 | 2;
+  setSidebarWizardStep: (step: 0 | 1 | 2) => void;
+
+  // ── Panel visibility toggles (survive refresh) ──────────────────────────────
+  showTimeline: boolean;
+  setShowTimeline: (v: boolean) => void;
+  showObjectExplorer: boolean;
+  setShowObjectExplorer: (v: boolean) => void;
+
+  // ── View mode (survives refresh) ────────────────────────────────────────────
+  viewMode: 'default' | 'acoustic' | 'dark';
+  setViewMode: (mode: 'default' | 'acoustic' | 'dark') => void;
+
+  // ── Floating panel positions & sizes (survive refresh) ──────────────────────
+  objectExplorerPanel: { x: number; y: number; width: number; height: number } | null;
+  setObjectExplorerPanel: (state: { x: number; y: number; width: number; height: number } | null) => void;
+  timelinePanel: { x: number; y: number; width: number; height: number } | null;
+  setTimelinePanel: (state: { x: number; y: number; width: number; height: number } | null) => void;
+
+  // ── Simulation cards expanded tab (survives refresh) ────────────────────────
+  expandedSimulationTabIndex: number | null;
+  setExpandedSimulationTabIndex: (index: number | null) => void;
 }
 
 export type GradientMetric = 'rt60' | 'edt' | 'd50' | 'c50' | 'spl';
@@ -151,8 +188,9 @@ export interface GradientMapState {
 }
 
 export const useUIStore = create<UIStoreState>()(
-  devtools(
-    (set) => ({
+  persist(
+    devtools(
+      (set) => ({
       // ── Load tab ────────────────────────────────────────────────────────
       activeLoadTab: 'upload',
       setActiveLoadTab: (tab) => set({ activeLoadTab: tab }, false, 'ui/setActiveLoadTab'),
@@ -287,7 +325,54 @@ export const useUIStore = create<UIStoreState>()(
         ),
       isInSoundsStep: false,
       setIsInSoundsStep: (v) => set({ isInSoundsStep: v }, false, 'ui/setIsInSoundsStep'),
+
+      // ── Autosave ───────────────────────────────────────────────────────────
+      enableAutoSave: true,
+      setEnableAutoSave: (v) => set({ enableAutoSave: v }, false, 'ui/setEnableAutoSave'),
+
+      // ── Camera POV ─────────────────────────────────────────────────────────
+      cameraPosition: null,
+      cameraTarget: null,
+      setCameraState: (pos, target) => set({ cameraPosition: pos, cameraTarget: target }, false, 'ui/setCameraState'),
+
+      // ── Sidebar wizard step ─────────────────────────────────────────────────
+      sidebarWizardStep: 0 as 0 | 1 | 2,
+      setSidebarWizardStep: (step) => set({ sidebarWizardStep: step }, false, 'ui/setSidebarWizardStep'),
+
+      // ── Panel visibility toggles ────────────────────────────────────────────
+      showTimeline: true,
+      setShowTimeline: (v) => set({ showTimeline: v }, false, 'ui/setShowTimeline'),
+      showObjectExplorer: false,
+      setShowObjectExplorer: (v) => set({ showObjectExplorer: v }, false, 'ui/setShowObjectExplorer'),
+
+      // ── View mode ──────────────────────────────────────────────────────────
+      viewMode: 'default' as 'default' | 'acoustic' | 'dark',
+      setViewMode: (mode) => set({ viewMode: mode }, false, 'ui/setViewMode'),
+
+      // ── Floating panel positions & sizes ───────────────────────────────────
+      objectExplorerPanel: null,
+      setObjectExplorerPanel: (s) => set({ objectExplorerPanel: s }, false, 'ui/setObjectExplorerPanel'),
+      timelinePanel: null,
+      setTimelinePanel: (s) => set({ timelinePanel: s }, false, 'ui/setTimelinePanel'),
+
+      // ── Simulation cards expanded tab ──────────────────────────────────────
+      expandedSimulationTabIndex: null,
+      setExpandedSimulationTabIndex: (idx) => set({ expandedSimulationTabIndex: idx }, false, 'ui/setExpandedSimulationTabIndex'),
     }),
     { name: 'uiStore' },
   ),
+  {
+    name: 'compas-ui-state',
+    storage: createJSONStorage(() => localStorage),
+    skipHydration: true,
+    partialize: (state: UIStoreState) => {
+      const { globalModelFile, globalSpeckleData, speckleModelUrl, speckleBounds,
+        hoveredIRSourceReceiver, activeGradientMap, selectedIRId, selectedIRMetadata,
+        irRefreshTrigger, refreshBoundingBoxTrigger, roomScale, isUploadingGlobalModel,
+        isSavingSoundscape, zoomToSoundCardTrigger,
+        activeSoundParentIndex, isInSoundsStep, showBoundingBox,
+        cameraPosition, cameraTarget, ...persistable } = state;
+      return persistable;
+    },
+  }),
 );

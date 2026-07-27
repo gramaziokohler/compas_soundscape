@@ -54,8 +54,10 @@ export function MaterialSelect({
   const [openUpward, setOpenUpward] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [histPos, setHistPos]     = useState<{ x: number; y: number } | null>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef   = useRef<HTMLDivElement>(null);
   const canvasRef    = useRef<HTMLCanvasElement | null>(null);
 
   const selectedMat  = materials.find((m) => m.id === value);
@@ -88,10 +90,15 @@ export function MaterialSelect({
   }, [hoveredId, materials]);
 
   const handleTriggerClick = () => {
-    if (!isOpen && containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
+    if (!isOpen && triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
       const spaceBelow = window.innerHeight - rect.bottom;
-      setOpenUpward(spaceBelow < LIST_MAX_HEIGHT && rect.top > spaceBelow);
+      const wantsUpward = spaceBelow < LIST_MAX_HEIGHT && rect.top > spaceBelow;
+      setOpenUpward(wantsUpward);
+      setDropdownPos({
+        left: rect.left,
+        top: wantsUpward ? rect.top - LIST_MAX_HEIGHT - 2 : rect.bottom + 2,
+      });
     }
     setIsOpen((prev) => !prev);
   };
@@ -120,6 +127,7 @@ export function MaterialSelect({
     >
       {/* ── Trigger ─ same width/height/colours as original <select> ──────────── */}
       <div
+        ref={triggerRef}
         role="button"
         tabIndex={0}
         onClick={handleTriggerClick}
@@ -156,15 +164,13 @@ export function MaterialSelect({
       {isOpen && (
         <div
             style={{
-            position: 'absolute',
-            ...(openUpward
-              ? { bottom: '100%', marginBottom: '2px' }
-              : { top: '100%', marginTop: '2px' }),
-            right: 0,
+            position: 'fixed',
+            left: dropdownPos.left,
+            top: dropdownPos.top,
             minWidth: 'max-content',
             maxHeight: `${LIST_MAX_HEIGHT}px`,
             overflowY: 'auto',
-            zIndex: 50,
+            zIndex: 99999,
             backgroundColor: 'var(--background)',
             border: `1px solid var(--color-secondary-light)`,
             borderRadius: `${UI_BORDER_RADIUS.SM}px`,
@@ -213,7 +219,7 @@ export function MaterialSelect({
       {/* ── Histogram ─ fixed-positioned to the left of the hovered option ──── */}
       {showHistogram && histPos && (
         <div
-          className="fixed pointer-events-none z-[200]"
+          className="fixed pointer-events-none"
           style={{
             left: Math.max(4, histPos.x),
             top: histPos.y,
@@ -223,6 +229,7 @@ export function MaterialSelect({
             overflow: 'hidden',
             border: '1px solid var(--color-secondary-light)',
             boxShadow: '0 4px 16px rgba(0,0,0,0.7)',
+            zIndex: 99999,
           }}
         >
           <canvas
