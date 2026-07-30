@@ -4,6 +4,8 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { apiService } from '@/services/api';
 import { isAuthError } from '@/utils/authErrors';
 import { useTextGenerationStore } from '@/store/textGenerationStore';
+import { ValidationMessage } from '@/components/ui/ValidationMessage';
+import { Spinner } from '@/components/ui/Spinner';
 import type { SpeckleModelDetail, SpeckleProjectModelsResponse } from '@/types/speckle-models';
 
 // ============================================================================
@@ -380,11 +382,7 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
   if (isLoading) {
     return (
       <div className="w-full text-center py-4">
-        <div
-          className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-solid border-current border-r-transparent"
-          style={{ color: 'var(--color-primary)' }}
-          role="status"
-        />
+        <Spinner size={20} />
         <p className="text-xs mt-2 text-neutral-500">
           Loading models...
         </p>
@@ -410,7 +408,7 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
             Configure API token in Advanced Settings →
           </button>
         ) : (
-          <p className="text-xs text-error">{error}</p>
+          <ValidationMessage type="error">{error}</ValidationMessage>
         )}
         <button
           type="button"

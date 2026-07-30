@@ -15,7 +15,7 @@
 'use client';
 
 import React, { CSSProperties, useMemo } from 'react';
-import { VirtualTreeItem as TreeItem, getHeaderAndSubheader, getTargetObjectIds, getGeometryLeafIdsFromNode } from '@/hooks/useSpeckleTree';
+import { VirtualTreeItem as TreeItem, getHeaderAndSubheader, getGeometryLeafIdsFromNode } from '@/hooks/useSpeckleTree';
 import { useSpeckleStore } from '@/store';
 import { TreeItemAcousticControls } from '@/components/scene/TreeItemAcousticControls';
 import type { MaterialOption } from '@/components/ui/MaterialSelect';
@@ -32,13 +32,20 @@ interface VirtualTreeItemProps {
   onMouseEnter: (objectIds: string[]) => void;
   onMouseLeave: (objectIds: string[]) => void;
   onToggleVisibility: (objectIds: string[]) => void;
-  onToggleIsolation: (objectIds: string[]) => void;
-  /** When true, render the acoustic material + scattering columns. */
+  onToggleIsolation?: (objectIds: string[]) => void;
   acousticActive?: boolean;
-  /** When true, render the scattering column (Pyroomacoustics only). */
   showScattering?: boolean;
   sortedMaterials?: MaterialOption[];
   materialColors?: Map<string, string>;
+  /** When true, do not render the isolate button (used in acoustic mode) */
+  hideIsolateButton?: boolean;
+  /** When true, render a "Select" button to designate this layer as the acoustic layer */
+  isLayerSelectionMode?: boolean;
+  onSelectAsAcousticLayer?: () => void;
+  /** When true, this row IS the acoustic layer row — render a red reload button instead of hide */
+  isAcousticLayerRow?: boolean;
+  /** Handler for the red reload button (resets acoustic layer assignment) */
+  onResetAcousticLayer?: () => void;
 }
 
 export function VirtualTreeItem({
@@ -58,11 +65,20 @@ export function VirtualTreeItem({
   showScattering = false,
   sortedMaterials,
   materialColors,
+  hideIsolateButton,
+  isLayerSelectionMode,
+  onSelectAsAcousticLayer,
+  isAcousticLayerRow,
+  onResetAcousticLayer,
 }: VirtualTreeItemProps) {
   const { modelFileName } = useSpeckleStore();
   const rawSpeckleData = item.data.raw;
-  const objectIds = getTargetObjectIds(rawSpeckleData);
   const geometryIds = useMemo(() => getGeometryLeafIdsFromNode(item.data), [item.data]);
+  // Hide/isolate/hover must key off the actual renderable geometry leaf ids
+  // (same ids the ObjectExplorer uses for isHidden/isIsolated state and the
+  // acoustic-mode explorer-hide tracking). A group/layer row's own raw id is
+  // NOT a renderable object id, so using it here would silently no-op.
+  const objectIds = geometryIds;
   const isRootNode = item.indent === 0;
   const { header, subheader } = getHeaderAndSubheader(rawSpeckleData, modelFileName, isRootNode);
   const displaySubheader = item.hasChildren ? 'Layer' : subheader;
@@ -114,6 +130,7 @@ export function VirtualTreeItem({
 
   const handleToggleIsolation = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!onToggleIsolation) return;
     console.log('[VirtualTreeItem] Toggle isolation clicked for:', { header: displayHeader, objectIds, isIsolated });
     onToggleIsolation(objectIds);
   };
@@ -190,11 +207,32 @@ export function VirtualTreeItem({
           />
         )}
 
-        {/* Right side: hide/isolate buttons (hidden for root nodes) */}
-        {!isRootNode && (
+        {/* Right side: acoustic layer row — red reload button to re-assign */}
+        {isAcousticLayerRow && onResetAcousticLayer && (
+          <div className="flex items-center shrink-0 w-auto">
+            <button
+              className="p-1 rounded transition-colors"
+              style={{ color: 'var(--color-error)' }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onResetAcousticLayer();
+              }}
+              title="Re-assign acoustic layer"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="23 4 23 10 17 10" />
+                <polyline points="1 20 1 14 7 14" />
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+              </svg>
+            </button>
+          </div>
+        )}
+
+        {/* Right side: hide/isolate buttons (hidden for root nodes unless in layer selection mode) */}
+        {!isAcousticLayerRow && (!isRootNode || isLayerSelectionMode) && (
           <div
             className={`flex items-center overflow-hidden shrink-0 group-hover:w-auto transition-all ${
-              isHidden || isIsolated ? 'w-auto' : 'w-0'
+              isHidden || isIsolated || isLayerSelectionMode ? 'w-auto' : 'w-0'
             }`}
           >
           {/* Hide/Show button */}
@@ -220,68 +258,89 @@ export function VirtualTreeItem({
             </svg>
           </button>
 
-          {/* Isolate button */}
-          <button
-            className={`p-1 hover:bg-neutral-200 rounded transition-colors ${
-              isIsolated ? 'text-primary' : 'text-neutral-600'
-            }`}
-            onClick={handleToggleIsolation}
-            title={isIsolated ? 'Un-isolate' : 'Isolate'}
-          >
-            {isIsolated ? (
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="w-4 h-4"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="none"
-              >
-                <rect
-                  x="4"
-                  y="4"
-                  width="16"
-                  height="16"
-                  rx="2"
-                  fill="currentColor"
-                  opacity="0.3"
-                />
-                <rect
-                  x="8"
-                  y="8"
-                  width="8"
-                  height="8"
-                  rx="1"
-                  fill="currentColor"
-                />
-              </svg>
-            ) : (
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="w-4 h-4"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <rect
-                  x="4"
-                  y="4"
-                  width="16"
-                  height="16"
-                  rx="2"
-                />
-                <rect
-                  x="8"
-                  y="8"
-                  width="8"
-                  height="8"
-                  rx="1"
-                />
-              </svg>
-            )}
-          </button>
+          {/* Isolate button (hidden in acoustic mode) */}
+          {!hideIsolateButton && onToggleIsolation && (
+            <button
+              className={`p-1 hover:bg-neutral-200 rounded transition-colors ${
+                isIsolated ? 'text-primary' : 'text-neutral-600'
+              }`}
+              onClick={handleToggleIsolation}
+              title={isIsolated ? 'Un-isolate' : 'Isolate'}
+            >
+              {isIsolated ? (
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="w-4 h-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="none"
+                >
+                  <rect
+                    x="4"
+                    y="4"
+                    width="16"
+                    height="16"
+                    rx="2"
+                    fill="currentColor"
+                    opacity="0.3"
+                  />
+                  <rect
+                    x="8"
+                    y="8"
+                    width="8"
+                    height="8"
+                    rx="1"
+                    fill="currentColor"
+                  />
+                </svg>
+              ) : (
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="w-4 h-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect
+                    x="4"
+                    y="4"
+                    width="16"
+                    height="16"
+                    rx="2"
+                  />
+                  <rect
+                    x="8"
+                    y="8"
+                    width="8"
+                    height="8"
+                    rx="1"
+                  />
+                </svg>
+              )}
+            </button>
+          )}
+
+          {/* Select as acoustic layer button (only in layer selection mode) */}
+          {isLayerSelectionMode && onSelectAsAcousticLayer && (
+            <button
+              className="ml-1 px-2 py-0.5 text-xs font-medium rounded transition-colors border"
+              style={{
+                backgroundColor: 'var(--color-primary)',
+                color: 'white',
+                borderColor: 'var(--color-primary)',
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelectAsAcousticLayer();
+              }}
+              title="Select as acoustic layer"
+            >
+              Select
+            </button>
+          )}
         </div>        )}      
       </div>
     </div>

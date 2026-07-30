@@ -13,6 +13,8 @@ export function ErrorToast() {
     <div
       className="fixed top-4 right-4 z-[9999] flex flex-col gap-2"
       style={{ maxWidth: '400px' }}
+      role="status"
+      aria-live="polite"
     >
       {errors.map((error) => {
         const typeClasses = error.type === 'error'
@@ -24,6 +26,7 @@ export function ErrorToast() {
         return (
           <div
             key={error.id}
+            role="alert"
             className={`rounded-lg border flex items-start gap-3 animate-slide-in-right ${typeClasses}`}
             style={{
               padding: `${UI_CARD.PADDING}px`,

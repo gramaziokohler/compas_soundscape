@@ -27,6 +27,7 @@ import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react'
 import { Power, ChevronDown, ChevronRight } from 'lucide-react';
 import { CardSection, type CardTypeOption } from '@/components/ui/CardSection';
 import { Card } from '@/components/ui/Card';
+import { ValidationMessage } from '@/components/ui/ValidationMessage';
 import { apiService } from '@/services/api';
 import { CARD_TYPE_LABELS } from '@/types/card';
 import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGridListenersStore, useAudioControlsStore, useSoundscapeStore } from '@/store';
@@ -1066,15 +1067,12 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   const handleExpandedIndexChange = useCallback((index: number | null) => {
     setExpandedCardIndex(index);
     useUIStore.getState().setExpandedSimulationTabIndex(index);
-    console.log('[dbg:simTab:sync] expandedCardIndex changed to:', index);
 
     if (index === null) {
-      // Collapsing all cards → switch to Default mode (unless dark mode is active)
+      // Collapsing all cards — deactivate audio but DON'T switch away from acoustic mode.
+      // ViewMode is now user-controlled via the toolbar, not card state.
       if (activeSimulationIndex !== null && onSetActiveSimulation) {
         onSetActiveSimulation(null);
-      }
-      if (viewMode !== 'dark') {
-        setViewMode('default');
       }
     } else {
       const config = simulationConfigs[index];
@@ -1099,12 +1097,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   const handleToggleAudioRendering = useCallback(() => {
     if (!onSetActiveSimulation) return;
     if (activeSimulationIndex !== null) {
-      // Deactivate and collapse the active card → switch to Default mode
+      // Deactivate and collapse the active card — DON'T switch away from acoustic mode
       onSetActiveSimulation(null);
       setExpandedCardIndex(null);
-      if (viewMode !== 'dark') {
-        setViewMode('default');
-      }
     } else {
       // Re-activate audio: prefer the currently expanded card if it's completed,
       // then fall back to the last active card, then the first completed card
@@ -1142,9 +1137,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     if (expandedRestoredRef.current) return;
     if (simulationConfigs.length === 0) return;
     const saved = useUIStore.getState().expandedSimulationTabIndex;
-    console.log('[dbg:simTab:restore] saved:', saved, 'configs:', simulationConfigs.length);
     if (saved !== null && saved >= 0 && saved < simulationConfigs.length) {
-      console.log('[dbg:simTab:restore] RESTORING expanded to:', saved);
       setExpandedCardIndex(saved);
     }
     expandedRestoredRef.current = true;
@@ -1425,12 +1418,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     const hasSoundSectionMismatch = mismatchedSourceCount > 0;
 
     const soundSectionMismatchWarning = hasSoundSectionMismatch ? (
-      <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-warning/10 border border-warning/40 text-warning text-xs">
-        <span className="font-bold shrink-0 mt-0.5">!</span>
-        {/* <span>
-          This simulation was generated with sound sources from a different sound section. The impulse responses remain accessible for the available source-receiver pairs.
-        </span> */}
-      </div>
+      <ValidationMessage type="warning">
+        This simulation was generated with sound sources from a different sound section. The impulse responses remain accessible for the available source-receiver pairs.
+      </ValidationMessage>
     ) : null;
 
     const afterContent = isCompleted ? (

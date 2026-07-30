@@ -1,5 +1,7 @@
 'use client';
 
+import { Spinner } from '@/components/ui/Spinner';
+
 export interface CircularFABProps {
   label: string;
   onClick: () => void;
@@ -44,10 +46,7 @@ export function CircularFAB({ label, onClick, isLoading, disabled, disabledReaso
       }}
     >
       {isLoading ? (
-        <span
-          className="inline-block w-3 h-3 rounded-full border-2 border-white border-t-transparent animate-spin"
-          aria-hidden="true"
-        />
+        <Spinner size={12} className="border-white" />
       ) : (
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
           <path d="M3 7h8M7.5 3.5L11 7l-3.5 3.5" stroke="var(--color-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />

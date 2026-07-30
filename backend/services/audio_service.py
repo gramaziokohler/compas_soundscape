@@ -311,7 +311,10 @@ class AudioService:
 
             # Create a hash of all generation parameters for unique identification
             import hashlib
+            regeneration_ts = sound_config.get('_regeneration_ts', '')
             param_string = f"{prompt}_{duration}_{guidance_scale}_{steps}_{apply_denoising}_{audio_model}"
+            if regeneration_ts:
+                param_string += f"_{regeneration_ts}"
             param_hash = hashlib.md5(param_string.encode()).hexdigest()[:PARAM_HASH_LENGTH]
 
             for copy_idx in range(seed_copies):

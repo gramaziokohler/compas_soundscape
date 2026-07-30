@@ -5,6 +5,8 @@ import type { SoundGenerationConfig, CatalogSoundSelection } from "@/types";
 import type { CatalogBrowseState, CatalogBrowseActions } from "@/hooks/useCatalogBrowse";
 import { useCatalogBrowse } from "@/hooks/useCatalogBrowse";
 import { SearchBar } from "@/components/ui/SearchBar";
+import { ValidationMessage } from '@/components/ui/ValidationMessage';
+import { Spinner } from '@/components/ui/Spinner';
 
 export interface CatalogModeProps {
   config: SoundGenerationConfig;
@@ -94,20 +96,12 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
         <>
           {isSearchingAll && (
             <div className="flex items-center justify-center py-4">
-              <div
-                className="w-4 h-4 border-2 rounded-full animate-spin"
-                style={{
-                  borderColor: "var(--color-primary-light)",
-                  borderTopColor: "var(--color-primary)",
-                }}
-              />
+              <Spinner size={16} className="align-middle" />
               <span className="ml-2 text-xs text-secondary-hover">Searching all categories...</span>
             </div>
           )}
           {searchError && (
-            <p className="text-xs rounded-lg p-2 bg-error-light border border-error text-error">
-              {searchError}
-            </p>
+            <ValidationMessage type="error">{searchError}</ValidationMessage>
           )}
           {!isSearchingAll && searchResults !== null && searchResults.length > 0 && (
             <div className="rounded-lg max-h-50 overflow-y-auto">
@@ -176,22 +170,13 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
           {/* Loading indicator */}
           {isLoading && (
             <div className="flex items-center justify-center py-4">
-              <div
-                className="w-4 h-4 border-2 rounded-full animate-spin"
-                style={{
-                  borderColor: "var(--color-primary-light)",
-                  borderTopColor: "var(--color-primary)",
-                }}
-              />
+              <Spinner size={16} />
               <span className="ml-2 text-xs text-secondary-hover">Loading...</span>
             </div>
           )}
 
-          {/* Error */}
           {error && (
-            <p className="text-xs rounded-lg p-2 bg-error-light border border-error text-error">
-              {error}
-            </p>
+            <ValidationMessage type="error">{error}</ValidationMessage>
           )}
 
           {/* Category list */}

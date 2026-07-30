@@ -212,6 +212,30 @@ export interface SoundscapeLoadResponse {
   found: boolean;
 }
 
+/** Response from GET /api/speckle/soundscape/{model_id}/stats */
+export interface SoundscapeStats {
+  model_id: string;
+  found: boolean;
+  sound_configs: number;
+  sound_events: number;
+  receivers: number;
+  simulation_configs: number;
+  analysis_cards: number;
+  audio_files: number;
+  audio_size_bytes: number;
+  audio_size_formatted: string;
+  ir_files: number;
+  ir_size_bytes: number;
+  ir_size_formatted: string;
+  analysis_files: number;
+  simulation_result_files: number;
+  total_size_bytes: number;
+  total_size_formatted: string;
+  last_modified: string | null;
+  created_at: string | null;
+  model_name: string;
+}
+
 // ============================================================================
 // Analysis State Persistence Types
 // ============================================================================

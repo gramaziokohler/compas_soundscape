@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { apiService, type ServiceVersions } from '@/services/api';
 import { useSoundscapeStore } from '@/store/soundscapeStore';
-import { useErrorsStore } from '@/store/errorsStore';
+import { notifyError } from '@/store';
 import { LLM_MODEL_TO_PROVIDER } from '@/utils/constants';
 
 let _cpuWarningShown = false;
@@ -40,7 +40,7 @@ export function useServiceVersions(): ServiceVersions | null {
       setVersions(enriched);
       if (!_cpuWarningShown && v.tangoflux?.device === 'cpu') {
         _cpuWarningShown = true;
-        useErrorsStore.getState().addError(
+        notifyError(
           'Audio generation is running on CPU — generation will be slow. A CUDA or MPS GPU is recommended.',
           'warning'
         );

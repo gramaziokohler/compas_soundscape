@@ -48,7 +48,6 @@ export function Sidebar(props: SidebarProps) {
 
   // Trace currentStep changes for debugging refresh state
   useEffect(() => {
-    console.log('[dbg:sidebar:currentStep] changed to:', currentStep, '  (stack:', new Error().stack?.split('\n')[2]?.trim(), ')');
   }, [currentStep]);
 
   // After persist rehydration, pull the saved sidebar state from stores.
@@ -59,7 +58,6 @@ export function Sidebar(props: SidebarProps) {
     // Check if a project is loaded — on homepage, force everything collapsed
     const urlModelId = new URLSearchParams(window.location.search).get('model_id');
     const hasProject = !!useUIStore.getState().globalSpeckleData || !!urlModelId;
-    console.log('[dbg:sidebar:mount] hasProject:', hasProject);
 
     let sidebarExpanded: boolean | null = null;
     // Try direct localStorage first (most reliable, bypasses rehydrate timing)
@@ -80,7 +78,6 @@ export function Sidebar(props: SidebarProps) {
       sidebarExpanded = false;
     }
     setIsExpanded(sidebarExpanded);
-    console.log('[dbg:sidebar:mount] sidebarExpanded:', sidebarExpanded);
 
     const savedStep = useUIStore.getState().sidebarWizardStep;
     setCurrentStep(savedStep);
@@ -88,7 +85,6 @@ export function Sidebar(props: SidebarProps) {
     setActiveContextOriginalIndex(ctxIdx);
     const usgIdx = useCardFlowStore.getState().activeUsageOriginalIndex;
     setActiveUsageOriginalIndex(usgIdx);
-    console.log('[dbg:sidebar:mount] step:', savedStep, 'ctxIdx:', ctxIdx, 'usgIdx:', usgIdx);
     if (savedStep === 0 && ctxIdx !== null) {
       setContextExpandedOriginalIndex(ctxIdx);
     } else if (savedStep === 1 && usgIdx !== null) {
@@ -296,7 +292,6 @@ export function Sidebar(props: SidebarProps) {
   // Step navigation helpers
   const advanceToUsage = useCallback((originalIndex: number, _title: string) => {
     if (isInitializingRef.current) {
-      console.log('[dbg:sidebar:advanceToUsage] SKIPPED — still initializing');
       return;
     }
     useCardFlowStore.getState().recordContextAdvance(originalIndex);
@@ -311,7 +306,6 @@ export function Sidebar(props: SidebarProps) {
 
   const handleContextSendToSounds = useCallback((originalIndex: number, _title: string) => {
     if (isInitializingRef.current) {
-      console.log('[dbg:sidebar:handleContextSendToSounds] SKIPPED — still initializing');
       return;
     }
     useCardFlowStore.getState().recordContextAdvance(originalIndex);
@@ -328,7 +322,6 @@ export function Sidebar(props: SidebarProps) {
 
   const handleUsageSendToSounds = useCallback((originalIndex: number, _title: string) => {
     if (isInitializingRef.current) {
-      console.log('[dbg:sidebar:handleUsageSendToSounds] SKIPPED — still initializing');
       return;
     }
     useCardFlowStore.getState().recordUsageAdvance(originalIndex);
@@ -375,7 +368,7 @@ export function Sidebar(props: SidebarProps) {
     <>
       {/* Toggle button — floats at the right edge of the sidebar content */}
       <button
-        onClick={() => { const v = !isExpanded; console.log('[dbg:sidebar:toggle] isExpanded:', isExpanded, '→ new:', v, 'writing to store'); setIsExpanded(v); useUIStore.getState().setIsLeftSidebarExpanded(v); console.log('[dbg:sidebar:toggle] store value after write:', useUIStore.getState().isLeftSidebarExpanded); console.log('[dbg:sidebar:toggle] direct localStorage check:', localStorage.getItem('compas-ui-state')?.substring(0, 200)); }}
+        onClick={() => { const v = !isExpanded;  setIsExpanded(v); useUIStore.getState().setIsLeftSidebarExpanded(v); }}
         title={isExpanded ? 'Collapse panel' : 'Open panel'}
         style={{
           position: 'fixed',
@@ -710,6 +703,8 @@ export function Sidebar(props: SidebarProps) {
               useSpeckleViewer={props.useSpeckleViewer}
               onResetSound={props.onResetSound}
               onDuplicateConfig={props.onDuplicateConfig}
+              onRegenerateSingle={props.onRegenerateSingle}
+              onDeleteVariant={props.onDeleteVariant}
               onSelectSoundCard={props.onSelectSoundCard}
               selectedCardIndex={props.selectedCardIndex}
               onCatalogSoundSelect={props.onCatalogSoundSelect}

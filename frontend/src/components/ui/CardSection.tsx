@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback, type ReactNode, Fragment } fr
 import type { CardType, CardBaseConfig, CardColor } from '@/types/card';
 import { isAuthError } from '@/utils/authErrors';
 import { useTextGenerationStore } from '@/store/textGenerationStore';
+import { ValidationMessage } from '@/components/ui/ValidationMessage';
 
 /**
  * CardSection Component
@@ -435,9 +436,8 @@ export function CardSection<TItem extends CardBaseConfig>({
         )}
       </div>
 
-      {/* Error display */}
       {error && (
-        <div className="p-3 text-xs rounded-lg bg-error-light border border-error text-error flex flex-col gap-1.5">
+        <ValidationMessage type="error">
           {isAuthError(error) ? (
             <button
               onClick={() => useTextGenerationStore.getState().triggerOpenTokenSettings()}
@@ -453,7 +453,7 @@ export function CardSection<TItem extends CardBaseConfig>({
           ) : (
             <span>{error}</span>
           )}
-        </div>
+        </ValidationMessage>
       )}
 
       {footer}

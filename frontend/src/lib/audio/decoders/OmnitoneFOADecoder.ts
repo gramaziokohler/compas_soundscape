@@ -18,7 +18,7 @@
  * - Uses SADIE binaural filters
  *
  * Physical Accuracy:
- * - First-order ambisonic decoding (4 channels: W, X, Y, Z)
+ * - First-order ambisonic decoding (4 channels: W, Y, Z, X — ACN, AmbiX standard)
  * - HRTF-based binaural rendering
  * - Accurate ITD (Interaural Time Difference) and ILD (Interaural Level Difference)
  * - Real-time head rotation via rotation matrix updates

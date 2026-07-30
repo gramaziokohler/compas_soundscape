@@ -173,6 +173,10 @@ export interface UIStoreState {
   // ── Simulation cards expanded tab (survives refresh) ────────────────────────
   expandedSimulationTabIndex: number | null;
   setExpandedSimulationTabIndex: (index: number | null) => void;
+
+  // ── Acoustic layer selection mode (NOT persisted — model-bound) ──────────────
+  acousticLayerSelectionMode: boolean;
+  setAcousticLayerSelectionMode: (v: boolean) => void;
 }
 
 export type GradientMetric = 'rt60' | 'edt' | 'd50' | 'c50' | 'spl';
@@ -358,6 +362,10 @@ export const useUIStore = create<UIStoreState>()(
       // ── Simulation cards expanded tab ──────────────────────────────────────
       expandedSimulationTabIndex: null,
       setExpandedSimulationTabIndex: (idx) => set({ expandedSimulationTabIndex: idx }, false, 'ui/setExpandedSimulationTabIndex'),
+
+      // ── Acoustic layer selection mode ─────────────────────────────────────
+      acousticLayerSelectionMode: false,
+      setAcousticLayerSelectionMode: (v) => set({ acousticLayerSelectionMode: v }, false, 'ui/setAcousticLayerSelectionMode'),
     }),
     { name: 'uiStore' },
   ),
@@ -371,7 +379,7 @@ export const useUIStore = create<UIStoreState>()(
         irRefreshTrigger, refreshBoundingBoxTrigger, roomScale, isUploadingGlobalModel,
         isSavingSoundscape, zoomToSoundCardTrigger,
         activeSoundParentIndex, isInSoundsStep, showBoundingBox,
-        cameraPosition, cameraTarget, ...persistable } = state;
+        cameraPosition, cameraTarget, acousticLayerSelectionMode, ...persistable } = state;
       return persistable;
     },
   }),

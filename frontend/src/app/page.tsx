@@ -23,6 +23,7 @@ import {
   useSEDStore,
   useRoomMaterialsStore,
   useRightSidebarStore,
+  useAcousticLayerStore,
   useUIStore,
   useGridListenersStore,
   useErrorsStore,
@@ -65,6 +66,8 @@ function buildAppIdMap(node: any, map: Map<string, string> = new Map()): Map<str
   return map;
 }
 
+let _viewerLoadComplete = false;
+
 function HomeContent() {
   useUndoRedo();
 
@@ -93,7 +96,32 @@ function HomeContent() {
     console.log('[page:bootstrap] Loading soundscape for model_id from URL:', urlModelId);
     apiService.loadSoundscapeFromSpeckle(urlModelId).then(loadResponse => {
       if (!loadResponse.found || !loadResponse.soundscape_data) {
-        console.log('[page:bootstrap] No saved soundscape found for', urlModelId);
+        console.log('[page:bootstrap] No saved soundscape found for', urlModelId, '- looking up model from Speckle API');
+        apiService.getSpeckleModels().then(speckleResponse => {
+          const model = speckleResponse.models.find(m => m.id === urlModelId);
+          if (!model || !model.latest_version) {
+            console.log('[page:bootstrap] Model not found in Speckle project:', urlModelId);
+            return;
+          }
+          const v = model.latest_version;
+          const speckleData = {
+            model_id: model.id,
+            version_id: v.id,
+            file_id: '',
+            url: `https://app.speckle.systems/projects/${speckleResponse.project_id}/models/${model.id}`,
+            object_id: v.referenced_object ?? v.id,
+            display_name: model.display_name ?? model.name,
+            auth_token: speckleResponse.auth_token || undefined,
+          };
+          useUIStore.getState().setGlobalSpeckleData(speckleData);
+          useUIStore.getState().setSpeckleModelUrl(speckleData.url);
+          if (speckleData.display_name) {
+            setModelFileName(speckleData.display_name);
+          }
+          console.log('[page:bootstrap] Viewer reconstructed from Speckle API for', urlModelId);
+        }).catch(err => {
+          console.error('[page:bootstrap] Failed to look up model from Speckle API:', err);
+        });
         return;
       }
 
@@ -486,6 +514,10 @@ function HomeContent() {
       console.log('[page:camera:save] Skipped — no viewer');
       return;
     }
+    if (!_viewerLoadComplete) {
+      console.log('[page:camera:save] Skipped — viewer load not complete');
+      return;
+    }
     try {
       const cam = viewer.getRenderer().renderingCamera as THREE.PerspectiveCamera;
       if (!cam || !(cam as any).isPerspectiveCamera) {
@@ -536,8 +568,16 @@ function HomeContent() {
     return () => window.removeEventListener('beforeunload', saveCameraToStore);
   }, [saveCameraToStore]);
 
+  // Reset the viewer-load-complete gate when model is unloaded (e.g. going to homepage)
+  useEffect(() => {
+    if (!globalSpeckleData) {
+      _viewerLoadComplete = false;
+    }
+  }, [globalSpeckleData]);
+
   // Callback when Speckle viewer is loaded
   const handleSpeckleViewerLoaded = useCallback((viewer: import('@speckle/viewer').Viewer) => {
+    _viewerLoadComplete = true;
     console.log('[page:camera:restore] Viewer loaded');
     // Try Zustand store first (may have been rehydrated), then fall back to direct localStorage
     let savedPos = useUIStore.getState().cameraPosition;
@@ -623,7 +663,17 @@ function HomeContent() {
         }
       }, 800);
     } else {
-      console.log('[page:camera:restore] No saved camera state — skipping');
+      console.log('[page:camera:restore] No saved camera state — fitting to model bounding box');
+      setTimeout(() => {
+        const cc = useSpeckleEngineStore.getState().cameraController;
+        if (cc?.setCameraView) {
+          cc.setCameraView([], true);
+          viewer.requestRender(8);
+          console.log('[page:camera:restore] Applied auto-fit to all objects');
+        } else {
+          console.warn('[page:camera:restore] CameraController not available for auto-fit');
+        }
+      }, 800);
     }
   }, []);
    
@@ -2318,6 +2368,17 @@ function HomeContent() {
       setGlobalSoundSpeed, setGlobalMeshLc,
       setShowGroundGrid, setGroundGridSpacing, setGroundGridColor]);
 
+  const handleDeleteHistory = useCallback(async () => {
+    const modelId = useUIStore.getState().globalSpeckleData?.model_id;
+    if (!modelId) return;
+    try {
+      await apiService.deleteSoundscapeHistory(modelId);
+    } catch {
+      // proceed with reload even if API fails
+    }
+    window.location.reload();
+  }, []);
+
   // Handler: Material assignment selection (NEW)
   const handleSelectGeometry = useCallback((selection: SelectedGeometry | null) => {
     setSelectedGeometry(selection);
@@ -3024,6 +3085,8 @@ function HomeContent() {
         useSpeckleViewer={useSpeckleViewer}
         onResetSound={handleResetSound}
         onDuplicateConfig={soundGen.handleDuplicateConfig}
+        onRegenerateSingle={soundGen.handleRegenerateSingle}
+        onDeleteVariant={soundGen.handleDeleteVariant}
         onSelectSoundCard={handleSelectSoundCard}
         selectedCardIndex={selectedCardIndex}
         // Analysis props
@@ -3108,6 +3171,7 @@ function HomeContent() {
         onGroundGridColorChange={setGroundGridColor}
         listenerOrientation={listenerOrientation}
         onListenerOrientationChange={setListenerOrientation}
+        onDeleteHistory={handleDeleteHistory}
       />
 
       {/* Right Sidebar - Acoustics + Listeners */}
@@ -3193,18 +3257,15 @@ export default function Home() {
   // BEFORE child mount effects (Sidebar, Timeline, Explorer on mount read
   // the store and expect rehydration to have completed).
   useEffect(() => {
-    console.log('[dbg:rehydrate] Starting Zustand persist rehydration (Home, outside Suspense)');
-    console.log('[dbg:rehydrate] uiStore.persist:', !!(useUIStore as any).persist, 'rehydrate:', typeof (useUIStore as any).persist?.rehydrate);
     (useUIStore as any).persist?.rehydrate?.();
     (useCardFlowStore as any).persist?.rehydrate?.();
     (useAudioControlsStore as any).persist?.rehydrate?.();
     (useRightSidebarStore as any).persist?.rehydrate?.();
-    console.log('[dbg:rehydrate] AFTER — ui.isLeftSidebarExpanded:', useUIStore.getState().isLeftSidebarExpanded, 'ui.showTimeline:', useUIStore.getState().showTimeline, 'ui.viewMode:', (useUIStore.getState() as any).viewMode, 'ui.objectExplorerPanel:', useUIStore.getState().objectExplorerPanel, 'ui.timelinePanel:', useUIStore.getState().timelinePanel, 'ui.expandedSimulationTabIndex:', useUIStore.getState().expandedSimulationTabIndex);
+    (useAcousticLayerStore as any).persist?.rehydrate?.();
 
     // On homepage (no model_id URL), force panels collapsed/hidden.
     const urlModelId = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('model_id') : null;
     if (!urlModelId) {
-      console.log('[dbg:rehydrate] HOMEPAGE — forcing panels collapsed');
       useUIStore.getState().setIsLeftSidebarExpanded(false);
       useUIStore.getState().setShowTimeline(false);
       useUIStore.getState().setShowObjectExplorer(false);

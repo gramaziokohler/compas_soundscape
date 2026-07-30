@@ -18,17 +18,17 @@ ambisonic / binaural spatial audio rendering.
 ## Run Commands
 
 ```bash
-# Always activate the environment first
+# Backend (from repo root), to run the app
 mamba activate compas-toy
-
-# Backend (from repo root)
 cd backend && uvicorn main:app --reload --log-config log_config.json
 
-# Frontend (from repo root)
+# Frontend (from repo root), to run the app
 cd frontend && pnpm dev
 
 # TypeScript strict gate — must pass before any commit
-cd frontend && pnpm build
+pnpm exec tsc --noEmit
+# or, after heavy frontend changes or new library installation:
+pnpm build
 ```
 
 ## Repository Map
@@ -97,6 +97,8 @@ touch matching files (Cursor by glob, Opencode via `opencode.json`, Claude Code 
 | `task-queue.mdc`      | Background job system         | `backend/services/task_queue.py`, `**/*_worker.py`                    |
 | `ui-conventions.mdc`  | UI styling & components       | `frontend/src/components/**`, `globals.css`                           |
 | `speckle.mdc`         | Speckle 3D platform           | `backend/services/speckle_service.py`, `backend/routers/speckle.py`   |
+| `object-explorer.mdc` | ObjectExplorer, filtering, isolation, view modes | `ObjectExplorer.tsx`, `useSpeckleFiltering.ts`, `useAcousticLayerIsolation.ts`, `VirtualTreeItem.tsx` |
 | `sound-rendering.mdc` | Spatial audio pipeline        | `frontend/src/lib/audio/**`                                           |
 | `daw-timeline.mdc`    | DAW timeline & WaveSurfer     | `frontend/src/components/audio/daw/**`                                |
+| `audio-generation.mdc`| AI audio generation pipeline  | `backend/routers/sounds.py`, `backend/services/sounds_worker.py`, `frontend/src/store/soundscapeStore.ts`, `SoundResultContent.tsx` |
 | `frontend-ux.mdc`     | Sidebar wizard & card flow    | `frontend/src/components/layout/**`, `store/cardFlowStore.ts`         |

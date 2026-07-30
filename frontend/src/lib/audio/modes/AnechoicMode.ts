@@ -197,7 +197,7 @@ export class AnechoicMode implements IAudioMode {
     });
 
     // Set azimuth and elevation in degrees (JSAmbisonics uses degrees)
-    // Negate azimuth: Omnitone FOA decoder has opposite Y-channel convention to JSAmbisonics
+    // Negate azimuth: JSAmbisonics monoEncoder internal convention
     encoder.azim = -spherical.azimuth * (180 / Math.PI);
     encoder.elev = spherical.elevation * (180 / Math.PI);
     encoder.updateGains();
@@ -311,7 +311,7 @@ export class AnechoicMode implements IAudioMode {
     // Actually, let's add a distanceGainNode to the chain.
     
     // Update JSAmbisonics encoder (degrees)
-    // Negate azimuth: Omnitone FOA decoder has opposite Y-channel convention to JSAmbisonics
+    // Negate azimuth: JSAmbisonics monoEncoder internal convention
     source.encoder.azim = -spherical.azimuth * (180 / Math.PI);
     source.encoder.elev = spherical.elevation * (180 / Math.PI);
     source.encoder.updateGains();

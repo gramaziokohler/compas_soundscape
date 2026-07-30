@@ -1,0 +1,172 @@
+---
+description: AI audio generation pipeline — TangoFlux / AudioLDM2, sounds worker, variant system, store generation flow
+globs: backend/routers/sounds.py,backend/services/audio_service.py,backend/services/sounds_worker.py,frontend/src/store/soundscapeStore.ts,frontend/src/components/layout/sidebar/sound/SoundResultContent.tsx,frontend/src/components/layout/sidebar/SoundGenerationSection.tsx,frontend/src/components/layout/sidebar/sound/SoundPreContent.tsx,frontend/src/components/layout/sidebar/sound/TextToAudioMode.tsx
+---
+
+# Audio Generation Rules
+
+## Architecture Overview
+
+```
+User clicks "Generate"
+  └─ soundscapeStore.handleGenerateInternal()
+       └─ apiService.generateSounds({ sounds: configs[], ... })
+            └─ POST /api/generate-sounds  →  router enqueues
+                 └─ sounds_worker.run_sound_generation()  [subprocess]
+                      └─ AudioService.generate_sound_file()  [TangoFlux / AudioLDM2]
+                           → WAV saved to temp/static/sounds/generated/<session_id>/
+  └─ Poll GET /api/sound-generation-status/<generation_id>  every 1500ms
+       └─ Streams partial_sounds into generatedSounds as they complete
+```
+
+## Key Files
+
+| File | Role |
+|------|------|
+| `backend/routers/sounds.py` | `POST /api/generate-sounds` — validates, enqueues via `unified_queue`, returns `generation_id` |
+| `backend/services/sounds_worker.py` | Subprocess runner — iterates configs, generates each WAV, writes progress/result JSON atomically |
+| `backend/services/audio_service.py` | ML model wrappers — `TangoFluxInference`, `AudioLDM2Service`, post-processing (RMS norm, denoise, SPL calibration) |
+| `backend/services/task_queue.py` | `make_subprocess_runner` + progress-file polling + cancel support |
+| `frontend/src/store/soundscapeStore.ts` | `handleGenerateInternal`, `handleGenerateSingle`, `handleRegenerateSingle`, `handleDeleteVariant` |
+| `frontend/src/services/api.ts` | `generateSounds()`, `getSoundGenerationStatus()` |
+| `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx` | Card list rendering, pre-gen / post-gen view switching |
+| `frontend/src/components/layout/sidebar/sound/SoundResultContent.tsx` | Post-gen card body — WaveSurfer, variant bar (A/B/C + add + delete) |
+| `frontend/src/components/layout/sidebar/sound/SoundPreContent.tsx` | Pre-gen card body — config UI (text-to-audio, upload, library pickers) |
+| `frontend/src/components/layout/sidebar/sound/TextToAudioMode.tsx` | Text-to-audio config UI — prompt textarea, duration/guidance/variants sliders |
+
+## Generation Entry Points
+
+The store exposes three generation entry points, all routing into `handleGenerateInternal(targetIndices?)`:
+
+| Method | Purpose |
+|--------|---------|
+| `handleGenerate()` | Generate all pending (no filter) |
+| `handleGenerateSingle(targetIndex)` | Generate a single config → `handleGenerateInternal([targetIndex])` |
+| `handleGenerateFiltered(targetIndices)` | Generate a subset → `handleGenerateInternal(targetIndices)` |
+| `handleRegenerateSingle(targetIndex)` | Generate one new variant for an already-generated card (see § Regeneration below) |
+
+`handleGenerateInternal` (at soundscapeStore.ts:392) is the core orchestrator. It:
+1. Skips already-generated config indices (tracks `alreadyGenerated` set from `soundscapeData`)
+2. Splits configs by type: ML generation (TangoFlux/AudioLDM2), ElevenLabs, TTS, upload, library, catalog
+3. For ML: submits via `apiService.generateSounds()`, polls via `getSoundGenerationStatus()`, streams `partial_sounds` into `generatedSounds` as each sound completes
+4. `mapBackendSound()` remaps batch-relative IDs to config-absolute IDs to avoid collision
+5. Merges results into `soundscapeData` and `generatedSounds`
+
+## Backend — Hash-Based Deduplication
+
+The worker (`sounds_worker.py:128`) and `AudioService.generate_multiple_sounds()` (`audio_service.py:314`) both compute a parameter hash to determine the output filename:
+
+```python
+param_string = f"{prompt}_{duration}_{guidance_scale}_{steps}_{apply_denoising}_{audio_model}"
+param_hash = hashlib.md5(param_string.encode()).hexdigest()[:PARAM_HASH_LENGTH]
+filename = f"{short_prompt}_{param_hash}_copy{copy_idx}.wav"
+```
+
+If the file already exists, generation is **skipped** and the existing file URL is returned.
+This means identical parameters produce identical filenames — perfect for deduplication on re-submission,
+but **prevents regeneration from producing a genuinely new file**.
+
+### Regeneration Uniqueness Fix
+
+For regeneration (user clicks "+" on a variant bar), the frontend adds `_regeneration_ts: Date.now()`
+to the config dict. Both hash sites check for this field:
+
+```python
+# sounds_worker.py:129-131 and audio_service.py:315-317
+regeneration_ts = cfg.get("_regeneration_ts", "")
+if regeneration_ts:
+    param_string += f"_{regeneration_ts}"
+```
+
+**The hash is duplicated in TWO places — always update both.** The worker and `generate_multiple_sounds()`
+compute the hash independently; missing one will cause silent deduplication on regenerate.
+
+## Variant System
+
+Each sound config can produce multiple variants (controlled by `seed_copies` in the config).
+Variants share the same `prompt_index` but have unique `copy_index` values (0, 1, 2, ...).
+
+### Store fields
+
+| Field | Store | Purpose |
+|-------|-------|---------|
+| `soundConfigs[]` | `soundscapeStore` | Configuration cards. Index = `prompt_index`. |
+| `generatedSounds[]` | `soundscapeStore` | All sound events. `prompt_index` links back to config. `copy_index` differentiates variants. |
+| `soundscapeData` | `soundscapeStore` | Same as `generatedSounds` but `null` when empty (used for save/restore). |
+| `selectedVariants: Record<number, number>` | `audioControlsStore` | Which variant index is selected for each config. Defaults to 0. |
+| `regeneratingIndices: number[]` | `soundscapeStore` | Config indices currently being regenerated (reactive state, shows spinner in UI). |
+
+### Key functions
+
+**`handleVariantChange(promptIdx, variantIdx)`** — `audioControlsStore.ts:240`:
+Switches the active variant. Stops preview playback of old variant, updates `selectedVariants`.
+Frontend components read `selectedVariants` to know which variant to display.
+
+**`getVariantsForPrompt(index)`** — `SoundGenerationSection.tsx:257`:
+Filters `generatedSounds` by `prompt_index` to return all variants for a card.
+
+**`getSelectedVariantIdx(index)`** — `SoundGenerationSection.tsx:262`:
+Returns `selectedVariants[index] ?? 0`.
+
+### Regeneration (`handleRegenerateSingle`)
+
+Located at `soundscapeStore.ts`. Called when user clicks "+" on the variant bar.
+
+1. Prevents duplicate regeneration via `regeneratingIndices` check
+2. Computes `maxCopyIndex` from existing variants to avoid ID collision
+3. Auto-switches to predicted new variant: `handleVariantChange(targetIndex, currentVariantCount)`
+4. Sends config with `seed_copies: 1` and `_regeneration_ts: Date.now()` for unique filename
+5. Polls backend, maps results with incremented `copy_index` and `id: "generated_{targetIndex}_{newCopyIdx}"`
+6. **Must include `geometry: sound.geometry || { vertices: [], faces: [] }`** in mapped events — otherwise `SoundSphereManager` crashes with "Cannot read properties of undefined (reading 'vertices')"
+7. Adds/removes `targetIndex` from `regeneratingIndices` for UI spinner display
+
+### Delete Variant (`handleDeleteVariant`)
+
+Located at `soundscapeStore.ts`. Called when user clicks "×" on a variant square.
+
+1. Sorts variants by `copy_index`, validates index and minimum count (>1)
+2. Removes target sound from `soundscapeData` / `generatedSounds`
+3. Adjusts `selectedVariants` if the deleted variant was selected (shifts down by 1)
+4. Audio file remains on disk — only the reference is removed from app state
+
+## Variant Bar UX (SoundResultContent)
+
+The variant bar (A / B / C squares) is shown **only for text-to-audio cards** (`showVariantSelector` prop).
+Other card types (upload, library, catalog, TTS) have no variant bar.
+
+| Element | Condition | Behavior |
+|---------|-----------|----------|
+| A, B, C… squares | Always | Click to switch variant. Active variant uses card-color background. |
+| Spinner square | `isRegenerating` is true | Shows animated spinner. Clickable but plays no audio yet. |
+| **+** button | `onAddVariant` provided & not regenerating | Triggers `handleRegenerateSingle`. Only on text-to-audio cards. |
+| **×** delete button | `variants.length > 1` & `onDeleteVariant` provided | Appears on hover (group-hover), removes variant from store. |
+
+When the pending variant is selected during regeneration, `SoundResultContent` renders a
+"Regenerating..." placeholder instead of the WaveSurfer waveform.
+
+## Card Lifecycle — Pre-Gen vs Post-Gen
+
+`SoundGenerationSection.renderCard()` determines which content to show in the `Card`'s `beforeContent` vs `afterContent` slots:
+
+| State | `beforeContent` | `afterContent` | Card styles |
+|-------|----------------|----------------|-------------|
+| **Pre-generation** | `SoundPreContent` (config UI) | `undefined` | Collapsed info shows "(pending)" |
+| **Post-generation** | `undefined` | `SoundResultContent` (waveform + variant bar) | `hasResult=true`, shows mute/solo/reset buttons |
+
+The transition is gated by `isSoundGenerated(index)` which checks if any `generatedSounds` entry has a matching `prompt_index`.
+
+## Event Mapper Comparison
+
+When adding new event-mapping logic, ensure it matches the existing `mapBackendSound` pattern in
+`handleGenerateInternal` (lines ~519-582). Key fields every mapped event must carry:
+
+- `id` — unique per variant, format `generated_{promptIndex}_{copyIndex}`
+- `prompt_index` — links back to `soundConfigs` array index
+- `copy_index` — integer variant number
+- `position` — `[x, y, z]` world position
+- `geometry` — `{ vertices: [], faces: [] }` or the backend-provided geometry
+- `entity_index` — optional, for entity-linked sounds
+- `url` — static file URL or blob URL for the WAV file
+- `duration` — seconds (float)
+- `volume_db` — SPL level
+- `interval_seconds` — loop interval

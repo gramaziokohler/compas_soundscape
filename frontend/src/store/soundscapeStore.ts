@@ -34,7 +34,7 @@ import { calculateSoundPosition, type GeometryBounds } from '@/utils/positioning
 import { createSoundEventFromUpload } from '@/utils/event-factory';
 import { generateSoundEffect } from '@/services/elevenlabs';
 import { apiService } from '@/services/api';
-import { useErrorsStore } from './errorsStore';
+import { notifyError } from './errorsStore';
 import { useFileUploadStore } from './fileUploadStore';
 import { useAudioControlsStore } from './audioControlsStore';
 import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
@@ -113,6 +113,7 @@ export interface SoundscapeStoreState {
   applyDenoising: boolean;
   trimSilence: boolean;
   applyNoiseReduction: boolean;
+  regeneratingIndices: number[];
   audioModel: string;
   llmModel: string;
 
@@ -127,6 +128,7 @@ export interface SoundscapeStoreState {
   handleGenerateSingle: (targetIndex: number) => Promise<void>;
   handleGenerateFiltered: (targetIndices: number[]) => Promise<void>;
   handleGenerateInternal: (targetIndices?: number[]) => Promise<void>;
+  handleRegenerateSingle: (targetIndex: number) => Promise<void>;
   handleStopGeneration: () => void;
   handleReprocessSounds: (applyDenoising: boolean) => Promise<void>;
   setActiveSoundConfigTab: (tab: number) => void;
@@ -148,6 +150,8 @@ export interface SoundscapeStoreState {
   handleResetSoundConfig: (index: number) => void;
   handleReorderSoundConfigs: (from: number, to: number) => void;
   handleDuplicateConfig: (index: number) => void;
+  /** Delete a single variant (by copy_index) from a generated sound card. */
+  handleDeleteVariant: (promptIndex: number, variantIdx: number) => void;
   /** Ctrl+drag duplicate — deep-clones the config at `from` (and soundscape data) and inserts at `toInsertion`. */
   duplicateConfigAt: (from: number, toInsertion: number) => void;
   handleDetachSoundFromEntity: (index: number) => void;
@@ -188,6 +192,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         applyDenoising: false,
         trimSilence: false,
         applyNoiseReduction: true,
+        regeneratingIndices: [],
         llmModel: DEFAULT_LLM_MODEL,
         audioModel: DEFAULT_AUDIO_MODEL,
 
@@ -952,11 +957,11 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             if (err.name === 'AbortError' || err.message === 'AbortError') {
               const msg = 'Sound generation stopped by user.';
               set({ soundGenError: msg }, false, 'soundscape/generateAbort');
-              useErrorsStore.getState().addError(msg, 'info');
+              notifyError(msg, 'info');
             } else {
               const isQuota = err.message.includes('quota') || err.message.includes('429');
               set({ soundGenError: err.message }, false, 'soundscape/generateError');
-              useErrorsStore.getState().addError(err.message, isQuota ? 'warning' : 'error');
+              notifyError(err.message, isQuota ? 'warning' : 'error');
             }
           } finally {
             set({ isSoundGenerating: false, soundGenTargetIndices: null, soundGenProgress: '', soundGenProgressValue: 0 }, false, 'soundscape/generateEnd');
@@ -973,6 +978,152 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               _ttsPollInterval = null;
             }
             _currentTtsGenerationId = null;
+          }
+        },
+
+        handleRegenerateSingle: async (targetIndex) => {
+          const state = get();
+          const config = state.soundConfigs[targetIndex];
+          if (!config) return;
+
+          const {
+            soundscapeData,
+            applyNoiseReduction,
+            trimSilence,
+            audioModel,
+            globalNegativePrompt,
+            regeneratingIndices,
+          } = state;
+          const { geometryBounds } = useFileUploadStore.getState();
+
+          // Prevent duplicate regeneration
+          if (regeneratingIndices.includes(targetIndex)) return;
+
+          // Find max existing copy_index for this prompt_index to avoid ID collision
+          let maxCopyIndex = -1;
+          if (soundscapeData) {
+            for (const s of soundscapeData) {
+              if ((s as any).prompt_index === targetIndex) {
+                const match = (s as any).id?.match(/_(\d+)$/);
+                if (match) {
+                  const copyIdx = parseInt(match[1], 10);
+                  if (!isNaN(copyIdx) && copyIdx > maxCopyIndex) maxCopyIndex = copyIdx;
+                }
+              }
+            }
+          }
+
+          // Auto-switch to the predicted new variant index
+          const pendingVariantIdx = (soundscapeData || []).filter((s: any) => s.prompt_index === targetIndex).length;
+          useAudioControlsStore.getState().handleVariantChange(targetIndex, pendingVariantIdx);
+
+          set(
+            {
+              isSoundGenerating: true,
+              soundGenTargetIndices: [targetIndex],
+              soundGenProgress: 'Regenerating...',
+              soundGenProgressValue: 0,
+              regeneratingIndices: [...regeneratingIndices, targetIndex],
+            },
+            false,
+            'soundscape/regenStart',
+          );
+
+          try {
+            const configForGeneration = { ...config, seed_copies: 1, _regeneration_ts: Date.now() };
+
+            const result = await apiService.generateSounds({
+              sounds: [configForGeneration],
+              bounding_box: config.entities?.length ? null : geometryBounds,
+              apply_denoising: applyNoiseReduction,
+              trim_silence: trimSilence,
+              audio_model: audioModel,
+            });
+            if (!result) throw new Error('Failed to submit regeneration');
+            const { generation_id } = result;
+            _currentGenerationId = generation_id;
+            recordInflightJob(generation_id, 'sound');
+
+            const mlResult = await new Promise<any[]>((resolve, reject) => {
+              if (_soundPollInterval) clearInterval(_soundPollInterval);
+              _soundPollInterval = setInterval(async () => {
+                try {
+                  const s = await apiService.getSoundGenerationStatus(generation_id);
+                  if (s.cancelled) {
+                    clearInterval(_soundPollInterval!);
+                    _soundPollInterval = null;
+                    reject(new Error('AbortError'));
+                  } else if (s.error) {
+                    clearInterval(_soundPollInterval!);
+                    _soundPollInterval = null;
+                    reject(new Error(s.error));
+                  } else if (s.completed && s.result) {
+                    clearInterval(_soundPollInterval!);
+                    _soundPollInterval = null;
+                    resolve(s.result);
+                  }
+                } catch (pollErr: any) {
+                  clearInterval(_soundPollInterval!);
+                  _soundPollInterval = null;
+                  reject(pollErr);
+                }
+              }, 1500);
+            });
+
+            const newCopyBase = maxCopyIndex + 1;
+            const mappedEvents = mlResult.map((sound: any, idx: number) => {
+              const copyIdx = newCopyBase + idx;
+
+              let position: number[] = [0, 0, 0];
+              if (config.entities?.[0]?.bounds?.center) {
+                position = config.entities[0].bounds.center as number[];
+              } else if (config.entities?.[0]?.position) {
+                position = config.entities[0].position as number[];
+              } else if (config.position) {
+                position = config.position as number[];
+              }
+
+              let entityIndex: number | undefined;
+              if (config.entities?.[0]?.index !== undefined) {
+                entityIndex = config.entities[0].index;
+              } else if (config.entities?.[0]?.nodeId || config.entities?.[0]?.id) {
+                entityIndex = targetIndex;
+              }
+
+              return {
+                ...sound,
+                id: `generated_${targetIndex}_${copyIdx}`,
+                prompt_index: targetIndex,
+                copy_index: copyIdx,
+                position,
+                geometry: sound.geometry || { vertices: [], faces: [] },
+                ...(entityIndex !== undefined && { entity_index: entityIndex }),
+              };
+            });
+
+            const currentData = get().soundscapeData || [];
+            const merged = [...currentData, ...mappedEvents];
+            set({ generatedSounds: merged, soundscapeData: merged }, false, 'soundscape/regenComplete');
+
+            removeInflightJob(generation_id);
+          } catch (err: any) {
+            if (err?.message !== 'AbortError') {
+              set({ soundGenError: `Regeneration failed: ${err?.message || err}` }, false, 'soundscape/regenError');
+            }
+          } finally {
+            set(
+              {
+                isSoundGenerating: false,
+                soundGenTargetIndices: null,
+                soundGenProgress: '',
+                soundGenProgressValue: 0,
+                regeneratingIndices: get().regeneratingIndices.filter(i => i !== targetIndex),
+              },
+              false,
+              'soundscape/regenEnd',
+            );
+            if (_currentGenerationId) { removeInflightJob(_currentGenerationId); _currentGenerationId = null; }
+            if (_soundPollInterval) { clearInterval(_soundPollInterval); _soundPollInterval = null; }
           }
         },
 
@@ -1392,6 +1543,38 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             },
             false,
             'soundscape/duplicateConfig',
+          );
+        },
+
+        handleDeleteVariant: (promptIndex, variantIdx) => {
+          const { soundscapeData } = get();
+          if (!soundscapeData) return;
+
+          // Get variants for this prompt sorted by copy_index
+          const variants = soundscapeData
+            .filter((s: any) => s.prompt_index === promptIndex)
+            .sort((a: any, b: any) => {
+              const ca = a.copy_index ?? parseInt(a.id?.split('_').pop() ?? '0', 10);
+              const cb = b.copy_index ?? parseInt(b.id?.split('_').pop() ?? '0', 10);
+              return ca - cb;
+            });
+
+          if (variants.length <= 1 || variantIdx < 0 || variantIdx >= variants.length) return;
+
+          const target = variants[variantIdx];
+          const newData = soundscapeData.filter((s: any) => s !== target);
+
+          // Adjust selected variant index if needed
+          const audioStore = useAudioControlsStore.getState();
+          const currentSelected = audioStore.selectedVariants[promptIndex] ?? 0;
+          if (currentSelected >= variantIdx && currentSelected > 0) {
+            audioStore.handleVariantChange(promptIndex, currentSelected - 1);
+          }
+
+          set(
+            { soundscapeData: newData, generatedSounds: newData },
+            false,
+            'soundscape/deleteVariant',
           );
         },
 

@@ -28,7 +28,7 @@ import {
   LLM_RETRY,
 } from '@/utils/constants';
 import type { ActiveTab } from '@/types';
-import { useErrorsStore } from './errorsStore';
+import { notifyError } from './errorsStore';
 import { useFileUploadStore } from './fileUploadStore';
 import { useSoundscapeStore } from './soundscapeStore';
 import { apiService } from '@/services/api';
@@ -400,7 +400,7 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
             if (err.name === 'AbortError' || err.message === 'AbortError') {
               const msg = 'Generation stopped by user.';
               set({ aiError: msg, llmProgress: '' }, false, 'textGen/abort');
-              useErrorsStore.getState().addError(msg, 'info');
+              notifyError(msg, 'info');
             } else {
               const isOverloaded =
                 err.message.includes('overloaded') ||
@@ -418,7 +418,7 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
                     : err.message;
 
               set({ aiError: errorMsg, llmProgress: '' }, false, 'textGen/error');
-              useErrorsStore.getState().addError(errorMsg, isQuotaError ? 'warning' : 'error');
+              notifyError(errorMsg, isQuotaError ? 'warning' : 'error');
             }
           } finally {
             set({ isGenerating: false }, false, 'textGen/generateEnd');

@@ -46,6 +46,41 @@ export function convertSN3DtoN3D(buffer: AudioBuffer, audioContext: AudioContext
 }
 
 /**
+ * Convert an AudioBuffer from N3D normalization (JSAmbisonics) to SN3D normalization (AmbiX).
+ *
+ * Inverse of convertSN3DtoN3D. Scale factor = 1 / sqrt(2*l + 1)
+ *   - Order 0 (W): factor = 1 (unchanged)
+ *   - Order 1 (Y, Z, X): factor = 1/sqrt(3) ≈ 0.577
+ *   - Order 2: factor = 1/sqrt(5) ≈ 0.447
+ *   - Order 3: factor = 1/sqrt(7) ≈ 0.378
+ *
+ * @param buffer - AudioBuffer in N3D normalization
+ * @param audioContext - AudioContext for creating output buffer
+ * @returns New AudioBuffer in SN3D normalization
+ */
+export function convertN3DtoSN3D(buffer: AudioBuffer, audioContext: AudioContext): AudioBuffer {
+  const numChannels = buffer.numberOfChannels;
+  const newBuffer = audioContext.createBuffer(numChannels, buffer.length, buffer.sampleRate);
+
+  for (let ch = 0; ch < numChannels; ch++) {
+    const order = Math.floor(Math.sqrt(ch));
+    const scale = 1 / Math.sqrt(2 * order + 1);
+    const input = buffer.getChannelData(ch);
+    const output = newBuffer.getChannelData(ch);
+
+    if (scale === 1.0) {
+      output.set(input);
+    } else {
+      for (let i = 0; i < input.length; i++) {
+        output[i] = input[i] * scale;
+      }
+    }
+  }
+
+  return newBuffer;
+}
+
+/**
  * Convert Cartesian (x, y, z) coordinates to spherical (azimuth, elevation, distance)
  *
  * Coordinate system:

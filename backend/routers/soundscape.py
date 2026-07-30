@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
 
 from services.paths import (
     user_audio_dir,
+    user_data_dir,
     user_model_dir,
 )
 from models.schemas import (
@@ -366,3 +367,189 @@ async def upload_soundscape_audio(
         raise HTTPException(status_code=500, detail=f"Failed to save audio: {e}")
 
     return {"filename": filename, "sound_id": sound_id}
+
+
+@router.delete("/{model_id}")
+async def delete_soundscape(model_id: str, req: Request):
+    """
+    Delete a project's saved history.
+
+    Removes the model-linked directory (soundscape.json, IR files, analysis files,
+    simulation results) and the session-level audio directory for the current session.
+    """
+    session_id = _get_session_id(req)
+
+    model_dir = user_model_dir(session_id, model_id)
+    audio_dir = user_audio_dir(session_id)
+    session_dir = user_data_dir(session_id)
+
+    deleted_model = False
+    deleted_audio = False
+
+    if model_dir.exists():
+        shutil.rmtree(str(model_dir))
+        deleted_model = True
+        logger.info(f"Deleted model directory: {model_dir}")
+
+    if audio_dir.exists():
+        shutil.rmtree(str(audio_dir))
+        deleted_audio = True
+        logger.info(f"Deleted session audio directory: {audio_dir}")
+
+    # Remove session dir if empty after deletions
+    if session_dir.exists():
+        remaining = list(session_dir.iterdir())
+        if len(remaining) == 0:
+            shutil.rmtree(str(session_dir))
+            logger.info(f"Removed empty session directory: {session_dir}")
+
+    return {
+        "success": True,
+        "deleted_model": deleted_model,
+        "deleted_audio": deleted_audio,
+    }
+
+
+def _format_bytes(size: int) -> str:
+    """Format byte count as human-readable string."""
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
+def _get_dir_stats(directory: Path) -> dict:
+    """Walk a directory and return file count, total bytes, last modified."""
+    count = 0
+    total_bytes = 0
+    last_modified = 0.0
+    if not directory.exists():
+        return {"count": 0, "total_bytes": 0, "last_modified": None}
+    for f in directory.rglob("*"):
+        if f.is_file():
+            count += 1
+            total_bytes += f.stat().st_size
+            mtime = f.stat().st_mtime
+            if mtime > last_modified:
+                last_modified = mtime
+    return {
+        "count": count,
+        "total_bytes": total_bytes,
+        "last_modified": datetime.fromtimestamp(last_modified, tz=timezone.utc).isoformat() if last_modified > 0 else None,
+    }
+
+
+@router.get("/{model_id}/stats")
+async def get_soundscape_stats(model_id: str, req: Request):
+    """
+    Return file statistics for a saved soundscape.
+
+    Reads soundscape.json for domain counts and walks the filesystem
+    for IR, analysis, and simulation file sizes and dates.
+    """
+    session_id = _get_session_id(req)
+    model_dir = user_model_dir(session_id, model_id)
+    audio_dir = user_audio_dir(session_id)
+
+    stats: dict = {
+        "model_id": model_id,
+        "found": False,
+        "sound_configs": 0,
+        "sound_events": 0,
+        "receivers": 0,
+        "simulation_configs": 0,
+        "analysis_cards": 0,
+        "audio_files": 0,
+        "audio_size_bytes": 0,
+        "audio_size_formatted": "0 B",
+        "ir_files": 0,
+        "ir_size_bytes": 0,
+        "ir_size_formatted": "0 B",
+        "analysis_files": 0,
+        "simulation_result_files": 0,
+        "total_size_bytes": 0,
+        "total_size_formatted": "0 B",
+        "last_modified": None,
+        "created_at": None,
+        "model_name": "",
+    }
+
+    # Read soundscape.json for domain counts
+    json_path = model_dir / SOUNDSCAPE_JSON_FILENAME
+    if json_path.exists():
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            stats["found"] = True
+            stats["sound_configs"] = len(data.get("sound_configs", []))
+            stats["sound_events"] = len(data.get("sound_events", []))
+            stats["receivers"] = len(data.get("receivers", []))
+            stats["simulation_configs"] = len(data.get("simulation_configs", []))
+            analysis_state = data.get("analysis_state")
+            if analysis_state:
+                stats["analysis_cards"] = len(analysis_state.get("configs", []))
+            stats["created_at"] = data.get("created_at") or None
+            stats["model_name"] = data.get("model_name", "")
+        except Exception:
+            pass
+
+    # Walk audio directory
+    audio_stats = _get_dir_stats(audio_dir)
+    stats["audio_files"] = audio_stats["count"]
+    stats["audio_size_bytes"] = audio_stats["total_bytes"]
+    stats["audio_size_formatted"] = _format_bytes(audio_stats["total_bytes"])
+
+    # Walk IR files
+    ir_dir = model_dir / "ir_files"
+    ir_stats = _get_dir_stats(ir_dir)
+    stats["ir_files"] = ir_stats["count"]
+    stats["ir_size_bytes"] = ir_stats["total_bytes"]
+    stats["ir_size_formatted"] = _format_bytes(ir_stats["total_bytes"])
+
+    # Walk analysis files
+    analysis_dir = model_dir / "analysis"
+    stats["analysis_files"] = _get_dir_stats(analysis_dir)["count"]
+
+    # Count simulation result files
+    simulation_count = 0
+    if model_dir.exists():
+        for f in model_dir.glob("simulation_*_results.json"):
+            if f.is_file():
+                simulation_count += 1
+    stats["simulation_result_files"] = simulation_count
+
+    # Compute total size
+    total_bytes = (
+        audio_stats["total_bytes"] +
+        ir_stats["total_bytes"] +
+        (json_path.stat().st_size if json_path.exists() else 0)
+    )
+    # Add analysis file sizes
+    if analysis_dir.exists():
+        for f in analysis_dir.rglob("*.json"):
+            if f.is_file():
+                total_bytes += f.stat().st_size
+    # Add simulation result sizes
+    if model_dir.exists():
+        for f in model_dir.glob("simulation_*_results.json"):
+            if f.is_file():
+                total_bytes += f.stat().st_size
+    stats["total_size_bytes"] = total_bytes
+    stats["total_size_formatted"] = _format_bytes(total_bytes)
+
+    # Determine overall last modified time across all files in the model dir + audio dir
+    last_modified = 0.0
+    for directory in (model_dir, audio_dir):
+        if directory.exists():
+            for f in directory.rglob("*"):
+                if f.is_file():
+                    mtime = f.stat().st_mtime
+                    if mtime > last_modified:
+                        last_modified = mtime
+    stats["last_modified"] = (
+        datetime.fromtimestamp(last_modified, tz=timezone.utc).isoformat()
+        if last_modified > 0 else None
+    )
+
+    return stats

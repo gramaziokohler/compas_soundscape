@@ -3,7 +3,7 @@ import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadRespo
 import type { ImpulseResponseMetadata } from '@/types/audio';
 import type { ModalAnalysisRequest, ModalAnalysisResult } from '@/types/modal';
 import type { SpeckleProjectModelsResponse } from '@/types/speckle-models';
-import type { SoundscapeSavePayload, SoundscapeSaveResponse, SoundscapeLoadResponse } from '@/types/soundscape';
+import type { SoundscapeSavePayload, SoundscapeSaveResponse, SoundscapeLoadResponse, SoundscapeStats } from '@/types/soundscape';
 
 /**
  * Enhanced error handling for API calls
@@ -1154,6 +1154,50 @@ export const apiService = {
       return response.json();
     } catch (error) {
       handleApiError(error, 'Upload soundscape audio');
+    }
+  },
+
+  /**
+   * Delete a project's saved history (soundscape data, audio, IRs, analysis).
+   * @param modelId - Speckle model ID
+   */
+  async deleteSoundscapeHistory(modelId: string): Promise<{ success: boolean }> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/speckle/soundscape/${encodeURIComponent(modelId)}`,
+        { method: 'DELETE' },
+        'Delete soundscape history'
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Failed to delete history' }));
+        throw new Error(error.detail || 'Failed to delete history');
+      }
+
+      return response.json();
+    } catch (error) {
+      handleApiError(error, 'Delete soundscape history');
+    }
+  },
+
+  /**
+   * Get file statistics for a saved soundscape (counts, sizes, dates).
+   * @param modelId - Speckle model ID
+   */
+  async getSoundscapeStats(modelId: string): Promise<SoundscapeStats> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/speckle/soundscape/${encodeURIComponent(modelId)}/stats`,
+        undefined,
+        'Get soundscape stats'
+      );
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Failed to get stats' }));
+        throw new Error(error.detail || 'Failed to get stats');
+      }
+      return response.json();
+    } catch (error) {
+      handleApiError(error, 'Get soundscape stats');
     }
   },
 

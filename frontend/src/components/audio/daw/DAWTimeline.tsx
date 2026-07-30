@@ -266,10 +266,8 @@ export function DAWTimeline({
     const p = panelPosRef.current;
     const s = panelSizeRef.current;
     if (p) {
-      console.log('[dbg:timelinePanel:save] saving:', JSON.stringify({ x: p.x, y: p.y, width: s.width, height: s.height }));
       useUIStore.getState().setTimelinePanel({ x: p.x, y: p.y, width: s.width, height: s.height });
     } else {
-      console.log('[dbg:timelinePanel:save] SKIPPED — panelPosRef is null');
     }
   }, []);
 
@@ -280,22 +278,18 @@ export function DAWTimeline({
   useEffect(() => {
     if (isInitialized.current) return;
     const saved = useUIStore.getState().timelinePanel;
-    console.log('[dbg:timelinePanel:init] saved panel state:', saved ? JSON.stringify(saved) : 'null');
     if (saved) {
       // Validate saved position is on-screen
       const onScreen = saved.x >= -saved.width + 100
         && saved.y >= 0
         && saved.x < window.innerWidth
         && saved.y < window.innerHeight;
-      console.log('[dbg:timelinePanel:init] onScreen check:', { onScreen, saved, vw: window.innerWidth, vh: window.innerHeight });
       if (onScreen) {
-        console.log('[dbg:timelinePanel:init] RESTORING saved position/size');
         setPanelPos({ x: saved.x, y: saved.y });
         setPanelSize({ width: saved.width, height: saved.height });
         isInitialized.current = true;
         return;
       }
-      console.log('[dbg:timelinePanel:init] saved position off-screen, using default');
     }
     const vw = window.innerWidth;
     const vh = window.innerHeight;

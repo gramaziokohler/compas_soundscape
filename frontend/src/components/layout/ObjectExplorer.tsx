@@ -2,10 +2,10 @@
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { VirtualTreeItem } from '@/components/scene/VirtualTreeItem';
-import { useSpeckleTree, getTargetObjectIds, getRootNodesForModel } from '@/hooks/useSpeckleTree';
+import { useSpeckleTree, getRootNodesForModel, getGeometryLeafIdsFromNode } from '@/hooks/useSpeckleTree';
 import { useSpeckleFiltering } from '@/hooks/useSpeckleFiltering';
 import { useSpeckleInteractions } from '@/hooks/useSpeckleInteractions';
-import { useSpeckleStore } from '@/store';
+import { useSpeckleStore, useAcousticLayerStore, useUIStore } from '@/store';
 import { SelectionExtension } from '@speckle/viewer';
 import type { VirtualTreeItem as TreeItem } from '@/hooks/useSpeckleTree';
 import { useAcousticMaterialStore } from '@/store';
@@ -30,6 +30,15 @@ interface ObjectExplorerProps {
 
 export function ObjectExplorer({ resetAllRef, onItemCountChange, maxTreeHeight }: ObjectExplorerProps = {}) {
   const { modelFileName, worldTreeVersion, getViewerRef, setSelectedEntity } = useSpeckleStore();
+  const viewMode = useSpeckleStore((s) => s.viewMode);
+  const selectedAcousticLayerName = useAcousticLayerStore((s) => s.selectedAcousticLayerName);
+  const isWholeModel = useAcousticLayerStore((s) => s.isWholeModel);
+  const setAcousticLayer = useAcousticLayerStore((s) => s.setAcousticLayer);
+  const clearAcousticLayer = useAcousticLayerStore((s) => s.clearAcousticLayer);
+  const acousticLayerSelectionMode = useUIStore((s) => s.acousticLayerSelectionMode);
+  const acousticExplorerHiddenIds = useSpeckleStore((s) => s.acousticExplorerHiddenIds);
+  const isAcousticMode = viewMode === 'acoustic';
+  const hasDefinedLayer = !!selectedAcousticLayerName;
   // Stable RefObject-like shim so hooks that expect RefObject<Viewer> keep working
   const viewerRef = useMemo<React.RefObject<any>>(() => ({
     get current() { return getViewerRef(); }
@@ -45,9 +54,12 @@ export function ObjectExplorer({ resetAllRef, onItemCountChange, maxTreeHeight }
   const [disableScrollOnNextSelection, setDisableScrollOnNextSelection] = useState(false);
   const treeContainerRef = useRef<HTMLDivElement>(null);
   const previousSelectionRef = useRef<string[]>([]);
-  const hasHiddenAcousticsLayerRef = useRef<boolean>(false);
   const pendingScrollIdRef = useRef<string | null>(null);
   const virtualItemsRef = useRef<typeof virtualItems>([]);
+  // Track which layer IDs have been clicked (for "Select" button reveal in selection mode)
+  const clickedLayerIdsRef = useRef<Set<string>>(new Set());
+  // Track the previous selection's object IDs for un-isolating when switching layers
+  const previousSelectionIdsRef = useRef<string[]>([]);
   
   // Initialize tree management hooks
   const {
@@ -97,23 +109,70 @@ export function ObjectExplorer({ resetAllRef, onItemCountChange, maxTreeHeight }
   
   const hasIsolatedObjectsInGeneral = isolatedObjects.size > 0;
 
-  // Exclude the "Soundscape" layer (and all its descendants) from the tree display.
-  // Uses indent as depth: once a Soundscape node is found, skip every subsequent
-  // item whose indent is greater, then resume when indent returns to the same level.
+  // Wrapper that also clears clicked-layer tracking + selection mode
+  const clearAll = useCallback(() => {
+    clearFilters();
+    clearSelection();
+    clickedLayerIdsRef.current.clear();
+    useUIStore.getState().setAcousticLayerSelectionMode(false);
+  }, [clearFilters, clearSelection]);
+
+  // Exclude the "Soundscape" layer (and all its descendants).
+  // In acoustic mode: show ONLY the acoustic layer subtree.
+  // In default/dark mode: hide the acoustic layer from display.
   const filteredVirtualItems = useMemo(() => {
-    let skipBelowIndent: number | null = null;
+    let soundscapeSkipIndent: number | null = null;
+    let acousticLayerFound = false;
+    let acousticLayerIndent = -1;
+
     return virtualItems.filter(item => {
-      if (skipBelowIndent !== null) {
-        if (item.indent > skipBelowIndent) return false;
-        skipBelowIndent = null; // back to parent level — stop skipping
+      // ── Always filter out Soundscape ──
+      if (soundscapeSkipIndent !== null) {
+        if (item.indent > soundscapeSkipIndent) return false;
+        soundscapeSkipIndent = null;
       }
       if (item.data.raw?.name === 'Soundscape') {
-        skipBelowIndent = item.indent;
+        soundscapeSkipIndent = item.indent;
         return false;
+      }
+
+      // ── ViewMode-dependent acoustic layer filtering ──
+      // Whole model: skip filtering entirely (everything IS the acoustic layer).
+      if (isWholeModel) return true;
+
+      if (isAcousticMode) {
+        if (selectedAcousticLayerName) {
+          // Show ONLY the acoustic layer and its subtree
+          if (!acousticLayerFound) {
+            if (item.data.raw?.name === selectedAcousticLayerName) {
+              acousticLayerFound = true;
+              acousticLayerIndent = item.indent;
+              return true;
+            }
+            return false; // skip everything before the acoustic layer
+          }
+          // Inside the acoustic layer subtree
+          if (item.indent > acousticLayerIndent) {
+            return true; // descendant
+          }
+          // Indent returned to parent level or above — subtree ended
+          acousticLayerIndent = Infinity; // prevent re-entering
+          return false;
+        }
+        // No layer selected yet — show everything so user can pick
+        return true;
+      }
+
+      // ── Default/dark mode: hide the acoustic layer from display ──
+      if (selectedAcousticLayerName && !isWholeModel) {
+        if (item.data.raw?.name === selectedAcousticLayerName) {
+          soundscapeSkipIndent = item.indent;
+          return false;
+        }
       }
       return true;
     });
-  }, [virtualItems]);
+  }, [virtualItems, isAcousticMode, selectedAcousticLayerName, isWholeModel]);
 
   // Report item count to parent panel
   useEffect(() => {
@@ -123,61 +182,19 @@ export function ObjectExplorer({ resetAllRef, onItemCountChange, maxTreeHeight }
   // Expose reset-all function to parent panel
   useEffect(() => {
     if (resetAllRef) {
-      resetAllRef.current = () => {
-        clearFilters();
-        clearSelection();
-      };
+      resetAllRef.current = clearAll;
     }
     return () => {
       if (resetAllRef) resetAllRef.current = null;
     };
-  }, [resetAllRef, clearFilters, clearSelection]);
+  }, [resetAllRef, clearAll]);
 
-  /**
-   * Find a node by name in the tree (searches recursively)
-   */
-  const findNodeByName = useCallback((nodes: typeof rootNodes, name: string): typeof rootNodes[0] | null => {
-    for (const node of nodes) {
-      const nodeName = node.raw?.name || node.model?.raw?.name || node.model?.name;
-      if (nodeName === name) {
-        return node;
-      }
-      // Search children
-      const children = node.model?.children || node.children;
-      if (children && children.length > 0) {
-        const found = findNodeByName(children as typeof rootNodes, name);
-        if (found) return found;
-      }
-    }
-    return null;
-  }, []);
-
-  // Auto-hide 'Acoustics' layer on initial load
-  useEffect(() => {
-    // Only run once when rootNodes become available
-    if (hasHiddenAcousticsLayerRef.current || rootNodes.length === 0) return;
-
-    const acousticsNode = findNodeByName(rootNodes, 'Acoustics');
-    if (acousticsNode) {
-      const objectIds = getTargetObjectIds(acousticsNode.raw || {});
-      if (objectIds.length > 0) {
-        console.log('[ObjectExplorer] Auto-hiding Acoustics layer on load:', objectIds.length, 'objects');
-        // Small delay to ensure FilteringExtension is ready
-        setTimeout(() => {
-          hideObjects(objectIds);
-        }, 100);
-        hasHiddenAcousticsLayerRef.current = true;
-      }
-    }
-  }, [rootNodes, findNodeByName, hideObjects]);
-  
   // Trigger tree fetch when viewer/world tree becomes available
   // worldTreeVersion is a proper reactive dependency that changes when the tree loads
   useEffect(() => {
     if (!viewerRef?.current) return;
 
-    // Reset per-load flags so auto-hide and tree loading run fresh on each viewer init
-    hasHiddenAcousticsLayerRef.current = false;
+    // Reset per-load flags so tree loading runs fresh on each viewer init
     hasLoadedTreeRef.current = false;
 
     const attemptTreeLoad = () => {
@@ -430,12 +447,60 @@ export function ObjectExplorer({ resetAllRef, onItemCountChange, maxTreeHeight }
     }, 150);
   }, [expandToLayerId, isAcousticMaterialActive, expandToShowObject, toggleNodeExpansion, scrollToSelectedItem]);
 
+  // Auto-expand the acoustic layer node in the tree when in acoustic mode
+  const acousticLayerExpandedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isAcousticMode || !selectedAcousticLayerName) return;
+    if (acousticLayerExpandedRef.current === selectedAcousticLayerName) return;
+
+    const acousticItem = filteredVirtualItems.find(
+      (item) => item.data.raw?.name === selectedAcousticLayerName,
+    );
+    if (!acousticItem || acousticItem.isExpanded) return;
+
+    // Expand ancestors to reveal the layer node, then expand the layer itself
+    const layerId = acousticItem.data.raw?.id;
+    if (!layerId) return;
+
+    acousticLayerExpandedRef.current = selectedAcousticLayerName;
+    expandToShowObject(layerId);
+    setTimeout(() => {
+      toggleNodeExpansion(layerId);
+      scrollToSelectedItem(layerId);
+    }, 200);
+  }, [isAcousticMode, selectedAcousticLayerName, filteredVirtualItems, expandToShowObject, toggleNodeExpansion, scrollToSelectedItem]);
+
   // Tree item callbacks
   const handleItemClick = useCallback((item: TreeItem, event: React.MouseEvent) => {
     const objectId = item.data.raw?.id;
     if (!objectId) return;
 
     const isCurrentlySelected = selectedObjectIds.includes(objectId);
+
+    // In selection mode: clicking a layer isolates it (without expanding) and
+    // reveals the "Select" button. Clicking another layer de-isolates the previous.
+    if (acousticLayerSelectionMode && item.hasChildren) {
+      const ids = getGeometryLeafIdsFromNode(item.data);
+
+      // Un-isolate the previously selected layer
+      if (previousSelectionIdsRef.current.length > 0) {
+        unIsolateObjects(previousSelectionIdsRef.current);
+      }
+
+      if (clickedLayerIdsRef.current.has(objectId)) {
+        // Toggle off — clear selection
+        clickedLayerIdsRef.current.delete(objectId);
+        previousSelectionIdsRef.current = [];
+      } else {
+        // Select this layer
+        clickedLayerIdsRef.current.clear();
+        clickedLayerIdsRef.current.add(objectId);
+        isolateObjects(ids);
+        previousSelectionIdsRef.current = ids;
+      }
+      setTreeUpdateTrigger((prev) => prev + 1);
+      return;
+    }
 
     if (isCurrentlySelected && !event.shiftKey) {
       if (item.hasChildren && !item.isExpanded) {
@@ -473,31 +538,50 @@ export function ObjectExplorer({ resetAllRef, onItemCountChange, maxTreeHeight }
         toggleNodeExpansion(item.id);
       }
     }
-  }, [selectedObjectIds, removeFromSelection, addToSelection, clearSelection, selectObject, selectObjects, toggleNodeExpansion, setSelectedEntity, modelFileName]);
+  }, [selectedObjectIds, removeFromSelection, addToSelection, clearSelection, selectObject, selectObjects, toggleNodeExpansion, setSelectedEntity, modelFileName, acousticLayerSelectionMode]);
 
   const handleItemDoubleClick = useCallback((objectId: string) => {
     zoomToObjects([objectId]);
   }, [zoomToObjects]);
 
   const handleToggleVisibility = useCallback((objectIds: string[]) => {
-    const isCurrentlyHidden = areObjectsHidden(objectIds);
+    if (isAcousticMode) {
+      const hiddenSet = useSpeckleStore.getState().acousticExplorerHiddenIds;
+      // Check if ALL the object IDs are in the hidden set
+      const allHidden = objectIds.every((id) => hiddenSet.includes(id));
+      console.log('[dbg:hide] handleToggleVisibility objectIds=', objectIds, 'allHidden=', allHidden);
 
-    if (isCurrentlyHidden) {
-      showObjects(objectIds);
+      objectIds.forEach((id) => {
+        if (allHidden) {
+          useSpeckleStore.getState().removeAcousticExplorerHiddenId(id);
+        } else {
+          useSpeckleStore.getState().addAcousticExplorerHiddenId(id);
+        }
+      });
+      useSpeckleStore.getState().applyAcousticExplorerHiddenIsolation();
     } else {
-      hideObjects(objectIds);
+      const isCurrentlyHidden = areObjectsHidden(objectIds);
+      if (isCurrentlyHidden) {
+        showObjects(objectIds);
+      } else {
+        hideObjects(objectIds);
+      }
     }
-  }, [areObjectsHidden, showObjects, hideObjects]);
+  }, [isAcousticMode, areObjectsHidden, showObjects, hideObjects]);
 
   const handleToggleIsolation = useCallback((objectIds: string[]) => {
     const isCurrentlyIsolated = areObjectsIsolated(objectIds);
-
     if (isCurrentlyIsolated) {
       unIsolateObjects(objectIds);
     } else {
       isolateObjects(objectIds);
     }
-  }, [areObjectsIsolated, unIsolateObjects, isolateObjects]);
+  }, [areObjectsIsolated, unIsolateObjects, isolateObjects, isolatedObjects.size]);
+
+  const handleSelectAsAcousticLayer = useCallback((objectId: string, name: string, isWholeModel: boolean) => {
+    setAcousticLayer(objectId, name, isWholeModel);
+    useUIStore.getState().setAcousticLayerSelectionMode(false);
+  }, [setAcousticLayer]);
 
   const handleMouseEnter = useCallback((objectIds: string[]) => {
     highlightObjects(objectIds);
@@ -518,6 +602,20 @@ export function ObjectExplorer({ resetAllRef, onItemCountChange, maxTreeHeight }
   
   return (
     <div className="flex flex-col min-h-0 space-y-2">
+      {/* Layer selection mode banner */}
+      {isAcousticMode && acousticLayerSelectionMode && (
+        <div
+          className="text-xs p-2 rounded border"
+          style={{
+            backgroundColor: 'var(--color-primary-light)',
+            borderColor: 'var(--color-primary)',
+            color: 'var(--color-secondary)',
+          }}
+        >
+          Define the acoustic layer to isolate for acoustic simulation
+        </div>
+      )}
+
       {filteredVirtualItems.length > 0 ? (
         <>
           {/* Scrolling Tree List */}
@@ -541,9 +639,14 @@ export function ObjectExplorer({ resetAllRef, onItemCountChange, maxTreeHeight }
                   );
                 }
 
-                const objectIds = getTargetObjectIds(item.data?.raw || {});
-                const isHidden = areObjectsHidden(objectIds);
+                const objectIds = getGeometryLeafIdsFromNode(item.data);
+                const isHidden = areObjectsHidden(objectIds) ||
+                  (isAcousticMode && hasDefinedLayer && objectIds.length > 0 &&
+                   objectIds.every((id) => acousticExplorerHiddenIds.includes(id)));
                 const isIsolated = areObjectsIsolated(objectIds);
+                const itemName = item.data.raw?.name || '';
+                const itemId = item.data.raw?.id || '';
+                const isRootNode = item.indent === 0;
 
                 return (
                   <VirtualTreeItem
@@ -560,10 +663,27 @@ export function ObjectExplorer({ resetAllRef, onItemCountChange, maxTreeHeight }
                     onMouseLeave={handleMouseLeave}
                     onToggleVisibility={handleToggleVisibility}
                     onToggleIsolation={handleToggleIsolation}
-                    acousticActive={isAcousticMaterialActive}
+                    acousticActive={isAcousticMaterialActive && hasDefinedLayer}
                     showScattering={acousticCardType === 'pyroomacoustics'}
                     sortedMaterials={sortedMaterials}
                     materialColors={materialColors}
+                    isLayerSelectionMode={isAcousticMode && acousticLayerSelectionMode && item.hasChildren && clickedLayerIdsRef.current.has(itemId)}
+                    onSelectAsAcousticLayer={isAcousticMode && acousticLayerSelectionMode && item.hasChildren && clickedLayerIdsRef.current.has(itemId)
+                      ? () => {
+                          clickedLayerIdsRef.current.clear();
+                          handleSelectAsAcousticLayer(itemId, itemName, isRootNode);
+                        } : undefined}
+                    hideIsolateButton={isAcousticMode && hasDefinedLayer}
+                    isAcousticLayerRow={!!selectedAcousticLayerName && itemName === selectedAcousticLayerName}
+                    onResetAcousticLayer={!!selectedAcousticLayerName && itemName === selectedAcousticLayerName
+                      ? () => {
+                          clearAcousticLayer();
+                          useAcousticMaterialStore.getState().deactivateViewer();
+                          if (isAcousticMode) {
+                            useUIStore.getState().setAcousticLayerSelectionMode(true);
+                            useUIStore.getState().setShowObjectExplorer(true);
+                          }
+                        } : undefined}
                   />
                 );
               } catch (error) {

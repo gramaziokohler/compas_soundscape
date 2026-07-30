@@ -114,11 +114,14 @@ export { useAudioControlsStore };
 export type { AudioControlsStoreState } from './audioControlsStore';
 
 // Non-temporal stores
-export { useErrorsStore } from './errorsStore';
+export { useErrorsStore, notifyError } from './errorsStore';
 export type { ErrorsStoreState, ErrorNotification } from './errorsStore';
 
 export { useRightSidebarStore } from './rightSidebarStore';
 export type { RightSidebarStoreState } from './rightSidebarStore';
+
+export { useAcousticLayerStore } from './acousticLayerStore';
+export type { AcousticLayerState } from './acousticLayerStore';
 
 export { useUIStore } from './uiStore';
 export type { UIStoreState } from './uiStore';

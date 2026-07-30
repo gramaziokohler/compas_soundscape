@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Search, X } from "lucide-react";
+import { Spinner } from '@/components/ui/Spinner';
 
 export interface SearchBarProps {
   value: string;
@@ -102,13 +103,7 @@ export function SearchBar({
       )}
       {isLoading && (
         <div className="absolute right-2 top-1/2 -translate-y-1/2">
-          <div
-            className="w-3 h-3 border-2 rounded-full animate-spin"
-            style={{
-              borderColor: "var(--color-primary-light)",
-              borderTopColor: "var(--color-primary)",
-            }}
-          />
+          <Spinner size={12} />
         </div>
       )}
     </div>

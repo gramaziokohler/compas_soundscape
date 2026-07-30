@@ -18,6 +18,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { ImpulseResponseUpload } from '@/components/audio/ImpulseResponseUpload';
 import type { SimulationConfig, ChorasSimulationConfig, PyroomAcousticsSimulationConfig } from '@/types/acoustics';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from '@/types/audio';
+import { ValidationMessage } from '@/components/ui/ValidationMessage';
 import type { GradientMetric } from '@/store/uiStore';
 import { useUIStore } from '@/store/uiStore';
 import { useGridListenersStore } from '@/store';
@@ -276,10 +277,8 @@ export function SimulationResultContent({
   // ── Render ──────────────────────────────────────────────────────────────
   return (
     <div className="space-y-3">
-      {/* Position mismatch warning */}
       {isExpanded && mismatchedNames.length > 0 && (
-        <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-error/10 border border-error/40 text-error text-xs">
-          <span className="font-bold shrink-0 mt-0.5">⚠</span>
+        <ValidationMessage type="error" icon={<span className="font-bold">⚠</span>}>
           <div className="flex-1 flex flex-col gap-1.5">
             <span>
               <strong>{mismatchedNames.join(', ')}</strong>{' '}
@@ -294,7 +293,7 @@ export function SimulationResultContent({
               </button>
             )}
           </div>
-        </div>
+        </ValidationMessage>
       )}
 
       {/* Gradient metric selector (replaces text metrics when grid receivers used) */}
@@ -371,16 +370,12 @@ export function SimulationResultContent({
         )
       )}
 
-      {/* Low-energy IR warning */}
       {lowEnergyIRIds.size > 0 && (
-        <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-error/10 border border-error/40 text-error text-xs">
-          <span className="font-bold shrink-0">!</span>
-          <span>
-            {lowEnergyIRIds.size === 1
-              ? '1 impulse response has very low energy and may produce poor auralization.'
-              : `${lowEnergyIRIds.size} impulse responses have very low energy and may produce poor auralization.`}
-          </span>
-        </div>
+        <ValidationMessage type="error" icon={<span className="font-bold">!</span>}>
+          {lowEnergyIRIds.size === 1
+            ? '1 impulse response has very low energy and may produce poor auralization.'
+            : `${lowEnergyIRIds.size} impulse responses have very low energy and may produce poor auralization.`}
+        </ValidationMessage>
       )}
 
       {/* IR Library */}

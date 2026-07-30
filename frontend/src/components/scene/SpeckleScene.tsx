@@ -38,6 +38,7 @@ import { useSpeckleObjectOverlay } from '@/components/scene/hooks/useSpeckleObje
 import { useSpeckleCoordinatorCallbacks } from '@/components/scene/hooks/useSpeckleCoordinatorCallbacks';
 import { useSpeckleBoundingBoxGumball } from '@/components/scene/hooks/useSpeckleBoundingBoxGumball';
 import { useSpeckleGroundGrid } from '@/components/scene/hooks/useSpeckleGroundGrid';
+import { useAcousticLayerIsolation } from '@/hooks/useAcousticLayerIsolation';
 // Phase 5 JSX sub-components
 import { SceneViewModeToolbar } from '@/components/scene/SceneViewModeToolbar';
 import { SceneFPSOverlay } from '@/components/scene/SceneFPSOverlay';
@@ -49,6 +50,7 @@ import { SceneControlButtons } from '@/components/scene/SceneControlButtons';
 import { ObjectExplorerPanel } from '@/components/scene/ObjectExplorerPanel';
 import { SceneControlButton } from '@/components/ui/SceneControlButton';
 import { UndoRedoToolbar } from '@/components/ui/UndoRedoToolbar';
+import { Spinner } from '@/components/ui/Spinner';
 import { UI_RIGHT_SIDEBAR, UI_SCENE_BUTTON } from '@/utils/constants';
 import type { SoundEvent, ReceiverData } from '@/types';
 import type { AuralizationConfig } from '@/types/audio';
@@ -839,6 +841,7 @@ export function SpeckleScene({
     mutedSounds,
     soloedSound,
     listenerOrientation,
+    isFirstPersonMode,
   });
 
   // ── Audio Sync ──
@@ -973,7 +976,6 @@ export function SpeckleScene({
   const viewModeSaveEnabledRef = useRef(false);
   useEffect(() => {
     if (!viewModeSaveEnabledRef.current) return;
-    console.log('[dbg:viewMode:save] saving viewMode:', viewMode);
     try { localStorage.setItem('compas-view-mode', viewMode); } catch {}
   }, [viewMode]);
 
@@ -985,18 +987,13 @@ export function SpeckleScene({
     if (!isViewerReady) return;
     try {
       const saved = localStorage.getItem('compas-view-mode');
-      console.log('[dbg:viewMode:restore] isViewerReady=true, localStorage saved:', saved, 'current viewMode:', viewMode);
       if (saved && saved !== 'default') {
-        console.log('[dbg:viewMode:restore] scheduling RESTORE to:', saved, 'in 300ms');
         const timer = setTimeout(() => {
-          console.log('[dbg:viewMode:restore] applying RESTORE to:', saved);
           setViewMode(saved as any);
         }, 300);
         // Enable save tracking after restore timer fires, not before
         viewModeSaveEnabledRef.current = true;
         return () => clearTimeout(timer);
-      } else {
-        console.log('[dbg:viewMode:restore] skipping restore (saved is default or null)');
       }
     } catch {}
     viewModeSaveEnabledRef.current = true;
@@ -1005,6 +1002,10 @@ export function SpeckleScene({
   useEffect(() => {
     setFilteringEnabled(viewMode === 'acoustic');
   }, [viewMode, setFilteringEnabled]);
+
+  // Acoustic layer isolation — isolates the selected acoustic layer when viewMode='acoustic',
+  // un-isolates when leaving acoustic mode, and auto-opens ObjectExplorer if no layer exists.
+  useAcousticLayerIsolation(viewerRef, worldTree, viewMode);
 
   // Keep isAcousticModeRef in sync so hover patch reads current value
   useEffect(() => {
@@ -1419,15 +1420,7 @@ export function SpeckleScene({
       {isModelLoading && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-background/50">
           <div className="flex flex-col items-center gap-3">
-            <div
-              className="animate-spin rounded-full border-4 border-t-transparent"
-              style={{
-                width: '48px',
-                height: '48px',
-                borderColor: 'var(--color-primary)',
-                borderTopColor: 'transparent',
-              }}
-            />
+            <Spinner size={48} />
             <p className="text-xs text-neutral-400">{isLoading ? 'Loading model...' : 'Uploading model...'}</p>
           </div>
         </div>
@@ -1508,9 +1501,10 @@ export function SpeckleScene({
           activeColor="var(--color-primary)"
           title="Home"
           border = {false}
+          background = {false}
           icon={
             <svg width="20" height="20" viewBox="0 0 24 24" fill="var(--color-primary)" stroke="none">
-              <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2L3 9v11a2 2 0 0 0 2 2h4v-10h6v10h4a2 2 0 0 0 2-2V9l-9-7z" />
+              <path fillRule="evenodd" clipRule="evenodd" d="M12 2L3 9v11a2 2 0 0 0 2 2h4v-10h6v10h4a2 2 0 0 0 2-2V9l-9-7z" />
             </svg>
           }
         />

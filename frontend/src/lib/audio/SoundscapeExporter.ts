@@ -22,6 +22,7 @@ import type { TimelineSound, Position, Position3D, Orientation, AmbisonicOrder, 
 import { AudioMode } from '@/types/audio';
 import { cartesianToSpherical } from './utils/ambisonic-utils';
 import { BinauralDecoder } from './decoders/BinauralDecoder';
+import { OmnitoneFOADecoder } from './decoders/OmnitoneFOADecoder';
 import { HRTF } from '@/utils/constants';
 
 // ============================================================================
@@ -267,16 +268,38 @@ async function buildAnechoicGraph(
     mixBus.connect(rotator.in);
     rotator.out.connect(destinationNode);
   } else if (fmt.label === 'binaural') {
-    const binDecoder = new BinauralDecoder();
-    await binDecoder.initialize(offlineCtx as unknown as AudioContext, encodeOrder);
-    binDecoder.updateOrientation({ yaw: 0, pitch: 0, roll: 0 });
-    try {
-      await binDecoder.loadHRTFs(HRTF.DEFAULT_HRTF_PATH);
-    } catch {
-      console.warn('[SoundscapeExporter] HRTFs unavailable, using cardioid fallback');
+    // mixBus carries SN3D signal
+    if (encodeOrder === 1) {
+      // FOA: Omnitone accepts SN3D natively
+      const decoder = new OmnitoneFOADecoder();
+      await decoder.initialize(offlineCtx as unknown as AudioContext, 1);
+      decoder.setRotationEnabled(false);
+      decoder.updateOrientation({ yaw: 0, pitch: 0, roll: 0 });
+      mixBus.connect(decoder.getInputNode());
+      decoder.getOutputNode().connect(destinationNode);
+    } else {
+      // SOA/TOA: BinauralDecoder expects N3D → convert SN3D→N3D via per-order gains
+      const binDecoder = new BinauralDecoder();
+      await binDecoder.initialize(offlineCtx as unknown as AudioContext, encodeOrder);
+      binDecoder.updateOrientation({ yaw: 0, pitch: 0, roll: 0 });
+      try {
+        await binDecoder.loadHRTFs(HRTF.DEFAULT_HRTF_PATH);
+      } catch {
+        console.warn('[SoundscapeExporter] HRTFs unavailable, using cardioid fallback');
+      }
+      const splitter = offlineCtx.createChannelSplitter(numChannels);
+      const merger = offlineCtx.createChannelMerger(numChannels);
+      for (let ch = 0; ch < numChannels; ch++) {
+        const n = Math.floor(Math.sqrt(ch));
+        const gain = offlineCtx.createGain();
+        gain.gain.value = Math.sqrt(2 * n + 1);
+        splitter.connect(gain, ch, 0);
+        gain.connect(merger, 0, ch);
+      }
+      mixBus.connect(splitter);
+      merger.connect(binDecoder.getInputNode());
+      binDecoder.getOutputNode().connect(destinationNode);
     }
-    mixBus.connect(binDecoder.getInputNode());
-    binDecoder.getOutputNode().connect(destinationNode);
   } else {
     // Mono: extract W channel (channel 0)
     setupMonoWExtract(offlineCtx, mixBus, numChannels, destinationNode);
@@ -323,6 +346,13 @@ async function buildAnechoicGraph(
     encoder.azim = -spherical.azimuth * (180 / Math.PI);
     encoder.elev = spherical.elevation * (180 / Math.PI);
     encoder.updateGains();
+    // Convert N3D encoder gains to SN3D (mixBus stays SN3D throughout)
+    for (let ch = 0; ch < numChannels; ch++) {
+      const n = Math.floor(Math.sqrt(ch));
+      if (n > 0) {
+        encoder.gainNodes[ch].gain.value /= Math.sqrt(2 * n + 1);
+      }
+    }
 
     gainNode.connect(distNode);
     distNode.connect(encoder.in);
@@ -421,17 +451,40 @@ async function buildAmbisonicIRGraph(
       }
     }
   } else if (fmt.label === 'binaural') {
-    const binDecoder = new BinauralDecoder();
-    await binDecoder.initialize(offlineCtx as unknown as AudioContext, irOrder);
-    binDecoder.setRotationEnabled(true);
-    binDecoder.updateOrientation(listenerOrientation);
-    try {
-      await binDecoder.loadHRTFs(HRTF.DEFAULT_HRTF_PATH);
-    } catch {
-      console.warn('[SoundscapeExporter] HRTFs unavailable, using cardioid fallback');
+    // mixBus carries SN3D signal
+    if (irOrder === 1) {
+      // FOA: Omnitone accepts SN3D natively
+      const decoder = new OmnitoneFOADecoder();
+      await decoder.initialize(offlineCtx as unknown as AudioContext, 1);
+      decoder.setRotationEnabled(true);
+      decoder.updateOrientation(listenerOrientation);
+      mixBus.connect(decoder.getInputNode());
+      decoder.getOutputNode().connect(destinationNode);
+    } else {
+      // SOA/TOA: BinauralDecoder expects N3D → convert SN3D→N3D via per-order gains
+      const binDecoder = new BinauralDecoder();
+      await binDecoder.initialize(offlineCtx as unknown as AudioContext, irOrder);
+      binDecoder.setRotationEnabled(true);
+      binDecoder.updateOrientation(listenerOrientation);
+      try {
+        await binDecoder.loadHRTFs(HRTF.DEFAULT_HRTF_PATH);
+      } catch {
+        console.warn('[SoundscapeExporter] HRTFs unavailable, using cardioid fallback');
+      }
+      const chCount = (irOrder + 1) ** 2;
+      const splitter = offlineCtx.createChannelSplitter(chCount);
+      const merger = offlineCtx.createChannelMerger(chCount);
+      for (let ch = 0; ch < chCount; ch++) {
+        const n = Math.floor(Math.sqrt(ch));
+        const gain = offlineCtx.createGain();
+        gain.gain.value = Math.sqrt(2 * n + 1);
+        splitter.connect(gain, ch, 0);
+        gain.connect(merger, 0, ch);
+      }
+      mixBus.connect(splitter);
+      merger.connect(binDecoder.getInputNode());
+      binDecoder.getOutputNode().connect(destinationNode);
     }
-    mixBus.connect(binDecoder.getInputNode());
-    binDecoder.getOutputNode().connect(destinationNode);
   } else {
     setupMonoWExtract(offlineCtx, mixBus, irChannels, destinationNode);
   }
@@ -873,7 +926,7 @@ function getModeLabel(mode: AudioMode): string {
 }
 
 // ============================================================================
-// 24-bit PCM WAV Encoding
+// 24-bit PCM WAV Encoding (with AES69-2015 ambisonics metadata chunk)
 // ============================================================================
 
 function audioBufferToWavBlob24(buffer: AudioBuffer): Blob {
@@ -881,12 +934,35 @@ function audioBufferToWavBlob24(buffer: AudioBuffer): Blob {
   const { sampleRate, length: numSamples } = buffer;
   const bytesPerSample = 3;
   const dataByteLength = numChannels * numSamples * bytesPerSample;
-  const headerByteLength = 44;
-  const arrayBuffer = new ArrayBuffer(headerByteLength + dataByteLength);
+
+  const isAmbisonic = numChannels === 4 || numChannels === 9 || numChannels === 16;
+
+  // Build AES69-2015 axml chunk for ambisonic formats
+  let axmlBuf: Uint8Array | null = null;
+  let axmlByteLength = 0;
+  let axmlPadding = 0;
+  if (isAmbisonic) {
+    const axmlStr = `<?xml version="1.0" encoding="UTF-8"?>
+<ambisonics>
+  <version>1.0.0</version>
+  <normalization>SN3D</normalization>
+  <channelOrdering>ACN</channelOrdering>
+</ambisonics>`;
+    axmlBuf = new TextEncoder().encode(axmlStr);
+    axmlByteLength = axmlBuf.length;
+    axmlPadding = axmlByteLength % 2; // pad to even boundary
+  }
+
+  const fmtEnd = 36; // offset after 'fmt ' chunk
+  const axmlChunkSize = isAmbisonic ? 8 + axmlByteLength + axmlPadding : 0;
+  const dataOffset = fmtEnd + axmlChunkSize;
+
+  const totalFileSize = dataOffset + 8 + dataByteLength;
+  const arrayBuffer = new ArrayBuffer(totalFileSize);
   const view = new DataView(arrayBuffer);
 
   writeStr(view, 0,  'RIFF');
-  view.setUint32(4,  headerByteLength + dataByteLength - 8, true);
+  view.setUint32(4,  totalFileSize - 8, true);
   writeStr(view, 8,  'WAVE');
   writeStr(view, 12, 'fmt ');
   view.setUint32(16, 16, true);
@@ -896,15 +972,25 @@ function audioBufferToWavBlob24(buffer: AudioBuffer): Blob {
   view.setUint32(28, sampleRate * numChannels * bytesPerSample, true);
   view.setUint16(32, numChannels * bytesPerSample, true);
   view.setUint16(34, 24, true);
-  writeStr(view, 36, 'data');
-  view.setUint32(40, dataByteLength, true);
+
+  // axml chunk (AES69-2015 ambisonics metadata)
+  if (isAmbisonic && axmlBuf) {
+    writeStr(view, 36, 'axml');
+    view.setUint32(40, axmlByteLength + axmlPadding, true);
+    for (let i = 0; i < axmlByteLength; i++) {
+      view.setUint8(44 + i, axmlBuf[i]);
+    }
+  }
+
+  writeStr(view, dataOffset, 'data');
+  view.setUint32(dataOffset + 4, dataByteLength, true);
 
   const channels: Float32Array[] = [];
   for (let c = 0; c < numChannels; c++) {
     channels.push(buffer.getChannelData(c));
   }
 
-  let offset = headerByteLength;
+  let offset = dataOffset + 8;
   for (let i = 0; i < numSamples; i++) {
     for (let c = 0; c < numChannels; c++) {
       const sample = Math.max(-1, Math.min(1, channels[c][i]));

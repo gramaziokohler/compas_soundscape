@@ -9,7 +9,7 @@ import type { CustomMenuItem } from "@/types/card";
 import { CardSection } from "@/components/ui/CardSection";
 import { Card } from "@/components/ui/Card";import { CircularFAB } from '@/components/ui/CircularFAB';import { SoundPreContent, SoundResultContent } from "./sound";
 import { apiService } from "@/services/api";
-import { useAudioControlsStore, useErrorsStore, useSoundscapeStore } from "@/store";
+import { useAudioControlsStore, useSoundscapeStore, notifyError } from "@/store";
 import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
 import { useUIStore } from "@/store/uiStore";
 import { useServiceVersions } from "@/hooks/useServiceVersions";
@@ -89,6 +89,8 @@ export function SoundGenerationSection({
   onSelectSoundCard,
   selectedCardIndex = null,
   onDuplicateConfig,
+  onRegenerateSingle,
+  onDeleteVariant,
   audioModel = AUDIO_MODEL_TANGOFLUX,
   visibleParentUsageIndex,
 }: SoundGenerationSectionProps) {
@@ -113,6 +115,7 @@ export function SoundGenerationSection({
   const duplicateConfigAt           = useSoundscapeStore((s) => s.duplicateConfigAt);
   const updateSoundPosition         = useSoundscapeStore((s) => s.updateSoundPosition);
   const handleDetachSoundFromEntity = useSoundscapeStore((s) => s.handleDetachSoundFromEntity);
+  const regeneratingIndices         = useSoundscapeStore((s) => s.regeneratingIndices);
 
   // Helper to check if a sound is generated (defined early for use in other callbacks)
   const isSoundGenerated = useCallback((index: number): boolean => {
@@ -329,7 +332,7 @@ export function SoundGenerationSection({
         await onUploadAudio(newOriginalIndex, sampleFile);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to load sample audio';
-        useErrorsStore.getState().addError(message, 'error');
+        notifyError(message, 'error');
         console.error('[SoundGenerationSection] Failed to load sample audio:', error);
       }
     }
@@ -932,6 +935,11 @@ export function SoundGenerationSection({
               onMute={onMute}
               onUpdatePosition={handleUpdateSoundPosition}
               onUnlinkEntity={() => handleDetachSoundFromEntity(originalIndex)}
+              isRegenerating={regeneratingIndices.includes(originalIndex)}
+              pendingVariantIdx={variants.length}
+              onAddVariant={(config.type === 'text-to-audio' || !config.type) ? onRegenerateSingle : undefined}
+              onDeleteVariant={onDeleteVariant}
+              showVariantSelector={config.type === 'text-to-audio' || !config.type}
             />
             {linkedEntitiesDisplay}
           </>
@@ -996,6 +1004,9 @@ export function SoundGenerationSection({
     handleUpdateSoundPosition,
     handleDetachSoundFromEntity,
     serviceVersions,
+    regeneratingIndices,
+    onRegenerateSingle,
+    onDeleteVariant,
     audioModel,
     triggerZoomToSoundCard,
     currentGeneratingCardIndex,

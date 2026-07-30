@@ -9,6 +9,7 @@
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Viewer } from '@speckle/viewer';
+import { useAcousticLayerStore } from '@/store/acousticLayerStore';
 import type {
   SpeckleMeshObject,
   SpeckleLayerInfo,
@@ -18,6 +19,7 @@ import type {
 import type { ExplorerNode } from './useSpeckleTree';
 import type { AcousticMaterial } from '@/types/materials';
 import { getMaterialColorByAbsorption } from '@/utils/utils';
+import { getGeometryLeafIdsFromNode } from './useSpeckleTree';
 
 /**
  * Hierarchical mesh object with children
@@ -248,6 +250,21 @@ function collectAllObjectIds(objects: HierarchicalMeshObject[]): string[] {
 }
 
 /**
+ * Find a node in the world tree by ID and return all descendant leaf
+ * geometry IDs via getGeometryLeafIdsFromNode.
+ * Uses the world tree (full hierarchy) rather than layer-scoped meshObjects,
+ * so cascade works even before meshObjects is populated.
+ */
+function findLeafIdsInWorldTree(worldTree: any, objectId: string): string[] | null {
+  if (!worldTree) return null;
+  const rootChildren = getRootChildren(worldTree);
+  const node = findNodeByIdRecursive(rootChildren, objectId);
+  if (!node) return null;
+  const ids = getGeometryLeafIdsFromNode(node);
+  return ids.length > 0 ? ids : null;
+}
+
+/**
  * Build mapping from rawId → model.id for migrating saved assignments.
  * Saved soundscapes may store object IDs using raw.id (Speckle hash) which
  * differs from the WorldTree node model.id when duplicates exist.
@@ -367,7 +384,8 @@ export function useSpeckleSurfaceMaterials(
     return hierarchicalObjects;
   }, [selectedLayerId, worldTree]);
 
-  // Auto-select layer: prioritize persisted layer name, then "Acoustics", then first layer
+  // Auto-select layer: prioritize acousticLayerStore, then persisted layer name,
+  // then "Acoustics", then first layer
   useEffect(() => {
     if (layerOptions.length === 0) {
       setSelectedLayerId(null);
@@ -376,15 +394,27 @@ export function useSpeckleSurfaceMaterials(
 
     // Skip if we've already initialized
     if (hasInitializedLayer && selectedLayerId) {
-      // Verify the current layer still exists
       const layerExists = layerOptions.some(l => l.id === selectedLayerId);
       if (layerExists) {
         return;
       }
-      // If current layer doesn't exist, fall through to re-selection
     }
 
-    // First priority: try to restore from persisted layer name
+    // First priority: acousticLayerStore (persisted acoustic layer selection)
+    const acousticLayerId = useAcousticLayerStore.getState().selectedAcousticLayerId;
+    const acousticLayerName = useAcousticLayerStore.getState().selectedAcousticLayerName;
+
+    if (acousticLayerId && acousticLayerName) {
+      const match = layerOptions.find(l => l.id === acousticLayerId || l.name === acousticLayerName);
+      if (match) {
+        console.log('[useSpeckleSurfaceMaterials] Using acousticLayerStore layer:', match.name, '->', match.id);
+        setSelectedLayerId(match.id);
+        setHasInitializedLayer(true);
+        return;
+      }
+    }
+
+    // Second priority: try to restore from persisted layer name (from simulation config)
     if (initialLayerName) {
       const persistedLayer = layerOptions.find(l => l.name === initialLayerName);
       if (persistedLayer) {
@@ -395,7 +425,7 @@ export function useSpeckleSurfaceMaterials(
       }
     }
 
-    // Second priority: try to find "Acoustics" layer
+    // Third priority: try to find "Acoustics" layer
     const acousticsLayer = layerOptions.find(
       l => l.name.toLowerCase() === 'acoustics'
     );
@@ -403,12 +433,13 @@ export function useSpeckleSurfaceMaterials(
     if (acousticsLayer) {
       console.log('[useSpeckleSurfaceMaterials] Found "Acoustics" layer:', acousticsLayer);
       setSelectedLayerId(acousticsLayer.id);
+      // Also set in acousticLayerStore so it becomes the source of truth
+      useAcousticLayerStore.getState().setAcousticLayer(acousticsLayer.id, acousticsLayer.name);
     } else {
       console.log('[useSpeckleSurfaceMaterials] No "Acoustics" layer found, using first layer:', layerOptions[0]);
       setSelectedLayerId(layerOptions[0].id);
     }
 
-    // Mark as initialized after first selection
     setHasInitializedLayer(true);
   }, [layerOptions, hasInitializedLayer, selectedLayerId, initialLayerName]);
 
@@ -430,38 +461,51 @@ export function useSpeckleSurfaceMaterials(
   }, [meshObjects]);
 
   /**
-   * Assign material to an object (and optionally its children)
+   * Assign material to an object — cascades to all descendant geometry
+   * when the target is a parent/layer in the world tree hierarchy.
    */
   const assignMaterial = useCallback((objectId: string, materialId: string) => {
-    console.log('[useSpeckleSurfaceMaterials] Assigning material:', { objectId, materialId });
     setMaterialAssignments(prev => {
+      const leafIds = findLeafIdsInWorldTree(worldTree, objectId);
+      const targetIds = leafIds || [objectId];
       const newAssignments = new Map(prev);
-      if (materialId) {
-        newAssignments.set(objectId, materialId);
-      } else {
-        newAssignments.delete(objectId);
-      }
-      return newAssignments;
-    });
-  }, []);
-
-  /**
-   * Assign material to a specific set of objects in a single state update
-   */
-  const assignMaterialToObjects = useCallback((objectIds: string[], materialId: string) => {
-    console.log('[useSpeckleSurfaceMaterials] Assigning material to', objectIds.length, 'objects:', materialId);
-    setMaterialAssignments(prev => {
-      const newAssignments = new Map(prev);
-      for (const objectId of objectIds) {
+      for (const id of targetIds) {
         if (materialId) {
-          newAssignments.set(objectId, materialId);
+          newAssignments.set(id, materialId);
         } else {
-          newAssignments.delete(objectId);
+          newAssignments.delete(id);
         }
       }
       return newAssignments;
     });
-  }, []);
+  }, [worldTree]);
+
+  /**
+   * Assign material to a specific set of objects — cascades to all descendant
+   * geometry for any parent/layer IDs in the array.
+   */
+  const assignMaterialToObjects = useCallback((objectIds: string[], materialId: string) => {
+    setMaterialAssignments(prev => {
+      const newAssignments = new Map(prev);
+      const expanded = new Set<string>();
+      for (const objectId of objectIds) {
+        const leafIds = findLeafIdsInWorldTree(worldTree, objectId);
+        if (leafIds) {
+          leafIds.forEach(id => expanded.add(id));
+        } else {
+          expanded.add(objectId);
+        }
+      }
+      for (const id of expanded) {
+        if (materialId) {
+          newAssignments.set(id, materialId);
+        } else {
+          newAssignments.delete(id);
+        }
+      }
+      return newAssignments;
+    });
+  }, [worldTree]);
 
   /**
    * Assign material to ALL objects in the tree

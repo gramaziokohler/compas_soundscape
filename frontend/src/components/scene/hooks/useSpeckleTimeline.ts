@@ -29,6 +29,7 @@ interface TimelineProps {
   mutedSounds: Set<string>;
   soloedSound: string | null;
   listenerOrientation: { x: number; y: number; z: number };
+  isFirstPersonMode: boolean;
 }
 
 interface TimelineResult {
@@ -56,6 +57,7 @@ export function useSpeckleTimeline({
   mutedSounds,
   soloedSound,
   listenerOrientation,
+  isFirstPersonMode,
 }: TimelineProps): TimelineResult {
   const [timelineSounds, setTimelineSounds] = useState<TimelineSound[]>([]);
   const [soundMetadataReady, setSoundMetadataReady] = useState(false);
@@ -68,21 +70,17 @@ export function useSpeckleTimeline({
   // prevent the auto-open effect from firing on refresh.
   useEffect(() => {
     const persisted = useUIStore.getState().showTimeline;
-    console.log('[dbg:timeline:init] persisted showTimeline:', persisted);
     if (!persisted) {
       userClosedTimelineRef.current = true;
-      console.log('[dbg:timeline:init] set userClosedTimelineRef = true (timeline was hidden)');
     }
   }, []);
 
   const handleCloseTimeline = useCallback(() => {
-    console.log('[dbg:timeline:close] user closed timeline');
     userClosedTimelineRef.current = true;
     setShowTimeline(false);
   }, [setShowTimeline]);
 
   const handleToggleTimeline = useCallback(() => {
-    console.log('[dbg:timeline:toggle] current showTimeline:', showTimeline);
     if (showTimeline) {
       setShowTimeline(false);
     } else {
@@ -226,7 +224,6 @@ export function useSpeckleTimeline({
   // but only if the user hasn't explicitly closed it.
   useEffect(() => {
     const shouldAutoOpen = timelineSounds.length > 0 && !userClosedTimelineRef.current;
-    console.log('[dbg:timeline:autoOpen] timelineSounds:', timelineSounds.length, 'userClosed:', userClosedTimelineRef.current, 'showTimeline:', showTimeline, 'shouldAutoOpen:', shouldAutoOpen);
     if (shouldAutoOpen) {
       setShowTimeline(true);
     }
@@ -285,10 +282,19 @@ export function useSpeckleTimeline({
       const activeSimulation =
         activeSimulationIndex !== null ? simulationConfigs[activeSimulationIndex] : null;
 
+      // Use live camera orientation when in FPS mode (receiver card expanded)
+      // so the exported ambisonic field matches what the user hears live.
+      const { currentCameraOrientation } = useSpeckleEngineStore.getState();
+
       const config: SoundscapeExportConfig = {
         ...exportState,
         exportFormat: format,
-        globalListenerOrientation: listenerOrientation,
+        listenerOrientation: isFirstPersonMode
+          ? currentCameraOrientation
+          : exportState.listenerOrientation,
+        globalListenerOrientation: isFirstPersonMode
+          ? undefined
+          : listenerOrientation,
         soundGains,
         mutedSounds,
         soloedSound,
@@ -313,6 +319,7 @@ export function useSpeckleTimeline({
     soloedSound,
     soundTrims,
     listenerOrientation,
+    isFirstPersonMode,
   ]);
 
   return {

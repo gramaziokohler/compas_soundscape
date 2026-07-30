@@ -28,7 +28,7 @@ import {
   CHORAS_DG_DEFAULT_PPW,
   CHORAS_DG_DEFAULT_CFL,
 } from '@/utils/constants';
-import { useErrorsStore } from './errorsStore';
+import { notifyError } from './errorsStore';
 import { useUIStore } from './uiStore';
 import type { SourceReceiverIRMapping } from '@/types/audio';
 
@@ -488,7 +488,7 @@ export const useChorasStore = create<ChorasStoreState>()(
                   );
 
                   const irWord = irImportResult.importedCount === 1 ? 'response' : 'responses';
-                  useErrorsStore.getState().addError(
+                  notifyError(
                     `Simulation completed! ${irImportResult.importedCount} impulse ${irWord} imported to library.`,
                     'info',
                   );

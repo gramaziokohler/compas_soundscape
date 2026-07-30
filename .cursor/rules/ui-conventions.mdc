@@ -84,6 +84,28 @@ const hex = getMaterialColorByAbsorption(0.4)   // → '#hex' between start, mid
 
 ---
 
+## UI Component Reuse
+
+Before building any UI element (confirmation dialogs, toasts, inline prompts, etc.),
+**check `frontend/src/components/ui/` first** for a reusable component that fits the need.
+If one exists, use it — do not inline the same UI pattern.
+
+If no reusable component exists and the UI pattern is likely to appear in other parts of the
+app, **extract it as a new component in `frontend/src/components/ui/`** rather than embedding
+it inline. Every component in `ui/` must:
+
+1. Have `"use client"` at the top.
+2. Export a named function component (no default exports).
+3. Define a TypeScript interface for its props, exported alongside the component.
+4. Use CSS custom-property tokens only — never hex, rgba, or named colors.
+5. Reference constants from `@/utils/constants.ts` for sizing, radius, spacing.
+6. Include a JSDoc comment with a `Usage:` example.
+
+When in doubt, look at existing components (`CheckboxField.tsx`, `ValidationMessage.tsx`,
+`ConfirmDialog.tsx`) for the pattern.
+
+---
+
 ## Component Patterns
 
 ### Slot-Based Card Composition

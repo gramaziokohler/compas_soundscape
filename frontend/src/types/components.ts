@@ -136,6 +136,8 @@ export interface SidebarProps {
   useSpeckleViewer?: boolean;
   onResetSound?: (soundId: string, promptIndex: number) => void;
   onDuplicateConfig?: (index: number) => void;
+  onRegenerateSingle?: (index: number) => Promise<void>;
+  onDeleteVariant?: (promptIndex: number, variantIdx: number) => void;
   onSelectSoundCard?: (promptIndex: number) => void;
   selectedCardIndex?: number | null;
   // SED props
@@ -272,6 +274,8 @@ export interface SoundGenerationSectionProps {
   useSpeckleViewer?: boolean;
   onResetSound?: (soundId: string, promptIndex: number) => void;
   onDuplicateConfig?: (index: number) => void;
+  onRegenerateSingle?: (index: number) => Promise<void>;
+  onDeleteVariant?: (promptIndex: number, variantIdx: number) => void;
   onSelectSoundCard?: (promptIndex: number) => void;
   selectedCardIndex?: number | null;
   // Receiver props

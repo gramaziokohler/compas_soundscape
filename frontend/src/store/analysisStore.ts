@@ -39,7 +39,7 @@ import { loadAudioFileWithBuffer } from '@/lib/audio/utils/audio-info';
 import { apiService } from '@/services/api';
 import { generatePositionsInArea } from '@/utils/positioning';
 import { getAnalysisGroupColor } from '@/utils/utils';
-import { useErrorsStore } from './errorsStore';
+import { notifyError } from './errorsStore';
 import { useAreaDrawingStore } from './areaDrawingStore';
 import { useSoundscapeStore } from './soundscapeStore';
 import { useSpeckleStore } from './speckleStore';
@@ -952,7 +952,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             } else {
               const errorMsg = error instanceof Error ? error.message : 'Analysis failed';
               const isQuotaError = errorMsg.includes('quota') || errorMsg.includes('429');
-              useErrorsStore.getState().addError(errorMsg, isQuotaError ? 'warning' : 'error');
+              notifyError(errorMsg, isQuotaError ? 'warning' : 'error');
               set({ analysisError: errorMsg }, false, 'analysis/analyzeError');
             }
           } finally {
@@ -1527,7 +1527,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             } else {
               const errorMsg = error instanceof Error ? error.message : 'Model analysis failed';
               const isQuota = errorMsg.includes('quota') || errorMsg.includes('429');
-              useErrorsStore.getState().addError(errorMsg, isQuota ? 'warning' : 'error');
+              notifyError(errorMsg, isQuota ? 'warning' : 'error');
               set({ analysisError: errorMsg }, false, 'analysis/analyzeModelError');
             }
           } finally {

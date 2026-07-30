@@ -26,7 +26,7 @@ import {
   PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE,
   PYROOMACOUSTICS_DEFAULT_ENABLE_GRID,
 } from '@/utils/constants';
-import { useErrorsStore } from './errorsStore';
+import { notifyError } from './errorsStore';
 import { useUIStore } from './uiStore';
 import type { SourceReceiverIRMapping } from '@/types/audio';
 
@@ -482,8 +482,8 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
                   );
 
                   const irWord = irImportResult.importedCount === 1 ? 'response' : 'responses';
-                  useErrorsStore.getState().addError(
-                    `🎉 Simulation completed! ${irImportResult.importedCount} impulse ${irWord} imported to library.`,
+                  notifyError(
+                    `Simulation completed! ${irImportResult.importedCount} impulse ${irWord} imported to library.`,
                     'info',
                   );
                 }

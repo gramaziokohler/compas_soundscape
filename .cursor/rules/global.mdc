@@ -83,20 +83,6 @@ simulation synchronously inside a request handler. Always enqueue via `task_queu
 
 ---
 
-## Verification
-
-```bash
-mamba activate compas-toy
-
-# Backend import sanity
-cd backend && python -c "from main import app; print('OK')"
-
-# Frontend strict TypeScript gate
-cd frontend && pnpm build
-```
-
----
-
 ## Debugging Discipline
 
 Applies to any unexpected-behavior bug (state sync, timing/race conditions, stale values) — not

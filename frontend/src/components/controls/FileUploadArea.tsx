@@ -1,3 +1,5 @@
+import { Spinner } from '@/components/ui/Spinner';
+
 interface UploadedFileLike {
   name: string;
   size: number;
@@ -51,15 +53,7 @@ export function FileUploadArea({
       <div className="flex flex-col items-center gap-1">
         {isUploading ? (
           <>
-            <div
-              className="animate-spin rounded-full border-2 border-t-transparent"
-              style={{
-                width: '24px',
-                height: '24px',
-                borderColor: 'var(--color-primary)',
-                borderTopColor: 'transparent',
-              }}
-            />
+            <Spinner size={24} />
             <p className="text-xs font-medium text-neutral-300">
               {file ? `Uploading ${file.name}...` : 'Uploading...'}
             </p>

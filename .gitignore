@@ -164,3 +164,7 @@ dist/
 .editorconfig
 .mcp.json
 .gitignore
+
+.playwright-cli/
+ui-testing/
+test-results/

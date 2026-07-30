@@ -102,18 +102,7 @@ export function SpeckleSurfaceMaterialsSection({
     hideObjects,
     hiddenObjects,
     isolatedObjects,
-  } = useSpeckleFiltering(viewerRef);
-
-  // Store previous visibility state to restore on unmount
-  const previousStateRef = useRef<{
-    hiddenObjects: string[];
-    isolatedObjects: string[];
-    wasIsolated: boolean;
-  } | null>(null);
-
-  const isolatedByUsRef = useRef<string[]>([]);
-  const savedIsolationRef = useRef<string[] | null>(initialIsolatedObjectIds ?? null);
-  const onIsolationChangeRef = useRef(onIsolationChange);
+  } = useSpeckleFiltering(viewerRef, 'acoustic-materials');
 
   // Material color registration (merged with diverse/linked colors)
   const { registerMaterialColors, clearMaterialColors, applyFilterColors } = useSpeckleStore();
@@ -143,15 +132,6 @@ export function SpeckleSurfaceMaterialsSection({
     if (worldTree) walkCollectIdMaps(getRootChildren(worldTree), rawIdToAppId, appIdToRawId);
     return { rawIdToAppId, appIdToRawId };
   }, [worldTree]);
-
-  useEffect(() => { onIsolationChangeRef.current = onIsolationChange; }, [onIsolationChange]);
-
-  // Eagerly persist isolation state to the card config whenever it changes.
-  const explorerIsolatedIds = useSpeckleStore((s) => s.explorerIsolatedIds);
-  useEffect(() => {
-    if (!filteringEnabled || isolatedByUsRef.current.length === 0) return;
-    onIsolationChangeRef.current?.(explorerIsolatedIds);
-  }, [filteringEnabled, explorerIsolatedIds]);
 
   // ── Activate the store (whole-tree workflow) ──
   useEffect(() => {
@@ -255,119 +235,7 @@ export function SpeckleSurfaceMaterialsSection({
   const previousLayerIdRef = useRef<string | null>(null);
 
   /**
-   * Isolate the Acoustics layer when it changes, but ONLY when filteringEnabled.
-   */
-  useEffect(() => {
-    if (!filteringEnabled) return;
-    if (!selectedLayerId) return;
-
-    const childObjectIds = getAllObjectIds();
-    if (childObjectIds.length === 0) return;
-
-    if (previousLayerIdRef.current !== selectedLayerId) {
-      if (previousStateRef.current === null) {
-        previousStateRef.current = {
-          hiddenObjects: Array.from(hiddenObjects),
-          isolatedObjects: Array.from(isolatedObjects),
-          wasIsolated: isolatedObjects.size > 0,
-        };
-      }
-
-      if (isolatedByUsRef.current.length > 0) {
-        unIsolateObjects(isolatedByUsRef.current);
-      }
-
-      let objectIdsToIsolate: string[];
-      if (savedIsolationRef.current && savedIsolationRef.current.length > 0) {
-        const meshOnlyIds = savedIsolationRef.current.filter(id => id !== selectedLayerId);
-        objectIdsToIsolate = meshOnlyIds.length > 0
-          ? meshOnlyIds
-          : [selectedLayerId, ...childObjectIds];
-        savedIsolationRef.current = null;
-      } else {
-        objectIdsToIsolate = [selectedLayerId, ...childObjectIds];
-      }
-      isolatedByUsRef.current = objectIdsToIsolate;
-
-      isolateObjects(objectIdsToIsolate);
-      previousLayerIdRef.current = selectedLayerId;
-
-      setTimeout(() => applyFilterColors(), 50);
-      setTimeout(() => applyFilterColors(), 300);
-      setTimeout(() => applyFilterColors(), 800);
-    }
-  }, [filteringEnabled, selectedLayerId, getAllObjectIds, isolateObjects, unIsolateObjects, hiddenObjects, isolatedObjects, applyFilterColors]);
-
-  /**
-   * React to filteringEnabled toggle changes.
-   */
-  const prevFilteringEnabledRef = useRef(filteringEnabled);
-  useEffect(() => {
-    const wasEnabled = prevFilteringEnabledRef.current;
-    prevFilteringEnabledRef.current = filteringEnabled;
-
-    if (wasEnabled && !filteringEnabled) {
-      clearMaterialColors();
-
-      if (isolatedByUsRef.current.length > 0) {
-        const currentIsolated = useSpeckleStore.getState().getExplorerIsolatedIds();
-        if (currentIsolated !== null) {
-          savedIsolationRef.current = currentIsolated;
-          onIsolationChangeRef.current?.(currentIsolated);
-        }
-        unIsolateObjects(isolatedByUsRef.current);
-      }
-
-      if (previousStateRef.current?.hiddenObjects.length) {
-        hideObjects(previousStateRef.current.hiddenObjects);
-      }
-      if (previousStateRef.current?.wasIsolated && previousStateRef.current.isolatedObjects.length > 0) {
-        isolateObjects(previousStateRef.current.isolatedObjects);
-      }
-
-      previousStateRef.current = null;
-      isolatedByUsRef.current = [];
-      previousLayerIdRef.current = null;
-    }
-  }, [filteringEnabled, clearMaterialColors, unIsolateObjects, hideObjects, isolateObjects]);
-
-  /**
-   * Restore previous visibility state when component unmounts.
-   */
-  const isolateObjectsRef = useRef(isolateObjects);
-  const unIsolateObjectsRef = useRef(unIsolateObjects);
-  const hideObjectsRef = useRef(hideObjects);
-  useEffect(() => { isolateObjectsRef.current = isolateObjects; }, [isolateObjects]);
-  useEffect(() => { unIsolateObjectsRef.current = unIsolateObjects; }, [unIsolateObjects]);
-  useEffect(() => { hideObjectsRef.current = hideObjects; }, [hideObjects]);
-
-  useEffect(() => {
-    return () => {
-      if (isolatedByUsRef.current.length === 0) return;
-
-      const currentIsolated = useSpeckleStore.getState().getExplorerIsolatedIds();
-      if (currentIsolated !== null) {
-        onIsolationChangeRef.current?.(currentIsolated);
-      }
-
-      unIsolateObjectsRef.current(isolatedByUsRef.current);
-
-      if (previousStateRef.current?.hiddenObjects.length) {
-        hideObjectsRef.current(previousStateRef.current.hiddenObjects);
-      }
-      if (previousStateRef.current?.wasIsolated && previousStateRef.current.isolatedObjects.length > 0) {
-        isolateObjectsRef.current(previousStateRef.current.isolatedObjects);
-      }
-
-      previousStateRef.current = null;
-      isolatedByUsRef.current = [];
-      previousLayerIdRef.current = null;
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  /**
-   * Update color visualization when material assignments change.
+   * Color visualization: update when material assignments change or filteringEnabled toggles.
    */
   const prevFilteringEnabledForColors = useRef(filteringEnabled);
   useEffect(() => {

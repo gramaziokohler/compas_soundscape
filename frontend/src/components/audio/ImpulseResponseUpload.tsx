@@ -6,6 +6,7 @@ import { AudioWaveformDisplay } from "@/components/audio/AudioWaveformDisplay";
 import { FileUploadArea } from "@/components/controls/FileUploadArea";
 import { apiService } from "@/services/api";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
+import { ValidationMessage } from '@/components/ui/ValidationMessage';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from "@/types/audio";
 import { API_BASE_URL, IR_HOVER_LINE, IR_LOW_ENERGY_THRESHOLD } from "@/utils/constants";
 import { trimDisplayName } from "@/utils/utils";
@@ -654,11 +655,8 @@ export function ImpulseResponseUpload({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Error Display */}
       {error && (
-        <div className="text-xs rounded p-2 bg-error/10 border border-error text-error">
-          {error}
-        </div>
+        <ValidationMessage type="error">{error}</ValidationMessage>
       )}
 
       {uploadProgress && (
@@ -668,9 +666,7 @@ export function ImpulseResponseUpload({
       )}
 
       {missingPairSetupMessage && (
-        <div className="text-xs rounded p-3 bg-info/10 border border-info/40 text-info">
-          {missingPairSetupMessage}
-        </div>
+        <ValidationMessage type="info">{missingPairSetupMessage}</ValidationMessage>
       )}
 
       {/* IR Library — grouped by receiver when mapping is available */}

@@ -9,7 +9,7 @@ import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { apiService } from '@/services/api';
 import { calculateGeometryBounds, calculateScaleForSounds } from '@/utils/utils';
-import { useErrorsStore } from './errorsStore';
+import { notifyError } from './errorsStore';
 import type { CompasGeometry } from '@/types';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -181,7 +181,7 @@ export const useFileUploadStore = create<FileUploadStoreState>()(
         } catch (err: any) {
           const msg = err.message || 'Failed to upload file';
           set({ uploadError: msg, isAnalyzingModel: false }, false, 'fileUpload/uploadError');
-          useErrorsStore.getState().addError(msg);
+          notifyError(msg);
         } finally {
           set({ isUploading: false }, false, 'fileUpload/uploadDone');
         }

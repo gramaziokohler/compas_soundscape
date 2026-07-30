@@ -11,6 +11,7 @@ interface SceneControlButtonProps {
   activeColor?: string;
   inactiveBackground?: string;
   border?: boolean
+  background?: boolean
 }
 
 /**
@@ -42,7 +43,8 @@ export function SceneControlButton({
   isActive = false,
   activeColor = 'var(--color-primary)',
   inactiveBackground = 'var(--color-secondary-lighter)',
-  border = true
+  border = true ,
+  background = true
 }: SceneControlButtonProps) {
   return (
     <button
@@ -52,7 +54,7 @@ export function SceneControlButton({
         width: UI_SCENE_BUTTON.SIZE,
         height: UI_SCENE_BUTTON.SIZE,
         borderRadius: UI_SCENE_BUTTON.BORDER_RADIUS,
-        backgroundColor: isActive ? activeColor : inactiveBackground,
+        backgroundColor: background? isActive ? activeColor : inactiveBackground : "transparent",
         borderColor: isActive ? activeColor : 'var(--color-overlay-border)',
         borderWidth: border? '1px': '0px',
         borderStyle: 'solid'
@@ -64,7 +66,12 @@ export function SceneControlButton({
       }}
       onMouseLeave={(e) => {
         if (!isActive) {
-          e.currentTarget.style.backgroundColor = inactiveBackground;
+          if (background) {
+            e.currentTarget.style.backgroundColor = inactiveBackground;
+          }
+          else {
+            e.currentTarget.style.backgroundColor = "transparent";            
+          }
         }
       }}
       title={title}

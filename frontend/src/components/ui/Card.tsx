@@ -325,11 +325,13 @@ export function Card<TConfig extends CardBaseConfig>({
                   {collapsedInfo}
                 </div>
               )}
-              {!isExpanded && isRunning && !error && (
+              {isRunning && !error && (
                 <div 
-                  className={`mt-0.5 flex items-center gap-2 text-[10px] font-medium leading-tight transition-colors duration-300 ${
-                    progress > 40 ? 'text-white' : 'text-foreground'
-                  }`}
+                  className={`mt-0.5 flex bg-success rounded-lg p-2 items-center gap-2 text-[10px] font-medium leading-tight transition-colors duration-300 ${
+                    progress > 40 ? 'text-foreground' : 'text-foreground'                   
+                  }`
+                
+                }
                 >
                   <span>{status || 'Calculating...'}</span>
                   <span className="opacity-80">{progress}%</span>
@@ -372,7 +374,7 @@ export function Card<TConfig extends CardBaseConfig>({
 
       {/* Expanded content */}
       {isExpanded && (
-        <div className="mt-3 space-y-3 max-h-[480px] overflow-y-auto pr-0.5">
+        <div className="mt-3 space-y-3 max-h-[480px] overflow-y-auto pr-0.5 relative z-[1]">
 
           {renderContent()}
                     
@@ -391,35 +393,17 @@ export function Card<TConfig extends CardBaseConfig>({
             </div>
           )}
 
-          {/* Progress Bar with Stop Button - Show when running */}
-          {isRunning && onRun && !hasResult && (
+          {/* Stop button when running in expanded view */}
+          {isRunning && onCancel && !hasResult && (
             <div className="flex gap-2 items-center">
-              <div
-                className="flex-1 px-3 py-2 rounded-lg text-xs"
-                style={{
-                  backgroundColor: 'var(--color-secondary-hover)',
-                  color: 'white',
-                  backgroundImage: `linear-gradient(to right, var(--color-primary) ${progress}%, var(--color-secondary-hover) ${progress}%)`,
-                  transition: 'background-image 0.3s ease'
-                }}
+              <button
+                onClick={onCancel}
+                className="w-8 h-8 rounded-lg text-white font-bold transition-colors flex items-center justify-center bg-error hover:bg-error-hover"
+                title="Stop"
+                aria-label="Stop"
               >
-                <div className="flex justify-between items-center">
-                  <span className="font-medium">{status || 'Calculating...'}</span>
-                  <span className="font-bold">{progress}%</span>
-                </div>
-              </div>
-              
-              {/* Stop button */}
-              {onCancel && (
-                <button
-                  onClick={onCancel}
-                  className="w-8 h-8 rounded-lg text-white font-bold transition-colors flex items-center justify-center flex-shrink-0 bg-error hover:bg-error-hover"
-                  title="Stop"
-                  aria-label="Stop"
-                >
-                  <span className="text-lg leading-none">■</span>
-                </button>
-              )}
+                <span className="text-lg leading-none">■</span>
+              </button>
             </div>
           )}
         </div>

@@ -43,14 +43,15 @@ export function ValidationMessage({
   className = ""
 }: ValidationMessageProps) {
   const typeClasses: Record<MessageType, string> = {
-    error:   'bg-error-light border-error text-error-hover',
-    success: 'bg-success-light border-success text-success-hover',
-    info:    'bg-info-light border-info text-info-hover',
-    warning: 'bg-warning-light border-warning text-warning-hover',
+    error:   'bg-error-light border-error text-error',
+    success: 'bg-success-light border-success text-success',
+    info:    'bg-info-light border-info text-info',
+    warning: 'bg-warning-light border-warning text-warning',
   };
 
   return (
     <div
+      role="alert"
       className={`${TAILWIND_TEXT_SIZE.XS} flex items-start gap-2 border ${typeClasses[type]} ${className}`}
       style={{
         padding: UI_VALIDATION.PADDING,

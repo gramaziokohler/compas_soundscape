@@ -2,6 +2,7 @@
 
 import type { SoundGenerationConfig, LibrarySearchResult } from '@/types';
 import { pauseStore, commitStore, globalUndo, globalRedo } from '@/store';
+import { ValidationMessage } from '@/components/ui/ValidationMessage';
 
 /**
  * LibraryMode Component
@@ -99,11 +100,8 @@ export function LibraryMode({
         </p>
       )}
 
-      {/* Search error */}
       {searchError && (
-        <p className="text-xs rounded-lg p-2 bg-error-light border border-error text-error">
-          {searchError}
-        </p>
+        <ValidationMessage type="error">{searchError}</ValidationMessage>
       )}
 
       {/* Initial help text

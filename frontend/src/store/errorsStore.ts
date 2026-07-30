@@ -22,6 +22,14 @@ export interface ErrorsStoreState {
   clearErrors: () => void;
 }
 
+/**
+ * Standalone helper for store files that cannot use hooks.
+ * Usage: `notifyError('Something went wrong')` or `notifyError('Quota exceeded', 'warning')`
+ */
+export function notifyError(message: string, type: ErrorNotification['type'] = 'error'): void {
+  useErrorsStore.getState().addError(message, type);
+}
+
 export const useErrorsStore = create<ErrorsStoreState>()(
   devtools(
     (set) => ({

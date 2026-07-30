@@ -510,7 +510,7 @@ AMBISONIC_SOA_CHANNELS = 9
 AMBISONIC_TOA_CHANNELS = 16
 
 # Ambisonic Channel Names (ACN ordering)
-AMBISONIC_FOA_CHANNEL_NAMES = ["W", "X", "Y", "Z"]
+AMBISONIC_FOA_CHANNEL_NAMES = ["W", "Y", "Z", "X"]
 AMBISONIC_TOA_CHANNEL_NAMES = [
     "W",   # 0: Omnidirectional
     "Y",   # 1: Left-Right (1st order)
