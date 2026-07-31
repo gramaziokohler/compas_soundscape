@@ -16,7 +16,6 @@ import { useBatchedSlider } from '@/hooks/useBatchedSlider';
  *       1. Position (x/y/z) widget — always visible
  *       2. Method row: "Method: <dropdown> v" — present for pre-gen cards
  *       3. Collapsible method panel (mainContent) — default collapsed
- *       4. extraContent
  *   - Right column: interval slider / timestamp list + volume slider
  *
  * All slider state and batched-undo logic live here so it never needs to be
@@ -30,11 +29,9 @@ export interface SoundCardBodyProps {
   fullWidthHeader?: ReactNode;
   /** Optional content rendered in the collapsible panel (text-to-audio sliders). */
   collapsibleContent?: ReactNode;
-  /** Optional content below the position widget (e.g. variant selector buttons) */
-  extraContent?: ReactNode;
 
   // ── Shared data ──────────────────────────────────────────────────────────
-  volumeDb: number;
+  volumeDbfs: number;
   intervalSeconds: number;
   schedulingMode: 'interval' | 'timestamps';
   timestamps: number[];
@@ -55,7 +52,7 @@ export interface SoundCardBodyProps {
   onMuteChange?: (muted: boolean) => void;
 
   // ── Callbacks ─────────────────────────────────────────────────────────────
-  onVolumeChange?: (db: number) => void;
+  onVolumeChange?: (dbfs: number) => void;
   onIntervalChange?: (sec: number) => void;
   onTimestampsChange?: (ts: number[]) => void;
   onUpdatePosition?: (pos: [number, number, number]) => void;
@@ -69,8 +66,7 @@ export function SoundCardBody({
   mainContent,
   fullWidthHeader,
   collapsibleContent,
-  extraContent,
-  volumeDb,
+  volumeDbfs,
   intervalSeconds,
   schedulingMode,
   timestamps,
@@ -89,28 +85,28 @@ export function SoundCardBody({
   storeContext,
 }: SoundCardBodyProps) {
   // Local slider state for smooth visual feedback while dragging
-  const [tempVolumeDb, setTempVolumeDb] = useState(volumeDb);
+  const [tempVolumeDbfs, setTempVolumeDbfs] = useState(volumeDbfs);
   const [tempIntervalSeconds, setTempIntervalSeconds] = useState(intervalSeconds);
 
   // Method panel expand/collapse state — default collapsed
   const [methodExpanded, setMethodExpanded] = useState(false);
 
   // Sync with external state (e.g. undo/redo)
-  useEffect(() => { setTempVolumeDb(volumeDb); }, [volumeDb]);
+  useEffect(() => { setTempVolumeDbfs(volumeDbfs); }, [volumeDbfs]);
   useEffect(() => { setTempIntervalSeconds(intervalSeconds); }, [intervalSeconds]);
 
-  const dbToSlider = (db: number) =>
-    (db - UI_VOLUME_SLIDER.MIN) / (UI_VOLUME_SLIDER.MAX - UI_VOLUME_SLIDER.MIN);
-  const sliderToDb = (v: number) =>
+  const dbfsToSlider = (dbfs: number) =>
+    (dbfs - UI_VOLUME_SLIDER.MIN) / (UI_VOLUME_SLIDER.MAX - UI_VOLUME_SLIDER.MIN);
+  const sliderToDbfs = (v: number) =>
     UI_VOLUME_SLIDER.MIN + v * (UI_VOLUME_SLIDER.MAX - UI_VOLUME_SLIDER.MIN);
 
   const volumeSlider = useBatchedSlider<number>(
     storeContext,
-    (v) => setTempVolumeDb(sliderToDb(v)),
+    (v) => setTempVolumeDbfs(sliderToDbfs(v)),
     (v) => {
-      const db = sliderToDb(v);
-      onVolumeChange?.(db);
-      if (db <= UI_VOLUME_SLIDER.MIN) {
+      const dbfs = sliderToDbfs(v);
+      onVolumeChange?.(dbfs);
+      if (dbfs <= UI_VOLUME_SLIDER.MIN) {
         onMuteChange?.(true);
       } else if (isMuted) {
         onMuteChange?.(false);
@@ -232,13 +228,6 @@ export function SoundCardBody({
             {collapsibleContent}
           </div>
         )}
-
-        {/* 5. Extra content — variant selector for post-gen */}
-        {extraContent && (
-          <div className="flex flex-col items-start gap-2 min-w-0">
-            {extraContent}
-          </div>
-        )}
       </div>
 
       {/* ── Right column: vertical sliders ── */}
@@ -268,13 +257,13 @@ export function SoundCardBody({
         {onVolumeChange && (
           <div
             className="flex flex-col items-center"
-            title="Volume level: Controls the sound pressure level (SPL) in decibels for spatial audio playback."
+            title="Volume level: Controls the level in dBFS for spatial audio playback (0 = full scale)."
           >
             <span className="text-[10px] mb-1 text-secondary-hover">
-              {isMuted || tempVolumeDb <= UI_VOLUME_SLIDER.MIN ? 'Mute' : `${tempVolumeDb.toFixed(0)}dB`}
+              {isMuted || tempVolumeDbfs <= UI_VOLUME_SLIDER.MIN ? 'Mute' : `${tempVolumeDbfs.toFixed(0)}dBFS`}
             </span>
             <VerticalVolumeSlider
-              value={dbToSlider(tempVolumeDb)}
+              value={dbfsToSlider(tempVolumeDbfs)}
               onDragStart={volumeSlider.onDragStart}
               onChange={volumeSlider.onChange}
               onChangeCommitted={volumeSlider.onCommit}

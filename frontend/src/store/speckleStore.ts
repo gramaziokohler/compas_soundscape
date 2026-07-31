@@ -449,7 +449,6 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         const colorGroups: { objectIds: string[]; color: string }[] = [];
 
         if (materialColors.length > 0) {
-          console.log('[dbg:colors] materialColors groups=', materialColors.length, 'totalIds=', materialColors.reduce((n, g) => n + g.objectIds.length, 0), 'hiddenSet.size=', hiddenSet.size, 'isolatedSet=', isolatedSet ? isolatedSet.size : null);
           // Material colors bypass the exclusion check — they are explicit
           // user assignments and should always render. The FilteringExtension
           // independently handles visibility of hidden/isolated objects.
@@ -739,7 +738,6 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
           const desired = new Set(filtered);
           const toRemove = Array.from(isolatedSet).filter((id) => !desired.has(id));
           const toAdd = filtered.filter((id) => !isolatedSet.has(id));
-          console.log('[dbg:iso] applyAcousticExplorerHiddenIsolation allIds=', _acousticLayerAllIds.length, 'hidden=', Array.from(_acousticExplorerHiddenIds), 'filtered=', filtered.length, 'isolatedSetBefore=', isolatedSet.size, 'toRemove=', toRemove, 'toAdd=', toAdd.length);
 
           if (toRemove.length > 0) {
             ext.unIsolateObjects(toRemove, 'acoustic-materials', true, true);
@@ -748,7 +746,6 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
             ext.isolateObjects(toAdd, 'acoustic-materials', true, true);
           }
           _viewerRef.requestRender();
-          console.log('[dbg:iso] after calls, ext.filteringState.isolatedObjects.length=', ext.filteringState?.isolatedObjects?.length, 'contains removed ids?', toRemove.map((id) => ext.filteringState?.isolatedObjects?.includes(id)));
 
           // Also update the tracked isolation set for the acoustic-materials key.
           isolatedSet.clear();

@@ -12,11 +12,11 @@ from config.constants import (
     AUDIO_SAMPLE_RATE,
     DEFAULT_DURATION_SECONDS,
     TARGET_RMS,
-    DEFAULT_SPL_DB
+    DEFAULT_DBFS
 )
 from utils.audio_processing import (
     normalize_audio_rms,
-    apply_spl_calibration,
+    apply_dbfs_calibration,
     apply_denoising as denoise_audio
 )
 
@@ -63,11 +63,12 @@ class AudioLDM2Service:
         duration: int = DEFAULT_DURATION_SECONDS,
         guidance_scale: float = 3.5,
         steps: int = AUDIOLDM2_INFERENCE_STEPS,
-        spl_db: float = DEFAULT_SPL_DB,
+        dbfs: float = DEFAULT_DBFS,
         apply_denoising: bool = False,
         trim_silence: bool = False,
         negative_prompt: str = "Low quality, distorted",
-        progress_callback: callable = None
+        progress_callback: callable = None,
+        stage_callback: callable = None,
     ) -> None:
         """Generate a single audio file from a text prompt using AudioLDM2
 
@@ -77,15 +78,16 @@ class AudioLDM2Service:
             duration: Duration in seconds
             guidance_scale: Guidance scale for generation (AudioLDM2 uses lower values)
             steps: Number of inference steps
-            spl_db: Target SPL level in dB
+            dbfs: Target volume level in dBFS
             apply_denoising: Whether to apply noise reduction
             negative_prompt: Negative prompt to avoid certain characteristics
             progress_callback: Callback function to update generation progress
+            stage_callback: Callback(stage_str) fired at post-processing stages (denoising, calibration)
         """
         model = self._init_model()
 
         denoise_suffix = " + denoising" if apply_denoising else ""
-        print(f"Generating sound with AudioLDM2: {prompt} (Target SPL: {spl_db} dB{denoise_suffix})")
+        print(f"Generating sound with AudioLDM2: {prompt} (Target level: {dbfs} dBFS{denoise_suffix})")
 
         # Set random seed for reproducibility
         generator = torch.Generator(self.device).manual_seed(0)
@@ -122,15 +124,19 @@ class AudioLDM2Service:
 
         # Step 2: Apply denoising if requested
         if apply_denoising:
+            if stage_callback:
+                stage_callback("Applying noise reduction...")
             print("Applying noise reduction...")
             audio = denoise_audio(audio, sample_rate=AUDIO_SAMPLE_RATE, trim_silence=trim_silence)
 
-        # Step 3: Apply SPL calibration
-        audio = apply_spl_calibration(audio, target_spl_db=spl_db)
+        # Step 3: Apply dBFS calibration
+        if stage_callback:
+            stage_callback(f"Calibrating to {dbfs} dBFS...")
+        audio = apply_dbfs_calibration(audio, target_dbfs=dbfs)
 
         # Safety: ensure mono before writing
         if audio.shape[0] > 1:
             audio = audio.mean(dim=0, keepdim=True)
 
         torchaudio.save(output_path, audio.cpu(), AUDIO_SAMPLE_RATE)
-        print(f"Saved to: {output_path} (calibrated to {spl_db} dB SPL{denoise_suffix})")
+        print(f"Saved to: {output_path} (calibrated to {dbfs} dBFS{denoise_suffix})")

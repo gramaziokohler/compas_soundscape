@@ -19,14 +19,23 @@ import sys
 import time
 import traceback
 
+import torch
+import torchaudio
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.tts_service import TTSService
+from utils.audio_processing import (
+    apply_dbfs_calibration,
+    normalize_audio_rms,
+)
 from config.constants import (
     TTS_DEFAULT_VOICE,
     TTS_OUTPUT_URL_PREFIX,
     FILENAME_MAX_LENGTH,
     WINDOWS_ILLEGAL_FILENAME_CHARS,
+    DEFAULT_DBFS,
+    TARGET_RMS,
 )
 
 
@@ -59,6 +68,28 @@ def _write_result(result_file: str, payload: dict) -> None:
     with open(tmp, "w") as f:
         json.dump(payload, f)
     _atomic_replace(tmp, result_file)
+
+
+def _calibrate_wav_to_dbfs(input_path: str, target_dbfs: float) -> None:
+    """Normalize RMS then apply dBFS calibration to a WAV in place.
+
+    Mirrors the TangoFlux/AudioLDM2 and /api/calibrate-audio post-processing so
+    TTS speech sits at the same dBFS anchor as every other sound mode — without
+    it, ``volume_dbfs`` would claim a level the file never received.
+    """
+    import soundfile as sf
+
+    audio_np, sample_rate = sf.read(input_path)
+    if audio_np.ndim > 1:
+        audio_np = audio_np.mean(axis=1)
+    audio_tensor = torch.from_numpy(audio_np).float().unsqueeze(0)
+    audio_tensor = normalize_audio_rms(audio_tensor, target_rms=TARGET_RMS)
+    audio_tensor = apply_dbfs_calibration(audio_tensor, target_dbfs=target_dbfs)
+    torchaudio.save(input_path, audio_tensor.cpu(), sample_rate)
+    print(
+        f"[tts_worker] Calibrated {os.path.basename(input_path)} -> {target_dbfs} dBFS",
+        file=sys.stderr, flush=True,
+    )
 
 
 def run_tts_generation(
@@ -169,6 +200,12 @@ def run_tts_generation(
                         last_exc = exc
                 if last_exc is not None:
                     raise last_exc
+
+                # Calibrate the raw TTS WAV to the requested dBFS so the reported
+                # volume_dbfs is truthful. Runs inside the outer try — a calibration
+                # failure fails the item instead of claiming a level the file lacks.
+                dbfs = item.get("dbfs", DEFAULT_DBFS)
+                _calibrate_wav_to_dbfs(output_path, dbfs)
             except Exception as exc:
                 print(f"[tts_worker] item[{idx}] FAILED: {exc}", file=sys.stderr, flush=True)
                 errors.append(f"{display_short}: {exc}")
@@ -181,7 +218,6 @@ def run_tts_generation(
                 continue
 
             position = item.get("position", [0, 0, 0])
-            spl_db = item.get("spl_db", 70)
 
             voice_display = f"{voice_name} speech {voice_num}"
 
@@ -202,7 +238,7 @@ def run_tts_generation(
                 # alignEnd() links, so it must reflect the actual audio length.
                 "duration": round(real_duration_seconds, 3),
                 "position": position,
-                "volume_db": spl_db,
+                "volume_dbfs": dbfs,
                 "voice_name": voice_name,
             }
             print(

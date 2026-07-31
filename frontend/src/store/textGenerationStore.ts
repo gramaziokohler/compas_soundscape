@@ -23,7 +23,7 @@ import {
   DEFAULT_GUIDANCE_SCALE,
   DEFAULT_SEED_COPIES,
   DEFAULT_DIFFUSION_STEPS,
-  DEFAULT_SPL_DB,
+  DEFAULT_DBFS,
   LLM_SUGGESTED_INTERVAL_SECONDS,
   LLM_RETRY,
 } from '@/utils/constants';
@@ -318,7 +318,7 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
                   steps: 25,
                   entity: item.entity,
                   display_name: item.display_name,
-                  spl_db: item.spl_db || 70.0,
+                  dbfs: item.dbfs ?? DEFAULT_DBFS,
                   interval_seconds: item.interval_seconds || LLM_SUGGESTED_INTERVAL_SECONDS,
                 }));
                 set(
@@ -361,7 +361,7 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
                   seed_copies: DEFAULT_SEED_COPIES,
                   steps: DEFAULT_DIFFUSION_STEPS,
                   display_name: item.display_name,
-                  spl_db: item.spl_db || DEFAULT_SPL_DB,
+                  dbfs: item.dbfs ?? DEFAULT_DBFS,
                   interval_seconds: item.interval_seconds || LLM_SUGGESTED_INTERVAL_SECONDS,
                 }));
                 set(

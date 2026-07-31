@@ -5,6 +5,8 @@ import type { CardProps, CardBaseConfig } from '@/types/card';
 import { CARD_TYPE_LABELS } from '@/types/card';
 import { useNameEditing } from '@/utils/useNameEditing';
 import { CircularFAB } from '@/components/ui/CircularFAB';
+import { VariantsBar } from '@/components/ui/VariantsBar';
+import { Notice } from '@/components/ui/Notice';
 
 /**
  * Card Component
@@ -110,6 +112,9 @@ export function Card<TConfig extends CardBaseConfig>({
   afterContent,
   loadingContent,
   dimmed = false,
+  variants,
+  showVariantsPreGen = false,
+  showVariantsPostGen = false,
 }: CardProps<TConfig>) {
   // Compute default name if not provided
   const computedDefaultName = defaultName || getCardDefaultName(config, index);
@@ -144,17 +149,17 @@ export function Card<TConfig extends CardBaseConfig>({
   const cardClassName = [
     'relative rounded-lg border-0 transition-all duration-200',
     // isExpanded ? `p-2 bg-${color}-light border-0` : hasResult ? `p-1.5 bg-${color}-light` : 'p-1.5 bg-secondary-lighter',
-    isExpanded && hasResult ? `p-2 bg-primary-light` : '',
+    !error && isExpanded && hasResult ? `p-2 bg-primary-light` : '',
     isExpanded && !hasResult ? 'p-2 border-0' : '',
-    !isExpanded && hasResult ? `p-2 bg-primary-light` : '',
-    !isExpanded && !hasResult ? `p-2 bg-secondary-light` : '',        
+    !error && !isExpanded && hasResult ? `p-2 bg-primary-light` : '',
+    !error && !isExpanded && !hasResult ? `p-2 bg-secondary-light` : '',
 
     error ? 'border-error bg-error-light' : '',
   ].filter(Boolean).join(' ');
 
   const titleClassName = [
-    `flex-1 text-left text-xs font-sans font-medium transition-opacity group text-secondary`,
-    hasResult ? 'text-white' : 'text-foreground',
+    `flex-1 text-left text-xs font-sans font-medium transition-opacity group`,
+    error ? 'text-secondary' : hasResult ? 'text-white' : 'text-foreground',
   ].filter(Boolean).join(' ');
 
   // Tracks the expansion state captured at the first click of a potential double-click sequence,
@@ -239,6 +244,11 @@ export function Card<TConfig extends CardBaseConfig>({
 
     return beforeContent;
   };
+
+  // Variants bar — shown in the pre-gen or post-gen state depending on the
+  // corresponding toggle. Card owns the state-awareness (hasResult); the parent
+  // owns the data + callbacks.
+  const showVariantsBar = !!variants && (hasResult ? showVariantsPostGen : showVariantsPreGen);
 
   return (
     <div
@@ -377,20 +387,20 @@ export function Card<TConfig extends CardBaseConfig>({
         <div className="mt-3 space-y-3 max-h-[480px] overflow-y-auto pr-0.5 relative z-[1]">
 
           {renderContent()}
+
+          {/* Variants bar — letter-square selector (pre-gen speech lines / post-gen audio variants) */}
+          {showVariantsBar && variants && (
+            <VariantsBar {...variants} />
+          )}
                     
           {/* Error display - shown before content but keeps configuration visible */}
           {error && (
-            <div className="px-2 py-1.5 text-xs rounded-lg bg-error-hover border border-error text-white flex items-start gap-2">
-              <span className="flex-1">{error}</span>
-              {onDismissError && (
-                <CardButton
-                  icon={<CloseIcon />}
-                  title="Dismiss error"
-                  onClick={(e) => { e.stopPropagation(); onDismissError(index); }}
-                  variant="close"
-                />
-              )}
-            </div>
+            <Notice
+              type="error"
+              variant="bar"
+              message={error}
+              onDismiss={onDismissError ? () => onDismissError(index) : undefined}
+            />
           )}
 
           {/* Stop button when running in expanded view */}

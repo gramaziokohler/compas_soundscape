@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.audio_service import AudioService
 from config.constants import (
     AUDIO_MODEL_AUDIOLDM2,
-    DEFAULT_SPL_DB,
+    DEFAULT_DBFS,
     DEFAULT_DURATION_SECONDS,
     DEFAULT_GUIDANCE_SCALE,
     DEFAULT_DIFFUSION_STEPS,
@@ -84,7 +84,7 @@ def run_sound_generation(
     trim_silence: bool,
     audio_model: str,
     output_dir: str,
-    base_spl_db: float = None,
+    base_dbfs: float = None,
     url_prefix: str = GENERATED_SOUND_URL_PREFIX,
 ) -> None:
     """
@@ -109,7 +109,7 @@ def run_sound_generation(
             guidance_scale = cfg.get("guidance_scale", DEFAULT_GUIDANCE_SCALE)
             seed_copies = cfg.get("seed_copies", DEFAULT_SEED_COPIES)
             steps = cfg.get("steps", DEFAULT_DIFFUSION_STEPS)
-            spl_db = cfg.get("spl_db") or base_spl_db or DEFAULT_SPL_DB
+            dbfs = cfg.get("dbfs") if cfg.get("dbfs") is not None else (base_dbfs if base_dbfs is not None else DEFAULT_DBFS)
             interval_seconds = cfg.get("interval_seconds", DEFAULT_INTERVAL_BETWEEN_SOUNDS)
             negative_prompt = cfg.get("negative_prompt", "")
 
@@ -169,6 +169,19 @@ def run_sound_generation(
                             completed_sounds,
                         )
 
+                    def stage_cb(
+                        stage: str,
+                        _cur: int = current,
+                        _n: int = n_total,
+                        _d: str = display_short,
+                    ) -> None:
+                        _write_progress(
+                            progress_file,
+                            int((_cur + 1) / _n * 90),
+                            f"Generating sound {_cur + 1}/{_n} ({_d}): {stage}",
+                            completed_sounds,
+                        )
+
                     if audio_model == AUDIO_MODEL_AUDIOLDM2:
                         audioldm2 = audio_service._init_audioldm2_service()
                         audioldm2.generate_sound_file(
@@ -177,11 +190,12 @@ def run_sound_generation(
                             duration=duration,
                             guidance_scale=guidance_scale,
                             steps=steps,
-                            spl_db=spl_db,
+                            dbfs=dbfs,
                             apply_denoising=apply_denoising,
                             trim_silence=trim_silence,
                             negative_prompt=negative_prompt or "Low quality, distorted",
                             progress_callback=step_cb,
+                            stage_callback=stage_cb,
                         )
                     else:
                         audio_service.generate_sound_file(
@@ -190,12 +204,13 @@ def run_sound_generation(
                             duration=duration,
                             guidance_scale=guidance_scale,
                             steps=steps,
-                            spl_db=spl_db,
+                            dbfs=dbfs,
                             apply_denoising=apply_denoising,
                             trim_silence=trim_silence,
                             audio_model=audio_model,
                             negative_prompt=negative_prompt,
                             progress_callback=step_cb,
+                            stage_callback=stage_cb,
                         )
 
                 sound_data: dict = {
@@ -208,7 +223,7 @@ def run_sound_generation(
                     "copy_index": copy_idx,
                     "total_copies": seed_copies,
                     "position": position,
-                    "volume_db": spl_db,
+                    "volume_dbfs": dbfs,
                     "interval_seconds": interval_seconds,
                 }
                 if entity_index is not None:

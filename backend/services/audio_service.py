@@ -9,7 +9,7 @@ import random
 from contextlib import contextmanager
 from utils.audio_processing import (
     normalize_audio_rms,
-    apply_spl_calibration,
+    apply_dbfs_calibration,
     apply_denoising as denoise_audio,
     ensure_mono
 )
@@ -33,7 +33,7 @@ from config.constants import (
     WINDOWS_ILLEGAL_FILENAME_CHARS,
     TARGET_RMS,
     AUDIO_SAMPLE_RATE,
-    DEFAULT_SPL_DB,
+    DEFAULT_DBFS,
     GENERATED_SOUNDS_DIR,
     GENERATED_SOUND_URL_PREFIX,
     FORCE_CPU_MODE
@@ -162,14 +162,15 @@ class AudioService:
         duration: int = DEFAULT_DURATION_SECONDS,
         guidance_scale: float = DEFAULT_GUIDANCE_SCALE,
         steps: int = DEFAULT_DIFFUSION_STEPS,
-        spl_db: float = DEFAULT_SPL_DB,
+        dbfs: float = DEFAULT_DBFS,
         apply_denoising: bool = False,
         trim_silence: bool = False,
         audio_model: str = DEFAULT_AUDIO_MODEL,
         negative_prompt: str = "",
         progress_callback: callable = None,
+        stage_callback: callable = None,
     ) -> None:
-        """Generate a single audio file from a text prompt with SPL calibration and optional denoising
+        """Generate a single audio file from a text prompt with dBFS calibration and optional denoising
 
         Args:
             prompt: Text prompt for sound generation
@@ -177,13 +178,15 @@ class AudioService:
             duration: Duration in seconds
             guidance_scale: Guidance scale for generation
             steps: Number of diffusion steps
-            spl_db: Target SPL level in dB
+            dbfs: Target volume level in dBFS
             apply_denoising: Whether to apply noise reduction
             audio_model: Model to use ('tangoflux' or 'audioldm2')
             negative_prompt: Negative prompt (used by AudioLDM2)
+            progress_callback: Callback(step, total) fired each diffusion step
+            stage_callback: Callback(stage_str) fired at post-processing stages (denoising, calibration)
         """
         denoise_suffix = " + denoising" if apply_denoising else ""
-        print(f"Generating sound with {audio_model}: {prompt} (Target SPL: {spl_db} dB{denoise_suffix})")
+        print(f"Generating sound with {audio_model}: {prompt} (Target level: {dbfs} dBFS{denoise_suffix})")
 
         # Route to appropriate model
         if audio_model == AUDIO_MODEL_AUDIOLDM2:
@@ -196,11 +199,12 @@ class AudioService:
                     duration=duration,
                     guidance_scale=guidance_scale,
                     steps=steps,
-                    spl_db=spl_db,
+                    dbfs=dbfs,
                     apply_denoising=apply_denoising,
                     trim_silence=trim_silence,
                     negative_prompt=negative_prompt or "Low quality, distorted",
                     progress_callback=progress_callback,
+                    stage_callback=stage_callback,
                 )
             else:
                 print("AudioLDM2 service is unavailable. Falling back to TangoFlux.")
@@ -256,18 +260,22 @@ class AudioService:
 
             # Step 2: Apply denoising if requested
             if apply_denoising:
+                if stage_callback:
+                    stage_callback("Applying noise reduction...")
                 print("Applying noise reduction...")
                 audio = denoise_audio(audio, sample_rate=AUDIO_SAMPLE_RATE, trim_silence=trim_silence)
 
-            # Step 3: Apply SPL calibration
-            audio = apply_spl_calibration(audio, target_spl_db=spl_db)
+            # Step 3: Apply dBFS calibration
+            if stage_callback:
+                stage_callback(f"Calibrating to {dbfs} dBFS...")
+            audio = apply_dbfs_calibration(audio, target_dbfs=dbfs)
 
             # Safety: ensure mono before writing
             if audio.shape[0] > 1:
                 audio = audio.mean(dim=0, keepdim=True)
 
             torchaudio.save(output_path, audio.cpu(), AUDIO_SAMPLE_RATE)
-            print(f"Saved to: {output_path} (calibrated to {spl_db} dB SPL{denoise_suffix})")
+            print(f"Saved to: {output_path} (calibrated to {dbfs} dBFS{denoise_suffix})")
 
     def generate_multiple_sounds(
         self,
@@ -290,7 +298,7 @@ class AudioService:
             guidance_scale = sound_config.get('guidance_scale', DEFAULT_GUIDANCE_SCALE)
             seed_copies = sound_config.get('seed_copies', DEFAULT_SEED_COPIES)
             steps = sound_config.get('steps', DEFAULT_DIFFUSION_STEPS)
-            spl_db = sound_config.get('spl_db', DEFAULT_SPL_DB)  # Get SPL from config
+            dbfs = sound_config.get('dbfs', DEFAULT_DBFS)  # Get volume level from config
             interval_seconds = sound_config.get('interval_seconds', DEFAULT_INTERVAL_BETWEEN_SOUNDS)  # Get interval from config
             negative_prompt = sound_config.get('negative_prompt', '')  # Get negative prompt from config
 
@@ -343,7 +351,7 @@ class AudioService:
                         "copy_index": copy_idx,
                         "total_copies": seed_copies,
                         "position": position,
-                        "volume_db": spl_db,
+                        "volume_dbfs": dbfs,
                         "interval_seconds": interval_seconds
                     }
                     if entity_index is not None:
@@ -353,14 +361,14 @@ class AudioService:
 
                 print(f"Generating sound {idx + 1}/{len(sound_configs)} (copy {copy_idx + 1}/{seed_copies}): {prompt}")
 
-                # Generate audio with SPL calibration and optional denoising
+                # Generate audio with dBFS calibration and optional denoising
                 self.generate_sound_file(
                     prompt=prompt,
                     output_path=output_path,
                     duration=duration,
                     guidance_scale=guidance_scale,
                     steps=steps,
-                    spl_db=spl_db,
+                    dbfs=dbfs,
                     apply_denoising=apply_denoising,
                     trim_silence=trim_silence,
                     audio_model=audio_model,
@@ -377,7 +385,7 @@ class AudioService:
                     "copy_index": copy_idx,
                     "total_copies": seed_copies,
                     "position": position,
-                    "volume_db": spl_db,
+                    "volume_dbfs": dbfs,
                     "interval_seconds": interval_seconds
                 }
                 if entity_index is not None:
@@ -433,11 +441,11 @@ class AudioService:
         self,
         input_path: str,
         output_path: str,
-        target_spl_db: float = DEFAULT_SPL_DB,
+        target_dbfs: float = DEFAULT_DBFS,
         apply_denoising: bool = False,
         trim_silence: bool = False,
     ):
-        """Normalize RMS, optionally denoise, then apply SPL calibration to any audio file.
+        """Normalize RMS, optionally denoise, then apply dBFS calibration to any audio file.
 
         Mirrors the post-processing pipeline used by TangoFlux/AudioLDM2 so that
         uploaded, library, catalog, sample, and ElevenLabs audio are treated
@@ -446,7 +454,7 @@ class AudioService:
         Args:
             input_path: Path to the source audio file (any format readable by soundfile)
             output_path: Path where the calibrated WAV will be saved
-            target_spl_db: Target SPL level in dB (default 70 dB)
+            target_dbfs: Target volume level in dBFS (default -18 dBFS)
             apply_denoising: Whether to apply spectral-gating denoising before calibration
         """
         import soundfile as sf
@@ -467,11 +475,11 @@ class AudioService:
             print("Applying denoising during calibration...")
             audio_tensor = denoise_audio(audio_tensor, sample_rate=sample_rate, trim_silence=trim_silence)
 
-        # Step 3: Apply SPL calibration
-        audio_tensor = apply_spl_calibration(audio_tensor, target_spl_db=target_spl_db)
+        # Step 3: Apply dBFS calibration
+        audio_tensor = apply_dbfs_calibration(audio_tensor, target_dbfs=target_dbfs)
 
         torchaudio.save(output_path, audio_tensor.cpu(), sample_rate)
-        print(f"Calibrated: {output_path} -> {target_spl_db} dB SPL")
+        print(f"Calibrated: {output_path} -> {target_dbfs} dBFS")
 
     @staticmethod
     def cleanup_generated_sounds(output_dir: str = GENERATED_SOUNDS_DIR):

@@ -42,6 +42,23 @@ export function ErrorToast() {
             {/* Message */}
             <div className="flex-1 text-sm">
               {error.message}
+
+              {error.action && (
+                <button
+                  onClick={() => {
+                    error.action?.onClick();
+                    removeError(error.id);
+                  }}
+                  className="mt-2 block text-xs font-medium rounded px-2 py-1 cursor-pointer transition-opacity hover:opacity-80"
+                  style={{
+                    border: '1px solid currentColor',
+                    color: 'inherit',
+                    background: 'color-mix(in srgb, currentColor 10%, transparent)',
+                  }}
+                >
+                  {error.action.label}
+                </button>
+              )}
             </div>
 
             {/* Close button */}

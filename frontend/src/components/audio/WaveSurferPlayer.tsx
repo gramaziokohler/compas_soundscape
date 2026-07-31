@@ -3,7 +3,8 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import Spectrogram from 'wavesurfer.js/dist/plugins/spectrogram.esm.js';
-import { API_BASE_URL } from '@/utils/constants';
+import { API_BASE_URL, DEFAULT_DBFS } from '@/utils/constants';
+import { dbfsToLinear } from '@/utils/utils';
 import { useUIStore } from '@/store/uiStore';
 
 const WAVEFORM_HEIGHT_MIN = 20;
@@ -27,7 +28,9 @@ export interface WaveSurferPlayerProps {
   isPlaying: boolean;
   onPlayPause: () => void;
   onStop: (ws: WaveSurfer | null) => void;
-  volumeDb?: number;
+  volumeDbfs?: number;
+  /** Calibrated level of the audio file itself (the gain is applied relative to this base). */
+  baseVolumeDbfs?: number;
   isMuted?: boolean;
   silent?: boolean;
   color?: string;
@@ -54,7 +57,8 @@ export function WaveSurferPlayer({
   isPlaying,
   onPlayPause,
   onStop,
-  volumeDb = 70,
+  volumeDbfs = DEFAULT_DBFS,
+  baseVolumeDbfs = DEFAULT_DBFS,
   isMuted = false,
   silent = false,
   color = 'var(--color-primary)',
@@ -129,6 +133,9 @@ export function WaveSurferPlayer({
 
     const ws = WaveSurfer.create({
       container: containerRef.current,
+      // WebAudio backend routes volume through a GainNode, which allows gains > 1.
+      // The MediaElement backend clamps volume to [0, 1] and throws on boost.
+      backend: 'WebAudio',
       waveColor: secondaryHoverColor,
       progressColor: primaryColor,
       cursorColor: primaryColor,
@@ -191,6 +198,12 @@ export function WaveSurferPlayer({
     if (!ws || !isReady) return;
     try {
       if (isPlaying && !isMuted) {
+        // WebAudio backend: the AudioContext is created at load time (not from a
+        // user gesture) and may be suspended by the autoplay policy — resume it.
+        const media = ws.getMediaElement() as unknown as { audioContext?: AudioContext };
+        if (media?.audioContext?.state === 'suspended') {
+          void media.audioContext.resume();
+        }
         ws.play();
       } else {
         ws.pause();
@@ -206,10 +219,13 @@ export function WaveSurferPlayer({
       ws.setVolume(0);
       return;
     }
-    const normalizedDb = volumeDb / 100;
-    const linearVolume = Math.pow(normalizedDb, 2);
-    ws.setVolume(Math.min(1, Math.max(0, linearVolume)));
-  }, [volumeDb, isMuted, silent]);
+    // The audio file is already calibrated to baseVolumeDbfs, so the preview
+    // gain is the ratio of the desired level to that base. With the WebAudio
+    // backend the GainNode accepts gains > 1, so the displayed dBFS value maps
+    // truthfully to the actual output level (up to 0 dBFS).
+    const linearVolume = dbfsToLinear(volumeDbfs - baseVolumeDbfs);
+    ws.setVolume(Math.max(0, linearVolume));
+  }, [volumeDbfs, baseVolumeDbfs, isMuted, silent]);
 
   const handleStop = useCallback(() => {
     onStop(wsRef.current);

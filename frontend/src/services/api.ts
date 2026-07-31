@@ -248,7 +248,7 @@ export const apiService = {
     apply_denoising?: boolean;
     trim_silence?: boolean;
     audio_model?: string;
-    base_spl_db?: number;
+    base_dbfs?: number;
   }): Promise<{ generation_id: string }> {
     try {
       const response = await fetchWithErrorHandling(
@@ -316,7 +316,7 @@ export const apiService = {
 
   // Generate TTS (async — returns generation_id for polling)
   async generateTTS(data: {
-    texts: { text: string; voice_name?: string; display_name?: string; position?: number[]; spl_db?: number; prompt_index?: number; copy_index?: number; total_copies?: number }[];
+    texts: { text: string; voice_name?: string; display_name?: string; position?: number[]; dbfs?: number; prompt_index?: number; copy_index?: number; total_copies?: number }[];
     language?: string;
   }): Promise<{ generation_id: string }> {
     try {
@@ -365,12 +365,6 @@ export const apiService = {
       const json = await response.json();
       if (json.result || json.partial_sounds) {
         const list = json.result || json.partial_sounds;
-        console.log(
-          '[duration-trace][api.getTTSGenerationStatus]',
-          json.result ? 'result' : 'partial_sounds',
-          'durations:',
-          list.map((s: any) => ({ id: s.id, duration: s.duration })),
-        );
       }
       return json;
     } catch (error) {
@@ -391,17 +385,17 @@ export const apiService = {
     }
   },
 
-  // Calibrate Audio (normalize RMS + SPL calibration for non-ML audio modes)
+  // Calibrate Audio (normalize RMS + dBFS calibration for non-ML audio modes)
   async calibrateAudio(
     audioBlob: Blob,
-    splDb: number,
+    dbfs: number,
     applyDenoising: boolean = false,
     trimSilence: boolean = false
   ): Promise<{ url: string }> {
     try {
       const formData = new FormData();
       formData.append('audio', audioBlob, 'audio.wav');
-      formData.append('spl_db', splDb.toString());
+      formData.append('dbfs', dbfs.toString());
       formData.append('apply_denoising', applyDenoising.toString());
       formData.append('trim_silence', trimSilence.toString());
 

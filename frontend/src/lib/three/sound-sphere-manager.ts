@@ -619,11 +619,6 @@ export class SoundSphereManager {
         // dispatched from the page.tsx useEffect and calling it from every buffer
         // callback caused a store-update storm that re-triggered syncAudioSources
         // repeatedly (compounding the pending-load race that pendingLoads now guards).
-        console.log(
-          `[duration-trace][SoundSphereManager] decoded buffer for ${soundEvent.id}: ` +
-          `buffer.duration=${buffer.duration.toFixed(3)}s (this is the REAL length — ` +
-          `compare against the "duration" field the sound arrived with)`,
-        );
         const audioStore = useAudioControlsStore.getState();
         audioStore.setSoundBufferDuration(soundEvent.id, buffer.duration);
       },

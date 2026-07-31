@@ -81,6 +81,8 @@ export class AnechoicMode implements IAudioMode {
   private numChannels: number = 4; // FOA default
 
   private enabled: boolean = false;
+  private debug: boolean = false;
+  private prevListenerPosition: Position | null = null;
 
   /**
    * Initialize mode with audio context
@@ -111,26 +113,21 @@ export class AnechoicMode implements IAudioMode {
     // Connect mix bus → master gain (master gain will be connected to binaural decoder by AudioOrchestrator)
     this.ambisonicMixBus.connect(this.masterGain);
 
-    // Reset rotation offset in binaural decoder (AnechoicMode handles rotation via encoding)
-    // We need to access the shared decoder via AudioOrchestrator, but we don't have reference to it here.
-    // However, AudioOrchestrator calls updateListener, which calls updateOrientation on the decoder.
-    // If we can't reset it here, we should ensure AnechoicMode doesn't rely on it.
-    // Actually, AnechoicMode shares the decoder instance if passed? No, AudioOrchestrator manages the connection.
-    // But AudioOrchestrator keeps the SAME BinauralDecoder instance.
-    // So if AmbisonicIRMode set an offset, it persists.
-    // We need a way to reset it.
-    // Since we don't have access to the decoder here (it's in AudioOrchestrator),
-    // we rely on AudioOrchestrator to handle this or we need to expose it.
-    // But wait, AnechoicMode doesn't have reference to BinauralDecoder.
-    // It outputs to masterGain, which AudioOrchestrator connects to BinauralDecoder.
-    
     console.log(`[AnechoicMode] Initialized with JSAmbisonics (order ${this.ambisonicOrder}, ${this.numChannels} channels)`);
 
-    // Expose debug helper globally
-    if (typeof window !== 'undefined') {
+    if (this.debug && typeof window !== 'undefined') {
       (window as any).__anechoicMode = this;
-      console.log('[AnechoicMode] Debug helper available: window.__anechoicMode.setDebugMode(true)');
     }
+  }
+
+  /** Maps a source world-space position to ambisonic spherical coordinates relative to listener. */
+  private worldSpaceSpherical(sourcePos: Position, listenerPos: Position) {
+    // Speckle Z-UP (+X=Right, -Y=Forward, +Z=Up) → Ambisonic Y-UP (+X=Front, +Y=Left, +Z=Up)
+    return cartesianToSpherical({
+      x: -(sourcePos.y - listenerPos.y),
+      y: -(sourcePos.x - listenerPos.x),
+      z:   sourcePos.z - listenerPos.z,
+    });
   }
 
   /**
@@ -164,45 +161,13 @@ export class AnechoicMode implements IAudioMode {
     // Note: monoEncoder uses GainNode matrix, not ConvolverNode, so no normalize property to set
     const encoder = new ambisonics.monoEncoder(this.audioContext, this.ambisonicOrder);
 
-    // Calculate initial position using the same yaw+pitch rotation as updateSourcePosition
-    // Speckle Z-UP: +X=Right, -Y=Forward, +Z=Up
-    const relativeX = position.x - this.listenerPosition.x;
-    const relativeY = position.y - this.listenerPosition.y;
-    const relativeZ = position.z - this.listenerPosition.z;
-    // Step 1: Apply YAW rotation around Z axis (horizontal head turn)
-    // Project relative world position onto listener's local basis:
-    //   Right   = ( cos(yaw), -sin(yaw), 0)
-    //   Forward = (-sin(yaw), -cos(yaw), 0)
-    //   Up      = (0, 0, 1)
-    const cosYaw = Math.cos(this.listenerOrientation.yaw);
-    const sinYaw = Math.sin(this.listenerOrientation.yaw);
-    const localRight   =  relativeX * cosYaw - relativeY * sinYaw;
-    const localForward = -relativeX * sinYaw - relativeY * cosYaw;
-    const localUp      =  relativeZ; // Z unchanged by yaw
+    const spherical = this.worldSpaceSpherical(position, this.listenerPosition);
 
-    // Step 2: Apply PITCH rotation around local Right axis (vertical head tilt)
-    // When looking UP (+pitch), objects at the horizon appear below
-    const cosPitch = Math.cos(this.listenerOrientation.pitch);
-    const sinPitch = Math.sin(this.listenerOrientation.pitch);
-    const headRight   = localRight; // Right unchanged by pitch
-    const headForward = localForward * cosPitch + localUp * sinPitch;
-    const headUp      = -localForward * sinPitch + localUp * cosPitch;
-
-    // Convert listener-local coords to Ambisonic coordinates
-    // Ambisonic: +X=Front, +Y=Left, +Z=Up
-    const spherical = cartesianToSpherical({
-      x: headForward,  // Front = listener's forward direction
-      y: -headRight,   // Left  = negative of listener's right direction
-      z: headUp        // Up    = listener's up direction
-    });
-
-    // Set azimuth and elevation in degrees (JSAmbisonics uses degrees)
     // Negate azimuth: JSAmbisonics monoEncoder internal convention
     encoder.azim = -spherical.azimuth * (180 / Math.PI);
     encoder.elev = spherical.elevation * (180 / Math.PI);
     encoder.updateGains();
 
-    // Apply initial distance attenuation
     const refDistance = 1.0;
     const distance = Math.max(refDistance, spherical.distance);
     const distanceGain = refDistance / distance;
@@ -234,19 +199,10 @@ export class AnechoicMode implements IAudioMode {
     };
 
     this.sources.set(sourceId, source);
-
-    console.log(`[AnechoicMode] Created source ${sourceId} with JSAmbisonics encoder at [${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)}]`);
   }
 
   /**
    * Update source position using JSAmbisonics encoder
-   *
-   * Speckle Z-UP coordinate system: +X=Right, -Y=Forward, +Z=Up
-   *
-   * Source positions are encoded in listener-local coordinates:
-   * 1. Calculate relative position (source - listener) in Z-UP world coords
-   * 2. Apply yaw (around Z axis) + pitch (around local Right axis) to get head-local coords
-   * 3. Map head-local to ambisonic coords (+X=Front, +Y=Left, +Z=Up) and encode
    */
   updateSourcePosition(sourceId: string, position: Position): void {
     const source = this.sources.get(sourceId);
@@ -257,66 +213,17 @@ export class AnechoicMode implements IAudioMode {
 
     source.position = position;
 
-    // Calculate relative position (source - listener) in Speckle Z-UP world coordinates
-    // Speckle Z-UP: +X=Right, -Y=Forward, +Z=Up
-    const relativeX = position.x - this.listenerPosition.x;
-    const relativeY = position.y - this.listenerPosition.y;
-    const relativeZ = position.z - this.listenerPosition.z;
+    const spherical = this.worldSpaceSpherical(position, this.listenerPosition);
 
-    // Step 1: Apply YAW rotation around Z axis (horizontal head turn)
-    // Project relative world position onto listener's local basis:
-    //   Right   = ( cos(yaw), -sin(yaw), 0)
-    //   Forward = (-sin(yaw), -cos(yaw), 0)
-    //   Up      = (0, 0, 1)
-    // +yaw = looking left, so world rotates right relative to listener
-    const cosYaw = Math.cos(this.listenerOrientation.yaw);
-    const sinYaw = Math.sin(this.listenerOrientation.yaw);
-    const localRight   =  relativeX * cosYaw - relativeY * sinYaw;
-    const localForward = -relativeX * sinYaw - relativeY * cosYaw;
-    const localUp      =  relativeZ; // Z unchanged by yaw
-
-    // Step 2: Apply PITCH rotation around local Right axis (vertical head tilt)
-    // When looking UP (+pitch), objects at the horizon appear below
-    const cosPitch = Math.cos(this.listenerOrientation.pitch);
-    const sinPitch = Math.sin(this.listenerOrientation.pitch);
-    const headRight   = localRight; // Right unchanged by pitch
-    const headForward = localForward * cosPitch + localUp * sinPitch;
-    const headUp      = -localForward * sinPitch + localUp * cosPitch;
-
-    // Convert listener-local coords to Ambisonic coordinates
-    // Ambisonic: +X=Front, +Y=Left, +Z=Up
-    //
-    // Mapping (in listener's local frame after yaw+pitch rotation):
-    // - Ambisonic Front (+X) = headForward (listener's forward direction)
-    // - Ambisonic Left  (+Y) = -headRight  (negative of listener's right)
-    // - Ambisonic Up    (+Z) = headUp      (listener's up direction)
-    const spherical = cartesianToSpherical({
-      x: headForward,
-      y: -headRight,
-      z: headUp
-    });
-
-    // Apply distance attenuation (Inverse Square Law)
-    // Reference distance = 1 meter
-    // Gain = ref / max(ref, distance)
     const refDistance = 1.0;
     const distance = Math.max(refDistance, spherical.distance);
     const distanceGain = refDistance / distance;
-    
-    // Update gain node
-    // We multiply the base volume (from setSourceVolume) by the distance gain
-    // Since we don't store the base volume separately here, we might overwrite user volume changes.
-    // Ideally, we should have a separate gain node for distance attenuation.
-    // But for now, let's assume gainNode is for volume and we can use muteGainNode or add a new one.
-    // Actually, let's add a distanceGainNode to the chain.
-    
-    // Update JSAmbisonics encoder (degrees)
+
     // Negate azimuth: JSAmbisonics monoEncoder internal convention
     source.encoder.azim = -spherical.azimuth * (180 / Math.PI);
     source.encoder.elev = spherical.elevation * (180 / Math.PI);
     source.encoder.updateGains();
-    
-    // Apply distance gain
+
     if (source.distanceGainNode) {
       source.distanceGainNode.gain.setTargetAtTime(distanceGain, this.audioContext!.currentTime, 0.1);
     }
@@ -326,29 +233,26 @@ export class AnechoicMode implements IAudioMode {
    * Update listener position and orientation
    * Called every frame for camera movement
    */
+  private _dbgFrame = 0;
+
   updateListener(position: Position, orientation: Orientation): void {
-    this.listenerPosition = position;
+    const positionChanged =
+      position.x !== this.listenerPosition.x ||
+      position.y !== this.listenerPosition.y ||
+      position.z !== this.listenerPosition.z;
+
+    // Store plain-object snapshots — caller passes a live THREE.Vector3 mutated each frame
+    this.listenerPosition = { x: position.x, y: position.y, z: position.z } as Position;
     this.listenerOrientation = orientation;
 
-    // // Debug logging (throttled)
-    // if (this.debugMode || Math.random() < 0.01) { // Log ~1% of frames or if debug enabled
-    //   console.log('[AnechoicMode] 🎧 Listener Update:', {
-    //     position: `(${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`,
-    //     orientation: {
-    //       yaw: orientation.yaw,
-    //       yawDeg: `${(orientation.yaw * 180 / Math.PI).toFixed(1)}°`,
-    //       pitch: orientation.pitch,
-    //       pitchDeg: `${(orientation.pitch * 180 / Math.PI).toFixed(1)}°`,
-    //       roll: orientation.roll,
-    //       rollDeg: `${(orientation.roll * 180 / Math.PI).toFixed(1)}°`
-    //     }
-    //   });
-    // }
+    this._dbgFrame++;
 
-    // Update all source encoder positions based on new listener position
-    this.sources.forEach((source, sourceId) => {
-      this.updateSourcePosition(sourceId, source.position);
-    });
+    // Re-encode only when listener moves; orientation is handled by OmnitoneDecoder.setRotationMatrix3
+    if (positionChanged) {
+      this.sources.forEach((source, sourceId) => {
+        this.updateSourcePosition(sourceId, source.position);
+      });
+    }
   }
 
   /**
@@ -358,55 +262,27 @@ export class AnechoicMode implements IAudioMode {
    * @param offset - Start playback from this position in seconds (default: 0)
    */
   playSource(sourceId: string, loop: boolean = false, offset: number = 0, duration?: number): void {
-    console.log(`[AnechoicMode] 🎵 playSource called`);
-    console.log(`  - Source ID: ${sourceId}`);
-    console.log(`  - Loop: ${loop}`);
-    console.log(`  - Offset: ${offset}s`);
-    console.log(`  - Ambisonic Order: ${this.ambisonicOrder} (${this.numChannels} channels)`);
-
     if (!this.audioContext) {
-      console.error('[AnechoicMode] ❌ No audio context');
+      console.error('[AnechoicMode] No audio context');
       return;
     }
 
     const source = this.sources.get(sourceId);
     if (!source) {
-      console.warn(`[AnechoicMode] ❌ Source ${sourceId} not found in sources map`);
-      console.warn(`  - Available sources:`, Array.from(this.sources.keys()));
+      console.warn(`[AnechoicMode] playSource: source ${sourceId} not found`);
       return;
     }
 
-    console.log(`[AnechoicMode] ✅ Source found:`, {
-      hasBuffer: !!source.audioBuffer,
-      bufferDuration: source.audioBuffer?.duration,
-      currentlyPlaying: source.isPlaying,
-      position: `[${source.position.x.toFixed(2)}, ${source.position.y.toFixed(2)}, ${source.position.z.toFixed(2)}]`
-    });
-
-    // Stop existing playback if any
     if (source.sourceNode) {
       source.sourceNode.stop();
       source.sourceNode.disconnect();
-      console.log('[AnechoicMode] 🛑 Stopped existing source node');
     }
 
-    // Create new source node
     const sourceNode = this.audioContext.createBufferSource();
     sourceNode.buffer = source.audioBuffer;
     sourceNode.loop = loop;
-
-    console.log('[AnechoicMode] 🔊 Audio Graph:', {
-      graph: 'BufferSource → Gain → MuteGain → DistanceGain → JSAmbisonics.Encoder → Mixer → Binaural Decoder → Destination',
-      order: this.ambisonicOrder,
-      channels: this.numChannels,
-      bufferChannels: source.audioBuffer?.numberOfChannels,
-      sampleRate: source.audioBuffer?.sampleRate
-    });
-
-    // Connect to gain node
     sourceNode.connect(source.gainNode);
 
-    // Start playback from offset position, optionally limited to trim duration
     if (duration !== undefined && duration > 0) {
       sourceNode.start(0, offset, duration);
     } else {
@@ -417,14 +293,10 @@ export class AnechoicMode implements IAudioMode {
     source.loop = loop;
     source.startTime = this.audioContext.currentTime;
 
-    console.log(`[AnechoicMode] ✅ Playback started for ${sourceId} (offset: ${offset}s, duration: ${duration ?? 'full'}s)`);
-
-    // Handle playback end (if not looping)
     sourceNode.onended = () => {
       if (!source.loop) {
         source.isPlaying = false;
         source.sourceNode = null;
-        console.log(`[AnechoicMode] 🏁 Playback ended for ${sourceId}`);
       }
     };
   }
@@ -445,15 +317,12 @@ export class AnechoicMode implements IAudioMode {
 
     source.sourceNode = null;
     source.isPlaying = false;
-
-    console.log(`[AnechoicMode] Stopped playback for source ${sourceId}`);
   }
 
   /**
    * Stop all audio sources immediately
    */
   stopAllSources(): void {
-    console.log(`[AnechoicMode] Stopping all ${this.sources.size} sources`);
     this.sources.forEach((_, sourceId) => {
       this.stopSource(sourceId);
     });
@@ -487,7 +356,6 @@ export class AnechoicMode implements IAudioMode {
     }
 
     this.sources.delete(sourceId);
-    console.log(`[AnechoicMode] Removed source ${sourceId}`);
   }
 
   /**

@@ -62,16 +62,16 @@ LLM_MAX_RETRY_DELAY = 30.0  # Maximum delay in seconds between retries
 LLM_BACKOFF_MULTIPLIER = 2.0  # Exponential backoff multiplier
 
 # Default Sound Parameters (consolidated from multiple sources)
-DEFAULT_SPL_DB = 70.0  # Default Sound Pressure Level in dB
-DEFAULT_ENTITY_SPL_DB = 70.0  # Default SPL for entity prompts
+DEFAULT_DBFS = -18.0  # Default volume level in dBFS (decibels relative to full scale)
+DEFAULT_ENTITY_DBFS = -18.0  # Default volume for entity prompts
 LLM_SUGGESTED_INTERVAL_SECONDS = 30.0  # LLM-suggested interval between sounds
 DEFAULT_DURATION_SECONDS = 5.0  # Default sound duration in seconds
 DEFAULT_ENTITY_DURATION_SECONDS = 5.0  # Default duration for entity prompts
 
-# SPL Range (dB)
-SPL_MIN = 30.0
-SPL_MAX = 120.0
-SPL_RANGE = (SPL_MIN, SPL_MAX)
+# dBFS Range (0 dBFS = digital full scale / clipping, so the range is negative)
+DBFS_MIN = -60.0
+DBFS_MAX = 0.0
+DBFS_RANGE = (DBFS_MIN, DBFS_MAX)
 
 # Speed of sound (shared by all simulation methods)
 DEFAULT_SPEED_OF_SOUND = 343.0  # m/s
@@ -98,7 +98,7 @@ DEFAULT_MAXIMUM_FOLEY_SOUNDS = 20  # Maximum total sound events across all scena
 # Audio Normalization
 TARGET_RMS = 0.1  # Target RMS level for normalization
 CLIPPING_THRESHOLD = 0.99  # Threshold to prevent clipping
-SPL_CLIPPING_THRESHOLD = 0.99  # Threshold for SPL calibration clipping prevention
+DBFS_CLIPPING_THRESHOLD = 0.99  # Threshold for dBFS calibration clipping prevention
 
 # Sample Rate
 AUDIO_SAMPLE_RATE = 44100  # Browser default AudioContext sample rate in Hz (matches Web Audio API default)

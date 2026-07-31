@@ -1,0 +1,159 @@
+---
+description: chrome-devtools MCP workflow — snapshot/click/console workflow, capturing native WebGL warning stacks, reverse-engineering minified _next chunks, runtime state keys
+globs: frontend/**,**/*.tsx,**/*.ts
+---
+
+# chrome-devtools (MCP) Playbook
+
+Chrome DevTools MCP is configured in `opencode.json` and attaches to a Chrome instance on
+`http://127.0.0.1:9222`. It is the tool for *observing* the running app (console, network, DOM,
+computed styles, localStorage) and *driving* simple UI interactions. It is **not** for looping
+test automation — for that, write a Playwright `.spec.ts` (see `playwright-cli` skill) and run
+via `pnpm exec playwright test`. For "I clicked X but nothing visibly changed" bugs, follow
+`debug-ui-visual-bug` skill; this file covers the chrome-devtools-specific mechanics.
+
+## Start the browser session
+
+The MCP server launches Chrome against `--browser-url=http://127.0.0.1:9222`. Load the app with:
+
+```text
+navigate_page -> http://localhost:3000/?model_id=c4ec0398f1
+```
+
+- `?model_id=` bootstraps a saved soundscape (project page). No `model_id` = homepage.
+- If `navigate_page` fails on a fresh session, `new_page` the same URL and `select_page` it.
+
+## Interaction loop (snapshot-driven, not selectors)
+
+1. `take_snapshot` — returns the a11y tree with stable `uid`s. **Always use the latest snapshot's
+   uids**; stale uids from an earlier snapshot fail silently.
+2. Interact via `click` / `fill` / `press_key` with those uids.
+3. Re-snapshot to read state. Radios render as `radio "<label>"` with `checked`.
+
+## Viewmodes — toolbar radios
+
+The scene toolbar (top of the 3D canvas) exposes three radios: **Sounds** (`dark`), **Default**,
+**Acoustics**. In the a11y snapshot they appear in the order `Sounds / Default / Acoustics`.
+- "Sounds" viewmode == **dark mode** (`useSpeckleDarkMode`). This is the mode that emits the
+  WebGL warnings described below.
+- Viewmode is persisted in `localStorage['compas-view-mode']` (NOT a Zustand persist store) and
+  restored 300ms after viewer init. To verify which mode is active from the console:
+
+```js
+localStorage.getItem('compas-view-mode')   // 'default' | 'acoustic' | 'dark'
+```
+
+Other direct localStorage keys: `compas-camera-state` (camera POV), `compas-ui-state`,
+`compas-audio-controls`, `compas-cardflow-state`, `compas-right-sidebar` (Zustand persist stores).
+
+## Console inspection
+
+```text
+list_console_messages  (types: ["error","warn"])
+```
+
+- **Types enum is lowercase**: use `"warn"`, NOT `"warning"`.
+- **Native GPU/WebGL warnings are NOT JS `console.warn`.** Chrome's own diagnostics (e.g.
+  `Performance warning: clear() called with no buffers in bitmask`, and the cap message
+  `WebGL: too many errors, no more errors will be reported after 256 errors`) come from the
+  ANGLE/GPU process. Patching `console.warn` to capture stacks captures **nothing**. They still
+  appear in `list_console_messages` (that reads CDP console events, which include these), but
+  they carry no JS stack.
+- App logs use `[dbg:*]`-prefixed `console.log` (see `global.mdc` debugging discipline) — those
+  DO show up as `log` type.
+
+## Capturing a stack for a native WebGL warning
+
+Since native GL warnings have no JS stack, instrument the WebGL context directly. Must run
+**before the WebGL context is created** (i.e. on a fresh page before viewer init), or wrap an
+already-created context by re-wrapping the canvas:
+
+```js
+() => {
+  // Wrap gl.clear on the canvas context to log bits + JS stack when bits === 0
+  const canvas = document.querySelector('canvas');
+  const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+  const origClear = gl.clear.bind(gl);
+  window.__clearLog = [];
+  gl.clear = (bits) => {
+    if (bits === 0) window.__clearLog.push(new Error('gl.clear(0)').stack);
+    return origClear(bits);
+  };
+  return 'instrumented';
+}
+```
+
+Evaluate this immediately after load (or `evaluate_script` with the page freshly navigated, then
+trigger the offending action), wait a few seconds, then read `window.__clearLog` back. The stack
+frames point into the minified **served chunks**, whose line numbers you then map back to source
+via the chunk reverse-engineering technique below.
+
+> If the context already exists, you can still get a handle via `canvas.getContext(...)`
+> (returns the same context) and wrap its prototype methods — but `gl.clear` must be wrapped on
+> the instance (or `WebGL2RenderingContext.prototype.clear`) before the call you're tracing.
+
+## Reverse-engineering minified `_next/static/chunks` (three.js / @speckle/viewer)
+
+Dev-mode chunk filenames are encoded and served at fixed URLs. Fetch them and search by substring
+using `IndexOf`/`Substring` (Chrome page too small; use a terminal `Invoke-WebRequest`):
+
+```powershell
+$r = Invoke-WebRequest -Uri "http://localhost:3000/_next/static/chunks/3be42_%40speckle_viewer_dist_index_4ee132ba.js" -UseBasicParsing
+$content = $r.Content
+$idx = $content.IndexOf("class Os")           # find a symbol, then slice around it
+$content.Substring($idx, 700)
+```
+
+### Chunk naming conventions (know how to find them)
+
+- `%40` == `@`. So `3be42_%40speckle_viewer_dist_index_4ee132ba.js` is the module
+  `@speckle/viewer/dist/index.js`. Find chunk URLs under the Network tab
+  (`list_network_requests` filtered to `script`), or grep the served HTML for `chunks/`.
+- Served chunk `b4e95_three_build_three_module_afa4dd3b.js` == `node_modules/three/build/three.module.js`
+  (this repo uses three **0.140.2**). The chunk line numbers differ from source line numbers;
+  search the chunk for a distinctive string (e.g. `_gl.clear`, `autoClearColor`) to locate the
+  function, then read the corresponding **source file** in
+  `node_modules/.pnpm/three@0.140.2/node_modules/three/src/...` for readable logic.
+- Dev builds set `window.__THREE__ = '140'` in the chunk footer. Multiple copies of three r140
+  exist under `.pnpm` (root, `@speckle/viewer` nested, `troika-three-text` nested) — all r140,
+  so the version warning is a red herring.
+
+### Minified-code reading patterns that worked
+
+| Pattern | Meaning |
+| ------- | ------- |
+| `e.setRenderTarget(this.outputTarget), this.clear(e), e.render(i, t)` | A pipeline pass: bind target → clear → render. `this.clear(e)` reads `_clearFlags`; if `_clearColor`/`_clearFlags` are `undefined`, `clear()` is skipped. |
+| `renderer.clear(renderer.autoClearColor, renderer.autoClearDepth, renderer.autoClearStencil)` | three.js `WebGLBackground.render`. A `Color` scene.background sets `forceClear = true`, so this runs even with `renderer.autoClear === false` — and if all three flags are false it calls `gl.clear(0)`. |
+| `class Os { get displayName() { return "GEOMETRY" } }` | The GEOMETRY pipeline pass. `displayName` getters are how pass types survive minification. |
+
+## Ground-truth checks via evaluate_script
+
+`evaluate_script` returns JSON-serializable values; use it to query real state instead of app
+bookkeeping:
+
+- `localStorage.getItem('compas-view-mode')` — active viewmode
+- `getComputedStyle(document.documentElement).getPropertyValue('--background').trim()` — CSS token
+  (colors come from `globals.css`; never hardcode hex in checks)
+- `document.querySelector('canvas')` + `getComputedStyle` — canvas transparency/size
+- Store internals (viewer/renderer instances) are **not** on `window`. To reach them without a
+  source edit, walk the React fiber tree from `document.documentElement`
+  (`__reactFiber$...`) — see `debug-ui-visual-bug` skill §Step 2 for the walker.
+
+## Screenshot caveats
+
+- IF your model is DeepSeek or OpenCode , NEVER TAKE screenshots, as you cannot read images.
+- `take_screenshot` returns an image attachment; if your model has no image input, treat it as
+  "page rendered without crash" evidence and rely on numeric ground-truth checks instead.
+- `chrome-devtools` snapshots are a11y-tree based; 3D canvas contents are opaque to them. Canvas
+  pixel verification is covered in the `debug-ui-visual-bug` skill.
+
+## Checklist for a warning/console bug
+
+1. Reproduce, count occurrences (`list_console_messages`).
+2. Determine if it's a JS `console.warn` (patchable for stack) or native GL (instrument `gl.clear`
+   instead). Never assume which — patch `console.warn` once; if 0 captured, switch strategy.
+3. If minified chunk frames appear, fetch the chunk and map the symbol back to source
+   (`node_modules/.pnpm/three@0.140.2/...` or `@speckle/viewer` dist).
+4. Fix the root cause in `frontend/src` (or wherever), run `pnpm exec tsc --noEmit`, reload the
+   page, re-trigger, confirm 0 messages. Toggle the viewmode radios in both directions to catch
+   enable/disable regressions.

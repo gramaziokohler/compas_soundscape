@@ -6,7 +6,8 @@ import { AudioWaveformDisplay } from "@/components/audio/AudioWaveformDisplay";
 import { FileUploadArea } from "@/components/controls/FileUploadArea";
 import { apiService } from "@/services/api";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
-import { ValidationMessage } from '@/components/ui/ValidationMessage';
+import { Notice } from '@/components/ui/Notice';
+import { Badge } from '@/components/ui/Badge';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from "@/types/audio";
 import { API_BASE_URL, IR_HOVER_LINE, IR_LOW_ENERGY_THRESHOLD } from "@/utils/constants";
 import { trimDisplayName } from "@/utils/utils";
@@ -360,12 +361,12 @@ export function ImpulseResponseUpload({
 
   const getFormatBadge = (format: string) => {
     const badges = {
-      mono:     { color: 'bg-info-light text-info',         label: 'Mono' },
-      binaural: { color: 'bg-primary-light text-primary',   label: 'Binaural' },
-      foa:      { color: 'bg-success-light text-success',   label: 'FOA' },
-      toa:      { color: 'bg-warning-light text-warning',   label: 'TOA' },
+      mono:     { variant: 'info' as const,    label: 'Mono' },
+      binaural: { variant: 'primary' as const, label: 'Binaural' },
+      foa:      { variant: 'success' as const, label: 'FOA' },
+      toa:      { variant: 'warning' as const, label: 'TOA' },
     };
-    return badges[format as keyof typeof badges] || { color: 'bg-neutral-100 text-neutral-800', label: format };
+    return badges[format as keyof typeof badges] || { variant: 'neutral' as const, label: format };
   };
 
   const formatChannelLabel = (channelCount: number): string => {
@@ -492,8 +493,8 @@ export function ImpulseResponseUpload({
         <div className="flex-1 min-w-0">
           <div className="text-[11px] text-neutral-200 truncate">{sourceName}</div>
           <div className="flex items-center gap-1.5 mt-0.5">
-            <span className={`text-[9px] px-1.5 py-0.5 rounded ${badge.color}`}>{badge.label}</span>
-            {isLowEnergy && <span className="text-[9px] font-medium text-error">Low energy</span>}
+            <Badge variant={badge.variant}>{badge.label}</Badge>
+            {isLowEnergy && <Badge variant="error">Low energy</Badge>}
             <span className="text-[9px] text-neutral-500">{ir.duration.toFixed(2)}s</span>
           </div>
         </div>
@@ -656,7 +657,7 @@ export function ImpulseResponseUpload({
   return (
     <div className="flex flex-col gap-4">
       {error && (
-        <ValidationMessage type="error">{error}</ValidationMessage>
+        <Notice type="error" message={error} />
       )}
 
       {uploadProgress && (
@@ -666,7 +667,7 @@ export function ImpulseResponseUpload({
       )}
 
       {missingPairSetupMessage && (
-        <ValidationMessage type="info">{missingPairSetupMessage}</ValidationMessage>
+        <Notice type="info" message={missingPairSetupMessage} />
       )}
 
       {/* IR Library — grouped by receiver when mapping is available */}
@@ -800,8 +801,8 @@ export function ImpulseResponseUpload({
                           {ir.name}
                         </div>
                         <div className="flex items-center gap-2 mt-1 whitespace-nowrap">
-                          <span className={`text-xs px-2 py-0.5 rounded flex-shrink-0 ${badge.color}`}>{badge.label}</span>
-                          {isLowEnergy && <span className="text-xs font-medium text-error flex-shrink-0">Low energy</span>}
+                          <Badge variant={badge.variant}>{badge.label}</Badge>
+                          {isLowEnergy && <Badge variant="error">Low energy</Badge>}
                           <span className={`text-xs flex-shrink-0 ${simulationResults ? 'text-neutral-400' : 'text-neutral-600 dark:text-neutral-400'}`}>
                             Length={ir.duration.toFixed(2)}s
                           </span>

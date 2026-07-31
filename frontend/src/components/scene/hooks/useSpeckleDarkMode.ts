@@ -162,7 +162,6 @@ export function useSpeckleDarkMode({
         side: THREE.DoubleSide,
       });
       dm.entityEmissiveMat = entityEmissiveMat;
-      const blackColor = new THREE.Color(0x000000);
 
       const applyDarkModeState = () => {
         if (!isDarkModeRef.current || !viewer) return;
@@ -175,7 +174,6 @@ export function useSpeckleDarkMode({
           if (obj instanceof THREE.AmbientLight) obj.intensity = 0;
         });
 
-        s.background = blackColor;
         r.renderer.setClearColor(0x000000, 0);
 
         const entityLinkedSet = new Set(darkModeStateRef.current?.entityObjectIds ?? []);

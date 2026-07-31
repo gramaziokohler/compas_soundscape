@@ -18,7 +18,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { ImpulseResponseUpload } from '@/components/audio/ImpulseResponseUpload';
 import type { SimulationConfig, ChorasSimulationConfig, PyroomAcousticsSimulationConfig } from '@/types/acoustics';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from '@/types/audio';
-import { ValidationMessage } from '@/components/ui/ValidationMessage';
+import { Notice } from '@/components/ui/Notice';
 import type { GradientMetric } from '@/store/uiStore';
 import { useUIStore } from '@/store/uiStore';
 import { useGridListenersStore } from '@/store';
@@ -278,7 +278,7 @@ export function SimulationResultContent({
   return (
     <div className="space-y-3">
       {isExpanded && mismatchedNames.length > 0 && (
-        <ValidationMessage type="error" icon={<span className="font-bold">⚠</span>}>
+        <Notice type="error" message={
           <div className="flex-1 flex flex-col gap-1.5">
             <span>
               <strong>{mismatchedNames.join(', ')}</strong>{' '}
@@ -293,7 +293,7 @@ export function SimulationResultContent({
               </button>
             )}
           </div>
-        </ValidationMessage>
+        } />
       )}
 
       {/* Gradient metric selector (replaces text metrics when grid receivers used) */}
@@ -371,11 +371,11 @@ export function SimulationResultContent({
       )}
 
       {lowEnergyIRIds.size > 0 && (
-        <ValidationMessage type="error" icon={<span className="font-bold">!</span>}>
-          {lowEnergyIRIds.size === 1
+        <Notice type="error" message={
+          lowEnergyIRIds.size === 1
             ? '1 impulse response has very low energy and may produce poor auralization.'
-            : `${lowEnergyIRIds.size} impulse responses have very low energy and may produce poor auralization.`}
-        </ValidationMessage>
+            : `${lowEnergyIRIds.size} impulse responses have very low energy and may produce poor auralization.`
+        } />
       )}
 
       {/* IR Library */}

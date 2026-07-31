@@ -112,7 +112,7 @@ export function buildSoundscapeSavePayload(
       type: config.type || undefined,
       duration: config.duration,
       display_name: config.display_name || undefined,
-      spl_db: config.spl_db,
+      dbfs: config.dbfs,
       interval_seconds: config.interval_seconds,
       // Legacy single-entity fields (kept for backward compat with older saves)
       entity_index: config.entities?.[0]?.id !== undefined
@@ -169,7 +169,7 @@ export function buildSoundscapeSavePayload(
 
       // Merge user-adjusted volume/interval from audioControls maps
       // These override the SoundEvent's own current_* fields
-      const adjustedVolume = soundVolumes?.[event.id] ?? event.current_volume_db;
+      const adjustedVolume = soundVolumes?.[event.id] ?? event.current_volume_dbfs;
       const adjustedInterval = soundIntervals?.[event.id] ?? event.current_interval_seconds;
 
       // Per-track timeline scheduling — prefer the live audioControls maps
@@ -197,8 +197,8 @@ export function buildSoundscapeSavePayload(
         display_name: event.display_name,
         prompt: event.prompt,
         prompt_index: event.prompt_index,
-        volume_db: event.volume_db,
-        current_volume_db: adjustedVolume,
+        volume_dbfs: event.volume_dbfs,
+        current_volume_dbfs: adjustedVolume,
         interval_seconds: event.interval_seconds,
         current_interval_seconds: adjustedInterval,
         is_uploaded: event.isUploaded || false,
@@ -439,7 +439,7 @@ export function restoreSoundscapeState(
       seed_copies: saved.seed_copies,
       steps: saved.steps,
       display_name: saved.display_name,
-      spl_db: saved.spl_db,
+      dbfs: saved.dbfs,
       interval_seconds: saved.interval_seconds,
       type: saved.type as SoundGenerationConfig['type'],
       parentUsageOriginalIndex: (saved as any).parent_usage_original_index,
@@ -491,8 +491,8 @@ export function restoreSoundscapeState(
     const url = hasAudio ? `${baseUrl}/${saved.audio_filename}` : '';
 
     // Populate user-adjusted volume/interval maps from current_* fields
-    if (saved.current_volume_db != null) {
-      soundVolumes[saved.id] = saved.current_volume_db;
+    if (saved.current_volume_dbfs != null) {
+      soundVolumes[saved.id] = saved.current_volume_dbfs;
     }
     if (saved.current_interval_seconds != null) {
       soundIntervals[saved.id] = saved.current_interval_seconds;
@@ -525,8 +525,8 @@ export function restoreSoundscapeState(
       display_name: saved.display_name,
       prompt: saved.prompt,
       prompt_index: saved.prompt_index,
-      volume_db: saved.volume_db,
-      current_volume_db: saved.current_volume_db ?? undefined,
+      volume_dbfs: saved.volume_dbfs,
+      current_volume_dbfs: saved.current_volume_dbfs ?? undefined,
       interval_seconds: saved.interval_seconds,
       current_interval_seconds: saved.current_interval_seconds ?? undefined,
       isUploaded: saved.is_uploaded,

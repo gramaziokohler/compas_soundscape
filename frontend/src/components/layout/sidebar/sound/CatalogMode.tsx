@@ -5,7 +5,9 @@ import type { SoundGenerationConfig, CatalogSoundSelection } from "@/types";
 import type { CatalogBrowseState, CatalogBrowseActions } from "@/hooks/useCatalogBrowse";
 import { useCatalogBrowse } from "@/hooks/useCatalogBrowse";
 import { SearchBar } from "@/components/ui/SearchBar";
-import { ValidationMessage } from '@/components/ui/ValidationMessage';
+import { Badge } from "@/components/ui/Badge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Notice } from "@/components/ui/Notice";
 import { Spinner } from '@/components/ui/Spinner';
 
 export interface CatalogModeProps {
@@ -101,7 +103,7 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
             </div>
           )}
           {searchError && (
-            <ValidationMessage type="error">{searchError}</ValidationMessage>
+            <Notice type="error" message={searchError} />
           )}
           {!isSearchingAll && searchResults !== null && searchResults.length > 0 && (
             <div className="rounded-lg max-h-50 overflow-y-auto">
@@ -123,9 +125,7 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
                       <div className="flex items-center gap-1.5">
                         <span className="truncate flex-1">{item.name}</span>
                         {item.category && (
-                          <span className="text-[10px] text-secondary-hover shrink-0">
-                            {item.category}
-                          </span>
+                          <Badge variant="neutral">{item.category}</Badge>
                         )}
                       </div>
                     </button>
@@ -135,9 +135,7 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
             </div>
           )}
           {!isSearchingAll && searchResults !== null && searchResults.length === 0 && (
-            <p className="text-xs text-center py-4 text-secondary-hover">
-              No sounds match "{searchQuery}".
-            </p>
+            <EmptyState message={`No sounds match "${searchQuery}".`} />
           )}
         </>
       )}
@@ -176,7 +174,7 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
           )}
 
           {error && (
-            <ValidationMessage type="error">{error}</ValidationMessage>
+            <Notice type="error" message={error} />
           )}
 
           {/* Category list */}
@@ -198,9 +196,7 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
 
           {/* Empty categories */}
           {!selectedCategory && !isLoading && !error && categories.length === 0 && (
-            <p className="text-xs text-center py-4 text-secondary-hover">
-              No categories found.
-            </p>
+            <EmptyState message="No categories found." />
           )}
 
           {/* Sounds list */}
@@ -231,9 +227,7 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
 
           {/* No sounds */}
           {selectedCategory && !isLoading && !error && sounds.length === 0 && (
-            <p className="text-xs text-center py-4 text-secondary-hover">
-              No sounds found in this category.
-            </p>
+            <EmptyState message="No sounds found in this category." />
           )}
         </>
       )}

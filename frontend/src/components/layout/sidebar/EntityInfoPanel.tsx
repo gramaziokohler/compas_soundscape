@@ -6,6 +6,7 @@ import { useSpeckleStore, getAnalysisResultGroups } from '@/store';
 import { useAudioControlsStore } from '@/store';
 import { useAnalysisStore } from '@/store';
 import { SoundResultContent } from '@/components/layout/sidebar/sound/SoundResultContent';
+import { VariantsBar } from '@/components/ui/VariantsBar';
 import type { SoundEvent } from '@/types';
 
 // ============================================================================
@@ -107,21 +108,27 @@ export function EntityInfoPanel({
       const isMuted = mutedSounds?.has(generatedSound.id) ?? false;
 
       return (
-        <SoundResultContent
-          generatedSound={generatedSound}
-          index={promptIndex}
-          variants={variants}
-          selectedVariantIdx={selectedVariantIdx}
-          isPreviewPlaying={localPreviewId === generatedSound.id}
-          isMuted={isMuted}
-          soundVolumes={soundVolumes ?? {}}
-          soundIntervals={soundIntervals ?? {}}
-          onPreviewPlayPause={handleLocalPlayPause}
-          onPreviewStop={handleLocalStop}
-          onVolumeChange={onVolumeChange}
-          onIntervalChange={onIntervalChange}
-          onVariantChange={onVariantChange}
-        />
+        <div className="flex flex-col gap-2 min-w-0">
+          <SoundResultContent
+            generatedSound={generatedSound}
+            index={promptIndex}
+            variants={variants}
+            selectedVariantIdx={selectedVariantIdx}
+            isPreviewPlaying={localPreviewId === generatedSound.id}
+            isMuted={isMuted}
+            soundVolumes={soundVolumes ?? {}}
+            soundIntervals={soundIntervals ?? {}}
+            onPreviewPlayPause={handleLocalPlayPause}
+            onPreviewStop={handleLocalStop}
+            onVolumeChange={onVolumeChange}
+            onIntervalChange={onIntervalChange}
+          />
+          <VariantsBar
+            items={variants.map((v, i) => ({ key: v.id, title: String.fromCharCode(65 + i) }))}
+            selectedIndex={selectedVariantIdx}
+            onSelect={onVariantChange ? (i) => onVariantChange(promptIndex, i) : undefined}
+          />
+        </div>
       );
     }
   }

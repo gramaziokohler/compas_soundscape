@@ -2,7 +2,9 @@
 
 import type { SoundGenerationConfig, LibrarySearchResult } from '@/types';
 import { pauseStore, commitStore, globalUndo, globalRedo } from '@/store';
-import { ValidationMessage } from '@/components/ui/ValidationMessage';
+import { Badge } from '@/components/ui/Badge';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Notice } from '@/components/ui/Notice';
 
 /**
  * LibraryMode Component
@@ -84,7 +86,7 @@ export function LibraryMode({
               >
                 <div className="font-medium truncate">{result.description}</div>
                 <div className="text-[10px] opacity-75 flex justify-between mt-0.5">
-                  <span>{result.category}</span>
+                  <Badge variant="neutral">{result.category}</Badge>
                   <span>{result.duration}</span>
                 </div>
               </button>
@@ -95,13 +97,11 @@ export function LibraryMode({
 
       {/* No results message */}
       {results && results.length === 0 && !isSearching && (
-        <p className="text-xs text-center py-4 text-secondary-hover">
-          No sounds found. Try a different search term.
-        </p>
+        <EmptyState message="No sounds found. Try a different search term." />
       )}
 
       {searchError && (
-        <ValidationMessage type="error">{searchError}</ValidationMessage>
+        <Notice type="error" message={searchError} />
       )}
 
       {/* Initial help text

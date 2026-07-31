@@ -7,7 +7,7 @@ import { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service
 import { BoundingBoxManager } from '@/lib/three/BoundingBoxManager';
 import { GradientMapManager } from '@/lib/three/gradient-map-manager';
 import { useTimelinePlayback } from '@/hooks/useTimelinePlayback';
-import { useSpeckleStore, useAcousticsSimulationStore, useGridListenersStore } from '@/store';
+import { useSpeckleStore, useAcousticsSimulationStore, useGridListenersStore, notifyError } from '@/store';
 import { useAcousticMaterialStore } from '@/store';
 import { useRightSidebarStore } from '@/store/rightSidebarStore';
 import { useUIStore } from '@/store/uiStore';
@@ -404,6 +404,11 @@ export function SpeckleScene({
     isAcousticModeRef,
     showHoveringHighlightRef,
   });
+
+  // Model load failures surface as a transient toast (replaces the old full-screen overlay)
+  useEffect(() => {
+    if (error) notifyError(error, 'error');
+  }, [error]);
 
   // Sync local refs from engine store so remaining in-scene effects use .current unchanged
   useEffect(() => {
@@ -1422,17 +1427,6 @@ export function SpeckleScene({
           <div className="flex flex-col items-center gap-3">
             <Spinner size={48} />
             <p className="text-xs text-neutral-400">{isLoading ? 'Loading model...' : 'Uploading model...'}</p>
-          </div>
-        </div>
-      )}
-
-      {/* Error overlay */}
-      {error && (
-        <div className="absolute inset-0 flex items-center justify-center bg-background/50">
-          <div className="text-center p-8">
-            <div className="text-6xl mb-4">⚠️</div>
-            <h3 className="text-xl font-semibold mb-2 text-error">Failed to Load Model</h3>
-            <p className="text-sm text-neutral-400">{error}</p>
           </div>
         </div>
       )}

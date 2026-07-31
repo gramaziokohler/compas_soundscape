@@ -337,7 +337,6 @@ export function useAcousticLayerIsolation(
           filteredShouldBeIsolated.length > 0 &&
           !filteredShouldBeIsolated.every((id: string) => currentIsolated.includes(id))
         ) {
-          console.log('[dbg:raf] Isolation lost, re-applying (', filteredShouldBeIsolated.length, 'objs, after filtering explorer-hides). currentIsolated.length=', currentIsolated.length, 'missing=', filteredShouldBeIsolated.filter((id: string) => !currentIsolated.includes(id)));
           ext.isolateObjects(filteredShouldBeIsolated, 'acoustic-materials', true, true);
           viewerRef.current?.requestRender();
           ourIsolatedIdsRef.current = shouldBeIsolated; // keep full set for reference

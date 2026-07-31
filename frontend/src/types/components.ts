@@ -60,7 +60,6 @@ export interface SidebarProps {
   isDragging: boolean;
   uploadError: string | null;
   aiError: string | null;
-  soundGenError: string | null;
   aiResponse: string | null;
   analysisProgress: string;
   llmProgress: string;
@@ -157,7 +156,6 @@ export interface SidebarProps {
   // Analysis props (NEW)
   analysisConfigs: AnalysisConfig[];
   isAnalyzing: boolean;
-  analysisError: string | null;
   analysisResult: AnalysisResult[];
   hasGlobalModelLoaded?: boolean; // Global model loaded from right sidebar
   onAddAnalysisConfig: (type: CardType) => void;
@@ -229,7 +227,6 @@ export interface SoundGenerationSectionProps {
   soundConfigs: SoundGenerationConfig[];
   activeSoundConfigTab: number;
   isSoundGenerating: boolean;
-  soundGenError: string | null;
   onAddConfig: (type?: CardType) => void;
   onBatchAddConfigs: (count: number) => number;
   onRemoveConfig: (index: number) => void;

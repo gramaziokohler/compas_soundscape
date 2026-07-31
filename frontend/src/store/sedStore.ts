@@ -11,7 +11,7 @@ import { temporal } from 'zundo';
 import { devtools } from 'zustand/middleware';
 import type { SEDAudioInfo, DetectedSound, SEDAnalysisOptions } from '@/types';
 import { loadAudioFileWithBuffer } from '@/lib/audio/utils/audio-info';
-import { API_BASE_URL, DEFAULT_SPL_DB, DEFAULT_DIFFUSION_STEPS, LLM_SUGGESTED_INTERVAL_SECONDS, DEFAULT_DURATION_SECONDS } from '@/utils/constants';
+import { API_BASE_URL, DEFAULT_DBFS, DEFAULT_DIFFUSION_STEPS, LLM_SUGGESTED_INTERVAL_SECONDS, DEFAULT_DURATION_SECONDS } from '@/utils/constants';
 import { apiService } from '@/services/api';
 
 // ─── Module-level polling refs ────────────────────────────────────────────────
@@ -174,7 +174,7 @@ export const useSEDStore = create<SEDStoreState>()(
             seed_copies: 1,
             steps: DEFAULT_DIFFUSION_STEPS,
             type: 'text-to-audio',
-            spl_db: DEFAULT_SPL_DB,
+            dbfs: DEFAULT_DBFS,
             interval_seconds: LLM_SUGGESTED_INTERVAL_SECONDS,
           }));
         },

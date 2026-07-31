@@ -38,11 +38,11 @@ from config.constants import (
     LLM_MODEL_ANTHROPIC,
     DEFAULT_LLM_MODEL,
     LLM_MODEL_VERSIONS,
-    DEFAULT_SPL_DB,
+    DEFAULT_DBFS,
     LLM_SUGGESTED_INTERVAL_SECONDS,
     DEFAULT_DURATION_SECONDS,
-    SPL_MIN,
-    SPL_MAX,
+    DBFS_MIN,
+    DBFS_MAX,
     INTERVAL_MIN,
     INTERVAL_MAX,
     DURATION_MIN,
@@ -522,13 +522,13 @@ class LLMService:
             text: Raw text that may contain PROMPT:, NAME:, SPL:, INTERVAL:, DURATION:, and ENTITY: markers
 
         Returns:
-            dict: {"prompt": str, "display_name": str, "spl_db": float, "interval_seconds": float, "duration_seconds": float, "entity_indices": list[int]} or None if parsing fails
+            dict: {"prompt": str, "display_name": str, "dbfs": float, "interval_seconds": float, "duration_seconds": float, "entity_indices": list[int]} or None if parsing fails
         """
         # Try to parse PROMPT: ... NAME: ... SPL: ... INTERVAL: ... DURATION: ... ENTITY: ... format
         _SOUND_FIELD = r'(?:PROMPT|NAME|SPL|INTERVAL|DURATION|ENTITY)'
         prompt_match = re.search(rf'PROMPT:\s*(.*?)(?=\s*{_SOUND_FIELD}:|$)', text, re.DOTALL)
         name_match = re.search(rf'NAME:\s*(.*?)(?=\s*{_SOUND_FIELD}:|$)', text, re.DOTALL | re.MULTILINE)
-        spl_match = re.search(r'SPL:\s*(\d+(?:\.\d+)?)', text, re.IGNORECASE)
+        spl_match = re.search(r'SPL:\s*(-?\d+(?:\.\d+)?)', text, re.IGNORECASE)
         interval_match = re.search(r'INTERVAL:\s*(\d+(?:\.\d+)?)', text, re.IGNORECASE)
         duration_match = re.search(r'DURATION:\s*(\d+(?:\.\d+)?)', text, re.IGNORECASE)
         entity_match = re.search(r'ENTITY:\s*([\d,\s]+|NONE|none|None)', text, re.IGNORECASE)
@@ -543,13 +543,13 @@ class LLMService:
             display_name = re.sub(r'^[-\*"\'\[\]]\s*', '', display_name)
             display_name = re.sub(r'\s*[-"\'\[\]]$', '', display_name)
 
-            # Extract SPL value
-            spl_db = DEFAULT_SPL_DB
+            # Extract dBFS value
+            dbfs = DEFAULT_DBFS
             if spl_match:
                 try:
-                    spl_db = float(spl_match.group(1))
+                    dbfs = float(spl_match.group(1))
                     # Clamp to reasonable range
-                    spl_db = max(SPL_MIN, min(SPL_MAX, spl_db))
+                    dbfs = max(DBFS_MIN, min(DBFS_MAX, dbfs))
                 except ValueError:
                     pass
 
@@ -592,7 +592,7 @@ class LLMService:
             return {
                 "prompt": sound_prompt,
                 "display_name": display_name,
-                "spl_db": spl_db,
+                "dbfs": dbfs,
                 "interval_seconds": interval_seconds,
                 "duration_seconds": duration_seconds,
                 "entity_indices": entity_indices
@@ -742,12 +742,12 @@ Generate exactly {num_sounds} sounds total"""
 
         return f"""{context_intro} possible sounds that could happen.
 
-For each sound, provide a 2 to 10 words sound prompt, a short 2-3 word display name, estimate the Sound Pressure Level (SPL) in dB at the source, estimate how often this sound would typically occur (in seconds), estimate the typical duration of the sound event (in seconds with 0.1 precision), AND indicate if it's linked to an entity.
+For each sound, provide a 2 to 10 words sound prompt, a short 2-3 word display name, estimate a target loudness level in dBFS (decibels relative to digital full scale), estimate how often this sound would typically occur (in seconds), estimate the typical duration of the sound event (in seconds with 0.1 precision), AND indicate if it's linked to an entity.
 
 Format your response as a numbered list with each sound using this EXACT format, without any extra text:
 1. PROMPT: [your sound prompt here]
 NAME: [your 2-3 word display name here]
-SPL: [estimated dB value, e.g., 75]
+SPL: [estimated dBFS value, e.g., -18]
 INTERVAL: [estimated interval in seconds, e.g., 120]
 DURATION: [estimated duration in seconds with 0.1 precision, e.g., 3.5]
 ENTITY: [comma-separated entity numbers (e.g., 1 or 1,3) if this sound is linked to those entities, or NONE if it's a non-entity context sound]
@@ -768,11 +768,12 @@ For the display names:
     *   Extract 2-3 most important words that identify the sound source
     *   Use title case (e.g., "Sliding Door", "Metal Lid", "HVAC System")
 
-For the SPL estimation (in dB):
-    *   Consider how loud this sound would typically be IN THE CONTEXT OF: {context}
-    *   Reference examples: whisper (30 dB), normal conversation (60 dB), vacuum cleaner (70 dB), heavy traffic (85 dB), power tools (95 dB), rock concert (110 dB)
-    *   Provide a single number between 30-120 dB representing the typical SPL at 1 meter from the source
-    *   The intensity should match realistic usage in: {context}
+For the loudness estimation (in dBFS):
+    *   Consider how loud this sound should be IN THE MIX OF: {context}
+    *   dBFS is relative to digital full scale: 0 dBFS is the clipping ceiling, so use NEGATIVE values.
+    *   Reference examples: subtle background texture (-45 dBFS), quiet ambience (-36 dBFS), normal foreground sound (-24 dBFS), prominent sound event (-18 dBFS), loud impact (-12 dBFS), near-clipping foreground (-6 dBFS)
+    *   Provide a single number between -60 and 0 dBFS representing the target playback level
+    *   The level should fit realistically in the mix for: {context}
 
 For the interval estimation (in seconds):
     *   CRITICALLY IMPORTANT: How often would this sound occur SPECIFICALLY IN: {context}
@@ -800,7 +801,7 @@ For the duration estimation (in seconds with 0.1 precision):
             context: Optional context description
 
         Returns:
-            list[dict]: List of {"prompt": str, "display_name": str, "spl_db": float, "interval_seconds": float, "duration_seconds": float, "entity_indices": list[int]}
+            list[dict]: List of {"prompt": str, "display_name": str, "dbfs": float, "interval_seconds": float, "duration_seconds": float, "entity_indices": list[int]}
         """
         if num_sounds <= 0:
             return []
@@ -854,7 +855,7 @@ For the duration estimation (in seconds with 0.1 precision):
                         sound_list.append({
                             "prompt": cleaned,
                             "display_name": display_name,
-                            "spl_db": DEFAULT_SPL_DB,
+                            "dbfs": DEFAULT_DBFS,
                             "interval_seconds": LLM_SUGGESTED_INTERVAL_SECONDS,
                             "duration_seconds": DEFAULT_DURATION_SECONDS,
                             "entity_indices": []  # Fallback case: no entity linkage
@@ -870,7 +871,7 @@ For the duration estimation (in seconds with 0.1 precision):
         """Generate sound prompts with display names from text description only
 
         Returns:
-            tuple: (raw_text, list of {"prompt": str, "display_name": str, "spl_db": float, "interval_seconds": float, "duration_seconds": float, "entity_indices": []})
+            tuple: (raw_text, list of {"prompt": str, "display_name": str, "dbfs": float, "interval_seconds": float, "duration_seconds": float, "entity_indices": []})
         """
         # Use unified base prompt (no entities)
         enhanced_prompt = self._create_base_sound_prompt(context, num_sounds, entities=None)
@@ -912,7 +913,7 @@ For the duration estimation (in seconds with 0.1 precision):
                     sound_list.append({
                         "prompt": cleaned,
                         "display_name": display_name,
-                        "spl_db": DEFAULT_SPL_DB,
+                        "dbfs": DEFAULT_DBFS,
                         "interval_seconds": LLM_SUGGESTED_INTERVAL_SECONDS,
                         "duration_seconds": DEFAULT_DURATION_SECONDS,
                         "entity_indices": []  # Text-based prompts have no entity linkage
@@ -2134,7 +2135,7 @@ For the duration estimation (in seconds with 0.1 precision):
                 '    "objectsInvolved": "untouched from input"],\n'
                 '    "position": untouched from input,\n'
                 '    "variants": [1,2,1],\n'
-                '    "spl": "float as string, e.g. \\"75 dB\\""\n'
+                '    "spl": "float as string, e.g. \\"-18 dBFS\\""\n'
                 "  }\n"
                 "]\n\n"
                 f"Scenarios:\n{scenarios_json}\n\n"

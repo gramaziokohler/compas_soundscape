@@ -70,7 +70,6 @@ export interface ContextSectionProps {
   /** Full analysisConfigs array — section filters internally to context types */
   analysisConfigs: AnalysisConfig[];
   isRunning: boolean;
-  error: string | null;
   analysisResult: AnalysisResult[];
   hasGlobalModelLoaded?: boolean;
   onAddConfig: (type: CardType) => void;
@@ -100,7 +99,6 @@ const CONTEXT_CARD_TYPES: CardType[] = ['model-analysis', '3d-model', 'audio', '
 export function ContextSection({
   analysisConfigs = [],
   isRunning,
-  error,
   analysisResult = [],
   hasGlobalModelLoaded = false,
   onAddConfig,
@@ -588,7 +586,6 @@ export function ContextSection({
         header={header}
         getPendingCount={getPendingCount}
         isRunning={isRunning}
-        error={error}
         color="primary"
         expandedIndex={filteredExpandedIndex}
         onExpandedIndexChange={handleCardSectionExpandedChange}

@@ -89,6 +89,12 @@ export function Sidebar(props: SidebarProps) {
       setContextExpandedOriginalIndex(ctxIdx);
     } else if (savedStep === 1 && usgIdx !== null) {
       setUsageExpandedOriginalIndex(usgIdx);
+    } else if (savedStep === 2) {
+      if (usgIdx !== null) {
+        useUIStore.getState().setActiveSoundParentIndex(usgIdx);
+      } else {
+        useUIStore.getState().setIsInSoundsStep(true);
+      }
     }
 
     // Clear the initializing guard after a delay so ContextSection's
@@ -615,7 +621,6 @@ export function Sidebar(props: SidebarProps) {
             <ContextSection
               analysisConfigs={props.analysisConfigs}
               isRunning={props.isAnalyzing}
-              error={props.analysisError}
               analysisResult={props.analysisResult}
               hasGlobalModelLoaded={props.hasGlobalModelLoaded}
               onAddConfig={props.onAddAnalysisConfig}
@@ -638,7 +643,6 @@ export function Sidebar(props: SidebarProps) {
             <UsageSection
               analysisConfigs={props.analysisConfigs}
               isRunning={props.isAnalyzing}
-              error={props.analysisError}
               analysisResult={props.analysisResult}
               hasGlobalModelLoaded={props.hasGlobalModelLoaded}
               onAddConfig={props.onAddAnalysisConfig}
@@ -661,7 +665,6 @@ export function Sidebar(props: SidebarProps) {
               soundConfigs={props.soundConfigs}
               activeSoundConfigTab={props.activeSoundConfigTab}
               isSoundGenerating={props.isSoundGenerating}
-              soundGenError={props.soundGenError}
               generatedSounds={props.generatedSounds}
               globalDuration={props.globalDuration}
               globalSteps={props.globalSteps}

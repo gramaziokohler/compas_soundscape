@@ -8,6 +8,9 @@ import type { CardTypeOption } from "@/components/ui/CardSection";
 import type { CustomMenuItem } from "@/types/card";
 import { CardSection } from "@/components/ui/CardSection";
 import { Card } from "@/components/ui/Card";import { CircularFAB } from '@/components/ui/CircularFAB';import { SoundPreContent, SoundResultContent } from "./sound";
+import { Badge } from "@/components/ui/Badge";
+import type { VariantsBarProps } from "@/components/ui/VariantsBar";
+import { createTtsSpeechLines } from "@/hooks/useTtsSpeechLines";
 import { apiService } from "@/services/api";
 import { useAudioControlsStore, useSoundscapeStore, notifyError } from "@/store";
 import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
@@ -19,6 +22,8 @@ import {
   AUDIO_MODEL_ELEVENLABS,
   ELEVENLABS_SERVICE_VERSION,
   GOOGLE_SOUND_LIBRARY_SERVICE_VERSION,
+  SOUND_CATEGORIES,
+  normalizeSoundCategory,
 } from "@/utils/constants";
 
 /**
@@ -59,7 +64,6 @@ export function SoundGenerationSection({
   soundConfigs,
   activeSoundConfigTab,
   isSoundGenerating,
-  soundGenError,
   onAddConfig,
   onBatchAddConfigs,
   onRemoveConfig,
@@ -160,10 +164,6 @@ export function SoundGenerationSection({
       // Sync the latest sound configs before the final bake so that generated
       // sound IDs and durations are available.
       if (soundConfigs.some(c => c.orchestrateMeta)) {
-        console.log(
-          '[duration-trace][SoundGenerationSection] Phase 3 final bake — generatedSounds durations:',
-          generatedSounds.map((s: any) => ({ id: s.id, prompt_index: s.prompt_index, copy_index: s.copy_index, duration: s.duration })),
-        );
         audioStore.syncSoundConfigs(soundConfigs);
         audioStore.syncGeneratedSounds(generatedSounds);
         audioStore.setOrchestrateIterationLinks(soundConfigs);
@@ -793,22 +793,11 @@ export function SoundGenerationSection({
     ) : null;
 
     // Category badge (if available from foley analysis)
+    const categoryKey = normalizeSoundCategory(config.category);
     const categoryBadge = config.category ? (
-      <span
-        style={{
-          fontSize: '9px',
-          padding: '1px 5px',
-          borderRadius: '3px',
-          backgroundColor: 'var(--color-secondary-light)',
-          color: 'var(--color-secondary-hover)',
-          textTransform: 'capitalize',
-          letterSpacing: '0.02em',
-          flexShrink: 0,
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {config.category.replace(/_/g, ' ')}
-      </span>
+      <Badge variant={categoryKey ? SOUND_CATEGORIES[categoryKey].variant : 'neutral'}>
+        {categoryKey ? SOUND_CATEGORIES[categoryKey].label : config.category.replace(/_/g, ' ')}
+      </Badge>
     ) : null;
 
     // Trigger badge (if available from orchestrateMeta with param or mixed trigger)
@@ -851,6 +840,39 @@ export function SoundGenerationSection({
       </div>
     ) : undefined;
 
+    // ── Card-level variants bar (letter-square selector) ────────────────────
+    // Pre-gen (TTS only): speech lines are the variants. Post-gen (TTS +
+    // text-to-audio): generated audio variants. Rendered by Card based on
+    // showVariantsPreGen / showVariantsPostGen.
+    const isTextToAudioType = config.type === 'text-to-audio' || !config.type;
+    const isTtsType = config.type === 'text-to-speech';
+
+    let cardVariants: VariantsBarProps | undefined;
+    if (isTtsType && !isGenerated) {
+      const tts = createTtsSpeechLines(config, originalIndex, onUpdateConfig);
+      cardVariants = {
+        items: tts.speechLines.map((line, i) => ({ key: `line-${i}`, title: line })),
+        selectedIndex: tts.selectedIndex,
+        onSelect: tts.onSelectLine,
+        onDelete: tts.onDeleteLine,
+        onAdd: tts.onAddLine,
+      };
+    } else if (isGenerated && (isTextToAudioType || isTtsType)) {
+      cardVariants = {
+        items: variants.map((v, i) => ({ key: v.id, title: String.fromCharCode(65 + i) })),
+        selectedIndex: selectedVariantIdx,
+        onSelect: onVariantChange ? (i) => onVariantChange(originalIndex, i) : undefined,
+        onDelete: onDeleteVariant ? (i) => onDeleteVariant(originalIndex, i) : undefined,
+        onAdd: (isTextToAudioType && onRegenerateSingle)
+          ? () => onRegenerateSingle(originalIndex)
+          : undefined,
+        isRegenerating: regeneratingIndices.includes(originalIndex),
+        pendingIndex: variants.length,
+      };
+    }
+    const showVariantsPreGen = isTtsType && !isGenerated;
+    const showVariantsPostGen = isGenerated && (isTextToAudioType || isTtsType) && !!onVariantChange;
+
     return (
       <div key={originalIndex} style={{ position: 'relative' }}>
       <Card
@@ -859,11 +881,20 @@ export function SoundGenerationSection({
         isExpanded={isExpanded}
         hasResult={isGenerated}
         result={generatedSound}
-        isRunning={isSoundGenerating && originalIndex === currentGeneratingCardIndex}
-        progress={originalIndex === currentGeneratingCardIndex ? soundGenProgressValue : 0}
+        isRunning={
+          (isSoundGenerating && originalIndex === currentGeneratingCardIndex)
+          || regeneratingIndices.includes(originalIndex)
+        }
+        progress={
+          (isSoundGenerating && originalIndex === currentGeneratingCardIndex)
+          || regeneratingIndices.includes(originalIndex)
+            ? soundGenProgressValue
+            : 0
+        }
         status={
-          originalIndex === currentGeneratingCardIndex
-            ? 'Generating...'
+          (isSoundGenerating && originalIndex === currentGeneratingCardIndex)
+          || regeneratingIndices.includes(originalIndex)
+            ? (soundGenProgress || (regeneratingIndices.includes(originalIndex) ? 'Regenerating...' : 'Generating...'))
             : !isGenerated && isSoundGenerating && (soundGenTargetIndices === null || soundGenTargetIndices.includes(originalIndex))
               ? 'Queued'
               : undefined
@@ -886,6 +917,9 @@ export function SoundGenerationSection({
         version={cardVersion}
         dimmed={isEffectivelyMuted}
         headerPrefix={headerPrefix}
+        variants={cardVariants}
+        showVariantsPreGen={showVariantsPreGen}
+        showVariantsPostGen={showVariantsPostGen}
         beforeContent={isGenerated ? undefined : (
           <>
             {categoryBadge}
@@ -931,15 +965,11 @@ export function SoundGenerationSection({
               soundTimestamps={soundTimestamps}
               onSchedulingModeChange={onSchedulingModeChange}
               onTimestampsChange={onTimestampsChange}
-              onVariantChange={onVariantChange}
               onMute={onMute}
               onUpdatePosition={handleUpdateSoundPosition}
               onUnlinkEntity={() => handleDetachSoundFromEntity(originalIndex)}
               isRegenerating={regeneratingIndices.includes(originalIndex)}
               pendingVariantIdx={variants.length}
-              onAddVariant={(config.type === 'text-to-audio' || !config.type) ? onRegenerateSingle : undefined}
-              onDeleteVariant={onDeleteVariant}
-              showVariantSelector={config.type === 'text-to-audio' || !config.type}
             />
             {linkedEntitiesDisplay}
           </>
@@ -1010,6 +1040,7 @@ export function SoundGenerationSection({
     audioModel,
     triggerZoomToSoundCard,
     currentGeneratingCardIndex,
+    soundGenProgress,
     soundGenProgressValue,
     onGenerateSingle,
     isConfigValid,
@@ -1101,7 +1132,6 @@ export function SoundGenerationSection({
       header={header}
       getPendingCount={getPendingCount}
       isRunning={isSoundGenerating}
-      error={soundGenError}
       expandedIndex={expandedIndex}
       onExpandedIndexChange={handleExpandedIndexChange}
       color="primary"

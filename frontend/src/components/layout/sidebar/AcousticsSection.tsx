@@ -27,10 +27,11 @@ import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react'
 import { Power, ChevronDown, ChevronRight } from 'lucide-react';
 import { CardSection, type CardTypeOption } from '@/components/ui/CardSection';
 import { Card } from '@/components/ui/Card';
-import { ValidationMessage } from '@/components/ui/ValidationMessage';
+import { Notice } from '@/components/ui/Notice';
 import { apiService } from '@/services/api';
 import { CARD_TYPE_LABELS } from '@/types/card';
-import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGridListenersStore, useAudioControlsStore, useSoundscapeStore } from '@/store';
+import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGridListenersStore, useAudioControlsStore, useSoundscapeStore, notifyError } from '@/store';
+import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useUIStore } from '@/store/uiStore';
 
 // Content Components
@@ -1006,6 +1007,83 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     }
   }, [activeSimulationIndex, activeConfigType, activeConfigState, activeConfigIRId, audioRenderingMode, selectedIRId, simulationConfigs]);
 
+  // ==========================================================================
+  // Mono Convolution Helper — "rotation does not change anything"
+  // ==========================================================================
+  // A mono (1-channel) IR is converted to FOA with the signal only in the
+  // omnidirectional W channel (see AmbisonicIRMode.convertMonoToFOA). Rotating
+  // the listener/camera in FPS mode therefore has no audible effect. Surface a
+  // transient Toast (ui-convention.mdc channel) when the user rotates the
+  // camera while in this state.
+
+  const isMonoConvolution = useMemo(() => {
+    if (audioRenderingMode !== 'precise') return false;
+    const buffer = auralizationConfig.impulseResponseBuffer;
+    if (buffer) return buffer.numberOfChannels === 1;
+    const meta = activeConfig && 'importedIRMetadata' in activeConfig
+      ? (activeConfig as any).importedIRMetadata
+      : null;
+    return meta?.channels === 1 || meta?.format === 'mono';
+  }, [audioRenderingMode, auralizationConfig, activeConfig]);
+
+  const monoRotationToastShownRef = useRef(false);
+  const monoRotationToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!isFPSModeActive || !isMonoConvolution || !isAudioActuallyPlaying) return;
+
+    monoRotationToastShownRef.current = false;
+
+    // The camera jumps to the receiver position when FPS mode is entered, which
+    // itself rotates the view. Capture the settled orientation AFTER that entry
+    // placement so the helper only fires when the user rotates afterwards.
+    let settledBaseline: { yaw: number; pitch: number; roll: number } | null = null;
+    const settleTimer = setTimeout(() => {
+      settledBaseline = { ...useSpeckleEngineStore.getState().currentCameraOrientation };
+    }, 300);
+
+    const clearCooldownTimer = () => {
+      if (monoRotationToastTimerRef.current) {
+        clearTimeout(monoRotationToastTimerRef.current);
+        monoRotationToastTimerRef.current = null;
+      }
+    };
+
+    const armCooldownTimer = () => {
+      clearCooldownTimer();
+      // Match the toast's 5s auto-dismiss so the helper can re-surface after a
+      // pause in rotation, but never while the user keeps rotating continuously.
+      monoRotationToastTimerRef.current = setTimeout(() => {
+        monoRotationToastShownRef.current = false;
+      }, 5000);
+    };
+
+    const unsub = useSpeckleEngineStore.subscribe((state) => {
+      if (!settledBaseline) return;
+      const ori = state.currentCameraOrientation;
+      const moved =
+        Math.abs(ori.yaw - settledBaseline.yaw) > 0.02 ||
+        Math.abs(ori.pitch - settledBaseline.pitch) > 0.02 ||
+        Math.abs(ori.roll - settledBaseline.roll) > 0.02;
+      if (!moved) return;
+
+      // Still rotating — extend the cooldown instead of re-toasting.
+      if (monoRotationToastShownRef.current) {
+        armCooldownTimer();
+        return;
+      }
+
+      monoRotationToastShownRef.current = true;
+      notifyError('Rotation does not change anything in mono convolution mode.', 'info');
+      armCooldownTimer();
+    });
+
+    return () => {
+      unsub();
+      clearTimeout(settleTimer);
+      clearCooldownTimer();
+    };
+  }, [isFPSModeActive, isMonoConvolution, isAudioActuallyPlaying]);
 
   // ==========================================================================
   // Expand / Active Simulation Sync
@@ -1418,9 +1496,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     const hasSoundSectionMismatch = mismatchedSourceCount > 0;
 
     const soundSectionMismatchWarning = hasSoundSectionMismatch ? (
-      <ValidationMessage type="warning">
-        This simulation was generated with sound sources from a different sound section. The impulse responses remain accessible for the available source-receiver pairs.
-      </ValidationMessage>
+      <Notice type="warning" message="This simulation was generated with sound sources from a different sound section. The impulse responses remain accessible for the available source-receiver pairs." />
     ) : null;
 
     const afterContent = isCompleted ? (

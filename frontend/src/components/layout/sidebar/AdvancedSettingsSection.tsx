@@ -5,6 +5,7 @@ import { RangeSlider } from "@/components/ui/RangeSlider";
 import { CheckboxField } from "@/components/ui/CheckboxField";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { SearchBar } from "@/components/ui/SearchBar";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { apiService } from "@/services/api";
 import type { TokenStatus, LLMProviders } from "@/services/api";
 import type { SoundscapeStats } from "@/types/soundscape";
@@ -35,9 +36,9 @@ import {
   CHORAS_DE_DEFAULT_LC,
   CHORAS_DE_LC_MIN,
   CHORAS_DE_LC_MAX,
-  DEFAULT_SPL_DB,
-  SPL_MIN,
-  SPL_MAX,
+  DEFAULT_DBFS,
+  DBFS_MIN,
+  DBFS_MAX,
   MAXIMUM_FOLEY_SOUNDS_MIN,
   MAXIMUM_FOLEY_SOUNDS_MAX,
 } from "@/utils/constants";
@@ -500,8 +501,8 @@ export function AdvancedSettingsSection({
   const setIntervalJitter = useAudioControlsStore((s) => s.setIntervalJitter);
   const timelineDurationMs = useAudioControlsStore((s) => s.timelineDurationMs);
   const setTimelineDurationMs = useAudioControlsStore((s) => s.setTimelineDurationMs);
-  const globalBaseSplDb = useAudioControlsStore((s) => s.globalBaseSplDb);
-  const setGlobalBaseSplDb = useAudioControlsStore((s) => s.setGlobalBaseSplDb);
+  const globalBaseDbfs = useAudioControlsStore((s) => s.globalBaseDbfs);
+  const setGlobalBaseDbfs = useAudioControlsStore((s) => s.setGlobalBaseDbfs);
   const maximumFoleySounds = useAudioControlsStore((s) => s.maximumFoleySounds);
   const setMaximumFoleySounds = useAudioControlsStore((s) => s.setMaximumFoleySounds);
 
@@ -774,14 +775,14 @@ export function AdvancedSettingsSection({
             <div className="flex flex-col gap-2">
               {isVisible('base-spl') && (
                 <RangeSlider
-                  label="Base SPL (dB): "
-                  value={globalBaseSplDb}
-                  min={SPL_MIN}
-                  max={SPL_MAX}
+                  label="Base Level (dBFS): "
+                  value={globalBaseDbfs}
+                  min={DBFS_MIN}
+                  max={DBFS_MAX}
                   step={1}
-                  onChange={setGlobalBaseSplDb}
-                  defaultValue={DEFAULT_SPL_DB}
-                  hoverText="Reference SPL level used in audio calibration for all generated sounds. Double-click to reset to 70 dB."
+                  onChange={setGlobalBaseDbfs}
+                  defaultValue={DEFAULT_DBFS}
+                  hoverText="Reference level in dBFS used in audio calibration for all generated sounds. Double-click to reset to -18 dBFS."
                 />
               )}
               {isVisible('tts-language') && (
@@ -964,7 +965,7 @@ export function AdvancedSettingsSection({
                   ) : statsLoading ? (
                     <p className="text-[10px] text-secondary-hover">Loading saved data info...</p>
                   ) : (
-                    <p className="text-[10px] text-secondary-hover">No saved data found for this project.</p>
+                    <EmptyState message="No saved data found for this project." />
                   )}
                   {showDeleteConfirm ? (
                     <ConfirmDialog

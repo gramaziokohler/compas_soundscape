@@ -98,7 +98,7 @@ export function createSoundEventFromUpload(
     prompt,
     prompt_index: originalIndex,
     total_copies: 1,
-    volume_db: config.spl_db ?? DEFAULT_SOUND_CONFIG.spl_db, // Default to 70 dB
+    volume_dbfs: config.dbfs ?? DEFAULT_SOUND_CONFIG.dbfs, // Default to -18 dBFS
     interval_seconds: config.interval_seconds ?? DEFAULT_SOUND_CONFIG.interval_seconds, // Default to 5 seconds
     isUploaded: true, // Mark as uploaded/library sound
     // Include entity_index (primary) and entity_indices (all) if entities are present.

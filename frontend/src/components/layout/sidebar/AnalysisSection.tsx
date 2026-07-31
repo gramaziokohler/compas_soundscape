@@ -75,7 +75,6 @@ export function AnalysisSection({
   analysisConfigs = [],
   activeTab,
   isRunning,
-  error,
   analysisResult = [],
   hasGlobalModelLoaded = false,
   onAddConfig,
@@ -506,7 +505,6 @@ export function AnalysisSection({
           header={header}
           getPendingCount={getPendingCount}
           isRunning={isRunning}
-          error={error}
           color="success"
           onReorder={handleReorderConfigs}
         />

@@ -95,8 +95,8 @@ export interface SoundEvent {
   prompt?: string;
   prompt_index?: number;
   total_copies?: number;
-  volume_db?: number; // SPL level in dB
-  current_volume_db?: number; // Current volume override (user-adjustable)
+  volume_dbfs?: number; // Level in dBFS (0 = full scale, negative = quieter)
+  current_volume_dbfs?: number; // Current volume override (user-adjustable)
   interval_seconds?: number; // Playback interval in seconds
   current_interval_seconds?: number; // Current interval override (user-adjustable)
   isUploaded?: boolean; // Flag indicating this sound was uploaded (not generated)
@@ -182,7 +182,7 @@ export interface SoundGenerationConfig {
   entity?: any;
   entities?: SoundEntity[];
   display_name?: string;
-  spl_db?: number; // SPL level from LLM estimation
+  dbfs?: number; // Level in dBFS from LLM estimation
   interval_seconds?: number; // Playback interval from LLM estimation
   type?: CardType; // Card type from CardType (single source of truth)
   error?: string | null; // Per-card error message

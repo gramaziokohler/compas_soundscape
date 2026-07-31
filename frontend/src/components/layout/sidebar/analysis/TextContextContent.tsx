@@ -4,6 +4,7 @@ import type { TextAnalysisConfig } from '@/types/analysis';
 import { NUM_SOUNDS_MAX, NUM_SOUNDS_MIN } from '@/utils/constants';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { CheckboxField } from '@/components/ui/CheckboxField';
+import { Notice } from '@/components/ui/Notice';
 import { useAreaDrawing } from '@/hooks/useAreaDrawing';
 import { pauseStore, commitStore, globalUndo, globalRedo } from '@/store';
 import { useBatchedSlider } from '@/hooks/useBatchedSlider';
@@ -128,7 +129,7 @@ export function TextContextContent({
       {/* Area status indicator */}
       {hasArea && !isDrawingThisCard && (
         <div className="flex items-center justify-between text-xs py-1">
-          <span className="text-success">Area defined</span>
+          <Notice type="success" variant="tag" message="Area defined" />
           <button
             onClick={removeArea}
             className="text-secondary-hover hover:text-foreground cursor-pointer text-xs"

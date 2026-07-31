@@ -38,7 +38,7 @@ interface RangeSliderProps {
  * * Usage:
  * ```tsx
  * <RangeSlider
- * label="Volume (dB SPL)"
+ * label="Volume (dBFS)"
  * value={volume}
  * min={30}
  * max={120}

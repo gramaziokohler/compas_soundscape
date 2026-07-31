@@ -13,7 +13,7 @@
  * - Axis labels and legend
  */
 
-import { AUDIO_VISUALIZATION, AMBISONIC } from "@/utils/constants";
+import { AUDIO_VISUALIZATION } from "@/utils/constants";
 import type { ViewportState } from "@/hooks/useWaveformInteraction";
 
 /**
@@ -60,12 +60,12 @@ export function getChannelNames(numChannels: number): string[] {
   
   if (numChannels === 4) {
     // First-Order Ambisonics (FOA) - SN3D/ACN ordering
-    return [...AMBISONIC.FOA_CHANNEL_NAMES];
+    return ['W', 'Y', 'Z', 'X'];
   }
   
   if (numChannels === 16) {
     // Third-Order Ambisonics (TOA) - SN3D/ACN ordering
-    return [...AMBISONIC.TOA_CHANNEL_NAMES];
+    return ['W', 'Y', 'Z', 'X', 'V', 'T', 'R', 'S', 'U', 'Q', 'O', 'M', 'K', 'L', 'N', 'P'];
   }
   
   // Generic multi-channel

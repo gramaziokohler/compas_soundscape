@@ -135,11 +135,13 @@ compas_soundscape/
 │       │       ├── Card.tsx                  # Card container component
 │       │       ├── CardSection.tsx           # Card section layout
 │       │       ├── CheckboxField.tsx         # Checkbox with label
-│       │       ├── ErrorToast.tsx            # Toast notification component
+│       │       ├── EmptyState.tsx             # Empty state placeholder
+│       │       ├── Notice.tsx                 # Severity-aware message bar / tag
+│       │       ├── Badge.tsx                  # Compact status pill
+│       │       ├── ErrorToast.tsx             # Toast notification component
 │       │       ├── Icon.tsx                  # Icon component
 │       │       ├── RangeSlider.tsx           # Range slider input
 │       │       ├── SceneControlButton.tsx    # Scene control button
-│       │       ├── ValidationMessage.tsx     # Validation message display
 │       │       ├── VerticalTabButton.tsx     # Vertical tab button
 │       │       └── VerticalVolumeSlider.tsx  # Volume slider (vertical)
 │       ├── contexts/

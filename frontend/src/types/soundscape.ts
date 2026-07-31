@@ -20,7 +20,7 @@ export interface SoundscapeSoundConfig {
   type?: string; // CardType: "text-to-audio", "upload", "library"
   duration: number;
   display_name?: string;
-  spl_db?: number;
+  dbfs?: number;
   interval_seconds?: number;
   /** @deprecated use entity_indices instead */
   entity_index?: number;
@@ -68,8 +68,8 @@ export interface SoundscapeSoundEvent {
   display_name?: string;
   prompt?: string;
   prompt_index?: number;
-  volume_db?: number;
-  current_volume_db?: number;
+  volume_dbfs?: number;
+  current_volume_dbfs?: number;
   interval_seconds?: number;
   current_interval_seconds?: number;
   is_uploaded: boolean;

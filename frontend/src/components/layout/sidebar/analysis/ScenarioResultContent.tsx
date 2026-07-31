@@ -2,6 +2,7 @@
 
 import type { FoleyResult, FoleySoundEvent, FoleyScenario } from '@/types/analysis';
 import { useSpeckleStore } from '@/store';
+import { Badge } from '@/components/ui/Badge';
 
 interface ScenarioResultContentProps {
   foleyResult: FoleyResult;
@@ -40,15 +41,7 @@ function FoleySoundItem({ sound, checked, onToggle }: FoleySoundItemProps) {
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-xs text-background-static font-semibold truncate">{sound.soundName}</span>
           {sound.category && (
-            <span
-              className="text-[10px] px-1.5 py-0 rounded-full font-medium flex-shrink-0"
-              style={{
-                backgroundColor: 'var(--color-secondary-light)',
-                color: 'var(--color-secondary-hover)',
-              }}
-            >
-              {sound.category}
-            </span>
+            <Badge variant="neutral">{sound.category}</Badge>
           )}
           {sound.spl && (
             <span

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { SoundGenerationConfig } from '@/types';
+import { DEFAULT_DBFS } from '@/utils/constants';
 import { WaveSurferPlayer } from '@/components/audio/WaveSurferPlayer';
 
 /**
@@ -35,7 +36,7 @@ export function SampleAudioMode({
         <div className="relative">
           <WaveSurferPlayer
             audioUrl={config.uploadedAudioUrl}
-            volumeDb={70}
+            volumeDbfs={DEFAULT_DBFS}
             isPlaying={isPreviewPlaying}
             onPlayPause={() => setIsPreviewPlaying((v) => !v)}
             onStop={(ws) => {

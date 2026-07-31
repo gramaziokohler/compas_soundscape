@@ -25,8 +25,7 @@ import { AnechoicMode } from './modes/AnechoicMode';
 import { ResonanceMode } from './modes/ResonanceMode';
 import { AmbisonicIRMode } from './modes/AmbisonicIRMode';
 import type { IBinauralDecoder } from './core/interfaces/IBinauralDecoder';
-import { BinauralDecoder } from './decoders/BinauralDecoder';
-import { OmnitoneFOADecoder } from './decoders/OmnitoneFOADecoder';
+import { OmnitoneDecoder } from './decoders/OmnitoneDecoder';
 
 // Utilities
 import {
@@ -43,7 +42,6 @@ import {
   createAudioError,
   handleIRLoadFailure,
   handleUnsupportedChannelCount,
-  handleHRTFLoadFailure,
   handleUnsupportedAmbisonicOrder,
   handleModeInitializationFailure,
   logAudioError,
@@ -56,7 +54,7 @@ import {
   getAudioBufferInfo,
   formatAudioBufferInfo
 } from './utils/audio-file-decoder';
-import { AUDIO_CONTROL, AMBISONIC, DEFAULT_SPEED_OF_SOUND, HRTF, API_BASE_URL } from '@/utils/constants';
+import { AUDIO_CONTROL, DEFAULT_SPEED_OF_SOUND, API_BASE_URL } from '@/utils/constants';
 
 export class AudioOrchestrator implements IAudioOrchestrator {
   private audioContext: AudioContext | null = null;
@@ -70,9 +68,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   private ambisonicIRMode: AmbisonicIRMode | null = null;
 
   // Binaural decoder (shared by all ambisonic modes)
-  // Uses either JSAmbisonics or Omnitone based on AMBISONIC.USE_OMNITONE_FOR_FOA constant
   private binauralDecoder: IBinauralDecoder | null = null;
-  private hrtfLoadFailed: boolean = false;
 
   // IR state
   private irState: IRState = {
@@ -178,38 +174,14 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       }
 
       // Create binaural decoder (shared by all ambisonic modes)
-      // For FOA, use Omnitone if enabled in constants, otherwise use JSAmbisonics
-      // For SOA/TOA, always use JSAmbisonics (Omnitone doesn't support higher orders)
-      const useFOA = this.ambisonicOrder === 1;
-      const useOmnitone = useFOA && AMBISONIC.USE_OMNITONE_FOR_FOA;
-      
-      if (useOmnitone) {
-        console.log('[AudioOrchestrator] Using Omnitone FOA decoder (Google SADIE HRTFs)');
-        this.binauralDecoder = new OmnitoneFOADecoder();
-      } else {
-        console.log(`[AudioOrchestrator] Using JSAmbisonics decoder (order ${this.ambisonicOrder})`);
-        this.binauralDecoder = new BinauralDecoder();
-      }
-      
+      // OmnitoneDecoder: FOARenderer for order 1, HOARenderer for order 2/3
+      this.binauralDecoder = new OmnitoneDecoder();
       try {
         await this.binauralDecoder.initialize(audioContext, this.ambisonicOrder);
       } catch (error) {
-        const audioError = handleHRTFLoadFailure(error as Error);
+        const audioError = handleModeInitializationFailure(AudioMode.ANECHOIC, error as Error);
         logAudioError(audioError, 'AudioOrchestrator');
-        this.hrtfLoadFailed = true;
-        this.warnings.push('HRTF data unavailable - using basic panning');
-      }
-
-      // Load actual HRTFs for physically accurate binaural rendering.
-      // OmnitoneFOADecoder has built-in HRTFs; BinauralDecoder defaults to
-      // cardioid virtual mics (fake amplitude coefficients).
-      if (!useOmnitone && this.binauralDecoder instanceof BinauralDecoder) {
-        try {
-          await (this.binauralDecoder as BinauralDecoder).loadHRTFs(HRTF.DEFAULT_HRTF_PATH);
-          console.log('[AudioOrchestrator] HRTFs loaded for real-time binaural');
-        } catch {
-          console.warn('[AudioOrchestrator] HRTFs unavailable for real-time — using cardioid fallback');
-        }
+        this.warnings.push('Omnitone decoder unavailable — audio disabled');
       }
 
       // Initialize default mode based on preferences
@@ -341,6 +313,8 @@ export class AudioOrchestrator implements IAudioOrchestrator {
                 this.binauralDecoder.getOutputNode(),
                 this.limiter!
               );
+              // Anechoic encodes world-space; delegate head rotation to the decoder
+              this.binauralDecoder.setRotationEnabled(true);
             }
           }
           return this.anechoicMode;
@@ -760,11 +734,6 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       notices.push(`🎵 ${orderNames[this.ambisonicOrder]} ambisonic rendering`);
     }
     
-    // HRTF warning
-    if (this.hrtfLoadFailed) {
-      notices.push('⚠️ HRTF data unavailable - using basic panning');
-    }
-    
     // Add any other warnings
     this.warnings.forEach(warning => {
       if (!notices.some(n => n.includes(warning))) {
@@ -994,6 +963,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       // Reconnect to decoder
       if (this.binauralDecoder) {
         this.anechoicMode.getOutputNode().connect(this.binauralDecoder.getInputNode());
+        this.binauralDecoder.setRotationEnabled(true);
       }
 
       // Smooth transition

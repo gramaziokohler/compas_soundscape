@@ -4,7 +4,7 @@
 from pydantic import BaseModel
 from enum import Enum
 from typing import Optional
-from config.constants import DEFAULT_AUDIO_MODEL, DEFAULT_LLM_MODEL, DEFAULT_SPL_DB
+from config.constants import DEFAULT_AUDIO_MODEL, DEFAULT_LLM_MODEL, DEFAULT_DBFS
 
 
 class PromptRequest(BaseModel):
@@ -20,7 +20,7 @@ class SoundGenerationRequest(BaseModel):
     apply_denoising: bool = False
     trim_silence: bool = False
     audio_model: str = DEFAULT_AUDIO_MODEL
-    base_spl_db: float = DEFAULT_SPL_DB
+    base_dbfs: float = DEFAULT_DBFS
 
 
 class SoundGenerationStartResponse(BaseModel):
@@ -283,7 +283,7 @@ class SoundscapeSoundConfig(BaseModel):
     type: Optional[str] = None  # CardType: "text-to-audio", "upload", "library"
     duration: float = 5.0
     display_name: Optional[str] = None
-    spl_db: Optional[float] = None
+    dbfs: Optional[float] = None
     interval_seconds: Optional[float] = None
     entity_index: Optional[int] = None
     entity_node_id: Optional[str] = None  # Full Speckle object hash ID
@@ -308,8 +308,8 @@ class SoundscapeSoundEvent(BaseModel):
     display_name: Optional[str] = None
     prompt: Optional[str] = None
     prompt_index: Optional[int] = None
-    volume_db: Optional[float] = None
-    current_volume_db: Optional[float] = None
+    volume_dbfs: Optional[float] = None
+    current_volume_dbfs: Optional[float] = None
     interval_seconds: Optional[float] = None
     current_interval_seconds: Optional[float] = None
     is_uploaded: bool = False

@@ -39,7 +39,7 @@ from models.schemas import (
     ScenarioResponse,
 )
 from config.constants import (
-    DEFAULT_SPL_DB,
+    DEFAULT_DBFS,
     LLM_SUGGESTED_INTERVAL_SECONDS,
     DEFAULT_DURATION_SECONDS,
     LLM_TASK_CLEANUP_DELAY_SECONDS,
@@ -111,7 +111,7 @@ async def generate_prompts(request: UnifiedPromptGenerationRequest):
                     "entities": entity_objects,
                     "prompt": sound_data["prompt"],
                     "display_name": sound_data["display_name"],
-                    "spl_db": sound_data.get("spl_db", DEFAULT_SPL_DB),
+                    "dbfs": sound_data.get("dbfs", DEFAULT_DBFS),
                     "interval_seconds": sound_data.get("interval_seconds", LLM_SUGGESTED_INTERVAL_SECONDS),
                     "duration_seconds": sound_data.get("duration_seconds", DEFAULT_DURATION_SECONDS),
                 })

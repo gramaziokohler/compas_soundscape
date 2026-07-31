@@ -65,6 +65,10 @@ export class SpeckleAudioCoordinator {
   private sourceReceiverIRMapping: SourceReceiverIRMapping | null = null;
   private activeReceiverId: string | null = null;
 
+  // Headphones mesh hidden while viewing through that listener in FPS mode
+  private fpsHiddenReceiverId: string | null = null;
+  private fpsHiddenGridInstance: number | null = null;
+
   // Callback when receiver is activated (for parent component integration)
   private onReceiverActivatedCallback: ((receiverId: string) => void) | null = null;
 
@@ -187,7 +191,7 @@ export class SpeckleAudioCoordinator {
         if (mesh) {
           // Fixed default orientation: always face +Y axis
           const target = new THREE.Vector3(mesh.position.x, mesh.position.y + 1, mesh.position.z);
-          this.enableFirstPersonMode(mesh.position.clone(), target);
+          this.enableFirstPersonMode(mesh.position.clone(), target, receiverId);
         }
       }
 
@@ -507,14 +511,56 @@ export class SpeckleAudioCoordinator {
     this.viewer.requestRender();
   }
 
-  public enableFirstPersonMode(position: THREE.Vector3, target: THREE.Vector3): void {
+  public enableFirstPersonMode(
+    position: THREE.Vector3,
+    target: THREE.Vector3,
+    receiverId?: string | null
+  ): void {
     if (!this.speckleCameraController) return;
+
+    // Hide the active listener's headphones mesh while viewing through it.
+    this.hideListenerMeshForFPS(receiverId ?? null, position);
+
     this.speckleCameraController.enableFirstPersonMode(position, target);
   }
 
   public disableFirstPersonMode(): void {
     if (!this.speckleCameraController) return;
+    this.restoreListenerMeshForFPS();
     this.speckleCameraController.disableFirstPersonMode();
+  }
+
+  /**
+   * Hide the headphones mesh of the listener currently being viewed in FPS mode
+   * (only that one — other listeners stay visible). Regular receivers are hidden
+   * by ID; grid listener points (no receiver ID) are hidden by position.
+   */
+  private hideListenerMeshForFPS(receiverId: string | null, position: THREE.Vector3): void {
+    // Restore any previously hidden mesh (e.g. FPS re-entered on another listener).
+    this.restoreListenerMeshForFPS();
+
+    if (receiverId && this.receiverManager) {
+      this.receiverManager.setReceiverVisible(receiverId, false);
+      this.fpsHiddenReceiverId = receiverId;
+    } else if (this.gridReceiverManager) {
+      const instance = this.gridReceiverManager.findInstanceAtPosition(position);
+      if (instance !== null) {
+        this.gridReceiverManager.setInstanceVisible(instance, false);
+        this.fpsHiddenGridInstance = instance;
+      }
+    }
+  }
+
+  /** Restore the headphones mesh hidden for FPS mode, if any. */
+  private restoreListenerMeshForFPS(): void {
+    if (this.fpsHiddenReceiverId && this.receiverManager) {
+      this.receiverManager.setReceiverVisible(this.fpsHiddenReceiverId, true);
+      this.fpsHiddenReceiverId = null;
+    }
+    if (this.fpsHiddenGridInstance !== null && this.gridReceiverManager) {
+      this.gridReceiverManager.setInstanceVisible(this.fpsHiddenGridInstance, true);
+      this.fpsHiddenGridInstance = null;
+    }
   }
 
   public isFirstPersonMode(): boolean {
@@ -527,9 +573,9 @@ export class SpeckleAudioCoordinator {
     this.speckleCameraController.teleportFirstPerson(position);
   }
 
-  public rotateFirstPersonView(deltaYaw: number, deltaPitch: number): void {
+  public rotateFirstPersonView(deltaYaw: number, deltaPitch: number, deltaRoll: number = 0): void {
     if (!this.speckleCameraController) return;
-    this.speckleCameraController.rotateFirstPersonView(deltaYaw, deltaPitch);
+    this.speckleCameraController.rotateFirstPersonView(deltaYaw, deltaPitch, deltaRoll);
   }
 
   public setOnSpeckleObjectSelected(callback: (objectIds: string[], intersectionPoint?: THREE.Vector3) => void): void {

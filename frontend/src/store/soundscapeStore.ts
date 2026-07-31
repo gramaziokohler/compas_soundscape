@@ -26,7 +26,7 @@ import {
   AUDIO_MODEL_ELEVENLABS,
   LIBRARY_MAX_SEARCH_RESULTS,
   DUPLICATE_POSITION_OFFSET,
-  DEFAULT_SPL_DB,
+  DEFAULT_DBFS,
   TTS_DEFAULT_VOICE,
 } from '@/utils/constants';
 import { loadAudioFile, revokeAudioUrl } from '@/lib/audio/utils/audio-upload';
@@ -34,7 +34,7 @@ import { calculateSoundPosition, type GeometryBounds } from '@/utils/positioning
 import { createSoundEventFromUpload } from '@/utils/event-factory';
 import { generateSoundEffect } from '@/services/elevenlabs';
 import { apiService } from '@/services/api';
-import { notifyError } from './errorsStore';
+import { notifySectionError } from './errorsStore';
 import { useFileUploadStore } from './fileUploadStore';
 import { useAudioControlsStore } from './audioControlsStore';
 import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
@@ -51,13 +51,13 @@ let _currentTtsGenerationId: string | null = null;
 
 async function calibrateBlobUrl(
   blobOrUrl: Blob | string,
-  splDb: number,
+  dbfs: number,
   applyDenoising: boolean,
   trimSilence: boolean = false,
 ): Promise<string> {
   const blob =
     typeof blobOrUrl === 'string' ? await fetch(blobOrUrl).then((r) => r.blob()) : blobOrUrl;
-  const { url } = await apiService.calibrateAudio(blob, splDb, applyDenoising, trimSilence);
+  const { url } = await apiService.calibrateAudio(blob, dbfs, applyDenoising, trimSilence);
   return url;
 }
 
@@ -165,7 +165,7 @@ export interface SoundscapeStoreState {
   ) => void;
   injectExtractedSEDSounds: (sounds: Array<{
     name: string;
-    spl_db?: number;
+    dbfs?: number;
     interval_seconds?: number;
     variants: Array<{ url: string; duration: number }>;
   }>, parentUsageOriginalIndex?: number) => void;
@@ -355,11 +355,13 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 'soundscape/sampleLoaded',
               );
             } catch (error) {
+              const msg = error instanceof Error ? error.message : 'Failed to load sample audio';
               set(
-                { soundGenError: error instanceof Error ? error.message : 'Failed to load sample audio' },
+                { soundGenError: msg },
                 false,
                 'soundscape/sampleError',
               );
+              notifySectionError(msg);
             }
           }
         },
@@ -481,11 +483,13 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             ttsConfigs.length;
 
           if (total === 0) {
+            const msg = 'Please enter at least one sound prompt or upload an audio file.';
             set(
-              { soundGenError: 'Please enter at least one sound prompt or upload an audio file.' },
+              { soundGenError: msg },
               false,
               'soundscape/generateEmpty',
             );
+            notifySectionError(msg);
             return;
           }
 
@@ -514,7 +518,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 apply_denoising: applyNoiseReduction,
                 trim_silence: trimSilence,
                 audio_model: audioModel,
-                base_spl_db: useAudioControlsStore.getState().globalBaseSplDb,
+                base_dbfs: useAudioControlsStore.getState().globalBaseDbfs,
               });
               _currentGenerationId = generation_id;
               recordInflightJob(generation_id, 'sound');
@@ -636,21 +640,21 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             }
 
             // ── Uploaded / sample audio ───────────────────────────────────────
-            const globalBaseSplDb = useAudioControlsStore.getState().globalBaseSplDb;
+            const globalBaseDbfs = useAudioControlsStore.getState().globalBaseDbfs;
             const uploadedEvents: any[] = [];
             for (const { config, originalIndex } of uploadedConfigs) {
               const audioFileUrl = config.uploadedAudioUrl;
               if (!audioFileUrl) continue;
-              const resolvedSpl = config.spl_db ?? globalBaseSplDb;
+              const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
               const audioUrl = await calibrateBlobUrl(
                 audioFileUrl,
-                resolvedSpl,
+                resolvedDbfs,
                 applyDenoising,
                 trimSilence,
               );
               uploadedEvents.push(
                 createSoundEventFromUpload(
-                  { ...config, spl_db: resolvedSpl },
+                  { ...config, dbfs: resolvedDbfs },
                   audioUrl,
                   originalIndex,
                   total,
@@ -675,15 +679,15 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   signal: _abortController.signal,
                 });
                 if (!dlRes.ok) throw new Error('Failed to download sound');
-                const resolvedSpl = config.spl_db ?? globalBaseSplDb;
+                const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
                 const audioUrl = await calibrateBlobUrl(
                   await dlRes.blob(),
-                  resolvedSpl,
+                  resolvedDbfs,
                   applyDenoising,
                 );
                 libraryEvents.push(
                   createSoundEventFromUpload(
-                    { ...config, spl_db: resolvedSpl },
+                    { ...config, dbfs: resolvedDbfs },
                     audioUrl,
                     originalIndex,
                     total,
@@ -705,16 +709,16 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   signal: _abortController.signal,
                 });
                 if (!dlRes.ok) throw new Error('Failed to download catalog sound');
-                const resolvedSpl = config.spl_db ?? globalBaseSplDb;
+                const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
                 const audioUrl = await calibrateBlobUrl(
                   await dlRes.blob(),
-                  resolvedSpl,
+                  resolvedDbfs,
                   applyDenoising,
                   trimSilence,
                 );
                 catalogEvents.push(
                   createSoundEventFromUpload(
-                    { ...config, spl_db: resolvedSpl },
+                    { ...config, dbfs: resolvedDbfs },
                     audioUrl,
                     originalIndex,
                     total,
@@ -749,7 +753,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                       voice_name: config.voice_name,
                       display_name: config.display_name || lineText,
                       position: config.position,
-                      spl_db: config.spl_db ?? globalBaseSplDb,
+                      dbfs: config.dbfs ?? globalBaseDbfs,
                       prompt_index: originalIndex,
                       copy_index: lineIdx,
                       total_copies: speechLines.length,
@@ -765,7 +769,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                       voice_name: config.voice_name,
                       display_name: config.display_name || config.prompt,
                       position: config.position,
-                      spl_db: config.spl_db ?? globalBaseSplDb,
+                      dbfs: config.dbfs ?? globalBaseDbfs,
                       // Carry the card's config index + variant index so the backend can
                       // echo them back. Mirrors the text-to-audio flow (sounds_worker),
                       // making variant grouping robust to backend re-indexing/filtering.
@@ -819,15 +823,10 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   position,
                   geometry: sound.geometry || { vertices: [], faces: [] },
                   isUploaded: true,
-                  volume_db: sound.volume_db ?? originalConfig?.spl_db ?? globalBaseSplDb,
+                  volume_dbfs: sound.volume_dbfs ?? originalConfig?.dbfs ?? globalBaseDbfs,
                   category: originalConfig?.category || 'speech',
                   display_name: ttsDisplayName,
                 };
-                console.log(
-                  '[duration-trace][soundscapeStore.mapTtsSound]',
-                  'incoming duration:', sound.duration,
-                  '→ mapped id:', mapped.id, 'mapped duration:', mapped.duration,
-                );
                 return mapped;
               };
 
@@ -854,10 +853,6 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                         ...(current || []).filter((e: any) => !newIds.has(e.id)),
                         ...newPartials,
                       ];
-                      console.log(
-                        '[duration-trace][handleGenerateInternal] partial merge, newPartials durations:',
-                        newPartials.map((e: any) => ({ id: e.id, duration: e.duration })),
-                      );
                       set({ generatedSounds: merged }, false, 'soundscape/ttsPartial');
                     }
 
@@ -896,16 +891,16 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 durationSeconds:
                   duration >= 0.5 && duration <= 22 ? duration : undefined,
               });
-              const resolvedSpl = config.spl_db ?? globalBaseSplDb;
+              const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
                 const audioUrl = await calibrateBlobUrl(
                   rawUrl,
-                  resolvedSpl,
+                  resolvedDbfs,
                   applyDenoising,
                   trimSilence,
                 );
               elevenLabsEvents.push(
                 createSoundEventFromUpload(
-                  { ...config, spl_db: resolvedSpl },
+                  { ...config, dbfs: resolvedDbfs },
                   audioUrl,
                   originalIndex,
                   total,
@@ -939,14 +934,6 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               'elevenLabs:', elevenLabsEvents.length,
               'existing:', existing.length,
               'allEvents:', allEvents.length);
-            if (ttsEvents.length > 0) {
-              console.log('[handleGenerateInternal] TTS events in final result:',
-                ttsEvents.map((e: any) => ({ id: e.id, pi: e.prompt_index, sci: e.speech_card_index, cat: e.category })));
-              console.log(
-                '[duration-trace][handleGenerateInternal] final ttsEvents durations:',
-                ttsEvents.map((e: any) => ({ id: e.id, duration: e.duration })),
-              );
-            }
 
             set(
               { generatedSounds: allEvents, soundscapeData: allEvents.length > 0 ? allEvents : null },
@@ -957,11 +944,11 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             if (err.name === 'AbortError' || err.message === 'AbortError') {
               const msg = 'Sound generation stopped by user.';
               set({ soundGenError: msg }, false, 'soundscape/generateAbort');
-              notifyError(msg, 'info');
+              notifySectionError(msg, 'info');
             } else {
               const isQuota = err.message.includes('quota') || err.message.includes('429');
               set({ soundGenError: err.message }, false, 'soundscape/generateError');
-              notifyError(err.message, isQuota ? 'warning' : 'error');
+              notifySectionError(err.message, isQuota ? 'warning' : 'error');
             }
           } finally {
             set({ isSoundGenerating: false, soundGenTargetIndices: null, soundGenProgress: '', soundGenProgressValue: 0 }, false, 'soundscape/generateEnd');
@@ -1049,6 +1036,14 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               _soundPollInterval = setInterval(async () => {
                 try {
                   const s = await apiService.getSoundGenerationStatus(generation_id);
+                  set(
+                    {
+                      soundGenProgress: s.status,
+                      soundGenProgressValue: s.progress,
+                    },
+                    false,
+                    'soundscape/regenPoll',
+                  );
                   if (s.cancelled) {
                     clearInterval(_soundPollInterval!);
                     _soundPollInterval = null;
@@ -1108,7 +1103,9 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             removeInflightJob(generation_id);
           } catch (err: any) {
             if (err?.message !== 'AbortError') {
-              set({ soundGenError: `Regeneration failed: ${err?.message || err}` }, false, 'soundscape/regenError');
+              const msg = `Regeneration failed: ${err?.message || err}`;
+              set({ soundGenError: msg }, false, 'soundscape/regenError');
+              notifySectionError(msg);
             }
           } finally {
             set(
@@ -1181,11 +1178,13 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             }));
             set({ soundscapeData: updated }, false, 'soundscape/reprocessed');
           } catch (error) {
+            const msg = error instanceof Error ? error.message : 'Failed to reprocess sounds';
             set(
-              { soundGenError: error instanceof Error ? error.message : 'Failed to reprocess sounds' },
+              { soundGenError: msg },
               false,
               'soundscape/reprocessError',
             );
+            notifySectionError(msg);
           }
         },
 
@@ -1222,7 +1221,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               // Update metadata fields, preserve generation settings and any user-dragged position
               updated[existingIdx] = {
                 ...updated[existingIdx],
-                spl_db: newConfig.spl_db,
+                dbfs: newConfig.dbfs,
                 interval_seconds: newConfig.interval_seconds,
                 timestamps: newConfig.timestamps,
                 duration: newConfig.duration,
@@ -1297,11 +1296,13 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               'soundscape/uploadAudio',
             );
           } catch (error) {
+            const msg = error instanceof Error ? error.message : 'Failed to upload audio';
             set(
-              { soundGenError: error instanceof Error ? error.message : 'Failed to upload audio' },
+              { soundGenError: msg },
               false,
               'soundscape/uploadAudioError',
             );
+            notifySectionError(msg);
           }
         },
 
@@ -1808,7 +1809,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               // Update metadata only — preserve generation state
               updatedConfigs[existingIdx] = {
                 ...updatedConfigs[existingIdx],
-                spl_db: s.spl_db ?? updatedConfigs[existingIdx].spl_db,
+                dbfs: s.dbfs ?? updatedConfigs[existingIdx].dbfs,
                 interval_seconds: s.interval_seconds ?? updatedConfigs[existingIdx].interval_seconds,
               };
               // Update variant URLs in existing events
@@ -1831,7 +1832,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 steps: globalSteps,
                 type: 'upload' as import('@/types').CardType,
                 display_name: s.name,
-                spl_db: s.spl_db,
+                dbfs: s.dbfs,
                 interval_seconds: s.interval_seconds,
                 parentUsageOriginalIndex,
               });
@@ -1845,7 +1846,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   prompt: s.name,
                   prompt_index: promptIndex,
                   total_copies: vi,
-                  volume_db: s.spl_db ?? 70,
+                  volume_dbfs: s.dbfs ?? DEFAULT_DBFS,
                   interval_seconds: s.interval_seconds ?? 30,
                   isUploaded: true,
                 });

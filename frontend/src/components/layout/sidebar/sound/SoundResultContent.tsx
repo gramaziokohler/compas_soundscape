@@ -1,6 +1,7 @@
 'use client';
 
 import type { SoundEvent } from '@/types';
+import { DEFAULT_DBFS } from '@/utils/constants';
 import { SoundCardWaveSurfer } from '@/components/audio/SoundCardWaveSurfer';
 import { SoundCardBody } from './SoundCardBody';
 
@@ -8,7 +9,9 @@ import { SoundCardBody } from './SoundCardBody';
  * SoundResultContent Component
  *
  * Renders the playback controls for a generated sound.
- * Shows waveform, volume slider, interval slider, and variant selector.
+ * Shows waveform, volume slider, interval slider.
+ * The letter-square variant selector is rendered by the Card component
+ * (see Card `variants` / `showVariantsPostGen`), not here.
  *
  * This is the `afterContent` for the Sound Card component.
  */
@@ -30,11 +33,10 @@ export interface SoundResultContentProps {
   soundTimestamps?: { [soundId: string]: number[] };
   onPreviewPlayPause?: (soundId: string) => void;
   onPreviewStop?: (soundId: string) => void;
-  onVolumeChange?: (soundId: string, volumeDb: number) => void;
+  onVolumeChange?: (soundId: string, volumeDbfs: number) => void;
   onIntervalChange?: (soundId: string, intervalSeconds: number) => void;
   onSchedulingModeChange?: (soundId: string, mode: 'interval' | 'timestamps') => void;
   onTimestampsChange?: (soundId: string, timestamps: number[]) => void;
-  onVariantChange?: (promptIdx: number, variantIdx: number) => void;
   onUpdatePosition?: (soundId: string, position: [number, number, number]) => void;
   onUnlinkEntity?: () => void;
   onMute?: (soundId: string) => void;
@@ -42,15 +44,9 @@ export interface SoundResultContentProps {
   isRegenerating?: boolean;
   /** The index of the variant that is currently being generated (variants.length). */
   pendingVariantIdx?: number;
-  /** Callback to add a new variant (trigger regeneration). */
-  onAddVariant?: (index: number) => void;
-  /** Callback to delete a variant. Only shown when >1 variant exists. */
-  onDeleteVariant?: (promptIndex: number, variantIdx: number) => void;
-  /** When true, the variant selector bar (A/B/C + add + delete) is visible. */
-  showVariantSelector?: boolean;
 }
 
-/** Spinner icon reused across the variant bar. */
+/** Spinner icon reused across the pending-variant placeholder. */
 function SpinnerIcon() {
   return (
     <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -78,20 +74,18 @@ export function SoundResultContent({
   onIntervalChange,
   onSchedulingModeChange: _onSchedulingModeChange,
   onTimestampsChange,
-  onVariantChange,
   onUpdatePosition,
   onUnlinkEntity,
   onMute,
   isRegenerating = false,
   pendingVariantIdx: _pendingVariantIdx,
-  onAddVariant,
-  onDeleteVariant,
-  showVariantSelector = true,
 }: SoundResultContentProps) {
   const isShowingPending = isRegenerating && selectedVariantIdx === _pendingVariantIdx;
 
   // Volume and interval from live state
-  const currentVolumeDb = soundVolumes[generatedSound.id] ?? generatedSound.volume_db ?? 70;
+  const currentVolumeDbfs = soundVolumes[generatedSound.id] ?? generatedSound.volume_dbfs ?? DEFAULT_DBFS;
+  // The WAV is calibrated to this level — the preview gain is applied relative to it.
+  const baseVolumeDbfs = generatedSound.volume_dbfs ?? DEFAULT_DBFS;
   const currentIntervalSeconds = soundIntervals[generatedSound.id] ?? generatedSound.interval_seconds ?? 30;
 
   // Resolve current timestamps: prefer store, then fall back to SoundEvent.timestamps (MM:SS → seconds)
@@ -100,79 +94,6 @@ export function SoundResultContent({
       const [mm, ss] = t.split(':').map(Number);
       return (mm ?? 0) * 60 + (ss ?? 0);
     }) ?? [];
-
-  // Variant selector — only shown when enabled and onVariantChange is provided
-  const pendingIdx = _pendingVariantIdx ?? variants.length;
-  const canAddVariant = onAddVariant && !isRegenerating;
-
-  const variantSelector = (showVariantSelector && onVariantChange) ? (
-    <div
-      className="flex gap-1 overflow-x-auto flex-shrink-0"
-      style={{ scrollbarWidth: 'thin', scrollbarColor: 'var(--card-color, var(--color-primary)) transparent' }}
-    >
-      {/* Existing variants */}
-      {variants.map((v, idx) => {
-        const showDelete = variants.length > 1 && onDeleteVariant;
-        return (
-          <div key={v.id || idx} className="relative flex-shrink-0 group">
-            <button
-              onClick={() => onVariantChange(index, idx)}
-              title={String.fromCharCode(65 + idx)}
-              className={`w-5 h-5 text-[10px] leading-none rounded transition-colors flex items-center justify-center ${
-                idx === selectedVariantIdx ? 'text-white' : 'bg-secondary text-secondary-light'
-              }`}
-              style={idx === selectedVariantIdx ? { backgroundColor: 'var(--card-color, var(--color-primary))' } : undefined}
-            >
-              {String.fromCharCode(65 + idx)}
-            </button>
-            {showDelete && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDeleteVariant(index, idx);
-                }}
-                title="Delete variant"
-                className="absolute -top-0 -right-0 w-2 h-2 rounded-full bg-error text-white text-[8px] leading-none opacity-0 group-hover:opacity-100 hover:scale-150 transition-all flex items-center justify-center"
-              >
-                ×
-              </button>
-            )}
-          </div>
-        );
-      })}
-
-      {/* Pending variant (regenerating) */}
-      {isRegenerating && (
-        <button
-          key="pending"
-          onClick={() => onVariantChange(index, pendingIdx)}
-          title={String.fromCharCode(65 + pendingIdx)}
-          className={`w-5 h-5 text-[10px] rounded transition-colors flex-shrink-0 flex items-center justify-center ${
-            pendingIdx === selectedVariantIdx ? 'text-white' : 'bg-secondary text-secondary-light'
-          }`}
-          style={pendingIdx === selectedVariantIdx ? { backgroundColor: 'var(--card-color, var(--color-primary))' } : undefined}
-        >
-          {pendingIdx === selectedVariantIdx ? (
-            <SpinnerIcon />
-          ) : (
-            <span className="text-[8px]">{String.fromCharCode(65 + pendingIdx)}</span>
-          )}
-        </button>
-      )}
-
-      {/* Add variant button */}
-      {canAddVariant && (
-        <button
-          key="add"
-          onClick={() => onAddVariant(index)}
-          title="Generate new variant"
-          className="w-5 h-5 text-[10px] leading-none rounded bg-secondary text-secondary-light hover:text-white hover:opacity-80 transition-colors flex-shrink-0 flex items-center justify-center"
-        >
-          +
-        </button>
-      )}
-    </div>
-  ) : null;
 
   // When showing the pending variant (regenerating), render a progress placeholder
   if (isShowingPending) {
@@ -186,14 +107,13 @@ export function SoundResultContent({
             </span>
           </div>
         }
-        extraContent={variantSelector}
-        volumeDb={currentVolumeDb}
+        volumeDbfs={currentVolumeDbfs}
         intervalSeconds={currentIntervalSeconds}
         schedulingMode={schedulingMode}
         timestamps={currentTimestamps}
         position={generatedSound.position}
         entityIndex={generatedSound.entity_index}
-        onVolumeChange={onVolumeChange ? (db) => onVolumeChange(generatedSound.id, db) : undefined}
+        onVolumeChange={onVolumeChange ? (dbfs) => onVolumeChange(generatedSound.id, dbfs) : undefined}
         onIntervalChange={onIntervalChange ? (s) => onIntervalChange(generatedSound.id, s) : undefined}
         onTimestampsChange={onTimestampsChange ? (ts) => onTimestampsChange(generatedSound.id, ts) : undefined}
         onUpdatePosition={onUpdatePosition ? (pos) => onUpdatePosition(generatedSound.id, pos) : undefined}
@@ -212,7 +132,8 @@ export function SoundResultContent({
       mainContent={
         <SoundCardWaveSurfer
           audioUrl={generatedSound.url}
-          volumeDb={currentVolumeDb}
+          volumeDbfs={currentVolumeDbfs}
+          baseVolumeDbfs={baseVolumeDbfs}
           isPlaying={isPreviewPlaying}
           isMuted={isMuted}
           silent={silent}
@@ -221,14 +142,13 @@ export function SoundResultContent({
           onStop={() => onPreviewStop?.(generatedSound.id)}
         />
       }
-      extraContent={variantSelector}
-      volumeDb={currentVolumeDb}
+      volumeDbfs={currentVolumeDbfs}
       intervalSeconds={currentIntervalSeconds}
       schedulingMode={schedulingMode}
       timestamps={currentTimestamps}
       position={generatedSound.position}
       entityIndex={generatedSound.entity_index}
-      onVolumeChange={onVolumeChange ? (db) => onVolumeChange(generatedSound.id, db) : undefined}
+      onVolumeChange={onVolumeChange ? (dbfs) => onVolumeChange(generatedSound.id, dbfs) : undefined}
       onIntervalChange={onIntervalChange ? (s) => onIntervalChange(generatedSound.id, s) : undefined}
       onTimestampsChange={onTimestampsChange ? (ts) => onTimestampsChange(generatedSound.id, ts) : undefined}
       onUpdatePosition={onUpdatePosition ? (pos) => onUpdatePosition(generatedSound.id, pos) : undefined}

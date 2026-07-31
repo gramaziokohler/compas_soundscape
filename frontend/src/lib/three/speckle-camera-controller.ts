@@ -28,12 +28,19 @@ export class SpeckleCameraController {
 
   // First-person mode state
   private firstPersonMode: boolean = false;
-  private firstPersonRotation: { yaw: number; pitch: number } = { yaw: 0, pitch: 0 };
+  private firstPersonRotation: { yaw: number; pitch: number; roll: number } = { yaw: 0, pitch: 0, roll: 0 };
   private lockedPosition: THREE.Vector3 | null = null;
 
   // Camera state before entering first-person mode (for restoration)
   private savedCameraPosition: THREE.Vector3 | null = null;
   private savedCameraTarget: THREE.Vector3 | null = null;
+
+  // True while FPS mode has switched Speckle's active controls to FlyControls.
+  // FlyControls.update() early-returns when disabled, so our direct camera
+  // writes (including roll) are not overwritten by the goal/damper system.
+  // SmoothOrbitControls.update() ignores the enabled flag and re-derives the
+  // camera from spherical coordinates every frame, which would wipe roll.
+  private fpsUsesFlyControls: boolean = false;
 
   /**
    * Create a new SpeckleCameraController
@@ -53,7 +60,7 @@ export class SpeckleCameraController {
 
   /**
    * Enable first-person mode at a specific position
-   * Uses Speckle's native fromPositionAndTarget() API
+   * Locks the camera at the position and drives it directly from yaw/pitch/roll
    * @param position - Position to lock the camera at
    * @param target - Initial look-at target
    */
@@ -67,16 +74,21 @@ export class SpeckleCameraController {
     if (!this.firstPersonMode) {
       this.savedCameraPosition = this.cameraController.controls.getPosition().clone();
       this.savedCameraTarget = this.cameraController.controls.getTarget().clone();
+
+      // Switch to FlyControls so disabling the controller actually stops its
+      // update loop (SmoothOrbitControls.update() ignores enabled and keeps
+      // overwriting the camera orientation, wiping roll).
+      this.switchToFlyControls();
     }
 
     // Calculate yaw and pitch from position to target
     const direction = new THREE.Vector3().subVectors(target, position).normalize();
-    
+
     // For Z-up coordinate system (Speckle):
     // Yaw: horizontal rotation around Z axis
     // atan2(-x, -y) gives: forward(-Y)=0, left(-X)=+π/2, back(+Y)=π, right(+X)=-π/2
     const yaw = Math.atan2(-direction.x, -direction.y);
-    
+
     // Pitch: vertical rotation (elevation angle)
     // In Z-up, vertical component is Z (not Y)
     const pitch = Math.asin(direction.z);
@@ -84,13 +96,10 @@ export class SpeckleCameraController {
     // Set first-person state
     this.firstPersonMode = true;
     this.lockedPosition = position.clone();
-    this.firstPersonRotation = { yaw, pitch };
+    this.firstPersonRotation = { yaw, pitch, roll: 0 };
 
-    // CRITICAL: Set up vector to (0, 1, 0) to prevent roll
-    this.cameraController.controls.up = new THREE.Vector3(0, 0, 1);
-
-    // Use Speckle's native API to set camera position and target
-    this.cameraController.controls.fromPositionAndTarget(position, target);
+    // Set the camera directly (position + yaw/pitch/roll orientation)
+    this.updateFirstPersonCamera();
 
     // Disable Speckle's camera controls to prevent user orbiting.
     // Re-enforce on the next frames: Speckle's internal double-click handler may
@@ -108,6 +117,36 @@ export class SpeckleCameraController {
   }
 
   /**
+   * Switch Speckle's active controls to FlyControls (whose update() respects the
+   * enabled flag), so the FPS camera can be driven directly without interference.
+   */
+  private switchToFlyControls(): void {
+    try {
+      const cc = this.cameraController as unknown as { toggleControls?: () => void };
+      if (cc.toggleControls) {
+        cc.toggleControls();
+        this.fpsUsesFlyControls = true;
+      }
+    } catch (error) {
+      console.warn('[SpeckleCameraController] Failed to switch to FlyControls:', error);
+    }
+  }
+
+  /**
+   * Switch back to Speckle's orbit controls after first-person mode exits.
+   */
+  private switchBackToOrbitControls(): void {
+    try {
+      const cc = this.cameraController as unknown as { toggleControls?: () => void };
+      if (cc.toggleControls) {
+        cc.toggleControls();
+      }
+    } catch (error) {
+      console.warn('[SpeckleCameraController] Failed to switch back to orbit controls:', error);
+    }
+  }
+
+  /**
    * Disable first-person mode and return to normal orbit controls
    * Uses Speckle's native API to restore camera state
    */
@@ -119,6 +158,12 @@ export class SpeckleCameraController {
 
     this.firstPersonMode = false;
     this.lockedPosition = null;
+
+    // Switch back to the orbit controls (which animate toward the restored view).
+    if (this.fpsUsesFlyControls) {
+      this.switchBackToOrbitControls();
+      this.fpsUsesFlyControls = false;
+    }
 
     // Restore camera position using Speckle's native API
     if (this.savedCameraPosition && this.savedCameraTarget) {
@@ -155,21 +200,23 @@ export class SpeckleCameraController {
   }
 
   /**
-   * Update camera position and orientation in first-person mode
-   * Uses Speckle's native fromPositionAndTarget() API
+   * Update camera position and orientation in first-person mode.
+   * Sets the camera directly (position + yaw/pitch/roll quaternion), bypassing
+   * Speckle's goal/damper controls so the roll is never overwritten between
+   * frames. Runs on a disabled FlyControls instance, which won't fight the write.
    */
   public updateFirstPersonCamera(): void {
     if (!this.firstPersonMode || !this.lockedPosition) {
       return;
     }
 
-    // Calculate look-at target based on rotation
     // Convention for Z-up coordinate system (Speckle):
     // - yaw=0 → looking in -Y direction (forward)
-    // - +yaw → rotate left (towards -X)
+    // - +yaw → rotate towards -X
     // - +pitch → look up (towards +Z)
     const yaw = this.firstPersonRotation.yaw;
     const pitch = this.firstPersonRotation.pitch;
+    const roll = this.firstPersonRotation.roll;
 
     // Direction calculation for Z-up coordinate system
     const direction = new THREE.Vector3(
@@ -183,11 +230,36 @@ export class SpeckleCameraController {
       direction
     );
 
-    // CRITICAL: Ensure up vector is locked to (0, 0, 1) to prevent roll/circular motion
-    this.cameraController.controls.up = new THREE.Vector3(0, 0, 1);
+    const camera = this.viewer.getRenderer().renderingCamera as THREE.PerspectiveCamera;
+    camera.position.copy(this.lockedPosition);
 
-    // Use Speckle's native API to update camera
-    this.cameraController.controls.fromPositionAndTarget(this.lockedPosition, target);
+    // Base orientation: look from lockedPosition to target with up = (0,0,1).
+    const baseQuat = new THREE.Quaternion().setFromRotationMatrix(
+      new THREE.Matrix4().lookAt(this.lockedPosition, target, new THREE.Vector3(0, 0, 1))
+    );
+
+    // Apply roll (head tilt) by post-multiplying the camera quaternion around its
+    // forward axis (camera-local +Z). Post-multiplication rotates in the camera's
+    // local frame, avoiding gimbal lock.
+    const rollQuat = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(0, 0, 1),
+      roll
+    );
+    camera.quaternion.copy(baseQuat).multiply(rollQuat);
+    camera.updateMatrixWorld(true);
+
+    // The viewer only renders on explicit request — without this the previous
+    // frame stays on screen.
+    this.viewer.requestRender();
+
+    // Keep the renderer's pipeline on the full-quality (stationary) stage.
+    // The FPS camera is driven directly while FlyControls is disabled, so the
+    // controls' update() never reports camera movement and the pipeline would
+    // otherwise stay stuck in the dynamic stage (which renders a fast, edge/
+    // wireframe representation of the scene). Emitting the same events the
+    // controls would emit when idle keeps the shaded render on screen.
+    const cc = this.cameraController as unknown as { emit?: (name: string, ...args: unknown[]) => void };
+    cc.emit?.('stationary');
   }
 
   // ============================================================================
@@ -198,8 +270,9 @@ export class SpeckleCameraController {
    * Rotate the first-person view
    * @param deltaYaw - Change in horizontal rotation (radians)
    * @param deltaPitch - Change in vertical rotation (radians)
+   * @param deltaRoll - Change in head tilt (radians), default 0
    */
-  public rotateFirstPersonView(deltaYaw: number, deltaPitch: number): void {
+  public rotateFirstPersonView(deltaYaw: number, deltaPitch: number, deltaRoll: number = 0): void {
     if (!this.firstPersonMode) {
       console.warn('[SpeckleCameraController] ⚠️ Cannot rotate: first-person mode not active');
       return;
@@ -208,6 +281,7 @@ export class SpeckleCameraController {
     // Update rotation values
     this.firstPersonRotation.yaw += deltaYaw;
     this.firstPersonRotation.pitch += deltaPitch;
+    this.firstPersonRotation.roll += deltaRoll;
 
     // Clamp pitch to prevent looking too far up/down
     // Leave small margin to avoid gimbal lock
@@ -230,7 +304,7 @@ export class SpeckleCameraController {
    *
    * - Yaw: Horizontal rotation (left/right)
    * - Pitch: Vertical rotation (up/down)
-   * - Roll: Head tilt (always 0 for now)
+   * - Roll: Head tilt around the forward axis
    *
    * This is the source of truth for listener orientation in auralization.
    */
@@ -240,7 +314,7 @@ export class SpeckleCameraController {
       return {
         yaw: this.firstPersonRotation.yaw,
         pitch: this.firstPersonRotation.pitch,
-        roll: 0  // No head tilt support yet
+        roll: this.firstPersonRotation.roll
       };
     } else {
       // In orbit mode, calculate from camera's actual look direction

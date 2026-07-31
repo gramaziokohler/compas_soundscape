@@ -2,9 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, type ReactNode, Fragment } from 'react';
 import type { CardType, CardBaseConfig, CardColor } from '@/types/card';
-import { isAuthError } from '@/utils/authErrors';
-import { useTextGenerationStore } from '@/store/textGenerationStore';
-import { ValidationMessage } from '@/components/ui/ValidationMessage';
+import { EmptyState } from '@/components/ui/EmptyState';
 
 /**
  * CardSection Component
@@ -48,7 +46,6 @@ export interface CardSectionProps<TItem extends CardBaseConfig> {
   header?: ReactNode;
   getPendingCount?: (items: TItem[]) => number;
   isRunning?: boolean;
-  error?: string | null;
   expandedIndex?: number | null;
   onExpandedIndexChange?: (index: number | null) => void;
   color?: CardColor;
@@ -103,7 +100,6 @@ export function CardSection<TItem extends CardBaseConfig>({
   header,
   getPendingCount,
   isRunning = false,
-  error,
   expandedIndex: controlledExpandedIndex,
   onExpandedIndexChange,
   color = 'primary' as const,
@@ -395,6 +391,11 @@ export function CardSection<TItem extends CardBaseConfig>({
         ))}
       </div>
 
+      {/* Empty state — shown above the add button when no cards exist */}
+      {items.length === 0 && emptyMessage && (
+        <EmptyState message={emptyMessage} action={emptyAction} />
+      )}
+
       {/* Add-card button (New button UI) + type selector */}
       <div className="relative" ref={typeSelectorRef}>
         <button
@@ -435,26 +436,6 @@ export function CardSection<TItem extends CardBaseConfig>({
           </div>
         )}
       </div>
-
-      {error && (
-        <ValidationMessage type="error">
-          {isAuthError(error) ? (
-            <button
-              onClick={() => useTextGenerationStore.getState().triggerOpenTokenSettings()}
-              className="self-start text-xs px-3 py-1 rounded transition-colors"
-              style={{
-                border: `1px solid var(--color-error)`,
-                color: 'var(--color-error)',
-                background: 'transparent',
-              }}
-            >
-              Configure API token in Advanced Settings →
-            </button>
-          ) : (
-            <span>{error}</span>
-          )}
-        </ValidationMessage>
-      )}
 
       {footer}
 

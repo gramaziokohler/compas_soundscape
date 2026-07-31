@@ -4,8 +4,9 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { apiService } from '@/services/api';
 import { isAuthError } from '@/utils/authErrors';
 import { useTextGenerationStore } from '@/store/textGenerationStore';
-import { ValidationMessage } from '@/components/ui/ValidationMessage';
 import { Spinner } from '@/components/ui/Spinner';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Notice } from '@/components/ui/Notice';
 import type { SpeckleModelDetail, SpeckleProjectModelsResponse } from '@/types/speckle-models';
 
 // ============================================================================
@@ -395,6 +396,7 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
     const isAuth = isAuthError(error);
     return (
       <div className="w-full py-3 flex flex-col gap-2">
+        <Notice type="error" message={error} />
         {isAuth ? (
           <button
             type="button"
@@ -407,9 +409,7 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
           >
             Configure API token in Advanced Settings →
           </button>
-        ) : (
-          <ValidationMessage type="error">{error}</ValidationMessage>
-        )}
+        ) : null}
         <button
           type="button"
           onClick={fetchModels}
@@ -427,11 +427,7 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
 
   // ── Empty state ────────────────────────────────────────────────────────
   if (models.length === 0) {
-    return (
-      <div className="w-full text-center py-3">
-        <p className="text-xs text-neutral-400">No models found.</p>
-      </div>
-    );
+    return <EmptyState message="No models found." />;
   }
 
   // ── Model list ─────────────────────────────────────────────────────────
@@ -439,11 +435,7 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
   const loadableModels = models.filter((m) => m.latest_version);
 
   if (loadableModels.length === 0) {
-    return (
-      <div className="w-full text-center py-3">
-        <p className="text-xs text-neutral-400">No loadable models available.</p>
-      </div>
-    );
+    return <EmptyState message="No loadable models available." />;
   }
 
   return (

@@ -36,7 +36,7 @@ export interface ThreeSceneProps {
   /** Selected variant indices for each prompt group (keyed by prompt index) */
   selectedVariants: { [key: number]: number };
 
-  /** Volume levels in dB for each sound (keyed by sound ID) */
+  /** Volume levels in dBFS for each sound (keyed by sound ID) */
   soundVolumes: { [key: string]: number };
 
   /** Playback intervals in seconds for each sound (keyed by sound ID) */
@@ -54,8 +54,8 @@ export interface ThreeSceneProps {
   /** Callback when a variant is selected for a prompt group */
   onVariantChange: (promptIdx: number, variantIdx: number) => void;
 
-  /** Callback when a sound's volume is changed */
-  onVolumeChange: (soundId: string, volumeDb: number) => void;
+  /** Callback when a sound's volume is changed (in dBFS) */
+  onVolumeChange: (soundId: string, volumeDbfs: number) => void;
 
   /** Callback when a sound's interval is changed */
   onIntervalChange: (soundId: string, intervalSeconds: number) => void;

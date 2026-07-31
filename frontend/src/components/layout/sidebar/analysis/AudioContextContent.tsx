@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import type { AudioAnalysisConfig } from '@/types/analysis';
 import { FileUploadArea } from '@/components/controls/FileUploadArea';
 import { WaveSurferPlayer } from '@/components/audio/WaveSurferPlayer';
-import { AUDIO_FILE_EXTENSIONS, NUM_SOUNDS_MAX, NUM_SOUNDS_MIN } from '@/utils/constants';
+import { AUDIO_FILE_EXTENSIONS, DEFAULT_DBFS, NUM_SOUNDS_MAX, NUM_SOUNDS_MIN } from '@/utils/constants';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { useBatchedSlider } from '@/hooks/useBatchedSlider';
 
@@ -110,7 +110,7 @@ export function AudioContextContent({
           {audioUrl && config.audioInfo && (
             <WaveSurferPlayer
               audioUrl={audioUrl}
-              volumeDb={70}
+              volumeDbfs={DEFAULT_DBFS}
               isPlaying={isPreviewPlaying}
               onPlayPause={() => setIsPreviewPlaying((v) => !v)}
               onStop={(ws) => {

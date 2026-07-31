@@ -36,7 +36,7 @@ import { useAudioOrchestrator } from "@/hooks/useAudioOrchestrator";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { useJobRecovery } from "@/hooks/useJobRecovery";
 import { apiService } from "@/services/api";
-import { API_BASE_URL, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION } from "@/utils/constants";
+import { API_BASE_URL, DEFAULT_DBFS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION } from "@/utils/constants";
 import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
 import type { LoadTab, SoundGenerationConfig } from "@/types";
 import type { AudioAnalysisConfig } from "@/types/analysis";
@@ -511,7 +511,6 @@ function HomeContent() {
     const engine = useSpeckleEngineStore.getState();
     const viewer = engine.viewer;
     if (!viewer) {
-      console.log('[page:camera:save] Skipped — no viewer');
       return;
     }
     if (!_viewerLoadComplete) {
@@ -549,7 +548,6 @@ function HomeContent() {
       } catch (e) {
         // localStorage may be full or unavailable
       }
-      console.log('[page:camera:save] Saved camera pos:', pos.map(v => v.toFixed(1)), 'target:', target.map(v => v.toFixed(1)));
     } catch (e) {
       console.warn('[page:camera:save] Error:', e);
     }
@@ -1196,7 +1194,7 @@ function HomeContent() {
     formData.append('file', config.audioFile);
     formData.append('segments_json', JSON.stringify(segmentsList));
     formData.append('apply_noise_reduction', String(config.applyNoiseReduction ?? false));
-    formData.append('target_spl_db', String(selectedPrompts[0]?.metadata?.spl_db ?? 70));
+    formData.append('target_dbfs', String(selectedPrompts[0]?.metadata?.dbfs ?? DEFAULT_DBFS));
 
     const res = await fetch(`${API_BASE_URL}/api/extract-sed-segments`, { method: 'POST', body: formData });
     if (!res.ok) {
@@ -1206,7 +1204,7 @@ function HomeContent() {
     const data = await res.json();
     const sounds = (data.sounds as any[]).map((s: any, si: number) => ({
       name: s.name,
-      spl_db: selectedPrompts[si]?.metadata?.spl_db,
+      dbfs: selectedPrompts[si]?.metadata?.dbfs,
       interval_seconds: selectedPrompts[si]?.metadata?.interval_seconds,
       variants: s.variants,
     }));
@@ -1327,7 +1325,7 @@ function HomeContent() {
           negative_prompt: '',
           seed_copies: variantCount,
           steps: 25,
-          spl_db: p.metadata?.spl_db ?? 60,
+          dbfs: p.metadata?.dbfs ?? DEFAULT_DBFS,
           interval_seconds: isBackground ? 0 : (p.metadata?.interval_seconds ?? 5),
           display_name: p.displayName || (p.text.length > 50 ? p.text.substring(0, 47) + '...' : p.text),
           entities: resolvedEntities,
@@ -1356,7 +1354,7 @@ function HomeContent() {
       });
 
       console.log('[Analysis→SoundGen] Converted configs with metadata:', 
-        newConfigs.map(c => ({ prompt: c.prompt.substring(0, 30), duration: c.duration, spl_db: c.spl_db, interval_seconds: c.interval_seconds, hasEntities: !!c.entities?.length })));
+        newConfigs.map(c => ({ prompt: c.prompt.substring(0, 30), duration: c.duration, dbfs: c.dbfs, interval_seconds: c.interval_seconds, hasEntities: !!c.entities?.length })));
 
       // Add to sound generation
       soundGen.setSoundConfigsFromPrompts(newConfigs);
@@ -2359,7 +2357,7 @@ function HomeContent() {
     setShowSceneListeners(true);
     setGlobalSoundSpeed(343);
     setGlobalMeshLc(1.5);
-    useAudioControlsStore.getState().resetGlobalBaseSplDb();
+    useAudioControlsStore.getState().resetGlobalBaseDbfs();
     setShowGroundGrid(false);
     setGroundGridSpacing(2);
     setGroundGridColor('#888888');
@@ -2753,33 +2751,22 @@ function HomeContent() {
     }
   }, [goToPositionReceiverId]);
 
-  // Compute bounding box for a list of Speckle object IDs using batch render views
+  // Compute bounding box for a list of Speckle object IDs using the renderer's
+  // native resolution (world-tree lookup + render-view AABB union). A manual
+  // walk of batch renderViews cannot match these ids — renderView.renderData.id
+  // is a different hash space than the selected object ids.
   const computeBoundsForObjectIds = useCallback(
     (objectIds: string[]): { min: [number, number, number]; max: [number, number, number] } | null => {
       const viewer = viewerRef?.current;
       if (!viewer || objectIds.length === 0) return null;
       try {
         const r = (viewer as any).getRenderer();
-        const bIds: string[] = (r as any).getBatchIds?.() ?? [];
-        const idSet = new Set(objectIds);
-        const unionBox = new THREE.Box3();
-        let hasBox = false;
-        for (const bid of bIds) {
-          const b = (r as any).getBatch?.(bid);
-          if (!b) continue;
-          for (const rv of (b.renderViews ?? [])) {
-            const objId: string | undefined = rv.renderData?.id;
-            if (!objId || !idSet.has(objId)) continue;
-            const aabb = rv.aabb as THREE.Box3 | undefined;
-            if (!aabb) continue;
-            unionBox.union(aabb);
-            hasBox = true;
-          }
-        }
-        if (!hasBox) return null;
+        if (typeof r?.boxFromObjects !== 'function') return null;
+        const box: THREE.Box3 = r.boxFromObjects(objectIds);
+        if (!box || box.isEmpty?.()) return null;
         return {
-          min: [unionBox.min.x, unionBox.min.y, unionBox.min.z],
-          max: [unionBox.max.x, unionBox.max.y, unionBox.max.z],
+          min: [box.min.x, box.min.y, box.min.z],
+          max: [box.max.x, box.max.y, box.max.z],
         };
       } catch (e) {
         console.error('[computeBoundsForObjectIds]', e);
@@ -3041,7 +3028,6 @@ function HomeContent() {
         soundConfigs={soundGen.soundConfigs}
         activeSoundConfigTab={soundGen.activeSoundConfigTab}
         isSoundGenerating={soundGen.isSoundGenerating}
-        soundGenError={soundGen.soundGenError}
         generatedSounds={soundGen.generatedSounds}
         globalDuration={soundGen.globalDuration}
         globalSteps={soundGen.globalSteps}
@@ -3093,7 +3079,6 @@ function HomeContent() {
         analysisConfigs={analysis.analysisConfigs}
         stepAdvanceTrigger={stepAdvanceTrigger}
         isAnalyzing={analysis.isAnalyzing}
-        analysisError={analysis.analysisError}
         analysisResult={analysis.analysisResults}
         hasGlobalModelLoaded={globalSpeckleData !== null}
         onAddAnalysisConfig={handleAddAnalysisConfig}

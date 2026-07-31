@@ -21,9 +21,8 @@
 import type { TimelineSound, Position, Position3D, Orientation, AmbisonicOrder, IterationLink } from '@/types/audio';
 import { AudioMode } from '@/types/audio';
 import { cartesianToSpherical } from './utils/ambisonic-utils';
-import { BinauralDecoder } from './decoders/BinauralDecoder';
-import { OmnitoneFOADecoder } from './decoders/OmnitoneFOADecoder';
-import { HRTF } from '@/utils/constants';
+import { applyAmbisonicRotation } from './utils/ambisonic-rotation';
+import { OmnitoneDecoder } from './decoders/OmnitoneDecoder';
 
 // ============================================================================
 // Public Types
@@ -218,6 +217,16 @@ export async function exportSoundscapeToWav(
     finalBuffer = applyLinkedLimiter(renderedBuffer);
   }
 
+  // Post-render: apply orientation to raw ambisonic export
+  if (fmt.rawAmbisonic && config.mode === AudioMode.AMBISONIC_IR &&
+      (config.listenerOrientation.yaw !== 0 || config.listenerOrientation.pitch !== 0)) {
+    finalBuffer = applyAmbisonicRotation(
+      finalBuffer,
+      fmt.order as AmbisonicOrder,
+      config.listenerOrientation,
+    );
+  }
+
   onProgress?.(0.92);
 
   const wavBlob = audioBufferToWavBlob24(finalBuffer);
@@ -255,51 +264,16 @@ async function buildAnechoicGraph(
 
   // Format-specific output stage
   if (fmt.rawAmbisonic) {
-    // Use a sceneRotator at identity to match the BinauralDecoder's exact
-    // input node (ChannelSplitter → rotation matrix → ChannelMerger).
-    // This ensures the raw ambisonic data is bit-identical to what the
-    // binDecoder receives, preserving the same spatial orientation.
-    const rotator = new ambisonics.sceneRotator(offlineCtx, encodeOrder);
-    rotator.yaw = 0;
-    rotator.pitch = 0;
-    rotator.roll = 0;
-    rotator.updateRotMtx();
-
-    mixBus.connect(rotator.in);
-    rotator.out.connect(destinationNode);
+    // Raw ambisonic: rotation baked into monoEncoder per-source positions
+    mixBus.connect(destinationNode);
   } else if (fmt.label === 'binaural') {
-    // mixBus carries SN3D signal
-    if (encodeOrder === 1) {
-      // FOA: Omnitone accepts SN3D natively
-      const decoder = new OmnitoneFOADecoder();
-      await decoder.initialize(offlineCtx as unknown as AudioContext, 1);
-      decoder.setRotationEnabled(false);
-      decoder.updateOrientation({ yaw: 0, pitch: 0, roll: 0 });
-      mixBus.connect(decoder.getInputNode());
-      decoder.getOutputNode().connect(destinationNode);
-    } else {
-      // SOA/TOA: BinauralDecoder expects N3D → convert SN3D→N3D via per-order gains
-      const binDecoder = new BinauralDecoder();
-      await binDecoder.initialize(offlineCtx as unknown as AudioContext, encodeOrder);
-      binDecoder.updateOrientation({ yaw: 0, pitch: 0, roll: 0 });
-      try {
-        await binDecoder.loadHRTFs(HRTF.DEFAULT_HRTF_PATH);
-      } catch {
-        console.warn('[SoundscapeExporter] HRTFs unavailable, using cardioid fallback');
-      }
-      const splitter = offlineCtx.createChannelSplitter(numChannels);
-      const merger = offlineCtx.createChannelMerger(numChannels);
-      for (let ch = 0; ch < numChannels; ch++) {
-        const n = Math.floor(Math.sqrt(ch));
-        const gain = offlineCtx.createGain();
-        gain.gain.value = Math.sqrt(2 * n + 1);
-        splitter.connect(gain, ch, 0);
-        gain.connect(merger, 0, ch);
-      }
-      mixBus.connect(splitter);
-      merger.connect(binDecoder.getInputNode());
-      binDecoder.getOutputNode().connect(destinationNode);
-    }
+    // binaural: OmnitoneDecoder handles all orders
+    const decoder = new OmnitoneDecoder();
+    await decoder.initialize(offlineCtx as unknown as AudioContext, encodeOrder);
+    decoder.setRotationEnabled(false);
+    decoder.updateOrientation({ yaw: 0, pitch: 0, roll: 0 });
+    mixBus.connect(decoder.getInputNode());
+    decoder.getOutputNode().connect(destinationNode);
   } else {
     // Mono: extract W channel (channel 0)
     setupMonoWExtract(offlineCtx, mixBus, numChannels, destinationNode);
@@ -417,74 +391,32 @@ async function buildAmbisonicIRGraph(
   // Format-specific output stage
   if (fmt.rawAmbisonic) {
     if (irOrder === fmt.order) {
-      setupRawAmbisonicOutput(offlineCtx, mixBus, irOrder, config, destinationNode);
+      // Same order: connect directly, apply post-render rotation after rendering
+      mixBus.connect(destinationNode);
     } else if (irOrder < fmt.order) {
-      // Upconvert: route through a sceneRotator at the target order.
-      // The first irChannels carry the valid lower-order subset.
-      const upRotator = new ambisonics.sceneRotator(offlineCtx, irOrder);
-      upRotator.yaw = 0; upRotator.pitch = 0; upRotator.roll = 0;
-      upRotator.updateRotMtx();
-      mixBus.connect(upRotator.in);
-
+      // Upconvert: zero-pad to target channel count
       const padBus = offlineCtx.createGain();
-      padBus.channelCount = (fmt.order + 1) ** 2;
+      padBus.channelCount = fmt.channels;
       padBus.channelCountMode = 'explicit';
       padBus.channelInterpretation = 'discrete';
-
       const splitter = offlineCtx.createChannelSplitter(irChannels);
-      upRotator.out.connect(splitter);
-      for (let c = 0; c < irChannels; c++) {
-        splitter.connect(padBus, c, c);
-      }
+      mixBus.connect(splitter);
+      for (let c = 0; c < irChannels; c++) splitter.connect(padBus, c, c);
       padBus.connect(destinationNode);
     } else {
-      // irOrder > fmt.order: extract first fmt.channels channels
-      const downRotator = new ambisonics.sceneRotator(offlineCtx, irOrder);
-      downRotator.yaw = 0; downRotator.pitch = 0; downRotator.roll = 0;
-      downRotator.updateRotMtx();
-      mixBus.connect(downRotator.in);
-
+      // Downconvert: extract first fmt.channels channels
       const splitter = offlineCtx.createChannelSplitter(irChannels);
-      downRotator.out.connect(splitter);
-      for (let c = 0; c < fmt.channels; c++) {
-        splitter.connect(destinationNode, c, c);
-      }
+      mixBus.connect(splitter);
+      for (let c = 0; c < fmt.channels; c++) splitter.connect(destinationNode, c, c);
     }
   } else if (fmt.label === 'binaural') {
-    // mixBus carries SN3D signal
-    if (irOrder === 1) {
-      // FOA: Omnitone accepts SN3D natively
-      const decoder = new OmnitoneFOADecoder();
-      await decoder.initialize(offlineCtx as unknown as AudioContext, 1);
-      decoder.setRotationEnabled(true);
-      decoder.updateOrientation(listenerOrientation);
-      mixBus.connect(decoder.getInputNode());
-      decoder.getOutputNode().connect(destinationNode);
-    } else {
-      // SOA/TOA: BinauralDecoder expects N3D → convert SN3D→N3D via per-order gains
-      const binDecoder = new BinauralDecoder();
-      await binDecoder.initialize(offlineCtx as unknown as AudioContext, irOrder);
-      binDecoder.setRotationEnabled(true);
-      binDecoder.updateOrientation(listenerOrientation);
-      try {
-        await binDecoder.loadHRTFs(HRTF.DEFAULT_HRTF_PATH);
-      } catch {
-        console.warn('[SoundscapeExporter] HRTFs unavailable, using cardioid fallback');
-      }
-      const chCount = (irOrder + 1) ** 2;
-      const splitter = offlineCtx.createChannelSplitter(chCount);
-      const merger = offlineCtx.createChannelMerger(chCount);
-      for (let ch = 0; ch < chCount; ch++) {
-        const n = Math.floor(Math.sqrt(ch));
-        const gain = offlineCtx.createGain();
-        gain.gain.value = Math.sqrt(2 * n + 1);
-        splitter.connect(gain, ch, 0);
-        gain.connect(merger, 0, ch);
-      }
-      mixBus.connect(splitter);
-      merger.connect(binDecoder.getInputNode());
-      binDecoder.getOutputNode().connect(destinationNode);
-    }
+    // binaural: OmnitoneDecoder handles all orders with rotation
+    const decoder = new OmnitoneDecoder();
+    await decoder.initialize(offlineCtx as unknown as AudioContext, irOrder);
+    decoder.setRotationEnabled(true);
+    decoder.updateOrientation(listenerOrientation);
+    mixBus.connect(decoder.getInputNode());
+    decoder.getOutputNode().connect(destinationNode);
   } else {
     setupMonoWExtract(offlineCtx, mixBus, irChannels, destinationNode);
   }
@@ -691,42 +623,6 @@ async function buildSimpleMixGraph(
 // ============================================================================
 // Output stage helpers
 // ============================================================================
-
-function setupRawAmbisonicOutput(
-  offlineCtx: OfflineAudioContext,
-  mixBus: GainNode,
-  order: AmbisonicOrder,
-  config: SoundscapeExportConfig,
-  destinationNode: AudioNode,
-  overrideOrientation?: Orientation | null,
-): void {
-  const numChannels = (order + 1) ** 2;
-  const outputBus = offlineCtx.createGain();
-  outputBus.channelCount = numChannels;
-  outputBus.channelCountMode = 'explicit';
-  outputBus.channelInterpretation = 'discrete';
-
-  const sceneRotator = new ambisonics.sceneRotator(offlineCtx, order);
-
-  let effectiveOrientation: Orientation;
-  if (overrideOrientation !== undefined && overrideOrientation !== null) {
-    effectiveOrientation = overrideOrientation;
-  } else if (config.globalListenerOrientation) {
-    effectiveOrientation = orientationFromForwardVector(config.globalListenerOrientation);
-  } else {
-    effectiveOrientation = config.listenerOrientation;
-  }
-
-  const RAD_TO_DEG = 180 / Math.PI;
-  sceneRotator.yaw = -effectiveOrientation.yaw * RAD_TO_DEG;
-  sceneRotator.pitch = -effectiveOrientation.pitch * RAD_TO_DEG;
-  sceneRotator.roll = 0;
-  sceneRotator.updateRotMtx();
-
-  mixBus.connect(sceneRotator.in);
-  sceneRotator.out.connect(outputBus);
-  outputBus.connect(destinationNode);
-}
 
 function setupMonoWExtract(
   offlineCtx: OfflineAudioContext,

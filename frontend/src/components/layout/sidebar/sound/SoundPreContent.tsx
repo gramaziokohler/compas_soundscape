@@ -1,6 +1,7 @@
 'use client';
 
 import type { CardType } from '@/types';
+import { DEFAULT_DBFS } from '@/utils/constants';
 import { SoundConfigContent, type SoundConfigContentProps } from './SoundConfigContent';
 import { TextToAudioSliders } from './TextToAudioMode';
 import { SoundCardBody } from './SoundCardBody';
@@ -37,7 +38,7 @@ export function SoundPreContent(props: SoundPreContentProps) {
   const { config, index, onUpdateConfig, availableTypes, onSwitchType, ...configProps } = props;
 
   // ── Derive shared-control values from config ──────────────────────────────
-  const volumeDb = config.spl_db ?? 70;
+  const volumeDbfs = config.dbfs ?? DEFAULT_DBFS;
 
   // ── Scheduling defaults (pre-generation) ──────────────────────────────────
   const intervalSeconds = config.interval_seconds ?? 30;
@@ -62,7 +63,7 @@ export function SoundPreContent(props: SoundPreContentProps) {
 
   // ── Callbacks ─────────────────────────────────────────────────────────────
 
-  const handleVolumeChange = (db: number) => onUpdateConfig(index, 'spl_db', db);
+  const handleVolumeChange = (dbfs: number) => onUpdateConfig(index, 'dbfs', dbfs);
 
   const handleUpdatePosition = (pos: [number, number, number]) =>
     onUpdateConfig(index, 'position', pos);
@@ -108,7 +109,7 @@ export function SoundPreContent(props: SoundPreContentProps) {
         />
       }
       collapsibleContent={collapsibleContent}
-      volumeDb={volumeDb}
+      volumeDbfs={volumeDbfs}
       intervalSeconds={intervalSeconds}
       schedulingMode={schedulingMode}
       timestamps={timestamps}

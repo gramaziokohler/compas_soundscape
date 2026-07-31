@@ -13,6 +13,7 @@ import { getHeaderAndSubheader } from '@/hooks/useSpeckleTree';
 import { getMaterialColorByAbsorption } from '@/utils/utils';
 import type { MaterialOption } from '@/components/ui/MaterialSelect';
 import { UI_RIGHT_SIDEBAR } from '@/utils/constants';
+import { EmptyState } from '@/components/ui/EmptyState';
 
 /**
  * ObjectExplorer Component
@@ -549,7 +550,6 @@ export function ObjectExplorer({ resetAllRef, onItemCountChange, maxTreeHeight }
       const hiddenSet = useSpeckleStore.getState().acousticExplorerHiddenIds;
       // Check if ALL the object IDs are in the hidden set
       const allHidden = objectIds.every((id) => hiddenSet.includes(id));
-      console.log('[dbg:hide] handleToggleVisibility objectIds=', objectIds, 'allHidden=', allHidden);
 
       objectIds.forEach((id) => {
         if (allHidden) {
@@ -593,11 +593,7 @@ export function ObjectExplorer({ resetAllRef, onItemCountChange, maxTreeHeight }
   
   // Don't render anything if no viewer
   if (!viewerRef?.current) {
-    return (
-      <div className="text-center text-xs p-4 text-neutral-500">
-        No viewer available
-      </div>
-    );
+    return <EmptyState message="No viewer available" />;
   }
   
   return (

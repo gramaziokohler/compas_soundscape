@@ -31,7 +31,8 @@ import type {
 import type { CardType } from '@/types/card';
 import {
   API_BASE_URL,
-  DEFAULT_SPL_DB,
+  DEFAULT_DBFS,
+  DBFS_MIN,
   LLM_SUGGESTED_INTERVAL_SECONDS,
   TTS_VOICES,
 } from '@/utils/constants';
@@ -39,7 +40,7 @@ import { loadAudioFileWithBuffer } from '@/lib/audio/utils/audio-info';
 import { apiService } from '@/services/api';
 import { generatePositionsInArea } from '@/utils/positioning';
 import { getAnalysisGroupColor } from '@/utils/utils';
-import { notifyError } from './errorsStore';
+import { notifySectionError } from './errorsStore';
 import { useAreaDrawingStore } from './areaDrawingStore';
 import { useSoundscapeStore } from './soundscapeStore';
 import { useSpeckleStore } from './speckleStore';
@@ -704,7 +705,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                     entities: p.entities || (p.entity ? [p.entity] : undefined),
                     entity: p.entities?.[0] || p.entity || null, // backward compat
                     metadata: {
-                      spl_db: p.spl_db || DEFAULT_SPL_DB,
+                      dbfs: p.dbfs ?? DEFAULT_DBFS,
                       interval_seconds: p.interval_seconds || LLM_SUGGESTED_INTERVAL_SECONDS,
                       duration_seconds: p.duration_seconds || 10,
                     },
@@ -793,14 +794,14 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 .filter((s: any) => s.confidence > 0)
                 .slice(0, config.numSounds)
                 .map((sound: any, i: number) => {
-                  let volumeSPL = DEFAULT_SPL_DB;
+                  let volumeDbfs = DEFAULT_DBFS;
                   if (
                     audioConfig.analysisOptions.analyze_amplitudes &&
                     sound.max_amplitude_db !== null &&
                     isFinite(sound.max_amplitude_db)
                   ) {
-                    const dbFS = Math.max(-60, Math.min(-3, sound.max_amplitude_db));
-                    volumeSPL = Math.round((30 + ((dbFS + 60) / 57) * 55) * 10) / 10;
+                    // max_amplitude_db is already measured in dBFS by SED analysis — use it directly.
+                    volumeDbfs = Math.max(DBFS_MIN, Math.min(-3, sound.max_amplitude_db));
                   }
                   let playbackInterval = LLM_SUGGESTED_INTERVAL_SECONDS;
                   if (
@@ -824,7 +825,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                     selected: true,
                     metadata: {
                       confidence: sound.confidence,
-                      spl_db: volumeSPL,
+                      dbfs: volumeDbfs,
                       interval_seconds: playbackInterval,
                       duration_seconds: estimatedDuration,
                       detection_segments: sound.detection_segments ?? [],
@@ -889,7 +890,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                   entities: p.entities || (p.entity ? [p.entity] : undefined),
                   entity: p.entities?.[0] || p.entity || null, // backward compat
                   metadata: {
-                    spl_db: p.spl_db || DEFAULT_SPL_DB,
+                    dbfs: p.dbfs ?? DEFAULT_DBFS,
                     interval_seconds: p.interval_seconds || LLM_SUGGESTED_INTERVAL_SECONDS,
                     duration_seconds: p.duration_seconds || 10,
                   },
@@ -952,7 +953,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             } else {
               const errorMsg = error instanceof Error ? error.message : 'Analysis failed';
               const isQuotaError = errorMsg.includes('quota') || errorMsg.includes('429');
-              notifyError(errorMsg, isQuotaError ? 'warning' : 'error');
+              notifySectionError(errorMsg, isQuotaError ? 'warning' : 'error');
               set({ analysisError: errorMsg }, false, 'analysis/analyzeError');
             }
           } finally {
@@ -1018,8 +1019,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 const normalizedCategory = (entry.category || '').toLowerCase().replace(/[\s-]+/g, '_');
                 const isSpeech = normalizedCategory === 'speech';
 
-                const splMatch = entry.spl?.match(/(\d+(?:\.\d+)?)/);
-                const splDb = splMatch ? parseFloat(splMatch[1]) : DEFAULT_SPL_DB;
+                const splMatch = entry.spl?.match(/(-?\d+(?:\.\d+)?)/);
+                const dbfsVal = splMatch ? parseFloat(splMatch[1]) : DEFAULT_DBFS;
 
                 const durationSec = (() => {
                   const d = entry.duration ?? '';
@@ -1095,7 +1096,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                       }
                     : undefined,
                   metadata: {
-                    spl_db: splDb,
+                    dbfs: dbfsVal,
                     duration_seconds: durationSec,
                     interval_seconds: LLM_SUGGESTED_INTERVAL_SECONDS,
                     timestamps: entry.trigger?.type === 'absolute'
@@ -1123,8 +1124,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               scenario.sound_events.forEach((sound, ei) => {
                 const key = `${scenario.scenario_title}__${sound.soundName}`;
                 if (!selectedKeys.has(key)) return;
-                const splMatch = sound.spl?.match(/(\d+(?:\.\d+)?)/);
-                const splDb = splMatch ? parseFloat(splMatch[1]) : DEFAULT_SPL_DB;
+                const splMatch = sound.spl?.match(/(-?\d+(?:\.\d+)?)/);
+                const dbfsVal = splMatch ? parseFloat(splMatch[1]) : DEFAULT_DBFS;
                 const durationSec = (() => {
                   const d = sound.duration ?? '';
                   const colonIdx = d.indexOf(':');
@@ -1173,7 +1174,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                       }
                     : undefined,
                   metadata: {
-                    spl_db: splDb,
+                    dbfs: dbfsVal,
                     duration_seconds: isBgFoley ? 10 : durationSec,
                     interval_seconds: LLM_SUGGESTED_INTERVAL_SECONDS,
                     timestamps: isBgFoley ? undefined : (sound.timestamps?.length ? sound.timestamps : undefined),
@@ -1527,7 +1528,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             } else {
               const errorMsg = error instanceof Error ? error.message : 'Model analysis failed';
               const isQuota = errorMsg.includes('quota') || errorMsg.includes('429');
-              notifyError(errorMsg, isQuota ? 'warning' : 'error');
+              notifySectionError(errorMsg, isQuota ? 'warning' : 'error');
               set({ analysisError: errorMsg }, false, 'analysis/analyzeModelError');
             }
           } finally {

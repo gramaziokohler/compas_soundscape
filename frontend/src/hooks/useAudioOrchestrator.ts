@@ -26,6 +26,11 @@ export function useAudioOrchestrator() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const orchestratorRef = useRef<AudioOrchestrator | null>(null);
 
+  // No-IR preference requested before the async orchestrator init completes
+  // (e.g. AcousticsSection's mount-time auto-select effect on refresh). Deferred
+  // and applied once initialization finishes instead of throwing.
+  const pendingNoIRPreferenceRef = useRef<'resonance' | 'anechoic' | null>(null);
+
   const [isInitialized, setIsInitialized] = useState(false);
   const [status, setStatus] = useState<OrchestratorStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +57,12 @@ export function useAudioOrchestrator() {
         await orchestrator.initialize(audioContext);
         
         orchestratorRef.current = orchestrator;
+
+        // Apply any no-IR preference requested before init completed
+        if (pendingNoIRPreferenceRef.current) {
+          orchestrator.setNoIRPreference(pendingNoIRPreferenceRef.current);
+          pendingNoIRPreferenceRef.current = null;
+        }
         setIsInitialized(true);
         
         // Get initial status
@@ -234,7 +245,9 @@ export function useAudioOrchestrator() {
   // Set no-IR preference
   const setNoIRPreference = useCallback((mode: 'resonance' | 'anechoic') => {
     if (!orchestratorRef.current) {
-      throw new Error('Orchestrator not initialized');
+      // Orchestrator init is async — defer the preference and apply it once ready
+      pendingNoIRPreferenceRef.current = mode;
+      return;
     }
 
     orchestratorRef.current.setNoIRPreference(mode);

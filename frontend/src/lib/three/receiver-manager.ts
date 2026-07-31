@@ -445,6 +445,17 @@ export class ReceiverManager {
     this.receiverMeshes.forEach(m => { m.visible = visible; });
   }
 
+  /**
+   * Show or hide a single receiver's headphones mesh and label by receiver ID.
+   * Used to hide the active listener's mesh while viewing through it in FPS mode.
+   */
+  public setReceiverVisible(receiverId: string, visible: boolean): void {
+    const mesh = this.receiverMeshes.find((m) => m.userData.receiverId === receiverId);
+    if (mesh) mesh.visible = visible;
+    const label = this.labelSprites.get(receiverId);
+    if (label) label.visible = visible;
+  }
+
   /** Show or hide all receiver label sprites. */
   public setLabelSpritesVisible(visible: boolean): void {
     this.labelSprites.forEach(s => { s.visible = visible; });

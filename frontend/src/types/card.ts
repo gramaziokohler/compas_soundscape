@@ -7,6 +7,7 @@
 
 import type { ReactNode } from 'react';
 import type React from 'react';
+import type { VariantsBarProps } from '@/components/ui/VariantsBar';
 
 // ============================================================================
 // Card Type Identifiers
@@ -254,6 +255,17 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   dimmed?: boolean;
   /** Optional element rendered to the left of the card title in the header (e.g., entity link button) */
   headerPrefix?: ReactNode;
+
+  // Variants Bar (letter-square selector for sound cards)
+  /**
+   * Data + callbacks for the letter-square variants bar. Rendered below the
+   * before/after content when the matching show-variants flag is true.
+   */
+  variants?: VariantsBarProps | null;
+  /** Show the variants bar when the card is in pre-generation state (!hasResult). */
+  showVariantsPreGen?: boolean;
+  /** Show the variants bar when the card is in post-generation state (hasResult). */
+  showVariantsPostGen?: boolean;
 }
 
 

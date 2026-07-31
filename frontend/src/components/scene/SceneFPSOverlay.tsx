@@ -33,7 +33,7 @@ export function SceneFPSOverlay({
 
   return (
     <div
-      className="absolute top-4 pointer-events-none z-20 flex flex-col items-center gap-1 transition-all duration-300"
+      className="absolute bottom-4 pointer-events-none z-20 flex flex-col items-center gap-1 transition-all duration-300"
       style={{
         left: `calc(50% + ${centerOffset}px)`,
         transform: 'translateX(-50%)',
@@ -47,12 +47,7 @@ export function SceneFPSOverlay({
           backdropFilter: 'blur(6px)',
         }}
       >
-        <span className="opacity-90">First-person view · Use</span>{' '}
-        <kbd className="px-1.5 py-0.5 rounded font-mono text-[10px]" style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}>←</kbd>{' '}
-        <kbd className="px-1.5 py-0.5 rounded font-mono text-[10px]" style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}>→</kbd>{' '}
-        <kbd className="px-1.5 py-0.5 rounded font-mono text-[10px]" style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}>↑</kbd>{' '}
-        <kbd className="px-1.5 py-0.5 rounded font-mono text-[10px]" style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}>↓</kbd>{' '}
-        <span className="opacity-90">to look around · Press</span>{' '}
+        <span className="opacity-90">First-person view · Drag to look around · Right-drag to roll · Press</span>{' '}
         <kbd className="px-1.5 py-0.5 rounded font-mono text-[10px]" style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}>Esc</kbd>{' '}
         <span className="opacity-90">to exit</span>
       </div>

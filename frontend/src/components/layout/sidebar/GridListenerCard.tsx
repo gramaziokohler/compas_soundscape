@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { CheckboxField } from '@/components/ui/CheckboxField';
+import { Notice } from '@/components/ui/Notice';
 import { GRID_LISTENER_CONFIG } from '@/utils/constants';
 import { useGridListenersStore } from '@/store/gridListenersStore';
 import { useSpeckleStore } from '@/store';
@@ -143,7 +144,7 @@ export function GridListenerCard({
             <div className="truncate">
               {index + 1}. {grid.name}
               {grid.hiddenForSimulation && (
-                <span className="ml-1 text-[9px] text-warning opacity-70">(hidden)</span>
+                <Notice type="warning" variant="tag" message="(hidden)" />
               )}
               <span className="text-[10px] ml-1 opacity-0 group-hover:opacity-40 transition-opacity">✏️</span>
             </div>

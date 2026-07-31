@@ -27,6 +27,8 @@ export class GridReceiverManager {
   private gridListenerId: string | null = null;
   private headphonesGeomResult: HeadphonesGeometryResult | null = null;
   private headphonesLoadInitiated = false;
+  // Instance indices hidden while viewing through them in FPS mode (zero-scale).
+  private hiddenIndices: Set<number> = new Set();
 
   constructor(scene: THREE.Scene, scaleForSounds: number, parentGroup?: THREE.Group) {
     this.scene = scene;
@@ -112,6 +114,51 @@ export class GridReceiverManager {
     return this.pointIds[instanceId] ?? null;
   }
 
+  /**
+   * Hide or show a single grid listener instance (by instance index). Hidden
+   * instances are rendered with zero scale, so they disappear while the rest
+   * of the grid stays visible.
+   */
+  public setInstanceVisible(instanceIndex: number, visible: boolean): void {
+    if (visible) {
+      this.hiddenIndices.delete(instanceIndex);
+    } else {
+      this.hiddenIndices.add(instanceIndex);
+    }
+    if (this.instancedMesh && instanceIndex < this.instancedMesh.count) {
+      this.applyInstanceMatrix(instanceIndex);
+      this.instancedMesh.instanceMatrix.needsUpdate = true;
+    }
+  }
+
+  /** Find the instance index whose position matches the given position (within epsilon). */
+  public findInstanceAtPosition(position: THREE.Vector3): number | null {
+    const EPS = 1e-3;
+    for (let i = 0; i < this.positions.length; i++) {
+      const p = this.positions[i];
+      if (
+        Math.abs(p[0] - position.x) < EPS &&
+        Math.abs(p[1] - position.y) < EPS &&
+        Math.abs(p[2] - position.z) < EPS
+      ) {
+        return i;
+      }
+    }
+    return null;
+  }
+
+  /** Write the matrix for one instance, honouring the hidden (zero-scale) state. */
+  private applyInstanceMatrix(index: number, scale?: number): void {
+    const pos = this.positions[index];
+    if (!pos) return;
+    this.dummy.position.fromArray(pos);
+    const s = this.hiddenIndices.has(index) ? 0 : (scale ?? 1);
+    this.dummy.scale.setScalar(s);
+    this.dummy.rotation.set(0, 0, Math.PI); // yaw=0 → OBJ Y-axis faces -Y (forward)
+    this.dummy.updateMatrix();
+    this.instancedMesh!.setMatrixAt(index, this.dummy.matrix);
+  }
+
   public updatePoints(points: [number, number, number][], pointIds?: string[]): void {
     this.positions = points;
     this.pointIds = pointIds ?? [];
@@ -125,11 +172,7 @@ export class GridReceiverManager {
     const count = Math.min(points.length, MAX_GRID_INSTANCES);
 
     for (let i = 0; i < count; i++) {
-      this.dummy.position.fromArray(points[i]);
-      this.dummy.scale.setScalar(1);
-      this.dummy.rotation.set(0, 0, Math.PI); // yaw=0 → OBJ Y-axis faces -Y (forward)
-      this.dummy.updateMatrix();
-      mesh.setMatrixAt(i, this.dummy.matrix);
+      this.applyInstanceMatrix(i, 1);
     }
     mesh.count = count;
     mesh.instanceMatrix.needsUpdate = true;
@@ -153,11 +196,7 @@ export class GridReceiverManager {
       if (dist < 0.01) continue;
       const raw = (dist * RECEIVER_CONFIG.SCREEN_SPACE_SIZE) / baseHalfSize;
       const scale = Math.max(RECEIVER_CONFIG.MIN_SCALE, Math.min(RECEIVER_CONFIG.MAX_SCALE, raw));
-      this.dummy.position.fromArray(pos);
-      this.dummy.scale.setScalar(scale);
-      this.dummy.rotation.set(0, 0, Math.PI); // yaw=0
-      this.dummy.updateMatrix();
-      this.instancedMesh.setMatrixAt(i, this.dummy.matrix);
+      this.applyInstanceMatrix(i, scale);
     }
     this.instancedMesh.instanceMatrix.needsUpdate = true;
   }
@@ -174,6 +213,7 @@ export class GridReceiverManager {
       this.instancedMesh.geometry.dispose();
       (this.instancedMesh.material as THREE.Material).dispose();
       this.instancedMesh = null;
+      this.hiddenIndices.clear();
       const pts = this.positions;
       const ids = this.pointIds;
       this.positions = [];
@@ -192,5 +232,6 @@ export class GridReceiverManager {
     }
     this.positions = [];
     this.pointIds = [];
+    this.hiddenIndices.clear();
   }
 }

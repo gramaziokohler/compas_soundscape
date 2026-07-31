@@ -29,7 +29,6 @@ export interface UsageSectionProps {
   /** Full analysisConfigs array — section filters internally to usage types */
   analysisConfigs: AnalysisConfig[];
   isRunning: boolean;
-  error: string | null;
   analysisResult: AnalysisResult[];
   hasGlobalModelLoaded?: boolean;
   onAddConfig: (type: CardType) => void;
@@ -57,7 +56,6 @@ const USAGE_CARD_TYPES: CardType[] = ['scenario', 'text', 'freeform'];
 export function UsageSection({
   analysisConfigs = [],
   isRunning,
-  error,
   analysisResult = [],
   onAddConfig,
   onRemoveConfig,
@@ -545,7 +543,6 @@ export function UsageSection({
       header={header}
       getPendingCount={getPendingCount}
       isRunning={isRunning}
-      error={error}
       color="primary"
       expandedIndex={filteredExpandedIndex}
       onExpandedIndexChange={handleCardSectionExpandedChange}

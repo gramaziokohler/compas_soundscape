@@ -68,8 +68,8 @@ export function AnalysisResultContent({
               {/* Metadata display (if available) */}
               {prompt.metadata && (
                 <div className="flex gap-3 mt-1 text-[10px] text-secondary-hover">
-                  {prompt.metadata.spl_db !== undefined && (
-                    <span>SPL: {prompt.metadata.spl_db}dB</span>
+                  {prompt.metadata.dbfs !== undefined && (
+                    <span>Level: {prompt.metadata.dbfs}dBFS</span>
                   )}
                   {prompt.metadata.interval_seconds !== undefined && (
                     <span>Interval: {prompt.metadata.interval_seconds}s</span>

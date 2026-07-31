@@ -7,8 +7,8 @@ import librosa
 from config.constants import (
     AUDIO_RMS_EPSILON,
     CLIPPING_THRESHOLD,
-    SPL_CLIPPING_THRESHOLD,
-    DEFAULT_SPL_DB,
+    DBFS_CLIPPING_THRESHOLD,
+    DEFAULT_DBFS,
     DENOISING_REDUCTION_STRENGTH,
     DENOISING_NOISE_PROFILE_DURATION,
     DENOISING_NOISE_PROFILE_MIN_DURATION,
@@ -135,19 +135,19 @@ def normalize_audio_rms(audio_tensor: torch.Tensor, target_rms: float = 0.1) -> 
     return normalized_audio
 
 
-def apply_spl_calibration(audio_tensor: torch.Tensor, target_spl_db: float, base_spl_db: float = DEFAULT_SPL_DB) -> torch.Tensor:
-    """Apply SPL calibration to audio based on desired dB level
+def apply_dbfs_calibration(audio_tensor: torch.Tensor, target_dbfs: float, base_dbfs: float = DEFAULT_DBFS) -> torch.Tensor:
+    """Apply dBFS calibration to audio based on desired level.
 
     Args:
         audio_tensor: Normalized audio tensor
-        target_spl_db: Target SPL level in dB (e.g., 85 for heavy traffic)
-        base_spl_db: Base SPL reference level in dB (default 70)
+        target_dbfs: Target volume level in dBFS (e.g., -12 for loud, -24 for quiet)
+        base_dbfs: Base reference level in dBFS (default -18)
 
     Returns:
         Calibrated audio tensor
     """
     # Calculate dB difference from base
-    db_diff = target_spl_db - base_spl_db
+    db_diff = target_dbfs - base_dbfs
 
     # Convert dB to linear scale
     # 20*log10(x) = db_diff => x = 10^(db_diff/20)
@@ -158,8 +158,8 @@ def apply_spl_calibration(audio_tensor: torch.Tensor, target_spl_db: float, base
 
     # Prevent clipping
     max_val = torch.max(torch.abs(calibrated_audio))
-    if max_val > SPL_CLIPPING_THRESHOLD:
-        calibrated_audio = calibrated_audio * (SPL_CLIPPING_THRESHOLD / max_val)
+    if max_val > DBFS_CLIPPING_THRESHOLD:
+        calibrated_audio = calibrated_audio * (DBFS_CLIPPING_THRESHOLD / max_val)
 
     return calibrated_audio
 

@@ -35,7 +35,7 @@ from models.schemas import (
 from config.constants import (
     GENERATED_SOUNDS_DIR,
     GENERATED_SOUND_URL_PREFIX,
-    DEFAULT_SPL_DB,
+    DEFAULT_DBFS,
     DEFAULT_AUDIO_MODEL,
     SOUND_GENERATION_TASK_CLEANUP_DELAY_SECONDS,
     TEMP_SIMULATIONS_DIR,
@@ -91,7 +91,7 @@ async def generate_sounds(request: SoundGenerationRequest, req: Request):
             apply_denoising=request.apply_denoising,
             trim_silence=request.trim_silence,
             audio_model=request.audio_model or DEFAULT_AUDIO_MODEL,
-            base_spl_db=request.base_spl_db,
+            base_dbfs=request.base_dbfs,
             output_dir=str(sounds_out),
             url_prefix=url_prefix,
         )
@@ -175,13 +175,13 @@ async def cleanup_generated_sounds(req: Request):
 @router.post("/api/calibrate-audio")
 async def calibrate_audio(
     audio: UploadFile = File(...),
-    spl_db: float = Form(DEFAULT_SPL_DB),
+    dbfs: float = Form(DEFAULT_DBFS),
     apply_denoising: bool = Form(False),
     trim_silence: bool = Form(False),
     req: Request = None,
 ):
     """
-    Normalize RMS + apply SPL calibration to any uploaded audio file.
+    Normalize RMS + apply dBFS calibration to any uploaded audio file.
     Returns a static URL to the calibrated WAV file.
     """
     tmp_input = None
@@ -198,13 +198,13 @@ async def calibrate_audio(
             out_dir = GENERATED_SOUNDS_DIR
         os.makedirs(out_dir, exist_ok=True)
 
-        filename = f"calibrated_{uuid.uuid4().hex}_{int(spl_db)}dB.wav"
+        filename = f"calibrated_{uuid.uuid4().hex}_{int(dbfs)}dBFS.wav"
         output_path = os.path.join(out_dir, filename)
 
         audio_service.calibrate_audio_file(
             tmp_input.name,
             output_path,
-            target_spl_db=spl_db,
+            target_dbfs=dbfs,
             apply_denoising=apply_denoising,
             trim_silence=trim_silence,
         )

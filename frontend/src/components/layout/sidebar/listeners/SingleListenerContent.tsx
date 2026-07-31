@@ -42,7 +42,7 @@ export function SingleListenerContent({ receiver, color, onUpdatePosition }: Sin
       setSaved(false);
       // Rotate camera to default direction
       const { coordinator } = useSpeckleEngineStore.getState();
-      coordinator?.rotateFirstPersonView(-liveYaw, -livePitch);
+      coordinator?.rotateFirstPersonView(-liveYaw, -livePitch, -liveRoll);
     } else {
       // Save current live orientation
       updateReceiverOrientation(receiver.id, liveYaw, livePitch, liveRoll);

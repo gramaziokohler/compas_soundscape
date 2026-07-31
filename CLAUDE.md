@@ -16,3 +16,4 @@ Global rules are in `AGENTS.md`. This file tells Claude Code which scoped rule f
 @.cursor/rules/sound-rendering.mdc
 @.cursor/rules/daw-timeline.mdc
 @.cursor/rules/frontend-ux.mdc
+@.cursor/rules/chrome-devtools.mdc

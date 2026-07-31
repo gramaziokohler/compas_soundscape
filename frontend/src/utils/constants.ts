@@ -255,6 +255,12 @@ export const UI_SIDEBAR_RESIZE = {
   RIGHT_MAX_WIDTH: 500,
   RIGHT_DEFAULT_WIDTH: 260,  // matches UI_RIGHT_SIDEBAR.WIDTH
 
+  // Right sidebar vertical split — fraction of height taken by the Acoustics
+  // (simulation) section; the Listeners section fills the remainder.
+  RIGHT_SPLIT_DEFAULT_RATIO: 0.65,
+  RIGHT_SPLIT_MIN_RATIO: 0.3,
+  RIGHT_SPLIT_MAX_RATIO: 0.85,
+
   // Resize handle visual / hit area
   HANDLE_WIDTH: 4,           // px — visible highlight bar
   HANDLE_HIT_AREA: 8,        // px — actual pointer hit area
@@ -272,9 +278,9 @@ export const DEFAULT_DURATION_SECONDS = 5;
 export const DEFAULT_GUIDANCE_SCALE = 4.5;
 export const DEFAULT_DIFFUSION_STEPS = 25;
 export const DEFAULT_SEED_COPIES = 1;
-export const DEFAULT_SPL_DB = 70;
-export const SPL_MIN = 30;
-export const SPL_MAX = 120;
+export const DEFAULT_DBFS = -18;
+export const DBFS_MIN = -60;
+export const DBFS_MAX = 0;
 
 // Scenario / Foley Artist
 export const DEFAULT_MAXIMUM_FOLEY_SOUNDS = 10;
@@ -399,7 +405,7 @@ export const DEFAULT_SOUND_CONFIG = {
   negative_prompt: "",
   seed_copies: DEFAULT_SEED_COPIES,
   interval_seconds: 0,
-  spl_db: DEFAULT_SPL_DB
+  dbfs: DEFAULT_DBFS
 };
 
 // Audio Playback Configuration
@@ -473,12 +479,12 @@ export const SED_TOP_N_CLASSES = '100';
 
 // Volume Slider Settings
 export const UI_VOLUME_SLIDER = {
-  MIN: SPL_MIN,      // Minimum volume in dB SPL (quiet/whisper)
-  MAX: SPL_MAX,      // Maximum volume in dB SPL (loud/concert)
-  STEP: 1,           // Step size for volume adjustments
-  LABEL: 'Volume (dB SPL)',
-  MIN_LABEL: `${SPL_MIN}`,
-  MAX_LABEL: `${SPL_MAX}`
+  MIN: DBFS_MIN,      // Minimum volume in dBFS (quiet)
+  MAX: DBFS_MAX,      // Maximum volume in dBFS (0 = digital full scale / clipping)
+  STEP: 1,            // Step size for volume adjustments
+  LABEL: 'Volume (dBFS)',
+  MIN_LABEL: `${DBFS_MIN}`,
+  MAX_LABEL: `${DBFS_MAX}`
 } as const;
 
 // Interval Slider Settings
@@ -567,17 +573,6 @@ export const AUDIO_SAMPLE_RATE = 44100
 // Ambisonic Audio Configuration
 // ============================================================================
 export const AMBISONIC = {
-  /**
-   * FOA Decoder Implementation
-   * 
-   * Controls which library is used for First Order Ambisonics decoding:
-   * - 'jsambisonic': JSAmbisonics library (supports FOA/SOA/TOA, custom HRTF loading)
-   * - 'omnitone': Google Omnitone library (FOA only, built-in SADIE HRTFs, optimized)
-   * 
-   * Note: For SOA/TOA, JSAmbisonics is always used regardless of this setting.
-   */
-  USE_OMNITONE_FOR_FOA: true as const,
-
   // Ambisonic orders
   ORDER: {
     FOA: 1,  // First Order Ambisonics (4 channels)
@@ -595,126 +590,14 @@ export const AMBISONIC = {
   // ACN channel ordering (JSAmbisonics default)
   ACN_ORDERING: true as const,
 
-  // Backend normalization: SN3D (AmbiX standard from pyroomacoustics)
-  // JSAmbisonics uses N3D internally — conversion applied in AmbisonicIRMode
-  // Omnitone uses SN3D natively — no conversion needed
+  // Normalization: SN3D (AmbiX standard from pyroomacoustics — Omnitone uses SN3D natively)
   NORMALIZATION: 'SN3D' as const,
 
-  // SN3D to N3D conversion factors (applied when JSAmbisonics decoder is active)
-  // Reference: https://en.wikipedia.org/wiki/Ambisonic_data_exchange_formats
-  SN3D_TO_N3D: {
-    // FOA (First Order) - ACN channels 0-3
-    FOA: [
-      1.0,          // ACN 0 (W): no change
-      1.732050808,  // ACN 1 (Y): sqrt(3)
-      1.732050808,  // ACN 2 (Z): sqrt(3)
-      1.732050808   // ACN 3 (X): sqrt(3)
-    ],
-    // SOA (Second Order) - ACN channels 0-8
-    SOA: [
-      1.0,          // ACN 0 (W): no change
-      1.732050808,  // ACN 1 (Y): sqrt(3)
-      1.732050808,  // ACN 2 (Z): sqrt(3)
-      1.732050808,  // ACN 3 (X): sqrt(3)
-      2.236067977,  // ACN 4 (V): sqrt(5)
-      2.236067977,  // ACN 5 (T): sqrt(5)
-      2.236067977,  // ACN 6 (R): sqrt(5)
-      2.236067977,  // ACN 7 (S): sqrt(5)
-      2.236067977   // ACN 8 (U): sqrt(5)
-    ],
-    // TOA (Third Order) - ACN channels 0-15
-    TOA: [
-      1.0,          // ACN 0 (W): no change
-      1.732050808,  // ACN 1 (Y): sqrt(3)
-      1.732050808,  // ACN 2 (Z): sqrt(3)
-      1.732050808,  // ACN 3 (X): sqrt(3)
-      2.236067977,  // ACN 4 (V): sqrt(5)
-      2.236067977,  // ACN 5 (T): sqrt(5)
-      2.236067977,  // ACN 6 (R): sqrt(5)
-      2.236067977,  // ACN 7 (S): sqrt(5)
-      2.236067977,  // ACN 8 (U): sqrt(5)
-      2.645751311,  // ACN 9 (Q): sqrt(7)
-      2.645751311,  // ACN 10 (O): sqrt(7)
-      2.645751311,  // ACN 11 (M): sqrt(7)
-      2.645751311,  // ACN 12 (K): sqrt(7)
-      2.645751311,  // ACN 13 (L): sqrt(7)
-      2.645751311,  // ACN 14 (N): sqrt(7)
-      2.645751311   // ACN 15 (P): sqrt(7)
-    ]
-  } as const,
-
-
-  // Channel names for FOA (ACN ordering: W, Y, Z, X)
-  FOA_CHANNEL_NAMES: ['W', 'Y', 'Z', 'X'] as const,
-
-  // Channel names for SOA (ACN ordering, 9 channels)
-  SOA_CHANNEL_NAMES: [
-    'W',                                          // 0th order
-    'Y', 'Z', 'X',                               // 1st order
-    'V', 'T', 'R', 'S', 'U'                     // 2nd order
-  ] as const,
-
-  // Channel names for TOA (ACN ordering, 16 channels)
-  TOA_CHANNEL_NAMES: [
-    'W',                                          // 0th order
-    'Y', 'Z', 'X',                               // 1st order
-    'V', 'T', 'R', 'S', 'U',                    // 2nd order
-    'Q', 'O', 'M', 'K', 'L', 'N', 'P'          // 3rd order
-  ] as const,
-
   // Front direction for ambisonic decoding (constant -Z axis in Three.js)
-  // Replaces dynamic scene alignment - IRs always assume front is -Z
   FRONT_DIRECTION: { x: 0, y: 0, z: -1 } as const,
-
-  // Normalization conventions (for reference/documentation)
-  // IRs from simulations are assumed to be N3D (JSAmbisonics expects N3D)
-  NORMALIZATION_CONVENTIONS: {
-    N3D: 'N3D',
-    SN3D: 'SN3D',
-  } as const
 } as const;
 
-// ============================================================================
-// HRTF (Head-Related Transfer Function) Configuration
-// ============================================================================
-export const HRTF = {
-  // Default HRTF dataset path (IRCAM subject 1076)
-  DEFAULT_HRTF_PATH: '/hrtf/HRTF_KEMAR_front_transformed.sofa.json',
 
-  // HRTF loading configuration
-  FETCH_TIMEOUT_MS: 10000,  // 10 second timeout for loading HRTF
-  RETRY_ATTEMPTS: 3,         // Number of retry attempts if loading fails
-
-  // HRTF type
-  FORMAT: 'ircam' as const,  // IRCAM SOFA JSON format
-
-  // Enable auto-loading on decoder initialization
-  AUTO_LOAD: false,           // Automatically load HRTFs on startup
-
-  /**
-   * Virtual speaker count for binaural decoding per ambisonic order.
-   *
-   * These determine how many virtual speakers are used to decode
-   * ambisonic signals to binaural (headphone) output via HRTF convolution.
-   *
-   * Guidelines:
-   * - Minimum: (order+1)² channels for proper reproduction
-   * - More speakers = better spatial accuracy, higher CPU usage
-   * - Common configurations:
-   *   - FOA: 4-8 speakers (4 = minimum, 8 = cube)
-   *   - SOA: 9-12 speakers
-   *   - TOA: 16-26 speakers (16 = minimum, 26 = Lebedev grid)
-   *
-   * Note: JSAmbisonics binDecoder works best with standard counts.
-   * Non-standard values may cause HRTF loading warnings but will
-   * fall back to cardioid virtual microphone decoding.
-   */
-  VIRTUAL_SPEAKERS: {
-    FOA: 4,   // First Order: tetrahedral (4) or cube (8)
-    SOA: 9,   // Second Order: 9 speakers (cube + zenith)
-    TOA: 16,  // Third Order: 16 speakers (dodecahedron)
-  } as const,
-} as const;
 
 // ============================================================================
 // Stereo Speaker Configuration (for Stereo IR Mode)
@@ -1526,3 +1409,30 @@ export const AREA_DRAWING = {
   RENDER_ORDER: 90,
   LABEL_FONT_SIZE: 14,
 } as const;
+
+// ============================================================================
+// Sound Categories (foley analysis)
+// ============================================================================
+
+/** Canonical sound-category labels + Badge variants. */
+export const SOUND_CATEGORIES = {
+  background: { label: 'Background', variant: 'info' },
+  sound_event: { label: 'Sound Event', variant: 'success' },
+  speech: { label: 'Speech', variant: 'warning' },
+} as const;
+
+export type SoundCategoryKey = keyof typeof SOUND_CATEGORIES;
+
+/**
+ * Normalize a raw category string to a canonical `SOUND_CATEGORIES` key.
+ * Handles variations like "background_sound", "sound event", "Sound Event".
+ * Returns undefined for unknown categories.
+ */
+export function normalizeSoundCategory(category?: string | null): SoundCategoryKey | undefined {
+  if (!category) return undefined;
+  const cat = category.toLowerCase().replace(/[\s-]+/g, '_');
+  if (cat === 'background' || cat === 'background_sound') return 'background';
+  if (cat === 'sound_event' || cat === 'sound event') return 'sound_event';
+  if (cat === 'speech') return 'speech';
+  return undefined;
+}

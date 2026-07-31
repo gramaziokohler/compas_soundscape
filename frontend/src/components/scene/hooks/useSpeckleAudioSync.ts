@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
+import { DEFAULT_DBFS } from '@/utils/constants';
 import type { SoundEvent } from '@/types';
 
 export function useSpeckleAudioSync({
@@ -18,15 +19,15 @@ export function useSpeckleAudioSync({
   globalSoundSpeed: number;
 }) {
   // ============================================================================
-  // Effect - Apply Volume Changes (dB-based)
+  // Effect - Apply Volume Changes (dBFS-based)
   // ============================================================================
   useEffect(() => {
     if (audioOrchestrator && soundscapeData) {
       soundscapeData.forEach((soundEvent) => {
-        const targetVolumeDb = soundVolumes[soundEvent.id] ?? soundEvent.volume_db ?? 70;
-        const baseVolumeDb = soundEvent.volume_db ?? 70;
+        const targetVolumeDbfs = soundVolumes[soundEvent.id] ?? soundEvent.volume_dbfs ?? DEFAULT_DBFS;
+        const baseVolumeDbfs = soundEvent.volume_dbfs ?? DEFAULT_DBFS;
 
-        const dbDiff = targetVolumeDb - baseVolumeDb;
+        const dbDiff = targetVolumeDbfs - baseVolumeDbfs;
         const gainFactor = Math.pow(10, dbDiff / 20);
         const clampedGain = Math.max(0.0, Math.min(10.0, gainFactor));
 

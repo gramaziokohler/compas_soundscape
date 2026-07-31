@@ -102,3 +102,4 @@ touch matching files (Cursor by glob, Opencode via `opencode.json`, Claude Code 
 | `daw-timeline.mdc`    | DAW timeline & WaveSurfer     | `frontend/src/components/audio/daw/**`                                |
 | `audio-generation.mdc`| AI audio generation pipeline  | `backend/routers/sounds.py`, `backend/services/sounds_worker.py`, `frontend/src/store/soundscapeStore.ts`, `SoundResultContent.tsx` |
 | `frontend-ux.mdc`     | Sidebar wizard & card flow    | `frontend/src/components/layout/**`, `store/cardFlowStore.ts`         |
+| `chrome-devtools.mdc` | Browser debugging via chrome-devtools MCP | `frontend/**`, dev-mode `_next/static/chunks` reverse-engineering |

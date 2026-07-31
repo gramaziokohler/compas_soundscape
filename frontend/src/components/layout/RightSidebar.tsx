@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { UI_RIGHT_SIDEBAR, UI_SIDEBAR_RESIZE } from '@/utils/constants';
 import { useRightSidebarStore } from '@/store';
 import { useSidebarResize } from '@/hooks/useSidebarResize';
+import { useVerticalResize } from '@/hooks/useVerticalResize';
 import { AcousticsSection } from '@/components/layout/sidebar/AcousticsSection';
 import { ListenersSection } from '@/components/layout/sidebar/ListenersSection';
 import type { ReceiverData, GridListenerData } from '@/types/receiver';
@@ -152,8 +153,9 @@ export function RightSidebar({
   collapseListenerCardTrigger,
   listenerOrientation,
 }: RightSidebarProps) {
-  const { isExpanded, requestExpand, requestCollapse } = useRightSidebarStore();
+  const { isExpanded, requestExpand, requestCollapse, simulationAreaRatio, setSimulationAreaRatio } = useRightSidebarStore();
   const [isHandleHovered, setIsHandleHovered] = useState(false);
+  const [isSplitHandleHovered, setIsSplitHandleHovered] = useState(false);
 
   const { width: sidebarWidth, isResizing, handleMouseDown: handleResizeMouseDown } = useSidebarResize({
     initialWidth: UI_SIDEBAR_RESIZE.RIGHT_DEFAULT_WIDTH,
@@ -162,6 +164,19 @@ export function RightSidebar({
     direction: 'left',
     onWidthChange,
   });
+
+  const {
+    ratio: acousticsRatio,
+    isResizing: isSplitResizing,
+    handleMouseDown: handleSplitResizeMouseDown,
+  } = useVerticalResize({
+    initialRatio: simulationAreaRatio,
+    minRatio: UI_SIDEBAR_RESIZE.RIGHT_SPLIT_MIN_RATIO,
+    maxRatio: UI_SIDEBAR_RESIZE.RIGHT_SPLIT_MAX_RATIO,
+    onRatioChange: setSimulationAreaRatio,
+  });
+
+  const listenersRatio = 1 - acousticsRatio;
 
   if (!isVisible) return null;
 
@@ -204,7 +219,7 @@ export function RightSidebar({
           width: isExpanded ? `${sidebarWidth}px` : '0px',
           borderLeft: isExpanded ? `${UI_RIGHT_SIDEBAR.BORDER_WIDTH}px solid var(--color-secondary-light)` : 'none',
           zIndex: 10,
-          userSelect: isResizing ? 'none' : undefined,
+          userSelect: (isResizing || isSplitResizing) ? 'none' : undefined,
         }}
       >
         {/* Resize handle — left edge */}
@@ -238,10 +253,10 @@ export function RightSidebar({
           </div>
         )}
 
-        {/* ===== Acoustics Section (top 65%) ===== */}
+        {/* ===== Acoustics Section (top, resizable) ===== */}
         <div
-          className="overflow-y-auto flex-shrink-0"
-          style={{ height: '65%', padding: `${UI_RIGHT_SIDEBAR.PADDING}px`, paddingBottom: '0.5rem' }}
+          className="overflow-y-auto"
+          style={{ flexGrow: acousticsRatio, flexBasis: 0, minHeight: 0, padding: `${UI_RIGHT_SIDEBAR.PADDING}px`, paddingBottom: '0.5rem' }}
         >
           <AcousticsSection
             onSelectIRFromLibrary={onSelectIRFromLibrary}
@@ -288,13 +303,37 @@ export function RightSidebar({
           />
         </div>
 
-        {/* Divider */}
-        <div className="flex-shrink-0 border-t border-secondary-light mx-2" />
-
-        {/* ===== Listeners Section (bottom 35%) ===== */}
+        {/* Vertical resize handle — split between Acoustics (top) and Listeners (bottom) */}
         <div
-          className="overflow-y-auto flex-shrink-0"
-          style={{ height: '35%', padding: `${UI_RIGHT_SIDEBAR.PADDING}px`, paddingTop: '0.5rem' }}
+          onMouseDown={handleSplitResizeMouseDown}
+          onMouseEnter={() => setIsSplitHandleHovered(true)}
+          onMouseLeave={() => setIsSplitHandleHovered(false)}
+          style={{
+            flexShrink: 0,
+            height: `${UI_SIDEBAR_RESIZE.HANDLE_HIT_AREA}px`,
+            width: '100%',
+            cursor: 'row-resize',
+            zIndex: 20,
+            display: 'flex',
+            alignItems: 'stretch',
+            justifyContent: 'center',
+          }}
+        >
+          <div
+            style={{
+              height: `${UI_SIDEBAR_RESIZE.HANDLE_WIDTH}px`,
+              width: '100%',
+              backgroundColor: (isSplitHandleHovered || isSplitResizing) ? 'var(--color-primary)' : 'var(--color-secondary-light)',
+              transition: 'background-color 150ms ease',
+              borderRadius: '2px',
+            }}
+          />
+        </div>
+
+        {/* ===== Listeners Section (bottom, resizable) ===== */}
+        <div
+          className="overflow-y-auto"
+          style={{ flexGrow: listenersRatio, flexBasis: 0, minHeight: 0, padding: `${UI_RIGHT_SIDEBAR.PADDING}px`, paddingTop: '0.5rem' }}
         >
           <ListenersSection
             receivers={receivers}

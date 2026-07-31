@@ -31,14 +31,14 @@ async def extract_sed_segments(
     file: UploadFile = File(...),
     segments_json: str = Form(...),
     apply_noise_reduction: bool = Form(False),
-    target_spl_db: float = Form(70.0),
+    target_dbfs: float = Form(-18.0),
 ):
     """
     Extract audio segments identified by SED analysis, calibrate them, and return URLs.
 
     For each detected sound event, this endpoint:
       1. Slices the original audio at each detection segment's timestamps
-      2. Calibrates the slice to target_spl_db via calibrate_audio_file
+      2. Calibrates the slice to target_dbfs via calibrate_audio_file
       3. Optionally applies noise reduction
       4. Saves the processed slice to GENERATED_SOUNDS_DIR
       5. Returns a URL for each variant
@@ -47,7 +47,7 @@ async def extract_sed_segments(
         - file: Original audio file (wav, mp3, etc.)
         - segments_json: JSON list of {name, detection_segments: [{start_sec, end_sec}]}
         - apply_noise_reduction: Whether to apply denoising (default False)
-        - target_spl_db: Target SPL in dB (default 70)
+        - target_dbfs: Target volume in dBFS (default -18)
 
     Response:
         {
@@ -120,14 +120,14 @@ async def extract_sed_segments(
                 )
                 sf.write(temp_seg_path, segment_audio, sample_rate)
 
-                # Calibrate (normalize RMS + optional denoise + SPL calibration)
+                # Calibrate (normalize RMS + optional denoise + dBFS calibration)
                 out_filename = f"sed_{safe_name}_{seg_idx}_{session_id}.wav"
                 out_path = os.path.join(GENERATED_SOUNDS_DIR, out_filename)
                 try:
                     _audio_service.calibrate_audio_file(
                         input_path=temp_seg_path,
                         output_path=out_path,
-                        target_spl_db=target_spl_db,
+                        target_dbfs=target_dbfs,
                         apply_denoising=apply_noise_reduction,
                     )
                     duration = float(end_sec - start_sec)

@@ -101,8 +101,96 @@ it inline. Every component in `ui/` must:
 5. Reference constants from `@/utils/constants.ts` for sizing, radius, spacing.
 6. Include a JSDoc comment with a `Usage:` example.
 
-When in doubt, look at existing components (`CheckboxField.tsx`, `ValidationMessage.tsx`,
-`ConfirmDialog.tsx`) for the pattern.
+When in doubt, look at existing components (`CheckboxField.tsx`, `Notice.tsx`, `ConfirmDialog.tsx`)
+for the pattern.
+
+---
+
+## Message UI — Three Canonical Channels
+
+User-facing messages must go through **one of three canonical channels**: Toast, Notice, or
+EmptyState. Supplementary status info uses **Badge**. Do **not** hand-roll inline error/success
+divs or styled `<p>` placeholders. (`ValidationMessage.tsx` was removed — do not reintroduce it.)
+
+### 1. Toast — transient, non-blocking, action-optional
+
+Transient notifications that appear top-right, auto-dismiss after 5s, and may offer an action.
+Fire-and-forget; do **not** store the message in component state.
+
+```tsx
+import { notifyError, notifyAuthError, notifySectionError } from '@/store'
+
+// Plain toast
+notifyError('Generation failed')
+
+// Section-level failure → auth-aware toast (auto-adds "Configure API token" action)
+notifySectionError('Analysis request failed', 'error')
+
+// Custom action toast
+notifyError('Missing API key', 'warning', { label: 'Open settings →', onClick: () => ... })
+```
+
+**Use when:** an async operation fails/succeeds outside the card's local context (API errors,
+generation/simulation failures, auth errors). Use `notifySectionError` in **stores** so the
+auth-error action is applied automatically. The full-screen error overlay pattern is **gone** —
+route scene/model load errors through toasts instead.
+
+### 2. Notice — persistent, inline, in-context
+
+Persistent severity-aware message rendered inside a card/panel (`variant="bar"` = full-width bar,
+`variant="tag"` = compact pill).
+
+```tsx
+import { Notice } from '@/components/ui/Notice'
+
+<Notice type="error" message="Simulation failed" onDismiss={clearError} />
+<Notice type="warning" variant="tag" message="(hidden)" />
+```
+
+Types: `error | warning | info | success`.
+
+**Use `bar` when:** the message must stay visible while the user edits (card-level errors via
+`Card.error` → automatically rendered as a bar; section warnings that should not disappear).
+**Use `tag` when:** rendering a persistent inline status label like "(hidden)" or "Area defined".
+Prefer `Badge` over `tag` for non-alerting status.
+
+### 3. EmptyState — zero-item placeholder
+
+Centered muted placeholder when a list/panel has no data.
+
+```tsx
+import { EmptyState } from '@/components/ui/EmptyState'
+
+<EmptyState message="No sounds found. Try a different search term." />
+<EmptyState message="No models available" action={<button onClick={retry}>Retry</button>} />
+```
+
+**Use when:** a collection (sounds, models, categories, saved data) is empty. `CardSection` shows
+it automatically via `emptyMessage` / `emptyAction` props — do not add a separate one.
+
+### 4. Badge — small non-alerting status / metadata
+
+```tsx
+import { Badge } from '@/components/ui/Badge'
+
+<Badge variant="neutral">{category}</Badge>          {/* info | success | warning | error | primary | neutral */}
+<Badge variant="success" size="sm">FOA</Badge>        {/* xs (default) | sm */}
+```
+
+**Use when:** labeling metadata (categories, IR formats, counts) that is purely informative —
+never for alerts. Prefer `normalizeSoundCategory` + `SOUND_CATEGORIES` (constants.ts) for sound
+categories. `Notice variant="tag"` is the alerting counterpart.
+
+### Decision Cheat-Sheet
+
+| Situation | Channel |
+| --------- | ------- |
+| Async op failed/succeeded, transient | Toast (`notifySectionError`) |
+| Persistent in-card/in-panel message, keep visible | `Notice` bar |
+| Persistent inline status label, alerting | `Notice` tag |
+| No data to show | `EmptyState` |
+| Informational label / category / format | `Badge` |
+| Load error → no full-screen overlay | Toast + conditional empty state |
 
 ---
 

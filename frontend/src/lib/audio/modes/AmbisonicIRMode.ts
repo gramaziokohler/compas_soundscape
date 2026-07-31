@@ -43,10 +43,8 @@ import type { IAudioMode } from '../core/interfaces/IAudioMode';
 import type { Position, Orientation, AmbisonicOrder } from '@/types/audio';
 import type { IBinauralDecoder } from '../core/interfaces/IBinauralDecoder';
 import { AudioMode } from '@/types/audio';
-import { BinauralDecoder } from '../decoders/BinauralDecoder';
-import { OmnitoneFOADecoder } from '../decoders/OmnitoneFOADecoder';
-import { AUDIO_CONTROL, AMBISONIC, IMPULSE_RESPONSE } from '@/utils/constants';
-import { convertSN3DtoN3D } from '../utils/ambisonic-utils';
+import { OmnitoneDecoder } from '../decoders/OmnitoneDecoder';
+import { AUDIO_CONTROL, IMPULSE_RESPONSE } from '@/utils/constants';
 
 // Lazy load ambisonics to avoid SSR issues (window is not defined)
 let ambisonics: any = null;
@@ -91,17 +89,12 @@ export class AmbisonicIRMode implements IAudioMode {
   private ambisonicOrder: AmbisonicOrder = 1; // FOA=1, SOA=2, TOA=3
   private numAmbisonicChannels: number = 4; // 4, 9, or 16
   
-  // Binaural decoder (includes rotation via sceneRotator)
-  // Uses either JSAmbisonics or Omnitone based on AMBISONIC.USE_OMNITONE_FOR_FOA constant
+  // Binaural decoder (includes rotation via Omnitone renderer)
   private binauralDecoder: IBinauralDecoder | null = null;
-
+  
   // Pipeline initialization counter (for race condition handling)
   private pipelineInitCounter: number = 0;
 
-  // Whether the current decoder needs N3D normalization (JSAmbisonics)
-  // Omnitone uses SN3D (AmbiX native), JSAmbisonics uses N3D
-  private decoderNeedsN3D: boolean = false;
-  
   // Master output gain (user-facing volume control only)
   private masterGain: GainNode | null = null;
 
@@ -312,25 +305,11 @@ export class AmbisonicIRMode implements IAudioMode {
       oldDecoder.dispose();
       this.binauralDecoder = null;
     }
-    // Create binaural decoder with rotation support
-    // For FOA, use Omnitone if enabled in constants, otherwise use JSAmbisonics
-    // For SOA/TOA, always use JSAmbisonics (Omnitone doesn't support higher orders)
-    const useFOA = this.ambisonicOrder === 1;
-    const useOmnitone = useFOA && AMBISONIC.USE_OMNITONE_FOR_FOA;
-    
-    if (useOmnitone) {
-      console.log('[AmbisonicIRMode] Using Omnitone FOA decoder (Google SADIE HRTFs, SN3D native)');
-      this.binauralDecoder = new OmnitoneFOADecoder();
-      this.decoderNeedsN3D = false; // Omnitone uses SN3D (AmbiX)
-    } else {
-      console.log(`[AmbisonicIRMode] Using JSAmbisonics decoder (order ${this.ambisonicOrder}, N3D)`);
-      this.binauralDecoder = new BinauralDecoder();
-      this.decoderNeedsN3D = true; // JSAmbisonics uses N3D
-    }
-    
+    // Create Omnitone decoder (FOARenderer for FOA, HOARenderer for SOA/TOA)
+    this.binauralDecoder = new OmnitoneDecoder();
     await this.binauralDecoder.initialize(this.audioContext, this.ambisonicOrder);
 
-    // Enable rotation for AmbisonicIRMode (IR has fixed spatial encoding, need to rotate field)
+    // Enable rotation: IR has fixed spatial encoding, rotate field for head tracking
     this.binauralDecoder.setRotationEnabled(true);
 
     // Check if this initialization is still current (another call may have started)
@@ -430,11 +409,7 @@ export class AmbisonicIRMode implements IAudioMode {
    * This keeps the IR in standard +Y=Left convention throughout.
    */
   private getConvolverIR(sn3dBuffer: AudioBuffer): AudioBuffer {
-    if (!this.audioContext) return sn3dBuffer;
-    if (this.decoderNeedsN3D) {
-      return convertSN3DtoN3D(sn3dBuffer, this.audioContext);
-    }
-    return sn3dBuffer;
+    return sn3dBuffer; // Omnitone uses SN3D natively, no conversion needed
   }
 
   /**

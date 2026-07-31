@@ -97,8 +97,8 @@ export function AudioAnalysisAfterContent({
                   {prompt.metadata.confidence !== undefined && (
                     <span>{(prompt.metadata.confidence * 100).toFixed(0)}% conf.</span>
                   )}
-                  {prompt.metadata.spl_db !== undefined && (
-                    <span>{prompt.metadata.spl_db} dB</span>
+                  {prompt.metadata.dbfs !== undefined && (
+                    <span>{prompt.metadata.dbfs} dBFS</span>
                   )}
                   {prompt.metadata.interval_seconds !== undefined && (
                     <span>{prompt.metadata.interval_seconds}s int.</span>

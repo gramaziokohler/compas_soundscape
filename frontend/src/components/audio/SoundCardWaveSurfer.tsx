@@ -8,7 +8,9 @@ import { WaveSurferPlayer } from './WaveSurferPlayer';
 
 interface SoundCardWaveSurferProps {
   audioUrl: string;
-  volumeDb: number;
+  volumeDbfs: number;
+  /** Calibrated level of the audio file itself (preview gain is relative to this base). */
+  baseVolumeDbfs?: number;
   isPlaying: boolean;
   isMuted?: boolean;
   silent?: boolean;
@@ -33,7 +35,8 @@ type DragPhase =
 
 export function SoundCardWaveSurfer({
   audioUrl,
-  volumeDb,
+  volumeDbfs,
+  baseVolumeDbfs,
   isPlaying,
   isMuted = false,
   silent = false,
@@ -304,7 +307,8 @@ export function SoundCardWaveSurfer({
       isPlaying={isPlaying}
       onPlayPause={handlePlayPause}
       onStop={handleStop}
-      volumeDb={volumeDb}
+      volumeDbfs={volumeDbfs}
+      baseVolumeDbfs={baseVolumeDbfs}
       isMuted={isMuted}
       silent={silent}
       color={color}

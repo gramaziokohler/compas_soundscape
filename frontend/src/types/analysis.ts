@@ -259,7 +259,7 @@ export interface TextPromptResult {
   /** Pre-computed position from area drawing (overrides random placement) */
   position?: [number, number, number];
   metadata?: {
-    spl_db?: number;
+    dbfs?: number;
     interval_seconds?: number;
     duration_seconds?: number;
     confidence?: number;
@@ -304,7 +304,6 @@ export interface AnalysisSectionProps {
   analysisConfigs: AnalysisConfig[];
   activeTab: number;
   isRunning: boolean;
-  error: string | null;
   analysisResult: AnalysisResult[];
   hasGlobalModelLoaded?: boolean;
 

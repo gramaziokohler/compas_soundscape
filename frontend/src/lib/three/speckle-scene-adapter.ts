@@ -233,7 +233,19 @@ export class SpeckleSceneAdapter {
           // Calculate basic orientation — Speckle Z-UP: +X=Right, -Y=Forward, +Z=Up
           const yaw = Math.atan2(-direction.x, -direction.y);
           const pitch = Math.asin(direction.z);
-          const orientation = { yaw, pitch, roll: 0 };
+          let roll = 0;
+
+          // In first-person mode the camera can be rolled (head tilt) via the camera
+          // controller's quaternion post-multiplication. getWorldDirection() only
+          // exposes the look direction (roll-invariant), so read the tracked roll
+          // from the camera controller — the source of truth for auralization.
+          const coordinator = useSpeckleEngineStore.getState().coordinator;
+          const camController = coordinator?.getCameraController();
+          if (camController?.isFirstPersonMode()) {
+            roll = camController.getListenerOrientation().roll;
+          }
+
+          const orientation = { yaw, pitch, roll };
 
           this.audioOrchestrator.updateListener(position, orientation);
 
@@ -241,10 +253,10 @@ export class SpeckleSceneAdapter {
           const prevOri = useSpeckleEngineStore.getState().currentCameraOrientation;
           if (
             Math.abs(prevOri.yaw - yaw) > 0.0001 ||
-            Math.abs(prevOri.pitch - pitch) > 0.0001||
-            Math.abs(prevOri.roll - 0) > 0.0001
+            Math.abs(prevOri.pitch - pitch) > 0.0001 ||
+            Math.abs(prevOri.roll - roll) > 0.0001
           ) {
-            useSpeckleEngineStore.getState().setCurrentCameraOrientation({ yaw, pitch, roll: 0 });
+            useSpeckleEngineStore.getState().setCurrentCameraOrientation({ yaw, pitch, roll });
           }
         } catch (error) {
           console.warn('[SpeckleSceneAdapter] Failed to update audio listener:', error);

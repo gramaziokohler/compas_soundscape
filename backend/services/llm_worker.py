@@ -23,7 +23,7 @@ from typing import Optional
 # Ensure absolute imports work when run as __main__
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.constants import DEFAULT_SPL_DB, LLM_SUGGESTED_INTERVAL_SECONDS, DEFAULT_LLM_MODEL
+from config.constants import DEFAULT_DBFS, LLM_SUGGESTED_INTERVAL_SECONDS, DEFAULT_LLM_MODEL
 
 
 def _write_progress(progress_file: str, value: int, status: str) -> None:
@@ -106,7 +106,7 @@ def run_llm_generation(
                     "entity": entity_data,
                     "prompt": sound_data["prompt"],
                     "display_name": sound_data["display_name"],
-                    "spl_db": sound_data.get("spl_db", DEFAULT_SPL_DB),
+                    "dbfs": sound_data.get("dbfs", DEFAULT_DBFS),
                     "interval_seconds": sound_data.get("interval_seconds", LLM_SUGGESTED_INTERVAL_SECONDS),
                     "duration_seconds": sound_data.get("duration_seconds", 5.0),
                 })

@@ -152,3 +152,21 @@ export function trimDisplayName(name: string): string {
 export function getAnalysisGroupColor(index: number): string {
   return `hsl(${(index * 137.5) % 360}, 68%, 58%)`;
 }
+
+/**
+ * Convert a dBFS value to linear gain (0 dBFS → 1.0).
+ * formula: 10^(dbfs/20)
+ */
+export function dbfsToLinear(dbfs: number): number {
+  return Math.pow(10, dbfs / 20);
+}
+
+/**
+ * Convert a linear gain to dBFS (1.0 → 0 dBFS).
+ * formula: 20*log10(linear)
+ * Returns -Infinity for 0.
+ */
+export function linearToDbfs(linear: number): number {
+  if (linear <= 0) return -Infinity;
+  return 20 * Math.log10(linear);
+}
