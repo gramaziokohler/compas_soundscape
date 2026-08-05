@@ -34,6 +34,24 @@ Mode enum and type definitions: `frontend/src/types/audio.ts`
 **Do not override the mode selector** from outside `AudioOrchestrator`. It is the contract between
 the UI layer and the audio engine.
 
+## Per-Source Simulation IR Resolution & Muting
+
+In `AMBISONIC_IR` mode with a room simulation, each source is convolved with the IR recorded for the
+simulated source position nearest to it. See `acoustic-sim.mdc` § "Applying Simulation Results to Sounds"
+for the full contract. The parts the audio engine owns:
+
+- **Resolve IR by Euclidean distance, not grid-cell equality.** `resolveSimSourcePosKey()` tries an exact
+  `computePositionKey()` match first, then the nearest recorded `simulationSourcePositions` coordinate
+  within `SIMULATION_POSITION_MATCH_THRESHOLD` (0.5). Recorded sim coordinates are arbitrary (not
+  grid-aligned) — a new sound placed naturally near a simulated source MUST inherit that IR, not mute.
+- **Mute only when there is no IR for the source's position + active receiver.** `AmbisonicIRMode.muteSourceImpulseResponse()`
+  applies a zero-IR buffer so the source plays silent. `clearSourceImpulseResponse()` restores the dry path.
+- **No receiver-position muting.** `receiverOutOfPosition` / `setActiveReceiverOutOfPosition()` were
+  **removed** — dragging the receiver does not mute anything. IRs recorded for a receiver stay applied
+  wherever the receiver is dragged.
+- The orchestrator tracks `sourceIRSeq` (per-source monotonic seq, guards stale async IR downloads) and
+  `sourceIRAppliedKey` (which posKey's IR is currently applied per source) — never bypass them.
+
 ## Ambisonic Signal Chain
 
 ```

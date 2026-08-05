@@ -27,6 +27,7 @@ from services.audio_service import AudioService
 from services.sounds_worker import run_sound_generation
 from services.task_queue import unified_queue, make_subprocess_runner
 from services.paths import user_sounds_dir
+from utils.audio_processing import compute_noise_trim_region_from_file
 from models.schemas import (
     SoundGenerationRequest,
     SoundGenerationStartResponse,
@@ -166,6 +167,7 @@ async def cleanup_generated_sounds(req: Request):
             session_dir = str(user_sounds_dir(session_id))
         else:
             session_dir = GENERATED_SOUNDS_DIR
+        print(f"[dbg:cleanup] session_id={session_id} session_dir={session_dir}")
         audio_service.cleanup_generated_sounds(output_dir=session_dir)
         return {"message": "Cleanup successful"}
     except Exception as e:
@@ -200,17 +202,20 @@ async def calibrate_audio(
 
         filename = f"calibrated_{uuid.uuid4().hex}_{int(dbfs)}dBFS.wav"
         output_path = os.path.join(out_dir, filename)
+        print(f"[dbg:calibrate] session_id={session_id} out_dir={out_dir} filename={filename} src_name={audio.filename}")
 
         audio_service.calibrate_audio_file(
             tmp_input.name,
             output_path,
             target_dbfs=dbfs,
             apply_denoising=apply_denoising,
-            trim_silence=trim_silence,
         )
 
         url_prefix = f"{GENERATED_SOUND_URL_PREFIX}/{session_id}" if session_id else GENERATED_SOUND_URL_PREFIX
-        return {"url": f"{url_prefix}/{filename}"}
+        response: dict = {"url": f"{url_prefix}/{filename}"}
+        if trim_silence:
+            response["noise_trim"] = compute_noise_trim_region_from_file(output_path)
+        return response
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Calibration failed: {str(e)}")

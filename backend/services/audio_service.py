@@ -5,13 +5,12 @@ import os
 import torch
 import torchaudio
 from tangoflux import TangoFluxInference
-import random
 from contextlib import contextmanager
 from utils.audio_processing import (
     normalize_audio_rms,
     apply_dbfs_calibration,
     apply_denoising as denoise_audio,
-    ensure_mono
+    ensure_mono,
 )
 from config.constants import (
     TANGOFLUX_MODEL_NAME,
@@ -134,27 +133,6 @@ class AudioService:
                 self.audioldm2_service = None
         return self.audioldm2_service
 
-    @staticmethod
-    def get_random_position(idx: int, total_sounds: int, bounding_box: dict = None):
-        """Return [0, 0, 0] — positioning is handled by camera-front placement in the frontend."""
-        # Bounding-box and default-spacing placement removed.
-        # The frontend (SoundSphereManager) places sounds in front of the camera.
-        # if bounding_box and bounding_box.get('min') and bounding_box.get('max'):
-        #     min_bounds = bounding_box['min']
-        #     max_bounds = bounding_box['max']
-        #     return [
-        #         random.uniform(min_bounds[0], max_bounds[0]),
-        #         random.uniform(min_bounds[1], max_bounds[1]),
-        #         random.uniform(min_bounds[2], max_bounds[2])
-        #     ]
-        # else:
-        #     return [
-        #         (idx * DEFAULT_POSITION_SPACING) - total_sounds * DEFAULT_POSITION_OFFSET,
-        #         DEFAULT_POSITION_Y,
-        #         DEFAULT_POSITION_Z
-        #     ]
-        return [0, 0, 0]
-
     def generate_sound_file(
         self,
         prompt: str,
@@ -164,7 +142,6 @@ class AudioService:
         steps: int = DEFAULT_DIFFUSION_STEPS,
         dbfs: float = DEFAULT_DBFS,
         apply_denoising: bool = False,
-        trim_silence: bool = False,
         audio_model: str = DEFAULT_AUDIO_MODEL,
         negative_prompt: str = "",
         progress_callback: callable = None,
@@ -201,7 +178,6 @@ class AudioService:
                     steps=steps,
                     dbfs=dbfs,
                     apply_denoising=apply_denoising,
-                    trim_silence=trim_silence,
                     negative_prompt=negative_prompt or "Low quality, distorted",
                     progress_callback=progress_callback,
                     stage_callback=stage_callback,
@@ -263,7 +239,7 @@ class AudioService:
                 if stage_callback:
                     stage_callback("Applying noise reduction...")
                 print("Applying noise reduction...")
-                audio = denoise_audio(audio, sample_rate=AUDIO_SAMPLE_RATE, trim_silence=trim_silence)
+                audio = denoise_audio(audio, sample_rate=AUDIO_SAMPLE_RATE)
 
             # Step 3: Apply dBFS calibration
             if stage_callback:
@@ -277,127 +253,7 @@ class AudioService:
             torchaudio.save(output_path, audio.cpu(), AUDIO_SAMPLE_RATE)
             print(f"Saved to: {output_path} (calibrated to {dbfs} dBFS{denoise_suffix})")
 
-    def generate_multiple_sounds(
-        self,
-        sound_configs: list[dict],
-        output_dir: str,
-        bounding_box: dict = None,
-        apply_denoising: bool = False,
-        trim_silence: bool = False,
-        audio_model: str = DEFAULT_AUDIO_MODEL
-    ) -> list[dict]:
-        """Generate multiple audio files from a list of sound configurations"""
-        os.makedirs(output_dir, exist_ok=True)
-
-        generated_files = []
-
-        for idx, sound_config in enumerate(sound_configs):
-            prompt = sound_config.get('prompt', '')
-            # Prefer duration_seconds from LLM output, fallback to duration, then default
-            duration = sound_config.get('duration_seconds') or sound_config.get('duration', DEFAULT_DURATION_SECONDS)
-            guidance_scale = sound_config.get('guidance_scale', DEFAULT_GUIDANCE_SCALE)
-            seed_copies = sound_config.get('seed_copies', DEFAULT_SEED_COPIES)
-            steps = sound_config.get('steps', DEFAULT_DIFFUSION_STEPS)
-            dbfs = sound_config.get('dbfs', DEFAULT_DBFS)  # Get volume level from config
-            interval_seconds = sound_config.get('interval_seconds', DEFAULT_INTERVAL_BETWEEN_SOUNDS)  # Get interval from config
-            negative_prompt = sound_config.get('negative_prompt', '')  # Get negative prompt from config
-
-            if not prompt:
-                continue
-
-            # Create shortened filename from prompt - sanitize all illegal characters
-            short_prompt = prompt[:FILENAME_MAX_LENGTH]
-            for char in WINDOWS_ILLEGAL_FILENAME_CHARS:
-                short_prompt = short_prompt.replace(char, '_')
-            short_prompt = short_prompt.replace(' ', '_')
-
-            # Use display_name from config if provided by LLM, otherwise fallback
-            display_name = sound_config.get('display_name')
-            if not display_name:
-                # Fallback: use the complete prompt
-                display_name = prompt
-
-            # Create a hash of all generation parameters for unique identification
-            import hashlib
-            regeneration_ts = sound_config.get('_regeneration_ts', '')
-            param_string = f"{prompt}_{duration}_{guidance_scale}_{steps}_{apply_denoising}_{audio_model}"
-            if regeneration_ts:
-                param_string += f"_{regeneration_ts}"
-            param_hash = hashlib.md5(param_string.encode()).hexdigest()[:PARAM_HASH_LENGTH]
-
-            for copy_idx in range(seed_copies):
-                filename = f"{short_prompt}_{param_hash}_copy{copy_idx}.wav"
-                output_path = os.path.normpath(os.path.join(output_dir, filename))
-
-                # Use entity position if available, otherwise generate random position
-                entity = sound_config.get('entity')
-                if entity and entity.get('position'):
-                    position = entity['position']
-                    entity_index = entity.get('index')  # Get entity index for linking
-                else:
-                    position = self.get_random_position(idx, len(sound_configs), bounding_box)
-                    entity_index = None
-
-                # Skip if file with exact same parameters already exists
-                if os.path.exists(output_path):
-                    print(f"Sound with identical parameters already exists, skipping: {filename}")
-                    sound_data = {
-                        "id": f"generated_{idx}_{copy_idx}",
-                        "prompt": prompt,
-                        "prompt_index": idx,
-                        "display_name": display_name,
-                        "url": f"{GENERATED_SOUND_URL_PREFIX}/{filename}",
-                        "duration": duration,
-                        "copy_index": copy_idx,
-                        "total_copies": seed_copies,
-                        "position": position,
-                        "volume_dbfs": dbfs,
-                        "interval_seconds": interval_seconds
-                    }
-                    if entity_index is not None:
-                        sound_data["entity_index"] = entity_index
-                    generated_files.append(sound_data)
-                    continue
-
-                print(f"Generating sound {idx + 1}/{len(sound_configs)} (copy {copy_idx + 1}/{seed_copies}): {prompt}")
-
-                # Generate audio with dBFS calibration and optional denoising
-                self.generate_sound_file(
-                    prompt=prompt,
-                    output_path=output_path,
-                    duration=duration,
-                    guidance_scale=guidance_scale,
-                    steps=steps,
-                    dbfs=dbfs,
-                    apply_denoising=apply_denoising,
-                    trim_silence=trim_silence,
-                    audio_model=audio_model,
-                    negative_prompt=negative_prompt
-                )
-
-                sound_data = {
-                    "id": f"generated_{idx}_{copy_idx}",
-                    "prompt": prompt,
-                    "prompt_index": idx,
-                    "display_name": display_name,
-                    "url": f"{GENERATED_SOUND_URL_PREFIX}/{filename}",
-                    "duration": duration,
-                    "copy_index": copy_idx,
-                    "total_copies": seed_copies,
-                    "position": position,
-                    "volume_dbfs": dbfs,
-                    "interval_seconds": interval_seconds
-                }
-                if entity_index is not None:
-                    sound_data["entity_index"] = entity_index
-                generated_files.append(sound_data)
-
-        # Clear CUDA cache after all generations
-        self._clear_cuda_cache()
-
-        return generated_files
-
-    def reprocess_audio_file(self, file_path: str, apply_denoising: bool, trim_silence: bool = False):
+    def reprocess_audio_file(self, file_path: str, apply_denoising: bool):
         """Reprocess an existing audio file to add or remove denoising
         
         Args:
@@ -423,7 +279,7 @@ class AudioService:
             audio_tensor = torch.from_numpy(audio_np).unsqueeze(0)
             
             # Apply denoising
-            audio_tensor = denoise_audio(audio_tensor, sample_rate=sample_rate, trim_silence=trim_silence)
+            audio_tensor = denoise_audio(audio_tensor, sample_rate=sample_rate)
             # Convert back to numpy
             audio_np = audio_tensor.squeeze().cpu().numpy()
         else:
@@ -443,7 +299,6 @@ class AudioService:
         output_path: str,
         target_dbfs: float = DEFAULT_DBFS,
         apply_denoising: bool = False,
-        trim_silence: bool = False,
     ):
         """Normalize RMS, optionally denoise, then apply dBFS calibration to any audio file.
 
@@ -473,7 +328,7 @@ class AudioService:
         # Step 2: Apply denoising if requested
         if apply_denoising:
             print("Applying denoising during calibration...")
-            audio_tensor = denoise_audio(audio_tensor, sample_rate=sample_rate, trim_silence=trim_silence)
+            audio_tensor = denoise_audio(audio_tensor, sample_rate=sample_rate)
 
         # Step 3: Apply dBFS calibration
         audio_tensor = apply_dbfs_calibration(audio_tensor, target_dbfs=target_dbfs)

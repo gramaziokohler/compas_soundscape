@@ -104,6 +104,9 @@ export interface UIStoreState {
   setShowSoundSpheres: (v: boolean) => void;
   showSceneListeners: boolean;
   setShowSceneListeners: (v: boolean) => void;
+  /** Draw the dashed-arrow scenario parcours in the 3D viewer (Advanced Settings → Viewer) */
+  showScenarioParcours: boolean;
+  setShowScenarioParcours: (v: boolean) => void;
 
   // ── Panel toggles ──────────────────────────────────────────────────────────
   showAdvancedSettings: boolean;
@@ -289,6 +292,8 @@ export const useUIStore = create<UIStoreState>()(
       setShowSoundSpheres: (v) => set({ showSoundSpheres: v }, false, 'ui/setShowSoundSpheres'),
       showSceneListeners: true,
       setShowSceneListeners: (v) => set({ showSceneListeners: v }, false, 'ui/setShowSceneListeners'),
+      showScenarioParcours: false,
+      setShowScenarioParcours: (v) => set({ showScenarioParcours: v }, false, 'ui/setShowScenarioParcours'),
 
       // ── Panel toggles ────────────────────────────────────────────────────
       showAdvancedSettings: false,

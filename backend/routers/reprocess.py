@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from services.audio_service import AudioService
 from services.paths import user_sounds_dir
+from utils.audio_processing import compute_noise_trim_region_from_file
 from pydantic import BaseModel
 from config.constants import GENERATED_SOUNDS_DIR
 import os
@@ -35,6 +36,7 @@ async def reprocess_sounds(request: ReprocessRequest, req: Request):
             sounds_dir = GENERATED_SOUNDS_DIR
 
         reprocessed_sounds = []
+        reprocessed_trims = {}
 
         for url in request.sound_urls:
             filename = os.path.basename(url)
@@ -45,7 +47,9 @@ async def reprocess_sounds(request: ReprocessRequest, req: Request):
                 continue
 
             try:
-                audio_service.reprocess_audio_file(file_path, request.apply_denoising, trim_silence=request.trim_silence)
+                audio_service.reprocess_audio_file(file_path, request.apply_denoising)
+                if request.trim_silence:
+                    reprocessed_trims[url] = compute_noise_trim_region_from_file(file_path)
                 reprocessed_sounds.append(url)
             except Exception as e:
                 print(f"Error reprocessing {filename}: {str(e)}")
@@ -54,7 +58,8 @@ async def reprocess_sounds(request: ReprocessRequest, req: Request):
         return {
             "success": True,
             "reprocessed_count": len(reprocessed_sounds),
-            "sounds": reprocessed_sounds
+            "sounds": reprocessed_sounds,
+            "noise_trims": reprocessed_trims,
         }
 
     except Exception as e:

@@ -88,9 +88,10 @@ export class OmnitoneDecoder implements IBinauralDecoder {
   }
 
   /**
-   * Update listener orientation via Omnitone's setRotationMatrix3.
-   * Matrix is Ry(yaw) * Rx(pitch), column-major, Y-up convention.
+   * Evaluate listener orientation via Omnitone's setRotationMatrix3.
+   * Matrix is Ry(yaw) * Rx(pitch) * Rz(roll), column-major, Y-up convention.
    * Works identically for FOARenderer and HOARenderer.
+   * With roll = 0 this reduces to the previous Ry * Rx matrix.
    */
   updateOrientation(orientation: Orientation): void {
     if (!this.renderer) return;
@@ -101,18 +102,17 @@ export class OmnitoneDecoder implements IBinauralDecoder {
       return;
     }
 
-    const yaw = orientation.yaw;
-    const pitch = orientation.pitch;
-    const cosYaw = Math.cos(yaw);
-    const sinYaw = Math.sin(yaw);
-    const cosPitch = Math.cos(pitch);
-    const sinPitch = Math.sin(pitch);
+    const yaw = orientation.yaw,  pitch = orientation.pitch,  roll = orientation.roll;
+    const cosYaw = Math.cos(yaw),   sinYaw = Math.sin(yaw);
+    const cosPitch = Math.cos(pitch), sinPitch = Math.sin(pitch);
+    const cosRoll = Math.cos(roll),   sinRoll = Math.sin(roll);
 
-    // R = Ry(yaw) * Rx(pitch), column-major format for Omnitone
+    // R = Ry(yaw) * Rx(pitch) * Rz(roll), column-major format for Omnitone.
+    // With roll = 0 this reduces to the previous Ry(yaw) * Rx(pitch) matrix.
     this.renderer.setRotationMatrix3([
-      cosYaw,            0,         -sinYaw,
-      sinYaw * sinPitch, cosPitch,   cosYaw * sinPitch,
-      sinYaw * cosPitch, -sinPitch,  cosYaw * cosPitch,
+      cosYaw*cosRoll + sinYaw*sinPitch*sinRoll,  cosPitch*sinRoll,                       -sinYaw*cosRoll + cosYaw*sinPitch*sinRoll,
+      -cosYaw*sinRoll + sinYaw*sinPitch*cosRoll,  cosPitch*cosRoll,                       sinYaw*sinRoll + cosYaw*sinPitch*cosRoll,
+      sinYaw*cosPitch,                            -sinPitch,                              cosYaw*cosPitch,
     ]);
   }
 

@@ -18,6 +18,11 @@ export class AudioScheduler {
     this.audioContext = audioContext || null;
   }
 
+  /** Set the orchestrator after construction (used when it was async-initialised late). */
+  public setAudioOrchestrator(orchestrator: AudioOrchestrator | null): void {
+    this.audioOrchestrator = orchestrator || null;
+  }
+
   /**
    * Schedule a sound to play at intervals with per-iteration jitter.
    * Interval = sound_duration + intervalSeconds ± jitter (clamped to ≥ 0)

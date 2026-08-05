@@ -26,8 +26,10 @@ import {
   PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE,
   PYROOMACOUSTICS_DEFAULT_ENABLE_GRID,
 } from '@/utils/constants';
+import { groupSoundsByPosition, collapseVariantsToOne } from '@/utils/positionKey';
 import { notifyError } from './errorsStore';
 import { useUIStore } from './uiStore';
+import { useAudioControlsStore } from './audioControlsStore';
 import type { SourceReceiverIRMapping } from '@/types/audio';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -302,18 +304,19 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
             return;
           }
 
-          // Build source-receiver pairs
+          // Group sounds by position to deduplicate source-receiver pairs.
+          // Variants of one source (same prompt_index) collapse to a single simulated source
+          // so multi-copy sounds are not simulated as N separate sources.
+          const sourceSounds = collapseVariantsToOne(
+            soundscapeData as Array<{ prompt_index?: number; copy_index?: number }>,
+            useAudioControlsStore.getState().selectedVariants,
+          );
+          const { uniquePositions: uniqueSourcePositions, soundToPosKey: sourceSoundToPosKey } =
+            groupSoundsByPosition(sourceSounds as Array<{ id: string; position: [number, number, number] }>);
+
+          // Build source-receiver pairs: unique source positions × receivers
           const sourceReceiverPairs: any[] = [];
-          for (const sound of soundscapeData) {
-            if (!sound.position || sound.position.length !== 3) {
-              patchInstance(
-                set,
-                instanceId,
-                { error: `Sound "${sound.display_name || sound.id}" has invalid position.` },
-                'pyroom/invalidPosition',
-              );
-              return;
-            }
+          for (const [posKey, pos] of uniqueSourcePositions) {
             for (const receiver of receivers) {
               if (!receiver.position || receiver.position.length !== 3) {
                 patchInstance(
@@ -325,9 +328,9 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
                 return;
               }
               sourceReceiverPairs.push({
-                source_position: sound.position,
+                source_position: pos,
                 receiver_position: receiver.position,
-                source_id: sound.id || sound.name,
+                source_id: posKey,
                 receiver_id: receiver.id,
               });
             }
@@ -387,11 +390,20 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
 
             patchInstance(set, instanceId, { currentSimulationId: simulation_id, status: 'Queued...' }, 'pyroom/queued');
 
-            // Build display name lookups once
+            // Build display name lookups from position keys
             const sourceDisplayNames: Record<string, string> = {};
-            for (const sound of soundscapeData) {
-              const sid = (sound as any).id || (sound as any).name;
-              if (sid) sourceDisplayNames[sid] = (sound as any).display_name || sid;
+            const posKeyToNames = new Map<string, string[]>();
+            for (const [pk] of uniqueSourcePositions) {
+              posKeyToNames.set(pk, []);
+            }
+            for (const sound of soundscapeData as any[]) {
+              const pk = sourceSoundToPosKey.get(sound.id || sound.name);
+              if (pk && posKeyToNames.has(pk)) {
+                posKeyToNames.get(pk)!.push(sound.display_name || sound.id || sound.name);
+              }
+            }
+            for (const [pk, names] of posKeyToNames) {
+              sourceDisplayNames[pk] = names.join(', ');
             }
             const receiverDisplayNames: Record<string, string> = {};
             for (const receiver of receivers) {

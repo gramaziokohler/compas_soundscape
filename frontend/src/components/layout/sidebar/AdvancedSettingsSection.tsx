@@ -80,6 +80,8 @@ export interface AdvancedSettingsSectionProps {
   onShowSoundSpheresChange: (value: boolean) => void;
   showSceneListeners: boolean;
   onShowSceneListenersChange: (value: boolean) => void;
+  showScenarioParcours: boolean;
+  onShowScenarioParcoursChange: (value: boolean) => void;
   showGroundGrid: boolean;
   onShowGroundGridChange: (value: boolean) => void;
   groundGridSpacing: number;
@@ -109,6 +111,7 @@ const SECTION_KEYS: SectionKey[] = ['viewer', 'acoustic', 'tokens', 'llm', 'rend
 
 type SettingKey =
   | 'label-sprites' | 'hovering-highlight' | 'sound-spheres' | 'listeners' | 'ground-grid'
+  | 'scenario-parcours'
   | 'grid-spacing' | 'grid-color'
   | 'sound-speed' | 'mesh-length'
   | 'tokens'
@@ -129,6 +132,7 @@ const SETTINGS: SettingEntry[] = [
   { section: 'viewer', key: 'hovering-highlight', terms: ['hovering highlight', 'hover', 'highlight'] },
   { section: 'viewer', key: 'sound-spheres', terms: ['sound spheres', 'sphere'] },
   { section: 'viewer', key: 'listeners', terms: ['listeners', 'listener'] },
+  { section: 'viewer', key: 'scenario-parcours', terms: ['scenario parcours', 'parcours', 'scenario', 'arrow', 'path'] },
   { section: 'viewer', key: 'ground-grid', terms: ['ground grid', 'grid'] },
   { section: 'viewer', key: 'grid-spacing', terms: ['grid spacing', 'spacing', 'grid'] },
   { section: 'viewer', key: 'grid-color', terms: ['grid color', 'color', 'grid'] },
@@ -428,6 +432,8 @@ export function AdvancedSettingsSection({
   onShowSoundSpheresChange,
   showSceneListeners,
   onShowSceneListenersChange,
+  showScenarioParcours,
+  onShowScenarioParcoursChange,
   showGroundGrid,
   onShowGroundGridChange,
   groundGridSpacing,
@@ -591,6 +597,13 @@ export function AdvancedSettingsSection({
               )}
               {isVisible('listeners') && (
                 <CheckboxField checked={showSceneListeners} onChange={onShowSceneListenersChange} label="Show listeners" />
+              )}
+              {isVisible('scenario-parcours') && (
+                <CheckboxField
+                  checked={showScenarioParcours}
+                  onChange={onShowScenarioParcoursChange}
+                  label="Show scenario parcours"
+                />
               )}
               {isVisible('ground-grid') && (
                 <CheckboxField checked={showGroundGrid} onChange={onShowGroundGridChange} label="Show ground grid" />

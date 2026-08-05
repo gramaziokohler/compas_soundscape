@@ -34,6 +34,7 @@ import { useSpeckleSceneObjects } from '@/components/scene/hooks/useSpeckleScene
 import { useSpeckleSoundHighlight } from '@/components/scene/hooks/useSpeckleSoundHighlight';
 import { useSpeckleSimulationMismatch } from '@/components/scene/hooks/useSpeckleSimulationMismatch';
 import { useSpeckleIRHoverLine } from '@/components/scene/hooks/useSpeckleIRHoverLine';
+import { useSpeckleScenarioPreview } from '@/components/scene/hooks/useSpeckleScenarioPreview';
 import { useSpeckleObjectOverlay } from '@/components/scene/hooks/useSpeckleObjectOverlay';
 import { useSpeckleCoordinatorCallbacks } from '@/components/scene/hooks/useSpeckleCoordinatorCallbacks';
 import { useSpeckleBoundingBoxGumball } from '@/components/scene/hooks/useSpeckleBoundingBoxGumball';
@@ -938,12 +939,26 @@ export function SpeckleScene({
     expandedGridListenerId,
   });
 
+  // ── Simulation Mismatch Coloring ──
+  // Runs BEFORE the highlight hook so it publishes userData.simMismatch flags
+  // (and colors red mismatched spheres) before useSpeckleSoundHighlight resets
+  // the remaining sphere colors / opacity. This ordering means the highlight
+  // hook is the final authority for non-red sphere colors, so e.g. a drag that
+  // triggers a soundscapeData change no longer resets spheres to blue.
+  useSpeckleSimulationMismatch({
+    isViewerReady,
+    activeSimulationPositions,
+    receivers,
+    soundscapeData,
+  });
+
   // ── Sound Sphere Highlight + Zoom ──
   useSpeckleSoundHighlight({
     isViewerReady,
     selectedCardIndex: selectedCardIndex ?? null,
     soundscapeData,
     selectedVariants,
+    activeSimulationPositions,
   });
 
   // ── IR Hover Line ──
@@ -951,17 +966,11 @@ export function SpeckleScene({
     hoveredIRSourceReceiver,
     receivers,
     gridListeners,
-    soundscapeData,
     activeSimulationPositions,
   });
 
-  // ── Simulation Mismatch Coloring ──
-  useSpeckleSimulationMismatch({
-    isViewerReady,
-    activeSimulationPositions,
-    soundscapeData,
-    receivers,
-  });
+  // ── Scenario Preview (wireframe highlight + dashed-arrow parcours) ──
+  useSpeckleScenarioPreview({ isViewerReady, worldTree });
 
   // ── Selected Object Overlay ──
   useSpeckleObjectOverlay({
@@ -1096,12 +1105,22 @@ export function SpeckleScene({
 
   // ============================================================================
   // Effect - Update Audio Orchestrator
+  // The coordinator and scheduler are created asynchronously in useSpeckleViewerInit
+  // (after the viewer loads), so the orchestrator may become ready before OR after them.
+  // Watch both the orchestrator AND the store instances reactively so whichever arrives
+  // last still gets the orchestrator injected. Otherwise the reversed ordering leaves the
+  // freshly-created coordinator/scheduler stuck with a stale null orchestrator closure.
   // ============================================================================
+  const engineCoordinator = useSpeckleEngineStore((s) => s.coordinator);
+  const enginePlaybackScheduler = useSpeckleEngineStore((s) => s.playbackScheduler);
   useEffect(() => {
-    if (coordinatorRef.current && audioOrchestrator) {
-      coordinatorRef.current.setAudioOrchestrator(audioOrchestrator);
+    if (audioOrchestrator && engineCoordinator) {
+      engineCoordinator.setAudioOrchestrator(audioOrchestrator);
     }
-  }, [audioOrchestrator]);
+    if (audioOrchestrator && enginePlaybackScheduler) {
+      enginePlaybackScheduler.setAudioOrchestrator(audioOrchestrator);
+    }
+  }, [audioOrchestrator, engineCoordinator, enginePlaybackScheduler]);
 
   // ============================================================================
   // Effect - Compute and Report Bounds When Viewer Ready

@@ -526,6 +526,30 @@ export const IR_HOVER_LINE = {
   GAP_SIZE: 0.02,
 } as const;
 
+// Scenario preview visualization (3D viewer)
+// Scenario-involved objects are colored light-primary via the FilteringExtension
+// (same pipeline as the hover highlight); the dashed "parcours" of arrows between
+// the objects in scenario order is drawn as THREE overlays, with each segment
+// colored along the acoustic-material gradient by its order of appearance.
+export const SCENARIO_PREVIEW = {
+  /** Opacity of the dashed parcours lines and arrowheads */
+  LINE_OPACITY: 0.9,
+  /** Dash length of the parcours line (meters) */
+  DASH_SIZE: 0.07,
+  /** Gap length of the parcours line (meters) */
+  GAP_SIZE: 0.05,
+  /** Skip parcours segments shorter than this (meters) */
+  MIN_SEGMENT_LENGTH: 0.01,
+  /** Arrowhead radius as a fraction of the segment length */
+  ARROW_RADIUS_FACTOR: 0.01,
+  /** Minimum arrowhead radius (meters) */
+  ARROW_MIN_RADIUS: 0.001,
+  /** Maximum arrowhead radius (meters) */
+  ARROW_MAX_RADIUS: 0.25,
+  /** Arrowhead length as a multiple of its radius */
+  ARROW_HEAD_LENGTH_FACTOR: 2.5,
+} as const;
+
 // IR low-energy detection threshold
 // If the average of all channel peak amplitudes is below this value, the IR is flagged as low energy
 export const IR_LOW_ENERGY_THRESHOLD = 0.01;
@@ -891,6 +915,10 @@ export const SOUND_SPHERE = {
   METALNESS: 0.1,
   OPACITY: 0.5,
   TRANSPARENT: true,
+  /** Sphere opacity when its sound card (or one of its variants) is muted. */
+  MUTED_OPACITY: 0.25,
+  /** Normal (non-muted) sphere opacity in light/default mode. */
+  BASE_OPACITY: 0.7,
   // Rendering order (always on top, same as receivers)
   RENDER_ORDER: 999,
   DEPTH_TEST: false,
@@ -929,10 +957,20 @@ export const OBJECT_LABEL = {
   PADDING_V: 6,
   BORDER_RADIUS: 3,
   RENDER_ORDER: 1001,
-  /** World height of label = distance * SCREEN_SPACE_HEIGHT */
-  SCREEN_SPACE_HEIGHT: 0.015,
+  /** Label world height is a fraction of the camera's vertical FOV at the label's
+   *  distance: h = distance * 2·tan(fov/2) * VIEWPORT_HEIGHT_RATIO. This keeps the
+   *  label at the same proportion of the viewport height on any screen / window
+   *  size / DPI (rem-like consistent sizing), instead of a fixed pixel count that
+   *  shrinks or grows with the canvas. */
+  VIEWPORT_HEIGHT_RATIO: 0.013,
+  /** Extra canvas render-resolution multiplier (on top of devicePixelRatio) so
+   *  labels stay crisp when zoomed in close instead of looking pixelated. */
+  RENDER_SCALE: 6,
   /** Label Z offset above object = distance * SCREEN_SPACE_SIZE * Z_OFFSET_FACTOR */
   Z_OFFSET_FACTOR: 1,
+  /** Debounce (ms) before a label sprite is updated after its text changes, so
+   *  rapid typing in a sound prompt doesn't re-render label canvases per keystroke. */
+  LABEL_UPDATE_DEBOUNCE_MS: 500,
 } as const;
 
 // Receiver positioning (for direct creation like sound spheres)
@@ -1301,6 +1339,10 @@ export const AUDIO_WARNINGS = {
 
 /** Distance threshold (meters) above which a source/receiver is flagged as not at its simulation position */
 export const SIMULATION_POSITION_THRESHOLD = 0.2;
+
+/** Precision (meters) for grouping source positions into equivalent acoustic locations.
+ *  Multiple sources within this distance share the same impulse response. */
+export const SIMULATION_POSITION_MATCH_THRESHOLD = 0.5;
 
 // ============================================================================
 // Pyroomacoustics Acoustic Simulation Configuration

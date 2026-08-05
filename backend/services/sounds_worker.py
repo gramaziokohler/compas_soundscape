@@ -26,6 +26,7 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.audio_service import AudioService
+from utils.audio_processing import compute_noise_trim_region_from_file
 from config.constants import (
     AUDIO_MODEL_AUDIOLDM2,
     DEFAULT_DBFS,
@@ -92,7 +93,7 @@ def run_sound_generation(
 
     Iterates over sound_configs and generates each sound file.  Progress is
     reported via atomic JSON file writes; result/error is written to
-    result_file on exit.  Output metadata mirrors AudioService.generate_multiple_sounds().
+    result_file on exit.
     """
     try:
         os.makedirs(output_dir, exist_ok=True)
@@ -117,7 +118,7 @@ def run_sound_generation(
                 current += seed_copies
                 continue
 
-            # Replicate filename logic from AudioService.generate_multiple_sounds
+            # Deterministic filename from generation parameters
             short_prompt = prompt[:FILENAME_MAX_LENGTH]
             for char in WINDOWS_ILLEGAL_FILENAME_CHARS:
                 short_prompt = short_prompt.replace(char, "_")
@@ -192,7 +193,6 @@ def run_sound_generation(
                             steps=steps,
                             dbfs=dbfs,
                             apply_denoising=apply_denoising,
-                            trim_silence=trim_silence,
                             negative_prompt=negative_prompt or "Low quality, distorted",
                             progress_callback=step_cb,
                             stage_callback=stage_cb,
@@ -206,7 +206,6 @@ def run_sound_generation(
                             steps=steps,
                             dbfs=dbfs,
                             apply_denoising=apply_denoising,
-                            trim_silence=trim_silence,
                             audio_model=audio_model,
                             negative_prompt=negative_prompt,
                             progress_callback=step_cb,
@@ -228,6 +227,8 @@ def run_sound_generation(
                 }
                 if entity_index is not None:
                     sound_data["entity_index"] = entity_index
+                if trim_silence:
+                    sound_data["noise_trim"] = compute_noise_trim_region_from_file(output_path)
 
                 completed_sounds.append(sound_data)
                 current += 1

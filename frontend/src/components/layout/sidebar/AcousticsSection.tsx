@@ -36,7 +36,7 @@ import { useUIStore } from '@/store/uiStore';
 
 // Content Components
 import { ResonanceContent } from '@/components/layout/sidebar/acoustics/ResonanceContent';
-import { SimulationResultContent, SimulationSettingsSection } from '@/components/layout/sidebar/acoustics/SimulationResultContent';
+import { SimulationResultContent } from '@/components/layout/sidebar/acoustics/SimulationResultContent';
 import { SimulationSetupContent } from '@/components/layout/sidebar/acoustics/SimulationSetupContent';
 import { SpeckleSurfaceMaterialsSection } from '@/components/acoustics/SpeckleSurfaceMaterialsSection';
 
@@ -78,8 +78,10 @@ import type { RoomScale } from '@/components/layout/sidebar/acoustics/ResonanceA
 // Constants
 import {
   MAX_FACES_FOR_LAYER_AUTO_EXCLUDE,
-  IMPULSE_RESPONSE
+  IMPULSE_RESPONSE,
+  SIMULATION_POSITION_MATCH_THRESHOLD
 } from '@/utils/constants';
+import { groupSoundsByPosition, collapseVariantsToOne } from '@/utils/positionKey';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
 
 interface AcousticsSectionProps {
@@ -217,6 +219,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // Muted sounds from audio controls store
   const mutedSounds = useAudioControlsStore((s) => s.mutedSounds);
   const individualSoundStates = useAudioControlsStore((s) => s.individualSoundStates);
+  // Which variant is active per sound source — used to pick the representative variant
+  // when collapsing multi-variant sources into single acoustic simulation sources.
+  const selectedVariants = useAudioControlsStore((s) => s.selectedVariants);
   const isAudioActuallyPlaying = useMemo(
     () => Object.values(individualSoundStates).some(s => s === 'playing'),
     [individualSoundStates]
@@ -236,6 +241,60 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     }
     return list;
   }, [receivers, gridListeners]);
+
+  // ==========================================================================
+  // Geometry readiness for simulation cards
+  // ==========================================================================
+  // This must match exactly what runChorasSimulation / runPyroomSimulation consume:
+  // they parse project_id + model_id from speckleData.url (the backend fetches
+  // geometry from the Speckle server at run time). They do NOT use speckleData.object_id,
+  // so that field must not gate the button. On the soundscape-restore bootstrap path
+  // (page.tsx) object_id is hardcoded to '' even though the model renders fine — gating
+  // on it produced the intermittent "No geometry loaded" while the model was visible.
+  const hasLocalModelFile = !!modelFile;
+  const hasSpeckleModel = !!(
+    speckleData?.model_id && speckleData?.version_id && !!speckleData?.url
+  );
+  const hasValidGeometry = hasLocalModelFile || hasSpeckleModel;
+
+  // Debug breadcrumbs — intermittently the run button reports "No geometry loaded"
+  // although the Speckle model is on screen. Log the exact gate inputs at the read
+  // site whenever they change (global.mdc debugging discipline), so a regression in
+  // which field feeds the gate is diagnosable from the console.
+  const geometryKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const key = JSON.stringify({
+      modelFile: hasLocalModelFile,
+      speckleData: speckleData
+        ? {
+            model_id: !!speckleData.model_id,
+            version_id: !!speckleData.version_id,
+            object_id: !!speckleData.object_id,
+            url: !!speckleData.url,
+          }
+        : null,
+      valid: hasValidGeometry,
+    });
+    if (geometryKeyRef.current !== key) {
+      geometryKeyRef.current = key;
+      try {
+        const s = speckleData?.url ?? '(none)';
+        const reason = !hasValidGeometry
+          ? !hasLocalModelFile && !speckleData
+            ? 'no modelFile and no speckleData'
+            : 'no local file and speckleData missing model_id/version_id/url'
+          : 'ok';
+        console.log(
+          `[dbg:acoustics:geometry] valid=${hasValidGeometry} | ${reason} | ` +
+            `modelFile=${hasLocalModelFile} | url=${s} | ` +
+            `model_id=${hasSpeckleModel && !!speckleData?.model_id} ` +
+            `version_id=${!!speckleData?.version_id} object_id=${!!speckleData?.object_id}`
+        );
+      } catch {
+        /* defensive */
+      }
+    }
+  }, [hasValidGeometry, hasLocalModelFile, speckleData]);
 
   // Active soundscape: exclude muted sounds and limit to the active sound section
   const activeSoundscapeData = useMemo(() => {
@@ -439,19 +498,27 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     const soundscape = activeSoundscapeData;
 
     try {
-      // Build source-receiver pairs
+      // Group sounds by position to deduplicate source-receiver pairs.
+      // Variants of one source (same prompt_index) collapse to a single simulated source.
+      const sourceSounds = collapseVariantsToOne(
+        soundscape,
+        useAudioControlsStore.getState().selectedVariants,
+      );
+      const { uniquePositions: uniqueSourcePositions, soundToPosKey: sourceSoundToPosKey } = groupSoundsByPosition(sourceSounds);
+
+      // Build source-receiver pairs: unique source positions × receivers
       const sourceReceiverPairs: Array<{
         source_position: number[];
         receiver_position: number[];
         source_id: string;
         receiver_id: string;
       }> = [];
-      for (const sound of soundscape) {
+      for (const [posKey, pos] of uniqueSourcePositions) {
         for (const receiver of receiversList) {
           sourceReceiverPairs.push({
-            source_position: sound.position,
+            source_position: pos,
             receiver_position: receiver.position,
-            source_id: sound.id,
+            source_id: posKey,
             receiver_id: receiver.id
           });
         }
@@ -544,8 +611,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
               currentSimulationRunId: null,
               currentSimulationId: result.simulation_id,
               simulationPositions: {
-                sources: Object.fromEntries(soundscape.map(s => [s.id, s.position as [number, number, number]])),
+                sources: Object.fromEntries(uniqueSourcePositions.entries()),
                 receivers: Object.fromEntries(receiversList.map(r => [r.id, r.position])),
+                soundToPosKey: Object.fromEntries(sourceSoundToPosKey.entries()),
               },
             } as any);
             if (onIRImported) onIRImported();
@@ -602,14 +670,22 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     const soundscape = activeSoundscapeData;
 
     try {
-      // Build source-receiver pairs
-      const sourceReceiverPairs = [];
-      for (const sound of soundscape) {
+      // Group sounds by position to deduplicate source-receiver pairs.
+      // Variants of one source (same prompt_index) collapse to a single simulated source.
+      const sourceSounds = collapseVariantsToOne(
+        soundscape,
+        useAudioControlsStore.getState().selectedVariants,
+      );
+      const { uniquePositions: uniqueSourcePositions, soundToPosKey: sourceSoundToPosKey } = groupSoundsByPosition(sourceSounds);
+
+      // Build source-receiver pairs: unique source positions × receivers
+      const sourceReceiverPairs: any[] = [];
+      for (const [posKey, pos] of uniqueSourcePositions) {
         for (const receiver of receiversList) {
           sourceReceiverPairs.push({
-            source_position: sound.position,
+            source_position: pos,
             receiver_position: receiver.position,
-            source_id: sound.id,
+            source_id: posKey,
             receiver_id: receiver.id
           });
         }
@@ -699,8 +775,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
               currentSimulationRunId: null,
               currentSimulationId: result.simulation_id,
               simulationPositions: {
-                sources: Object.fromEntries(soundscape.map(s => [s.id, s.position as [number, number, number]])),
+                sources: Object.fromEntries(uniqueSourcePositions.entries()),
                 receivers: Object.fromEntries(receiversList.map(r => [r.id, r.position])),
+                soundToPosKey: Object.fromEntries(sourceSoundToPosKey.entries()),
               },
             } as any);
             if (onIRImported) onIRImported();
@@ -1264,7 +1341,6 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
     // Simulation action button state
     const isSimulationType = config.type === 'choras' || config.type === 'pyroomacoustics';
-    const hasValidGeometry = !!modelFile || !!(speckleData?.model_id && speckleData?.version_id && speckleData?.object_id);
     const hasReceivers = allReceivers.length > 0;
     const hasSounds = activeSoundscapeData.length > 0;
     const actionButtonDisabled = isSimulationType && (!hasValidGeometry || !hasReceivers || !hasSounds);
@@ -1321,11 +1397,45 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     ) : !isCompleted ? simulationSetup : undefined;
 
     // After Content - results + hidden setup (keeps effects mounted for filtering/coloring)
-    // Build display name maps from current soundscapeData and receivers for the IR label override
+    // Build display name maps from current soundscapeData and receivers for the IR label override.
+    // Collapse variants to one representative per prompt so a multi-copy sound counts as ONE
+    // simulation source (one position, one IR per receiver) in the source count and saved positions.
+    const { soundToPosKey: sourceSoundToPosKey, uniquePositions: renderUniqueSourcePositions } =
+      groupSoundsByPosition(collapseVariantsToOne(activeSoundscapeData ?? [], selectedVariants));
+
     const sourceDisplayNames: Record<string, string> = {};
-    (soundscapeData ?? []).forEach((s) => {
-      const sid = s.id;
-      if (sid) sourceDisplayNames[sid] = s.display_name || sid;
+    const currentSourcePositions: Record<string, [number, number, number]> = {};
+    for (const [posKey, pos] of renderUniqueSourcePositions) {
+      currentSourcePositions[posKey] = pos;
+    }
+    // An IR belongs to a simulated source position (simPosKey). Label it with the name of
+    // EVERY sound whose current position is within SIMULATION_POSITION_MATCH_THRESHOLD of the
+    // recorded simulation coordinate — not only the ones whose quantized posKey coincides.
+    const simPositions = (config as any).simulationPositions as {
+      sources: Record<string, [number, number, number]>;
+    } | undefined;
+    const simSourceEntries = Object.entries(simPositions?.sources ?? {});
+    if (simSourceEntries.length > 0) {
+      const posKeyToSourceNames = new Map<string, string[]>(simSourceEntries.map(([pk]) => [pk, []]));
+      (activeSoundscapeData ?? []).forEach((s) => {
+        const p = s.position;
+        if (!p) return;
+        for (const [pk, simPos] of simSourceEntries) {
+          if (Math.hypot(simPos[0] - p[0], simPos[1] - p[1], simPos[2] - p[2]) <= SIMULATION_POSITION_MATCH_THRESHOLD) {
+            posKeyToSourceNames.get(pk)!.push(s.display_name || s.id);
+          }
+        }
+      });
+      for (const [pk, names] of posKeyToSourceNames) {
+        sourceDisplayNames[pk] = names.join(', ');
+      }
+    }
+    // Per-sound current positions and display names for drift detection
+    const currentSoundPositions: Record<string, [number, number, number]> = {};
+    const currentSoundNames: Record<string, string> = {};
+    (activeSoundscapeData ?? []).forEach((s) => {
+      currentSoundPositions[s.id] = s.position;
+      currentSoundNames[s.id] = s.display_name || s.id;
     });
     const receiverDisplayNames: Record<string, string> = {};
     (receivers ?? []).forEach((r) => {
@@ -1345,11 +1455,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       });
     });
 
-    // Current positions for mismatch detection in SimulationResultContent
-    const currentSourcePositions: Record<string, [number, number, number]> = {};
-    (soundscapeData ?? []).forEach((s) => {
-      if (s.id && s.position) currentSourcePositions[s.id] = s.position as [number, number, number];
-    });
+    // Current receiver positions for mismatch detection in SimulationResultContent
     const currentReceiverPositions: Record<string, [number, number, number]> = {};
     receivers.forEach((r) => { currentReceiverPositions[r.id] = r.position; });
     gridListeners.forEach((g) => {
@@ -1357,9 +1463,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     });
 
     const pairDefinitions = allReceivers.flatMap(({ id: receiverId }) =>
-      (activeSoundscapeData ?? []).map((sound) => ({ sourceId: sound.id, receiverId }))
+      Array.from(renderUniqueSourcePositions.keys()).map((posKey) => ({ sourceId: posKey, receiverId }))
     );
-    const availableSourceCount = activeSoundscapeData?.length ?? 0;
+    const availableSourceCount = renderUniqueSourcePositions.size;
     const availableReceiverCount = allReceivers.length;
 
     const importIRMapping = (config as any).sourceReceiverIRMapping as Record<string, Record<string, ImpulseResponseMetadata>> | undefined;
@@ -1385,6 +1491,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         simulationPositions: {
           sources: currentSourcePositions,
           receivers: currentReceiverPositions,
+          soundToPosKey: Object.fromEntries(sourceSoundToPosKey.entries()),
         },
       } as any);
 
@@ -1437,6 +1544,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         simulationPositions: {
           sources: currentSourcePositions,
           receivers: currentReceiverPositions,
+          soundToPosKey: Object.fromEntries(sourceSoundToPosKey.entries()),
         },
       } as any);
 
@@ -1470,15 +1578,18 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     };
 
     // Reset mismatched objects to their simulation-time positions
-    const handleResetPositions = (sourceIds: string[], receiverIds: string[]) => {
+    const handleResetPositions = (soundIds: string[], receiverIds: string[]) => {
       const simPositions = (config as any).simulationPositions as {
         sources: Record<string, [number, number, number]>;
         receivers: Record<string, [number, number, number]>;
+        soundToPosKey?: Record<string, string>;
       } | undefined;
       if (!simPositions) return;
-      for (const id of sourceIds) {
-        const pos = simPositions.sources[id];
-        if (pos) updateSoundPosition(id, pos);
+      // soundIds are sound IDs — move each back to its simulation-time position
+      for (const soundId of soundIds) {
+        const posKey = simPositions.soundToPosKey?.[soundId];
+        const pos = posKey ? simPositions.sources[posKey] : undefined;
+        if (pos) updateSoundPosition(soundId, pos);
       }
       for (const id of receiverIds) {
         const pos = simPositions.receivers[id];
@@ -1489,9 +1600,17 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     // Detect sound section mismatch: this simulation was generated with sounds from a
     // different parent usage than the one currently active in the Sounds step.
     const activeSourceIds = new Set(activeSoundscapeData.map((s) => s.id));
-    const simSourceIds = Object.keys(((config as any).simulationPositions?.sources ?? {}));
+    const simPosKeys = Object.keys(((config as any).simulationPositions?.sources ?? {}));
+    // Find all sounds at the simulated position keys
+    const allSoundscapeIds = new Set((soundscapeData ?? []).map((s) => s.id));
+    const simulatedSoundIds = new Set<string>();
+    for (const pk of simPosKeys) {
+      for (const s of (soundscapeData ?? [])) {
+        if (sourceSoundToPosKey.get(s.id) === pk) simulatedSoundIds.add(s.id);
+      }
+    }
     const mismatchedSourceCount = activeSoundParentIndex !== null && activeSoundParentIndex !== undefined
-      ? simSourceIds.filter((id) => !activeSourceIds.has(id) && (soundscapeData ?? []).some(s => s.id === id)).length
+      ? Array.from(simulatedSoundIds).filter((id) => !activeSourceIds.has(id) && allSoundscapeIds.has(id)).length
       : 0;
     const hasSoundSectionMismatch = mismatchedSourceCount > 0;
 
@@ -1551,7 +1670,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
               isExpanded={isExpanded}
               selectedMetric={(config as any).selectedGradientMetric ?? null}
               onMetricChange={(metric) => handleUpdateConfig(index, { selectedGradientMetric: metric } as any)}
-              currentSourcePositions={currentSourcePositions}
+              currentSoundPositions={currentSoundPositions}
+              currentSoundNames={currentSoundNames}
               currentReceiverPositions={currentReceiverPositions}
               onResetPositions={handleResetPositions}
               receiverGroups={receiverGroups}
@@ -1568,7 +1688,6 @@ export function AcousticsSection(props: AcousticsSectionProps) {
                 onListenerIRUploaded={config.type === 'import-irs' ? handleListenerIRUploaded : undefined}
                 onListenerAssignmentCleared={config.type === 'import-irs' ? handleListenerAssignmentCleared : undefined}
           />
-              {config.type !== 'import-irs' && <SimulationSettingsSection config={config} />}
           {config.type === 'import-irs' && (
             <div className="mt-3">
               <button

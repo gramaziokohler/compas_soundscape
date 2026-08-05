@@ -358,16 +358,24 @@ export class ResonanceMode implements IAudioMode {
 
       // Convert Euler angles to forward and up vectors
       // Use positive yaw (matching AnechoicMode's coordinate transformation)
+      const sinYaw = Math.sin(orientation.yaw),   cosYaw = Math.cos(orientation.yaw);
+      const sinPitch = Math.sin(orientation.pitch), cosPitch = Math.cos(orientation.pitch);
+      const sinRoll = Math.sin(orientation.roll),  cosRoll = Math.cos(orientation.roll);
+
       const forward = {
-        x: Math.sin(orientation.yaw) * Math.cos(orientation.pitch),
-        y: -Math.cos(orientation.yaw) * Math.cos(orientation.pitch),
-        z: Math.sin(orientation.pitch)
+        x: sinYaw * cosPitch,
+        y: -cosYaw * cosPitch,
+        z: sinPitch
       };
 
+      // up = worldUp·cos(roll) + cameraRight·sin(roll), where cameraRight is the
+      // listener's local right vector (cosYaw, sinYaw, 0). This reduces to world-up
+      // (0,0,1) when roll is 0, keeping non-FPS (constant-roll) output identical to
+      // the previous implementation while enabling head-tilt in FPS mode.
       const up = {
-        x: Math.sin(orientation.roll),
-        y: 0,
-        z: Math.cos(orientation.roll)
+        x: cosYaw * sinRoll,
+        y: sinYaw * sinRoll,
+        z: cosRoll
       };
 
       this.resonanceAudioScene.setListenerOrientation(

@@ -65,7 +65,6 @@ class AudioLDM2Service:
         steps: int = AUDIOLDM2_INFERENCE_STEPS,
         dbfs: float = DEFAULT_DBFS,
         apply_denoising: bool = False,
-        trim_silence: bool = False,
         negative_prompt: str = "Low quality, distorted",
         progress_callback: callable = None,
         stage_callback: callable = None,
@@ -127,7 +126,7 @@ class AudioLDM2Service:
             if stage_callback:
                 stage_callback("Applying noise reduction...")
             print("Applying noise reduction...")
-            audio = denoise_audio(audio, sample_rate=AUDIO_SAMPLE_RATE, trim_silence=trim_silence)
+            audio = denoise_audio(audio, sample_rate=AUDIO_SAMPLE_RATE)
 
         # Step 3: Apply dBFS calibration
         if stage_callback:

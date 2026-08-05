@@ -1,12 +1,14 @@
 'use client';
 
 import { useCallback, useRef, useState, useEffect, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import type { CardProps, CardBaseConfig } from '@/types/card';
 import { CARD_TYPE_LABELS } from '@/types/card';
 import { useNameEditing } from '@/utils/useNameEditing';
 import { CircularFAB } from '@/components/ui/CircularFAB';
 import { VariantsBar } from '@/components/ui/VariantsBar';
 import { Notice } from '@/components/ui/Notice';
+import { SettingsSummary, getSettingsTitle, getSettingsRows } from '@/components/ui/SettingsSummary';
 
 /**
  * Card Component
@@ -115,6 +117,7 @@ export function Card<TConfig extends CardBaseConfig>({
   variants,
   showVariantsPreGen = false,
   showVariantsPostGen = false,
+  showSettingsSummary = true,
 }: CardProps<TConfig>) {
   // Compute default name if not provided
   const computedDefaultName = defaultName || getCardDefaultName(config, index);
@@ -261,27 +264,6 @@ export function Card<TConfig extends CardBaseConfig>({
         ...(dimmed ? { filter: 'brightness(0.55)' } : {}),
       }}
     >
-      {!isExpanded && isRunning && !error && (
-        <div aria-hidden="true" className="absolute inset-0 overflow-hidden rounded-lg pointer-events-none">
-          <div
-            className="absolute inset-y-0 left-0 transition-all duration-300"
-            style={{
-              width: `${Math.max(0, Math.min(progress, 100))}%`,
-              backgroundColor: 'var(--card-color)',
-            }}
-          />
-          <div
-            className="absolute inset-0"
-            style={{
-              background:
-                'linear-gradient(to right, transparent, transparent var(--collapsed-progress, 0%), rgba(255, 255, 255, 0.06) var(--collapsed-progress, 0%), rgba(255, 255, 255, 0.06) 100%)',
-              // @ts-expect-error -- CSS custom property for the collapsed progress divider
-              '--collapsed-progress': `${Math.max(0, Math.min(progress, 100))}%`,
-            }}
-          />
-        </div>
-      )}
-
       {/* CircularFAB — floating action button shown in expanded mode before generation starts */}
       {isExpanded && onRun && !hasResult && !isRunning && !error && (
         <CircularFAB
@@ -336,15 +318,18 @@ export function Card<TConfig extends CardBaseConfig>({
                 </div>
               )}
               {isRunning && !error && (
-                <div 
-                  className={`mt-0.5 flex bg-success rounded-lg p-2 items-center gap-2 text-[10px] font-medium leading-tight transition-colors duration-300 ${
-                    progress > 40 ? 'text-foreground' : 'text-foreground'                   
-                  }`
-                
-                }
-                >
-                  <span>{status || 'Calculating...'}</span>
-                  <span className="opacity-80">{progress}%</span>
+                <div className="relative mt-0.5 bg-black rounded-lg overflow-hidden text-[10px] font-medium leading-tight">
+                  <div
+                    className="absolute inset-y-0 left-0 transition-all duration-300"
+                    style={{
+                      width: `${Math.max(0, Math.min(progress, 100))}%`,
+                      backgroundColor: 'var(--card-color)',
+                    }}
+                  />
+                  <div className="relative z-10 flex items-center gap-2 px-2 py-2 text-foreground">
+                    <span>{status || 'Calculating...'}</span>
+                    <span className="opacity-80">{progress}%</span>
+                  </div>
                 </div>
               )}
               {isExpanded && hasResult && version && (
@@ -416,11 +401,18 @@ export function Card<TConfig extends CardBaseConfig>({
               </button>
             </div>
           )}
+
+          {/* Read-only recap of the pre-generation settings for generated cards */}
+          {showSettingsSummary && hasResult && (
+            <SettingsSummary title={getSettingsTitle(config)} rows={getSettingsRows(config)} />
+          )}
         </div>
       )}
 
-      {/* Right-click context menu */}
-      {contextMenu && (
+      {/* Right-click context menu — rendered via portal to <body> so it escapes the
+          card's stacking context. Dimmed (muted) cards apply `filter: brightness(...)`,
+          which creates a new stacking context and would trap z-index:9999 behind other cards. */}
+      {contextMenu && createPortal(
         <div
           onPointerDown={e => e.stopPropagation()}
           onClick={e => e.stopPropagation()}
@@ -531,7 +523,8 @@ export function Card<TConfig extends CardBaseConfig>({
               )}
             </div>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

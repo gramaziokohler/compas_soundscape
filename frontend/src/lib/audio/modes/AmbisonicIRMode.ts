@@ -554,6 +554,67 @@ export class AmbisonicIRMode implements IAudioMode {
   }
 
   /**
+   * Clear per-source impulse response, replacing it with a Dirac impulse (identity filter).
+   * This makes the convolver pass audio through unchanged — effectively dry playback.
+   */
+  async clearSourceImpulseResponse(sourceId: string): Promise<void> {
+    const chain = this.sourceChains.get(sourceId);
+    if (!chain) {
+      console.warn(`[AmbisonicIRMode] Source "${sourceId}" not found for IR clear`);
+      return;
+    }
+
+    if (!this.audioContext) return;
+
+    // Create a Dirac impulse buffer (identity filter — passes audio through unchanged)
+    const numChannels = this.numAmbisonicChannels;
+    const identityIR = this.audioContext.createBuffer(numChannels, 2, this.audioContext.sampleRate);
+    for (let ch = 0; ch < numChannels; ch++) {
+      const data = identityIR.getChannelData(ch);
+      data[0] = 1.0;
+    }
+
+    chain.convolver.updateFilters(identityIR);
+    chain.sourceIRBuffer = null;
+    chain.normGainValue = 1.0;
+    if (this.normalizeEnabled && this.audioContext) {
+      chain.normGainNode.gain.setValueAtTime(1.0, this.audioContext.currentTime);
+    }
+
+    console.log(`[AmbisonicIRMode] 🧹 Cleared IR for source "${sourceId}" — dry playback`);
+  }
+
+  /**
+   * Mute a per-source impulse response by applying an all-zero buffer.
+   * The convolver then outputs silence, so a source sitting outside its simulation
+   * position is fully muted (instead of played dry). Reverted automatically when a
+   * real IR is applied via setSourceImpulseResponse, or when clearSourceImpulseResponse
+   * restores the identity filter.
+   */
+  async muteSourceImpulseResponse(sourceId: string): Promise<void> {
+    const chain = this.sourceChains.get(sourceId);
+    if (!chain) {
+      console.warn(`[AmbisonicIRMode] Source "${sourceId}" not found for IR mute`);
+      return;
+    }
+
+    if (!this.audioContext) return;
+
+    const numChannels = this.numAmbisonicChannels;
+    const silentIR = this.audioContext.createBuffer(numChannels, 2, this.audioContext.sampleRate);
+    // All samples default to 0 → convolution yields silence.
+
+    chain.convolver.updateFilters(silentIR);
+    chain.sourceIRBuffer = null;
+    chain.normGainValue = 1.0;
+    if (this.normalizeEnabled && this.audioContext) {
+      chain.normGainNode.gain.setValueAtTime(1.0, this.audioContext.currentTime);
+    }
+
+    console.log(`[AmbisonicIRMode] 🔇 Muted source "${sourceId}" (zero-IR) — out of simulation position`);
+  }
+
+  /**
    * Set impulse response for a specific source (simulation mode)
    * Allows per-source IR assignment for source-receiver pair workflows
    */

@@ -160,6 +160,61 @@ filteringExtension.setUserObjectColors([{ objectIds, color: hex }])
 filteringExtension.setUserObjectColors([{ objectIds, color: 'var(--color-warning)' }])
 ```
 
+## Frontend Viewer — Per-Object Mesh Geometry (wireframes / overlays)
+
+When you need the **actual triangle geometry** of an object in the live viewer
+(e.g. to draw a mesh-edge wireframe overlay), do **not** read
+`NodeRenderView.renderData.geometry.attributes` — the viewer calls
+`disposeGeometry()` during batch building, which replaces those attributes with
+empty `ChunkArray`s. The triangles survive in the per-render-view **BatchObject**:
+
+```typescript
+// 1. Resolve the object id → render views (one id may map to several views,
+//    e.g. a Brep decomposed into display meshes — walk ALL of them)
+const renderTree = worldTree.getRenderTree();
+const rvs = renderTree.getRenderViewsForNodeId(id) ?? [];
+
+const renderer = viewer.getRenderer();          // SpeckleRenderer (v2)
+for (const rv of rvs) {
+  // 2. The BatchObject's BVH geometry holds the renderView's mesh.
+  const batchObject = renderer.getObject(rv);   // undefined if not resolvable
+  const bvhGeo = batchObject?.accelerationStructure?.geometry;
+  if (!bvhGeo) continue;
+
+  // 3. The BVH geometry positions are re-centered around the object's local
+  //    origin — add `localOrigin` back to recover WORLD-SPACE coordinates.
+  const origin = batchObject.localOrigin;       // THREE.Vector3
+  const posAttr = bvhGeo.getAttribute('position');
+  const index = bvhGeo.getIndex();
+  const positions = new Float32Array(posAttr.count * 3);
+  for (let i = 0; i < posAttr.count; i++) {
+    positions[i * 3]     = posAttr.getX(i) + origin.x;
+    positions[i * 3 + 1] = posAttr.getY(i) + origin.y;
+    positions[i * 3 + 2] = posAttr.getZ(i) + origin.z;
+  }
+  const indices = new Uint32Array(index.count);
+  for (let i = 0; i < index.count; i++) indices[i] = index.array[i];
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setIndex(new THREE.BufferAttribute(indices, 1));
+  // new THREE.EdgesGeometry(geo, 1) → clean mesh-outline LineSegments
+}
+```
+
+Key facts (verified against `@speckle/viewer@2.26.9`):
+- `worldTree.getRenderTree().getRenderViewsForNodeId(id)` also resolves **Brep**
+  and other non-atomic objects (walks descendants that carry render views), so it
+  matches the same ids the hover highlight uses.
+- BVH geometry is `Float32`, re-centered around `localOrigin` (no RTE encoding) —
+  this is simpler than slicing the batch `BufferGeometry`, whose positions are
+  RTE-encoded as `position` + `position_low` when `needsRTE()` is true.
+- `viewer.getRenderer().getObject(rv)` returns `BatchObject | null` (lookup by
+  renderView `guid`). `.accelerationStructure` may be absent for some geometry
+  types — fall back to `rv.aabb` in that case.
+- The BVH geometry is shared with raycasting — **never dispose it**; copy into
+  your own buffers (as above).
+
 ## Common Pitfalls
 
 - `version.referencedObject` → **AttributeError** in modern specklepy. Use `getattr(version, "referenced_object", None)`.

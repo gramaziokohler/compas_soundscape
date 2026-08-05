@@ -37,6 +37,8 @@ import {
 } from './utils/mode-selector';
 import type { IRState, NoIRPreferences, ModeSelectionResult } from './utils/mode-selector';
 import { smoothModeTransition, safeDisconnect, safeConnect } from './utils/mode-transition';
+import { computePositionKey } from '@/utils/positionKey';
+import { SIMULATION_POSITION_MATCH_THRESHOLD } from '@/utils/constants';
 import {
   AudioErrorType,
   createAudioError,
@@ -95,6 +97,12 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   private sourceReceiverIRMapping: SourceReceiverIRMapping | null = null;
   private activeReceiverId: string | null = null;
 
+  // Actual simulation-time coordinates of each simulated source, keyed by the same
+  // posKey as sourceReceiverIRMapping. Used to resolve a source's IR by Euclidean
+  // distance to the recorded coordinate (not by quantized grid-cell equality), so a
+  // newly added sound placed anywhere near a simulated source inherits that IR.
+  private simulationSourcePositions: Record<string, [number, number, number]> = {};
+
   // Source registry - tracks all sources for re-creation on mode switch
   private sourceRegistry: Map<string, { buffer: AudioBuffer; position: Position }> = new Map();
 
@@ -106,6 +114,20 @@ export class AudioOrchestrator implements IAudioOrchestrator {
 
   // IR cache - prevents double downloads of same IR (keyed by IR metadata id)
   private irCache: Map<string, AudioBuffer> = new Map();
+
+  // Per-source IR resolve sequence. Bumped every time a source's position asks for
+  // a new simulation IR. Async downloads only apply when their sequence is still the
+  // latest, so a stale download from a previous grid cell can never overwrite the
+  // IR that belongs to the source's *current* position. This makes wet/dry state
+  // deterministic regardless of network/async resolution order.
+  private sourceIRSeq: Map<string, number> = new Map();
+
+  // Position key of the IR currently APPLIED to each source's convolver. Reconciles
+  // on updateSourcePosition: we re-resolve whenever this differs from the source's
+  // new position key, so a source that ended up dry while sitting in a wet cell (a
+  // dry-out clear followed by a drag-back whose async load was superseded, then
+  // in-cell nudges — all sharing the wet posKey) self-heals back to convolved.
+  private sourceIRAppliedKey: Map<string, string> = new Map();
 
   // Browser capabilities
   private browserCapabilities: {
@@ -470,11 +492,13 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   async setSourceReceiverIRMapping(
     mapping: SourceReceiverIRMapping,
     simulationMode: AcousticSimulationMode,
-    initialReceiverId?: string
+    initialReceiverId?: string,
+    simulationSourcePositions?: Record<string, [number, number, number]>
   ): Promise<void> {
     this.sourceReceiverIRMapping = mapping;
     this.simulationMode = simulationMode;
     this.activeReceiverId = initialReceiverId || null;
+    this.simulationSourcePositions = simulationSourcePositions || {};
     this.clearSimulationGlobalIR();
 
     console.log('[AudioOrchestrator] Source-Receiver IR mapping set:', {
@@ -569,24 +593,28 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       return;
     }
 
-    // For each source in the registry
-    for (const [sourceId] of this.sourceRegistry) {
-      const irMetadata = this.sourceReceiverIRMapping[sourceId]?.[receiverId];
+    // For each source in the registry — look up IR by position key
+    for (const [sourceId, { position }] of this.sourceRegistry) {
+      const posKey = this.resolveSimSourcePosKey([position.x, position.y, position.z]);
+      const irMetadata = this.sourceReceiverIRMapping[posKey]?.[receiverId];
 
       if (irMetadata) {
         try {
-          // Download and decode IR buffer
           const irBuffer = await this.downloadAndDecodeIR(irMetadata);
-
-          // Update mode with per-source IR
           (this.currentModeInstance as any).setSourceImpulseResponse(sourceId, irBuffer);
 
-          console.log(`[AudioOrchestrator] ✅ Updated IR for source "${sourceId}" with receiver "${receiverId}"`);
+          console.log(`[AudioOrchestrator] ✅ Updated IR for source "${sourceId}" (posKey ${posKey}) with receiver "${receiverId}"`);
         } catch (error) {
           console.error(`[AudioOrchestrator] ❌ Failed to update IR for source "${sourceId}":`, error);
         }
       } else {
-        console.warn(`[AudioOrchestrator] No IR found for source "${sourceId}" and receiver "${receiverId}"`);
+        // Position has no simulation IR for this receiver → the sound cannot be
+        // acoustically convolved there; mute it fully instead of erroring/no-op.
+        if ('muteSourceImpulseResponse' in this.currentModeInstance) {
+          (this.currentModeInstance as any).muteSourceImpulseResponse(sourceId);
+        }
+        this.sourceIRAppliedKey.set(sourceId, posKey);
+        console.log(`[AudioOrchestrator] 🚫 No IR at posKey ${posKey} for "${sourceId}" — muted (out-of-simulation sound)`);
       }
     }
 
@@ -657,11 +685,13 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   async hotSwapSourceReceiverIRMapping(
     mapping: SourceReceiverIRMapping,
     simulationMode: AcousticSimulationMode,
-    activeReceiverId?: string
+    activeReceiverId?: string,
+    simulationSourcePositions?: Record<string, [number, number, number]>
   ): Promise<void> {
     this.sourceReceiverIRMapping = mapping;
     this.simulationMode = simulationMode;
     this.activeReceiverId = activeReceiverId || this.activeReceiverId;
+    this.simulationSourcePositions = simulationSourcePositions || {};
     this.clearSimulationGlobalIR();
 
     console.log('[AudioOrchestrator] Hot-swapping IR mapping (no stop):', {
@@ -691,6 +721,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     this.sourceReceiverIRMapping = null;
     this.simulationMode = 'none';
     this.activeReceiverId = null;
+    this.simulationSourcePositions = {};
     this.clearIRCache();
 
     console.log('[AudioOrchestrator] Source-receiver IR mapping cleared');
@@ -1207,25 +1238,10 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     }
 
     // If in simulation mode with active receiver, apply source-specific IR immediately
+    // (sequenced via resolveSourceIR so creation can never be clobbered by a stale load)
     if (this.sourceReceiverIRMapping && this.activeReceiverId && this.simulationMode !== 'none') {
-      const irMetadata = this.sourceReceiverIRMapping[sourceId]?.[this.activeReceiverId];
-      
-      if (irMetadata) {
-        console.log(`[AudioOrchestrator] Applying simulation IR for newly created source: ${sourceId}`);
-        
-        // Apply IR asynchronously (don't block source creation)
-        this.downloadAndDecodeIR(irMetadata)
-          .then(irBuffer => {
-            // Check if mode supports per-source IR setting
-            if ('setSourceImpulseResponse' in this.currentModeInstance!) {
-              (this.currentModeInstance as any).setSourceImpulseResponse(sourceId, irBuffer);
-              console.log(`[AudioOrchestrator] ✅ Applied IR to new source: ${sourceId}`);
-            }
-          })
-          .catch(error => {
-            console.error(`[AudioOrchestrator] ❌ Failed to apply IR to new source ${sourceId}:`, error);
-          });
-      }
+      const posKey = this.resolveSimSourcePosKey([position.x, position.y, position.z]);
+      this.resolveSourceIR(sourceId, posKey);
     }
   }
 
@@ -1268,18 +1284,109 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * Routes to current mode implementation
    */
   updateSourcePosition(sourceId: string, position: Position): void {
-    // Update position in registry regardless of mode state
     const existing = this.sourceRegistry.get(sourceId);
     if (existing) {
+      // Check if the source's convolver state no longer matches its current position
+      const newPosKey = this.resolveSimSourcePosKey([position.x, position.y, position.z]);
       this.sourceRegistry.set(sourceId, { ...existing, position });
+
+      // Re-assign simulation IR whenever the last-APPLIED key differs from the
+      // current position key. Gating on posKey-change alone is fragile: once a
+      // source is dry inside a wet cell, in-cell position nudges all share the wet
+      // posKey and would never re-trigger the load. Comparing against the applied
+      // key makes every position update self-heal to the correct wet/dry state.
+      // The load is sequenced per source so the source's *latest* position always
+      // wins — a slow download that resolves after a newer clear/set is dropped.
+      if (this.sourceIRAppliedKey.get(sourceId) !== newPosKey && this.sourceReceiverIRMapping && this.activeReceiverId && this.simulationMode !== 'none') {
+        this.resolveSourceIR(sourceId, newPosKey);
+      }
     }
 
     if (!this.currentModeInstance) {
-      // Position saved in registry; will be applied when mode activates
       return;
     }
 
     this.currentModeInstance.updateSourcePosition(sourceId, position);
+  }
+
+  /**
+   * Resolve a source's current position to the most appropriate simulation posKey.
+   *
+   * Prefers an exact quantized grid-cell match first. Failing that, it falls back to
+   * the nearest ACTUAL simulation source coordinate within SIMULATION_POSITION_MATCH_THRESHOLD.
+   * This is what makes simulation IRs sound-agnostic: a newly added sound placed near
+   * (not necessarily grid-cell-exact to) a previously simulated source position inherits
+   * that source's IR, instead of silently muting.
+   *
+   * Always returns a posKey (the grid key as a fallback) so downstream mute/apply
+   * bookkeeping stays well-defined.
+   */
+  private resolveSimSourcePosKey(position: [number, number, number]): string {
+    const gridKey = computePositionKey(position);
+    if (!this.sourceReceiverIRMapping) return gridKey;
+    if (this.sourceReceiverIRMapping[gridKey]) return gridKey;
+
+    const sources = this.simulationSourcePositions;
+    let bestKey: string | undefined;
+    let bestDist = Infinity;
+    for (const [posKey, coord] of Object.entries(sources)) {
+      const d = Math.hypot(position[0] - coord[0], position[1] - coord[1], position[2] - coord[2]);
+      if (d < bestDist) {
+        bestDist = d;
+        bestKey = posKey;
+      }
+    }
+    if (bestKey !== undefined && bestDist <= SIMULATION_POSITION_MATCH_THRESHOLD && this.sourceReceiverIRMapping[bestKey]) {
+      return bestKey;
+    }
+    return gridKey;
+  }
+
+  /**
+   * Resolve the per-source simulation IR for a given position key.
+   *
+   * Bumps a per-source sequence; the async IR download only applies if its sequence
+   * is still the latest for that source. This eliminates the race between the
+   * synchronous clearSourceImpulseResponse (dry) and the asynchronous
+   * downloadAndDecodeIR (wet): whichever position was requested LAST always wins,
+   * so a sound that is dragged out quickly then back to its simulation position ends
+   * deterministically convolved (not randomly dry).
+   */
+  private resolveSourceIR(sourceId: string, targetPosKey: string): void {
+    const seq = (this.sourceIRSeq.get(sourceId) || 0) + 1;
+    this.sourceIRSeq.set(sourceId, seq);
+
+    const receiverId = this.activeReceiverId;
+    if (!receiverId) return;
+    const irMetadata = this.sourceReceiverIRMapping?.[targetPosKey]?.[receiverId];
+    const mode = this.currentModeInstance;
+
+    if (!irMetadata) {
+      // No valid simulation IR at this position → mute the source completely rather
+      // than playing it dry.
+      if (mode && 'muteSourceImpulseResponse' in mode) {
+        (mode as any).muteSourceImpulseResponse(sourceId);
+        this.sourceIRAppliedKey.set(sourceId, targetPosKey);
+      }
+      console.log(`[dbg:ir] ${targetPosKey} → MUTED for "${sourceId}" (seq ${seq})`);
+      return;
+    }
+
+    console.log(`[dbg:ir] ${targetPosKey} → LOAD for "${sourceId}" (seq ${seq})`);
+    this.downloadAndDecodeIR(irMetadata)
+      .then((irBuffer) => {
+        if ((this.sourceIRSeq.get(sourceId) || 0) !== seq) {
+          console.log(`[dbg:ir] ${targetPosKey} → STALE skip for "${sourceId}" (seq ${seq}, latest ${this.sourceIRSeq.get(sourceId)})`);
+          return;
+        }
+        const liveMode = this.currentModeInstance;
+        if (liveMode && 'setSourceImpulseResponse' in liveMode) {
+          (liveMode as any).setSourceImpulseResponse(sourceId, irBuffer);
+          this.sourceIRAppliedKey.set(sourceId, targetPosKey);
+          console.log(`[dbg:ir] ${targetPosKey} → CONVOLVED for "${sourceId}" (seq ${seq})`);
+        }
+      })
+      .catch((err) => console.error(`[AudioOrchestrator] Failed IR update on position change for "${sourceId}":`, err));
   }
 
   /**
@@ -1291,6 +1398,8 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     this.sourceRegistry.delete(sourceId);
     this.muteRegistry.delete(sourceId);
     this.pendingVolumes.delete(sourceId);
+    this.sourceIRSeq.delete(sourceId);
+    this.sourceIRAppliedKey.delete(sourceId);
 
     if (!this.currentModeInstance) {
       // No mode active — source was only registered, nothing to tear down

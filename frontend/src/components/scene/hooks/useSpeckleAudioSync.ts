@@ -44,6 +44,10 @@ export function useSpeckleAudioSync({
       const { coordinator } = useSpeckleEngineStore.getState();
       const soundSphereManager = coordinator?.getSoundSphereManager();
 
+      // Per-prompt effective mute: a card is dimmed when ANY of its variants is
+      // muted, or when solo mode is active and none of its variants is soloed.
+      const promptMuted = new Map<number, boolean>();
+
       soundscapeData.forEach((soundEvent) => {
         let shouldBeMuted = mutedSounds.has(soundEvent.id);
 
@@ -53,6 +57,14 @@ export function useSpeckleAudioSync({
 
         audioOrchestrator.setSourceMute(soundEvent.id, shouldBeMuted);
         soundSphereManager?.setSourceMuted(soundEvent.id, shouldBeMuted);
+
+        const promptIdx = (soundEvent as any).prompt_index ?? 0;
+        const isCardMuted = promptMuted.get(promptIdx) ?? false;
+        promptMuted.set(promptIdx, isCardMuted || shouldBeMuted);
+      });
+
+      promptMuted.forEach((muted, promptIdx) => {
+        soundSphereManager?.setPromptMuted(promptIdx, muted);
       });
     }
   }, [mutedSounds, soloedSound, soundscapeData, audioOrchestrator]);

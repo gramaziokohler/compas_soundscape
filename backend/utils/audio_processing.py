@@ -261,15 +261,16 @@ def _find_all_noise_gaps(
     return noise_gaps, noise_profile
 
 
-def _trim_to_longest_sfx_region(
-    audio_1d: np.ndarray,
+def _longest_sfx_region_samples(
     noise_gaps: list[tuple[int, int]],
     merge_threshold_samples: int,
-) -> np.ndarray:
-    """Keep only the longest continuous SFX region after removing noise gaps.
+    total_samples: int,
+) -> tuple[int, int] | None:
+    """Return the longest continuous SFX region as ``(start, end)`` sample indices.
 
     Noise gaps shorter than *merge_threshold_samples* are treated as part of
-    the surrounding SFX (short pauses are not real separators).
+    the surrounding SFX (short pauses are not real separators).  Returns
+    ``None`` when no region can be derived (e.g. the gaps span the whole file).
     """
     # Only gaps at least as long as the merge threshold actually separate regions
     significant = [(s, e) for s, e in noise_gaps if e - s >= merge_threshold_samples]
@@ -280,14 +281,63 @@ def _trim_to_longest_sfx_region(
         if gs > cursor:
             keep_regions.append((cursor, gs))
         cursor = ge
-    if cursor < len(audio_1d):
-        keep_regions.append((cursor, len(audio_1d)))
+    if cursor < total_samples:
+        keep_regions.append((cursor, total_samples))
 
     if not keep_regions:
-        return audio_1d
+        return None
 
-    longest = max(keep_regions, key=lambda r: r[1] - r[0])
-    return audio_1d[longest[0] : longest[1]]
+    return max(keep_regions, key=lambda r: r[1] - r[0])
+
+
+def compute_noise_trim_region(
+    audio_1d: np.ndarray,
+    sample_rate: int,
+) -> tuple[float, float] | None:
+    """Detect the trim region of an audio clip as ``(start, end)`` fractions (0-1).
+
+    Uses the exact same noise-gap detection as denoising
+    (:func:`_find_all_noise_gaps`, librosa spectral-flux onset detection) so the
+    reported trim region is consistent with what noise reduction treats as noise.
+    Mirrors the old ``trim_silence`` behaviour: only the longest continuous SFX
+    region is kept (interior gaps ≤ ``DENOISING_TRIM_MERGE_THRESHOLD`` are merged).
+
+    Returns ``None`` when no usable trim region is found (no noise profile, or the
+    region spans essentially the whole file).
+    """
+    if audio_1d.ndim != 1:
+        audio_1d = ensure_mono(audio_1d)
+
+    noise_gaps, _ = _find_all_noise_gaps(audio_1d, sample_rate)
+    if not noise_gaps:
+        return None
+
+    merge_samples = int(DENOISING_TRIM_MERGE_THRESHOLD * sample_rate)
+    region = _longest_sfx_region_samples(noise_gaps, merge_samples, len(audio_1d))
+    if region is None:
+        return None
+
+    start, end = region
+    start_frac = start / len(audio_1d)
+    end_frac = end / len(audio_1d)
+
+    # Nothing meaningfully trimmed — whole clip is SFX
+    if start_frac <= 0.001 and end_frac >= 0.999:
+        return None
+
+    return round(start_frac, 4), round(end_frac, 4)
+
+
+def compute_noise_trim_region_from_file(file_path: str) -> tuple[float, float] | None:
+    """Detect the trim region of a WAV/audio file on disk as fractions (0-1).
+
+    Convenience wrapper around :func:`compute_noise_trim_region` for files that
+    were already written (generation, calibration, reprocessing).
+    """
+    import soundfile as sf
+
+    audio_np, sample_rate = sf.read(file_path)
+    return compute_noise_trim_region(audio_np, sample_rate)
 
 
 def _get_channel_noise_profile(
@@ -308,25 +358,22 @@ def _get_channel_noise_profile(
 def apply_denoising(
     audio_tensor: torch.Tensor,
     sample_rate: int = 44100,
-    trim_silence: bool = False,
 ) -> torch.Tensor:
     """Apply noise reduction to audio using spectral gating.
 
     Automatically detects background-noise segments via onset detection.
     If found, a noise profile is passed to the algorithm.
-    If ``trim_silence`` is ``True``, *all* noise gaps are stripped and only the
-    longest continuous SFX region is kept (short gaps ≤
-    ``DENOISING_TRIM_MERGE_THRESHOLD`` seconds are merged).
     If no usable noise profile can be extracted the audio is returned unchanged.
+
+    Trimming is intentionally NOT performed here — the detected noise gaps can be
+    surfaced non-destructively via :func:`compute_noise_trim_region`.
 
     Args:
         audio_tensor: Audio tensor of shape (channels, samples).
         sample_rate: Sample rate in Hz (default 44100).
-        trim_silence: If ``True``, remove all noise gaps and keep only the
-            longest contiguous SFX portion.
 
     Returns:
-        Denoised audio tensor (possibly trimmed).
+        Denoised audio tensor.
     """
     if not NOISEREDUCE_AVAILABLE:
         print("Warning: noisereduce not available, returning original audio")
@@ -342,7 +389,6 @@ def apply_denoising(
 
         if audio_np.ndim > 1 and audio_np.shape[0] > 1:
             # Stereo: Process each channel separately
-            merge_samples = int(DENOISING_TRIM_MERGE_THRESHOLD * sample_rate)
             denoised_channels = []
             for channel_idx in range(audio_np.shape[0]):
                 channel_data = audio_np[channel_idx]
@@ -355,14 +401,6 @@ def apply_denoising(
                             f"Channel {channel_idx}: noise profile ({len(noise_profile)} samples), "
                             f"{len(noise_gaps)} noise gap(s)"
                         )
-                        if trim_silence:
-                            channel_data = _trim_to_longest_sfx_region(
-                                channel_data, noise_gaps, merge_samples
-                            )
-                            print(
-                                f"Channel {channel_idx}: kept longest SFX region "
-                                f"({len(channel_data)} samples)"
-                            )
                         denoised_channel = nr.reduce_noise(
                             y=channel_data,
                             sr=sample_rate,
@@ -393,12 +431,6 @@ def apply_denoising(
                     f"Noise profile ({len(noise_profile)} samples), "
                     f"{len(noise_gaps)} noise gap(s)"
                 )
-                if trim_silence:
-                    merge_samples = int(DENOISING_TRIM_MERGE_THRESHOLD * sample_rate)
-                    audio_1d = _trim_to_longest_sfx_region(
-                        audio_1d, noise_gaps, merge_samples
-                    )
-                    print(f"Kept longest SFX region ({len(audio_1d)} samples)")
                 denoised_audio = nr.reduce_noise(
                     y=audio_1d,
                     sr=sample_rate,

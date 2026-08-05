@@ -107,6 +107,8 @@ export interface SidebarProps {
   onShowSoundSpheresChange: (v: boolean) => void;
   showSceneListeners: boolean;
   onShowSceneListenersChange: (v: boolean) => void;
+  showScenarioParcours: boolean;
+  onShowScenarioParcoursChange: (v: boolean) => void;
   showGroundGrid: boolean;
   onShowGroundGridChange: (v: boolean) => void;
   groundGridSpacing: number;
@@ -139,6 +141,9 @@ export interface SidebarProps {
   onDeleteVariant?: (promptIndex: number, variantIdx: number) => void;
   onSelectSoundCard?: (promptIndex: number) => void;
   selectedCardIndex?: number | null;
+  /** Called when the user collapses the currently expanded sound card in the sidebar.
+   *  Lets the caller clear scene-driven selection so the sphere highlight reverts. */
+  onSoundCardCollapsed?: () => void;
   // SED props
   isSEDAnalyzing?: boolean;
   sedAudioInfo?: SEDAudioInfo | null;
@@ -275,6 +280,9 @@ export interface SoundGenerationSectionProps {
   onDeleteVariant?: (promptIndex: number, variantIdx: number) => void;
   onSelectSoundCard?: (promptIndex: number) => void;
   selectedCardIndex?: number | null;
+  /** Called when the user collapses the currently expanded sound card in the sidebar.
+   *  Lets the caller clear scene-driven selection so the sphere highlight reverts. */
+  onSoundCardCollapsed?: () => void;
   // Receiver props
   receivers?: ReceiverData[];
   onAddReceiver?: () => void;

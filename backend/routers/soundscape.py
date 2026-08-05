@@ -7,12 +7,15 @@ import shutil
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
 
 from services.paths import (
+    GENERATED_SOUNDS_PARENT,
     user_audio_dir,
     user_data_dir,
     user_model_dir,
+    user_sounds_dir,
 )
 from models.schemas import (
     SoundscapeSaveRequest,
@@ -27,6 +30,8 @@ from config.constants import (
     PYROOMACOUSTICS_RIR_DIR,
     TEMP_SIMULATIONS_DIR,
     TEMP_ANALYSIS_DIR,
+    TEMP_STATIC_DIR,
+    STATIC_MOUNT_PATH,
     BACKEND_DIR,
 )
 
@@ -44,30 +49,109 @@ def _get_session_id(request: Request) -> str:
     return sid
 
 
+def _resolve_audio_source(url: str, session_id: str) -> Path | None:
+    """Resolve an audio URL to an existing file on disk.
+
+    Priority order:
+      1. Direct URL-path mapping via the /static and /soundscapes mounts
+         (handles already-persisted URLs, tts files, and current-session files).
+      2. Basename search across the current session's generated dir, every other
+         session's generated dir, the tts dir, every persisted session audio dir,
+         and the staged uploads dir.
+    """
+    if not url or url.startswith("blob:"):
+        return None
+
+    # Normalize full URLs (http://host/path) to a URL path
+    parsed = urlparse(url)
+    url_path = parsed.path if parsed.scheme else url
+    if not url_path:
+        return None
+
+    # 1. Direct mount mapping
+    if url_path.startswith(STATIC_MOUNT_PATH + "/"):
+        rel = unquote(url_path[len(STATIC_MOUNT_PATH):].lstrip("/"))
+        if rel:
+            candidate = Path(TEMP_STATIC_DIR) / rel
+            if candidate.is_file():
+                return candidate
+    elif url_path.startswith(SOUNDSCAPE_DATA_URL_PREFIX + "/"):
+        rel = unquote(url_path[len(SOUNDSCAPE_DATA_URL_PREFIX):].lstrip("/"))
+        if rel:
+            candidate = Path(SOUNDSCAPE_DATA_DIR) / rel
+            if candidate.is_file():
+                return candidate
+
+    # 2. Basename fallback search (decode percent-encoding — TTS names can be encoded)
+    filename = unquote(os.path.basename(url_path))
+    if not filename:
+        return None
+
+    generated_parent = Path(GENERATED_SOUNDS_PARENT)
+
+    candidates: list[Path] = [
+        user_sounds_dir(session_id) / filename,
+        generated_parent / "tts" / filename,
+    ]
+    if generated_parent.exists():
+        candidates.extend(
+            sub / filename
+            for sub in generated_parent.iterdir()
+            if sub.is_dir() and (sub / filename).is_file()
+        )
+    data_root = Path(SOUNDSCAPE_DATA_DIR)
+    if data_root.exists():
+        candidates.extend(
+            sub / "audio" / filename
+            for sub in data_root.iterdir()
+            if sub.is_dir() and (sub / "audio" / filename).is_file()
+        )
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def _copy_audio_files(session_id: str, model_id: str, audio_urls: list[str]) -> int:
-    """Copy audio files from generated-sounds dir to session-level audio dir."""
+    """Copy audio files referenced by URLs into the session-level audio dir.
+
+    Resolves each URL across all candidate locations (current session, other
+    sessions, tts, already-persisted data/soundscapes) so sounds calibrated or
+    generated under a different session cookie still land in the persistent
+    `data/soundscapes/<session_id>/audio/` folder and survive a temp/ wipe.
+    """
     dest_dir = user_audio_dir(session_id)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    generated_sounds_dir = Path(BACKEND_DIR / "temp" / "static" / "sounds" / "generated") / session_id
+    print(f"[dbg:copy] session_id={session_id} n_urls={len(audio_urls)} dest={dest_dir}")
 
     copied = 0
+    missing: list[str] = []
     for url in audio_urls:
-        filename = os.path.basename(url)
-        if not filename:
+        source = _resolve_audio_source(url, session_id)
+        if source is None:
+            logger.warning(f"Audio source not found for URL: {url}")
+            missing.append(url)
             continue
 
-        source = generated_sounds_dir / filename
-        if not source.exists():
-            logger.warning(f"Audio source not found: {source}")
+        # Destination filename = decoded basename, matching what the /soundscapes
+        # static mount will serve when the frontend reconstructs the URL.
+        filename = unquote(os.path.basename(urlparse(url).path) or os.path.basename(url))
+        if not filename:
             continue
 
         dest = dest_dir / filename
         try:
-            shutil.copy2(str(source), str(dest))
+            if dest.resolve() != source.resolve():
+                shutil.copy2(str(source), str(dest))
             copied += 1
         except Exception as e:
             logger.warning(f"Failed to copy {filename}: {e}")
+
+    if missing:
+        logger.warning(f"Missing audio sources ({len(missing)}): {missing}")
+    print(f"[dbg:copy] copied={copied} missing={len(missing)}")
 
     return copied
 
@@ -192,6 +276,9 @@ async def save_soundscape(request: SoundscapeSaveRequest, req: Request):
     if not model_id:
         raise HTTPException(status_code=400, detail="model_id is required")
 
+    print(f"[dbg:save] session_id={session_id} model_id={model_id} n_audio_urls={len(request.audio_urls)} n_ir_urls={len(request.ir_urls)}")
+    print(f"[dbg:save] audio_urls={request.audio_urls}")
+
     # Persist project_id and version_id from the request payload so the
     # frontend can reconstruct the Speckle geometry viewer on reload without
     # needing the user to re-pick the model.
@@ -264,6 +351,14 @@ async def load_soundscape(model_id: str, req: Request):
 
     audio_base_url = f"{SOUNDSCAPE_DATA_URL_PREFIX}/{session_id}/audio"
     ir_base_url = f"{SOUNDSCAPE_DATA_URL_PREFIX}/{session_id}/{model_id}/ir_files"
+
+    print(f"[dbg:load] session_id={session_id} model_id={model_id} audio_base_url={audio_base_url}")
+    audio_dir = user_audio_dir(session_id)
+    if audio_dir.exists():
+        files = sorted(p.name for p in audio_dir.iterdir() if p.is_file())
+        print(f"[dbg:load] audio_dir={audio_dir} files={files}")
+    else:
+        print(f"[dbg:load] audio_dir_MISSING={audio_dir}")
 
     # Restore analysis files from persistent storage back to temp/analysis/
     _restore_analysis_files(session_id, model_id)

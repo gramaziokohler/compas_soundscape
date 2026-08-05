@@ -3,13 +3,13 @@ import * as THREE from 'three';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { getCssColorHex } from '@/utils/utils';
 import { IR_HOVER_LINE } from '@/utils/constants';
-import type { SoundEvent, ReceiverData } from '@/types';
+import { computePositionKey } from '@/utils/positionKey';
+import type { ReceiverData } from '@/types';
 
 interface IRHoverLineProps {
   hoveredIRSourceReceiver: { sourceId: string; receiverId: string } | null;
   receivers: ReceiverData[];
   gridListeners: any[];
-  soundscapeData: SoundEvent[] | null;
   activeSimulationPositions: {
     sources: Record<string, [number, number, number]>;
     receivers: Record<string, [number, number, number]>;
@@ -20,7 +20,6 @@ export function useSpeckleIRHoverLine({
   hoveredIRSourceReceiver,
   receivers,
   gridListeners,
-  soundscapeData,
   activeSimulationPositions,
 }: IRHoverLineProps) {
   const irHoverLineRef = useRef<THREE.Line | null>(null);
@@ -30,7 +29,6 @@ export function useSpeckleIRHoverLine({
     const { coordinator, viewer } = useSpeckleEngineStore.getState();
     if (!coordinator) return;
 
-    // Remove existing line
     if (irHoverLineRef.current) {
       const scene = viewer?.getRenderer().scene;
       if (scene) scene.remove(irHoverLineRef.current);
@@ -44,15 +42,8 @@ export function useSpeckleIRHoverLine({
 
     const { sourceId, receiverId } = hoveredIRSourceReceiver;
 
-    const soundSphereManager = coordinator.getSoundSphereManager();
-    const receiverManager = coordinator.getReceiverManager();
-    if (!soundSphereManager || !receiverManager) return;
-
-    // Prefer simulation-time positions (source of truth per card) over current manager positions
     const spherePos: [number, number, number] | undefined =
-      activeSimulationPositions?.sources[sourceId]
-      ?? soundSphereManager.getSpherePosition(sourceId)
-      ?? soundscapeData?.find(s => s.id === sourceId)?.position as [number, number, number] | undefined;
+      activeSimulationPositions?.sources[sourceId];
     let receiverPos: [number, number, number] | undefined =
       activeSimulationPositions?.receivers[receiverId]
       ?? receivers.find((r) => r.id === receiverId)?.position;
@@ -113,5 +104,5 @@ export function useSpeckleIRHoverLine({
         v?.requestRender();
       }
     };
-  }, [hoveredIRSourceReceiver, receivers, gridListeners, soundscapeData, activeSimulationPositions]);
+  }, [hoveredIRSourceReceiver, receivers, gridListeners, activeSimulationPositions]);
 }

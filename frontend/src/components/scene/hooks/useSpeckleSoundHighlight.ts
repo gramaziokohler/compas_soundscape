@@ -10,6 +10,14 @@ interface SoundHighlightProps {
   selectedCardIndex: number | null;
   soundscapeData: SoundEvent[] | null;
   selectedVariants: Record<number, number>;
+  /** Simulation-time source/receiver positions. Reactivity signal only — forces this
+   *  hook to re-run whenever the active simulation changes so the base-color reset
+   *  below clears the mismatch-red on spheres that are no longer out of position. */
+  activeSimulationPositions?: {
+    sources: Record<string, [number, number, number]>;
+    receivers: Record<string, [number, number, number]>;
+    soundToPosKey?: Record<string, string>;
+  } | null;
 }
 
 export function useSpeckleSoundHighlight({
@@ -17,6 +25,7 @@ export function useSpeckleSoundHighlight({
   selectedCardIndex,
   soundscapeData,
   selectedVariants,
+  activeSimulationPositions,
 }: SoundHighlightProps) {
   const expandedSoundCardIndex = useUIStore(s => s.expandedSoundCardIndex);
   const zoomToSoundCardTrigger = useUIStore(s => s.zoomToSoundCardTrigger);
@@ -25,6 +34,10 @@ export function useSpeckleSoundHighlight({
   // listing it as a dependency (prevents re-zooming when data populates on nav).
   const soundscapeDataRef = useRef(soundscapeData);
   soundscapeDataRef.current = soundscapeData;
+
+  // Mesh the drag gizmo is currently attached to via the highlight-follow logic —
+  // avoids re-attaching on every effect re-run and detects mesh recreation.
+  const dragTargetSphereRef = useRef<THREE.Mesh | null>(null);
 
   // Note: Speckle object coloring (linked/diverse) is handled by the context's FilteringExtension.
   // This effect only handles sound sphere highlighting.
@@ -38,18 +51,26 @@ export function useSpeckleSoundHighlight({
 
     const sphereMeshes = soundSphereManager.getSoundSphereMeshes();
 
-    // Reset all sphere colors — pending spheres stay light, generated spheres stay primary
+    // Reset all sphere colors — pending spheres stay muted gray, generated spheres stay primary.
+    // Mismatched spheres (userData.simMismatch, set by useSpeckleSimulationMismatch) stay red
+    // so the mismatch coloring survives selection changes.
     sphereMeshes.forEach(sphere => {
       const material = sphere.material as THREE.MeshStandardMaterial;
       if (material.color) {
         const isPending = (sphere.userData.soundEvent as any)?.isPending;
-        material.color.setHex(getCssColorHex(isPending ? '--color-primary-light' : '--color-primary'));
+        const isMismatched = sphere.userData.simMismatch === true;
+        material.color.setHex(
+          isMismatched
+            ? getCssColorHex('--color-error')
+            : getCssColorHex(isPending ? '--color-secondary-hover-static' : '--color-primary'),
+        );
       }
     });
 
     // Sidebar expansion takes priority; fall back to scene-driven selection
     const effectiveIndex = expandedSoundCardIndex ?? selectedCardIndex;
 
+    let highlightedSphere: THREE.Mesh | undefined;
     if (effectiveIndex !== null) {
       const selectedSound = soundscapeData.find((sound: any) => {
         const promptIdx = (sound as any).prompt_index ?? 0;
@@ -57,19 +78,46 @@ export function useSpeckleSoundHighlight({
       });
 
       if (selectedSound && (selectedSound.entity_index === undefined || selectedSound.entity_index === null)) {
-        const sphere = sphereMeshes.find(s => s.userData.soundEvent?.id === selectedSound.id);
-        if (sphere) {
-          const material = sphere.material as THREE.MeshStandardMaterial;
-          if (material.color) {
-            material.color.setHex(getCssColorHex('--color-primary-hover'));
-            material.needsUpdate = true;
-          }
+        highlightedSphere = sphereMeshes.find(s => s.userData.soundEvent?.id === selectedSound.id);
+      }
+    }
+
+    if (highlightedSphere) {
+      const material = highlightedSphere.material as THREE.MeshStandardMaterial;
+      // Keep mismatched spheres red — do not apply the selection highlight over the mismatch color.
+      if (material.color && highlightedSphere.userData.simMismatch !== true) {
+        material.color.setHex(getCssColorHex('--color-success'));
+        material.needsUpdate = true;
+      }
+    }
+
+    // Drag gizmo follows the highlighted sound sphere: when a different card is
+    // expanded/selected (or the current one loses its highlight), re-attach the
+    // gizmo to the highlighted sphere so it never stays on a previously clicked one.
+    const dragHandler = coordinator.getDragHandler();
+    if (dragHandler && !dragHandler.getIsDragging()) {
+      if (highlightedSphere) {
+        const attached = dragHandler.getSelectedObjects()?.[0] as THREE.Mesh | undefined;
+        if (attached !== highlightedSphere) {
+          dragHandler.selectObjects([highlightedSphere]);
         }
+        dragTargetSphereRef.current = highlightedSphere;
+      } else {
+        // No highlighted sphere: detach the gizmo from ANY attached sound sphere.
+        // This covers gizmos attached by the event bridge click handler (where
+        // dragTargetSphereRef is never set), so collapsing the card clears the
+        // gizmo even when it wasn't attached by this effect. Receiver gizmos are
+        // untouched (only 'sound' is deselected).
+        const attached = dragHandler.getSelectedObjects()?.[0];
+        if (attached?.userData.customObjectType === 'sound') {
+          dragHandler.deselectObjects();
+        }
+        dragTargetSphereRef.current = null;
       }
     }
 
     viewer?.requestRender();
-  }, [isViewerReady, selectedCardIndex, expandedSoundCardIndex, soundscapeData, selectedVariants]);
+  }, [isViewerReady, selectedCardIndex, expandedSoundCardIndex, soundscapeData, selectedVariants, activeSimulationPositions]);
 
   // Zoom to sound sphere when card is double-clicked in sidebar
   useEffect(() => {

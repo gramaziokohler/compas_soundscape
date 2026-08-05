@@ -382,6 +382,7 @@ class SoundscapeSimulationConfig(BaseModel):
     imported_ir_ids: Optional[list[str]] = None
     source_receiver_ir_mapping: Optional[dict[str, dict[str, SoundscapeIRMetadata]]] = None
     receiver_positions: Optional[dict[str, list[float]]] = None  # receiverId -> [x, y, z]
+    simulation_positions: Optional[dict] = None  # {sources, receivers, sound_to_pos_key}
     ir_gain_db: Optional[float] = None
     ir_normalize_enabled: Optional[bool] = None
     material_assignments_enabled: Optional[bool] = None

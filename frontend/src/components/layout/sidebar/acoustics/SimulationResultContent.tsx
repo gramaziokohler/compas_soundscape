@@ -6,17 +6,13 @@
  *
  * When grid receivers are detected in sourceReceiverIRMapping, the text metrics block
  * is replaced by a gradient-map metric selector (RT60 / EDT / D50 / C50) + color legend.
- *
- * Also exports SimulationSettingsSection — a collapsible, read-only text summary of the
- * simulation settings used (Simulation Mode, Rays, Air Absorption, …).
  */
 
 'use client';
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
 import { ImpulseResponseUpload } from '@/components/audio/ImpulseResponseUpload';
-import type { SimulationConfig, ChorasSimulationConfig, PyroomAcousticsSimulationConfig } from '@/types/acoustics';
+import type { SimulationConfig } from '@/types/acoustics';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from '@/types/audio';
 import { Notice } from '@/components/ui/Notice';
 import type { GradientMetric } from '@/store/uiStore';
@@ -63,8 +59,10 @@ interface SimulationResultContentProps {
   /** Controlled selected metric — persisted by the parent across expand/collapse */
   selectedMetric?: GradientMetric | null;
   onMetricChange?: (metric: GradientMetric | null) => void;
-  /** Current positions of sound sources (for simulation-position drift detection) */
-  currentSourcePositions?: Record<string, [number, number, number]>;
+  /** Current positions of sound sources keyed by sound ID (per-sound drift detection) */
+  currentSoundPositions?: Record<string, [number, number, number]>;
+  /** Display names of sound sources keyed by sound ID (for per-sound mismatch labels) */
+  currentSoundNames?: Record<string, string>;
   /** Current positions of receivers/grid-listeners (for simulation-position drift detection) */
   currentReceiverPositions?: Record<string, [number, number, number]>;
   /** Called when user clicks "Reset positions" — should move mismatched objects back to sim positions */
@@ -100,7 +98,8 @@ export function SimulationResultContent({
   isExpanded = true,
   selectedMetric: controlledMetric = null,
   onMetricChange,
-  currentSourcePositions,
+  currentSoundPositions,
+  currentSoundNames,
   currentReceiverPositions,
   onResetPositions,
   receiverGroups,
@@ -138,6 +137,7 @@ export function SimulationResultContent({
     const simPositions = (simulationConfig as any).simulationPositions as {
       sources: Record<string, [number, number, number]>;
       receivers: Record<string, [number, number, number]>;
+      soundToPosKey?: Record<string, string>;
     } | undefined;
     if (!simPositions) return empty;
 
@@ -145,14 +145,20 @@ export function SimulationResultContent({
     const sourceIds: string[] = [];
     const receiverIds: string[] = [];
 
-    if (currentSourcePositions) {
-      for (const [id, simPos] of Object.entries(simPositions.sources)) {
-        const cur = currentSourcePositions[id];
-        if (!cur) continue;
+    // Per-sound detection: compare each sound's simulation-time position key
+    // (soundToPosKey) to its CURRENT position. Keying by posKey alone breaks
+    // because a dragged sound's posKey changes, so the sim-time key disappears
+    // from currentSourcePositions.
+    if (currentSoundPositions) {
+      const soundToPosKey = simPositions.soundToPosKey ?? {};
+      for (const [soundId, simPosKey] of Object.entries(soundToPosKey)) {
+        const simPos = simPositions.sources[simPosKey];
+        const cur = currentSoundPositions[soundId];
+        if (!simPos || !cur) continue;
         const dist = Math.hypot(simPos[0] - cur[0], simPos[1] - cur[1], simPos[2] - cur[2]);
         if (dist > SIMULATION_POSITION_THRESHOLD) {
-          names.push(sourceDisplayNames?.[id] || id);
-          sourceIds.push(id);
+          names.push(currentSoundNames?.[soundId] || soundId);
+          sourceIds.push(soundId);
         }
       }
     }
@@ -170,7 +176,7 @@ export function SimulationResultContent({
     }
 
     return { names, sourceIds, receiverIds };
-  }, [isExpanded, simulationConfig, currentSourcePositions, currentReceiverPositions, sourceDisplayNames, receiverDisplayNames]);
+  }, [isExpanded, simulationConfig, currentSoundPositions, currentSoundNames, currentReceiverPositions, receiverDisplayNames]);
 
   const mismatchedNames = mismatchInfo.names;
 
@@ -403,69 +409,6 @@ export function SimulationResultContent({
         onListenerIRUploaded={onListenerIRUploaded}
         onListenerAssignmentCleared={onListenerAssignmentCleared}
       />
-    </div>
-  );
-}
-
-// =============================================================================
-// SimulationSettingsSection
-// =============================================================================
-
-interface SettingRowProps { label: string; value: string }
-function SettingRow({ label, value }: SettingRowProps) {
-  return (
-    <div className="flex items-baseline justify-between gap-3">
-      <span className="text-neutral-500 shrink-0">{label}</span>
-      <span className="text-neutral-300 text-right">{value}</span>
-    </div>
-  );
-}
-
-interface SimulationSettingsSectionProps { config: SimulationConfig }
-
-export function SimulationSettingsSection({ config }: SimulationSettingsSectionProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const rows: { label: string; value: string }[] = [];
-
-  if (config.type === 'pyroomacoustics') {
-    const s = (config as PyroomAcousticsSimulationConfig).settings;
-    rows.push({ label: 'Simulation Mode', value: s.simulation_mode === 'foa' ? 'FOA' : 'Mono' });
-    rows.push({ label: 'Rays', value: s.n_rays.toLocaleString() });
-    rows.push({ label: 'Ray Tracing', value: s.ray_tracing ? 'Yes' : 'No' });
-    rows.push({ label: 'Air Absorption', value: s.air_absorption ? 'Yes' : 'No' });
-    rows.push({ label: 'Max Order (ISM)', value: String(s.max_order) });
-    if (s.enable_grid) rows.push({ label: 'Grid Receivers', value: 'Yes' });
-  } else if (config.type === 'choras' && 'simulation_method' in config.settings) {
-    const s = (config as ChorasSimulationConfig).settings;
-    rows.push({ label: 'Method', value: s.simulation_method });
-    if (s.simulation_method === 'DE') {
-      // no DE-specific display rows
-    } else {
-      rows.push({ label: 'Freq. Upper Limit', value: `${s.dg_freq_upper_limit} Hz` });
-      rows.push({ label: 'Polynomial Order', value: String(s.dg_poly_order) });
-      rows.push({ label: 'Points per Wavelength', value: String(s.dg_ppw) });
-      rows.push({ label: 'CFL', value: String(s.dg_cfl) });
-    }
-  }
-
-  if (rows.length === 0) return null;
-
-  return (
-    <div className="mt-3">
-      <button
-        onClick={() => setIsExpanded((v) => !v)}
-        className="flex items-center gap-1.5 w-full text-left text-xs text-secondary-light hover:text-neutral-300 transition-colors"
-      >
-        {isExpanded ? <ChevronDown size={11} className="shrink-0" /> : <ChevronRight size={11} className="shrink-0" />}
-        <span>Simulation Settings</span>
-      </button>
-      {isExpanded && (
-        <div className="mt-2 space-y-1 text-xs">
-          {rows.map(({ label, value }) => (
-            <SettingRow key={label} label={label} value={value} />
-          ))}
-        </div>
-      )}
     </div>
   );
 }

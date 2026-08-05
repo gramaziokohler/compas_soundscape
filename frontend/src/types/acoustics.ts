@@ -78,6 +78,7 @@ export interface ChorasSimulationConfig extends BaseSimulationConfig, CardExecut
   simulationPositions?: {
     sources: Record<string, [number, number, number]>;
     receivers: Record<string, [number, number, number]>;
+    soundToPosKey?: Record<string, string>;
   };
 }
 
@@ -117,6 +118,7 @@ export interface PyroomAcousticsSimulationConfig extends BaseSimulationConfig, C
   simulationPositions?: {
     sources: Record<string, [number, number, number]>;
     receivers: Record<string, [number, number, number]>;
+    soundToPosKey?: Record<string, string>;
   };
 }
 
@@ -137,6 +139,7 @@ export interface ImportIRsSimulationConfig extends BaseSimulationConfig {
   simulationPositions?: {
     sources: Record<string, [number, number, number]>;
     receivers: Record<string, [number, number, number]>;
+    soundToPosKey?: Record<string, string>;
   };
   /** Advanced settings */
   advancedSettingsExpanded?: boolean;

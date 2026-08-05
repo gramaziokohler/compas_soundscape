@@ -44,6 +44,23 @@ export class PlaybackSchedulerService {
   }
 
   /**
+   * Set the audio orchestrator after construction.
+   *
+   * The scalar is created before the async orchestrator init completes, so the
+   * constructor may capture a null orchestrator. The coordinator handles this via
+   * setAudioOrchestrator(); the scheduler needs the same treatment so that
+   * AudioScheduler.triggerPlayback doesn't silently no-op on `if (this.audioOrchestrator)`.
+   */
+  public setAudioOrchestrator(orchestrator: AudioOrchestrator | null): void {
+    this.audioOrchestrator = orchestrator || null;
+
+    // Propagate to schedulers that may already exist (created with a null orchestrator).
+    this.audioSchedulers.forEach((scheduler) => {
+      scheduler.setAudioOrchestrator(this.audioOrchestrator);
+    });
+  }
+
+  /**
    * Update individual sound playback states (granular updates only)
    */
   public async updateSoundPlayback(

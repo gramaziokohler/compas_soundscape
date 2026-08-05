@@ -39,11 +39,12 @@ import { apiService } from "@/services/api";
 import { API_BASE_URL, DEFAULT_DBFS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION } from "@/utils/constants";
 import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
 import type { LoadTab, SoundGenerationConfig } from "@/types";
+import type { AcousticSimulationMode } from "@/types/audio";
 import type { AudioAnalysisConfig } from "@/types/analysis";
 import type { SelectedGeometry, AcousticMaterial } from "@/types/materials";
 import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSelector";
 import { buildSoundscapeSavePayload, restoreSoundscapeState, getBlobUrlSounds, buildAnalysisStateSave, restoreAnalysisState } from "@/utils/soundscape-serializer";
-import { recordInflightJob } from "@/lib/job-tracker";
+import { getStoredJobs, recordInflightJob } from "@/lib/job-tracker";
 
 /**
  * Build a map from applicationId (Rhino GUID) → current Speckle tree ID.
@@ -453,6 +454,7 @@ function HomeContent() {
     showHoveringHighlight, setShowHoveringHighlight,
     showSoundSpheres, setShowSoundSpheres,
     showSceneListeners, setShowSceneListeners,
+    showScenarioParcours, setShowScenarioParcours,
     showAdvancedSettings, setShowAdvancedSettings,
     showGroundGrid, setShowGroundGrid,
     groundGridSpacing, setGroundGridSpacing,
@@ -728,13 +730,16 @@ function HomeContent() {
     if (acousticsSimulation.activeSimulationIndex !== null) {
       const activeConfig = acousticsSimulation.simulationConfigs[acousticsSimulation.activeSimulationIndex];
 
-      if (activeConfig && (activeConfig.type === 'pyroomacoustics' || activeConfig.type === 'import-irs')) {
+      if (activeConfig && (activeConfig.type === 'pyroomacoustics' || activeConfig.type === 'choras' || activeConfig.type === 'import-irs')) {
         const simConfig = activeConfig as any;
-        const simulationMode = activeConfig.type === 'import-irs' ? 'pyroomacoustics' : activeConfig.type;
+        const simulationMode = activeConfig.type === 'import-irs' ? 'pyroomacoustics' : activeConfig.type as AcousticSimulationMode;
 
         // If simulation has source-receiver IR mapping, pass it to AudioOrchestrator
         if (simConfig.sourceReceiverIRMapping) {
           const initialReceiverId = receivers.receivers.length > 0 ? receivers.receivers[0].id : undefined;
+          // Actual simulation-time source coordinates — lets the orchestrator resolve a
+          // new sound's IR by distance to the recorded position, not grid-cell equality.
+          const simulationSourcePositions = simConfig.simulationPositions?.sources;
 
           // Determine if we can hot-swap: already in AMBISONIC_IR mode and previous sim also had IR mapping
           const prevMapping = getSimIRMapping(prevIRMappingIndexRef.current);
@@ -749,7 +754,8 @@ function HomeContent() {
             audioOrchestrator.orchestrator.hotSwapSourceReceiverIRMapping(
               simConfig.sourceReceiverIRMapping,
               simulationMode,
-              initialReceiverId
+              initialReceiverId,
+              simulationSourcePositions
             ).then(() => {
               console.log('[Page] ✅ IR mapping hot-swapped successfully');
             }).catch(error => {
@@ -764,7 +770,8 @@ function HomeContent() {
             audioOrchestrator.orchestrator.setSourceReceiverIRMapping(
               simConfig.sourceReceiverIRMapping,
               simulationMode,
-              initialReceiverId
+              initialReceiverId,
+              simulationSourcePositions
             ).then(() => {
               console.log('[Page] ✅ Source-receiver IR mapping applied successfully');
             }).catch(error => {
@@ -1798,6 +1805,9 @@ function HomeContent() {
       // Embed analysis state in the soundscape data
       payload.soundscape_data.analysis_state = analysisStateData.analysis_state;
 
+      console.log('[dbg:save] audio_urls count:', payload.audio_urls.length);
+      for (const u of payload.audio_urls) console.log('[dbg:save]   audio_url:', u);
+
       // Persist project_id and version_id so the URL bootstrap can reconstruct the viewer
       if (globalSpeckleData?.url) {
         const urlMatch = globalSpeckleData.url.match(/\/projects\/([^/]+)\/models\/([^/@]+)(?:@([^/?]+))?/);
@@ -2355,6 +2365,7 @@ function HomeContent() {
     setShowHoveringHighlight(true);
     setShowSoundSpheres(true);
     setShowSceneListeners(true);
+    setShowScenarioParcours(false);
     setGlobalSoundSpeed(343);
     setGlobalMeshLc(1.5);
     useAudioControlsStore.getState().resetGlobalBaseDbfs();
@@ -2363,6 +2374,7 @@ function HomeContent() {
     setGroundGridColor('#888888');
   }, [soundGen.handleResetToDefaults, audioNormalization.reset,
       setShowLabelSprites, setShowHoveringHighlight, setShowSoundSpheres, setShowSceneListeners,
+      setShowScenarioParcours,
       setGlobalSoundSpeed, setGlobalMeshLc,
       setShowGroundGrid, setGroundGridSpacing, setGroundGridColor]);
 
@@ -2842,6 +2854,19 @@ function HomeContent() {
     });
     
     return () => {
+      // Unmount-time cleanup must be guarded: if a soundscape was restored from
+      // URL (bootstrap) the load endpoint just copied files back into temp/, and
+      // the beacon would delete them again before they are re-saved. Also skip
+      // while in-flight jobs are being recovered (read live, not the stale
+      // closure value). Only clean when no restore happened and no jobs remain.
+      if (bootstrappedRef.current) {
+        console.log('[page:cleanup] Skipping unmount cleanup — soundscape restored from URL');
+        return;
+      }
+      if (getStoredJobs().length > 0) {
+        console.log('[page:cleanup] Skipping unmount cleanup — in-flight jobs present');
+        return;
+      }
       navigator.sendBeacon(`${API_BASE_URL}/api/cleanup-generated-sounds`);
     };
   }, []);
@@ -3075,6 +3100,7 @@ function HomeContent() {
         onDeleteVariant={soundGen.handleDeleteVariant}
         onSelectSoundCard={handleSelectSoundCard}
         selectedCardIndex={selectedCardIndex}
+        onSoundCardCollapsed={() => setSelectedCardIndex(null)}
         // Analysis props
         analysisConfigs={analysis.analysisConfigs}
         stepAdvanceTrigger={stepAdvanceTrigger}
@@ -3104,6 +3130,8 @@ function HomeContent() {
         onShowSoundSpheresChange={setShowSoundSpheres}
         showSceneListeners={showSceneListeners}
         onShowSceneListenersChange={setShowSceneListeners}
+        showScenarioParcours={showScenarioParcours}
+        onShowScenarioParcoursChange={setShowScenarioParcours}
         showGroundGrid={showGroundGrid}
         onShowGroundGridChange={setShowGroundGrid}
         groundGridSpacing={groundGridSpacing}
@@ -3148,6 +3176,8 @@ function HomeContent() {
         onShowSoundSpheresChange={setShowSoundSpheres}
         showSceneListeners={showSceneListeners}
         onShowSceneListenersChange={setShowSceneListeners}
+        showScenarioParcours={showScenarioParcours}
+        onShowScenarioParcoursChange={setShowScenarioParcours}
         showGroundGrid={showGroundGrid}
         onShowGroundGridChange={setShowGroundGrid}
         groundGridSpacing={groundGridSpacing}

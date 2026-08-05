@@ -60,11 +60,6 @@ def main():
         default=None,
         help="Force a resample to this sample rate before denoising (default: keep original)",
     )
-    parser.add_argument(
-        "--trim-silence",
-        action="store_true",
-        help="Trim the leading silence/noise preamble before denoising",
-    )
     args = parser.parse_args()
 
     if not os.path.exists(args.input):
@@ -90,23 +85,17 @@ def main():
     print(f"  RMS before: {before_rms:.2f} dBFS  |  samples: {before_samples}")
 
     t0 = time.perf_counter()
-    denoised = apply_denoising(
-        waveform, sample_rate=sample_rate, trim_silence=args.trim_silence
-    )
+    denoised = apply_denoising(waveform, sample_rate=sample_rate)
     elapsed = time.perf_counter() - t0
 
     after_rms = rms_db(denoised)
     after_samples = denoised.shape[-1]
     delta_db = after_rms - before_rms
-    trimmed = before_samples - after_samples
-    extra = ""
-    if trimmed > 0:
-        extra = f"  |  trimmed: {trimmed} samples ({trimmed / sample_rate:.3f}s)"
-    print(f"  RMS after:  {after_rms:.2f} dBFS  (delta: {delta_db:+.2f} dB)  |  samples: {after_samples}{extra}")
+    print(f"  RMS after:  {after_rms:.2f} dBFS  (delta: {delta_db:+.2f} dB)  |  samples: {after_samples}")
     print(f"  Processing time: {elapsed:.2f} s")
 
     # Determine output path
-    suffix = "_trimmed_denoised" if args.trim_silence else "_denoised"
+    suffix = "_denoised"
     if args.output_dir:
         os.makedirs(args.output_dir, exist_ok=True)
         base = os.path.splitext(os.path.basename(args.input))[0]

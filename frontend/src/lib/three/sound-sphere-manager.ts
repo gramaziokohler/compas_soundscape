@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import { triangulate } from "@/utils/utils";
 import { API_BASE_URL, SOUND_SPHERE, DARK_MODE, OBJECT_LABEL } from "@/utils/constants";
-import { getCssColorHex } from '@/utils/utils';
-import { createLabelSprite, disposeLabelSprite } from "@/lib/three/label-sprite-factory";
+import { getCssColorHex, trimDisplayName } from '@/utils/utils';
+import { createLabelSprite, disposeLabelSprite, updateLabelSprite } from "@/lib/three/label-sprite-factory";
 import { updateDraggableMeshes, disposeMeshes } from "@/lib/three/draggable-mesh-manager";
 // import { calculateSpiralPositions } from "@/lib/three/spiral-placement"; // Bounding-box placement removed
 import { calculateCameraFrontSpiralPositions } from "@/lib/three/spiral-placement";
@@ -10,7 +10,6 @@ import { SPIRAL_PLACEMENT } from "@/utils/constants";
 import type { SoundEvent } from "@/types";
 import type { AuralizationConfig, SoundMetadata } from "@/types/audio";
 import type { AudioOrchestrator } from "@/lib/audio/AudioOrchestrator";
-import { trimDisplayName } from "@/utils/utils";
 import { useAudioControlsStore } from "@/store/audioControlsStore";
 // import type { BoundingBoxBounds } from "@/lib/three/BoundingBoxManager"; // Bounding-box placement removed
 
@@ -70,6 +69,10 @@ export class SoundSphereManager {
   private latestSounds: SoundEvent[] = [];
   // Track which sounds are entity-linked (for change detection in updateSounds)
   private entityLinkedIds: Set<string> = new Set();
+  // Previous visible sound ID set — used to detect sound-set changes for the fast path.
+  // soundMetadata intentionally contains ALL non-pending variants (not just the visible
+  // selection), so a size comparison against it is invalid for multi-variant prompts.
+  private lastVisibleSoundIds: Set<string> = new Set();
   private audioLoader: THREE.AudioLoader;
 
   // Dark mode state
@@ -85,6 +88,10 @@ export class SoundSphereManager {
 
   // Label sprites — one per non-entity sound sphere, keyed by sound ID
   private labelSprites: Map<string, THREE.Sprite> = new Map();
+
+  // Pending label-recreation timers — debounce text changes so prompt typing
+  // doesn't dispose/recreate sprite canvases on every keystroke.
+  private labelUpdateTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
   // Label sprites for entity-linked sounds (no mesh), keyed by sound ID
   private entityLabelSprites: Map<string, THREE.Sprite> = new Map();
@@ -161,6 +168,7 @@ export class SoundSphereManager {
       this.removeAllSoundMeshes();
       this.entityLinkedIds.clear();
       this.promptPositions.clear();
+      this.lastVisibleSoundIds.clear();
       return new Map();
     }
 
@@ -224,10 +232,14 @@ export class SoundSphereManager {
     const newEntityLinkedIds = new Set(
       visibleSounds.filter(s => s.entity_index !== undefined).map(s => s.id)
     );
+    const visibleSetUnchanged =
+      this.lastVisibleSoundIds.size === newSoundIds.size &&
+      [...newSoundIds].every(id => this.lastVisibleSoundIds.has(id));
+    const allVisibleHaveMetadata = [...newSoundIds].every(id => this.soundMetadata.has(id));
     if (
       this.soundMetadata.size > 0 &&
-      newSoundIds.size === this.soundMetadata.size &&
-      [...newSoundIds].every(id => this.soundMetadata.has(id)) &&
+      visibleSetUnchanged &&
+      allVisibleHaveMetadata &&
       // Also check entity_index hasn't changed (sphere visibility depends on it)
       newEntityLinkedIds.size === this.entityLinkedIds.size &&
       [...newEntityLinkedIds].every(id => this.entityLinkedIds.has(id))
@@ -285,6 +297,7 @@ export class SoundSphereManager {
         ...visibleSounds.filter(s => s.entity_index !== undefined),
         ...iterationLabels,
       ]);
+      this.lastVisibleSoundIds = new Set(newSoundIds);
       return new Map();
     }
 
@@ -484,6 +497,8 @@ export class SoundSphereManager {
 
     this.syncAudioSources(allNonPendingSounds);
 
+    this.lastVisibleSoundIds = new Set(newSoundIds);
+
     return newlyPlacedPositions;
   }
 
@@ -655,6 +670,8 @@ export class SoundSphereManager {
       disposeLabelSprite(sprite);
     });
     this.entityLabelSprites.clear();
+    this.labelUpdateTimers.forEach(timer => clearTimeout(timer));
+    this.labelUpdateTimers.clear();
   }
 
   /**
@@ -684,15 +701,15 @@ export class SoundSphereManager {
       sphereGeom = new THREE.SphereGeometry(sphereRadius, 32, 32);
     }
 
-    // Use lighter color for pending (pre-generation) spheres
+    // Use muted gray for pending (pre-generation) spheres
     const sphereColor = soundEvent.isPending
-      ? getCssColorHex('--color-primary-light')
+      ? getCssColorHex('--color-secondary-hover-static')
       : getCssColorHex('--color-primary');
 
     const material = new THREE.MeshBasicMaterial({
       color: sphereColor,
       transparent: true,
-      opacity: 0.7,
+      opacity: SOUND_SPHERE.BASE_OPACITY,
       fog: true,
       depthWrite: true,
       depthTest: true,
@@ -836,6 +853,11 @@ export class SoundSphereManager {
         this.soundSpheresGroup.remove(sprite);
         disposeLabelSprite(sprite);
         this.labelSprites.delete(id);
+        const timer = this.labelUpdateTimers.get(id);
+        if (timer) {
+          clearTimeout(timer);
+          this.labelUpdateTimers.delete(id);
+        }
       }
     }
 
@@ -844,22 +866,44 @@ export class SoundSphereManager {
       const id = mesh.userData.soundEvent?.id as string;
       if (!id) continue;
 
-      const text = trimDisplayName((mesh.userData.soundEvent?.display_name as string)) || id;
+      const text = trimDisplayName((mesh.userData.soundEvent?.display_name as string) || id);
       const existing = this.labelSprites.get(id);
+      // Pending placeholders (pre-generation) have a frozen label: while the
+      // card is pending its title may still be edited, but the 3D label must
+      // not update. When the sound is generated the pending event is replaced
+      // by a generated event (new id), which creates a fresh label then.
+      const isPending = !!(mesh.userData.soundEvent as any)?.isPending;
 
       if (existing) {
         if (existing.userData.labelText === text) continue; // up-to-date
-        // Name changed — dispose and recreate
-        this.soundSpheresGroup.remove(existing);
-        disposeLabelSprite(existing);
-        this.labelSprites.delete(id);
+        if (isPending) continue; // pending — freeze label, update only on generation
+        // Name changed — debounce the recreation so typing in a sound prompt
+        // only settles the label once the user stops typing.
+        const pending = this.labelUpdateTimers.get(id);
+        if (pending) clearTimeout(pending);
+        this.labelUpdateTimers.set(id, setTimeout(() => {
+          this.labelUpdateTimers.delete(id);
+          this.recreateLabelSprite(id, text, mesh.position);
+        }, OBJECT_LABEL.LABEL_UPDATE_DEBOUNCE_MS));
+        continue;
       }
 
-      const sprite = createLabelSprite(text);
-      sprite.position.copy(mesh.position);
-      this.soundSpheresGroup.add(sprite);
-      this.labelSprites.set(id, sprite);
+      this.recreateLabelSprite(id, text, mesh.position);
     }
+  }
+
+  private recreateLabelSprite(id: string, text: string, position: THREE.Vector3): void {
+    const existing = this.labelSprites.get(id);
+    if (existing) {
+      // Redraw the existing canvas/texture in place — no sprite recreation, so
+      // the label never flashes at the default (huge) scale for a frame.
+      updateLabelSprite(existing, text);
+      return;
+    }
+    const sprite = createLabelSprite(text);
+    sprite.position.copy(position);
+    this.soundSpheresGroup.add(sprite);
+    this.labelSprites.set(id, sprite);
   }
 
   /**
@@ -921,7 +965,7 @@ export class SoundSphereManager {
       const groupSize = sounds.length;
       sounds.forEach((soundEvent, slotIdx) => {
         if (iterBaseIds.has(soundEvent.id)) return;
-        const baseText = trimDisplayName(soundEvent.display_name ?? '') || soundEvent.id;
+        const baseText = trimDisplayName((soundEvent.display_name ?? '') || soundEvent.id);
         const text = groupSize > 1 ? `${baseText}.pos${slotIdx + 1}` : baseText;
         this.upsertEntityLabel(soundEvent, slotIdx, groupSize, text);
       });
@@ -933,7 +977,7 @@ export class SoundSphereManager {
     for (const sounds of iterationGroups.values()) {
       const groupSize = sounds.length;
       sounds.forEach((soundEvent, slotIdx) => {
-        const baseText = trimDisplayName(soundEvent.display_name ?? '') || soundEvent.id;
+        const baseText = trimDisplayName((soundEvent.display_name ?? '') || soundEvent.id);
         const entityIdx = soundEvent.entity_index ?? -1;
         const posNum = entityIdx >= 0 ? entityIdx + 1 : slotIdx + 1;
         const text = `${baseText}.pos${posNum}`;
@@ -950,6 +994,11 @@ export class SoundSphereManager {
   ): void {
     const existing = this.entityLabelSprites.get(soundEvent.id);
 
+    // Pending placeholders (pre-generation) have a frozen label — never rebuild
+    // them while pending. When the sound is generated the pending event is
+    // replaced by a generated event (new id), which creates a fresh label then.
+    if (existing && (soundEvent as any).isPending) return;
+
     // Recreate when text, slot index, or group size has changed
     const needsRebuild = existing && (
       existing.userData.labelText !== text ||
@@ -960,9 +1009,12 @@ export class SoundSphereManager {
     if (existing && !needsRebuild) return;
 
     if (existing) {
-      this.soundSpheresGroup.remove(existing);
-      disposeLabelSprite(existing);
-      this.entityLabelSprites.delete(soundEvent.id);
+      // Redraw the existing canvas/texture in place — no sprite recreation, so
+      // the label never flashes at the default (huge) scale for a frame.
+      updateLabelSprite(existing, text);
+      existing.userData.entitySlot = slotIdx;
+      existing.userData.entityGroupSize = groupSize;
+      return;
     }
 
     const pos = this.spherePositions.get(soundEvent.id) ?? soundEvent.position as [number, number, number];
@@ -972,6 +1024,17 @@ export class SoundSphereManager {
     sprite.userData.entityGroupSize = groupSize;
     this.soundSpheresGroup.add(sprite);
     this.entityLabelSprites.set(soundEvent.id, sprite);
+  }
+
+  /**
+   * World height for a label at `distance` from a perspective camera so the
+   * label occupies a fixed fraction of the viewport height on ANY screen/window
+   * size (rem-like consistent sizing). Independent of canvas pixel size/DPI.
+   */
+  private labelWorldHeight(camera: THREE.PerspectiveCamera, distance: number, clampRatio: number): number {
+    const tanHalfFov = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    const viewportHeightAtDistance = 2 * distance * tanHalfFov;
+    return viewportHeightAtDistance * OBJECT_LABEL.VIEWPORT_HEIGHT_RATIO * clampRatio;
   }
 
   /**
@@ -999,7 +1062,7 @@ export class SoundSphereManager {
         const clampRatio = scale / rawScale;
         const zOffset = distance * SOUND_SPHERE.SCREEN_SPACE_SIZE * OBJECT_LABEL.Z_OFFSET_FACTOR * clampRatio;
         label.position.set(mesh.position.x, mesh.position.y, mesh.position.z + zOffset);
-        const h = distance * OBJECT_LABEL.SCREEN_SPACE_HEIGHT * clampRatio;
+        const h = this.labelWorldHeight(camera, distance, clampRatio);
         label.scale.set(h * (label.userData.aspectRatio as number || 3), h, 1);
       }
     });
@@ -1023,7 +1086,7 @@ export class SoundSphereManager {
       const clampedScale = Math.max(SOUND_SPHERE.MIN_SCALE, Math.min(SOUND_SPHERE.MAX_SCALE, rawScale));
       const clampRatio = clampedScale / rawScale;
 
-      const h = distance * OBJECT_LABEL.SCREEN_SPACE_HEIGHT * clampRatio;
+      const h = this.labelWorldHeight(camera, distance, clampRatio);
       const labelWidth = h * (label.userData.aspectRatio as number || 3);
 
       // Vertical offset so grouped labels stack above the anchor without overlapping.
@@ -1166,6 +1229,28 @@ export class SoundSphereManager {
   }
 
   /**
+   * Dim (or restore) a card's sound sphere based on its effective mute state.
+   * A card is considered muted when ANY of its variants is muted, or when solo
+   * mode is active and none of its variants is the soloed one.
+   *
+   * Only the selected variant of a card has a visible mesh, but the mesh is
+   * keyed by prompt index here so muting a non-selected variant still dims the
+   * card's sphere.
+   */
+  public setPromptMuted(promptIdx: number, muted: boolean): void {
+    const mesh = this.soundMeshes.find(m => {
+      const ev = m.userData.soundEvent as SoundEvent | undefined;
+      return (ev as any)?.prompt_index === promptIdx;
+    });
+    if (!mesh) return;
+    const material = mesh.material as THREE.MeshBasicMaterial;
+    mesh.userData.isMuted = muted;
+    material.transparent = true;
+    material.opacity = muted ? SOUND_SPHERE.MUTED_OPACITY : SOUND_SPHERE.BASE_OPACITY;
+    material.needsUpdate = true;
+  }
+
+  /**
    * Get positions of all entity-linked sounds (for external point light placement).
    */
   public getEntityLinkedSoundPositions(): Array<{ id: string; position: [number, number, number] }> {
@@ -1183,16 +1268,48 @@ export class SoundSphereManager {
    * Re-enforce dark mode colors on all sound spheres.
    * Called by the enforcement interval to guard against external material resets
    * (e.g. Speckle render passes during drag operations).
+   *
+   * Spheres carrying a MANAGED color are skipped:
+   * - `--color-success`    → selection highlight (useSpeckleSoundHighlight)
+   * - `--color-error`      → simulation mismatch (useSpeckleSimulationMismatch)
+   * - `--color-secondary-hover-static` → pending pre-generation sphere
+   * - `userData.isMuted`   → 50%-opacity muted state (audioControlsStore)
+   *
+   * Otherwise the enforcement would paint every sphere back to primary blue
+   * (including a sphere being dragged) every interval tick.
    */
   public enforceDarkModeColors(): void {
     if (!this.darkModeEnabled) return;
+    const primaryHex = getCssColorHex('--color-primary');
+    const successHex = getCssColorHex('--color-success');
+    const errorHex = getCssColorHex('--color-error');
+    const pendingHex = getCssColorHex('--color-secondary-hover-static');
+
     this.soundMeshes.forEach(mesh => {
       const material = mesh.material as THREE.MeshBasicMaterial;
-      if (material.color.getHex() !== getCssColorHex('--color-primary')) {
-        material.color.setHex(getCssColorHex('--color-primary'));
+      const currentHex = material.color.getHex();
+
+      if (
+        currentHex !== primaryHex &&
+        currentHex !== successHex &&
+        currentHex !== errorHex &&
+        currentHex !== pendingHex
+      ) {
+        material.color.setHex(primaryHex);
         material.needsUpdate = true;
       }
-      // Also enforce opaque state
+
+      // Keep muted spheres at 50% opacity — the interval must not force opaque.
+      if (mesh.userData.isMuted === true) {
+        if (!material.transparent || material.opacity !== SOUND_SPHERE.MUTED_OPACITY) {
+          material.transparent = true;
+          material.opacity = SOUND_SPHERE.MUTED_OPACITY;
+          material.needsUpdate = true;
+        }
+        return;
+      }
+
+      // Enforce opaque state for non-muted spheres
       if (material.transparent) {
         material.transparent = false;
         material.opacity = 1;
@@ -1240,6 +1357,8 @@ export class SoundSphereManager {
       disposeLabelSprite(sprite);
     });
     this.entityLabelSprites.clear();
+    this.labelUpdateTimers.forEach(timer => clearTimeout(timer));
+    this.labelUpdateTimers.clear();
 
     // Remove sound spheres group from scene
     this.scene.remove(this.soundSpheresGroup);

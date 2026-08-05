@@ -54,11 +54,12 @@ async function calibrateBlobUrl(
   dbfs: number,
   applyDenoising: boolean,
   trimSilence: boolean = false,
-): Promise<string> {
+): Promise<{ url: string; noise_trim?: [number, number] | null }> {
   const blob =
     typeof blobOrUrl === 'string' ? await fetch(blobOrUrl).then((r) => r.blob()) : blobOrUrl;
-  const { url } = await apiService.calibrateAudio(blob, dbfs, applyDenoising, trimSilence);
-  return url;
+  const { url, noise_trim } = await apiService.calibrateAudio(blob, dbfs, applyDenoising, trimSilence);
+  console.log('[dbg:calibrate] dbfs=', dbfs, '-> returned url=', url, 'noise_trim=', noise_trim);
+  return { url, noise_trim };
 }
 
 function reindexSounds(sounds: any[], removedIndex: number): any[] {
@@ -68,6 +69,21 @@ function reindexSounds(sounds: any[], removedIndex: number): any[] {
       ...s,
       prompt_index: s.prompt_index > removedIndex ? s.prompt_index - 1 : s.prompt_index,
     }));
+}
+
+// Apply backend-detected noise trim regions ([start, end] fractions) to the
+// non-destructive wavesurfer trim handles. The backend computes these with the
+// exact same librosa onset detection used for denoising; we just surface them.
+function applyTrimRegions(events: any[]): void {
+  for (const e of events) {
+    const nt = e?.noise_trim;
+    if (!e?.id || !Array.isArray(nt) || nt.length !== 2) continue;
+    const [start, end] = nt;
+    if (typeof start !== 'number' || typeof end !== 'number') continue;
+    if (start < 0 || end > 1 || end <= start) continue;
+    useAudioControlsStore.getState().setSoundTrim(e.id, { start, end });
+    console.log(`[dbg:autotrim] ${e.id} -> [${start}, ${end}]`);
+  }
 }
 
 // ─── Partialize ───────────────────────────────────────────────────────────────
@@ -613,6 +629,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                         ...newPartials,
                       ];
                       set({ generatedSounds: merged }, false, 'soundscape/partialSound');
+                      applyTrimRegions(newPartials);
                     }
 
                     if (s.cancelled) {
@@ -646,22 +663,24 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               const audioFileUrl = config.uploadedAudioUrl;
               if (!audioFileUrl) continue;
               const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
-              const audioUrl = await calibrateBlobUrl(
+              const { url: audioUrl, noise_trim } = await calibrateBlobUrl(
                 audioFileUrl,
                 resolvedDbfs,
                 applyDenoising,
                 trimSilence,
               );
-              uploadedEvents.push(
-                createSoundEventFromUpload(
-                  { ...config, dbfs: resolvedDbfs },
-                  audioUrl,
-                  originalIndex,
-                  total,
-                  geometryBounds as GeometryBounds | undefined,
-                  'uploaded',
-                ),
+              const uploadedEvent = createSoundEventFromUpload(
+                { ...config, dbfs: resolvedDbfs },
+                audioUrl,
+                originalIndex,
+                total,
+                geometryBounds as GeometryBounds | undefined,
+                'uploaded',
               );
+              uploadedEvents.push(uploadedEvent);
+              if (noise_trim) {
+                useAudioControlsStore.getState().setSoundTrim(uploadedEvent.id, { start: noise_trim[0], end: noise_trim[1] });
+              }
             }
 
             // ── Library ───────────────────────────────────────────────────────
@@ -680,21 +699,24 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 });
                 if (!dlRes.ok) throw new Error('Failed to download sound');
                 const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
-                const audioUrl = await calibrateBlobUrl(
+                const { url: audioUrl, noise_trim } = await calibrateBlobUrl(
                   await dlRes.blob(),
                   resolvedDbfs,
                   applyDenoising,
+                  trimSilence,
                 );
-                libraryEvents.push(
-                  createSoundEventFromUpload(
-                    { ...config, dbfs: resolvedDbfs },
-                    audioUrl,
-                    originalIndex,
-                    total,
-                    geometryBounds as GeometryBounds | undefined,
-                    'library',
-                  ),
+                const libraryEvent = createSoundEventFromUpload(
+                  { ...config, dbfs: resolvedDbfs },
+                  audioUrl,
+                  originalIndex,
+                  total,
+                  geometryBounds as GeometryBounds | undefined,
+                  'library',
                 );
+                libraryEvents.push(libraryEvent);
+                if (noise_trim) {
+                  useAudioControlsStore.getState().setSoundTrim(libraryEvent.id, { start: noise_trim[0], end: noise_trim[1] });
+                }
               } catch (error) {
                 console.error('[soundscapeStore] Library download error:', error);
               }
@@ -710,22 +732,24 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 });
                 if (!dlRes.ok) throw new Error('Failed to download catalog sound');
                 const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
-                const audioUrl = await calibrateBlobUrl(
+                const { url: audioUrl, noise_trim } = await calibrateBlobUrl(
                   await dlRes.blob(),
                   resolvedDbfs,
                   applyDenoising,
                   trimSilence,
                 );
-                catalogEvents.push(
-                  createSoundEventFromUpload(
-                    { ...config, dbfs: resolvedDbfs },
-                    audioUrl,
-                    originalIndex,
-                    total,
-                    geometryBounds as GeometryBounds | undefined,
-                    'catalog',
-                  ),
+                const catalogEvent = createSoundEventFromUpload(
+                  { ...config, dbfs: resolvedDbfs },
+                  audioUrl,
+                  originalIndex,
+                  total,
+                  geometryBounds as GeometryBounds | undefined,
+                  'catalog',
                 );
+                catalogEvents.push(catalogEvent);
+                if (noise_trim) {
+                  useAudioControlsStore.getState().setSoundTrim(catalogEvent.id, { start: noise_trim[0], end: noise_trim[1] });
+                }
               } catch (error) {
                 const errorMsg = error instanceof Error ? error.message : 'Failed to download catalog sound';
                 console.error('[soundscapeStore] Catalog download error:', error);
@@ -892,22 +916,24 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   duration >= 0.5 && duration <= 22 ? duration : undefined,
               });
               const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
-                const audioUrl = await calibrateBlobUrl(
+                const { url: audioUrl, noise_trim } = await calibrateBlobUrl(
                   rawUrl,
                   resolvedDbfs,
                   applyDenoising,
                   trimSilence,
                 );
-              elevenLabsEvents.push(
-                createSoundEventFromUpload(
-                  { ...config, dbfs: resolvedDbfs },
-                  audioUrl,
-                  originalIndex,
-                  total,
-                  geometryBounds as GeometryBounds | undefined,
-                  'elevenlabs',
-                ),
+              const elevenLabsEvent = createSoundEventFromUpload(
+                { ...config, dbfs: resolvedDbfs },
+                audioUrl,
+                originalIndex,
+                total,
+                geometryBounds as GeometryBounds | undefined,
+                'elevenlabs',
               );
+              elevenLabsEvents.push(elevenLabsEvent);
+              if (noise_trim) {
+                useAudioControlsStore.getState().setSoundTrim(elevenLabsEvent.id, { start: noise_trim[0], end: noise_trim[1] });
+              }
             }
 
             // ── Merge ─────────────────────────────────────────────────────────
@@ -920,10 +946,20 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               ...ttsEvents,
               ...elevenLabsEvents,
             ];
+            // New variants of an already-simulated prompt must share the prompt's source
+            // position (they are ONE acoustic source). A fresh variant carries the config
+            // position ([0,0,0] until placed) — inherit the existing variant's position so
+            // the simulation never sees the prompt at two different spots.
             const newEventIds = new Set(newEvents.map((e) => e.id));
             const allEvents = [
               ...existing.filter((e) => !newEventIds.has(e.id)),
-              ...newEvents,
+              ...newEvents.map((e) => {
+                if (e.prompt_index === undefined) return e;
+                const anchor = existing.find(
+                  (x) => x.prompt_index === e.prompt_index && x.id !== e.id && x.position?.length === 3,
+                );
+                return anchor ? { ...e, position: anchor.position } : e;
+              }),
             ];
 
             console.log('[handleGenerateInternal] merge: generated:', generatedEvents.length,
@@ -940,6 +976,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               false,
               'soundscape/generateDone',
             );
+            applyTrimRegions(allEvents);
           } catch (err: any) {
             if (err.name === 'AbortError' || err.message === 'AbortError') {
               const msg = 'Sound generation stopped by user.';
@@ -1097,8 +1134,17 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             });
 
             const currentData = get().soundscapeData || [];
-            const merged = [...currentData, ...mappedEvents];
+            // New variants share the prompt's source position: inherit the position of an
+            // existing variant of the same prompt so the source does not split in the sim.
+            const anchor = currentData.find(
+              (x: any) => x.prompt_index === targetIndex && x.id !== mappedEvents[0]?.id && x.position?.length === 3,
+            );
+            const alignedEvents = anchor
+              ? mappedEvents.map((e) => ({ ...e, position: anchor.position }))
+              : mappedEvents;
+            const merged = [...currentData, ...alignedEvents];
             set({ generatedSounds: merged, soundscapeData: merged }, false, 'soundscape/regenComplete');
+            applyTrimRegions(alignedEvents);
 
             removeInflightJob(generation_id);
           } catch (err: any) {
@@ -1177,6 +1223,18 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               url: s.url.includes('?') ? `${s.url}&t=${timestamp}` : `${s.url}?t=${timestamp}`,
             }));
             set({ soundscapeData: updated }, false, 'soundscape/reprocessed');
+
+            // Re-apply backend-detected trim regions (the files were rewritten by reprocessing,
+            // so their noise boundaries may have shifted).
+            const data = await response.json();
+            const noiseTrims = data?.noise_trims;
+            if (noiseTrims && typeof noiseTrims === 'object') {
+              const trimEvents = Object.entries(noiseTrims).map(([url, nt]) => {
+                const ev = soundscapeData.find((s: any) => s.url === url);
+                return ev ? { id: ev.id, noise_trim: nt } : null;
+              }).filter(Boolean);
+              applyTrimRegions(trimEvents);
+            }
           } catch (error) {
             const msg = error instanceof Error ? error.message : 'Failed to reprocess sounds';
             set(

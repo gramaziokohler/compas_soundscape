@@ -218,6 +218,7 @@ export function RightSidebar({
         style={{
           width: isExpanded ? `${sidebarWidth}px` : '0px',
           borderLeft: isExpanded ? `${UI_RIGHT_SIDEBAR.BORDER_WIDTH}px solid var(--color-secondary-light)` : 'none',
+          opacity: isExpanded ? 0.95 : 0,
           zIndex: 10,
           userSelect: (isResizing || isSplitResizing) ? 'none' : undefined,
         }}

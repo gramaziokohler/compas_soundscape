@@ -7,7 +7,7 @@ import type { ReceiverData } from "@/types";
 // import type { BoundingBoxBounds } from "@/lib/three/BoundingBoxManager"; // Unused after spiral placement removal
 import { RECEIVER_CONFIG, OBJECT_LABEL } from "@/utils/constants";
 import { getCssColorHex } from "@/utils/utils";
-import { createLabelSprite, disposeLabelSprite } from "@/lib/three/label-sprite-factory";
+import { createLabelSprite, disposeLabelSprite, updateLabelSprite } from "@/lib/three/label-sprite-factory";
 import {
   loadHeadphonesGeometry,
   invalidateHeadphonesCache,
@@ -394,9 +394,10 @@ export class ReceiverManager {
 
       if (existing) {
         if (existing.userData.labelText === text) continue;
-        target.remove(existing);
-        disposeLabelSprite(existing);
-        this.labelSprites.delete(id);
+        // Redraw the existing canvas/texture in place — no sprite recreation, so
+        // the label never flashes at the default (huge) scale for a frame.
+        updateLabelSprite(existing, text);
+        continue;
       }
 
       const sprite = createLabelSprite(text);
@@ -404,6 +405,17 @@ export class ReceiverManager {
       target.add(sprite);
       this.labelSprites.set(id, sprite);
     }
+  }
+
+  /**
+   * World height for a label at `distance` from a perspective camera so the
+   * label occupies a fixed fraction of the viewport height on ANY screen/window
+   * size (rem-like consistent sizing). Independent of canvas pixel size/DPI.
+   */
+  private labelWorldHeight(camera: THREE.PerspectiveCamera, distance: number, clampRatio: number): number {
+    const tanHalfFov = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    const viewportHeightAtDistance = 2 * distance * tanHalfFov;
+    return viewportHeightAtDistance * OBJECT_LABEL.VIEWPORT_HEIGHT_RATIO * clampRatio;
   }
 
   /**
@@ -434,7 +446,7 @@ export class ReceiverManager {
         const clampRatio = scale / rawScale;
         const zOffset = distance * RECEIVER_CONFIG.SCREEN_SPACE_SIZE * OBJECT_LABEL.Z_OFFSET_FACTOR * clampRatio;
         label.position.set(mesh.position.x, mesh.position.y, mesh.position.z + zOffset);
-        const h = distance * OBJECT_LABEL.SCREEN_SPACE_HEIGHT * clampRatio;
+        const h = this.labelWorldHeight(camera, distance, clampRatio);
         label.scale.set(h * (label.userData.aspectRatio as number || 3), h, 1);
       }
     });

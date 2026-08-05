@@ -142,6 +142,11 @@ export interface SoundscapeSimulationConfig {
   imported_ir_ids?: string[];
   source_receiver_ir_mapping?: Record<string, Record<string, SoundscapeIRMetadata>>;
   receiver_positions?: Record<string, number[]>; // receiverId -> [x, y, z]
+  simulation_positions?: {
+    sources: Record<string, number[]>; // posKey -> [x, y, z]
+    receivers: Record<string, number[]>; // receiverId -> [x, y, z]
+    sound_to_pos_key?: Record<string, string>; // soundId -> posKey
+  };
   ir_gain_db?: number;
   ir_normalize_enabled?: boolean;
   material_assignments_enabled?: boolean;

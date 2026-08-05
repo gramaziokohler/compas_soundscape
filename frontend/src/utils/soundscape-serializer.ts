@@ -166,6 +166,7 @@ export function buildSoundscapeSavePayload(
       if (event.url && !event.url.startsWith('blob:')) {
         audioUrls.push(event.url);
       }
+      console.log('[dbg:serializer] event', event.id, 'url=', event.url, '-> collected non-blob url for copy');
 
       // Merge user-adjusted volume/interval from audioControls maps
       // These override the SoundEvent's own current_* fields
@@ -314,6 +315,15 @@ export function buildSoundscapeSavePayload(
       }
     }
 
+    // Capture simulation-time source/receiver positions (needed by the mismatch
+    // "red" coloring to survive a page refresh). Unchanged by the `receivers`
+    // array above — these are the exact positions recorded at simulation time.
+    const simPositions = (pyConfig.simulationPositions as {
+      sources?: Record<string, [number, number, number]>;
+      receivers?: Record<string, [number, number, number]>;
+      soundToPosKey?: Record<string, string>;
+    } | undefined);
+
     serializedSimConfigs.push({
       id: config.id,
       display_name: config.display_name || config.id,
@@ -337,6 +347,19 @@ export function buildSoundscapeSavePayload(
       imported_ir_ids: pyConfig.importedIRIds,
       source_receiver_ir_mapping: serializedMapping,
       receiver_positions: Object.keys(receiverPositions).length > 0 ? receiverPositions : undefined,
+      simulation_positions: simPositions
+        ? {
+            sources: Object.fromEntries(
+              Object.entries(simPositions.sources ?? {}).map(([k, v]) => [k, [...v]])
+            ),
+            receivers: Object.fromEntries(
+              Object.entries(simPositions.receivers ?? {}).map(([k, v]) => [k, [...v]])
+            ),
+            sound_to_pos_key: simPositions.soundToPosKey
+              ? { ...simPositions.soundToPosKey }
+              : undefined,
+          }
+        : undefined,
       ir_gain_db: pyConfig.irGainDb ?? undefined,
       ir_normalize_enabled: pyConfig.irNormalizeEnabled ?? undefined,
       material_assignments_enabled: pyConfig.materialAssignmentsEnabled ?? undefined,
@@ -626,6 +649,12 @@ export function restoreSoundscapeState(
     const hasSettings = !!saved.settings;
     const settings = saved.settings!;
 
+    const savedSimPositions = saved.simulation_positions as {
+      sources?: Record<string, number[]>;
+      receivers?: Record<string, number[]>;
+      sound_to_pos_key?: Record<string, string>;
+    } | undefined;
+
     // Build the runtime SimulationConfig
     const restoredConfig: SimulationConfig = {
       id: saved.id,
@@ -660,6 +689,22 @@ export function restoreSoundscapeState(
       currentSimulationId: saved.current_simulation_id,
       importedIRIds: saved.imported_ir_ids,
       sourceReceiverIRMapping,
+      // Restore simulation-time source/receiver positions (needed by the mismatch
+      // "red" coloring after refresh — soundToPosKey maps restored sound IDs back
+      // to their simulation source position key).
+      simulationPositions: savedSimPositions
+        ? {
+            sources: Object.fromEntries(
+              Object.entries(savedSimPositions.sources ?? {}).map(([k, v]) => [k, v as [number, number, number]])
+            ),
+            receivers: Object.fromEntries(
+              Object.entries(savedSimPositions.receivers ?? {}).map(([k, v]) => [k, v as [number, number, number]])
+            ),
+            soundToPosKey: savedSimPositions.sound_to_pos_key
+              ? { ...savedSimPositions.sound_to_pos_key }
+              : undefined,
+          }
+        : undefined,
       // Speckle material assignments (attached as any for pass-through)
       speckleMaterialAssignments: saved.speckle_material_assignments,
       speckleLayerName: saved.speckle_layer_name,

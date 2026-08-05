@@ -2,29 +2,33 @@ import { useEffect } from 'react';
 import * as THREE from 'three';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { getCssColorHex } from '@/utils/utils';
-import { SIMULATION_POSITION_THRESHOLD } from '@/utils/constants';
-import type { SoundEvent, ReceiverData } from '@/types';
+import { SIMULATION_POSITION_THRESHOLD, SIMULATION_POSITION_MATCH_THRESHOLD } from '@/utils/constants';
+import type { ReceiverData } from '@/types';
 
 interface SimulationMismatchProps {
   isViewerReady: boolean;
   activeSimulationPositions: {
     sources: Record<string, [number, number, number]>;
     receivers: Record<string, [number, number, number]>;
+    soundToPosKey?: Record<string, string>;
   } | null;
-  soundscapeData: SoundEvent[] | null;
   receivers: ReceiverData[];
+  /** Current sound events — used as a reactivity signal so the effect re-runs
+   *  whenever a sound sphere is dragged to a new position. */
+  soundscapeData?: unknown;
 }
 
 /**
  * Colors sound spheres and receiver cubes light-red when they have moved more than
  * SIMULATION_POSITION_THRESHOLD from their simulation-time positions.
- * Only active when activeSimulationPositions is non-null (expanded completed card).
+ * Uses soundToPosKey (per-sound link to simulation position key) for accurate tracking
+ * even when sounds move to entirely unsimulated positions.
  */
 export function useSpeckleSimulationMismatch({
   isViewerReady,
   activeSimulationPositions,
-  soundscapeData,
   receivers,
+  soundscapeData,
 }: SimulationMismatchProps) {
   useEffect(() => {
     const { coordinator, viewer } = useSpeckleEngineStore.getState();
@@ -34,11 +38,12 @@ export function useSpeckleSimulationMismatch({
     const receiverManager = coordinator.getReceiverManager();
 
     if (!activeSimulationPositions) {
-      // No active simulation card expanded — restore default colors
+      // No active simulation: only clear the mismatch flags. Do NOT touch sphere
+      // colors here — useSpeckleSoundHighlight owns the base/highlight color and
+      // runs right after this hook, so resetting colors here would clobber the
+      // highlight (and turn pending gray spheres blue) after every drag.
       soundSphereManager?.getSoundSphereMeshes().forEach(mesh => {
-        const mat = mesh.material as THREE.MeshStandardMaterial;
-        if (mat.color) mat.color.setHex(getCssColorHex('--color-primary'));
-        mat.needsUpdate = true;
+        mesh.userData.simMismatch = false;
       });
       receiverManager?.getReceiverMeshes().forEach(mesh => {
         const mat = mesh.material as THREE.MeshStandardMaterial;
@@ -50,16 +55,51 @@ export function useSpeckleSimulationMismatch({
       return;
     }
 
-    // Color sphere meshes
+    const { sources, soundToPosKey } = activeSimulationPositions;
+    const simSourceEntries = Object.entries(sources);
+
+    // Color sphere meshes — compare current position against sim position using soundToPosKey
     soundSphereManager?.getSoundSphereMeshes().forEach(mesh => {
       const soundId: string | undefined = mesh.userData.soundEvent?.id;
-      if (!soundId) return;
-      const simPos = activeSimulationPositions.sources[soundId];
-      if (!simPos) return;
-      const p = mesh.position;
-      const dist = Math.hypot(simPos[0] - p.x, simPos[1] - p.y, simPos[2] - p.z);
       const mat = mesh.material as THREE.MeshStandardMaterial;
-      if (dist > SIMULATION_POSITION_THRESHOLD) {
+      const p = mesh.position;
+
+      const curX = p.x;
+      const curY = p.y;
+      const curZ = p.z;
+
+      let isRed = false;
+
+      if (soundId && soundToPosKey) {
+        // Look up the sound's simulation-time position key
+        const simPosKey = soundToPosKey[soundId];
+        if (simPosKey) {
+          const simPos = sources[simPosKey];
+          if (simPos) {
+            const dist = Math.hypot(simPos[0] - curX, simPos[1] - curY, simPos[2] - curZ);
+            if (dist > SIMULATION_POSITION_THRESHOLD) isRed = true;
+          }
+        }
+      }
+
+      // New sound with no assigned simulation position: color it red UNLESS it sits
+      // within SIMULATION_POSITION_MATCH_THRESHOLD of a simulated source — in which case
+      // it inherits that position's IR and is considered "in a simulation position".
+      if (!isRed && soundId && simSourceEntries.length > 0) {
+        const nearSimSource = simSourceEntries.some(([, simPos]) =>
+          Math.hypot(simPos[0] - curX, simPos[1] - curY, simPos[2] - curZ) <= SIMULATION_POSITION_MATCH_THRESHOLD,
+        );
+        if (!nearSimSource) isRed = true;
+      }
+
+      // Publish the mismatch state on the mesh so useSpeckleSoundHighlight does NOT
+      // clobber the red when it resets all sphere colors on selection change.
+      mesh.userData.simMismatch = isRed;
+      // Only color red (mismatched) spheres. Non-red spheres are left untouched —
+      // useSpeckleSoundHighlight (runs right after this hook) resets them to their
+      // correct base/highlight color, so setting blue here would clobber both the
+      // pending-gray state and the selection highlight.
+      if (isRed) {
         mat.color.setHex(getCssColorHex('--color-error'));
       }
       mat.needsUpdate = true;
@@ -85,5 +125,5 @@ export function useSpeckleSimulationMismatch({
     });
 
     viewer?.requestRender();
-  }, [isViewerReady, activeSimulationPositions, soundscapeData, receivers]);
+  }, [isViewerReady, activeSimulationPositions, receivers, soundscapeData]);
 }

@@ -95,7 +95,7 @@ export function calculateDistance(
 
 /**
  * Calculate sound position with proper spacing for multiple sounds.
- * This matches the backend's get_random_position logic.
+ * The backend returns [0,0,0] for generated sounds; the frontend owns placement.
  *
  * Priority order:
  * 1. Entity position (if provided in config)

@@ -475,6 +475,7 @@ export function ImpulseResponseUpload({
     options?: {
       onDelete?: (e: React.MouseEvent<HTMLButtonElement>) => void;
       deleteTitle?: string;
+      fullName?: string;
     },
   ) => {
     const badge = getFormatBadge(ir.format);
@@ -491,7 +492,7 @@ export function ImpulseResponseUpload({
         onMouseLeave={handleRowMouseLeave}
       >
         <div className="flex-1 min-w-0">
-          <div className="text-[11px] text-neutral-200 truncate">{sourceName}</div>
+          <div className="text-[11px] text-neutral-200 truncate" title={options?.fullName ?? sourceName}>{sourceName}</div>
           <div className="flex items-center gap-1.5 mt-0.5">
             <Badge variant={badge.variant}>{badge.label}</Badge>
             {isLowEnergy && <Badge variant="error">Low energy</Badge>}
@@ -517,6 +518,7 @@ export function ImpulseResponseUpload({
     receiverId: string,
     sourceName: string,
     ir: ImpulseResponseMetadata | null,
+    fullName?: string,
   ) => {
     const pairKey = buildPairKey(sourceId, receiverId);
     const isLowEnergy = ir ? lowEnergyIRIds.has(ir.id) : false;
@@ -528,15 +530,18 @@ export function ImpulseResponseUpload({
         sourceId,
         receiverId,
         sourceName,
-        onPairAssignmentCleared
-          ? {
-              onDelete: (e) => {
-                e.stopPropagation();
-                onPairAssignmentCleared(sourceId, receiverId);
-              },
-              deleteTitle: 'Clear assigned IR',
-            }
-          : undefined,
+        {
+          fullName,
+          ...(onPairAssignmentCleared
+            ? {
+                onDelete: (e) => {
+                  e.stopPropagation();
+                  onPairAssignmentCleared(sourceId, receiverId);
+                },
+                deleteTitle: 'Clear assigned IR',
+              }
+            : {}),
+        },
       );
     }
 
@@ -551,7 +556,7 @@ export function ImpulseResponseUpload({
       >
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <div className="text-[11px] text-neutral-200 truncate">{sourceName}</div>
+            <div className="text-[11px] text-neutral-200 truncate" title={fullName ?? sourceName}>{sourceName}</div>
             <div className="text-[10px] text-neutral-500 mt-1">
               No IR imported yet. Auralization stays disabled for this pair.
             </div>
@@ -734,12 +739,13 @@ export function ImpulseResponseUpload({
                           {allowPairUploads && singleIRPerListener
                             ? renderListenerUploadRow(groupId, groupName, sources)
                             : sources.map(({ sourceId, receiverId, ir }) => {
-                                const sourceName = trimDisplayName(sourceDisplayNames?.[sourceId] ?? sourceId);
+                                const fullName = sourceDisplayNames?.[sourceId] ?? sourceId;
+                                const sourceName = trimDisplayName(fullName);
                                 if (allowPairUploads) {
-                                  return renderPairUploadRow(sourceId, receiverId, sourceName, ir);
+                                  return renderPairUploadRow(sourceId, receiverId, sourceName, ir, fullName);
                                 }
                                 return ir
-                                  ? renderSourceRow(ir, sourceId, receiverId, sourceName)
+                                  ? renderSourceRow(ir, sourceId, receiverId, sourceName, { fullName })
                                   : null;
                               })}
                         </div>

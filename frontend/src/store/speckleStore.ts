@@ -151,6 +151,10 @@ let _worldTreeVersion = 0;
 // Debounce handle for applyFilterColors
 let _applyColorsTimer: ReturnType<typeof setTimeout> | null = null;
 let _hoverHighlightIds: string[] = [];
+/** Scenario preview highlight (expanded scenario card) — colored like the hover
+ *  highlight but with the light primary colour. Kept in a module ref so it
+ *  survives every applyFilterColors() re-apply. */
+let _scenarioPreviewIds: string[] = [];
 
 // ─── Store state/actions interface ───────────────────────────────────────────
 
@@ -243,6 +247,9 @@ export interface SpeckleStoreState {
   // Scenario hover/zoom helpers
   highlightObjectForHover: (objectId: string | string[]) => void;
   clearHoverHighlight: () => void;
+  // Scenario preview highlight (expanded scenario card — light primary colour)
+  setScenarioPreviewHighlight: (objectIds: string[]) => void;
+  clearScenarioPreviewHighlight: () => void;
   zoomToObjectById: (objectId: string | string[]) => void;
 }
 
@@ -497,7 +504,7 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
             (id) => !currentGenerated.has(id) && !isExcluded(id) && isActiveLink(id),
           );
           const pendingColor = getComputedStyle(document.documentElement)
-            .getPropertyValue('--color-primary-light')
+            .getPropertyValue('--color-primary-lighter')
             .trim();
           const generatedColor = getComputedStyle(document.documentElement)
             .getPropertyValue('--color-primary')
@@ -517,6 +524,24 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
               objectIds: generatedLinkedIds,
               color: generatedColor,
             });
+        }
+
+        // Scenario preview highlight (expanded scenario card). Same FilteringExtension
+        // mechanism as the hover highlight, but with the light primary colour. Inserted
+        // BEFORE the hover block so a hovered reference (success green) still wins over
+        // the scenario highlight for the same object.
+        const scenarioPreviewIds = _scenarioPreviewIds.filter((id) => !isExcluded(id));
+        if (scenarioPreviewIds.length > 0) {
+          for (const previewId of scenarioPreviewIds) {
+            for (const g of colorGroups) {
+              const idx = g.objectIds.indexOf(previewId);
+              if (idx !== -1) g.objectIds.splice(idx, 1);
+            }
+          }
+          const primaryLightColor = getComputedStyle(document.documentElement)
+            .getPropertyValue('--color-success-light')
+            .trim();
+          colorGroups.push({ objectIds: scenarioPreviewIds, color: primaryLightColor });
         }
 
         // Hover highlight (scenario object reference hover)
@@ -807,6 +832,16 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
 
       clearHoverHighlight: () => {
         _hoverHighlightIds = [];
+        get().applyFilterColors();
+      },
+
+      setScenarioPreviewHighlight: (objectIds) => {
+        _scenarioPreviewIds = Array.isArray(objectIds) ? objectIds : [objectIds];
+        get().applyFilterColors();
+      },
+
+      clearScenarioPreviewHighlight: () => {
+        _scenarioPreviewIds = [];
         get().applyFilterColors();
       },
 

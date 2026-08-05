@@ -391,7 +391,7 @@ export const apiService = {
     dbfs: number,
     applyDenoising: boolean = false,
     trimSilence: boolean = false
-  ): Promise<{ url: string }> {
+  ): Promise<{ url: string; noise_trim?: [number, number] | null }> {
     try {
       const formData = new FormData();
       formData.append('audio', audioBlob, 'audio.wav');

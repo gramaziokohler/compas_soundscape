@@ -54,7 +54,7 @@ The store exposes three generation entry points, all routing into `handleGenerat
 
 ## Backend — Hash-Based Deduplication
 
-The worker (`sounds_worker.py:128`) and `AudioService.generate_multiple_sounds()` (`audio_service.py:314`) both compute a parameter hash to determine the output filename:
+The worker (`sounds_worker.py:129`) computes a parameter hash to determine the output filename:
 
 ```python
 param_string = f"{prompt}_{duration}_{guidance_scale}_{steps}_{apply_denoising}_{audio_model}"
@@ -69,17 +69,17 @@ but **prevents regeneration from producing a genuinely new file**.
 ### Regeneration Uniqueness Fix
 
 For regeneration (user clicks "+" on a variant bar), the frontend adds `_regeneration_ts: Date.now()`
-to the config dict. Both hash sites check for this field:
+to the config dict. The worker checks for this field:
 
 ```python
-# sounds_worker.py:129-131 and audio_service.py:315-317
+# sounds_worker.py:130-132
 regeneration_ts = cfg.get("_regeneration_ts", "")
 if regeneration_ts:
     param_string += f"_{regeneration_ts}"
 ```
 
-**The hash is duplicated in TWO places — always update both.** The worker and `generate_multiple_sounds()`
-compute the hash independently; missing one will cause silent deduplication on regenerate.
+**The hash lives in a single place — `sounds_worker.py`.** Keep the `_regeneration_ts` field in sync
+with the frontend; omitting it causes silent deduplication on regenerate.
 
 ## Variant System
 

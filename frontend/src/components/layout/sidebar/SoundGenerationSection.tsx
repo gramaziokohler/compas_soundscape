@@ -92,6 +92,7 @@ export function SoundGenerationSection({
   onResetSound,
   onSelectSoundCard,
   selectedCardIndex = null,
+  onSoundCardCollapsed,
   onDuplicateConfig,
   onRegenerateSingle,
   onDeleteVariant,
@@ -463,7 +464,12 @@ export function SoundGenerationSection({
       ? (filteredCardItems[newFilteredIndex]?.originalIndex ?? null)
       : null;
     setExpandedSoundCardIndex(originalIdx);
-  }, [previewingSoundId, onPreviewStop, setExpandedSoundCardIndex, filteredCardItems]);
+    // Collapsing the last expanded card should also clear the scene-driven
+    // selection so the sphere highlight reverts to its original state.
+    if (newFilteredIndex === null) {
+      onSoundCardCollapsed?.();
+    }
+  }, [previewingSoundId, onPreviewStop, setExpandedSoundCardIndex, filteredCardItems, onSoundCardCollapsed]);
 
   // Available card types for add button dropdown (sound types only)
   const availableTypes: CardTypeOption[] = useMemo(() => [

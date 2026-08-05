@@ -213,6 +213,11 @@ export function SpeckleSurfaceMaterialsSection({
       if (currentRawIds.has(key)) { remappedMaterial.set(key, materialId); return; }
       const rawFromApp = appIdToRawId.get(key);
       if (rawFromApp) remappedMaterial.set(rawFromApp, materialId);
+      // Keep unknown keys as-is: a raw geometry id that is valid in the viewer
+      // tree may not be in rawIdToAppId (walkCollectIdMaps only records objects
+      // that carry an applicationId). Dropping it here would silently unassign
+      // surfaces whose Object Explorer rows (and backends) key off that id.
+      else remappedMaterial.set(key, materialId);
     });
 
     const remappedScattering = new Map<string, number>();
@@ -220,6 +225,7 @@ export function SpeckleSurfaceMaterialsSection({
       if (currentRawIds.has(key)) { remappedScattering.set(key, value); return; }
       const rawFromApp = appIdToRawId.get(key);
       if (rawFromApp) remappedScattering.set(rawFromApp, value);
+      else remappedScattering.set(key, value);
     });
 
     // If every saved ID was stale (no matches), keep the originals to avoid

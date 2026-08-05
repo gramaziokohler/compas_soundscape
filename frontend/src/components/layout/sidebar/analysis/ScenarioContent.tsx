@@ -1,12 +1,13 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import type { ScenarioConfig } from '@/types/analysis';
 import type { AnalyzeModelConfig } from '@/types/analysis';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { CheckboxField } from '@/components/ui/CheckboxField';
-import { useAnalysisStore, useAudioControlsStore, useSpeckleStore } from '@/store';
+import { useAnalysisStore, useAudioControlsStore, useScenarioPreviewStore, useSpeckleStore } from '@/store';
 import { pauseStore, commitStore } from '@/store';
+import type { ScenarioPreviewParcours, ScenarioPreviewStop } from '@/store';
 import { ScenarioResultContent } from './ScenarioResultContent';
 
 // ─── Object-reference renderer ────────────────────────────────────────────────
@@ -30,6 +31,46 @@ const ID_HEX_DOT_RE = /\b([A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+)*)\.([0-9a-fA
 /** Extract all hex IDs from the full matched token (including the parenthesised id-list). */
 function extractIdsFromToken(raw: string): string[] {
   return Array.from(raw.matchAll(ID_HEX_RE), (m) => m[0]);
+}
+
+/** Extract the object IDs referenced in a single scenario event description (same regex as ScenarioTextRenderer). */
+function extractEventObjectIds(description: string): string[] {
+  const ids: string[] = [];
+  const normalizedText = (description ?? '').replace(ID_HEX_DOT_RE, '$1 (id:$2)');
+  const re = new RegExp(OBJECT_REF_RE.source, 'g');
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(normalizedText)) !== null) {
+    for (const id of extractIdsFromToken(match[0])) {
+      if (id && !ids.includes(id)) ids.push(id);
+    }
+  }
+  return ids;
+}
+
+/** All object-ID references in event order, WITHOUT deduplication — one parcours
+ *  stop per occurrence, so repeated objects produce repeated waypoints. */
+function extractEventObjectOccurrences(description: string): string[] {
+  const ids: string[] = [];
+  const normalizedText = (description ?? '').replace(ID_HEX_DOT_RE, '$1 (id:$2)');
+  const re = new RegExp(OBJECT_REF_RE.source, 'g');
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(normalizedText)) !== null) {
+    ids.push(...extractIdsFromToken(match[0]));
+  }
+  return ids;
+}
+
+/** Collect every object ID referenced in the scenario event descriptions (same regex as ScenarioTextRenderer). */
+function extractScenarioObjectIds(scenarioResult: ScenarioConfig['scenarioResult']): string[] {
+  const ids: string[] = [];
+  for (const scenario of scenarioResult?.scenarios ?? []) {
+    for (const event of scenario.events ?? []) {
+      for (const id of extractEventObjectIds(event.description)) {
+        if (!ids.includes(id)) ids.push(id);
+      }
+    }
+  }
+  return ids;
 }
 
 function ScenarioTextRenderer({ text }: { text: string }) {
@@ -167,6 +208,54 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
 
   // Always show scenario events — foley sounds are shown in the Sounds step, not here
   const scenarios = config.scenarioResult?.scenarios ?? [];
+
+  // ── 3D preview: color-highlight all scenario objects while this card is
+  // expanded (always on), plus a dashed-arrow parcours between the objects in
+  // scenario order. The parcours visibility is controlled by the "Show scenario
+  // parcours" toggle in Advanced Settings → Viewer (uiStore.showScenarioParcours).
+  const setPreview = useScenarioPreviewStore((s) => s.setPreview);
+  const clearPreview = useScenarioPreviewStore((s) => s.clearPreview);
+
+  // Object IDs referenced anywhere in the scenario event descriptions
+  // (same source as the hover highlight in ScenarioTextRenderer).
+  const scenarioObjectIds = useMemo(
+    () => extractScenarioObjectIds(config.scenarioResult),
+    [config.scenarioResult],
+  );
+
+  useEffect(() => {
+    const objectIds = [...scenarioObjectIds];
+    // Parcours: one stop per OBJECT REFERENCE in the event descriptions, in
+    // textual order (an object mentioned more than once yields repeated stops).
+    // The scene hook places each stop at that object's bounds center, so every
+    // arrow connects one object to the next referenced object.
+    const parcours: ScenarioPreviewParcours = [];
+    for (const scenario of config.scenarioResult?.scenarios ?? []) {
+      const stops: ScenarioPreviewStop[] = [];
+      for (const event of scenario.events ?? []) {
+        for (const id of extractEventObjectOccurrences(event.description)) {
+          stops.push({ id });
+        }
+      }
+      // Fallback: add foley-involved objects (which the viewer can always resolve)
+      // when the scenario descriptions carry no object references.
+      const foleyScenario = config.foleyResult?.scenarios.find(
+        (fs) => fs.scenario_title === scenario.title,
+      );
+      for (const evt of foleyScenario?.sound_events ?? []) {
+        for (const id of evt.objectsInvolved ?? []) {
+          if (id && !objectIds.includes(id)) objectIds.push(id);
+        }
+      }
+      if (stops.length > 0) parcours.push(stops);
+    }
+
+    setPreview({ objectIds, parcours });
+  }, [scenarioObjectIds, config.foleyResult, setPreview]);
+
+  // Clear the viewer preview when the card collapses (component unmounts)
+  useEffect(() => () => clearPreview(), [clearPreview]);
+
   return (
     <div className="space-y-3 px-4 pb-3 leading-relaxed whitespace-pre-wrap max-h-80 overflow-y-auto">
       {scenarios.map((scenario, si) => (
@@ -185,34 +274,15 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
         </div>
       ))}
 
-      {/* Call Foley Artist — only shown when scenarist done, pipeline not yet started */}
-      {scenarioCompleted && !isOperationRunning && !hasFoley && !hasSpeech && !hasOrchestrate && (
-        <button
-          onClick={() => handleAnalyze(index)}
-          className="w-full py-1.5 px-3 text-xs font-medium rounded hover:opacity-80 transition-opacity"
-          style={{
-            backgroundColor: 'var(--color-primary)',
-            color: 'var(--color-primary-foreground, #fff)',
-            borderRadius: '6px',
-          }}
-        >
-          Generate Sound Pipeline
-        </button>
-      )}
-
-      {/* Continue orchestrate — shown when foley+speech done but orchestrator not started yet (was interrupted) */}
-      {scenarioCompleted && !isOperationRunning && hasFoley && hasSpeech && !hasOrchestrate && (
-        <button
-          onClick={() => handleAnalyze(index)}
-          className="w-full py-1.5 px-3 text-xs font-medium rounded hover:opacity-80 transition-opacity"
-          style={{
-            backgroundColor: 'var(--color-info, #3b82f6)',
-            color: '#fff',
-            borderRadius: '6px',
-          }}
-        >
-          Compile Playlist
-        </button>
+      {/* Foley results — toggleable foley sounds (shown when foley done) */}
+      {hasFoley && config.foleyResult && (
+        <div className="border-t -mx-4 mt-1" style={{ borderTopColor: 'var(--color-secondary-light)' }}>
+          <ScenarioResultContent
+            foleyResult={config.foleyResult}
+            selectedKeys={config.selectedFoleyKeys ?? []}
+            onToggle={(key) => useAnalysisStore.getState().handleToggleFoleySound(index, key)}
+          />
+        </div>
       )}
 
       {/* Re-generate — shown when pipeline completed, clicking re-runs orchestrate */}

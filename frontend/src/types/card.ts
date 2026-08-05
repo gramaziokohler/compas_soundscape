@@ -266,6 +266,13 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   showVariantsPreGen?: boolean;
   /** Show the variants bar when the card is in post-generation state (hasResult). */
   showVariantsPostGen?: boolean;
+
+  /**
+   * Show a collapsible, read-only recap of the card's pre-generation settings
+   * below the post-generation content.
+   * @default true
+   */
+  showSettingsSummary?: boolean;
 }
 
 

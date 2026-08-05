@@ -1,6 +1,6 @@
 ---
-description: Room acoustics simulation — pyroomacoustics and Choras FEM/DG solver
-globs: backend/services/pyroomacoustics_service.py,backend/services/choras_service.py,backend/choras_backend/**,backend/routers/pyroomacoustics.py,backend/routers/choras.py,backend/utils/acoustic_measurement.py,backend/utils/speckle_geometry_mapper.py,backend/services/pyroomacoustics_worker.py
+description: Room acoustics simulation — pyroomacoustics and Choras FEM/DG solver, plus applying simulation results to sounds (IR matching, muting, IR panel, mismatch coloring)
+globs: backend/services/pyroomacoustics_service.py,backend/services/choras_service.py,backend/choras_backend/**,backend/routers/pyroomacoustics.py,backend/routers/choras.py,backend/utils/acoustic_measurement.py,backend/utils/speckle_geometry_mapper.py,backend/services/pyroomacoustics_worker.py,frontend/src/lib/audio/AudioOrchestrator.ts,frontend/src/lib/audio/modes/AmbisonicIRMode.ts,frontend/src/components/layout/sidebar/AcousticsSection.tsx,frontend/src/components/audio/ImpulseResponseUpload.tsx,frontend/src/components/scene/hooks/useSpeckleSimulationMismatch.ts,frontend/src/components/scene/hooks/useSpeckleSoundHighlight.ts
 ---
 
 # Acoustic Simulation Rules
@@ -207,3 +207,75 @@ progress events and may confuse the frontend progress bar.
 - Dispatched via **`IO_POOL`** thread (not a subprocess — gmsh `initialize()`/`finalize()` must run
   in the same process; `_gmsh_initialize()` in `choras_service.py` handles SIGINT safety for
   non-main threads).
+
+---
+
+## Applying Simulation Results to Sounds (frontend)
+
+After a simulation, IRs are stored under the *simulated source position key* and a receiver ID:
+`sourceReceiverIRMapping[sourcePosKey][receiverId]`. `simulationPositions` records:
+- `sources`: `posKey → [x, y, z]` — the **exact recorded coordinate** of each simulated source
+- `receivers`: `receiverId → [x, y, z]` — exact simulated receiver coordinate
+- `soundToPosKey`: `soundId → sourcePosKey` — which simulated source position each sound was created from
+
+### Source → IR matching is by Euclidean distance, NOT grid-cell equality
+
+`AudioOrchestrator.resolveSimSourcePosKey()` resolves a sound's current position to a simulated source:
+1. Exact `computePositionKey()` match first (a 0.5-unit quantized grid key),
+2. otherwise the nearest recorded `simulationPositions.sources` coordinate within
+   `SIMULATION_POSITION_MATCH_THRESHOLD` (**0.5**).
+
+The recorded sim coordinates are arbitrary (not grid-aligned), so matching by grid-cell equality alone
+silently mutes every sound placed naturally near a simulated source. **Always resolve by distance to the
+recorded coordinate**, never by quantized posKey equality. Constant: `SIMULATION_POSITION_MATCH_THRESHOLD = 0.5`
+in `frontend/src/utils/constants.ts`.
+
+### Variants = ONE acoustic source
+
+All variants of a sound source (same `prompt_index`, different `copy_index`) are a SINGLE simulated
+source: one source position, one sound sphere, one IR per receiver. Enforced by `collapseVariantsToOne()`
+(`frontend/src/utils/positionKey.ts`), applied wherever the simulation source set is built from
+`soundscapeData` — `pyroomAcousticsStore.ts`, `chorasStore.ts`, and `AcousticsSection.tsx` (source pairs,
+`availableSourceCount`, and saved `simulationPositions.sources`). It keeps the currently selected variant
+(`useAudioControlsStore.selectedVariants`) as the representative. New variants also inherit the prompt's
+existing position at store merge (`soundscapeStore.ts` handleGenerateInternal / handleRegenerateSingle) so
+a freshly generated copy never splits the source. Never feed raw `soundscapeData` into
+`groupSoundsByPosition()` for simulation purposes.
+
+### Muting rules — source-drag ONLY
+
+- A sound is muted only when its resolved position has **no IR for the active receiver** in
+  `sourceReceiverIRMapping` (i.e. no simulation was run at that spot).
+- **There is NO receiver-position muting.** Moving the active receiver away from its simulation position
+  does NOT mute sources; the IRs recorded for that receiver stay applied wherever the receiver is dragged.
+  (The `receiverOutOfPosition` flag / `setActiveReceiverOutOfPosition()` were **removed**.)
+
+### IR panel labels (`ImpulseResponseUpload`)
+
+An IR row is labelled with the names of **every** sound whose current position is within
+`SIMULATION_POSITION_MATCH_THRESHOLD` of that simulated source coordinate — not just sounds whose
+quantized `sourcePosKey` coincides. Name map is built in `AcousticsSection.tsx` (`sourceDisplayNames`,
+keyed by `sourcePosKey`, matched by Euclidean distance). The on-screen label is `trimDisplayName()`'d
+(first 3 words + "…"); hovering shows the full untrimmed list via a native `title` tooltip (threaded as
+`fullName` through `renderSourceRow` / `renderPairUploadRow`).
+
+### Mismatch coloring (`useSpeckleSimulationMismatch`)
+
+Sound spheres and receiver cubes turn red when moved more than `SIMULATION_POSITION_THRESHOLD` (**0.2**)
+from their simulation position. A sound with **no simulation position** (added/generated after the sim)
+is also colored red, UNLESS it sits within `SIMULATION_POSITION_MATCH_THRESHOLD` of a simulated source
+(in which case it inherits that IR and is considered "in a simulation position"). If there are no
+simulated sources, no sound is colored red (no reference frame).
+
+**Mismatch state is published per mesh on `mesh.userData.simMismatch`** (true = red). `useSpeckleSoundHighlight`
+resets every sphere's color to primary on selection changes and MUST keep `simMismatch === true` spheres red
+(and skip the hover highlight for them) — otherwise clicking a sphere resets all mismatch coloring to blue.
+The mismatch hook clears the marker when there is no active simulation. Never reset sound-sphere colors
+without consulting this flag.
+
+**The two hooks must re-run together whenever the active simulation changes.** `useSpeckleSoundHighlight`
+takes `activeSimulationPositions` as a reactivity-only prop and lists it in its effect deps. Without it,
+switching active sim cards (or a sim completing and becoming active) re-runs only the mismatch hook —
+it recomputes `simMismatch` flags but does NOT reset non-red sphere colors (it only colors red ones), so
+spheres that were mismatched under the old active sim STAY red until an unrelated re-render (click/drag).
+Never drop `activeSimulationPositions` from the highlight hook's deps.

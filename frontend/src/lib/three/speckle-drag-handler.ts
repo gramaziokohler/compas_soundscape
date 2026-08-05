@@ -213,6 +213,25 @@ export class SpeckleDragHandler {
     }
   }
 
+  /**
+   * Reposition the gizmo anchor onto the currently selected object's current
+   * center.  Called every frame so the gizmo follows its object when the
+   * position changes from another controller (e.g. undo/redo, external drag)
+   * instead of floating detached at the previous position.
+   * No-op while the user is dragging.
+   */
+  public syncAnchorToSelection(): void {
+    if (this.isDragging || this.selectedObjects.length === 0) return;
+    const object = this.selectedObjects[0];
+    if (!object) return;
+    const center = new THREE.Box3().setFromObject(object).getCenter(new THREE.Vector3());
+    if (this.dummyAnchor.position.distanceTo(center) > 0.0001) {
+      this.dummyAnchor.position.copy(center);
+      this.dummyAnchor.updateMatrixWorld();
+      this.lastGizmoPosition.copy(center);
+    }
+  }
+
   public setOnDragStart(callback: (objects: THREE.Object3D[]) => void): void {
     this.onDragStartCallback = callback;
   }

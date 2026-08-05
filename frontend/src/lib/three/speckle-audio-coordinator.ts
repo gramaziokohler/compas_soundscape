@@ -678,6 +678,10 @@ export class SpeckleAudioCoordinator {
     this.soundSphereManager?.updateScreenSpaceScale(camera);
     this.receiverManager?.updateScreenSpaceScale(camera);
     this.gridReceiverManager?.updateScreenSpaceScale(camera);
+
+    // Keep the drag gizmo anchored to its selected object when its position
+    // changes externally (undo/redo, etc.) — never leave it floating detached.
+    this.dragHandler?.syncAnchorToSelection();
   }
 
   public dispose(): void {
