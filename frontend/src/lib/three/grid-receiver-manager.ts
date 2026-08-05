@@ -24,11 +24,19 @@ export class GridReceiverManager {
   private positions: [number, number, number][] = [];
   private pointIds: string[] = [];
   private readonly dummy = new THREE.Object3D();
+  private readonly mat4 = new THREE.Matrix4();
   private gridListenerId: string | null = null;
   private headphonesGeomResult: HeadphonesGeometryResult | null = null;
   private headphonesLoadInitiated = false;
   // Instance indices hidden while viewing through them in FPS mode (zero-scale).
   private hiddenIndices: Set<number> = new Set();
+  // ── Mismatch overlay ──────────────────────────────────────────────────────
+  // A separate InstancedMesh rendered ON TOP of grid points that have drifted
+  // from their simulation-time position (red). A sibling mesh (not tinting the
+  // shared base material) so it renders reliably through the Speckle pipeline.
+  private pointIdToIndex: Map<string, number> = new Map();
+  private mismatchedPointIds: Set<string> = new Set();
+  private mismatchOverlay: THREE.InstancedMesh | null = null;
 
   constructor(scene: THREE.Scene, scaleForSounds: number, parentGroup?: THREE.Group) {
     this.scene = scene;
@@ -51,6 +59,14 @@ export class GridReceiverManager {
           this.instancedMesh.geometry.dispose();
           (this.instancedMesh.material as THREE.Material).dispose();
           this.instancedMesh = null;
+        }
+        // Same for the mismatch overlay — next updateMismatchOverlay rebuilds with OBJ.
+        if (this.mismatchOverlay) {
+          const target = this.parentGroup || this.scene;
+          target.remove(this.mismatchOverlay);
+          this.mismatchOverlay.geometry.dispose();
+          (this.mismatchOverlay.material as THREE.Material).dispose();
+          this.mismatchOverlay = null;
         }
       })
       .catch((err) => {
@@ -162,9 +178,12 @@ export class GridReceiverManager {
   public updatePoints(points: [number, number, number][], pointIds?: string[]): void {
     this.positions = points;
     this.pointIds = pointIds ?? [];
+    this.pointIdToIndex = new Map();
+    this.pointIds.forEach((id, i) => { if (id) this.pointIdToIndex.set(id, i); });
 
     if (points.length === 0) {
       if (this.instancedMesh) this.instancedMesh.count = 0;
+      this.updateMismatchOverlay();
       return;
     }
 
@@ -176,6 +195,7 @@ export class GridReceiverManager {
     }
     mesh.count = count;
     mesh.instanceMatrix.needsUpdate = true;
+    this.updateMismatchOverlay();
   }
 
   public updateScreenSpaceScale(camera: THREE.PerspectiveCamera): void {
@@ -199,6 +219,82 @@ export class GridReceiverManager {
       this.applyInstanceMatrix(i, scale);
     }
     this.instancedMesh.instanceMatrix.needsUpdate = true;
+    this.updateMismatchOverlay();
+  }
+
+  // ── Mismatch overlay ────────────────────────────────────────────────────
+  private ensureMismatchOverlay(): THREE.InstancedMesh {
+    if (this.mismatchOverlay) return this.mismatchOverlay;
+
+    const baseHalfSize = RECEIVER_CONFIG.CUBE_SIZE_MULTIPLIER * this.scaleForSounds;
+    const geom = this.headphonesGeomResult
+      ? this.headphonesGeomResult.geometry
+      : new THREE.BoxGeometry(baseHalfSize * 2, baseHalfSize * 2, baseHalfSize * 2);
+
+    const mat = new SpeckleStandardMaterial({
+      color: getCssColorHex('--color-error'),
+      emissive: getCssColorHex('--color-error'),
+      emissiveIntensity: RECEIVER_CONFIG.EMISSIVE_INTENSITY,
+      roughness: RECEIVER_CONFIG.ROUGHNESS,
+      metalness: RECEIVER_CONFIG.METALNESS,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+      depthTest: true,
+      side: THREE.FrontSide,
+    });
+
+    const origOnBeforeRender = mat.onBeforeRender.bind(mat);
+    mat.onBeforeRender = (renderer: any, _scene: any, camera: any, geometry: any, object: any) => {
+      const rt = renderer.getRenderTarget();
+      if (rt?.texture && Array.isArray(rt.texture)) return;
+      if (origOnBeforeRender) origOnBeforeRender(renderer, _scene, camera, geometry, object);
+    };
+
+    const overlay = new THREE.InstancedMesh(geom, mat, MAX_GRID_INSTANCES);
+    overlay.count = 0;
+    overlay.renderOrder = 990;
+    overlay.userData.isGridMismatchOverlay = true;
+    overlay.layers.disableAll();
+    overlay.layers.enable(0);
+    overlay.layers.enable(4);
+
+    const target = this.parentGroup || this.scene;
+    target.add(overlay);
+    this.mismatchOverlay = overlay;
+    return overlay;
+  }
+
+  private updateMismatchOverlay(): void {
+    if (!this.instancedMesh) return;
+    if (this.mismatchedPointIds.size === 0) {
+      if (this.mismatchOverlay) this.mismatchOverlay.count = 0;
+      return;
+    }
+    const overlay = this.ensureMismatchOverlay();
+    let n = 0;
+    for (const id of this.mismatchedPointIds) {
+      const idx = this.pointIdToIndex.get(id);
+      if (idx === undefined || idx >= this.instancedMesh.count) continue;
+      // Mirror the base instance's matrix (position + screen-space scale) so the
+      // red overlay sits exactly on top of the corresponding grid point.
+      this.instancedMesh.getMatrixAt(idx, this.mat4);
+      overlay.setMatrixAt(n, this.mat4);
+      n++;
+    }
+    overlay.count = n;
+    overlay.instanceMatrix.needsUpdate = true;
+  }
+
+  /** Mark specific grid point ids (e.g. `${gridListenerId}-${index}`) as out of position. */
+  public setMismatchedPointIds(ids: Set<string>): void {
+    this.mismatchedPointIds = new Set(ids);
+    this.updateMismatchOverlay();
+  }
+
+  /** Clear any mismatch marking (no active simulation or everything back in place). */
+  public clearMismatchedPoints(): void {
+    this.setMismatchedPointIds(new Set());
   }
 
   public updateScale(scaleForSounds: number): void {
@@ -218,7 +314,18 @@ export class GridReceiverManager {
       const ids = this.pointIds;
       this.positions = [];
       this.pointIds = [];
+      this.disposeMismatchOverlay();
       this.updatePoints(pts, ids);
+    }
+  }
+
+  private disposeMismatchOverlay(): void {
+    if (this.mismatchOverlay) {
+      const target = this.parentGroup || this.scene;
+      target.remove(this.mismatchOverlay);
+      this.mismatchOverlay.geometry.dispose();
+      (this.mismatchOverlay.material as THREE.Material).dispose();
+      this.mismatchOverlay = null;
     }
   }
 
@@ -230,8 +337,11 @@ export class GridReceiverManager {
       (this.instancedMesh.material as THREE.Material).dispose();
       this.instancedMesh = null;
     }
+    this.disposeMismatchOverlay();
     this.positions = [];
     this.pointIds = [];
+    this.pointIdToIndex = new Map();
+    this.mismatchedPointIds = new Set();
     this.hiddenIndices.clear();
   }
 }

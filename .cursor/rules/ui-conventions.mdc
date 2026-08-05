@@ -84,6 +84,42 @@ const hex = getMaterialColorByAbsorption(0.4)   // → '#hex' between start, mid
 
 ---
 
+## 3D Text in the Viewer — Use `label-sprite-factory.ts`
+
+Any text rendered inside the 3D viewer (labels on sound spheres, receivers, bounding-box
+faces, dimension readouts, etc.) must go through `frontend/src/lib/three/label-sprite-factory.ts`:
+
+```typescript
+import { createLabelSprite, updateLabelSprite, disposeLabelSprite } from '@/lib/three/label-sprite-factory'
+
+// Create (canvas + texture + SpriteMaterial, layers 0 & 4, renderOrder 1001)
+const sprite = createLabelSprite('Right')
+sprite.position.set(x, y, z)
+scene.add(sprite)
+
+// Update text IN PLACE (same canvas, no sprite recreation → no scale flash)
+updateLabelSprite(sprite, '6.2 m')
+
+// Dispose GPU resources when done
+disposeLabelSprite(sprite)
+```
+
+**Never** hand-roll `document.createElement('canvas')` + `CanvasTexture` + `SpriteMaterial`
+for viewer text (BoundingBoxManager previously did this — see git history).
+
+Sizing rules:
+
+1. `createLabelSprite` does **not** set a world scale — the caller owns `sprite.scale`.
+2. Use screen-space sizing so text keeps a constant apparent size at any zoom:
+   `h = 2 · distance · tan(fov/2) · OBJECT_LABEL.VIEWPORT_HEIGHT_RATIO`, then
+   `sprite.scale.set(h · userData.aspectRatio, h, 1)`. See `updateScreenSpaceScale()` in
+   `sound-sphere-manager.ts` / `receiver-manager.ts` / `BoundingBoxManager.ts` for the pattern.
+3. Font/padding/radius constants come from `OBJECT_LABEL` in `utils/constants.ts`.
+4. Call `updateLabelSprite` (not a new sprite) when only the text changes — recreating
+   flashes the label at the default (huge) sprite scale for a frame.
+
+---
+
 ## UI Component Reuse
 
 Before building any UI element (confirmation dialogs, toasts, inline prompts, etc.),
@@ -103,6 +139,37 @@ it inline. Every component in `ui/` must:
 
 When in doubt, look at existing components (`CheckboxField.tsx`, `Notice.tsx`, `ConfirmDialog.tsx`)
 for the pattern.
+
+---
+
+## SectionHighlight — Transient "Focus" Border
+
+`frontend/src/components/ui/SectionHighlight.tsx` draws a rotating primary-color border ring
+around any element by `id`, then fades it away. It is a **transient, decorative cue** that tells
+the user "this is the place that was just referenced" — it is **not** a message channel.
+
+```tsx
+import { SectionHighlight } from '@/components/ui/SectionHighlight'
+
+// Render once per target, re-fire on demand by bumping `trigger`
+const [trigger, setTrigger] = useState(0)
+<button onClick={() => setTrigger((t) => t + 1)}>Jump to sounds</button>
+<SectionHighlight targetId="sidebar-sounds-breadcrumb" trigger={trigger} />
+```
+
+Implementation notes:
+- Portals to `document.body`, so it escapes transformed / `overflow: hidden` ancestors and
+  tracks animated panels (sidebar/panel open) via `ResizeObserver` + scroll/resize listeners.
+- Animated by `@property --section-highlight-angle` + `@keyframes` in `globals.css` — colors come
+  from CSS tokens only (primary + primary-light).
+
+**Use when:** an element in another panel (often a collapsed/off-screen section) is programmatically
+revealed by an action and the user needs to notice *where* it appeared — e.g. a summary-bar count
+click expands the Sounds step, the right sidebar, or the Object Explorer and highlights the target.
+The target element must exist in the DOM before the highlight fires; re-fire by bumping `trigger`.
+
+**Do not use for:** persistent state, errors, or anything that must stay visible. Those use Notice /
+Badge (see Message UI below). If the target is not mounted yet, hold the `trigger` until it is.
 
 ---
 

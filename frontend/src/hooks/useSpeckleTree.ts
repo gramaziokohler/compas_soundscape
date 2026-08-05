@@ -324,6 +324,73 @@ export function flattenModelTree(
 }
 
 /**
+ * Whether a node is a pure geometry object (Mesh/Brep) rather than a container.
+ */
+function isPureGeometryNode(node: any): boolean {
+  const raw = node?.raw || node?.model?.raw || {};
+  const speckleType = raw.speckle_type || '';
+  return speckleType.includes('Mesh') || speckleType.includes('Brep');
+}
+
+/**
+ * Count geometry leaf objects in a subtree (mirrors useSpeckleSurfaceMaterials).
+ */
+function countGeometryObjectsInNode(node: any): number {
+  if (!node) return 0;
+  let count = isPureGeometryNode(node) ? 1 : 0;
+  const children = node?.model?.children || node?.children || [];
+  for (const child of children) {
+    count += countGeometryObjectsInNode(child);
+  }
+  return count;
+}
+
+/**
+ * Count the number of top-level selectable layers in a world tree.
+ *
+ * Mirrors the layer definition in useSpeckleSurfaceMaterials.collectLayerNodesRecursive:
+ * a layer is a non-geometry container node at depth >= 2 (root -> model container -> layer)
+ * that contains at least one geometry leaf. When this returns 1, the model is a single-layer
+ * model and can be treated as the whole acoustic model (no layer filtering).
+ */
+function collectTopLevelLayerNodes(node: any, depth: number, out: ExplorerNode[]): void {
+  if (!node) return;
+  if (!isPureGeometryNode(node) && depth >= 2 && countGeometryObjectsInNode(node) > 0) {
+    out.push(node as ExplorerNode);
+  }
+  const children = node?.model?.children || node?.children || [];
+  for (const child of children) {
+    collectTopLevelLayerNodes(child, depth + 1, out);
+  }
+}
+
+/**
+ * Count top-level selectable layers for the whole world tree.
+ */
+export function countTopLevelLayers(worldTree: any): number {
+  if (!worldTree) return 0;
+  const layers: ExplorerNode[] = [];
+  for (const node of getRootNodesForModel(worldTree)) {
+    collectTopLevelLayerNodes(node, 0, layers);
+  }
+  return layers.length;
+}
+
+/**
+ * Return the single top-level selectable layer when the model has exactly one,
+ * otherwise null. Used to auto-define the acoustic layer for a whole-model
+ * (single-layer) model so acoustic mode does not prompt the user to pick a layer.
+ */
+export function findSingleTopLevelLayer(worldTree: any): ExplorerNode | null {
+  if (!worldTree) return null;
+  const layers: ExplorerNode[] = [];
+  for (const node of getRootNodesForModel(worldTree)) {
+    collectTopLevelLayerNodes(node, 0, layers);
+  }
+  return layers.length === 1 ? layers[0] : null;
+}
+
+/**
  * Get root nodes for the model from world tree
  */
 export function getRootNodesForModel(worldTree: any, modelFileName?: string | null): ExplorerNode[] {

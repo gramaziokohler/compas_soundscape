@@ -10,6 +10,23 @@ import type { AcousticMaterial } from './materials';
 import type { CardBaseConfig, CardType, CardExecutionState } from './card';
 
 /**
+ * Snapshot of a grid listener's configuration captured at simulation time.
+ * Used to detect grid "drift" (points moved by editing spacing/zOffset or the
+ * bounding box) and to restore the grid card back to its simulation-time
+ * x/y/z values and linked object.
+ */
+export interface GridListenerSnapshot {
+  id: string;
+  name: string;
+  xSpacing: number;
+  ySpacing: number;
+  zOffset: number;
+  selectedObjectIds: string[];
+  boundingBox: { min: [number, number, number]; max: [number, number, number] } | null;
+  points: [number, number, number][];
+}
+
+/**
  * Acoustic simulation modes
  */
 export type AcousticSimulationMode = 'resonance' | 'choras' | 'pyroomacoustics' | 'import-irs';
@@ -79,6 +96,8 @@ export interface ChorasSimulationConfig extends BaseSimulationConfig, CardExecut
     sources: Record<string, [number, number, number]>;
     receivers: Record<string, [number, number, number]>;
     soundToPosKey?: Record<string, string>;
+    /** Grid listener configs at simulation time (for drift detection + reset) */
+    gridListeners?: GridListenerSnapshot[];
   };
 }
 
@@ -119,6 +138,8 @@ export interface PyroomAcousticsSimulationConfig extends BaseSimulationConfig, C
     sources: Record<string, [number, number, number]>;
     receivers: Record<string, [number, number, number]>;
     soundToPosKey?: Record<string, string>;
+    /** Grid listener configs at simulation time (for drift detection + reset) */
+    gridListeners?: GridListenerSnapshot[];
   };
 }
 
@@ -140,6 +161,8 @@ export interface ImportIRsSimulationConfig extends BaseSimulationConfig {
     sources: Record<string, [number, number, number]>;
     receivers: Record<string, [number, number, number]>;
     soundToPosKey?: Record<string, string>;
+    /** Grid listener configs at simulation time (for drift detection + reset) */
+    gridListeners?: GridListenerSnapshot[];
   };
   /** Advanced settings */
   advancedSettingsExpanded?: boolean;

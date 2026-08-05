@@ -99,6 +99,20 @@ export interface SoundscapeReceiver {
   orientation_saved?: boolean;
 }
 
+/** Serializable grid listener configuration */
+export interface SoundscapeGridListener {
+  id: string;
+  name: string;
+  xSpacing: number;
+  ySpacing: number;
+  zOffset: number;
+  showListeners: boolean;
+  hiddenForSimulation: boolean;
+  selectedObjectIds: string[];
+  boundingBox: { min: number[]; max: number[] } | null;
+  points: number[][];
+}
+
 /** Serializable impulse response metadata for persistence */
 export interface SoundscapeIRMetadata {
   id: string;
@@ -146,6 +160,16 @@ export interface SoundscapeSimulationConfig {
     sources: Record<string, number[]>; // posKey -> [x, y, z]
     receivers: Record<string, number[]>; // receiverId -> [x, y, z]
     sound_to_pos_key?: Record<string, string>; // soundId -> posKey
+    grid_listeners?: Array<{
+      id: string;
+      name: string;
+      xSpacing: number;
+      ySpacing: number;
+      zOffset: number;
+      selectedObjectIds: string[];
+      boundingBox: { min: number[]; max: number[] } | null;
+      points: number[][];
+    }>; // grid configs at simulation time (for drift detection + reset)
   };
   ir_gain_db?: number;
   ir_normalize_enabled?: boolean;
@@ -175,6 +199,7 @@ export interface SoundscapeData {
   sound_events: SoundscapeSoundEvent[];
   // Simulation persistence (all optional, backward-compatible)
   receivers?: SoundscapeReceiver[];
+  grid_listeners?: SoundscapeGridListener[];
   selected_receiver_id?: string;
   simulation_configs?: SoundscapeSimulationConfig[];
   active_simulation_index?: number;

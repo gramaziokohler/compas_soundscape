@@ -15,6 +15,7 @@ import * as THREE from 'three';
 import { SpeckleBasicMaterial } from '@speckle/viewer';
 import { RESONANCE_AUDIO } from '@/utils/constants';
 import { getCssColorHex } from '@/utils/utils';
+import { createLabelSprite, updateLabelSprite, disposeLabelSprite, computeLabelWorldHeight } from './label-sprite-factory';
 import type { ResonanceRoomMaterial } from '@/types/audio';
 
 export interface BoundingBoxBounds {
@@ -52,6 +53,17 @@ export class BoundingBoxManager {
   public currentBounds: BoundingBoxBounds | null = null;
   public gumballHandles: THREE.Mesh[] = [];
   public activeGumball: THREE.Mesh | null = null;
+  /** Per-face screen-space labels (Right/Left/Ceiling/Floor/Front/Back). */
+  private faceLabels: THREE.Sprite[] = [];
+  /** Per-face gumball arrow groups (scaled per-frame for constant screen size). */
+  private gumballGroups: THREE.Group[] = [];
+  /** Live dimension readout shown in the bbox middle while an arrow is dragged. */
+  private dimensionLabel: THREE.Sprite | null = null;
+  private dimensionLabelAxis: 'x' | 'y' | 'z' | null = null;
+  /** Camera from the most recent updateScreenSpaceScale() — used to size freshly
+   *  created sprites immediately so they never render one frame at the rough
+   *  creation scale (which is huge relative to their correct screen-space size). */
+  private lastCamera: THREE.PerspectiveCamera | null = null;
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -251,10 +263,10 @@ export class BoundingBoxManager {
     
     boundingBoxGroup.add(wireframe);
 
-    // Calculate label size based on bounding box dimensions
-    const maxDimension = Math.max(width, height, depth);
-    const labelWidth = maxDimension * RESONANCE_AUDIO.BOUNDING_BOX.LABEL_SCALE_FACTOR;
-    const labelHeight = labelWidth / RESONANCE_AUDIO.BOUNDING_BOX.LABEL_ASPECT_RATIO;
+    // Arrows/labels keep a constant apparent (screen-space) size at any zoom. The
+    // per-frame scale is applied by updateScreenSpaceScale(); set a rough world
+    // scale at creation so they never flash at the default sprite size for a frame.
+    const roughArrowScale = Math.max(width, height, depth) / 4;
 
     // 2. Create face planes with materials
     const faceConfigs: FaceConfig[] = [
@@ -305,54 +317,31 @@ export class BoundingBoxManager {
       
       boundingBoxGroup.add(plane);
 
-      // Create text sprite for label
-      const canvas = document.createElement('canvas');
-      const context = canvas.getContext('2d')!;
-      canvas.width = RESONANCE_AUDIO.BOUNDING_BOX.LABEL_CANVAS_WIDTH;
-      canvas.height = RESONANCE_AUDIO.BOUNDING_BOX.LABEL_CANVAS_HEIGHT;
-      context.fillStyle = 'transparent';
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      context.font = RESONANCE_AUDIO.BOUNDING_BOX.LABEL_FONT;
-      context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--foreground').trim() || '#171717';
-      context.textAlign = 'center';
-      context.textBaseline = 'middle';
-      context.fillText(faceConfig.name, canvas.width / 2, canvas.height / 2);
-
-      const texture = new THREE.CanvasTexture(canvas);
-      const spriteMaterial = new THREE.SpriteMaterial({ 
-        map: texture,
-        depthTest: false,
-        depthWrite: false
-      });
-      const sprite = new THREE.Sprite(spriteMaterial);
-      sprite.position.copy(faceConfig.position);
-      sprite.scale.set(labelWidth, labelHeight, 1);
-      sprite.renderOrder = RESONANCE_AUDIO.BOUNDING_BOX.LABEL_RENDER_ORDER;
-      sprite.frustumCulled = false; // Disable frustum culling
-      sprite.userData.speckleType = 'BoundingBoxLabel'; // Mark as Speckle object
-      
-      // Configure layers for Speckle compatibility
-      sprite.layers.disableAll();
-      sprite.layers.enable(0); // Default layer
-      sprite.layers.enable(4); // OVERLAY layer
-      
-      boundingBoxGroup.add(sprite);
-
       // 3. Create gumball double-arrow handle
       const gumballGrp = new THREE.Group();
       gumballGrp.position.copy(faceConfig.position);
+      gumballGrp.scale.setScalar(roughArrowScale);
 
       // Make group orient such that Y points along normal
       const targetQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), faceConfig.normal);
       gumballGrp.setRotationFromQuaternion(targetQuat);
 
-      // Geometry for the arrow
-      const bodyGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.8, 8);
-      const headGeo = new THREE.ConeGeometry(0.15, 0.25, 8);
+      // Geometry for the arrow (CSS-token colors, resolved at render time)
+      const bodyGeo = new THREE.CylinderGeometry(
+        RESONANCE_AUDIO.BOUNDING_BOX.GUMBALL_BODY_RADIUS,
+        RESONANCE_AUDIO.BOUNDING_BOX.GUMBALL_BODY_RADIUS,
+        RESONANCE_AUDIO.BOUNDING_BOX.GUMBALL_BODY_LENGTH,
+        8
+      );
+      const headGeo = new THREE.ConeGeometry(
+        RESONANCE_AUDIO.BOUNDING_BOX.GUMBALL_HEAD_RADIUS,
+        RESONANCE_AUDIO.BOUNDING_BOX.GUMBALL_HEAD_HEIGHT,
+        8
+      );
 
-      const colorHover = 0x00ffcc;
-      const colorNormal = 0x00aaff;
-      
+      const colorNormal = getCssColorHex('--color-primary');
+      const colorHover = getCssColorHex('--color-primary-hover');
+
       const mat = new THREE.MeshBasicMaterial({
         color: colorNormal,
         depthTest: false,
@@ -365,19 +354,24 @@ export class BoundingBoxManager {
       gumballGrp.add(body);
 
       const topHead = new THREE.Mesh(headGeo, mat);
-      topHead.position.set(0, 0.5, 0);
+      topHead.position.set(0, RESONANCE_AUDIO.BOUNDING_BOX.GUMBALL_BODY_LENGTH / 2, 0);
       gumballGrp.add(topHead);
 
       const botHead = new THREE.Mesh(headGeo, mat);
-      botHead.position.set(0, -0.5, 0);
+      botHead.position.set(0, -RESONANCE_AUDIO.BOUNDING_BOX.GUMBALL_BODY_LENGTH / 2, 0);
       botHead.rotation.x = Math.PI;
       gumballGrp.add(botHead);
 
       // A larger invisible cylinder for easier clicking
-      const hitGeo = new THREE.CylinderGeometry(0.5, 0.5, 1.5, 8);
+      const hitGeo = new THREE.CylinderGeometry(
+        RESONANCE_AUDIO.BOUNDING_BOX.GUMBALL_HIT_RADIUS,
+        RESONANCE_AUDIO.BOUNDING_BOX.GUMBALL_HIT_RADIUS,
+        RESONANCE_AUDIO.BOUNDING_BOX.GUMBALL_HIT_LENGTH,
+        8
+      );
       const hitMat = new THREE.MeshBasicMaterial({ visible: false, depthTest: false, depthWrite: false });
       const hitMesh = new THREE.Mesh(hitGeo, hitMat);
-      
+
       hitMesh.userData = {
          isGumballHit: true,
          faceName: faceConfig.material,
@@ -388,7 +382,24 @@ export class BoundingBoxManager {
       };
 
       gumballGrp.add(hitMesh);
-      
+
+      // Face label sprite, placed ON TOP of the arrow. It is a child of the
+      // gumball group (which is scaled per frame for constant screen size), so
+      // its local Y position = arrow tip + clearance and its local scale must be
+      // divided by the group scale each frame (updateScreenSpaceScale does this)
+      // to keep the text a constant screen size.
+      const labelSprite = createLabelSprite(faceConfig.name, { showBackground: false });
+      const arrowTipOffset =
+        RESONANCE_AUDIO.BOUNDING_BOX.GUMBALL_BODY_LENGTH / 2 +
+        RESONANCE_AUDIO.BOUNDING_BOX.GUMBALL_HEAD_HEIGHT +
+        RESONANCE_AUDIO.BOUNDING_BOX.GUMBALL_LABEL_CLEARANCE;
+      labelSprite.position.set(0, arrowTipOffset, 0);
+      labelSprite.scale.set(1, 1, 1); // rough; corrected immediately + per frame
+      labelSprite.frustumCulled = false; // Disable frustum culling
+      labelSprite.userData.speckleType = 'BoundingBoxLabel'; // Mark as Speckle object
+      gumballGrp.add(labelSprite);
+      this.faceLabels.push(labelSprite);
+
       // Force all parts onto overlay layers and top renderOrder
       gumballGrp.traverse(c => {
          c.renderOrder = 9999;
@@ -398,6 +409,7 @@ export class BoundingBoxManager {
       });
 
       boundingBoxGroup.add(gumballGrp);
+      this.gumballGroups.push(gumballGrp);
       this.gumballHandles.push(hitMesh);
     });
 
@@ -421,6 +433,14 @@ export class BoundingBoxManager {
     // Set visibility
     if (config.visible !== undefined) {
       this.boundingBoxGroup.visible = config.visible;
+    }
+
+    // Size the freshly created sprites to their correct screen-space scale NOW,
+    // before the next render. The frame loop would otherwise render this group
+    // once at the rough creation scale — and since the group is recreated on
+    // every drag event, that flash would be visible for most frames of a drag.
+    if (this.lastCamera) {
+      this.updateScreenSpaceScale(this.lastCamera);
     }
   }
 
@@ -490,8 +510,127 @@ export class BoundingBoxManager {
       }
     });
 
+    // Dispose tracked label sprites (shared factory resources).
+    this.faceLabels.forEach(disposeLabelSprite);
+    this.faceLabels = [];
+    if (this.dimensionLabel) {
+      disposeLabelSprite(this.dimensionLabel);
+      this.dimensionLabel = null;
+      this.dimensionLabelAxis = null;
+    }
+    // Gumball group meshes are disposed by the generic child loop above; just drop refs.
+    this.gumballGroups = [];
+
     this.boundingBoxGroup = null;
     this.gumballHandles = [];
+  }
+
+  /**
+   * Show the live dimension readout in the middle of the bounding box, aligned
+   * with the given drag axis. Creates the label lazily and positions it at the
+   * bbox center nudged just inside the box along the axis.
+   */
+  public showDimensionLabel(bounds: BoundingBoxBounds, axis: 'x' | 'y' | 'z'): void {
+    if (!this.boundingBoxGroup) return;
+    if (!this.dimensionLabel) {
+      this.dimensionLabel = createLabelSprite('', { showBackground: false });
+      this.dimensionLabel.scale.set(3, 1.5, 1); // rough; corrected immediately below
+      this.dimensionLabel.frustumCulled = false;
+      this.dimensionLabel.layers.disableAll();
+      this.dimensionLabel.layers.enable(0);
+      this.dimensionLabel.layers.enable(4);
+      this.boundingBoxGroup.add(this.dimensionLabel);
+    }
+    this.dimensionLabelAxis = axis;
+    this.dimensionLabel.visible = true;
+    this.applyDimensionLabel(bounds, axis);
+    // Size the readout to its correct screen-space scale immediately so it never
+    // renders one frame at the rough (3,1.5,1) scale right after creation.
+    if (this.lastCamera) {
+      this.updateScreenSpaceScale(this.lastCamera);
+    }
+  }
+
+  /**
+   * Update the live dimension readout text + position while dragging, without
+   * recreating the sprite (no flash).
+   */
+  public updateDimensionLabel(bounds: BoundingBoxBounds, axis: 'x' | 'y' | 'z'): void {
+    if (!this.dimensionLabel) return;
+    this.dimensionLabelAxis = axis;
+    this.applyDimensionLabel(bounds, axis);
+  }
+
+  /** Hide the live dimension readout (kept for reuse on the next drag). */
+  public hideDimensionLabel(): void {
+    if (this.dimensionLabel) {
+      this.dimensionLabel.visible = false;
+    }
+    this.dimensionLabelAxis = null;
+  }
+
+  private applyDimensionLabel(bounds: BoundingBoxBounds, axis: 'x' | 'y' | 'z'): void {
+    if (!this.dimensionLabel) return;
+    const dim = axis === 'x'
+      ? bounds.max[0] - bounds.min[0]
+      : axis === 'y'
+        ? bounds.max[1] - bounds.min[1]
+        : bounds.max[2] - bounds.min[2];
+
+    updateLabelSprite(this.dimensionLabel, `${dim.toFixed(1)} m`);
+
+    const offset = RESONANCE_AUDIO.BOUNDING_BOX.DIMENSION_READOUT_AXIS_OFFSET;
+    // Position is relative to the bbox group origin (= bbox center).
+    this.dimensionLabel.position.set(
+      axis === 'x' ? offset : 0,
+      axis === 'y' ? offset : 0,
+      axis === 'z' ? offset : 0
+    );
+  }
+
+  /**
+   * Scale gumball arrows and label sprites every frame so they keep a constant
+   * apparent size regardless of camera distance (zoom). Called by the audio
+   * coordinator's per-frame loop.
+   */
+  public updateScreenSpaceScale(camera: THREE.PerspectiveCamera): void {
+    if (!this.boundingBoxGroup) return;
+    this.lastCamera = camera;
+    const tmpVec = new THREE.Vector3();
+    const bbox = RESONANCE_AUDIO.BOUNDING_BOX;
+
+    for (const grp of this.gumballGroups) {
+      grp.getWorldPosition(tmpVec);
+      const distance = camera.position.distanceTo(tmpVec);
+      if (distance < 0.01) continue;
+
+      const rawScale = (distance * bbox.GUMBALL_SCREEN_SPACE_SIZE) / bbox.GUMBALL_BASE_HALF_LENGTH;
+      const scale = Math.max(bbox.GUMBALL_MIN_SCALE, Math.min(bbox.GUMBALL_MAX_SCALE, rawScale));
+      grp.scale.setScalar(scale);
+    }
+
+    for (let i = 0; i < this.faceLabels.length; i++) {
+      const label = this.faceLabels[i];
+      const grp = this.gumballGroups[i];
+      if (!grp) continue;
+      label.getWorldPosition(tmpVec);
+      const distance = camera.position.distanceTo(tmpVec);
+      if (distance < 0.01) continue;
+      const h = computeLabelWorldHeight(camera, distance);
+      // The label lives inside the (screen-space scaled) gumball group, so the
+      // group's scale must be divided out to keep the text a constant screen size.
+      const groupScale = grp.scale.x || 1;
+      const localH = h / groupScale;
+      label.scale.set(localH * (label.userData.aspectRatio as number || 2), localH, 1);
+    }
+
+    if (this.dimensionLabel && this.dimensionLabel.visible && this.boundingBoxGroup) {
+      this.dimensionLabel.getWorldPosition(tmpVec);
+      const distance = camera.position.distanceTo(tmpVec);
+      if (distance < 0.01) return;
+      const h = computeLabelWorldHeight(camera, distance);
+      this.dimensionLabel.scale.set(h * (this.dimensionLabel.userData.aspectRatio as number || 2), h, 1);
+    }
   }
 
   /**

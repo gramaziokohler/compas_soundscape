@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { RangeSlider } from '@/components/ui/RangeSlider';
-import { CheckboxField } from '@/components/ui/CheckboxField';
+import { HelperHint } from '@/components/ui/HelperHint';
 import { GRID_LISTENER_CONFIG } from '@/utils/constants';
 import { useGridListenersStore } from '@/store/gridListenersStore';
 import { useSpeckleStore } from '@/store';
@@ -14,13 +14,13 @@ interface GridListenerContentProps {
   onComputeBounds: (objectIds: string[]) => { min: [number, number, number]; max: [number, number, number] } | null;
 }
 
-type SelectionPhase = 'idle' | 'selecting' | 'ready';
+type SelectionPhase = 'selecting' | 'ready';
 
 export function GridListenerContent({ grid, color, onComputeBounds }: GridListenerContentProps) {
   const { updateGridListener, setGridListenerBounds } = useGridListenersStore();
   const selectedObjectIds = useSpeckleStore((s) => s.selectedObjectIds);
 
-  const [phase, setPhase] = useState<SelectionPhase>(() => grid.boundingBox ? 'ready' : 'idle');
+  const [phase, setPhase] = useState<SelectionPhase>(() => grid.boundingBox ? 'ready' : 'selecting');
   const selectionRef = useRef<string[]>([]);
 
   useEffect(() => {
@@ -33,19 +33,24 @@ export function GridListenerContent({ grid, color, onComputeBounds }: GridListen
     if (phase !== 'selecting') return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Enter') { e.preventDefault(); handleValidate(); }
-      else if (e.key === 'Escape') { e.preventDefault(); setPhase(grid.boundingBox ? 'ready' : 'idle'); }
+      else if (e.key === 'Escape') { e.preventDefault(); setPhase(grid.boundingBox ? 'ready' : 'selecting'); }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, grid.boundingBox]);
 
+  const startSelecting = useCallback(() => {
+    selectionRef.current = [];
+    setPhase('selecting');
+  }, []);
+
   const handleValidate = useCallback(() => {
     const ids = selectionRef.current.length > 0 ? selectionRef.current : selectedObjectIds;
-    if (ids.length === 0) { setPhase(grid.boundingBox ? 'ready' : 'idle'); return; }
+    if (ids.length === 0) { setPhase(grid.boundingBox ? 'ready' : 'selecting'); return; }
     const bbox = onComputeBounds(ids);
     if (bbox) { setGridListenerBounds(grid.id, ids, bbox); setPhase('ready'); }
-    else { setPhase(grid.boundingBox ? 'ready' : 'idle'); }
+    else { setPhase(grid.boundingBox ? 'ready' : 'selecting'); }
     selectionRef.current = [];
   }, [grid.id, grid.boundingBox, selectedObjectIds, onComputeBounds, setGridListenerBounds]);
 
@@ -62,13 +67,45 @@ export function GridListenerContent({ grid, color, onComputeBounds }: GridListen
     useGridListenersStore.temporal.getState().resume();
   }, [grid.id, updateGridListener]);
 
-  const btnLabel = phase === 'selecting' ? 'Validate selection' : phase === 'ready' ? 'Recreate grid' : 'Select objects';
-  const btnColor = phase === 'selecting' ? 'var(--color-success)' : phase === 'ready' ? 'var(--color-secondary-hover)' : color;
-
   return (
     <div className="space-y-2">
+      {/* Top control row */}
+      {phase === 'selecting' ? (
+        <div className="flex items-center gap-1.5">
+          <span className="flex-1 text-[10px] text-secondary-hover leading-snug">
+            select one or multiples surfaces
+          </span>
+          <button
+            onClick={handleValidate}
+            className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-md text-white transition-all cursor-pointer"
+            style={{ backgroundColor: 'var(--color-success)' }}
+            title="Validate selection"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+            </svg>
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-1.5">
+          <span className="flex-1 text-[10px] text-secondary-hover">
+            {grid.points.length} listener point{grid.points.length !== 1 ? 's' : ''}
+          </span>
+          <button
+            onClick={startSelecting}
+            className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-md text-secondary-hover hover:text-foreground hover:bg-secondary-light transition-all cursor-pointer"
+            title="Recreate grid"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h5M20 20v-5h-5M20 9a8 8 0 00-14.32-3M4 15a8 8 0 0014.32 3" />
+            </svg>
+          </button>
+        </div>
+      )}
+
       <RangeSlider
-        label="X spacing"
+        inline
+        label="X"
         value={grid.xSpacing}
         min={GRID_LISTENER_CONFIG.MIN_SPACING}
         max={GRID_LISTENER_CONFIG.MAX_SPACING}
@@ -79,10 +116,10 @@ export function GridListenerContent({ grid, color, onComputeBounds }: GridListen
         onDragStart={handleDragStart}
         onChange={(v) => handleSpacingChange('xSpacing', v)}
         onChangeCommitted={(v) => handleDragEnd('xSpacing', v)}
-        showLabels={false}
       />
       <RangeSlider
-        label="Y spacing"
+        inline
+        label="Y"
         value={grid.ySpacing}
         min={GRID_LISTENER_CONFIG.MIN_SPACING}
         max={GRID_LISTENER_CONFIG.MAX_SPACING}
@@ -93,10 +130,10 @@ export function GridListenerContent({ grid, color, onComputeBounds }: GridListen
         onDragStart={handleDragStart}
         onChange={(v) => handleSpacingChange('ySpacing', v)}
         onChangeCommitted={(v) => handleDragEnd('ySpacing', v)}
-        showLabels={false}
       />
       <RangeSlider
-        label="Z offset"
+        inline
+        label="Z"
         value={grid.zOffset}
         min={GRID_LISTENER_CONFIG.MIN_Z_OFFSET}
         max={GRID_LISTENER_CONFIG.MAX_Z_OFFSET}
@@ -107,39 +144,15 @@ export function GridListenerContent({ grid, color, onComputeBounds }: GridListen
         onDragStart={handleDragStart}
         onChange={(v) => handleSpacingChange('zOffset', v)}
         onChangeCommitted={(v) => handleDragEnd('zOffset', v)}
-        showLabels={false}
       />
 
-      <CheckboxField
-        checked={grid.showListeners}
-        onChange={(v) => updateGridListener(grid.id, { showListeners: v })}
-        label="Show listeners"
+      <HelperHint
+        text={
+          phase === 'selecting'
+            ? 'Hold shift to select multiple objects, press Enter when finished.'
+            : null
+        }
       />
-
-      {grid.boundingBox && (
-        <div className="text-[10px] text-secondary-hover">
-          {grid.points.length} listener point{grid.points.length !== 1 ? 's' : ''}
-        </div>
-      )}
-
-      {phase === 'selecting' && (
-        <div className="text-[10px] rounded-lg px-2 py-1.5 text-white leading-relaxed" style={{ backgroundColor: 'color-mix(in srgb, var(--color-success) 80%, transparent)' }}>
-          Select one or multiple surfaces. Press Enter or click the button to validate. Esc to cancel.
-        </div>
-      )}
-
-      <div className="flex justify-center">
-        <button
-          onClick={() => {
-            if (phase === 'selecting') handleValidate();
-            else { selectionRef.current = []; setPhase('selecting'); }
-          }}
-          className="py-1.5 px-4 rounded-lg text-xs font-medium text-white transition-all"
-          style={{ backgroundColor: btnColor }}
-        >
-          {btnLabel}
-        </button>
-      </div>
     </div>
   );
 }

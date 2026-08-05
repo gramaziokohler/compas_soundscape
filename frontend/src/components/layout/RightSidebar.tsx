@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { UI_RIGHT_SIDEBAR, UI_SIDEBAR_RESIZE } from '@/utils/constants';
 import { useRightSidebarStore } from '@/store';
 import { useSidebarResize } from '@/hooks/useSidebarResize';
@@ -157,12 +157,17 @@ export function RightSidebar({
   const [isHandleHovered, setIsHandleHovered] = useState(false);
   const [isSplitHandleHovered, setIsSplitHandleHovered] = useState(false);
 
+  const handleWidthChange = useCallback((w: number) => {
+    onWidthChange?.(w);
+    useRightSidebarStore.getState().setSidebarWidth(w);
+  }, [onWidthChange]);
+
   const { width: sidebarWidth, isResizing, handleMouseDown: handleResizeMouseDown } = useSidebarResize({
     initialWidth: UI_SIDEBAR_RESIZE.RIGHT_DEFAULT_WIDTH,
     minWidth: UI_SIDEBAR_RESIZE.RIGHT_MIN_WIDTH,
     maxWidth: UI_SIDEBAR_RESIZE.RIGHT_MAX_WIDTH,
     direction: 'left',
-    onWidthChange,
+    onWidthChange: handleWidthChange,
   });
 
   const {

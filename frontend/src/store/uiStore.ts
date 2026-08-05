@@ -157,6 +157,11 @@ export interface UIStoreState {
   sidebarWizardStep: 0 | 1 | 2;
   setSidebarWizardStep: (step: 0 | 1 | 2) => void;
 
+  // ── Programmatic sounds-step navigation (from sim cards, NOT persisted) ──────
+  /** Incremented to tell the left sidebar to expand and navigate to the Sounds step. */
+  soundsNavTrigger: number;
+  triggerSoundsNav: () => void;
+
   // ── Panel visibility toggles (survive refresh) ──────────────────────────────
   showTimeline: boolean;
   setShowTimeline: (v: boolean) => void;
@@ -348,6 +353,11 @@ export const useUIStore = create<UIStoreState>()(
       sidebarWizardStep: 0 as 0 | 1 | 2,
       setSidebarWizardStep: (step) => set({ sidebarWizardStep: step }, false, 'ui/setSidebarWizardStep'),
 
+      // ── Programmatic sounds-step navigation ─────────────────────────────────
+      soundsNavTrigger: 0,
+      triggerSoundsNav: () =>
+        set((s) => ({ soundsNavTrigger: s.soundsNavTrigger + 1 }), false, 'ui/triggerSoundsNav'),
+
       // ── Panel visibility toggles ────────────────────────────────────────────
       showTimeline: true,
       setShowTimeline: (v) => set({ showTimeline: v }, false, 'ui/setShowTimeline'),
@@ -384,7 +394,7 @@ export const useUIStore = create<UIStoreState>()(
         irRefreshTrigger, refreshBoundingBoxTrigger, roomScale, isUploadingGlobalModel,
         isSavingSoundscape, zoomToSoundCardTrigger,
         activeSoundParentIndex, isInSoundsStep, showBoundingBox,
-        cameraPosition, cameraTarget, acousticLayerSelectionMode, ...persistable } = state;
+        cameraPosition, cameraTarget, acousticLayerSelectionMode, soundsNavTrigger, ...persistable } = state;
       return persistable;
     },
   }),

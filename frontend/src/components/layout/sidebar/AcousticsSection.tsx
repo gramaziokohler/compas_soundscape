@@ -13,8 +13,8 @@
  *   AcousticsSection.tsx (orchestration layer)
   ├── useAcousticsMaterials() - loads Choras materials
   ├── useAcousticsMaterials() - loads Pyroom materials
-  ├── SimulationSetupContent - renders material assignment + settings
-  │   ├── SpeckleSurfaceMaterialsSection
+  ├── SimulationSetupContent - renders summary bar + settings
+  │   ├── SimulationSummaryBar
   │   ├── ChorasSimulationSettings
   │   └── PyroomAcousticsSimulationSettings
   ├── ResonanceContent
@@ -30,7 +30,7 @@ import { Card } from '@/components/ui/Card';
 import { Notice } from '@/components/ui/Notice';
 import { apiService } from '@/services/api';
 import { CARD_TYPE_LABELS } from '@/types/card';
-import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGridListenersStore, useAudioControlsStore, useSoundscapeStore, notifyError } from '@/store';
+import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGridListenersStore, useAudioControlsStore, useSoundscapeStore, notifyError, resolveSimulationLayerName } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useUIStore } from '@/store/uiStore';
 
@@ -56,12 +56,14 @@ import type {
   AcousticSimulationMode,
   ChorasSimulationConfig,
   PyroomAcousticsSimulationConfig,
+  GridListenerSnapshot,
 } from '@/types/acoustics';
 import type { CardType, CustomMenuItem } from '@/types/card';
 import type {
   CompasGeometry,
   EntityData,
   SoundEvent,
+  GridListenerData,
 } from '@/types';
 import type {
   ImpulseResponseMetadata,
@@ -154,6 +156,26 @@ interface AcousticsSectionProps {
   onIRNormalizeChange?: (index: number, enabled: boolean) => void;
 }
 
+/**
+ * Snapshot the active (non-hidden) grid listener configs exactly as they are at
+ * simulation time. Stored in `simulationPositions.gridListeners` so the grid's
+ * x/y/z spacing, zOffset, bounding box and linked objects can be restored later.
+ */
+function buildGridListenerSnapshot(gridListeners: GridListenerData[]): GridListenerSnapshot[] {
+  return gridListeners
+    .filter((g) => !g.hiddenForSimulation)
+    .map((g) => ({
+      id: g.id,
+      name: g.name,
+      xSpacing: g.xSpacing,
+      ySpacing: g.ySpacing,
+      zOffset: g.zOffset,
+      selectedObjectIds: g.selectedObjectIds,
+      boundingBox: g.boundingBox,
+      points: g.points,
+    }));
+}
+
 export function AcousticsSection(props: AcousticsSectionProps) {
   const {
     onSelectIRFromLibrary,
@@ -209,6 +231,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   const receivers = useReceiversStore((s) => s.receivers);
   const updateReceiverPosition = useReceiversStore((s) => s.updateReceiverPosition);
   const gridListeners = useGridListenersStore((s) => s.gridListeners);
+  const setGridListenerBounds = useGridListenersStore((s) => s.setGridListenerBounds);
+  const updateGridListener = useGridListenersStore((s) => s.updateGridListener);
   const updateSoundPosition = useSoundscapeStore((s) => s.updateSoundPosition);
 
   // Active sound parent index from UIStore (controls which sound section is active)
@@ -552,7 +576,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         projectId,
         modelId,
         objectMaterials,
-        (config as any).speckleLayerName || null,
+        resolveSimulationLayerName((config as any).speckleLayerName),
         config.display_name || 'Simulation',
         mergedSettings,
         sourceReceiverPairs,
@@ -614,6 +638,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
                 sources: Object.fromEntries(uniqueSourcePositions.entries()),
                 receivers: Object.fromEntries(receiversList.map(r => [r.id, r.position])),
                 soundToPosKey: Object.fromEntries(sourceSoundToPosKey.entries()),
+                gridListeners: buildGridListenerSnapshot(gridListeners),
               },
             } as any);
             if (onIRImported) onIRImported();
@@ -711,7 +736,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         projectId,
         modelId,
         objectMaterials,
-        (config as any).speckleLayerName || null,
+        resolveSimulationLayerName((config as any).speckleLayerName),
         config.display_name || 'Simulation',
         { ...settings, sound_speed: useUIStore.getState().globalSoundSpeed },
         sourceReceiverPairs,
@@ -778,6 +803,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
                 sources: Object.fromEntries(uniqueSourcePositions.entries()),
                 receivers: Object.fromEntries(receiversList.map(r => [r.id, r.position])),
                 soundToPosKey: Object.fromEntries(sourceSoundToPosKey.entries()),
+                gridListeners: buildGridListenerSnapshot(gridListeners),
               },
             } as any);
             if (onIRImported) onIRImported();
@@ -1362,8 +1388,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         : [];
 
     // Simulation setup component — always rendered for non-resonance types
-    // so that filtering, coloring, and material context stay active
-    // regardless of completion state (decoupled from generation state)
+    // so that settings stay available regardless of completion state
     const simulationSetup = config.type !== 'resonance' && config.type !== 'import-irs' ? (
         <SimulationSetupContent
             config={config}
@@ -1492,6 +1517,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
           sources: currentSourcePositions,
           receivers: currentReceiverPositions,
           soundToPosKey: Object.fromEntries(sourceSoundToPosKey.entries()),
+          gridListeners: buildGridListenerSnapshot(gridListeners),
         },
       } as any);
 
@@ -1545,6 +1571,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
           sources: currentSourcePositions,
           receivers: currentReceiverPositions,
           soundToPosKey: Object.fromEntries(sourceSoundToPosKey.entries()),
+          gridListeners: buildGridListenerSnapshot(gridListeners),
         },
       } as any);
 
@@ -1583,6 +1610,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         sources: Record<string, [number, number, number]>;
         receivers: Record<string, [number, number, number]>;
         soundToPosKey?: Record<string, string>;
+        gridListeners?: GridListenerSnapshot[];
       } | undefined;
       if (!simPositions) return;
       // soundIds are sound IDs — move each back to its simulation-time position
@@ -1591,7 +1619,23 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         const pos = posKey ? simPositions.sources[posKey] : undefined;
         if (pos) updateSoundPosition(soundId, pos);
       }
+      const gridSnapshots = simPositions.gridListeners ?? [];
       for (const id of receiverIds) {
+        // Grid listener id → restore the grid card's x/y/z spacing, zOffset,
+        // bounding box and linked object so its points recompute to sim-time values.
+        const gridSnap = gridSnapshots.find((g) => g.id === id);
+        if (gridSnap) {
+          if (gridSnap.boundingBox) {
+            setGridListenerBounds(id, gridSnap.selectedObjectIds, gridSnap.boundingBox);
+          }
+          updateGridListener(id, {
+            xSpacing: gridSnap.xSpacing,
+            ySpacing: gridSnap.ySpacing,
+            zOffset: gridSnap.zOffset,
+          });
+          continue;
+        }
+        // Regular receiver — move back to its simulation-time position
         const pos = simPositions.receivers[id];
         if (pos) updateReceiverPosition(id, pos);
       }
@@ -1801,7 +1845,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
     // Derive version + timestamp lines for this card type
     const cardVersion = (() => {
-      if (!serviceVersions || !hasResult) return undefined;
+      if (!serviceVersions) return undefined;
       let versionLine: string | undefined;
       if (config.type === 'pyroomacoustics') {
         const v = serviceVersions.pyroomacoustics;

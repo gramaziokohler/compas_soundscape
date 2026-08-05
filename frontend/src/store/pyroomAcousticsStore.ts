@@ -28,6 +28,7 @@ import {
 } from '@/utils/constants';
 import { groupSoundsByPosition, collapseVariantsToOne } from '@/utils/positionKey';
 import { notifyError } from './errorsStore';
+import { resolveSimulationLayerName } from './acousticLayerStore';
 import { useUIStore } from './uiStore';
 import { useAudioControlsStore } from './audioControlsStore';
 import type { SourceReceiverIRMapping } from '@/types/audio';
@@ -379,7 +380,7 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
               projectId,
               modelId,
               objectMaterials,
-              layerName || '',
+              resolveSimulationLayerName(layerName),
               simulationName,
               {
                 ...inst.simulationSettings,

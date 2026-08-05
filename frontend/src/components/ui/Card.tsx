@@ -332,8 +332,8 @@ export function Card<TConfig extends CardBaseConfig>({
                   </div>
                 </div>
               )}
-              {isExpanded && hasResult && version && (
-                <div className="text-[9px] mt-0.5 text-secondary-hover font-mono opacity-60 leading-tight">
+              {isExpanded && version && (
+                <div className="text-[9px] mt-0.5 text-secondary-hover font-mono opacity-60 leading-tight line-clamp-2">
                   {Array.isArray(version)
                     ? version.map((line, i) => <div key={i}>{line}</div>)
                     : version}

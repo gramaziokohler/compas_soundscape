@@ -44,18 +44,13 @@ export function PyroomAcousticsSimulationSettings({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <h4 className="text-xs font-semibold text-neutral-700">
-          Simulation Settings
-        </h4>
-      </div>
 
       {/* Note: Error display is handled at Card level for consistency */}
 
 {/* Simulation Mode Dropdown */}
 <div>
   <label
-    className="text-xs block mb-1 text-neutral-700"
+    className="text-xxs block mb-1 text-secondary-hover"
   >
     Simulation Mode
   </label>
@@ -64,7 +59,7 @@ export function PyroomAcousticsSimulationSettings({
     value={config.settings.simulation_mode}
     onChange={(e) => handleSettingChange('simulation_mode', e.target.value)}
     className="
-      w-full px-3 py-2 text-xs rounded border transition-colors
+      w-full px-3 py-1.5 text-xs rounded border transition-colors
       hover:bg-opacity-90 focus:outline-none
     "
     style={{

@@ -138,6 +138,11 @@ export function useSpeckleBoundingBoxGumball({
         roomMaterials: resonanceAudioConfig?.roomMaterials,
         visible: showBoundingBox,
       });
+      // updateBoundingBox recreates the bbox group (and any child readout label)
+      // when bounds change, so re-show the live dimension readout each drag frame.
+      if (dragAxis) {
+        bbm.showDimensionLabel(previewBounds, dragAxis);
+      }
       setDraggedBoundsOverride(previewBounds);
       onBoundsComputed?.(previewBounds);
       viewer.requestRender(8);
@@ -177,6 +182,9 @@ export function useSpeckleBoundingBoxGumball({
     };
 
     const onPointerDown = (e: PointerEvent) => {
+      // Arrows are draggable with the primary (left) mouse button only — ignore
+      // middle (button 1) and right (button 2) clicks.
+      if (e.button !== 0) return;
       updatePointer(e);
       const { boundingBoxManager: bbm, viewer: v } = useSpeckleEngineStore.getState();
       if (!bbm || bbm.gumballHandles.length === 0 || !showBoundingBox) return;
@@ -202,6 +210,7 @@ export function useSpeckleBoundingBoxGumball({
           min: [...bounds.min] as [number, number, number],
           max: [...bounds.max] as [number, number, number],
         };
+        bbm.showDimensionLabel(baseBoundsAtDragStart as BoundingBoxBounds, dragAxis);
       }
 
       dragAnchor.position.copy(hitWorldPoint);
@@ -210,6 +219,11 @@ export function useSpeckleBoundingBoxGumball({
       transformHelper.visible = true;
       syncTransformAxis(dragAxis);
       transformControls.attach(dragAnchor);
+      // Refresh the object + TransformControls' drag plane matrices so pointerDown
+      // computes its delta against the new drag-anchor position, not the stale
+      // matrix from the last render (fixes the first-drag jump to a far position).
+      dragAnchor.updateMatrixWorld(true);
+      transformHelper.updateMatrixWorld(true);
       transformControls.pointerDown(getControlPointer(e, 0));
       document.addEventListener('pointermove', onDocumentDragMove, true);
     };
@@ -229,7 +243,8 @@ export function useSpeckleBoundingBoxGumball({
       transformHelper.visible = false;
       canvas.style.cursor = 'default';
       document.removeEventListener('pointermove', onDocumentDragMove, true);
-      const { selectionExtension } = useSpeckleEngineStore.getState();
+      const { boundingBoxManager: bbm, selectionExtension } = useSpeckleEngineStore.getState();
+      bbm?.hideDimensionLabel();
       if (selectionExtension) selectionExtension.enabled = true;
     };
 
@@ -247,7 +262,8 @@ export function useSpeckleBoundingBoxGumball({
       transformControls.dispose();
       scene.remove(transformHelper);
       scene.remove(dragAnchor);
-      const { cameraController, selectionExtension } = useSpeckleEngineStore.getState();
+      const { boundingBoxManager, cameraController, selectionExtension } = useSpeckleEngineStore.getState();
+      boundingBoxManager?.hideDimensionLabel();
       if (cameraController) cameraController.enabled = true;
       if (selectionExtension) selectionExtension.enabled = true;
     };

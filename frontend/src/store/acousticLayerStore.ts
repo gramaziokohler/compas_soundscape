@@ -57,3 +57,15 @@ export const useAcousticLayerStore = create<AcousticLayerState & AcousticLayerAc
     { name: 'acousticLayerStore' },
   ),
 );
+
+/**
+ * Resolve the layer name to send to the backend simulation routers.
+ *
+ * When the acoustic layer is the whole model (single-layer model), return an empty
+ * string so the backend skips layer-name filtering entirely
+ * (speckle_service.get_model_geometry skips filtering on a falsy layer_name).
+ */
+export function resolveSimulationLayerName(layerName: string | null | undefined): string {
+  if (useAcousticLayerStore.getState().isWholeModel) return '';
+  return layerName || '';
+}

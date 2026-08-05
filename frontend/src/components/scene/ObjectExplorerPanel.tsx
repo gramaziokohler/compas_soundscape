@@ -132,6 +132,7 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
   return (
     <div
       ref={panelRef}
+      id="object-explorer-panel"
       className="fixed flex flex-col shadow-2xl"
       style={{
         left: position.x,

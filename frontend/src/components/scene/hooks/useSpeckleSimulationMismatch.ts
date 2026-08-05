@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { getCssColorHex } from '@/utils/utils';
 import { SIMULATION_POSITION_THRESHOLD, SIMULATION_POSITION_MATCH_THRESHOLD } from '@/utils/constants';
-import type { ReceiverData } from '@/types';
+import type { ReceiverData, GridListenerData } from '@/types';
 
 interface SimulationMismatchProps {
   isViewerReady: boolean;
@@ -13,6 +13,8 @@ interface SimulationMismatchProps {
     soundToPosKey?: Record<string, string>;
   } | null;
   receivers: ReceiverData[];
+  /** Grid listener configs — current points compared against sim-time receiver positions */
+  gridListeners: GridListenerData[];
   /** Current sound events — used as a reactivity signal so the effect re-runs
    *  whenever a sound sphere is dragged to a new position. */
   soundscapeData?: unknown;
@@ -23,11 +25,13 @@ interface SimulationMismatchProps {
  * SIMULATION_POSITION_THRESHOLD from their simulation-time positions.
  * Uses soundToPosKey (per-sound link to simulation position key) for accurate tracking
  * even when sounds move to entirely unsimulated positions.
+ * Grid listener points are marked through the GridReceiverManager red mismatch overlay.
  */
 export function useSpeckleSimulationMismatch({
   isViewerReady,
   activeSimulationPositions,
   receivers,
+  gridListeners,
   soundscapeData,
 }: SimulationMismatchProps) {
   useEffect(() => {
@@ -36,6 +40,7 @@ export function useSpeckleSimulationMismatch({
 
     const soundSphereManager = coordinator.getSoundSphereManager();
     const receiverManager = coordinator.getReceiverManager();
+    const gridReceiverManager = coordinator.getGridReceiverManager();
 
     if (!activeSimulationPositions) {
       // No active simulation: only clear the mismatch flags. Do NOT touch sphere
@@ -51,6 +56,7 @@ export function useSpeckleSimulationMismatch({
         if (mat.emissive) mat.emissive.setHex(getCssColorHex('--color-receiver'));
         mat.needsUpdate = true;
       });
+      gridReceiverManager?.clearMismatchedPoints();
       viewer?.requestRender();
       return;
     }
@@ -124,6 +130,22 @@ export function useSpeckleSimulationMismatch({
       mat.needsUpdate = true;
     });
 
+    // Mark grid listener points that drifted from their sim-time receiver positions.
+    // Grid points are auto-computed (not draggable), so a mismatch means the grid
+    // card's spacing / zOffset / bounding box changed after the simulation.
+    const simReceivers = activeSimulationPositions.receivers;
+    const gridMismatchIds = new Set<string>();
+    for (const g of gridListeners) {
+      g.points.forEach((pt, i) => {
+        const pointId = `${g.id}-${i}`;
+        const simPos = simReceivers[pointId];
+        if (!simPos) return;
+        const dist = Math.hypot(simPos[0] - pt[0], simPos[1] - pt[1], simPos[2] - pt[2]);
+        if (dist > SIMULATION_POSITION_THRESHOLD) gridMismatchIds.add(pointId);
+      });
+    }
+    gridReceiverManager?.setMismatchedPointIds(gridMismatchIds);
+
     viewer?.requestRender();
-  }, [isViewerReady, activeSimulationPositions, receivers, soundscapeData]);
+  }, [isViewerReady, activeSimulationPositions, receivers, gridListeners, soundscapeData]);
 }

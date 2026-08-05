@@ -339,6 +339,20 @@ class SoundscapeReceiver(BaseModel):
     orientation_saved: Optional[bool] = None
 
 
+class SoundscapeGridListener(BaseModel):
+    """Serializable grid listener configuration"""
+    id: str
+    name: str
+    xSpacing: float
+    ySpacing: float
+    zOffset: float
+    showListeners: bool = True
+    hiddenForSimulation: bool = False
+    selectedObjectIds: list[str] = []
+    boundingBox: Optional[dict[str, list[float]]] = None  # {min: [x,y,z], max: [x,y,z]}
+    points: list[list[float]] = []
+
+
 class SoundscapeIRMetadata(BaseModel):
     """Serializable impulse response metadata for persistence"""
     id: str
@@ -403,6 +417,7 @@ class SoundscapeData(BaseModel):
     sound_events: list[SoundscapeSoundEvent] = []
     # Simulation persistence (all optional, backward-compatible)
     receivers: list[SoundscapeReceiver] = []
+    grid_listeners: list[SoundscapeGridListener] = []
     selected_receiver_id: Optional[str] = None
     simulation_configs: list[SoundscapeSimulationConfig] = []
     active_simulation_index: Optional[int] = None

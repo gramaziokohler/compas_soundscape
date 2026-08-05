@@ -1170,6 +1170,9 @@ class SpeckleService:
             "receivers": json.dumps(
                 soundscape_data.get("receivers", [])
             ),
+            "grid_listeners": json.dumps(
+                soundscape_data.get("grid_listeners", [])
+            ),
             "selected_receiver_id": soundscape_data.get("selected_receiver_id", ""),
             "simulation_configs": json.dumps(
                 soundscape_data.get("simulation_configs", [])
@@ -1376,6 +1379,7 @@ class SpeckleService:
                 "sound_configs": _load("sound_configs", []),
                 "sound_events": _load("sound_events", []),
                 "receivers": _load("receivers", []),
+                "grid_listeners": _load("grid_listeners", []),
                 "selected_receiver_id": props.get("selected_receiver_id") or None,
                 "simulation_configs": _load("simulation_configs", []),
                 "active_simulation_index": props.get("active_simulation_index"),

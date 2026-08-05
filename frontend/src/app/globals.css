@@ -202,3 +202,25 @@ canvas {
 .text-xxs {
   font-size: 10px;
 }
+
+/* SectionHighlight — animated rotating border ring */
+@property --section-highlight-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes section-highlight-spin {
+  to {
+    --section-highlight-angle: 360deg;
+  }
+}
+
+@keyframes section-highlight-fade {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}

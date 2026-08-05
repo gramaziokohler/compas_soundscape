@@ -949,6 +949,7 @@ export function SpeckleScene({
     isViewerReady,
     activeSimulationPositions,
     receivers,
+    gridListeners,
     soundscapeData,
   });
 

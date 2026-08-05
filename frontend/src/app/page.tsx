@@ -178,6 +178,9 @@ function HomeContent() {
       if (restored.receivers.length > 0) {
         receivers.restoreReceivers(restored.receivers, restored.selectedReceiverId);
       }
+      if (restored.gridListeners.length > 0) {
+        gridListeners.restoreGridListeners(restored.gridListeners);
+      }
       if (restored.simulationConfigs.length > 0) {
         restored.simulationConfigs.forEach(config => {
           if (config.type === 'pyroomacoustics' && config.simulationInstanceId) {
@@ -263,6 +266,7 @@ function HomeContent() {
     const unsubSoundscape = useSoundscapeStore.subscribe(() => scheduleAutosave('soundscapeStore'));
     const unsubAudio = useAudioControlsStore.subscribe(() => scheduleAutosave('audioControlsStore'));
     const unsubReceivers = useReceiversStore.subscribe(() => scheduleAutosave('receiversStore'));
+    const unsubGridListeners = useGridListenersStore.subscribe(() => scheduleAutosave('gridListenersStore'));
     const unsubSim = useAcousticsSimulationStore.subscribe(() => scheduleAutosave('acousticsSimulationStore'));
     const unsubAnalysis = useAnalysisStore.subscribe(() => scheduleAutosave('analysisStore'));
     return () => {
@@ -270,6 +274,7 @@ function HomeContent() {
       unsubSoundscape();
       unsubAudio();
       unsubReceivers();
+      unsubGridListeners();
       unsubSim();
       unsubAnalysis();
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
@@ -479,6 +484,20 @@ function HomeContent() {
       speckleBounds.max
     );
   }, [speckleBounds, audioOrchestrator.orchestrator]);
+
+  // Sync room materials → Resonance Audio engine.
+  // Re-runs on material edits, undo/redo, soundscape restore, and mode entry into
+  // resonance so the ShoeBox acoustics always match the persisted store value.
+  useEffect(() => {
+    if (!audioOrchestrator.orchestrator) return;
+    audioOrchestrator.orchestrator.updateResonanceRoomMaterials(roomMaterials.roomMaterials);
+  }, [audioOrchestrator.orchestrator, audioOrchestrator.status?.currentMode, roomMaterials.roomMaterials]);
+
+  // Sync room dimensions → Resonance Audio engine (same trigger surface as above).
+  useEffect(() => {
+    if (!audioOrchestrator.orchestrator) return;
+    audioOrchestrator.orchestrator.updateResonanceRoomDimensions(roomMaterials.roomDimensions);
+  }, [audioOrchestrator.orchestrator, audioOrchestrator.status?.currentMode, roomMaterials.roomDimensions]);
 
   // When roomScale changes (including after undo/redo), trigger a bounding box re-render
   useEffect(() => {
@@ -1580,6 +1599,12 @@ function HomeContent() {
           console.log(`[page.tsx] Restored ${restored.receivers.length} receivers`);
         }
 
+        // Restore grid listeners
+        if (restored.gridListeners.length > 0) {
+          gridListeners.restoreGridListeners(restored.gridListeners);
+          console.log(`[page.tsx] Restored ${restored.gridListeners.length} grid listeners`);
+        }
+
         // Restore simulation state
         if (restored.simulationConfigs.length > 0) {
           // Seed pyroom persistent states BEFORE restoring configs
@@ -1791,6 +1816,7 @@ function HomeContent() {
         useAudioControlsStore.getState().soundIntervals,
         uploadedFilenames,
         receivers.receivers,
+        gridListeners.gridListeners,
         receivers.selectedReceiverId,
         acousticsSimulation.simulationConfigs,
         acousticsSimulation.activeSimulationIndex,
@@ -1844,6 +1870,7 @@ function HomeContent() {
     soundGen.audioModel,
     receivers.receivers,
     receivers.selectedReceiverId,
+    gridListeners.gridListeners,
     acousticsSimulation.simulationConfigs,
     acousticsSimulation.activeSimulationIndex,
     isSavingSoundscape,

@@ -281,6 +281,20 @@ export function Sidebar(props: SidebarProps) {
     }
   }, [props.stepAdvanceTrigger, props.analysisConfigs]);
 
+  // Navigate to the Sounds step when a sim card requests it (SimulationSummaryBar).
+  // Mirrors the stepAdvanceTrigger effect's parentless branch: no parent re-filtering.
+  const soundsNavTrigger = useUIStore((s) => s.soundsNavTrigger);
+  const prevSoundsNavTriggerRef = useRef(0);
+  useEffect(() => {
+    if (soundsNavTrigger > prevSoundsNavTriggerRef.current) {
+      prevSoundsNavTriggerRef.current = soundsNavTrigger;
+      hasInteractedRef.current = true;
+      useUIStore.getState().setIsInSoundsStep(true);
+      setCurrentStep(2);
+      setIsExpanded(true);
+    }
+  }, [soundsNavTrigger]);
+
   const { width: contentWidth, isResizing, handleMouseDown: handleResizeMouseDown } = useSidebarResize({
     initialWidth: UI_SIDEBAR_RESIZE.LEFT_DEFAULT_WIDTH,
     minWidth: UI_SIDEBAR_RESIZE.LEFT_MIN_WIDTH,
@@ -733,6 +747,7 @@ export function Sidebar(props: SidebarProps) {
             <span className="text-secondary-hover shrink-0" aria-hidden="true">›</span>
             {/* Sounds step — always clickable; creates placeholder parent cards when needed */}
             <button
+              id="sidebar-sounds-breadcrumb"
               className={`transition-colors flex-1 min-w-0 truncate ${
                 currentStep === 2
                   ? 'bg-primary text-secondary px-0.5 py-0.5'

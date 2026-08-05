@@ -16,6 +16,8 @@ interface RangeSliderProps {
   formatValue?: (value: number) => string;
   className?: string;
   showLabels?: boolean;
+  /** Render label + value + slider on a single horizontal line (e.g. "X: 1.5 m [slider]"). */
+  inline?: boolean;
   hoverText?: string;
   disabled?: boolean;
   color?: string;
@@ -63,6 +65,7 @@ export function RangeSlider({
   formatValue = (v) => v.toString(),
   className = "",
   showLabels = false,
+  inline = false,
   hoverText,
   disabled = false,
   color,
@@ -93,37 +96,63 @@ export function RangeSlider({
       className={`${className}`} 
       title={hoverText} 
     >
-      {/* Label and Value */}
-      <div className={`flex items-center gap-1 text-xxs text-secondary-hover`}>
-        <span>{label}</span>
-        <span className="text-xs font-bold text-secondary">
-          {formatValue(value)}
-        </span>
-      </div>
-
-      {/* Slider */}
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={handleChange}
-        onPointerDown={() => onDragStart?.()}
-        onPointerUp={handlePointerUp}
-        onDoubleClick={handleDoubleClick}
-        disabled={disabled}
-        className={`w-full h-1.5 rounded-lg range-sm appearance-none cursor-pointer bg-secondary-hover ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-        style={{ accentColor: color? color : 'var(--card-color, var(--color-primary))' }}
-        title={defaultValue !== undefined ? `Double-click to reset (${formatValue(defaultValue)})` : hoverText}
-      />
-
-      {/* Min/Max Labels */}
-      {showLabels && (
-        <div className={`flex justify-between text-xs text-secondary-hover`}>
-          <span>{displayMin}</span>
-          <span>{displayMax}</span>
+      {inline ? (
+        <div className="flex items-center gap-1.5">
+          <span className="text-xxs text-secondary-hover whitespace-nowrap">{label}:</span>
+          <span className="text-xs font-bold text-secondary whitespace-nowrap">
+            {formatValue(value)}
+          </span>
+          <input
+            type="range"
+            min={min}
+            max={max}
+            step={step}
+            value={value}
+            onChange={handleChange}
+            onPointerDown={() => onDragStart?.()}
+            onPointerUp={handlePointerUp}
+            onDoubleClick={handleDoubleClick}
+            disabled={disabled}
+            className={`flex-1 min-w-0 h-1.5 rounded-lg range-sm appearance-none cursor-pointer bg-secondary-hover ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+            style={{ accentColor: color? color : 'var(--card-color, var(--color-primary))' }}
+            title={defaultValue !== undefined ? `Double-click to reset (${formatValue(defaultValue)})` : hoverText}
+          />
         </div>
+      ) : (
+        <>
+          {/* Label and Value */}
+          <div className={`flex items-center gap-1 text-xxs text-secondary-hover`}>
+            <span>{label}</span>
+            <span className="text-xs font-bold text-secondary">
+              {formatValue(value)}
+            </span>
+          </div>
+
+          {/* Slider */}
+          <input
+            type="range"
+            min={min}
+            max={max}
+            step={step}
+            value={value}
+            onChange={handleChange}
+            onPointerDown={() => onDragStart?.()}
+            onPointerUp={handlePointerUp}
+            onDoubleClick={handleDoubleClick}
+            disabled={disabled}
+            className={`w-full h-1.5 rounded-lg range-sm appearance-none cursor-pointer bg-secondary-hover ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+            style={{ accentColor: color? color : 'var(--card-color, var(--color-primary))' }}
+            title={defaultValue !== undefined ? `Double-click to reset (${formatValue(defaultValue)})` : hoverText}
+          />
+
+          {/* Min/Max Labels */}
+          {showLabels && (
+            <div className={`flex justify-between text-xs text-secondary-hover`}>
+              <span>{displayMin}</span>
+              <span>{displayMax}</span>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

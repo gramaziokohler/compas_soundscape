@@ -646,7 +646,7 @@ export function ObjectExplorer({ resetAllRef, onItemCountChange, maxTreeHeight }
 
                 return (
                   <VirtualTreeItem
-                    key={item.id}
+                    key={`${item.id}-${index}`}
                     item={item}
                     style={{ height: `${UI_RIGHT_SIDEBAR.TREE_ITEM_HEIGHT}px` }}
                     isHidden={isHidden}

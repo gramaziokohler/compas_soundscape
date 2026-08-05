@@ -30,6 +30,7 @@ import {
 } from '@/utils/constants';
 import { groupSoundsByPosition, collapseVariantsToOne } from '@/utils/positionKey';
 import { notifyError } from './errorsStore';
+import { resolveSimulationLayerName } from './acousticLayerStore';
 import { useUIStore } from './uiStore';
 import { useAudioControlsStore } from './audioControlsStore';
 import type { SourceReceiverIRMapping } from '@/types/audio';
@@ -405,7 +406,7 @@ export const useChorasStore = create<ChorasStoreState>()(
               projectId,
               modelId,
               objectMaterials,
-              layerName || '',
+              resolveSimulationLayerName(layerName),
               simulationName,
               {
                 simulation_method:    simulationSettings.simulation_method,

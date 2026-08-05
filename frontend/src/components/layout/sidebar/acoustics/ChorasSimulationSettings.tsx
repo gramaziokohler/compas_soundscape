@@ -44,12 +44,6 @@ export function ChorasSimulationSettings({
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Section title */}
-      <div className="flex items-center justify-between">
-        <h4 className="text-xs font-semibold text-neutral-700">
-          Simulation Settings
-        </h4>
-      </div>
 
       {/* Method selector */}
       <div>

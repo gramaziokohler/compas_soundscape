@@ -11,6 +11,7 @@ import { GridReceiverManager } from './grid-receiver-manager';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 import type { SoundEvent, ReceiverData } from '@/types';
 import type { AuralizationConfig, SourceReceiverIRMapping, AcousticSimulationMode } from '@/types/audio';
+import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 // import type { BoundingBoxBounds } from './BoundingBoxManager'; // Bounding-box placement removed
 
 /**
@@ -678,6 +679,9 @@ export class SpeckleAudioCoordinator {
     this.soundSphereManager?.updateScreenSpaceScale(camera);
     this.receiverManager?.updateScreenSpaceScale(camera);
     this.gridReceiverManager?.updateScreenSpaceScale(camera);
+
+    // Keep bbox gumball arrows / labels a constant apparent size at any zoom.
+    useSpeckleEngineStore.getState().boundingBoxManager?.updateScreenSpaceScale(camera);
 
     // Keep the drag gizmo anchored to its selected object when its position
     // changes externally (undo/redo, etc.) — never leave it floating detached.

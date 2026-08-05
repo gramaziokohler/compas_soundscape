@@ -433,11 +433,18 @@ export function useSpeckleSurfaceMaterials(
     if (acousticsLayer) {
       console.log('[useSpeckleSurfaceMaterials] Found "Acoustics" layer:', acousticsLayer);
       setSelectedLayerId(acousticsLayer.id);
-      // Also set in acousticLayerStore so it becomes the source of truth
-      useAcousticLayerStore.getState().setAcousticLayer(acousticsLayer.id, acousticsLayer.name);
+      // Also set in acousticLayerStore so it becomes the source of truth.
+      // A single-layer model is the whole model — no layer filtering anywhere.
+      const wholeModel = layerOptions.length === 1;
+      useAcousticLayerStore.getState().setAcousticLayer(acousticsLayer.id, acousticsLayer.name, wholeModel);
     } else {
       console.log('[useSpeckleSurfaceMaterials] No "Acoustics" layer found, using first layer:', layerOptions[0]);
       setSelectedLayerId(layerOptions[0].id);
+      // Single-layer model: mark it as whole-model so ObjectExplorer / backend
+      // don't filter by layer name.
+      if (layerOptions.length === 1) {
+        useAcousticLayerStore.getState().setAcousticLayer(layerOptions[0].id, layerOptions[0].name, true);
+      }
     }
 
     setHasInitializedLayer(true);

@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { triangulate } from "@/utils/utils";
 import { API_BASE_URL, SOUND_SPHERE, DARK_MODE, OBJECT_LABEL } from "@/utils/constants";
 import { getCssColorHex, trimDisplayName } from '@/utils/utils';
-import { createLabelSprite, disposeLabelSprite, updateLabelSprite } from "@/lib/three/label-sprite-factory";
+import { createLabelSprite, disposeLabelSprite, updateLabelSprite, computeLabelWorldHeight } from "@/lib/three/label-sprite-factory";
 import { updateDraggableMeshes, disposeMeshes } from "@/lib/three/draggable-mesh-manager";
 // import { calculateSpiralPositions } from "@/lib/three/spiral-placement"; // Bounding-box placement removed
 import { calculateCameraFrontSpiralPositions } from "@/lib/three/spiral-placement";
@@ -1031,12 +1031,6 @@ export class SoundSphereManager {
    * label occupies a fixed fraction of the viewport height on ANY screen/window
    * size (rem-like consistent sizing). Independent of canvas pixel size/DPI.
    */
-  private labelWorldHeight(camera: THREE.PerspectiveCamera, distance: number, clampRatio: number): number {
-    const tanHalfFov = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-    const viewportHeightAtDistance = 2 * distance * tanHalfFov;
-    return viewportHeightAtDistance * OBJECT_LABEL.VIEWPORT_HEIGHT_RATIO * clampRatio;
-  }
-
   /**
    * Update mesh scales and label positions every frame so objects appear
    * at a constant screen size regardless of camera distance (zoom).
@@ -1062,7 +1056,7 @@ export class SoundSphereManager {
         const clampRatio = scale / rawScale;
         const zOffset = distance * SOUND_SPHERE.SCREEN_SPACE_SIZE * OBJECT_LABEL.Z_OFFSET_FACTOR * clampRatio;
         label.position.set(mesh.position.x, mesh.position.y, mesh.position.z + zOffset);
-        const h = this.labelWorldHeight(camera, distance, clampRatio);
+        const h = computeLabelWorldHeight(camera, distance, clampRatio);
         label.scale.set(h * (label.userData.aspectRatio as number || 3), h, 1);
       }
     });
@@ -1086,7 +1080,7 @@ export class SoundSphereManager {
       const clampedScale = Math.max(SOUND_SPHERE.MIN_SCALE, Math.min(SOUND_SPHERE.MAX_SCALE, rawScale));
       const clampRatio = clampedScale / rawScale;
 
-      const h = this.labelWorldHeight(camera, distance, clampRatio);
+      const h = computeLabelWorldHeight(camera, distance, clampRatio);
       const labelWidth = h * (label.userData.aspectRatio as number || 3);
 
       // Vertical offset so grouped labels stack above the anchor without overlapping.

@@ -208,6 +208,16 @@ export const UI_SCENE_BUTTON = {
   GAP: "8px",                // gap-2 between buttons
 } as const;
 
+// Helper hint — transient bottom-right viewer hint positioned left of the scene control buttons.
+export const UI_HELPER_HINT = {
+  BOTTOM: 56,                 // px above the bottom edge (clears the Object Explorer toggle)
+  BUTTON_COLUMN_MARGIN: 10,   // px — same margin the scene control buttons use from the screen edge
+  GAP_BETWEEN_BUTTONS: 10,    // px gap between the control button column and the hint
+  Z_INDEX: 300,               // above the timeline panel (z-index 200) so it is always on top
+  DURATION_MS: 6000,          // how long the hint stays visible before fading away
+  FADE_MS: 400,               // opacity transition duration
+} as const;
+
 // Material Assignment UI
 export const MAX_FACES_FOR_EXPANSION = 10; // Maximum number of faces before disabling entity expansion
 export const MAX_FACES_FOR_LAYER_AUTO_EXCLUDE = 1000; // Auto-exclude layers with more than this many faces in new simulations
@@ -804,19 +814,36 @@ export const RESONANCE_AUDIO = {
     FACE_BASE_OPACITY: 0.4,
     FACE_ABSORPTION_OPACITY_SCALE: 0, // Additional opacity based on absorption
     
-    // Label sprite sizing (relative to bounding box dimensions)
-    LABEL_SCALE_FACTOR: 0.2, // Label width = max(bbox dimensions) * this factor
-    LABEL_ASPECT_RATIO: 2.0,  // Width to height ratio
-    
-    // Label text rendering
-    LABEL_CANVAS_WIDTH: 256,
-    LABEL_CANVAS_HEIGHT: 128,
-    LABEL_FONT: 'Bold 24px Arial',
-    
     // Render order (higher = rendered later/on top)
     WIREFRAME_RENDER_ORDER: 5,
     FACE_RENDER_ORDER: 2,
-    LABEL_RENDER_ORDER: 5,
+    
+    // Gumball arrow geometry (one double-headed arrow per face, at unit scale)
+    GUMBALL_BODY_RADIUS: 0.04,
+    GUMBALL_BODY_LENGTH: 0.8,
+    GUMBALL_HEAD_RADIUS: 0.15,
+    GUMBALL_HEAD_HEIGHT: 0.25,
+    GUMBALL_HIT_RADIUS: 0.5,    // Invisible click target radius
+    GUMBALL_HIT_LENGTH: 1.5,    // Invisible click target length
+    
+    // Extra local-units clearance between the arrow tip and the face-label text,
+    // so the label sits clearly on top of the arrow instead of inside it. The
+    // label is a child of the (screen-space scaled) gumball group, so this offset
+    // keeps a constant screen-space gap above the arrow at any zoom.
+    GUMBALL_LABEL_CLEARANCE: 0.15,
+    
+    // Screen-space scaling: arrow world half-length = distance * SCREEN_SPACE_SIZE
+    // keeps the arrows a constant apparent size at any zoom (same pattern as
+    // sound spheres / receivers). Scale factor = (distance * SIZE) / BASE_HALF_LENGTH.
+    GUMBALL_SCREEN_SPACE_SIZE: 0.05,
+    GUMBALL_BASE_HALF_LENGTH: 0.75,
+    GUMBALL_MIN_SCALE: 0.2,
+    GUMBALL_MAX_SCALE: 8,
+    
+    // Live dimension readout (shown in the middle of the bounding box while a
+    // gumball arrow is dragged). World-space offset applied along the drag axis
+    // so the readout sits just inside the box instead of on its wireframe.
+    DIMENSION_READOUT_AXIS_OFFSET: 0.3,
     
     // Auto bounding box from sound sources (when no geometry)
     AUTO_BBOX_THRESHOLD: 2.0, // Meters to add on each side of sound sources
@@ -963,6 +990,18 @@ export const OBJECT_LABEL = {
    *  size / DPI (rem-like consistent sizing), instead of a fixed pixel count that
    *  shrinks or grows with the canvas. */
   VIEWPORT_HEIGHT_RATIO: 0.013,
+  /** Default multiplicative clamp applied to a label's VIEWPORT_HEIGHT_RATIO when
+   *  the caller has no object-specific clamp ratio. This is the Resonance bounding-box
+   *  face-label / dimension-readout scale — 2.5 (250% of the base ratio) so they
+   *  match (and stay readable against) the sound-sphere / receiver labels, which
+   *  derive their own clamp ratio from their mesh scale clamps. */
+  DEFAULT_CLAMP_RATIO: 2.5,
+  /** Min/max bounds on a label's effective viewport-height fraction
+   *  (i.e. VIEWPORT_HEIGHT_RATIO * clampRatio is clamped into this range), so
+   *  labels never shrink to an unreadable sliver when zoomed out nor grow to
+   *  screen-filling size when zoomed in. */
+  MIN_HEIGHT_RATIO: 0.006,
+  MAX_HEIGHT_RATIO: 0.05,
   /** Extra canvas render-resolution multiplier (on top of devicePixelRatio) so
    *  labels stay crisp when zoomed in close instead of looking pixelated. */
   RENDER_SCALE: 6,

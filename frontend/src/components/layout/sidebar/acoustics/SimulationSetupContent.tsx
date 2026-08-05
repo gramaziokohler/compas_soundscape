@@ -2,18 +2,22 @@
  * SimulationSetupContent Component
  *
  * Wrapper component for simulation setup UI.
- * Combines material assignment (SpeckleSurfaceMaterialsSection) with
+ * Shows the simulation summary bar (sources / listeners / materials) and the
  * simulation-specific settings (Choras or Pyroomacoustics).
+ *
+ * Also mounts the headless SpeckleSurfaceMaterialsSection so the acoustic
+ * material store stays activated while a simulation card exists — this drives
+ * the material/scattering columns in the Object Explorer.
  *
  * This component extracts the setup UI from AcousticsSection for better modularity.
  */
 
 'use client';
 
-import { useEffect } from 'react';
 import { SpeckleSurfaceMaterialsSection } from '@/components/acoustics/SpeckleSurfaceMaterialsSection';
 import { ChorasSimulationSettings } from './ChorasSimulationSettings';
 import { PyroomAcousticsSimulationSettings } from './PyroomAcousticsSimulationSettings';
+import { SimulationSummaryBar } from './SimulationSummaryBar';
 import type { SimulationConfig, ChorasSimulationConfig, PyroomAcousticsSimulationConfig } from '@/types/acoustics';
 import type { AcousticMaterial } from '@/types/materials';
 import type { Viewer } from '@speckle/viewer';
@@ -54,22 +58,10 @@ export function SimulationSetupContent({
   const initialScatteringAssignments = (config as any).speckleScatteringAssignments as Record<string, number> | undefined;
   const initialIsolatedObjectIds = (config as any).speckleIsolatedObjectIds as string[] | null | undefined;
 
-  // DEBUG: log what we receive on mount and when config changes
-  useEffect(() => {
-    console.log(`[SimulationSetupContent #${index}] MOUNT — config.state=${config.state} isReadOnly=${isReadOnly}`);
-    console.log(`[SimulationSetupContent #${index}] initialAssignments:`, initialAssignments ? Object.keys(initialAssignments).length + ' entries' : 'undefined', initialAssignments);
-    console.log(`[SimulationSetupContent #${index}] initialLayerName:`, initialLayerName);
-    console.log(`[SimulationSetupContent #${index}] worldTree:`, worldTree ? 'present' : 'null/undefined');
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    console.log(`[SimulationSetupContent #${index}] worldTree changed:`, worldTree ? 'present' : 'null/undefined');
-  }, [index, worldTree]);
-
   return (
-    <div className="space-y-4">
-      {/* Surface Materials Selection */}
+    <div className="space-y-1">
+      {/* Headless — activates the acoustic material store so the Object Explorer
+          shows the material/scattering assignment columns for this simulation */}
       <SpeckleSurfaceMaterialsSection
         viewerRef={viewerRef}
         worldTree={worldTree}
@@ -85,10 +77,8 @@ export function SimulationSetupContent({
         onIsolationChange={onIsolationChange}
       />
 
-      {/* Material assignment moved to the Object Explorer (two extra columns) */}
-      <p className="text-xs" style={{ color: 'var(--color-secondary-hover)', fontStyle: 'italic' }}>
-        Assign materials{config.type === 'pyroomacoustics' ? ' and scattering' : ''} per object in the Object Explorer.
-      </p>
+      {/* Source / listener / material summary */}
+      <SimulationSummaryBar />
 
       {/* Choras Settings */}
       {config.type === 'choras' && (

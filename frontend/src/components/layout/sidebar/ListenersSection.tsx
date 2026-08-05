@@ -95,6 +95,20 @@ export function ListenersSection({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collapseAllTrigger]);
 
+  // Expand/collapse controls listener visibility: only the expanded grid's
+  // listener dots are shown in the 3D scene (drives showListeners, which the
+  // scene/filter logic in page.tsx reads). Collapsed grids are hidden.
+  useEffect(() => {
+    const { gridListeners: grids } = useGridListenersStore.getState();
+    for (const g of grids) {
+      const shouldShow = g.id === expandedGridListenerId;
+      if (g.showListeners !== shouldShow) {
+        updateGridListener(g.id, { showListeners: shouldShow });
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandedGridListenerId, gridListeners.length]);
+
   // Unified items array for CardSection
   const items = useMemo<ListenerItemConfig[]>(() => [
     ...receivers.map(r => ({ ...r, type: 'listener' as const })),
@@ -289,20 +303,22 @@ export function ListenersSection({
   ]);
 
   return (
-    <CardSection
-      items={items}
-      availableTypes={AVAILABLE_TYPES}
-      emptyMessage="No listeners yet. Click + to add one."
-      statusLabel="listener"
-      addButtonTitle="Add listener"
-      onAddItem={handleAddItem}
-      renderCard={renderCard}
-      color="warning"
-      expandedIndex={expandedIndex}
-      header={header}
-      onExpandedIndexChange={handleExpandedIndexChange}
-      onReorder={handleReorder}
-      onDuplicate={handleDuplicate}
-    />
+    <div id="listeners-section">
+      <CardSection
+        items={items}
+        availableTypes={AVAILABLE_TYPES}
+        emptyMessage="No listeners yet. Click + to add one."
+        statusLabel="listener"
+        addButtonTitle="Add listener"
+        onAddItem={handleAddItem}
+        renderCard={renderCard}
+        color="warning"
+        expandedIndex={expandedIndex}
+        header={header}
+        onExpandedIndexChange={handleExpandedIndexChange}
+        onReorder={handleReorder}
+        onDuplicate={handleDuplicate}
+      />
+    </div>
   );
 }

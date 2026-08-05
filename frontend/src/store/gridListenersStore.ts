@@ -95,6 +95,9 @@ export interface GridListenersStoreState {
   ) => void;
   toggleGridListenerHiddenForSimulation: (id: string) => void;
 
+  /** Restore grid listener configurations from a saved soundscape (bulk replace). */
+  restoreGridListeners: (savedGridListeners: GridListenerData[]) => void;
+
   /** All active (non-hidden) grid listener points for simulation */
   getEffectiveGridPoints: () => [number, number, number][];
 }
@@ -215,6 +218,13 @@ export const useGridListenersStore = create<GridListenersStoreState>()(
             }),
             false,
             'gridListeners/toggleHidden',
+          ),
+
+        restoreGridListeners: (savedGridListeners) =>
+          set(
+            { gridListeners: savedGridListeners },
+            false,
+            'gridListeners/restore',
           ),
 
         getEffectiveGridPoints: () => {

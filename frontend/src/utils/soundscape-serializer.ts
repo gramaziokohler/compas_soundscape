@@ -13,12 +13,14 @@ import type {
   SoundscapeGlobalSettings,
   SoundscapeData,
   SoundscapeReceiver,
+  SoundscapeGridListener,
   SoundscapeSimulationConfig,
   SoundscapeIRMetadata,
   SerializedAnalysisConfig,
   AnalysisState,
   SoundscapeIterationLink,
 } from '@/types/soundscape';
+import type { GridListenerData } from '@/types/receiver';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping, ResonanceAudioConfig } from '@/types/audio';
 import type { AnalysisConfig, AnalysisResult, TextPromptResult } from '@/types/analysis';
 import { API_BASE_URL } from '@/utils/constants';
@@ -81,6 +83,8 @@ export function buildSoundscapeSavePayload(
   uploadedFilenames?: Record<string, string>,
   /** Receiver positions to persist */
   receivers?: ReceiverData[],
+  /** Grid listener configurations to persist */
+  gridListeners?: GridListenerData[],
   /** Currently selected receiver ID */
   selectedReceiverId?: string | null,
   /** Simulation configurations to persist */
@@ -233,6 +237,22 @@ export function buildSoundscapeSavePayload(
     orientation_saved: r.orientationSaved,
   }));
 
+  // Serialize grid listeners (convert tuple points to plain arrays)
+  const serializedGridListeners: SoundscapeGridListener[] = (gridListeners || []).map((g) => ({
+    id: g.id,
+    name: g.name,
+    xSpacing: g.xSpacing,
+    ySpacing: g.ySpacing,
+    zOffset: g.zOffset,
+    showListeners: g.showListeners,
+    hiddenForSimulation: g.hiddenForSimulation,
+    selectedObjectIds: [...g.selectedObjectIds],
+    boundingBox: g.boundingBox
+      ? { min: [...g.boundingBox.min], max: [...g.boundingBox.max] }
+      : null,
+    points: g.points.map((p) => [...p]),
+  }));
+
   // Serialize simulation configs and collect IR URLs
   const irUrls: string[] = [];
   const serializedSimConfigs: SoundscapeSimulationConfig[] = [];
@@ -322,6 +342,16 @@ export function buildSoundscapeSavePayload(
       sources?: Record<string, [number, number, number]>;
       receivers?: Record<string, [number, number, number]>;
       soundToPosKey?: Record<string, string>;
+      gridListeners?: Array<{
+        id: string;
+        name: string;
+        xSpacing: number;
+        ySpacing: number;
+        zOffset: number;
+        selectedObjectIds: string[];
+        boundingBox: { min: [number, number, number]; max: [number, number, number] } | null;
+        points: [number, number, number][];
+      }>;
     } | undefined);
 
     serializedSimConfigs.push({
@@ -358,6 +388,20 @@ export function buildSoundscapeSavePayload(
             sound_to_pos_key: simPositions.soundToPosKey
               ? { ...simPositions.soundToPosKey }
               : undefined,
+            grid_listeners: simPositions.gridListeners
+              ? simPositions.gridListeners.map((g) => ({
+                  id: g.id,
+                  name: g.name,
+                  xSpacing: g.xSpacing,
+                  ySpacing: g.ySpacing,
+                  zOffset: g.zOffset,
+                  selectedObjectIds: [...g.selectedObjectIds],
+                  boundingBox: g.boundingBox
+                    ? { min: [...g.boundingBox.min], max: [...g.boundingBox.max] }
+                    : null,
+                  points: g.points.map((p) => [...p]),
+                }))
+              : undefined,
           }
         : undefined,
       ir_gain_db: pyConfig.irGainDb ?? undefined,
@@ -376,6 +420,7 @@ export function buildSoundscapeSavePayload(
     sound_configs: serializedConfigs,
     sound_events: serializedEvents,
     receivers: serializedReceivers.length > 0 ? serializedReceivers : undefined,
+    grid_listeners: serializedGridListeners.length > 0 ? serializedGridListeners : undefined,
     selected_receiver_id: selectedReceiverId ?? undefined,
     simulation_configs: serializedSimConfigs.length > 0 ? serializedSimConfigs : undefined,
     active_simulation_index: activeSimulationIndex ?? undefined,
@@ -430,6 +475,7 @@ export function restoreSoundscapeState(
     audioModel: string;
   };
   receivers: ReceiverData[];
+  gridListeners: GridListenerData[];
   selectedReceiverId: string | null;
   simulationConfigs: SimulationConfig[];
   activeSimulationIndex: number | null;
@@ -604,6 +650,27 @@ export function restoreSoundscapeState(
 
   const selectedReceiverId = loadedData.selected_receiver_id ?? null;
 
+  // Restore grid listeners (snake_case from save → camelCase runtime type)
+  const restoredGridListeners: GridListenerData[] = (loadedData.grid_listeners || []).map(
+    (g) => ({
+      id: g.id,
+      name: g.name,
+      xSpacing: g.xSpacing,
+      ySpacing: g.ySpacing,
+      zOffset: g.zOffset,
+      showListeners: g.showListeners ?? true,
+      hiddenForSimulation: g.hiddenForSimulation ?? false,
+      selectedObjectIds: [...g.selectedObjectIds],
+      boundingBox: g.boundingBox
+        ? {
+            min: g.boundingBox.min as [number, number, number],
+            max: g.boundingBox.max as [number, number, number],
+          }
+        : null,
+      points: g.points.map((p) => p as [number, number, number]),
+    }),
+  );
+
   // Normalize IR base URL
   const irBase = irBaseUrl?.replace(/\/$/, '') || '';
 
@@ -653,6 +720,16 @@ export function restoreSoundscapeState(
       sources?: Record<string, number[]>;
       receivers?: Record<string, number[]>;
       sound_to_pos_key?: Record<string, string>;
+      grid_listeners?: Array<{
+        id: string;
+        name: string;
+        xSpacing: number;
+        ySpacing: number;
+        zOffset: number;
+        selectedObjectIds: string[];
+        boundingBox: { min: number[]; max: number[] } | null;
+        points: number[][];
+      }>;
     } | undefined;
 
     // Build the runtime SimulationConfig
@@ -703,6 +780,23 @@ export function restoreSoundscapeState(
             soundToPosKey: savedSimPositions.sound_to_pos_key
               ? { ...savedSimPositions.sound_to_pos_key }
               : undefined,
+            gridListeners: savedSimPositions.grid_listeners
+              ? savedSimPositions.grid_listeners.map((g) => ({
+                  id: g.id,
+                  name: g.name,
+                  xSpacing: g.xSpacing,
+                  ySpacing: g.ySpacing,
+                  zOffset: g.zOffset,
+                  selectedObjectIds: [...g.selectedObjectIds],
+                  boundingBox: g.boundingBox
+                    ? {
+                        min: g.boundingBox.min as [number, number, number],
+                        max: g.boundingBox.max as [number, number, number],
+                      }
+                    : null,
+                  points: g.points.map((p) => p as [number, number, number]),
+                }))
+              : undefined,
           }
         : undefined,
       // Speckle material assignments (attached as any for pass-through)
@@ -744,6 +838,7 @@ export function restoreSoundscapeState(
     iterationLinks: loadedData.iteration_links ?? {},
     globalSettings,
     receivers: restoredReceivers,
+    gridListeners: restoredGridListeners,
     selectedReceiverId,
     simulationConfigs: restoredSimConfigs,
     activeSimulationIndex,

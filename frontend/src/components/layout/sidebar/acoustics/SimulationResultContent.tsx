@@ -126,6 +126,8 @@ export function SimulationResultContent({
   const [lowEnergyIRIds, setLowEnergyIRIds] = useState<Set<string>>(new Set());
   const handleLowEnergyIdsChange = useCallback((ids: Set<string>) => setLowEnergyIRIds(ids), []);
 
+  const gridListeners = useGridListenersStore((s) => s.gridListeners);
+
   // ── Position mismatch detection ─────────────────────────────────────────
   const mismatchInfo = useMemo<{
     names: string[];
@@ -138,6 +140,11 @@ export function SimulationResultContent({
       sources: Record<string, [number, number, number]>;
       receivers: Record<string, [number, number, number]>;
       soundToPosKey?: Record<string, string>;
+      gridListeners?: Array<{
+        id: string;
+        name: string;
+        points: [number, number, number][];
+      }>;
     } | undefined;
     if (!simPositions) return empty;
 
@@ -163,8 +170,39 @@ export function SimulationResultContent({
       }
     }
 
+    // Grid listeners: a grid is mismatched when ANY of its current points differ
+    // from the sim-time snapshot. Report one per-grid summary with a COUNT of the
+    // listeners out of position (never a single generic "grid N" or per-point noise).
+    const gridPointIds = new Set<string>();
+    if (simPositions.gridListeners && gridListeners.length > 0) {
+      const gridLookup = new Map(gridListeners.map((g) => [g.id, g]));
+      for (const snap of simPositions.gridListeners) {
+        const grid = gridLookup.get(snap.id);
+        if (!grid) continue;
+        snap.points.forEach((_, i) => gridPointIds.add(`${snap.id}-${i}`));
+        let count = 0;
+        const n = Math.max(snap.points.length, grid.points.length);
+        for (let i = 0; i < n; i++) {
+          const simP = snap.points[i];
+          const curP = grid.points[i];
+          if (!simP || !curP) {
+            if (simP || curP) count++;
+            continue;
+          }
+          const dist = Math.hypot(simP[0] - curP[0], simP[1] - curP[1], simP[2] - curP[2]);
+          if (dist > SIMULATION_POSITION_THRESHOLD) count++;
+        }
+        if (count > 0) {
+          names.push(`${snap.name || snap.id} — ${count} listener${count === 1 ? '' : 's'} out of position`);
+          receiverIds.push(snap.id);
+        }
+      }
+    }
+
     if (currentReceiverPositions) {
       for (const [id, simPos] of Object.entries(simPositions.receivers)) {
+        // Grid point receivers are covered by the per-grid summary above
+        if (gridPointIds.has(id)) continue;
         const cur = currentReceiverPositions[id];
         if (!cur) continue;
         const dist = Math.hypot(simPos[0] - cur[0], simPos[1] - cur[1], simPos[2] - cur[2]);
@@ -176,13 +214,12 @@ export function SimulationResultContent({
     }
 
     return { names, sourceIds, receiverIds };
-  }, [isExpanded, simulationConfig, currentSoundPositions, currentSoundNames, currentReceiverPositions, receiverDisplayNames]);
+  }, [isExpanded, simulationConfig, currentSoundPositions, currentSoundNames, currentReceiverPositions, receiverDisplayNames, gridListeners]);
 
   const mismatchedNames = mismatchInfo.names;
 
   // ── Gradient map state ──────────────────────────────────────────────────
   const setActiveGradientMap = useUIStore((s) => s.setActiveGradientMap);
-  const gridListeners = useGridListenersStore((s) => s.gridListeners);
 
   const hasGridReceivers = useMemo(() => detectGridReceivers(sourceReceiverIRMapping), [sourceReceiverIRMapping]);
 
@@ -293,7 +330,7 @@ export function SimulationResultContent({
             {onResetPositions && (
               <button
                 onClick={() => onResetPositions(mismatchInfo.sourceIds, mismatchInfo.receiverIds)}
-                className="self-start px-2 py-0.5 rounded border border-error/40 bg-error/10 hover:bg-error/20 text-error hover:text-error-hover transition-colors"
+                className="self-start px-2 py-0.5 rounded border border-error bg-white/80 hover:bg-white/95 text-error hover:text-error-hover transition-colors"
               >
                 Reset positions
               </button>

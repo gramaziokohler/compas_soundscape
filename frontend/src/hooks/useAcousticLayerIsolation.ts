@@ -21,7 +21,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { FilteringExtension } from '@speckle/viewer';
 import type React from 'react';
 import { useSpeckleStore, useAcousticLayerStore, useUIStore } from '@/store';
-import { getRootNodesForModel, getGeometryLeafIdsFromNode } from '@/hooks/useSpeckleTree';
+import { getRootNodesForModel, getGeometryLeafIdsFromNode, countTopLevelLayers, findSingleTopLevelLayer } from '@/hooks/useSpeckleTree';
 import { setPostIsolateHideIds, setAcousticLayerAllIds, getAcousticExplorerHiddenIds, clearAcousticExplorerHiddenIds } from '@/store/speckleStore';
 
 function findNodeByName(nodes: any[], name: string): any | null {
@@ -95,6 +95,7 @@ export function useAcousticLayerIsolation(
   useEffect(() => {
     if (!worldTree) return;
     if (isAcousticMode) return;
+    if (isWholeModel) return;
     if (!acousticLayerName) return;
     // Only apply the initial hide once (hiddenGeometryIdsRef is empty until
     // removeIsolation or this effect sets it).
@@ -130,7 +131,7 @@ export function useAcousticLayerIsolation(
       setPostIsolateHideIds(geometryIds);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAcousticMode, worldTree, acousticLayerName]);
+  }, [isAcousticMode, worldTree, acousticLayerName, isWholeModel]);
 
   // ── 2. Auto-detect / verify persisted layer ──
   useEffect(() => {
@@ -161,8 +162,28 @@ export function useAcousticLayerIsolation(
       if (geometryIds.length > 0) {
         const name = acousticsNode.raw?.name || 'Acoustics';
         const layerId = acousticsNode.raw?.id || geometryIds[0];
-        console.log('[useAcousticLayerIsolation] Auto-detected Acoustics layer:', layerId, name);
-        useAcousticLayerStore.getState().setAcousticLayer(layerId, name);
+        const onlyLayer = countTopLevelLayers(worldTree) <= 1;
+        console.log(
+          '[useAcousticLayerIsolation] Auto-detected Acoustics layer:',
+          layerId,
+          name,
+          onlyLayer ? '(only layer — whole model)' : '',
+        );
+        useAcousticLayerStore.getState().setAcousticLayer(layerId, name, onlyLayer);
+      }
+    } else {
+      // No layer named "Acoustics" — if the model has exactly one top-level layer
+      // it IS the whole acoustic model. Auto-define it so acoustic mode does not
+      // prompt the user to pick a layer.
+      const singleLayer = findSingleTopLevelLayer(worldTree);
+      if (singleLayer) {
+        const name = singleLayer.raw?.name || singleLayer.model?.name;
+        const layerId = singleLayer.raw?.id || singleLayer.model?.id;
+        const geometryIds = getGeometryLeafIdsFromNode(singleLayer);
+        if (name && layerId && geometryIds.length > 0) {
+          console.log('[useAcousticLayerIsolation] Single-layer model — auto-defined acoustic layer as whole model:', name);
+          useAcousticLayerStore.getState().setAcousticLayer(layerId, name, true);
+        }
       }
     }
     hasDetectedRef.current = true;
@@ -294,6 +315,19 @@ export function useAcousticLayerIsolation(
       const rootNodes = getRootNodesForModel(liveTree, modelFileName);
       if (!rootNodes || rootNodes.length === 0) return false;
       if (useAcousticLayerStore.getState().selectedAcousticLayerId) return false;
+
+      // Whole-model (single-layer): auto-define the layer instead of prompting.
+      const singleLayer = findSingleTopLevelLayer(liveTree);
+      if (singleLayer) {
+        const name = singleLayer.raw?.name || singleLayer.model?.name;
+        const layerId = singleLayer.raw?.id || singleLayer.model?.id;
+        const geometryIds = getGeometryLeafIdsFromNode(singleLayer);
+        if (name && layerId && geometryIds.length > 0) {
+          console.log('[useAcousticLayerIsolation] Acoustic mode + single-layer model — auto-defined whole model:', name);
+          useAcousticLayerStore.getState().setAcousticLayer(layerId, name, true);
+          return true;
+        }
+      }
 
       console.log('[useAcousticLayerIsolation] No acoustic layer — entering selection mode');
       useUIStore.getState().setAcousticLayerSelectionMode(true);
