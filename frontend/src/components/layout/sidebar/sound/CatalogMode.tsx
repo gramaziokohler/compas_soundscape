@@ -106,7 +106,7 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
             <Notice type="error" message={searchError} />
           )}
           {!isSearchingAll && searchResults !== null && searchResults.length > 0 && (
-            <div className="rounded-lg max-h-50 overflow-y-auto">
+            <div className="rounded-lg max-h-[min(200px,40dvh)] overflow-y-auto">
               <p className="text-xs font-medium text-secondary-hover px-1 mb-1">
                 {searchResults.length} result{searchResults.length !== 1 ? "s" : ""}
               </p>
@@ -179,7 +179,7 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
 
           {/* Category list */}
           {!selectedCategory && !isLoading && categories.length > 0 && (
-            <div className="rounded-lg max-h-50 overflow-y-auto">
+            <div className="rounded-lg max-h-[min(200px,40dvh)] overflow-y-auto">
               <div className="space-y-0.5">
                 {categories.map((cat) => (
                   <button
@@ -201,7 +201,7 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
 
           {/* Sounds list */}
           {selectedCategory && !isLoading && sounds.length > 0 && (
-            <div className="rounded-lg max-h-50 overflow-y-auto">
+            <div className="rounded-lg max-h-[min(200px,40dvh)] overflow-y-auto">
               <p className="text-xs font-medium text-secondary-hover px-1 mb-1">
                 {sounds.length} sounds
               </p>

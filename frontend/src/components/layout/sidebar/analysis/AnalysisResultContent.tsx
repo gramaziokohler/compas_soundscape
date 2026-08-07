@@ -36,7 +36,7 @@ export function AnalysisResultContent({
 
       {/* Prompt list */}
       <div
-        className="max-h-64 overflow-y-auto space-y-1"
+        className="max-h-[min(256px,50dvh)] overflow-y-auto space-y-1"
       >
         {analysisResult.prompts.map((prompt) => (
           <label

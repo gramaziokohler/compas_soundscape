@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import type { CardProps, CardBaseConfig } from '@/types/card';
 import { CARD_TYPE_LABELS } from '@/types/card';
 import { useNameEditing } from '@/utils/useNameEditing';
-import { CircularFAB } from '@/components/ui/CircularFAB';
+import { GenerateButton, type GenerateStatus } from '@/components/ui/GenerateButton';
 import { VariantsBar } from '@/components/ui/VariantsBar';
 import { Notice } from '@/components/ui/Notice';
 import { SettingsSummary, getSettingsTitle, getSettingsRows } from '@/components/ui/SettingsSummary';
@@ -104,6 +104,8 @@ export function Card<TConfig extends CardBaseConfig>({
   actionButtonDisabled = false,
   actionButtonColor,
   actionButtonDisabledReason,
+  doneActionLabel,
+  onDoneAction,
   onToggleExpand,
   onUpdateConfig,
   onRemove,
@@ -152,10 +154,10 @@ export function Card<TConfig extends CardBaseConfig>({
   const cardClassName = [
     'relative rounded-lg border-0 transition-all duration-200',
     // isExpanded ? `p-2 bg-${color}-light border-0` : hasResult ? `p-1.5 bg-${color}-light` : 'p-1.5 bg-secondary-lighter',
-    !error && isExpanded && hasResult ? `p-2 bg-primary-light` : '',
-    isExpanded && !hasResult ? 'p-2 border-0' : '',
-    !error && !isExpanded && hasResult ? `p-2 bg-primary-light` : '',
-    !error && !isExpanded && !hasResult ? `p-2 bg-secondary-light` : '',
+    !error && isExpanded && hasResult ? `pt-2 px-2 pb-1 bg-primary-light` : '',
+    isExpanded && !hasResult ? 'pt-2 px-2 pb-1 border-0' : '',
+    !error && !isExpanded && hasResult ? `pt-2 px-2 pb-1 bg-primary-light` : '',
+    !error && !isExpanded && !hasResult ? `pt-2 px-2 pb-1 bg-secondary-light` : '',
 
     error ? 'border-error bg-error-light' : '',
   ].filter(Boolean).join(' ');
@@ -253,6 +255,14 @@ export function Card<TConfig extends CardBaseConfig>({
   // owns the data + callbacks.
   const showVariantsBar = !!variants && (hasResult ? showVariantsPostGen : showVariantsPreGen);
 
+  // Unified run/stop/progress state for the bottom bar — derived entirely from
+  // existing store-driven props (no local state / AbortController).
+  const generateStatus: GenerateStatus = isRunning
+    ? 'generating'
+    : hasResult
+      ? 'done'
+      : 'idle';
+
   return (
     <div
       className={cardClassName}
@@ -264,16 +274,6 @@ export function Card<TConfig extends CardBaseConfig>({
         ...(dimmed ? { filter: 'brightness(0.55)' } : {}),
       }}
     >
-      {/* CircularFAB — floating action button shown in expanded mode before generation starts */}
-      {isExpanded && onRun && !hasResult && !isRunning && !error && (
-        <CircularFAB
-          label={actionButtonLabel}
-          onClick={() => onRun()}
-          disabled={actionButtonDisabled}
-          disabledReason={actionButtonDisabledReason}
-        />
-      )}
-
       {/* Header - Click anywhere (except buttons) to expand/collapse.
            Double-click to zoom — stops propagation so the outer card's onDoubleClick doesn't fire twice. */}
       <div
@@ -317,21 +317,6 @@ export function Card<TConfig extends CardBaseConfig>({
                   {collapsedInfo}
                 </div>
               )}
-              {isRunning && !error && (
-                <div className="relative mt-0.5 bg-black rounded-lg overflow-hidden text-[10px] font-medium leading-tight">
-                  <div
-                    className="absolute inset-y-0 left-0 transition-all duration-300"
-                    style={{
-                      width: `${Math.max(0, Math.min(progress, 100))}%`,
-                      backgroundColor: 'var(--card-color)',
-                    }}
-                  />
-                  <div className="relative z-10 flex items-center gap-2 px-2 py-2 text-foreground">
-                    <span>{status || 'Calculating...'}</span>
-                    <span className="opacity-80">{progress}%</span>
-                  </div>
-                </div>
-              )}
               {isExpanded && version && (
                 <div className="text-[9px] mt-0.5 text-secondary-hover font-mono opacity-60 leading-tight line-clamp-2">
                   {Array.isArray(version)
@@ -369,7 +354,7 @@ export function Card<TConfig extends CardBaseConfig>({
 
       {/* Expanded content */}
       {isExpanded && (
-        <div className="mt-3 space-y-3 max-h-[480px] overflow-y-auto pr-0.5 relative z-[1]">
+        <div className="mt-3 space-y-3 max-h-[min(480px,55dvh)] overflow-y-auto pr-0.5 relative z-[1]">
 
           {renderContent()}
 
@@ -388,24 +373,32 @@ export function Card<TConfig extends CardBaseConfig>({
             />
           )}
 
-          {/* Stop button when running in expanded view */}
-          {isRunning && onCancel && !hasResult && (
-            <div className="flex gap-2 items-center">
-              <button
-                onClick={onCancel}
-                className="w-8 h-8 rounded-lg text-white font-bold transition-colors flex items-center justify-center bg-error hover:bg-error-hover"
-                title="Stop"
-                aria-label="Stop"
-              >
-                <span className="text-lg leading-none">■</span>
-              </button>
-            </div>
-          )}
-
           {/* Read-only recap of the pre-generation settings for generated cards */}
           {showSettingsSummary && hasResult && (
             <SettingsSummary title={getSettingsTitle(config)} rows={getSettingsRows(config)} />
           )}
+        </div>
+      )}
+
+      {/* Bottom bar — unified run / stop / progress UI. Always visible while
+          generating (both expanded and reduced states); idle/done actions only
+          show when the card is expanded (nothing actionable in reduced state). */}
+      {(generateStatus === 'generating' ||
+        (isExpanded && generateStatus === 'idle' && !!onRun) ||
+        (isExpanded && generateStatus === 'done' && !!doneActionLabel && !!onDoneAction)) && (
+        <div className="mt-1">
+          <GenerateButton
+            status={generateStatus}
+            progress={progress}
+            statusText={status}
+            label={actionButtonLabel}
+            disabled={actionButtonDisabled}
+            disabledReason={actionButtonDisabledReason}
+            onGenerate={onRun}
+            onStop={onCancel}
+            doneLabel={doneActionLabel}
+            onDoneAction={onDoneAction}
+          />
         </div>
       )}
 

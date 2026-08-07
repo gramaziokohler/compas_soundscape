@@ -1,0 +1,119 @@
+{
+  "name": "PyroomacousticsSimulate",
+  "nickname": "PRASim",
+  "description": "Run a pyroomacoustics room simulation on the COMPAS backend from direct geometry (no Speckle). Serializes meshes/Breps, materials, sources and receivers into the geometry JSON payload, POSTs to the backend, polls until done, and returns IR download URLs plus per-pair acoustic metrics (RT60/EDT/C50/DRR). Faces whose mesh has no material are skipped.",
+  "category": "COMPAS",
+  "subcategory": "Acoustics",
+  "exposure": 2,
+  "ghpython": {
+    "iconDisplay": 0,
+    "marshalGuids": true,
+    "inputParameters": [
+      {
+        "name": "geometry",
+        "nickname": "geometry",
+        "description": "Room geometry: Mesh or Brep items (flattened). Items without a matching material are skipped.",
+        "typeHintID": "geometrybase",
+        "scriptParamAccess": "list",
+        "flatten": true,
+        "optional": false
+      },
+      {
+        "name": "materials",
+        "nickname": "materials",
+        "description": "Per-mesh material map, aligned with the geometry items. Either a single dict {absorption: float, scattering: float} applied to every mesh, or a list of dicts by index. Meshes with no material entry are skipped.",
+        "typeHintID": "none",
+        "scriptParamAccess": "list",
+        "flatten": true,
+        "optional": true
+      },
+      {
+        "name": "sources",
+        "nickname": "sources",
+        "description": "Sound source positions (Point3d list).",
+        "typeHintID": "point",
+        "scriptParamAccess": "list",
+        "flatten": true,
+        "optional": false
+      },
+      {
+        "name": "receivers",
+        "nickname": "receivers",
+        "description": "Receiver positions (Point3d list).",
+        "typeHintID": "point",
+        "scriptParamAccess": "list",
+        "flatten": true,
+        "optional": false
+      },
+      {
+        "name": "units",
+        "nickname": "units",
+        "description": "Units of the geometry and source/receiver coordinates. One of 'm', 'mm', 'cm', 'ft'. Default 'm'.",
+        "typeHintID": "str",
+        "scriptParamAccess": "item",
+        "optional": true
+      },
+      {
+        "name": "settings",
+        "nickname": "settings",
+        "description": "Optional dict overriding defaults: {max_order, ray_tracing, air_absorption, n_rays, simulation_mode ('mono'|'foa'), sound_speed, rir_duration}. Defaults: {max_order: 15, ray_tracing: False, air_absorption: False, n_rays: 10000, simulation_mode: 'mono', sound_speed: 343.0, rir_duration: 1.0}.",
+        "typeHintID": "none",
+        "scriptParamAccess": "item",
+        "optional": true
+      },
+      {
+        "name": "base_url",
+        "nickname": "base_url",
+        "description": "Backend base URL. Default 'http://localhost:8000'.",
+        "typeHintID": "str",
+        "scriptParamAccess": "item",
+        "optional": true
+      },
+      {
+        "name": "run",
+        "nickname": "run",
+        "description": "Boolean trigger. While True the component submits the simulation in the background and streams progress. Set to False to cancel/release, then True again to re-run with the current inputs.",
+        "typeHintID": "bool",
+        "scriptParamAccess": "item",
+        "optional": true
+      }
+    ],
+    "outputParameters": [
+      {
+        "name": "ir_paths",
+        "nickname": "ir_paths",
+        "description": "Download URLs for the generated room impulse response WAVs (one per source-receiver pair).",
+        "typeHintID": "str",
+        "scriptParamAccess": "list"
+      },
+      {
+        "name": "metrics",
+        "nickname": "metrics",
+        "description": "Per source-receiver pair result dicts (source_id, receiver_id, ir_file, acoustic_parameters: rt60/edt/c50/d50/drr/spl).",
+        "typeHintID": "none",
+        "scriptParamAccess": "list"
+      },
+      {
+        "name": "progress",
+        "nickname": "progress",
+        "description": "Last reported simulation progress (0-100).",
+        "typeHintID": "float",
+        "scriptParamAccess": "item"
+      },
+      {
+        "name": "status",
+        "nickname": "status",
+        "description": "Final status string ('Completed', error text, or timeout).",
+        "typeHintID": "str",
+        "scriptParamAccess": "item"
+      },
+      {
+        "name": "simulation_id",
+        "nickname": "simulation_id",
+        "description": "Backend simulation ID.",
+        "typeHintID": "str",
+        "scriptParamAccess": "item"
+      }
+    ]
+  }
+}

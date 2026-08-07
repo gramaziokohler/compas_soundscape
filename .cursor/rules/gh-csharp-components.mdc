@@ -1,0 +1,347 @@
+---
+description: Grasshopper C# (.gha) component development — GH 8 API deltas, csproj setup, on-canvas attributes panel, async + UI-thread rules, JSON/HTTP without System.Web.Extensions, build/deploy, headless harness
+globs: src/compas_acoustics_gh_components/**,**/*.csproj,**/build_gha.ps1
+---
+
+# Grasshopper C# (.gha) Component Rules
+
+Rules for building and debugging compiled Grasshopper components (`.gha` DLLs) that talk to the
+compas_soundscape backend. Hard-won from the `PyroomacousticsSimulate` component
+(`PRASim`, `src/compas_acoustics_gh_components/`). Every section below is a verified root cause or
+working pattern against **Rhino 8 / Grasshopper 8.17**, not speculation.
+
+## Component Layout
+
+```
+src/compas_acoustics_gh_components/
+  CompasAcoustics.csproj                     ← net48 SDK project (see below)
+  PyroomacousticsSimulateComponent.cs        ← GH_Component: IO, solve, async lifecycle
+  PyroomacousticsSimulateAttributes.cs       ← GH_ComponentAttributes: on-canvas settings panel
+  SimulationSettings.cs                      ← persisted settings (GH_IWriter/GH_IReader)
+  BackendClient.cs                           ← HttpClient wrapper for the backend API
+  SimpleJson.cs                              ← zero-dependency JSON (see "JSON" section)
+  MaterialCatalog.cs                         ← process-wide cached material list
+  build_gha.ps1                              ← build + install loop
+```
+
+- `ComponentGuid` is a **fixed GUID** in the component class — never regenerate it or saved
+  definitions break.
+- Category / SubCategory come from the `GH_Component` constructor
+  (`base(name, nickname, description, "COMPAS", "Acoustics")`).
+
+## csproj — The Minimum That Loads in Rhino 8
+
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <TargetFrameworkHighestPatchVersion>true</TargetFrameworkHighestPatchVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="RhinoCommon"><HintPath>C:\Program Files\Rhino 8\System\RhinoCommon.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Grasshopper"><HintPath>C:\Program Files\Rhino 8\Plug-ins\Grasshopper\Grasshopper.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="GH_IO"><HintPath>C:\Program Files\Rhino 8\Plug-ins\Grasshopper\GH_IO.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
+</Project>
+```
+
+- Target **net48** (builds and loads fine in Rhino 8). `Private=false` on the Rhino refs so their
+  DLLs are not copied next to the .gha.
+- **Do NOT reference `System.Web.Extensions`** — it is absent from the Rhino 8 CoreCLR runtime and
+  the component throws `Could not load file or assembly 'System.Web.Extensions, Version=4.0.0.0…'`
+  at runtime (verify: `AssemblyName.GetAssemblyName(dll).GetReferencedAssemblies()` must not list it).
+
+## GH 8 API Deltas (differences from GH 1.x tutorials)
+
+| GH 1.x | GH 8.17 |
+| ------ | ------- |
+| `OnMouseDown` override | `RespondToMouseDown(Move/Up)` returning `GH_ObjectResponse` (from `Grasshopper.GUI.Canvas`) |
+| `GH_ComponentAttributes.Render` public | `Render` is **`protected`** |
+| `GH_Component.Write/Read` return `void` | return **`bool`** |
+| `GH_IReader.GetBool(name, default)` | `reader.TryGetBoolean("key", ref field)` — `ref` semantics, no default-value overloads |
+| `e.Location` on mouse events | `GH_CanvasMouseEvent.CanvasLocation` |
+| `Grasshopper.Instances.RedrawObject(...)` | `Grasshopper.Instances.RedrawCanvas()` |
+| `GH_CanvasMouseEvent` in `Grasshopper` | `Grasshopper.GUI` |
+| `GH_ComponentAttributes` in `Grasshopper` | `Grasshopper.Kernel.Attributes` |
+| `GH_Font` type | `Grasshopper.Kernel.GH_FontServer` static properties (`Standard`, `StandardBold`, `Small`, `Console`, …) — `Grasshopper.GUI.Canvas.GH_Font` does **not** exist |
+
+Set custom attributes from `CreateAttributes()` by assigning the protected `m_attributes` field:
+
+```csharp
+public override void CreateAttributes()
+{
+    m_attributes = new PyroomacousticsSimulateAttributes(this);
+}
+```
+
+## Component Skeleton
+
+```csharp
+public class MyComponent : GH_Component
+{
+    public MyComponent()
+        : base("Display Name", "Nickname", "Description", "COMPAS", "Acoustics")
+    { }
+
+    public override Guid ComponentGuid { get { return new Guid("…FIXED…"); } }
+    protected override System.Drawing.Bitmap Icon { get { return null; } }
+    public override GH_Exposure Exposure { get { return GH_Exposure.primary; } }
+
+    protected override void RegisterInputParams(GH_InputParamManager p)
+    {
+        p.AddMeshParameter("Geometry", "G", "…", GH_ParamAccess.item);
+        p.AddPointParameter("Sources", "S", "…", GH_ParamAccess.list);
+        p.AddBooleanParameter("Run", "Run", "…", GH_ParamAccess.item);
+    }
+    protected override void RegisterOutputParams(GH_OutputParamManager p)
+    {
+        p.AddTextParameter("IR paths", "IR", "…", GH_ParamAccess.list);
+    }
+
+    protected override void SolveInstance(IGH_DataAccess DA)
+    {
+        Mesh mesh = null; List<Point3d> sources = new List<Point3d>(); bool run = false;
+        DA.GetData(0, ref mesh);
+        DA.GetDataList(1, sources);
+        DA.GetData(3, ref run);
+        // … validate, kick off async work …
+        DA.SetDataList(0, irPaths);
+        DA.SetData(2, simulationId);
+    }
+}
+```
+
+- `DA.GetDataList` for `GH_ParamAccess.list`; `DA.GetData(…, ref x)` for `item`.
+- Set `Message` in `SolveInstance` for the live status text under the component name
+  (e.g. `"Running… 45%"`).
+
+## Persistent Settings — GH_IWriter/GH_IReader
+
+Per-component config survives save/reopen because the component serializes it; there is **no**
+session-static namespace like GHPython:
+
+```csharp
+public override bool Write(GH_IO.Serialization.GH_IWriter writer)
+{
+    bool ok = base.Write(writer);
+    if (_settings != null) _settings.Write(writer);   // writer.SetBoolean/SetInt32/SetString/SetDouble
+    return ok;
+}
+public override bool Read(GH_IO.Serialization.GH_IReader reader)
+{
+    bool ok = base.Read(reader);
+    if (_settings == null) _settings = new SimulationSettings();
+    _settings.Read(reader);                            // reader.TryGet*(name, ref field)
+    _justLoaded = true;                                // see "load-time guard" below
+    return ok;
+}
+```
+
+- **`TryGet*` uses `ref`** (GH 8) — declare the field and pass `ref field`.
+- Guard auto-fire on file open: if `Read` set `_justLoaded`, the first `SolveInstance` copies the
+  Run input into `_prevRun` without starting, so a definition saved with `Run=True` does not
+  re-run the backend every time the file is opened. Set `_initialized = true` in
+  `AddedToDocument(GH_Document)`.
+
+## On-Canvas Panel — Custom Attributes
+
+The Karamba-style collapsible settings panel is drawn directly in
+`PyroomacousticsSimulateAttributes : GH_ComponentAttributes`. Non-negotiable rules:
+
+1. **Never widen `Bounds` after `base.Layout()`.** GH positions the input/output gizmos during
+   `base.Layout()`. If you then widen `Bounds.Width`, the gizmos are *drawn* at the new right edge
+   but their *draggable hit-areas* stay at the natural position → **wire dragging from the outputs
+   silently breaks** and the ports look detached. Extend `Bounds` DOWN for the panel, keep the
+   width untouched:
+
+   ```csharp
+   protected override void Layout()
+   {
+       base.Layout();
+       _panelRect = new RectangleF(Bounds.X, Bounds.Bottom, Bounds.Width, panelHeight);
+       Bounds = new RectangleF(Bounds.X, Bounds.Y, Bounds.Width, Bounds.Height + panelHeight);
+   }
+   ```
+
+   The panel width therefore equals the component's natural width (driven by the longest input /
+   output nickname). To change the width, shorten the nicknames, not the Bounds.
+
+2. **Text must be drawn with `Graphics.DrawString` (GDI+), never `TextRenderer.DrawText` (GDI).**
+   The GH canvas applies a zoom/pan transform; GDI ignores it, so GDI text renders off-view
+   (symptom: panel shows only backgrounds and slider fills, no labels). GDI+ respects the
+   transform. Use a `StringFormat` with `LineAlignment = StringAlignment.Center`,
+   `Trimming = StringTrimming.EllipsisCharacter`, `FormatFlags |= StringFormatFlags.NoWrap`.
+
+3. **Fonts come from `Grasshopper.Kernel.GH_FontServer`** (`Standard`, `StandardBold`, `Small`, …)
+   or a `new Font(GH_FontServer.Standard.FontFamily, sizePx, GraphicsUnit.Pixel)` for a tunable
+   size. Never `SystemFonts.DefaultFont` (too big).
+
+4. **Collapse must never make the panel disappear.** Always draw the header row; when collapsed
+   the panel is just the header. Toggling only changes `_panelRect` height.
+
+5. **Mouse input**: override `RespondToMouseDown/Move/Up`, return `GH_ObjectResponse.Capture`
+   while dragging a slider and `GH_ObjectResponse.Handled` for panel clicks; return
+   `base.RespondToMouseDown(sender, e)` for anything outside the panel so GH's own selection /
+   wire-dragging still works. Hit-test with `e.CanvasLocation`. During drag, redraw with
+   `Grasshopper.Instances.RedrawCanvas()` per move and `ExpireSolution(true)` on release.
+
+6. Keep a clearly-commented `UI TUNING` block (font size px, per-row heights, label-space px,
+   min control width, margins, colors) at the top of the attributes class.
+
+## Async — Background Work + UI-Thread Redraw
+
+Never block the solver thread on HTTP. Run the backend poll loop on a background thread and
+marshal redraws to the UI thread:
+
+```csharp
+ThreadPool.QueueUserWorkItem(delegate
+{
+    try
+    {
+        var id = BackendClient.PostSimulationAsync(payload);
+        id.Wait();
+        lock (this) { _simulationId = id.Result; _state = SimState.Running; }
+        ExpireUi();
+        while (true)
+        {
+            Thread.Sleep(1000);
+            var status = BackendClient.GetStatusAsync(_simulationId).Result;
+            lock (this) { /* copy progress/state */ }
+            ExpireUi();
+            if (done) break;
+        }
+    }
+    catch (Exception ex) { lock (this) { _state = SimState.Failed; _error = FlattenMessage(ex); } ExpireUi(); }
+});
+
+private void ExpireUi()
+{
+    try
+    {
+        Rhino.RhinoApp.InvokeOnUiThread(new Action(() =>
+        {
+            if (OnPingDocument() == null) return;   // component deleted mid-flight
+            ExpireSolution(true);
+        }));
+    }
+    catch { }
+}
+```
+
+- `ExpireSolution()` is **not thread-safe** — never call it (or any GH/Rhino UI API) from the
+  worker thread. Always via `RhinoApp.InvokeOnUiThread`.
+- Wrap the worker body in try/catch and set a failed state + error string; surface the error in
+  `SolveInstance` via `AddRuntimeMessage(GH_RuntimeMessageLevel.Error, …)`.
+- Flatten `AggregateException` (HttpClient `.Result`/`.Wait()` wraps them) before reading
+  `.Message`.
+
+## JSON — No System.Web.Extensions in the Rhino 8 Runtime
+
+`JavaScriptSerializer` and `System.Text.Json` are **unavailable** (one is not present, the other
+not on net48). The plugin ships a ~150-line mscorlib-only serializer/parser:
+`src/compas_acoustics_gh_components/SimpleJson.cs`. It handles nested
+`Dictionary<string,object>` / `List<object>` graphs (what `BuildPayload` produces), string
+escaping, and parsing numbers as `long` (integral) or `double`. Serialize the payload with
+`SimpleJson.Serialize(payload)`; parse responses with `SimpleJson.Parse(body)` and cast to
+`IDictionary<string, object>` / `System.Collections.IList` (not `object[]`).
+
+## HTTP — HttpClient
+
+`BackendClient` is a static `HttpClient` wrapper. Key points:
+
+- Base URL `http://localhost:8000`, overridable via `COMPAS_BACKEND_URL` env var.
+- Return `Task<…>` and `.ContinueWith` for the async pipeline; the caller `.Result`s inside the
+  worker thread.
+- Throw a custom `BackendException("HTTP " + status + ": " + detail)` on non-2xx, parsing FastAPI's
+  `{"detail": …}` body.
+- Parse arrays defensively (`as IList`, null-guarded) — the backend shape is
+  `{results: [{source_id, receiver_id, acoustic_parameters:{rt60, edt, c50, d50, drr, spl}}]}`.
+- `Task.Run` a one-time `EnsureLoaded()` for the material catalog (guarded by a `bool` + `lock`) so
+  the panel's material menu is populated asynchronously without blocking component instantiation.
+
+## Build, Install & Reload
+
+`build_gha.ps1` builds Release and copies `bin\Release\net48\CompasAcoustics.dll` to
+`%APPDATA%\Grasshopper\Libraries\CompasAcoustics.gha` (GH 8 loads a bare renamed DLL, no zip
+manifest), then removes a stale `.dll` so GH doesn't double-load.
+
+```powershell
+# 1. CLOSE Rhino first — it locks the installed .gha (error: "file is being used by another process")
+powershell -File src\compas_acoustics_gh_components\build_gha.ps1
+# 2. Restart Grasshopper → COMPAS > Acoustics
+```
+
+Rebuild after EVERY code change — the .gha embeds a snapshot; forget this and you test a stale
+build.
+
+## Headless Testing Without Rhino
+
+A net48 console harness (`%TEMP%\opencode\ghharness\`) compiles the backend-facing `.cs` files
+directly and exercises them against the **live backend**, no Rhino needed:
+
+```xml
+<Compile Include="C:\…\compas_acoustics_gh_components\BackendClient.cs" />
+<Compile Include="C:\…\compas_acoustics_gh_components\SimpleJson.cs" />
+```
+
+It asserts the materials catalog (92 entries, `rough_concrete` present), builds a box-room payload
+exactly as the component does, POSTs, polls `Queued → Running → Completed`, and formats metrics.
+Run it to validate any backend/protocol/serializer change before round-tripping through Grasshopper.
+Verify the built DLL's references with
+`[System.Reflection.AssemblyName]::GetAssemblyName(path).GetReferencedAssemblies()` — it must NOT
+list `System.Web.Extensions`.
+
+## Debug Logging — Your Only Window Inside Grasshopper
+
+You cannot see `Console.WriteLine` in a running definition. Write to a temp log:
+
+```csharp
+var DEBUG_LOG = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "compas_pra_debug.log");
+File.AppendAllText(DEBUG_LOG, $"[dbg:pra] {DateTime.Now:HH:mm:ss} {message}\n");
+```
+
+Log every state transition: `POST -> simulation_id=`, `progress=`, `completed`, `failed`, and the
+worker catch block. This is the ground truth that distinguishes "component never ran" from
+"backend error".
+
+## Backend Contract (pyroomacoustics)
+
+- `POST /api/pyroomacoustics/run-simulation-geometry` → `{simulation_id}` immediately.
+  Body: `{vertices, faces, face_groups, materials, units, sources, receivers, settings, simulation_name}`.
+  Vertices/faces come from the Rhino mesh (quads triangulated to `ABC` + `ACD`), units from
+  `RhinoDoc.ModelUnitSystem` (mm/cm/ft/m).
+- `GET /api/pyroomacoustics/simulation-status/{id}` → `{progress (0-100), status, completed, error, result:{ir_files:[…]}}`.
+- `GET /api/pyroomacoustics/get-result-file/{id}/wav?ir_filename=…` and `…/json` (metrics).
+- Default ISM reflection order is **3** (`PYROOMACOUSTICS_RAY_TRACING_RECOMMENDED_MAX_ORDER`);
+  send `settings.max_order` explicitly — never default to the old 15.
+- Backend work is async (task queue + subprocess); the component MUST poll — never block on the
+  simulation itself.
+
+## Golden Pitfall Checklist
+
+1. `Could not load file or assembly 'System.Web.Extensions…'` at runtime → **remove the
+   System.Web.Extensions reference** and use `SimpleJson` (Rhino 8's runtime has no .NET
+   Framework web assembly).
+2. Panel renders backgrounds/fills but NO text → text drawn with `TextRenderer` (GDI) instead of
+   `Graphics.DrawString` (GDI+) — the canvas transform is ignored.
+3. Cannot drag wires from the outputs → `Layout()` widened `Bounds.Width` after `base.Layout()`,
+   desyncing gizmo draw position from hit-area. Never widen; extend down only.
+4. Component crashes on `ExpireSolution()` from a worker thread → marshal through
+   `RhinoApp.InvokeOnUiThread`.
+5. `Read` no longer compiles → GH 8 `Write/Read` return `bool` and `TryGet*` uses `ref`.
+6. Settings reset after reopen → `Write/Read` not implemented or `TryGet*` not called on the
+   settings object.
+7. Definition auto-runs the backend on file open → missing the `_justLoaded`/`_prevRun` guard in
+   the first `SolveInstance`.
+8. Panel still in old size/font after editing the tuning constants → rebuild via `build_gha.ps1`
+   AND restart Grasshopper (stale .gha snapshot).
+9. Long material names overflow the dropdown → draw with `StringTrimming.EllipsisCharacter` +
+   `NoWrap`, not by enlarging the panel.

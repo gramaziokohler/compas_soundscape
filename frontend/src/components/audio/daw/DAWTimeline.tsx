@@ -16,6 +16,8 @@ import { useSpeckleStore } from '@/store/speckleStore';
 import { useUIStore } from '@/store/uiStore';
 import { WAVESURFER_TIMELINE } from '@/utils/constants';
 import type { TimelineSound } from '@/types/audio';
+import { useViewportScale } from '@/hooks/useViewportScale';
+import { clampToViewport, clampToViewportWidth, clampToViewportHeight, getScale } from '@/utils/scale';
 
 /* ============================================================
  * Constants
@@ -80,7 +82,7 @@ function DAWRuler({
         height: `${RULER_HEIGHT}px`,
         flexShrink: 0,
         backgroundColor: 'var(--background)',
-        borderBottom: '1px solid rgba(255,255,255,0.12)',
+        borderBottom: '1px solid var(--background)',
         cursor: 'crosshair',
         userSelect: 'none',
         minWidth: LABEL_WIDTH + totalDurationSec * pxPerSecond,
@@ -249,9 +251,11 @@ export function DAWTimeline({
   }, [sounds]);
 
   /* ---- Panel drag/resize state ---- */
+  const scale = useViewportScale();
+  const PANEL_VIEWPORT_MARGIN = 48;
   const [panelPos, setPanelPos] = useState<{ x: number; y: number } | null>(null);
   const [panelSize, setPanelSize] = useState({
-    width: PANEL_DEFAULT_WIDTH,
+    width: Math.min(PANEL_DEFAULT_WIDTH, clampToViewportWidth(PANEL_DEFAULT_WIDTH, 500)),
     height: PANEL_MIN_HEIGHT,
   });
 
@@ -277,34 +281,71 @@ export function DAWTimeline({
   const isInitialized = useRef(false);
   useEffect(() => {
     if (isInitialized.current) return;
+    const vp = getScale().viewport;
     const saved = useUIStore.getState().timelinePanel;
     if (saved) {
       // Validate saved position is on-screen
       const onScreen = saved.x >= -saved.width + 100
         && saved.y >= 0
-        && saved.x < window.innerWidth
-        && saved.y < window.innerHeight;
+        && saved.x < vp.width
+        && saved.y < vp.height;
       if (onScreen) {
         setPanelPos({ x: saved.x, y: saved.y });
-        setPanelSize({ width: saved.width, height: saved.height });
+        setPanelSize({
+          width: clampToViewportWidth(saved.width, 500),
+          height: Math.max(100, saved.height),
+        });
         isInitialized.current = true;
         return;
       }
     }
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
     const totalDurationSec = timelineDurationMs / 1000;
     const pxPerSec = WAVESURFER_TIMELINE.PIXELS_PER_SECOND;
     const contentBasedWidth = LABEL_WIDTH + totalDurationSec * pxPerSec + 2;
-    const panelWidth = Math.max(contentBasedWidth, PANEL_DEFAULT_WIDTH);
+    // Clamped-fluid: follow content up to the available viewport width (between
+    // margins), never overflowing the window.
+    const maxWidth = vp.width - PANEL_VIEWPORT_MARGIN;
+    const panelWidth = clampToViewportWidth(Math.max(contentBasedWidth, PANEL_DEFAULT_WIDTH), 500);
     setPanelPos({
-      x: Math.max(0, vw/2 - panelWidth/2),
-      y: Math.max(0, vh - Math.min(vh - 40, minPanelHeight) - 20),
+      x: Math.max(0, vp.width / 2 - Math.min(panelWidth, maxWidth) / 2),
+      y: Math.max(0, vp.height - Math.min(vp.height - 40, minPanelHeight) - 20),
     });
-    setPanelSize({ width: panelWidth, height: Math.min(vh - 40, minPanelHeight) });
+    setPanelSize({
+      width: Math.min(panelWidth, maxWidth),
+      height: Math.min(vp.height - 40, minPanelHeight),
+    });
     isInitialized.current = true;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Re-clamp on viewport resize so the floating timeline never runs off-screen
+  // (clamped-fluid sizing). The position is scaled by the viewport growth/shrink
+  // ratio so the panel keeps the same *relative* position on screen. Skipped
+  // while the user is actively dragging/resizing.
+  const lastViewportRef = useRef(scale.viewport);
+  useEffect(() => {
+    if (!isInitialized.current || dragStartRef.current || resizeStartRef.current) return;
+    const vp = getScale().viewport;
+    const prev = lastViewportRef.current;
+    if (prev.width === vp.width && prev.height === vp.height) return;
+    lastViewportRef.current = vp;
+    const ratioX = prev.width > 0 ? vp.width / prev.width : 1;
+    const ratioY = prev.height > 0 ? vp.height / prev.height : 1;
+    const maxWidth = vp.width - PANEL_VIEWPORT_MARGIN;
+    setPanelSize((prevSize) => ({
+      ...prevSize,
+      width: clampToViewportWidth(Math.min(prevSize.width, maxWidth), 500),
+      height: clampToViewportHeight(prevSize.height, 100),
+    }));
+    setPanelPos((prevPos) => {
+      if (!prevPos) return prevPos;
+      const nx = Math.round(prevPos.x * ratioX);
+      const ny = Math.round(prevPos.y * ratioY);
+      const c = clampToViewport(nx, ny, panelSizeRef.current.width, panelSizeRef.current.height, 20);
+      if (c.x === prevPos.x && c.y === prevPos.y) return prevPos;
+      return c;
+    });
+  }, [scale.viewport.width, scale.viewport.height]);
 
   // Grow panel upward when new tracks are added
   const prevMinPanelHeightRef = useRef(minPanelHeight);
@@ -315,7 +356,7 @@ export function DAWTimeline({
 
     if (delta <= 0) return;
 
-    const maxH = window.innerHeight - 40;
+    const maxH = getScale().viewport.height - 40;
     const newHeight = Math.min(panelSize.height + delta, maxH);
     const actualDelta = newHeight - panelSize.height;
 
@@ -790,7 +831,7 @@ export function DAWTimeline({
         display: 'flex',
         flexDirection: 'column',
         backgroundColor: 'var(--background)',
-        border: '1px solid rgba(255,255,255,0.15)',
+        border: '1.5px solid var(--color-primary)',
         borderRadius: '8px',
         boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
         zIndex: 200,

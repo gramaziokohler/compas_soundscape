@@ -4,8 +4,9 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { ContextSection } from "./sidebar/ContextSection";
 import { UsageSection } from "./sidebar/UsageSection";
 import { SoundGenerationSection } from "./sidebar/SoundGenerationSection";
-import { UI_SIDEBAR_RESIZE } from "@/utils/constants";
+import { UI_SIDEBAR_RESIZE, UI_SCALE } from "@/utils/constants";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
+import { useViewportScale } from "@/hooks/useViewportScale";
 import { useTextGenerationStore } from "@/store/textGenerationStore";
 import { useCardFlowStore } from "@/store/cardFlowStore";
 import { useUIStore } from "@/store/uiStore";
@@ -295,10 +296,26 @@ export function Sidebar(props: SidebarProps) {
     }
   }, [soundsNavTrigger]);
 
+  // Sidebar width — clamped-fluid: proportional to the viewport width between
+  // physical min/max bounds (UI_SCALE.LEFT_SIDEBAR), so it absorbs a wide canvas
+  // but never degenerates on a narrow window.
+  const scale = useViewportScale();
+  const sidebarMinWidth = scale.physical(UI_SIDEBAR_RESIZE.LEFT_MIN_WIDTH);
+  const sidebarMaxWidth = scale.clampW(
+    UI_SCALE.LEFT_SIDEBAR.MIN,
+    UI_SCALE.LEFT_SIDEBAR.FRACTION,
+    UI_SCALE.LEFT_SIDEBAR.MAX,
+  );
+  const sidebarDefaultWidth = scale.clampW(
+    UI_SCALE.LEFT_SIDEBAR.MIN,
+    UI_SCALE.LEFT_SIDEBAR.DEFAULT_FRACTION,
+    UI_SCALE.LEFT_SIDEBAR.MAX,
+  );
+
   const { width: contentWidth, isResizing, handleMouseDown: handleResizeMouseDown } = useSidebarResize({
-    initialWidth: UI_SIDEBAR_RESIZE.LEFT_DEFAULT_WIDTH,
-    minWidth: UI_SIDEBAR_RESIZE.LEFT_MIN_WIDTH,
-    maxWidth: UI_SIDEBAR_RESIZE.LEFT_MAX_WIDTH,
+    initialWidth: sidebarDefaultWidth,
+    minWidth: sidebarMinWidth,
+    maxWidth: sidebarMaxWidth,
     direction: 'right',
     onWidthChange: props.onWidthChange,
   });

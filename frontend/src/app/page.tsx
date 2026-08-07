@@ -33,6 +33,7 @@ import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
 import * as THREE from "three";
 import { useAudioNormalization } from "@/hooks/useAudioNormalization";
 import { useAudioOrchestrator } from "@/hooks/useAudioOrchestrator";
+import { useViewportScale } from "@/hooks/useViewportScale";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { useJobRecovery } from "@/hooks/useJobRecovery";
 import { apiService } from "@/services/api";
@@ -3295,6 +3296,11 @@ function HomeContent() {
 }
 
 export default function Home() {
+  // Track the CSS-pixel viewport once at the app root (outside Suspense, before
+  // child mount effects that read fluid panel sizes). Updates utils/scale.ts and
+  // the --ui-vw / --ui-vh / --ui-dvh CSS vars for the whole UI.
+  useViewportScale();
+
   // Zustand persist rehydration — must run OUTSIDE Suspense so it fires
   // BEFORE child mount effects (Sidebar, Timeline, Explorer on mount read
   // the store and expect rehydration to have completed).

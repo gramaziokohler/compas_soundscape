@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { UI_RIGHT_SIDEBAR, UI_SIDEBAR_RESIZE } from '@/utils/constants';
+import { UI_RIGHT_SIDEBAR, UI_SIDEBAR_RESIZE, UI_SCALE } from '@/utils/constants';
 import { useRightSidebarStore } from '@/store';
 import { useSidebarResize } from '@/hooks/useSidebarResize';
 import { useVerticalResize } from '@/hooks/useVerticalResize';
+import { useViewportScale } from '@/hooks/useViewportScale';
 import { AcousticsSection } from '@/components/layout/sidebar/AcousticsSection';
 import { ListenersSection } from '@/components/layout/sidebar/ListenersSection';
 import type { ReceiverData, GridListenerData } from '@/types/receiver';
@@ -162,10 +163,25 @@ export function RightSidebar({
     useRightSidebarStore.getState().setSidebarWidth(w);
   }, [onWidthChange]);
 
+  // Sidebar width — clamped-fluid (see UI_SCALE.RIGHT_SIDEBAR): proportional to
+  // the viewport width between physical min/max bounds.
+  const scale = useViewportScale();
+  const sidebarMinWidth = scale.physical(UI_SIDEBAR_RESIZE.RIGHT_MIN_WIDTH);
+  const sidebarMaxWidth = scale.clampW(
+    UI_SCALE.RIGHT_SIDEBAR.MIN,
+    UI_SCALE.RIGHT_SIDEBAR.FRACTION,
+    UI_SCALE.RIGHT_SIDEBAR.MAX,
+  );
+  const sidebarDefaultWidth = scale.clampW(
+    UI_SCALE.RIGHT_SIDEBAR.MIN,
+    UI_SCALE.RIGHT_SIDEBAR.DEFAULT_FRACTION,
+    UI_SCALE.RIGHT_SIDEBAR.MAX,
+  );
+
   const { width: sidebarWidth, isResizing, handleMouseDown: handleResizeMouseDown } = useSidebarResize({
-    initialWidth: UI_SIDEBAR_RESIZE.RIGHT_DEFAULT_WIDTH,
-    minWidth: UI_SIDEBAR_RESIZE.RIGHT_MIN_WIDTH,
-    maxWidth: UI_SIDEBAR_RESIZE.RIGHT_MAX_WIDTH,
+    initialWidth: sidebarDefaultWidth,
+    minWidth: sidebarMinWidth,
+    maxWidth: sidebarMaxWidth,
     direction: 'left',
     onWidthChange: handleWidthChange,
   });

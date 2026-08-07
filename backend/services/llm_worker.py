@@ -24,6 +24,7 @@ from typing import Optional
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.constants import DEFAULT_DBFS, LLM_SUGGESTED_INTERVAL_SECONDS, DEFAULT_LLM_MODEL
+from utils.llm_errors import llm_error_message
 
 
 def _write_progress(progress_file: str, value: int, status: str) -> None:
@@ -141,4 +142,4 @@ def run_llm_generation(
     except Exception as exc:
         tb = traceback.format_exc()
         print(f"[llm_worker] Error: {exc}\n{tb}", file=sys.stderr)
-        _write_result(result_file, {"type": "error", "message": str(exc), "traceback": tb})
+        _write_result(result_file, {"type": "error", "message": llm_error_message(exc), "traceback": tb})

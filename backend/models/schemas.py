@@ -1,10 +1,23 @@
 # backend/models/schemas.py
 # Pydantic Models for Request Bodies
 
-from pydantic import BaseModel
 from enum import Enum
+from typing import Literal
 from typing import Optional
-from config.constants import DEFAULT_AUDIO_MODEL, DEFAULT_LLM_MODEL, DEFAULT_DBFS
+
+from config.constants import DEFAULT_AUDIO_MODEL
+from config.constants import DEFAULT_DBFS
+from config.constants import DEFAULT_LLM_MODEL
+from config.constants import DEFAULT_SPEED_OF_SOUND
+from config.constants import PYROOMACOUSTICS_DEFAULT_ABSORPTION
+from config.constants import PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION
+from config.constants import PYROOMACOUSTICS_DEFAULT_MAX_ORDER
+from config.constants import PYROOMACOUSTICS_DEFAULT_RAY_TRACING
+from config.constants import PYROOMACOUSTICS_DEFAULT_RIR_DURATION
+from config.constants import PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE
+from config.constants import PYROOMACOUSTICS_RAY_TRACING_N_RAYS
+from pydantic import BaseModel
+from pydantic import Field
 
 
 class PromptRequest(BaseModel):
@@ -521,6 +534,68 @@ class PyroomacousticsSimulationStatusResponse(BaseModel):
     result: Optional[PyroomacousticsSimulationResult] = None
     queue_position: Optional[int] = None   # 1-based queue slot; None when running or done
     queue_total: Optional[int] = None      # total jobs in system (running + queued)
+
+
+class PyroomacousticsGeometryMaterial(BaseModel):
+    """Material assignment for a face group.
+
+    Faces whose group has no material entry are skipped (not built as walls),
+    per the Grasshopper direct-geometry contract.
+    """
+    absorption: float = Field(default=PYROOMACOUSTICS_DEFAULT_ABSORPTION, ge=0.0, le=1.0)
+    scattering: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    name: Optional[str] = Field(
+        default=None,
+        description=(
+            "Material id from GET /api/pyroomacoustics/materials (e.g. 'rough_concrete'). "
+            "When present, per-band absorption coefficients from the material database "
+            "are used instead of the scalar `absorption`."
+        ),
+    )
+
+
+class PyroomacousticsGeometrySettings(BaseModel):
+    """Simulation settings for the direct-geometry (Grasshopper) endpoint."""
+    max_order: int = PYROOMACOUSTICS_DEFAULT_MAX_ORDER
+    ray_tracing: bool = PYROOMACOUSTICS_DEFAULT_RAY_TRACING
+    air_absorption: bool = PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION
+    n_rays: int = PYROOMACOUSTICS_RAY_TRACING_N_RAYS
+    simulation_mode: Literal["mono", "foa"] = PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE
+    sound_speed: float = DEFAULT_SPEED_OF_SOUND
+    rir_duration: float = PYROOMACOUSTICS_DEFAULT_RIR_DURATION
+
+
+class PyroomacousticsGeometrySource(BaseModel):
+    """A sound source position in the direct-geometry payload."""
+    id: str
+    position: list[float] = Field(min_length=3, max_length=3)
+
+
+class PyroomacousticsGeometryReceiver(BaseModel):
+    """A receiver position in the direct-geometry payload."""
+    id: str
+    position: list[float] = Field(min_length=3, max_length=3)
+
+
+class PyroomacousticsGeometryRequest(BaseModel):
+    """Direct-geometry simulation payload (no Speckle involved).
+
+    - vertices: [[x, y, z], ...] in the declared `units`.
+    - faces: triangulated [[i, j, k], ...] referencing `vertices`.
+    - face_groups: face-group id → list of face indices into `faces`.
+      Faces not referenced by any group are skipped (no material).
+    - materials: face-group id → absorption/scattering. Groups present in
+      `face_groups` but missing from `materials` are skipped.
+    """
+    vertices: list[list[float]] = Field(min_length=3)
+    faces: list[list[int]] = Field(min_length=1)
+    face_groups: dict[str, list[int]] = Field(default_factory=dict)
+    materials: dict[str, PyroomacousticsGeometryMaterial] = Field(default_factory=dict)
+    units: Literal["m", "mm", "cm", "ft"] = "m"
+    sources: list[PyroomacousticsGeometrySource] = Field(min_length=1)
+    receivers: list[PyroomacousticsGeometryReceiver] = Field(min_length=1)
+    settings: PyroomacousticsGeometrySettings = Field(default_factory=PyroomacousticsGeometrySettings)
+    simulation_name: str = "grasshopper_simulation"
 
 
 class SoundscapeSaveResponse(BaseModel):

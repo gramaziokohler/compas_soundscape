@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { AdvancedSettingsSection } from '@/components/layout/sidebar/AdvancedSettingsSection';
 import type { AdvancedSettingsSectionProps } from '@/components/layout/sidebar/AdvancedSettingsSection';
+import { getScale, clampToViewportWidth } from '@/utils/scale';
 
 const MIN_WIDTH = 300;
 const PANEL_MARGIN = 12;
@@ -22,10 +23,12 @@ export function AdvancedSettingsPanel({ isVisible, onClose, ...settingsProps }: 
   useEffect(() => {
     const el = contentRef.current;
     const naturalWidth = el ? Math.max(MIN_WIDTH, el.scrollWidth + 24) : MIN_WIDTH;
-    setWidth(naturalWidth);
+    const clampedWidth = clampToViewportWidth(naturalWidth, MIN_WIDTH, PANEL_MARGIN);
+    setWidth(clampedWidth);
+    const vp = getScale().viewport;
     setPosition({
-      x: Math.max(PANEL_MARGIN, window.innerWidth / 2 - naturalWidth / 2),
-      y: Math.max(PANEL_MARGIN, window.innerHeight / 4),
+      x: Math.max(PANEL_MARGIN, vp.width / 2 - clampedWidth / 2),
+      y: Math.max(PANEL_MARGIN, vp.height / 4),
     });
     setPositionReady(true);
   // eslint-disable-next-line react-hooks/exhaustive-deps

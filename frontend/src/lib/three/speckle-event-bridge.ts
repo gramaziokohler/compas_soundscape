@@ -7,7 +7,7 @@
 
 import * as THREE from 'three';
 import type { Viewer, SelectionExtension } from '@speckle/viewer';
-import { FilteringExtension, CameraController } from '@speckle/viewer';
+import { FilteringExtension, CameraController, ObjectLayers } from '@speckle/viewer';
 import type { SpeckleSceneAdapter } from './speckle-scene-adapter';
 import type { SpeckleDragHandler } from './speckle-drag-handler';
 
@@ -18,6 +18,20 @@ import type { SpeckleDragHandler } from './speckle-drag-handler';
 interface FilterSnapshot {
   hiddenObjects: string[];
   isolatedObjects: string[];
+}
+
+/**
+ * THREE's raycaster ignores the `visible` flag (it only checks layers), so an
+ * intersection list can contain invisible meshes. Walk the ancestry chain to
+ * decide whether an object is actually visible on screen.
+ */
+function isObjectVisible(object: THREE.Object3D): boolean {
+  let current: THREE.Object3D | null = object;
+  while (current) {
+    if (!current.visible) return false;
+    current = current.parent;
+  }
+  return true;
 }
 
 export class SpeckleEventBridge {
@@ -450,11 +464,16 @@ export class SpeckleEventBridge {
     return intersects.length > 0;
   }
 
-  private raycastCustomObjects(): { type: 'sound' | 'receiver' | 'grid-receiver'; object: THREE.Object3D; instanceId?: number } | null {
+  private raycastCustomObjects(
+    visibleOnly: boolean = false
+  ): { type: 'sound' | 'receiver' | 'grid-receiver'; object: THREE.Object3D; instanceId?: number } | null {
     const camera = this.adapter.getCamera();
     this.raycaster.setFromCamera(this.mouse, camera);
     const customObjects = this.adapter.getCustomObjects();
-    const intersects = this.raycaster.intersectObjects(customObjects, true);
+    const targets = visibleOnly
+      ? customObjects.filter((o) => o.visible)
+      : customObjects;
+    const intersects = this.raycaster.intersectObjects(targets, true);
 
     if (intersects.length === 0) return null;
 
@@ -585,6 +604,59 @@ export class SpeckleEventBridge {
     const hit = this.raycastCustomObjects();
     this.mouse.copy(savedMouse);
     return hit !== null;
+  }
+
+  /**
+   * Returns true if a VISIBLE custom object (sound/receiver/grid-receiver) is
+   * under the given screen position. Invisible objects are skipped, so the FPS
+   * listener mesh (hidden while viewing through it) does not block the
+   * camera-look / drag guard.
+   */
+  public hasVisibleCustomObjectAt(clientX: number, clientY: number): boolean {
+    const canvas = this.viewer.getRenderer().renderer.domElement;
+    const rect = canvas.getBoundingClientRect();
+    const savedMouse = this.mouse.clone();
+    this.mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    this.mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    const hit = this.raycastCustomObjects(true);
+    this.mouse.copy(savedMouse);
+    return hit !== null;
+  }
+
+  /**
+   * Returns true if the drag gizmo (TransformControls) is under the given
+   * screen position. Only true while a gizmo is actually attached to a selected
+   * object — detached gizmos are invisible and ignored.
+   */
+  public hasGizmoAt(clientX: number, clientY: number): boolean {
+    if (!this.dragHandler) return false;
+    const transformControls = this.dragHandler.getTransformControls();
+    if (!transformControls || !transformControls.object) return false;
+
+    // Raycast ONLY the gizmo handle group (_gizmo). The TransformControls root
+    // also contains a 100000×100000 invisible picking plane (_plane); THREE's
+    // raycaster ignores the `visible` flag, so intersecting the root would
+    // report a hit for almost any pointer once a gizmo is attached — blocking
+    // the FPS camera-look everywhere. Invisible pickers/helpers inside the
+    // handle group are excluded by the ancestry-visibility filter below.
+    const gizmo = (transformControls as unknown as { _gizmo?: THREE.Object3D })._gizmo;
+    if (!gizmo) return false;
+
+    const canvas = this.viewer.getRenderer().renderer.domElement;
+    const rect = canvas.getBoundingClientRect();
+    const savedMouse = this.mouse.clone();
+    const savedLayers = this.raycaster.layers.mask;
+    this.mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    this.mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    const camera = this.adapter.getCamera();
+    this.raycaster.setFromCamera(this.mouse, camera);
+    // The gizmo children live on the PROPS layer — enable it alongside the
+    // default layer so the raycaster can intersect them.
+    this.raycaster.layers.enable(ObjectLayers.PROPS);
+    const intersects = this.raycaster.intersectObject(gizmo, true);
+    this.raycaster.layers.mask = savedLayers;
+    this.mouse.copy(savedMouse);
+    return intersects.some((i) => isObjectVisible(i.object));
   }
 
   public dispose(): void {

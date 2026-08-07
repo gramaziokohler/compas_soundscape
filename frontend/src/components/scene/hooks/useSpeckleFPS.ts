@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
-import type { ReceiverData, SoundEvent } from '@/types';
+import type { ReceiverData } from '@/types';
 
 interface FPSProps {
   isViewerReady: boolean;
@@ -14,7 +14,6 @@ interface FPSProps {
   goToPositionReceiverId?: string | null;
   listenerOrientation: { x: number; y: number; z: number };
   receivers: ReceiverData[];
-  soundscapeData: SoundEvent[] | null;
   selectedReceiverId: string | null;
   onReceiverModeChange?: (isActive: boolean, receiverId: string | null) => void;
   onFPSExited?: () => void;
@@ -35,7 +34,6 @@ export function useSpeckleFPS({
   goToPositionReceiverId,
   listenerOrientation,
   receivers,
-  soundscapeData,
   selectedReceiverId,
   onReceiverModeChange,
   onFPSExited,
@@ -157,6 +155,14 @@ export function useSpeckleFPS({
 
     const handlePointerDown = (event: PointerEvent) => {
       if (event.button === 0) {
+        // Don't start the camera-look joystick when the press is over a
+        // draggable element (sound source / listener) or its drag gizmo — the
+        // user intends to select/drag that element, not look around.
+        const { coordinator } = useSpeckleEngineStore.getState();
+        if (coordinator?.isPointerOverDraggable(event.clientX, event.clientY)) {
+          leftDragRef.current = false;
+          return;
+        }
         leftDragRef.current = true;
         leftOriginRef.current = { x: event.clientX, y: event.clientY };
         leftVecRef.current = { x: 0, y: 0 };
@@ -374,7 +380,10 @@ export function useSpeckleFPS({
       position: receiverPosition.toArray(),
       target: initialTarget.toArray(),
     });
-  }, [goToReceiverId, receivers, soundscapeData, listenerOrientation]);
+    // NOTE: `soundscapeData` is intentionally NOT in the deps — it is unused in
+    // the body, and re-running on every sound edit (e.g. dragging a sound
+    // sphere) would call enableFirstPersonMode again, resetting the FPS view.
+  }, [goToReceiverId, receivers, listenerOrientation]);
 
   // ============================================================================
   // Effect - Go To Position (grid listener points with no individual mesh)

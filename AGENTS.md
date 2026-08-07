@@ -101,5 +101,6 @@ touch matching files (Cursor by glob, Opencode via `opencode.json`, Claude Code 
 | `sound-rendering.mdc` | Spatial audio pipeline        | `frontend/src/lib/audio/**`                                           |
 | `daw-timeline.mdc`    | DAW timeline & WaveSurfer     | `frontend/src/components/audio/daw/**`                                |
 | `audio-generation.mdc`| AI audio generation pipeline  | `backend/routers/sounds.py`, `backend/services/sounds_worker.py`, `frontend/src/store/soundscapeStore.ts`, `SoundResultContent.tsx` |
+| `gh-csharp-components.mdc` | Grasshopper C# (.gha) component development | `src/compas_acoustics_gh_components/**`, `**/*.csproj`, `**/build_gha.ps1` |
 | `frontend-ux.mdc`     | Sidebar wizard & card flow    | `frontend/src/components/layout/**`, `store/cardFlowStore.ts`         |
 | `chrome-devtools.mdc` | Browser debugging via chrome-devtools MCP | `frontend/**`, dev-mode `_next/static/chunks` reverse-engineering |

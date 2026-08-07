@@ -2,6 +2,7 @@
 
 import { createPortal } from 'react-dom';
 import { UI_RIGHT_SIDEBAR } from '@/utils/constants';
+import { getScale } from '@/utils/scale';
 
 const PREVIEW_WIDTH = 160; // 50% of SceneContextMenu's INITIAL_WIDTH (320)
 const VIEWPORT_MARGIN = 4;
@@ -28,12 +29,11 @@ interface SceneHoverPreviewProps {
 export function SceneHoverPreview({ x, y, entity }: SceneHoverPreviewProps) {
   if (typeof document === 'undefined') return null;
 
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
+  const vp = getScale().viewport;
 
   // Clamp so the panel stays inside the viewport
-  const left = Math.max(VIEWPORT_MARGIN, Math.min(x + 12, vw - PREVIEW_WIDTH - VIEWPORT_MARGIN));
-  const top = Math.max(VIEWPORT_MARGIN, Math.min(y + 12, vh - VIEWPORT_MARGIN - 80));
+  const left = Math.max(VIEWPORT_MARGIN, Math.min(x + 12, vp.width - PREVIEW_WIDTH - VIEWPORT_MARGIN));
+  const top = Math.max(VIEWPORT_MARGIN, Math.min(y + 12, vp.height - VIEWPORT_MARGIN - 80));
 
   const title = entity.objectName || entity.objectType || 'Object';
 

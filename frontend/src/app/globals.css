@@ -75,6 +75,12 @@
   /* 3D scene overlay UI (glass panel on scene canvas) */
   --color-overlay-bg: rgba(0, 0, 0, 0.8);
   --color-overlay-border: rgba(255, 255, 255, 0.2);
+
+  /* Viewport scale — set to live px values by useViewportScale() in browser
+   * (see utils/scale.ts). Fallback values keep static CSS correct pre-JS. */
+  --ui-vw: 100vw;
+  --ui-vh: 100vh;
+  --ui-dvh: 100dvh;
 }
 
 @theme inline {
@@ -113,6 +119,9 @@
   --color-mixed: var(--color-mixed);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /* GenerateButton — icon hover spin (rotation with delayed pauses) */
+  --animate-generate-spin: generate-spin-delayed 2.1s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 
 }
 
@@ -212,7 +221,7 @@ canvas {
 
 @keyframes section-highlight-spin {
   to {
-    --section-highlight-angle: 360deg;
+    --section-highlight-angle: 90deg;
   }
 }
 
@@ -223,4 +232,20 @@ canvas {
   to {
     opacity: 0;
   }
+}
+
+/* GenerateButton — icon hover spin: rotate with pauses (delays) built into the
+ * keyframe percentages so each quarter-turn stops briefly before continuing. */
+@keyframes generate-spin-delayed {
+  0%   { transform: rotate(0deg) scale(1.15); }
+  50%  { transform: rotate(90deg) scale(1.15); }
+  100% { transform: rotate(360deg) scale(1.15); }
+}
+
+/* GenerateButton — disabled-click feedback: fade in, hold, fade out */
+@keyframes message-flash {
+  0%   { opacity: 0; }
+  10%  { opacity: 1; }
+  75%  { opacity: 1; }
+  100% { opacity: 0; }
 }

@@ -3,6 +3,10 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { ObjectExplorer } from '@/components/layout/ObjectExplorer';
 import { useUIStore } from '@/store/uiStore';
+import { RefreshIcon } from '@/components/ui/Icon';
+import { useViewportScale } from '@/hooks/useViewportScale';
+import { clampToViewport, clampToViewportWidth, clampToViewportHeight, getScale } from '@/utils/scale';
+import { UI_SCALE } from '@/utils/constants';
 
 const MIN_WIDTH = 380;
 const MIN_HEIGHT = 200;
@@ -21,40 +25,75 @@ interface ObjectExplorerPanelProps {
 }
 
 export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded = false, rightSidebarWidth = 0 }: ObjectExplorerPanelProps) {
+  const scale = useViewportScale();
+
   const [itemCount, setItemCount] = useState(0);
   const resetAllRef = useRef<(() => void) | null>(null);
 
   const panelRef = useRef<HTMLDivElement>(null);
 
+  // NOTE: initial size is a stable constant (matching SSR) to avoid a hydration
+  // mismatch — the fluid viewport-proportional height is applied in the mount
+  // effect below. The panel is display:none until positionReady anyway.
   const [position, setPosition] = useState({ x: -DEFAULT_WIDTH, y: 72 });
   const [positionReady, setPositionReady] = useState(false);
   const [size, setSize] = useState({ width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT });
 
   useEffect(() => {
     const saved = useUIStore.getState().objectExplorerPanel;
+    const vp = getScale().viewport;
+    const fluidDefaultHeight = Math.max(
+      MIN_HEIGHT,
+      Math.min(
+        Math.max(MIN_HEIGHT, Math.min(vp.height * UI_SCALE.OBJECT_EXPLORER_PANEL_HEIGHT.FRACTION, 1000)),
+        vp.height * 0.85,
+      ),
+    );
     if (saved) {
       const onScreen = saved.x >= -saved.width + 100
         && saved.y >= 0
-        && saved.x < window.innerWidth
-        && saved.y < window.innerHeight;
+        && saved.x < vp.width
+        && saved.y < vp.height;
       if (onScreen) {
         setPosition({ x: saved.x, y: saved.y });
-        setSize({ width: saved.width, height: saved.height });
+        setSize({ width: saved.width, height: Math.max(MIN_HEIGHT, saved.height) });
         setPositionReady(true);
         return;
       }
     }
     const sidebarOffset = isRightSidebarExpanded ? rightSidebarWidth + PANEL_MARGIN : PANEL_MARGIN;
+    const initWidth = clampToViewportWidth(saved?.width ?? DEFAULT_WIDTH, MIN_WIDTH);
+    const initHeight = clampToViewportHeight(saved?.height ?? fluidDefaultHeight, MIN_HEIGHT, PANEL_MARGIN);
     setPosition({
-      x: window.innerWidth - (saved?.width ?? DEFAULT_WIDTH) - sidebarOffset,
-      y: 72,
+      x: scale.viewport.width - initWidth - sidebarOffset,
+      y: PANEL_MARGIN,
     });
-    if (saved) {
-      setSize({ width: saved.width, height: saved.height });
-    }
+    setSize({ width: initWidth, height: initHeight });
     setPositionReady(true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Preserve the panel's *relative* position across viewport resizes: the
+  // absolute pixel position is scaled by the viewport growth/shrink ratio, then
+  // clamped so the panel stays on-screen (clamped-fluid sizing). Never mid-drag.
+  const lastViewportRef = useRef(scale.viewport);
+  useEffect(() => {
+    if (!positionReady || isDraggingRef.current || isResizingRef.current) return;
+    const cur = scale.viewport;
+    const prev = lastViewportRef.current;
+    if (prev.width === cur.width && prev.height === cur.height) return;
+    lastViewportRef.current = cur;
+    const ratioX = prev.width > 0 ? cur.width / prev.width : 1;
+    const ratioY = prev.height > 0 ? cur.height / prev.height : 1;
+    setSize((s) => ({ ...s, height: clampToViewportHeight(s.height, MIN_HEIGHT, PANEL_MARGIN) }));
+    setPosition((p) => {
+      const nx = Math.round(p.x * ratioX);
+      const ny = Math.round(p.y * ratioY);
+      const c = clampToViewport(nx, ny, sizeRef.current.width, sizeRef.current.height, PANEL_MARGIN);
+      if (c.x === p.x && c.y === p.y) return p;
+      return c;
+    });
+  }, [scale.viewport.width, scale.viewport.height, positionReady]);
 
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ mouseX: 0, mouseY: 0, panelX: 0, panelY: 0 });
@@ -194,10 +233,7 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
             onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
             title="Reset hidden / isolated items"
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="23 4 23 10 17 10" />
-              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-            </svg>
+            <RefreshIcon size="0.8rem" />
           </button>
           <button
             data-no-drag

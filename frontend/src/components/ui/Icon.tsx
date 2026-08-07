@@ -47,3 +47,23 @@ export function Icon({
     </svg>
   );
 }
+
+/**
+ * RefreshIcon Component
+ *
+ * Canonical refresh/reload glyph (feather `refresh-cw`), shared across all
+ * refresh / recreate / reset-style actions so they stay visually consistent.
+ *
+ * Usage:
+ * ```tsx
+ * <RefreshIcon size="0.75rem" />
+ * ```
+ */
+export function RefreshIcon({ size = "0.8rem" }: { size?: string }) {
+  return (
+    <Icon size={size}>
+      <polyline points="23 4 23 10 17 10" />
+      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+    </Icon>
+  );
+}

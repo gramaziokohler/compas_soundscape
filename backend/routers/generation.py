@@ -47,6 +47,7 @@ from config.constants import (
     TEMP_ANALYSIS_DIR,
     DEFAULT_LLM_MODEL,
 )
+from utils.llm_errors import llm_error_message
 
 router = APIRouter()
 
@@ -182,9 +183,8 @@ async def generate_prompts_stream(request: UnifiedPromptGenerationRequest):
                 yield f"data: {json.dumps({'type': 'error', 'message': 'Either context or entities must be provided'})}\n\n"
 
         except Exception as e:
-            error_str = str(e)
             traceback.print_exc()
-            yield f"data: {json.dumps({'type': 'error', 'message': error_str})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': llm_error_message(e)})}\n\n"
 
         finally:
             yield "data: [DONE]\n\n"
@@ -438,7 +438,7 @@ async def analyze_3dmodel_stream(request: AnalyzeModelStreamRequest):
 
         except Exception as e:
             traceback.print_exc()
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': llm_error_message(e)})}\n\n"
 
         finally:
             done_event.set()  # release the consumer thread slot
@@ -624,7 +624,7 @@ async def scenarist_stream(request: ScenaristStreamRequest):
 
         except Exception as e:
             traceback.print_exc()
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': llm_error_message(e)})}\n\n"
         finally:
             done_event.set()
             yield "data: [DONE]\n\n"
@@ -740,7 +740,7 @@ async def foley_artist_stream(request: FoleyArtistRequest):
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception as e:
             traceback.print_exc()
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': llm_error_message(e)})}\n\n"
         finally:
             done_event.set()
             yield "data: [DONE]\n\n"
@@ -885,7 +885,7 @@ async def speech_agent_stream(request: SpeechAgentRequest):
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception as e:
             traceback.print_exc()
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': llm_error_message(e)})}\n\n"
         finally:
             done_event.set()
             yield "data: [DONE]\n\n"
@@ -1017,7 +1017,7 @@ async def orchestrate_stream(request: OrchestrateStreamRequest):
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception as e:
             traceback.print_exc()
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': llm_error_message(e)})}\n\n"
         finally:
             done_event.set()
             yield "data: [DONE]\n\n"

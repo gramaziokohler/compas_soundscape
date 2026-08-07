@@ -69,7 +69,7 @@ export function LibraryMode({
 
       {/* Search results */}
       {results && results.length > 0 && (
-        <div className="rounded-lg max-h-50 overflow-y-auto bg-background">
+        <div className="rounded-lg max-h-[min(200px,40dvh)] overflow-y-auto bg-background">
           <p className="text-xs font-medium text-secondary-hover">
             Found {results.length} results:
           </p>

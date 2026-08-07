@@ -6,6 +6,7 @@ import { HelperHint } from '@/components/ui/HelperHint';
 import { GRID_LISTENER_CONFIG } from '@/utils/constants';
 import { useGridListenersStore } from '@/store/gridListenersStore';
 import { useSpeckleStore } from '@/store';
+import { RefreshIcon } from '@/components/ui/Icon';
 import type { GridListenerData } from '@/types/receiver';
 
 interface GridListenerContentProps {
@@ -96,9 +97,7 @@ export function GridListenerContent({ grid, color, onComputeBounds }: GridListen
             className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-md text-secondary-hover hover:text-foreground hover:bg-secondary-light transition-all cursor-pointer"
             title="Recreate grid"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h5M20 20v-5h-5M20 9a8 8 0 00-14.32-3M4 15a8 8 0 0014.32 3" />
-            </svg>
+            <RefreshIcon size="0.75rem" />
           </button>
         </div>
       )}

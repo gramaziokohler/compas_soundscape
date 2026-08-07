@@ -67,7 +67,7 @@ export function AudioAnalysisAfterContent({
       </div>
 
       {/* Sound list */}
-      <div className="max-h-52 overflow-y-auto space-y-1">
+      <div className="max-h-[min(208px,45dvh)] overflow-y-auto space-y-1">
         {analysisResult.prompts.map((prompt, i) => (
           <label
             key={prompt.id}

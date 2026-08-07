@@ -44,6 +44,18 @@ export function useSidebarResize({
     startWidthRef.current = width;
   }, [width]);
 
+  // Re-clamp the current width whenever the (possibly viewport-derived) min/max
+  // bounds change, e.g. after a window resize shrinks a fluid max. Never clamps
+  // mid-drag so the user keeps control.
+  useEffect(() => {
+    if (isResizing) return;
+    const clamped = Math.min(maxWidth, Math.max(minWidth, Math.round(width)));
+    if (clamped !== width) {
+      setWidth(clamped);
+      onWidthChange?.(clamped);
+    }
+  }, [width, minWidth, maxWidth, isResizing, onWidthChange]);
+
   useEffect(() => {
     if (!isResizing) return;
 

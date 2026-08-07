@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React from 'react';
 import { ResonanceAudioMaterialUI } from '@/components/acoustics/ResonanceAudioMaterialUI';
 import { CheckboxField } from '@/components/ui/CheckboxField';
+import { RefreshIcon } from '@/components/ui/Icon';
 import type { ResonanceAudioConfig, ResonanceRoomMaterial } from '@/types/audio';
 
 export interface RoomScale {
@@ -39,7 +40,7 @@ export function ResonanceAudioControls({
   onToggle,
   onUpdateRoomMaterials,
   hasGeometry,
-  showBoundingBox ,
+  showBoundingBox,
   onToggleBoundingBox,
   onRefreshBoundingBox,
   roomScale = { x: 1, y: 1, z: 1 },
@@ -47,7 +48,6 @@ export function ResonanceAudioControls({
   className = ''
 }: ResonanceAudioControlsProps) {
   const enabled = config?.enabled ?? false;
-  const [isRoomScaleExpanded, setIsRoomScaleExpanded] = useState(false);
   const materials = config?.roomMaterials ?? {
     left: 'transparent',
     right: 'transparent',
@@ -57,71 +57,35 @@ export function ResonanceAudioControls({
     up: 'transparent'
   };
 
-      
-  const handleToggle = () => {
-    onToggle(!enabled);
-  };
-
   return (
-    <div className={`flex flex-col gap-3 ${className}`}>
-
+    <div className={`flex flex-col gap-1.5 min-w-0 ${className}`}>
       {/* Bounding Box Visualization Toggle */}
       {enabled && (
-        <div className="flex items-center justify-between gap-2">
-           <CheckboxField
-              checked={showBoundingBox}
-              onChange={onToggleBoundingBox}
-              label="Show Room Bounding Box"
-            />
+        <div className="flex items-center justify-between gap-1">
+          <CheckboxField
+            checked={showBoundingBox}
+            onChange={onToggleBoundingBox}
+            label="Show Bounding Box"
+          />
           {!hasGeometry && onRefreshBoundingBox && (
             <button
               onClick={onRefreshBoundingBox}
-              className="h-5 px-1 rounded hover:bg-secondary-light transition-colors text-neutral-600 flex items-center justify-center"
+              className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-md text-secondary-hover hover:text-foreground hover:bg-secondary-light transition-all cursor-pointer"
               title="Reset bounding box to original size"
             >
-              <svg 
-                width="16" 
-                height="16" 
-                viewBox="0 0 24 24" 
-                fill="none" 
-                stroke="currentColor" 
-                strokeWidth="2"
-                strokeLinecap="round" 
-                strokeLinejoin="round"
-              >
-                <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
-              </svg>
+              <RefreshIcon size="0.8rem" />
             </button>
           )}
         </div>
       )}
 
-
       {/* Surface Materials */}
       {enabled && (
-        <div className="flex flex-col gap-2">
-          {/* <h4 className="text-xs font-semibold" style={{ color: UI_COLORS.NEUTRAL_700 }}>
-            Surface Materials
-          </h4> */}
-          <ResonanceAudioMaterialUI
-            materials={materials}
-            onUpdateMaterials={onUpdateRoomMaterials}
-          />
-        </div>
+        <ResonanceAudioMaterialUI
+          materials={materials}
+          onUpdateMaterials={onUpdateRoomMaterials}
+        />
       )}
-
-
-      {/* {enabled && (
-        <div 
-          className="text-xs p-2 rounded" 
-          style={{ 
-            backgroundColor: UI_COLORS.NEUTRAL_100,
-            color: UI_COLORS.NEUTRAL_600 
-          }}
-        >
-          💡 Room dimensions are automatically calculated from your 3D model's bounding box.
-        </div>
-      )} */}
     </div>
   );
 }

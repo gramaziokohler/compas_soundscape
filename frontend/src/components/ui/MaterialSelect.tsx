@@ -13,6 +13,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { UI_BORDER_RADIUS } from '@/utils/constants';
 import { drawAbsorptionHistogram } from '@/lib/audio/utils/absorption-histogram-utils';
+import { getScale } from '@/utils/scale';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -99,7 +100,8 @@ export function MaterialSelect({
   const handleTriggerClick = () => {
     if (!isOpen && triggerRef.current) {
       const rect = triggerRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
+      const vp = getScale().viewport;
+      const spaceBelow = vp.height - rect.bottom;
       const wantsUpward = spaceBelow < LIST_MAX_HEIGHT && rect.top > spaceBelow;
       setOpenUpward(wantsUpward);
       setDropdownPos({
@@ -115,7 +117,7 @@ export function MaterialSelect({
     setHoveredId(matId);
     setHistPos({
       x: rect.left - HIST_W - 8,
-      y: Math.max(4, Math.min(window.innerHeight - HIST_H - 4, rect.top + rect.height / 2 - HIST_H / 2)),
+      y: Math.max(4, Math.min(getScale().viewport.height - HIST_H - 4, rect.top + rect.height / 2 - HIST_H / 2)),
     });
   }, []);
 
@@ -145,7 +147,7 @@ export function MaterialSelect({
           setHoveredId(selectedMat.id);
           setHistPos({
             x: rect.left - HIST_W - 8,
-            y: Math.max(4, Math.min(window.innerHeight - HIST_H - 4, rect.top + rect.height / 2 - HIST_H / 2)),
+            y: Math.max(4, Math.min(getScale().viewport.height - HIST_H - 4, rect.top + rect.height / 2 - HIST_H / 2)),
           });
         }}
         onMouseLeave={() => {

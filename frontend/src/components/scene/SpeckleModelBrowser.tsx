@@ -8,6 +8,7 @@ import { Spinner } from '@/components/ui/Spinner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Notice } from '@/components/ui/Notice';
 import type { SpeckleModelDetail, SpeckleProjectModelsResponse } from '@/types/speckle-models';
+import { getScale } from '@/utils/scale';
 
 // ============================================================================
 // Constants
@@ -448,7 +449,7 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
         className="flex flex-col"
         style={{
           gap: MODEL_BROWSER_STYLES.CARD_GAP,
-          maxHeight: MODEL_BROWSER_STYLES.MAX_HEIGHT,
+          maxHeight: Math.min(MODEL_BROWSER_STYLES.MAX_HEIGHT, getScale().viewport.height * 0.4),
           overflowY: 'auto',
           overflowX: 'visible',
         }}

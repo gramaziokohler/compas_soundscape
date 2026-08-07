@@ -3,7 +3,7 @@
 import React, { useState, useCallback } from 'react';
 import { SceneControlButton } from '@/components/ui/SceneControlButton';
 import { VerticalVolumeSlider } from '@/components/ui/VerticalVolumeSlider';
-import { Icon } from '@/components/ui/Icon';
+import { Icon, RefreshIcon } from '@/components/ui/Icon';
 import { UI_SCENE_BUTTON, UI_RIGHT_SIDEBAR } from '@/utils/constants';
 import type { SoundEvent } from '@/types';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
@@ -146,10 +146,7 @@ export function SceneControlButtons({
         onClick={onRefreshScene}
         title="Refresh scene"
         icon={
-          <Icon>
-            <polyline points="23 4 23 10 17 10" />
-            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-          </Icon>
+          <RefreshIcon size="0.8rem" />
         }
       />
 

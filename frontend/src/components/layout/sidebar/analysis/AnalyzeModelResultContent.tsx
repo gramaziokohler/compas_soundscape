@@ -32,7 +32,7 @@ export function AnalyzeModelResultContent({ config }: Props) {
       {/* Space description */}
       {spaceDescription && (
         <div
-          className="rounded px-2 py-2 max-h-28 overflow-y-auto"
+          className="rounded px-2 py-2 max-h-[min(112px,28dvh)] overflow-y-auto"
           style={{
             borderLeft: '2px solid var(--color-primary)',
             backgroundColor: 'var(--color-secondary-hover)',
@@ -57,7 +57,7 @@ export function AnalyzeModelResultContent({ config }: Props) {
       </div>
 
       {/* Object group list */}
-      <div className="space-y-1.5 max-h-56 overflow-y-auto pr-0.5">
+      <div className="space-y-1.5 max-h-[min(224px,50dvh)] overflow-y-auto pr-0.5">
         {objects.map((obj, i) => {
           const color = getAnalysisGroupColor(i);
 

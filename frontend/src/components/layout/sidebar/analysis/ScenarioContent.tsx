@@ -257,7 +257,7 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
   useEffect(() => () => clearPreview(), [clearPreview]);
 
   return (
-    <div className="space-y-3 px-4 pb-3 leading-relaxed whitespace-pre-wrap max-h-80 overflow-y-auto">
+    <div className="space-y-3 px-4 pb-3 leading-relaxed whitespace-pre-wrap max-h-[min(320px,50dvh)] overflow-y-auto">
       {scenarios.map((scenario, si) => (
         <div key={si} className="space-y-1">
           {scenario.events.map((event, ei) => (

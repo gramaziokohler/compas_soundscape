@@ -438,7 +438,6 @@ export function SpeckleScene({
     goToPositionReceiverId,
     listenerOrientation,
     receivers,
-    soundscapeData,
     selectedReceiverId,
     onReceiverModeChange,
     onFPSExited,

@@ -686,7 +686,7 @@ export function ImpulseResponseUpload({
             </h3>
           </div>
 
-          <div ref={scrollContainerRef} className="space-y-0.5 max-h-80 overflow-y-auto">
+          <div ref={scrollContainerRef} className="space-y-0.5 max-h-[min(320px,40dvh)] overflow-y-auto">
             {groupedByReceiver ? (
               <>
                 {/* Receiver-grouped list */}

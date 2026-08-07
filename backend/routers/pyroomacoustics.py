@@ -5,6 +5,11 @@ POST /pyroomacoustics/run-simulation-speckle
   Validates basic params, queues the job, returns simulation_id immediately.
   Speckle fetch + room build + compute_rir run in a subprocess.
 
+POST /pyroomacoustics/run-simulation-geometry
+  Direct-geometry variant (Grasshopper → JSON).  Geometry is supplied inline
+  as a JSON body instead of being fetched from Speckle.  Same queue/worker
+  machinery, same polling endpoint.
+
 GET  /pyroomacoustics/simulation-status/{id}
   Poll for progress, queue position, or completed result.
 
@@ -17,34 +22,37 @@ import json
 import traceback
 import uuid
 from pathlib import Path
-from typing import List, Optional
+from typing import List
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Form
+from config.constants import DEFAULT_SPEED_OF_SOUND
+from config.constants import PYROOMACOUSTICS_DEFAULT_ABSORPTION
+from config.constants import PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION
+from config.constants import PYROOMACOUSTICS_DEFAULT_MAX_ORDER
+from config.constants import PYROOMACOUSTICS_DEFAULT_RAY_TRACING
+from config.constants import PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE
+from config.constants import PYROOMACOUSTICS_MAX_ORDER_MAX
+from config.constants import PYROOMACOUSTICS_MAX_ORDER_MIN
+from config.constants import PYROOMACOUSTICS_RAY_TRACING_N_RAYS
+from config.constants import PYROOMACOUSTICS_RIR_DIR
+from config.constants import PYROOMACOUSTICS_SIMULATION_MODE_FOA
+from config.constants import PYROOMACOUSTICS_SIMULATION_MODE_MONO
+from config.constants import PYROOMACOUSTICS_TASK_CLEANUP_DELAY_SECONDS
+from config.constants import TEMP_SIMULATIONS_DIR
+from fastapi import APIRouter
+from fastapi import Form
+from fastapi import HTTPException
 from fastapi.responses import FileResponse
+from models.schemas import PyroomacousticsGeometryRequest
+from models.schemas import PyroomacousticsSimulationResult
+from models.schemas import PyroomacousticsSimulationStartResponse
+from models.schemas import PyroomacousticsSimulationStatusResponse
 from pydantic import BaseModel
-
 from services.pyroomacoustics_service import PyroomacousticsService
 from services.pyroomacoustics_worker import run_pyroomacoustics_simulation
-from services.task_queue import unified_queue, make_subprocess_runner
-from models.schemas import (
-    PyroomacousticsSimulationStartResponse,
-    PyroomacousticsSimulationResult,
-    PyroomacousticsSimulationStatusResponse,
-)
-from config.constants import (
-    PYROOMACOUSTICS_RIR_DIR,
-    PYROOMACOUSTICS_DEFAULT_MAX_ORDER,
-    PYROOMACOUSTICS_DEFAULT_RAY_TRACING,
-    PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION,
-    PYROOMACOUSTICS_RAY_TRACING_N_RAYS,
-    PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE,
-    PYROOMACOUSTICS_SIMULATION_MODE_MONO,
-    PYROOMACOUSTICS_SIMULATION_MODE_FOA,
-    TEMP_SIMULATIONS_DIR,
-    PYROOMACOUSTICS_DEFAULT_ABSORPTION,
-    PYROOMACOUSTICS_TASK_CLEANUP_DELAY_SECONDS,
-    DEFAULT_SPEED_OF_SOUND,
-)
+from services.pyroomacoustics_worker import run_pyroomacoustics_simulation_from_geometry
+from services.task_queue import make_subprocess_runner
+from services.task_queue import unified_queue
 
 router = APIRouter(prefix="/api")
 
@@ -198,7 +206,7 @@ async def run_simulation_speckle(
         )
 
         print(f"\n{'='*60}")
-        print(f"Pyroomacoustics Speckle Simulation Request")
+        print("Pyroomacoustics Speckle Simulation Request")
         print(f"Simulation ID: {simulation_id}")
         print(f"Project: {speckle_project_id}  Version: {speckle_version_id}")
         print(f"Layer: {layer_name}  Mode: {simulation_mode}  Pairs: {len(pairs_data)}")
@@ -247,6 +255,171 @@ async def run_simulation_speckle(
         raise
     except Exception as exc:
         print(f"Pyroomacoustics setup error: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Simulation setup failed: {str(exc)}")
+
+
+# ─── Run simulation — direct geometry (Grasshopper) ───────────────────────────
+
+_UNIT_TO_METERS = {
+    "m": 1.0,
+    "mm": 0.001,
+    "cm": 0.01,
+    "ft": 0.3048,
+}
+
+
+@router.post(
+    "/pyroomacoustics/run-simulation-geometry",
+    response_model=PyroomacousticsSimulationStartResponse,
+)
+async def run_simulation_geometry(req: PyroomacousticsGeometryRequest):
+    """
+    Direct-geometry simulation: the room mesh, materials, sources and receivers
+    are supplied inline as a JSON body (e.g. from a Grasshopper component).
+
+    Faces whose group has no material entry are skipped by the worker.  Units
+    are converted to meters here so the subprocess always works in meters.
+    Returns simulation_id immediately — poll GET .../simulation-status/{id}.
+    """
+    simulation_id = str(uuid.uuid4())
+
+    try:
+        settings = req.settings
+        if settings.simulation_mode not in (
+            PYROOMACOUSTICS_SIMULATION_MODE_MONO,
+            PYROOMACOUSTICS_SIMULATION_MODE_FOA,
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid simulation mode: {settings.simulation_mode}",
+            )
+
+        if settings.max_order < PYROOMACOUSTICS_MAX_ORDER_MIN or settings.max_order > PYROOMACOUSTICS_MAX_ORDER_MAX:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"max_order must be between {PYROOMACOUSTICS_MAX_ORDER_MIN} "
+                    f"and {PYROOMACOUSTICS_MAX_ORDER_MAX}"
+                ),
+            )
+
+        # ── Face / vertex index validation ────────────────────────────────────
+        n_verts = len(req.vertices)
+        n_faces = len(req.faces)
+        if not req.face_groups:
+            raise HTTPException(
+                status_code=400,
+                detail="face_groups must contain at least one group — every simulated face needs a material",
+            )
+        for face in req.faces:
+            if any(idx < 0 or idx >= n_verts for idx in face):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Face contains a vertex index outside the vertex array",
+                )
+        for group_id, face_indices in req.face_groups.items():
+            if any(fi < 0 or fi >= n_faces for fi in face_indices):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Face group '{group_id}' references a face index outside the face array",
+                )
+
+        # ── Unit conversion (all coordinates → meters) ────────────────────────
+        scale = _UNIT_TO_METERS[req.units]
+        vertices_m = [[x * scale, y * scale, z * scale] for (x, y, z) in req.vertices]
+        sources_m = [
+            {"id": s.id, "position": [c * scale for c in s.position]}
+            for s in req.sources
+        ]
+        receivers_m = [
+            {"id": r.id, "position": [c * scale for c in r.position]}
+            for r in req.receivers
+        ]
+
+        PyroomacousticsService.validate_unit_scale(
+            source_positions=[s["position"] for s in sources_m],
+            receiver_positions=[r["position"] for r in receivers_m],
+        )
+
+        print(f"\n{'='*60}")
+        print("Pyroomacoustics Geometry Simulation Request")
+        print(f"Simulation ID: {simulation_id}")
+        print(f"Units: {req.units} (scaled to meters)  Mode: {settings.simulation_mode}")
+        print(f"Vertices: {len(vertices_m)}  Faces: {n_faces}  "
+              f"Groups: {len(req.face_groups)}  Sources: {len(sources_m)}  "
+              f"Receivers: {len(receivers_m)}")
+        print(f"{'='*60}\n")
+
+        # ── Persist normalized geometry for the subprocess handoff ────────────
+        materials_payload: dict = {}
+        for group_id, mat in req.materials.items():
+            if mat.name:
+                resolved = PyroomacousticsService.get_material_by_id(mat.name)
+                if resolved is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Unknown pyroomacoustics material id '{mat.name}' for "
+                            f"group '{group_id}'. Available ids are returned by "
+                            "GET /api/pyroomacoustics/materials."
+                        ),
+                    )
+                materials_payload[group_id] = resolved
+            else:
+                materials_payload[group_id] = {
+                    "absorption": mat.absorption,
+                    "scattering": mat.scattering,
+                }
+
+        geometry_payload = {
+            "vertices": vertices_m,
+            "faces": req.faces,
+            "face_groups": req.face_groups,
+            "materials": materials_payload,
+            "sources": sources_m,
+            "receivers": receivers_m,
+        }
+        geometry_file = str(TEMP_DIR / f"geometry_{simulation_id}.json")
+        with open(geometry_file, "w") as f:
+            json.dump(geometry_payload, f)
+
+        progress_file = str(TEMP_DIR / f"progress_{simulation_id}.json")
+        result_file   = str(TEMP_DIR / f"result_{simulation_id}.json")
+
+        worker_kwargs = dict(
+            simulation_id=simulation_id,
+            progress_file=progress_file,
+            result_file=result_file,
+            geometry_file=geometry_file,
+            simulation_mode=settings.simulation_mode,
+            max_order=settings.max_order,
+            ray_tracing=settings.ray_tracing,
+            air_absorption=settings.air_absorption,
+            n_rays=settings.n_rays,
+            sound_speed=settings.sound_speed,
+            simulation_name=req.simulation_name,
+            rir_output_dir=str(RIR_OUTPUT_DIR),
+            temp_dir=str(TEMP_DIR),
+        )
+
+        run_fn = make_subprocess_runner(
+            run_pyroomacoustics_simulation_from_geometry,
+            worker_kwargs,
+            progress_file,
+            result_file,
+            error_prefix="Simulation",
+        )
+
+        pos, total = unified_queue.enqueue(
+            simulation_id, "pyroomacoustics", run_fn, PYROOMACOUSTICS_TASK_CLEANUP_DELAY_SECONDS
+        )
+        print(f"Simulation {simulation_id} queued at position {pos} of {total}")
+        return PyroomacousticsSimulationStartResponse(simulation_id=simulation_id)
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"Pyroomacoustics geometry setup error: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Simulation setup failed: {str(exc)}")
 
 

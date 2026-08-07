@@ -257,23 +257,53 @@ export const UI_RIGHT_SIDEBAR = {
 export const UI_SIDEBAR_RESIZE = {
   // Left sidebar content panel (excludes vertical tab bar)
   LEFT_MIN_WIDTH: 180,
-  LEFT_MAX_WIDTH: 520,
+  LEFT_MAX_WIDTH: 720,
   LEFT_DEFAULT_WIDTH: 288,   // 18rem
 
   // Right sidebar total width
-  RIGHT_MIN_WIDTH: 200,
-  RIGHT_MAX_WIDTH: 500,
-  RIGHT_DEFAULT_WIDTH: 260,  // matches UI_RIGHT_SIDEBAR.WIDTH
+  RIGHT_MIN_WIDTH: 180,
+  RIGHT_MAX_WIDTH: 720,
+  RIGHT_DEFAULT_WIDTH: 288,  // 18rem
 
   // Right sidebar vertical split — fraction of height taken by the Acoustics
   // (simulation) section; the Listeners section fills the remainder.
   RIGHT_SPLIT_DEFAULT_RATIO: 0.65,
-  RIGHT_SPLIT_MIN_RATIO: 0.3,
+  RIGHT_SPLIT_MIN_RATIO: 0.25,
   RIGHT_SPLIT_MAX_RATIO: 0.85,
 
   // Resize handle visual / hit area
-  HANDLE_WIDTH: 4,           // px — visible highlight bar
+  HANDLE_WIDTH: 3,           // px — visible highlight bar
   HANDLE_HIT_AREA: 8,        // px — actual pointer hit area
+} as const;
+
+// ============================================================================
+// Fluid Design Tokens (UI Scale System)
+// ============================================================================
+// Assigns every layout surface a scaling class (see utils/scale.ts):
+//   physical  — constant CSS px, zoom/DPI invariant (text, hit targets, hairlines)
+//   fluid     — proportional to the viewport (constant fraction of the window)
+//   clamped   — fluid between a hard physical min/max
+//
+// `.FRACTION` is the target viewport share; `.MIN` / `.MAX` are hard physical px.
+// Consumers compute a value at render time via `useViewportScale()` / `getScale()`:
+//   scale.clampW(UI_SCALE.LEFT_SIDEBAR.MIN, UI_SCALE.LEFT_SIDEBAR.FRACTION,
+//                UI_SCALE.LEFT_SIDEBAR.MAX)
+// Never hardcode fractions or px for these surfaces elsewhere.
+export const UI_SCALE = {
+  /** Left sidebar content width — clamped-fluid fraction of viewport width. */
+  LEFT_SIDEBAR: { FRACTION: 0.18, DEFAULT_FRACTION: 0.18, MIN: 240, MAX: 720 },
+  /** Right sidebar width — clamped-fluid fraction of viewport width. */
+  RIGHT_SIDEBAR: { FRACTION: 0.18, DEFAULT_FRACTION: 0.18, MIN: 240, MAX: 720 },
+  /**
+   * Max height of scrollable card bodies / list panels as a clamped-fluid
+   * fraction of viewport height, so they neither clip on short screens nor
+   * leave dead space on tall ones.
+   */
+  SCROLL_MAX_HEIGHT: { FRACTION: 0.45, MAX: 720 },
+  /** ObjectExplorer tree max height (fraction of viewport height). */
+  TREE_MAX_HEIGHT: { FRACTION: 0.60 },
+  /** Floating ObjectExplorerPanel default height (clamped-fluid). */
+  OBJECT_EXPLORER_PANEL_HEIGHT: { FRACTION: 0.60, MIN: 200, MAX: 800 },
 } as const;
 
 // ============================================================================

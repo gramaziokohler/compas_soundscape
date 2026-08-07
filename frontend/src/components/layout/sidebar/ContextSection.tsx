@@ -23,7 +23,6 @@ import { useSpeckleStore, useAnalysisStore, useSoundscapeStore } from '@/store';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
 import { LLM_MODEL_TO_PROVIDER } from '@/utils/constants';
 import { getAnalysisGroupColor } from '@/utils/utils';
-import { CircularFAB } from '@/components/ui/CircularFAB';
 
 // ─── AnalysisGroupColorSync ───────────────────────────────────────────────────
 // Applies/clears viewer color groups when a model-analysis card is expanded.
@@ -443,7 +442,8 @@ export function ContextSection({
     [analysisResult.length],
   );
 
-  // Render card — wraps Card with optional circular FAB
+  // Render card — the unified bottom bar (idle → run, generating → progress+stop,
+  // done → continue action) replaces the old circular FAB.
   const renderCard = useCallback(
     (
       config: AnalysisConfig,
@@ -453,21 +453,18 @@ export function ContextSection({
     ) => {
       const originalIndex = indexMap[filteredIndex] ?? filteredIndex;
       const configHasResult = config.type === 'freeform' ? true : hasResult(originalIndex);
-      const showFloatingAction = configHasResult && isExpanded;
       const actionBtn = getActionButton(config, originalIndex);
       const title = config.display_name || CARD_TYPE_LABELS[config.type as CardType] || 'Card';
 
-      // Floating action: audio extracts & sends to Sounds; others advance to Usage
-      const floatingLabel =
-        config.type === 'audio'
-          ? (extractingAudioIndices.has(originalIndex) ? 'Extracting…' : 'Extract & go to Sounds')
-          : config.type === 'freeform'
-          ? 'Next: Usage'
-          : 'Next: Usage';
-      const handleFloatingAction =
-        config.type === 'audio'
+      const isAudio = config.type === 'audio';
+      const isExtracting = extractingAudioIndices.has(originalIndex);
+
+      // Done-state continue action: audio extracts & sends to Sounds; others advance to Usage
+      const doneActionLabel = isAudio ? 'Extract & go to Sounds' : 'Next: Usage';
+      const handleDoneAction =
+        isAudio
           ? async () => {
-              if (extractingAudioIndices.has(originalIndex)) return;
+              if (isExtracting) return;
               const audioConfig = config as AudioAnalysisConfig;
               setExtractingAudioIndices((prev) => new Set([...prev, originalIndex]));
               try {
@@ -492,9 +489,13 @@ export function ContextSection({
           isExpanded={isExpanded}
           hasResult={configHasResult}
           result={getResult(originalIndex)}
-          isRunning={isRunning && analyzingConfigIndex === originalIndex}
+          isRunning={(isRunning && analyzingConfigIndex === originalIndex) || isExtracting}
           status={
-            analyzingConfigIndex === originalIndex ? analysisStatus : undefined
+            isExtracting
+              ? 'Extracting…'
+              : analyzingConfigIndex === originalIndex
+                ? analysisStatus
+                : undefined
           }
           collapsedInfo={getCollapsedInfo(config, originalIndex)}
           showIndex={true}
@@ -508,27 +509,16 @@ export function ContextSection({
           beforeContent={getBeforeContent(config, originalIndex)}
           afterContent={getAfterContent(config, originalIndex)}
           onRun={async () => onRun(originalIndex)}
-          onCancel={onStop}
+          onCancel={isExtracting ? undefined : onStop}
           actionButtonLabel={actionBtn.label}
           actionButtonDisabled={actionBtn.disabled}
           actionButtonDisabledReason={actionBtn.disabledReason}
           actionButtonColor={actionBtn.color}
+          doneActionLabel={configHasResult ? doneActionLabel : undefined}
+          onDoneAction={configHasResult ? handleDoneAction : undefined}
           color="primary"
           version={getCardVersion(config)}
         />
-      );
-
-      const wrapped = (
-        <div key={originalIndex} style={{ position: 'relative' }}>
-          {card}
-          {showFloatingAction && (
-            <CircularFAB
-              label={floatingLabel}
-              onClick={handleFloatingAction as () => void}
-              isLoading={(isRunning && analyzingConfigIndex === originalIndex) || extractingAudioIndices.has(originalIndex)}
-            />
-          )}
-        </div>
       );
 
       if (config.type === 'model-analysis') {
@@ -538,11 +528,11 @@ export function ContextSection({
               config={config as AnalyzeModelConfig}
               isExpanded={isExpanded}
             />
-            {wrapped}
+            {card}
           </>
         );
       }
-      return wrapped;
+      return card;
     },
     [
       indexMap,

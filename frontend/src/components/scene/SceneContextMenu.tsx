@@ -8,6 +8,7 @@ import { useSpeckleStore, useAcousticLayerStore } from '@/store';
 import { useSpeckleFiltering } from '@/hooks/useSpeckleFiltering';
 import { getRootNodesForModel, getGeometryLeafIdsFromNode } from '@/hooks/useSpeckleTree';
 import type { SoundEvent } from '@/types';
+import { getScale } from '@/utils/scale';
 
 const INITIAL_WIDTH = 320;
 const MIN_WIDTH = 200;
@@ -42,11 +43,10 @@ export function SceneContextMenu({
 }: SceneContextMenuProps) {
   // Initialise position clamped to viewport
   const [pos, setPos] = useState<{ x: number; y: number }>(() => {
-    const vw = typeof window !== 'undefined' ? window.innerWidth : 1920;
-    const vh = typeof window !== 'undefined' ? window.innerHeight : 1080;
+    const vp = getScale().viewport;
     return {
-      x: Math.max(4, Math.min(x, vw - INITIAL_WIDTH - 4)),
-      y: Math.max(4, Math.min(y, vh - MIN_HEIGHT - 4)),
+      x: Math.max(4, Math.min(x, vp.width - INITIAL_WIDTH - 4)),
+      y: Math.max(4, Math.min(y, vp.height - MIN_HEIGHT - 4)),
     };
   });
   // height === 0 means auto (fit content); set to explicit px only after user resizes

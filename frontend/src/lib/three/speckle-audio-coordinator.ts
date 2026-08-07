@@ -264,6 +264,11 @@ export class SpeckleAudioCoordinator {
         }
       }
     });
+
+    // Never re-enable Speckle's camera controls on drag end while FPS mode is
+    // active — the FPS camera writes directly and a re-enabled controller
+    // would overwrite it, throwing the view off the locked listener position.
+    this.dragHandler.setOnCameraLocked(() => this.speckleCameraController?.isFirstPersonMode() ?? false);
   }
 
   public setAudioOrchestrator(orchestrator: AudioOrchestrator | null): void {
@@ -613,6 +618,18 @@ export class SpeckleAudioCoordinator {
   /** Returns true if a custom object is under the given screen position. */
   public hasCustomObjectAt(clientX: number, clientY: number): boolean {
     return this.eventBridge?.hasCustomObjectAt(clientX, clientY) ?? false;
+  }
+
+  /**
+   * Returns true if the pointer is over a draggable element (sound source,
+   * listener, grid listener) or its drag gizmo. Only VISIBLE custom objects are
+   * considered, so the listener mesh hidden while viewing through it in FPS
+   * mode does not block the camera-look. Used to suppress FPS camera-look so a
+   * press intended to drag an element does not also rotate the view.
+   */
+  public isPointerOverDraggable(clientX: number, clientY: number): boolean {
+    if (this.eventBridge?.hasVisibleCustomObjectAt(clientX, clientY)) return true;
+    return this.eventBridge?.hasGizmoAt(clientX, clientY) ?? false;
   }
 
   /** Returns true if the last pointer gesture was a drag (orbit/pan), regardless of button. */

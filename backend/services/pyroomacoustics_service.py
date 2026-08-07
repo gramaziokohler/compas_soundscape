@@ -7,8 +7,8 @@ import pyroomacoustics as pra
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for server-side rendering
 import matplotlib.pyplot as plt
-from scipy.io import wavfile
 from pathlib import Path
+from typing import Optional
 from fastapi import HTTPException
 
 from config.constants import (
@@ -467,6 +467,69 @@ class PyroomacousticsService:
             raise HTTPException(status_code=500, detail=f"Failed to create room from mesh: {str(e)}")
 
     @staticmethod
+    def build_room_from_geometry(
+        vertices: list[list[float]],
+        faces: list[list[int]],
+        face_materials: dict[int, float] = None,
+        face_scattering: dict[int, float] = None,
+        max_order: int = None,
+        ray_tracing: bool = False,
+        air_absorption: bool = False,
+        sound_speed: float = 343.0,
+        skip_weld: bool = False,
+    ) -> pra.Room:
+        """
+        Shared room-build entry point used by both the Speckle worker and the
+        direct-geometry (Grasshopper) worker.
+
+        Welds the mesh (deduplicate verts, drop degenerate/duplicate/
+        non-manifold faces) then builds a pra.Room from the welded mesh.
+        Keeps the two simulation paths from drifting on mesh handling.
+
+        Args:
+            vertices: List of [x, y, z] coordinates in meters.
+            faces: List of face vertex index lists (e.g. [[0,1,2], [1,2,3]]).
+            face_materials: Optional dict mapping face index → absorption value.
+            face_scattering: Optional dict mapping face index → scattering value.
+            max_order: Maximum reflection order for ISM.
+            ray_tracing: Enable hybrid ISM / ray tracing.
+            air_absorption: Enable frequency-dependent air absorption.
+            sound_speed: Speed of sound in m/s.
+            skip_weld: When True, assume `vertices`/`faces` are already welded
+                (used by the shared compute loop, which welds once for all
+                sources and reuses the result per source).
+
+        Returns:
+            pra.Room: Ready-to-use room (no sources/receivers added yet).
+        """
+        if not skip_weld:
+            vertices, faces, face_materials, face_scattering = (
+                PyroomacousticsService.weld_mesh(
+                    vertices,
+                    faces,
+                    face_materials if face_materials else None,
+                    face_scattering,
+                )
+            )
+
+        from config.constants import PYROOMACOUSTICS_MAX_ORDER_MAX
+        if max_order is None:
+            max_order = PYROOMACOUSTICS_MAX_ORDER_MAX
+
+        return PyroomacousticsService.create_room_from_mesh(
+            vertices=vertices,
+            faces=faces,
+            face_materials=face_materials,
+            face_scattering=face_scattering,
+            fs=None,
+            max_order=max_order,
+            ray_tracing=ray_tracing,
+            air_absorption=air_absorption,
+            skip_weld=True,
+            sound_speed=sound_speed,
+        )
+
+    @staticmethod
     def enable_ray_tracing(
         room,  # pra.Room
         n_rays: int = None,
@@ -630,4 +693,28 @@ class PyroomacousticsService:
         absoprtion_db["custom"] = PYROOMACOUSTICS_CUSTOM_MATERIALS
 
         return absoprtion_db
+
+    @staticmethod
+    def get_material_by_id(material_id: str) -> Optional[dict]:
+        """
+        Resolve a material id (from GET /api/pyroomacoustics/materials) to the
+        per-band absorption coefficient dict consumed by pra.Material:
+
+            {"coeffs": [...], "center_freqs": [...]}
+
+        Returns None if the id is not in the database.
+        """
+        if not material_id:
+            return None
+        for category in PyroomacousticsService.get_material_database().values():
+            props = category.get(material_id)
+            if props is None:
+                continue
+            return {
+                "coeffs": props.get("coeffs", []),
+                "center_freqs": props.get(
+                    "center_freqs", [125, 250, 500, 1000, 2000, 4000, 8000]
+                ),
+            }
+        return None
 

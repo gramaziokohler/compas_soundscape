@@ -206,6 +206,17 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
    * Tooltip text when action button is disabled
    */
   actionButtonDisabledReason?: string;
+  /**
+   * Label for the done-state continue action (e.g. "Next: Usage", "Send to sounds").
+   * Shown in the bottom bar once the card has a result. When omitted, the bottom
+   * bar hides entirely after generation (nothing left to generate).
+   */
+  doneActionLabel?: string;
+  /**
+   * Click handler for the done-state continue action. Only rendered when
+   * doneActionLabel is also provided.
+   */
+  onDoneAction?: () => void;
   /** Result data (when hasResult is true) */
   result?: TResult;
 

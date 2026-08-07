@@ -21,7 +21,6 @@ import { useAnalysisStore, useSoundscapeStore, useAreaDrawingStore } from '@/sto
 import { useServiceVersions } from '@/hooks/useServiceVersions';
 import { LLM_MODEL_TO_PROVIDER } from '@/utils/constants';
 import type { CustomMenuItem } from '@/types/card';
-import { CircularFAB } from '@/components/ui/CircularFAB';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -343,11 +342,9 @@ export function UsageSection({
           : null;
       const title = config.display_name || scenarioTitle || CARD_TYPE_LABELS[config.type as CardType] || 'Card';
 
-      // Floating action logic per card type
-      let showFloatingAction = false;
-      let floatingLabel = '';
-      let floatingIsLoading = false;
-      let handleFloatingAction: () => void = () => {};
+      // Done-state continue action per card type (idle → run button, done → continue)
+      let doneActionLabel: string | undefined;
+      let onDoneAction: (() => void) | undefined;
 
       if (config.type === 'scenario') {
         const sc = config as ScenarioConfig;
@@ -358,23 +355,16 @@ export function UsageSection({
           !sc.foleyResult;
 
         if (sc.foleyResult) {
-          // Foley complete → floating action sends to sounds (but wait for streaming to finish)
-          const isFoleyStreaming = isRunning && analyzingConfigIndex === originalIndex;
-          showFloatingAction = isExpanded;
-          floatingIsLoading = isFoleyStreaming;
-          floatingLabel = isFoleyStreaming ? 'Generating sounds…' : 'Send to sounds';
-          handleFloatingAction = isFoleyStreaming
-            ? () => {}
-            : () => {
-                // onAdvanceToSounds → handleUsageSendToSounds → pushes only this card's sounds
-                onAdvanceToSounds(originalIndex, title);
-              };
+          // Foley complete → send to sounds (running state shows progress while streaming)
+          doneActionLabel = 'Send to sounds';
+          onDoneAction = () => {
+            // onAdvanceToSounds → handleUsageSendToSounds → pushes only this card's sounds
+            onAdvanceToSounds(originalIndex, title);
+          };
         } else if (sc.scenarioResult) {
-          // Scenario generated, no foley yet → floating action runs foley (auto-chains)
-          showFloatingAction = isExpanded;
-          floatingLabel = 'Call Foley Artist';
-          floatingIsLoading = isFoleyLoading;
-          handleFloatingAction = () => {
+          // Scenario generated, no foley yet → run foley (auto-chains to send)
+          doneActionLabel = 'Call Foley Artist';
+          onDoneAction = () => {
             if (!isFoleyLoading) {
               pendingAutoSendRef.current.add(originalIndex);
               onRun(originalIndex);
@@ -383,18 +373,14 @@ export function UsageSection({
         }
       } else if (config.type === 'text') {
         const result = analysisResult.find((r) => r.configIndex === originalIndex);
-        showFloatingAction = isExpanded && configHasResult;
-        floatingLabel = 'Send to sounds';
-        handleFloatingAction = () => {
-          // onAdvanceToSounds → handleUsageSendToSounds → pushes only this card's sounds
-          onAdvanceToSounds(originalIndex, title);
-        };
-        // Disable if nothing selected
-        if (result && result.prompts.filter((p) => p.selected).length === 0) {
-          floatingLabel = 'Select prompts to send';
+        if (result) {
+          const selectedCount = result.prompts.filter((p) => p.selected).length;
+          doneActionLabel = selectedCount > 0 ? 'Send to sounds' : 'Select prompts to send';
+          onDoneAction = () => {
+            // onAdvanceToSounds → handleUsageSendToSounds → pushes only this card's sounds
+            onAdvanceToSounds(originalIndex, title);
+          };
         }
-      } else if (config.type === 'freeform') {
-        showFloatingAction = false;
       }
 
       // Action button for text cards - draw area custom button
@@ -486,24 +472,15 @@ export function UsageSection({
           onCancel={onStop}
           actionButtonLabel={actionButtonLabel}
           actionButtonDisabled={false}
+          doneActionLabel={doneActionLabel}
+          onDoneAction={onDoneAction}
           color="primary"
           customButtons={customButtons}
           version={getCardVersion(config)}
         />
       );
 
-      return (
-        <div key={originalIndex} style={{ position: 'relative' }}>
-          {card}
-          {showFloatingAction && (
-            <CircularFAB
-              label={floatingLabel}
-              onClick={handleFloatingAction}
-              isLoading={floatingIsLoading}
-            />
-          )}
-        </div>
-      );
+      return card;
     },
     [
       indexMap,

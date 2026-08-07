@@ -69,6 +69,11 @@ export class SpeckleDragHandler {
   private onDragCallback: ((objects: THREE.Object3D[], delta: THREE.Vector3) => void) | null = null;
   private onDragEndCallback: ((objects: THREE.Object3D[], position: THREE.Vector3) => void) | null = null;
 
+  // When true (e.g. first-person mode is active), the camera controller must
+  // stay disabled after a drag ends — re-enabling it would let the active
+  // controls overwrite the directly-written FPS camera.
+  private onCameraLockedCheck: (() => boolean) | null = null;
+
   /**
    * Create a new SpeckleDragHandler
    * @param viewer - Speckle viewer instance
@@ -115,7 +120,13 @@ export class SpeckleDragHandler {
         }
       } else {
         setTimeout(() => {
-          this.cameraController.enabled = !val;
+          // Don't re-enable Speckle's camera while the FPS camera is locked to
+          // a listener — re-enabling would let the (FlyControls-based) FPS
+          // controller overwrite the direct FPS camera writes and corrupt the
+          // view. The coordinator supplies the lock predicate.
+          if (!(this.onCameraLockedCheck?.() ?? false)) {
+            this.cameraController.enabled = !val;
+          }
         }, 100);
 
         this.justFinishedDragging = true;
@@ -242,6 +253,15 @@ export class SpeckleDragHandler {
 
   public setOnDragEnd(callback: (objects: THREE.Object3D[], position: THREE.Vector3) => void): void {
     this.onDragEndCallback = callback;
+  }
+
+  /**
+   * Set a predicate returning true while the camera must stay locked (e.g. FPS
+   * mode). When it returns true, the camera controller is NOT re-enabled after
+   * a drag ends, so the FPS camera's direct writes are never overwritten.
+   */
+  public setOnCameraLocked(callback: (() => boolean) | null): void {
+    this.onCameraLockedCheck = callback;
   }
 
   public getIsDragging(): boolean {

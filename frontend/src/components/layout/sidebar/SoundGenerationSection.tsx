@@ -7,7 +7,8 @@ import { CARD_TYPE_LABELS } from "@/types";
 import type { CardTypeOption } from "@/components/ui/CardSection";
 import type { CustomMenuItem } from "@/types/card";
 import { CardSection } from "@/components/ui/CardSection";
-import { Card } from "@/components/ui/Card";import { CircularFAB } from '@/components/ui/CircularFAB';import { SoundPreContent, SoundResultContent } from "./sound";
+import { Card } from "@/components/ui/Card";
+import { SoundPreContent, SoundResultContent } from "./sound";
 import { Badge } from "@/components/ui/Badge";
 import type { VariantsBarProps } from "@/components/ui/VariantsBar";
 import { createTtsSpeechLines } from "@/hooks/useTtsSpeechLines";
@@ -919,6 +920,8 @@ export function SoundGenerationSection({
         onUpdateConfig={(_i, updates) => handleUpdateConfig(originalIndex, updates)}
         onRemove={() => onRemoveConfig(originalIndex)}
         onReset={() => handleReset(originalIndex)}
+        onRun={async () => onGenerateSingle(originalIndex)}
+        onCancel={onStopGeneration}
         color="primary"
         version={cardVersion}
         dimmed={isEffectivelyMuted}
@@ -981,13 +984,6 @@ export function SoundGenerationSection({
           </>
         )}
       />
-      {isExpanded && !isGenerated && (
-        <CircularFAB
-          label={isSoundGenerating && (soundGenTargetIndices === null || soundGenTargetIndices.includes(originalIndex)) ? 'Generating…' : 'Generate Sound'}
-          onClick={() => onGenerateSingle(originalIndex)}
-          isLoading={isSoundGenerating && (soundGenTargetIndices === null || soundGenTargetIndices.includes(originalIndex))}
-        />
-      )}
     </div>
   );
   }, [

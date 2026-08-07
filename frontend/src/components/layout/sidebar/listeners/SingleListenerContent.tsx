@@ -4,6 +4,7 @@ import { useState, useRef, useCallback } from 'react';
 import type { ReceiverData } from '@/types/receiver';
 import { useReceiversStore } from '@/store/receiversStore';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
+import { RefreshIcon } from '@/components/ui/Icon';
 
 function toDeg(rad: number): string {
   if (isNaN(rad)) return '0.0';
@@ -33,6 +34,22 @@ export function SingleListenerContent({ receiver, color, onUpdatePosition }: Sin
   const liveYaw = cameraOri.yaw;
   const livePitch = cameraOri.pitch;
   const liveRoll = cameraOri.roll;
+
+  const hasNonDefaultOrientation =
+    Math.abs(liveYaw) > 1e-4 || Math.abs(livePitch) > 1e-4 || Math.abs(liveRoll) > 1e-4;
+
+  const handleResetOrientation = useCallback(() => {
+    // Clear any saved orientation for this receiver
+    updateReceiverOrientation(receiver.id, 0, 0, 0);
+    savedRef.current = false;
+    setSaved(false);
+
+    // Rotate the camera back to the default orientation (yaw/pitch/roll = 0)
+    const { coordinator } = useSpeckleEngineStore.getState();
+    if (coordinator?.isFirstPersonMode()) {
+      coordinator.rotateFirstPersonView(-liveYaw, -livePitch, -liveRoll);
+    }
+  }, [liveYaw, livePitch, liveRoll, receiver.id, updateReceiverOrientation]);
 
   const handleOrientationClick = useCallback(() => {
     if (savedRef.current) {
@@ -95,6 +112,16 @@ export function SingleListenerContent({ receiver, color, onUpdatePosition }: Sin
               </svg>
             )}
           </button>
+          {hasNonDefaultOrientation && (
+            <button
+              onClick={handleResetOrientation}
+              title="Reset orientation to default"
+              className="w-5 h-5 flex items-center justify-center rounded border text-[10px] transition-colors hover:opacity-80 shrink-0"
+              style={{ borderColor: `${color}55`, color }}
+            >
+              <RefreshIcon size="0.625rem" />
+            </button>
+          )}
         </div>
         {saved && (
           <span className="text-[9px]" style={{ color }}>

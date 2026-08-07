@@ -443,12 +443,57 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
 
         handleRemoveConfig: (index) => {
           const { analysisConfigs, activeAnalysisTab, analysisResults } = get();
-          const newConfigs = analysisConfigs.filter((_, i) => i !== index);
-          const newResults = analysisResults.filter((r) => r.configIndex !== index);
-          const newTab =
-            activeAnalysisTab >= analysisConfigs.length - 1
-              ? Math.max(0, analysisConfigs.length - 2)
-              : activeAnalysisTab;
+          const removed = analysisConfigs[index];
+          if (!removed) return;
+
+          const removedType = removed.type as CardType;
+          const removedParent = (removed as AnalysisBaseConfig).parentContextOriginalIndex;
+          const isContextCard =
+            removedType === 'model-analysis' ||
+            removedType === '3d-model' ||
+            removedType === 'audio' ||
+            (removedType === 'freeform' && removedParent === undefined);
+
+          // Collect all analysis config indices to remove: the target card plus
+          // any usage cards parented to it (parentContextOriginalIndex linkage).
+          const removeSet = new Set<number>([index]);
+          if (isContextCard) {
+            analysisConfigs.forEach((c, i) => {
+              if (i === index) return;
+              if ((c as AnalysisBaseConfig).parentContextOriginalIndex === index) {
+                removeSet.add(i);
+              }
+            });
+          }
+
+          // Cascade-delete child sound configs: sounds linked to any removed
+          // usage card (parentUsageOriginalIndex), plus the negative namespace
+          // `-(index + 1)` used by audio context cards that bypassed Usage.
+          const soundscape = useSoundscapeStore.getState();
+          const soundIndicesToRemove: number[] = [];
+          soundscape.soundConfigs.forEach((sc, i) => {
+            const pui = (sc as any).parentUsageOriginalIndex;
+            if (pui === undefined || pui === null) return;
+            if (removeSet.has(pui)) {
+              soundIndicesToRemove.push(i);
+            } else if (isContextCard && pui === -(index + 1)) {
+              soundIndicesToRemove.push(i);
+            }
+          });
+          if (soundIndicesToRemove.length > 0) {
+            soundscape.handleRemoveConfigs(soundIndicesToRemove);
+          }
+
+          const newConfigs = analysisConfigs.filter((_, i) => !removeSet.has(i));
+          const newResults = analysisResults.filter((r) => !removeSet.has(r.configIndex));
+          const remainingIndices = analysisConfigs.map((_, i) => i).filter((i) => !removeSet.has(i));
+          let newTab = activeAnalysisTab;
+          if (removeSet.has(newTab)) {
+            newTab = remainingIndices.length > 0 ? remainingIndices[remainingIndices.length - 1] : 0;
+          } else {
+            const below = [...removeSet].filter((i) => i < newTab).length;
+            newTab = newTab - below;
+          }
           set(
             { analysisConfigs: newConfigs, analysisResults: newResults, activeAnalysisTab: newTab },
             false,
@@ -1713,7 +1758,9 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               }
             }
           } catch (e) {
+            if (e instanceof Error && e.name === 'AbortError') return;
             console.error('[handleScenarioAnalyze] stream error:', e);
+            notifySectionError(e instanceof Error ? e.message : 'Scenario analysis failed');
           }
         },
 
@@ -1817,7 +1864,9 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                   }
                 }
               } catch (e) {
+                if (e instanceof Error && e.name === 'AbortError') return;
                 console.error('[handleFoleyArtist] Foley stream error:', e);
+                notifySectionError(e instanceof Error ? e.message : 'Foley generation failed');
               }
             })();
 
@@ -1848,7 +1897,9 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                   }
                 }
               } catch (e) {
+                if (e instanceof Error && e.name === 'AbortError') return;
                 console.error('[handleFoleyArtist] Speech stream error:', e);
+                notifySectionError(e instanceof Error ? e.message : 'Speech generation failed');
               }
             })();
 
@@ -1904,7 +1955,9 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               }
             }
           } catch (e) {
+            if (e instanceof Error && e.name === 'AbortError') return;
             console.error('[handleFoleyArtist] Orchestrate stream error:', e);
+            notifySectionError(e instanceof Error ? e.message : 'Soundscape orchestration failed');
             return;
           }
 

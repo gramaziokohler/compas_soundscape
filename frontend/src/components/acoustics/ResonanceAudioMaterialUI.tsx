@@ -17,6 +17,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import { ChevronRight } from 'lucide-react';
 import { RESONANCE_AUDIO } from '@/utils/constants';
 import type { ResonanceRoomMaterial } from '@/types/audio';
 
@@ -30,10 +31,10 @@ type RoomFace = 'left' | 'right' | 'front' | 'back' | 'down' | 'up';
 const FACE_LABELS: Record<RoomFace, string> = {
   left: 'Left',
   right: 'Right',
-  front: 'Ceiling',
+  front: 'Front',
   back: 'Back',
   down: 'Floor',
-  up: 'Front'
+  up: 'Ceiling'
 };
 
 const FACE_ORDER: RoomFace[] = ['left', 'right', 'front', 'back', 'down', 'up'];
@@ -161,101 +162,99 @@ export function ResonanceAudioMaterialUI({
   };
 
   // Render "All faces" display label
-  const allFacesDisplay = allFacesMaterial
-    ? getMaterialDisplay(allFacesMaterial).label
-    : 'various';
-
   const allFacesColor = allFacesMaterial
     ? getSelectBackgroundColor(allFacesMaterial)
     : 'var(--color-secondary-hover)';
 
   return (
-    <div className="flex flex-col gap-1 text-xs w-full overflow-hidden">
+    <div className="flex flex-col w-full min-w-0 text-xs overflow-hidden">
       {/* All Faces Root */}
-      <div className="flex flex-col w-full">
-        <div className="flex items-center gap-1 p-0 rounded w-full min-w-0">
-          <button
-            onClick={() => setExpandedAll(!expandedAll)}
-            className="flex items-center justify-center  h-4 shrink-0 "
-          >
-            {expandedAll ? '▼' : '▶'}
-          </button>
-          <span className="font-medium shrink-0 w-16 ">Materials</span>
-          <select
-            value={allFacesMaterial || 'various'}
-            onChange={(e) => {
-              if (e.target.value !== 'various') {
-                handleAllFacesChange(e.target.value);
-              }
-            }}
-            className="flex-1 min-w-0 text-xs px-2 py-1 text-white rounded focus:outline-none focus:ring-1 focus:ring-white"
-            style={{
-              backgroundColor: allFacesColor,
-              borderRadius: '8px'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {!allFacesMaterial && (
-              <option value="various" style={{ backgroundColor: 'var(--color-secondary-hover)' }}>various</option>
-            )}
-            {materialOptions.map((opt) => {
-              const display = getMaterialDisplay(opt.value);
-              return (
-                <option
-                  key={opt.value}
-                  value={opt.value}
-                  style={{ backgroundColor: display.color }}
-                >
-                  {opt.label} ({(display.absorption * 100).toFixed(0)}% abs)
-                </option>
-              );
-            })}
-          </select>
-        </div>
-
-        {/* Individual Faces */}
-        {expandedAll && (
-          <div className="ml-0 flex flex-col gap-1 w-full">
-            {FACE_ORDER.map((face) => {
-              const faceLabel = FACE_LABELS[face];
-              const faceMaterial = materials[face];
-              const display = getMaterialDisplay(faceMaterial);
-
-              return (
-                <div
-                  key={face}
-                  className="flex items-center gap-2 p-2 rounded w-full min-w-0"
-                >
-                  <span className="shrink-0 w-16 ml-2">{faceLabel}</span>
-                  <select
-                    value={faceMaterial}
-                    onChange={(e) => handleFaceChange(face, e.target.value)}
-                    className="flex-1 min-w-0 text-xs px-2 py-1 text-white rounded focus:outline-none focus:ring-1 focus:ring-white"
-                    style={{
-                      backgroundColor: display.color,
-                      borderRadius: '8px'
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {materialOptions.map((opt) => {
-                      const optDisplay = getMaterialDisplay(opt.value);
-                      return (
-                        <option
-                          key={opt.value}
-                          value={opt.value}
-                          style={{ backgroundColor: optDisplay.color }}
-                        >
-                          {opt.label} ({(optDisplay.absorption * 100).toFixed(0)}% abs)
-                        </option>
-                      );
-                    })}
-                  </select>
-                </div>
-              );
-            })}
-          </div>
-        )}
+      <div className="flex items-center gap-1 w-full min-w-0">
+        <button
+          onClick={() => setExpandedAll(!expandedAll)}
+          className="flex items-center justify-center h-4 w-4 shrink-0 text-secondary-hover hover:text-foreground"
+          title={expandedAll ? 'Collapse surfaces' : 'Expand surfaces'}
+        >
+          <ChevronRight
+            size={12}
+            className={`shrink-0 transition-transform duration-150 ${expandedAll ? 'rotate-90' : ''}`}
+          />
+        </button>
+        <span className="font-medium text-secondary shrink-0">Materials</span>
+        <select
+          value={allFacesMaterial || 'various'}
+          onChange={(e) => {
+            if (e.target.value !== 'various') {
+              handleAllFacesChange(e.target.value);
+            }
+          }}
+          className="flex-1 min-w-0 w-full text-xxs px-2 py-0.5 text-white rounded focus:outline-none focus:ring-1 focus:ring-white"
+          style={{
+            backgroundColor: allFacesColor,
+            borderRadius: '8px'
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {!allFacesMaterial && (
+            <option value="various" style={{ backgroundColor: 'var(--color-secondary-hover)' }}>various</option>
+          )}
+          {materialOptions.map((opt) => {
+            const display = getMaterialDisplay(opt.value);
+            return (
+              <option
+                key={opt.value}
+                value={opt.value}
+                style={{ backgroundColor: display.color }}
+              >
+                {opt.label} ({(display.absorption * 100).toFixed(0)}% abs)
+              </option>
+            );
+          })}
+        </select>
       </div>
+
+      {/* Individual Faces */}
+      {expandedAll && (
+        <div className="ml-4 flex flex-col gap-0.5 mt-0.5 w-full min-w-0">
+          {FACE_ORDER.map((face) => {
+            const faceLabel = FACE_LABELS[face];
+            const faceMaterial = materials[face];
+            const display = getMaterialDisplay(faceMaterial);
+
+            return (
+              <div
+                key={face}
+                className="flex items-center gap-1 w-full min-w-0"
+              >
+                <span className="shrink-0 w-10 text-xxs text-secondary-hover">{faceLabel}</span>
+                <select
+                  value={faceMaterial}
+                  onChange={(e) => handleFaceChange(face, e.target.value)}
+                  className="flex-1 min-w-0 w-full text-xxs px-2 py-0.5 text-white rounded focus:outline-none focus:ring-1 focus:ring-white"
+                  style={{
+                    backgroundColor: display.color,
+                    borderRadius: '8px'
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {materialOptions.map((opt) => {
+                    const optDisplay = getMaterialDisplay(opt.value);
+                    return (
+                      <option
+                        key={opt.value}
+                        value={opt.value}
+                        style={{ backgroundColor: optDisplay.color }}
+                      >
+                        {opt.label} ({(optDisplay.absorption * 100).toFixed(0)}% abs)
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

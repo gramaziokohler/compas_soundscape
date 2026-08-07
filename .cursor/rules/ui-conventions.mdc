@@ -84,6 +84,60 @@ const hex = getMaterialColorByAbsorption(0.4)   // → '#hex' between start, mid
 
 ---
 
+## UI Scaling — Three Scaling Classes
+
+Every UI element belongs to exactly one scaling class. OS display scaling and browser zoom are
+already handled by the browser for anything expressed in CSS px — the real bugs are **fixed-px
+layout that ignores the window size** and **JS pixel math reading `window.innerWidth`**. Never
+hardcode `window.innerWidth/innerHeight` reads in components; route them through the scale system.
+
+| Class | Behavior | Use for |
+| ----- | -------- | ------- |
+| `physical` | Constant CSS px, zoom/DPI-invariant | Text, buttons, hairlines, scrollbars, focus rings, icon sizes |
+| `fluid` | Constant fraction of the viewport (`vw`/`vh`) | (rare — almost everything is clamped-fluid) |
+| `clamped-fluid` | Fluid between a hard physical min/max | Sidebar widths, floating panels, scroll max-heights |
+
+### Where the system lives
+
+| File | Role |
+| ---- | ---- |
+| `frontend/src/utils/scale.ts` | `buildScale()` → `{physical, vw, vh, clampW, clampH, viewport}`; `getScale()` for non-component callers; `clampToViewport*` for popups/panels; `SCALE_REFERENCE_VIEWPORT` |
+| `frontend/src/hooks/useViewportScale.ts` | Tracks the CSS-pixel viewport (`visualViewport` resize+scroll, window resize, rAF-coalesced); publishes `--ui-vw/--ui-vh/--ui-dvh` on `<html>`; returns a `Scale` |
+| `frontend/src/app/globals.css` | `:root` fallbacks for `--ui-vw/--ui-vh/--ui-dvh` |
+| `frontend/src/utils/constants.ts` | `UI_SCALE` tokens (`LEFT_SIDEBAR`, `RIGHT_SIDEBAR`, `SCROLL_MAX_HEIGHT`, `TREE_MAX_HEIGHT`, `OBJECT_EXPLORER_PANEL_HEIGHT`) |
+
+### Rules
+
+1. **Use the scale system, not raw window reads.** Components read the viewport via
+   `useViewportScale()` (reactive) or `getScale()` (imperative/popup positioning). Never call
+   `window.innerWidth` directly for layout.
+2. **Sidebar widths = clamped-fluid.** Left/right sidebar widths come from
+   `scale.clampW(UI_SCALE.LEFT_SIDEBAR.MIN, UI_SCALE.LEFT_SIDEBAR.FRACTION, UI_SCALE.LEFT_SIDEBAR.MAX)`
+   (and the `RIGHT_SIDEBAR` counterpart) passed into `useSidebarResize` as min/max + initial width.
+   `useSidebarResize` re-clamps on viewport shrink but never yanks the width on grow (re-clamp
+   only clamps to the new fluid max — it does not re-expand).
+3. **Scroll max-heights = clamped-fluid via `dvh`.** Fixed `max-h-*` scroll areas use
+   `max-h-[min(480px,55dvh)]` (Card), `min(320px,40dvh)`, etc. Never a bare fixed px for a
+   scrollable region that must fit a short screen.
+4. **Floating panels preserve relative position on resize.** Timeline (`DAWTimeline`) and Object
+   Explorer (`ObjectExplorerPanel`) scale their pixel position by the viewport ratio
+   (`ratioX = newW/prevW`, `ratioY = newH/prevH`) then clamp with `clampToViewport` — the panel
+   stays at the same *relative* on-screen spot. Track the previous viewport in a ref and skip
+   while dragging/resizing. Panels also clamp their width/height to the viewport
+   (`clampToViewportWidth/Height`).
+5. **Popups clamp via `clampToViewport*`.** Context menus, hover previews, dropdowns, and
+   settings panels clamp with `clampToViewport(x, y, w, h)` / `clampToViewportWidth` /
+   `clampToViewportHeight` from `@/utils/scale` — do not hand-roll `Math.min/max` against window.
+6. **Hydration: never read the viewport in a `useState` initializer or first render.**
+   Server renders with `SCALE_REFERENCE_VIEWPORT`; the client's first render has the real window,
+   which produces hydration-mismatch errors on inline `style`. Compute viewport-derived values in
+   a mount `useEffect` (e.g. `ObjectExplorerPanel` initializes its fluid height in the mount
+   effect with a stable constant initializer).
+7. **Never block the request thread / no `any`** — the scale helpers are pure; keep them stateless
+   (module `_viewport` is the only shared state, updated by `useViewportScale`).
+
+---
+
 ## 3D Text in the Viewer — Use `label-sprite-factory.ts`
 
 Any text rendered inside the 3D viewer (labels on sound spheres, receivers, bounding-box

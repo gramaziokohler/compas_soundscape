@@ -168,3 +168,7 @@ dist/
 .playwright-cli/
 ui-testing/
 test-results/
+# C# Grasshopper plugin build output
+src/compas_acoustics_gh_components/bin/
+src/compas_acoustics_gh_components/obj/
+

@@ -62,13 +62,14 @@ async function calibrateBlobUrl(
   return { url, noise_trim };
 }
 
-function reindexSounds(sounds: any[], removedIndex: number): any[] {
+function reindexSoundsMulti(sounds: any[], removedIndices: number[]): any[] {
+  const removed = new Set(removedIndices);
   return sounds
-    .filter((s: any) => s.prompt_index !== removedIndex)
-    .map((s: any) => ({
-      ...s,
-      prompt_index: s.prompt_index > removedIndex ? s.prompt_index - 1 : s.prompt_index,
-    }));
+    .filter((s: any) => !removed.has(s.prompt_index))
+    .map((s: any) => {
+      const shift = removedIndices.filter((r) => r < s.prompt_index).length;
+      return shift > 0 ? { ...s, prompt_index: s.prompt_index - shift } : s;
+    });
 }
 
 // Apply backend-detected noise trim regions ([start, end] fractions) to the
@@ -136,6 +137,8 @@ export interface SoundscapeStoreState {
   handleAddConfig: (type?: CardType) => void;
   handleBatchAddConfigs: (count: number) => number;
   handleRemoveConfig: (index: number) => void;
+  /** Remove multiple sound configs at once (cascade delete from a parent card). */
+  handleRemoveConfigs: (indices: number[]) => void;
   handleUpdateConfig: (index: number, field: keyof SoundGenerationConfig, value: any) => void;
   handleTypeChange: (index: number, type: CardType) => Promise<void>;
   handleGlobalDurationChange: (duration: number) => void;
@@ -260,14 +263,24 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         },
 
         handleRemoveConfig: (index) => {
+          get().handleRemoveConfigs([index]);
+        },
+
+        handleRemoveConfigs: (indices) => {
+          if (indices.length === 0) return;
           const { soundConfigs, activeSoundConfigTab, soundscapeData, generatedSounds } = get();
-          const newConfigs = soundConfigs.filter((_, i) => i !== index);
-          const newTab =
-            activeSoundConfigTab >= soundConfigs.length - 1
-              ? Math.max(0, soundConfigs.length - 2)
-              : activeSoundConfigTab;
-          const newSoundscape = soundscapeData ? reindexSounds(soundscapeData, index) : null;
-          const newGenerated = reindexSounds(generatedSounds, index);
+          const removedSet = new Set(indices);
+          const newConfigs = soundConfigs.filter((_, i) => !removedSet.has(i));
+          const remainingIndices = soundConfigs.map((_, i) => i).filter((i) => !removedSet.has(i));
+          let newTab = activeSoundConfigTab;
+          if (removedSet.has(newTab)) {
+            newTab = remainingIndices.length > 0 ? remainingIndices[remainingIndices.length - 1] : 0;
+          } else {
+            const below = indices.filter((i) => i < newTab).length;
+            newTab = newTab - below;
+          }
+          const newSoundscape = soundscapeData ? reindexSoundsMulti(soundscapeData, indices) : null;
+          const newGenerated = reindexSoundsMulti(generatedSounds, indices);
           set(
             {
               soundConfigs: newConfigs,
@@ -276,7 +289,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               generatedSounds: newGenerated,
             },
             false,
-            'soundscape/removeConfig',
+            'soundscape/removeConfigs',
           );
         },
 
