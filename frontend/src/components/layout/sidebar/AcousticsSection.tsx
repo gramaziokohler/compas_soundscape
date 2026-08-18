@@ -36,7 +36,10 @@ import { useUIStore } from '@/store/uiStore';
 
 // Content Components
 import { ResonanceContent } from '@/components/layout/sidebar/acoustics/ResonanceContent';
-import { SimulationResultContent } from '@/components/layout/sidebar/acoustics/SimulationResultContent';
+import {
+  SimulationResultContent,
+  getSimulationResultCollapsedInfo,
+} from '@/components/layout/sidebar/acoustics/SimulationResultContent';
 import { SimulationSetupContent } from '@/components/layout/sidebar/acoustics/SimulationSetupContent';
 import { SpeckleSurfaceMaterialsSection } from '@/components/acoustics/SpeckleSurfaceMaterialsSection';
 
@@ -1900,6 +1903,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             actionButtonColor='info'
             color="info"
             version={cardVersion}
+            collapsedInfo={getSimulationResultCollapsedInfo(config)}
         />
     );
   };

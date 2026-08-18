@@ -8,6 +8,8 @@ import { RightSidebar } from "@/components/layout/RightSidebar";
 import { AdvancedSettingsPanel } from "@/components/scene/AdvancedSettingsPanel";
 import { ErrorToast } from "@/components/ui/ErrorToast";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
+import { useObjectSelectionPhase } from "@/hooks/useObjectSelectionPhase";
+import { buildEntityFromObjectId } from "@/lib/three/speckle-entity-utils";
 import {
   useAudioControlsStore,
   useFileUploadStore,
@@ -853,19 +855,6 @@ function HomeContent() {
   const [linkingConfigIndex, setLinkingConfigIndex] = useState<number | null>(null);
   const [selectedCardIndex, setSelectedCardIndex] = useState<number | null>(null);
 
-  // Track shift-key for append-entity mode (shift+click adds to entities[], plain click replaces)
-  const isShiftHeldRef = useRef(false);
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Shift') isShiftHeldRef.current = true; };
-    const onKeyUp = (e: KeyboardEvent) => { if (e.key === 'Shift') isShiftHeldRef.current = false; };
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
-    };
-  }, []);
-
   // Material assignment state (NEW)
   const [selectedGeometry, setSelectedGeometry] = useState<SelectedGeometry | null>(null);
   const [hoveredGeometry, setHoveredGeometry] = useState<SelectedGeometry | null>(null);
@@ -1235,9 +1224,12 @@ function HomeContent() {
       interval_seconds: selectedPrompts[si]?.metadata?.interval_seconds,
       variants: s.variants,
     }));
-    soundGen.injectExtractedSEDSounds(sounds, -(originalIndex + 1));
-    console.log(`[handleAudioExtract] Injected ${sounds.length} sounds from audio card ${originalIndex} (parentKey=${-(originalIndex + 1)})`);
-  }, [analysis.analysisResults, soundGen]);
+    // Link extracted sounds to a real placeholder usage card parented to the
+    // audio context (instead of the old negative-namespace bypass key).
+    const usageIdx = analysis.ensureUsageCardForContext(originalIndex);
+    soundGen.injectExtractedSEDSounds(sounds, usageIdx);
+    console.log(`[handleAudioExtract] Injected ${sounds.length} sounds from audio card ${originalIndex} (usageCard=${usageIdx})`);
+  }, [analysis.analysisResults, analysis.ensureUsageCardForContext, soundGen]);
   const handleSendAnalysisToGeneration = useCallback((parentUsageIndex?: number) => {
     analysis.handleSendToSoundGeneration((prompts) => {
       // Resolve a full entity object from a Speckle tree ID by searching the world tree.
@@ -2103,80 +2095,88 @@ function HomeContent() {
     setIsLinkingEntity(true);
     setLinkingConfigIndex(configIndex);
     delete preGenActiveEntityRef.current[configIndex];
+    // Start with a clean slate — never commit a stale selection from a previous interaction.
+    useSpeckleStore.getState().clearViewerSelection();
   }, []);
 
   const handleCancelLinkingEntity = useCallback(() => {
     setIsLinkingEntity(false);
     setLinkingConfigIndex(null);
+    useSpeckleStore.getState().clearViewerSelection();
   }, []);
 
   const handleFinishLinkingEntity = useCallback(() => {
+    const configIndex = linkingConfigIndex;
     setIsLinkingEntity(false);
     setLinkingConfigIndex(null);
-  }, []);
+    // Exit linking BEFORE reading the selection so the whole commit is one atomic
+    // "Done" — the clicked selection already accumulated in selectedObjectIds.
+    const selectedIds = useSpeckleStore.getState().selectedObjectIds;
+    useSpeckleStore.getState().clearViewerSelection();
+    if (configIndex === null || selectedIds.length === 0) return;
 
-  const handleEntityLinked = useCallback((entity: any) => {
-    if (linkingConfigIndex !== null) {
-      const currentConfig = soundGen.soundConfigs[linkingConfigIndex];
-      const previousEntities = currentConfig?.entities || [];
+    // Resolve the selected Speckle ids → full sound entities (position/bounds from
+    // the world tree), reusing the shared builder.
+    let worldTree: any = null;
+    try { worldTree = viewerRef.current?.getWorldTree() ?? null; } catch { /* ignore */ }
 
-      // If entity is null (clicked on empty space) — ignore in multi-select mode
-      if (entity === null) return;
+    const currentConfig = soundGen.soundConfigs[configIndex];
+    const existingEntities: any[] = currentConfig?.entities || [];
+    const existingIds = new Set(
+      existingEntities.map((e: any) => e.nodeId || e.id).filter(Boolean)
+    );
 
+    // Dedupe against already-linked entities, then append each new one.
+    const newEntities: any[] = [];
+    for (const id of selectedIds) {
+      if (existingIds.has(id)) continue;
+      const entity = worldTree
+        ? buildEntityFromObjectId(worldTree, id, [...existingEntities, ...newEntities])
+        : null;
+      if (!entity) continue;
+      newEntities.push(entity);
+    }
+    if (newEntities.length === 0) return;
+
+    // Append all new entities (first position unchanged → generated sound position stays).
+    for (const entity of newEntities) {
+      soundGen.handleAttachSoundToEntity(configIndex, entity, true);
+    }
+    // Link in Speckle context so object↔sound highlight + icon state update.
+    for (const entity of newEntities) {
       const objectId = entity.nodeId || entity.id;
-
-      // Check if this entity is already linked — toggle it off
-      const existingIdx = previousEntities.findIndex(
-        (e: any) => (e.nodeId || e.id) === objectId
-      );
-
-      if (existingIdx >= 0) {
-        // Unlink this specific entity
-        const updatedEntities = previousEntities.filter((_, i) => i !== existingIdx);
-        if (updatedEntities.length === 0) {
-          soundGen.handleDetachSoundFromEntity(linkingConfigIndex);
-        } else {
-          soundGen.handleUpdateConfig(linkingConfigIndex, 'entities', updatedEntities);
-          // If we removed the first entity (primary position), reposition to new first
-          if (existingIdx === 0) {
-            const newFirst = updatedEntities[0];
-            const pos: [number, number, number] = newFirst.bounds?.center
-              ? [newFirst.bounds.center[0], newFirst.bounds.center[1], newFirst.bounds.center[2]]
-              : newFirst.position && newFirst.position.length >= 3
-                ? [newFirst.position[0], newFirst.position[1], newFirst.position[2]]
-                : [0, 0, 0];
-            const generatedSound = soundGen.generatedSounds.find(s =>
-              s.prompt_index === linkingConfigIndex ||
-              (s.prompt_index >= 10000 && Math.floor(s.prompt_index / 10000) === linkingConfigIndex)
-            );
-            if (generatedSound) {
-              soundGen.selectLinkedEntity(generatedSound.id, newFirst.index ?? 0, pos);
-            }
-          }
-        }
-        if (objectId) unlinkObjectFromSound(objectId);
-        // Remove from diverse highlights
-        const selectedEntities = getSelectedDiverseEntities();
-        const updated = selectedEntities.filter(
-          (e: any) => (e.nodeId || e.id) !== objectId
-        );
-        updateSelectedDiverseEntities(updated);
-        return;
-      }
-
-      // Append this entity (multi-select by default)
-      soundGen.handleAttachSoundToEntity(linkingConfigIndex, entity, true);
-
-      // Link in Speckle context if it's a Speckle object
-      if (objectId) linkObjectToSound(objectId, linkingConfigIndex);
-
-      // Add new entity to diverse selection highlights
-      const selectedEntities = getSelectedDiverseEntities();
+      if (objectId) linkObjectToSound(objectId, configIndex);
+    }
+    // Reflect the new links in the diverse-selection highlights.
+    const selectedEntities = getSelectedDiverseEntities();
+    let diverseChanged = false;
+    const updatedDiverse = [...selectedEntities];
+    for (const entity of newEntities) {
+      const objectId = entity.nodeId || entity.id;
       if (!selectedEntities.find((e: any) => (e.nodeId || e.id) === objectId)) {
-        updateSelectedDiverseEntities([...selectedEntities, entity]);
+        updatedDiverse.push(entity);
+        diverseChanged = true;
       }
     }
-  }, [linkingConfigIndex, soundGen, getSelectedDiverseEntities, updateSelectedDiverseEntities, linkObjectToSound, unlinkObjectFromSound]);
+    if (diverseChanged) updateSelectedDiverseEntities(updatedDiverse);
+  }, [
+    linkingConfigIndex,
+    soundGen,
+    linkObjectToSound,
+    getSelectedDiverseEntities,
+    updateSelectedDiverseEntities,
+  ]);
+
+  // Enter commits the multi-selection, Escape cancels (grid-listener behaviour).
+  // Typing-sensitive: a focused prompt textarea must not trigger Enter-commit.
+  useObjectSelectionPhase({
+    active: isLinkingEntity && linkingConfigIndex !== null,
+    hasConfirmedSelection: false,
+    onCommit: () => { handleFinishLinkingEntity(); return true; },
+    onEscape: () => handleCancelLinkingEntity(),
+    ignoreTyping: true,
+    deps: [handleFinishLinkingEntity, handleCancelLinkingEntity, linkingConfigIndex],
+  });
 
   // Track pre-gen entity selections to preserve after generation
   const preGenActiveEntityRef = useRef<Record<number, number>>({});
@@ -2982,7 +2982,6 @@ function HomeContent() {
             // Entity linking (sound-to-Speckle-object linking)
             isLinkingEntity={isLinkingEntity}
             linkingConfigIndex={linkingConfigIndex}
-            onEntityLinked={handleEntityLinked}
             // Resonance Audio (ShoeBox Acoustics)
             resonanceAudioConfig={resonanceAudioConfig}
             showBoundingBox={showBoundingBox}

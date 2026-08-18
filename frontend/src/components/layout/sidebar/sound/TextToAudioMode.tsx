@@ -1,7 +1,9 @@
 'use client';
 
+import { useState } from 'react';
 import type { SoundGenerationConfig } from '@/types';
 import { RangeSlider } from '@/components/ui/RangeSlider';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { pauseStore, commitStore, globalUndo, globalRedo } from '@/store';
 import { useBatchedSlider } from '@/hooks/useBatchedSlider';
 import { useSoundscapeStore } from '@/store';
@@ -82,6 +84,32 @@ export function TextToAudioSliders({
   );
 }
 
+/** Collapsible "Additional settings" panel wrapping the generation sliders. */
+export function AdditionalSettings({
+  config,
+  index,
+  onUpdateConfig,
+}: Omit<TextToAudioModeProps, 'hideSliders'>) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  return (
+    <div className="mt-0">
+      <button
+        onClick={() => setIsExpanded((v) => !v)}
+        className="flex items-center gap-1.5 w-full text-left text-xs text-secondary-hover hover:text-neutral-300 transition-colors"
+      >
+        {isExpanded ? <ChevronDown size={11} className="shrink-0" /> : <ChevronRight size={11} className="shrink-0" />}
+        <span>Additional settings</span>
+      </button>
+      {isExpanded && (
+        <div className="mt-2">
+          <TextToAudioSliders config={config} index={index} onUpdateConfig={onUpdateConfig} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function TextToAudioMode({ config, index, onUpdateConfig, hideSliders }: TextToAudioModeProps) {
   const applyNoiseReduction = useSoundscapeStore((s) => s.applyNoiseReduction);
 
@@ -111,7 +139,9 @@ export function TextToAudioMode({ config, index, onUpdateConfig, hideSliders }: 
         rows={2}
       />
 
-      {!hideSliders && (
+      {hideSliders ? (
+        <AdditionalSettings config={config} index={index} onUpdateConfig={onUpdateConfig} />
+      ) : (
         <TextToAudioSliders config={config} index={index} onUpdateConfig={onUpdateConfig} />
       )}
     </>

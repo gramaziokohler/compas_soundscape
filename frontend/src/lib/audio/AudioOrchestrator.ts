@@ -9,6 +9,7 @@
 
 import type { IAudioOrchestrator } from './core/interfaces/IAudioOrchestrator';
 import type { IAudioMode } from './core/interfaces/IAudioMode';
+import type { FadeOptions } from './utils/fade-envelope';
 import type {
   AudioModeConfig,
   OrchestratorStatus,
@@ -1417,7 +1418,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * @param loop - Whether to loop the audio
    * @param offset - Start playback from this position in seconds (default: 0)
    */
-  playSource(sourceId: string, loop: boolean = false, offset: number = 0, duration?: number): void {
+  playSource(sourceId: string, loop: boolean = false, offset: number = 0, duration?: number, opts?: FadeOptions): void {
     if (!this.currentModeInstance) {
       console.error('[AudioOrchestrator] ❌ playSource failed: No mode active');
       throw new Error('[AudioOrchestrator] No mode active');
@@ -1430,7 +1431,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     console.log(`  - Duration: ${duration ?? 'full'}s`);
     console.log(`  - Mode instance:`, this.currentModeInstance.constructor.name);
 
-    this.currentModeInstance.playSource(sourceId, loop, offset, duration);
+    this.currentModeInstance.playSource(sourceId, loop, offset, duration, opts);
   }
 
   /**

@@ -41,7 +41,7 @@ interface MaterialSelectProps {
 
 const HIST_W = 260;
 const HIST_H = 156;
-const LIST_MAX_HEIGHT = 240;
+const LIST_MAX_HEIGHT = 160;
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
@@ -153,10 +153,9 @@ export function MaterialSelect({
         onMouseLeave={() => {
           if (!isOpen) { setHoveredId(null); setHistPos(null); }
         }}
-        className="text-xs px-2 py-1 text-white rounded cursor-pointer focus:outline-none focus:ring-1 focus:ring-white"
+        className="select-trigger compact text-xs rounded cursor-pointer focus:outline-none"
         style={{
           backgroundColor: triggerBg,
-          borderRadius: `${UI_BORDER_RADIUS.SM}px`,
           opacity,
           width: '100%',
           boxSizing: 'border-box',
@@ -172,23 +171,23 @@ export function MaterialSelect({
       {/* ── Dropdown list ─────────────────────────────────────────────────────── */}
       {isOpen && (
         <div
+            className="select-menu compact"
             style={{
             position: 'fixed',
             left: dropdownPos.left,
             top: dropdownPos.top,
-            minWidth: 'max-content',
+            width: 'max-content',
+            right: 'auto',
             maxHeight: `${LIST_MAX_HEIGHT}px`,
             overflowY: 'auto',
             zIndex: 99999,
-            backgroundColor: 'var(--background)',
-            border: `1px solid var(--color-secondary-light)`,
-            borderRadius: `${UI_BORDER_RADIUS.SM}px`,
+            backgroundColor: 'var(--color-surface-2)',
           }}
         >
           {/* Placeholder / clear option */}
           <div
-            className="text-xs px-2 py-1 cursor-pointer"
-            style={{ color: 'var(--color-secondary-hover)', backgroundColor: 'var(--color-secondary-lighter)' }}
+            className="select-opt compact cursor-pointer"
+            style={{ color: 'var(--color-secondary-hover)', backgroundColor: 'var(--color-surface-2)' }}
             onMouseEnter={(e) => (e.currentTarget.style.filter = 'brightness(1.15)')}
             onMouseLeave={(e)  => (e.currentTarget.style.filter = '')}
             onClick={() => { onChange(''); setIsOpen(false); }}
@@ -201,8 +200,8 @@ export function MaterialSelect({
             return (
               <div
                 key={mat.id}
-                className="text-xs px-2 py-1 text-white cursor-pointer"
-                style={{ backgroundColor: bg }}
+                className="select-opt compact text-white cursor-pointer"
+                style={{ backgroundColor: bg, color: '#fff' }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.filter = 'brightness(1.15)';
                   handleOptionEnter(e, mat.id);

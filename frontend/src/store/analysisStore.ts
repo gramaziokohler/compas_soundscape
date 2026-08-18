@@ -34,6 +34,8 @@ import {
   DEFAULT_DBFS,
   DBFS_MIN,
   LLM_SUGGESTED_INTERVAL_SECONDS,
+  SED_MIN_CONFIDENCE,
+  SED_TOP_N_CLASSES,
   TTS_VOICES,
 } from '@/utils/constants';
 import { loadAudioFileWithBuffer } from '@/lib/audio/utils/audio-info';
@@ -314,6 +316,8 @@ export interface AnalysisStoreState {
   handleRemoveConfig: (index: number) => void;
   handleUpdateConfig: (index: number, updates: Partial<AnalysisConfig>) => void;
   setActiveAnalysisTab: (index: number) => void;
+  /** Find an existing freeform usage card linked to a context, or create one (idempotent). Returns its index. */
+  ensureUsageCardForContext: (contextIndex: number) => number;
 
   handleModelFileUpload: (index: number, file: File, worldTree?: any) => Promise<void>;
   handleAudioFileUpload: (index: number, file: File) => Promise<void>;
@@ -439,6 +443,27 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             false,
             'analysis/addConfig',
           );
+        },
+
+        ensureUsageCardForContext: (contextIndex) => {
+          const { analysisConfigs } = get();
+          const existing = analysisConfigs.findIndex(
+            (c) => c.type === 'freeform' && (c as FreeformConfig).parentContextOriginalIndex === contextIndex,
+          );
+          if (existing >= 0) return existing;
+
+          const newIndex = analysisConfigs.length;
+          const newCard: AnalysisConfig = {
+            type: 'freeform',
+            display_name: 'Untitled usage',
+            parentContextOriginalIndex: contextIndex,
+          } as FreeformConfig;
+          set(
+            { analysisConfigs: [...analysisConfigs, newCard], activeAnalysisTab: newIndex },
+            false,
+            'analysis/ensureUsageCardForContext',
+          );
+          return newIndex;
         },
 
         handleRemoveConfig: (index) => {
@@ -780,7 +805,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
 
               const formData = new FormData();
               formData.append('file', audioConfig.audioFile);
-              formData.append('num_sounds', (config.numSounds ?? 5).toString());
+              formData.append('num_sounds', SED_TOP_N_CLASSES);
               formData.append(
                 'analyze_amplitudes',
                 audioConfig.analysisOptions.analyze_amplitudes.toString(),
@@ -789,7 +814,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 'analyze_durations',
                 audioConfig.analysisOptions.analyze_durations.toString(),
               );
-              formData.append('top_n_classes', '100');
+              formData.append('top_n_classes', SED_TOP_N_CLASSES);
 
               const { task_id } = await apiService.startSEDAnalysis(formData);
               _sedTaskId = task_id;
@@ -836,8 +861,11 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               });
 
               prompts = sedResult.detected_sounds
-                .filter((s: any) => s.confidence > 0)
-                .slice(0, config.numSounds)
+                .filter(
+                  (s: any) =>
+                    s.confidence > SED_MIN_CONFIDENCE &&
+                    s.name.trim().toLowerCase() !== 'silence',
+                )
                 .map((sound: any, i: number) => {
                   let volumeDbfs = DEFAULT_DBFS;
                   if (

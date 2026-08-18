@@ -1,9 +1,12 @@
 'use client';
 
+import { useState } from 'react';
 import type { SoundEvent } from '@/types';
 import { DEFAULT_DBFS } from '@/utils/constants';
 import { SoundCardWaveSurfer } from '@/components/audio/SoundCardWaveSurfer';
 import { SoundCardBody } from './SoundCardBody';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { HelperHint } from '@/components/ui/HelperHint';
 
 /**
  * SoundResultContent Component
@@ -82,6 +85,25 @@ export function SoundResultContent({
 }: SoundResultContentProps) {
   const isShowingPending = isRegenerating && selectedVariantIdx === _pendingVariantIdx;
 
+  // Unlink confirmation — clicking the link/unlink button asks first.
+  const [showUnlinkConfirm, setShowUnlinkConfirm] = useState(false);
+
+  const unlinkConfirm = showUnlinkConfirm && onUnlinkEntity ? (
+    <ConfirmDialog
+      message="Unlink sound from this entity? Its position will become manually editable."
+      confirmLabel="Unlink"
+      onConfirm={() => { setShowUnlinkConfirm(false); onUnlinkEntity(); }}
+      onCancel={() => setShowUnlinkConfirm(false)}
+    />
+  ) : null;
+
+  // Vanishing viewer message that fades away automatically (HelperHint).
+  const unlinkHint = (
+    <HelperHint
+      text={showUnlinkConfirm ? 'Separating the sound from the 3D entity…' : null}
+    />
+  );
+
   // Volume and interval from live state
   const currentVolumeDbfs = soundVolumes[generatedSound.id] ?? generatedSound.volume_dbfs ?? DEFAULT_DBFS;
   // The WAV is calibrated to this level — the preview gain is applied relative to it.
@@ -98,7 +120,10 @@ export function SoundResultContent({
   // When showing the pending variant (regenerating), render a progress placeholder
   if (isShowingPending) {
     return (
-      <SoundCardBody
+      <>
+        {unlinkConfirm}
+        {unlinkHint}
+        <SoundCardBody
         mainContent={
           <div className="flex items-center gap-2 py-1 px-2">
             <SpinnerIcon />
@@ -117,18 +142,22 @@ export function SoundResultContent({
         onIntervalChange={onIntervalChange ? (s) => onIntervalChange(generatedSound.id, s) : undefined}
         onTimestampsChange={onTimestampsChange ? (ts) => onTimestampsChange(generatedSound.id, ts) : undefined}
         onUpdatePosition={onUpdatePosition ? (pos) => onUpdatePosition(generatedSound.id, pos) : undefined}
-        onUnlinkEntity={onUnlinkEntity}
+        onUnlinkEntity={onUnlinkEntity ? () => setShowUnlinkConfirm(true) : undefined}
         isMuted={isMuted}
         onMuteChange={onMute ? (muted: boolean) => {
           if (muted !== isMuted) onMute(generatedSound.id);
         } : undefined}
         storeContext="audioControls"
       />
+      </>
     );
   }
 
   return (
-    <SoundCardBody
+    <>
+      {unlinkConfirm}
+      {unlinkHint}
+      <SoundCardBody
       mainContent={
         <SoundCardWaveSurfer
           audioUrl={generatedSound.url}
@@ -152,12 +181,13 @@ export function SoundResultContent({
       onIntervalChange={onIntervalChange ? (s) => onIntervalChange(generatedSound.id, s) : undefined}
       onTimestampsChange={onTimestampsChange ? (ts) => onTimestampsChange(generatedSound.id, ts) : undefined}
       onUpdatePosition={onUpdatePosition ? (pos) => onUpdatePosition(generatedSound.id, pos) : undefined}
-      onUnlinkEntity={onUnlinkEntity}
+      onUnlinkEntity={onUnlinkEntity ? () => setShowUnlinkConfirm(true) : undefined}
       isMuted={isMuted}
       onMuteChange={onMute ? (muted: boolean) => {
         if (muted !== isMuted) onMute(generatedSound.id);
       } : undefined}
       storeContext="audioControls"
     />
+    </>
   );
 }

@@ -1,114 +1,259 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useState, useCallback } from 'react';
 import type { AnalyzeModelConfig } from '@/types/analysis';
 import { getAnalysisGroupColor } from '@/utils/utils';
+import { useSpeckleStore, useAnalysisStore } from '@/store';
 
 /**
  * AnalyzeModelResultContent
  *
  * Displays identified architectural object groups after model analysis completes.
- * Color application is handled by AnalysisGroupColorSync in AnalysisSection.
+ * Results are shown as single lines with a colored left-border badge.
+ * Hover highlights objects in the 3D viewer; click zooms + expands group info.
+ * The pen icon switches to an inline edit form. Only one group expanded at a time.
  */
 
 interface Props {
   config: AnalyzeModelConfig;
+  configIndex: number;
 }
 
-export function AnalyzeModelResultContent({ config }: Props) {
+export function AnalyzeModelResultContent({ config, configIndex }: Props) {
   const result = config.analysisResult;
   const objects = result?.architecturalObjects ?? [];
   const spaceDescription = result?.spaceDescription;
 
-  const stats = useMemo(() => {
-    const total = objects.length;
-    return { total };
-  }, [objects]);
+  const { highlightObjectForHover, clearHoverHighlight, zoomToObjectById } = useSpeckleStore();
+  const handleUpdateAnalysisObject = useAnalysisStore((s) => s.handleUpdateAnalysisObject);
+
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+
+  const [editingValues, setEditingValues] = useState<Record<number, { name: string; description: string; material: string }>>({});
+
+  const handleClick = useCallback(
+    (groupIdx: number, ids: string[]) => {
+      if (ids.length > 0) zoomToObjectById(ids);
+      setEditingIndex(null);
+      setExpandedIndex((prev) => (prev === groupIdx ? null : groupIdx));
+    },
+    [zoomToObjectById],
+  );
+
+  const handleStartEditing = useCallback(
+    (groupIdx: number) => {
+      const group = objects[groupIdx];
+      setEditingValues((ev) => ({
+        ...ev,
+        [groupIdx]: {
+          name: group.name,
+          description: group.description ?? '',
+          material: group.material ?? '',
+        },
+      }));
+      setEditingIndex(groupIdx);
+    },
+    [objects],
+  );
+
+  const handleCancelEdit = useCallback(() => {
+    setEditingIndex(null);
+  }, []);
+
+  const handleSave = useCallback(
+    async (groupIdx: number) => {
+      const values = editingValues[groupIdx];
+      if (!values) return;
+      await handleUpdateAnalysisObject(configIndex, groupIdx, values);
+      setExpandedIndex(null);
+      setEditingIndex(null);
+    },
+    [configIndex, editingValues, handleUpdateAnalysisObject],
+  );
 
   if (!result || objects.length === 0) return null;
 
   return (
-    <div className="space-y-2 px-4 pb-2">
-      {/* Space description */}
+    <div className="space-y-1.5 px-4 pb-2">
       {spaceDescription && (
-        <div
-          className="rounded px-2 py-2 max-h-[min(112px,28dvh)] overflow-y-auto"
-          style={{
-            borderLeft: '2px solid var(--color-primary)',
-            backgroundColor: 'var(--color-secondary-hover)',
-            scrollbarWidth: 'thin',
-            scrollbarColor: 'var(--color-secondary-light) transparent',
-          }}
+        <p
+          className="text-xs leading-relaxed max-h-[min(128px,30dvh)] overflow-y-auto"
+          style={{ color: 'var(--color-foreground)', opacity: 0.75 }}
         >
-          <p
-            className="text-xs leading-relaxed"
-            style={{ color: 'var(--color-background)', opacity: 0.85 }}
-          >
-            {spaceDescription}
-          </p>
-        </div>
+          {spaceDescription}
+        </p>
       )}
 
       {/* Summary row */}
-      <div className="flex items-center gap-3 text-xs" style={{ color: 'var(--color-secondary-hover)' }}>
-        <span>
-          <span style={{ color: 'var(--color-background-static)', fontWeight: 600 }}>{stats.total}</span> groups
-        </span>
+      <div className="text-xs" style={{ color: 'var(--color-secondary-hover)' }}>
+        <span style={{ color: 'var(--color-foreground)', fontWeight: 600 }}>{objects.length}</span> groups
       </div>
 
       {/* Object group list */}
-      <div className="space-y-1.5 max-h-[min(224px,50dvh)] overflow-y-auto pr-0.5">
+      <div className="max-h-[min(280px,50dvh)] overflow-y-auto pr-0.5 space-y-0.5">
         {objects.map((obj, i) => {
           const color = getAnalysisGroupColor(i);
+          const ids = Object.keys(obj.object_ids ?? {});
+          const isExpanded = expandedIndex === i;
+          const isEditing = editingIndex === i;
 
           return (
-            <div
-              key={i}
-              className="flex items-start gap-2 rounded px-2 py-1.5"
-              title={obj.description || undefined}
-              style={{
-                borderLeft: `3px solid ${color}`,
-                backgroundColor: 'var(--color-secondary-hover)',
-                cursor: obj.description ? 'default' : undefined,
-              }}
-            >
-              {/* Color swatch */}
+            <div key={i}>
+              {/* Collapsed row */}
               <div
-                className="flex-shrink-0 rounded-sm mt-0.5"
-                style={{ width: 10, height: 10, backgroundColor: color }}
-              />
-              <div className="flex-1 min-w-0 space-y-0.5">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span
-                    className="text-xs font-medium truncate"
-                    style={{ color: 'var(--color-background)' }}
-                  >
-                    {obj.name}
-                  </span>
-                  {obj.quantity > 1 && (
-                    <span
-                      className="text-xs px-1 rounded"
-                      style={{
-                        backgroundColor: 'var(--color-secondary-hover)',
-                        color: 'var(--color-secondary-light)',
-                      }}
-                    >
-                      ×{obj.quantity}
-                    </span>
-                  )}
-                </div>
-                {obj.material && (
-                  <span
-                    className="inline-block text-xs px-1 rounded"
-                    style={{
-                      backgroundColor: 'var(--color-secondary-hover)',
-                      color: 'var(--color-secondary-light)',
-                    }}
-                  >
-                    {obj.material}
+                className="flex items-center gap-2 py-1 pl-1 pr-1 cursor-pointer hover:opacity-80 transition-opacity"
+                style={{ borderLeft: `3px solid ${color}` }}
+                onMouseEnter={() => ids.length > 0 && highlightObjectForHover(ids)}
+                onMouseLeave={() => clearHoverHighlight()}
+                onClick={() => handleClick(i, ids)}
+                title={ids.length > 0 ? `Click to zoom to ${ids.length} ${ids.length === 1 ? 'object' : 'objects'}` : (obj.description || undefined)}
+              >
+                <span
+                  className="text-xs font-medium truncate flex-1 min-w-0"
+                  style={{ color: 'var(--color-foreground)' }}
+                >
+                  {obj.name}
+                </span>
+                {obj.quantity > 1 && (
+                  <span className="text-xs flex-shrink-0" style={{ color: 'var(--color-secondary-hover)' }}>
+                    x{obj.quantity}
                   </span>
                 )}
               </div>
+
+              {/* Expanded: info mode */}
+              {isExpanded && !isEditing && (
+                <div
+                  className="mt-1 mb-1 ml-1 space-y-2 px-2 py-2 rounded"
+                  style={{ borderLeft: `2px solid ${color}`, backgroundColor: 'var(--color-secondary-lighter)' }}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-xs font-medium" style={{ color: 'var(--color-foreground)' }}>
+                      {obj.name}
+                    </span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleStartEditing(i);
+                      }}
+                      className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full opacity-80 hover:opacity-100 hover:bg-secondary-light transition-all cursor-pointer"
+                      style={{ color: 'var(--color-secondary-hover)', cursor: 'pointer' }}
+                      title="Edit group info"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H8v-2.414a2 2 0 01.586-1.414z" />
+                      </svg>
+                    </button>
+                  </div>
+                  {obj.description && (
+                    <p
+                      className="text-xs leading-relaxed max-h-[min(96px,20dvh)] overflow-y-auto"
+                      style={{ color: 'var(--color-secondary-hover)' }}
+                    >
+                      {obj.description}
+                    </p>
+                  )}
+                  {obj.material && (
+                    <span
+                      className="inline-block text-xs px-1 rounded"
+                      style={{
+                        backgroundColor: 'var(--color-secondary-light)',
+                        color: 'var(--color-secondary-hover)',
+                      }}
+                    >
+                      {obj.material}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Expanded: editing mode */}
+              {isExpanded && isEditing && (
+                <div
+                  className="mt-1 mb-1 ml-1 space-y-1.5 px-2 py-2 rounded"
+                  style={{ borderLeft: `2px solid ${color}`, backgroundColor: 'var(--color-secondary-light)' }}
+                >
+                  <div className="text-xs font-medium" style={{ color: 'var(--color-secondary-hover)' }}>
+                    Edit Group
+                  </div>
+                  <input
+                    className="w-full text-xs rounded px-2 py-1"
+                    style={{
+                      backgroundColor: 'var(--color-secondary-hover)',
+                      color: 'var(--color-background)',
+                    }}
+                    placeholder="Name"
+                    value={editingValues[i]?.name ?? obj.name}
+                    onChange={(e) =>
+                      setEditingValues((ev) => ({
+                        ...ev,
+                        [i]: { ...ev[i], name: e.target.value },
+                      }))
+                    }
+                  />
+                  <input
+                    className="w-full text-xs rounded px-2 py-1"
+                    style={{
+                      backgroundColor: 'var(--color-secondary-hover)',
+                      color: 'var(--color-background)',
+                    }}
+                    placeholder="Description"
+                    value={editingValues[i]?.description ?? ''}
+                    onChange={(e) =>
+                      setEditingValues((ev) => ({
+                        ...ev,
+                        [i]: { ...ev[i], description: e.target.value },
+                      }))
+                    }
+                  />
+                  <input
+                    className="w-full text-xs rounded px-2 py-1"
+                    style={{
+                      backgroundColor: 'var(--color-secondary-hover)',
+                      color: 'var(--color-background)',
+                    }}
+                    placeholder="Material"
+                    value={editingValues[i]?.material ?? ''}
+                    onChange={(e) =>
+                      setEditingValues((ev) => ({
+                        ...ev,
+                        [i]: { ...ev[i], material: e.target.value },
+                      }))
+                    }
+                  />
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSave(i);
+                      }}
+                      className="flex-1 text-xs py-1 rounded"
+                      style={{
+                        backgroundColor: 'var(--color-primary)',
+                        color: 'var(--color-foreground)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleCancelEdit();
+                      }}
+                      className="flex-1 text-xs py-1 rounded"
+                      style={{
+                        backgroundColor: 'var(--color-error)',
+                        color: 'var(--color-secondary-light)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}

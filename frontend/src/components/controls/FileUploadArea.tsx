@@ -44,7 +44,7 @@ export function FileUploadArea({
       }`}
       style={{
         borderColor: isDragging ? 'var(--color-secondary))' : 'var(--color-secondary-hover)',
-        backgroundColor: isDragging ? 'var(--color-primary-light))' : 'var(--color-primary)',
+        backgroundColor: isDragging ? 'var(--color-primary-light))' : 'var(--color-primary-light)',
         borderRadius: '8px'
       }}
       onMouseEnter={(e) => { if (!isDragging) e.currentTarget.style.borderColor = 'var(--color-secondary)'; }}

@@ -3,7 +3,7 @@
 import { useEffect, useRef } from 'react';
 import { apiService } from '@/services/api';
 import { getStoredJobs, removeInflightJob, clearAllJobs } from '@/lib/job-tracker';
-import { useSoundscapeStore } from '@/store/soundscapeStore';
+import { useSoundscapeStore, beginSoundGeneration, endSoundGeneration } from '@/store/soundscapeStore';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { usePyroomAcousticsStore } from '@/store/pyroomAcousticsStore';
 import { useChorasStore } from '@/store/chorasStore';
@@ -84,6 +84,9 @@ async function recoverJob(record: JobRecord): Promise<void> {
 }
 
 function startPolling(jobType: JobType, jobId: string): void {
+  // Route isSoundGenerating through the shared counter so a recovered job can
+  // never clobber a live concurrent generation's flag.
+  if (jobType === 'sound' || jobType === 'tts') beginSoundGeneration();
   const interval = setInterval(async () => {
     try {
       const status = await apiService.getJobStatus(jobType, jobId);
@@ -91,12 +94,14 @@ function startPolling(jobType: JobType, jobId: string): void {
       if (status.cancelled || status.error) {
         clearInterval(interval);
         removeInflightJob(jobId);
+        if (jobType === 'sound' || jobType === 'tts') endSoundGeneration();
         resetJobState(jobType);
         return;
       }
 
       if (status.completed) {
         clearInterval(interval);
+        if (jobType === 'sound' || jobType === 'tts') endSoundGeneration();
         processCompletedJob(jobType, jobId, status.result);
         removeInflightJob(jobId);
         return;
@@ -107,6 +112,7 @@ function startPolling(jobType: JobType, jobId: string): void {
     } catch {
       clearInterval(interval);
       removeInflightJob(jobId);
+      if (jobType === 'sound' || jobType === 'tts') endSoundGeneration();
       resetJobState(jobType);
     }
   }, POLL_INTERVAL_MS);
@@ -118,14 +124,12 @@ function updateProgress(jobType: JobType, progress: number, statusText: string):
       useSoundscapeStore.setState({
         soundGenProgress: statusText,
         soundGenProgressValue: progress,
-        isSoundGenerating: true,
       });
       break;
     case 'tts':
       useSoundscapeStore.setState({
         soundGenProgress: `TTS: ${statusText}`,
         soundGenProgressValue: progress,
-        isSoundGenerating: true,
       });
       break;
     case 'llm':
@@ -158,7 +162,6 @@ function resetJobState(jobType: JobType): void {
     case 'sound':
     case 'tts':
       useSoundscapeStore.setState({
-        isSoundGenerating: false,
         soundGenProgress: '',
         soundGenProgressValue: 0,
       });
@@ -206,13 +209,11 @@ function processCompletedJob(
         const merged = [...store.generatedSounds, ...newEvents];
         useSoundscapeStore.setState({
           generatedSounds: merged,
-          isSoundGenerating: false,
           soundGenProgress: '',
           soundGenProgressValue: 0,
         });
       } else {
         useSoundscapeStore.setState({
-          isSoundGenerating: false,
           soundGenProgress: '',
           soundGenProgressValue: 0,
         });
@@ -234,13 +235,11 @@ function processCompletedJob(
         const merged = [...store.generatedSounds, ...newEvents];
         useSoundscapeStore.setState({
           generatedSounds: merged,
-          isSoundGenerating: false,
           soundGenProgress: '',
           soundGenProgressValue: 0,
         });
       } else {
         useSoundscapeStore.setState({
-          isSoundGenerating: false,
           soundGenProgress: '',
           soundGenProgressValue: 0,
         });

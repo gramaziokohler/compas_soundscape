@@ -4,9 +4,7 @@ import { useState, useEffect } from 'react';
 import type { AudioAnalysisConfig } from '@/types/analysis';
 import { FileUploadArea } from '@/components/controls/FileUploadArea';
 import { WaveSurferPlayer } from '@/components/audio/WaveSurferPlayer';
-import { AUDIO_FILE_EXTENSIONS, DEFAULT_DBFS, NUM_SOUNDS_MAX, NUM_SOUNDS_MIN } from '@/utils/constants';
-import { RangeSlider } from '@/components/ui/RangeSlider';
-import { useBatchedSlider } from '@/hooks/useBatchedSlider';
+import { AUDIO_FILE_EXTENSIONS, DEFAULT_DBFS } from '@/utils/constants';
 
 /**
  * AudioContextContent Component
@@ -44,11 +42,6 @@ export function AudioContextContent({
     }
     setAudioUrl('');
   }, [config.audioFile]);
-
-  // Batched slider — one undo step per drag gesture
-  const numSoundsSlider = useBatchedSlider<number>('analysis', (v) =>
-    onUpdateConfig(index, { numSounds: v }),
-  );
 
   // Drag and drop handlers
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
@@ -119,18 +112,6 @@ export function AudioContextContent({
               }}
             />
           )}
-
-          {/* Number of sounds */}
-          <RangeSlider
-            label="Number of sounds: "
-            value={config.numSounds ?? NUM_SOUNDS_MIN}
-            min={NUM_SOUNDS_MIN}
-            max={NUM_SOUNDS_MAX}
-            step={1}
-            onDragStart={numSoundsSlider.onDragStart}
-            onChange={numSoundsSlider.onChange}
-            onChangeCommitted={numSoundsSlider.onCommit}
-          />
 
           {/* Note: Action button is rendered by Card component */}
         </div>

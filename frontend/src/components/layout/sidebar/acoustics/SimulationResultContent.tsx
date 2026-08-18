@@ -15,6 +15,8 @@ import { ImpulseResponseUpload } from '@/components/audio/ImpulseResponseUpload'
 import type { SimulationConfig } from '@/types/acoustics';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from '@/types/audio';
 import { Notice } from '@/components/ui/Notice';
+import { CardSelect } from '@/components/ui/CardSelect';
+import { NumberField } from '@/components/ui/NumberField';
 import type { GradientMetric } from '@/store/uiStore';
 import { useUIStore } from '@/store/uiStore';
 import { useGridListenersStore } from '@/store';
@@ -33,6 +35,25 @@ const METRICS: Array<{ key: GradientMetric; label: string; unit: string; format:
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Count source-receiver IR pairs stored on a completed simulation. */
+export function countComputedIRs(mapping: SourceReceiverIRMapping | undefined): number {
+  if (!mapping) return 0;
+  let count = 0;
+  for (const receiverMap of Object.values(mapping)) {
+    count += Object.keys(receiverMap).length;
+  }
+  return count;
+}
+
+/** One-line summary for a reduced simulation card header (mirrors sound-card collapsedInfo). */
+export function getSimulationResultCollapsedInfo(config: SimulationConfig): string {
+  if (config.state !== 'completed') return '';
+  const mapping = (config as { sourceReceiverIRMapping?: SourceReceiverIRMapping }).sourceReceiverIRMapping;
+  const count = countComputedIRs(mapping);
+  if (count === 0) return '';
+  return count === 1 ? '(1 IR)' : `(${count} IRs)`;
+}
 
 /** True if any receiver ID in the mapping looks like a grid-listener receiver */
 function detectGridReceivers(mapping: SourceReceiverIRMapping | undefined): boolean {
@@ -345,18 +366,17 @@ export function SimulationResultContent({
           {/* Metric dropdown */}
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-neutral-400 shrink-0">Acoustic Metric</span>
-            <select
+            <CardSelect
               value={selectedMetric ?? ''}
-              onChange={(e) => setSelectedMetric((e.target.value || null) as GradientMetric | null)}
-              className="flex-1 text-[11px] bg-neutral-800 text-white border border-neutral-600 rounded px-2 py-1 outline-none focus:border-info cursor-pointer"
-            >
-              <option value="">— select —</option>
-              {METRICS.map((m) => (
-                <option key={m.key} value={m.key}>
-                  {m.label} ({m.unit})
-                </option>
-              ))}
-            </select>
+              onChange={(v) => setSelectedMetric((v || null) as GradientMetric | null)}
+              compact
+              className="flex-1"
+              placeholder="— select —"
+              options={METRICS.map((m) => ({
+                value: m.key,
+                label: `${m.label} (${m.unit})`,
+              }))}
+            />
           </div>
 
           {/* Gradient legend */}
@@ -368,38 +388,24 @@ export function SimulationResultContent({
               />
               <div className="flex items-end justify-between gap-1">
                 {/* Min input */}
-                <div className="flex flex-col gap-0" style={{ width: '64px' }}>
-                  <input
-                    type="number"
-                    step="any"
-                    value={parseFloat(displayMin.toFixed(2))}
-                    onChange={(e) => {
-                      const v = parseFloat(e.target.value);
-                      if (!isNaN(v)) setUserMin(v);
-                    }}
-                    className="w-full text-[10px] text-center rounded px-1 py-0.5 outline-none bg-foreground text-background text-center"
-                    style={{ borderBottom: '1px solid var(--color-info)55' }}
-                  />
-                </div>
+                <NumberField
+                  value={parseFloat(displayMin.toFixed(2))}
+                  step="any"
+                  containerStyle={{ width: '64px' }}
+                  onChange={(v) => setUserMin(v)}
+                />
 
                 <span className="text-[9px] text-neutral-500 pb-0.5">
                   {METRICS.find((m) => m.key === selectedMetric)?.label}
                 </span>
 
                 {/* Max input */}
-                <div className="flex flex-col gap-0" style={{ width: '64px' }}>
-                  <input
-                    type="number"
-                    step="any"
-                    value={parseFloat(displayMax.toFixed(2))}
-                    onChange={(e) => {
-                      const v = parseFloat(e.target.value);
-                      if (!isNaN(v)) setUserMax(v);
-                    }}
-                    className="w-full text-[10px] text-center rounded px-1 py-0.5 outline-none bg-foreground text-background text-center"
-                    style={{ borderBottom: '1px solid var(--color-info)55' }}
-                  />
-                </div>
+                <NumberField
+                  value={parseFloat(displayMax.toFixed(2))}
+                  step="any"
+                  containerStyle={{ width: '64px' }}
+                  onChange={(v) => setUserMax(v)}
+                />
               </div>
             </div>
           )}

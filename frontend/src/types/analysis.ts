@@ -21,6 +21,8 @@ export interface AnalysisBaseConfig extends CardBaseConfig {
   type: CardType;
   /** Original index of the context card that generated this usage card (for parent-child filtering) */
   parentContextOriginalIndex?: number;
+  /** Per-card config-validation error message, rendered as an inline Notice bar (not a toast) */
+  error?: string | null;
 }
 
 /**
@@ -85,6 +87,7 @@ export interface ArchitecturalObject {
 export interface ModelAnalysisResultData {
   analysisId: string;
   architecturalObjects: ArchitecturalObject[];
+  spaceTitle?: string;
   spaceDescription?: string;
 }
 

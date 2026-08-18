@@ -69,13 +69,15 @@ export function AudioAnalysisAfterContent({
       {/* Sound list */}
       <div className="max-h-[min(208px,45dvh)] overflow-y-auto space-y-1">
         {analysisResult.prompts.map((prompt, i) => (
-          <label
+          <div
             key={prompt.id}
             className="flex items-start gap-0 p-1 rounded cursor-pointer transition-colors"
             style={{
               backgroundColor: prompt.selected ? 'color-mix(in srgb, var(--color-secondary) 30%, transparent)' : 'transparent',
               borderRadius: '6px',
+              cursor: 'pointer',
             }}
+            onClick={() => onTogglePromptSelection(analysisResult.configIndex, prompt.id)}
             onMouseEnter={(e) => {
               setHoveredIndex(i);
               e.currentTarget.style.backgroundColor = 'var(--color-primary)';
@@ -92,30 +94,41 @@ export function AudioAnalysisAfterContent({
             />
             <div className="flex-1 text-xs text-neutral-200">
               {prompt.text}
-              {prompt.metadata && (
-                <div className="flex gap-3 mt-0.5 text-[10px] text-neutral-400">
-                  {prompt.metadata.confidence !== undefined && (
-                    <span>{(prompt.metadata.confidence * 100).toFixed(0)}% conf.</span>
-                  )}
-                  {prompt.metadata.dbfs !== undefined && (
-                    <span>{prompt.metadata.dbfs} dBFS</span>
-                  )}
-                  {prompt.metadata.interval_seconds !== undefined && (
-                    <span>{prompt.metadata.interval_seconds}s int.</span>
-                  )}
-                  {prompt.metadata.detection_segments && prompt.metadata.detection_segments.length > 0 && (
-                    <span>{prompt.metadata.detection_segments.length} seg.</span>
-                  )}
-                </div>
+              {prompt.metadata?.confidence !== undefined && (
+                <span className="ml-1">
+                  ({Math.round(prompt.metadata.confidence * 100)}% conf.)
+                </span>
               )}
+              {(() => {
+                const m = prompt.metadata;
+                const bits: string[] = [];
+                if (m?.interval_seconds !== undefined) {
+                  bits.push(`Interval: ${m.interval_seconds}s`);
+                }
+                if (m?.dbfs !== undefined) {
+                  bits.push(`${m.dbfs.toFixed(2)} dBFS`);
+                }
+                if (m?.detection_segments && m.detection_segments.length > 0) {
+                  bits.push(`${m.detection_segments.length} seg.`);
+                }
+                if (bits.length === 0) return null;
+                return (
+                  <div className="mt-0.5 text-[10px] text-neutral-400">
+                    {bits.join(', ')}
+                  </div>
+                );
+              })()}
             </div>
-          </label>
+          </div>
         ))}
       </div>
 
       {/* Noise reduction toggle (extraction triggered by card FAB) */}
       <div className="pt-1 border-t border-neutral-700">
-        <label className="flex items-center gap-2 cursor-pointer">
+        <div
+          className="flex items-center gap-2 cursor-pointer"
+          onClick={() => onNoiseReductionChange?.(!applyNoiseReduction)}
+        >
           <CheckboxField
             checked={applyNoiseReduction}
             onChange={() => onNoiseReductionChange?.(!applyNoiseReduction)}
@@ -124,7 +137,7 @@ export function AudioAnalysisAfterContent({
           <span className="text-xs text-neutral-300">
             Apply noise reduction on extraction
           </span>
-        </label>
+        </div>
       </div>
     </div>
   );

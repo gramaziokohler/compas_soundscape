@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { RangeSlider } from "@/components/ui/RangeSlider";
 import { CheckboxField } from "@/components/ui/CheckboxField";
+import { CardSelect } from "@/components/ui/CardSelect";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { SearchBar } from "@/components/ui/SearchBar";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -676,13 +677,10 @@ export function AdvancedSettingsSection({
           )}
 
           {activeSection === 'llm' && isVisible('llm-model') && (
-            <select
+            <CardSelect
               value={llmModel}
-              onChange={(e) => onLlmModelChange(e.target.value)}
-              className="w-full px-2 py-1.5 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light cursor-pointer hover:border-secondary-hover transition-colors focus:outline-none focus:ring-1"
-              style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px`, accentColor: 'var(--color-primary)' }}
-            >
-              {[
+              onChange={onLlmModelChange}
+              options={[
                 LLM_MODEL_GEMINI_3_PRO,
                 LLM_MODEL_GEMINI_3_FLASH,
                 LLM_MODEL_GEMINI_PRO,
@@ -691,13 +689,13 @@ export function AdvancedSettingsSection({
                 LLM_MODEL_ANTHROPIC,
               ].map((m) => {
                 const installed = isProviderInstalled(m, llmProviders);
-                return (
-                  <option key={m} value={m} disabled={!installed}>
-                    {LLM_MODEL_NAMES[m]}{!installed ? " (not installed)" : ""}
-                  </option>
-                );
+                return {
+                  value: m,
+                  label: `${LLM_MODEL_NAMES[m]}${!installed ? " (not installed)" : ""}`,
+                  disabled: !installed,
+                };
               })}
-            </select>
+            />
           )}
 
           {activeSection === 'rendering' && (
@@ -813,16 +811,15 @@ export function AdvancedSettingsSection({
               )}
               {isVisible('audio-model') && (
                 <>
-                  <select
+                  <CardSelect
                     value={audioModel}
-                    onChange={(e) => onAudioModelChange(e.target.value)}
-                    className="w-full px-2 py-1.5 text-xs rounded bg-secondary-lighter text-foreground border border-secondary-light cursor-pointer hover:border-secondary-hover transition-colors focus:outline-none focus:ring-1"
-                    style={{ borderRadius: `${UI_BORDER_RADIUS.SM}px`, accentColor: 'var(--color-primary)' }}
-                  >
-                    <option value={AUDIO_MODEL_TANGOFLUX}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_TANGOFLUX]}</option>
-                    <option value={AUDIO_MODEL_AUDIOLDM2}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_AUDIOLDM2]}</option>
-                    <option value={AUDIO_MODEL_ELEVENLABS}>{AUDIO_MODEL_NAMES[AUDIO_MODEL_ELEVENLABS]}</option>
-                  </select>
+                    onChange={onAudioModelChange}
+                    options={[
+                      { value: AUDIO_MODEL_TANGOFLUX, label: AUDIO_MODEL_NAMES[AUDIO_MODEL_TANGOFLUX] },
+                      { value: AUDIO_MODEL_AUDIOLDM2, label: AUDIO_MODEL_NAMES[AUDIO_MODEL_AUDIOLDM2] },
+                      { value: AUDIO_MODEL_ELEVENLABS, label: AUDIO_MODEL_NAMES[AUDIO_MODEL_ELEVENLABS] },
+                    ]}
+                  />
                   <p className="text-[10px] text-secondary-hover leading-tight">
                     {audioModel === AUDIO_MODEL_TANGOFLUX
                       ? "Fast, high-quality text-to-audio generation (default)"

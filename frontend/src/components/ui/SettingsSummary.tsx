@@ -73,10 +73,10 @@ export function SettingsSummary({
   };
 
   return (
-    <div className="mt-3">
+    <div className="mt-2 mb-2">
       <button
         onClick={() => setIsExpanded((v) => !v)}
-        className="flex items-center gap-1.5 w-full text-left text-xs text-secondary-hover hover:text-neutral-300 transition-colors"
+        className="flex items-center gap-1.5 w-full text-left text-xxs text-secondary-hover hover:text-neutral-300 transition-colors"
       >
         {isExpanded ? <ChevronDown size={11} className="shrink-0" /> : <ChevronRight size={11} className="shrink-0" />}
         <span>{title}</span>

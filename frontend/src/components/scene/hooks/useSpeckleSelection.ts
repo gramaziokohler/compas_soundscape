@@ -56,10 +56,13 @@ export function useSpeckleSelection({
 
     const selectedId = selectedSpeckleObjectIds[0];
 
-    // If this object is linked to a sound, skip — the click callback already set
-    // selectedEntity with objectType 'Sound' via onSelectSoundCard
+    // The click callback already set selectedEntity with objectType 'Sound' via
+    // onSelectSoundCard (skip that here). Still publish the selected ids so
+    // surface-selection flows (e.g. grid-listener bounds) count a linked object
+    // that was clicked FIRST instead of swallowing the selection.
     const linkState = getObjectLinkState(selectedId);
     if (linkState.isLinked && linkState.linkedSoundIndex !== undefined) {
+      setSelectedObjectIds(selectedSpeckleObjectIds || []);
       return;
     }
 

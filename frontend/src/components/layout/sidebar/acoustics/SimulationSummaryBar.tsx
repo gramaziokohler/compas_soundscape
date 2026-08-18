@@ -40,6 +40,7 @@ import {
 } from '@/store';
 import { collapseVariantsToOne, groupSoundsByPosition } from '@/utils/positionKey';
 import { SectionHighlight } from '@/components/ui/SectionHighlight';
+import { Badge } from '@/components/ui/Badge';
 
 const HIGHLIGHT_TARGETS = {
   sources: 'sidebar-sounds-breadcrumb',
@@ -159,16 +160,13 @@ interface SummaryChipProps {
 
 function SummaryChip({ count, label, onClick }: SummaryChipProps) {
   return (
-    <button
-      type="button"
+    <Badge
+      size="sm"
+      variant={count > 0 ? 'primary' : 'error'}
       onClick={onClick}
-      className="flex items-center gap-0.5 hover:underline transition-colors"
-      style={{
-        color: count > 0 ? 'var(--card-color, var(--color-primary))' : 'var(--color-error)',
-      }}
+      className="hover:underline"
     >
-      <span className="tabular-nums">{count}</span>
-      <span>{count > 1 ? `${label}s` : label}</span>
-    </button>
+      <span className="tabular-nums">{count}</span>&nbsp;{count > 1 ? `${label}s` : label}
+    </Badge>
   );
 }

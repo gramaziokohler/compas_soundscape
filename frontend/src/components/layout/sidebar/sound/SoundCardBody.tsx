@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect, type ReactNode } from 'react';
-import type { CardType } from '@/types';
 import { VerticalVolumeSlider } from '@/components/ui/VerticalVolumeSlider';
+import { PositionWidget } from '@/components/ui/PositionWidget';
 import { TimestampList } from './TimestampList';
 import { UI_VOLUME_SLIDER, UI_INTERVAL_SLIDER } from '@/utils/constants';
 import { useBatchedSlider } from '@/hooks/useBatchedSlider';
@@ -14,8 +14,7 @@ import { useBatchedSlider } from '@/hooks/useBatchedSlider';
  * Renders:
  *   - Left column:
  *       1. Position (x/y/z) widget — always visible
- *       2. Method row: "Method: <dropdown> v" — present for pre-gen cards
- *       3. Collapsible method panel (mainContent) — default collapsed
+ *       2. Mode-specific main content (textarea, upload area, waveform, ...)
  *   - Right column: interval slider / timestamp list + volume slider
  *
  * All slider state and batched-undo logic live here so it never needs to be
@@ -27,8 +26,6 @@ export interface SoundCardBodyProps {
   mainContent: ReactNode;
   /** Rendered full-width above the flex row — use for headers that span both columns. */
   fullWidthHeader?: ReactNode;
-  /** Optional content rendered in the collapsible panel (text-to-audio sliders). */
-  collapsibleContent?: ReactNode;
 
   // ── Shared data ──────────────────────────────────────────────────────────
   volumeDbfs: number;
@@ -38,14 +35,6 @@ export interface SoundCardBodyProps {
   position?: [number, number, number];
   /** When defined the sound is entity-linked; position inputs are disabled. */
   entityIndex?: number;
-
-  // ── Method selector (pre-gen only) ────────────────────────────────────────
-  /** Currently selected method/type (e.g. 'text-to-audio') */
-  methodType?: CardType;
-  /** Available method options; when provided the method row is rendered */
-  availableTypes?: Array<{ type: CardType; label: string; enabled: boolean }>;
-  /** Called when the user selects a different method */
-  onSwitchType?: (type: CardType) => void;
 
   // ── Mute state ─────────────────────────────────────────────────────────────
   isMuted?: boolean;
@@ -65,16 +54,12 @@ export interface SoundCardBodyProps {
 export function SoundCardBody({
   mainContent,
   fullWidthHeader,
-  collapsibleContent,
   volumeDbfs,
   intervalSeconds,
   schedulingMode,
   timestamps,
   position,
   entityIndex,
-  methodType,
-  availableTypes,
-  onSwitchType,
   isMuted = false,
   onMuteChange,
   onVolumeChange,
@@ -87,9 +72,6 @@ export function SoundCardBody({
   // Local slider state for smooth visual feedback while dragging
   const [tempVolumeDbfs, setTempVolumeDbfs] = useState(volumeDbfs);
   const [tempIntervalSeconds, setTempIntervalSeconds] = useState(intervalSeconds);
-
-  // Method panel expand/collapse state — default collapsed
-  const [methodExpanded, setMethodExpanded] = useState(false);
 
   // Sync with external state (e.g. undo/redo)
   useEffect(() => { setTempVolumeDbfs(volumeDbfs); }, [volumeDbfs]);
@@ -121,8 +103,6 @@ export function SoundCardBody({
   );
 
   const isLinked = entityIndex !== undefined;
-  const hasMethodSelector = !!(availableTypes && availableTypes.length > 0 && onSwitchType);
-  const hasCollapsible = !!collapsibleContent;
 
   return (
     <div>
@@ -142,38 +122,12 @@ export function SoundCardBody({
         {/* 2. Position widget — always visible when provided */}
         {onUpdatePosition && (
           <div className="flex items-center gap-1.5 flex-shrink-0">
-            <div
-              className="flex gap-1"
-              title={isLinked ? 'Position is controlled by the linked entity' : undefined}
-            >
-              {(['x', 'y', 'z'] as const).map((axis, axisIdx) => {
-                const val = position?.[axisIdx] ?? 0;
-                return (
-                  <div key={axis} className="flex flex-col gap-0" style={{ width: '55px', opacity: isLinked ? 0.4 : 1 }}>
-                    <span className="text-[9px] font-medium text-secondary-hover uppercase text-center leading-tight">{axis}</span>
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={parseFloat(val.toFixed(2))}
-                      disabled={isLinked}
-                      onChange={(e) => {
-                        const parsed = parseFloat(e.target.value);
-                        if (isNaN(parsed)) return;
-                        const newPos: [number, number, number] = [
-                          position?.[0] ?? 0,
-                          position?.[1] ?? 0,
-                          position?.[2] ?? 0,
-                        ];
-                        newPos[axisIdx] = parsed;
-                        onUpdatePosition(newPos);
-                      }}
-                      className="w-full text-[9px] text-center rounded px-1 py-0.5 outline-none bg-foreground text-background disabled:cursor-not-allowed"
-                      style={{ borderColor: 'var(--card-color, var(--color-primary))55' }}
-                    />
-                  </div>
-                );
-              })}
-            </div>
+            <PositionWidget
+              position={position}
+              disabled={isLinked}
+              disabledTitle="Position is controlled by the linked entity"
+              onUpdatePosition={onUpdatePosition}
+            />
 
             {isLinked && onUnlinkEntity && (
               <button
@@ -188,44 +142,6 @@ export function SoundCardBody({
                 </svg>
               </button>
             )}
-          </div>
-        )}
-
-        {/* 3. Method selector row — pre-gen cards only */}
-        {hasMethodSelector && (
-          <div className="flex items-center gap-1.5">
-            <span className="text-[9px] text-secondary-hover whitespace-nowrap flex-shrink-0">Method:</span>
-            <select
-              value={methodType}
-              onChange={(e) => onSwitchType!(e.target.value as CardType)}
-              onClick={(e) => e.stopPropagation()}
-              className="flex-1 min-w-0 text-[9px] rounded px-1 py-0.5 bg-foreground text-background outline-none cursor-pointer"
-              style={{ accentColor: 'var(--card-color, var(--color-primary))' }}
-            >
-              {availableTypes!.map((t) => (
-                <option key={t.type} value={t.type} disabled={!t.enabled}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
-            {/* Toggle button — only shown when there is a collapsible panel */}
-            {hasCollapsible && (
-              <button
-                onClick={(e) => { e.stopPropagation(); setMethodExpanded((v) => !v); }}
-                className="flex-shrink-0 w-5 h-5 flex items-center justify-center text-[11px] text-secondary-hover hover:text-foreground rounded transition-colors hover:bg-secondary-light"
-                title={methodExpanded ? 'Collapse method settings' : 'Expand method settings'}
-                aria-label={methodExpanded ? 'Collapse' : 'Expand'}
-              >
-                {methodExpanded ? '▾' : '▸'}
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* 4. Collapsible panel — text-to-audio sliders */}
-        {hasCollapsible && methodExpanded && (
-          <div className="border-t border-secondary-light pt-1.5">
-            {collapsibleContent}
           </div>
         )}
       </div>

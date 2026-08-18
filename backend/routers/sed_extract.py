@@ -11,6 +11,7 @@ import json
 import uuid
 import numpy as np
 import soundfile as sf
+import librosa
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form
 from typing import Optional
 from utils.audio_processing import ensure_mono
@@ -85,8 +86,9 @@ async def extract_sed_segments(
         with open(source_path, "wb") as f_out:
             f_out.write(content)
 
-        # Read audio once for slicing — force mono
-        audio_np, sample_rate = sf.read(source_path)
+        # Read audio once for slicing — librosa handles formats libsndfile
+        # cannot decode (m4a/aac/mp3), and returns mono float in [-1, 1]
+        audio_np, sample_rate = librosa.load(source_path, sr=None, mono=True)
         audio_np = ensure_mono(audio_np)
         total_samples = audio_np.shape[0]
 

@@ -14,10 +14,7 @@ interface SceneControlButtonsProps {
   rightSidebarWidth?: number;
   audioOrchestrator: AudioOrchestrator | null;
   soundscapeData: SoundEvent[] | null;
-  speckleData?: { model_id: string; version_id: string; file_id: string; url: string; object_id: string; auth_token?: string } | null;
-  isSavingSoundscape: boolean;
   showTimeline: boolean;
-  onSaveSoundscape?: () => void;
   onResetZoom: () => void;
   onRefreshScene: () => void;
   onToggleTimeline: () => void;
@@ -29,10 +26,7 @@ export function SceneControlButtons({
   rightSidebarWidth,
   audioOrchestrator,
   soundscapeData,
-  speckleData,
-  isSavingSoundscape,
   showTimeline,
-  onSaveSoundscape,
   onResetZoom,
   onRefreshScene,
   onToggleTimeline,
@@ -98,37 +92,6 @@ export function SceneControlButtons({
           />
         </div>
       </div>
-
-      {/* Save Soundscape */}
-      {speckleData && onSaveSoundscape && (
-        <SceneControlButton
-          onClick={onSaveSoundscape}
-          isActive={isSavingSoundscape}
-          title={isSavingSoundscape ? 'Saving progress...' : 'Save progress'}
-          icon={
-            isSavingSoundscape ? (
-              <Icon>
-                <circle cx="12" cy="12" r="10" strokeDasharray="31.4 31.4" strokeDashoffset="0">
-                  <animateTransform
-                    attributeName="transform"
-                    type="rotate"
-                    from="0 12 12"
-                    to="360 12 12"
-                    dur="1s"
-                    repeatCount="indefinite"
-                  />
-                </circle>
-              </Icon>
-            ) : (
-              <Icon>
-                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-                <polyline points="17 21 17 13 7 13 7 21" />
-                <polyline points="7 3 7 8 15 8" />
-              </Icon>
-            )
-          }
-        />
-      )}
 
       {/* Reset Zoom */}
       <SceneControlButton

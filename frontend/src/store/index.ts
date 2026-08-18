@@ -21,7 +21,7 @@ import {
 } from './acousticsSimulationStore';
 import { usePyroomAcousticsStore, pyroomAcousticsPartialize } from './pyroomAcousticsStore';
 import { useChorasStore, chorasPartialize } from './chorasStore';
-import { useSoundscapeStore, soundscapePartialize } from './soundscapeStore';
+import { useSoundscapeStore, soundscapePartialize, configValidationError } from './soundscapeStore';
 import { useTextGenerationStore, textGenerationPartialize } from './textGenerationStore';
 import { useAnalysisStore, analysisPartialize } from './analysisStore';
 import { useSEDStore, sedPartialize } from './sedStore';
@@ -114,6 +114,9 @@ export { useAudioControlsStore };
 export type { AudioControlsStoreState } from './audioControlsStore';
 
 // Non-temporal stores
+export { usePositionClipboardStore } from './positionClipboardStore';
+export type { PositionClipboardState } from './positionClipboardStore';
+
 export { useErrorsStore, notifyError, notifyAuthError, notifySectionError } from './errorsStore';
 export type { ErrorsStoreState, ErrorNotification, ErrorNotificationAction } from './errorsStore';
 
@@ -172,7 +175,7 @@ export type {
   ChorasSimulationSettings,
 } from './chorasStore';
 
-export { useSoundscapeStore };
+export { useSoundscapeStore, configValidationError };
 export type { SoundscapeStoreState } from './soundscapeStore';
 
 export { useTextGenerationStore };

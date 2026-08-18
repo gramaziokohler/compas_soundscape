@@ -134,7 +134,17 @@ export function AnalyzeModelContent({
       )}
 
       {hasModel && (
+
         <div className="space-y-1">
+
+          {/* Entity count */}
+          <div className="mx-2 text-xxs" style={{ color: 'var(--color-text-3)' }}>
+            {entityCount > 0
+              ? `${entityCount} object${entityCount !== 1 ? 's' : ''} detected`
+              : 'Loading model objects…'}
+          </div>
+
+
           {/* Capture view section */}
           <CaptureViewSection
             index={index}
@@ -162,13 +172,6 @@ export function AnalyzeModelContent({
                 outline: 'none',
               }}
             />
-          </div>
-
-          {/* Entity count */}
-          <div className="mx-2 text-xxs" style={{ color: 'var(--color-secondary-hover)' }}>
-            {entityCount > 0
-              ? `${entityCount} object${entityCount !== 1 ? 's' : ''} detected`
-              : 'Loading model objects…'}
           </div>
 
         </div>
@@ -250,13 +253,10 @@ function CaptureViewSection({ index, screenshots, screenshotFilenames, onUpdateC
         <button
           onClick={handleCapture}
           disabled={isCapturing}
-          className="rounded flex items-center justify-center flex-shrink-0"
+          className="tag add flex-shrink-0"
           style={{
             width: screenshots.length > 0 ? 52 : 26,
             height: screenshots.length > 0 ? 52 : 26,
-            border: '1px dashed var(--color-secondary-light)',
-            backgroundColor: 'var(--color-secondary-lighter)',
-            color: 'var(--color-secondary-hover)',
             cursor: isCapturing ? 'wait' : 'pointer',
             opacity: isCapturing ? 0.6 : 1,
           }}

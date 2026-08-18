@@ -74,6 +74,7 @@ export interface ChorasInstanceState {
   irImported: boolean;
   importedIRIds?: string[];
   sourceReceiverIRMapping?: SourceReceiverIRMapping;
+  _pollInterval?: ReturnType<typeof setInterval> | null;
 }
 
 export interface SpeckleData {
@@ -126,6 +127,7 @@ function createDefaultInstanceState(sharedMaterials: ChorasMaterial[]): ChorasIn
     simulationResults: null,
     currentSimulationId: null,
     irImported: false,
+    _pollInterval: null,
   };
 }
 
@@ -321,6 +323,12 @@ export const useChorasStore = create<ChorasStoreState>()(
           const inst = instances[instanceId];
           if (!inst) return;
 
+          // Tear down any previous poll loop for this instance so a re-run can't
+          // race the old simulation's completion patches against the new state.
+          if (inst._pollInterval) {
+            clearInterval(inst._pollInterval);
+          }
+
           if (Object.keys(materialAssignments).length === 0) {
             _patch(set, instanceId, { error: 'Assign materials first' }, 'choras/noMaterials');
             return;
@@ -379,6 +387,7 @@ export const useChorasStore = create<ChorasStoreState>()(
               currentSimulationId: null,
               irImported: false,
               importedIRIds: undefined,
+              _pollInterval: null,
             },
             'choras/runStart',
           );
@@ -432,6 +441,7 @@ export const useChorasStore = create<ChorasStoreState>()(
 
                   if (!statusData.completed) return;
                   clearInterval(pollInterval);
+                  _patch(set, instanceId, { _pollInterval: null }, 'choras/pollDone');
 
                   if (statusData.cancelled) {
                     _patch(set, instanceId, { isRunning: false, progress: 0, status: 'Cancelled' }, 'choras/runCancelled');
@@ -507,9 +517,11 @@ export const useChorasStore = create<ChorasStoreState>()(
                   resolve();
                 } catch (pollErr) {
                   clearInterval(pollInterval);
+                  _patch(set, instanceId, { _pollInterval: null }, 'choras/pollError');
                   reject(pollErr);
                 }
               }, 1000);
+              _patch(set, instanceId, { _pollInterval: pollInterval }, 'choras/pollStarted');
             });
           } catch (error) {
             _patch(
@@ -519,6 +531,7 @@ export const useChorasStore = create<ChorasStoreState>()(
                 isRunning: false,
                 status: 'Error',
                 error: error instanceof Error ? error.message : 'Simulation failed',
+                _pollInterval: null,
               },
               'choras/runError',
             );

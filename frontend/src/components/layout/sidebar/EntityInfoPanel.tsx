@@ -1,10 +1,7 @@
 'use client';
 
-import { useMemo, useState, useCallback } from 'react';
-import { getAnalysisGroupColor } from '@/utils/utils';
-import { useSpeckleStore, getAnalysisResultGroups } from '@/store';
-import { useAudioControlsStore } from '@/store';
-import { useAnalysisStore } from '@/store';
+import { useState, useCallback } from 'react';
+import { useSpeckleStore, useAudioControlsStore } from '@/store';
 import { SoundResultContent } from '@/components/layout/sidebar/sound/SoundResultContent';
 import { VariantsBar } from '@/components/ui/VariantsBar';
 import type { SoundEvent } from '@/types';
@@ -20,7 +17,7 @@ import type { SoundEvent } from '@/types';
  * Modes:
  * - Receiver: receiver details with go-to button
  * - Sound: sound result/preview controls
- * - Default: entity information + analysis group controls
+ * - Default: entity information (Type, Name, Parent, Object ID)
  *
  * NOTE: Acoustic material/scattering assignment has moved to the Object Explorer
  * (two extra columns shown while a Pyroom/Choras card is active).
@@ -164,9 +161,6 @@ export function EntityInfoPanel({
   return (
     <div className="h-full flex flex-col">
 
-      {/* Analysis Group Information */}
-      <AnalysisGroupSection objectId={selectedEntity.objectId} />
-
       {/* Entity Details */}
       <div className="space-y-1 text-xs flex-1 overflow-y-auto">
         <div className="flex text-secondary">
@@ -214,174 +208,3 @@ export function EntityInfoPanel({
   );
 }
 
-// ─── AnalysisGroupSection ─────────────────────────────────────────────────────
-
-/**
- * Inline component shown in EntityInfoPanel when the selected object belongs
- * to a model-analysis group. Supports inline editing of name/description/material.
- */
-function AnalysisGroupSection({ objectId }: { objectId: string }) {
-  // Subscribe to analysisObjectGroups for reactivity when groups change
-  const analysisObjectGroups = useSpeckleStore((s) => s.analysisObjectGroups);
-
-  const matchedGroup = useMemo(() => {
-    const groups = getAnalysisResultGroups();
-    const idx = groups.findIndex((g) => g.object_ids != null && objectId in g.object_ids);
-    if (idx === -1) return null;
-    return { group: groups[idx], index: idx };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [objectId, analysisObjectGroups]);
-
-  const [isEditing, setIsEditing] = useState(false);
-  const [editName, setEditName] = useState('');
-  const [editDescription, setEditDescription] = useState('');
-  const [editMaterial, setEditMaterial] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
-
-  if (!matchedGroup) return null;
-
-  const { group, index } = matchedGroup;
-  const color = getAnalysisGroupColor(index);
-
-  const handleEditStart = () => {
-    setEditName(group.name);
-    setEditDescription(group.description ?? '');
-    setEditMaterial(group.material ?? '');
-    setIsEditing(true);
-  };
-
-  const handleSave = async () => {
-    // Find configIndex by searching analysisConfigs for a model-analysis config with this group
-    const { analysisConfigs, handleUpdateAnalysisObject } = useAnalysisStore.getState();
-    const configIdx = analysisConfigs.findIndex(
-      (c) =>
-        c.type === 'model-analysis' &&
-        (c as any).analysisResult?.architecturalObjects?.[index] !== undefined,
-    );
-    if (configIdx === -1) return;
-    setIsSaving(true);
-    try {
-      await handleUpdateAnalysisObject(configIdx, index, {
-        name: editName,
-        description: editDescription,
-        material: editMaterial,
-      });
-    } finally {
-      setIsSaving(false);
-      setIsEditing(false);
-    }
-  };
-
-  return (
-    <div
-      className="pt-2 mt-2 space-y-1"
-      style={{ borderTop: `1px solid var(--color-secondary-light)`, borderLeft: `3px solid ${color}`, paddingLeft: 8 }}
-    >
-      {!isEditing ? (
-        <>
-          <div className="flex items-center justify-between gap-1">
-            <span className="text-xs font-medium" style={{ color: 'var(--color-success)' }}>
-              Analysis Group
-            </span>
-            <button
-              onClick={handleEditStart}
-              className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-secondary-hover opacity-80 hover:opacity-100 hover:bg-secondary-light hover:text-foreground transition-all cursor-pointer"
-              style={{ color: 'var(--color-secondary-hover)', cursor: 'pointer' }}
-              title="Edit group info"
-            >
-            <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H8v-2.414a2 2 0 01.586-1.414z" />
-            </svg>
-            </button>
-          </div>
-          <div
-            className="flex items-center gap-1.5 flex-wrap"
-            title={group.description || undefined}
-          >
-            <span className="text-xs font-medium" style={{ color: 'var(--color-foreground)' }}>
-              {group.name}
-            </span>
-          </div>
-          {group.description && (
-            <p className="text-xs leading-tight" style={{ color: 'var(--color-secondary-hover)' }}>
-              {group.description}
-            </p>
-          )}
-          {group.material && (
-            <span
-              className="inline-block text-xs px-1 rounded"
-              style={{ backgroundColor: 'var(--color-secondary-light)', color: 'var(--color-secondary-hover)' }}
-            >
-              {group.material}
-            </span>
-          )}
-        </>
-      ) : (
-        <>
-          <div className="text-xs font-medium" style={{ color: 'var(--color-success)' }}>
-            Edit Group
-          </div>
-          <input
-            className="w-full text-xs rounded px-2 py-1"
-            style={{
-              backgroundColor: 'var(--color-secondary-lighter)',
-              color: 'var(--color-foreground)',
-              border: '1px solid var(--color-secondary-light)',
-            }}
-            placeholder="Name"
-            value={editName}
-            onChange={(e) => setEditName(e.target.value)}
-          />
-          <input
-            className="w-full text-xs rounded px-2 py-1"
-            style={{
-              backgroundColor: 'var(--color-secondary-lighter)',
-              color: 'var(--color-foreground)',
-              border: '1px solid var(--color-secondary-light)',
-            }}
-            placeholder="Description"
-            value={editDescription}
-            onChange={(e) => setEditDescription(e.target.value)}
-          />
-          <input
-            className="w-full text-xs rounded px-2 py-1"
-            style={{
-              backgroundColor: 'var(--color-secondary-lighter)',
-              color: 'var(--color-foreground)',
-              border: '1px solid var(--color-secondary-light)',
-            }}
-            placeholder="Material"
-            value={editMaterial}
-            onChange={(e) => setEditMaterial(e.target.value)}
-          />
-          <div className="flex gap-1.5">
-            <button
-              onClick={handleSave}
-              disabled={isSaving}
-              className="flex-1 text-xs py-1 rounded"
-              style={{
-                backgroundColor: 'var(--color-success)',
-                color: 'var(--color-background)',
-                opacity: isSaving ? 0.6 : 1,
-                cursor: isSaving ? 'wait' : 'pointer',
-              }}
-            >
-              {isSaving ? 'Saving…' : 'Save'}
-            </button>
-            <button
-              onClick={() => setIsEditing(false)}
-              className="flex-1 text-xs py-1 rounded"
-              style={{
-                backgroundColor: 'var(--color-secondary-lighter)',
-                color: 'var(--color-secondary-hover)',
-                cursor: 'pointer',
-              }}
-            >
-              Cancel
-            </button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}

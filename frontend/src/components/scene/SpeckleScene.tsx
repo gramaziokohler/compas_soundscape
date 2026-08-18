@@ -129,7 +129,6 @@ interface SpeckleSceneProps {
   // Entity linking (sound-to-Speckle-object linking)
   isLinkingEntity?: boolean; // Whether we're in entity linking mode
   linkingConfigIndex?: number | null; // Index of the sound config being linked
-  onEntityLinked?: (entity: any) => void; // Callback when a Speckle object is clicked in linking mode
 
   // Playback controls
   // (onPlayAll/onPauseAll/onStopAll/isAnyPlaying are now read from audioControlsStore)
@@ -234,7 +233,6 @@ export function SpeckleScene({
   onSelectSoundCard,
   isLinkingEntity = false,
   linkingConfigIndex = null,
-  onEntityLinked,
   resonanceAudioConfig,
   showBoundingBox ,
   refreshBoundingBoxTrigger = 0,
@@ -279,6 +277,7 @@ export function SpeckleScene({
   const globalSoundSpeed = useUIStore((s) => s.globalSoundSpeed);
   const showAdvancedSettings = useUIStore((s) => s.showAdvancedSettings);
   const setShowAdvancedSettings = useUIStore((s) => s.setShowAdvancedSettings);
+  const enableAutoSave = useUIStore((s) => s.enableAutoSave);
   const gradientMapManagerRef = useRef<GradientMapManager | null>(null);
 
   // Local refs synced from engine store — remaining effects use .current pattern unchanged
@@ -905,15 +904,12 @@ export function SpeckleScene({
     soundscapeData,
     onSelectSoundCard,
     isLinkingEntity,
-    onEntityLinked,
-    worldTree,
     getObjectLinkState,
     onUpdateReceiverPosition,
     onUpdateSoundPosition,
     applyFilterColors,
     receivers,
     setSelectedEntity,
-    selectedDiverseEntities,
     setSelectedSpeckleObjectIds,
     skipDeselectionRef,
   });
@@ -1465,9 +1461,10 @@ export function SpeckleScene({
         />
       )}
 
-      {/* Timeline */}
-      {showTimeline && isViewerReady && timelineSounds.length > 0 && (
+      {/* Timeline — full DAW panel, or compact play/pause when the panel is hidden */}
+      {isViewerReady && timelineSounds.length > 0 && (
         <SceneTimeline
+          collapsed={!showTimeline}
           sounds={timelineSounds}
           playbackState={playbackState}
           isLeftSidebarExpanded={isLeftSidebarExpanded}
@@ -1498,6 +1495,35 @@ export function SpeckleScene({
         }}
       >
         <UndoRedoToolbar />
+        {isViewerReady && speckleData && onSaveSoundscape && !enableAutoSave && (
+          <SceneControlButton
+            onClick={onSaveSoundscape}
+            isActive={isSavingSoundscape}
+            title={isSavingSoundscape ? 'Saving progress...' : 'Save progress'}
+            icon={
+              isSavingSoundscape ? (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" strokeDasharray="31.4 31.4" strokeDashoffset="0">
+                    <animateTransform
+                      attributeName="transform"
+                      type="rotate"
+                      from="0 12 12"
+                      to="360 12 12"
+                      dur="1s"
+                      repeatCount="indefinite"
+                    />
+                  </circle>
+                </svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                  <polyline points="17 21 17 13 7 13 7 21" />
+                  <polyline points="7 3 7 8 15 8" />
+                </svg>
+              )
+            }
+          />
+        )}
         <SceneControlButton
           onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
           isActive={showAdvancedSettings}
@@ -1542,10 +1568,7 @@ export function SpeckleScene({
         rightSidebarWidth={rightSidebarWidth}
         audioOrchestrator={audioOrchestrator}
         soundscapeData={soundscapeData}
-        speckleData={speckleData}
-        isSavingSoundscape={isSavingSoundscape}
         showTimeline={showTimeline}
-        onSaveSoundscape={onSaveSoundscape}
         onResetZoom={handleResetZoom}
         onRefreshScene={handleRefreshScene}
         onToggleTimeline={handleToggleTimeline}

@@ -41,6 +41,8 @@
 
 import type { IAudioMode } from '../core/interfaces/IAudioMode';
 import type { Position, Orientation, AmbisonicOrder } from '@/types/audio';
+import type { FadeOptions } from '../utils/fade-envelope';
+import { applyFadeInOut } from '../utils/fade-envelope';
 import type { IBinauralDecoder } from '../core/interfaces/IBinauralDecoder';
 import { AudioMode } from '@/types/audio';
 import { OmnitoneDecoder } from '../decoders/OmnitoneDecoder';
@@ -730,7 +732,7 @@ export class AmbisonicIRMode implements IAudioMode {
    * @param loop - Whether to loop the audio
    * @param offset - Start playback from this position in seconds (default: 0)
    */
-  playSource(sourceId: string, loop: boolean = false, offset: number = 0, duration?: number): void {
+  playSource(sourceId: string, loop: boolean = false, offset: number = 0, duration?: number, opts?: FadeOptions): void {
     if (!this.audioContext) return;
 
     const chain = this.sourceChains.get(sourceId);
@@ -754,9 +756,9 @@ export class AmbisonicIRMode implements IAudioMode {
     bufferSource.buffer = chain.audioBuffer;
     bufferSource.loop = loop;
 
-    // Connect to JSAmbisonics convolver
-    // Graph: bufferSource → convolver.in → convolver.out → ambisonicMerger
-    bufferSource.connect(chain.gainNode);
+    // Graph: bufferSource → [fade gain] → gainNode → convolver.in → convolver.out
+    // A transient gain stage dips the loop wrap to silence when requested.
+    applyFadeInOut(bufferSource, chain.gainNode, opts ? { ...opts, durationSec: duration } : {});
 
     // Start playback from offset position, optionally limited to trim duration
     if (duration !== undefined && duration > 0) {

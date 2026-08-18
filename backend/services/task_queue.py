@@ -45,6 +45,7 @@ POOL_MAP: Dict[str, ThreadPoolExecutor] = {
     "sed":             CPU_POOL,
     "pyroomacoustics": CPU_POOL,
     "choras":          CPU_POOL,
+    "loop":            CPU_POOL,
     "tts":             IO_POOL,
 }
 

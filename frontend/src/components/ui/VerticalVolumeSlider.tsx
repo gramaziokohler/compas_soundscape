@@ -66,13 +66,14 @@ export function VerticalVolumeSlider({
         height: '100px'
       }}
     >
-      {/* Custom vertical track background (matches horizontal slider track) */}
+      {/* Custom vertical track background (2px visual, surface-2) */}
       <div 
         className="absolute rounded-lg pointer-events-none"
         style={{
           width: '8px',
           height: '100px',
-          backgroundColor: 'var(--color-secondary-light)',
+          backgroundColor: 'var(--color-surface-2)',
+          border: '1px solid var(--color-border)',
           left: '50%',
           transform: 'translateX(-50%)'
         }}
@@ -116,7 +117,7 @@ export function VerticalVolumeSlider({
         }}
       />
 
-      {/* Slider thumb styling (matches browser's default accent-primary behavior) */}
+      {/* Slider thumb styling (11px blue thumb with surface ring) */}
       <style jsx>{`
         .vertical-slider::-webkit-slider-track {
           background: transparent;
@@ -127,13 +128,13 @@ export function VerticalVolumeSlider({
         .vertical-slider::-webkit-slider-thumb {
           -webkit-appearance: none;
           appearance: none;
-          width: 16px;
-          height: 16px;
+          width: 11px;
+          height: 11px;
           border-radius: 50%;
-          background: ${fillColor}; // Matches accent color
+          background: ${fillColor};
           cursor: pointer;
-          border: none;
-          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+          border: 2px solid var(--color-surface);
+          box-shadow: 0 0 0 1px ${fillColor};
           margin-top: 0;
         }
         
@@ -144,13 +145,13 @@ export function VerticalVolumeSlider({
         }
         
         .vertical-slider::-moz-range-thumb {
-          width: 16px;
-          height: 16px;
+          width: 11px;
+          height: 11px;
           border-radius: 50%;
           background: ${fillColor};
           cursor: pointer;
-          border: none;
-          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+          border: 2px solid var(--color-surface);
+          box-shadow: 0 0 0 1px ${fillColor};
         }
 
         .vertical-slider::-ms-track {
@@ -161,13 +162,13 @@ export function VerticalVolumeSlider({
         }
 
         .vertical-slider::-ms-thumb {
-          width: 16px;
-          height: 16px;
+          width: 11px;
+          height: 11px;
           border-radius: 50%;
           background: ${fillColor};
           cursor: pointer;
-          border: none;
-          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+          border: 2px solid var(--color-surface);
+          box-shadow: 0 0 0 1px ${fillColor};
         }
 
         .vertical-slider::-ms-fill-lower {

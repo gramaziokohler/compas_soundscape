@@ -10,6 +10,7 @@ import { useViewportScale } from "@/hooks/useViewportScale";
 import { useTextGenerationStore } from "@/store/textGenerationStore";
 import { useCardFlowStore } from "@/store/cardFlowStore";
 import { useUIStore } from "@/store/uiStore";
+import { useAnalysisStore } from "@/store";
 import type { SidebarProps } from "@/types/components";
 import type { AnalysisConfig } from "@/types/analysis";
 import { CARD_TYPE_LABELS } from "@/types/card";
@@ -349,11 +350,13 @@ export function Sidebar(props: SidebarProps) {
     useCardFlowStore.getState().recordContextAdvance(originalIndex);
     setContextExpandedOriginalIndex(null);
     setActiveContextOriginalIndex(originalIndex);
-    // Audio context bypasses Usage — use negative namespace key so sounds filter correctly.
-    const audioParentKey = -(originalIndex + 1);
-    setBypassedUsage(true);
-    setActiveUsageOriginalIndex(audioParentKey); // needed so SoundGenerationSection shows the right cards
-    useUIStore.getState().setActiveSoundParentIndex(audioParentKey);
+    // Audio contexts get a real placeholder usage card as parent (created on
+    // extraction), so extracted sounds filter under that usage card instead of
+    // the old negative-namespace bypass key.
+    const usageIdx = useAnalysisStore.getState().ensureUsageCardForContext(originalIndex);
+    setBypassedUsage(false);
+    setActiveUsageOriginalIndex(usageIdx);
+    useUIStore.getState().setActiveSoundParentIndex(usageIdx);
     setCurrentStep(2);
     setIsExpanded(true);
   }, []);
@@ -427,29 +430,41 @@ export function Sidebar(props: SidebarProps) {
   const applyParentGuard = useCallback(() => {
     if (parentGuardRanRef.current) return;
     if (hasInteractedRef.current) return;
-    // Step 0 (Context) is the root — no parent to validate. Skip without
-    // consuming the guard so it can still run once the restored step lands.
-    if (currentStep === 0) return;
-    parentGuardRanRef.current = true;
 
     let step: Step = currentStep;
-    if (step === 2) {
-      const hasUsageParent =
-        activeUsageOriginalIndex !== null &&
-        activeUsageOriginalIndex !== undefined &&
-        (activeUsageOriginalIndex < 0 ||
-          (activeUsageOriginalIndex < props.analysisConfigs.length &&
-            SIDEBAR_USAGE_TYPES.includes(props.analysisConfigs[activeUsageOriginalIndex]?.type as CardType)));
-      if (!hasUsageParent) step = getFirstUsageChildIndex(null) !== null ? 1 : 0;
+    // Content-determined landing step on load/refresh: a model with no sound
+    // cards always starts on the Usage section; if it has no usage cards
+    // either, it starts on Context. Content is authoritative here — the
+    // restored step may belong to a different model/session, so it is
+    // overridden instead of validated.
+    if (props.soundConfigs.length === 0) {
+      step = getFirstUsageChildIndex(null) !== null ? 1 : 0;
+    } else {
+      // Validate that the restored section has a parent card; if not, step
+      // back to the nearest parent section that does, ending at Context.
+      if (step === 2) {
+        const hasUsageParent =
+          activeUsageOriginalIndex !== null &&
+          activeUsageOriginalIndex !== undefined &&
+          (activeUsageOriginalIndex < 0 ||
+            (activeUsageOriginalIndex < props.analysisConfigs.length &&
+              SIDEBAR_USAGE_TYPES.includes(props.analysisConfigs[activeUsageOriginalIndex]?.type as CardType)));
+        if (!hasUsageParent) step = getFirstUsageChildIndex(null) !== null ? 1 : 0;
+      }
+      if (step === 1) {
+        const hasContextParent =
+          activeContextOriginalIndex !== null &&
+          activeContextOriginalIndex !== undefined &&
+          activeContextOriginalIndex < props.analysisConfigs.length &&
+          SIDEBAR_CONTEXT_TYPES.includes(props.analysisConfigs[activeContextOriginalIndex]?.type as CardType);
+        if (!hasContextParent) step = 0;
+      }
     }
-    if (step === 1) {
-      const hasContextParent =
-        activeContextOriginalIndex !== null &&
-        activeContextOriginalIndex !== undefined &&
-        activeContextOriginalIndex < props.analysisConfigs.length &&
-        SIDEBAR_CONTEXT_TYPES.includes(props.analysisConfigs[activeContextOriginalIndex]?.type as CardType);
-      if (!hasContextParent) step = 0;
-    }
+
+    // Step 0 (Context) is the root — no parent to validate. Skip without
+    // consuming the guard so it can still run once the restored step lands.
+    if (step === 0 && currentStep === 0) return;
+    parentGuardRanRef.current = true;
 
     if (step !== currentStep) {
       setContextExpandedOriginalIndex(null);
@@ -474,14 +489,18 @@ export function Sidebar(props: SidebarProps) {
       setCurrentStep(step);
       setIsExpanded(true);
     }
-  }, [currentStep, activeUsageOriginalIndex, activeContextOriginalIndex, props.analysisConfigs]);
+  }, [currentStep, activeUsageOriginalIndex, activeContextOriginalIndex, props.analysisConfigs, props.soundConfigs]);
 
   // Run the guard once restored data is available and before user interaction.
+  // Run the guard once restored data is available and before user interaction.
+  // Also run it for a model that has loaded with no cards at all — otherwise an
+  // empty model restored on the Sounds step would stay on Sounds forever.
   useEffect(() => {
     if (parentGuardRanRef.current || hasInteractedRef.current) return;
-    if (props.analysisConfigs.length === 0 && props.soundConfigs.length === 0) return;
+    const modelLoaded = props.hasGlobalModelLoaded;
+    if (props.analysisConfigs.length === 0 && props.soundConfigs.length === 0 && !modelLoaded) return;
     applyParentGuard();
-  }, [props.analysisConfigs, props.soundConfigs, applyParentGuard]);
+  }, [props.analysisConfigs, props.soundConfigs, props.hasGlobalModelLoaded, applyParentGuard]);
 
   // ─── Breadcrumb click handlers ─────────────────────────────────────────────
   // Go to the Sounds section, recursively creating placeholder parent cards
@@ -516,12 +535,13 @@ export function Sidebar(props: SidebarProps) {
 
     const ctxCfg = props.analysisConfigs[ctxIdx];
     if (ctxCfg?.type === 'audio') {
-      // Audio context bypasses Usage — use the negative namespace key.
-      const audioParentKey = -(ctxIdx + 1);
+      // Audio contexts get a real placeholder usage card as parent (created on
+      // extraction), so extracted sounds filter under that usage card.
+      const usageIdx = useAnalysisStore.getState().ensureUsageCardForContext(ctxIdx);
       setActiveContextOriginalIndex(ctxIdx);
-      setBypassedUsage(true);
-      setActiveUsageOriginalIndex(audioParentKey);
-      useUIStore.getState().setActiveSoundParentIndex(audioParentKey);
+      setBypassedUsage(false);
+      setActiveUsageOriginalIndex(usageIdx);
+      useUIStore.getState().setActiveSoundParentIndex(usageIdx);
     } else {
       // The usage parent is scoped to THIS context only — a usage card belonging
       // to another context must never be reused (independent trees).
@@ -551,19 +571,10 @@ export function Sidebar(props: SidebarProps) {
   }, [currentStep, usageExpandedOriginalIndex, activeUsageOriginalIndex, contextExpandedOriginalIndex, activeContextOriginalIndex, props.analysisConfigs, props.onAddAnalysisConfig, props.onUpdateAnalysisConfig]);
 
   // Go to the Usage section, creating a placeholder context parent when none
-  // exists. Audio contexts bypass Usage, so they stay disabled.
+  // exists. Audio contexts land on their placeholder usage card (created on
+  // extraction), so the breadcrumb is clickable for them too.
   const handleUsageBreadcrumbClick = useCallback(() => {
     hasInteractedRef.current = true;
-
-    const isAudioContext =
-      (contextExpandedOriginalIndex !== null &&
-        contextExpandedOriginalIndex < props.analysisConfigs.length &&
-        props.analysisConfigs[contextExpandedOriginalIndex]?.type === 'audio') ||
-      (activeContextOriginalIndex !== null &&
-        activeContextOriginalIndex !== undefined &&
-        activeContextOriginalIndex < props.analysisConfigs.length &&
-        props.analysisConfigs[activeContextOriginalIndex]?.type === 'audio');
-    if (isAudioContext) return;
 
     let ctxIdx = findContextIndex();
     if (ctxIdx === null) ctxIdx = createPlaceholderContext();
@@ -731,36 +742,21 @@ export function Sidebar(props: SidebarProps) {
               {contextBreadcrumbLabel}
             </button>
             <span className="text-secondary-hover shrink-0" aria-hidden="true">›</span>
-            {/* Usage step — always clickable, except when an audio context is active (it bypasses Usage) */}
-            {(() => {
-              const isAudioContext =
-                (contextExpandedOriginalIndex !== null &&
-                  contextExpandedOriginalIndex < props.analysisConfigs.length &&
-                  props.analysisConfigs[contextExpandedOriginalIndex]?.type === 'audio') ||
-                (activeContextOriginalIndex !== null &&
-                  activeContextOriginalIndex !== undefined &&
-                  activeContextOriginalIndex < props.analysisConfigs.length &&
-                  props.analysisConfigs[activeContextOriginalIndex]?.type === 'audio');
-              const usageActive = currentStep === 1;
-              return (
-                <button
-                  className={`transition-colors flex-1 min-w-0 truncate ${
-                    usageActive
-                      ? 'bg-primary text-secondary px-0.5 py-0.5'
-                      : isAudioContext
-                      ? 'text-secondary-hover opacity-70 cursor-default'
-                      : usageBreadcrumbHasCards
-                      ? 'text-primary hover:bg-secondary-light cursor-pointer'
-                      : 'text-secondary-hover hover:bg-secondary-light cursor-pointer'
-                  }`}
-                  onClick={handleUsageBreadcrumbClick}
-                  aria-current={usageActive ? 'step' : undefined}
-                  title={usageTooltip}
-                >
-                  {usageBreadcrumbLabel}
-                </button>
-              );
-            })()}
+            {/* Usage step — always clickable; audio contexts land on their placeholder usage card */}
+            <button
+              className={`transition-colors flex-1 min-w-0 truncate ${
+                currentStep === 1
+                  ? 'bg-primary text-secondary px-0.5 py-0.5'
+                  : usageBreadcrumbHasCards
+                  ? 'text-primary hover:bg-secondary-light cursor-pointer'
+                  : 'text-secondary-hover hover:bg-secondary-light cursor-pointer'
+              }`}
+              onClick={handleUsageBreadcrumbClick}
+              aria-current={currentStep === 1 ? 'step' : undefined}
+              title={usageTooltip}
+            >
+              {usageBreadcrumbLabel}
+            </button>
             <span className="text-secondary-hover shrink-0" aria-hidden="true">›</span>
             {/* Sounds step — always clickable; creates placeholder parent cards when needed */}
             <button
@@ -772,7 +768,9 @@ export function Sidebar(props: SidebarProps) {
                   ? 'text-primary hover:bg-secondary-light cursor-pointer'
                   : 'text-secondary-hover hover:bg-secondary-light cursor-pointer'
               }`}
-              onClick={handleSoundsBreadcrumbClick}
+              onClick={() => {
+                handleSoundsBreadcrumbClick();
+              }}
               aria-current={currentStep === 2 ? 'step' : undefined}
               title={soundsTooltip}
             >

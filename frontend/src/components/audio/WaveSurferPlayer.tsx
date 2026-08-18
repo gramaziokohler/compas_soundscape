@@ -410,10 +410,10 @@ export function WaveSurferPlayer({
           <button
             onClick={onPlayPause}
             disabled={!isReady}
-            className="w-8 h-8 flex items-center justify-center rounded-full transition-colors"
+            className="w-7 h-7 flex items-center justify-center rounded-full transition-colors"
             style={{
               backgroundColor: isPlaying ? color : 'var(--color-secondary)',
-              color: isPlaying ? 'white' : 'var(--color-primary-hover)',
+              color: isPlaying ? 'white' : 'var(--color-primary)',
               opacity: isReady ? 1 : 0.5,
             }}
             title={isPlaying ? 'Pause' : 'Play'}
@@ -434,7 +434,7 @@ export function WaveSurferPlayer({
           <button
             onClick={handleStop}
             disabled={!isReady || !isPlaying}
-            className="w-8 h-8 flex items-center justify-center rounded-full transition-colors"
+            className="w-7 h-7 flex items-center justify-center rounded-full transition-colors"
             style={{
               backgroundColor: isPlaying ? 'var(--color-secondary)' : 'var(--color-secondary-hover)',
               color: isPlaying ? 'var(--color-error)' : 'var(--color-secondary-light)',

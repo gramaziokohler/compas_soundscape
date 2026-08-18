@@ -300,6 +300,12 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
           const inst = instances[instanceId];
           if (!inst) return;
 
+          // Tear down any previous poll loop for this instance so a re-run can't
+          // race the old simulation's completion patches against the new state.
+          if (inst._pollInterval) {
+            clearInterval(inst._pollInterval);
+          }
+
           if (Object.keys(materialAssignments).length === 0) {
             patchInstance(set, instanceId, { error: 'Assign materials first' }, 'pyroom/noMaterials');
             return;
@@ -360,6 +366,7 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
               importedIRIds: undefined,
               queuePosition: null,
               queueTotal: null,
+              _pollInterval: null,
             },
             'pyroom/runStart',
           );

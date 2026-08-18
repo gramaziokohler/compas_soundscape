@@ -11,7 +11,7 @@
 
 'use client';
 
-import React from 'react';
+import { CardSelect } from '@/components/ui/CardSelect';
 
 export type AudioRenderingMode = 'anechoic' | 'resonance' | 'precise';
 
@@ -21,24 +21,23 @@ interface AudioRenderingModeSelectorProps {
   className?: string;
 }
 
+const OPTIONS = [
+  { value: 'anechoic' as const, label: 'No Acoustics' },
+  { value: 'resonance' as const, label: 'ShoeBox Acoustics' },
+  { value: 'precise' as const, label: 'Precise Acoustics' },
+];
+
 export function AudioRenderingModeSelector({
   currentMode,
   onModeChange,
   className = ''
 }: AudioRenderingModeSelectorProps) {
   return (
-    <select
+    <CardSelect
       value={currentMode}
-      onChange={(e) => onModeChange(e.target.value as AudioRenderingMode)}
-      className={`flex-1 text-xs px-2 py-1 text-white rounded focus:outline-none focus:ring-1 focus:ring-white ${className}`}
-      style={{
-        backgroundColor: 'var(--color-primary)',
-        borderRadius: '8px'
-      }}
-    >
-      <option value="anechoic">No Acoustics</option>
-      <option value="resonance">ShoeBox Acoustics</option>
-      <option value="precise">Precise Acoustics</option>
-    </select>
+      onChange={(v) => onModeChange(v as AudioRenderingMode)}
+      options={OPTIONS}
+      className={className}
+    />
   );
 }

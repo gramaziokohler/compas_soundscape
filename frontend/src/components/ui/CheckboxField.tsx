@@ -1,7 +1,5 @@
 "use client";
 
-import { UI_CHECKBOX, TAILWIND_TEXT_SIZE, TAILWIND_PADDING } from "@/utils/constants";
-
 interface CheckboxFieldProps {
   checked: boolean;
   onChange: (checked: boolean) => void;
@@ -12,18 +10,11 @@ interface CheckboxFieldProps {
 
 /**
  * CheckboxField Component
- * 
- * Reusable checkbox with label in a consistent layout.
- * Used throughout sidebar sections (ModelLoadSection, ImpulseResponseUpload, etc.)
- * 
- * Features:
- * - Checkbox + label in flex layout with gap
- * - Primary accent color
- * - Consistent sizing (w-4 h-4)
- * - Focus ring on keyboard navigation
- * - Disabled state support
- * - Cursor pointer for better UX
- * 
+ *
+ * Custom 14px checkbox (blue fill + white check) with label in a consistent
+ * `.ck-row` layout. Rendered via the shared `.ck` / `.ck-row` CSS so styling is
+ * centralized — no native-browser checkbox chrome.
+ *
  * Usage:
  * ```tsx
  * <CheckboxField
@@ -42,26 +33,21 @@ export function CheckboxField({
 }: CheckboxFieldProps) {
   return (
     <label
-      className={`flex items-center gap-1 ${TAILWIND_PADDING.SM} ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'} ${className}`}
+      className={`ck-row ${className}`}
       style={{ opacity: disabled ? 0.6 : 1 }}
+      onClick={(e) => {
+        if (disabled) return;
+        e.preventDefault();
+        e.stopPropagation();
+        onChange(!checked);
+      }}
     >
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        disabled={disabled}
-        className="w-3.5 h-3.5 rounded focus:ring-2"
-        style={{
-          borderRadius: `${UI_CHECKBOX.BORDER_RADIUS}px`,
-          accentColor: 'var(--card-color, var(--color-primary))',
-          cursor: disabled ? 'not-allowed' : 'pointer'
-        }}
-      />
       <span
-        className="text-xs text-secondary-hover"
-      >
-        {label}
-      </span>
+        aria-hidden
+        className={`ck ${checked ? 'checked' : ''}`}
+        style={{ cursor: disabled ? 'not-allowed' : 'pointer' }}
+      />
+      <span style={{ cursor: disabled ? 'not-allowed' : 'pointer' }}>{label}</span>
     </label>
   );
 }

@@ -125,12 +125,14 @@ def run_model_analysis(
         )
         # object_ids are already resolved and filled with bounds by analyze_3dmodel.
         objects = _normalize_objects(raw_result.get("objects", []))
+        space_title = raw_result.get("space_title", "")
         space_description = raw_result.get("space_description", "")
 
         _write_progress(progress_file, 95, "Finalizing...")
 
         result_payload = {
             "objects":           objects,
+            "space_title":       space_title,
             "space_description": space_description,
         }
         _write_result(result_file, {"type": "done", "result": result_payload})

@@ -14,7 +14,7 @@
 
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import { FilteringExtension, CameraController, type Viewer } from '@speckle/viewer';
+import { FilteringExtension, CameraController, SelectionExtension, type Viewer } from '@speckle/viewer';
 import type React from 'react';
 import type { ArchitecturalObject } from '@/types/analysis';
 import { useUIStore } from './uiStore';
@@ -197,6 +197,8 @@ export interface SpeckleStoreState {
   // Actions — entity selection
   setSelectedEntity: (entity: SelectedEntityInfo | null) => void;
   setSelectedObjectIds: (ids: string[]) => void;
+  /** Clears the Speckle SelectionExtension highlight AND the app selection state. */
+  clearViewerSelection: () => void;
 
   // Actions — colors
   applyFilterColors: () => void;
@@ -430,6 +432,16 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
 
       setSelectedObjectIds: (ids) =>
         set({ selectedObjectIds: ids }, false, 'speckle/setSelectedObjectIds'),
+
+      clearViewerSelection: () => {
+        try {
+          const viewer = get().getViewerRef();
+          viewer?.getExtension(SelectionExtension)?.clearSelection();
+        } catch (err) {
+          console.warn('[speckleStore] clearViewerSelection failed:', err);
+        }
+        set({ selectedObjectIds: [], selectedEntity: null }, false, 'speckle/clearViewerSelection');
+      },
 
       // ── Colors ────────────────────────────────────────────────────────────
       applyFilterColors: () => {

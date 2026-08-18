@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Play, Square, Check } from 'lucide-react';
+import { Play } from 'lucide-react';
 
 /**
  * GenerateButton Component
@@ -95,59 +95,40 @@ export function GenerateButton({
     onGenerate?.();
   };
 
-  // Run and stop icons share the same color and the same right-hand spot.
-  const iconColor = 'var(--color-primary)';
-
-  // Done state renders a continue action only when one exists — otherwise there
-  // is nothing to generate and the caller hides the whole bar.
+  // Done state renders the full primary action button (same as idle) when a
+  // continue action exists — otherwise there is nothing to click and the caller
+  // hides the whole bar. Always uses the same triangle icon as idle.
   if (status === 'done') {
     if (!doneLabel || !onDoneAction) return null;
     return (
       <button
+        className="btn-primary"
         onClick={onDoneAction}
         title={doneLabel}
         aria-label={doneLabel}
-        className="group w-full flex items-end gap-2 py-0.5 px-1 text-left cursor-pointer"
       >
-        <span className="flex-1 text-[11px] font-medium truncate items-center justify-center text-secondary group-hover:scale-102">
-          {doneLabel}
-        </span>
-        {/* Check icon — same right-hand spot as run/stop */}
-        <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center transition-all duration-150 group-hover:bg-secondary-light group-hover:scale-120">
-          <Check size={14} strokeWidth={2.5} color={iconColor} />
-        </span>
+        <span>{doneLabel}</span>
+        <Play size={11} fill="currentColor" />
       </button>
     );
   }
 
   if (status === 'generating') {
     const clamped = Math.max(0, Math.min(progress || 0, 100));
+    const hasStop = !!onStop;
     return (
-      <div className="w-full flex items-end gap-2 py-0.5 px-1 ">
-        <div className="flex-1 min-w-0">
-          {/* Tiny polling/status info above the progress track */}
-          <div className="text-[9px] leading-tight text-secondary-hover truncate mb-1">
-            {statusText || 'Working…'}
-          </div>
-          <div
-            className="relative h-1 rounded-full overflow-hidden"
-            style={{ backgroundColor: 'var(--color-secondary-lighter)' }}
-          >
-            <div
-              className="absolute inset-y-0 left-0 transition-all duration-300"
-              style={{ width: `${clamped}%`, backgroundColor: iconColor }}
-            />
-          </div>
+      <div className="w-full">
+        {/* Status line + stop square */}
+        <div className="gen-status">
+          <span>{statusText || 'Working…'}</span>
+          {hasStop && (
+            <button className="stop" onClick={onStop} aria-label="Stop" title="Stop" />
+          )}
         </div>
-        {/* Stop icon — superposed on the run icon spot (same color, hover animation) */}
-        <button
-          onClick={onStop}
-          title="Stop"
-          aria-label="Stop"
-          className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center transition-all duration-150 hover:bg-secondary-light hover:scale-120 cursor-pointer"
-        >
-          <Square size={14} fill={iconColor} color={iconColor} />
-        </button>
+        {/* Progress track / fill */}
+        <div className="progress-track">
+          <div className="progress-fill" style={{ width: `${clamped}%` }} />
+        </div>
       </div>
     );
   }
@@ -155,40 +136,26 @@ export function GenerateButton({
   // idle
   if (!onGenerate) return null;
   return (
-    <button
-      onClick={handleIdleClick}
-      aria-disabled={disabled}
-      title={disabled ? (disabledReason || label) : label}
-      aria-label={disabled ? (disabledReason || label) : label}
-      className={`group w-full flex items-end gap-2 py-0.5 px-1 border-t-2 border-primary-hover/70 text-left ${
-        disabled ? 'cursor-not-allowed' : 'cursor-pointer'
-      }`}
-    >
-      {showDisabledMsg ? (
-        <span
-          key="err"
-          className="flex-1 text-[11px] font-medium truncate items-center justify-center text-error"
+    <div>
+      {showDisabledMsg && (
+        <div
+          className="text-[10px] text-error text-center mb-1"
           style={{ animation: `message-flash ${DISABLED_MSG_DURATION_MS}ms ease-in-out forwards` }}
         >
           {disabledReason || 'Not available'}
-        </span>
-      ) : (
-        <span
-          key="label"
-          className={`flex-1 text-[11px] font-medium truncate items-center justify-center group-hover:scale-102 ${
-            disabled ? 'text-secondary-hover' : 'text-secondary'
-          }`}
-        >
-          {label}
-        </span>
+        </div>
       )}
-      {/* Run icon — fixed on the right, rotating hover animation with delays */}
-      <span
-        className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center transition-all duration-150 group-hover:bg-secondary-light group-hover:animate-generate-spin"
-        style={{ opacity: disabled ? 0.4 : 1 }}
+      <button
+        className="btn-primary"
+        onClick={handleIdleClick}
+        aria-disabled={disabled}
+        disabled={disabled}
+        title={disabled ? (disabledReason || label) : label}
+        aria-label={disabled ? (disabledReason || label) : label}
       >
-        <Play size={14} fill={iconColor} color={iconColor} />
-      </span>
-    </button>
+        <span>{label}</span>
+        <Play size={11} fill="currentColor" />
+      </button>
+    </div>
   );
 }

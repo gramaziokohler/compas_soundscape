@@ -85,6 +85,29 @@ class SEDAnalysisStatusResponse(BaseModel):
     queue_total: Optional[int] = None
 
 
+# ─── Loop Analysis Schemas ────────────────────────────────────────────────────
+
+class LoopAnalysisRequest(BaseModel):
+    """Request to detect a seamless loop region for an existing sound."""
+    sound_url: str
+
+
+class LoopAnalysisStartResponse(BaseModel):
+    analysis_id: str
+
+
+class LoopAnalysisStatusResponse(BaseModel):
+    analysis_id: str
+    progress: int
+    status: str
+    completed: bool
+    cancelled: bool
+    error: Optional[str] = None
+    result: Optional[dict] = None  # {start, end, length_sec, match_score} or None
+    queue_position: Optional[int] = None
+    queue_total: Optional[int] = None
+
+
 class UnifiedPromptGenerationRequest(BaseModel):
     context: str | None = None
     num_sounds: int = 5
@@ -632,6 +655,7 @@ class ModelObjectResultRaw(BaseModel):
 
 class ModelAnalysisOutput(BaseModel):
     """Wrapper for 3D model analysis output (all providers require object root, not bare array)."""
+    space_title: str = ""
     space_description: str = ""
     objects: list[ModelObjectResultRaw]
 

@@ -5,6 +5,7 @@ import type { ReceiverData } from '@/types/receiver';
 import { useReceiversStore } from '@/store/receiversStore';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { RefreshIcon } from '@/components/ui/Icon';
+import { PositionWidget } from '@/components/ui/PositionWidget';
 
 function toDeg(rad: number): string {
   if (isNaN(rad)) return '0.0';
@@ -14,12 +15,11 @@ function toDeg(rad: number): string {
 interface SingleListenerContentProps {
   receiver: ReceiverData;
   color: string;
-  onUpdatePosition: (id: string, axis: 0 | 1 | 2, raw: string, currentPos: [number, number, number]) => void;
+  onUpdatePosition: (id: string, position: [number, number, number]) => void;
   listenerOrientation: { x: number; y: number; z: number };
 }
 
 export function SingleListenerContent({ receiver, color, onUpdatePosition }: SingleListenerContentProps) {
-  const [x, y, z] = receiver.position;
   const updateReceiverOrientation = useReceiversStore((s) => s.updateReceiverOrientation);
   const cameraOri = useSpeckleEngineStore((s) => s.currentCameraOrientation);
 
@@ -71,24 +71,10 @@ export function SingleListenerContent({ receiver, color, onUpdatePosition }: Sin
   return (
     <div className="text-xs text-secondary-hover">
       <div className="font-medium mb-1.5" style={{ color }}>Position</div>
-      <div className="flex gap-2">
-        {(['x', 'y', 'z'] as const).map((axis, axisIdx) => {
-          const val = [x, y, z][axisIdx];
-          return (
-            <div key={axis} className="flex-1 flex flex-col gap-0.5">
-              <span className="text-[10px] font-medium text-secondary-hover uppercase">{axis}</span>
-              <input
-                type="number"
-                step="0.1"
-                value={parseFloat(val.toFixed(3))}
-                onChange={(e) => onUpdatePosition(receiver.id, axisIdx as 0 | 1 | 2, e.target.value, receiver.position)}
-                className="w-full text-[10px] font-mono rounded px-1.5 py-0.5 border outline-none focus:ring-1 bg-background text-foreground"
-                style={{ borderColor: `${color}55` }}
-              />
-            </div>
-          );
-        })}
-      </div>
+      <PositionWidget
+        position={receiver.position}
+        onUpdatePosition={(pos) => onUpdatePosition(receiver.id, pos)}
+      />
 
       <div className="font-medium mb-1.5 mt-2.5" style={{ color }}>Orientation</div>
       <div className="flex flex-col gap-1 mb-2">

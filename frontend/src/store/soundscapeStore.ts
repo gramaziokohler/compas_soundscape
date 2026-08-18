@@ -38,14 +38,89 @@ import { notifySectionError } from './errorsStore';
 import { useFileUploadStore } from './fileUploadStore';
 import { useAudioControlsStore } from './audioControlsStore';
 import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
+import { startPolling, createPollRegistry } from '@/lib/poll-until-done';
 
-// ─── Module-level refs ────────────────────────────────────────────────────────
+// ─── Module-level concurrency state ──────────────────────────────────────────
+// Multiple generations may run at once (e.g. TTA on the GPU pool while a
+// catalog card is downloaded client-side). All handles are therefore stored in
+// per-invocation registries rather than singletons, so one job's `finally`
+// can never clear another job's poll loop.
 
-let _abortController: AbortController | null = null;
-let _currentGenerationId: string | null = null;
-let _soundPollInterval: ReturnType<typeof setInterval> | null = null;
-let _ttsPollInterval: ReturnType<typeof setInterval> | null = null;
-let _currentTtsGenerationId: string | null = null;
+const soundPollRegistry = createPollRegistry();
+const _activeSoundJobIds = new Set<string>();
+const _activeTtsJobIds = new Set<string>();
+const _abortControllers = new Set<AbortController>();
+
+let _activeCount = 0;              // concurrent generation invocations in flight
+let _targetGlobal = false;         // any active invocation is a "generate all"
+const _targetIndices = new Set<number>();
+
+// Per-type config-validation error shown inline on the sound card (mirrors the
+// "Assign materials first" card-error pattern — not a toast). Also used as the
+// disabled-reason on the per-card Generate button.
+export function configValidationError(config: SoundGenerationConfig): string {
+  switch (config.type) {
+    case 'upload':
+    case 'sample-audio':
+      return 'Upload an audio file.';
+    case 'library':
+      return 'Select a library sound.';
+    case 'catalog':
+      return 'Select a catalog sound.';
+    case 'text-to-speech':
+      return 'Enter a text prompt.';
+    case 'text-to-audio':
+    default:
+      return 'Enter a sound prompt.';
+  }
+}
+
+function syncSoundGenActivity(): void {
+  useSoundscapeStore.setState(
+    {
+      isSoundGenerating: _activeCount > 0,
+      soundGenTargetIndices: _targetGlobal
+        ? null
+        : _targetIndices.size > 0
+          ? [..._targetIndices]
+          : null,
+    },
+    false,
+    'soundscape/activitySync',
+  );
+}
+
+/** Register an active generation invocation (affects `isSoundGenerating` only). */
+export function beginSoundGeneration(): void {
+  _activeCount += 1;
+  syncSoundGenActivity();
+}
+
+/** Unregister a generation invocation. `isSoundGenerating` stays true while any remain. */
+export function endSoundGeneration(): void {
+  _activeCount = Math.max(0, _activeCount - 1);
+  syncSoundGenActivity();
+}
+
+/** Track which cards an active invocation targets (undefined = generate all). */
+export function trackGenerationTargets(targetIndices?: number[]): void {
+  if (targetIndices === undefined) {
+    _targetGlobal = true;
+  } else {
+    targetIndices.forEach((i) => _targetIndices.add(i));
+  }
+  syncSoundGenActivity();
+}
+
+/** Untrack an invocation's targeted cards (paired with trackGenerationTargets). */
+export function untrackGenerationTargets(targetIndices?: number[]): void {
+  if (targetIndices === undefined) {
+    _targetGlobal = false;
+  } else {
+    targetIndices.forEach((i) => _targetIndices.delete(i));
+  }
+  syncSoundGenActivity();
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -512,22 +587,53 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             ttsConfigs.length;
 
           if (total === 0) {
-            const msg = 'Please enter at least one sound prompt or upload an audio file.';
+            // No targeted config is ready — surface a per-card config error inline
+            // (same pattern as "Assign materials first" on simulation cards).
+            const invalidIndices = new Set(
+              withIndices
+                .filter(({ originalIndex }) => !alreadyGenerated.has(originalIndex))
+                .map(({ originalIndex }) => originalIndex),
+            );
             set(
-              { soundGenError: msg },
+              (s) => ({
+                soundGenError: null,
+                soundConfigs: s.soundConfigs.map((c, i) =>
+                  invalidIndices.has(i) ? { ...c, error: configValidationError(c) } : c,
+                ),
+              }),
               false,
               'soundscape/generateEmpty',
             );
-            notifySectionError(msg);
             return;
           }
 
+          const generatedTargets = new Set(
+            [
+              ...generationConfigs,
+              ...uploadedConfigs,
+              ...libraryConfigs,
+              ...catalogConfigs,
+              ...elevenLabsConfigs,
+              ...ttsConfigs,
+            ].map(({ originalIndex }) => originalIndex),
+          );
+
           set(
-            { soundGenError: null, isSoundGenerating: true, soundGenTargetIndices: targetIndices ?? null, soundGenProgress: '', soundGenProgressValue: 0 },
+            (s) => ({
+              soundGenError: null,
+              soundGenProgress: '',
+              soundGenProgressValue: 0,
+              soundConfigs: s.soundConfigs.map((c, i) =>
+                generatedTargets.has(i) ? { ...c, error: null } : c,
+              ),
+            }),
             false,
             'soundscape/generateStart',
           );
-          _abortController = new AbortController();
+          const controller = new AbortController();
+          _abortControllers.add(controller);
+          beginSoundGeneration();
+          trackGenerationTargets(targetIndices);
 
           try {
             let generatedEvents: any[] = [];
@@ -549,7 +655,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 audio_model: audioModel,
                 base_dbfs: useAudioControlsStore.getState().globalBaseDbfs,
               });
-              _currentGenerationId = generation_id;
+              _activeSoundJobIds.add(generation_id);
               recordInflightJob(generation_id, 'sound');
 
               // Map a raw backend sound object to a SoundEvent, resolving the
@@ -616,12 +722,15 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 return event;
               };
 
-              // Poll until done, streaming each completed sound into the UI immediately
-              const mlResult = await new Promise<any[]>((resolve, reject) => {
-                let lastPartialCount = 0;
-                _soundPollInterval = setInterval(async () => {
-                  try {
-                    const s = await apiService.getSoundGenerationStatus(generation_id);
+              // Poll until done, streaming each completed sound into the UI immediately.
+              // The poll controller is scoped to this invocation and registered so
+              // handleStopGeneration can cancel it — a concurrent invocation can no
+              // longer clear this loop from its own finally.
+              let lastPartialCount = 0;
+              const mlPoll = soundPollRegistry.track(
+                startPolling({
+                  fetchStatus: () => apiService.getSoundGenerationStatus(generation_id),
+                  onStatus: (s) => {
                     set(
                       {
                         soundGenProgress: s.status,
@@ -644,27 +753,17 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                       set({ generatedSounds: merged }, false, 'soundscape/partialSound');
                       applyTrimRegions(newPartials);
                     }
-
-                    if (s.cancelled) {
-                      clearInterval(_soundPollInterval!);
-                      _soundPollInterval = null;
-                      reject(new Error('AbortError'));
-                    } else if (s.error) {
-                      clearInterval(_soundPollInterval!);
-                      _soundPollInterval = null;
-                      reject(new Error(s.error));
-                    } else if (s.completed && s.result) {
-                      clearInterval(_soundPollInterval!);
-                      _soundPollInterval = null;
-                      resolve(s.result);
-                    }
-                  } catch (pollErr: any) {
-                    clearInterval(_soundPollInterval!);
-                    _soundPollInterval = null;
-                    reject(pollErr);
-                  }
-                }, 1500);
-              });
+                  },
+                }),
+              );
+              let mlResult: any[] = [];
+              try {
+                mlResult = await mlPoll.done;
+              } finally {
+                soundPollRegistry.release(mlPoll);
+                _activeSoundJobIds.delete(generation_id);
+                removeInflightJob(generation_id);
+              }
 
               generatedEvents = mlResult.map(mapBackendSound);
             }
@@ -708,7 +807,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                     location: config.selectedLibrarySound.location,
                     description: config.selectedLibrarySound.description,
                   }),
-                  signal: _abortController.signal,
+                  signal: controller.signal,
                 });
                 if (!dlRes.ok) throw new Error('Failed to download sound');
                 const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
@@ -741,7 +840,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               if (!config.selectedCatalogSound) continue;
               try {
                 const dlRes = await fetch(config.selectedCatalogSound.url, {
-                  signal: _abortController.signal,
+                  signal: controller.signal,
                 });
                 if (!dlRes.ok) throw new Error('Failed to download catalog sound');
                 const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
@@ -822,7 +921,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 texts: ttsTexts,
                 language: useAudioControlsStore.getState().ttsLanguage,
               });
-              _currentTtsGenerationId = generation_id;
+              _activeTtsJobIds.add(generation_id);
               recordInflightJob(generation_id, 'tts');
 
               const mapTtsSound = (sound: any) => {
@@ -867,11 +966,11 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 return mapped;
               };
 
-              const ttsResult = await new Promise<any[]>((resolve, reject) => {
-                let lastPartialCount = 0;
-                _ttsPollInterval = setInterval(async () => {
-                  try {
-                    const s = await apiService.getTTSGenerationStatus(generation_id);
+              let ttsLastPartialCount = 0;
+              const ttsPoll = soundPollRegistry.track(
+                startPolling({
+                  fetchStatus: () => apiService.getTTSGenerationStatus(generation_id),
+                  onStatus: (s) => {
                     set(
                       {
                         soundGenProgress: s.status,
@@ -881,9 +980,9 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                       'soundscape/ttsPoll',
                     );
 
-                    if (s.partial_sounds && s.partial_sounds.length > lastPartialCount) {
-                      const newPartials = s.partial_sounds.slice(lastPartialCount).map(mapTtsSound);
-                      lastPartialCount = s.partial_sounds.length;
+                    if (s.partial_sounds && s.partial_sounds.length > ttsLastPartialCount) {
+                      const newPartials = s.partial_sounds.slice(ttsLastPartialCount).map(mapTtsSound);
+                      ttsLastPartialCount = s.partial_sounds.length;
                       const { generatedSounds: current } = get();
                       const newIds = new Set(newPartials.map((e: any) => e.id));
                       const merged = [
@@ -892,27 +991,17 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                       ];
                       set({ generatedSounds: merged }, false, 'soundscape/ttsPartial');
                     }
-
-                    if (s.cancelled) {
-                      clearInterval(_ttsPollInterval!);
-                      _ttsPollInterval = null;
-                      reject(new Error('AbortError'));
-                    } else if (s.error) {
-                      clearInterval(_ttsPollInterval!);
-                      _ttsPollInterval = null;
-                      reject(new Error(s.error));
-                    } else if (s.completed && s.result) {
-                      clearInterval(_ttsPollInterval!);
-                      _ttsPollInterval = null;
-                      resolve(s.result);
-                    }
-                  } catch (pollErr: any) {
-                    clearInterval(_ttsPollInterval!);
-                    _ttsPollInterval = null;
-                    reject(pollErr);
-                  }
-                }, 1500);
-              });
+                  },
+                }),
+              );
+              let ttsResult: any[] = [];
+              try {
+                ttsResult = await ttsPoll.done;
+              } finally {
+                soundPollRegistry.release(ttsPoll);
+                _activeTtsJobIds.delete(generation_id);
+                removeInflightJob(generation_id);
+              }
 
               console.log('[handleGenerateInternal] TTS polling completed, ttsResult.length:', ttsResult.length,
                 'samples:', ttsResult.slice(0, 3).map((s: any) => ({ id: s.id, pi: s.prompt_index, sci: s.speech_card_index })));
@@ -950,7 +1039,10 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             }
 
             // ── Merge ─────────────────────────────────────────────────────────
-            const existing = soundscapeData ? [...soundscapeData] : [];
+            // Read the FRESH state at merge time (not the start-of-invocation
+            // snapshot) so a concurrently-streaming/merging generation's events
+            // are preserved instead of being overwritten.
+            const existing = (get().soundscapeData || get().generatedSounds || []).slice();
             const newEvents = [
               ...generatedEvents,
               ...uploadedEvents,
@@ -1001,20 +1093,10 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               notifySectionError(err.message, isQuota ? 'warning' : 'error');
             }
           } finally {
-            set({ isSoundGenerating: false, soundGenTargetIndices: null, soundGenProgress: '', soundGenProgressValue: 0 }, false, 'soundscape/generateEnd');
-            if (_currentGenerationId) { removeInflightJob(_currentGenerationId); }
-            if (_currentTtsGenerationId) { removeInflightJob(_currentTtsGenerationId); }
-            _abortController = null;
-            _currentGenerationId = null;
-            if (_soundPollInterval) {
-              clearInterval(_soundPollInterval);
-              _soundPollInterval = null;
-            }
-            if (_ttsPollInterval) {
-              clearInterval(_ttsPollInterval);
-              _ttsPollInterval = null;
-            }
-            _currentTtsGenerationId = null;
+            endSoundGeneration();
+            untrackGenerationTargets(targetIndices);
+            set({ soundGenProgress: '', soundGenProgressValue: 0 }, false, 'soundscape/generateEnd');
+            _abortControllers.delete(controller);
           }
         },
 
@@ -1036,28 +1118,12 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           // Prevent duplicate regeneration
           if (regeneratingIndices.includes(targetIndex)) return;
 
-          // Find max existing copy_index for this prompt_index to avoid ID collision
-          let maxCopyIndex = -1;
-          if (soundscapeData) {
-            for (const s of soundscapeData) {
-              if ((s as any).prompt_index === targetIndex) {
-                const match = (s as any).id?.match(/_(\d+)$/);
-                if (match) {
-                  const copyIdx = parseInt(match[1], 10);
-                  if (!isNaN(copyIdx) && copyIdx > maxCopyIndex) maxCopyIndex = copyIdx;
-                }
-              }
-            }
-          }
-
           // Auto-switch to the predicted new variant index
           const pendingVariantIdx = (soundscapeData || []).filter((s: any) => s.prompt_index === targetIndex).length;
           useAudioControlsStore.getState().handleVariantChange(targetIndex, pendingVariantIdx);
 
           set(
             {
-              isSoundGenerating: true,
-              soundGenTargetIndices: [targetIndex],
               soundGenProgress: 'Regenerating...',
               soundGenProgressValue: 0,
               regeneratingIndices: [...regeneratingIndices, targetIndex],
@@ -1065,6 +1131,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             false,
             'soundscape/regenStart',
           );
+          beginSoundGeneration();
+          trackGenerationTargets([targetIndex]);
 
           try {
             const configForGeneration = { ...config, seed_copies: 1, _regeneration_ts: Date.now() };
@@ -1078,14 +1146,13 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             });
             if (!result) throw new Error('Failed to submit regeneration');
             const { generation_id } = result;
-            _currentGenerationId = generation_id;
+            _activeSoundJobIds.add(generation_id);
             recordInflightJob(generation_id, 'sound');
 
-            const mlResult = await new Promise<any[]>((resolve, reject) => {
-              if (_soundPollInterval) clearInterval(_soundPollInterval);
-              _soundPollInterval = setInterval(async () => {
-                try {
-                  const s = await apiService.getSoundGenerationStatus(generation_id);
+            const regenPoll = soundPollRegistry.track(
+              startPolling({
+                fetchStatus: () => apiService.getSoundGenerationStatus(generation_id),
+                onStatus: (s) => {
                   set(
                     {
                       soundGenProgress: s.status,
@@ -1094,28 +1161,27 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                     false,
                     'soundscape/regenPoll',
                   );
-                  if (s.cancelled) {
-                    clearInterval(_soundPollInterval!);
-                    _soundPollInterval = null;
-                    reject(new Error('AbortError'));
-                  } else if (s.error) {
-                    clearInterval(_soundPollInterval!);
-                    _soundPollInterval = null;
-                    reject(new Error(s.error));
-                  } else if (s.completed && s.result) {
-                    clearInterval(_soundPollInterval!);
-                    _soundPollInterval = null;
-                    resolve(s.result);
-                  }
-                } catch (pollErr: any) {
-                  clearInterval(_soundPollInterval!);
-                  _soundPollInterval = null;
-                  reject(pollErr);
-                }
-              }, 1500);
-            });
+                },
+              }),
+            );
+            let mlResult: any[] = [];
+            try {
+              mlResult = await regenPoll.done;
+            } finally {
+              soundPollRegistry.release(regenPoll);
+              _activeSoundJobIds.delete(generation_id);
+              removeInflightJob(generation_id);
+            }
 
-            const newCopyBase = maxCopyIndex + 1;
+            // Allocate the new variant's copy index against the CURRENT variant set
+            // (computed at merge time, not click time) so a concurrently-streamed
+            // variant can never claim the same copy_index / id.
+            const currentForCopy = get().soundscapeData || [];
+            const existingCopyIdx = currentForCopy
+              .filter((x: any) => x.prompt_index === targetIndex)
+              .map((x: any) => x.copy_index ?? parseInt(x.id?.match(/_(\d+)$/)?.[1] ?? '0', 10))
+              .filter((n: number) => !isNaN(n));
+            const newCopyBase = (existingCopyIdx.length > 0 ? Math.max(...existingCopyIdx) : -1) + 1;
             const mappedEvents = mlResult.map((sound: any, idx: number) => {
               const copyIdx = newCopyBase + idx;
 
@@ -1158,8 +1224,6 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             const merged = [...currentData, ...alignedEvents];
             set({ generatedSounds: merged, soundscapeData: merged }, false, 'soundscape/regenComplete');
             applyTrimRegions(alignedEvents);
-
-            removeInflightJob(generation_id);
           } catch (err: any) {
             if (err?.message !== 'AbortError') {
               const msg = `Regeneration failed: ${err?.message || err}`;
@@ -1167,10 +1231,10 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               notifySectionError(msg);
             }
           } finally {
+            endSoundGeneration();
+            untrackGenerationTargets([targetIndex]);
             set(
               {
-                isSoundGenerating: false,
-                soundGenTargetIndices: null,
                 soundGenProgress: '',
                 soundGenProgressValue: 0,
                 regeneratingIndices: get().regeneratingIndices.filter(i => i !== targetIndex),
@@ -1178,36 +1242,44 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               false,
               'soundscape/regenEnd',
             );
-            if (_currentGenerationId) { removeInflightJob(_currentGenerationId); _currentGenerationId = null; }
-            if (_soundPollInterval) { clearInterval(_soundPollInterval); _soundPollInterval = null; }
           }
         },
 
         handleStopGeneration: () => {
-          if (_soundPollInterval) {
-            clearInterval(_soundPollInterval);
-            _soundPollInterval = null;
+          // Stop every in-flight poll (each rejects its promise → the owning
+          // invocation unwinds and cleans up its own state).
+          soundPollRegistry.stopAll(new Error('AbortError'));
+
+          for (const id of _activeSoundJobIds) {
+            apiService.cancelSoundGeneration(id);
+            removeInflightJob(id);
           }
-          if (_ttsPollInterval) {
-            clearInterval(_ttsPollInterval);
-            _ttsPollInterval = null;
+          _activeSoundJobIds.clear();
+
+          for (const id of _activeTtsJobIds) {
+            apiService.cancelTTSGeneration(id);
+            removeInflightJob(id);
           }
-          if (_abortController) {
-            _abortController.abort();
-            _abortController = null;
+          _activeTtsJobIds.clear();
+
+          for (const c of _abortControllers) {
+            try { c.abort(); } catch {}
           }
-          if (_currentGenerationId) {
-            apiService.cancelSoundGeneration(_currentGenerationId);
-            removeInflightJob(_currentGenerationId);
-            _currentGenerationId = null;
-          }
-          if (_currentTtsGenerationId) {
-            apiService.cancelTTSGeneration(_currentTtsGenerationId);
-            removeInflightJob(_currentTtsGenerationId);
-            _currentTtsGenerationId = null;
-          }
+          _abortControllers.clear();
+
+          _activeCount = 0;
+          _targetGlobal = false;
+          _targetIndices.clear();
+
           set(
-            { isSoundGenerating: false, soundGenError: 'Sound generation stopped by user.', soundGenProgress: '', soundGenProgressValue: 0 },
+            {
+              isSoundGenerating: false,
+              soundGenTargetIndices: null,
+              soundGenError: 'Sound generation stopped by user.',
+              soundGenProgress: '',
+              soundGenProgressValue: 0,
+              regeneratingIndices: [],
+            },
             false,
             'soundscape/stop',
           );

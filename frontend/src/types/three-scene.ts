@@ -138,9 +138,6 @@ export interface ThreeSceneProps {
   /** Whether the user is currently in entity linking mode for sounds */
   isLinkingEntity?: boolean;
 
-  /** Callback when an entity is selected for linking to a sound (or null to unlink/exit) */
-  onEntityLinked?: (entity: EntityData | null) => void;
-
   /** Callback to toggle entity in diverse selection (for LLM prompts) */
   onToggleDiverseSelection?: (entity: EntityData) => void;
 

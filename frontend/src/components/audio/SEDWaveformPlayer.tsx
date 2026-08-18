@@ -65,7 +65,6 @@ export function SEDWaveformPlayer({
   }, []);
 
   const totalDur = duration > 0 ? duration : audioDuration || 1;
-  const isHovering = hoveredSoundIndex !== null;
 
   return (
     <WaveSurferPlayer
@@ -78,14 +77,13 @@ export function SEDWaveformPlayer({
       onFinish={handleFinish}
       interact={true}
       className="space-y-1"
-      borderColor="var(--color-secondary)"
+      borderColor="var(--color-primary)"
       backgroundColor="var(--background)"
     >
-      {/* Detection region overlays */}
+      {/* Detection region overlays — hovered sound only */}
       {detectedSounds.map((sound, soundIdx) => {
         if (!selectedMask[soundIdx]) return null;
-        const isActive = hoveredSoundIndex === soundIdx;
-        const opacity = isHovering ? (isActive ? 0.75 : 0.50) : 0.15;
+        if (hoveredSoundIndex !== soundIdx) return null;
 
         return sound.detection_segments.map((seg, segIdx) => {
           const left = (seg.start_sec / totalDur) * 100;
@@ -100,10 +98,10 @@ export function SEDWaveformPlayer({
                 width: `${width}%`,
                 height: '100%',
                 backgroundColor: 'var(--color-primary-hover)',
-                opacity,
+                opacity: 0.75,
                 pointerEvents: 'none',
                 transition: 'opacity 0.25s ease',
-                zIndex: isActive ? 4 : 3,
+                zIndex: 4,
               }}
             />
           );

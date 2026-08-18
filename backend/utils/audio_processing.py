@@ -17,6 +17,12 @@ from config.constants import (
     DENOISING_ONSET_HOP_LENGTH,
     DENOISING_ONSET_PRE_MARGIN,
     DENOISING_TRIM_MERGE_THRESHOLD,
+    LOOP_FINDER_HOP_SEC,
+    LOOP_FINDER_MIN_LOOP_SEC,
+    LOOP_FINDER_MAX_SCAN_SEC,
+    LOOP_FINDER_ALIGN_REPEATS,
+    LOOP_FINDER_MIN_MATCH_SCORE,
+    LOOP_FINDER_LENGTH_PENALTY,
 )
 
 try:
@@ -338,6 +344,110 @@ def compute_noise_trim_region_from_file(file_path: str) -> tuple[float, float] |
 
     audio_np, sample_rate = sf.read(file_path)
     return compute_noise_trim_region(audio_np, sample_rate)
+
+
+def compute_loop_region(
+    audio_1d: np.ndarray,
+    sample_rate: int,
+) -> dict | None:
+    """Detect a seamless loop region as ``(start, end)`` fractions (0-1).
+
+    This is the loop counterpart of :func:`compute_noise_trim_region`: instead of
+    finding silence it finds the strongest *period* in the audio and returns the
+    window that repeats seamlessly.
+
+    The search runs on a decimated block-RMS energy envelope
+    (``LOOP_FINDER_HOP_SEC`` per block) rather than the raw waveform. Scanning
+    candidate periods in the decimated domain is O(decimated²) — microseconds to
+    milliseconds even for a 60 s clip — which is why this lives server-side: the
+    equivalent full-rate brute force on the client took minutes.
+
+    Returns ``None`` when no usable periodic region is found. Otherwise a dict
+    with ``start``/``end`` fractions (0-1), plus ``length_sec`` and
+    ``match_score`` for the UI.
+    """
+    import time as _time
+
+    t0 = _time.perf_counter()
+    if audio_1d.ndim != 1:
+        audio_1d = ensure_mono(audio_1d)
+    audio_1d = np.asarray(audio_1d, dtype=np.float64)
+
+    n = len(audio_1d)
+    if n <= 0:
+        return None
+    duration = n / sample_rate
+
+    hop = max(1, int(round(LOOP_FINDER_HOP_SEC * sample_rate)))
+    n_blocks = max(1, n // hop)
+    env = np.zeros(n_blocks, dtype=np.float64)
+    for b in range(n_blocks):
+        seg = audio_1d[b * hop:(b + 1) * hop]
+        env[b] = float(np.sqrt(np.mean(np.square(seg))))
+    peak = float(env.max()) if env.size else 0.0
+    if peak <= 1e-9:
+        return None
+    env /= peak
+
+    min_len_bins = max(2, int(round(LOOP_FINDER_MIN_LOOP_SEC / LOOP_FINDER_HOP_SEC)))
+    max_len_bins = min(n_blocks, int(round(LOOP_FINDER_MAX_SCAN_SEC / LOOP_FINDER_HOP_SEC)))
+    if max_len_bins <= min_len_bins:
+        return None
+
+    best_period: int | None = None
+    best_score = 0.0
+    for period in range(min_len_bins, max_len_bins + 1):
+        samples = min(n_blocks - period, period * LOOP_FINDER_ALIGN_REPEATS)
+        if samples <= 0:
+            continue
+        a = env[:samples]
+        b = env[period:period + samples]
+        num = float(np.dot(a, b))
+        denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+        if denom < 1e-12:
+            continue
+        score = num / denom
+        # Mild length penalty: any multiple of a good period also correlates
+        # perfectly (longer windows average out more noise), so without a bias
+        # the scan would pick a large multiple instead of the tight fundamental.
+        adjusted = score * (1.0 - LOOP_FINDER_LENGTH_PENALTY * (period / max_len_bins))
+        if adjusted > best_score:
+            best_score = adjusted
+            best_period = period
+
+    if best_period is None or best_score < LOOP_FINDER_MIN_MATCH_SCORE:
+        return None
+
+    # One decimated bin spans `hop` raw samples — convert back to seconds via
+    # the real sample rate, not the nominal LOOP_FINDER_HOP_SEC.
+    end_sec = best_period * hop / sample_rate
+    start_frac = 0.0
+    end_frac = min(1.0, end_sec / duration)
+
+    elapsed_ms = (_time.perf_counter() - t0) * 1000.0
+    print(
+        f"[dbg:loop] period={best_period} bins score={best_score:.3f} "
+        f"end_sec={end_sec:.3f} duration={duration:.3f} elapsed={elapsed_ms:.2f}ms"
+    )
+
+    return {
+        "start": round(start_frac, 4),
+        "end": round(end_frac, 4),
+        "length_sec": round(end_sec, 3),
+        "match_score": round(best_score, 4),
+    }
+
+
+def compute_loop_region_from_file(file_path: str) -> dict | None:
+    """Detect the seamless loop region of an audio file on disk.
+
+    Convenience wrapper around :func:`compute_loop_region` mirroring
+    :func:`compute_noise_trim_region_from_file`.
+    """
+    import soundfile as sf
+
+    audio_np, sample_rate = sf.read(file_path)
+    return compute_loop_region(audio_np, sample_rate)
 
 
 def _get_channel_noise_profile(

@@ -295,6 +295,8 @@ export interface SerializedAnalysisConfig {
       quantity: number;
       object_ids: Record<string, { min_bounds?: number[]; max_bounds?: number[] }>;
     }>;
+    /** Short 1-3 word LLM-generated title for the analyzed space. */
+    spaceTitle?: string;
     /** Natural-language description of the space from the analysis. */
     spaceDescription?: string;
   };

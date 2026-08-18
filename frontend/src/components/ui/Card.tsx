@@ -152,19 +152,13 @@ export function Card<TConfig extends CardBaseConfig>({
 
   // Build Tailwind class names
   const cardClassName = [
-    'relative rounded-lg border-0 transition-all duration-200',
-    // isExpanded ? `p-2 bg-${color}-light border-0` : hasResult ? `p-1.5 bg-${color}-light` : 'p-1.5 bg-secondary-lighter',
-    !error && isExpanded && hasResult ? `pt-2 px-2 pb-1 bg-primary-light` : '',
-    isExpanded && !hasResult ? 'pt-2 px-2 pb-1 border-0' : '',
-    !error && !isExpanded && hasResult ? `pt-2 px-2 pb-1 bg-primary-light` : '',
-    !error && !isExpanded && !hasResult ? `pt-2 px-2 pb-1 bg-secondary-light` : '',
-
-    error ? 'border-error bg-error-light' : '',
+    'relative bg-surface border rounded-xl transition-all duration-200',
+    error ? 'border-error' : 'border-border',
   ].filter(Boolean).join(' ');
 
   const titleClassName = [
     `flex-1 text-left text-xs font-sans font-medium transition-opacity group`,
-    error ? 'text-secondary' : hasResult ? 'text-white' : 'text-foreground',
+    'text-foreground',
   ].filter(Boolean).join(' ');
 
   // Tracks the expansion state captured at the first click of a potential double-click sequence,
@@ -270,14 +264,29 @@ export function Card<TConfig extends CardBaseConfig>({
       onContextMenu={handleContextMenu}
       style={{
         ...cardColorStyle,
-        ...(isExpanded && !hasResult && !error ? { borderColor: `var(--color-${color})`, backgroundColor: 'var(--color-secondary-light)' } : {}),
+        ...(error ? { borderColor: `var(--color-error)` } : {}),
         ...(dimmed ? { filter: 'brightness(0.55)' } : {}),
       }}
     >
-      {/* Header - Click anywhere (except buttons) to expand/collapse.
+      {/* Accent strip — thin colored bar on the card's left edge. Marks the
+          card state (result / error) with the card's identity color while
+          keeping the shell a uniform dark surface (mockup design). */}
+      {(hasResult || error) && (
+        <div
+          aria-hidden
+          className="absolute left-0 top-0 bottom-0 w-[3px]"
+          style={{
+            backgroundColor: error ? 'var(--color-error)' : 'var(--card-color)',
+            borderTopLeftRadius: '12px',
+            borderBottomLeftRadius: '12px',
+          }}
+        />
+      )}
+
+      {/* Header - Click to expand/collapse.
            Double-click to zoom — stops propagation so the outer card's onDoubleClick doesn't fire twice. */}
       <div
-        className="relative z-10 flex items-center justify-between gap-2 cursor-pointer"
+        className="group relative z-10 flex items-center justify-between gap-2 cursor-pointer px-3 pt-1.5 pb-1.5"
         onClick={!isEditingName ? handleToggleClick : undefined}
         onDoubleClick={e => e.stopPropagation()}
         style={{ userSelect: 'none' }}
@@ -313,12 +322,12 @@ export function Card<TConfig extends CardBaseConfig>({
                 {displayName}
               </div>
               {!isExpanded && collapsedInfo && (
-                <div className="text-xs mt-0.5 text-secondary-hover">
+                <div className="text-xxs mt-0.5 text-info">
                   {collapsedInfo}
                 </div>
               )}
               {isExpanded && version && (
-                <div className="text-[9px] mt-0.5 text-secondary-hover font-mono opacity-60 leading-tight line-clamp-2">
+                <div className="text-[10px] mt-1 text-text-3 font-mono leading-tight line-clamp-2">
                   {Array.isArray(version)
                     ? version.map((line, i) => <div key={i}>{line}</div>)
                     : version}
@@ -328,8 +337,9 @@ export function Card<TConfig extends CardBaseConfig>({
           )}
         </div>
 
-        {/* Action buttons */}
-        <div className="flex items-center gap-1 flex-shrink-0">
+        {/* Action buttons — collapse out of flow until title-bar hover/focus so the
+            title can use the full bar; when they appear the title truncates to fit. */}
+        <div className="flex items-center gap-1 flex-shrink-0 w-0 overflow-hidden opacity-0 pointer-events-none group-hover:w-auto group-hover:opacity-100 group-hover:pointer-events-auto focus-within:w-auto focus-within:opacity-100 focus-within:pointer-events-auto">
           {/* Reset button - only show if result exists */}
           {hasResult && (
             <CardButton
@@ -354,7 +364,7 @@ export function Card<TConfig extends CardBaseConfig>({
 
       {/* Expanded content */}
       {isExpanded && (
-        <div className="mt-3 space-y-3 max-h-[min(480px,55dvh)] overflow-y-auto pr-0.5 relative z-[1]">
+        <div className="px-1 space-y-0 max-h-[min(480px,55dvh)] overflow-y-auto pr-0.5 relative z-[1]">
 
           {renderContent()}
 
@@ -386,7 +396,7 @@ export function Card<TConfig extends CardBaseConfig>({
       {(generateStatus === 'generating' ||
         (isExpanded && generateStatus === 'idle' && !!onRun) ||
         (isExpanded && generateStatus === 'done' && !!doneActionLabel && !!onDoneAction)) && (
-        <div className="mt-1">
+        <div className="px-3.5 py-1.5 border-t border-border">
           <GenerateButton
             status={generateStatus}
             progress={progress}
@@ -415,10 +425,10 @@ export function Card<TConfig extends CardBaseConfig>({
             left: `${contextMenu.x}px`,
             top: `${contextMenu.y}px`,
             zIndex: 9999,
-            backgroundColor: 'var(--background)',
-            border: '1px solid rgba(255,255,255,0.15)',
-            borderRadius: '6px',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+            backgroundColor: 'var(--color-surface-2)',
+            border: '1px solid var(--color-border-strong)',
+            borderRadius: '8px',
+            boxShadow: 'var(--shadow-lg)',
             minWidth: '150px',
             padding: '4px 0',
             fontSize: '11px',

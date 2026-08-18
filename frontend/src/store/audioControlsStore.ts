@@ -20,6 +20,7 @@ import type { SoundState, SoundGenerationConfig } from '@/types';
 import type { IterationLink } from '@/types/audio';
 import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
 import { AUDIO_PLAYBACK, AUDIO_TIMELINE, DEFAULT_DBFS, DEFAULT_MAXIMUM_FOLEY_SOUNDS, TTS_DEFAULT_LANGUAGE } from '@/utils/constants';
+import { apiService } from '@/services/api';
 import { useSoundscapeStore } from './soundscapeStore';
 
 
@@ -47,6 +48,14 @@ export interface AudioControlsStoreState {
   soundSchedulingModes: Record<string, 'interval' | 'timestamps'>;
   /** Per-sound explicit playback timestamps in seconds (used when mode is 'timestamps'). */
   soundTimestamps: Record<string, number[]>;
+  /**
+   * Per-sound loopable flag, keyed by soundId. When true, DAW interval playback
+   * narrows to the detected loop region (the sound's trim) and applies a seam
+   * fade so the loop wraps without clicking.
+   */
+  soundLoopable: Record<string, boolean>;
+  /** Per-sound flag while loop analysis is running (id → true). */
+  loopAnalysisInProgress: Record<string, boolean>;
   /**
    * Per-iteration audio durations in seconds, keyed by soundId.
    * Parallel to soundTimestamps — each entry matches the iteration array length.
@@ -89,6 +98,14 @@ export interface AudioControlsStoreState {
   handleMute: (soundId: string) => void;
   handleSolo: (soundId: string) => void;
   setSoundTrim: (soundId: string, trim: { start: number; end: number }) => void;
+  /**
+   * Toggle "loopable" for a generated sound. Turning it on runs the client-side
+   * loop analysis against `url`, then narrows the sound's trim to the detected
+   * periodic loop region (so DAW interval playback loops seamlessly with a seam
+   * fade). Turning it off restores nothing else — the trim is left wherever it
+   * landed so the user can keep a manual trim if desired.
+   */
+  toggleSoundLoopable: (soundId: string, url: string) => Promise<void>;
   setIntervalJitter: (seconds: number) => void;
   setTimelineDurationMs: (ms: number) => void;
   resetTimelineDurationMs: () => void;
@@ -152,6 +169,7 @@ export const audioControlsPartialize = (state: AudioControlsStoreState) => ({
   maximumFoleySounds: state.maximumFoleySounds,
   soundSchedulingModes: { ...state.soundSchedulingModes },
   soundTimestamps: { ...state.soundTimestamps },
+  soundLoopable: { ...state.soundLoopable },
 });
 
 // Module-level counter used to cancel superseded bake calls (set inside setTimeout).
@@ -181,6 +199,8 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         soundBufferDurations: {},
         soundSchedulingModes: {},
         soundTimestamps: {},
+        soundLoopable: {},
+        loopAnalysisInProgress: {},
         soundIterationDurations: {},
         isBakingSchedule: false,
         isDeferredCycleBakePending: false,
@@ -435,6 +455,100 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           // Recompute orchestrate schedule so alignEnd placements stay valid after trim
           if (get()._soundConfigs.some(c => c.orchestrateMeta)) {
             get().bakeOrchestrateSchedule();
+          }
+        },
+
+        toggleSoundLoopable: async (soundId, url) => {
+          const currentlyLoopable = get().soundLoopable[soundId] ?? false;
+          if (currentlyLoopable) {
+            set(
+              (state) => ({
+                soundLoopable: { ...state.soundLoopable, [soundId]: false },
+              }),
+              false,
+              'audio/setSoundLoopableOff',
+            );
+            return;
+          }
+
+          if (get().loopAnalysisInProgress[soundId]) return;
+
+          set(
+            (state) => ({
+              loopAnalysisInProgress: { ...state.loopAnalysisInProgress, [soundId]: true },
+            }),
+            false,
+            'audio/loopAnalysisStart',
+          );
+
+          try {
+            // The heavy period-search runs server-side on the CPU pool (same
+            // queue pattern as trim_silence / SED) — the browser only polls.
+            const { analysis_id } = await apiService.analyzeLoop(url);
+
+            const deadline = Date.now() + 60_000;
+            let outcome: { start: number; end: number; length_sec?: number; match_score?: number } | null | undefined;
+            for (;;) {
+              if (Date.now() > deadline) {
+                throw new Error('Loop analysis timed out.');
+              }
+              const st = await apiService.getLoopAnalysisStatus(analysis_id);
+              if (st.error) {
+                throw new Error(st.error);
+              }
+              if (st.completed) {
+                outcome = st.result ?? null;
+                break;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 700));
+            }
+
+            if (!outcome) {
+              throw new Error('Could not find a loopable region in this audio.');
+            }
+
+            const startFrac = Math.max(0, Math.min(1, outcome.start));
+            const endFrac = Math.max(0, Math.min(1, outcome.end));
+
+            set(
+              (state) => ({
+                soundLoopable: { ...state.soundLoopable, [soundId]: true },
+              }),
+              false,
+              'audio/setSoundLoopableOn',
+            );
+            // The loop region IS the trim — DAW blocks, interval playback and the
+            // card preview all narrow to it automatically.
+            get().setSoundTrim(soundId, {
+              start: startFrac,
+              end: Math.max(startFrac + 0.02, endFrac),
+            });
+
+            const { notifyError } = await import('@/store/errorsStore');
+            notifyError(
+              `Loop ready — ${(outcome.length_sec ?? 0).toFixed(1)}s, ${Math.round((outcome.match_score ?? 0) * 100)}% match`,
+              'info',
+            );
+          } catch (err) {
+            const { notifyError } = await import('@/store/errorsStore');
+            notifyError(err instanceof Error ? err.message : 'Loop analysis failed');
+            set(
+              (state) => ({
+                soundLoopable: { ...state.soundLoopable, [soundId]: false },
+              }),
+              false,
+              'audio/loopAnalysisFailed',
+            );
+          } finally {
+            set(
+              (state) => {
+                const next = { ...state.loopAnalysisInProgress };
+                delete next[soundId];
+                return { loopAnalysisInProgress: next };
+              },
+              false,
+              'audio/loopAnalysisEnd',
+            );
           }
         },
 
@@ -1332,7 +1446,8 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         past.timelineDurationMs === current.timelineDurationMs &&
         past.globalBaseDbfs === current.globalBaseDbfs &&
         JSON.stringify(past.soundSchedulingModes) === JSON.stringify(current.soundSchedulingModes) &&
-        JSON.stringify(past.soundTimestamps) === JSON.stringify(current.soundTimestamps),
+        JSON.stringify(past.soundTimestamps) === JSON.stringify(current.soundTimestamps) &&
+        JSON.stringify(past.soundLoopable) === JSON.stringify(current.soundLoopable),
     },
   ),
   {
@@ -1342,7 +1457,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
     partialize: (state: AudioControlsStoreState) => {
       const { individualSoundStates, previewingSoundId, _generatedSounds, _soundConfigs,
         soundBufferDurations, isBakingSchedule, isDeferredCycleBakePending,
-        _pendingPlayAllStagger, _generationInProgress, ...persistable } = state;
+        _pendingPlayAllStagger, _generationInProgress, loopAnalysisInProgress, ...persistable } = state;
       return {
         ...persistable,
         mutedSounds: [...(state.mutedSounds || [])],

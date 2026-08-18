@@ -10,6 +10,7 @@ import { SingleListenerContent } from './listeners/SingleListenerContent';
 import { GridListenerContent } from './listeners/GridListenerContent';
 import { useGridListenersStore } from '@/store/gridListenersStore';
 import { useReceiversStore } from '@/store/receiversStore';
+import { usePositionClipboardStore } from '@/store';
 
 // Unified item type satisfying CardBaseConfig
 type SingleListenerConfig = ReceiverData & { type: 'listener'; display_name?: string };
@@ -68,6 +69,10 @@ export function ListenersSection({
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const prevGridCountRef = useRef(gridListeners.length);
+
+  // Copied position for the right-click "Paste position" menu item (shared across
+  // sound + listener cards). Null when nothing has been copied yet.
+  const copiedPosition = usePositionClipboardStore((s) => s.position);
 
   // Auto-expand newly added grid listener
   useEffect(() => {
@@ -207,15 +212,6 @@ export function ListenersSection({
     }
   }, [receivers.length, gridListeners.length, duplicateReceiverAt, duplicateGridListenerAt]);
 
-  const handlePositionChange = useCallback((
-    id: string, axis: 0 | 1 | 2, raw: string, currentPos: [number, number, number],
-  ) => {
-    const parsed = parseFloat(raw);
-    if (isNaN(parsed)) return;
-    const next: [number, number, number] = [...currentPos] as [number, number, number];
-    next[axis] = parsed;
-    onUpdateReceiverPosition(id, next);
-  }, [onUpdateReceiverPosition]);
 
   const header = (
     <div className="flex items-center gap-2 w-full justify-between">
@@ -256,11 +252,47 @@ export function ListenersSection({
       },
     };
 
+    // Position copy / paste — single listeners only (grid listeners have no
+    // single position to copy or paste onto).
+    const clipboardButtons: CustomMenuItem[] = [];
+    if (item.type === 'listener') {
+      clipboardButtons.push({
+        key: 'copy-position',
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
+          </svg>
+        ),
+        label: 'Copy position',
+        disabled: !item.position,
+        onClick: (e) => {
+          e.stopPropagation();
+          if (item.position) usePositionClipboardStore.getState().copyPosition([...item.position]);
+        },
+      });
+
+      if (copiedPosition) {
+        clipboardButtons.push({
+          key: 'paste-position',
+          icon: (
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+            </svg>
+          ),
+          label: 'Paste position',
+          onClick: (e) => {
+            e.stopPropagation();
+            onUpdateReceiverPosition(item.id, copiedPosition);
+          },
+        });
+      }
+    }
+
     const content = item.type === 'listener' ? (
       <SingleListenerContent
         receiver={item}
         color={LISTENER_COLOR}
-        onUpdatePosition={handlePositionChange}
+        onUpdatePosition={onUpdateReceiverPosition}
         listenerOrientation={listenerOrientation}
       />
     ) : (
@@ -283,7 +315,7 @@ export function ListenersSection({
           showIndex={true}
           canRemove={true}
           closeButtonTitle="Delete listener"
-          customButtons={[hideButton]}
+          customButtons={[...clipboardButtons, hideButton]}
           onToggleExpand={onToggleExpand}
           onUpdateConfig={handleUpdateConfig as (index: number, updates: Partial<typeof item>) => void}
           onRemove={handleRemove}
@@ -295,11 +327,12 @@ export function ListenersSection({
   }, [
     onToggleReceiverHiddenForSimulation,
     toggleGridListenerHiddenForSimulation,
-    handlePositionChange,
     handleUpdateConfig,
     handleRemove,
     onComputeBounds,
     listenerOrientation,
+    onUpdateReceiverPosition,
+    copiedPosition,
   ]);
 
   return (

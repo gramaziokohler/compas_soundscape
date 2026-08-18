@@ -80,7 +80,7 @@ export function formatAudioBufferInfo(info: AudioBufferInfo): string {
  * @returns Decoded AudioBuffer
  */
 export async function decodeAudioFile(
-  audioContext: AudioContext,
+  audioContext: BaseAudioContext,
   arrayBuffer: ArrayBuffer,
   metadata: AudioFileMetadata
 ): Promise<AudioBuffer> {

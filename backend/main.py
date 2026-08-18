@@ -16,7 +16,7 @@ from services.tts_service import TTSService
 # from services.modal_analysis_service import ModalAnalysisService
 
 # Import routers
-from routers import upload, generation, sounds, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, speckle, soundscape, tokens, tts
+from routers import upload, generation, sounds, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, speckle, soundscape, tokens, tts, loop_analysis
 
 # Import utilities
 from utils.file_operations import cleanup_all_temp_directories, ensure_all_temp_directories
@@ -174,6 +174,7 @@ app.include_router(speckle.router)
 app.include_router(soundscape.router)
 app.include_router(tokens.router)
 app.include_router(tts.router)
+app.include_router(loop_analysis.router)
 
 
 @app.get("/")

@@ -116,6 +116,18 @@ DENOISING_ONSET_HOP_LENGTH = 512  # Hop length (samples) for onset detection
 DENOISING_ONSET_PRE_MARGIN = 0.02  # Seconds before first onset to exclude (avoids onset bleed)
 DENOISING_TRIM_MERGE_THRESHOLD = 0.2  # Max silence (seconds) between SFX to merge into one continuous region
 
+# Loop detection (seamless-loop region finder) — decimated-envelope search.
+# The envelope is decimated to LOOP_FINDER_HOP_SEC resolution so the period scan
+# is O(decimated²) instead of the O(n²) full-rate brute force that made the old
+# client-side finder take minutes.
+LOOP_FINDER_HOP_SEC = 0.01  # Decimation hop (seconds) for the energy envelope
+LOOP_FINDER_MIN_LOOP_SEC = 0.5  # Shortest loop window to consider
+LOOP_FINDER_MAX_SCAN_SEC = 8.0  # Longest loop window to consider
+LOOP_FINDER_ALIGN_REPEATS = 3  # How many loop repeats are aligned when scoring a period
+LOOP_FINDER_MIN_MATCH_SCORE = 0.5  # Normalized cross-correlation floor for an acceptable loop
+LOOP_FINDER_LENGTH_PENALTY = 0.15  # Fractional score discount across the scan range, favoring shorter loops
+LOOP_FINDER_TASK_CLEANUP_DELAY_SECONDS = 300  # Task state retention after completion
+
 # ============================================================================
 # Audio Generation Configuration
 # ============================================================================

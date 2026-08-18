@@ -30,6 +30,8 @@
 
 import type { IAudioMode } from '../core/interfaces/IAudioMode';
 import type { AudioMode, Position, Orientation, AmbisonicOrder } from '@/types/audio';
+import type { FadeOptions } from '../utils/fade-envelope';
+import { applyFadeInOut } from '../utils/fade-envelope';
 import { cartesianToSpherical } from '../utils/ambisonic-utils';
 import { AUDIO_CONTROL } from '@/utils/constants';
 
@@ -261,7 +263,7 @@ export class AnechoicMode implements IAudioMode {
    * @param loop - Whether to loop the audio
    * @param offset - Start playback from this position in seconds (default: 0)
    */
-  playSource(sourceId: string, loop: boolean = false, offset: number = 0, duration?: number): void {
+  playSource(sourceId: string, loop: boolean = false, offset: number = 0, duration?: number, opts?: FadeOptions): void {
     if (!this.audioContext) {
       console.error('[AnechoicMode] No audio context');
       return;
@@ -281,7 +283,11 @@ export class AnechoicMode implements IAudioMode {
     const sourceNode = this.audioContext.createBufferSource();
     sourceNode.buffer = source.audioBuffer;
     sourceNode.loop = loop;
-    sourceNode.connect(source.gainNode);
+
+    // Insert a transient gain stage when a seam fade is requested (loopable
+    // sounds), so consecutive loop windows dip to silence at the wrap. With no
+    // fade this is a plain sourceNode → gainNode connection.
+    applyFadeInOut(sourceNode, source.gainNode, opts ? { ...opts, durationSec: duration } : {});
 
     if (duration !== undefined && duration > 0) {
       sourceNode.start(0, offset, duration);

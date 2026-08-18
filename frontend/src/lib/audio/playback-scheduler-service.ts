@@ -504,7 +504,23 @@ export class PlaybackSchedulerService {
               );
             }
 
-            this.audioOrchestrator.playSource(soundId, false, offsetSeconds, trimDurationSec !== undefined ? trimDurationSec - (timeIntoIteration / 1000) : undefined);
+            // Loopable sounds dip each window edge to silence so the wrap is seamless.
+            const audioControls = useAudioControlsStore.getState();
+            const loopable = !!audioControls.soundLoopable[soundId];
+            const fadeOpts = loopable
+              ? {
+                  fadeInMs: AUDIO_PLAYBACK.LOOPABLE_SEAM_FADE_MS,
+                  fadeOutMs: AUDIO_PLAYBACK.LOOPABLE_SEAM_FADE_MS,
+                }
+              : undefined;
+
+            this.audioOrchestrator.playSource(
+              soundId,
+              false,
+              offsetSeconds,
+              trimDurationSec !== undefined ? trimDurationSec - (timeIntoIteration / 1000) : undefined,
+              fadeOpts,
+            );
           } catch (error) {
             console.warn(`[PlaybackScheduler] ❌ Orchestrator playback failed for "${displayName}":`, error);
           }

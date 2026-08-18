@@ -72,14 +72,13 @@ export function useSpeckleSoundHighlight({
 
     let highlightedSphere: THREE.Mesh | undefined;
     if (effectiveIndex !== null) {
-      const selectedSound = soundscapeData.find((sound: any) => {
-        const promptIdx = (sound as any).prompt_index ?? 0;
-        return promptIdx === effectiveIndex;
-      });
-
-      if (selectedSound && (selectedSound.entity_index === undefined || selectedSound.entity_index === null)) {
-        highlightedSphere = sphereMeshes.find(s => s.userData.soundEvent?.id === selectedSound.id);
-      }
+      // A sound sphere represents the whole sound CARD: all variants collapse to a
+      // single sphere keyed by promptKey. Match by prompt — never by a specific
+      // variant's id, which only matches when the first variant is the selected one.
+      // Entity-linked cards have no sphere mesh (entities are colored instead), so
+      // this naturally yields no highlight for them.
+      const promptKey = `prompt_${effectiveIndex}`;
+      highlightedSphere = sphereMeshes.find(s => s.userData.promptKey === promptKey);
     }
 
     if (highlightedSphere) {
@@ -134,12 +133,18 @@ export function useSpeckleSoundHighlight({
     const isNonZeroPos = (pos: [number, number, number]) =>
       pos[0] !== 0 || pos[1] !== 0 || pos[2] !== 0;
 
-    const storedPos = soundSphereManager.getSpherePosition(sound.id);
-    // Only use stored position when it's actually been placed (non-zero).
-    // [0,0,0] means not yet resolved — fall back to the event's own position.
+    // The sphere is keyed by the sound CARD (promptKey) — all variants collapse to a
+    // single sphere. Read its live position (resolved + drag-updated) as the zoom target
+    // instead of getSpherePosition(firstVariant.id), which goes stale after dragging
+    // when a non-first variant is selected.
+    const sphere = soundSphereManager.findSphereByPromptKey(`prompt_${index}`);
+    const spherePos: [number, number, number] | undefined = sphere
+      ? [sphere.position.x, sphere.position.y, sphere.position.z]
+      : undefined;
+
     const position =
-      (storedPos && isNonZeroPos(storedPos))
-        ? new THREE.Vector3(...storedPos)
+      (spherePos && isNonZeroPos(spherePos))
+        ? new THREE.Vector3(...spherePos)
         : (sound.position && isNonZeroPos(sound.position as [number, number, number]))
           ? new THREE.Vector3(...(sound.position as [number, number, number]))
           : null;

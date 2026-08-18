@@ -20,6 +20,7 @@ import {
 } from '@/utils/constants';
 import type { ChorasSimulationConfig } from '@/types/acoustics';
 import { RangeSlider } from '@/components/ui/RangeSlider';
+import { CardSelect } from '@/components/ui/CardSelect';
 
 interface ChorasSimulationSettingsProps {
   config: ChorasSimulationConfig;
@@ -50,23 +51,17 @@ export function ChorasSimulationSettings({
         <label className="text-xs block mb-1 text-neutral-700">
           Method
         </label>
-        <select
+        <CardSelect
           value={settings.simulation_method}
-          onChange={(e) =>
-            handleSettingChange('simulation_method', e.target.value as 'DE' | 'DG')
+          onChange={(v) =>
+            handleSettingChange('simulation_method', v as 'DE' | 'DG')
           }
           disabled={isRunning}
-          className="w-full px-3 py-2 text-xs rounded border transition-colors hover:bg-opacity-90 focus:outline-none"
-          style={{
-            backgroundColor: 'var(--card-color, var(--color-primary))',
-            color: 'white',
-            borderColor: 'var(--color-secondary-light)',
-            borderRadius: '8px',
-          }}
-        >
-          <option value="DE">DE — Diffusion Equation (FVM)</option>
-          <option value="DG">DG — Discontinuous Galerkin</option>
-        </select>
+          options={[
+            { value: 'DE', label: 'DE — Diffusion Equation (FVM)' },
+            { value: 'DG', label: 'DG — Discontinuous Galerkin' },
+          ]}
+        />
       </div>
 
       {/* ── DE settings ─────────────────────────────────────────────────── */}

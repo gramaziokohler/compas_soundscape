@@ -9,6 +9,8 @@ interface ConfirmDialogProps {
   confirmLabel?: string;
   cancelLabel?: string;
   disabled?: boolean;
+  /** Only disable the confirm button — cancel stays active. */
+  disableConfirm?: boolean;
   variant?: "danger" | "default";
 }
 
@@ -42,6 +44,7 @@ export function ConfirmDialog({
   confirmLabel = "Confirm",
   cancelLabel = "Cancel",
   disabled = false,
+  disableConfirm = false,
   variant = "default",
 }: ConfirmDialogProps) {
   const isDanger = variant === "danger";
@@ -49,6 +52,7 @@ export function ConfirmDialog({
   const accentBg = isDanger
     ? "color-mix(in srgb, var(--color-error) 8%, transparent)"
     : "color-mix(in srgb, var(--color-primary) 8%, transparent)";
+  const confirmDisabled = disabled || disableConfirm;
 
   return (
     <div
@@ -81,7 +85,7 @@ export function ConfirmDialog({
         </button>
         <button
           onClick={onConfirm}
-          disabled={disabled}
+          disabled={confirmDisabled}
           className="flex-1 py-1 text-[10px] font-medium rounded transition-colors disabled:opacity-40"
           style={{
             background: accentColor,
@@ -89,7 +93,7 @@ export function ConfirmDialog({
             borderRadius: `${UI_BORDER_RADIUS.SM}px`,
           }}
         >
-          {disabled ? `${confirmLabel}…` : confirmLabel}
+          {confirmDisabled ? `${confirmLabel}…` : confirmLabel}
         </button>
       </div>
     </div>

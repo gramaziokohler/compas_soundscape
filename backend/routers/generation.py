@@ -407,6 +407,7 @@ async def analyze_3dmodel_stream(request: AnalyzeModelStreamRequest):
 
     async def event_generator():
         objects: list[dict] = []
+        space_title = ""
         space_description = ""
         try:
             # ── Queue-position phase ──────────────────────────────────────
@@ -429,7 +430,10 @@ async def analyze_3dmodel_stream(request: AnalyzeModelStreamRequest):
                 user_context=request.user_context or None,
                 llm_model=request.llm_model,
             ):
-                if event.get("type") == "space_description":
+                if event.get("type") == "space_title":
+                    space_title = event.get("text", "")
+                    yield f"data: {json.dumps({'type': 'space_title', 'text': space_title})}\n\n"
+                elif event.get("type") == "space_description":
                     space_description = event.get("text", "")
                     yield f"data: {json.dumps({'type': 'space_description', 'text': space_description})}\n\n"
                 else:
@@ -474,6 +478,8 @@ async def analyze_3dmodel_stream(request: AnalyzeModelStreamRequest):
                 except Exception:
                     pass
                 payload: dict = {"analysis_id": analysis_id, "objects": objects}
+                if space_title:
+                    payload["space_title"] = space_title
                 if space_description:
                     payload["space_description"] = space_description
                 if total_bounds:

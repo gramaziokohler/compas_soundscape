@@ -33,12 +33,32 @@ import { useFileUploadStore } from './fileUploadStore';
 import { useSoundscapeStore } from './soundscapeStore';
 import { apiService } from '@/services/api';
 import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
+import { startPolling, createPollRegistry } from '@/lib/poll-until-done';
 
-// ─── Module-level abort ref ───────────────────────────────────────────────────
+// ─── Module-level concurrency state ──────────────────────────────────────────
+// LLM jobs run concurrently on the backend IO pool (6 workers). Each invocation
+// owns its own poll/abort handles via registries so a second job can never
+// clobber the first's poll loop.
 
-let _abortController: AbortController | null = null;
-let _currentGenerationId: string | null = null;
-let _llmPollInterval: ReturnType<typeof setInterval> | null = null;
+const textPollRegistry = createPollRegistry();
+const _activeLlmJobIds = new Set<string>();
+const _abortControllers = new Set<AbortController>();
+
+let _activeCount = 0;
+
+function syncTextGenActivity(): void {
+  useTextGenerationStore.setState({ isGenerating: _activeCount > 0 }, false, 'textGen/activitySync');
+}
+
+export function beginTextGeneration(): void {
+  _activeCount += 1;
+  syncTextGenActivity();
+}
+
+export function endTextGeneration(): void {
+  _activeCount = Math.max(0, _activeCount - 1);
+  syncTextGenActivity();
+}
 
 // ─── Partialize ───────────────────────────────────────────────────────────────
 
@@ -123,7 +143,8 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
           const previousSelection = [...selectedDiverseEntities];
           set({ aiError: null, isAnalyzingEntities: true, llmProgress: '' }, false, 'textGen/analyzeStart');
 
-          _abortController = new AbortController();
+          const controller = new AbortController();
+          _abortControllers.add(controller);
 
           try {
             const msg =
@@ -137,7 +158,7 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
               headers: { 'Content-Type': 'application/json' },
               credentials: 'include',
               body: JSON.stringify({ entities: modelEntities, max_sounds: numSounds, llm_model: useSoundscapeStore.getState().llmModel }),
-              signal: _abortController.signal,
+              signal: controller.signal,
             });
 
             if (!res.ok) {
@@ -181,7 +202,7 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
             }
           } finally {
             set({ isAnalyzingEntities: false }, false, 'textGen/analyzeEnd');
-            _abortController = null;
+            _abortControllers.delete(controller);
           }
         },
 
@@ -199,15 +220,16 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
             {
               aiError: null,
               aiResponse: null,
-              isGenerating: true,
               showConfirmLoadSounds: false,
               llmProgress: '',
             },
             false,
             'textGen/generateStart',
           );
+          beginTextGeneration();
 
-          _abortController = new AbortController();
+          const controller = new AbortController();
+          _abortControllers.add(controller);
 
           try {
             const requestBody: any = {
@@ -241,7 +263,7 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
                   headers: { 'Content-Type': 'application/json' },
                   credentials: 'include',
                   body: JSON.stringify({ entities: modelEntities, max_sounds: numSounds, llm_model: useSoundscapeStore.getState().llmModel }),
-                  signal: _abortController.signal,
+                  signal: controller.signal,
                 });
 
                 if (selRes.ok) {
@@ -269,36 +291,27 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
             // Submit LLM generation and get generation_id
             set({ llmProgress: 'Submitting to LLM...' }, false, 'textGen/submitting');
             const { generation_id } = await apiService.generateText(requestBody);
-            _currentGenerationId = generation_id;
+            _activeLlmJobIds.add(generation_id);
             recordInflightJob(generation_id, 'llm');
             set({ llmProgress: 'Queued...' }, false, 'textGen/queued');
 
-            // Poll until done
-            const result = await new Promise<any>((resolve, reject) => {
-              _llmPollInterval = setInterval(async () => {
-                try {
-                  const s = await apiService.getTextGenerationStatus(generation_id);
+            // Poll until done — controller scoped to this invocation
+            const llmPoll = textPollRegistry.track(
+              startPolling({
+                fetchStatus: () => apiService.getTextGenerationStatus(generation_id),
+                onStatus: (s) => {
                   if (s.status) set({ llmProgress: s.status }, false, 'textGen/poll');
-                  if (s.cancelled) {
-                    clearInterval(_llmPollInterval!);
-                    _llmPollInterval = null;
-                    reject(new Error('AbortError'));
-                  } else if (s.error) {
-                    clearInterval(_llmPollInterval!);
-                    _llmPollInterval = null;
-                    reject(new Error(s.error));
-                  } else if (s.completed && s.result) {
-                    clearInterval(_llmPollInterval!);
-                    _llmPollInterval = null;
-                    resolve(s.result);
-                  }
-                } catch (pollErr: any) {
-                  clearInterval(_llmPollInterval!);
-                  _llmPollInterval = null;
-                  reject(pollErr);
-                }
-              }, 1500);
-            });
+                },
+              }),
+            );
+            let result: any;
+            try {
+              result = await llmPoll.done;
+            } finally {
+              textPollRegistry.release(llmPoll);
+              _activeLlmJobIds.delete(generation_id);
+              removeInflightJob(generation_id);
+            }
 
             set({ llmProgress: '' }, false, 'textGen/generateLlmDone');
 
@@ -421,31 +434,23 @@ export const useTextGenerationStore = create<TextGenerationStoreState>()(
               notifyError(errorMsg, isQuotaError ? 'warning' : 'error');
             }
           } finally {
-            set({ isGenerating: false }, false, 'textGen/generateEnd');
-            if (_currentGenerationId) { removeInflightJob(_currentGenerationId); }
-            _abortController = null;
-            _currentGenerationId = null;
-            if (_llmPollInterval) {
-              clearInterval(_llmPollInterval);
-              _llmPollInterval = null;
-            }
+            endTextGeneration();
+            _abortControllers.delete(controller);
           }
         },
 
         handleStopGeneration: () => {
-          if (_llmPollInterval) {
-            clearInterval(_llmPollInterval);
-            _llmPollInterval = null;
+          textPollRegistry.stopAll(new Error('AbortError'));
+          for (const id of _activeLlmJobIds) {
+            apiService.cancelTextGeneration(id);
+            removeInflightJob(id);
           }
-          if (_abortController) {
-            _abortController.abort();
-            _abortController = null;
+          _activeLlmJobIds.clear();
+          for (const c of _abortControllers) {
+            try { c.abort(); } catch {}
           }
-          if (_currentGenerationId) {
-            apiService.cancelTextGeneration(_currentGenerationId);
-            removeInflightJob(_currentGenerationId);
-            _currentGenerationId = null;
-          }
+          _abortControllers.clear();
+          _activeCount = 0;
           set(
             { isGenerating: false, isAnalyzingEntities: false, llmProgress: '', aiError: 'Generation stopped by user.' },
             false,

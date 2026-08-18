@@ -1,12 +1,14 @@
 'use client';
 
 import { DAWTimeline } from '@/components/audio/daw/DAWTimeline';
+import { DAWMiniTransport } from '@/components/audio/daw/DAWMiniTransport';
 import type { TimelinePlaybackState } from '@/types/audio';
 
 interface SceneTimelineProps {
   sounds: any[];
   playbackState: TimelinePlaybackState;
-  // Kept for backward-compat but no longer used for positioning (panel is self-positioned)
+  /** When true, hide the DAW panel and show the compact bottom-center play/pause bar. */
+  collapsed?: boolean;
   isLeftSidebarExpanded?: boolean;
   isRightSidebarExpanded?: boolean;
   leftSidebarContentWidth?: number;
@@ -26,6 +28,11 @@ interface SceneTimelineProps {
 export function SceneTimeline({
   sounds,
   playbackState,
+  collapsed = false,
+  isLeftSidebarExpanded,
+  isRightSidebarExpanded,
+  leftSidebarContentWidth,
+  rightSidebarWidth,
   onSeek,
   onRefresh,
   onDownload,
@@ -37,6 +44,19 @@ export function SceneTimeline({
   onSelectSoundCard,
   originalIRChannelCount,
 }: SceneTimelineProps) {
+  if (collapsed) {
+    return (
+      <DAWMiniTransport
+        currentTime={playbackState.currentTime}
+        duration={playbackState.duration}
+        isPlaying={playbackState.isPlaying}
+        onPlay={onPlay}
+        onPause={onPause}
+        onStop={onStop}
+      />
+    );
+  }
+
   return (
     <DAWTimeline
       sounds={sounds}

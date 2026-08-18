@@ -73,7 +73,7 @@ export function VariantsBar({
 
   return (
     <div
-      className="flex gap-1 overflow-x-auto flex-shrink-0 items-center"
+      className="tag-row flex overflow-x-auto flex-shrink-0 items-center"
       style={{ scrollbarWidth: 'thin', scrollbarColor: 'var(--card-color, var(--color-primary)) transparent' }}
     >
       {items.map((item, idx) => {
@@ -83,10 +83,7 @@ export function VariantsBar({
             key={item.key}
             onClick={() => onSelect?.(idx)}
             title={item.title ?? letterFor(idx)}
-            className={`w-5 h-5 text-[10px] rounded transition-colors flex-shrink-0 relative group ${
-              isSelected ? 'text-white' : 'bg-secondary text-secondary-light'
-            }`}
-            style={isSelected ? { backgroundColor: 'var(--card-color, var(--color-primary))' } : undefined}
+            className={`tag relative group flex-shrink-0 ${isSelected ? 'on' : ''}`}
           >
             {letterFor(idx)}
             {items.length > 1 && onDelete && (
@@ -110,10 +107,7 @@ export function VariantsBar({
           key="pending"
           onClick={() => onSelect?.(pendingIndex)}
           title={letterFor(pendingIndex)}
-          className={`w-5 h-5 text-[10px] rounded transition-colors flex-shrink-0 flex items-center justify-center ${
-            pendingIndex === selectedIndex ? 'text-white' : 'bg-secondary text-secondary-light'
-          }`}
-          style={pendingIndex === selectedIndex ? { backgroundColor: 'var(--card-color, var(--color-primary))' } : undefined}
+          className={`tag relative flex-shrink-0 flex items-center justify-center ${pendingIndex === selectedIndex ? 'on' : ''}`}
         >
           {pendingIndex === selectedIndex ? (
             <SpinnerIcon />
@@ -128,7 +122,7 @@ export function VariantsBar({
           key="add"
           onClick={onAdd}
           title="Add variant"
-          className="w-5 h-5 text-[10px] rounded border border-dashed border-secondary-light text-secondary-hover hover:text-foreground hover:border-foreground transition-colors flex-shrink-0 flex items-center justify-center"
+          className="tag add relative flex-shrink-0 flex items-center justify-center"
         >
           +
         </button>

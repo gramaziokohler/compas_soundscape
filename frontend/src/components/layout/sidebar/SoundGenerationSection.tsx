@@ -8,12 +8,15 @@ import type { CardTypeOption } from "@/components/ui/CardSection";
 import type { CustomMenuItem } from "@/types/card";
 import { CardSection } from "@/components/ui/CardSection";
 import { Card } from "@/components/ui/Card";
+import { GenerateButton } from "@/components/ui/GenerateButton";
+import { ObjectPickerBar } from "@/components/ui/ObjectPickerBar";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { SoundPreContent, SoundResultContent } from "./sound";
 import { Badge } from "@/components/ui/Badge";
 import type { VariantsBarProps } from "@/components/ui/VariantsBar";
 import { createTtsSpeechLines } from "@/hooks/useTtsSpeechLines";
 import { apiService } from "@/services/api";
-import { useAudioControlsStore, useSoundscapeStore, notifyError } from "@/store";
+import { useAudioControlsStore, useSoundscapeStore, usePositionClipboardStore, useSpeckleStore, configValidationError } from "@/store";
 import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
 import { useUIStore } from "@/store/uiStore";
 import { useServiceVersions } from "@/hooks/useServiceVersions";
@@ -105,6 +108,10 @@ export function SoundGenerationSection({
   // ── UI store for sidebar→scene communication ──
   const setExpandedSoundCardIndex = useUIStore(s => s.setExpandedSoundCardIndex);
   const triggerZoomToSoundCard    = useUIStore(s => s.triggerZoomToSoundCard);
+  const showSpectrograms          = useUIStore(s => s.showSpectrograms);
+  const setShowSpectrograms       = useUIStore(s => s.setShowSpectrograms);
+  // Pending multi-selection accumulated by the viewer SelectionExtension while linking.
+  const linkingSelectedIds = useSpeckleStore((s) => s.selectedObjectIds);
 
   // Clear entity highlight in 3D scene when Sounds section unmounts (user navigates away)
   useEffect(() => {
@@ -122,6 +129,10 @@ export function SoundGenerationSection({
   const updateSoundPosition         = useSoundscapeStore((s) => s.updateSoundPosition);
   const handleDetachSoundFromEntity = useSoundscapeStore((s) => s.handleDetachSoundFromEntity);
   const regeneratingIndices         = useSoundscapeStore((s) => s.regeneratingIndices);
+
+  // Copied position for the right-click "Paste position" menu item (shared across
+  // sound + listener cards). Null when nothing has been copied yet.
+  const copiedPosition = usePositionClipboardStore((s) => s.position);
 
   // Helper to check if a sound is generated (defined early for use in other callbacks)
   const isSoundGenerated = useCallback((index: number): boolean => {
@@ -180,8 +191,12 @@ export function SoundGenerationSection({
 
   // Find the current generating card index by matching config object references.
   // This is stable even if the user reorders cards, since the reference stays the same.
+  // When the ref snapshot is absent (e.g. the section remounts on a sidebar-step
+  // switch while a generation is still in flight), fall back to store state so the
+  // card keeps its progress UI instead of reverting to the idle config view.
   const getCurrentGeneratingCardIndex = useCallback((): number | null => {
-    if (!isSoundGenerating || pendingConfigOrderRef.current.length === 0) return null;
+    if (!isSoundGenerating) return null;
+
     const generatedIndices = new Set<number>();
     generatedSounds.forEach(s => {
       const pi = s.prompt_index;
@@ -193,17 +208,31 @@ export function SoundGenerationSection({
         }
       }
     });
+
     // Walk the original generation order; find the first not yet generated
-    for (const pendingConfig of pendingConfigOrderRef.current) {
-      // Find where this config object lives in the current soundConfigs array
-      const currentIdx = soundConfigs.indexOf(pendingConfig);
-      if (currentIdx === -1) continue; // config was removed
-      if (!generatedIndices.has(currentIdx)) {
-        return currentIdx;
+    if (pendingConfigOrderRef.current.length > 0) {
+      for (const pendingConfig of pendingConfigOrderRef.current) {
+        // Find where this config object lives in the current soundConfigs array
+        const currentIdx = soundConfigs.indexOf(pendingConfig);
+        if (currentIdx === -1) continue; // config was removed
+        if (!generatedIndices.has(currentIdx)) {
+          return currentIdx;
+        }
+      }
+      // Fall through to the store-derived loop below if the snapshot is fully
+      // consumed (e.g. configs were replaced mid-generation).
+    }
+
+    // No snapshot — derive from the persisted generation targets. The first
+    // targeted card that hasn't generated a sound yet is the active one.
+    for (let idx = 0; idx < soundConfigs.length; idx++) {
+      if (soundGenTargetIndices !== null && !soundGenTargetIndices.includes(idx)) continue;
+      if (!generatedIndices.has(idx)) {
+        return idx;
       }
     }
     return null;
-  }, [isSoundGenerating, soundConfigs, generatedSounds]);
+  }, [isSoundGenerating, soundConfigs, generatedSounds, soundGenTargetIndices]);
 
   const currentGeneratingCardIndex = getCurrentGeneratingCardIndex();
 
@@ -233,9 +262,16 @@ export function SoundGenerationSection({
   const onTimestampsChange   = useAudioControlsStore((s) => s.handleTimestampsChange);
   const iterationLinks       = useAudioControlsStore((s) => s.iterationLinks);
   const isDeferredCycleBakePending = useAudioControlsStore(s => s.isDeferredCycleBakePending);
+  const soundLoopable         = useAudioControlsStore((s) => s.soundLoopable);
+  const loopAnalysisInProgress = useAudioControlsStore((s) => s.loopAnalysisInProgress);
+  const onToggleSoundLoopable = useAudioControlsStore((s) => s.toggleSoundLoopable);
 
   // Track active linked entity index per card via state (for reactive selector highlighting)
   const [activeLinkedEntityIdx, setActiveLinkedEntityIdx] = useState<Record<number, number>>({});
+
+  // Card header link button on an already-linked card opens an unlink confirm
+  // (same ui/ux as the grid-listener card). Index = which card is confirming.
+  const [unlinkConfirmIndex, setUnlinkConfirmIndex] = useState<number | null>(null);
 
   // Track expanded index for controlled mode (CardSection)
   const [expandedIndex, setExpandedIndex] = useState<number | null>(
@@ -327,14 +363,13 @@ export function SoundGenerationSection({
       onUpdateConfig(newOriginalIndex, 'parentUsageOriginalIndex', visibleParentUsageIndex);
     }
 
-    // If sample-audio type, auto-load the sample file
+    // If sample-audio type, auto-load the sample file. Errors surface as the
+    // card's inline error (set by the store's handleUploadAudio), not a toast.
     if (type === 'sample-audio') {
       try {
         const sampleFile = await apiService.loadSampleAudio();
         await onUploadAudio(newOriginalIndex, sampleFile);
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to load sample audio';
-        notifyError(message, 'error');
         console.error('[SoundGenerationSection] Failed to load sample audio:', error);
       }
     }
@@ -477,7 +512,6 @@ export function SoundGenerationSection({
     { type: 'text-to-audio', label: CARD_TYPE_LABELS['text-to-audio'], enabled: true },
     { type: 'text-to-speech', label: CARD_TYPE_LABELS['text-to-speech'], enabled: true },
     { type: 'upload', label: CARD_TYPE_LABELS['upload'], enabled: true },
-    { type: 'library', label: CARD_TYPE_LABELS['library'], enabled: true },
     { type: 'catalog', label: CARD_TYPE_LABELS['catalog'], enabled: true },
     { type: 'sample-audio', label: CARD_TYPE_LABELS['sample-audio'], enabled: true },
   ], []);
@@ -577,6 +611,51 @@ export function SoundGenerationSection({
 
     // Scheduling mode toggle removed from kebab — use the lock icon in the DAW timeline instead.
 
+    // Make loopable (only if generated): analyses the audio and narrows
+    // interval playback to a seamless loop region with a seam-smoothing fade.
+    if (isGenerated && generatedSound) {
+      const isLoopable = generatedSound.id ? (soundLoopable[generatedSound.id] ?? false) : false;
+      const isAnalyzingLoop = generatedSound.id ? (loopAnalysisInProgress[generatedSound.id] ?? false) : false;
+      customButtons.push({
+        key: 'loopable',
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+        ),
+        label: isAnalyzingLoop ? 'Analyzing loop…' : (isLoopable ? 'Loopable ✓' : 'Make loopable'),
+        isActive: isLoopable,
+        disabled: isAnalyzingLoop,
+        onClick: (e) => {
+          e.stopPropagation();
+          void onToggleSoundLoopable(generatedSound.id, generatedSound.url);
+        },
+      });
+    }
+
+    // Spectrogram toggle (only when this card shows a WaveSurfer viewer).
+    // Generated cards always render one (SoundResultContent); pending upload /
+    // sample-audio cards only after an audio file is loaded. Reuses the global
+    // showSpectrograms setting from AdvancedSettings → Sound Rendering.
+    const hasWavesurferViewer = isGenerated
+      ? !!generatedSound
+      : (config.type === 'upload' || config.type === 'sample-audio')
+        && !!config.uploadedAudioUrl && !!config.uploadedAudioInfo;
+
+    if (hasWavesurferViewer) {
+      customButtons.push({
+        key: 'spectrogram',
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 18V6m4 12V10m4 8V4m4 14v-6m4 6V8" />
+          </svg>
+        ),
+        label: showSpectrograms ? 'Hide spectrogram' : 'Show spectrogram',
+        isActive: showSpectrograms,
+        onClick: (e) => { e.stopPropagation(); setShowSpectrograms(!showSpectrograms); },
+      });
+    }
+
     // Duplicate button (only if generated)
     if (isGenerated && onDuplicateConfig) {
       customButtons.push({
@@ -588,6 +667,64 @@ export function SoundGenerationSection({
         ),
         label: 'Duplicate sound',
         onClick: (e) => { e.stopPropagation(); onDuplicateConfig(originalIndex); },
+      });
+    }
+
+    // ── Position copy / paste (right-click menu) ─────────────────────────────
+    // Effective position of this card, used by "Copy position": generated events
+    // always carry one; pending cards fall back to an explicit config.position or,
+    // when entity-linked, the linked entity's bounds center / position.
+    const copyablePosition = (() => {
+      if (isGenerated && generatedSound?.position && generatedSound.position.length >= 3) {
+        return [generatedSound.position[0], generatedSound.position[1], generatedSound.position[2]] as [number, number, number];
+      }
+      if (config.position) return config.position;
+      if (config.entity) {
+        const ec = config.entity as any;
+        if (ec?.bounds?.center) return ec.bounds.center as [number, number, number];
+        if (Array.isArray(ec?.position) && ec.position.length >= 3)
+          return [ec.position[0], ec.position[1], ec.position[2]] as [number, number, number];
+      }
+      return undefined;
+    })();
+
+    // Pasting onto an entity-linked generated sound is disabled, matching the
+    // inline position widget (position is controlled by the linked entity).
+    const isPasteDisabled = isGenerated && generatedSound?.entity_index !== undefined;
+
+    customButtons.push({
+      key: 'copy-position',
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
+        </svg>
+      ),
+      label: 'Copy position',
+      disabled: !copyablePosition,
+      onClick: (e) => {
+        e.stopPropagation();
+        if (copyablePosition) usePositionClipboardStore.getState().copyPosition(copyablePosition);
+      },
+    });
+
+    if (copiedPosition) {
+      customButtons.push({
+        key: 'paste-position',
+        icon: (
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+          </svg>
+        ),
+        label: 'Paste position',
+        disabled: isPasteDisabled,
+        onClick: (e) => {
+          e.stopPropagation();
+          if (isGenerated && generatedSound) {
+            updateSoundPosition(generatedSound.id, copiedPosition);
+          } else {
+            onUpdateConfig(originalIndex, 'position', copiedPosition);
+          }
+        },
       });
     }
 
@@ -681,7 +818,7 @@ export function SoundGenerationSection({
 
     // Linked entities display (shown inside card body when entities are linked)
     const linkedEntitiesDisplay = hasEntities ? (
-      <div className="flex items-center gap-2 mt-2">
+      <div className="flex items-center gap-2 mb-1">
         <span className="text-[10px] text-secondary whitespace-nowrap">
           Linked entities:
         </span>
@@ -732,18 +869,6 @@ export function SoundGenerationSection({
             {linkedEntityLabel}
           </span>
         )}
-        {onClearLinkedEntities && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onClearLinkedEntities(originalIndex);
-            }}
-            className="text-[10px] text-warning hover:text-error cursor-pointer whitespace-nowrap ml-auto"
-            title="Remove all linked entities"
-          >
-            Clear
-          </button>
-        )}
       </div>
     ) : null;
 
@@ -754,7 +879,9 @@ export function SoundGenerationSection({
           if (isCurrentlyLinking) {
             onFinishLinkingEntity?.();
           } else if (isLinkedInHeader) {
-            onStartLinkingEntity?.(originalIndex);
+            // Already linked → open the unlink confirm (grid-listener style).
+            // This replaces the old "Clear" button.
+            setUnlinkConfirmIndex(originalIndex);
           } else {
             onStartLinkingEntity?.(originalIndex);
           }
@@ -763,13 +890,15 @@ export function SoundGenerationSection({
           isCurrentlyLinking
             ? 'Multi-select active — click entities in the 3D view (click here to finish)'
             : linkedEntityLabel
-              ? `Linked to: ${linkedEntityLabel} — click to edit links`
+              ? `Linked to: ${linkedEntityLabel} — click to unlink`
               : 'Link to entities'
         }
         className={`flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full transition-all opacity-80 hover:bg-secondary hover:text-primary ${
           isCurrentlyLinking ? 'animate-pulse' : ''
         }`}
-        style={{ color: (isCurrentlyLinking || isLinkedInHeader) ? 'var(--color-primary-hover)' : undefined , backgroundColor: (isCurrentlyLinking || isLinkedInHeader) ? 'var(--color-foreground)' : undefined}}
+        style={(isCurrentlyLinking || isLinkedInHeader)
+          ? { color: 'var(--color-foreground)', backgroundColor: 'var(--color-primary)' }
+          : undefined}
       >
         <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
@@ -777,26 +906,31 @@ export function SoundGenerationSection({
       </button>
     ) : undefined;
 
-    // Linking mode tip bar (reused in both before/after content)
-    const linkingTipBar = isCurrentlyLinking ? (
-      <div
-        className="text-xs p-2 rounded-md flex items-start justify-between gap-2 mb-2"
-        style={{ backgroundColor: 'color-mix(in srgb, var(--color-warning) 40%, transparent)', color: 'var(--color-secondary)' }}
-      >
-        <span>
-          Select one or multiple objects in the 3D view to link them.
-        </span>
-        <button
-          onClick={(e) => { e.stopPropagation(); onFinishLinkingEntity?.(); }}
-          className="shrink-0 px-2 py-0.5 rounded text-xs font-medium cursor-pointer"
-          style={{
-            backgroundColor: 'var(--color-secondary)',
-            color: 'var(--color-primary)',
-          }}
-        >
-          Done
-        </button>
-      </div>
+    // Linking mode — shared selection bar (same UX as grid-listener cards).
+    // Cancel always active; Link lights up when there is at least one selection.
+    const linkingBar = (
+      <ObjectPickerBar
+        isSelecting={isCurrentlyLinking}
+        selectedCount={linkingSelectedIds.length}
+        message="Select one or multiple surfaces on the model, then link."
+        confirmLabel="Link"
+        cancelLabel="Cancel"
+        onConfirm={() => onFinishLinkingEntity?.()}
+        onCancel={() => onCancelLinkingEntity?.()}
+      />
+    );
+
+    // Unlink confirm — shown when clicking the already-linked link button.
+    const unlinkConfirmDialog = unlinkConfirmIndex === originalIndex ? (
+      <ConfirmDialog
+        message="Unlink sound from this entity? Its position becomes manually editable."
+        confirmLabel="Unlink"
+        onConfirm={() => {
+          setUnlinkConfirmIndex(null);
+          onClearLinkedEntities?.(originalIndex);
+        }}
+        onCancel={() => setUnlinkConfirmIndex(null)}
+      />
     ) : null;
 
     // Category badge (if available from foley analysis)
@@ -823,22 +957,14 @@ export function SoundGenerationSection({
     const triggerBadge = config.orchestrateMeta?.trigger?.type
       && config.orchestrateMeta.trigger.type !== 'absolute'
       && activeExpressions.length > 0 ? (
-      <span
-        style={{
-          fontSize: '9px',
-          padding: '1px 5px',
-          borderRadius: '3px',
-          backgroundColor: 'color-mix(in srgb, var(--color-warning) 30%, transparent)',
-          color: 'var(--color-warning)',
-          textTransform: 'capitalize',
-          letterSpacing: '0.02em',
-          flexShrink: 0,
-          whiteSpace: 'nowrap',
-        }}
+      <Badge
+        variant="warning"
+        size="xs"
+        className="uppercase tracking-wider"
         title={`${activeExpressions.length}/${totalExpressions} active — ${expressionDetails.join(', ')}`}
       >
         {config.orchestrateMeta.trigger.type === 'param' ? 'Param' : 'Mixed'}
-      </span>
+      </Badge>
     ) : null;
 
     const headerPrefix = linkHeaderPrefix ? (
@@ -853,6 +979,16 @@ export function SoundGenerationSection({
     // showVariantsPreGen / showVariantsPostGen.
     const isTextToAudioType = config.type === 'text-to-audio' || !config.type;
     const isTtsType = config.type === 'text-to-speech';
+    // SED-extracted upload cards (injected from an audio analysis card) can
+    // carry multiple variants — one per extracted segment for a detected sound.
+    const isUploadWithVariants = config.type === 'upload' && variants.length > 1;
+
+    // True while THIS card's own generation is still in flight (either the
+    // original generation or a regeneration). While busy, the "+" add-variant
+    // button is disabled so a new variant's copy_index can never collide with
+    // a variant the in-flight job is about to stream in.
+    const cardGenerating = isSoundGenerating &&
+      (soundGenTargetIndices === null || soundGenTargetIndices.includes(originalIndex));
 
     let cardVariants: VariantsBarProps | undefined;
     if (isTtsType && !isGenerated) {
@@ -870,15 +1006,25 @@ export function SoundGenerationSection({
         selectedIndex: selectedVariantIdx,
         onSelect: onVariantChange ? (i) => onVariantChange(originalIndex, i) : undefined,
         onDelete: onDeleteVariant ? (i) => onDeleteVariant(originalIndex, i) : undefined,
-        onAdd: (isTextToAudioType && onRegenerateSingle)
+        onAdd: (isTextToAudioType && onRegenerateSingle && !cardGenerating)
           ? () => onRegenerateSingle(originalIndex)
           : undefined,
         isRegenerating: regeneratingIndices.includes(originalIndex),
         pendingIndex: variants.length,
       };
+    } else if (isGenerated && isUploadWithVariants) {
+      // Extracted segments are real audio clips — select-only selector, no
+      // add/delete (nothing to regenerate, and deleting a segment is a
+      // different concern than removing an ML-generated variant).
+      cardVariants = {
+        items: variants.map((v, i) => ({ key: v.id, title: String.fromCharCode(65 + i) })),
+        selectedIndex: selectedVariantIdx,
+        onSelect: onVariantChange ? (i) => onVariantChange(originalIndex, i) : undefined,
+      };
     }
     const showVariantsPreGen = isTtsType && !isGenerated;
-    const showVariantsPostGen = isGenerated && (isTextToAudioType || isTtsType) && !!onVariantChange;
+    const showVariantsPostGen = isGenerated && !!onVariantChange &&
+      (isTextToAudioType || isTtsType || isUploadWithVariants);
 
     return (
       <div key={originalIndex} style={{ position: 'relative' }}>
@@ -922,6 +1068,9 @@ export function SoundGenerationSection({
         onReset={() => handleReset(originalIndex)}
         onRun={async () => onGenerateSingle(originalIndex)}
         onCancel={onStopGeneration}
+        actionButtonLabel="Generate sound"
+        actionButtonDisabled={!isConfigValid(config)}
+        actionButtonDisabledReason={configValidationError(config)}
         color="primary"
         version={cardVersion}
         dimmed={isEffectivelyMuted}
@@ -931,9 +1080,11 @@ export function SoundGenerationSection({
         showVariantsPostGen={showVariantsPostGen}
         beforeContent={isGenerated ? undefined : (
           <>
+            {!isCurrentlyLinking && linkedEntitiesDisplay}
+            {unlinkConfirmDialog}
             {categoryBadge}
             {triggerBadge}
-            {linkingTipBar}
+            {linkingBar}
             <SoundPreContent
               config={config}
               index={originalIndex}
@@ -946,17 +1097,16 @@ export function SoundGenerationSection({
               onLibrarySearch={onLibrarySearch}
               onLibrarySoundSelect={onLibrarySoundSelect}
               onCatalogSoundSelect={onCatalogSoundSelect}
-              availableTypes={availableTypes}
-              onSwitchType={handleSwitchCardType}
             />
-            {linkedEntitiesDisplay}
           </>
         )}
         afterContent={!isGenerated || !generatedSound ? undefined : (
           <>
+            {!isCurrentlyLinking && linkedEntitiesDisplay}
+            {unlinkConfirmDialog}
             {categoryBadge}
             {triggerBadge}
-            {linkingTipBar}
+            {linkingBar}
             <SoundResultContent
               generatedSound={generatedSound}
               index={originalIndex}
@@ -980,7 +1130,6 @@ export function SoundGenerationSection({
               isRegenerating={regeneratingIndices.includes(originalIndex)}
               pendingVariantIdx={variants.length}
             />
-            {linkedEntitiesDisplay}
           </>
         )}
       />
@@ -1016,6 +1165,7 @@ export function SoundGenerationSection({
     onCatalogSoundSelect,
     onStartLinkingEntity,
     onCancelLinkingEntity,
+    unlinkConfirmIndex,
     onFinishLinkingEntity,
     onSelectLinkedEntity,
     onClearLinkedEntities,
@@ -1046,70 +1196,54 @@ export function SoundGenerationSection({
     soundGenProgressValue,
     onGenerateSingle,
     isConfigValid,
+    copiedPosition,
+    linkingSelectedIds,
+    showSpectrograms,
+    setShowSpectrograms,
   ]);  
 
   // Footer with generate button
+  const handleGenerateAll = useCallback(() => {
+    const pendingIndices = filteredCardItems
+      .filter((item) => !isSoundGenerated(item.originalIndex))
+      .map((item) => item.originalIndex);
+    const hasOrchestrate = soundConfigs.some(
+      (_, i) => pendingIndices.includes(i) && soundConfigs[i].orchestrateMeta
+    );
+    if (hasOrchestrate) {
+      const audioStore = useAudioControlsStore.getState();
+      audioStore.setGenerationInProgress(true);
+      audioStore.bakeOrchestrateSchedule();
+    }
+    onGenerateFiltered(pendingIndices);
+  }, [filteredCardItems, isSoundGenerated, soundConfigs, onGenerateFiltered]);
+
+  // Pending count for the generate-all button visibility gate (hide unless > 2 pending)
+  const pendingCardCount = useMemo(
+    () => filteredCardItems.filter((item) => !isSoundGenerated(item.originalIndex)).length,
+    [filteredCardItems, isSoundGenerated],
+  );
+  const showGenerateAll = pendingCardCount > 2;
+
   const footer = (
     <div className="flex gap-2">
       {isSoundGenerating ? (
-        /* Progress bar replaces generate button while running */
-        <div
-          className="flex-1 px-3 py-2 rounded-lg text-xs"
-          style={{
-            backgroundColor: 'var(--color-secondary-hover)',
-            color: 'white',
-            backgroundImage: soundGenProgressValue > 0
-              ? `linear-gradient(to right, var(--card-color, var(--color-primary)) ${soundGenProgressValue}%, var(--color-secondary-hover) ${soundGenProgressValue}%)`
-              : undefined,
-            transition: 'background-image 0.3s ease',
-          }}
-        >
-          <div className="flex justify-between items-center">
-            <span className="font-medium">{displayProgress}</span>
-            {soundGenProgressValue > 0 && (
-              <span className="font-bold">{soundGenProgressValue}%</span>
-            )}
-          </div>
-        </div>
-      ) : (
-        <button
-          onClick={() => {
-            const pendingIndices = filteredCardItems
-              .filter((item) => !isSoundGenerated(item.originalIndex))
-              .map((item) => item.originalIndex);
-            const hasOrchestrate = soundConfigs.some(
-              (_, i) => pendingIndices.includes(i) && soundConfigs[i].orchestrateMeta
-            );
-            if (hasOrchestrate) {
-              const audioStore = useAudioControlsStore.getState();
-              audioStore.setGenerationInProgress(true);
-              audioStore.bakeOrchestrateSchedule();
-            }
-            onGenerateFiltered(pendingIndices);
-          }}
+        /* Progress replaces the generate button while running */
+        <GenerateButton
+          status="generating"
+          progress={soundGenProgressValue}
+          statusText={displayProgress}
+          onStop={onStopGeneration}
+        />
+      ) : showGenerateAll ? (
+        <GenerateButton
+          status="idle"
+          progress={0}
+          label="Generate Sounds"
           disabled={shouldDisableGenerateButton}
-          className={`flex-1 py-2 px-4 rounded-lg text-white text-xs font-medium transition-colors ${
-            shouldDisableGenerateButton
-              ? 'bg-secondary-hover opacity-40 cursor-not-allowed'
-              : 'hover:opacity-80 cursor-pointer'
-          }`}
-          style={!shouldDisableGenerateButton ? { backgroundColor: 'var(--card-color, var(--color-primary))' } : undefined}
-        >
-          Generate Sounds
-        </button>
-      )}
-
-      {/* Stop button - only visible when generating */}
-      {isSoundGenerating && (
-        <button
-          onClick={onStopGeneration}
-          className="w-8 h-8 rounded-lg text-white font-bold bg-error hover:bg-error-hover transition-colors flex items-center justify-center"
-          title="Stop generation"
-          aria-label="Stop generation"
-        >
-          <span className="text-lg leading-none">&#9632;</span>
-        </button>
-      )}
+          onGenerate={handleGenerateAll}
+        />
+      ) : null}
     </div>
   );
 

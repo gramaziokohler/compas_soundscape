@@ -7,6 +7,7 @@
  */
 
 import type { Position, Orientation, AudioMode } from '@/types/audio';
+import type { FadeOptions } from '@/lib/audio/utils/fade-envelope';
 
 export interface IAudioMode {
   /**
@@ -53,8 +54,9 @@ export interface IAudioMode {
    * @param loop - Whether to loop the audio (default: false)
    * @param offset - Start playback from this position in seconds (default: 0)
    * @param duration - Maximum playback duration in seconds (trim end)
+   * @param opts - Optional fade-in/out to smooth a loop seam on one-shot playback
    */
-  playSource(sourceId: string, loop?: boolean, offset?: number, duration?: number): void;
+  playSource(sourceId: string, loop?: boolean, offset?: number, duration?: number, opts?: FadeOptions): void;
 
   /**
    * Stop audio playback for a source

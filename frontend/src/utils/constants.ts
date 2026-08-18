@@ -218,6 +218,14 @@ export const UI_HELPER_HINT = {
   FADE_MS: 400,               // opacity transition duration
 } as const;
 
+// Compact play/pause/stop control shown at the bottom-center of the 3D scene
+// when the DAW timeline panel is hidden. Replaced by DAWTimeline when shown.
+export const DAW_MINI_TRANSPORT = {
+  BOTTOM: 48,                 // px — aligns with SceneControlButtons (bottom-12)
+  Z_INDEX: 20,                // same stacking as scene control buttons
+  GAP: 6,                     // px — matches DAWTimeline transport row
+} as const;
+
 // Material Assignment UI
 export const MAX_FACES_FOR_EXPANSION = 10; // Maximum number of faces before disabling entity expansion
 export const MAX_FACES_FOR_LAYER_AUTO_EXCLUDE = 1000; // Auto-exclude layers with more than this many faces in new simulations
@@ -512,6 +520,7 @@ export const SPECKLE_VIEWER_RETRY = {
 // Sound Event Detection (SED) Configuration
 // ============================================================================
 export const SED_TOP_N_CLASSES = '100';
+export const SED_MIN_CONFIDENCE = 0.05;
 
 // ============================================================================
 // UI Slider Configuration (Sound Overlays)

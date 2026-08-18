@@ -22,6 +22,7 @@ import {
 import type { PyroomAcousticsSimulationConfig } from '@/types/acoustics';
 import { CheckboxField } from '@/components/ui/CheckboxField';
 import { RangeSlider } from '@/components/ui/RangeSlider';
+import { CardSelect } from '@/components/ui/CardSelect';
 
 interface PyroomAcousticsSimulationSettingsProps {
   config: PyroomAcousticsSimulationConfig;
@@ -55,29 +56,21 @@ export function PyroomAcousticsSimulationSettings({
     Simulation Mode
   </label>
 
-  <select
+  <CardSelect
     value={config.settings.simulation_mode}
-    onChange={(e) => handleSettingChange('simulation_mode', e.target.value)}
-    className="
-      w-full px-3 py-1.5 text-xs rounded border transition-colors
-      hover:bg-opacity-90 focus:outline-none
-    "
-    style={{
-      backgroundColor: 'var(--card-color, var(--color-primary))',
-      color: 'white',
-      borderColor: 'var(--color-secondary-light)',
-      borderRadius: '8px',
-    }}
+    onChange={(v) => handleSettingChange('simulation_mode', v)}
     disabled={config.isRunning}
-  >
-    <option value={PYROOMACOUSTICS_SIMULATION_MODE_MONO}>
-      {PYROOMACOUSTICS_SIMULATION_MODE_NAMES[PYROOMACOUSTICS_SIMULATION_MODE_MONO]}
-    </option>
-
-    <option value={PYROOMACOUSTICS_SIMULATION_MODE_FOA}>
-      {PYROOMACOUSTICS_SIMULATION_MODE_NAMES[PYROOMACOUSTICS_SIMULATION_MODE_FOA]}
-    </option>
-  </select>
+    options={[
+      {
+        value: PYROOMACOUSTICS_SIMULATION_MODE_MONO,
+        label: PYROOMACOUSTICS_SIMULATION_MODE_NAMES[PYROOMACOUSTICS_SIMULATION_MODE_MONO],
+      },
+      {
+        value: PYROOMACOUSTICS_SIMULATION_MODE_FOA,
+        label: PYROOMACOUSTICS_SIMULATION_MODE_NAMES[PYROOMACOUSTICS_SIMULATION_MODE_FOA],
+      },
+    ]}
+  />
 </div>
 
       {/* Image Source Order Slider */}

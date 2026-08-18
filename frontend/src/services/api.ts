@@ -416,6 +416,64 @@ export const apiService = {
     }
   },
 
+  // Loop Analysis — detect a seamless loop region (server-side, queued job)
+
+  /**
+   * Enqueue a seamless-loop-region analysis for an existing generated sound.
+   * @param soundUrl - The generated sound's static URL (e.g. /static/sounds/generated/<sid>/<file>.wav)
+   * @returns analysis_id to poll with getLoopAnalysisStatus
+   */
+  async analyzeLoop(soundUrl: string): Promise<{ analysis_id: string }> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/analyze-loop`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sound_url: soundUrl }),
+        },
+        'Loop analysis'
+      );
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: 'Loop analysis failed' }));
+        throw new Error(err.detail || 'Loop analysis failed');
+      }
+
+      return await response.json();
+    } catch (error) {
+      handleApiError(error, 'Loop analysis');
+    }
+  },
+
+  /** Poll the loop-analysis job. Result carries {start, end} fractions (0-1). */
+  async getLoopAnalysisStatus(
+    analysisId: string
+  ): Promise<{
+    status: string;
+    progress: number;
+    completed: boolean;
+    error?: string | null;
+    result?: { start: number; end: number; length_sec?: number; match_score?: number } | null;
+  }> {
+    try {
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/analyze-loop-status/${analysisId}`,
+        { method: 'GET' },
+        'Loop analysis status'
+      );
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: 'Status failed' }));
+        throw new Error(err.detail || 'Loop analysis status failed');
+      }
+
+      return await response.json();
+    } catch (error) {
+      handleApiError(error, 'Loop analysis status');
+    }
+  },
+
   // Cleanup Generated Sounds
   async cleanupGeneratedSounds(): Promise<void> {
     try {

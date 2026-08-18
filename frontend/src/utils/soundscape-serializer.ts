@@ -903,15 +903,18 @@ export function buildAnalysisStateSave(
 
     if (config.type === 'model-analysis') {
       const mc = config as any;
-      if (mc.analysisResult?.architecturalObjects) {
-        base.analysisResult = {
-          analysisId: mc.analysisResult.analysisId,
-          architecturalObjects: mc.analysisResult.architecturalObjects,
-        };
-        if (mc.analysisResult.spaceDescription) {
-          base.analysisResult.spaceDescription = mc.analysisResult.spaceDescription;
+if (mc.analysisResult?.architecturalObjects) {
+          base.analysisResult = {
+            analysisId: mc.analysisResult.analysisId,
+            architecturalObjects: mc.analysisResult.architecturalObjects,
+          };
+          if (mc.analysisResult.spaceTitle) {
+            base.analysisResult.spaceTitle = mc.analysisResult.spaceTitle;
+          }
+          if (mc.analysisResult.spaceDescription) {
+            base.analysisResult.spaceDescription = mc.analysisResult.spaceDescription;
+          }
         }
-      }
     }
 
     if (config.type === '3d-model') {

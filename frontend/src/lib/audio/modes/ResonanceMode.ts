@@ -24,6 +24,8 @@
 import type { IAudioMode } from '../core/interfaces/IAudioMode';
 import type { Position, Orientation } from '@/types/audio';
 import { AudioMode } from '@/types/audio';
+import type { FadeOptions } from '../utils/fade-envelope';
+import { applyFadeInOut } from '../utils/fade-envelope';
 import { AUDIO_CONTROL, DEFAULT_SPEED_OF_SOUND } from '@/utils/constants';
 
 // Dynamic import type
@@ -228,7 +230,7 @@ export class ResonanceMode implements IAudioMode {
    * @param loop - Whether to loop the audio
    * @param offset - Start playback from this position in seconds (default: 0)
    */
-  playSource(sourceId: string, loop: boolean = false, offset: number = 0, duration?: number): void {
+  playSource(sourceId: string, loop: boolean = false, offset: number = 0, duration?: number, opts?: FadeOptions): void {
     const source = this.resonanceSources.get(sourceId);
     if (!source || !this.audioContext) {
       console.warn(`[ResonanceMode] Cannot play source ${sourceId}`);
@@ -247,8 +249,13 @@ export class ResonanceMode implements IAudioMode {
     sourceNode.buffer = source.buffer;
     sourceNode.loop = loop;
 
-    // Connect: sourceNode → gainNode → muteGainNode → Resonance source input
-    sourceNode.connect(source.gainNode);
+    // Insert a transient gain stage when a seam fade is requested, so loopable
+    // sounds dip to silence at each wrap. (With no fade this is a plain
+    // sourceNode → gainNode connection.)
+    applyFadeInOut(sourceNode, source.gainNode, opts ? { ...opts, durationSec: duration } : {});
+
+    // Chain: sourceNode → gainNode → muteGainNode → Resonance source input
+    source.sourceNode = sourceNode;
     source.gainNode.connect(source.muteGainNode);
     source.muteGainNode.connect(source.source.input);
 
@@ -266,7 +273,6 @@ export class ResonanceMode implements IAudioMode {
     } else {
       sourceNode.start(0, offset);
     }
-    source.sourceNode = sourceNode;
     source.isPlaying = true;
 
     console.log(`[ResonanceMode] Playing source: ${sourceId} (loop: ${loop}, offset: ${offset}s, duration: ${duration ?? 'full'}s)`);

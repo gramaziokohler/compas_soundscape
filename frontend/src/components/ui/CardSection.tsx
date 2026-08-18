@@ -118,6 +118,48 @@ export function CardSection<TItem extends CardBaseConfig>({
 
   const [showTypeSelector, setShowTypeSelector] = useState(false);
   const typeSelectorRef = useRef<HTMLDivElement>(null);
+  const typeDropdownRef = useRef<HTMLDivElement>(null);
+
+  /** Nearest scrollable ancestor of a node (walks up the DOM tree). */
+  const getScrollParent = (el: HTMLElement | null): HTMLElement | null => {
+    let node = el?.parentElement ?? null;
+    while (node) {
+      const style = window.getComputedStyle(node);
+      if (/(auto|scroll|overlay)/.test(style.overflowY)) return node;
+      node = node.parentElement;
+    }
+    return null;
+  };
+
+  /** Scrolls the section up so a dropdown opening below the button is fully visible. */
+  const scrollDropdownIntoView = useCallback(() => {
+    const dd = typeDropdownRef.current;
+    if (!dd) return;
+    const rect = dd.getBoundingClientRect();
+    const viewportBottom = window.innerHeight || document.documentElement.clientHeight;
+    const viewportOverflow = rect.bottom - viewportBottom;
+
+    const scroller = getScrollParent(dd);
+    if (scroller && scroller !== document.scrollingElement) {
+      const scrollerRect = scroller.getBoundingClientRect();
+      const clippedOverflow = rect.bottom - scrollerRect.bottom;
+      if (clippedOverflow > 0) {
+        scroller.scrollBy({ top: clippedOverflow + 8, behavior: 'smooth' });
+      } else if (viewportOverflow > 0) {
+        window.scrollBy({ top: viewportOverflow + 8, behavior: 'smooth' });
+      }
+    } else if (viewportOverflow > 0) {
+      window.scrollBy({ top: viewportOverflow + 8, behavior: 'smooth' });
+    }
+  }, []);
+
+  const handleToggleTypeSelector = useCallback(() => {
+    const willOpen = !showTypeSelector;
+    setShowTypeSelector(willOpen);
+    if (willOpen) {
+      setTimeout(scrollDropdownIntoView, 50);
+    }
+  }, [showTypeSelector, scrollDropdownIntoView]);
 
   const listRef = useRef<HTMLDivElement>(null);
   const cardRefs = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -399,7 +441,7 @@ export function CardSection<TItem extends CardBaseConfig>({
       {/* Add-card button (New button UI) + type selector */}
       <div className="relative" ref={typeSelectorRef}>
         <button
-          onClick={() => setShowTypeSelector(!showTypeSelector)}
+          onClick={handleToggleTypeSelector}
           title={addButtonTitle}
           aria-label={addButtonTitle}
           className={`w-full rounded-lg border-2 border-dashed flex flex-col items-center justify-center gap-1.5 py-6 opacity-60 hover:opacity-100 transition-all duration-150 cursor-pointer active:scale-95 ${showTypeSelector ? 'scale-95 opacity-100' : ''}`}
@@ -410,7 +452,7 @@ export function CardSection<TItem extends CardBaseConfig>({
         </button>
 
         {showTypeSelector && (
-          <div className="absolute left-0 right-0 top-full mt-1 z-[100] rounded-lg shadow-lg bg-background border border-secondary-light overflow-hidden">
+          <div ref={typeDropdownRef} className="absolute left-0 right-0 top-full mt-1 z-[100] rounded-lg shadow-lg bg-background border border-secondary-light overflow-hidden">
             {availableTypes.map((option, idx) => {
               const isFirst = idx === 0;
               const isLast = idx === availableTypes.length - 1;

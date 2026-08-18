@@ -68,7 +68,6 @@ export function RangeSlider({
   inline = false,
   hoverText,
   disabled = false,
-  color,
   defaultValue,
 }: RangeSliderProps) {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -99,7 +98,7 @@ export function RangeSlider({
       {inline ? (
         <div className="flex items-center gap-1.5">
           <span className="text-xxs text-secondary-hover whitespace-nowrap">{label}:</span>
-          <span className="text-xs font-bold text-secondary whitespace-nowrap">
+          <span className="text-xs font-bold text-secondary font-mono whitespace-nowrap">
             {formatValue(value)}
           </span>
           <input
@@ -113,8 +112,7 @@ export function RangeSlider({
             onPointerUp={handlePointerUp}
             onDoubleClick={handleDoubleClick}
             disabled={disabled}
-            className={`flex-1 min-w-0 h-1.5 rounded-lg range-sm appearance-none cursor-pointer bg-secondary-hover ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-            style={{ accentColor: color? color : 'var(--card-color, var(--color-primary))' }}
+            className={`c-slider flex-1 min-w-0 ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
             title={defaultValue !== undefined ? `Double-click to reset (${formatValue(defaultValue)})` : hoverText}
           />
         </div>
@@ -123,7 +121,7 @@ export function RangeSlider({
           {/* Label and Value */}
           <div className={`flex items-center gap-1 text-xxs text-secondary-hover`}>
             <span>{label}</span>
-            <span className="text-xs font-bold text-secondary">
+            <span className="text-xs font-bold text-foreground font-mono">
               {formatValue(value)}
             </span>
           </div>
@@ -140,8 +138,7 @@ export function RangeSlider({
             onPointerUp={handlePointerUp}
             onDoubleClick={handleDoubleClick}
             disabled={disabled}
-            className={`w-full h-1.5 rounded-lg range-sm appearance-none cursor-pointer bg-secondary-hover ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-            style={{ accentColor: color? color : 'var(--card-color, var(--color-primary))' }}
+            className={`c-slider w-full ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
             title={defaultValue !== undefined ? `Double-click to reset (${formatValue(defaultValue)})` : hoverText}
           />
 

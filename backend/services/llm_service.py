@@ -1320,6 +1320,7 @@ For the duration estimation (in seconds with 0.1 precision):
             f"Use this to understand the spatial layout of the room (which objects are near each other, "
             f"their height, footprint, etc.).\n\n"
             f"First, output at the beginning of the response:\n"
+            f"TITLE: [short 1 to 3 word title for the analyzed space, e.g. Open Plan Lounge]\n"
             f"SPACE: [description of the architectural typology and general layout of the space "
             f"(10 to 20 words)]\n\n"
             f"Then, for EACH identified group, output ONE numbered entry using EXACTLY this format:\n\n"
@@ -1332,7 +1333,7 @@ For the duration estimation (in seconds with 0.1 precision):
             f"- Group similar objects together depending on their function (e.g. desk chair and conference chair → Chairs).\n"
             f"- IDS must contain ONLY the raw hex SPECKLE_ID strings — no backticks, no code formatting, no quotes, no brackets, no extra text.\n"
             f"- Do NOT put any section headers, labels, or comments inside an IDS field.\n"
-            f"- Output ONLY the SPACE: line followed by the numbered list.\n\n"
+            f"- Output ONLY the TITLE: line, the SPACE: line, followed by the numbered list.\n\n"
             f"Model contains {len(entities)} objects:\n{entities_text}"
         )
         return system_prompt, user_prompt
@@ -1505,6 +1506,7 @@ For the duration estimation (in seconds with 0.1 precision):
         """Async generator yielding architectural object dicts one by one as the LLM streams.
 
         Yields:
+            {"type": "space_title", "text": str}      — once, at the start (1-3 word space title)
             {"type": "space_description", "text": str}  — once, at the start
             {"type": "object", **ArchitecturalObject}    — one per identified group
 
@@ -1523,8 +1525,10 @@ For the duration estimation (in seconds with 0.1 precision):
         )
 
         _ENTRY_START = re.compile(r'\n\s*\d+[\.\)]\s+')
+        _TITLE_LINE = re.compile(r'\bTITLE\s*:\s*(.+?)(?:\n|$)', re.IGNORECASE)
         _SPACE_LINE = re.compile(r'\bSPACE\s*:\s*(.+?)(?:\n|$)', re.IGNORECASE)
         buffer = ""
+        title_yielded = False
         space_yielded = False
         async for chunk in self._stream_llm_chunks(
             user_prompt, system_prompt,
@@ -1533,6 +1537,13 @@ For the duration estimation (in seconds with 0.1 precision):
             llm_model=llm_model,
         ):
             buffer += chunk
+            if not title_yielded:
+                title_match = _TITLE_LINE.search(buffer)
+                if title_match:
+                    title_text = title_match.group(1).strip()
+                    if title_text:
+                        yield {"type": "space_title", "text": title_text}
+                    title_yielded = True
             if not space_yielded:
                 space_match = _SPACE_LINE.search(buffer)
                 if space_match:

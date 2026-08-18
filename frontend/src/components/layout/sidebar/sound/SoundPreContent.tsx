@@ -1,23 +1,12 @@
 'use client';
 
-import type { CardType } from '@/types';
 import { DEFAULT_DBFS } from '@/utils/constants';
 import { SoundConfigContent, type SoundConfigContentProps } from './SoundConfigContent';
-import { TextToAudioSliders } from './TextToAudioMode';
 import { SoundCardBody } from './SoundCardBody';
 import { SearchBar } from '@/components/ui/SearchBar';
 import { useCatalogBrowse, type CatalogBrowseState, type CatalogBrowseActions } from '@/hooks/useCatalogBrowse';
 
-interface MethodOption {
-  type: CardType;
-  label: string;
-  enabled: boolean;
-}
-
-interface SoundPreContentProps extends SoundConfigContentProps {
-  availableTypes?: MethodOption[];
-  onSwitchType?: (index: number, type: CardType) => void;
-}
+interface SoundPreContentProps extends SoundConfigContentProps {}
 
 /**
  * SoundPreContent
@@ -28,14 +17,15 @@ interface SoundPreContentProps extends SoundConfigContentProps {
  *
  * Layout (left column):
  *   1. x/y/z position widget (always visible)
- *   2. Method selector row: "Method: <dropdown> v"  (collapsed by default)
- *   3. Collapsible panel with the type-specific UI
+ *   2. The type-specific UI (textarea, upload area, etc.) — text-to-audio
+ *      sliders are collapsed under an "Additional settings" toggle inside
+ *      TextToAudioMode.
  *
  * This is the `beforeContent` for the Sound Card component.
  * SoundResultContent is the `afterContent`.
  */
 export function SoundPreContent(props: SoundPreContentProps) {
-  const { config, index, onUpdateConfig, availableTypes, onSwitchType, ...configProps } = props;
+  const { config, index, onUpdateConfig, ...configProps } = props;
 
   // ── Derive shared-control values from config ──────────────────────────────
   const volumeDbfs = config.dbfs ?? DEFAULT_DBFS;
@@ -87,13 +77,9 @@ export function SoundPreContent(props: SoundPreContentProps) {
     />
   ) : undefined;
 
-  // For text-to-audio: render just the textarea in mainContent; sliders go in collapsible panel.
-  // For other types: render the full mode UI, no collapsible.
+  // For text-to-audio: render just the textarea; sliders go in an "Additional
+  // settings" collapse inside TextToAudioMode.
   const isTextToAudio = currentType === 'text-to-audio';
-
-  const collapsibleContent = isTextToAudio ? (
-    <TextToAudioSliders config={config} index={index} onUpdateConfig={onUpdateConfig} />
-  ) : undefined;
 
   return (
     <SoundCardBody
@@ -108,16 +94,12 @@ export function SoundPreContent(props: SoundPreContentProps) {
           {...configProps}
         />
       }
-      collapsibleContent={collapsibleContent}
       volumeDbfs={volumeDbfs}
       intervalSeconds={intervalSeconds}
       schedulingMode={schedulingMode}
       timestamps={timestamps}
       position={displayedPosition}
       entityIndex={entityIndex}
-      methodType={config.type || 'text-to-audio'}
-      availableTypes={availableTypes}
-      onSwitchType={onSwitchType ? (t) => onSwitchType(index, t) : undefined}
       onVolumeChange={handleVolumeChange}
       onUpdatePosition={handleUpdatePosition}
       onUnlinkEntity={handleUnlinkEntity}

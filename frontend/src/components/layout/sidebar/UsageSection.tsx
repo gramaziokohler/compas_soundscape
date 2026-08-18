@@ -466,12 +466,21 @@ export function UsageSection({
           onUpdateConfig={(i, updates) => onUpdateConfig(originalIndex, updates)}
           onRemove={() => onRemoveConfig(originalIndex)}
           onReset={() => onReset(originalIndex)}
+          error={config.error || null}
+          onDismissError={() => onUpdateConfig(originalIndex, { error: null })}
           beforeContent={getBeforeContent(config, originalIndex)}
           afterContent={getAfterContent(config, originalIndex)}
           onRun={config.type === 'freeform' ? async () => onAdvanceToSounds(originalIndex, title) : async () => onRun(originalIndex)}
           onCancel={onStop}
           actionButtonLabel={actionButtonLabel}
-          actionButtonDisabled={false}
+          actionButtonDisabled={
+            config.type === 'text' && !(config as TextAnalysisConfig).textInput.trim()
+          }
+          actionButtonDisabledReason={
+            config.type === 'text' && !(config as TextAnalysisConfig).textInput.trim()
+              ? 'Please enter a text description'
+              : undefined
+          }
           doneActionLabel={doneActionLabel}
           onDoneAction={onDoneAction}
           color="primary"

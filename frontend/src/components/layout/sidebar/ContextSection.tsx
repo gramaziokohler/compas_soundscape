@@ -12,6 +12,7 @@ import type {
 import type { CardTypeOption } from '@/components/ui/CardSection';
 import { CARD_TYPE_LABELS } from '@/types/card';
 import type { CardType } from '@/types/card';
+import type { CustomMenuItem } from '@/types/card';
 import { CardSection } from '@/components/ui/CardSection';
 import { Card } from '@/components/ui/Card';
 import { Model3DContextContent } from '@/components/layout/sidebar/analysis/Model3DContextContent';
@@ -20,6 +21,7 @@ import { AudioAnalysisAfterContent } from '@/components/layout/sidebar/analysis/
 import { AnalyzeModelContent } from '@/components/layout/sidebar/analysis/AnalyzeModelContent';
 import { AnalyzeModelResultContent } from '@/components/layout/sidebar/analysis/AnalyzeModelResultContent';
 import { useSpeckleStore, useAnalysisStore, useSoundscapeStore } from '@/store';
+import { useUIStore } from '@/store/uiStore';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
 import { LLM_MODEL_TO_PROVIDER } from '@/utils/constants';
 import { getAnalysisGroupColor } from '@/utils/utils';
@@ -126,6 +128,9 @@ export function ContextSection({
   const analyzingConfigIndex = useAnalysisStore((s) => s.analyzingConfigIndex);
   const handleReorderConfigs = useAnalysisStore((s) => s.handleReorderConfigs);
   const duplicateConfigAt = useAnalysisStore((s) => s.duplicateConfigAt);
+
+  const showSpectrograms    = useUIStore((s) => s.showSpectrograms);
+  const setShowSpectrograms = useUIStore((s) => s.setShowSpectrograms);
 
   // Filter to context card types only, maintaining original indices
   // Freeform cards with parentContextOriginalIndex belong to Usage, exclude them here.
@@ -342,7 +347,7 @@ export function ContextSection({
       if (config.type === 'model-analysis') {
         const mc = config as AnalyzeModelConfig;
         if ((mc.analysisResult?.architecturalObjects?.length ?? 0) > 0) {
-          return <AnalyzeModelResultContent config={mc} />;
+          return <AnalyzeModelResultContent config={mc} configIndex={originalIndex} />;
         }
         return null;
       }
@@ -381,7 +386,7 @@ export function ContextSection({
                 : 'Generate Sound Ideas',
             disabled: modelConfig.modelEntities.length === 0,
             disabledReason:
-              modelConfig.modelEntities.length === 0 ? 'Loading objects...' : undefined,
+              modelConfig.modelEntities.length === 0 ? 'No 3D model loaded' : undefined,
             color:
               modelConfig.selectedDiverseEntities.length === 0 ? 'success' : 'success-hover',
           };
@@ -391,7 +396,7 @@ export function ContextSection({
           return {
             label: 'Analyze Sound Events',
             disabled: audioConfig.audioFile === null,
-            disabledReason: audioConfig.audioFile === null ? 'No audio file loaded' : undefined,
+            disabledReason: audioConfig.audioFile === null ? 'No audio file uploaded' : undefined,
             color: 'success',
           };
         }
@@ -459,6 +464,26 @@ export function ContextSection({
       const isAudio = config.type === 'audio';
       const isExtracting = extractingAudioIndices.has(originalIndex);
 
+      // Spectrogram toggle — only when the audio card shows a WaveSurfer preview
+      // (an audio file is loaded). Reuses the global showSpectrograms setting from
+      // AdvancedSettings → Sound Rendering.
+      const hasWavesurferViewer = isAudio && !!(config as AudioAnalysisConfig).audioFile;
+      const customButtons: CustomMenuItem[] = [];
+      if (hasWavesurferViewer) {
+        customButtons.push({
+          key: 'spectrogram',
+          icon: (
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 18V6m4 12V10m4 8V4m4 14v-6m4 6V8" />
+            </svg>
+          ),
+          label: showSpectrograms ? 'Hide spectrogram' : 'Show spectrogram',
+          isActive: showSpectrograms,
+          onClick: (e) => { e.stopPropagation(); setShowSpectrograms(!showSpectrograms); },
+        });
+      }
+
+
       // Done-state continue action: audio extracts & sends to Sounds; others advance to Usage
       const doneActionLabel = isAudio ? 'Extract & go to Sounds' : 'Next: Usage';
       const handleDoneAction =
@@ -506,6 +531,8 @@ export function ContextSection({
           onUpdateConfig={(i, updates) => onUpdateConfig(originalIndex, updates)}
           onRemove={() => onRemoveConfig(originalIndex)}
           onReset={() => onReset(originalIndex)}
+          error={config.error || null}
+          onDismissError={() => onUpdateConfig(originalIndex, { error: null })}
           beforeContent={getBeforeContent(config, originalIndex)}
           afterContent={getAfterContent(config, originalIndex)}
           onRun={async () => onRun(originalIndex)}
@@ -518,6 +545,7 @@ export function ContextSection({
           onDoneAction={configHasResult ? handleDoneAction : undefined}
           color="primary"
           version={getCardVersion(config)}
+          customButtons={customButtons.length > 0 ? customButtons : undefined}
         />
       );
 
@@ -556,6 +584,8 @@ export function ContextSection({
       onAdvanceToSounds,
       onAudioExtract,
       extractingAudioIndices,
+      showSpectrograms,
+      setShowSpectrograms,
     ],
   );
 
