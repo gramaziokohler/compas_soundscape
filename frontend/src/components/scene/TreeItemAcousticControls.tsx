@@ -79,6 +79,7 @@ export function TreeItemAcousticControls({
         placeholder={isMixed ? '(mixed)' : 'Select...'}
         opacity={isMixed ? 0.7 : 1}
         isMixed={isMixed}
+        showSearch
       />
 
       {showScattering && (

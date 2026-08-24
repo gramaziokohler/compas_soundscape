@@ -84,7 +84,8 @@ import type { RoomScale } from '@/components/layout/sidebar/acoustics/ResonanceA
 import {
   MAX_FACES_FOR_LAYER_AUTO_EXCLUDE,
   IMPULSE_RESPONSE,
-  SIMULATION_POSITION_MATCH_THRESHOLD
+  SIMULATION_POSITION_MATCH_THRESHOLD,
+  RESONANCE_AUDIO
 } from '@/utils/constants';
 import { groupSoundsByPosition, collapseVariantsToOne } from '@/utils/positionKey';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
@@ -311,12 +312,6 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             ? 'no modelFile and no speckleData'
             : 'no local file and speckleData missing model_id/version_id/url'
           : 'ok';
-        console.log(
-          `[dbg:acoustics:geometry] valid=${hasValidGeometry} | ${reason} | ` +
-            `modelFile=${hasLocalModelFile} | url=${s} | ` +
-            `model_id=${hasSpeckleModel && !!speckleData?.model_id} ` +
-            `version_id=${!!speckleData?.version_id} object_id=${!!speckleData?.object_id}`
-        );
       } catch {
         /* defensive */
       }
@@ -1848,9 +1843,13 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
     // Derive version + timestamp lines for this card type
     const cardVersion = (() => {
-      if (!serviceVersions) return undefined;
       let versionLine: string | undefined;
-      if (config.type === 'pyroomacoustics') {
+      if (config.type === 'resonance') {
+        // Frontend-only engine — version is a local constant, not a backend service.
+        versionLine = `resonance-audio ${RESONANCE_AUDIO.VERSION}`;
+      } else if (!serviceVersions) {
+        return undefined;
+      } else if (config.type === 'pyroomacoustics') {
         const v = serviceVersions.pyroomacoustics;
         versionLine = `${v.name} ${v.version}`;
       } else if (config.type === 'choras') {

@@ -124,8 +124,6 @@ def _copy_audio_files(session_id: str, model_id: str, audio_urls: list[str]) -> 
     dest_dir = user_audio_dir(session_id)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"[dbg:copy] session_id={session_id} n_urls={len(audio_urls)} dest={dest_dir}")
-
     copied = 0
     missing: list[str] = []
     for url in audio_urls:
@@ -151,7 +149,6 @@ def _copy_audio_files(session_id: str, model_id: str, audio_urls: list[str]) -> 
 
     if missing:
         logger.warning(f"Missing audio sources ({len(missing)}): {missing}")
-    print(f"[dbg:copy] copied={copied} missing={len(missing)}")
 
     return copied
 
@@ -276,9 +273,6 @@ async def save_soundscape(request: SoundscapeSaveRequest, req: Request):
     if not model_id:
         raise HTTPException(status_code=400, detail="model_id is required")
 
-    print(f"[dbg:save] session_id={session_id} model_id={model_id} n_audio_urls={len(request.audio_urls)} n_ir_urls={len(request.ir_urls)}")
-    print(f"[dbg:save] audio_urls={request.audio_urls}")
-
     # Persist project_id and version_id from the request payload so the
     # frontend can reconstruct the Speckle geometry viewer on reload without
     # needing the user to re-pick the model.
@@ -352,13 +346,9 @@ async def load_soundscape(model_id: str, req: Request):
     audio_base_url = f"{SOUNDSCAPE_DATA_URL_PREFIX}/{session_id}/audio"
     ir_base_url = f"{SOUNDSCAPE_DATA_URL_PREFIX}/{session_id}/{model_id}/ir_files"
 
-    print(f"[dbg:load] session_id={session_id} model_id={model_id} audio_base_url={audio_base_url}")
     audio_dir = user_audio_dir(session_id)
     if audio_dir.exists():
         files = sorted(p.name for p in audio_dir.iterdir() if p.is_file())
-        print(f"[dbg:load] audio_dir={audio_dir} files={files}")
-    else:
-        print(f"[dbg:load] audio_dir_MISSING={audio_dir}")
 
     # Restore analysis files from persistent storage back to temp/analysis/
     _restore_analysis_files(session_id, model_id)

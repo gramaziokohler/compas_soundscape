@@ -1369,22 +1369,18 @@ export class AudioOrchestrator implements IAudioOrchestrator {
         (mode as any).muteSourceImpulseResponse(sourceId);
         this.sourceIRAppliedKey.set(sourceId, targetPosKey);
       }
-      console.log(`[dbg:ir] ${targetPosKey} → MUTED for "${sourceId}" (seq ${seq})`);
       return;
     }
 
-    console.log(`[dbg:ir] ${targetPosKey} → LOAD for "${sourceId}" (seq ${seq})`);
     this.downloadAndDecodeIR(irMetadata)
       .then((irBuffer) => {
         if ((this.sourceIRSeq.get(sourceId) || 0) !== seq) {
-          console.log(`[dbg:ir] ${targetPosKey} → STALE skip for "${sourceId}" (seq ${seq}, latest ${this.sourceIRSeq.get(sourceId)})`);
           return;
         }
         const liveMode = this.currentModeInstance;
         if (liveMode && 'setSourceImpulseResponse' in liveMode) {
           (liveMode as any).setSourceImpulseResponse(sourceId, irBuffer);
           this.sourceIRAppliedKey.set(sourceId, targetPosKey);
-          console.log(`[dbg:ir] ${targetPosKey} → CONVOLVED for "${sourceId}" (seq ${seq})`);
         }
       })
       .catch((err) => console.error(`[AudioOrchestrator] Failed IR update on position change for "${sourceId}":`, err));

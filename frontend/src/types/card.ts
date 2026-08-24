@@ -74,7 +74,7 @@ export const CARD_TYPE_LABELS: Record<CardType, string> = {
   'library': 'Library Sound',
   'catalog': 'Catalog Sound',
   'sample-audio': 'Sample Audio',
-  'resonance': 'Real-time simulation',
+  'resonance': 'Shoebox simulation',
   'choras': 'Wave-based simulation',
   'pyroomacoustics': 'Ray-tracing simulation',
   'import-irs': 'Import IRs',
@@ -83,6 +83,49 @@ export const CARD_TYPE_LABELS: Record<CardType, string> = {
   'model-analysis': 'Spatial context',
   'scenario': 'scenario-based',
   'freeform': 'Untitled',
+};
+
+/**
+ * Short technical descriptions for each card type, shown in the card info
+ * popover ("i" icon, bottom-right of every card). Single source of truth —
+ * Card falls back to these unless a per-card `description` prop is passed.
+ */
+export const CARD_TYPE_DESCRIPTIONS: Record<CardType, string> = {
+  '3d-model':
+    'Select 3D objects from the loaded Speckle model that act as sound sources. Each selected object becomes a scene node; sounds placed on it inherit its world position and bounding-box anchor.',
+  'audio':
+    "Captures the acoustic character of the space via AI audio analysis. Can extract audio features/spectrograms and send them to the Sounds step ('Extract & go to Sounds').",
+  'text':
+    'Free-text card. Type a description of the intended soundscape and the LLM converts it into sound-generation prompts.',
+  'text-to-audio':
+    'Generate an original clip from a text prompt with AI (TangoFlux / AudioLDM2). Tune duration, guidance scale, denoising and inference steps; each run can produce multiple seed variants (A/B/C).',
+  'text-to-speech':
+    'Convert typed text into spoken audio via a TTS model. Each line becomes a speech segment managed by the variants bar.',
+  'upload':
+    'Use a local WAV/AIFF file as the source. Supports automatic segment extraction so one file can yield multiple clips.',
+  'library':
+    'Search the Freesound / BBC Sound Effects API and use a pre-recorded clip as the source.',
+  'catalog':
+    'Pick from a curated built-in catalog of sounds — no network or LLM required; fast placeholder sources.',
+  'sample-audio': 'Use a short bundled sample clip as the source.',
+  'resonance':
+    'Resonance Audio synthetic room: parametric shoebox with early reflections + late reverb rendered by the Web Audio engine. No external solver; instant real-time 6DOF auralization.',
+  'choras':
+    'Choras wave-based solver (Diffusion Equation / Discontinuous Galerkin) on a gmsh-meshed room. Full impulse responses, highest fidelity, slowest.',
+  'pyroomacoustics':
+    'ISM + ray tracing on the Speckle mesh. Computes RT60 / EDT / C80 and per-source-per-receiver IR WAVs (mono or FOA B-format).',
+  'import-irs':
+    'Upload pre-recorded impulse-response WAVs (mono/stereo/FOA/SOA/TOA) and use them directly for spatial convolution — no simulation needed.',
+  'listener':
+    'Add a single listener (receiver) at a point in the scene; the audio pipeline renders the soundscape binaurally from that position.',
+  'grid-listener':
+    'Place a grid of listeners over an area to evaluate the soundscape at multiple positions at once (e.g. across a room).',
+  'model-analysis':
+    "Runs LLM analysis on the loaded Speckle model to describe the space's geometry, materials and acoustics — the basis of the Context step.",
+  'scenario':
+    'Generate scenario-based sound prompts from a description of how the space will be used (LLM-driven pipeline).',
+  'freeform':
+    'Blank bypass card — skips the current wizard step and jumps to the next one.',
 };
 
 // ============================================================================
@@ -227,6 +270,12 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   collapsedInfo?: string;
   /** Whether to show the index number prefix */
   showIndex?: boolean;
+
+  /**
+   * Per-card description shown in the info ("i") popover, bottom-right of the
+   * card. Falls back to `CARD_TYPE_DESCRIPTIONS[config.type]` when omitted.
+   */
+  description?: string;
 
   // Button Configuration
   /** Whether the card can be removed (shows close button) */

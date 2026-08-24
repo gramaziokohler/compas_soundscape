@@ -133,7 +133,6 @@ async function calibrateBlobUrl(
   const blob =
     typeof blobOrUrl === 'string' ? await fetch(blobOrUrl).then((r) => r.blob()) : blobOrUrl;
   const { url, noise_trim } = await apiService.calibrateAudio(blob, dbfs, applyDenoising, trimSilence);
-  console.log('[dbg:calibrate] dbfs=', dbfs, '-> returned url=', url, 'noise_trim=', noise_trim);
   return { url, noise_trim };
 }
 
@@ -158,7 +157,6 @@ function applyTrimRegions(events: any[]): void {
     if (typeof start !== 'number' || typeof end !== 'number') continue;
     if (start < 0 || end > 1 || end <= start) continue;
     useAudioControlsStore.getState().setSoundTrim(e.id, { start, end });
-    console.log(`[dbg:autotrim] ${e.id} -> [${start}, ${end}]`);
   }
 }
 

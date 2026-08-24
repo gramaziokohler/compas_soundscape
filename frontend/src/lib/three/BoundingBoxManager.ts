@@ -383,17 +383,30 @@ export class BoundingBoxManager {
 
       gumballGrp.add(hitMesh);
 
-      // Face label sprite, placed ON TOP of the arrow. It is a child of the
-      // gumball group (which is scaled per frame for constant screen size), so
-      // its local Y position = arrow tip + clearance and its local scale must be
-      // divided by the group scale each frame (updateScreenSpaceScale does this)
-      // to keep the text a constant screen size.
+      // Face label sprite. For the four vertical faces (Right/Left/Front/Back)
+      // it is placed VERTICALLY ON TOP of the arrow: offset along world-up
+      // expressed in the gumball group's local frame, so it hovers directly
+      // above the arrow instead of sticking out sideways at the arrow tip.
+      // Ceiling and Floor keep the arrow-tip position (along their vertical
+      // normal, which is the only sane reading for horizontal faces). The
+      // sprite is a child of the gumball group (scaled per frame for constant
+      // screen size), so its local scale must be divided by the group scale
+      // each frame (updateScreenSpaceScale does this) to keep the text a
+      // constant screen size.
       const labelSprite = createLabelSprite(faceConfig.name, { showBackground: false });
       const arrowTipOffset =
         RESONANCE_AUDIO.BOUNDING_BOX.GUMBALL_BODY_LENGTH / 2 +
         RESONANCE_AUDIO.BOUNDING_BOX.GUMBALL_HEAD_HEIGHT +
         RESONANCE_AUDIO.BOUNDING_BOX.GUMBALL_LABEL_CLEARANCE;
-      labelSprite.position.set(0, arrowTipOffset, 0);
+      const isHorizontalFace = faceConfig.material === 'up' || faceConfig.material === 'down';
+      if (isHorizontalFace) {
+        labelSprite.position.set(0, arrowTipOffset, 0);
+      } else {
+        const localWorldUp = new THREE.Vector3(0, 0, 1)
+          .applyQuaternion(gumballGrp.quaternion.clone().invert())
+          .multiplyScalar(arrowTipOffset);
+        labelSprite.position.copy(localWorldUp);
+      }
       labelSprite.scale.set(1, 1, 1); // rough; corrected immediately + per frame
       labelSprite.frustumCulled = false; // Disable frustum culling
       labelSprite.userData.speckleType = 'BoundingBoxLabel'; // Mark as Speckle object

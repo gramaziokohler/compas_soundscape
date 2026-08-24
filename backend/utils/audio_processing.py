@@ -424,12 +424,6 @@ def compute_loop_region(
     start_frac = 0.0
     end_frac = min(1.0, end_sec / duration)
 
-    elapsed_ms = (_time.perf_counter() - t0) * 1000.0
-    print(
-        f"[dbg:loop] period={best_period} bins score={best_score:.3f} "
-        f"end_sec={end_sec:.3f} duration={duration:.3f} elapsed={elapsed_ms:.2f}ms"
-    )
-
     return {
         "start": round(start_frac, 4),
         "end": round(end_frac, 4),

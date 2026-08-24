@@ -19,6 +19,13 @@ export interface AcousticParameters {
   c50: number | null;
   spl?: number | null;
   drr?: number | null;
+  /** RT60/EDT measured over an adequate decay range (backend *_reliable) */
+  rt60Reliable?: boolean;
+  edtReliable?: boolean;
+  /** Pure ISM simulation (no ray-traced diffuse tail) — RT60 is an estimate */
+  rt60IsEstimate?: boolean;
+  /** spl is a relative energy level, not physical SPL (pyroomacoustics path) */
+  splIsRelative?: boolean;
 }
 
 /**
@@ -68,23 +75,35 @@ export async function fetchPyroomAcousticMetrics(simulationId: string): Promise<
     }
     
     // Calculate average acoustic parameters across all source-receiver pairs
-    const allParams = jsonData.results
+const allParams = jsonData.results
       .filter((r: any) => r.acoustic_parameters)
       .map((r: any) => r.acoustic_parameters);
-    
+
     if (allParams.length === 0) {
       return null;
     }
-    
+
     console.log('[acousticMetrics] Acoustic parameters found:', allParams);
-    
+
+    // A pair contributes to the average only when its metric is a real number.
+    const contributing = (key: string) => allParams.filter((p: any) => typeof p[key] === 'number' && !isNaN(p[key]));
+    // Reliability: true when every contributing pair measured an adequate decay
+    // range (missing backend flag on legacy data is treated as reliable).
+    const allReliable = (key: string) =>
+      contributing(key).length > 0 &&
+      contributing(key).every((p: any) => p[`${key}_reliable`] === undefined || p[`${key}_reliable`] === true);
+
     return {
       rt60: calculateAverage(allParams, 'rt60'),
       edt: calculateAverage(allParams, 'edt'),
       d50: calculateAverage(allParams, 'd50'),
       c50: calculateAverage(allParams, 'c50'),
       spl: calculateAverage(allParams, 'spl'),
-      drr: calculateAverage(allParams, 'drr')
+      drr: calculateAverage(allParams, 'drr'),
+      rt60Reliable: allReliable('rt60'),
+      edtReliable: allReliable('edt'),
+      rt60IsEstimate: allParams.some((p: any) => p.rt60_is_estimate === true),
+      splIsRelative: true,
     };
   } catch (error) {
     console.error('[acousticMetrics] Failed to fetch acoustic metrics:', error);
@@ -106,15 +125,40 @@ export function formatAcousticMetrics(
 
   const metrics: string[] = [];
 
-  if (params.rt60 !== null) metrics.push(`RT60: ${params.rt60.toFixed(2)}s`);
+  if (params.rt60 !== null) {
+    metrics.push(`RT60: ${params.rt60.toFixed(2)}s`);
+  }
   if (params.edt !== null) metrics.push(`EDT: ${params.edt.toFixed(2)}s`);
   if (params.d50 !== null) metrics.push(`D50: ${(params.d50 * 100).toFixed(1)}%`);
   if (params.c50 !== null) metrics.push(`C50: ${params.c50.toFixed(1)} dB`);
-  if (params.spl !== null && params.spl !== undefined) metrics.push(`SPL: ${params.spl.toFixed(1)} dB`);
+  if (params.spl !== null && params.spl !== undefined) {
+    metrics.push(
+      params.splIsRelative
+        ? `Energy: ${params.spl.toFixed(1)} dB (relative)`
+        : `SPL: ${params.spl.toFixed(1)} dB`,
+    );
+  }
 
   if (metrics.length === 0) return '';
 
-  return `Acoustic Metrics:\n${metrics.join(', ')}\n`;
+  // Warnings are emitted as a separate "Note:" section (rendered in warning
+  // color and smaller type by the card) — never inline in the metric line.
+  const warnings: string[] = [];
+  if (params.rt60 !== null && params.rt60IsEstimate) {
+    warnings.push('RT60 is an estimate: ISM-only simulation, no ray-traced diffuse tail');
+  }
+  if (params.rt60 !== null && params.rt60Reliable === false) {
+    warnings.push('RT60 is unreliable (low measured decay range)');
+  }
+  if (params.edt !== null && params.edtReliable === false) {
+    warnings.push('EDT is unreliable (low measured decay range)');
+  }
+
+  let out = `Acoustic Metrics:\n${metrics.join(', ')}\n`;
+  if (warnings.length > 0) {
+    out += `\nNote:\n${warnings.map((w) => `\u2022 ${w}`).join('\n')}\n`;
+  }
+  return out;
 }
 
 /**
@@ -328,6 +372,8 @@ export async function fetchChorasAcousticMetrics(
       c50:  avgFirst('c50'),
       spl:  avgFirst('spl'),
       drr:  avgFirst('drr'),
+      // Choras DE/DG overrides 'spl' with a physically-correct SPL.
+      splIsRelative: false,
     };
   } catch {
     return null;

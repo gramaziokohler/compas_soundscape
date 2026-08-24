@@ -10,10 +10,11 @@
  * - Hovering an option shows a 260×156 absorption-spectrum histogram to its left
  */
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { UI_BORDER_RADIUS } from '@/utils/constants';
 import { drawAbsorptionHistogram } from '@/lib/audio/utils/absorption-histogram-utils';
 import { getScale } from '@/utils/scale';
+import { SearchBar } from '@/components/ui/SearchBar';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -35,6 +36,8 @@ interface MaterialSelectProps {
   opacity?: number;
   /** When true and no value selected, show the trigger in pink instead of grey */
   isMixed?: boolean;
+  /** When true, opening the dropdown replaces the trigger with a search box that filters options by name */
+  showSearch?: boolean;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -53,12 +56,14 @@ export function MaterialSelect({
   placeholder = 'Select...',
   opacity = 1,
   isMixed = false,
+  showSearch = false,
 }: MaterialSelectProps) {
   const [isOpen, setIsOpen]       = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [histPos, setHistPos]     = useState<{ x: number; y: number } | null>(null);
   const [dropdownPos, setDropdownPos] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
+  const [searchQuery, setSearchQuery] = useState('');
 
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef   = useRef<HTMLDivElement>(null);
@@ -96,6 +101,18 @@ export function MaterialSelect({
       drawAbsorptionHistogram(canvasRef.current, mat.coeffs, mat.center_freqs);
     }
   }, [hoveredId, materials]);
+
+  // Clear the search query whenever the dropdown closes
+  useEffect(() => {
+    if (!isOpen) setSearchQuery('');
+  }, [isOpen]);
+
+  // Filter options by name when search is active
+  const filteredMaterials = useMemo(() => {
+    if (!showSearch || !searchQuery.trim()) return materials;
+    const q = searchQuery.trim().toLowerCase();
+    return materials.filter((mat) => mat.name.toLowerCase().includes(q));
+  }, [materials, searchQuery, showSearch]);
 
   const handleTriggerClick = () => {
     if (!isOpen && triggerRef.current) {
@@ -135,38 +152,50 @@ export function MaterialSelect({
       style={{ position: 'relative', width: '140px', flexShrink: 0 }}
     >
       {/* ── Trigger ─ same width/height/colours as original <select> ──────────── */}
-      <div
-        ref={triggerRef}
-        role="button"
-        tabIndex={0}
-        onClick={handleTriggerClick}
-        onKeyDown={(e) => e.key === 'Enter' && handleTriggerClick()}
-        onMouseEnter={(e) => {
-          if (!selectedMat?.coeffs || !selectedMat.center_freqs) return;
-          const rect = e.currentTarget.getBoundingClientRect();
-          setHoveredId(selectedMat.id);
-          setHistPos({
-            x: rect.left - HIST_W - 8,
-            y: Math.max(4, Math.min(getScale().viewport.height - HIST_H - 4, rect.top + rect.height / 2 - HIST_H / 2)),
-          });
-        }}
-        onMouseLeave={() => {
-          if (!isOpen) { setHoveredId(null); setHistPos(null); }
-        }}
-        className="select-trigger compact text-xs rounded cursor-pointer focus:outline-none"
-        style={{
-          backgroundColor: triggerBg,
-          opacity,
-          width: '100%',
-          boxSizing: 'border-box',
-          overflow: 'hidden',
-          whiteSpace: 'nowrap',
-          textOverflow: 'ellipsis',
-          userSelect: 'none',
-        }}
-      >
-        {triggerLabel}
-      </div>
+      {/* When open with search enabled, the trigger slot becomes a search box that filters the list below */}
+      {isOpen && showSearch ? (
+        <SearchBar
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder="Search materials..."
+          autoFocus
+          debounceMs={0}
+          className="w-full"
+        />
+      ) : (
+        <div
+          ref={triggerRef}
+          role="button"
+          tabIndex={0}
+          onClick={handleTriggerClick}
+          onKeyDown={(e) => e.key === 'Enter' && handleTriggerClick()}
+          onMouseEnter={(e) => {
+            if (!selectedMat?.coeffs || !selectedMat.center_freqs) return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            setHoveredId(selectedMat.id);
+            setHistPos({
+              x: rect.left - HIST_W - 8,
+              y: Math.max(4, Math.min(getScale().viewport.height - HIST_H - 4, rect.top + rect.height / 2 - HIST_H / 2)),
+            });
+          }}
+          onMouseLeave={() => {
+            if (!isOpen) { setHoveredId(null); setHistPos(null); }
+          }}
+          className="select-trigger compact text-xs rounded cursor-pointer focus:outline-none"
+          style={{
+            backgroundColor: triggerBg,
+            opacity,
+            width: '100%',
+            boxSizing: 'border-box',
+            overflow: 'hidden',
+            whiteSpace: 'nowrap',
+            textOverflow: 'ellipsis',
+            userSelect: 'none',
+          }}
+        >
+          {triggerLabel}
+        </div>
+      )}
 
       {/* ── Dropdown list ─────────────────────────────────────────────────────── */}
       {isOpen && (
@@ -195,32 +224,41 @@ export function MaterialSelect({
             {placeholder}
           </div>
 
-          {materials.map((mat) => {
+          {filteredMaterials.length === 0 ? (
+            <div
+              className="select-opt compact"
+              style={{ color: 'var(--color-secondary-hover)', backgroundColor: 'var(--color-surface-2)', cursor: 'default' }}
+            >
+              No materials found
+            </div>
+          ) : (
+            filteredMaterials.map((mat) => {
               const bg = materialColors.get(mat.id) ?? 'var(--color-secondary-hover)';
-            return (
-              <div
-                key={mat.id}
-                className="select-opt compact text-white cursor-pointer"
-                style={{ backgroundColor: bg, color: '#fff' }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.filter = 'brightness(1.15)';
-                  handleOptionEnter(e, mat.id);
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.filter = '';
-                  handleOptionLeave();
-                }}
-                onClick={() => {
-                  onChange(mat.id);
-                  setIsOpen(false);
-                  setHoveredId(null);
-                  setHistPos(null);
-                }}
-              >
-                {mat.name} ({(mat.absorption * 100).toFixed(0)}%)
-              </div>
-            );
-          })}
+              return (
+                <div
+                  key={mat.id}
+                  className="select-opt compact text-white cursor-pointer"
+                  style={{ backgroundColor: bg, color: '#fff' }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.filter = 'brightness(1.15)';
+                    handleOptionEnter(e, mat.id);
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.filter = '';
+                    handleOptionLeave();
+                  }}
+                  onClick={() => {
+                    onChange(mat.id);
+                    setIsOpen(false);
+                    setHoveredId(null);
+                    setHistPos(null);
+                  }}
+                >
+                  {mat.name} ({(mat.absorption * 100).toFixed(0)}%)
+                </div>
+              );
+            })
+          )}
         </div>
       )}
 

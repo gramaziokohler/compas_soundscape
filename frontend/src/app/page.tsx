@@ -1824,9 +1824,6 @@ function HomeContent() {
       // Embed analysis state in the soundscape data
       payload.soundscape_data.analysis_state = analysisStateData.analysis_state;
 
-      console.log('[dbg:save] audio_urls count:', payload.audio_urls.length);
-      for (const u of payload.audio_urls) console.log('[dbg:save]   audio_url:', u);
-
       // Persist project_id and version_id so the URL bootstrap can reconstruct the viewer
       if (globalSpeckleData?.url) {
         const urlMatch = globalSpeckleData.url.match(/\/projects\/([^/]+)\/models\/([^/@]+)(?:@([^/?]+))?/);

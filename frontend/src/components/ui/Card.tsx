@@ -3,12 +3,13 @@
 import { useCallback, useRef, useState, useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { CardProps, CardBaseConfig } from '@/types/card';
-import { CARD_TYPE_LABELS } from '@/types/card';
+import { CARD_TYPE_LABELS, CARD_TYPE_DESCRIPTIONS } from '@/types/card';
 import { useNameEditing } from '@/utils/useNameEditing';
 import { GenerateButton, type GenerateStatus } from '@/components/ui/GenerateButton';
 import { VariantsBar } from '@/components/ui/VariantsBar';
 import { Notice } from '@/components/ui/Notice';
 import { SettingsSummary, getSettingsTitle, getSettingsRows } from '@/components/ui/SettingsSummary';
+import { InfoPopover } from '@/components/ui/InfoPopover';
 
 /**
  * Card Component
@@ -120,11 +121,15 @@ export function Card<TConfig extends CardBaseConfig>({
   showVariantsPreGen = false,
   showVariantsPostGen = false,
   showSettingsSummary = true,
+  description,
 }: CardProps<TConfig>) {
   // Compute default name if not provided
   const computedDefaultName = defaultName || getCardDefaultName(config, index);
   const baseName = config.display_name || computedDefaultName;
   const displayName = showIndex ? `${index + 1}. ${baseName}` : baseName;
+
+  // Card info popover text — per-card override falls back to the type description.
+  const cardDescription = description ?? CARD_TYPE_DESCRIPTIONS[config.type];
 
   // Name editing hook
   const handleSaveName = useCallback((newName: string) => {
@@ -327,10 +332,20 @@ export function Card<TConfig extends CardBaseConfig>({
                 </div>
               )}
               {isExpanded && version && (
-                <div className="text-[10px] mt-1 text-text-3 font-mono leading-tight line-clamp-2">
-                  {Array.isArray(version)
-                    ? version.map((line, i) => <div key={i}>{line}</div>)
-                    : version}
+                <div className="mt-1 flex items-center min-w-0">
+                  <div className="text-[10px] text-text-3 font-mono leading-tight min-w-0">
+                    {Array.isArray(version)
+                      ? version.map((line, i) => <div key={i}>{line}</div>)
+                      : version}
+                  </div>
+                  {/* Info ("i") popover — at the end of the version text, no gap, shown
+                      only while expanded and only on cards that expose a version. */}
+                  <InfoPopover
+                    title={CARD_TYPE_LABELS[config.type]}
+                    text={cardDescription}
+                    label={`Info: ${CARD_TYPE_LABELS[config.type]}`}
+                    compact
+                  />
                 </div>
               )}
             </div>
@@ -338,8 +353,10 @@ export function Card<TConfig extends CardBaseConfig>({
         </div>
 
         {/* Action buttons — collapse out of flow until title-bar hover/focus so the
-            title can use the full bar; when they appear the title truncates to fit. */}
-        <div className="flex items-center gap-1 flex-shrink-0 w-0 overflow-hidden opacity-0 pointer-events-none group-hover:w-auto group-hover:opacity-100 group-hover:pointer-events-auto focus-within:w-auto focus-within:opacity-100 focus-within:pointer-events-auto">
+            title can use the full bar; when they appear the title truncates to fit.
+            self-start keeps them aligned with the title row (higher) instead of
+            centered against the taller title+version block. */}
+        <div className="flex items-center gap-1 flex-shrink-0 w-0 overflow-hidden opacity-0 pointer-events-none self-start group-hover:w-auto group-hover:opacity-100 group-hover:pointer-events-auto focus-within:w-auto focus-within:opacity-100 focus-within:pointer-events-auto">
           {/* Reset button - only show if result exists */}
           {hasResult && (
             <CardButton

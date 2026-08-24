@@ -13,7 +13,7 @@ except ImportError as err:
     )
     raise err
 
-stl_path = Path("G:/My Drive/03_ETH Acoustic/02_Work/00_Case studies/HIL D24-1/HIL_D24-1_acoustic_mesh_no_furniture.stl")
+stl_path = Path("G:/My Drive/03_ETH Acoustic/06_Case studies/HIL D24-1/HIL_D24-1_acoustic_mesh_simple.stl")
 
 
 the_mesh = mesh.Mesh.from_file(stl_path)
@@ -37,8 +37,8 @@ room = pra.Room(
             walls,
             fs=freq_s,
             max_order=3,
-            ray_tracing=False,
-            air_absorption=False,
+            ray_tracing=True,
+            air_absorption=True,
             use_rand_ism = False,
             max_rand_disp = 0.05
         )
@@ -48,9 +48,9 @@ rec_pos = [2.0, 1.0, 1.5]
 room.add_source(source_pos)
 room.add_microphone(rec_pos)
 
-room.set_ray_tracing(n_rays=16000)
-# room.image_source_model()
-# room.ray_tracing()
+room.set_ray_tracing(n_rays=100000)
+room.image_source_model()
+room.ray_tracing()
 room.compute_rir()
 rt60 = pra.experimental.rt60.measure_rt60(room.rir[0][0], fs=freq_s, plot=True)
 print("RT60:", rt60)

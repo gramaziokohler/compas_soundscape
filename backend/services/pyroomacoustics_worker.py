@@ -192,7 +192,9 @@ def _run_pyroomacoustics_compute_loop(
                 rir = room.rir[mic_start_idx][source_in_room]
                 if rir is None or len(rir) == 0:
                     raise ValueError(f"Empty RIR for '{source_id}' -> '{receiver_id}'")
-                rir_data = rir
+                rir_data = trim_ir(
+                    rir, threshold_fraction=PYROOMACOUSTICS_IR_TRIM_THRESHOLD
+                )
             else:
                 rir_channels = []
                 for ch in range(num_channels):
@@ -209,18 +211,26 @@ def _run_pyroomacoustics_compute_loop(
                     np.pad(r, (0, max_length - len(r)), mode="constant") if len(r) < max_length else r
                     for r in rir_channels
                 ]
-                rir_data = np.column_stack(padded)
+                rir_data = trim_ir(
+                    np.column_stack(padded),
+                    threshold_fraction=PYROOMACOUSTICS_IR_TRIM_THRESHOLD,
+                )
 
+            # Metrics are computed on the TRIMMED signal that is written to
+            # disk, so RT60/EDT/DRR/C50/D50 describe the exact exported IR.
+            # FOA metrics use the W (omni) channel — rir_data[:, 0].
             acoustic_params = None
             try:
-                first_ch_rir = room.rir[mic_start_idx][source_in_room]
+                metric_rir = rir_data if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO else rir_data[:, 0]
                 acoustic_params = AcousticMeasurement.calculate_acoustic_parameters_from_rir(
-                    first_ch_rir, PYROOMACOUSTICS_SAMPLE_RATE
+                    metric_rir, PYROOMACOUSTICS_SAMPLE_RATE
                 )
+                if acoustic_params and not ray_tracing:
+                    # Pure ISM has no diffuse late field; its decay estimate is
+                    # inherently less trustworthy than the hybrid ray-traced one.
+                    acoustic_params["rt60_is_estimate"] = True
             except Exception as ap_err:
                 print(f"  Warning: acoustic params failed for {source_id}->{receiver_id}: {ap_err}")
-
-            rir_data = trim_ir(rir_data, threshold_fraction=PYROOMACOUSTICS_IR_TRIM_THRESHOLD)
 
             current_pair = pair_counter + local_pair_idx + 1
             _write_progress(

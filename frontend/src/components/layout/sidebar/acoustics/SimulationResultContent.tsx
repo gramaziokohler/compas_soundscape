@@ -31,7 +31,8 @@ const METRICS: Array<{ key: GradientMetric; label: string; unit: string; format:
   { key: 'edt',  label: 'EDT',  unit: 's',  format: (v) => `${v.toFixed(2)}s`  },
   { key: 'd50',  label: 'D50',  unit: '%',  format: (v) => `${(v*100).toFixed(0)}%` },
   { key: 'c50',  label: 'C50',  unit: 'dB', format: (v) => `${v.toFixed(1)}dB` },
-  { key: 'spl',  label: 'SPL',  unit: 'dB', format: (v) => `${v.toFixed(1)}dB` },
+  // 'spl' is a relative energy level for pyroomacoustics (not physical SPL).
+  { key: 'spl',  label: 'Level', unit: 'dB', format: (v) => `${v.toFixed(1)}dB` },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -139,6 +140,19 @@ export function SimulationResultContent({
 }: SimulationResultContentProps) {
   const simulationConfig = config as any;
   const results: string | null = simulationConfig.simulationResults;
+
+  // formatAcousticMetrics appends a "Note:" section for reliability / ISM-estimate
+  // warnings — split it out so the card renders it in warning color and smaller type.
+  // Legacy strings also use "\nNote: ", so match the bare marker (not "\nNote:\n").
+  const noteMarker = '\nNote:';
+  const noteIdx = results ? results.indexOf(noteMarker) : -1;
+  let metricsBody: string | null = results;
+  let metricsNote: string | null = null;
+  if (noteIdx !== -1 && results) {
+    metricsBody = results.slice(0, noteIdx);
+    metricsNote = results.slice(noteIdx + noteMarker.length).trim();
+  }
+
   const sourceReceiverIRMapping: SourceReceiverIRMapping | undefined = simulationConfig.sourceReceiverIRMapping;
   const simulationId: string | undefined = simulationConfig.currentSimulationId;
   const simType: 'pyroomacoustics' | 'choras' | undefined =
@@ -412,9 +426,12 @@ export function SimulationResultContent({
         </div>
       ) : (
         /* Text metrics block (no grid receivers) */
-        results && (
-          <div className="bg-slate-800 text-white p-3 rounded text-xs overflow-x-auto">
-            <pre className="whitespace-pre-wrap font-sans text-xs">{results}</pre>
+        metricsBody && (
+          <div className="bg-secondary-lighter text-foreground border border-secondary-light rounded p-2.5 overflow-x-auto">
+            <pre className="whitespace-pre-wrap font-sans text-[10px] leading-relaxed">{metricsBody}</pre>
+            {metricsNote && (
+              <pre className="whitespace-pre-wrap font-sans text-[9px] leading-relaxed mt-1 text-warning">{metricsNote}</pre>
+            )}
           </div>
         )
       )}

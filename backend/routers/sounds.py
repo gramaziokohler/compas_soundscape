@@ -167,7 +167,6 @@ async def cleanup_generated_sounds(req: Request):
             session_dir = str(user_sounds_dir(session_id))
         else:
             session_dir = GENERATED_SOUNDS_DIR
-        print(f"[dbg:cleanup] session_id={session_id} session_dir={session_dir}")
         audio_service.cleanup_generated_sounds(output_dir=session_dir)
         return {"message": "Cleanup successful"}
     except Exception as e:
@@ -202,7 +201,6 @@ async def calibrate_audio(
 
         filename = f"calibrated_{uuid.uuid4().hex}_{int(dbfs)}dBFS.wav"
         output_path = os.path.join(out_dir, filename)
-        print(f"[dbg:calibrate] session_id={session_id} out_dir={out_dir} filename={filename} src_name={audio.filename}")
 
         audio_service.calibrate_audio_file(
             tmp_input.name,

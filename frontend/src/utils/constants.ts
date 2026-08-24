@@ -200,6 +200,17 @@ export const UI_OVERLAY = {
   VERTICAL_STACK_OFFSET: 230, // Offset when stacking Entity UI above Sound UI (EntityBox ~110px + GAP 20px + clearance ~130px)
 } as const;
 
+// Card info ("i") popover — click-to-open explanation panel on every card
+// (bottom-right corner). Sizing/placement tokens for `components/ui/InfoPopover.tsx`.
+export const CARD_INFO_POPOVER = {
+  PANEL_WIDTH: 260,      // px — fixed panel width; text wraps inside it
+  GAP: 6,                // px — gap between the "i" trigger and the panel
+  VIEWPORT_MARGIN: 8,    // px — minimum distance from viewport edges after clamping
+  TRIGGER_SIZE: "22px",  // circular trigger diameter
+  ICON_SIZE: "11px",     // info glyph size inside the trigger
+  Z_INDEX: 9999,         // matches the card context menu — both are body-portaled popups
+} as const;
+
 // 3D Scene Control Buttons (bottom-right corner)
 export const UI_SCENE_BUTTON = {
   SIZE: "24px",              // w-6 h-6 (50% of original 48px)
@@ -467,6 +478,9 @@ export const AUDIO_PLAYBACK = {
 
   // Fixed timeline length in milliseconds (visual + audio are both bounded to this).
   TIMELINE_FIXED_DURATION_MS: 60_000, // 1 minute
+
+  // Seam fade (ms) applied at each loopable window edge so the wrap is silent.
+  LOOPABLE_SEAM_FADE_MS: 5,
 } as const;
 
 // ============================================================================
@@ -752,6 +766,10 @@ export const AUDIO_CONTROL = {
 export const RESONANCE_AUDIO = {
   // Default ambisonic order for Resonance Audio scene
   DEFAULT_AMBISONIC_ORDER: 1, // 1st order (4 channels)
+
+  // resonance-audio npm package version (see package.json) — single source of
+  // truth for the Resonance Audio card's "version" line.
+  VERSION: '1.0.0',
   
   // Default room dimensions (meters)
   DEFAULT_ROOM_DIMENSIONS: {
@@ -1443,7 +1461,7 @@ export const PYROOMACOUSTICS_SIMULATION_MODE_DESCRIPTIONS = {
 } as const;
 
 // Default Simulation Settings
-export const PYROOMACOUSTICS_DEFAULT_MAX_ORDER = 2; // Default max_order for image source method
+export const PYROOMACOUSTICS_DEFAULT_MAX_ORDER = 3; // PYROOMACOUSTICS_RAY_TRACING_RECOMMENDED_MAX_ORDER (hybrid ISM/ray tracing)
 export const PYROOMACOUSTICS_DEFAULT_RAY_TRACING = true; // Default ray tracing state
 export const PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION = true; // Default air absorption state
 export const PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE = PYROOMACOUSTICS_SIMULATION_MODE_MONO; // Default simulation mode

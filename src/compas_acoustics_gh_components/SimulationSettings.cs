@@ -12,8 +12,10 @@ namespace CompasAcoustics
     public class SimulationSettings
     {
         // ---- pyroomacoustics settings -------------------------------------
-        public bool RayTracing = false;
-        public bool AirAbsorption = false;
+        // Hybrid ISM + ray tracing defaults (validated config, see
+        // backend/config/constants.py) — pure ISM inflates RT60.
+        public bool RayTracing = true;
+        public bool AirAbsorption = true;
         public int NRays = 10000;
         public int MaxOrder = 3;               // PYROOMACOUSTICS_RAY_TRACING_RECOMMENDED_MAX_ORDER
         public double RirDuration = 1.0;

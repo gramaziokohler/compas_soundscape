@@ -170,7 +170,6 @@ export function buildSoundscapeSavePayload(
       if (event.url && !event.url.startsWith('blob:')) {
         audioUrls.push(event.url);
       }
-      console.log('[dbg:serializer] event', event.id, 'url=', event.url, '-> collected non-blob url for copy');
 
       // Merge user-adjusted volume/interval from audioControls maps
       // These override the SoundEvent's own current_* fields

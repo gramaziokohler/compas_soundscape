@@ -261,9 +261,13 @@ PYROOMACOUSTICS_SIMULATION_MODE_MONO = "mono"  # Single microphone (1 channel)
 PYROOMACOUSTICS_SIMULATION_MODE_FOA = "foa"  # First-Order Ambisonics (4 channels: W, X, Y, Z)
 
 # Default Simulation Settings
-PYROOMACOUSTICS_DEFAULT_MAX_ORDER = 15  # Default max_order for image source method
-PYROOMACOUSTICS_DEFAULT_RAY_TRACING = False  # Default ray tracing state
-PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION = False  # Default air absorption state
+# Hybrid ISM + ray tracing (max_order=3, air absorption on) is the validated
+# configuration (see pyroomacoustics_test_ach.py and acoustic-sim.mdc). Pure
+# ISM at high order produces a truncated, non-diffuse tail whose Schroeder
+# decay extrapolates to an inflated RT60.
+PYROOMACOUSTICS_DEFAULT_MAX_ORDER = 3  # PYROOMACOUSTICS_RAY_TRACING_RECOMMENDED_MAX_ORDER
+PYROOMACOUSTICS_DEFAULT_RAY_TRACING = True  # Default ray tracing state
+PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION = True  # Default air absorption state
 PYROOMACOUSTICS_DEFAULT_RIR_DURATION = 1.0  # seconds
 PYROOMACOUSTICS_DEFAULT_SIMULATION_MODE = PYROOMACOUSTICS_SIMULATION_MODE_MONO  # Default simulation mode
 
@@ -307,6 +311,17 @@ PYROOMACOUSTICS_SAMPLE_RATE = 44100  # Sample rate -- uses n_bands = math.floor(
 PYROOMACOUSTICS_USE_RAND_ISM = False  # Use randomized ISM for better realism
 PYROOMACOUSTICS_IR_TRIM_THRESHOLD = 0.01  # Fraction of peak amplitude below which trailing IR samples are trimmed
 PYROOMACOUSTICS_TASK_CLEANUP_DELAY_SECONDS = 600  # 10 minutes after completion
+
+# Acoustic Metrics Measurement (utils/acoustic_measurement.py)
+# ISO 3382-style robust estimation. A metric is only reported when the measured
+# Schroeder decay covers at least MIN_DYNAMIC_RANGE_DB of level drop; otherwise
+# it is returned as None and flagged unreliable instead of being extrapolated
+# from a flattened/truncated tail (the classic cause of inflated RT60).
+PYROOMACOUSTICS_METRICS_RT60_MIN_DYNAMIC_RANGE_DB = 15.0   # T30-style: 5→35 dB must be observable
+PYROOMACOUSTICS_METRICS_EDT_MIN_DYNAMIC_RANGE_DB = 6.0    # T10-style: 5→15 dB must be observable
+PYROOMACOUSTICS_METRICS_DIRECT_SEARCH_FRACTION_S = 0.5    # Direct-arrival search window (s) from sample 0
+PYROOMACOUSTICS_METRICS_DIRECT_THRESHOLD_FRACTION = 0.1   # Fraction of global peak used to detect arrival
+PYROOMACOUSTICS_METRICS_DIRECT_WINDOW_S = 0.002           # Direct-sound window (s) AFTER the arrival for DRR
 
 # Parameter Ranges
 PYROOMACOUSTICS_MAX_ORDER_MIN = 0  # Direct path only
