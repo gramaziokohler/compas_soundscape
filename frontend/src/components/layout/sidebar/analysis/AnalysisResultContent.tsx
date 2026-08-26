@@ -29,7 +29,7 @@ export function AnalysisResultContent({
         <div className="text-xs font-semibold text-secondary">
         Generated Prompts
         </div>
-        <div className="text-xs text-secondary-hover">
+        <div className="text-xs" style={{ color: 'var(--color-on-blue-muted)' }}>
           {selectedCount} / {analysisResult.prompts.length} selected
         </div>
       </div>
@@ -67,7 +67,7 @@ export function AnalysisResultContent({
               
               {/* Metadata display (if available) */}
               {prompt.metadata && (
-                <div className="flex gap-3 mt-1 text-[10px] text-secondary-hover">
+                <div className="flex gap-3 mt-1 text-[10px]" style={{ color: 'var(--color-on-blue-muted)' }}>
                   {prompt.metadata.dbfs !== undefined && (
                     <span>Level: {prompt.metadata.dbfs}dBFS</span>
                   )}

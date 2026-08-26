@@ -6,6 +6,8 @@ interface VerticalVolumeSliderProps {
   onChangeCommitted?: (value: number) => void; // Called when user releases the slider
   onDragStart?: () => void; // Called when user presses the slider
   className?: string;
+  /** When true, recolors the track/fill for legibility on a solid-blue generated card. */
+  onBlueBackground?: boolean;
 }
 
 /**
@@ -39,7 +41,8 @@ export function VerticalVolumeSlider({
   onChange,
   onChangeCommitted,
   onDragStart,
-  className = ""
+  className = "",
+  onBlueBackground = false,
 }: VerticalVolumeSliderProps) {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onChange(parseFloat(e.target.value));
@@ -56,7 +59,10 @@ export function VerticalVolumeSlider({
   const fillPercentage = value * 100;
   
   // Determine color: muted (0) uses secondary-hover (grey), otherwise primary
-  const fillColor = value === 0 ? 'var(--color-secondary-hover)' : 'var(--color-primary)';
+  // (or their on-blue equivalents when sitting directly on a solid-blue generated card)
+  const fillColor = onBlueBackground
+    ? (value === 0 ? 'var(--color-on-blue-muted)' : 'var(--color-on-blue)')
+    : (value === 0 ? 'var(--color-secondary-hover)' : 'var(--color-primary)');
 
   return (
     <div 
@@ -72,8 +78,8 @@ export function VerticalVolumeSlider({
         style={{
           width: '8px',
           height: '100px',
-          backgroundColor: 'var(--color-surface-2)',
-          border: '1px solid var(--color-border)',
+          backgroundColor: onBlueBackground ? 'var(--color-blue-chip-bg)' : 'var(--color-surface-2)',
+          border: `1px solid ${onBlueBackground ? 'var(--color-on-blue-faint)' : 'var(--color-border)'}`,
           left: '50%',
           transform: 'translateX(-50%)'
         }}

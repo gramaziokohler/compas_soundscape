@@ -48,6 +48,8 @@ export interface VariantsBarProps {
   isRegenerating?: boolean;
   /** Index of the variant currently being generated. */
   pendingIndex?: number;
+  /** When true, recesses the selected/add squares so they read on a solid-blue generated card. */
+  onBlueBackground?: boolean;
 }
 
 /** Spinner icon shown on the pending square while regenerating. */
@@ -68,13 +70,14 @@ export function VariantsBar({
   onAdd,
   isRegenerating = false,
   pendingIndex,
+  onBlueBackground = false,
 }: VariantsBarProps) {
   const letterFor = (idx: number) => String.fromCharCode(65 + idx);
 
   return (
     <div
-      className="tag-row flex overflow-x-auto flex-shrink-0 items-center"
-      style={{ scrollbarWidth: 'thin', scrollbarColor: 'var(--card-color, var(--color-primary)) transparent' }}
+      className={`tag-row flex overflow-x-auto flex-shrink-0 items-center ${onBlueBackground ? 'on-blue' : ''}`}
+      style={{ scrollbarWidth: 'thin', scrollbarColor: onBlueBackground ? 'var(--color-on-blue) transparent' : 'var(--card-color, var(--color-primary)) transparent' }}
     >
       {items.map((item, idx) => {
         const isSelected = idx === selectedIndex;

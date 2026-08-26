@@ -159,12 +159,16 @@ interface SummaryChipProps {
 }
 
 function SummaryChip({ count, label, onClick }: SummaryChipProps) {
+  const hasItems = count > 0;
+
   return (
     <Badge
       size="sm"
-      variant={count > 0 ? 'primary' : 'error'}
+      variant={hasItems ? 'primary' : 'error'}
       onClick={onClick}
-      className="hover:underline"
+      className={hasItems
+        ? 'bg-primary text-white hover:underline'
+        : 'bg-error text-white hover:underline'}
     >
       <span className="tabular-nums">{count}</span>&nbsp;{count > 1 ? `${label}s` : label}
     </Badge>

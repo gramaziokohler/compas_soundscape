@@ -12,6 +12,8 @@ interface ConfirmDialogProps {
   /** Only disable the confirm button — cancel stays active. */
   disableConfirm?: boolean;
   variant?: "danger" | "default";
+  /** When true, recolors the "default" variant for legibility on a solid-blue generated card. */
+  onBlueBackground?: boolean;
 }
 
 /**
@@ -46,21 +48,22 @@ export function ConfirmDialog({
   disabled = false,
   disableConfirm = false,
   variant = "default",
+  onBlueBackground = false,
 }: ConfirmDialogProps) {
   const isDanger = variant === "danger";
   const accentColor = isDanger ? "var(--color-error)" : "var(--color-primary)";
   const accentBg = isDanger
     ? "color-mix(in srgb, var(--color-error) 8%, transparent)"
-    : "color-mix(in srgb, var(--color-primary) 8%, transparent)";
+    : onBlueBackground
+      ? "color-mix(in srgb, var(--color-on-blue) 60%, transparent)"
+      : "color-mix(in srgb, var(--background-static) 65%, transparent)";
   const confirmDisabled = disabled || disableConfirm;
 
   return (
     <div
       className="flex flex-col gap-2 p-2 rounded"
       style={{
-        background: accentBg,
-        border: `1px solid ${accentColor}`,
-        borderRadius: `${UI_BORDER_RADIUS.SM}px`,
+        background: accentBg
       }}
     >
       <p
@@ -77,7 +80,6 @@ export function ConfirmDialog({
           style={{
             background: "var(--color-secondary-lighter)",
             color: "var(--foreground)",
-            border: "1px solid var(--color-secondary-light)",
             borderRadius: `${UI_BORDER_RADIUS.SM}px`,
           }}
         >

@@ -525,10 +525,7 @@ export function SoundGenerationSection({
   const getCollapsedInfo = useCallback((config: SoundGenerationConfig, index: number): string => {
     if (isSoundGenerated(index)) {
       const variants = getVariantsForPrompt(index);
-      if (variants.length > 1) {
-        return `(${variants.length} variants)`;
-      }
-      return '(generated)';
+      return `(${variants.length} sound${variants.length !== 1 ? 's' : ''})`;
     }
     if (isSoundGenerating && pendingConfigOrderRef.current.length > 0) {
       const orderIdx = pendingConfigOrderRef.current.indexOf(config);
@@ -819,7 +816,7 @@ export function SoundGenerationSection({
     // Linked entities display (shown inside card body when entities are linked)
     const linkedEntitiesDisplay = hasEntities ? (
       <div className="flex items-center gap-2 mb-1">
-        <span className="text-[10px] text-secondary whitespace-nowrap">
+        <span className={`text-[10px] whitespace-nowrap ${isGenerated ? '' : 'text-secondary'}`} style={isGenerated ? { color: 'var(--color-on-blue-muted)' } : undefined}>
           Linked entities:
         </span>
           {hasMultipleEntities ? (
@@ -827,7 +824,9 @@ export function SoundGenerationSection({
             className="flex gap-1 overflow-x-auto flex-shrink-0"
             style={{
               scrollbarWidth: 'thin',
-              scrollbarColor: timelineEntityId !== null ? 'var(--color-secondary-light) transparent' : 'var(--color-primary) transparent',
+              scrollbarColor: timelineEntityId !== null
+                ? 'var(--color-secondary-light) transparent'
+                : `${isGenerated ? 'var(--color-on-blue)' : 'var(--color-primary)'} transparent`,
               opacity: isTimelineManaged ? 0.4 : 1,
             }}
             title={isTimelineManaged ? 'Managed by timeline' : undefined}
@@ -847,8 +846,16 @@ export function SoundGenerationSection({
                 style={isTimelineManaged
                   ? { backgroundColor: 'var(--color-secondary-light)', color: 'var(--color-secondary-hover)', cursor: 'not-allowed' }
                   : idx === effectiveActiveIdx
-                    ? { backgroundColor: 'var(--color-primary)', cursor: timelineEntityId !== null ? 'not-allowed' : undefined }
-                    : { backgroundColor: 'var(--color-secondary)', color: 'var(--color-secondary-light)', cursor: timelineEntityId !== null ? 'not-allowed' : undefined }}
+                    ? {
+                        backgroundColor: isGenerated ? 'var(--color-blue-chip-bg)' : 'var(--color-primary)',
+                        color: isGenerated ? 'var(--color-on-blue)' : undefined,
+                        cursor: timelineEntityId !== null ? 'not-allowed' : undefined,
+                      }
+                    : {
+                        backgroundColor: isGenerated ? 'var(--color-blue-chip-bg)' : 'var(--color-secondary)',
+                        color: isGenerated ? 'var(--color-on-blue-muted)' : 'var(--color-secondary-light)',
+                        cursor: timelineEntityId !== null ? 'not-allowed' : undefined,
+                      }}
                 title={
                   isTimelineManaged
                     ? 'Managed by timeline — different entities per iteration'
@@ -862,8 +869,8 @@ export function SoundGenerationSection({
             ))}
           </div>
         ) : (
-          <span className="text-[10px] text-secondary-hover truncate"
-            style={{ opacity: isTimelineManaged ? 0.4 : 1 }}
+          <span className={`text-[10px] truncate ${isGenerated ? '' : 'text-secondary-hover'}`}
+            style={{ opacity: isTimelineManaged ? 0.4 : 1, color: isGenerated ? 'var(--color-on-blue-muted)' : undefined }}
             title={isTimelineManaged ? 'Managed by timeline — different entities per iteration' : linkedEntityLabel}
           >
             {linkedEntityLabel}
@@ -893,12 +900,15 @@ export function SoundGenerationSection({
               ? `Linked to: ${linkedEntityLabel} — click to unlink`
               : 'Link to entities'
         }
-        className={`flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full transition-all opacity-80 hover:bg-secondary hover:text-primary ${
-          isCurrentlyLinking ? 'animate-pulse' : ''
-        }`}
+        className={`flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full transition-all opacity-80 ${
+          isGenerated ? 'hover:bg-black/20' : 'hover:bg-secondary hover:text-primary'
+        } ${isCurrentlyLinking ? 'animate-pulse' : ''}`}
         style={(isCurrentlyLinking || isLinkedInHeader)
-          ? { color: 'var(--color-foreground)', backgroundColor: 'var(--color-primary)' }
-          : undefined}
+          ? {
+              color: isGenerated ? 'var(--color-primary)' : 'var(--color-foreground)',
+              backgroundColor: isGenerated ? 'var(--color-on-blue)' : 'var(--color-primary)',
+            }
+          : isGenerated ? { color: 'var(--color-on-blue-muted)' } : undefined}
       >
         <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
@@ -917,6 +927,7 @@ export function SoundGenerationSection({
         cancelLabel="Cancel"
         onConfirm={() => onFinishLinkingEntity?.()}
         onCancel={() => onCancelLinkingEntity?.()}
+        onBlueBackground={isGenerated}
       />
     );
 
@@ -930,13 +941,14 @@ export function SoundGenerationSection({
           onClearLinkedEntities?.(originalIndex);
         }}
         onCancel={() => setUnlinkConfirmIndex(null)}
+        onBlueBackground={isGenerated}
       />
     ) : null;
 
     // Category badge (if available from foley analysis)
     const categoryKey = normalizeSoundCategory(config.category);
     const categoryBadge = config.category ? (
-      <Badge variant={categoryKey ? SOUND_CATEGORIES[categoryKey].variant : 'neutral'}>
+      <Badge variant={categoryKey ? SOUND_CATEGORIES[categoryKey].variant : 'neutral'} onBlueBackground={isGenerated}>
         {categoryKey ? SOUND_CATEGORIES[categoryKey].label : config.category.replace(/_/g, ' ')}
       </Badge>
     ) : null;
@@ -962,6 +974,7 @@ export function SoundGenerationSection({
         size="xs"
         className="uppercase tracking-wider"
         title={`${activeExpressions.length}/${totalExpressions} active — ${expressionDetails.join(', ')}`}
+        onBlueBackground={isGenerated}
       >
         {config.orchestrateMeta.trigger.type === 'param' ? 'Param' : 'Mixed'}
       </Badge>

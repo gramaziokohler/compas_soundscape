@@ -316,12 +316,12 @@ export function ContextSection({
               (c as AnalysisBaseConfig).parentContextOriginalIndex === originalIndex,
           );
           return (
-            <div className="px-1 py-2 text-xs text-secondary-hover space-y-1">
+            <div className="px-1 py-2 text-xs space-y-1" style={{ color: 'var(--color-on-blue-muted)' }}>
               {childUsage.length === 0 ? (
                 <p>No usage cards linked. Click &quot;Next: Usage&quot; to add usage scenarios.</p>
               ) : (
                 <>
-                  <p className="font-medium text-foreground mb-1">Linked usage cards:</p>
+                  <p className="font-medium mb-1" style={{ color: 'var(--color-on-blue)' }}>Linked usage cards:</p>
                   <ul className="space-y-0.5">
                     {childUsage.map((c, i) => (
                       <li key={i} className="flex items-center gap-1">

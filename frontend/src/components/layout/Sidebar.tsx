@@ -4,7 +4,8 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { ContextSection } from "./sidebar/ContextSection";
 import { UsageSection } from "./sidebar/UsageSection";
 import { SoundGenerationSection } from "./sidebar/SoundGenerationSection";
-import { UI_SIDEBAR_RESIZE, UI_SCALE } from "@/utils/constants";
+import { UI_SIDEBAR_RESIZE, UI_SCALE, UI_SIDEBAR_TOGGLE } from "@/utils/constants";
+import { buildSidebarEdgeNotchClipPath } from "@/utils/sidebarEdgeNotch";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useViewportScale } from "@/hooks/useViewportScale";
 import { useTextGenerationStore } from "@/store/textGenerationStore";
@@ -636,50 +637,81 @@ export function Sidebar(props: SidebarProps) {
     return props.soundConfigs.length > 0;
   })();
 
+  // Toggle handle geometry — the button always sits a fixed margin to the
+  // right of the sidebar's edge, in both states (never flush on top of it).
+  // When expanded, the sidebar's own edge gets a smooth inward notch near
+  // the button (see sidebarEdgeNotch.ts) instead of a hard straight border.
+  const toggleEdgeX = isExpanded ? contentWidth - UI_SIDEBAR_TOGGLE.MARGIN * 1.5 : 0;
+  const toggleCenterX = toggleEdgeX + UI_SIDEBAR_TOGGLE.MARGIN + UI_SIDEBAR_TOGGLE.DIAMETER / 2;
+  const sidebarEdgeClipPath = isExpanded
+    ? buildSidebarEdgeNotchClipPath(
+        contentWidth,
+        scale.viewport.height,
+        'right',
+        scale.viewport.height / 2,
+        UI_SIDEBAR_TOGGLE.NOTCH_HEIGHT,
+        UI_SIDEBAR_TOGGLE.NOTCH_DEPTH,
+      )
+    : undefined;
+
   return (
     <>
-      {/* Toggle button — floats at the right edge of the sidebar content */}
-      <button
-        onClick={() => { const v = !isExpanded;  setIsExpanded(v); useUIStore.getState().setIsLeftSidebarExpanded(v); }}
-        title={isExpanded ? 'Collapse panel' : 'Open panel'}
+      {/* Toggle handle — a soft circular button offset from the sidebar edge */}
+      <div
+        className="group"
         style={{
           position: 'fixed',
-          left: isExpanded ? `${contentWidth}px` : '0px',
+          left: `${toggleCenterX}px`,
           top: '50%',
-          transform: 'translateY(-50%)',
+          transform: 'translate(-50%, -50%)',
           zIndex: 15,
           transition: 'left 300ms ease-in-out',
         }}
-        className="flex flex-col items-center justify-center w-5 py-3 gap-1.5 bg-primary border border-secondary-light rounded-r-md shadow-md hover:bg-primary-hover"
       >
-        <svg width="10" height="16" viewBox="0 0 10 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-          {isExpanded ? (
-            <path d="M7 3L2 8L7 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          ) : (
-            <path d="M3 3L8 8L3 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          )}
-        </svg>
+        <button
+          onClick={() => { const v = !isExpanded;  setIsExpanded(v); useUIStore.getState().setIsLeftSidebarExpanded(v); }}
+          title={isExpanded ? 'Collapse panel' : 'Open panel'}
+          style={{ width: `${UI_SIDEBAR_TOGGLE.DIAMETER}px`, height: `${UI_SIDEBAR_TOGGLE.DIAMETER}px` }}
+          className={`sidebar-toggle-handle ${!isExpanded ? 'sidebar-toggle-handle--bounce' : ''}`}
+        >
+          <svg width={UI_SIDEBAR_TOGGLE.ICON_WIDTH} height={UI_SIDEBAR_TOGGLE.ICON_HEIGHT} viewBox="0 0 10 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            {isExpanded ? (
+              <path d="M7 3L2 8L7 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            ) : (
+              <path d="M3 3L8 8L3 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            )}
+          </svg>
+        </button>
         {!isExpanded && (
           <span
-            style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', fontSize: '12px', letterSpacing: '0.05em' }}
-            className="text-secondary-light-static select-none"
+            style={{ left: `calc(100% + ${UI_SIDEBAR_TOGGLE.LABEL_OFFSET}px)`, top: '50%', transform: 'translateY(-50%)' }}
+            className="sidebar-toggle-label backdrop-blur-lg backdrop-saturate-150 absolute opacity-0 group-hover:opacity-100 transition-opacity select-none pointer-events-none"
           >
             Soundscape
           </span>
         )}
-      </button>
+      </div>
 
       {/* Sidebar content panel */}
       <aside
-        className="fixed top-0 left-0 h-screen flex flex-col transition-all duration-300 ease-in-out bg-background border-r border-secondary-light shadow-lg"
+        className="fixed top-0 left-0 h-screen flex flex-col transition-all duration-300 ease-in-out shadow-lg"
         style={{
           width: isExpanded ? `${contentWidth}px` : '0px',
-          overflow: 'hidden',
-          opacity: isExpanded ? 0.95 : 0,
+          opacity: isExpanded ? 1 : 0,
           zIndex: 10,
           userSelect: isResizing ? 'none' : undefined,
         }}
       >
+        {/* clip-path lives on the blur layer itself, not the <aside> — a
+            clip-path on an ancestor of a backdrop-filter element breaks the
+            backdrop blur in Chromium, so the notch shape must be applied
+            directly to the element that carries the blur. */}
+        <div
+          className="sidebar-glass backdrop-blur-lg backdrop-saturate-150"
+          style={{ clipPath: sidebarEdgeClipPath }}
+          aria-hidden="true"
+        />
+        <div className="relative z-[1] flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden">
         {/* Resize handle — right edge */}
         {isExpanded && (
           <div
@@ -879,6 +911,7 @@ export function Sidebar(props: SidebarProps) {
               visibleParentUsageIndex={activeUsageOriginalIndex}
             />
           )}
+        </div>
         </div>
       </aside>
     </>

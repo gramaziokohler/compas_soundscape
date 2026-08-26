@@ -61,7 +61,7 @@ export function AudioAnalysisAfterContent({
         <span className="text-xs font-semibold text-secondary">
           Detected Sounds
         </span>
-        <span className="text-xs text-secondary-hover">
+        <span className="text-xs" style={{ color: 'var(--color-on-blue-muted)' }}>
           {selectedCount} / {analysisResult.prompts.length} selected
         </span>
       </div>
@@ -80,7 +80,7 @@ export function AudioAnalysisAfterContent({
             onClick={() => onTogglePromptSelection(analysisResult.configIndex, prompt.id)}
             onMouseEnter={(e) => {
               setHoveredIndex(i);
-              e.currentTarget.style.backgroundColor = 'var(--color-primary)';
+              e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.14)';
             }}
             onMouseLeave={(e) => {
               setHoveredIndex(null);
@@ -92,7 +92,7 @@ export function AudioAnalysisAfterContent({
               onChange={() => onTogglePromptSelection(analysisResult.configIndex, prompt.id)}
               label=""
             />
-            <div className="flex-1 text-xs text-neutral-200">
+            <div className="flex-1 text-xs" style={{ color: 'var(--color-on-blue)' }}>
               {prompt.text}
               {prompt.metadata?.confidence !== undefined && (
                 <span className="ml-1">
@@ -113,7 +113,7 @@ export function AudioAnalysisAfterContent({
                 }
                 if (bits.length === 0) return null;
                 return (
-                  <div className="mt-0.5 text-[10px] text-neutral-400">
+                  <div className="mt-0.5 text-[10px]" style={{ color: 'var(--color-on-blue-muted)' }}>
                     {bits.join(', ')}
                   </div>
                 );
@@ -124,7 +124,7 @@ export function AudioAnalysisAfterContent({
       </div>
 
       {/* Noise reduction toggle (extraction triggered by card FAB) */}
-      <div className="pt-1 border-t border-neutral-700">
+      <div className="pt-1" style={{ borderTop: '1px solid var(--color-on-blue-faint)' }}>
         <div
           className="flex items-center gap-2 cursor-pointer"
           onClick={() => onNoiseReductionChange?.(!applyNoiseReduction)}
@@ -134,7 +134,7 @@ export function AudioAnalysisAfterContent({
             onChange={() => onNoiseReductionChange?.(!applyNoiseReduction)}
             label=""
           />
-          <span className="text-xs text-neutral-300">
+          <span className="text-xs" style={{ color: 'var(--color-on-blue)' }}>
             Apply noise reduction on extraction
           </span>
         </div>

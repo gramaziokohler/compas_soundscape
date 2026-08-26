@@ -1841,7 +1841,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       });
     }
 
-    // Derive version + timestamp lines for this card type
+    // Derive the service version for this card type
     const cardVersion = (() => {
       let versionLine: string | undefined;
       if (config.type === 'resonance') {
@@ -1861,14 +1861,6 @@ export function AcousticsSection(props: AcousticsSectionProps) {
           const v = serviceVersions.acousticDE;
           versionLine = `${v.name} ${v.version}`;
         }
-      }
-      if (!versionLine) return undefined;
-      const completedAt: number | undefined = (config as any).completedAt;
-      if (completedAt) {
-        const d = new Date(completedAt);
-        const pad = (n: number) => String(n).padStart(2, '0');
-        const timestamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-        return [versionLine, timestamp];
       }
       return versionLine;
     })();

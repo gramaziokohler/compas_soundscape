@@ -41,14 +41,14 @@ function FoleySoundItem({ sound, checked, onToggle }: FoleySoundItemProps) {
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-xs text-background-static font-semibold truncate">{sound.soundName}</span>
           {sound.category && (
-            <Badge variant="neutral">{sound.category}</Badge>
+            <Badge variant="neutral" onBlueBackground>{sound.category}</Badge>
           )}
           {sound.spl && (
             <span
               className="text-[10px] px-1.5 py-0 rounded-full font-medium flex-shrink-0 ml-auto"
               style={{
-                backgroundColor: 'var(--color-primary-light, rgba(var(--color-primary-rgb,0,0,0),0.15))',
-                color: 'var(--color-primary)',
+                backgroundColor: 'var(--color-blue-chip-bg)',
+                color: 'var(--color-on-blue)',
               }}
             >
               {sound.spl}
@@ -58,7 +58,7 @@ function FoleySoundItem({ sound, checked, onToggle }: FoleySoundItemProps) {
 
         {/* Description */}
         {sound.description && (
-          <p className="text-[11px] leading-snug" style={{ color: 'var(--color-neutral-400, #9ca3af)' }}>
+          <p className="text-[11px] leading-snug" style={{ color: 'var(--color-on-blue-muted)' }}>
             {sound.description}
           </p>
         )}
@@ -71,8 +71,8 @@ function FoleySoundItem({ sound, checked, onToggle }: FoleySoundItemProps) {
                 key={i}
                 className="text-[10px] px-1 rounded font-mono"
                 style={{
-                  backgroundColor: 'var(--color-secondary-light)',
-                  color: 'var(--color-secondary-hover)',
+                  backgroundColor: 'var(--color-blue-chip-bg)',
+                  color: 'var(--color-on-blue-muted)',
                 }}
               >
                 {t}
@@ -90,7 +90,7 @@ export function ScenarioResultContent({ foleyResult, selectedKeys, onToggle }: S
 
   if (!foleyResult.scenarios || foleyResult.scenarios.length === 0) {
     return (
-      <p className="text-xs text-center py-4" style={{ color: 'var(--color-neutral-400, #9ca3af)' }}>
+      <p className="text-xs text-center py-4" style={{ color: 'var(--color-on-blue-muted)' }}>
         No foley sounds generated.
       </p>
     );
@@ -105,8 +105,8 @@ export function ScenarioResultContent({ foleyResult, selectedKeys, onToggle }: S
             <p
               className="text-xs font-semibold mb-1.5 pb-1"
               style={{
-                color: 'var(--color-secondary-hover)',
-                borderBottom: '1px solid var(--color-secondary-light)',
+                color: 'var(--color-on-blue)',
+                borderBottom: '1px solid var(--color-on-blue-faint)',
               }}
             >
               {scenario.scenario_title}

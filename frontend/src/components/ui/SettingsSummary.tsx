@@ -76,27 +76,31 @@ export function SettingsSummary({
     <div className="mt-2 mb-2">
       <button
         onClick={() => setIsExpanded((v) => !v)}
-        className="flex items-center gap-1.5 w-full text-left text-xxs text-secondary-hover hover:text-neutral-300 transition-colors"
+        className="flex items-center gap-1.5 w-full text-left text-xxs transition-colors"
+        style={{ color: 'var(--color-on-blue-muted)' }}
+        onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-on-blue)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-on-blue-muted)'; }}
       >
         {isExpanded ? <ChevronDown size={11} className="shrink-0" /> : <ChevronRight size={11} className="shrink-0" />}
         <span>{title}</span>
       </button>
       {isExpanded && (
-        <div className="mt-2 space-y-1 text-xs">
+        <div className="mt-2 space-y-1 text-xxs">
           {rows.map((row) => {
             const isRowExpanded = expandedRows.has(row.label);
             const truncateAt = row.truncateAt ?? 48;
             const isLong = row.value.length > truncateAt;
             return (
               <div key={row.label} className="flex items-baseline justify-between gap-3">
-                <span className="text-neutral-500 shrink-0">{row.label}</span>
-                <span className="text-neutral-300 text-right break-words max-w-[70%]">
+                <span className="shrink-0" style={{ color: 'var(--color-on-blue-muted)' }}>{row.label}</span>
+                <span className="text-right break-words max-w-[70%]" style={{ color: 'var(--color-on-blue)' }}>
                   {row.expandable && isLong ? (
                     <>
                       {isRowExpanded ? row.value : row.value.slice(0, truncateAt)}
                       <button
                         onClick={() => toggleRow(row.label)}
-                        className="text-secondary-light hover:text-neutral-300 transition-colors px-0.5 cursor-pointer"
+                        className="transition-colors px-0.5 cursor-pointer"
+                        style={{ color: 'var(--color-on-blue-muted)' }}
                         title={isRowExpanded ? 'Collapse' : 'Show full value'}
                         aria-label={`${isRowExpanded ? 'Collapse' : 'Show full'} ${row.label}`}
                       >
@@ -162,6 +166,20 @@ export function getSettingsTitle(config: CardBaseConfig): string {
  */
 export function getSettingsRows(config: CardBaseConfig): SettingsRow[] {
   const rows: SettingsRow[] = [];
+
+  if (SIMULATION_TYPES.includes(config.type)) {
+    const completedAt = 'completedAt' in config && typeof config.completedAt === 'number'
+      ? config.completedAt
+      : undefined;
+    if (completedAt) {
+      const date = new Date(completedAt);
+      const pad = (value: number) => String(value).padStart(2, '0');
+      rows.push({
+        label: 'Generated',
+        value: `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`,
+      });
+    }
+  }
 
   if (config.type === 'pyroomacoustics') {
     const s = (config as PyroomAcousticsSimulationConfig).settings;

@@ -37,7 +37,7 @@ export function SceneViewModeToolbar() {
               className="px-2.5 py-1 text-[10px] font-medium transition-colors"
               style={{
                 backgroundColor: isActive
-                  ? 'var(--color-primary-hover)'
+                  ? 'var(--color-primary)'
                   : 'transparent',
                 color: isActive ? accentColor : 'rgba(255,255,255,0.55)',
                 borderRight: mode !== 'acoustic' ? '1px solid rgba(255,255,255,0.12)' : undefined,

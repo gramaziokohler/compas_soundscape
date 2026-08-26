@@ -11,6 +11,8 @@ export interface PositionWidgetProps {
   disabled?: boolean;
   /** Tooltip shown when disabled. */
   disabledTitle?: string;
+  /** When true, recolors the inputs for legibility on a solid-blue generated card. */
+  onBlueBackground?: boolean;
 }
 
 /**
@@ -29,6 +31,7 @@ export function PositionWidget({
   onUpdatePosition,
   disabled = false,
   disabledTitle,
+  onBlueBackground = false,
 }: PositionWidgetProps) {
   return (
     <div
@@ -44,6 +47,7 @@ export function PositionWidget({
             value={val}
             step={0.1}
             disabled={disabled}
+            onBlueBackground={onBlueBackground}
             containerStyle={{ width: "55px", opacity: disabled ? 0.4 : 1 }}
             onChange={(n) => {
               const newPos: [number, number, number] = [

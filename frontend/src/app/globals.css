@@ -20,7 +20,7 @@
   --color-secondary-lighter: #0f1012;
 
   /* Granular card-surface tokens */
-  --color-surface: #17181b;
+  --color-surface: #0a0a0a;
   --color-surface-2: #1c1e22;
   --color-field: #0f1012;
   --color-field-hover: #131418;
@@ -31,6 +31,13 @@
   --color-blue-tint: rgba(78, 107, 255, 0.13);
   --color-purple: #9d7bff;
   --color-amber: #f0b24d;
+
+  /* On-blue foreground tokens — for content sitting directly on a solid
+   * --color-primary card surface (generated-state cards). */
+  --color-on-blue: #ffffff;
+  --color-on-blue-muted: rgba(255, 255, 255, 0.7);
+  --color-on-blue-faint: rgba(255, 255, 255, 0.16);
+  --color-blue-chip-bg: rgba(0, 0, 0, 0.22);
 
   /* Secondary color */
   --color-secondary-static: #1f1f1f;
@@ -77,6 +84,9 @@
   --color-overlay-bg: rgba(0, 0, 0, 0.8);
   --color-overlay-border: rgba(255, 255, 255, 0.2);
 
+  /* Sidebar panels — frosted glass over the 3D canvas */
+  --sidebar-bg: rgba(12, 13, 15, 0.45);
+
   /* Viewport scale — set to live px values by useViewportScale() in browser
    * (see utils/scale.ts). Fallback values keep static CSS correct pre-JS. */
   --ui-vw: 100vw;
@@ -112,6 +122,10 @@
   --color-blue-tint: var(--color-blue-tint);
   --color-purple: var(--color-purple);
   --color-amber: var(--color-amber);
+  --color-on-blue: var(--color-on-blue);
+  --color-on-blue-muted: var(--color-on-blue-muted);
+  --color-on-blue-faint: var(--color-on-blue-faint);
+  --color-blue-chip-bg: var(--color-blue-chip-bg);
   --color-success: var(--color-success);
   --color-success-hover: var(--color-success-hover);
   --color-success-light: var(--color-success-light);
@@ -129,6 +143,7 @@
   --color-material-end: var(--color-material-end);
   --color-receiver: var(--color-receiver);
   --color-mixed: var(--color-mixed);
+  --color-sidebar-bg: var(--sidebar-bg);
   --font-sans: var(--font-inter);
   --font-mono: var(--font-jetbrains-mono);
 
@@ -154,6 +169,15 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
+}
+
+/* Frosted-glass sidebar panels — blur via Tailwind utilities (backdrop-filter stripped from custom CSS by Tailwind v4) */
+.sidebar-glass {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: var(--sidebar-bg);
 }
 
 /* Global scrollbar styling */
@@ -265,6 +289,56 @@ canvas {
   100% { opacity: 0; }
 }
 
+/* Sidebar collapse/expand handle — a soft circular button, offset from the
+ * sidebar edge with a gap (no hard border ring; separation comes from
+ * background + shadow only). */
+.sidebar-toggle-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--color-primary);
+  border: none;
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  padding: 0;
+  transition: background-color 0.15s ease;
+}
+.sidebar-toggle-handle:hover {
+  background: var(--color-primary-hover);
+}
+
+/* Collapsed-state only — a physical "dropped ball" bounce: one large bounce,
+ * one small bounce, then a 1.2s rest before repeating. Starts 2s into the
+ * hover (so a passing cursor doesn't trigger it) and is disabled once the
+ * sidebar is expanded (the handle nests in the bump shape instead). */
+.sidebar-toggle-handle--bounce:hover {
+  animation: sidebar-toggle-bounce-ball 2s ease-in-out 2s infinite;
+}
+@keyframes sidebar-toggle-bounce-ball {
+  0%   { transform: translateY(0); }     /* resting */
+  6%   { transform: translateY(-16px); } /* large bounce — peak */
+  16%  { transform: translateY(-4px); }  /* large bounce — falling */
+  24%  { transform: translateY(0); }     /* large bounce — lands */
+  30%  { transform: translateY(-6px); }  /* small bounce — peak */
+  40%  { transform: translateY(0); }     /* small bounce — lands, 1.2s rest follows (40%–100% of 2s) */
+  100% { transform: translateY(0); }
+}
+
+/* Hover label — horizontal text on a frosted-glass pill, revealed to the
+ * right of the toggle handle. Backdrop blur comes from the Tailwind
+ * `backdrop-blur-*` utility applied alongside this class in JSX (raw
+ * `backdrop-filter` in custom CSS is stripped by Tailwind v4). */
+.sidebar-toggle-label {
+  white-space: nowrap;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  padding: 6px 11px;
+  border-radius: 999px;
+  background: var(--sidebar-bg);
+  color: var(--color-secondary-light-static);
+}
+
 /* ==========================================================================
    Card design system — shared presentation classes (token-only)
    ========================================================================== */
@@ -311,6 +385,17 @@ textarea.c-field { height: 56px; line-height: 1.4; resize: none; }
   outline: none;
   border-color: var(--color-primary);
   background: var(--color-field-hover);
+}
+
+/* Sitting directly on a solid-blue generated card */
+.xyz-input.on-blue {
+  background: var(--color-blue-chip-bg);
+  border-color: var(--color-on-blue-faint);
+  color: var(--color-on-blue);
+}
+.xyz-input.on-blue:focus {
+  border-color: var(--color-on-blue);
+  background: var(--color-blue-chip-bg);
 }
 
 /* Custom select */
@@ -525,6 +610,28 @@ textarea.c-field { height: 56px; line-height: 1.4; resize: none; }
   border-color: var(--color-primary);
   color: var(--color-primary);
 }
+
+/* Variant tags sitting directly on a solid-blue generated card — recess the
+   selected/add squares so they don't blend into the card's own background. */
+.tag-row.on-blue .tag.on {
+  background: var(--color-blue-chip-bg);
+  color: var(--color-on-blue);
+  border: 1px solid var(--color-on-blue);
+}
+.tag-row.on-blue .tag.add {
+  border-color: var(--color-on-blue-muted);
+  color: var(--color-on-blue);
+}
+.tag-row.on-blue .tag.add:hover {
+  background: var(--color-blue-chip-bg);
+  border-color: var(--color-on-blue);
+  color: var(--color-on-blue);
+}
+
+/* Icon buttons (reset/close) rendered on a solid-blue generated card */
+.on-blue-btn { color: var(--color-on-blue-muted); }
+.on-blue-btn:hover { color: var(--color-on-blue); background: rgba(0, 0, 0, 0.2); }
+.on-blue-btn.close:hover { color: var(--color-error); background: var(--color-error-light); }
 
 /* Expandable rows + mini-value rows */
 .expand-row {

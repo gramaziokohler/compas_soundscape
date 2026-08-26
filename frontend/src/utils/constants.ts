@@ -295,6 +295,20 @@ export const UI_SIDEBAR_RESIZE = {
   HANDLE_HIT_AREA: 8,        // px — actual pointer hit area
 } as const;
 
+// Collapse/expand toggle handle — a soft circular button offset from the
+// sidebar edge with a fixed gap (both states). When expanded, the sidebar's
+// own edge gets a smooth inward notch (see utils/sidebarEdgeNotch.ts) near
+// the button instead of a hard straight border. See Sidebar.tsx / RightSidebar.tsx.
+export const UI_SIDEBAR_TOGGLE = {
+  DIAMETER: 30,              // px — circle diameter
+  ICON_WIDTH: 12,
+  ICON_HEIGHT: 12,
+  MARGIN: 12,                // px — gap between the sidebar edge and the button
+  LABEL_OFFSET: 10,          // px — gap between the button and its hover label
+  NOTCH_HEIGHT: 100,         // px — total vertical span of the expanded-state edge notch
+  NOTCH_DEPTH: 12,           // px — how far inward the sidebar edge dips at the notch
+} as const;
+
 // ============================================================================
 // Fluid Design Tokens (UI Scale System)
 // ============================================================================
@@ -310,9 +324,9 @@ export const UI_SIDEBAR_RESIZE = {
 // Never hardcode fractions or px for these surfaces elsewhere.
 export const UI_SCALE = {
   /** Left sidebar content width — clamped-fluid fraction of viewport width. */
-  LEFT_SIDEBAR: { FRACTION: 0.18, DEFAULT_FRACTION: 0.18, MIN: 240, MAX: 720 },
+  LEFT_SIDEBAR: { FRACTION: 0.30, DEFAULT_FRACTION: 0.18, MIN: 240, MAX: 720 },
   /** Right sidebar width — clamped-fluid fraction of viewport width. */
-  RIGHT_SIDEBAR: { FRACTION: 0.18, DEFAULT_FRACTION: 0.18, MIN: 240, MAX: 720 },
+  RIGHT_SIDEBAR: { FRACTION: 0.30, DEFAULT_FRACTION: 0.18, MIN: 240, MAX: 720 },
   /**
    * Max height of scrollable card bodies / list panels as a clamped-fluid
    * fraction of viewport height, so they neither clip on short screens nor

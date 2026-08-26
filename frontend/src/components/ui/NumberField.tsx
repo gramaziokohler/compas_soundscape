@@ -39,6 +39,8 @@ export interface NumberFieldProps
   onKeyDown?: InputHTMLAttributes<HTMLInputElement>["onKeyDown"];
   /** Inline style for the wrapper span (sizing / flex-grow in a row). */
   containerStyle?: CSSProperties;
+  /** When true, recolors the field for legibility on a solid-blue generated card. */
+  onBlueBackground?: boolean;
 }
 
 export function NumberField({
@@ -52,6 +54,7 @@ export function NumberField({
   onKeyDown,
   className = "",
   containerStyle,
+  onBlueBackground = false,
   ...rest
 }: NumberFieldProps) {
   // Draft holds the raw text while the user is typing. `null` = not editing.
@@ -115,13 +118,14 @@ export function NumberField({
           }
           onKeyDown?.(e);
         }}
-        className={`xyz-input w-full text-center ${prefix ? "pl-5" : ""} ${className} ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}
+        className={`xyz-input w-full text-center ${onBlueBackground ? "on-blue" : ""} ${prefix ? "pl-5" : ""} ${className} ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}
         {...rest}
       />
       {prefix && (
         <span
           aria-hidden
-          className="pointer-events-none absolute left-1.5 top-1/2 -translate-y-1/2 text-[9px] font-medium uppercase text-text-3 select-none"
+          className={`pointer-events-none absolute left-1.5 top-1/2 -translate-y-1/2 text-[9px] font-medium uppercase select-none ${onBlueBackground ? "" : "text-text-3"}`}
+          style={onBlueBackground ? { color: 'var(--color-on-blue-muted)' } : undefined}
         >
           {prefix}
         </span>

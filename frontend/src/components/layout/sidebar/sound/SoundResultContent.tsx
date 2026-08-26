@@ -94,6 +94,7 @@ export function SoundResultContent({
       confirmLabel="Unlink"
       onConfirm={() => { setShowUnlinkConfirm(false); onUnlinkEntity(); }}
       onCancel={() => setShowUnlinkConfirm(false)}
+      onBlueBackground
     />
   ) : null;
 
@@ -148,6 +149,7 @@ export function SoundResultContent({
           if (muted !== isMuted) onMute(generatedSound.id);
         } : undefined}
         storeContext="audioControls"
+        onBlueBackground
       />
       </>
     );
@@ -187,6 +189,7 @@ export function SoundResultContent({
         if (muted !== isMuted) onMute(generatedSound.id);
       } : undefined}
       storeContext="audioControls"
+      onBlueBackground
     />
     </>
   );

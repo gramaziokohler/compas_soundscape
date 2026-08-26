@@ -488,6 +488,7 @@ export function ImpulseResponseUpload({
             ? 'border-error/30 bg-error/10'
             : 'border-neutral-700/50 hover:border-neutral-600/70'
         }`}
+        style={isLowEnergy ? undefined : { backgroundColor: 'var(--color-blue-chip-bg)' }}
         onMouseEnter={(e) => handleRowMouseEnter(e, ir, sourceId, receiverId)}
         onMouseLeave={handleRowMouseLeave}
       >
@@ -553,6 +554,7 @@ export function ImpulseResponseUpload({
             ? 'border-error/30 bg-error/10'
             : 'border-neutral-700/50'
         }`}
+        style={isLowEnergy ? undefined : { backgroundColor: 'var(--color-blue-chip-bg)' }}
       >
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
@@ -613,6 +615,7 @@ export function ImpulseResponseUpload({
       <div
         key={groupKey}
         className="rounded border px-2 py-2 border-neutral-700/50"
+        style={{ backgroundColor: 'var(--color-blue-chip-bg)' }}
       >
         <div className="text-[10px] text-neutral-500 mb-2">
           One IR for this listener — applied to all {pairs.length} source pair{pairs.length === 1 ? '' : 's'}.
@@ -699,7 +702,10 @@ export function ImpulseResponseUpload({
                       key={groupId}
                       ref={(el) => setGroupRef(groupId, el)}
                       className="rounded transition-all duration-200"
-                      style={{ border: `1px solid ${isActive ? 'var(--color-primary)' : 'transparent'}` }}
+                      style={{
+                        border: `1px solid ${isActive ? 'var(--color-primary)' : 'transparent'}`,
+                        backgroundColor: 'var(--color-blue-chip-bg)',
+                      }}
                     >
                       {/* Receiver header */}
                       <div className="flex items-center gap-1 px-1 py-1 group rounded hover:bg-neutral-800/40">
@@ -788,6 +794,7 @@ export function ImpulseResponseUpload({
                           ? 'border-neutral-700 hover:border-neutral-600'
                           : 'border-neutral-200 dark:border-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-600'
                     }`}
+                    style={!isLowEnergy && simulationResults ? { backgroundColor: 'var(--color-blue-chip-bg)' } : undefined}
                     onMouseEnter={async (e) => {
                       if (hideTimeoutRef.current) { clearTimeout(hideTimeoutRef.current); hideTimeoutRef.current = null; }
                       setHoveredIRId(ir.id);

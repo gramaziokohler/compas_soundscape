@@ -33,6 +33,8 @@ export interface BadgeProps {
   inline?: boolean;
   /** Native tooltip text. */
   title?: string;
+  /** Adds a recessed dark backing so the badge reads on a solid-blue generated card. */
+  onBlueBackground?: boolean;
 }
 
 const VARIANT_CLASSES: Record<BadgeVariant, string> = {
@@ -57,11 +59,13 @@ export function Badge({
   onClick,
   inline = false,
   title,
+  onBlueBackground = false,
 }: BadgeProps) {
   return (
     <span
       onClick={onClick}
       title={title}
+      style={onBlueBackground ? { backgroundColor: 'var(--color-blue-chip-bg)' } : undefined}
       className={`font-medium flex-shrink-0 whitespace-nowrap ${inline ? "inline" : "inline-flex items-center"} border ${SIZE_CLASSES[size]} ${VARIANT_CLASSES[variant]} ${onClick ? "cursor-pointer transition-colors" : ""} ${className}`}
     >
       {children}

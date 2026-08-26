@@ -155,9 +155,14 @@ export function Card<TConfig extends CardBaseConfig>({
     accentColor: `var(--color-${color})`,
   } as React.CSSProperties;
 
+  // Whole shell turns solid blue once a result exists (and no error) — signals
+  // "generated" without needing the separate accent strip.
+  const isGenerated = hasResult && !error;
+
   // Build Tailwind class names
   const cardClassName = [
-    'relative bg-surface border rounded-xl transition-all duration-200',
+    'relative border rounded-xl transition-all duration-200',
+    isGenerated ? '' : 'bg-surface',
     error ? 'border-error' : 'border-border',
   ].filter(Boolean).join(' ');
 
@@ -253,6 +258,7 @@ export function Card<TConfig extends CardBaseConfig>({
   // corresponding toggle. Card owns the state-awareness (hasResult); the parent
   // owns the data + callbacks.
   const showVariantsBar = !!variants && (hasResult ? showVariantsPostGen : showVariantsPreGen);
+  const versionTitle = Array.isArray(version) ? version.join(' · ') : version;
 
   // Unified run/stop/progress state for the bottom bar — derived entirely from
   // existing store-driven props (no local state / AbortController).
@@ -269,14 +275,15 @@ export function Card<TConfig extends CardBaseConfig>({
       onContextMenu={handleContextMenu}
       style={{
         ...cardColorStyle,
+        ...(isGenerated ? { backgroundColor: 'color-mix(in srgb, var(--color-primary) 60%, transparent)' } : {}),
         ...(error ? { borderColor: `var(--color-error)` } : {}),
         ...(dimmed ? { filter: 'brightness(0.55)' } : {}),
       }}
     >
-      {/* Accent strip — thin colored bar on the card's left edge. Marks the
-          card state (result / error) with the card's identity color while
-          keeping the shell a uniform dark surface (mockup design). */}
-      {(hasResult || error) && (
+      {/* Accent strip — thin colored bar on the card's left edge. Once generated,
+          the whole shell is solid blue and the strip would blend into itself,
+          so it's now reserved for the error state only. */}
+      {error && (
         <div
           aria-hidden
           className="absolute left-0 top-0 bottom-0 w-[3px]"
@@ -327,16 +334,21 @@ export function Card<TConfig extends CardBaseConfig>({
                 {displayName}
               </div>
               {!isExpanded && collapsedInfo && (
-                <div className="text-xxs mt-0.5 text-info">
+                <div
+                  className={`text-xxs mt-0.5 ${isGenerated ? '' : 'text-info'}`}
+                  style={isGenerated ? { color: 'var(--color-on-blue)' } : undefined}
+                >
                   {collapsedInfo}
                 </div>
               )}
               {isExpanded && version && (
                 <div className="mt-1 flex items-center min-w-0">
-                  <div className="text-[10px] text-text-3 font-mono leading-tight min-w-0">
-                    {Array.isArray(version)
-                      ? version.map((line, i) => <div key={i}>{line}</div>)
-                      : version}
+                  <div
+                    className={`text-[10px] font-mono leading-tight flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap ${isGenerated ? '' : 'text-text-3'}`}
+                    title={versionTitle}
+                    style={isGenerated ? { color: 'var(--color-on-blue-muted)' } : undefined}
+                  >
+                    {versionTitle}
                   </div>
                   {/* Info ("i") popover — at the end of the version text, no gap, shown
                       only while expanded and only on cards that expose a version. */}
@@ -364,6 +376,7 @@ export function Card<TConfig extends CardBaseConfig>({
               title={resetButtonTitle}
               onClick={handleResetClick}
               variant="default"
+              onBlueBackground={isGenerated}
             />
           )}
 
@@ -374,6 +387,7 @@ export function Card<TConfig extends CardBaseConfig>({
               title={closeButtonTitle}
               onClick={handleRemoveClick}
               variant="close"
+              onBlueBackground={isGenerated}
             />
           )}
         </div>
@@ -387,7 +401,7 @@ export function Card<TConfig extends CardBaseConfig>({
 
           {/* Variants bar — letter-square selector (pre-gen speech lines / post-gen audio variants) */}
           {showVariantsBar && variants && (
-            <VariantsBar {...variants} />
+            <VariantsBar {...variants} onBlueBackground={isGenerated} />
           )}
                     
           {/* Error display - shown before content but keeps configuration visible */}
@@ -413,7 +427,14 @@ export function Card<TConfig extends CardBaseConfig>({
       {(generateStatus === 'generating' ||
         (isExpanded && generateStatus === 'idle' && !!onRun) ||
         (isExpanded && generateStatus === 'done' && !!doneActionLabel && !!onDoneAction)) && (
-        <div className="px-3.5 py-1.5 border-t border-border">
+        <div
+          className="px-3.5 py-1.5 border-t border-border"
+          style={isGenerated && generateStatus === 'done' ? {
+            backgroundColor: 'rgba(0, 0, 0, 0.15)',
+            borderBottomLeftRadius: '12px',
+            borderBottomRightRadius: '12px',
+          } : undefined}
+        >
           <GenerateButton
             status={generateStatus}
             progress={progress}
@@ -560,9 +581,11 @@ export interface CardButtonProps {
   onClick: (e: React.MouseEvent) => void;
   disabled?: boolean;
   variant?: 'default' | 'close' | 'primary';
+  /** Recolors the icon for legibility on a solid-blue generated card. */
+  onBlueBackground?: boolean;
 }
 
-export function CardButton({ icon, title, onClick, disabled = false, variant = 'default' }: CardButtonProps) {
+export function CardButton({ icon, title, onClick, disabled = false, variant = 'default', onBlueBackground = false }: CardButtonProps) {
   const variantClasses = {
     default: 'text-secondary-hover hover:bg-secondary-light hover:text-foreground',
     close: 'text-secondary-hover hover:bg-error-light hover:text-error',
@@ -573,9 +596,9 @@ export function CardButton({ icon, title, onClick, disabled = false, variant = '
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`w-5 h-5 flex items-center justify-center rounded-full transition-colors ${variantClasses[variant]} ${
-        disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
-      }`}
+      className={`w-5 h-5 flex items-center justify-center rounded-full transition-colors ${
+        onBlueBackground ? `on-blue-btn ${variant === 'close' ? 'close' : ''}` : variantClasses[variant]
+      } ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
       title={title}
     >
       {icon}

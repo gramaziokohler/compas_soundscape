@@ -174,7 +174,7 @@ export function InfoPopover({ title, text, className, label = 'Info', compact = 
         style={{
           width: compact ? '16px' : CARD_INFO_POPOVER.TRIGGER_SIZE,
           height: compact ? '16px' : CARD_INFO_POPOVER.TRIGGER_SIZE,
-          border: '1px solid var(--color-secondary-light)',
+          border: compact ? 'none' : '1px solid var(--color-secondary-light)',
         }}
       >
         <svg

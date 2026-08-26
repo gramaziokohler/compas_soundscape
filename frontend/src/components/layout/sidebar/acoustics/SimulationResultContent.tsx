@@ -379,7 +379,7 @@ export function SimulationResultContent({
         <div className="space-y-2">
           {/* Metric dropdown */}
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-neutral-400 shrink-0">Acoustic Metric</span>
+            <span className="text-[10px] shrink-0" style={{ color: 'var(--color-on-blue-muted)' }}>Acoustic Metric</span>
             <CardSelect
               value={selectedMetric ?? ''}
               onChange={(v) => setSelectedMetric((v || null) as GradientMetric | null)}
@@ -407,9 +407,10 @@ export function SimulationResultContent({
                   step="any"
                   containerStyle={{ width: '64px' }}
                   onChange={(v) => setUserMin(v)}
+                  onBlueBackground
                 />
 
-                <span className="text-[9px] text-neutral-500 pb-0.5">
+                <span className="text-[9px] pb-0.5" style={{ color: 'var(--color-on-blue-muted)' }}>
                   {METRICS.find((m) => m.key === selectedMetric)?.label}
                 </span>
 
@@ -419,15 +420,20 @@ export function SimulationResultContent({
                   step="any"
                   containerStyle={{ width: '64px' }}
                   onChange={(v) => setUserMax(v)}
+                  onBlueBackground
                 />
               </div>
             </div>
           )}
         </div>
       ) : (
-        /* Text metrics block (no grid receivers) */
+        /* Text metrics block (no grid receivers) — recessed chip so numbers stay
+           legible on the solid-blue generated card. */
         metricsBody && (
-          <div className="bg-secondary-lighter text-foreground border border-secondary-light rounded p-2.5 overflow-x-auto">
+          <div
+            className="rounded p-2.5 overflow-x-auto border"
+            style={{ backgroundColor: 'var(--color-blue-chip-bg)', borderColor: 'var(--color-on-blue-faint)', color: 'var(--color-on-blue)' }}
+          >
             <pre className="whitespace-pre-wrap font-sans text-[10px] leading-relaxed">{metricsBody}</pre>
             {metricsNote && (
               <pre className="whitespace-pre-wrap font-sans text-[9px] leading-relaxed mt-1 text-warning">{metricsNote}</pre>

@@ -3021,10 +3021,8 @@ function HomeContent() {
             </div>
           </div>
         )}
-      </main>
-
-      {/* Left Sidebar - Overlays on top of scene */}
-      <Sidebar
+        {/* Left Sidebar - Overlays on top of scene */}
+        <Sidebar
         // File upload props
         audioFile={fileUpload.audioFile}
         uploadError={fileUpload.uploadError}
@@ -3287,6 +3285,7 @@ function HomeContent() {
         onIRNormalizeChange={handleIRNormalizeChange}
         listenerOrientation={listenerOrientation}
       />
+      </main>
     </div>
   );
 }

@@ -264,7 +264,7 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
             <p key={ei} className="text-xs leading-relaxed text-secondary">
               <span
                 className="font-mono"
-                style={{ color: 'var(--color-secondary-hover)', fontSize: '10px', borderRadius: '4px', marginRight: '4px' }}
+                style={{ color: 'var(--color-on-blue-muted)', fontSize: '10px', borderRadius: '4px', marginRight: '4px' }}
               >
                 {formatTimestampRange(event.timestamp)}
               </span>{' '}
@@ -276,7 +276,7 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
 
       {/* Foley results — toggleable foley sounds (shown when foley done) */}
       {hasFoley && config.foleyResult && (
-        <div className="border-t -mx-4 mt-1" style={{ borderTopColor: 'var(--color-secondary-light)' }}>
+        <div className="border-t -mx-4 mt-1" style={{ borderTopColor: 'var(--color-on-blue-faint)' }}>
           <ScenarioResultContent
             foleyResult={config.foleyResult}
             selectedKeys={config.selectedFoleyKeys ?? []}
@@ -291,7 +291,7 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
           onClick={() => handleAnalyze(index)}
           className="w-full py-1.5 px-3 text-xs font-medium rounded hover:opacity-80 transition-opacity"
           style={{
-            backgroundColor: 'var(--color-success, #22c55e)',
+            backgroundColor: 'var(--color-success)',
             color: '#fff',
             borderRadius: '6px',
           }}

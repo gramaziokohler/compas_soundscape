@@ -49,6 +49,8 @@ export interface SoundCardBodyProps {
 
   /** Store ID used for batched-slider undo grouping ('audioControls' | 'soundscape'). */
   storeContext: string;
+  /** When true, recolors icons/labels for legibility on a solid-blue generated card. */
+  onBlueBackground?: boolean;
 }
 
 export function SoundCardBody({
@@ -68,6 +70,7 @@ export function SoundCardBody({
   onUpdatePosition,
   onUnlinkEntity,
   storeContext,
+  onBlueBackground = false,
 }: SoundCardBodyProps) {
   // Local slider state for smooth visual feedback while dragging
   const [tempVolumeDbfs, setTempVolumeDbfs] = useState(volumeDbfs);
@@ -127,6 +130,7 @@ export function SoundCardBody({
               disabled={isLinked}
               disabledTitle="Position is controlled by the linked entity"
               onUpdatePosition={onUpdatePosition}
+              onBlueBackground={onBlueBackground}
             />
 
             {isLinked && onUnlinkEntity && (
@@ -134,7 +138,7 @@ export function SoundCardBody({
                 onClick={onUnlinkEntity}
                 title="Unlink from entity — position will become manually editable"
                 className="flex-shrink-0 transition-opacity hover:opacity-70"
-                style={{ color: 'var(--color-primary)' }}
+                style={{ color: onBlueBackground ? 'var(--color-on-blue)' : 'var(--color-primary)' }}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
@@ -154,7 +158,7 @@ export function SoundCardBody({
             className="flex flex-col items-center"
             title="Playback interval: Time between sound repetitions in the timeline. Set to 0 for continuous loop."
           >
-            <span className="text-[10px] mb-1 text-secondary-hover">
+            <span className="text-[10px] mb-1" style={onBlueBackground ? { color: 'var(--color-on-blue-muted)' } : undefined}>
               {tempIntervalSeconds === 0 ? '∞' : `${tempIntervalSeconds}s`}
             </span>
             <VerticalVolumeSlider
@@ -162,8 +166,9 @@ export function SoundCardBody({
               onDragStart={intervalSlider.onDragStart}
               onChange={intervalSlider.onChange}
               onChangeCommitted={intervalSlider.onCommit}
+              onBlueBackground={onBlueBackground}
             />
-            <span className="text-[10px] mt-1 text-secondary-hover">Int.</span>
+            <span className="text-[10px] mt-1" style={onBlueBackground ? { color: 'var(--color-on-blue-muted)' } : undefined}>Int.</span>
           </div>
         )}
 
@@ -175,7 +180,7 @@ export function SoundCardBody({
             className="flex flex-col items-center"
             title="Volume level: Controls the level in dBFS for spatial audio playback (0 = full scale)."
           >
-            <span className="text-[10px] mb-1 text-secondary-hover">
+            <span className="text-[10px] mb-1" style={onBlueBackground ? { color: 'var(--color-on-blue-muted)' } : undefined}>
               {isMuted || tempVolumeDbfs <= UI_VOLUME_SLIDER.MIN ? 'Mute' : `${tempVolumeDbfs.toFixed(0)}dBFS`}
             </span>
             <VerticalVolumeSlider
@@ -183,8 +188,9 @@ export function SoundCardBody({
               onDragStart={volumeSlider.onDragStart}
               onChange={volumeSlider.onChange}
               onChangeCommitted={volumeSlider.onCommit}
+              onBlueBackground={onBlueBackground}
             />
-            <span className="text-[10px] mt-1 text-secondary-hover">Vol.</span>
+            <span className="text-[10px] mt-1" style={onBlueBackground ? { color: 'var(--color-on-blue-muted)' } : undefined}>Vol.</span>
           </div>
         )}
       </div>

@@ -86,8 +86,8 @@ export function AnalyzeModelResultContent({ config, configIndex }: Props) {
       )}
 
       {/* Summary row */}
-      <div className="text-xs" style={{ color: 'var(--color-secondary-hover)' }}>
-        <span style={{ color: 'var(--color-foreground)', fontWeight: 600 }}>{objects.length}</span> groups
+      <div className="text-xs" style={{ color: 'var(--color-on-blue-muted)' }}>
+        <span style={{ color: 'var(--color-on-blue)', fontWeight: 600 }}>{objects.length}</span> groups
       </div>
 
       {/* Object group list */}
@@ -111,12 +111,12 @@ export function AnalyzeModelResultContent({ config, configIndex }: Props) {
               >
                 <span
                   className="text-xs font-medium truncate flex-1 min-w-0"
-                  style={{ color: 'var(--color-foreground)' }}
+                  style={{ color: 'var(--color-on-blue)' }}
                 >
                   {obj.name}
                 </span>
                 {obj.quantity > 1 && (
-                  <span className="text-xs flex-shrink-0" style={{ color: 'var(--color-secondary-hover)' }}>
+                  <span className="text-xs flex-shrink-0" style={{ color: 'var(--color-on-blue-muted)' }}>
                     x{obj.quantity}
                   </span>
                 )}

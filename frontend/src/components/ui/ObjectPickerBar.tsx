@@ -20,6 +20,8 @@ export interface ObjectPickerBarProps {
   onConfirm: () => void;
   /** Called when cancel is pressed. */
   onCancel: () => void;
+  /** When true, recolors the ConfirmDialog for legibility on a solid-blue generated card. */
+  onBlueBackground?: boolean;
 }
 
 /**
@@ -55,6 +57,7 @@ export function ObjectPickerBar({
   hintText = "Hold shift to select multiple objects, press Enter when finished.",
   onConfirm,
   onCancel,
+  onBlueBackground = false,
 }: ObjectPickerBarProps) {
   if (!isSelecting) return null;
 
@@ -67,6 +70,7 @@ export function ObjectPickerBar({
         disableConfirm={selectedCount === 0}
         onConfirm={onConfirm}
         onCancel={onCancel}
+        onBlueBackground={onBlueBackground}
       />
       <HelperHint text={hintText} />
     </>
