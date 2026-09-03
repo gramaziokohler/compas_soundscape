@@ -215,10 +215,8 @@ export function MaterialSelect({
         >
           {/* Placeholder / clear option */}
           <div
-            className="select-opt compact cursor-pointer"
-            style={{ color: 'var(--color-secondary-hover)', backgroundColor: 'var(--color-surface-2)' }}
-            onMouseEnter={(e) => (e.currentTarget.style.filter = 'brightness(1.15)')}
-            onMouseLeave={(e)  => (e.currentTarget.style.filter = '')}
+            className="select-opt compact cursor-pointer hover:!bg-primary-lighter hover:!text-foreground dark:hover:!bg-surface-2 dark:hover:brightness-[1.15] dark:hover:!text-secondary-hover"
+            style={{ color: 'var(--color-secondary-hover)' }}
             onClick={() => { onChange(''); setIsOpen(false); }}
           >
             {placeholder}
@@ -237,16 +235,12 @@ export function MaterialSelect({
               return (
                 <div
                   key={mat.id}
-                  className="select-opt compact text-white cursor-pointer"
-                  style={{ backgroundColor: bg, color: '#fff' }}
+                  className="select-opt compact cursor-pointer hover:brightness-90 dark:hover:brightness-[1.15]"
+                  style={{ backgroundColor: bg, color: 'var(--color-on-blue)' }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.filter = 'brightness(1.15)';
                     handleOptionEnter(e, mat.id);
                   }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.filter = '';
-                    handleOptionLeave();
-                  }}
+                  onMouseLeave={handleOptionLeave}
                   onClick={() => {
                     onChange(mat.id);
                     setIsOpen(false);

@@ -28,6 +28,7 @@ import { Power, ChevronDown, ChevronRight } from 'lucide-react';
 import { CardSection, type CardTypeOption } from '@/components/ui/CardSection';
 import { Card } from '@/components/ui/Card';
 import { Notice } from '@/components/ui/Notice';
+import { RangeSlider } from '@/components/ui/RangeSlider';
 import { apiService } from '@/services/api';
 import { CARD_TYPE_LABELS } from '@/types/card';
 import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGridListenersStore, useAudioControlsStore, useSoundscapeStore, notifyError, resolveSimulationLayerName } from '@/store';
@@ -1335,9 +1336,6 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
   const header = (
   <div className="flex items-center gap-2 w-full justify-between">
-    <div className="text-xs font-medium text-info">
-      Acoustic cards
-    </div>
     {simulationConfigs.length > 0 && hasAnyCompletedCard && (
       <button
         onClick={(e) => {
@@ -1774,33 +1772,31 @@ export function AcousticsSection(props: AcousticsSectionProps) {
                     />
                   )}
                   <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-neutral-400">IR Gain</span>
-                      <span className="text-xs text-neutral-300 tabular-nums">{((config as any).irGainDb ?? 0) > 0 ? '+' : ''}{((config as any).irGainDb ?? 0).toFixed(1)} dB</span>
-                    </div>
-                    <input
-                      type="range"
-                      min={-12}
-                      max={12}
-                      step={0.1}
-                      value={(config as any).irGainDb ?? 0}
-                      onChange={(e) => {
-                        const value = parseFloat(e.target.value);
-                        handleUpdateConfig(index, { irGainDb: value } as any);
+                    {(() => {
+                      const irGainDb = (config as any).irGainDb ?? 0;
+                      const applyIRGain = (value: number) => {
+                        const clamped = Math.min(12, Math.max(-12, value));
+                        handleUpdateConfig(index, { irGainDb: clamped } as any);
                         if (onIRGainChange && index === activeSimulationIndex) {
-                          onIRGainChange(index, value);
+                          onIRGainChange(index, clamped);
                         }
-                      }}
-                      className="w-full h-1.5 rounded-full appearance-none bg-neutral-700 cursor-pointer"
-                      style={{
-                        background: `linear-gradient(to right, #3b82f6 ${((((config as any).irGainDb ?? 0) + 12) / 24) * 100}%, #374151 ${((((config as any).irGainDb ?? 0) + 12) / 24) * 100}%)`,
-                      }}
-                    />
-                    <div className="flex justify-between text-[9px] text-neutral-500">
-                      <span>-12 dB</span>
-                      <span>0 dB</span>
-                      <span>+12 dB</span>
-                    </div>
+                      };
+                      return (
+                        <RangeSlider
+                          label="IR Gain"
+                          value={irGainDb}
+                          min={-12}
+                          max={12}
+                          step={0.1}
+                          unit="dB"
+                          defaultValue={0}
+                          showLabels
+                          minLabel="-12 dB"
+                          maxLabel="+12 dB"
+                          onChange={applyIRGain}
+                        />
+                      );
+                    })()}
                   </div>
                   <label className="flex items-center gap-2 text-xs text-neutral-300 cursor-pointer">
                     <input
@@ -1891,8 +1887,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             actionButtonLabel="Start Simulation"
             actionButtonDisabled={actionButtonDisabled}
             actionButtonDisabledReason={actionButtonDisabledReason}
-            actionButtonColor='info'
-            color="info"
+            actionButtonColor='primary'
+            color="primary"
             version={cardVersion}
             collapsedInfo={getSimulationResultCollapsedInfo(config)}
         />
@@ -1910,7 +1906,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
           addButtonTitle="Add acoustic simulation"
           onAddItem={handleAddItem}
           renderCard={renderCard}
-          color="info"
+          color="primary"
           header={header}
           expandedIndex={expandedCardIndex}
           onExpandedIndexChange={handleExpandedIndexChange}

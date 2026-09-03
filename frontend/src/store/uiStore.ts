@@ -21,6 +21,7 @@ import {
   DEFAULT_SPEED_OF_SOUND,
   CHORAS_DE_DEFAULT_LC,
 } from '@/utils/constants';
+import { applyColorTheme, type ColorThemePreference } from '@/utils/color-theme';
 
 export interface UIStoreState {
   // ── Load tab ──────────────────────────────────────────────────────────────
@@ -171,6 +172,10 @@ export interface UIStoreState {
   // ── View mode (survives refresh) ────────────────────────────────────────────
   viewMode: 'default' | 'acoustic' | 'dark';
   setViewMode: (mode: 'default' | 'acoustic' | 'dark') => void;
+
+  // ── UI color theme (independent of Speckle Sounds/Default/Acoustics viewmode)
+  colorTheme: ColorThemePreference;
+  setColorTheme: (theme: ColorThemePreference) => void;
 
   // ── Floating panel positions & sizes (survive refresh) ──────────────────────
   objectExplorerPanel: { x: number; y: number; width: number; height: number } | null;
@@ -367,6 +372,13 @@ export const useUIStore = create<UIStoreState>()(
       // ── View mode ──────────────────────────────────────────────────────────
       viewMode: 'default' as 'default' | 'acoustic' | 'dark',
       setViewMode: (mode) => set({ viewMode: mode }, false, 'ui/setViewMode'),
+
+      // ── UI color theme ─────────────────────────────────────────────────────
+      colorTheme: 'system' as ColorThemePreference,
+      setColorTheme: (theme) => {
+        applyColorTheme(theme);
+        set({ colorTheme: theme }, false, 'ui/setColorTheme');
+      },
 
       // ── Floating panel positions & sizes ───────────────────────────────────
       objectExplorerPanel: null,

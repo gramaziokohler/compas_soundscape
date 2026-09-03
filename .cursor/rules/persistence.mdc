@@ -161,7 +161,8 @@ const storage: PersistStorage<State> = {
 | Key | Format | Purpose |
 |-----|--------|---------|
 | `compas-camera-state` | `{ pos, target, up, orbitTarget }` | Camera POV survival |
-| `compas-view-mode` | `'default' \| 'acoustic' \| 'dark'` | View mode survival |
+| `compas-view-mode` | `'default' \| 'acoustic' \| 'dark'` | Speckle viewmode survival (Sounds/Default/Acoustics) |
+| `compas-color-theme` | `'system' \| 'light' \| 'dark'` | UI color theme; blocking script in `layout.tsx` reads this before paint |
 
 ## SessionStorage Job Recovery
 

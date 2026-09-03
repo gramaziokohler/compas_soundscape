@@ -170,7 +170,7 @@ export function InfoPopover({ title, text, className, label = 'Info', compact = 
         title={label}
         aria-expanded={open}
         aria-haspopup="dialog"
-        className="flex items-center justify-center rounded-full transition-colors cursor-pointer text-secondary-hover hover:text-foreground hover:bg-secondary-light"
+        className="flex items-center justify-center rounded-full transition-colors cursor-pointer info-trigger text-secondary-hover hover:text-foreground hover:bg-secondary-light"
         style={{
           width: compact ? '16px' : CARD_INFO_POPOVER.TRIGGER_SIZE,
           height: compact ? '16px' : CARD_INFO_POPOVER.TRIGGER_SIZE,

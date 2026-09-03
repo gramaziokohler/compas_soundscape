@@ -94,7 +94,7 @@ function DAWRuler({
         style={{
           width: `${LABEL_WIDTH}px`,
           flexShrink: 0,
-          borderRight: '1px solid rgba(255,255,255,0.1)',
+          borderRight: '1px solid var(--color-border-strong)',
           backgroundColor: 'var(--background)',
         }}
       />
@@ -812,8 +812,8 @@ export function DAWTimeline({
           height: '38px',
           paddingLeft: '12px',
           paddingRight: '8px',
-          borderBottom: '1px solid rgba(255,255,255,0.1)',
-          backgroundColor: 'rgba(255,255,255,0.04)',
+          borderBottom: '1px solid var(--color-border-strong)',
+          backgroundColor: 'var(--color-border)',
           cursor: 'grab',
           flexShrink: 0,
           gap: '8px',
@@ -868,7 +868,7 @@ export function DAWTimeline({
             style={{
               fontSize: '10px',
               fontFamily: 'monospace',
-              color: 'rgba(255,255,255,0.5)',
+              color: 'var(--color-secondary-hover)',
               minWidth: '40px',
               textAlign: 'right',
             }}
@@ -884,7 +884,7 @@ export function DAWTimeline({
               style={{
                 background: 'transparent',
                 border: 'none',
-                color: 'rgba(255,255,255,0.5)',
+                color: 'var(--color-secondary-hover)',
                 cursor: 'pointer',
                 padding: '4px',
                 borderRadius: '4px',
@@ -909,7 +909,7 @@ export function DAWTimeline({
                 style={{
                   background: 'transparent',
                   border: 'none',
-                  color: isDownloading ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.5)',
+                  color: isDownloading ? 'var(--color-text-3)' : 'var(--color-secondary-hover)',
                   cursor: isDownloading ? 'wait' : 'pointer',
                   padding: '4px',
                   borderRadius: '4px',
@@ -929,7 +929,7 @@ export function DAWTimeline({
                     right: 0,
                     top: '100%',
                     backgroundColor: 'var(--background)',
-                    border: '1px solid rgba(255,255,255,0.15)',
+                    border: '1px solid var(--color-border-strong)',
                     borderRadius: '6px',
                     boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
                     padding: '4px 0',
@@ -963,9 +963,9 @@ export function DAWTimeline({
                             cursor: disabled ? 'not-allowed' : 'pointer',
                             whiteSpace: 'nowrap',
                             fontSize: '11px',
-                            color: disabled ? 'rgba(255,255,255,0.2)' : 'var(--foreground)',
+                            color: disabled ? 'var(--color-text-3)' : 'var(--foreground)',
                           }}
-                          onMouseEnter={disabled ? undefined : (e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.07)')}
+                          onMouseEnter={disabled ? undefined : (e) => (e.currentTarget.style.backgroundColor = 'var(--color-border)')}
                           onMouseLeave={disabled ? undefined : (e) => (e.currentTarget.style.backgroundColor = 'transparent')}
                         >
                           <div style={{ fontWeight: 500 }}>{label}</div>
@@ -985,7 +985,7 @@ export function DAWTimeline({
             style={{
               background: 'transparent',
               border: 'none',
-              color: 'rgba(255,255,255,0.5)',
+              color: 'var(--color-secondary-hover)',
               cursor: 'pointer',
               padding: '4px',
               borderRadius: '4px',
@@ -1042,7 +1042,7 @@ export function DAWTimeline({
                 backgroundColor: 'rgba(var(--color-primary-rgb, 99,102,241), 0.12)',
                 borderBottom: '1px solid rgba(var(--color-primary-rgb, 99,102,241), 0.25)',
                 fontSize: 11,
-                color: 'rgba(255,255,255,0.7)',
+                color: 'var(--color-secondary-hover)',
                 backdropFilter: 'blur(2px)',
               }}
             >
@@ -1307,7 +1307,7 @@ export function DAWTimeline({
               top: `${contextMenu.y}px`,
               zIndex: 9999,
               backgroundColor: 'var(--background)',
-              border: '1px solid rgba(255,255,255,0.15)',
+              border: '1px solid var(--color-border-strong)',
               borderRadius: '6px',
               boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
               width: `${MENU_WIDTH}px`,
@@ -1328,7 +1328,7 @@ export function DAWTimeline({
                 position: 'relative',
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.07)';
+                e.currentTarget.style.backgroundColor = 'var(--color-border)';
                 setContextMenu((prev) => prev ? { ...prev, submenuOpen: 'variants' } : prev);
               }}
               onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
@@ -1347,7 +1347,7 @@ export function DAWTimeline({
                     top: 0,
                     width: 80,
                     backgroundColor: 'var(--background)',
-                    border: '1px solid rgba(255,255,255,0.15)',
+                    border: '1px solid var(--color-border-strong)',
                     borderRadius: '6px',
                     boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
                     padding: '4px 0',
@@ -1368,7 +1368,7 @@ export function DAWTimeline({
                           gap: '6px',
                           color: 'var(--foreground)',
                         }}
-                        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.07)')}
+                        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--color-border)')}
                         onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
                         onClick={() => {
                           setIterationLink(soundId, iterationIndex, { variantIndex: vi });
@@ -1408,10 +1408,10 @@ export function DAWTimeline({
               <div
                 style={{
                   padding: '6px 12px',
-                  color: 'rgba(255,255,255,0.5)',
+                  color: 'var(--color-secondary-hover)',
                   fontSize: '10px',
                   fontFamily: 'monospace',
-                  borderBottom: '1px solid rgba(255,255,255,0.08)',
+                  borderBottom: '1px solid var(--color-border)',
                   cursor: 'default',
                   display: 'flex',
                   alignItems: 'center',
@@ -1432,7 +1432,7 @@ export function DAWTimeline({
               <div
                 style={{
                   padding: '8px 12px',
-                  color: 'rgba(255,255,255,0.35)',
+                  color: 'var(--color-text-3)',
                   fontStyle: 'italic',
                   cursor: 'default',
                   textAlign: 'center',
@@ -1455,7 +1455,7 @@ export function DAWTimeline({
                 position: 'relative',
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.07)';
+                e.currentTarget.style.backgroundColor = 'var(--color-border)';
                 setContextMenu((prev) => prev ? { ...prev, submenuOpen: 'entities' } : prev);
               }}
               onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
@@ -1482,7 +1482,7 @@ export function DAWTimeline({
                     top: 0,
                     width: 80,
                     backgroundColor: 'var(--background)',
-                    border: '1px solid rgba(255,255,255,0.15)',
+                    border: '1px solid var(--color-border-strong)',
                     borderRadius: '6px',
                     boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
                     padding: '4px 0',
@@ -1504,7 +1504,7 @@ export function DAWTimeline({
                             gap: '6px',
                             color: 'var(--foreground)',
                           }}
-                          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.07)')}
+                          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--color-border)')}
                           onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
                           onClick={() => {
                             if (isActive) {

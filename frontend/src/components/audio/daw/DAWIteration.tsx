@@ -3,12 +3,18 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import { API_BASE_URL } from '@/utils/constants';
+import { subscribeColorTheme } from '@/utils/color-theme';
 import type { IterationLink } from '@/types/audio';
 
 export interface IterationContextMenuData {
   x: number;
   y: number;
   iterationIndex: number;
+}
+
+function waveformColor(muted: boolean): string {
+  const styles = getComputedStyle(document.documentElement);
+  return styles.getPropertyValue(muted ? '--color-border-strong' : '--color-secondary-hover').trim();
 }
 
 export interface DAWIterationProps {
@@ -105,7 +111,7 @@ export function DAWIteration({
     const ws = WaveSurfer.create({
       container: waveContainerRef.current,
       height: 28,
-      waveColor: isMuted ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.55)',
+      waveColor: waveformColor(isMuted),
       progressColor: 'transparent',
       cursorWidth: 0,
       interact: false,
@@ -123,8 +129,12 @@ export function DAWIteration({
   }, [audioUrl]);
 
   useEffect(() => {
-    if (!wsRef.current) return;
-    wsRef.current.setOptions({ waveColor: isMuted ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.55)' });
+    const applyWaveColor = () => {
+      if (!wsRef.current) return;
+      wsRef.current.setOptions({ waveColor: waveformColor(isMuted) });
+    };
+    applyWaveColor();
+    return subscribeColorTheme(applyWaveColor);
   }, [isMuted]);
 
   // ── Pointer drag / duplicate ───────────────────────────────────────────────

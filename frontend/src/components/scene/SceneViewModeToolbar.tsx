@@ -26,7 +26,6 @@ export function SceneViewModeToolbar() {
           { mode: 'acoustic', label: 'Acoustics', title: 'Acoustic materials layer isolation (needs a simulation tab expanded)' },
         ] as const).map(({ mode, label, title }) => {
           const isActive = viewMode === mode;
-          const accentColor = 'var(--color-secondary)';
           return (
             <button
               key={mode}
@@ -39,8 +38,8 @@ export function SceneViewModeToolbar() {
                 backgroundColor: isActive
                   ? 'var(--color-primary)'
                   : 'transparent',
-                color: isActive ? accentColor : 'rgba(255,255,255,0.55)',
-                borderRight: mode !== 'acoustic' ? '1px solid rgba(255,255,255,0.12)' : undefined,
+                color: isActive ? 'var(--color-on-blue)' : 'var(--color-secondary-hover)',
+                borderRight: mode !== 'acoustic' ? '1px solid var(--color-border-strong)' : undefined,
               }}
             >
               {label}

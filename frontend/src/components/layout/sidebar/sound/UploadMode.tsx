@@ -5,6 +5,7 @@ import type { SoundGenerationConfig } from '@/types';
 import { DEFAULT_DBFS } from '@/utils/constants';
 import { FileUploadArea } from '@/components/controls/FileUploadArea';
 import { WaveSurferPlayer } from '@/components/audio/WaveSurferPlayer';
+import { registerPreviewInstance } from '@/lib/audio/previewRegistry';
 
 /**
  * UploadMode Component
@@ -18,6 +19,10 @@ export interface UploadModeProps {
   index: number;
   onUploadAudio?: (index: number, file: File) => Promise<void>;
   onClearUploadedAudio?: (index: number) => void;
+  /** Controlled preview state — owned by the parent so previews are mutually exclusive. */
+  isPreviewPlaying?: boolean;
+  onPreviewPlayPause?: () => void;
+  onPreviewStop?: () => void;
 }
 
 export function UploadMode({
@@ -25,10 +30,12 @@ export function UploadMode({
   index,
   onUploadAudio,
   onClearUploadedAudio,
+  isPreviewPlaying = false,
+  onPreviewPlayPause,
+  onPreviewStop,
 }: UploadModeProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
 
   const hasUploadedAudio = config.uploadedAudioInfo !== undefined;
 
@@ -66,6 +73,7 @@ export function UploadMode({
 
   const handleClearAudio = () => {
     setUploadFile(null);
+    onPreviewStop?.();
     onClearUploadedAudio?.(index);
   };
 
@@ -94,22 +102,13 @@ export function UploadMode({
             audioUrl={config.uploadedAudioUrl}
             volumeDbfs={DEFAULT_DBFS}
             isPlaying={isPreviewPlaying}
-            onPlayPause={() => setIsPreviewPlaying((v) => !v)}
+            onPlayPause={() => onPreviewPlayPause?.()}
             onStop={(ws) => {
               if (ws) ws.seekTo(0);
-              setIsPreviewPlaying(false);
+              onPreviewStop?.();
             }}
+            onWavesurferReady={(ws) => registerPreviewInstance(`pregen:${index}`, ws)}
           />
-          <button
-            onClick={() => {
-              setIsPreviewPlaying(false);
-              handleClearAudio();
-            }}
-            className="absolute top-1 right-1 bg-black/70 hover:bg-red-600 text-white w-5 h-5 flex items-center justify-center rounded text-xs transition-colors z-10"
-            title="Remove audio"
-          >
-            ✕
-          </button>
         </div>
       )}
     </>

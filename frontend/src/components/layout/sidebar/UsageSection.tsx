@@ -363,7 +363,7 @@ export function UsageSection({
           };
         } else if (sc.scenarioResult) {
           // Scenario generated, no foley yet → run foley (auto-chains to send)
-          doneActionLabel = 'Call Foley Artist';
+          doneActionLabel = 'Send to sounds';
           onDoneAction = () => {
             if (!isFoleyLoading) {
               pendingAutoSendRef.current.add(originalIndex);

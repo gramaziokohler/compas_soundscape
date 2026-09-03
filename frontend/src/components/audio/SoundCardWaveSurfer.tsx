@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import type WaveSurfer from 'wavesurfer.js';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { pauseStore, commitStore } from '@/store';
+import { registerPreviewInstance } from '@/lib/audio/previewRegistry';
 import { WaveSurferPlayer } from './WaveSurferPlayer';
 
 interface SoundCardWaveSurferProps {
@@ -294,7 +295,7 @@ export function SoundCardWaveSurfer({
           onStop();
         }}
         className="text-xs px-1 rounded"
-        style={{ color: 'var(--color-secondary-hover)', backgroundColor: 'transparent', border: '1px solid var(--color-secondary-hover)' }}
+        style={{ color: 'var(--color-on-blue-muted)', backgroundColor: 'transparent', border: '1px solid var(--color-on-blue-muted)' }}
         title="Clear trim"
       >
         ×
@@ -312,7 +313,12 @@ export function SoundCardWaveSurfer({
       isMuted={isMuted}
       silent={silent}
       color={color}
-      onWavesurferReady={(ws) => { wsRef.current = ws; }}
+      backgroundColor="var(--color-blue-chip-bg)"
+      onBlueBackground
+      onWavesurferReady={(ws) => {
+        wsRef.current = ws;
+        if (soundId) registerPreviewInstance(soundId, ws);
+      }}
       onAudioProcess={handleAudioProcess}
       onFinish={handleFinish}
       interact={false}
@@ -336,7 +342,7 @@ export function SoundCardWaveSurfer({
             left: 0,
             width: `${localTrimStart * 100}%`,
             height: '100%',
-            backgroundColor: 'var(--foreground-static)',
+            backgroundColor: 'var(--color-blue-chip-bg)',
             pointerEvents: 'none',
             zIndex: 5,
           }}
@@ -352,7 +358,7 @@ export function SoundCardWaveSurfer({
             left: `${localTrimEnd * 100}%`,
             width: `${(1 - localTrimEnd) * 100}%`,
             height: '100%',
-            backgroundColor: 'var(--foreground-static)',
+            backgroundColor: 'var(--color-blue-chip-bg)',
             pointerEvents: 'none',
             zIndex: 5,
           }}

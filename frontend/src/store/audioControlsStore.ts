@@ -19,6 +19,7 @@ import { devtools, persist, createJSONStorage } from 'zustand/middleware';
 import type { SoundState, SoundGenerationConfig } from '@/types';
 import type { IterationLink } from '@/types/audio';
 import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
+import { pausePreviewInstance, pauseAllPreviewInstances } from '@/lib/audio/previewRegistry';
 import { AUDIO_PLAYBACK, AUDIO_TIMELINE, DEFAULT_DBFS, DEFAULT_MAXIMUM_FOLEY_SOUNDS, TTS_DEFAULT_LANGUAGE } from '@/utils/constants';
 import { apiService } from '@/services/api';
 import { useSoundscapeStore } from './soundscapeStore';
@@ -1295,12 +1296,15 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         },
 
         handlePreviewPlayPause: (soundId) => {
-          const { individualSoundStates } = get();
+          const { individualSoundStates, previewingSoundId } = get();
           if (Object.values(individualSoundStates).some((s) => s === 'playing')) {
             const stopped: Record<string, SoundState> = {};
             Object.keys(individualSoundStates).forEach((id) => { stopped[id] = 'stopped'; });
             set({ individualSoundStates: stopped }, false, 'audio/previewStopTimeline');
           }
+          // Pause imperatively — a prop-driven `isPlaying=false` effect may never
+          // run if the previous card unmounts/collapses in the same React commit.
+          if (previewingSoundId) pausePreviewInstance(previewingSoundId);
           set(
             (state) => ({
               previewingSoundId:
@@ -1311,7 +1315,8 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           );
         },
 
-        handlePreviewStop: (soundId) =>
+        handlePreviewStop: (soundId) => {
+          pausePreviewInstance(soundId);
           set(
             (state) => ({
               previewingSoundId:
@@ -1319,12 +1324,16 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             }),
             false,
             'audio/handlePreviewStop',
-          ),
+          );
+        },
 
-        stopSoundcardPreview: () =>
-          set({ previewingSoundId: null }, false, 'audio/stopSoundcardPreview'),
+        stopSoundcardPreview: () => {
+          pauseAllPreviewInstances();
+          set({ previewingSoundId: null }, false, 'audio/stopSoundcardPreview');
+        },
 
         playAll: () => {
+          pauseAllPreviewInstances();
           set({ previewingSoundId: null }, false, 'audio/playAll/clearPreview');
           set({ _pendingPlayAllStagger: true }, false, 'audio/playAll/stagger');
 

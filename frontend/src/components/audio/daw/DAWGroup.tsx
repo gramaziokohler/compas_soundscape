@@ -23,8 +23,8 @@ export function DAWGroup({ groupName, soundCount, children }: DAWGroupProps) {
           height: '22px',
           paddingLeft: '8px',
           paddingRight: '8px',
-          backgroundColor: 'rgba(255,255,255,0.04)',
-          borderBottom: '1px solid rgba(255,255,255,0.08)',
+          backgroundColor: 'var(--color-border)',
+          borderBottom: '1px solid var(--color-border)',
           cursor: 'pointer',
           userSelect: 'none',
           flexShrink: 0,
@@ -64,8 +64,8 @@ export function DAWGroup({ groupName, soundCount, children }: DAWGroupProps) {
         <span
           style={{
             fontSize: '9px',
-            color: 'rgba(255,255,255,0.4)',
-            backgroundColor: 'rgba(255,255,255,0.08)',
+            color: 'var(--color-text-3)',
+            backgroundColor: 'var(--color-border)',
             borderRadius: '8px',
             padding: '0 5px',
             lineHeight: '14px',

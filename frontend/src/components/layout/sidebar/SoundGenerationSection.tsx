@@ -491,9 +491,6 @@ export function SoundGenerationSection({
   // communication (sound sphere / linked object click) and would trigger right sidebar expansion.
   // Instead, we write directly to uiStore so SpeckleScene can highlight the sphere.
   const handleExpandedIndexChange = useCallback((newFilteredIndex: number | null) => {
-    if (previewingSoundId) {
-      onPreviewStop?.(previewingSoundId);
-    }
     setExpandedIndex(newFilteredIndex);
     // Map filtered position → original index for 3D scene sync
     const originalIdx = newFilteredIndex !== null
@@ -505,7 +502,7 @@ export function SoundGenerationSection({
     if (newFilteredIndex === null) {
       onSoundCardCollapsed?.();
     }
-  }, [previewingSoundId, onPreviewStop, setExpandedSoundCardIndex, filteredCardItems, onSoundCardCollapsed]);
+  }, [setExpandedSoundCardIndex, filteredCardItems, onSoundCardCollapsed]);
 
   // Available card types for add button dropdown (sound types only)
   const availableTypes: CardTypeOption[] = useMemo(() => [
@@ -816,7 +813,7 @@ export function SoundGenerationSection({
     // Linked entities display (shown inside card body when entities are linked)
     const linkedEntitiesDisplay = hasEntities ? (
       <div className="flex items-center gap-2 mb-1">
-        <span className={`text-[10px] whitespace-nowrap ${isGenerated ? '' : 'text-secondary'}`} style={isGenerated ? { color: 'var(--color-on-blue-muted)' } : undefined}>
+        <span className={`text-[10px] whitespace-nowrap ${isGenerated ? '' : 'text-foreground'}`} style={isGenerated ? { color: 'var(--color-on-blue-muted)' } : undefined}>
           Linked entities:
         </span>
           {hasMultipleEntities ? (
@@ -852,7 +849,7 @@ export function SoundGenerationSection({
                         cursor: timelineEntityId !== null ? 'not-allowed' : undefined,
                       }
                     : {
-                        backgroundColor: isGenerated ? 'var(--color-blue-chip-bg)' : 'var(--color-secondary)',
+                        backgroundColor: isGenerated ? 'var(--color-blue-chip-bg)' : 'var(--foreground)',
                         color: isGenerated ? 'var(--color-on-blue-muted)' : 'var(--color-secondary-light)',
                         cursor: timelineEntityId !== null ? 'not-allowed' : undefined,
                       }}
@@ -901,14 +898,15 @@ export function SoundGenerationSection({
               : 'Link to entities'
         }
         className={`flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full transition-all opacity-80 ${
-          isGenerated ? 'hover:bg-black/20' : 'hover:bg-secondary hover:text-primary'
-        } ${isCurrentlyLinking ? 'animate-pulse' : ''}`}
-        style={(isCurrentlyLinking || isLinkedInHeader)
-          ? {
-              color: isGenerated ? 'var(--color-primary)' : 'var(--color-foreground)',
-              backgroundColor: isGenerated ? 'var(--color-on-blue)' : 'var(--color-primary)',
-            }
-          : isGenerated ? { color: 'var(--color-on-blue-muted)' } : undefined}
+          isCurrentlyLinking ? 'animate-pulse' : ''
+        } ${(isCurrentlyLinking || isLinkedInHeader)
+          ? (isGenerated
+              ? 'text-primary bg-on-blue hover:bg-blue-chip-bg'
+              : 'bg-primary text-on-blue dark:text-foreground')
+          : (isGenerated
+              ? 'text-on-blue-muted hover:bg-blue-chip-bg'
+              : 'hover:bg-primary-lighter hover:text-blue-text dark:hover:bg-foreground dark:hover:text-primary')
+        }`}
       >
         <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
@@ -1039,6 +1037,12 @@ export function SoundGenerationSection({
     const showVariantsPostGen = isGenerated && !!onVariantChange &&
       (isTextToAudioType || isTtsType || isUploadWithVariants);
 
+    // Pre-gen (upload / sample-audio) preview shares the global previewingSoundId
+    // field with generated-sound previews, so starting one always stops the other.
+    const preGenPreviewKey = `pregen:${originalIndex}`;
+    const isPreGenPreviewPlaying = previewingSoundId === preGenPreviewKey;
+    const isThisCardPreviewPlaying = isGenerated ? previewingSoundId === generatedSound?.id : isPreGenPreviewPlaying;
+
     return (
       <div key={originalIndex} style={{ position: 'relative' }}>
       <Card
@@ -1067,6 +1071,8 @@ export function SoundGenerationSection({
         }
         defaultName={undefined}
         collapsedInfo={getCollapsedInfo(config, originalIndex)}
+        isPlayingCollapsedInfo={isThisCardPreviewPlaying}
+        keepContentMountedWhenCollapsed={isThisCardPreviewPlaying}
         showIndex={true}
         canRemove={true}
         closeButtonTitle="Remove sound"
@@ -1091,6 +1097,7 @@ export function SoundGenerationSection({
         variants={cardVariants}
         showVariantsPreGen={showVariantsPreGen}
         showVariantsPostGen={showVariantsPostGen}
+        showSettingsSummary={false}
         beforeContent={isGenerated ? undefined : (
           <>
             {!isCurrentlyLinking && linkedEntitiesDisplay}
@@ -1110,6 +1117,9 @@ export function SoundGenerationSection({
               onLibrarySearch={onLibrarySearch}
               onLibrarySoundSelect={onLibrarySoundSelect}
               onCatalogSoundSelect={onCatalogSoundSelect}
+              isPreviewPlaying={isPreGenPreviewPlaying}
+              onPreviewPlayPause={() => onPreviewPlayPause(preGenPreviewKey)}
+              onPreviewStop={() => onPreviewStop(preGenPreviewKey)}
             />
           </>
         )}
@@ -1121,6 +1131,7 @@ export function SoundGenerationSection({
             {triggerBadge}
             {linkingBar}
             <SoundResultContent
+              cardConfig={item}
               generatedSound={generatedSound}
               index={originalIndex}
               variants={variants}
@@ -1238,8 +1249,8 @@ export function SoundGenerationSection({
   );
   const showGenerateAll = pendingCardCount > 2;
 
-  const footer = (
-    <div className="flex gap-2">
+  const footer = (isSoundGenerating || showGenerateAll) ? (
+    <div className="flex gap-2 pt-2">
       {isSoundGenerating ? (
         /* Progress replaces the generate button while running */
         <GenerateButton
@@ -1248,7 +1259,7 @@ export function SoundGenerationSection({
           statusText={displayProgress}
           onStop={onStopGeneration}
         />
-      ) : showGenerateAll ? (
+      ) : (
         <GenerateButton
           status="idle"
           progress={0}
@@ -1256,9 +1267,9 @@ export function SoundGenerationSection({
           disabled={shouldDisableGenerateButton}
           onGenerate={handleGenerateAll}
         />
-      ) : null}
+      )}
     </div>
-  );
+  ) : null;
 
     const header = (
     <div className="flex flex-col gap-2">

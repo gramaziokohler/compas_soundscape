@@ -118,7 +118,7 @@ export function NumberField({
           }
           onKeyDown?.(e);
         }}
-        className={`xyz-input w-full text-center ${onBlueBackground ? "on-blue" : ""} ${prefix ? "pl-5" : ""} ${className} ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}
+        className={`xyz-input w-full ${prefix ? "pl-5 pr-1 text-left" : "text-center"} ${onBlueBackground ? "on-blue" : ""} ${className} ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}
         {...rest}
       />
       {prefix && (

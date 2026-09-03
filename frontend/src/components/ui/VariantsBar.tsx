@@ -27,6 +27,8 @@
  * ```
  */
 
+import { DashedAddButton } from '@/components/ui/DashedAddButton';
+
 export interface VariantsBarItem {
   /** Stable React key for the square. */
   key: string;
@@ -121,14 +123,11 @@ export function VariantsBar({
       )}
 
       {onAdd && (
-        <button
-          key="add"
+        <DashedAddButton
           onClick={onAdd}
           title="Add variant"
-          className="tag add relative flex-shrink-0 flex items-center justify-center"
-        >
-          +
-        </button>
+          className="relative flex-shrink-0"
+        />
       )}
     </div>
   );

@@ -137,7 +137,7 @@ export function ResonanceAudioMaterialUI({
             className={`shrink-0 transition-transform duration-150 ${expandedAll ? 'rotate-90' : ''}`}
           />
         </button>
-        <span className="font-medium text-secondary shrink-0 w-12 truncate">Materials</span>
+        <span className="font-medium text-foreground shrink-0 w-12 truncate">Materials</span>
         <MaterialSelect
           value={allFacesMaterial || ''}
           onChange={handleAllFacesChange}

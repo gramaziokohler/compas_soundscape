@@ -75,6 +75,7 @@ export function GenerateButton({
   // Disabled-click feedback: flash the reason in red, then return to the label.
   const [showDisabledMsg, setShowDisabledMsg] = useState(false);
   const disabledMsgTimerRef = useRef<number | null>(null);
+  const [doneHovered, setDoneHovered] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -106,6 +107,15 @@ export function GenerateButton({
         onClick={onDoneAction}
         title={doneLabel}
         aria-label={doneLabel}
+        onMouseEnter={() => setDoneHovered(true)}
+        onMouseLeave={() => setDoneHovered(false)}
+        style={{
+          backgroundColor: doneHovered
+            ? 'color-mix(in srgb, var(--color-primary) 12%, var(--color-on-blue))'
+            : 'var(--color-on-blue)',
+          color: 'var(--color-primary)',
+          border: 'none',
+        }}
       >
         <span>{doneLabel}</span>
         <Play size={11} fill="currentColor" />

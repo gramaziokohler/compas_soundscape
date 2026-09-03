@@ -91,6 +91,7 @@ touch matching files (Cursor by glob, Opencode via `opencode.json`, Claude Code 
 | File                  | Domain                        | Key paths                                                             |
 | --------------------- | ----------------------------- | --------------------------------------------------------------------- |
 | `global.mdc`          | Always loaded                 | All files                                                             |
+| `run-app-when-debugging.mdc` | Start the app only when debugging needs a live instance | Always loaded — do not run/browser-verify after routine UI edits |
 | `persistence.mdc`     | Refresh survival, save/load   | `page.tsx`, `soundscape-serializer.ts`, `soundscape.py`, stores with persist |
 | `acoustic-sim.mdc`    | Room acoustics simulation     | `backend/services/pyroomacoustics_service.py`, `choras_backend/**`    |
 | `zustand-stores.mdc`  | State management              | `frontend/src/store/**`                                               |

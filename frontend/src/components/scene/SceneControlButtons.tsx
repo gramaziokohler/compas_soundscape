@@ -65,7 +65,7 @@ export function SceneControlButtons({
       >
         {isHoveringVolume && (
           <div data-volume-slider className="mb-1 flex items-center justify-center">
-            <VerticalVolumeSlider value={globalVolume} onChange={handleGlobalVolumeChange} />
+            <VerticalVolumeSlider value={globalVolume} onChange={handleGlobalVolumeChange} defaultValue={0.8} precision={2} />
           </div>
         )}
         <div data-volume-button>

@@ -238,7 +238,7 @@ export function RightSidebar({
           onClick={() => isExpanded ? requestCollapse() : requestExpand()}
           title={isExpanded ? 'Collapse panel' : 'Acoustics'}
           style={{ width: `${UI_SIDEBAR_TOGGLE.DIAMETER}px`, height: `${UI_SIDEBAR_TOGGLE.DIAMETER}px` }}
-          className={`sidebar-toggle-handle ${!isExpanded ? 'sidebar-toggle-handle--bounce' : ''}`}
+          className={`sidebar-toggle-handle backdrop-blur-lg backdrop-saturate-150 ${!isExpanded ? 'sidebar-toggle-handle--bounce' : 'sidebar-toggle-handle--expanded'}`}
         >
           <svg width={UI_SIDEBAR_TOGGLE.ICON_WIDTH} height={UI_SIDEBAR_TOGGLE.ICON_HEIGHT} viewBox="0 0 10 16" fill="none" xmlns="http://www.w3.org/2000/svg">
             {isExpanded ? (

@@ -5,7 +5,8 @@ import WaveSurfer from 'wavesurfer.js';
 import Spectrogram from 'wavesurfer.js/dist/plugins/spectrogram.esm.js';
 import { API_BASE_URL, DEFAULT_DBFS } from '@/utils/constants';
 import { dbfsToLinear } from '@/utils/utils';
-import { useUIStore } from '@/store/uiStore';
+import { useUIStore } from '@/store';
+import { subscribeColorTheme } from '@/utils/color-theme';
 
 const WAVEFORM_HEIGHT_MIN = 20;
 const WAVEFORM_HEIGHT_MAX = 300;
@@ -50,6 +51,8 @@ export interface WaveSurferPlayerProps {
   className?: string;
   borderColor?: string;
   backgroundColor?: string;
+  /** Recolor waveform + transport for a solid-primary (generated) card. */
+  onBlueBackground?: boolean;
 }
 
 export function WaveSurferPlayer({
@@ -72,7 +75,8 @@ export function WaveSurferPlayer({
   controlsExtra,
   className = 'space-y-2 min-w-0 overflow-hidden',
   borderColor,
-  backgroundColor = 'var(--foreground-static)',
+  backgroundColor = 'var(--color-secondary-lighter)',
+  onBlueBackground = false,
 }: WaveSurferPlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const spectrogramContainerRef = useRef<HTMLDivElement>(null);
@@ -118,8 +122,7 @@ export function WaveSurferPlayer({
     setIsReady(false);
     setCurrentTime(0);
 
-    const primaryColor = resolveCssVar('var(--color-primary)');
-    const secondaryHoverColor = resolveCssVar('var(--color-secondary-hover)');
+    const { waveColor, progressColor } = resolveWaveColors(onBlueBackground);
 
     const plugins = [];
     if (isSpectrogramMode && spectrogramContainerRef.current) {
@@ -136,9 +139,9 @@ export function WaveSurferPlayer({
       // WebAudio backend routes volume through a GainNode, which allows gains > 1.
       // The MediaElement backend clamps volume to [0, 1] and throws on boost.
       backend: 'WebAudio',
-      waveColor: secondaryHoverColor,
-      progressColor: primaryColor,
-      cursorColor: primaryColor,
+      waveColor,
+      progressColor,
+      cursorColor: progressColor,
       cursorWidth: 2,
       height: isSpectrogramMode ? 0 : waveformHeight,
       barWidth: 2,
@@ -190,7 +193,22 @@ export function WaveSurferPlayer({
       wsRef.current = null;
       setIsReady(false);
     };
-  }, [audioUrl, isSpectrogramMode, waveformHeight, interact]);
+  }, [audioUrl, isSpectrogramMode, waveformHeight, interact, onBlueBackground]);
+
+  useEffect(() => {
+    const applyWaveColors = () => {
+      const ws = wsRef.current;
+      if (!ws) return;
+      const { waveColor, progressColor } = resolveWaveColors(onBlueBackground);
+      ws.setOptions({
+        waveColor,
+        progressColor,
+        cursorColor: progressColor,
+      });
+    };
+    applyWaveColors();
+    return subscribeColorTheme(applyWaveColors);
+  }, [onBlueBackground]);
 
   // Play/pause sync
   useEffect(() => {
@@ -389,7 +407,7 @@ export function WaveSurferPlayer({
               width: '24px',
               height: '3px',
               borderRadius: '2px',
-              backgroundColor: 'var(--color-secondary-hover)',
+              backgroundColor: onBlueBackground ? 'var(--color-on-blue-muted)' : 'var(--color-secondary-hover)',
               opacity: 0.6,
             }}
           />
@@ -399,7 +417,7 @@ export function WaveSurferPlayer({
       {/* Time display and controls */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="text-xs text-neutral-400">
+          <div className={`text-xs ${onBlueBackground ? 'text-on-blue-muted' : 'text-secondary-hover'}`}>
             {formatTime(currentTime)} / {formatTime(duration)}
           </div>
           {controlsExtra}
@@ -410,11 +428,12 @@ export function WaveSurferPlayer({
           <button
             onClick={onPlayPause}
             disabled={!isReady}
-            className="w-7 h-7 flex items-center justify-center rounded-full transition-colors"
+            className="ws-play w-7 h-7 flex items-center justify-center rounded-full transition-colors"
             style={{
-              backgroundColor: isPlaying ? color : 'var(--color-secondary)',
-              color: isPlaying ? 'white' : 'var(--color-primary)',
+              backgroundColor: isPlaying ? color : 'var(--color-primary)',
+              color: 'var(--color-on-blue)',
               opacity: isReady ? 1 : 0.5,
+              border: 'none',
             }}
             title={isPlaying ? 'Pause' : 'Play'}
           >
@@ -434,11 +453,12 @@ export function WaveSurferPlayer({
           <button
             onClick={handleStop}
             disabled={!isReady || !isPlaying}
-            className="w-7 h-7 flex items-center justify-center rounded-full transition-colors"
+            className={`ws-stop w-7 h-7 flex items-center justify-center rounded-full transition-colors${isPlaying ? ' ws-stop--live' : ''}`}
             style={{
-              backgroundColor: isPlaying ? 'var(--color-secondary)' : 'var(--color-secondary-hover)',
-              color: isPlaying ? 'var(--color-error)' : 'var(--color-secondary-light)',
+              backgroundColor: isPlaying ? 'var(--color-surface)' : 'var(--color-secondary-lighter)',
+              color: isPlaying ? 'var(--color-error)' : 'var(--color-secondary-hover)',
               opacity: isReady ? 1 : 0.5,
+              border: '1px solid var(--color-border-strong)',
             }}
             title="Stop"
           >
@@ -459,4 +479,17 @@ function resolveCssVar(variable: string, fallback = '#888888'): string {
   if (!match) return fallback;
   const val = getComputedStyle(document.documentElement).getPropertyValue(match[1]).trim();
   return val || fallback;
+}
+
+function resolveWaveColors(onBlueBackground: boolean): { waveColor: string; progressColor: string } {
+  if (onBlueBackground) {
+    return {
+      waveColor: resolveCssVar('var(--color-on-blue-muted)'),
+      progressColor: resolveCssVar('var(--color-on-blue)'),
+    };
+  }
+  return {
+    waveColor: resolveCssVar('var(--color-secondary-hover)'),
+    progressColor: resolveCssVar('var(--color-primary)'),
+  };
 }

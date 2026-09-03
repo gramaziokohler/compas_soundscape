@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import type { SoundEvent } from '@/types';
+import type { SoundEvent, CardBaseConfig } from '@/types';
+import { SettingsSummary, getSettingsTitle, getSettingsRows } from '@/components/ui/SettingsSummary';
 import { DEFAULT_DBFS } from '@/utils/constants';
 import { SoundCardWaveSurfer } from '@/components/audio/SoundCardWaveSurfer';
 import { SoundCardBody } from './SoundCardBody';
@@ -47,6 +48,8 @@ export interface SoundResultContentProps {
   isRegenerating?: boolean;
   /** The index of the variant that is currently being generated (variants.length). */
   pendingVariantIdx?: number;
+  /** Card config used to derive the post-gen "Sound Settings" summary. */
+  cardConfig?: CardBaseConfig;
 }
 
 /** Spinner icon reused across the pending-variant placeholder. */
@@ -82,8 +85,16 @@ export function SoundResultContent({
   onMute,
   isRegenerating = false,
   pendingVariantIdx: _pendingVariantIdx,
+  cardConfig,
 }: SoundResultContentProps) {
   const isShowingPending = isRegenerating && selectedVariantIdx === _pendingVariantIdx;
+
+  const settingsSummary = cardConfig ? (
+    <SettingsSummary
+      title={getSettingsTitle(cardConfig)}
+      rows={getSettingsRows(cardConfig)}
+    />
+  ) : undefined;
 
   // Unlink confirmation — clicking the link/unlink button asks first.
   const [showUnlinkConfirm, setShowUnlinkConfirm] = useState(false);
@@ -125,10 +136,11 @@ export function SoundResultContent({
         {unlinkConfirm}
         {unlinkHint}
         <SoundCardBody
+        settingsSummary={settingsSummary}
         mainContent={
           <div className="flex items-center gap-2 py-1 px-2">
             <SpinnerIcon />
-            <span className="text-xs text-foreground">
+            <span className="text-xs text-on-blue">
               Generating new variant...
             </span>
           </div>
@@ -160,6 +172,7 @@ export function SoundResultContent({
       {unlinkConfirm}
       {unlinkHint}
       <SoundCardBody
+      settingsSummary={settingsSummary}
       mainContent={
         <SoundCardWaveSurfer
           audioUrl={generatedSound.url}

@@ -85,7 +85,7 @@ export function DAWTrack({
       style={{
         display: 'flex',
         height: `${trackHeight}px`,
-        borderBottom: '1px solid rgba(255,255,255,0.06)',
+        borderBottom: '1px solid var(--color-border)',
         flexShrink: 0,
       }}
       onPointerDown={(e) => e.stopPropagation()}
@@ -101,7 +101,7 @@ export function DAWTrack({
           paddingLeft: '8px',
           paddingRight: '4px',
           backgroundColor: 'var(--background)',
-          borderRight: '1px solid rgba(255,255,255,0.1)',
+          borderRight: '1px solid var(--color-border-strong)',
           position: 'sticky',
           left: 0,
           zIndex: 10,
@@ -173,7 +173,7 @@ export function DAWTrack({
               backgroundColor: isSoloed
                 ? 'var(--color-primary)'
                 : 'var(--color-secondary-light)',
-              color: isSoloed ? '#fff' : 'var(--foreground)',
+              color: isSoloed ? 'var(--color-on-blue)' : 'var(--foreground)',
               fontWeight: 600,
               lineHeight: 1.5,
             }}
@@ -216,7 +216,7 @@ export function DAWTrack({
           flex: 1,
           position: 'relative',
           minWidth: `${contentWidth}px`,
-          backgroundColor: isMuted ? 'rgba(30,30,30,0.4)' : 'transparent',
+          backgroundColor: isMuted ? 'color-mix(in srgb, var(--color-secondary-light) 40%, transparent)' : 'transparent',
         }}
       >
         {sound.scheduledIterations.map((startMs, i) => {

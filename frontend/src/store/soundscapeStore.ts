@@ -23,6 +23,7 @@ import {
   DEFAULT_SEED_COPIES,
   DEFAULT_AUDIO_MODEL,
   DEFAULT_LLM_MODEL,
+  DEFAULT_TTS_MODEL,
   AUDIO_MODEL_ELEVENLABS,
   LIBRARY_MAX_SEARCH_RESULTS,
   DUPLICATE_POSITION_OFFSET,
@@ -183,6 +184,7 @@ export const soundscapePartialize = (state: SoundscapeStoreState) => ({
   applyNoiseReduction: state.applyNoiseReduction,
   audioModel: state.audioModel,
   llmModel: state.llmModel,
+  ttsModel: state.ttsModel,
 });
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -206,6 +208,7 @@ export interface SoundscapeStoreState {
   regeneratingIndices: number[];
   audioModel: string;
   llmModel: string;
+  ttsModel: string;
 
   handleAddConfig: (type?: CardType) => void;
   handleBatchAddConfigs: (count: number) => number;
@@ -232,6 +235,7 @@ export interface SoundscapeStoreState {
   setApplyNoiseReduction: (val: boolean) => void;
   setAudioModel: (model: string) => void;
   setLlmModel: (model: string) => void;
+  setTtsModel: (model: string) => void;
   handleUploadAudio: (index: number, file: File) => Promise<void>;
   handleClearUploadedAudio: (index: number) => void;
   handleLibrarySearch: (index: number) => Promise<void>;
@@ -253,7 +257,7 @@ export interface SoundscapeStoreState {
   restoreSoundscape: (
     configs: SoundGenerationConfig[],
     events: any[],
-    settings?: { negativePrompt?: string; audioModel?: string; llmModel?: string },
+    settings?: { negativePrompt?: string; audioModel?: string; llmModel?: string; ttsModel?: string },
   ) => void;
   injectExtractedSEDSounds: (sounds: Array<{
     name: string;
@@ -287,6 +291,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         regeneratingIndices: [],
         llmModel: DEFAULT_LLM_MODEL,
         audioModel: DEFAULT_AUDIO_MODEL,
+        ttsModel: DEFAULT_TTS_MODEL,
 
         handleAddConfig: (type = 'text-to-audio') => {
           const { globalDuration, globalSteps, soundConfigs } = get();
@@ -341,6 +346,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
 
         handleRemoveConfigs: (indices) => {
           if (indices.length === 0) return;
+          // Card indices shift on removal — any stale preview reference must be cleared.
+          useAudioControlsStore.getState().stopSoundcardPreview();
           const { soundConfigs, activeSoundConfigTab, soundscapeData, generatedSounds } = get();
           const removedSet = new Set(indices);
           const newConfigs = soundConfigs.filter((_, i) => !removedSet.has(i));
@@ -918,6 +925,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               const { generation_id } = await apiService.generateTTS({
                 texts: ttsTexts,
                 language: useAudioControlsStore.getState().ttsLanguage,
+                tts_model: get().ttsModel,
               });
               _activeTtsJobIds.add(generation_id);
               recordInflightJob(generation_id, 'tts');
@@ -1416,6 +1424,9 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         setLlmModel: (model) =>
           set({ llmModel: model }, false, 'soundscape/setLlmModel'),
 
+        setTtsModel: (model) =>
+          set({ ttsModel: model }, false, 'soundscape/setTtsModel'),
+
         handleUploadAudio: async (index, file) => {
           try {
             const result = await loadAudioFile(file);
@@ -1608,6 +1619,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               applyNoiseReduction: true,
               audioModel: DEFAULT_AUDIO_MODEL,
               llmModel: DEFAULT_LLM_MODEL,
+              ttsModel: DEFAULT_TTS_MODEL,
             },
             false,
             'soundscape/resetDefaults',
@@ -1918,6 +1930,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               }),
               ...(settings?.audioModel !== undefined && { audioModel: settings.audioModel }),
               ...(settings?.llmModel !== undefined && { llmModel: settings.llmModel }),
+              ...(settings?.ttsModel !== undefined && { ttsModel: settings.ttsModel }),
             },
             false,
             'soundscape/restore',

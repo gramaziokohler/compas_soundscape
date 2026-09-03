@@ -1,6 +1,10 @@
 "use client";
 
 import { NumberField } from "@/components/ui/NumberField";
+import { estimatePrefixedNumberFieldWidth } from "@/components/ui/numberFieldSizing";
+
+/** Matches NumberField's own default display precision. */
+const POSITION_PRECISION = 2;
 
 export interface PositionWidgetProps {
   /** Current world position; missing axes default to 0. */
@@ -48,7 +52,9 @@ export function PositionWidget({
             step={0.1}
             disabled={disabled}
             onBlueBackground={onBlueBackground}
-            containerStyle={{ width: "55px", opacity: disabled ? 0.4 : 1 }}
+            precision={POSITION_PRECISION}
+            containerStyle={{ width: estimatePrefixedNumberFieldWidth(val, POSITION_PRECISION), opacity: disabled ? 0.4 : 1 }}
+            className="!text-xs !py-0.5"
             onChange={(n) => {
               const newPos: [number, number, number] = [
                 position?.[0] ?? 0,

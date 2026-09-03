@@ -6,6 +6,7 @@ Global rules are in `AGENTS.md`. This file tells Claude Code which scoped rule f
 
 ## Always-active rules
 @.cursor/rules/global.mdc
+@.cursor/rules/run-app-when-debugging.mdc
 
 ## Load when touching matching files (on demand)
 @.cursor/rules/acoustic-sim.mdc

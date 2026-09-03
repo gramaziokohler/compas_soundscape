@@ -91,6 +91,7 @@ export function Card<TConfig extends CardBaseConfig>({
   color = 'primary' as const,
   defaultName,
   collapsedInfo,
+  isPlayingCollapsedInfo = false,
   version,
   showIndex = true,
   canRemove = true,
@@ -116,6 +117,7 @@ export function Card<TConfig extends CardBaseConfig>({
   beforeContent,
   afterContent,
   loadingContent,
+  keepContentMountedWhenCollapsed = false,
   dimmed = false,
   variants,
   showVariantsPreGen = false,
@@ -162,13 +164,13 @@ export function Card<TConfig extends CardBaseConfig>({
   // Build Tailwind class names
   const cardClassName = [
     'relative border rounded-xl transition-all duration-200',
-    isGenerated ? '' : 'bg-surface',
+    isGenerated ? 'card-generated' : 'bg-surface',
     error ? 'border-error' : 'border-border',
   ].filter(Boolean).join(' ');
 
   const titleClassName = [
     `flex-1 text-left text-xs font-sans font-medium transition-opacity group`,
-    'text-foreground',
+    isGenerated ? 'text-on-blue' : 'text-foreground',
   ].filter(Boolean).join(' ');
 
   // Tracks the expansion state captured at the first click of a potential double-click sequence,
@@ -275,7 +277,7 @@ export function Card<TConfig extends CardBaseConfig>({
       onContextMenu={handleContextMenu}
       style={{
         ...cardColorStyle,
-        ...(isGenerated ? { backgroundColor: 'color-mix(in srgb, var(--color-primary) 60%, transparent)' } : {}),
+        ...(isGenerated ? { backgroundColor: 'color-mix(in srgb, var(--color-primary) 72%, var(--color-surface))' } : {}),
         ...(error ? { borderColor: `var(--color-error)` } : {}),
         ...(dimmed ? { filter: 'brightness(0.55)' } : {}),
       }}
@@ -341,12 +343,16 @@ export function Card<TConfig extends CardBaseConfig>({
                   {collapsedInfo}
                 </div>
               )}
+              {!isExpanded && isPlayingCollapsedInfo && (
+                <div className="text-xxs mt-0.5 italic text-warning">
+                  playing
+                </div>
+              )}
               {isExpanded && version && (
-                <div className="mt-1 flex items-center min-w-0">
+                <div className="mt-1 flex items-center gap-1 min-w-0">
                   <div
-                    className={`text-[10px] font-mono leading-tight flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap ${isGenerated ? '' : 'text-text-3'}`}
+                    className={`text-[10px] font-mono leading-tight min-w-0 overflow-hidden text-ellipsis whitespace-nowrap ${isGenerated ? 'text-on-blue-muted' : 'text-text-3'}`}
                     title={versionTitle}
-                    style={isGenerated ? { color: 'var(--color-on-blue-muted)' } : undefined}
                   >
                     {versionTitle}
                   </div>
@@ -393,9 +399,15 @@ export function Card<TConfig extends CardBaseConfig>({
         </div>
       </div>
 
-      {/* Expanded content */}
-      {isExpanded && (
-        <div className="px-1 space-y-0 max-h-[min(480px,55dvh)] overflow-y-auto pr-0.5 relative z-[1]">
+      {/* Expanded content — kept mounted (hidden) instead of unmounted when
+          `keepContentMountedWhenCollapsed` is set, so content that owns a live
+          resource (e.g. a playing WaveSurfer instance) survives collapse/expand
+          without being destroyed and recreated. */}
+      {(isExpanded || keepContentMountedWhenCollapsed) && (
+        <div
+          className="px-1 space-y-0 max-h-[min(480px,55dvh)] overflow-y-auto pr-0.5 relative z-[1]"
+          style={!isExpanded ? { display: 'none' } : undefined}
+        >
 
           {renderContent()}
 
@@ -428,7 +440,7 @@ export function Card<TConfig extends CardBaseConfig>({
         (isExpanded && generateStatus === 'idle' && !!onRun) ||
         (isExpanded && generateStatus === 'done' && !!doneActionLabel && !!onDoneAction)) && (
         <div
-          className="px-3.5 py-1.5 border-t border-border"
+          className="px-3.5 py-1.5 border-border"
           style={isGenerated && generateStatus === 'done' ? {
             backgroundColor: 'rgba(0, 0, 0, 0.15)',
             borderBottomLeftRadius: '12px',

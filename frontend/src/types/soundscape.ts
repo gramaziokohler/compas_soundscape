@@ -11,6 +11,7 @@ export interface SoundscapeGlobalSettings {
   steps: number;
   negative_prompt: string;
   audio_model: string;
+  tts_model?: string;
 }
 
 /** Serializable sound configuration (one card) */

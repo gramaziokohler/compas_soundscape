@@ -24,6 +24,8 @@ import torchaudio
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from typing import Optional
+
 from services.tts_service import TTSService
 from utils.audio_processing import (
     apply_dbfs_calibration,
@@ -32,6 +34,7 @@ from utils.audio_processing import (
 from config.constants import (
     TTS_DEFAULT_VOICE,
     TTS_OUTPUT_URL_PREFIX,
+    DEFAULT_TTS_MODEL,
     FILENAME_MAX_LENGTH,
     WINDOWS_ILLEGAL_FILENAME_CHARS,
     DEFAULT_DBFS,
@@ -100,6 +103,7 @@ def run_tts_generation(
     output_dir: str,
     url_prefix: str = TTS_OUTPUT_URL_PREFIX,
     language: Optional[str] = None,
+    tts_model: str = DEFAULT_TTS_MODEL,
 ) -> None:
     try:
         os.makedirs(output_dir, exist_ok=True)
@@ -188,6 +192,7 @@ def run_tts_generation(
                             output_path=output_path,
                             voice_name=voice_name,
                             language=language,
+                            model=tts_model or DEFAULT_TTS_MODEL,
                         )
                         print(
                             f"copy_index={copy_index} voice={voice_name!r} "

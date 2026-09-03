@@ -8,6 +8,7 @@ from typing import Optional
 from config.constants import DEFAULT_AUDIO_MODEL
 from config.constants import DEFAULT_DBFS
 from config.constants import DEFAULT_LLM_MODEL
+from config.constants import DEFAULT_TTS_MODEL
 from config.constants import DEFAULT_SPEED_OF_SOUND
 from config.constants import PYROOMACOUSTICS_DEFAULT_ABSORPTION
 from config.constants import PYROOMACOUSTICS_DEFAULT_AIR_ABSORPTION
@@ -310,6 +311,7 @@ class SoundscapeGlobalSettings(BaseModel):
     steps: int = 25
     negative_prompt: str = ""
     audio_model: str = "tangoflux"
+    tts_model: str = DEFAULT_TTS_MODEL
 
 
 class SoundscapeSoundConfig(BaseModel):
@@ -788,6 +790,7 @@ class TTSGenerationRequest(BaseModel):
     output_dir: str = "./temp/static/sounds/generated/tts"
     url_prefix: str = "/static/sounds/generated/tts"
     language: Optional[str] = None
+    tts_model: Optional[str] = None
 
 
 class TTSGenerationStartResponse(BaseModel):

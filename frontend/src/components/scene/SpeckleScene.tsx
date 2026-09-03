@@ -1,7 +1,6 @@
 ﻿'use client';
 
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { ControlsInfo } from '@/components/layout/sidebar/ControlsInfo';
 import { SpeckleAudioCoordinator } from '@/lib/three/speckle-audio-coordinator';
 import { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
 import { BoundingBoxManager } from '@/lib/three/BoundingBoxManager';
@@ -1413,7 +1412,7 @@ export function SpeckleScene({
   return (
     <div
       className={`relative w-full h-full ${className || ''}`}
-      style={{ height: '100vh', backgroundColor: isDarkMode ? 'var(--background)' : undefined }}
+      style={{ height: '100vh', backgroundColor: isDarkMode ? 'black' : undefined }}
     >
       {/* Viewer container */}
       <div
@@ -1535,18 +1534,17 @@ export function SpeckleScene({
             </svg>
           }
         />
-        <SceneControlButton
-          onClick={() => { window.location.href = window.location.origin; }}
-          activeColor="var(--color-primary)"
-          title="Home"
-          border = {false}
-          background = {false}
-          icon={
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="var(--color-primary)" stroke="none">
-              <path fillRule="evenodd" clipRule="evenodd" d="M12 2L3 9v11a2 2 0 0 0 2 2h4v-10h6v10h4a2 2 0 0 0 2-2V9l-9-7z" />
-            </svg>
-          }
-        />
+        {modelUrl && (
+          <button
+            type="button"
+            onClick={() => { window.location.href = window.location.origin; }}
+            title="Home"
+            className="font-extrabold tracking-tight text-primary bg-transparent border-0 p-0 cursor-pointer whitespace-nowrap flex items-center text-sm leading-none"
+            style={{ height: UI_SCENE_BUTTON.SIZE }}
+          >
+            Sound is blue
+          </button>
+        )}
       </div>
 
 
@@ -1557,9 +1555,6 @@ export function SpeckleScene({
         isRightSidebarExpanded={isRightSidebarExpanded}
         rightSidebarWidth={rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH}
       />
-
-      {/* 3D Controls Info */}
-      {isViewerReady && <ControlsInfo />}
 
       {/* Control Buttons */}
       <SceneControlButtons

@@ -39,7 +39,7 @@ function FoleySoundItem({ sound, checked, onToggle }: FoleySoundItemProps) {
       <div className="flex-1 min-w-0 space-y-0.5">
         {/* Name row */}
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-xs text-background-static font-semibold truncate">{sound.soundName}</span>
+          <span className="text-xs text-on-blue font-semibold truncate">{sound.soundName}</span>
           {sound.category && (
             <Badge variant="neutral" onBlueBackground>{sound.category}</Badge>
           )}

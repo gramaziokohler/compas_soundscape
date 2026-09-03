@@ -703,7 +703,7 @@ export class SoundSphereManager {
 
     // Use muted gray for pending (pre-generation) spheres
     const sphereColor = soundEvent.isPending
-      ? getCssColorHex('--color-secondary-hover-static')
+      ? getCssColorHex('--color-pending')
       : getCssColorHex('--color-primary');
 
     const material = new THREE.MeshBasicMaterial({
@@ -1266,7 +1266,7 @@ export class SoundSphereManager {
    * Spheres carrying a MANAGED color are skipped:
    * - `--color-success`    → selection highlight (useSpeckleSoundHighlight)
    * - `--color-error`      → simulation mismatch (useSpeckleSimulationMismatch)
-   * - `--color-secondary-hover-static` → pending pre-generation sphere
+   * - `--color-pending` → pending pre-generation sphere
    * - `userData.isMuted`   → 50%-opacity muted state (audioControlsStore)
    *
    * Otherwise the enforcement would paint every sphere back to primary blue
@@ -1277,7 +1277,7 @@ export class SoundSphereManager {
     const primaryHex = getCssColorHex('--color-primary');
     const successHex = getCssColorHex('--color-success');
     const errorHex = getCssColorHex('--color-error');
-    const pendingHex = getCssColorHex('--color-secondary-hover-static');
+    const pendingHex = getCssColorHex('--color-pending');
 
     this.soundMeshes.forEach(mesh => {
       const material = mesh.material as THREE.MeshBasicMaterial;

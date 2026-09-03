@@ -5,6 +5,10 @@ globs: frontend/**,**/*.tsx,**/*.ts
 
 # chrome-devtools (MCP) Playbook
 
+Do not open a browser session or start the app unless you are actively debugging a
+live issue or the user asked you to. This file is a playbook for those sessions, not
+a post-edit verification step.
+
 Chrome DevTools MCP is configured in `opencode.json` and attaches to a Chrome instance on
 `http://127.0.0.1:9222`. It is the tool for *observing* the running app (console, network, DOM,
 computed styles, localStorage) and *driving* simple UI interactions. It is **not** for looping

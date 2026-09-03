@@ -61,12 +61,12 @@ export function ButtonGroup({ buttons, className = "" }: ButtonGroupProps) {
           key={index}
           onClick={button.onClick}
           className={`flex-1 py-2 ${TAILWIND_ROUNDED.MD} font-medium ${TAILWIND_TEXT_SIZE.SM} ${TAILWIND_TRANSITION.COLORS} ${
-            button.isActive ? 'text-white' : 'text-neutral-300'
+            button.isActive ? 'text-on-blue' : 'text-foreground'
           }`}
           style={{
             backgroundColor: button.isActive
               ? button.activeColor || 'var(--color-primary)'
-              : button.inactiveColor || 'var(--color-secondary)'
+              : button.inactiveColor || 'var(--color-secondary-lighter)'
           }}
           title={button.title}
         >

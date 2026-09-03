@@ -268,6 +268,8 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   defaultName?: string;
   /** Info text shown in collapsed state (e.g., "3 selected prompts") */
   collapsedInfo?: string;
+  /** When true (and collapsed), shows a small italic "playing" label in the header. */
+  isPlayingCollapsedInfo?: boolean;
   /** Whether to show the index number prefix */
   showIndex?: boolean;
 
@@ -311,6 +313,13 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   afterContent?: ReactNode;
   /** Content to show while generation is running (optional loading state) */
   loadingContent?: ReactNode;
+  /**
+   * When true, keeps `afterContent` mounted (visually hidden) while the card is
+   * collapsed instead of unmounting it. Needed for content that owns a live
+   * resource (e.g. a playing WaveSurfer/audio instance) that must survive
+   * collapse/expand cycles without being destroyed and recreated.
+   */
+  keepContentMountedWhenCollapsed?: boolean;
   /** When true, dims the card title and body (but not the action buttons / kebab menu) */
   dimmed?: boolean;
   /** Optional element rendered to the left of the card title in the header (e.g., entity link button) */

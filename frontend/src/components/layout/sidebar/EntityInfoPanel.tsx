@@ -61,7 +61,7 @@ export function EntityInfoPanel({
     return (
       <div className="flex flex-col gap-2 text-xs">
         {/* ID row + go-to button */}
-        <div className="flex items-center justify-between text-secondary">
+        <div className="flex items-center justify-between text-foreground">
           <div className="flex items-center gap-1 min-w-0">
             <span className="flex-shrink-0">ID:</span>
             <span className="mx-1 truncate" title={selectedEntity.objectId}>
@@ -163,13 +163,13 @@ export function EntityInfoPanel({
 
       {/* Entity Details */}
       <div className="space-y-1 text-xs flex-1 overflow-y-auto">
-        <div className="flex text-secondary">
+        <div className="flex text-foreground">
           <span>Type:</span>
           <span className="mx-2">{selectedEntity.objectType}</span>
         </div>
 
         {selectedEntity.objectName && (
-          <div className="flex text-secondary">
+          <div className="flex text-foreground">
             <span>Name:</span>
             <span
               className="text-right mx-2 max-w-[180px] truncate"
@@ -181,7 +181,7 @@ export function EntityInfoPanel({
         )}
 
         {selectedEntity.parentName && (
-          <div className="flex text-secondary">
+          <div className="flex text-foreground">
             <span>Parent:</span>
             <span
               className="text mx-2 max-w-[180px] truncate"
@@ -193,7 +193,7 @@ export function EntityInfoPanel({
         )}
 
         {selectedEntity.objectId && (
-          <div className="flex text-secondary">
+          <div className="flex text-foreground">
             <span>Object ID:</span>
             <span
               className="text-right mx-2 max-w-[160px] truncate"

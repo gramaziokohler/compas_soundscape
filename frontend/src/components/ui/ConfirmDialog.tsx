@@ -56,7 +56,7 @@ export function ConfirmDialog({
     ? "color-mix(in srgb, var(--color-error) 8%, transparent)"
     : onBlueBackground
       ? "color-mix(in srgb, var(--color-on-blue) 60%, transparent)"
-      : "color-mix(in srgb, var(--background-static) 65%, transparent)";
+      : "color-mix(in srgb, var(--color-confirm-tint) 65%, transparent)";
   const confirmDisabled = disabled || disableConfirm;
 
   return (

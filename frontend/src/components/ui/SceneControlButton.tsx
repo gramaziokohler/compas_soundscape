@@ -55,6 +55,9 @@ export function SceneControlButton({
         height: UI_SCENE_BUTTON.SIZE,
         borderRadius: UI_SCENE_BUTTON.BORDER_RADIUS,
         backgroundColor: background? isActive ? activeColor : inactiveBackground : "transparent",
+        color: isActive
+          ? (activeColor === 'var(--color-warning)' ? 'var(--foreground)' : 'var(--color-on-blue)')
+          : 'var(--foreground)',
         borderColor: isActive ? activeColor : 'var(--color-overlay-border)',
         borderWidth: border? '1px': '0px',
         borderStyle: 'solid'

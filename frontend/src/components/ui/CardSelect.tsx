@@ -9,6 +9,8 @@
  * `<body>`, so it is never clipped by the card's `overflow` scroll container and
  * always fits the viewport (opens upward when there is no room below). Replaces
  * the native `<select>` everywhere so all dropdowns share one visual language.
+ * When there are `CARD_SELECT_INLINE_MAX_OPTIONS` or fewer choices, renders
+ * `TextSelect` instead (horizontal plain-text labels).
  *
  * Usage:
  * ```tsx
@@ -25,11 +27,15 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { createPortal } from "react-dom";
+import { CARD_SELECT_INLINE_MAX_OPTIONS } from "@/utils/constants";
+import { TextSelect } from "@/components/ui/TextSelect";
 
 export interface CardSelectOption {
   value: string;
   label: string;
   disabled?: boolean;
+  /** Native tooltip shown on hover (trigger uses the selected option's title). */
+  title?: string;
   /** Inline style for this option row (e.g. material-absorption color coding). */
   style?: CSSProperties;
 }
@@ -47,10 +53,14 @@ export interface CardSelectProps {
   triggerStyle?: CSSProperties;
   /** Max height of the option menu before it scrolls. Default 240px. */
   menuMaxHeight?: number;
+  /** Always render the floating menu, even when there are few options. */
+  forceMenu?: boolean;
 }
 
 const MENU_MAX_HEIGHT = 240;
 const MENU_GAP = 4;
+/** Below this, opening downward would leave too few options visible — fall back to upward. */
+const MIN_USABLE_MENU_HEIGHT = 120;
 
 export function CardSelect({
   value,
@@ -62,10 +72,12 @@ export function CardSelect({
   compact = false,
   triggerStyle,
   menuMaxHeight = MENU_MAX_HEIGHT,
+  forceMenu = false,
 }: CardSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
   const [menuPos, setMenuPos] = useState<{ left: number; top: number; width: number } | null>(null);
+  const [menuHeight, setMenuHeight] = useState(menuMaxHeight);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -111,17 +123,40 @@ export function CardSelect({
       const vw = window.innerWidth;
       const vh = window.innerHeight;
       const spaceBelow = vh - rect.bottom - MENU_GAP;
-      const wantsUpward = spaceBelow < menuMaxHeight && rect.top > spaceBelow;
+      const spaceAbove = rect.top - MENU_GAP;
+      // The menu is a fixed-position portal, so it is never clipped by a
+      // parent panel's overflow — it can freely extend past the panel's own
+      // edge. Prefer opening downward (below the trigger) even when that
+      // means overflowing outside a small enclosing panel; only flip upward
+      // when there is truly too little room below AND more room above.
+      const wantsUpward = spaceBelow < MIN_USABLE_MENU_HEIGHT && spaceAbove > spaceBelow;
       const left = Math.min(rect.left, vw - 8);
+      const height = wantsUpward
+        ? Math.min(menuMaxHeight, spaceAbove)
+        : Math.min(menuMaxHeight, Math.max(spaceBelow, MIN_USABLE_MENU_HEIGHT));
       setOpenUpward(wantsUpward);
+      setMenuHeight(height);
       setMenuPos({
         left,
-        top: wantsUpward ? Math.max(4, rect.top - menuMaxHeight - MENU_GAP) : rect.bottom + MENU_GAP,
+        top: wantsUpward ? Math.max(4, rect.top - height - MENU_GAP) : rect.bottom + MENU_GAP,
         width: rect.width,
       });
     }
     setIsOpen((v) => !v);
   };
+
+  if (!forceMenu && options.length <= CARD_SELECT_INLINE_MAX_OPTIONS) {
+    return (
+      <TextSelect
+        value={value}
+        onChange={onChange}
+        options={options}
+        disabled={disabled}
+        className={className}
+        compact={compact}
+      />
+    );
+  }
 
   return (
     <div ref={rootRef} className={`select ${className}`}>
@@ -135,6 +170,7 @@ export function CardSelect({
         onClick={handleTriggerClick}
         className={`select-trigger ${isOpen ? "open" : ""} ${compact ? "compact" : ""}`}
         style={triggerStyle}
+        title={selected?.title}
       >
         <span className="truncate">{selected ? selected.label : placeholder}</span>
         <svg
@@ -159,7 +195,7 @@ export function CardSelect({
               left: menuPos.left,
               top: menuPos.top,
               width: menuPos.width,
-              maxHeight: `${menuMaxHeight}px`,
+              maxHeight: `${menuHeight}px`,
               overflowY: "auto",
               zIndex: 99999,
             }}
@@ -173,6 +209,7 @@ export function CardSelect({
                   aria-selected={active}
                   className={`select-opt ${active ? "active" : ""} ${opt.disabled ? "opacity-40 cursor-not-allowed" : ""}`}
                   style={opt.style}
+                  title={opt.title}
                   onClick={() => {
                     if (opt.disabled) return;
                     onChange(opt.value);

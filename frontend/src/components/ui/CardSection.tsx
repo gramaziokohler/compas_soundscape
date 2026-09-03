@@ -359,7 +359,7 @@ export function CardSection<TItem extends CardBaseConfig>({
 
   const totalCount = items.length;
   const pendingCount = getPendingCount ? getPendingCount(items) : 0;
-  const addCardLabel = addButtonLabel ?? `Add a ${statusLabel} card`;
+  const addCardLabel = addButtonLabel ?? `Add a ${statusLabel}`;
 
   const sectionColorStyle = {
     '--card-color': `var(--color-${color})`,
@@ -380,11 +380,57 @@ export function CardSection<TItem extends CardBaseConfig>({
     <div className="flex flex-col gap-3" style={sectionColorStyle}>
       {/* {header} */}
 
-      {/* Status bar (count only) */}
+      {/* Status line + compact "+" button — frozen at the top of the section
+          (position: sticky) so it stays visible whatever the scroll position,
+          once at least one card exists. No background color (per design), but
+          a backdrop blur keeps scrolled cards from showing through legibly. */}
       {totalCount > 0 && (
-        <div className="flex items-center text-xs w-full gap-1 text-secondary-hover">
-          {totalCount} {statusLabel}{totalCount !== 1 ? 's' : ''}
-          {pendingCount > 0 && <span> ({pendingCount} pending)</span>}
+        <div
+          className="sticky top-0 z-20 flex items-center justify-between gap-2 backdrop-blur-lg backdrop-saturate-150"
+        >
+          <div className="flex items-center text-xs gap-1 text-adaptive min-w-0 truncate">
+            {totalCount} {statusLabel}{totalCount !== 1 ? 's' : ''}
+            {pendingCount > 0 && <span> ({pendingCount} pending)</span>}
+          </div>
+
+          <div className="relative flex-shrink-0" ref={typeSelectorRef}>
+            <button
+              onClick={handleToggleTypeSelector}
+              title={addButtonTitle}
+              aria-label={addButtonTitle}
+              className={`flex items-center justify-center w-6 h-6 rounded-full transition-colors duration-150 ease-out cursor-pointer active:scale-95 hover:bg-[var(--card-color-hover)] ${showTypeSelector ? 'bg-[var(--card-color-hover)]' : 'bg-[var(--card-color)]'}`}
+              style={{ color: 'var(--color-on-blue)' }}
+            >
+              <span className="text-sm leading-none">+</span>
+            </button>
+
+            {showTypeSelector && (
+              <div ref={typeDropdownRef} className="absolute right-0 top-full mt-1 z-[100] min-w-[160px] rounded-lg shadow-lg bg-background border border-secondary-light overflow-hidden">
+                {availableTypes.map((option, idx) => {
+                  const isFirst = idx === 0;
+                  const isLast = idx === availableTypes.length - 1;
+                  const roundedClass = isFirst && isLast ? 'rounded-lg' : isFirst ? 'rounded-t-lg' : isLast ? 'rounded-b-lg' : '';
+                  return (
+                    <button
+                      key={option.type}
+                      onClick={() => option.enabled ? handleTypeSelect(option.type) : null}
+                      disabled={!option.enabled}
+                      className={`w-full text-left px-3 py-2 text-xs transition-colors ${roundedClass} ${
+                        option.enabled
+                          ? 'text-foreground cursor-pointer hover:text-white'
+                          : 'text-secondary-hover cursor-not-allowed opacity-60'
+                      }`}
+                      onMouseEnter={(e) => { if (option.enabled) e.currentTarget.style.backgroundColor = 'var(--card-color)'; }}
+                      onMouseLeave={(e) => { if (option.enabled) e.currentTarget.style.backgroundColor = ''; }}
+                      title={option.enabled ? option.label : option.disabledTooltip}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -433,53 +479,66 @@ export function CardSection<TItem extends CardBaseConfig>({
         ))}
       </div>
 
-      {/* Empty state — shown above the add button when no cards exist */}
-      {items.length === 0 && emptyMessage && (
-        <EmptyState message={emptyMessage} action={emptyAction} />
+      {/* Empty state + full "Add card" button — shown only when no cards exist yet.
+          Once at least one card is added, this is replaced by the compact "+"
+          button on the frozen status line above. */}
+      {items.length === 0 && (
+        <>
+          {emptyMessage && (
+            <EmptyState message={emptyMessage} action={emptyAction} onGlass />
+          )}
+
+          <div className="relative" ref={typeSelectorRef}>
+            <button
+              onClick={handleToggleTypeSelector}
+              title={addButtonTitle}
+              aria-label={addButtonTitle}
+              className={`w-full rounded-lg border-2 border-dashed flex flex-col items-center justify-center gap-1.5 py-6 opacity-70 hover:opacity-100 transition-all duration-150 cursor-pointer active:scale-95 ${showTypeSelector ? 'scale-95 opacity-100' : ''}`}
+              style={{ borderColor: 'var(--card-color)', backgroundColor: 'var(--color-secondary-light)' }}
+            >
+              <span className="text-2xl leading-none" style={{ color: 'var(--card-color)' }}>+</span>
+              <span className="text-xs font-medium text-foreground">{addCardLabel}</span>
+            </button>
+
+            {showTypeSelector && (
+              <div ref={typeDropdownRef} className="absolute left-0 right-0 top-full mt-1 z-[100] rounded-lg shadow-lg bg-background border border-secondary-light overflow-hidden">
+                {availableTypes.map((option, idx) => {
+                  const isFirst = idx === 0;
+                  const isLast = idx === availableTypes.length - 1;
+                  const roundedClass = isFirst && isLast ? 'rounded-lg' : isFirst ? 'rounded-t-lg' : isLast ? 'rounded-b-lg' : '';
+                  return (
+                    <button
+                      key={option.type}
+                      onClick={() => option.enabled ? handleTypeSelect(option.type) : null}
+                      disabled={!option.enabled}
+                      className={`w-full text-left px-3 py-2 text-xs transition-colors ${roundedClass} ${
+                        option.enabled
+                          ? 'text-foreground cursor-pointer hover:text-white'
+                          : 'text-secondary-hover cursor-not-allowed opacity-60'
+                      }`}
+                      onMouseEnter={(e) => { if (option.enabled) e.currentTarget.style.backgroundColor = 'var(--card-color)'; }}
+                      onMouseLeave={(e) => { if (option.enabled) e.currentTarget.style.backgroundColor = ''; }}
+                      title={option.enabled ? option.label : option.disabledTooltip}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </>
       )}
 
-      {/* Add-card button (New button UI) + type selector */}
-      <div className="relative" ref={typeSelectorRef}>
-        <button
-          onClick={handleToggleTypeSelector}
-          title={addButtonTitle}
-          aria-label={addButtonTitle}
-          className={`w-full rounded-lg border-2 border-dashed flex flex-col items-center justify-center gap-1.5 py-6 opacity-60 hover:opacity-100 transition-all duration-150 cursor-pointer active:scale-95 ${showTypeSelector ? 'scale-95 opacity-100' : ''}`}
-          style={{ borderColor: 'var(--card-color)', backgroundColor: 'var(--color-secondary-light)' }}
-        >
-          <span className="text-2xl leading-none" style={{ color: 'var(--card-color)' }}>+</span>
-          <span className="text-xs font-medium text-secondary-hover">{addCardLabel}</span>
-        </button>
-
-        {showTypeSelector && (
-          <div ref={typeDropdownRef} className="absolute left-0 right-0 top-full mt-1 z-[100] rounded-lg shadow-lg bg-background border border-secondary-light overflow-hidden">
-            {availableTypes.map((option, idx) => {
-              const isFirst = idx === 0;
-              const isLast = idx === availableTypes.length - 1;
-              const roundedClass = isFirst && isLast ? 'rounded-lg' : isFirst ? 'rounded-t-lg' : isLast ? 'rounded-b-lg' : '';
-              return (
-                <button
-                  key={option.type}
-                  onClick={() => option.enabled ? handleTypeSelect(option.type) : null}
-                  disabled={!option.enabled}
-                  className={`w-full text-left px-3 py-2 text-xs transition-colors ${roundedClass} ${
-                    option.enabled
-                      ? 'text-foreground cursor-pointer hover:text-white'
-                      : 'text-secondary-hover cursor-not-allowed opacity-60'
-                  }`}
-                  onMouseEnter={(e) => { if (option.enabled) e.currentTarget.style.backgroundColor = 'var(--card-color)'; }}
-                  onMouseLeave={(e) => { if (option.enabled) e.currentTarget.style.backgroundColor = ''; }}
-                  title={option.enabled ? option.label : option.disabledTooltip}
-                >
-                  {option.label}
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {footer}
+      {/* Footer (e.g. "Generate sounds") — frozen at the bottom of the section
+          so it stays reachable whatever the scroll position. No background
+          color (per design); a backdrop blur keeps scrolled cards from
+          showing through legibly. */}
+      {footer && (
+        <div className="sticky bottom-0 z-20 backdrop-blur-lg backdrop-saturate-150">
+          {footer}
+        </div>
+      )}
 
       {/* Drag ghost — fixed-position card silhouette that follows the cursor */}
       {isDraggingMoved && (

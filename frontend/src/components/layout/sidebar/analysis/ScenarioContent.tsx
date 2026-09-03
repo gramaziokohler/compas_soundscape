@@ -261,7 +261,7 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
       {scenarios.map((scenario, si) => (
         <div key={si} className="space-y-1">
           {scenario.events.map((event, ei) => (
-            <p key={ei} className="text-xs leading-relaxed text-secondary">
+            <p key={ei} className="text-xs leading-relaxed text-foreground">
               <span
                 className="font-mono"
                 style={{ color: 'var(--color-on-blue-muted)', fontSize: '10px', borderRadius: '4px', marginRight: '4px' }}
@@ -378,6 +378,7 @@ export function ScenarioContent({
             max={20}
             step={1}
             value={config.peopleCount}
+            defaultValue={5}
             onChange={(v) => onUpdateConfig(index, { peopleCount: v })}
             disabled={isAnalyzing}
           />
@@ -389,6 +390,7 @@ export function ScenarioContent({
             max={10}
             step={1}
             value={config.likeliness}
+            defaultValue={9}
             onChange={(v) => onUpdateConfig(index, { likeliness: v })}
             disabled={isAnalyzing}
           />

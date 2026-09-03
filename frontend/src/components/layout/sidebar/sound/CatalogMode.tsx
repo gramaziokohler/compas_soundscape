@@ -185,7 +185,7 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
                   <button
                     key={cat.id}
                     onClick={() => handleSelectCategory(cat)}
-                    className="w-full text-left px-2 py-1 rounded-lg text-xs transition-colors bg-secondary-light text-secondary hover:bg-primary"
+                    className="w-full text-left px-2 py-1 rounded-lg text-xs transition-colors bg-secondary-light text-foreground hover:bg-primary"
                   >
                     {cat.name}
                   </button>

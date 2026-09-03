@@ -62,7 +62,7 @@ export function useSpeckleSoundHighlight({
         material.color.setHex(
           isMismatched
             ? getCssColorHex('--color-error')
-            : getCssColorHex(isPending ? '--color-secondary-hover-static' : '--color-primary'),
+            : getCssColorHex(isPending ? '--color-pending' : '--color-primary'),
         );
       }
     });

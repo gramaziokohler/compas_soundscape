@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import type { AudioAnalysisConfig } from '@/types/analysis';
 import { FileUploadArea } from '@/components/controls/FileUploadArea';
 import { WaveSurferPlayer } from '@/components/audio/WaveSurferPlayer';
+import { registerPreviewInstance } from '@/lib/audio/previewRegistry';
 import { AUDIO_FILE_EXTENSIONS, DEFAULT_DBFS } from '@/utils/constants';
 
 /**
@@ -18,18 +19,24 @@ interface AudioContextContentProps {
   index: number;
   isAnalyzing: boolean;
   onUpdateConfig: (index: number, updates: Partial<AudioAnalysisConfig>) => void;
+  /** Controlled preview state — owned by the parent so previews are mutually exclusive. */
+  isPreviewPlaying?: boolean;
+  onPreviewPlayPause?: () => void;
+  onPreviewStop?: () => void;
 }
 
 export function AudioContextContent({
   config,
   index,
   isAnalyzing,
-  onUpdateConfig
+  onUpdateConfig,
+  isPreviewPlaying = false,
+  onPreviewPlayPause,
+  onPreviewStop,
 }: AudioContextContentProps) {
   // File upload state
   const [isDragging, setIsDragging] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string>('');
-  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
 
   const hasAudioFile = config.audioFile !== null;
 
@@ -105,11 +112,12 @@ export function AudioContextContent({
               audioUrl={audioUrl}
               volumeDbfs={DEFAULT_DBFS}
               isPlaying={isPreviewPlaying}
-              onPlayPause={() => setIsPreviewPlaying((v) => !v)}
+              onPlayPause={() => onPreviewPlayPause?.()}
               onStop={(ws) => {
                 if (ws) ws.seekTo(0);
-                setIsPreviewPlaying(false);
+                onPreviewStop?.();
               }}
+              onWavesurferReady={(ws) => registerPreviewInstance(`context-audio:${index}`, ws)}
             />
           )}
 

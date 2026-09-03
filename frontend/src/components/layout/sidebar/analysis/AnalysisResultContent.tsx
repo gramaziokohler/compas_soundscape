@@ -26,7 +26,7 @@ export function AnalysisResultContent({
     <div className="space-y-2">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="text-xs font-semibold text-secondary">
+        <div className="text-xs font-semibold text-on-blue">
         Generated Prompts
         </div>
         <div className="text-xs" style={{ color: 'var(--color-on-blue-muted)' }}>
@@ -43,12 +43,12 @@ export function AnalysisResultContent({
             key={prompt.id}
             className="flex items-start gap-0 p-1 rounded cursor-pointer transition-colors"
             style={{
-              backgroundColor: prompt.selected ? 'color-mix(in srgb, var(--color-secondary) 30%, transparent)' : 'transparent',
+              backgroundColor: prompt.selected ? 'var(--color-on-blue-faint)' : 'transparent',
               borderRadius: '6px'
             }}
             onMouseEnter={(e) => {
               if (!prompt.selected) {
-                e.currentTarget.style.backgroundColor = 'var(--color-secondary-lighter)';
+                e.currentTarget.style.backgroundColor = 'var(--color-on-blue-faint)';
               }
             }}
             onMouseLeave={(e) => {
@@ -62,7 +62,7 @@ export function AnalysisResultContent({
               onChange={() => onTogglePromptSelection(analysisResult.configIndex, prompt.id)}
               label=""
             />
-            <div className="flex-1 text-xs text-secondary">
+            <div className="flex-1 text-xs text-on-blue">
               {prompt.text}
               
               {/* Metadata display (if available) */}

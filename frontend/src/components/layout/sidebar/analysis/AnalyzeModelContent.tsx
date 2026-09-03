@@ -5,6 +5,7 @@ import { toPng } from 'html-to-image';
 import type { AnalyzeModelConfig } from '@/types/analysis';
 import { useSpeckleStore, useAnalysisStore, useUIStore } from '@/store';
 import { getRootNodesForModel } from '@/hooks/useSpeckleTree';
+import { DashedAddButton } from '@/components/ui/DashedAddButton';
 
 /**
  * AnalyzeModelContent
@@ -145,14 +146,6 @@ export function AnalyzeModelContent({
           </div>
 
 
-          {/* Capture view section */}
-          <CaptureViewSection
-            index={index}
-            screenshots={config.liveScreenshots}
-            screenshotFilenames={config.liveScreenshotFilenames ?? []}
-            onUpdateConfig={onUpdateConfig}
-          />
-
           {/* Optional user context */}
           <div className="px-2 space-y-1">
             <label className="text-xxs font-medium" style={{ color: 'var(--color-secondary-hover)' }}>
@@ -173,6 +166,14 @@ export function AnalyzeModelContent({
               }}
             />
           </div>
+
+          {/* Capture view section */}
+          <CaptureViewSection
+            index={index}
+            screenshots={config.liveScreenshots}
+            screenshotFilenames={config.liveScreenshotFilenames ?? []}
+            onUpdateConfig={onUpdateConfig}
+          />
 
         </div>
       )}
@@ -250,24 +251,17 @@ function CaptureViewSection({ index, screenshots, screenshotFilenames, onUpdateC
         {screenshots.map((src, i) => (
           <Thumbnail key={i} src={src} onRemove={() => handleRemove(i)} />
         ))}
-        <button
+        <DashedAddButton
           onClick={handleCapture}
           disabled={isCapturing}
-          className="tag add flex-shrink-0"
+          className="flex-shrink-0 self-center"
+          icon={isCapturing ? '…' : '+'}
           style={{
-            width: screenshots.length > 0 ? 52 : 26,
-            height: screenshots.length > 0 ? 52 : 26,
             cursor: isCapturing ? 'wait' : 'pointer',
             opacity: isCapturing ? 0.6 : 1,
           }}
           title="Capture current view"
-        >
-          {isCapturing ? (
-            <span style={{ fontSize: 10 }}>…</span>
-          ) : (
-            <span style={{ fontSize: screenshots.length > 0 ? 18 : 12, lineHeight: 1 }}>+</span>
-          )}
-        </button>
+        />
       </div>
       {error && (
         <p className="text-xs" style={{ color: 'var(--color-error, #f87171)' }}>{error}</p>

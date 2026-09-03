@@ -58,7 +58,7 @@ export function AudioAnalysisAfterContent({
 
       {/* Sound list header */}
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-secondary">
+        <span className="text-xs font-semibold text-on-blue">
           Detected Sounds
         </span>
         <span className="text-xs" style={{ color: 'var(--color-on-blue-muted)' }}>
@@ -73,18 +73,18 @@ export function AudioAnalysisAfterContent({
             key={prompt.id}
             className="flex items-start gap-0 p-1 rounded cursor-pointer transition-colors"
             style={{
-              backgroundColor: prompt.selected ? 'color-mix(in srgb, var(--color-secondary) 30%, transparent)' : 'transparent',
+              backgroundColor: prompt.selected ? 'var(--color-on-blue-faint)' : 'transparent',
               borderRadius: '6px',
               cursor: 'pointer',
             }}
             onClick={() => onTogglePromptSelection(analysisResult.configIndex, prompt.id)}
             onMouseEnter={(e) => {
               setHoveredIndex(i);
-              e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.14)';
+              e.currentTarget.style.backgroundColor = 'var(--color-on-blue-faint)';
             }}
             onMouseLeave={(e) => {
               setHoveredIndex(null);
-               e.currentTarget.style.backgroundColor = prompt.selected? 'color-mix(in srgb, var(--color-secondary) 30%, transparent)' : 'transparent';
+               e.currentTarget.style.backgroundColor = prompt.selected? 'var(--color-on-blue-faint)' : 'transparent';
             }}
           >
             <CheckboxField

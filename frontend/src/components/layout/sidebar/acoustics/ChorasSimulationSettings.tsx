@@ -11,12 +11,16 @@
 import {
   CHORAS_DG_FREQ_UPPER_MIN,
   CHORAS_DG_FREQ_UPPER_MAX,
+  CHORAS_DG_DEFAULT_FREQ_UPPER,
   CHORAS_DG_POLY_ORDER_MIN,
   CHORAS_DG_POLY_ORDER_MAX,
+  CHORAS_DG_DEFAULT_POLY_ORDER,
   CHORAS_DG_PPW_MIN,
   CHORAS_DG_PPW_MAX,
+  CHORAS_DG_DEFAULT_PPW,
   CHORAS_DG_CFL_MIN,
   CHORAS_DG_CFL_MAX,
+  CHORAS_DG_DEFAULT_CFL,
 } from '@/utils/constants';
 import type { ChorasSimulationConfig } from '@/types/acoustics';
 import { RangeSlider } from '@/components/ui/RangeSlider';
@@ -74,46 +78,49 @@ export function ChorasSimulationSettings({
         <>
           {/* Upper frequency limit */}
           <RangeSlider
-            label="Upper frequency: "
+            label="Upper frequency"
             value={settings.dg_freq_upper_limit}
             min={CHORAS_DG_FREQ_UPPER_MIN}
             max={CHORAS_DG_FREQ_UPPER_MAX}
             step={10}
-            formatValue={(v) => `${v} Hz`}
+            unit="Hz"
+            defaultValue={CHORAS_DG_DEFAULT_FREQ_UPPER}
             onChange={(v) => handleSettingChange('dg_freq_upper_limit', v)}
             disabled={isRunning}
           />
 
           {/* Polynomial order */}
           <RangeSlider
-            label="Polynomial order: "
+            label="Polynomial order"
             value={settings.dg_poly_order}
             min={CHORAS_DG_POLY_ORDER_MIN}
             max={CHORAS_DG_POLY_ORDER_MAX}
             step={1}
+            defaultValue={CHORAS_DG_DEFAULT_POLY_ORDER}
             onChange={(v) => handleSettingChange('dg_poly_order', v)}
             disabled={isRunning}
           />
 
           {/* Points per wavelength */}
           <RangeSlider
-            label="Points/wavelength: "
+            label="Points/wavelength"
             value={settings.dg_ppw}
             min={CHORAS_DG_PPW_MIN}
             max={CHORAS_DG_PPW_MAX}
             step={0.5}
+            defaultValue={CHORAS_DG_DEFAULT_PPW}
             onChange={(v) => handleSettingChange('dg_ppw', v)}
             disabled={isRunning}
           />
 
           {/* CFL number */}
           <RangeSlider
-            label="CFL number: "
+            label="CFL number"
             value={settings.dg_cfl}
             min={CHORAS_DG_CFL_MIN}
             max={CHORAS_DG_CFL_MAX}
             step={0.1}
-            formatValue={(v) => `${v.toFixed(1)}`}
+            defaultValue={CHORAS_DG_DEFAULT_CFL}
             onChange={(v) => handleSettingChange('dg_cfl', v)}
             disabled={isRunning}
           />

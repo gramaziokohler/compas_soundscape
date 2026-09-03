@@ -10,29 +10,43 @@ globs: frontend/src/components/**,frontend/src/app/globals.css
 All colors live in `frontend/src/app/globals.css` as CSS custom properties.
 **Never write hex, rgba, or named colors in component files, `constants.ts`, or anywhere else.**
 
+Light (`:root`) and dark (`html[data-theme="dark"]` + `prefers-color-scheme: dark`) share the same
+primary / on-blue / semantic / material tokens. Surfaces, text, borders, and overlays invert.
+
+The resolved theme is `html[data-theme="light"|"dark"]`. Preference (`system` | `light` | `dark`)
+is stored at `localStorage['compas-color-theme']` (written immediately on change; also persisted
+in `uiStore.colorTheme`). A blocking script in `layout.tsx` applies it before first paint.
+This is **independent** of Speckle viewmode (`viewMode: 'dark'` = Sounds lighting).
+
 ### Token Reference
 
-| Token | Value | Use |
-| ----- | ----- | --- |
-| `--color-primary` | `#2F2FE4` | Brand, buttons, active states |
-| `--color-primary-hover` | `#5151e3` | Button hover |
-| `--color-primary-light` | `#c2c2ff` | Light accent |
-| `--color-secondary` | `#1f1f1f` | Dark text, Three.js dark geometry |
-| `--color-secondary-hover` | `#787878` | Muted text |
-| `--color-secondary-light` | `#dbdbdb` | Borders, dividers |
-| `--color-secondary-lighter` | `#f3f3f3` | Backgrounds |
-| `--color-success` | `#10B981` | |
-| `--color-error` | `#EF4444` | |
-| `--color-warning` | `#F59E0B` | |
-| `--color-info` | `#3B82F6` | |
-| `--color-material-start/mid/end` | `#67bfb4` / `#ffbf6d` / `#eb5c52` | Acoustic absorption gradient |
-| `--color-receiver` | `#f0a938` | Three.js receiver cube |
-| `--color-overlay-bg` | `rgba(0,0,0,0.8)` | Glass panels on 3D canvas |
-| `--color-overlay-border` | `rgba(255,255,255,0.2)` | |
-| `--shadow-sm/md/lg/xl/overlay` | CSS box-shadow strings | |
-
-`-static` variants exist for `--background`, `--foreground`, `--color-secondary*` — use them where
-dark-mode overrides must not apply.
+| Token | Light | Dark | Use |
+| ----- | ----- | ---- | --- |
+| `--background` | `#edece3` | `#0c0d0f` | Page / panel chrome |
+| `--foreground` | `#1c1d21` | `#eceef0` | Body text |
+| `--color-primary` | `#002aff` | same | Brand, buttons, active states |
+| `--color-primary-hover` | `#002fffa0` | same | Button hover |
+| `--color-primary-light` | `#002aff7a` | same | Light accent |
+| `--color-primary-lighter` | `rgba(78, 107, 255, 0.24)` | same | Selected-chip fill |
+| `--color-on-blue` | `#ffffff` | same | Text/icons on a solid primary surface |
+| `--color-secondary-hover` | `#5c5f66` | `#94979f` | Muted text |
+| `--color-secondary-light` | `#d4d3c9` | `#17181b` | Borders, hover fills |
+| `--color-secondary-lighter` | `#e4e3d9` | `#0f1012` | Inputs, recessed surfaces |
+| `--color-surface` | `#f6f5ee` | `#0a0a0a` | Cards |
+| `--color-surface-2` | `#fafaf6` | `#1c1e22` | Menus, elevated |
+| `--color-border` | `rgba(0,0,0,0.08)` | `rgba(255,255,255,0.07)` | Hairline |
+| `--color-border-strong` | `rgba(0,0,0,0.16)` | `rgba(255,255,255,0.15)` | Strong hairline |
+| `--color-blue-text` | `#002aff` | `#8fa1ff` | Blue label on a surface |
+| `--color-success` | `#10B981` | same | |
+| `--color-error` | `#EF4444` | same | |
+| `--color-warning` | `#F59E0B` | same | |
+| `--color-info` | `#3B82F6` | same | |
+| `--color-material-start/mid/end` | `#67bfb4` / `#ffbf6d` / `#eb5c52` | same | Acoustic absorption gradient |
+| `--color-receiver` | `#f0a938` | same | Three.js receiver cube |
+| `--color-overlay-bg` | `rgba(237,236,227,0.92)` | `rgba(0,0,0,0.8)` | Glass panels on 3D canvas |
+| `--color-overlay-border` | `rgba(0,0,0,0.12)` | `rgba(255,255,255,0.2)` | |
+| `--sidebar-bg` | `rgba(237,236,227,0.72)` | `rgba(68,68,68,0.45)` | Frosted sidebar |
+| `--shadow-md/lg` | CSS box-shadow strings | same | |
 
 ### How to Use Colors by Context
 

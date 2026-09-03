@@ -185,7 +185,7 @@ export function VirtualTreeItem({
             <div
               className="truncate text-xs"
               style={{
-                color: isHidden || shouldShowDimmed ? 'var(--color-secondary-hover)' : 'var(--color-secondary)'
+                color: isHidden || shouldShowDimmed ? 'var(--color-secondary-hover)' : 'var(--foreground)'
               }}
             >
               {displayHeader}

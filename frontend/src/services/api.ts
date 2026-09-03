@@ -318,6 +318,7 @@ export const apiService = {
   async generateTTS(data: {
     texts: { text: string; voice_name?: string; display_name?: string; position?: number[]; dbfs?: number; prompt_index?: number; copy_index?: number; total_copies?: number }[];
     language?: string;
+    tts_model?: string;
   }): Promise<{ generation_id: string }> {
     try {
       const response = await fetchWithErrorHandling(

@@ -1,9 +1,18 @@
 ---
 name: run-app
-description: use this to start web-app before UI verification or manual testing
+description: >-
+  Start the COMPAS FastAPI backend (port 8000) and Next.js frontend (port 3000)
+  when they are not already running. Use only when the user asks to start the
+  app, or when debugging a live bug that requires a running instance. Do not
+  start the app after routine UI or code edits, and do not start it as a default
+  post-edit verification step.
 ---
 
 # Run App — compas_soundscape
+
+Start the app only when a live instance is actually needed (debugging, or the
+user asked). Check whether ports 8000 and 3000 already respond before launching
+anything. If they do, skip this skill.
 
 ## 1. Stop Any Existing Servers
 

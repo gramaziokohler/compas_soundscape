@@ -152,9 +152,21 @@ AUDIOLDM2_NUM_WAVEFORMS = 1  # Number of waveforms to generate per prompt
 AUDIOLDM2_SAMPLE_RATE = 16000  # AudioLDM2 output sample rate
 
 # Gemini TTS Configuration
-# TTS_MODEL_NAME = "gemini-2.5-flash-preview-tts"
-# TTS_MODEL_NAME = "gemini-2.5-pro-preview-tts"
-TTS_MODEL_NAME = "gemini-3.1-flash-tts-preview"
+TTS_MODEL_GEMINI_FLASH = "gemini-2.5-flash-preview-tts"
+TTS_MODEL_GEMINI_PRO = "gemini-2.5-pro-preview-tts"
+TTS_MODEL_GEMINI_3_FLASH = "gemini-3.1-flash-tts-preview"
+TTS_AVAILABLE_MODELS = (
+    TTS_MODEL_GEMINI_3_FLASH,
+    TTS_MODEL_GEMINI_FLASH,
+    TTS_MODEL_GEMINI_PRO,
+)
+DEFAULT_TTS_MODEL = TTS_MODEL_GEMINI_3_FLASH
+TTS_MODEL_NAME = DEFAULT_TTS_MODEL  # alias used by TTSService / version info
+TTS_MODEL_NAMES = {
+    TTS_MODEL_GEMINI_3_FLASH: "Gemini 3.1 Flash TTS",
+    TTS_MODEL_GEMINI_FLASH: "Gemini 2.5 Flash TTS",
+    TTS_MODEL_GEMINI_PRO: "Gemini 2.5 Pro TTS",
+}
 TTS_SAMPLE_RATE = 24000
 TTS_DEFAULT_VOICE = "Kore"
 TTS_AVAILABLE_VOICES = [

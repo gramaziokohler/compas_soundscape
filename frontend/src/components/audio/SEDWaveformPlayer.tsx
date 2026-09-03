@@ -77,8 +77,9 @@ export function SEDWaveformPlayer({
       onFinish={handleFinish}
       interact={true}
       className="space-y-1"
-      borderColor="var(--color-primary)"
-      backgroundColor="var(--background)"
+      borderColor="var(--color-on-blue-faint)"
+      backgroundColor="var(--color-blue-chip-bg)"
+      onBlueBackground
     >
       {/* Detection region overlays — hovered sound only */}
       {detectedSounds.map((sound, soundIdx) => {

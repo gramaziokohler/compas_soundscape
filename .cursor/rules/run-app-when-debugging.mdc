@@ -1,0 +1,18 @@
+---
+description: Do not start the app or open the browser after routine UI edits; run the app only when debugging needs a live instance.
+alwaysApply: true
+---
+
+# Run the app only when debugging
+
+Routine UI, layout, styling, routing, and component work ends when the code is written.
+Do not start the backend/frontend, open a browser, take screenshots, or run Playwright
+as a post-edit checklist.
+
+Start the app (`run-app`) and use the browser (`ui-verify`, Playwright, chrome-devtools)
+only when:
+
+- the user asked to run / open / verify the app, or
+- you are debugging a live issue that cannot be diagnosed from code, logs, or types.
+
+If the servers are already running, reuse them. Do not restart them to "verify" an edit.

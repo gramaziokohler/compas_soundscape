@@ -605,7 +605,7 @@ export function ObjectExplorer({ resetAllRef, onItemCountChange, maxTreeHeight }
           style={{
             backgroundColor: 'var(--color-primary-light)',
             borderColor: 'var(--color-primary)',
-            color: 'var(--color-secondary)',
+            color: 'var(--foreground)',
           }}
         >
           Define the acoustic layer to isolate for acoustic simulation

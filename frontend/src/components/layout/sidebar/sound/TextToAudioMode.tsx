@@ -7,6 +7,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { pauseStore, commitStore, globalUndo, globalRedo } from '@/store';
 import { useBatchedSlider } from '@/hooks/useBatchedSlider';
 import { useSoundscapeStore } from '@/store';
+import { DEFAULT_DURATION_SECONDS, DEFAULT_GUIDANCE_SCALE, DEFAULT_SEED_COPIES } from '@/utils/constants';
 
 /**
  * TextToAudioMode Component
@@ -41,13 +42,15 @@ export function TextToAudioSliders({
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid gap-1">
         <RangeSlider
-          label="Duration (s): "
+          label="Duration"
           value={config.duration}
           min={1}
           max={30}
           step={1}
+          unit="s"
+          defaultValue={DEFAULT_DURATION_SECONDS}
           onDragStart={durationSlider.onDragStart}
           onChange={durationSlider.onChange}
           onChangeCommitted={durationSlider.onCommit}
@@ -55,31 +58,32 @@ export function TextToAudioSliders({
         />
 
         <RangeSlider
-          label="Guidance: "
-          value={config.guidance_scale ?? 4.5}
+          label="Guidance"
+          value={config.guidance_scale ?? DEFAULT_GUIDANCE_SCALE}
           min={0}
           max={10}
           step={0.5}
+          defaultValue={DEFAULT_GUIDANCE_SCALE}
           onDragStart={guidanceSlider.onDragStart}
           onChange={guidanceSlider.onChange}
           onChangeCommitted={guidanceSlider.onCommit}
           showLabels={false}
           hoverText="Low guidance = AI model can get creative, but follows less your prompts"
         />
-      </div>
-
       <RangeSlider
-        label="Number of variants: "
+        label="Variants"
         value={config.seed_copies}
         min={1}
         max={5}
         step={1}
+        defaultValue={DEFAULT_SEED_COPIES}
         onDragStart={variantsSlider.onDragStart}
         onChange={variantsSlider.onChange}
         onChangeCommitted={variantsSlider.onCommit}
         showLabels={false}
         hoverText="This will generate multiple variants of sounds from your prompt"
       />
+    </div>
     </>
   );
 }
@@ -96,7 +100,7 @@ export function AdditionalSettings({
     <div className="mt-0">
       <button
         onClick={() => setIsExpanded((v) => !v)}
-        className="flex items-center gap-1.5 w-full text-left text-xs text-secondary-hover hover:text-neutral-300 transition-colors"
+        className="flex items-center gap-1.5 w-full text-left text-xs text-secondary-hover hover:text-foreground transition-colors"
       >
         {isExpanded ? <ChevronDown size={11} className="shrink-0" /> : <ChevronRight size={11} className="shrink-0" />}
         <span>Additional settings</span>

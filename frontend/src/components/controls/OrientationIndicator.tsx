@@ -73,7 +73,7 @@ export function OrientationIndicator({ yaw, pitch, className = "", onExitFirstPe
             <div 
               className="relative w-12 h-12 rounded-full"
               style={{
-                backgroundColor: 'var(--color-secondary)',
+                backgroundColor: 'var(--foreground)',
                 borderColor: 'color-mix(in srgb, var(--color-primary) 50%, transparent)',
                 borderWidth: '1px',
                 borderStyle: 'solid',
@@ -111,7 +111,7 @@ export function OrientationIndicator({ yaw, pitch, className = "", onExitFirstPe
             <div 
               className="relative w-8 h-12 rounded overflow-hidden"
               style={{
-                backgroundColor: 'var(--color-secondary)',
+                backgroundColor: 'var(--foreground)',
                 borderColor: 'color-mix(in srgb, var(--color-primary) 50%, transparent)',
                 borderWidth: '1px',
                 borderStyle: 'solid',

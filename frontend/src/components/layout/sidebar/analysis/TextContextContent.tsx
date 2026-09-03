@@ -1,7 +1,7 @@
 'use client';
 
 import type { TextAnalysisConfig } from '@/types/analysis';
-import { NUM_SOUNDS_MAX, NUM_SOUNDS_MIN } from '@/utils/constants';
+import { NUM_SOUNDS_MAX, NUM_SOUNDS_MIN, DEFAULT_NUM_SOUNDS } from '@/utils/constants';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { CheckboxField } from '@/components/ui/CheckboxField';
 import { Notice } from '@/components/ui/Notice';
@@ -82,11 +82,12 @@ export function TextContextContent({
 
       {/* Number of sounds */}
       <RangeSlider
-        label="Number of sounds: "
+        label="Number of sounds"
         value={config.numSounds ?? NUM_SOUNDS_MIN}
         min={NUM_SOUNDS_MIN}
         max={NUM_SOUNDS_MAX}
         step={1}
+        defaultValue={DEFAULT_NUM_SOUNDS}
         onDragStart={numSoundsSlider.onDragStart}
         onChange={numSoundsSlider.onChange}
         onChangeCommitted={numSoundsSlider.onCommit}

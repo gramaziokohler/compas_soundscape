@@ -16,6 +16,8 @@ const HEADER_HEIGHT = 40;
 const CONTENT_PADDING = 8;
 
 const PANEL_MARGIN = 24;
+/** Panel center as a fraction of viewport width for the default (center-right) placement. */
+const DEFAULT_X_CENTER_FRACTION = 0.62;
 
 interface ObjectExplorerPanelProps {
   onClose: () => void;
@@ -64,9 +66,12 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
     const sidebarOffset = isRightSidebarExpanded ? rightSidebarWidth + PANEL_MARGIN : PANEL_MARGIN;
     const initWidth = clampToViewportWidth(saved?.width ?? DEFAULT_WIDTH, MIN_WIDTH);
     const initHeight = clampToViewportHeight(saved?.height ?? fluidDefaultHeight, MIN_HEIGHT, PANEL_MARGIN);
+    const targetX = scale.viewport.width * DEFAULT_X_CENTER_FRACTION - initWidth / 2;
+    const maxX = scale.viewport.width - initWidth - sidebarOffset;
+    const targetY = (scale.viewport.height - initHeight) / 2;
     setPosition({
-      x: scale.viewport.width - initWidth - sidebarOffset,
-      y: PANEL_MARGIN,
+      x: Math.max(PANEL_MARGIN, Math.min(targetX, maxX)),
+      y: Math.max(PANEL_MARGIN, Math.min(targetY, scale.viewport.height - initHeight - PANEL_MARGIN)),
     });
     setSize({ width: initWidth, height: initHeight });
     setPositionReady(true);

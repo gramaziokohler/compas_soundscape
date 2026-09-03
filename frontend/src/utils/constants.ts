@@ -149,11 +149,8 @@ export const UI_LINE_THICKNESS = {
 // Shadows (CSS box-shadow values — defined in globals.css)
 export const UI_SHADOWS = {
   NONE: "none",
-  SM: "var(--shadow-sm)",
   MD: "var(--shadow-md)",
   LG: "var(--shadow-lg)",
-  XL: "var(--shadow-xl)",
-  OVERLAY: "var(--shadow-overlay)",
 } as const;
 
 // Transitions
@@ -184,13 +181,15 @@ export const UI_CARD = {
   SHADOW: UI_SHADOWS.MD,
 } as const;
 
+/** CardSelect with this many options or fewer renders as TextSelect (inline labels). */
+export const CARD_SELECT_INLINE_MAX_OPTIONS = 3;
+
 // Overlays (3D Scene UI)
 export const UI_OVERLAY = {
   BACKDROP_BLUR: "8px",      // backdrop-blur-sm
   BORDER_RADIUS: UI_BORDER_RADIUS.MD,
   BORDER_WIDTH: UI_LINE_THICKNESS.THIN,
   PADDING: UI_SPACING.MD,
-  SHADOW: UI_SHADOWS.OVERLAY,
   MIN_WIDTH: "200px",
   WIDTH: "230px",            // Standard width for all overlays (Sound UI and Entity UI)
   MARGIN: 200,               // Margin for overlay positioning
@@ -407,6 +406,28 @@ export const AUDIO_MODEL_NAMES: Record<string, string> = {
   [AUDIO_MODEL_AUDIOLDM2]: "AudioLDM2",
   [AUDIO_MODEL_ELEVENLABS]: "ElevenLabs",
   [AUDIO_MODEL_TTS]: "Gemini TTS",
+};
+
+export const AUDIO_MODEL_DESCRIPTIONS: Record<string, string> = {
+  [AUDIO_MODEL_TANGOFLUX]: "Fast, high-quality text-to-audio generation (default)",
+  [AUDIO_MODEL_AUDIOLDM2]: "Alternative model with different characteristics",
+  [AUDIO_MODEL_ELEVENLABS]: "Cloud-based sound effects via ElevenLabs — requires NEXT_PUBLIC_ELEVENLABS_API_KEY",
+};
+
+// Gemini TTS models — keys must match backend TTS_MODEL_* constants
+export const TTS_MODEL_GEMINI_FLASH = "gemini-2.5-flash-preview-tts";
+export const TTS_MODEL_GEMINI_PRO = "gemini-2.5-pro-preview-tts";
+export const TTS_MODEL_GEMINI_3_FLASH = "gemini-3.1-flash-tts-preview";
+export const TTS_AVAILABLE_MODELS = [
+  TTS_MODEL_GEMINI_3_FLASH,
+  TTS_MODEL_GEMINI_FLASH,
+  TTS_MODEL_GEMINI_PRO,
+] as const;
+export const DEFAULT_TTS_MODEL = TTS_MODEL_GEMINI_3_FLASH;
+export const TTS_MODEL_NAMES: Record<string, string> = {
+  [TTS_MODEL_GEMINI_3_FLASH]: "Gemini 3.1 Flash TTS",
+  [TTS_MODEL_GEMINI_FLASH]: "Gemini 2.5 Flash TTS",
+  [TTS_MODEL_GEMINI_PRO]: "Gemini 2.5 Pro TTS",
 };
 
 // TTS Voice options
@@ -1465,7 +1486,7 @@ export const PYROOMACOUSTICS_SIMULATION_MODE_FOA = "foa"; // First-Order Ambison
 // Simulation Mode Display Names
 export const PYROOMACOUSTICS_SIMULATION_MODE_NAMES = {
   [PYROOMACOUSTICS_SIMULATION_MODE_MONO]: "Mono (1-ch)",
-  [PYROOMACOUSTICS_SIMULATION_MODE_FOA]: "FOA Ambisonics (4-ch)",
+  [PYROOMACOUSTICS_SIMULATION_MODE_FOA]: "FOA (4-ch)",
 } as const;
 
 // Simulation Mode Descriptions (for tooltips/UI help)

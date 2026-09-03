@@ -34,6 +34,8 @@ from config.constants import (
     GENERATED_SOUND_URL_PREFIX,
     TTS_TASK_CLEANUP_DELAY_SECONDS,
     TEMP_SIMULATIONS_DIR,
+    TTS_AVAILABLE_MODELS,
+    DEFAULT_TTS_MODEL,
 )
 
 router = APIRouter()
@@ -65,6 +67,10 @@ async def generate_tts(request: TTSGenerationRequest, req: Request):
         if not session_id:
             raise HTTPException(status_code=400, detail="No session cookie")
 
+        tts_model = request.tts_model or DEFAULT_TTS_MODEL
+        if tts_model not in TTS_AVAILABLE_MODELS:
+            raise HTTPException(status_code=400, detail=f"Unknown TTS model: {tts_model}")
+
         sounds_out = user_sounds_dir(session_id)
         sounds_out.mkdir(parents=True, exist_ok=True)
         url_prefix = f"{GENERATED_SOUND_URL_PREFIX}/{session_id}"
@@ -77,6 +83,7 @@ async def generate_tts(request: TTSGenerationRequest, req: Request):
             output_dir=str(sounds_out),
             url_prefix=url_prefix,
             language=request.language,
+            tts_model=tts_model,
         )
 
         run_fn = make_subprocess_runner(

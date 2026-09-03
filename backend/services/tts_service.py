@@ -15,6 +15,7 @@ from config.constants import (
     TTS_MODEL_NAME,
     TTS_SAMPLE_RATE,
     TTS_DEFAULT_VOICE,
+    DEFAULT_TTS_MODEL,
 )
 
 try:
@@ -46,6 +47,7 @@ class TTSService:
         output_path: str,
         voice_name: str = TTS_DEFAULT_VOICE,
         language: Optional[str] = None,
+        model: str = DEFAULT_TTS_MODEL,
     ) -> tuple[str, float]:
         """
         Generate speech audio from text and save as WAV.
@@ -82,7 +84,7 @@ class TTSService:
             formatted_text = text
 
         response = client.models.generate_content(
-            model=TTS_MODEL_NAME,
+            model=model or DEFAULT_TTS_MODEL,
             contents=formatted_text,
             config=types.GenerateContentConfig(
                 response_modalities=["AUDIO"],

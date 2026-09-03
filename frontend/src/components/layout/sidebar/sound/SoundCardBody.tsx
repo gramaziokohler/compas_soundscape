@@ -4,7 +4,7 @@ import { useState, useEffect, type ReactNode } from 'react';
 import { VerticalVolumeSlider } from '@/components/ui/VerticalVolumeSlider';
 import { PositionWidget } from '@/components/ui/PositionWidget';
 import { TimestampList } from './TimestampList';
-import { UI_VOLUME_SLIDER, UI_INTERVAL_SLIDER } from '@/utils/constants';
+import { UI_VOLUME_SLIDER, UI_INTERVAL_SLIDER, DEFAULT_DBFS, AUDIO_PLAYBACK } from '@/utils/constants';
 import { useBatchedSlider } from '@/hooks/useBatchedSlider';
 
 /**
@@ -13,8 +13,9 @@ import { useBatchedSlider } from '@/hooks/useBatchedSlider';
  * Shared layout for both pre-generation and post-generation sound cards.
  * Renders:
  *   - Left column:
- *       1. Position (x/y/z) widget — always visible
- *       2. Mode-specific main content (textarea, upload area, waveform, ...)
+ *       1. Mode-specific main content (textarea, upload area, waveform, ...)
+ *       2. Position (x/y/z) widget — always visible
+ *       3. Optional settings summary (post-gen sound cards)
  *   - Right column: interval slider / timestamp list + volume slider
  *
  * All slider state and batched-undo logic live here so it never needs to be
@@ -26,6 +27,8 @@ export interface SoundCardBodyProps {
   mainContent: ReactNode;
   /** Rendered full-width above the flex row — use for headers that span both columns. */
   fullWidthHeader?: ReactNode;
+  /** Rendered in the left column below the position widget (e.g. post-gen settings recap). */
+  settingsSummary?: ReactNode;
 
   // ── Shared data ──────────────────────────────────────────────────────────
   volumeDbfs: number;
@@ -56,6 +59,7 @@ export interface SoundCardBodyProps {
 export function SoundCardBody({
   mainContent,
   fullWidthHeader,
+  settingsSummary,
   volumeDbfs,
   intervalSeconds,
   schedulingMode,
@@ -80,18 +84,12 @@ export function SoundCardBody({
   useEffect(() => { setTempVolumeDbfs(volumeDbfs); }, [volumeDbfs]);
   useEffect(() => { setTempIntervalSeconds(intervalSeconds); }, [intervalSeconds]);
 
-  const dbfsToSlider = (dbfs: number) =>
-    (dbfs - UI_VOLUME_SLIDER.MIN) / (UI_VOLUME_SLIDER.MAX - UI_VOLUME_SLIDER.MIN);
-  const sliderToDbfs = (v: number) =>
-    UI_VOLUME_SLIDER.MIN + v * (UI_VOLUME_SLIDER.MAX - UI_VOLUME_SLIDER.MIN);
-
   const volumeSlider = useBatchedSlider<number>(
     storeContext,
-    (v) => setTempVolumeDbfs(sliderToDbfs(v)),
+    (v) => setTempVolumeDbfs(v),
     (v) => {
-      const dbfs = sliderToDbfs(v);
-      onVolumeChange?.(dbfs);
-      if (dbfs <= UI_VOLUME_SLIDER.MIN) {
+      onVolumeChange?.(v);
+      if (v <= UI_VOLUME_SLIDER.MIN) {
         onMuteChange?.(true);
       } else if (isMuted) {
         onMuteChange?.(false);
@@ -101,8 +99,8 @@ export function SoundCardBody({
 
   const intervalSlider = useBatchedSlider<number>(
     storeContext,
-    (v) => setTempIntervalSeconds(Math.round(v * UI_INTERVAL_SLIDER.MAX)),
-    onIntervalChange ? (v) => onIntervalChange(Math.round(v * UI_INTERVAL_SLIDER.MAX)) : undefined,
+    (v) => setTempIntervalSeconds(Math.round(v)),
+    onIntervalChange ? (v) => onIntervalChange(Math.round(v)) : undefined,
   );
 
   const isLinked = entityIndex !== undefined;
@@ -148,50 +146,50 @@ export function SoundCardBody({
             )}
           </div>
         )}
+
+        {settingsSummary}
       </div>
 
       {/* ── Right column: vertical sliders ── */}
       <div className="flex gap-2">
         {/* Interval slider (interval mode) */}
         {schedulingMode === 'interval' && onIntervalChange && (
-          <div
-            className="flex flex-col items-center"
-            title="Playback interval: Time between sound repetitions in the timeline. Set to 0 for continuous loop."
-          >
-            <span className="text-[10px] mb-1" style={onBlueBackground ? { color: 'var(--color-on-blue-muted)' } : undefined}>
-              {tempIntervalSeconds === 0 ? '∞' : `${tempIntervalSeconds}s`}
-            </span>
-            <VerticalVolumeSlider
-              value={tempIntervalSeconds / UI_INTERVAL_SLIDER.MAX}
-              onDragStart={intervalSlider.onDragStart}
-              onChange={intervalSlider.onChange}
-              onChangeCommitted={intervalSlider.onCommit}
-              onBlueBackground={onBlueBackground}
-            />
-            <span className="text-[10px] mt-1" style={onBlueBackground ? { color: 'var(--color-on-blue-muted)' } : undefined}>Int.</span>
-          </div>
+          <VerticalVolumeSlider
+            value={tempIntervalSeconds}
+            min={UI_INTERVAL_SLIDER.MIN}
+            max={UI_INTERVAL_SLIDER.MAX}
+            step={1}
+            unit="s"
+            precision={0}
+            defaultValue={AUDIO_PLAYBACK.DEFAULT_INTERVAL_SECONDS}
+            label="Int."
+            hoverText="Playback interval: Time between sound repetitions in the timeline. Set to 0 for continuous loop. Double-click to reset."
+            onDragStart={intervalSlider.onDragStart}
+            onChange={intervalSlider.onChange}
+            onChangeCommitted={intervalSlider.onCommit}
+            onBlueBackground={onBlueBackground}
+          />
         )}
 
         {/* Timestamp list removed — the DAW timeline manages timestamps in timestamp mode */}
 
         {/* Volume slider */}
         {onVolumeChange && (
-          <div
-            className="flex flex-col items-center"
-            title="Volume level: Controls the level in dBFS for spatial audio playback (0 = full scale)."
-          >
-            <span className="text-[10px] mb-1" style={onBlueBackground ? { color: 'var(--color-on-blue-muted)' } : undefined}>
-              {isMuted || tempVolumeDbfs <= UI_VOLUME_SLIDER.MIN ? 'Mute' : `${tempVolumeDbfs.toFixed(0)}dBFS`}
-            </span>
-            <VerticalVolumeSlider
-              value={dbfsToSlider(tempVolumeDbfs)}
-              onDragStart={volumeSlider.onDragStart}
-              onChange={volumeSlider.onChange}
-              onChangeCommitted={volumeSlider.onCommit}
-              onBlueBackground={onBlueBackground}
-            />
-            <span className="text-[10px] mt-1" style={onBlueBackground ? { color: 'var(--color-on-blue-muted)' } : undefined}>Vol.</span>
-          </div>
+          <VerticalVolumeSlider
+            value={tempVolumeDbfs}
+            min={UI_VOLUME_SLIDER.MIN}
+            max={UI_VOLUME_SLIDER.MAX}
+            step={1}
+            unit="dBFS"
+            precision={0}
+            defaultValue={DEFAULT_DBFS}
+            label="Vol."
+            hoverText="Volume level: Controls the level in dBFS for spatial audio playback (0 = full scale). Double-click to reset."
+            onDragStart={volumeSlider.onDragStart}
+            onChange={volumeSlider.onChange}
+            onChangeCommitted={volumeSlider.onCommit}
+            onBlueBackground={onBlueBackground}
+          />
         )}
       </div>
     </div>

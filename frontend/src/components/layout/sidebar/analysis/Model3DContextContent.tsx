@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import type { ModelAnalysisConfig } from '@/types/analysis';
 import { useSpeckleStore, useAnalysisStore } from '@/store';
 import { getRootNodesForModel } from '@/hooks/useSpeckleTree';
-import { NUM_SOUNDS_MIN, NUM_SOUNDS_MAX } from '@/utils/constants';
+import { NUM_SOUNDS_MIN, NUM_SOUNDS_MAX, DEFAULT_NUM_SOUNDS } from '@/utils/constants';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { useBatchedSlider } from '@/hooks/useBatchedSlider';
 
@@ -251,11 +251,12 @@ export function Model3DContextContent({
 
           {/* Number of sounds */}
           <RangeSlider
-            label="Number of sounds: "
+            label="Number of sounds"
             value={config.numSounds ?? NUM_SOUNDS_MIN}
             min={NUM_SOUNDS_MIN}
             max={NUM_SOUNDS_MAX}
             step={1}
+            defaultValue={DEFAULT_NUM_SOUNDS}
             onDragStart={numSoundsSlider.onDragStart}
             onChange={numSoundsSlider.onChange}
             onChangeCommitted={numSoundsSlider.onCommit}

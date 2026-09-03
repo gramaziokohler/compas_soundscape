@@ -1,36 +1,38 @@
 @import "tailwindcss";
 
+/* In-app override (`html[data-theme]`) wins over prefers-color-scheme. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* Light = SSR / no-JS default. Dark = current palette, applied via
+ * prefers-color-scheme (when data-theme is not "light") or html[data-theme="dark"]. */
 :root {
-  --background: #0c0d0f;
-  --foreground: #eceef0;
+  color-scheme: light;
+  --background: #edece3;
+  --foreground: #1c1d21;
 
-  --background-static: #ffffff;
-  --foreground-static: #171717;
+  /* ConfirmDialog "default" variant background tint (not on a blue card) */
+  --color-confirm-tint: #ffffff;
 
-  /* Primary brand color */
+  /* Primary brand color — identical in both themes */
   --color-primary: #002aff;
   --color-primary-hover: #002fffa0;
   --color-primary-light: #002aff7a;
   --color-primary-lighter: rgba(78, 107, 255, 0.24);
 
-  /* Secondary color */
-  --color-secondary: #eceef0;
-  --color-secondary-hover: #94979f;
-  --color-secondary-light: #17181b;
-  --color-secondary-lighter: #0f1012;
+  /* Secondary gray scale */
+  --color-secondary-hover: #5c5f66;
+  --color-secondary-light: #d4d3c9;
+  --color-secondary-lighter: #e4e3d9;
 
   /* Granular card-surface tokens */
-  --color-surface: #0a0a0a;
-  --color-surface-2: #1c1e22;
-  --color-field: #0f1012;
-  --color-field-hover: #131418;
-  --color-border: rgba(255, 255, 255, 0.07);
-  --color-border-strong: rgba(255, 255, 255, 0.15);
-  --color-text-3: #56585f;
-  --color-blue-text: #8fa1ff;
-  --color-blue-tint: rgba(78, 107, 255, 0.13);
-  --color-purple: #9d7bff;
-  --color-amber: #f0b24d;
+  --color-surface: #f6f5ee;
+  --color-surface-2: #fafaf6;
+  --color-field-hover: #e8e7dd;
+  --color-border: rgba(0, 0, 0, 0.08);
+  --color-border-strong: rgba(0, 0, 0, 0.16);
+  --color-text-3: #6b6d73;
+  --color-blue-text: #002aff;
+  --color-blue-tint: rgba(0, 42, 255, 0.10);
 
   /* On-blue foreground tokens — for content sitting directly on a solid
    * --color-primary card surface (generated-state cards). */
@@ -39,12 +41,12 @@
   --color-on-blue-faint: rgba(255, 255, 255, 0.16);
   --color-blue-chip-bg: rgba(0, 0, 0, 0.22);
 
-  /* Secondary color */
-  --color-secondary-static: #1f1f1f;
-  --color-secondary-hover-static: #787878;
-  --color-secondary-light-static: #dbdbdb;
-  --color-secondary-lighter-static: #f3f3f3;
-  
+  /* Sidebar collapse toggle label text (frosted-glass pill) */
+  --color-toggle-label: #1c1d21;
+
+  /* Three.js pending pre-generation sound-sphere color (sound-sphere-manager.ts) */
+  --color-pending: #787878;
+
   /* Semantic colors */
   --color-success: #10B981;
   --color-success-hover: #059669;
@@ -74,18 +76,15 @@
   --color-mixed: #787878;
 
   /* Elevation shadows */
-  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-  --shadow-overlay: 0 20px 25px -5px rgba(0, 0, 0, 0.3);
 
   /* 3D scene overlay UI (glass panel on scene canvas) */
-  --color-overlay-bg: rgba(0, 0, 0, 0.8);
-  --color-overlay-border: rgba(255, 255, 255, 0.2);
+  --color-overlay-bg: rgba(237, 236, 227, 0.92);
+  --color-overlay-border: rgba(0, 0, 0, 0.12);
 
   /* Sidebar panels — frosted glass over the 3D canvas */
-  --sidebar-bg: rgba(12, 13, 15, 0.45);
+  --sidebar-bg: rgba(237, 236, 227, 0.72);
 
   /* Viewport scale — set to live px values by useViewportScale() in browser
    * (see utils/scale.ts). Fallback values keep static CSS correct pre-JS. */
@@ -97,35 +96,28 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --color-background-static: var(--background-static);
-  --color-foreground-static: var(--foreground-static);  
+  --color-confirm-tint: var(--color-confirm-tint);
   --color-primary: var(--color-primary);
   --color-primary-hover: var(--color-primary-hover);
   --color-primary-light: var(--color-primary-light);
   --color-primary-lighter: var(--color-primary-lighter);
-  --color-secondary: var(--color-secondary);
   --color-secondary-hover: var(--color-secondary-hover);
   --color-secondary-light: var(--color-secondary-light);
   --color-secondary-lighter: var(--color-secondary-lighter);
-  --color-secondary-static: var(--color-secondary-static);
-  --color-secondary-hover-static: var(--color-secondary-hover-static);
-  --color-secondary-light-static: var(--color-secondary-light-static);
-  --color-secondary-lighter-static: var(--color-secondary-lighter-static);
   --color-surface: var(--color-surface);
   --color-surface-2: var(--color-surface-2);
-  --color-field: var(--color-field);
   --color-field-hover: var(--color-field-hover);
   --color-border: var(--color-border);
   --color-border-strong: var(--color-border-strong);
   --color-text-3: var(--color-text-3);
   --color-blue-text: var(--color-blue-text);
   --color-blue-tint: var(--color-blue-tint);
-  --color-purple: var(--color-purple);
-  --color-amber: var(--color-amber);
   --color-on-blue: var(--color-on-blue);
   --color-on-blue-muted: var(--color-on-blue-muted);
   --color-on-blue-faint: var(--color-on-blue-faint);
   --color-blue-chip-bg: var(--color-blue-chip-bg);
+  --color-toggle-label: var(--color-toggle-label);
+  --color-pending: var(--color-pending);
   --color-success: var(--color-success);
   --color-success-hover: var(--color-success-hover);
   --color-success-light: var(--color-success-light);
@@ -152,18 +144,53 @@
 
 }
 
-/* @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-
-    /* Secondary scale flips: dark bg tones for cards/borders, medium for muted text 
-    --color-secondary: #dbdbdb;
-    --color-secondary-hover: #909090;
-    --color-secondary-light: #2a2a2a;
-    --color-secondary-lighter: #141414;
+/* Dark palette — today's color system. Duplicated for OS preference (no JS)
+ * and for the in-app override (`data-theme="dark"`). */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --background: #0c0d0f;
+    --foreground: #eceef0;
+    --color-confirm-tint: #ffffff;
+    --color-secondary-hover: #94979f;
+    --color-secondary-light: #17181b;
+    --color-secondary-lighter: #0f1012;
+    --color-surface: #0a0a0a;
+    --color-surface-2: #1c1e22;
+    --color-field-hover: #131418;
+    --color-border: rgba(255, 255, 255, 0.07);
+    --color-border-strong: rgba(255, 255, 255, 0.15);
+    --color-text-3: #56585f;
+    --color-blue-text: #8fa1ff;
+    --color-blue-tint: rgba(78, 107, 255, 0.13);
+    --color-toggle-label: #dbdbdb;
+    --color-overlay-bg: rgba(0, 0, 0, 0.8);
+    --color-overlay-border: rgba(255, 255, 255, 0.2);
+    --sidebar-bg: rgba(68, 68, 68, 0.45);
   }
-} */
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #0c0d0f;
+  --foreground: #eceef0;
+  --color-confirm-tint: #ffffff;
+  --color-secondary-hover: #94979f;
+  --color-secondary-light: #17181b;
+  --color-secondary-lighter: #0f1012;
+  --color-surface: #0a0a0a;
+  --color-surface-2: #1c1e22;
+  --color-field-hover: #131418;
+  --color-border: rgba(255, 255, 255, 0.07);
+  --color-border-strong: rgba(255, 255, 255, 0.15);
+  --color-text-3: #56585f;
+  --color-blue-text: #8fa1ff;
+  --color-blue-tint: rgba(78, 107, 255, 0.13);
+  --color-toggle-label: #dbdbdb;
+  --color-overlay-bg: rgba(0, 0, 0, 0.8);
+  --color-overlay-border: rgba(255, 255, 255, 0.2);
+  --sidebar-bg: rgba(68, 68, 68, 0.45);
+}
 
 body {
   background: var(--background);
@@ -180,10 +207,27 @@ body {
   background: var(--sidebar-bg);
 }
 
-/* Global scrollbar styling */
+/* Adaptive-contrast text — for labels/text sitting directly on the frosted
+ * `.sidebar-glass` panel (breadcrumbs, status counts, empty-state messages),
+ * i.e. not on a solid card surface. `mix-blend-mode: difference` against a
+ * white source inverts against whatever shows through the blur, so it stays
+ * readable no matter how light/dark the live 3D scene is behind it. */
+.text-adaptive {
+  color: #ffffff;
+  mix-blend-mode: difference;
+}
+/* Light sidebar glass is opaque enough that difference-blend washes out.
+ * Use real body text instead of inverting the 3D scene. */
+html[data-theme="light"] .text-adaptive {
+  color: var(--foreground);
+  mix-blend-mode: normal;
+  font-weight: 500;
+}
+
+/* Global scrollbar styling — thumb/track tokens flip with :root / dark palette */
 html {
   scrollbar-width: thin;
-  scrollbar-color: var(--color-secondary-hover) transparent;
+  scrollbar-color: var(--color-border-strong) transparent;
   -ms-overflow-style: auto;
 }
 
@@ -193,17 +237,16 @@ html {
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--color-secondary);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-secondary-hover);
+  background: var(--color-border-strong);
   border-radius: 2px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-secondary-hover);
-  filter: brightness(1.3);
 }
 
 /* Remove focus outline from checkboxes and radio buttons */
@@ -291,21 +334,33 @@ canvas {
 
 /* Sidebar collapse/expand handle — a soft circular button, offset from the
  * sidebar edge with a gap (no hard border ring; separation comes from
- * background + shadow only). */
+ * background + shadow only). Collapsed = solid primary. Expanded = frosted
+ * glass using --sidebar-bg / --color-toggle-label (theme-aware). Hover
+ * always restores the current primary fill. Backdrop blur comes from the
+ * Tailwind `backdrop-blur-*` utility on the button in JSX. */
 .sidebar-toggle-handle {
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
   background: var(--color-primary);
+  color: var(--color-on-blue);
   border: none;
   box-shadow: var(--shadow-md);
   cursor: pointer;
   padding: 0;
-  transition: background-color 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.sidebar-toggle-handle svg {
+  color: inherit;
 }
 .sidebar-toggle-handle:hover {
   background: var(--color-primary-hover);
+  color: var(--color-on-blue);
+}
+.sidebar-toggle-handle--expanded {
+  background: var(--sidebar-bg);
+  color: var(--color-toggle-label);
 }
 
 /* Collapsed-state only — a physical "dropped ball" bounce: one large bounce,
@@ -336,43 +391,23 @@ canvas {
   padding: 6px 11px;
   border-radius: 999px;
   background: var(--sidebar-bg);
-  color: var(--color-secondary-light-static);
+  color: var(--color-toggle-label);
 }
 
 /* ==========================================================================
    Card design system — shared presentation classes (token-only)
    ========================================================================== */
 
-/* Field inputs (textarea / text-input) */
-.c-field {
-  width: 100%;
-  background: var(--color-field);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  color: var(--foreground);
-  font-family: var(--font-sans);
-  font-size: 12px;
-  padding: 8px 9px;
-}
-.c-field::placeholder { color: var(--color-text-3); }
-.c-field:focus {
-  outline: none;
-  border-color: var(--color-primary);
-  background: var(--color-field-hover);
-}
-textarea.c-field { height: 56px; line-height: 1.4; resize: none; }
-
 /* x/y/z numeric widget */
-.xyz { display: flex; gap: 6px; }
-.position-widget { display: flex; gap: 6px; align-items: flex-end; }
+.position-widget { display: flex; gap: 2px; align-items: flex-end; }
 .xyz-input {
   display: block;
   width: 100%;
   text-align: center;
   padding: 7px 4px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
-  background: var(--color-field);
+  font-size: 10px;
+  background: var(--color-secondary-lighter);
   border: 1px solid var(--color-border);
   border-radius: 6px;
   color: var(--foreground);
@@ -405,7 +440,7 @@ textarea.c-field { height: 56px; line-height: 1.4; resize: none; }
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  background: var(--color-field);
+  background: var(--color-secondary-lighter);
   border: 1px solid var(--color-border);
   border-radius: 6px;
   padding: 7px 9px;
@@ -449,58 +484,100 @@ textarea.c-field { height: 56px; line-height: 1.4; resize: none; }
   font-size: 10px;
   border-radius: 4px;
 }
-.select-opt:hover { background: var(--color-field); color: var(--foreground); }
+.select-opt:hover { background: var(--color-secondary-lighter); color: var(--foreground); }
 .select-opt.active { color: var(--color-blue-text); background: var(--color-blue-tint); }
 
-/* Range slider — 2px track + 11px blue thumb */
+/* Inline text select — used by CardSelect when there are few options */
+.text-select {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.text-select-opt {
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-family: var(--font-sans);
+  color: var(--color-secondary-hover);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.text-select-opt:hover:not(:disabled):not(.active) {
+  color: var(--color-primary-light);
+}
+.text-select-opt.active {
+  color: var(--color-blue-text);
+  border-color: var(--color-primary);
+}
+.text-select-opt:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.text-select.compact .text-select-opt {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 5px;
+}
+
+/* Range slider — filled track (matches the vertical fader look) + 13px thumb.
+ * Fill color/percentage are driven per-instance via the --slider-color /
+ * --slider-fill custom properties set inline by RangeSlider.tsx. Firefox fills
+ * the track natively via ::-moz-range-progress, so --slider-fill is only
+ * consumed by the Chromium/WebKit gradient background. */
 .c-slider {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 2px;
-  background: var(--color-border-strong);
-  border-radius: 2px;
+  height: 5px;
+  border-radius: 999px;
   outline: none;
-  margin: 10px 0 2px;
+  margin: 0;
+  background: linear-gradient(
+    to right,
+    var(--slider-color, var(--color-primary)) var(--slider-fill, 0%),
+    var(--color-secondary-light) var(--slider-fill, 0%)
+  );
 }
 .c-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 11px;
-  height: 11px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  background: var(--color-primary);
+  background: var(--slider-color, var(--color-primary));
   cursor: pointer;
   border: 2px solid var(--color-surface);
-  box-shadow: 0 0 0 1px var(--color-primary);
+  box-shadow: 0 0 0 1px var(--slider-color, var(--color-primary));
 }
 .c-slider::-moz-range-thumb {
-  width: 11px;
-  height: 11px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  background: var(--color-primary);
+  background: var(--slider-color, var(--color-primary));
   cursor: pointer;
   border: 2px solid var(--color-surface);
-  box-shadow: 0 0 0 1px var(--color-primary);
+  box-shadow: 0 0 0 1px var(--slider-color, var(--color-primary));
 }
-
-/* Stat row (source / listener / material) */
-.stat-row {
-  display: flex;
-  gap: 14px;
-  margin-bottom: 14px;
-  font-size: 11.5px;
-  color: var(--color-secondary-hover);
+.c-slider::-moz-range-track {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--color-secondary-light);
 }
-.stat-row .stat { display: flex; align-items: center; gap: 5px; }
-.stat-row .stat i { width: 6px; height: 6px; border-radius: 50%; display: block; }
-.stat-row .stat .n { color: var(--foreground); font-weight: 600; font-family: var(--font-mono); }
+.c-slider::-moz-range-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--slider-color, var(--color-primary));
+}
 
 /* Footer CTA */
 .btn-primary {
   width: 100%;
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-on-blue);
   border: none;
   border-radius: 6px;
   padding: 8px 12px;
@@ -517,7 +594,6 @@ textarea.c-field { height: 56px; line-height: 1.4; resize: none; }
 .btn-primary:hover { background: var(--color-primary-hover); }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-primary svg { width: 9px; height: 9px; }
-.btn-primary.compact { width: auto; margin-left: auto; }
 
 /* Generating state */
 .gen-status {
@@ -547,39 +623,6 @@ textarea.c-field { height: 56px; line-height: 1.4; resize: none; }
 .progress-track { height: 3px; background: var(--color-border-strong); border-radius: 2px; overflow: hidden; }
 .progress-fill { height: 100%; background: var(--color-primary); border-radius: 2px; transition: width 0.3s; }
 
-/* Waveform box + transport */
-.wave-box {
-  background: var(--color-field);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  padding: 10px 9px 8px;
-  margin-bottom: 12px;
-}
-.wave-time {
-  display: flex;
-  justify-content: space-between;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--color-text-3);
-  margin-top: 7px;
-}
-.transport { display: flex; gap: 6px; margin-top: 8px; }
-.transport button {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  border: 1px solid var(--color-border-strong);
-  background: var(--color-field);
-  color: var(--color-secondary-hover);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  padding: 0;
-}
-.transport button:hover { border-color: var(--color-text-3); color: var(--foreground); }
-.transport button svg { width: 9px; height: 9px; }
-
 /* Variant tags */
 .tag-row { display: flex; gap: 6px; margin-top: 1px; }
 .tag {
@@ -593,13 +636,13 @@ textarea.c-field { height: 56px; line-height: 1.4; resize: none; }
   font-weight: 600;
   font-family: var(--font-mono);
   cursor: pointer;
-  background: var(--color-field);
+  background: var(--color-secondary-lighter);
   color: var(--foreground);
   border: 1px solid var(--color-border);
 }
 .tag.on { background: var(--color-primary-lighter); color: var(--color-blue-text); border: 1px solid var(--color-primary); }
 .tag.add {
-  background: var(--color-field);
+  background: var(--color-secondary-lighter);
   border: 1px dashed var(--color-primary);
   color: var(--color-primary);
   transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
@@ -633,176 +676,180 @@ textarea.c-field { height: 56px; line-height: 1.4; resize: none; }
 .on-blue-btn:hover { color: var(--color-on-blue); background: rgba(0, 0, 0, 0.2); }
 .on-blue-btn.close:hover { color: var(--color-error); background: var(--color-error-light); }
 
-/* Expandable rows + mini-value rows */
-.expand-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 9px 0 0;
-  margin-top: 10px;
-  border-top: 1px solid var(--color-border);
-  cursor: pointer;
-}
-.expand-row span { font-size: 11.5px; color: var(--color-secondary-hover); }
-.expand-row svg { width: 10px; height: 10px; color: var(--color-text-3); transition: transform 0.15s; }
-.expand-row.open svg { transform: rotate(180deg); }
-.expand-panel { display: block; padding-top: 10px; }
-.mini-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 5px 0;
-  font-size: 11.5px;
-  color: var(--color-secondary-hover);
-}
-.mini-row .val { font-family: var(--font-mono); color: var(--foreground); }
-
-/* Dashed add-row */
-.dashed-row {
-  margin-top: 10px;
-  border: 1px dashed var(--color-border-strong);
-  border-radius: 6px;
-  padding: 9px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  font-size: 11.5px;
-  color: var(--color-text-3);
-  cursor: pointer;
-  background: transparent;
-  width: 100%;
-}
-.dashed-row:hover { border-color: var(--color-text-3); color: var(--color-secondary-hover); }
-.dashed-row svg { width: 10px; height: 10px; }
-
-/* Upload box + meta line */
-.upload-box {
-  width: 36px;
-  height: 36px;
-  border: 1px dashed var(--color-border-strong);
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-text-3);
-  cursor: pointer;
-  background: transparent;
-  padding: 0;
-}
-.upload-box:hover { border-color: var(--color-secondary-hover); color: var(--color-secondary-hover); }
-.meta-line {
-  font-size: 11px;
-  color: var(--color-text-3);
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-top: 12px;
-}
-.meta-line svg { width: 11px; height: 11px; color: var(--color-blue-text); }
-
 /* Checkbox — custom 14px box */
-.ck-row { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
-.ck-row:last-child { margin-bottom: 0; }
+.ck-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px;}
+.ck-row:last-child { margin-bottom: 0;}
 .ck {
   width: 14px;
   height: 14px;
   border-radius: 4px;
   border: 1px solid var(--color-border-strong);
-  background: var(--color-field);
+  background: var(--color-secondary-lighter);
   flex-shrink: 0;
   position: relative;
   cursor: pointer;
   padding: 0;
   display: block;
+  overflow: hidden;
+  color: var(--color-on-blue);
 }
 .ck.checked { background: var(--color-primary); border-color: var(--color-primary); }
 .ck.checked::after {
   content: '';
   position: absolute;
-  left: 4px;
-  top: 1px;
-  width: 3px;
-  height: 7px;
-  border: solid white;
-  border-width: 0 1.6px 1.6px 0;
-  transform: rotate(40deg);
+  inset: 0;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M2 7.2 5.6 10.7 12 3.4'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M2 7.2 5.6 10.7 12 3.4'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 .ck-row label,
-.ck-row > span:last-child { font-size: 12px; color: var(--color-secondary-hover); cursor: pointer; }
+.ck-row > span:last-child { font-size: 10px; color: var(--color-text-3); cursor: pointer; }
+.ck-row.checked > span:last-child { color: var(--color-primary); }
 
-/* List / search / category pill pattern */
-.search {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  background: var(--color-field);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  padding: 7px 9px;
-  margin-bottom: 10px;
+/* Generated (blue) card — page-surface tokens would read as dark-mode leftovers
+ * on the primary fill, so chrome and type switch to on-blue. */
+.card-generated {
+  color: var(--color-on-blue);
 }
-.search input {
-  background: none;
-  border: none;
-  outline: none;
-  color: var(--foreground);
-  font-size: 12px;
-  width: 100%;
-  font-family: var(--font-sans);
+.card-generated .text-foreground {
+  color: var(--color-on-blue);
 }
-.search input::placeholder { color: var(--color-text-3); }
-.pill-row { display: flex; gap: 5px; margin-bottom: 14px; flex-wrap: wrap; }
-.pill {
-  font-size: 10.5px;
-  padding: 4px 9px;
-  border-radius: 99px;
-  border: 1px solid var(--color-border);
+.card-generated .text-secondary-hover,
+.card-generated .text-text-3,
+.card-generated .text-neutral-400,
+.card-generated .text-neutral-500,
+.card-generated .text-neutral-300 {
+  color: var(--color-on-blue-muted);
+}
+.card-generated .xyz-input {
+  background: var(--color-blue-chip-bg);
+  border-color: var(--color-on-blue-faint);
+  color: var(--color-on-blue);
+}
+.card-generated .xyz-input:focus {
+  border-color: var(--color-on-blue);
+  background: var(--color-blue-chip-bg);
+}
+.card-generated .select-trigger {
+  background: var(--color-blue-chip-bg);
+  border-color: var(--color-on-blue-faint);
+  color: var(--color-on-blue);
+}
+.card-generated .text-select-opt {
+  color: var(--color-on-blue);
+}
+.card-generated .text-select-opt:hover:not(:disabled):not(.active),
+.card-generated .text-select-opt.active {
+  color: var(--color-on-blue);
+}
+.card-generated .text-select-opt.active {
+  border-color: var(--color-on-blue);
+}
+.card-generated .select-trigger svg {
+  color: var(--color-on-blue-muted);
+}
+.card-generated .c-slider {
+  background: linear-gradient(
+    to right,
+    var(--color-on-blue) var(--slider-fill, 0%),
+    var(--color-blue-chip-bg) var(--slider-fill, 0%)
+  );
+}
+.card-generated .c-slider::-webkit-slider-thumb {
+  background: var(--color-on-blue);
+  border-color: transparent;
+  box-shadow: 0 0 0 1px var(--color-on-blue-faint);
+}
+.card-generated .c-slider::-moz-range-thumb {
+  background: var(--color-on-blue);
+  border-color: transparent;
+  box-shadow: 0 0 0 1px var(--color-on-blue-faint);
+}
+.card-generated .c-slider::-moz-range-track {
+  background: var(--color-blue-chip-bg);
+}
+.card-generated .c-slider::-moz-range-progress {
+  background: var(--color-on-blue);
+}
+.card-generated .tag {
+  background: var(--color-blue-chip-bg);
+  color: var(--color-on-blue-muted);
+  border-color: var(--color-on-blue-faint);
+}
+.card-generated .tag.on {
+  background: var(--color-blue-chip-bg);
+  color: var(--color-on-blue);
+  border-color: var(--color-on-blue);
+}
+.card-generated .tag.add {
   background: transparent;
-  color: var(--color-secondary-hover);
-  cursor: pointer;
-  font-family: var(--font-sans);
+  border-color: var(--color-on-blue-muted);
+  color: var(--color-on-blue);
 }
-.pill.active { background: var(--foreground); color: var(--background); border-color: var(--foreground); font-weight: 600; }
-.group-label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-text-3);
-  margin: 12px 0 6px;
+.card-generated .tag.add:hover {
+  background: var(--color-blue-chip-bg);
+  border-color: var(--color-on-blue);
+  color: var(--color-on-blue);
 }
-.row-item {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 6px 4px;
-  border-radius: 6px;
-  cursor: pointer;
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  border: none;
-  font-family: var(--font-sans);
+.card-generated .btn-primary {
+  background: var(--color-on-blue);
+  color: var(--color-primary);
 }
-.row-item:hover { background: var(--color-field); }
-.row-thumb {
-  width: 26px;
-  height: 26px;
-  border-radius: 5px;
-  background: var(--color-field);
-  border: 1px solid var(--color-border);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 1.5px;
-  flex-shrink: 0;
+.card-generated .btn-primary:hover {
+  background: color-mix(in srgb, var(--color-primary) 12%, var(--color-on-blue));
 }
-.row-thumb i { width: 2px; background: var(--color-primary); border-radius: 1px; }
-.row-item .name { font-size: 12px; color: var(--foreground); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row-item .dur { font-size: 10.5px; color: var(--color-text-3); font-family: var(--font-mono); }
-.row-item .play { width: 16px; height: 16px; color: var(--color-text-3); opacity: 0; transition: opacity 0.1s; flex-shrink: 0; }
-.row-item:hover .play { opacity: 1; color: var(--color-blue-text); }
+.card-generated .ck {
+  border-color: var(--color-on-blue-faint);
+  background: var(--color-blue-chip-bg);
+}
+.card-generated .ck.checked {
+  background: var(--color-on-blue);
+  border-color: var(--color-on-blue);
+  color: var(--color-primary);
+}
+.card-generated .ck-row > span:last-child {
+  color: var(--color-on-blue-muted);
+}
+.card-generated .ck-row.checked > span:last-child {
+  color: var(--color-on-blue);
+}
+.card-generated .gen-status {
+  color: var(--color-on-blue-muted);
+}
+.card-generated .gen-status .stop {
+  background: var(--color-on-blue);
+}
+.card-generated .gen-status .stop:hover {
+  background: var(--color-on-blue-muted);
+}
+.card-generated .progress-track {
+  background: var(--color-on-blue-faint);
+}
+.card-generated .progress-fill {
+  background: var(--color-on-blue);
+}
+.card-generated .ws-play {
+  background: var(--color-on-blue) !important;
+  color: var(--color-primary) !important;
+  border-color: transparent !important;
+}
+.card-generated .ws-stop {
+  background: var(--color-blue-chip-bg) !important;
+  color: var(--color-on-blue-muted) !important;
+  border-color: var(--color-on-blue-faint) !important;
+}
+.card-generated .ws-stop.ws-stop--live {
+  background: var(--color-on-blue) !important;
+  color: var(--color-error) !important;
+}
+.card-generated .info-trigger {
+  color: var(--color-on-blue-muted);
+  border-color: var(--color-on-blue-faint);
+}
+.card-generated .info-trigger:hover {
+  color: var(--color-on-blue);
+  background: var(--color-blue-chip-bg);
+}
 
 .font-sans { font-family: var(--font-sans); }
 .font-mono { font-family: var(--font-mono); }

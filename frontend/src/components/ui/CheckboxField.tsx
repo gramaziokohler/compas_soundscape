@@ -33,7 +33,7 @@ export function CheckboxField({
 }: CheckboxFieldProps) {
   return (
     <label
-      className={`ck-row ${className}`}
+      className={`ck-row ${checked ? 'checked' : ''} ${className}`}
       style={{ opacity: disabled ? 0.6 : 1 }}
       onClick={(e) => {
         if (disabled) return;

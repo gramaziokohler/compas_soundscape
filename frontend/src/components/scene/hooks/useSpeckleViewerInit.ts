@@ -20,6 +20,7 @@ import { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service
 import { useSpeckleStore } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { SPECKLE_VIEWER_RETRY } from '@/utils/constants';
+import { getCssColorHex } from '@/utils/utils';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 
 interface ViewerInitProps {
@@ -136,7 +137,7 @@ export function useSpeckleViewerInit({
         selectionExtension.options = {
           selectionMaterialData: {
             id: THREE.MathUtils.generateUUID(),
-            color: 0x047efb,
+            color: getCssColorHex('--color-primary'),
             emissive: 0x000000,
             opacity: 1,
             roughness: 1,

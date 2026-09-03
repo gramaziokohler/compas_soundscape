@@ -34,6 +34,10 @@ export interface SoundConfigContentProps {
   onCatalogSoundSelect?: (index: number, sound: CatalogSoundSelection) => void;
   /** Shared catalog search state from SoundPreContent, so SearchBar renders full-width. */
   catalogState?: CatalogBrowseState & CatalogBrowseActions;
+  /** Controlled preview state for upload/sample-audio modes — owned by the parent so previews are mutually exclusive. */
+  isPreviewPlaying?: boolean;
+  onPreviewPlayPause?: () => void;
+  onPreviewStop?: () => void;
 }
 
 export function SoundConfigContent({
@@ -50,6 +54,9 @@ export function SoundConfigContent({
   onCatalogSoundSelect,
   hideTextToAudioSliders,
   catalogState,
+  isPreviewPlaying,
+  onPreviewPlayPause,
+  onPreviewStop,
 }: SoundConfigContentProps) {
   const cardType = config.type || 'text-to-audio';
 
@@ -79,6 +86,9 @@ export function SoundConfigContent({
           index={index}
           onUploadAudio={onUploadAudio}
           onClearUploadedAudio={onClearUploadedAudio}
+          isPreviewPlaying={isPreviewPlaying}
+          onPreviewPlayPause={onPreviewPlayPause}
+          onPreviewStop={onPreviewStop}
         />
       )}
 
@@ -107,6 +117,9 @@ export function SoundConfigContent({
           config={config}
           index={index}
           onClearUploadedAudio={onClearUploadedAudio}
+          isPreviewPlaying={isPreviewPlaying}
+          onPreviewPlayPause={onPreviewPlayPause}
+          onPreviewStop={onPreviewStop}
         />
       )}
     </div>

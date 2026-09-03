@@ -6,6 +6,7 @@ import { useReceiversStore } from '@/store/receiversStore';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { RefreshIcon } from '@/components/ui/Icon';
 import { PositionWidget } from '@/components/ui/PositionWidget';
+import { Notice } from '@/components/ui/Notice';
 
 function toDeg(rad: number): string {
   if (isNaN(rad)) return '0.0';
@@ -70,6 +71,12 @@ export function SingleListenerContent({ receiver, color, onUpdatePosition }: Sin
 
   return (
     <div className="text-xs text-secondary-hover">
+      <div className="mb-2.5">
+        <Notice
+          type="info"
+          message="Viewer in locked FPS viewmode. Press Esc or reduce this card to cancel it."
+        />
+      </div>
       <div className="font-medium mb-1.5" style={{ color }}>Position</div>
       <PositionWidget
         position={receiver.position}

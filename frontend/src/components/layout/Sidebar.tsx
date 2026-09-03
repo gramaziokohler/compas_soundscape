@@ -11,7 +11,8 @@ import { useViewportScale } from "@/hooks/useViewportScale";
 import { useTextGenerationStore } from "@/store/textGenerationStore";
 import { useCardFlowStore } from "@/store/cardFlowStore";
 import { useUIStore } from "@/store/uiStore";
-import { useAnalysisStore } from "@/store";
+import { useAnalysisStore, useSpeckleStore } from "@/store";
+import { useAudioControlsStore } from "@/store/audioControlsStore";
 import type { SidebarProps } from "@/types/components";
 import type { AnalysisConfig } from "@/types/analysis";
 import { CARD_TYPE_LABELS } from "@/types/card";
@@ -27,6 +28,7 @@ const SIDEBAR_USAGE_TYPES: CardType[] = ['scenario', 'text', 'freeform'];
 function cardLabelHelper(config: any, fallback: string): string {
   if (!config) return fallback;
   if (config.display_name) return config.display_name;
+  if (config.type === 'model-analysis' && config.analysisResult?.spaceTitle) return config.analysisResult.spaceTitle;
   if (config.audioFile?.name) return config.audioFile.name;
   if (config.modelFile?.name) return config.modelFile.name;
   return CARD_TYPE_LABELS[config.type as CardType] || fallback;
@@ -34,7 +36,7 @@ function cardLabelHelper(config: any, fallback: string): string {
 
 export function Sidebar(props: SidebarProps) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const [currentStep, setCurrentStep] = useState<Step>(0);
+  const [currentStep, setCurrentStepRaw] = useState<Step>(0);
   const [isHandleHovered, setIsHandleHovered] = useState(false);
   const [contextExpandedOriginalIndex, setContextExpandedOriginalIndex] = useState<number | null>(null);
   const [usageExpandedOriginalIndex, setUsageExpandedOriginalIndex] = useState<number | null>(null);
@@ -46,6 +48,16 @@ export function Sidebar(props: SidebarProps) {
   // during initial load. ContextSection auto-advances when analysis configs
   // load asynchronously after mount, which would clobber the persisted step.
   const isInitializingRef = useRef(true);
+
+  // Switching wizard steps (Context/Usage/Sounds) unmounts the outgoing section,
+  // which destroys its WaveSurfer instance(s) — must stop any active preview
+  // synchronously *before* that unmount so the still-registered instance gets
+  // paused. A passive effect reacting to `currentStep` runs after the unmount
+  // cleanup already deregistered the instance, too late to pause it reliably.
+  const setCurrentStep = useCallback((step: Step) => {
+    useAudioControlsStore.getState().stopSoundcardPreview();
+    setCurrentStepRaw(step);
+  }, []);
 
   // Trace currentStep changes for debugging refresh state
   useEffect(() => {
@@ -107,6 +119,15 @@ export function Sidebar(props: SidebarProps) {
   useEffect(() => {
     useUIStore.getState().setSidebarWizardStep(currentStep);
   }, [currentStep]);
+
+  // Leaving Context unmounts AnalysisGroupColorSync; clear any single-group focus
+  // set by AnalyzeModelResultContent so meshes don't stay highlighted in Usage.
+  useEffect(() => {
+    if (currentStep !== 0) {
+      useSpeckleStore.getState().clearAnalysisObjectGroups();
+    }
+  }, [currentStep]);
+
   // Sync active context/usage indices → cardFlowStore for refresh survival
   useEffect(() => {
     useCardFlowStore.getState().setActiveContextOriginalIndex(activeContextOriginalIndex);
@@ -143,10 +164,14 @@ export function Sidebar(props: SidebarProps) {
 
   // Breadcrumb labels derived reactively — ALL navigation paths update the same index
   // state, so labels are always consistent (FAB, breadcrumb click, or skip).
-  // We replicate getCardDefaultName logic: display_name > file name > type label.
+  // We replicate getCardDefaultName logic: display_name > LLM-generated space title
+  // (model-analysis only) > file name > type label.
   function getConfigLabel(config: AnalysisConfig | undefined, fallback: string): string {
     if (!config) return fallback;
     if (config.display_name) return config.display_name;
+    if (config.type === 'model-analysis' && (config as any).analysisResult?.spaceTitle) {
+      return (config as any).analysisResult.spaceTitle;
+    }
     if ('audioFile' in config && (config as any).audioFile?.name) return (config as any).audioFile.name;
     if ('modelFile' in config && (config as any).modelFile?.name) return (config as any).modelFile.name;
     return fallback;
@@ -343,7 +368,7 @@ export function Sidebar(props: SidebarProps) {
     setIsExpanded(true);
   }, [props.analysisConfigs]);
 
-  const handleContextSendToSounds = useCallback((originalIndex: number, _title: string) => {
+  const handleContextSendToSounds = useCallback((originalIndex: number, title: string) => {
     if (isInitializingRef.current) {
       return;
     }
@@ -353,8 +378,9 @@ export function Sidebar(props: SidebarProps) {
     setActiveContextOriginalIndex(originalIndex);
     // Audio contexts get a real placeholder usage card as parent (created on
     // extraction), so extracted sounds filter under that usage card instead of
-    // the old negative-namespace bypass key.
-    const usageIdx = useAnalysisStore.getState().ensureUsageCardForContext(originalIndex);
+    // the old negative-namespace bypass key. The placeholder inherits the
+    // audio context card's own title.
+    const usageIdx = useAnalysisStore.getState().ensureUsageCardForContext(originalIndex, title);
     setBypassedUsage(false);
     setActiveUsageOriginalIndex(usageIdx);
     useUIStore.getState().setActiveSoundParentIndex(usageIdx);
@@ -537,8 +563,12 @@ export function Sidebar(props: SidebarProps) {
     const ctxCfg = props.analysisConfigs[ctxIdx];
     if (ctxCfg?.type === 'audio') {
       // Audio contexts get a real placeholder usage card as parent (created on
-      // extraction), so extracted sounds filter under that usage card.
-      const usageIdx = useAnalysisStore.getState().ensureUsageCardForContext(ctxIdx);
+      // extraction), so extracted sounds filter under that usage card. The
+      // placeholder inherits the audio context card's own title.
+      const usageIdx = useAnalysisStore.getState().ensureUsageCardForContext(
+        ctxIdx,
+        getConfigLabel(ctxCfg, CARD_TYPE_LABELS['audio']),
+      );
       setActiveContextOriginalIndex(ctxIdx);
       setBypassedUsage(false);
       setActiveUsageOriginalIndex(usageIdx);
@@ -637,6 +667,28 @@ export function Sidebar(props: SidebarProps) {
     return props.soundConfigs.length > 0;
   })();
 
+  // ─── Breadcrumb "blue link" child-count state ──────────────────────────────
+  // While a parent card is expanded, its immediate child section's breadcrumb
+  // turns into a blue clickable link carrying a count badge — but only scoped
+  // to THIS parent's children (not the whole section), and only while that
+  // parent is the one currently expanded.
+  const usageChildCountForExpandedContext =
+    currentStep === 0 && contextExpandedOriginalIndex !== null
+      ? props.analysisConfigs.filter(
+          (c) =>
+            SIDEBAR_USAGE_TYPES.includes(c.type as CardType) &&
+            (c as any).parentContextOriginalIndex === contextExpandedOriginalIndex,
+        ).length
+      : 0;
+
+  const soundChildCountForExpandedUsage =
+    currentStep === 1 && usageExpandedOriginalIndex !== null
+      ? props.soundConfigs.filter((s) => s.parentUsageOriginalIndex === usageExpandedOriginalIndex).length
+      : 0;
+
+  const usageBreadcrumbBlue = usageChildCountForExpandedContext > 0;
+  const soundsBreadcrumbBlue = soundChildCountForExpandedUsage > 0;
+
   // Toggle handle geometry — the button always sits a fixed margin to the
   // right of the sidebar's edge, in both states (never flush on top of it).
   // When expanded, the sidebar's own edge gets a smooth inward notch near
@@ -672,7 +724,7 @@ export function Sidebar(props: SidebarProps) {
           onClick={() => { const v = !isExpanded;  setIsExpanded(v); useUIStore.getState().setIsLeftSidebarExpanded(v); }}
           title={isExpanded ? 'Collapse panel' : 'Open panel'}
           style={{ width: `${UI_SIDEBAR_TOGGLE.DIAMETER}px`, height: `${UI_SIDEBAR_TOGGLE.DIAMETER}px` }}
-          className={`sidebar-toggle-handle ${!isExpanded ? 'sidebar-toggle-handle--bounce' : ''}`}
+          className={`sidebar-toggle-handle backdrop-blur-lg backdrop-saturate-150 ${!isExpanded ? 'sidebar-toggle-handle--bounce' : 'sidebar-toggle-handle--expanded'}`}
         >
           <svg width={UI_SIDEBAR_TOGGLE.ICON_WIDTH} height={UI_SIDEBAR_TOGGLE.ICON_HEIGHT} viewBox="0 0 10 16" fill="none" xmlns="http://www.w3.org/2000/svg">
             {isExpanded ? (
@@ -694,7 +746,7 @@ export function Sidebar(props: SidebarProps) {
 
       {/* Sidebar content panel */}
       <aside
-        className="fixed top-0 left-0 h-screen flex flex-col transition-all duration-300 ease-in-out shadow-lg"
+        className="fixed top-0 left-0 h-screen flex flex-col transition-all duration-300 ease-in-out"
         style={{
           width: isExpanded ? `${contentWidth}px` : '0px',
           opacity: isExpanded ? 1 : 0,
@@ -749,10 +801,10 @@ export function Sidebar(props: SidebarProps) {
             <button
               className={`transition-colors flex-1 min-w-0 truncate ${
                 currentStep === 0
-                  ? 'bg-primary text-secondary px-0.5 py-0.5'
+                  ? 'bg-primary text-on-blue px-0.5 py-0.5'
                   : contextBreadcrumbHasCards
-                  ? 'text-primary hover:bg-secondary-light cursor-pointer'
-                  : 'text-secondary-hover hover:bg-secondary-light cursor-pointer'
+                  ? 'text-adaptive hover:bg-secondary-light cursor-pointer'
+                  : 'text-adaptive opacity-80 hover:bg-secondary-light cursor-pointer'
               }`}
               onClick={() => {
                 hasInteractedRef.current = true;
@@ -773,41 +825,61 @@ export function Sidebar(props: SidebarProps) {
             >
               {contextBreadcrumbLabel}
             </button>
-            <span className="text-secondary-hover shrink-0" aria-hidden="true">›</span>
-            {/* Usage step — always clickable; audio contexts land on their placeholder usage card */}
-            <button
-              className={`transition-colors flex-1 min-w-0 truncate ${
-                currentStep === 1
-                  ? 'bg-primary text-secondary px-0.5 py-0.5'
-                  : usageBreadcrumbHasCards
-                  ? 'text-primary hover:bg-secondary-light cursor-pointer'
-                  : 'text-secondary-hover hover:bg-secondary-light cursor-pointer'
-              }`}
-              onClick={handleUsageBreadcrumbClick}
-              aria-current={currentStep === 1 ? 'step' : undefined}
-              title={usageTooltip}
-            >
-              {usageBreadcrumbLabel}
-            </button>
-            <span className="text-secondary-hover shrink-0" aria-hidden="true">›</span>
+            <span className="text-adaptive opacity-80 shrink-0" aria-hidden="true">›</span>
+            {/* Usage step — always clickable; audio contexts land on their placeholder usage card.
+                Badge lives in this wrapper (not inside the `truncate`/overflow-hidden button)
+                so it isn't clipped by the button's own bounds. */}
+            <div className="relative flex-1 min-w-0">
+              <button
+                className={`transition-colors w-full min-w-0 truncate ${
+                  currentStep === 1
+                    ? 'bg-primary text-on-blue px-0.5 py-0.5'
+                    : usageBreadcrumbBlue
+                    ? 'text-blue-text hover:bg-secondary-light cursor-pointer'
+                    : usageBreadcrumbHasCards
+                    ? 'text-adaptive hover:bg-secondary-light cursor-pointer'
+                    : 'text-adaptive opacity-80 hover:bg-secondary-light cursor-pointer'
+                }`}
+                onClick={handleUsageBreadcrumbClick}
+                aria-current={currentStep === 1 ? 'step' : undefined}
+                title={usageTooltip}
+              >
+                {usageBreadcrumbLabel}
+              </button>
+              {usageBreadcrumbBlue && (
+                <span className="absolute -top-1.5 -right-1.5 z-10 min-w-[14px] h-[14px] px-[3px] rounded-full bg-primary text-on-blue text-[8px] font-bold flex items-center justify-center leading-none pointer-events-none">
+                  {usageChildCountForExpandedContext}
+                </span>
+              )}
+            </div>
+            <span className="text-adaptive opacity-80 shrink-0" aria-hidden="true">›</span>
             {/* Sounds step — always clickable; creates placeholder parent cards when needed */}
-            <button
-              id="sidebar-sounds-breadcrumb"
-              className={`transition-colors flex-1 min-w-0 truncate ${
-                currentStep === 2
-                  ? 'bg-primary text-secondary px-0.5 py-0.5'
-                  : soundsBreadcrumbHasCards
-                  ? 'text-primary hover:bg-secondary-light cursor-pointer'
-                  : 'text-secondary-hover hover:bg-secondary-light cursor-pointer'
-              }`}
-              onClick={() => {
-                handleSoundsBreadcrumbClick();
-              }}
-              aria-current={currentStep === 2 ? 'step' : undefined}
-              title={soundsTooltip}
-            >
-              Sounds
-            </button>
+            <div className="relative flex-1 min-w-0">
+              <button
+                id="sidebar-sounds-breadcrumb"
+                className={`transition-colors w-full min-w-0 truncate ${
+                  currentStep === 2
+                    ? 'bg-primary text-on-blue px-0.5 py-0.5'
+                    : soundsBreadcrumbBlue
+                    ? 'text-blue-text hover:bg-secondary-light cursor-pointer'
+                    : soundsBreadcrumbHasCards
+                    ? 'text-adaptive hover:bg-secondary-light cursor-pointer'
+                    : 'text-adaptive opacity-80 hover:bg-secondary-light cursor-pointer'
+                }`}
+                onClick={() => {
+                  handleSoundsBreadcrumbClick();
+                }}
+                aria-current={currentStep === 2 ? 'step' : undefined}
+                title={soundsTooltip}
+              >
+                Sounds
+              </button>
+              {soundsBreadcrumbBlue && (
+                <span className="absolute -top-1.5 -right-1.5 z-10 min-w-[14px] h-[14px] px-[3px] rounded-full bg-primary text-on-blue text-[8px] font-bold flex items-center justify-center leading-none pointer-events-none">
+                  {soundChildCountForExpandedUsage}
+                </span>
+              )}
+            </div>
           </nav>
         </div>
 

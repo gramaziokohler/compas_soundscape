@@ -85,7 +85,6 @@ export function GridListenerContent({ grid, color, onComputeBounds }: GridListen
       )}
 
       <RangeSlider
-        inline
         label="X"
         value={grid.xSpacing}
         min={GRID_LISTENER_CONFIG.MIN_SPACING}
@@ -93,13 +92,12 @@ export function GridListenerContent({ grid, color, onComputeBounds }: GridListen
         step={0.5}
         defaultValue={GRID_LISTENER_CONFIG.DEFAULT_X_SPACING}
         color={color}
-        formatValue={(v) => `${v.toFixed(1)} m`}
+        unit="m"
         onDragStart={handleDragStart}
         onChange={(v) => handleSpacingChange('xSpacing', v)}
         onChangeCommitted={(v) => handleDragEnd('xSpacing', v)}
       />
       <RangeSlider
-        inline
         label="Y"
         value={grid.ySpacing}
         min={GRID_LISTENER_CONFIG.MIN_SPACING}
@@ -107,13 +105,12 @@ export function GridListenerContent({ grid, color, onComputeBounds }: GridListen
         step={0.5}
         defaultValue={GRID_LISTENER_CONFIG.DEFAULT_Y_SPACING}
         color={color}
-        formatValue={(v) => `${v.toFixed(1)} m`}
+        unit="m"
         onDragStart={handleDragStart}
         onChange={(v) => handleSpacingChange('ySpacing', v)}
         onChangeCommitted={(v) => handleDragEnd('ySpacing', v)}
       />
       <RangeSlider
-        inline
         label="Z"
         value={grid.zOffset}
         min={GRID_LISTENER_CONFIG.MIN_Z_OFFSET}
@@ -121,7 +118,7 @@ export function GridListenerContent({ grid, color, onComputeBounds }: GridListen
         step={0.1}
         defaultValue={GRID_LISTENER_CONFIG.DEFAULT_Z_OFFSET}
         color={color}
-        formatValue={(v) => `${v.toFixed(1)} m`}
+        unit="m"
         onDragStart={handleDragStart}
         onChange={(v) => handleSpacingChange('zOffset', v)}
         onChangeCommitted={(v) => handleDragEnd('zOffset', v)}

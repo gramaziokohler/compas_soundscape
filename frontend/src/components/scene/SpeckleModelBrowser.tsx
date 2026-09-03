@@ -143,7 +143,7 @@ function ModelCardMenu({
           gap: 8,
           padding: '8px 12px',
           fontSize: 12,
-          color: 'var(--color-secondary)',
+          color: 'var(--foreground)',
           textDecoration: 'none',
           whiteSpace: 'nowrap',
         }}
@@ -202,26 +202,13 @@ function ModelCard({
       <button
         type="button"
         onClick={onSelect}
-        className="w-full text-left transition-colors"
+        className="w-full text-left transition-colors flex items-center cursor-pointer border border-secondary-light bg-background hover:border-primary hover:bg-primary-lighter dark:hover:border-primary dark:hover:bg-primary-light"
         style={{
-          display: 'flex',
-          alignItems: 'center',
           gap: MODEL_BROWSER_STYLES.CARD_GAP + 2,
           padding: MODEL_BROWSER_STYLES.CARD_PADDING,
           paddingRight: 32, // leave room for 3-dot button
           borderRadius: MODEL_BROWSER_STYLES.CARD_BORDER_RADIUS,
-          border: `1px solid var(--color-secondary-light)`,
-          background: 'var(--background)',
-          cursor: 'pointer',
           width: '100%',
-        }}
-        onMouseEnter={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--color-primary)';
-          (e.currentTarget as HTMLButtonElement).style.background = 'var(--color-primary-light)';
-        }}
-        onMouseLeave={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--color-secondary-light)';
-          (e.currentTarget as HTMLButtonElement).style.background = 'var(--background)';
         }}
       >
         {/* Preview / fallback icon */}

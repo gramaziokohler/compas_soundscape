@@ -20,7 +20,7 @@ import { AudioContextContent } from '@/components/layout/sidebar/analysis/AudioC
 import { AudioAnalysisAfterContent } from '@/components/layout/sidebar/analysis/AudioAnalysisAfterContent';
 import { AnalyzeModelContent } from '@/components/layout/sidebar/analysis/AnalyzeModelContent';
 import { AnalyzeModelResultContent } from '@/components/layout/sidebar/analysis/AnalyzeModelResultContent';
-import { useSpeckleStore, useAnalysisStore, useSoundscapeStore } from '@/store';
+import { useSpeckleStore, useAnalysisStore, useSoundscapeStore, useAudioControlsStore } from '@/store';
 import { useUIStore } from '@/store/uiStore';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
 import { LLM_MODEL_TO_PROVIDER } from '@/utils/constants';
@@ -120,6 +120,9 @@ export function ContextSection({
   const [filteredExpandedIndex, setFilteredExpandedIndex] = useState<number | null>(null);
   // Tracks which audio card indices are currently extracting (for FAB loading state)
   const [extractingAudioIndices, setExtractingAudioIndices] = useState<Set<number>>(new Set());
+  const previewingSoundId = useAudioControlsStore((s) => s.previewingSoundId);
+  const handlePreviewPlayPause = useAudioControlsStore((s) => s.handlePreviewPlayPause);
+  const handlePreviewStop = useAudioControlsStore((s) => s.handlePreviewStop);
   const serviceVersions = useServiceVersions();
   const llmModel = useSoundscapeStore((s) => s.llmModel);
   const { diverseSelectedObjectIds, clearDiverseSelection } = useSpeckleStore();
@@ -306,6 +309,9 @@ export function ContextSection({
               index={originalIndex}
               isAnalyzing={isRunning}
               onUpdateConfig={onUpdateConfig}
+              isPreviewPlaying={previewingSoundId === `context-audio:${originalIndex}`}
+              onPreviewPlayPause={() => handlePreviewPlayPause(`context-audio:${originalIndex}`)}
+              onPreviewStop={() => handlePreviewStop(`context-audio:${originalIndex}`)}
             />
           );
         case 'freeform': {
@@ -339,7 +345,7 @@ export function ContextSection({
           return null;
       }
     },
-    [isRunning, onUpdateConfig, analysisConfigs],
+    [isRunning, onUpdateConfig, analysisConfigs, previewingSoundId, handlePreviewPlayPause, handlePreviewStop],
   );
 
   const getAfterContent = useCallback(
@@ -485,7 +491,7 @@ export function ContextSection({
 
 
       // Done-state continue action: audio extracts & sends to Sounds; others advance to Usage
-      const doneActionLabel = isAudio ? 'Extract & go to Sounds' : 'Next: Usage';
+      const doneActionLabel = isAudio ? 'Send to Sounds' : 'Use as context';
       const handleDoneAction =
         isAudio
           ? async () => {
@@ -523,6 +529,13 @@ export function ContextSection({
                 : undefined
           }
           collapsedInfo={getCollapsedInfo(config, originalIndex)}
+          isPlayingCollapsedInfo={isAudio && previewingSoundId === `context-audio:${originalIndex}`}
+          keepContentMountedWhenCollapsed={isAudio && previewingSoundId === `context-audio:${originalIndex}`}
+          defaultName={
+            config.type === 'model-analysis'
+              ? ((config as AnalyzeModelConfig).analysisResult?.spaceTitle ?? undefined)
+              : undefined
+          }
           showIndex={true}
           canRemove={true}
           closeButtonTitle="Remove"
@@ -584,6 +597,7 @@ export function ContextSection({
       onAdvanceToSounds,
       onAudioExtract,
       extractingAudioIndices,
+      previewingSoundId,
       showSpectrograms,
       setShowSpectrograms,
     ],
@@ -598,7 +612,7 @@ export function ContextSection({
       <CardSection
         items={contextConfigs}
         availableTypes={availableTypes}
-        emptyMessage="No context cards yet. Add a context card to analyse your scene, or choose 'Skip context' to create sounds directly."
+        emptyMessage="No context cards yet. Add a context card bellow to analyse your scene, or go to 'Sounds' to create sounds directly."
         statusLabel="context"
         addButtonTitle="Add context card"
         onAddItem={handleAddContextConfig}

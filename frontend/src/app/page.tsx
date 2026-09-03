@@ -39,11 +39,12 @@ import { useViewportScale } from "@/hooks/useViewportScale";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { useJobRecovery } from "@/hooks/useJobRecovery";
 import { apiService } from "@/services/api";
-import { API_BASE_URL, DEFAULT_DBFS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION } from "@/utils/constants";
+import { API_BASE_URL, DEFAULT_DBFS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, AUDIO_PLAYBACK, TTS_DEFAULT_LANGUAGE, DEFAULT_MAXIMUM_FOLEY_SOUNDS } from "@/utils/constants";
 import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
 import type { LoadTab, SoundGenerationConfig } from "@/types";
 import type { AcousticSimulationMode } from "@/types/audio";
 import type { AudioAnalysisConfig } from "@/types/analysis";
+import { CARD_TYPE_LABELS } from "@/types/card";
 import type { SelectedGeometry, AcousticMaterial } from "@/types/materials";
 import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSelector";
 import { buildSoundscapeSavePayload, restoreSoundscapeState, getBlobUrlSounds, buildAnalysisStateSave, restoreAnalysisState } from "@/utils/soundscape-serializer";
@@ -159,6 +160,7 @@ function HomeContent() {
       soundGen.restoreSoundscape(restored.soundConfigs, restored.soundEvents, {
         negativePrompt: restored.globalSettings.negativePrompt,
         audioModel: restored.globalSettings.audioModel,
+        ttsModel: restored.globalSettings.ttsModel,
       });
       useAudioControlsStore.getState().restoreVolumeAndIntervals(restored.soundVolumes, restored.soundIntervals);
       useAudioControlsStore.getState().restoreSchedulingModes(restored.soundSchedulingModes, restored.soundTimestamps);
@@ -1225,8 +1227,12 @@ function HomeContent() {
       variants: s.variants,
     }));
     // Link extracted sounds to a real placeholder usage card parented to the
-    // audio context (instead of the old negative-namespace bypass key).
-    const usageIdx = analysis.ensureUsageCardForContext(originalIndex);
+    // audio context (instead of the old negative-namespace bypass key). The
+    // placeholder inherits the audio context card's own title.
+    const usageIdx = analysis.ensureUsageCardForContext(
+      originalIndex,
+      config.display_name || CARD_TYPE_LABELS['audio'],
+    );
     soundGen.injectExtractedSEDSounds(sounds, usageIdx);
     console.log(`[handleAudioExtract] Injected ${sounds.length} sounds from audio card ${originalIndex} (usageCard=${usageIdx})`);
   }, [analysis.analysisResults, analysis.ensureUsageCardForContext, soundGen]);
@@ -1521,6 +1527,7 @@ function HomeContent() {
           {
             negativePrompt: restored.globalSettings.negativePrompt,
             audioModel: restored.globalSettings.audioModel,
+            ttsModel: restored.globalSettings.ttsModel,
           }
         );
 
@@ -1804,6 +1811,7 @@ function HomeContent() {
           steps: soundGen.globalSteps,
           negativePrompt: soundGen.globalNegativePrompt,
           audioModel: soundGen.audioModel,
+          ttsModel: soundGen.ttsModel,
         },
         useAudioControlsStore.getState().soundVolumes,
         useAudioControlsStore.getState().soundIntervals,
@@ -1858,6 +1866,7 @@ function HomeContent() {
     soundGen.globalSteps,
     soundGen.globalNegativePrompt,
     soundGen.audioModel,
+    soundGen.ttsModel,
     receivers.receivers,
     receivers.selectedReceiverId,
     gridListeners.gridListeners,
@@ -2393,7 +2402,13 @@ function HomeContent() {
     setShowScenarioParcours(false);
     setGlobalSoundSpeed(343);
     setGlobalMeshLc(1.5);
-    useAudioControlsStore.getState().resetGlobalBaseDbfs();
+    const audio = useAudioControlsStore.getState();
+    audio.resetGlobalBaseDbfs();
+    audio.setTtsLanguage(TTS_DEFAULT_LANGUAGE);
+    audio.setIntervalJitter(AUDIO_PLAYBACK.DEFAULT_INTERVAL_JITTER_SECONDS);
+    audio.resetTimelineDurationMs();
+    audio.setMaximumFoleySounds(DEFAULT_MAXIMUM_FOLEY_SOUNDS);
+    useUIStore.getState().setEnableAutoSave(true);
     setShowGroundGrid(false);
     setGroundGridSpacing(2);
     setGroundGridColor('#888888');
@@ -3169,7 +3184,6 @@ function HomeContent() {
       <AdvancedSettingsPanel
         isVisible={showAdvancedSettings}
         onClose={() => setShowAdvancedSettings(false)}
-        globalDuration={soundGen.globalDuration}
         globalSteps={soundGen.globalSteps}
         globalNegativePrompt={soundGen.globalNegativePrompt}
         applyDenoising={soundGen.applyDenoising}
@@ -3178,7 +3192,6 @@ function HomeContent() {
         normalizeImpulseResponses={auralizationConfig.normalize}
         audioModel={soundGen.audioModel}
         llmModel={soundGen.llmModel}
-        onGlobalDurationChange={soundGen.handleGlobalDurationChange}
         onGlobalStepsChange={soundGen.handleGlobalStepsChange}
         onGlobalNegativePromptChange={soundGen.setGlobalNegativePrompt}
         onApplyDenoisingChange={soundGen.setApplyDenoising}

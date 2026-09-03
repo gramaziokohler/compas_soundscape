@@ -74,6 +74,7 @@ export function buildSoundscapeSavePayload(
     steps: number;
     negativePrompt: string;
     audioModel: string;
+    ttsModel?: string;
   },
   /** User-adjusted volumes keyed by sound ID (from audioControls) */
   soundVolumes?: Record<string, number>,
@@ -222,6 +223,7 @@ export function buildSoundscapeSavePayload(
     steps: globalSettings.steps,
     negative_prompt: globalSettings.negativePrompt,
     audio_model: globalSettings.audioModel,
+    tts_model: globalSettings.ttsModel,
   };
 
   // Serialize receivers (strip non-serializable mesh property)
@@ -472,6 +474,7 @@ export function restoreSoundscapeState(
     steps: number;
     negativePrompt: string;
     audioModel: string;
+    ttsModel?: string;
   };
   receivers: ReceiverData[];
   gridListeners: GridListenerData[];
@@ -623,6 +626,7 @@ export function restoreSoundscapeState(
     steps: loadedData.global_settings.steps,
     negativePrompt: loadedData.global_settings.negative_prompt,
     audioModel: loadedData.global_settings.audio_model,
+    ttsModel: loadedData.global_settings.tts_model,
   };
 
   // Build authoritative receiver position map from simulation configs

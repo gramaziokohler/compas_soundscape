@@ -45,6 +45,7 @@ import { getAnalysisGroupColor } from '@/utils/utils';
 import { notifySectionError } from './errorsStore';
 import { useAreaDrawingStore } from './areaDrawingStore';
 import { useSoundscapeStore } from './soundscapeStore';
+import { useAudioControlsStore } from './audioControlsStore';
 import { useSpeckleStore } from './speckleStore';
 import { useObjectExplorerStore } from './objectExplorerStore';
 
@@ -316,8 +317,9 @@ export interface AnalysisStoreState {
   handleRemoveConfig: (index: number) => void;
   handleUpdateConfig: (index: number, updates: Partial<AnalysisConfig>) => void;
   setActiveAnalysisTab: (index: number) => void;
-  /** Find an existing freeform usage card linked to a context, or create one (idempotent). Returns its index. */
-  ensureUsageCardForContext: (contextIndex: number) => number;
+  /** Find an existing freeform usage card linked to a context, or create one (idempotent). Returns its index.
+   *  `displayName`, when provided, seeds the new card's title (ignored if a card already exists). */
+  ensureUsageCardForContext: (contextIndex: number, displayName?: string) => number;
 
   handleModelFileUpload: (index: number, file: File, worldTree?: any) => Promise<void>;
   handleAudioFileUpload: (index: number, file: File) => Promise<void>;
@@ -445,7 +447,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           );
         },
 
-        ensureUsageCardForContext: (contextIndex) => {
+        ensureUsageCardForContext: (contextIndex, displayName) => {
           const { analysisConfigs } = get();
           const existing = analysisConfigs.findIndex(
             (c) => c.type === 'freeform' && (c as FreeformConfig).parentContextOriginalIndex === contextIndex,
@@ -455,7 +457,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           const newIndex = analysisConfigs.length;
           const newCard: AnalysisConfig = {
             type: 'freeform',
-            display_name: 'Untitled usage',
+            display_name: displayName || 'Untitled usage',
             parentContextOriginalIndex: contextIndex,
           } as FreeformConfig;
           set(
@@ -470,6 +472,9 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           const { analysisConfigs, activeAnalysisTab, analysisResults } = get();
           const removed = analysisConfigs[index];
           if (!removed) return;
+
+          // Card indices shift on removal — any stale preview reference must be cleared.
+          useAudioControlsStore.getState().stopSoundcardPreview();
 
           const removedType = removed.type as CardType;
           const removedParent = (removed as AnalysisBaseConfig).parentContextOriginalIndex;
@@ -1343,6 +1348,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           const objects: ArchitecturalObject[] = [];
           const colorGroups: { objectIds: string[]; color: string }[] = [];
           let analysisId = '';
+          let spaceTitle = '';
           let spaceDescription = '';
 
           try {
@@ -1562,10 +1568,15 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             )) {
               if (event.type === 'start') {
                 analysisId = event.analysis_id;
+              } else if (event.type === 'space_title') {
+                spaceTitle = event.text || '';
+                handleUpdateConfig(index, {
+                  analysisResult: { analysisId, architecturalObjects: [...objects], spaceTitle, spaceDescription },
+                } as Partial<AnalyzeModelConfig>);
               } else if (event.type === 'space_description') {
                 spaceDescription = event.text || '';
                 handleUpdateConfig(index, {
-                  analysisResult: { analysisId, architecturalObjects: [...objects], spaceDescription },
+                  analysisResult: { analysisId, architecturalObjects: [...objects], spaceTitle, spaceDescription },
                 } as Partial<AnalyzeModelConfig>);
               } else if (event.type === 'object') {
                 const { type: _t, ...obj } = event;
@@ -1580,7 +1591,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 // Partial update
                 useSpeckleStore.getState().setAnalysisObjectGroups([...colorGroups], [...objects]);
                 handleUpdateConfig(index, {
-                  analysisResult: { analysisId, architecturalObjects: [...objects], spaceDescription },
+                  analysisResult: { analysisId, architecturalObjects: [...objects], spaceTitle, spaceDescription },
                 } as Partial<AnalyzeModelConfig>);
               } else if (event.type === 'done') {
                 // Final update handled below
@@ -1590,6 +1601,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             const resultData: ModelAnalysisResultData = {
               analysisId,
               architecturalObjects: objects,
+              spaceTitle: spaceTitle || undefined,
               spaceDescription: spaceDescription || undefined,
             };
             handleUpdateConfig(index, { analysisResult: resultData } as Partial<AnalyzeModelConfig>);

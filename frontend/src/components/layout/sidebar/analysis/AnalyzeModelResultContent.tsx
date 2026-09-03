@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type { AnalyzeModelConfig } from '@/types/analysis';
 import { getAnalysisGroupColor } from '@/utils/utils';
 import { useSpeckleStore, useAnalysisStore } from '@/store';
@@ -10,7 +10,7 @@ import { useSpeckleStore, useAnalysisStore } from '@/store';
  *
  * Displays identified architectural object groups after model analysis completes.
  * Results are shown as single lines with a colored left-border badge.
- * Hover highlights objects in the 3D viewer; click zooms + expands group info.
+ * Hover or expand highlights only that group's meshes in the 3D viewer (group color).
  * The pen icon switches to an inline edit form. Only one group expanded at a time.
  */
 
@@ -24,10 +24,11 @@ export function AnalyzeModelResultContent({ config, configIndex }: Props) {
   const objects = result?.architecturalObjects ?? [];
   const spaceDescription = result?.spaceDescription;
 
-  const { highlightObjectForHover, clearHoverHighlight, zoomToObjectById } = useSpeckleStore();
+  const zoomToObjectById = useSpeckleStore((s) => s.zoomToObjectById);
   const handleUpdateAnalysisObject = useAnalysisStore((s) => s.handleUpdateAnalysisObject);
 
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
 
   const [editingValues, setEditingValues] = useState<Record<number, { name: string; description: string; material: string }>>({});
@@ -72,17 +73,58 @@ export function AnalyzeModelResultContent({ config, configIndex }: Props) {
     [configIndex, editingValues, handleUpdateAnalysisObject],
   );
 
+  const buildAllGroupColors = useCallback(
+    () =>
+      objects
+        .map((obj, i) => ({
+          objectIds: Object.keys(obj.object_ids ?? {}),
+          color: getAnalysisGroupColor(i),
+        }))
+        .filter((g) => g.objectIds.length > 0),
+    [objects],
+  );
+
+  const applyGroupViewerFocus = useCallback(
+    (focusIdx: number | null) => {
+      if (focusIdx !== null) {
+        const group = objects[focusIdx];
+        const ids = Object.keys(group?.object_ids ?? {});
+        if (ids.length === 0) return;
+        useSpeckleStore.getState().setAnalysisObjectGroups(
+          [{ objectIds: ids, color: getAnalysisGroupColor(focusIdx) }],
+          objects,
+        );
+        return;
+      }
+      const colorGroups = buildAllGroupColors();
+      if (colorGroups.length > 0) {
+        useSpeckleStore.getState().setAnalysisObjectGroups(colorGroups, objects);
+      }
+    },
+    [buildAllGroupColors, objects],
+  );
+
+  const focusIndex = hoveredIndex ?? expandedIndex;
+
+  useEffect(() => {
+    applyGroupViewerFocus(focusIndex);
+  }, [applyGroupViewerFocus, focusIndex]);
+
   if (!result || objects.length === 0) return null;
 
   return (
     <div className="space-y-1.5 px-4 pb-2">
       {spaceDescription && (
+        <>
         <p
           className="text-xs leading-relaxed max-h-[min(128px,30dvh)] overflow-y-auto"
-          style={{ color: 'var(--color-foreground)', opacity: 0.75 }}
-        >
+        > 
+        <span className="font-bold text-on-blue"> Space description: </span>
+        <span style={{ color: 'var(--color-on-blue-muted)' }}>
           {spaceDescription}
+        </span>
         </p>
+        </>
       )}
 
       {/* Summary row */}
@@ -101,44 +143,56 @@ export function AnalyzeModelResultContent({ config, configIndex }: Props) {
           return (
             <div key={i}>
               {/* Collapsed row */}
-              <div
-                className="flex items-center gap-2 py-1 pl-1 pr-1 cursor-pointer hover:opacity-80 transition-opacity"
-                style={{ borderLeft: `3px solid ${color}` }}
-                onMouseEnter={() => ids.length > 0 && highlightObjectForHover(ids)}
-                onMouseLeave={() => clearHoverHighlight()}
-                onClick={() => handleClick(i, ids)}
-                title={ids.length > 0 ? `Click to zoom to ${ids.length} ${ids.length === 1 ? 'object' : 'objects'}` : (obj.description || undefined)}
-              >
-                <span
-                  className="text-xs font-medium truncate flex-1 min-w-0"
-                  style={{ color: 'var(--color-on-blue)' }}
+              {!isExpanded && (
+                <div
+                  className="flex items-center gap-2 py-1 pl-1 pr-1 cursor-pointer hover:opacity-80 transition-opacity"
+                  style={{ borderLeft: `3px solid ${color}` }}
+                  onMouseEnter={() => ids.length > 0 && setHoveredIndex(i)}
+                  onMouseLeave={() => setHoveredIndex(null)}
+                  onClick={() => handleClick(i, ids)}
+                  title={ids.length > 0 ? `Click to zoom to ${ids.length} ${ids.length === 1 ? 'object' : 'objects'}` : (obj.description || undefined)}
                 >
-                  {obj.name}
-                </span>
-                {obj.quantity > 1 && (
-                  <span className="text-xs flex-shrink-0" style={{ color: 'var(--color-on-blue-muted)' }}>
-                    x{obj.quantity}
+                  <span
+                    className="text-xs font-medium truncate flex-1 min-w-0"
+                    style={{ color: 'var(--color-on-blue)' }}
+                  >
+                    {obj.name}
                   </span>
-                )}
-              </div>
+                  {obj.quantity > 1 && (
+                    <span className="text-xs flex-shrink-0" style={{ color: 'var(--color-on-blue-muted)' }}>
+                      x{obj.quantity}
+                    </span>
+                  )}
+                </div>
+              )}
 
               {/* Expanded: info mode */}
               {isExpanded && !isEditing && (
                 <div
                   className="mt-1 mb-1 ml-1 space-y-2 px-2 py-2 rounded"
-                  style={{ borderLeft: `2px solid ${color}`, backgroundColor: 'var(--color-secondary-lighter)' }}
+                  style={{ borderLeft: `2px solid ${color}`, backgroundColor: 'var(--color-blue-chip-bg)' }}
+                  onMouseEnter={() => ids.length > 0 && setHoveredIndex(i)}
+                  onMouseLeave={() => setHoveredIndex(null)}
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <span className="text-xs font-medium" style={{ color: 'var(--color-foreground)' }}>
+                    <button
+                      type="button"
+                      className="text-left text-xs font-medium flex-1 min-w-0"
+                      style={{ color: 'var(--color-on-blue)' }}
+                      onClick={() => {
+                        setExpandedIndex(null);
+                        setEditingIndex(null);
+                      }}
+                      title="Click to collapse"
+                    >
                       {obj.name}
-                    </span>
+                    </button>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         handleStartEditing(i);
                       }}
-                      className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full opacity-80 hover:opacity-100 hover:bg-secondary-light transition-all cursor-pointer"
-                      style={{ color: 'var(--color-secondary-hover)', cursor: 'pointer' }}
+                      className="on-blue-btn flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full transition-all cursor-pointer"
                       title="Edit group info"
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -149,7 +203,7 @@ export function AnalyzeModelResultContent({ config, configIndex }: Props) {
                   {obj.description && (
                     <p
                       className="text-xs leading-relaxed max-h-[min(96px,20dvh)] overflow-y-auto"
-                      style={{ color: 'var(--color-secondary-hover)' }}
+                      style={{ color: 'var(--color-on-blue-muted)' }}
                     >
                       {obj.description}
                     </p>
@@ -158,8 +212,8 @@ export function AnalyzeModelResultContent({ config, configIndex }: Props) {
                     <span
                       className="inline-block text-xs px-1 rounded"
                       style={{
-                        backgroundColor: 'var(--color-secondary-light)',
-                        color: 'var(--color-secondary-hover)',
+                        backgroundColor: 'var(--color-on-blue-faint)',
+                        color: 'var(--color-on-blue)',
                       }}
                     >
                       {obj.material}
@@ -172,16 +226,28 @@ export function AnalyzeModelResultContent({ config, configIndex }: Props) {
               {isExpanded && isEditing && (
                 <div
                   className="mt-1 mb-1 ml-1 space-y-1.5 px-2 py-2 rounded"
-                  style={{ borderLeft: `2px solid ${color}`, backgroundColor: 'var(--color-secondary-light)' }}
+                  style={{ borderLeft: `2px solid ${color}`, backgroundColor: 'var(--color-blue-chip-bg)' }}
+                  onMouseEnter={() => ids.length > 0 && setHoveredIndex(i)}
+                  onMouseLeave={() => setHoveredIndex(null)}
                 >
-                  <div className="text-xs font-medium" style={{ color: 'var(--color-secondary-hover)' }}>
+                  <button
+                    type="button"
+                    className="text-left text-xs font-medium"
+                    style={{ color: 'var(--color-on-blue)' }}
+                    onClick={() => {
+                      setExpandedIndex(null);
+                      setEditingIndex(null);
+                    }}
+                    title="Click to collapse"
+                  >
                     Edit Group
-                  </div>
+                  </button>
                   <input
-                    className="w-full text-xs rounded px-2 py-1"
+                    className="w-full text-xs rounded px-2 py-1 placeholder:text-on-blue-muted"
                     style={{
-                      backgroundColor: 'var(--color-secondary-hover)',
-                      color: 'var(--color-background)',
+                      backgroundColor: 'var(--color-blue-chip-bg)',
+                      border: '1px solid var(--color-on-blue-faint)',
+                      color: 'var(--color-on-blue)',
                     }}
                     placeholder="Name"
                     value={editingValues[i]?.name ?? obj.name}
@@ -193,10 +259,11 @@ export function AnalyzeModelResultContent({ config, configIndex }: Props) {
                     }
                   />
                   <input
-                    className="w-full text-xs rounded px-2 py-1"
+                    className="w-full text-xs rounded px-2 py-1 placeholder:text-on-blue-muted"
                     style={{
-                      backgroundColor: 'var(--color-secondary-hover)',
-                      color: 'var(--color-background)',
+                      backgroundColor: 'var(--color-blue-chip-bg)',
+                      border: '1px solid var(--color-on-blue-faint)',
+                      color: 'var(--color-on-blue)',
                     }}
                     placeholder="Description"
                     value={editingValues[i]?.description ?? ''}
@@ -208,10 +275,11 @@ export function AnalyzeModelResultContent({ config, configIndex }: Props) {
                     }
                   />
                   <input
-                    className="w-full text-xs rounded px-2 py-1"
+                    className="w-full text-xs rounded px-2 py-1 placeholder:text-on-blue-muted"
                     style={{
-                      backgroundColor: 'var(--color-secondary-hover)',
-                      color: 'var(--color-background)',
+                      backgroundColor: 'var(--color-blue-chip-bg)',
+                      border: '1px solid var(--color-on-blue-faint)',
+                      color: 'var(--color-on-blue)',
                     }}
                     placeholder="Material"
                     value={editingValues[i]?.material ?? ''}
@@ -230,8 +298,8 @@ export function AnalyzeModelResultContent({ config, configIndex }: Props) {
                       }}
                       className="flex-1 text-xs py-1 rounded"
                       style={{
-                        backgroundColor: 'var(--color-primary)',
-                        color: 'var(--color-foreground)',
+                        backgroundColor: 'var(--color-on-blue)',
+                        color: 'var(--color-primary)',
                         cursor: 'pointer',
                       }}
                     >
@@ -245,7 +313,7 @@ export function AnalyzeModelResultContent({ config, configIndex }: Props) {
                       className="flex-1 text-xs py-1 rounded"
                       style={{
                         backgroundColor: 'var(--color-error)',
-                        color: 'var(--color-secondary-light)',
+                        color: 'var(--color-on-blue)',
                         cursor: 'pointer',
                       }}
                     >
