@@ -4,7 +4,7 @@ import { useEffect, useMemo } from 'react';
 import type { ScenarioConfig } from '@/types/analysis';
 import type { AnalyzeModelConfig } from '@/types/analysis';
 import { RangeSlider } from '@/components/ui/RangeSlider';
-import { CheckboxField } from '@/components/ui/CheckboxField';
+import { ToggleField } from '@/components/ui/ToggleField';
 import { useAnalysisStore, useAudioControlsStore, useScenarioPreviewStore, useSpeckleStore } from '@/store';
 import { pauseStore, commitStore } from '@/store';
 import type { ScenarioPreviewParcours, ScenarioPreviewStop } from '@/store';
@@ -105,7 +105,7 @@ function ScenarioTextRenderer({ text }: { text: string }) {
           <span
             key={i}
             className="cursor-pointer font-medium underline decoration-dotted"
-            style={{ color: 'var(--color-success)' }}
+            style={{ color: 'var(--color-warning)' }}
             onMouseEnter={() => part.ids.length > 0 && highlightObjectForHover(part.ids)}
             onMouseLeave={() => clearHoverHighlight()}
             onClick={() => part.ids.length > 0 && zoomToObjectById(part.ids)}
@@ -257,18 +257,20 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
   useEffect(() => () => clearPreview(), [clearPreview]);
 
   return (
-    <div className="space-y-3 px-4 pb-3 leading-relaxed whitespace-pre-wrap max-h-[min(320px,50dvh)] overflow-y-auto">
+    <div className="card-stack leading-relaxed whitespace-pre-wrap max-h-[min(320px,50dvh)] overflow-y-auto">
       {scenarios.map((scenario, si) => (
-        <div key={si} className="space-y-1">
+        <div key={si} className="card-stack--tight">
           {scenario.events.map((event, ei) => (
             <p key={ei} className="text-xs leading-relaxed text-foreground">
-              <span
-                className="font-mono"
-                style={{ color: 'var(--color-on-blue-muted)', fontSize: '10px', borderRadius: '4px', marginRight: '4px' }}
-              >
+              <span style={{ marginRight: '4px' }}>
                 {formatTimestampRange(event.timestamp)}
               </span>{' '}
-              <ScenarioTextRenderer text={event.description} />
+              <span
+                className="font-mono"
+                style={{ color: 'var(--color-on-blue-muted)', fontSize: '10px' }}
+              >
+                <ScenarioTextRenderer text={event.description} />
+              </span>
             </p>
           ))}
         </div>
@@ -276,7 +278,10 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
 
       {/* Foley results — toggleable foley sounds (shown when foley done) */}
       {hasFoley && config.foleyResult && (
-        <div className="border-t -mx-4 mt-1" style={{ borderTopColor: 'var(--color-on-blue-faint)' }}>
+        <div
+          className="border-t"
+          style={{ borderTopColor: 'var(--color-on-blue-faint)', paddingTop: 'var(--card-gap-row)' }}
+        >
           <ScenarioResultContent
             foleyResult={config.foleyResult}
             selectedKeys={config.selectedFoleyKeys ?? []}
@@ -291,7 +296,7 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
           onClick={() => handleAnalyze(index)}
           className="w-full py-1.5 px-3 text-xs font-medium rounded hover:opacity-80 transition-opacity"
           style={{
-            backgroundColor: 'var(--color-success)',
+            backgroundColor: 'var(--color-warning)',
             color: '#fff',
             borderRadius: '6px',
           }}
@@ -334,9 +339,9 @@ export function ScenarioContent({
   const durationSeconds = Math.round(timelineDurationMs / 1000);
 
   return (
-    <div className="space-y-3">
+    <div className="card-stack">
       {hasAnalysisResult && (
-        <CheckboxField
+        <ToggleField
           label="Use 3D model analysis as context"
           checked={config.useAnalysisResult}
           onChange={(checked) => onUpdateConfig(index, { useAnalysisResult: checked })}
@@ -346,7 +351,7 @@ export function ScenarioContent({
       <div>
         <label
           htmlFor={`scenario-context-${index}`}
-          className="text-xs font-medium block mb-1.5 opacity-70"
+          className="text-xs font-medium card-label opacity-70"
         >
           Context (optional)
         </label>

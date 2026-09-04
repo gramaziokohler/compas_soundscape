@@ -29,6 +29,8 @@ interface RangeSliderProps {
   disabled?: boolean;
   /** Fill/thumb accent color. Defaults to `var(--color-primary)`. */
   color?: string;
+  /** When true, recolors labels/field/unit for legibility on a solid-blue generated card. */
+  onBlueBackground?: boolean;
   /** Default value to reset to on double-click. If omitted, double-click reset is disabled. */
   defaultValue?: number;
 }
@@ -83,6 +85,7 @@ export function RangeSlider({
   hoverText,
   disabled = false,
   color,
+  onBlueBackground = false,
   defaultValue,
 }: RangeSliderProps) {
   const resolvedPrecision = precision ?? decimalsFromStep(step);
@@ -121,7 +124,7 @@ export function RangeSlider({
   const fieldWidthCh = estimateFieldWidthCh(min, max, resolvedPrecision);
   const fillPercent = max > min ? Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100)) : 0;
   const sliderStyle = {
-    "--slider-color": color ?? "var(--color-primary)",
+    "--slider-color": color ?? (onBlueBackground ? "var(--color-on-blue)" : "var(--color-primary)"),
     "--slider-fill": `${fillPercent}%`,
   } as CSSProperties;
 
@@ -133,10 +136,18 @@ export function RangeSlider({
         onChange={handleFieldChange}
         onCommit={handleFieldCommit}
         disabled={disabled}
+        onBlueBackground={onBlueBackground}
         containerStyle={{ width: `${fieldWidthCh}ch` }}
         className="!text-xs !py-0.5"
       />
-      {unit && <span className="text-[10px] text-secondary-hover whitespace-nowrap">{unit}</span>}
+      {unit && (
+        <span
+          className="text-[10px] whitespace-nowrap"
+          style={onBlueBackground ? { color: 'var(--color-on-blue-muted)' } : { color: 'var(--color-secondary-hover)' }}
+        >
+          {unit}
+        </span>
+      )}
     </span>
   );
 
@@ -157,7 +168,12 @@ export function RangeSlider({
         squashing the slider down to something undraggable.
       */}
       <div className="flex flex-wrap items-center gap-1">
-        <span className="text-xxs text-secondary-hover whitespace-nowrap shrink-0">{label}</span>
+        <span
+          className="text-xxs whitespace-nowrap shrink-0"
+          style={onBlueBackground ? { color: 'var(--color-on-blue-muted)' } : { color: 'var(--color-secondary-hover)' }}
+        >
+          {label}
+        </span>
         <div className="flex items-center gap-1 flex-1">
           <input
             type="range"
@@ -180,7 +196,10 @@ export function RangeSlider({
 
       {/* Min/Max Labels */}
       {showLabels && (
-        <div className="flex justify-between text-xs text-secondary-hover mt-0.5">
+        <div
+          className="flex justify-between text-xs mt-0.5"
+          style={onBlueBackground ? { color: 'var(--color-on-blue-muted)' } : { color: 'var(--color-secondary-hover)' }}
+        >
           <span>{displayMin}</span>
           <span>{displayMax}</span>
         </div>

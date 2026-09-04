@@ -257,9 +257,8 @@ export function SoundGenerationSection({
   const onPreviewPlayPause   = useAudioControlsStore((s) => s.handlePreviewPlayPause);
   const onPreviewStop        = useAudioControlsStore((s) => s.handlePreviewStop);
   const soundSchedulingModes = useAudioControlsStore((s) => s.soundSchedulingModes);
-  const soundTimestamps      = useAudioControlsStore((s) => s.soundTimestamps);
-  const onSchedulingModeChange = useAudioControlsStore((s) => s.handleSchedulingModeChange);
-  const onTimestampsChange   = useAudioControlsStore((s) => s.handleTimestampsChange);
+  const soundIntervalJitter  = useAudioControlsStore((s) => s.soundIntervalJitter);
+  const onIntervalJitterChange = useAudioControlsStore((s) => s.setSoundIntervalJitter);
   const iterationLinks       = useAudioControlsStore((s) => s.iterationLinks);
   const isDeferredCycleBakePending = useAudioControlsStore(s => s.isDeferredCycleBakePending);
   const soundLoopable         = useAudioControlsStore((s) => s.soundLoopable);
@@ -812,7 +811,7 @@ export function SoundGenerationSection({
 
     // Linked entities display (shown inside card body when entities are linked)
     const linkedEntitiesDisplay = hasEntities ? (
-      <div className="flex items-center gap-2 mb-1">
+      <div className="flex items-center gap-2">
         <span className={`text-[10px] whitespace-nowrap ${isGenerated ? '' : 'text-foreground'}`} style={isGenerated ? { color: 'var(--color-on-blue-muted)' } : undefined}>
           Linked entities:
         </span>
@@ -978,6 +977,16 @@ export function SoundGenerationSection({
       </Badge>
     ) : null;
 
+    // Category + trigger badges share a single wrapping row. As direct children
+    // of the card body's flex-column `.card-stack`, each chip would stretch to
+    // a full line; grouping keeps them side by side in one compact row.
+    const metaBadgeRow = (categoryBadge || triggerBadge) ? (
+      <div className="flex flex-wrap items-center gap-1">
+        {categoryBadge}
+        {triggerBadge}
+      </div>
+    ) : null;
+
     const headerPrefix = linkHeaderPrefix ? (
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
         {linkHeaderPrefix}
@@ -990,9 +999,21 @@ export function SoundGenerationSection({
     // showVariantsPreGen / showVariantsPostGen.
     const isTextToAudioType = config.type === 'text-to-audio' || !config.type;
     const isTtsType = config.type === 'text-to-speech';
-    // SED-extracted upload cards (injected from an audio analysis card) can
-    // carry multiple variants — one per extracted segment for a detected sound.
+    // SED-extracted upload cards (injected from an audio analysis card) carry
+    // one variant per extracted segment for a detected sound — events created
+    // by injectExtractedSEDSounds are tagged with a `sed-` id.
+    const isSedExtractedEvent = (e: any) => String(e?.id ?? '').startsWith('sed-');
+    // A true SED-extracted card: every variant event comes from the extraction
+    // router. Deleting a variant (removing the segment + its backend WAV) is
+    // only allowed here — duplicated copies share the same backend WAV and must
+    // not delete it out from under the original card.
+    const isSedExtractedCard =
+      variants.length > 0 && variants.every(isSedExtractedEvent);
+    // Multi-variant upload cards (SED-extracted or duplicated) show the selector.
     const isUploadWithVariants = config.type === 'upload' && variants.length > 1;
+    // After deleting down to a single segment the bar stays visible (one square,
+    // no delete badge) so the card keeps reading as the segment-based card it is.
+    const isSingleSedSegment = isSedExtractedCard && variants.length === 1;
 
     // True while THIS card's own generation is still in flight (either the
     // original generation or a regeneration). While busy, the "+" add-variant
@@ -1023,19 +1044,25 @@ export function SoundGenerationSection({
         isRegenerating: regeneratingIndices.includes(originalIndex),
         pendingIndex: variants.length,
       };
-    } else if (isGenerated && isUploadWithVariants) {
-      // Extracted segments are real audio clips — select-only selector, no
-      // add/delete (nothing to regenerate, and deleting a segment is a
-      // different concern than removing an ML-generated variant).
+    } else if (isGenerated && (isUploadWithVariants || isSingleSedSegment)) {
+      // SED-extracted upload cards (injected from an audio analysis card) carry
+      // one real audio variant per extracted segment. Letter squares select the
+      // active segment; the hover delete badge (same UI as TTS/ML variants)
+      // removes that segment's variant — both from the store and its backend WAV.
+      // Delete is only wired for true `sed-` events (duplicated upload cards keep
+      // the select-only bar so they cannot delete a WAV the original still uses).
       cardVariants = {
         items: variants.map((v, i) => ({ key: v.id, title: String.fromCharCode(65 + i) })),
         selectedIndex: selectedVariantIdx,
         onSelect: onVariantChange ? (i) => onVariantChange(originalIndex, i) : undefined,
+        onDelete: (isSedExtractedCard && onDeleteVariant)
+          ? (i) => onDeleteVariant(originalIndex, i)
+          : undefined,
       };
     }
     const showVariantsPreGen = isTtsType && !isGenerated;
     const showVariantsPostGen = isGenerated && !!onVariantChange &&
-      (isTextToAudioType || isTtsType || isUploadWithVariants);
+      (isTextToAudioType || isTtsType || isUploadWithVariants || isSingleSedSegment);
 
     // Pre-gen (upload / sample-audio) preview shares the global previewingSoundId
     // field with generated-sound previews, so starting one always stops the other.
@@ -1097,13 +1124,11 @@ export function SoundGenerationSection({
         variants={cardVariants}
         showVariantsPreGen={showVariantsPreGen}
         showVariantsPostGen={showVariantsPostGen}
-        showSettingsSummary={false}
         beforeContent={isGenerated ? undefined : (
           <>
             {!isCurrentlyLinking && linkedEntitiesDisplay}
             {unlinkConfirmDialog}
-            {categoryBadge}
-            {triggerBadge}
+            {metaBadgeRow}
             {linkingBar}
             <SoundPreContent
               config={config}
@@ -1127,11 +1152,9 @@ export function SoundGenerationSection({
           <>
             {!isCurrentlyLinking && linkedEntitiesDisplay}
             {unlinkConfirmDialog}
-            {categoryBadge}
-            {triggerBadge}
+            {metaBadgeRow}
             {linkingBar}
             <SoundResultContent
-              cardConfig={item}
               generatedSound={generatedSound}
               index={originalIndex}
               variants={variants}
@@ -1140,14 +1163,14 @@ export function SoundGenerationSection({
               isMuted={isMuted}
               soundVolumes={soundVolumes}
               soundIntervals={soundIntervals}
+              soundIntervalJitter={soundIntervalJitter}
+              cardSoundId={primarySoundId || undefined}
+              schedulingMode={(primarySoundId ? soundSchedulingModes[primarySoundId] : undefined) ?? 'interval'}
               onPreviewPlayPause={onPreviewPlayPause}
               onPreviewStop={onPreviewStop}
               onVolumeChange={onVolumeChange}
               onIntervalChange={onIntervalChange}
-              schedulingMode={soundSchedulingModes[generatedSound.id] ?? 'interval'}
-              soundTimestamps={soundTimestamps}
-              onSchedulingModeChange={onSchedulingModeChange}
-              onTimestampsChange={onTimestampsChange}
+              onIntervalJitterChange={onIntervalJitterChange}
               onMute={onMute}
               onUpdatePosition={handleUpdateSoundPosition}
               onUnlinkEntity={() => handleDetachSoundFromEntity(originalIndex)}
@@ -1203,9 +1226,8 @@ export function SoundGenerationSection({
     onVolumeChange,
     onIntervalChange,
     soundSchedulingModes,
-    soundTimestamps,
-    onSchedulingModeChange,
-    onTimestampsChange,
+    soundIntervalJitter,
+    onIntervalJitterChange,
     onVariantChange,
     handleUpdateSoundPosition,
     handleDetachSoundFromEntity,

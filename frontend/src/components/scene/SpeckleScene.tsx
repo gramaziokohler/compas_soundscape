@@ -297,7 +297,6 @@ export function SpeckleScene({
   const soundVolumes            = useAudioControlsStore((s) => s.soundVolumes);
   const soundIntervals          = useAudioControlsStore((s) => s.soundIntervals);
   const soundTrims              = useAudioControlsStore((s) => s.soundTrims);
-  const intervalJitterSeconds   = useAudioControlsStore((s) => s.intervalJitterSeconds);
   const timelineDurationMs      = useAudioControlsStore((s) => s.timelineDurationMs);
   const mutedSounds          = useAudioControlsStore((s) => s.mutedSounds);
   const soloedSound          = useAudioControlsStore((s) => s.soloedSound);
@@ -358,7 +357,6 @@ export function SpeckleScene({
 
   // Context menu (right-click floating panel)
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number } | null>(null);
-  const savedPrevEntityRef = useRef<import('@/store/speckleStore').SelectedEntityInfo | null>(null);
 
   // Hover preview — shown after 2 s of dwelling over a Speckle object
   const [hoverPreview, setHoverPreview] = useState<{ x: number; y: number; objectName: string; objectType: string; parentName?: string } | null>(null);
@@ -367,7 +365,6 @@ export function SpeckleScene({
   // Ref so timer callbacks can read contextMenuPos without stale closure
   const contextMenuPosRef = useRef<{ x: number; y: number } | null>(null);
   useEffect(() => { contextMenuPosRef.current = contextMenuPos; }, [contextMenuPos]);
-  const savedPrevObjectIdsRef = useRef<string[]>([]);
   // Refs for latest mutable values accessible inside event callbacks without re-registering listeners
   const worldTreeRef = useRef<any>(null);
   const isFirstPersonModeRef = useRef(false);
@@ -469,6 +466,12 @@ export function SpeckleScene({
       const { viewer, selectionExtension: sel, filteringExtension: fe } = useSpeckleEngineStore.getState();
       if (!viewer || !sel) return;
 
+      // Right-click never creates a real selection — it only peeks at the entity under
+      // the cursor to drive the floating info panel. Clear any existing real selection
+      // unconditionally, regardless of what (if anything) is under the cursor.
+      sel.clearSelection();
+      setSelectedObjectIds([]);
+
       // Convert client coordinates to NDC
       const renderer = viewer.getRenderer();
       const canvas = renderer.renderer.domElement;
@@ -484,9 +487,6 @@ export function SpeckleScene({
 
       if (customHit) {
         const obj = customHit.object;
-        const currentState = useSpeckleStore.getState();
-        savedPrevEntityRef.current = currentState.selectedEntity;
-        savedPrevObjectIdsRef.current = (currentState as any).selectedObjectIds ?? [];
 
         useRightSidebarStore.getState().setRightClickActive(true);
 
@@ -513,9 +513,7 @@ export function SpeckleScene({
           };
         }
 
-        sel.selectObjects([]);
         setSelectedEntity(entityData);
-        setSelectedObjectIds([entityData.objectId]);
         setContextMenuPos({ x: e.clientX, y: e.clientY });
         return;
       }
@@ -558,11 +556,6 @@ export function SpeckleScene({
       }
 
       if (foundId) {
-        const currentState = useSpeckleStore.getState();
-        savedPrevEntityRef.current = currentState.selectedEntity;
-        savedPrevObjectIdsRef.current = (currentState as any).selectedObjectIds ?? [];
-
-        sel.selectObjects([foundId]);
         useRightSidebarStore.getState().setRightClickActive(true);
 
         // Build entity data directly from world tree for immediate display
@@ -620,7 +613,6 @@ export function SpeckleScene({
         }
 
         setSelectedEntity(entityData);
-        setSelectedObjectIds([foundId]);
         setContextMenuPos({ x: e.clientX, y: e.clientY });
       }
     };
@@ -837,7 +829,6 @@ export function SpeckleScene({
     selectedVariants,
     soundIntervals,
     soundTrims,
-    intervalJitterSeconds,
     timelineDurationMs,
     audioOrchestrator,
     soundVolumes,
@@ -1610,19 +1601,8 @@ export function SpeckleScene({
           onClose={() => {
             setContextMenuPos(null);
             useRightSidebarStore.getState().setRightClickActive(false);
-            // Restore the entity and selection that were active before right-click
-            setSelectedEntity(savedPrevEntityRef.current);
-            setSelectedObjectIds(savedPrevObjectIdsRef.current);
-            const { selectionExtension: sel } = useSpeckleEngineStore.getState();
-            if (sel) {
-              if (savedPrevObjectIdsRef.current.length > 0) {
-                sel.selectObjects(savedPrevObjectIdsRef.current);
-              } else {
-                sel.selectObjects([]);
-              }
-            }
-            savedPrevEntityRef.current = null;
-            savedPrevObjectIdsRef.current = [];
+            // Right-click never mutated the real selection, so there's nothing to restore.
+            setSelectedEntity(null);
           }}
           onOpenExplorer={handleOpenExplorer}
           generatedSounds={soundscapeData ?? undefined}

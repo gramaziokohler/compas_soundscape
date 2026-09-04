@@ -18,7 +18,11 @@ import React, { CSSProperties, useMemo } from 'react';
 import { VirtualTreeItem as TreeItem, getHeaderAndSubheader, getGeometryLeafIdsFromNode } from '@/hooks/useSpeckleTree';
 import { useSpeckleStore } from '@/store';
 import { TreeItemAcousticControls } from '@/components/scene/TreeItemAcousticControls';
-import { RefreshIcon } from '@/components/ui/Icon';
+import {
+  OBJECT_EXPLORER_PANEL_ACTIONS_WIDTH_PX,
+  objectExplorerAcousticGridStyle,
+} from '@/components/scene/objectExplorerAcousticLayout';
+import { AudioLines } from 'lucide-react';
 import type { MaterialOption } from '@/components/ui/MaterialSelect';
 
 interface VirtualTreeItemProps {
@@ -136,103 +140,74 @@ export function VirtualTreeItem({
     onToggleIsolation(objectIds);
   };
 
-  return (
-    <div style={style} className="px-1">
+  const nameContent = (
+    <div className="flex items-center gap-0.5 min-w-0">
       <div
-        className={`group flex items-center w-full p-1 pr-2 cursor-pointer text-left justify-between rounded-sm transition-colors ${getItemBackgroundClass()}`}
-        style={{ opacity }}
-        onClick={handleClick}
-        onDoubleClick={handleDoubleClick}
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-      >
-        {/* Left side: indentation + expansion triangle + content */}
-        <div className="flex flex-1 items-center gap-0.5 min-w-0">
-          {/* Indentation */}
+        className="shrink-0"
+        style={{ width: `${(item.indent || 0) * 0.375}rem` }}
+      />
+      {item.hasChildren ? (
+        <button
+          className="h-8 w-4 flex items-center justify-center shrink-0 text-neutral-600 hover:text-neutral-800"
+          onClick={handleToggleExpansion}
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="w-3 h-3 transition-transform"
+            style={{
+              transform: item.isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+            }}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M9 18l6-6-6-6" />
+          </svg>
+        </button>
+      ) : (
+        <div className="w-4 shrink-0" />
+      )}
+      <div className="flex min-w-0 flex-col">
+        <div className="flex items-center gap-1 min-w-0">
           <div
-            className="shrink-0"
-            style={{ width: `${(item.indent || 0) * 0.375}rem` }}
-          />
-
-          {/* Expansion triangle */}
-          {item.hasChildren ? (
-            <button
-            className="h-8 w-4 flex items-center justify-center shrink-0 text-neutral-600 hover:text-neutral-800"
-              onClick={handleToggleExpansion}
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="w-3 h-3 transition-transform"
-                style={{
-                  transform: item.isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
-                }}
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M9 18l6-6-6-6" />
-              </svg>
-            </button>
-          ) : (
-            <div className="w-4 shrink-0" />
-          )}
-
-          {/* Item content */}
-          <div className="flex min-w-0 flex-col">
-            <div
-              className="truncate text-xs"
-              style={{
-                color: isHidden || shouldShowDimmed ? 'var(--color-secondary-hover)' : 'var(--foreground)'
-              }}
-            >
-              {displayHeader}
-            </div>
-            {displaySubheader && (
-              <div className="truncate text-[10px] text-neutral-500">
-                {displaySubheader}
-              </div>
-            )}
+            className="truncate text-xs"
+            style={{
+              color: isHidden || shouldShowDimmed ? 'var(--color-secondary-hover)' : 'var(--foreground)',
+            }}
+          >
+            {displayHeader}
           </div>
-        </div>
-
-        {/* Acoustic material + scattering columns */}
-        {acousticActive && sortedMaterials && materialColors && (
-          <TreeItemAcousticControls
-            geometryIds={geometryIds}
-            sortedMaterials={sortedMaterials}
-            materialColors={materialColors}
-            showScattering={showScattering}
-          />
-        )}
-
-        {/* Right side: acoustic layer row — red reload button to re-assign */}
-        {isAcousticLayerRow && onResetAcousticLayer && (
-          <div className="flex items-center shrink-0 w-auto">
+          {isAcousticLayerRow && onResetAcousticLayer && (
             <button
-              className="p-1 rounded transition-colors"
-              style={{ color: 'var(--color-error)' }}
+              type="button"
+              className="shrink-0 text-blue-text hover:opacity-70 transition-opacity"
               onClick={(e) => {
                 e.stopPropagation();
                 onResetAcousticLayer();
               }}
               title="Re-assign acoustic layer"
+              aria-label="Re-assign acoustic layer"
             >
-              <RefreshIcon size="0.85rem" />
+              <AudioLines size={12} strokeWidth={2} />
             </button>
+          )}
+        </div>
+        {displaySubheader && (
+          <div className="truncate text-[10px] text-neutral-500">
+            {displaySubheader}
           </div>
         )}
+      </div>
+    </div>
+  );
 
-        {/* Right side: hide/isolate buttons (hidden for root nodes unless in layer selection mode) */}
-        {!isAcousticLayerRow && (!isRootNode || isLayerSelectionMode) && (
-          <div
-            className={`flex items-center overflow-hidden shrink-0 group-hover:w-auto transition-all ${
-              isHidden || isIsolated || isLayerSelectionMode ? 'w-auto' : 'w-0'
-            }`}
-          >
-          {/* Hide/Show button */}
+  const actionButtons = (
+    <>
+      {!isAcousticLayerRow && (!isRootNode || isLayerSelectionMode) && (
+        <>
           <button
             className={`p-1 hover:bg-neutral-200 rounded transition-colors ${
               isHidden ? 'text-primary' : 'text-neutral-700'
@@ -254,8 +229,6 @@ export function VirtualTreeItem({
               <circle cx="12" cy="12" r="2" fill="currentColor" />
             </svg>
           </button>
-
-          {/* Isolate button (hidden in acoustic mode) */}
           {!hideIsolateButton && onToggleIsolation && (
             <button
               className={`p-1 hover:bg-neutral-200 rounded transition-colors ${
@@ -265,62 +238,18 @@ export function VirtualTreeItem({
               title={isIsolated ? 'Un-isolate' : 'Isolate'}
             >
               {isIsolated ? (
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="w-4 h-4"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="none"
-                >
-                  <rect
-                    x="4"
-                    y="4"
-                    width="16"
-                    height="16"
-                    rx="2"
-                    fill="currentColor"
-                    opacity="0.3"
-                  />
-                  <rect
-                    x="8"
-                    y="8"
-                    width="8"
-                    height="8"
-                    rx="1"
-                    fill="currentColor"
-                  />
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="none">
+                  <rect x="4" y="4" width="16" height="16" rx="2" fill="currentColor" opacity="0.3" />
+                  <rect x="8" y="8" width="8" height="8" rx="1" fill="currentColor" />
                 </svg>
               ) : (
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="w-4 h-4"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <rect
-                    x="4"
-                    y="4"
-                    width="16"
-                    height="16"
-                    rx="2"
-                  />
-                  <rect
-                    x="8"
-                    y="8"
-                    width="8"
-                    height="8"
-                    rx="1"
-                  />
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="4" y="4" width="16" height="16" rx="2" />
+                  <rect x="8" y="8" width="8" height="8" rx="1" />
                 </svg>
               )}
             </button>
           )}
-
-          {/* Select as acoustic layer button (only in layer selection mode) */}
           {isLayerSelectionMode && onSelectAsAcousticLayer && (
             <button
               className="ml-1 px-2 py-0.5 text-xs font-medium rounded transition-colors border"
@@ -338,7 +267,53 @@ export function VirtualTreeItem({
               Select
             </button>
           )}
-        </div>        )}      
+        </>
+      )}
+    </>
+  );
+
+  const useAcousticGrid = acousticActive && !!sortedMaterials && !!materialColors;
+
+  return (
+    <div style={style}>
+      <div
+        className={`group w-full p-1 cursor-pointer text-left rounded-sm transition-colors ${getItemBackgroundClass()} ${
+          useAcousticGrid ? '' : 'flex items-center justify-between'
+        }`}
+        style={{
+          opacity,
+          ...(useAcousticGrid ? objectExplorerAcousticGridStyle(showScattering) : {}),
+        }}
+        onClick={handleClick}
+        onDoubleClick={handleDoubleClick}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+      >
+        <div className={useAcousticGrid ? 'min-w-0' : 'flex flex-1 items-center gap-0.5 min-w-0'}>
+          {nameContent}
+        </div>
+
+        {useAcousticGrid && (
+          <TreeItemAcousticControls
+            geometryIds={geometryIds}
+            sortedMaterials={sortedMaterials}
+            materialColors={materialColors}
+            showScattering={showScattering}
+          />
+        )}
+
+        <div
+          className={`flex items-center shrink-0 ${
+            useAcousticGrid
+              ? 'justify-end overflow-hidden'
+              : `overflow-hidden group-hover:w-auto transition-all ${
+                  isHidden || isIsolated || isLayerSelectionMode ? 'w-auto' : 'w-0'
+                }`
+          }`}
+          style={useAcousticGrid ? { width: `${OBJECT_EXPLORER_PANEL_ACTIONS_WIDTH_PX}px` } : undefined}
+        >
+          {actionButtons}
+        </div>
       </div>
     </div>
   );

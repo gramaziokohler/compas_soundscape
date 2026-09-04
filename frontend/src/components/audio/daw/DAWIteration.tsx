@@ -4,6 +4,7 @@ import { useRef, useState, useCallback, useEffect } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import { API_BASE_URL } from '@/utils/constants';
 import { subscribeColorTheme } from '@/utils/color-theme';
+import { Spinner } from '@/components/ui/Spinner';
 import type { IterationLink } from '@/types/audio';
 
 export interface IterationContextMenuData {
@@ -66,6 +67,7 @@ export function DAWIteration({
   onHoverEnd,
 }: DAWIterationProps) {
   const [isHovered, setIsHovered] = useState(false);
+  const [isLoadingWaveform, setIsLoadingWaveform] = useState(false);
   const [dragOffsetMs, setDragOffsetMs] = useState(0);
   const isDraggingRef = useRef(false);
   const isDuplicatingRef = useRef(false);
@@ -108,6 +110,9 @@ export function DAWIteration({
         ? audioUrl
         : `${API_BASE_URL}${audioUrl}`;
 
+    let active = true;
+    setIsLoadingWaveform(true);
+
     const ws = WaveSurfer.create({
       container: waveContainerRef.current,
       height: 28,
@@ -119,11 +124,15 @@ export function DAWIteration({
       barGap: 1,
       barRadius: 1,
     });
-    ws.load(resolvedUrl).catch(() => {});
+    ws.on('ready', () => { if (active) setIsLoadingWaveform(false); });
+    ws.on('error', () => { if (active) setIsLoadingWaveform(false); });
+    ws.load(resolvedUrl).catch(() => { if (active) setIsLoadingWaveform(false); });
     wsRef.current = ws;
     return () => {
+      active = false;
       try { ws.destroy(); } catch { /* ignore */ }
       wsRef.current = null;
+      setIsLoadingWaveform(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audioUrl]);
@@ -233,6 +242,25 @@ export function DAWIteration({
         ref={waveContainerRef}
         style={{ width: '100%', height: '100%', pointerEvents: 'none', opacity: 0.75 }}
       />
+
+      {/* Loading overlay while the saved audio WAV streams in */}
+      {isLoadingWaveform && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            pointerEvents: 'none',
+            zIndex: 20,
+          }}
+        >
+          <span style={{ display: 'flex', color: 'rgba(255,255,255,0.85)' }}>
+            <Spinner size={12} />
+          </span>
+        </div>
+      )}
 
       {/* Top-right badge row — always rendered (badges + hover controls) */}
       <div

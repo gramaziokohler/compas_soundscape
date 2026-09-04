@@ -314,6 +314,36 @@ export const apiService = {
     }
   },
 
+  // Delete a single SED-extracted segment audio file (one variant of an
+  // audio-analysis sound card). Returns true when the file was removed, false
+  // when it was already gone (404).
+  async deleteSedSegmentAudio(url: string): Promise<boolean> {
+    try {
+      const filename = (() => {
+        try {
+          return new URL(url, API_BASE_URL).pathname.split('/').pop() || '';
+        } catch {
+          return url.split('/').pop() || '';
+        }
+      })();
+      if (!filename) return false;
+
+      const response = await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/extract-sed-segments/${encodeURIComponent(filename)}`,
+        { method: 'DELETE' },
+        'Delete audio segment'
+      );
+      if (response.status === 404) return false;
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: 'Failed to delete audio segment' }));
+        throw new Error(err.detail || 'Failed to delete audio segment');
+      }
+      return true;
+    } catch (error) {
+      handleApiError(error, 'Delete audio segment');
+    }
+  },
+
   // Generate TTS (async — returns generation_id for polling)
   async generateTTS(data: {
     texts: { text: string; voice_name?: string; display_name?: string; position?: number[]; dbfs?: number; prompt_index?: number; copy_index?: number; total_copies?: number }[];

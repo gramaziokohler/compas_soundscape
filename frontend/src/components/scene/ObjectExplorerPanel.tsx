@@ -3,7 +3,13 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { ObjectExplorer } from '@/components/layout/ObjectExplorer';
 import { useUIStore } from '@/store/uiStore';
+import { useAcousticMaterialStore, useAcousticLayerStore } from '@/store';
 import { RefreshIcon } from '@/components/ui/Icon';
+import { CardButton, CloseIcon } from '@/components/ui/Card';
+import {
+  OBJECT_EXPLORER_ROW_PADDING_PX,
+  objectExplorerAcousticGridStyle,
+} from '@/components/scene/objectExplorerAcousticLayout';
 import { useViewportScale } from '@/hooks/useViewportScale';
 import { clampToViewport, clampToViewportWidth, clampToViewportHeight, getScale } from '@/utils/scale';
 import { UI_SCALE } from '@/utils/constants';
@@ -29,8 +35,12 @@ interface ObjectExplorerPanelProps {
 export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded = false, rightSidebarWidth = 0 }: ObjectExplorerPanelProps) {
   const scale = useViewportScale();
 
-  const [itemCount, setItemCount] = useState(0);
   const resetAllRef = useRef<(() => void) | null>(null);
+  const isAcousticMaterialActive = useAcousticMaterialStore((s) => s.isActive);
+  const acousticCardType = useAcousticMaterialStore((s) => s.cardType);
+  const selectedAcousticLayerName = useAcousticLayerStore((s) => s.selectedAcousticLayerName);
+  const showAcousticColumns = isAcousticMaterialActive && !!selectedAcousticLayerName;
+  const showScatteringColumn = showAcousticColumns && acousticCardType === 'pyroomacoustics';
 
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -206,8 +216,63 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
       />
 
       {/* Header — drag handle */}
+      {showAcousticColumns ? (
+        <div
+          className="flex-shrink-0 min-w-0"
+          style={{
+            height: `${HEADER_HEIGHT}px`,
+            paddingLeft: `${OBJECT_EXPLORER_ROW_PADDING_PX}px`,
+            paddingRight: `${OBJECT_EXPLORER_ROW_PADDING_PX}px`,
+            borderBottom: '1px solid var(--color-secondary-light)',
+            cursor: 'grab',
+            userSelect: 'none',
+            backgroundColor: 'var(--background)',
+            ...objectExplorerAcousticGridStyle(showScatteringColumn),
+          }}
+          onMouseDown={handleDragStart}
+        >
+          <span className="text-sm font-semibold text-foreground truncate min-w-0">Object Explorer</span>
+          <span className="pr-6 text-[10px] text-primary whitespace-nowrap text-right justify-self-end">
+            Acoustic material
+          </span>
+          {showScatteringColumn && (
+            <span className="pr-22 text-[10px] text-primary whitespace-nowrap text-center justify-self-center w-full">
+              Scattering
+            </span>
+          )}
+          <div className="flex items-center justify-end gap-2 justify-self-end">
+            <button
+              data-no-drag
+              onClick={() => resetAllRef.current?.()}
+              className="flex items-center justify-center rounded transition-colors"
+              style={{
+                width: '18px',
+                height: '18px',
+                color: 'var(--color-secondary-hover)',
+                backgroundColor: 'transparent',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--color-secondary-light)')}
+              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+              title="Reset hidden / isolated items"
+            >
+              <RefreshIcon size="0.8rem" />
+            </button>
+            <div data-no-drag>
+              <CardButton
+                icon={<CloseIcon />}
+                title="Close"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClose();
+                }}
+                variant="close"
+              />
+            </div>
+          </div>
+        </div>
+      ) : (
       <div
-        className="flex items-center justify-between px-3 flex-shrink-0"
+        className="flex items-center justify-between px-3 flex-shrink-0 min-w-0"
         style={{
           height: `${HEADER_HEIGHT}px`,
           borderBottom: '1px solid var(--color-secondary-light)',
@@ -217,13 +282,8 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
         }}
         onMouseDown={handleDragStart}
       >
-        <span className="text-sm font-semibold text-foreground">Object Explorer</span>
-        <div className="flex items-center gap-2">
-          {itemCount > 0 && (
-            <span className="text-xs" style={{ color: 'var(--color-secondary-hover)' }}>
-              {itemCount} items
-            </span>
-          )}
+        <span className="text-sm font-semibold text-foreground shrink-0">Object Explorer</span>
+        <div className="flex items-center gap-2 shrink-0">
           <button
             data-no-drag
             onClick={() => resetAllRef.current?.()}
@@ -240,37 +300,29 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
           >
             <RefreshIcon size="0.8rem" />
           </button>
-          <button
-            data-no-drag
-            onClick={onClose}
-            className="flex items-center justify-center rounded transition-colors"
-            style={{
-              width: '18px',
-              height: '18px',
-              color: 'var(--color-secondary-hover)',
-              backgroundColor: 'transparent',
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--color-warning)')}
-            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-            title="Close"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
+          <div data-no-drag>
+            <CardButton
+              icon={<CloseIcon />}
+              title="Close"
+              onClick={(e) => {
+                e.stopPropagation();
+                onClose();
+              }}
+              variant="close"
+            />
+          </div>
         </div>
       </div>
+      )}
 
       {/* Content */}
       <div
         style={{
-          padding: `0 ${CONTENT_PADDING}px ${CONTENT_PADDING}px`,
+          padding: `0 ${OBJECT_EXPLORER_ROW_PADDING_PX}px ${CONTENT_PADDING}px`,
         }}
       >
         <ObjectExplorer
           resetAllRef={resetAllRef}
-          onItemCountChange={setItemCount}
           maxTreeHeight={Math.max(MIN_HEIGHT - HEADER_HEIGHT - CONTENT_PADDING * 2, size.height - HEADER_HEIGHT - CONTENT_PADDING * 2)}
         />
       </div>

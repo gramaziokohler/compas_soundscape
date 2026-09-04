@@ -1,16 +1,131 @@
 /**
  * Absorption Coefficient Histogram Utilities
  *
- * Renders a minimalistic per-frequency-band absorption histogram on a canvas.
- * Style inspired by waveform-utils.ts: black background, monospace labels, dotted grid.
+ * Renders a vector (SVG-based) per-frequency-band absorption histogram.
+ * Two variants:
+ *  - Full: labels, axes, grid — shown in expanded dropdown hover.
+ *  - Mini: bars only, no text — small icon sized to tree-item line height.
  */
 
+/** CSS variable reader (SSR-safe). */
+const getCssVar = (v: string, fallback: string): string => {
+  if (typeof document === 'undefined') return fallback;
+  return getComputedStyle(document.documentElement).getPropertyValue(v).trim() || fallback;
+};
+
+/* ------------------------------------------------------------------ */
+/*  Full histogram (SVG string)                                       */
+/* ------------------------------------------------------------------ */
+
+/** Base design dimensions (75 % of old 260×156). */
+const FULL_W = 195;
+const FULL_H = 117;
+
+const PAD = { top: 18, right: 5, bottom: 21, left: 30 } as const;
+
 /**
- * Draw an absorption-coefficient histogram.
- *
- * @param canvas      Target HTML canvas element (caller sets width/height attributes)
- * @param coeffs      Absorption coefficients per band (0–1)
- * @param centerFreqs Matching octave-band center frequencies in Hz
+ * Build an SVG string for the full absorption histogram.
+ * Caller injects it via `innerHTML` on a container div.
+ */
+export function buildAbsorptionHistogramSVG(
+  coeffs: number[],
+  centerFreqs: number[],
+): string {
+  if (coeffs.length === 0) return '';
+
+  const primary = getCssVar('--color-primary', '#002aff');
+  const grey = getCssVar('--color-secondary-hover', '#9CA3AF');
+  const grid = getCssVar('--color-secondary-hover', '#374151');
+  const bg = getCssVar('--background', '#000000');
+
+  const plotW = FULL_W - PAD.left - PAD.right;
+  const plotH = FULL_H - PAD.top - PAD.bottom;
+  const n = coeffs.length;
+  const gap = 2;
+  const barW = (plotW - gap * (n - 1)) / n;
+
+  const gridLines = [0.25, 0.5, 0.75, 1.0]
+    .map((level) => {
+      const y = PAD.top + plotH * (1 - level);
+      return `<line x1="${PAD.left}" y1="${y}" x2="${PAD.left + plotW}" y2="${y}" stroke="${grid}" stroke-width="0.5" stroke-dasharray="2 2.5" />`;
+    })
+    .join('');
+
+  const bars = coeffs
+    .map((coeff, i) => {
+      const c = Math.max(0, Math.min(1, coeff));
+      const bh = c * plotH;
+      const x = PAD.left + i * (barW + gap);
+      const y = PAD.top + plotH - bh;
+      return `<rect x="${x}" y="${y}" width="${barW}" height="${bh}" fill="${primary}" rx="0.5" />`;
+    })
+    .join('');
+
+  const freqLabels = centerFreqs
+    .map((f, i) => {
+      const x = PAD.left + i * (barW + gap) + barW / 2;
+      const label = f >= 1000 ? `${f / 1000}k` : `${f}`;
+      return `<text x="${x}" y="${FULL_H - 3}" text-anchor="middle" fill="${grey}" font-size="8" font-family="system-ui, -apple-system, sans-serif">${label}</text>`;
+    })
+    .join('');
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${FULL_W} ${FULL_H}" width="100%" height="100%" shape-rendering="geometricPrecision">
+  <rect width="${FULL_W}" height="${FULL_H}" fill="${bg}" rx="3" />
+  ${gridLines}
+  <line x1="${PAD.left}" y1="${PAD.top}" x2="${PAD.left}" y2="${PAD.top + plotH}" stroke="${grid}" stroke-width="0.5" />
+  ${bars}
+  ${freqLabels}
+  <text x="${PAD.left - 2}" y="${PAD.top + 6}" text-anchor="end" fill="${grey}" font-size="7.5" font-family="system-ui, -apple-system, sans-serif">100</text>
+  <text x="${PAD.left - 2}" y="${PAD.top + plotH + 5}" text-anchor="end" fill="${grey}" font-size="7.5" font-family="system-ui, -apple-system, sans-serif">0</text>
+  <text x="${PAD.left + 2}" y="${PAD.top - 4}" fill="${grey}" font-size="7.5" font-family="system-ui, -apple-system, sans-serif">α(%)</text>
+</svg>`;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Mini histogram icon (bars only, no text/axes)                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Build a tiny SVG string showing only the bars, sized to fit the given
+ * `size` (px). Used as an inline icon in the collapsed dropdown trigger.
+ */
+export function buildMiniHistogramSVG(
+  coeffs: number[],
+  size: number,
+): string {
+  if (coeffs.length === 0) return '';
+
+  const primary = getCssVar('--color-primary', '#002aff');
+  const bg = getCssVar('--background', '#000000');
+
+  const pad = 2;
+  const inner = size - pad * 2;
+  const n = coeffs.length;
+  const gap = 0.8;
+  const barW = (inner - gap * (n - 1)) / n;
+
+  const bars = coeffs
+    .map((coeff, i) => {
+      const c = Math.max(0, Math.min(1, coeff));
+      const bh = Math.max(0.5, c * inner);
+      const x = pad + i * (barW + gap);
+      const y = pad + inner - bh;
+      return `<rect x="${x}" y="${y}" width="${barW}" height="${bh}" fill="${primary}" rx="0.3" />`;
+    })
+    .join('');
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" shape-rendering="geometricPrecision">
+  <rect width="${size}" height="${size}" fill="${bg}" rx="2" />
+  ${bars}
+</svg>`;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Legacy canvas API (kept for any remaining canvas consumers)       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @deprecated Use `buildAbsorptionHistogramSVG` for vector rendering.
  */
 export function drawAbsorptionHistogram(
   canvas: HTMLCanvasElement,
@@ -20,89 +135,14 @@ export function drawAbsorptionHistogram(
   const ctx = canvas.getContext('2d');
   if (!ctx || coeffs.length === 0) return;
 
-  const root = typeof document !== 'undefined' ? document.documentElement : null;
-  const getCssVar = (v: string, fallback: string) =>
-    root ? getComputedStyle(root).getPropertyValue(v).trim() || fallback : fallback;
-
-  const PRIMARY_COLOR = getCssVar('--color-primary', '#2F2FE4');
-  const GREY_RT = getCssVar('--color-secondary-hover', '#9CA3AF');
-  const GRID_RT = getCssVar('--color-secondary-hover', '#374151');
-  const BG_RT = getCssVar('--background', '#000000');
-
-  const W = canvas.width;
-  const H = canvas.height;
-
-  // Scale factor relative to the base 130×78 design
-  const scale = Math.min(W / 130, H / 78);
-
-  ctx.fillStyle = BG_RT;
-  ctx.fillRect(0, 0, W, H);
-
-  const pad = {
-    top: Math.round(14 * scale),
-    right: Math.round(4 * scale),
-    bottom: Math.round(20 * scale),
-    left: Math.round(26 * scale),
+  const svg = buildAbsorptionHistogramSVG(coeffs, centerFreqs);
+  const img = new Image();
+  const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  img.onload = () => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(url);
   };
-  const plotW = W - pad.left - pad.right;
-  const plotH = H - pad.top - pad.bottom;
-
-  const n = coeffs.length;
-  const gap = Math.max(1, Math.round(2 * scale));
-  const barW = (plotW - gap * (n - 1)) / n;
-
-  // Dotted grid at 25 / 50 / 75 / 100 %
-  ctx.strokeStyle = GRID_RT;
-  ctx.lineWidth = 1;
-  ctx.setLineDash([Math.round(2 * scale), Math.round(3 * scale)]);
-  [0.25, 0.5, 0.75, 1.0].forEach((level) => {
-    const y = pad.top + plotH * (1 - level);
-    ctx.beginPath();
-    ctx.moveTo(pad.left, y);
-    ctx.lineTo(pad.left + plotW, y);
-    ctx.stroke();
-  });
-  ctx.setLineDash([]);
-
-  // Left axis line
-  ctx.strokeStyle = GRID_RT;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(pad.left, pad.top);
-  ctx.lineTo(pad.left, pad.top + plotH);
-  ctx.stroke();
-
-  const fontSize = Math.round(7 * scale);
-  const fontStr = `${fontSize}px monospace`;
-
-  // Bars + frequency labels
-  coeffs.forEach((coeff, i) => {
-    const c = Math.max(0, Math.min(1, coeff));
-    const bh = c * plotH;
-    const x = pad.left + i * (barW + gap);
-    const y = pad.top + plotH - bh;
-
-    ctx.fillStyle = PRIMARY_COLOR;
-    ctx.fillRect(x, y, barW, bh);
-
-    const f = centerFreqs[i];
-    const label = f >= 1000 ? `${f / 1000}k` : `${f}`;
-    ctx.fillStyle = GREY_RT;
-    ctx.font = fontStr;
-    ctx.textAlign = 'center';
-    ctx.fillText(label, x + barW / 2, H - Math.round(4 * scale));
-  });
-
-  // Y-axis labels: 100 / 0
-  ctx.fillStyle = GREY_RT;
-  ctx.font = fontStr;
-  ctx.textAlign = 'right';
-  ctx.fillText('100', pad.left - Math.round(2 * scale), pad.top + fontSize);
-  ctx.fillText('0', pad.left - Math.round(2 * scale), pad.top + plotH + Math.round(4 * scale));
-
-  // Y-axis title
-  ctx.fillStyle = GREY_RT;
-  ctx.font = fontStr;
-  ctx.textAlign = 'left';
-  ctx.fillText('α(%)', pad.left + Math.round(2 * scale), pad.top - Math.round(3 * scale));
+  img.src = url;
 }

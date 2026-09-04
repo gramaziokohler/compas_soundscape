@@ -99,6 +99,7 @@ export function Card<TConfig extends CardBaseConfig>({
   resetButtonTitle = 'Reset to configuration',
   customButtons,
   headerPrefix,
+  footerPrefix,
   // Simulation action button props
   onRun,
   onCancel,
@@ -269,6 +270,22 @@ export function Card<TConfig extends CardBaseConfig>({
     : hasResult
       ? 'done'
       : 'idle';
+  const showFooterPrefix = !!footerPrefix && generateStatus !== 'generating';
+
+  const contextMenuItemClass = (
+    state: 'default' | 'disabled' | 'active' = 'default',
+    indented = false,
+  ) => [
+    'card-context-menu-item flex items-center gap-2 w-full text-left py-2 text-xs transition-colors',
+    indented ? 'pl-8 pr-3' : 'px-3',
+    state === 'disabled'
+      ? `opacity-40 cursor-not-allowed${isGenerated ? '' : ' text-secondary-hover'}`
+      : state === 'active'
+        ? 'active cursor-pointer'
+        : isGenerated
+          ? 'cursor-pointer'
+          : 'text-foreground cursor-pointer hover:bg-secondary-light',
+  ].join(' ');
 
   return (
     <div
@@ -297,10 +314,14 @@ export function Card<TConfig extends CardBaseConfig>({
         />
       )}
 
+      {/* Uniform inset from the card border on all sides (--card-inset) — keeps
+          spacing consistent across pending/generated states and regardless of
+          content. Column gap (--card-gap-header) spaces header / body / footer. */}
+      <div className="card-shell flex flex-col min-w-0" style={{ gap: 'var(--card-gap-header)' }}>
       {/* Header - Click to expand/collapse.
            Double-click to zoom — stops propagation so the outer card's onDoubleClick doesn't fire twice. */}
       <div
-        className="group relative z-10 flex items-center justify-between gap-2 cursor-pointer px-3 pt-1.5 pb-1.5"
+        className="group relative z-10 flex items-center justify-between gap-2 cursor-pointer"
         onClick={!isEditingName ? handleToggleClick : undefined}
         onDoubleClick={e => e.stopPropagation()}
         style={{ userSelect: 'none' }}
@@ -319,12 +340,14 @@ export function Card<TConfig extends CardBaseConfig>({
             <input
               {...inputProps}
               onClick={e => e.stopPropagation()}
-              className="flex-1 text-xs font-medium px-2 py-1 rounded-lg border bg-background text-foreground outline-none focus:ring-1"
+              className={`flex-1 text-xs font-medium px-2 py-1 rounded-lg border outline-none focus:ring-1 ${
+                isGenerated ? 'xyz-input on-blue' : 'bg-background text-foreground'
+              }`}
               style={{
-                borderColor: 'var(--card-color)',
+                ...(isGenerated ? {} : { borderColor: 'var(--card-color)' }),
                 userSelect: 'text',
                 // @ts-expect-error -- CSS custom property for focus ring
-                '--tw-ring-color': 'var(--card-color)',
+                '--tw-ring-color': isGenerated ? 'var(--color-on-blue)' : 'var(--card-color)',
               }}
             />
           ) : (
@@ -337,21 +360,21 @@ export function Card<TConfig extends CardBaseConfig>({
               </div>
               {!isExpanded && collapsedInfo && (
                 <div
-                  className={`text-xxs mt-0.5 ${isGenerated ? '' : 'text-info'}`}
+                  className={`text-xxs card-title-info ${isGenerated ? '' : 'text-primary'}`}
                   style={isGenerated ? { color: 'var(--color-on-blue)' } : undefined}
                 >
                   {collapsedInfo}
                 </div>
               )}
               {!isExpanded && isPlayingCollapsedInfo && (
-                <div className="text-xxs mt-0.5 italic text-warning">
+                <div className="text-xxs card-title-info italic text-warning">
                   playing
                 </div>
               )}
               {isExpanded && version && (
-                <div className="mt-1 flex items-center gap-1 min-w-0">
+                <div className="card-title-meta flex items-center gap-1 min-w-0">
                   <div
-                    className={`text-[10px] font-mono leading-tight min-w-0 overflow-hidden text-ellipsis whitespace-nowrap ${isGenerated ? 'text-on-blue-muted' : 'text-text-3'}`}
+                    className={`text-xxs min-w-0 overflow-hidden text-ellipsis whitespace-nowrap ${isGenerated ? 'text-on-blue-muted' : 'text-text-3'}`}
                     title={versionTitle}
                   >
                     {versionTitle}
@@ -405,28 +428,32 @@ export function Card<TConfig extends CardBaseConfig>({
           without being destroyed and recreated. */}
       {(isExpanded || keepContentMountedWhenCollapsed) && (
         <div
-          className="px-1 space-y-0 max-h-[min(480px,55dvh)] overflow-y-auto pr-0.5 relative z-[1]"
-          style={!isExpanded ? { display: 'none' } : undefined}
+          className="flex flex-col min-w-0"
+          style={{
+            gap: 'var(--card-gap-header)',
+            ...(!isExpanded ? { display: 'none' } : undefined),
+          }}
         >
+          <div className="card-stack max-h-[min(480px,55dvh)] overflow-y-auto relative z-[1]">
+            {renderContent()}
 
-          {renderContent()}
+            {/* Variants bar — letter-square selector (pre-gen speech lines / post-gen audio variants) */}
+            {showVariantsBar && variants && (
+              <VariantsBar {...variants} onBlueBackground={isGenerated} />
+            )}
 
-          {/* Variants bar — letter-square selector (pre-gen speech lines / post-gen audio variants) */}
-          {showVariantsBar && variants && (
-            <VariantsBar {...variants} onBlueBackground={isGenerated} />
-          )}
-                    
-          {/* Error display - shown before content but keeps configuration visible */}
-          {error && (
-            <Notice
-              type="error"
-              variant="bar"
-              message={error}
-              onDismiss={onDismissError ? () => onDismissError(index) : undefined}
-            />
-          )}
+            {/* Error display - shown before content but keeps configuration visible */}
+            {error && (
+              <Notice
+                type="error"
+                variant="bar"
+                message={error}
+                onDismiss={onDismissError ? () => onDismissError(index) : undefined}
+              />
+            )}
+          </div>
 
-          {/* Read-only recap of the pre-generation settings for generated cards */}
+          {/* Read-only recap — always pinned below scrollable content, above the footer bar */}
           {showSettingsSummary && hasResult && (
             <SettingsSummary title={getSettingsTitle(config)} rows={getSettingsRows(config)} />
           )}
@@ -440,33 +467,38 @@ export function Card<TConfig extends CardBaseConfig>({
         (isExpanded && generateStatus === 'idle' && !!onRun) ||
         (isExpanded && generateStatus === 'done' && !!doneActionLabel && !!onDoneAction)) && (
         <div
-          className="px-3.5 py-1.5 border-border"
+          className={`border-border${showFooterPrefix ? ' flex items-stretch gap-1.5 overflow-visible' : ''}`}
           style={isGenerated && generateStatus === 'done' ? {
             backgroundColor: 'rgba(0, 0, 0, 0.15)',
-            borderBottomLeftRadius: '12px',
-            borderBottomRightRadius: '12px',
+            borderBottomLeftRadius: '10px',
+            borderBottomRightRadius: '10px',
           } : undefined}
         >
-          <GenerateButton
-            status={generateStatus}
-            progress={progress}
-            statusText={status}
-            label={actionButtonLabel}
-            disabled={actionButtonDisabled}
-            disabledReason={actionButtonDisabledReason}
-            onGenerate={onRun}
-            onStop={onCancel}
-            doneLabel={doneActionLabel}
-            onDoneAction={onDoneAction}
-          />
+          {showFooterPrefix ? footerPrefix : null}
+          <div className={showFooterPrefix ? 'min-w-0 flex-1' : undefined}>
+            <GenerateButton
+              status={generateStatus}
+              progress={progress}
+              statusText={status}
+              label={actionButtonLabel}
+              disabled={actionButtonDisabled}
+              disabledReason={actionButtonDisabledReason}
+              onGenerate={onRun}
+              onStop={onCancel}
+              doneLabel={doneActionLabel}
+              onDoneAction={onDoneAction}
+            />
+          </div>
         </div>
       )}
+      </div>
 
       {/* Right-click context menu — rendered via portal to <body> so it escapes the
           card's stacking context. Dimmed (muted) cards apply `filter: brightness(...)`,
           which creates a new stacking context and would trap z-index:9999 behind other cards. */}
       {contextMenu && createPortal(
         <div
+          className={isGenerated ? 'card-context-menu--generated' : undefined}
           onPointerDown={e => e.stopPropagation()}
           onClick={e => e.stopPropagation()}
           onDoubleClick={e => e.stopPropagation()}
@@ -475,8 +507,8 @@ export function Card<TConfig extends CardBaseConfig>({
             left: `${contextMenu.x}px`,
             top: `${contextMenu.y}px`,
             zIndex: 9999,
-            backgroundColor: 'var(--color-surface-2)',
-            border: '1px solid var(--color-border-strong)',
+            backgroundColor: isGenerated ? undefined : 'var(--color-surface-2)',
+            border: isGenerated ? '1px solid var(--color-on-blue-faint)' : '1px solid var(--color-border-strong)',
             borderRadius: '8px',
             boxShadow: 'var(--shadow-lg)',
             minWidth: '150px',
@@ -492,7 +524,7 @@ export function Card<TConfig extends CardBaseConfig>({
                 setContextMenu(null);
                 startEdit();
               }}
-              className="flex items-center gap-2 w-full text-left px-3 py-2 text-xs text-foreground cursor-pointer hover:bg-secondary-light transition-colors"
+              className={contextMenuItemClass()}
             >
               <span className="flex-shrink-0 w-3 h-3 flex items-center justify-center">
                 <PenIcon />
@@ -516,16 +548,20 @@ export function Card<TConfig extends CardBaseConfig>({
                   }
                 }}
                 disabled={item.disabled && !item.subItems}
-                className={`flex items-center gap-2 w-full text-left px-3 py-2 text-xs transition-colors ${
+                className={contextMenuItemClass(
                   item.disabled && !item.subItems
-                    ? 'opacity-40 cursor-not-allowed text-secondary-hover'
+                    ? 'disabled'
                     : item.isActive
-                      ? 'cursor-pointer'
-                      : 'text-foreground cursor-pointer hover:bg-secondary-light'
-                }`}
+                      ? 'active'
+                      : 'default',
+                )}
                 style={item.isActive ? {
-                  backgroundColor: 'var(--card-color-lighter, var(--color-primary-light))',
-                  color: 'var(--card-color, var(--color-primary))',
+                  backgroundColor: isGenerated
+                    ? 'var(--color-blue-chip-bg)'
+                    : 'var(--card-color-lighter, var(--color-primary-light))',
+                  color: isGenerated
+                    ? 'var(--color-on-blue)'
+                    : 'var(--card-color, var(--color-primary))',
                 } : undefined}
               >
                 <span className="flex-shrink-0 w-3 h-3 flex items-center justify-center">
@@ -533,7 +569,7 @@ export function Card<TConfig extends CardBaseConfig>({
                 </span>
                 <span className="flex-1">{item.label}</span>
                 {item.subItems && (
-                  <span className="text-secondary-hover text-[10px]">
+                  <span className={`text-[10px] ${isGenerated ? 'card-context-menu-chevron' : 'text-secondary-hover'}`}>
                     {expandedSubKey === item.key ? '▾' : '▸'}
                   </span>
                 )}
@@ -541,7 +577,7 @@ export function Card<TConfig extends CardBaseConfig>({
 
               {/* Sub-items accordion */}
               {item.subItems && expandedSubKey === item.key && (
-                <div className="border-t border-secondary-light">
+                <div className={`border-t ${isGenerated ? 'card-context-menu-divider' : 'border-secondary-light'}`}>
                   {item.subItems.map(sub => (
                     <button
                       key={sub.key}
@@ -554,16 +590,21 @@ export function Card<TConfig extends CardBaseConfig>({
                         }
                       }}
                       disabled={sub.disabled}
-                      className={`flex items-center gap-2 w-full text-left pl-8 pr-3 py-2 text-xs transition-colors ${
+                      className={contextMenuItemClass(
                         sub.disabled
-                          ? 'opacity-40 cursor-not-allowed text-secondary-hover'
+                          ? 'disabled'
                           : sub.isActive
-                            ? 'cursor-pointer'
-                            : 'text-foreground cursor-pointer hover:bg-secondary-light'
-                      }`}
+                            ? 'active'
+                            : 'default',
+                        true,
+                      )}
                       style={sub.isActive ? {
-                        backgroundColor: 'var(--card-color-lighter, var(--color-primary-light))',
-                        color: 'var(--card-color, var(--color-primary))',
+                        backgroundColor: isGenerated
+                          ? 'var(--color-blue-chip-bg)'
+                          : 'var(--card-color-lighter, var(--color-primary-light))',
+                        color: isGenerated
+                          ? 'var(--color-on-blue)'
+                          : 'var(--card-color, var(--color-primary))',
                       } : undefined}
                     >
                       <span className="flex-1">{sub.label}</span>

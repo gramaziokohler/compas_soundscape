@@ -39,11 +39,11 @@ import { useViewportScale } from "@/hooks/useViewportScale";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { useJobRecovery } from "@/hooks/useJobRecovery";
 import { apiService } from "@/services/api";
-import { API_BASE_URL, DEFAULT_DBFS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, AUDIO_PLAYBACK, TTS_DEFAULT_LANGUAGE, DEFAULT_MAXIMUM_FOLEY_SOUNDS } from "@/utils/constants";
+import { API_BASE_URL, DEFAULT_DBFS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, DEFAULT_MAXIMUM_FOLEY_SOUNDS } from "@/utils/constants";
 import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
 import type { LoadTab, SoundGenerationConfig } from "@/types";
 import type { AcousticSimulationMode } from "@/types/audio";
-import type { AudioAnalysisConfig } from "@/types/analysis";
+import type { AudioAnalysisConfig, AnalysisConfig } from "@/types/analysis";
 import { CARD_TYPE_LABELS } from "@/types/card";
 import type { SelectedGeometry, AcousticMaterial } from "@/types/materials";
 import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSelector";
@@ -162,6 +162,8 @@ function HomeContent() {
         audioModel: restored.globalSettings.audioModel,
         ttsModel: restored.globalSettings.ttsModel,
       });
+      // sample-audio cards lost their (blob) clip on refresh — reload the bundled sample.
+      void soundGen.rehydrateSampleAudioConfigs();
       useAudioControlsStore.getState().restoreVolumeAndIntervals(restored.soundVolumes, restored.soundIntervals);
       useAudioControlsStore.getState().restoreSchedulingModes(restored.soundSchedulingModes, restored.soundTimestamps);
 
@@ -207,6 +209,9 @@ function HomeContent() {
           analysisResults: analysisRestored.analysisResults,
           activeTab: analysisRestored.activeTab,
         });
+        // Rebuild persisted audio-context source Files so the SED waveform/results
+        // render after a cold refresh (the original File object is not JSON-serializable).
+        analysis.rehydrateAudioContextSources(audioBaseUrl);
         if (analysisRestored.pendingSoundConfigs.length > 0) {
           textGen.setPendingSoundConfigs(analysisRestored.pendingSoundConfigs);
         }
@@ -881,10 +886,13 @@ function HomeContent() {
   // FPS mode programmatic exit trigger (increment to exit first-person mode)
   const [exitFPSTrigger, setExitFPSTrigger] = useState(0);
 
-  // Forced expanded listener card (from scene mesh double-click)
-  const [forcedExpandedListenerId, setForcedExpandedListenerId] = useState<string | null>(null);
+  // Forced expanded listener card — derived from active go-to target (single listeners only)
+  const goToExpandedSingleListenerId = useMemo(() => {
+    if (!activeIRGroupId) return null;
+    return receivers.receivers.some((r) => r.id === activeIRGroupId) ? activeIRGroupId : null;
+  }, [activeIRGroupId, receivers.receivers]);
 
-  // Collapse all listener cards trigger (from FPS exit via Escape)
+  // Collapse all listener cards trigger (from FPS exit via Escape or go-to toggle off)
   const [collapseListenerCardTrigger, setCollapseListenerCardTrigger] = useState(0);
 
   // Expanded grid listener ID (controls which grid's points are rendered in 3D)
@@ -1531,6 +1539,9 @@ function HomeContent() {
           }
         );
 
+        // sample-audio cards lost their (blob) clip on refresh — reload the bundled sample.
+        void soundGen.rehydrateSampleAudioConfigs();
+
         // Restore user-adjusted volume and interval values
         useAudioControlsStore.getState().restoreVolumeAndIntervals(
           restored.soundVolumes,
@@ -1665,6 +1676,9 @@ function HomeContent() {
             analysisResults: analysisRestored.analysisResults,
             activeTab: analysisRestored.activeTab,
           });
+          // Rebuild persisted audio-context source Files so the SED waveform/results
+          // render after a model reload (the original File object is not JSON-serializable).
+          analysis.rehydrateAudioContextSources(audioBaseUrl);
           if (analysisRestored.pendingSoundConfigs.length > 0) {
             textGen.setPendingSoundConfigs(analysisRestored.pendingSoundConfigs);
           }
@@ -1758,13 +1772,36 @@ function HomeContent() {
         await Promise.all(uploadPromises);
       }
 
-      // 2. Build analysis state (serialize cards, results, pending configs)
+      // 2. Persist audio-context source files that don't have a persisted copy yet, so the
+      // SED waveform + detected-sounds results can be rebuilt after a refresh. This covers
+      // cards whose audio was loaded before persistence existed and never re-saved.
+      const liveAnalysis = useAnalysisStore.getState();
+      for (let i = 0; i < liveAnalysis.analysisConfigs.length; i++) {
+        const cfg = liveAnalysis.analysisConfigs[i] as AudioAnalysisConfig;
+        if (cfg?.type !== 'audio' || !cfg.audioFile || cfg.persistedAudioFilename) continue;
+        try {
+          const { filename } = await apiService.uploadSoundscapeAudio(
+            modelId,
+            `ctx-audio-${i}-${Date.now()}`,
+            cfg.audioFile,
+          );
+          useAnalysisStore
+            .getState()
+            .handleUpdateConfig(i, { persistedAudioFilename: filename } as Partial<AnalysisConfig>);
+        } catch (err) {
+          console.warn(`[page:save] Failed to persist audio context source for config ${i}:`, err);
+        }
+      }
+
+      // Build analysis state (serialize cards, results, pending configs) — read the live
+      // store so the just-persisted audio filenames are included in this save.
       const cardFlowState = useCardFlowStore.getState();
+      const saveAnalysisState = useAnalysisStore.getState();
       const analysisStateData = buildAnalysisStateSave(
-        analysis.analysisConfigs,
-        analysis.analysisResults,
+        saveAnalysisState.analysisConfigs,
+        saveAnalysisState.analysisResults,
         textGen.pendingSoundConfigs,
-        analysis.activeAnalysisTab,
+        saveAnalysisState.activeAnalysisTab,
         soundGen.soundConfigs.map(c => ({ parentUsageOriginalIndex: (c as any).parentUsageOriginalIndex })),
         {
           contextAdvanced: [...cardFlowState.contextAdvanced],
@@ -2405,7 +2442,7 @@ function HomeContent() {
     const audio = useAudioControlsStore.getState();
     audio.resetGlobalBaseDbfs();
     audio.setTtsLanguage(TTS_DEFAULT_LANGUAGE);
-    audio.setIntervalJitter(AUDIO_PLAYBACK.DEFAULT_INTERVAL_JITTER_SECONDS);
+    audio.clearAllSoundIntervalJitter();
     audio.resetTimelineDurationMs();
     audio.setMaximumFoleySounds(DEFAULT_MAXIMUM_FOLEY_SOUNDS);
     useUIStore.getState().setEnableAutoSave(true);
@@ -2625,8 +2662,26 @@ function HomeContent() {
     audioOrchestrator.setReceiverMode(isActive, receiverId || undefined, hasReceivers);
   }, [audioOrchestrator, receivers.receivers.length]);
 
+  // Exit go-to-listener / FPS mode and optionally collapse listener cards
+  const exitGoToListenerMode = useCallback((collapseCards = true) => {
+    setActiveIRGroupId(null);
+    setIsFPSModeActive(false);
+    setGoToReceiverId(null);
+    setGoToPosition(null);
+    setGoToPositionReceiverId(null);
+    setExitFPSTrigger((t) => t + 1);
+    setExpandedGridListenerId(null);
+    if (collapseCards) setCollapseListenerCardTrigger((t) => t + 1);
+    audioOrchestrator.setReceiverMode(false, undefined, receivers.receivers.length > 0);
+  }, [audioOrchestrator, receivers.receivers.length]);
+
   // Handler: Go To Receiver (activates first-person view at receiver position)
   const handleGoToReceiver = useCallback((receiverId: string) => {
+    if (activeIRGroupId === receiverId) {
+      exitGoToListenerMode(true);
+      return;
+    }
+
     setActiveIRGroupId(receiverId);
 
     const activeSimulation = acousticsSimulation.activeSimulationIndex !== null
@@ -2649,6 +2704,7 @@ function HomeContent() {
       setGoToReceiverId(receiverId);
       setIsFPSModeActive(true);
       audioOrchestrator.setReceiverMode(true, receiverId, true);
+      setExpandedGridListenerId(null);
       return;
     }
 
@@ -2663,23 +2719,18 @@ function HomeContent() {
         setGoToPositionReceiverId(receiverId);
         setIsFPSModeActive(true);
         audioOrchestrator.setReceiverMode(true, receiverId, true);
+        setExpandedGridListenerId(parentId);
         return;
       }
     }
 
     console.warn('[Page] handleGoToReceiver: Receiver not found:', receiverId);
-  }, [receivers.receivers, gridListeners.gridListeners, audioOrchestrator, acousticsSimulation.activeSimulationIndex, acousticsSimulation.simulationConfigs, addError]);
+  }, [activeIRGroupId, exitGoToListenerMode, receivers.receivers, gridListeners.gridListeners, audioOrchestrator, acousticsSimulation.activeSimulationIndex, acousticsSimulation.simulationConfigs, addError]);
 
-  // Handler: Receiver mesh double-clicked in 3D scene →
-  //   switch to Listeners tab + expand card for single listeners; for grid points just enter FPS
+  // Handler: Receiver mesh double-clicked in 3D scene → enter FPS + expand listener card
   const handleReceiverDoubleClickedInScene = useCallback((receiverId: string) => {
-    const isGridPoint = gridListeners.gridListeners.some(g => receiverId.startsWith(g.id + '-'));
-    if (!isGridPoint) {
-      setForcedExpandedListenerId(receiverId);
-      setTimeout(() => setForcedExpandedListenerId(null), 200);
-    }
     handleGoToReceiver(receiverId);
-  }, [handleGoToReceiver, gridListeners.gridListeners]);
+  }, [handleGoToReceiver]);
 
   // Keyboard navigation between IR groups while in FPS mode (Shift+ArrowRight / Shift+ArrowLeft)
   useEffect(() => {
@@ -2708,12 +2759,6 @@ function HomeContent() {
 
       const nextId = eligibleIds[nextIndex];
       if (!nextId) return;
-
-      // Expand listener card only for single receivers (grid points have no card)
-      if (receivers.receivers.some(r => r.id === nextId)) {
-        setForcedExpandedListenerId(nextId);
-        setTimeout(() => setForcedExpandedListenerId(null), 200);
-      }
 
       handleGoToReceiver(nextId);
     };
@@ -3024,7 +3069,7 @@ function HomeContent() {
             // Receiver mesh double-click → expand listener card + enter FPS mode
             onReceiverDoubleClicked={handleReceiverDoubleClickedInScene}
             // FPS exit via Escape → collapse listener card
-            onFPSExited={() => { setCollapseListenerCardTrigger(t => t + 1); setIsFPSModeActive(false); setActiveIRGroupId(null); }}
+            onFPSExited={() => exitGoToListenerMode(true)}
             className="w-full h-full"
           />
         ) : (
@@ -3241,10 +3286,10 @@ function HomeContent() {
         onUpdateReceiverPosition={receivers.updateReceiverPosition}
         onGoToReceiver={handleGoToReceiver}
         onToggleReceiverHiddenForSimulation={receivers.toggleReceiverHiddenForSimulation}
-        onExitFPS={() => setExitFPSTrigger(t => t + 1)}
+        onExitFPS={() => exitGoToListenerMode(false)}
         isFPSModeActive={isFPSModeActive}
         forcedActiveGroupId={activeIRGroupId}
-        forcedExpandedListenerId={forcedExpandedListenerId}
+        forcedExpandedListenerId={goToExpandedSingleListenerId}
         collapseListenerCardTrigger={collapseListenerCardTrigger}
         // Grid listener props
         gridListeners={gridListeners.gridListeners}

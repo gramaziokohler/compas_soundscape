@@ -501,6 +501,10 @@ export function restoreSoundscapeState(
       console.log(`[DEBUG-DESERIALIZE]   config pi=${sc.index} cat="${sc.category}" prompt="${sc.prompt?.substring(0, 30)}"`);
     }
   }
+  // Normalize the base URL (remove trailing slash) — used for both event audio
+  // URLs below and the clip re-attach pass after events are rebuilt.
+  const baseUrl = (audioBaseUrl || '').replace(/\/$/, '');
+
   // Rebuild SoundGenerationConfig[] from saved configs
   const soundConfigs: SoundGenerationConfig[] = loadedData.sound_configs.map(
     (saved) => ({
@@ -542,9 +546,6 @@ export function restoreSoundscapeState(
       })(),
     })
   );
-
-  // Normalize the base URL (remove trailing slash)
-  const baseUrl = audioBaseUrl.replace(/\/$/, '');
 
   // Rebuild user-adjusted volume/interval maps (keyed by sound ID)
   const soundVolumes: Record<string, number> = {};
@@ -619,6 +620,40 @@ export function restoreSoundscapeState(
     }
 
     return event;
+  });
+
+  // ── Re-attach source clips for generated upload cards ─────────────────────
+  // Blob URLs (the uploaded clip shown in the config UI) do not survive a page
+  // refresh. When such a card was already generated, its audio is persisted
+  // server-side as the sound event — reuse it as the config's clip so that
+  // "Reset to configuration UI" shows the audio again instead of an empty
+  // dropzone. sample-audio cards are skipped: their clip is the deterministic
+  // bundled sample, reloaded after restore (rehydrateSampleAudioConfigs).
+  (loadedData.sound_configs || []).forEach((savedConfig) => {
+    if (savedConfig.type !== 'upload') return;
+    const runtimeConfig = soundConfigs[savedConfig.index];
+    if (!runtimeConfig || runtimeConfig.uploadedAudioUrl || runtimeConfig.uploadedAudioInfo) return;
+    const clipEvent = (loadedData.sound_events || [])
+      .filter(
+        (se) =>
+          se.prompt_index === savedConfig.index &&
+          !!se.audio_filename &&
+          !String(se.id ?? '').startsWith('sed-'),
+      )
+      .sort((a, b) => (a.copy_index ?? 0) - (b.copy_index ?? 0))[0];
+    if (!clipEvent?.audio_filename) return;
+    const dotIdx = clipEvent.audio_filename.lastIndexOf('.');
+    const ext = dotIdx >= 0 ? clipEvent.audio_filename.slice(dotIdx) : '.wav';
+    runtimeConfig.uploadedAudioUrl = `${baseUrl}/${clipEvent.audio_filename}`;
+    runtimeConfig.uploadedAudioInfo = {
+      duration: 0,
+      sample_rate: 0,
+      num_samples: 0,
+      channels: 'Mono',
+      filename: clipEvent.display_name
+        ? `${clipEvent.display_name}${ext}`
+        : clipEvent.audio_filename,
+    };
   });
 
   const globalSettings = {
@@ -890,6 +925,9 @@ export function buildAnalysisStateSave(
     if ('likeliness' in config) base.likeliness = (config as any).likeliness;
     if ('analysisOptions' in config) base.analysisOptions = (config as any).analysisOptions;
     if ('applyNoiseReduction' in config) base.applyNoiseReduction = (config as any).applyNoiseReduction;
+    if (config.type === 'audio' && (config as any).persistedAudioFilename) {
+      base.audio_filename = (config as any).persistedAudioFilename;
+    }
 
     const result = resultsByIndex.get(configIndex);
     if (result && result.prompts.length > 0) {
@@ -1099,6 +1137,7 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
       config.audioFile = null;
       config.audioInfo = null;
       config.audioBuffer = null;
+      config.persistedAudioFilename = saved.audio_filename || undefined;
     }
     if (saved.type === 'text') {
       config.isGenerating = false;

@@ -25,11 +25,15 @@ export function estimateFieldWidthCh(min: number, max: number, precision: number
   return intDigits + decimalChars + (hasNegative ? 1 : 0) + buffer;
 }
 
-/** Matches NumberField axis-prefix gutter (`pl-5`). */
-export const PREFIXED_NUMBER_FIELD_PREFIX_REM = 1.25;
+/** Matches NumberField axis-prefix gutter (`pl-4`, includes prefix `pr-1`). */
+export const PREFIXED_NUMBER_FIELD_PREFIX_REM = 1;
 
 /** CSS width for a prefixed NumberField — prefix gutter + digit columns only. */
 export function estimatePrefixedNumberFieldWidth(value: number, precision: number): string {
-  const digitsCh = estimateFieldWidthCh(value, value, precision, 0);
+  const digitsCh = Number.isFinite(value)
+    ? value.toFixed(precision).length
+    : precision > 0
+      ? 2 + precision
+      : 1;
   return `calc(${PREFIXED_NUMBER_FIELD_PREFIX_REM}rem + ${digitsCh}ch)`;
 }

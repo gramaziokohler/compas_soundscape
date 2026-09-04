@@ -11,7 +11,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { RangeSlider } from "@/components/ui/RangeSlider";
-import { CheckboxField } from "@/components/ui/CheckboxField";
+import { ToggleField } from "@/components/ui/ToggleField";
 import { CardSelect } from "@/components/ui/CardSelect";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { SearchBar } from "@/components/ui/SearchBar";
@@ -131,7 +131,7 @@ type SettingKey =
   | 'tokens'
   | 'llm-model' | 'tts-model' | 'tts-language' | 'audio-model'
   | 'diffusion-steps' | 'negative-prompt' | 'noise-reduction' | 'trim-silence'
-  | 'listener-orientation' | 'jitter' | 'timeline' | 'spectrograms'
+  | 'listener-orientation' | 'timeline' | 'spectrograms'
   | 'base-spl' | 'max-foley'
   | 'auto-save' | 'delete-history';
 
@@ -167,7 +167,6 @@ const SETTINGS: SettingEntry[] = [
   { section: 'llm', key: 'trim-silence', terms: ['trim silence', 'silence', 'trim', 'text-to-audio settings'] },
 
   { section: 'rendering', key: 'listener-orientation', terms: ['listener orientation', 'orientation', 'listener', 'x', 'y', 'z'] },
-  { section: 'rendering', key: 'jitter', terms: ['jitter', 'interval jitter', 'time', 'stagger', 'timeline settings'] },
   { section: 'rendering', key: 'timeline', terms: ['timeline', 'duration', 'time', 'timeline settings'] },
   { section: 'rendering', key: 'spectrograms', terms: ['spectrograms', 'spectrogram'] },
   { section: 'rendering', key: 'base-spl', terms: ['base level', 'base spl', 'spl', 'volume', 'db', 'decibel'] },
@@ -577,8 +576,6 @@ export function AdvancedSettingsSection({
     if (tokenSettingsTrigger > 0) setActiveSection('tokens');
   }, [tokenSettingsTrigger]);
 
-  const intervalJitterSeconds = useAudioControlsStore((s) => s.intervalJitterSeconds);
-  const setIntervalJitter = useAudioControlsStore((s) => s.setIntervalJitter);
   const timelineDurationMs = useAudioControlsStore((s) => s.timelineDurationMs);
   const setTimelineDurationMs = useAudioControlsStore((s) => s.setTimelineDurationMs);
   const globalBaseDbfs = useAudioControlsStore((s) => s.globalBaseDbfs);
@@ -678,28 +675,28 @@ export function AdvancedSettingsSection({
                   />
                 </div>
               )}
-              {/* <CheckboxField checked={showAxesHelper} onChange={onShowAxesHelperChange} label="Show axes helper" /> */}
+              {/* <ToggleField checked={showAxesHelper} onChange={onShowAxesHelperChange} label="Show axes helper" /> */}
               {isVisible('label-sprites') && (
-                <CheckboxField checked={showLabelSprites} onChange={onShowLabelSpritesChange} label="Show label sprites" />
+                <ToggleField checked={showLabelSprites} onChange={onShowLabelSpritesChange} label="Show label sprites" />
               )}
               {isVisible('hovering-highlight') && (
-                <CheckboxField checked={showHoveringHighlight} onChange={onShowHoveringHighlightChange} label="Hovering highlight" />
+                <ToggleField checked={showHoveringHighlight} onChange={onShowHoveringHighlightChange} label="Hovering highlight" />
               )}
               {isVisible('sound-spheres') && (
-                <CheckboxField checked={showSoundSpheres} onChange={onShowSoundSpheresChange} label="Show sound spheres" />
+                <ToggleField checked={showSoundSpheres} onChange={onShowSoundSpheresChange} label="Show sound spheres" />
               )}
               {isVisible('listeners') && (
-                <CheckboxField checked={showSceneListeners} onChange={onShowSceneListenersChange} label="Show listeners" />
+                <ToggleField checked={showSceneListeners} onChange={onShowSceneListenersChange} label="Show listeners" />
               )}
               {isVisible('scenario-parcours') && (
-                <CheckboxField
+                <ToggleField
                   checked={showScenarioParcours}
                   onChange={onShowScenarioParcoursChange}
                   label="Show scenario parcours"
                 />
               )}
               {isVisible('ground-grid') && (
-                <CheckboxField checked={showGroundGrid} onChange={onShowGroundGridChange} label="Show ground grid" />
+                <ToggleField checked={showGroundGrid} onChange={onShowGroundGridChange} label="Show ground grid" />
               )}
               {showGroundGrid && isVisible('grid-spacing', 'grid-color') && (
                 <div className="flex flex-col gap-1 pl-2 border-l border-secondary-light">
@@ -876,14 +873,14 @@ export function AdvancedSettingsSection({
                     </div>
                   )}
                   {isVisible('noise-reduction') && (
-                    <CheckboxField
+                    <ToggleField
                       checked={applyNoiseReduction}
                       onChange={onApplyNoiseReductionChange}
                       label="Apply noise reduction"
                     />
                   )}
                   {applyNoiseReduction && isVisible('trim-silence') && (
-                    <CheckboxField
+                    <ToggleField
                       checked={trimSilence}
                       onChange={onTrimSilenceChange}
                       label="Trim silence"
@@ -909,21 +906,8 @@ export function AdvancedSettingsSection({
                   hoverText="Reference level in dBFS used in audio calibration for all generated sounds. Double-click to reset to -18 dBFS."
                 />
               )}
-              {isVisible('jitter', 'timeline') && (
+              {isVisible('timeline') && (
                 <CollapsibleGroup title="Timeline settings" forceExpanded={isSearchActive}>
-                  {isVisible('jitter') && (
-                    <RangeSlider
-                      label="Jitter"
-                      value={intervalJitterSeconds}
-                      min={0}
-                      max={15}
-                      step={0.5}
-                      unit="s"
-                      onChange={setIntervalJitter}
-                      defaultValue={AUDIO_PLAYBACK.DEFAULT_INTERVAL_JITTER_SECONDS}
-                      hoverText="Each iteration fires at its base interval ± a random offset drawn from [0, jitter]. Also controls the stagger between sounds on Play All. Double-click to reset."
-                    />
-                  )}
                   {isVisible('timeline') && (
                     <RangeSlider
                       label="Duration"
@@ -940,7 +924,7 @@ export function AdvancedSettingsSection({
                 </CollapsibleGroup>
               )}
               {isVisible('spectrograms') && (
-                <CheckboxField
+                <ToggleField
                   checked={showSpectrograms}
                   onChange={setShowSpectrograms}
                   label="Show spectrograms"
@@ -980,7 +964,7 @@ export function AdvancedSettingsSection({
           {activeSection === 'history' && (
             <div className="flex flex-col gap-2">
               {isVisible('auto-save') && (
-                <CheckboxField
+                <ToggleField
                   checked={enableAutoSave}
                   onChange={setEnableAutoSave}
                   label="Autosave"

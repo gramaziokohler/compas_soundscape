@@ -98,6 +98,72 @@ const hex = getMaterialColorByAbsorption(0.4)   // → '#hex' between start, mid
 
 ---
 
+## Card Vertical Rhythm — Spacing Tokens (Single Source of Truth)
+
+All vertical spacing inside **cards** (all `Card.tsx` modes: Context / Usage / Sounds / Acoustics /
+Listeners × pending & generated) is driven by tokens and rhythm classes defined in
+`frontend/src/app/globals.css` (Card design-system section). Do **not** add ad-hoc spacing
+utilities (`space-y-*`, `gap-*`, `mb-*`, `mt-*`, `px-*`) to card content.
+
+### Token scale (`:root`, theme-independent — no dark flip)
+
+| Token | Value | Used for |
+| ----- | ----- | -------- |
+| `--card-space-xxs` | 2px | title captions / collapsed info |
+| `--card-space-xs` | 4px | tight rows in a list / group |
+| `--card-space-sm` | 6px | label → its control |
+| `--card-space-md` | 8px | collapsible body, header↔body, inset |
+| `--card-space-lg` | 12px | between sibling control components |
+| `--card-space-xl` | 16px | wide separations |
+
+### Semantic roles (edit these to re-space the whole system)
+
+| Role | = | Meaning |
+| ---- | -- | ------- |
+| `--card-inset` | `md` | uniform card inner padding (`.card-shell`) |
+| `--card-gap-header` | `md` | header row → body / footer |
+| `--card-gap-label` | `sm` | label → control |
+| `--card-gap-control` | `lg` | between components/blocks |
+| `--card-gap-row` | `xs` | rows within a group/list |
+| `--card-gap-collapse` | `md` | collapsible trigger → body |
+| `--card-gap-info` | `xxs` | info line under a title |
+
+### Rhythm classes and when to use them
+
+| Class | Gap | Use for |
+| ----- | --- | ------- |
+| `.card-shell` | inset | Uniform card padding. **Card owns the inset — content components must be edge-to-edge** (no own `px-*`/`mx-*`/`pb-*` on roots). |
+| `.card-stack` | `control` (12px) | Top-level stacks of sibling control components in a card body. |
+| `.card-stack--md` | 8px | Mid groupings (section header → its list, tight control panels). |
+| `.card-stack--tight` | `row` (4px) | Same-kind list rows (`max-h-[min(...)] overflow-y-auto` scroll lists). |
+| `.card-label` | mb `label` | A label directly above a control; no `mb-1/mb-2` on the label. |
+| `.card-field` | `label` | Column wrapper for a label-over-control group (gap via container). |
+| `.card-field--row` | `label` | Label beside a control. |
+| `.card-collapse-body` | `collapse` | Expanded body of a collapsible/disclosure group (`Additional settings`, accordions). |
+| `.card-title-info` / `.card-title-meta` | 2px / 4px | Caption / version row under a card title. |
+
+### Rules
+
+1. **Pending & generated states share the identical rhythm** — only colors swap via
+   `.card-generated`. Never branch spacing on `hasResult`.
+2. **Card owns the inset** — Card content components must not add edge padding; delete any
+   leftover `px-*`/`mx-*`/`pb-*` on roots when they appear.
+3. Label above a control uses `.card-label` or `.card-field` — never a raw `mb-1/mb-2`.
+4. Stack controls with the token classes; never mix `space-y-*`/`gap-*` into card content.
+5. `.toggle-row` keeps its 4px margin on non-card surfaces; inside any `card-stack*`/`card-field`
+   the margin is zeroed (see the `.card-stack .toggle-row` rule in `globals.css`) — spacing then
+   comes from the container gap.
+6. A component only reacts to tokens it actually references. Before editing, confirm which
+   classes the file uses (e.g. `AnalyzeModelContent` consumes only `--card-gap-control` and
+   `--card-gap-label`; its outer `.card-stack` is a single child so control-gap edits are
+   invisible until a model is loaded and the card is expanded).
+7. After editing tokens in `globals.css`, if the running UI does not change, the compiled chunk
+   is stale (Turbopack on Windows sometimes does not re-emit): restart `pnpm dev`, delete
+   `frontend/.next`, and hard-refresh. Verify with `getComputedStyle(el).gap` /
+   `getComputedStyle(document.documentElement).getPropertyValue('--card-gap-control')`.
+
+---
+
 ## UI Scaling — Three Scaling Classes
 
 Every UI element belongs to exactly one scaling class. OS display scaling and browser zoom are

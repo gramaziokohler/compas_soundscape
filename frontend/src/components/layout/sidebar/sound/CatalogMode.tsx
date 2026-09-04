@@ -82,7 +82,7 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
   );
 
   return (
-    <div className="space-y-2">
+    <div className="card-stack--md">
       {/* SearchBar: only rendered when not provided by parent via catalogState */}
       {!catalogState && (
         <SearchBar
@@ -107,10 +107,10 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
           )}
           {!isSearchingAll && searchResults !== null && searchResults.length > 0 && (
             <div className="rounded-lg max-h-[min(200px,40dvh)] overflow-y-auto">
-              <p className="text-xs font-medium text-secondary-hover px-1 mb-1">
+              <p className="text-xs font-medium text-secondary-hover px-1 card-label">
                 {searchResults.length} result{searchResults.length !== 1 ? "s" : ""}
               </p>
-              <div className="space-y-0.5">
+              <div className="card-stack--tight">
                 {searchResults.map(({ item }) => {
                   const isSelected = selectedSound?.url === item.url;
                   return (
@@ -180,12 +180,12 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
           {/* Category list */}
           {!selectedCategory && !isLoading && categories.length > 0 && (
             <div className="rounded-lg max-h-[min(200px,40dvh)] overflow-y-auto">
-              <div className="space-y-0.5">
+              <div className="card-stack--tight">
                 {categories.map((cat) => (
                   <button
                     key={cat.id}
                     onClick={() => handleSelectCategory(cat)}
-                    className="w-full text-left px-2 py-1 rounded-lg text-xs transition-colors bg-secondary-light text-foreground hover:bg-primary"
+                    className="w-full text-left px-2 py-1 rounded-lg text-xs transition-colors bg-secondary-light text-foreground hover:bg-secondary-lighter"
                   >
                     {cat.name}
                   </button>
@@ -202,10 +202,10 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
           {/* Sounds list */}
           {selectedCategory && !isLoading && sounds.length > 0 && (
             <div className="rounded-lg max-h-[min(200px,40dvh)] overflow-y-auto">
-              <p className="text-xs font-medium text-secondary-hover px-1 mb-1">
+              <p className="text-xs font-medium text-secondary-hover px-1 card-label">
                 {sounds.length} sounds
               </p>
-              <div className="space-y-0.5">
+              <div className="card-stack--tight">
                 {sounds.map((sound) => {
                   const isSelected = selectedSound?.url === sound.url;
                   return (
@@ -214,7 +214,7 @@ export function CatalogMode({ config, index, onUpdateConfig, onCatalogSoundSelec
                       onClick={() => handleSoundClick(sound)}
                       className={`w-full text-left px-2 py-1.5 rounded-lg text-xs transition-colors ${isSelected
                         ? "bg-primary text-white"
-                        : "secondary-light text-foreground hover:bg-secondary-lighter"
+                        : "bg-secondary-light text-foreground hover:bg-secondary-lighter"
                       }`}
                     >
                       <span className="truncate block">{sound.name}</span>

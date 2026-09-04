@@ -279,13 +279,13 @@ export function UsageSection({
             (s) => s.parentUsageOriginalIndex === originalIndex,
           );
           return (
-            <div className="px-1 py-2 text-xs text-secondary-hover space-y-1">
+            <div className="text-xs text-secondary-hover card-stack">
               {childSounds.length === 0 ? (
                 <p>No sounds linked. Click &quot;Go to Sounds&quot; to create sounds for this usage.</p>
               ) : (
                 <>
-                  <p className="font-medium text-foreground mb-1">Linked sounds:</p>
-                  <ul className="space-y-0.5">
+                  <p className="font-medium text-foreground">Linked sounds:</p>
+                  <ul className="card-stack--tight">
                     {childSounds.map((s, i) => (
                       <li key={i} className="flex items-center gap-1">
                         <span>•</span>

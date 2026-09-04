@@ -51,19 +51,23 @@ export function useSpeckleSoundHighlight({
 
     const sphereMeshes = soundSphereManager.getSoundSphereMeshes();
 
-    // Reset all sphere colors — pending spheres stay muted gray, generated spheres stay primary.
-    // Mismatched spheres (userData.simMismatch, set by useSpeckleSimulationMismatch) stay red
-    // so the mismatch coloring survives selection changes.
+    // Reset all sphere colors to primary — pending placeholders and generated
+    // spheres share the same primary look, differing only in base opacity set at
+    // mesh creation (PENDING_OPACITY vs BASE_OPACITY). Mismatched spheres
+    // (userData.simMismatch, set by useSpeckleSimulationMismatch) stay red so the
+    // mismatch coloring survives selection changes. Opacity is never touched here —
+    // that would clobber both the per-state base opacity and the muted-dim state
+    // set by setPromptMuted.
     sphereMeshes.forEach(sphere => {
       const material = sphere.material as THREE.MeshStandardMaterial;
       if (material.color) {
-        const isPending = (sphere.userData.soundEvent as any)?.isPending;
         const isMismatched = sphere.userData.simMismatch === true;
         material.color.setHex(
           isMismatched
             ? getCssColorHex('--color-error')
-            : getCssColorHex(isPending ? '--color-pending' : '--color-primary'),
+            : getCssColorHex('--color-primary'),
         );
+        material.needsUpdate = true;
       }
     });
 
@@ -85,7 +89,7 @@ export function useSpeckleSoundHighlight({
       const material = highlightedSphere.material as THREE.MeshStandardMaterial;
       // Keep mismatched spheres red — do not apply the selection highlight over the mismatch color.
       if (material.color && highlightedSphere.userData.simMismatch !== true) {
-        material.color.setHex(getCssColorHex('--color-success'));
+        material.color.setHex(getCssColorHex('--color-warning'));
         material.needsUpdate = true;
       }
     }

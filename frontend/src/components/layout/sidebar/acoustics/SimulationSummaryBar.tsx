@@ -1,9 +1,10 @@
 /**
  * SimulationSummaryBar Component
  *
- * One-line summary shown at the top of a Choras / Pyroomacoustics simulation card.
- * Displays, in order: `N source(s) | N listener(s) | N material(s)`. Labels are
- * singular unless the count is > 1.
+ * Three source / listener / material count dots stacked in the simulation card
+ * footer, to the left of the Start Simulation button. Each idle dot is a circle
+ * showing only the number; hovering (or keyboard-focusing) expands that dot
+ * into the full `{count} {label}` chip.
  *
  * - **sources**  : unique sound-source positions actually simulated (muted sounds
  *   are excluded, sounds sharing a position count as one, and multi-variant
@@ -13,17 +14,15 @@
  * - **materials** : count of distinct materials currently assigned (ObjectExplorer /
  *   acousticMaterialStore-driven).
  *
- * Each item is colored `--color-error` when its count is 0 and
- * `var(--card-color, var(--color-primary))` when > 0. Clicking an item navigates
- * to the relevant section (expanding the left sidebar / right sidebar / Object
- * Explorer panel as needed) and plays a transient SectionHighlight border.
+ * Each item is colored `--color-error` when its count is 0 and primary when > 0.
+ * Clicking an item navigates to the relevant section (expanding the left sidebar /
+ * right sidebar / Object Explorer panel as needed) and plays a transient
+ * SectionHighlight border.
  *
- * The line ALWAYS fits its container width via CSS container query units: the
- * wrapper is an inline-size query container and the row's font-size is
- * `clamp(7px, 4.5cqw, 12px)`. Text scales proportionally with the container, so
- * it grows/shrinks live with the layout and can never overflow or get stuck at a
- * stale scale (no JS measurement state). 4.5cqw is sized for worst-case
- * three-digit counts; for typical counts it simply caps at 12px.
+ * Usage:
+ * ```tsx
+ * <Card footerPrefix={<SimulationSummaryBar />} ... />
+ * ```
  */
 
 'use client';
@@ -36,11 +35,11 @@ import {
   useReceiversStore,
   useRightSidebarStore,
   useSoundscapeStore,
+  useSpeckleStore,
   useUIStore,
 } from '@/store';
 import { collapseVariantsToOne, groupSoundsByPosition } from '@/utils/positionKey';
 import { SectionHighlight } from '@/components/ui/SectionHighlight';
-import { Badge } from '@/components/ui/Badge';
 
 const HIGHLIGHT_TARGETS = {
   sources: 'sidebar-sounds-breadcrumb',
@@ -114,33 +113,25 @@ export function SimulationSummaryBar() {
     runHighlight('listeners');
   };
   const handleMaterials = () => {
+    const { viewMode, setViewMode } = useSpeckleStore.getState();
+    if (viewMode !== 'acoustic') {
+      setViewMode('acoustic');
+    }
     useUIStore.getState().setShowObjectExplorer(true);
     runHighlight('materials');
   };
 
   return (
     <>
-      {/* Inline-size query container: cqw below scales with THIS element's width,
-          so the line always fits no matter the panel/viewport size. */}
-      <div className="w-full overflow-hidden" style={{ containerType: 'inline-size' }}>
-        <div
-          className="flex items-center gap-1 font-medium select-none whitespace-nowrap"
-          style={{
-            fontSize: 'clamp(7px, 5.5cqw, 12px)',
-            lineHeight: 1.15,
-            minHeight: '1.05rem',
-          }}
-        >
-          <SummaryChip count={sourceCount} label="source" onClick={handleSources} />
-          <span className="text-secondary-hover" aria-hidden="true">
-            |
-          </span>
-          <SummaryChip count={listenerCount} label="listener" onClick={handleListeners} />
-          <span className="text-secondary-hover" aria-hidden="true">
-            |
-          </span>
-          <SummaryChip count={materialCount} label="material" onClick={handleMaterials} />
-        </div>
+      {/* Direct flex child of the card footer: stretch to the Start Simulation
+          button height, then split that height across three equal rows. */}
+      <div
+        className="grid grid-rows-3 gap-px self-stretch select-none"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <SummaryChip count={sourceCount} label="source" onClick={handleSources} />
+        <SummaryChip count={listenerCount} label="listener" onClick={handleListeners} />
+        <SummaryChip count={materialCount} label="material" onClick={handleMaterials} />
       </div>
       {highlight && (
         <SectionHighlight
@@ -160,17 +151,30 @@ interface SummaryChipProps {
 
 function SummaryChip({ count, label, onClick }: SummaryChipProps) {
   const hasItems = count > 0;
+  const pluralLabel = count === 1 ? label : `${label}s`;
+  const fullLabel = `${count} ${pluralLabel}`;
+  const fillClass = hasItems ? 'bg-primary text-white' : 'bg-error text-white';
+  const [expanded, setExpanded] = useState(false);
 
   return (
-    <Badge
-      size="sm"
-      variant={hasItems ? 'primary' : 'error'}
-      onClick={onClick}
-      className={hasItems
-        ? 'bg-primary text-white hover:underline'
-        : 'bg-error text-white hover:underline'}
-    >
-      <span className="tabular-nums">{count}</span>&nbsp;{count > 1 ? `${label}s` : label}
-    </Badge>
+    <div className="relative h-full min-h-[8px] min-w-[8px] aspect-square justify-self-start">
+      <button
+        type="button"
+        onClick={onClick}
+        onMouseEnter={() => setExpanded(true)}
+        onMouseLeave={() => setExpanded(false)}
+        onFocus={() => setExpanded(true)}
+        onBlur={() => setExpanded(false)}
+        aria-label={fullLabel}
+        className={`flex items-center rounded-full font-medium leading-none cursor-pointer ${fillClass} ${
+          expanded
+            ? 'absolute left-0 top-1/2 z-20 h-auto w-max -translate-y-1/2 px-2 py-0.5 text-[10.5px]'
+            : 'h-full w-full justify-center text-[7px]'
+        }`}
+      >
+        <span className="tabular-nums">{count}</span>
+        {expanded && <span className="pl-1 whitespace-nowrap">{pluralLabel}</span>}
+      </button>
+    </div>
   );
 }

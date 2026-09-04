@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { NumberField } from "./NumberField";
 import { decimalsFromStep, estimateFieldWidthCh } from "./numberFieldSizing";
 
@@ -26,6 +27,12 @@ interface VerticalVolumeSliderProps {
   /** Caption rendered below the slider (e.g. "Vol.", "Int."). */
   label?: string;
   hoverText?: string;
+  /**
+   * When true, the slider stretches to fill the vertical space of its parent
+   * flex column (the card body). The track grows/shrinks to match the height
+   * of the sibling content column instead of using a fixed track height.
+   */
+  fillHeight?: boolean;
 }
 
 /**
@@ -66,8 +73,34 @@ export function VerticalVolumeSlider({
   defaultValue,
   label,
   hoverText,
+  fillHeight = false,
 }: VerticalVolumeSliderProps) {
   const resolvedPrecision = precision ?? decimalsFromStep(step);
+
+  // In fillHeight mode the track wrapper is a flex-1 row inside a stretched
+  // column. Its resolved height is driven by the sibling content column, so we
+  // measure it with a ResizeObserver and size the (rotated) native range input
+  // + track visuals to that exact pixel height.
+  const trackWrapRef = useRef<HTMLDivElement | null>(null);
+  const [measuredTrackHeight, setMeasuredTrackHeight] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!fillHeight) {
+      setMeasuredTrackHeight(null);
+      return;
+    }
+    const el = trackWrapRef.current;
+    if (!el) return;
+    const measure = () => setMeasuredTrackHeight(el.clientHeight);
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    measure();
+    return () => ro.disconnect();
+  }, [fillHeight]);
+
+  // Fixed 100px track unless filling the container height (RO updates shortly
+  // after mount, so the first paint uses the legacy default — no visible jump).
+  const trackLength = fillHeight ? (measuredTrackHeight ?? 100) : 100;
 
   const clamp = (v: number) => Math.min(max, Math.max(min, v));
 
@@ -112,7 +145,10 @@ export function VerticalVolumeSlider({
   const fieldWidthCh = estimateFieldWidthCh(min, max, resolvedPrecision, 0.5);
 
   return (
-    <div className={`flex flex-col items-center ${className}`} title={hoverText}>
+    <div
+      className={`flex flex-col items-center ${fillHeight ? 'h-full min-w-0' : ''} ${className}`}
+      title={hoverText}
+    >
       {/* Editable value field — minimal width, unit compact below (not next to it) */}
       <div className="flex flex-col items-center mb-1">
         <NumberField
@@ -135,18 +171,20 @@ export function VerticalVolumeSlider({
       </div>
 
       <div
+        ref={trackWrapRef}
         className="relative flex items-center justify-center"
-        style={{
-          width: '24px',
-          height: '100px'
-        }}
+        style={
+          fillHeight
+            ? { width: '24px', flex: '1 1 0%', minHeight: '28px' }
+            : { width: '24px', height: '100px' }
+        }
       >
         {/* Custom vertical track background (2px visual, surface-2) */}
         <div 
           className="absolute rounded-lg pointer-events-none"
           style={{
             width: '8px',
-            height: '100px',
+            height: `${trackLength}px`,
             backgroundColor: onBlueBackground ? 'var(--color-blue-chip-bg)' : 'var(--color-surface-2)',
             border: `1px solid ${onBlueBackground ? 'var(--color-on-blue-faint)' : 'var(--color-border)'}`,
             left: '50%',
@@ -181,7 +219,7 @@ export function VerticalVolumeSlider({
           className="vertical-slider cursor-pointer absolute"
           title={defaultValue !== undefined ? `Double-click to reset (${defaultValue.toFixed(resolvedPrecision)}${unit ? ` ${unit}` : ''})` : undefined}
           style={{
-            width: '100px',
+            width: `${trackLength}px`,
             height: '24px',
             transform: 'rotate(-90deg)',
             transformOrigin: 'center center',

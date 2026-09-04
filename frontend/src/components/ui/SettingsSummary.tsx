@@ -73,7 +73,7 @@ export function SettingsSummary({
   };
 
   return (
-    <div className="mt-2 mb-2">
+    <div>
       <button
         onClick={() => setIsExpanded((v) => !v)}
         className="flex items-center gap-1.5 w-full text-left text-xxs transition-colors"
@@ -85,7 +85,7 @@ export function SettingsSummary({
         <span>{title}</span>
       </button>
       {isExpanded && (
-        <div className="mt-2 space-y-1 text-xxs">
+        <div className="card-collapse-body card-stack--tight text-xxs">
           {rows.map((row) => {
             const isRowExpanded = expandedRows.has(row.label);
             const truncateAt = row.truncateAt ?? 48;

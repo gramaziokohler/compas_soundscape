@@ -5,6 +5,9 @@ import type { AudioAnalysisConfig } from '@/types/analysis';
 import { FileUploadArea } from '@/components/controls/FileUploadArea';
 import { WaveSurferPlayer } from '@/components/audio/WaveSurferPlayer';
 import { registerPreviewInstance } from '@/lib/audio/previewRegistry';
+import { Spinner } from '@/components/ui/Spinner';
+import { Notice } from '@/components/ui/Notice';
+import { useAnalysisStore } from '@/store';
 import { AUDIO_FILE_EXTENSIONS, DEFAULT_DBFS } from '@/utils/constants';
 
 /**
@@ -39,6 +42,15 @@ export function AudioContextContent({
   const [audioUrl, setAudioUrl] = useState<string>('');
 
   const hasAudioFile = config.audioFile !== null;
+
+  // Restore status for saved audio-context source files — while the store is
+  // re-fetching + decoding the persisted WAV the card must show a loading state
+  // instead of a misleading "upload a new file" dropzone.
+  const rehydratingAudioConfigs = useAnalysisStore((s) => s.rehydratingAudioConfigs);
+  const audioRehydrateFailedConfigs = useAnalysisStore((s) => s.audioRehydrateFailedConfigs);
+  const isRestoringAudio = rehydratingAudioConfigs.has(index);
+  const audioRestoreFailed = audioRehydrateFailedConfigs.has(index);
+  const savedAudioPending = !hasAudioFile && !!config.persistedAudioFilename;
 
   // Create blob URL from audio file for WaveSurfer
   useEffect(() => {
@@ -85,27 +97,57 @@ export function AudioContextContent({
     e.target.value = "";
   };
 
+  const fileUploadArea = (
+    <FileUploadArea
+      file={config.audioFile}
+      isDragging={isDragging}
+      acceptedFormats="audio/*,.wav,.mp3,.ogg,.flac"
+      acceptedExtensions={AUDIO_FILE_EXTENSIONS.join(', ')}
+      onFileChange={handleFileChange}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      inputId={`audio-upload-${index}`}
+      multiple={false}
+    />
+  );
+
   return (
-    <div className="space-y-3">
-      {/* File upload area - only show if no audio loaded */}
+    <div className="card-stack">
+      {/* File upload area / restore state - only show if no audio loaded */}
       {!hasAudioFile && (
-        <FileUploadArea
-          file={config.audioFile}
-          isDragging={isDragging}
-          acceptedFormats="audio/*,.wav,.mp3,.ogg,.flac"
-          acceptedExtensions={AUDIO_FILE_EXTENSIONS.join(', ')}
-          onFileChange={handleFileChange}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          inputId={`audio-upload-${index}`}
-          multiple={false}
-        />
+        <>
+          {savedAudioPending && isRestoringAudio && (
+            <div
+              className="flex items-center justify-center gap-2 rounded-lg border border-dashed py-6 text-xs"
+              style={{
+                borderColor: 'var(--color-border-strong)',
+                color: 'var(--color-secondary-hover)',
+              }}
+            >
+              <Spinner size={14} />
+              Restoring saved audio file…
+            </div>
+          )}
+
+          {savedAudioPending && !isRestoringAudio && audioRestoreFailed && (
+            <div className="card-stack--md">
+              <Notice
+                type="warning"
+                message="The saved audio file could not be reloaded — upload it again to analyse it."
+              />
+              {fileUploadArea}
+            </div>
+          )}
+
+          {(!savedAudioPending || (!isRestoringAudio && !audioRestoreFailed)) &&
+            fileUploadArea}
+        </>
       )}
 
       {/* Audio loaded UI */}
       {hasAudioFile && (
-        <div className="space-y-2">
+        <div className="card-stack--md">
           {/* Show WaveSurfer waveform/spectrogram */}
           {audioUrl && config.audioInfo && (
             <WaveSurferPlayer

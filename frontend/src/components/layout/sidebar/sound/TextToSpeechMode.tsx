@@ -16,7 +16,7 @@ export function TextToSpeechMode({ config, index, onUpdateConfig }: TextToSpeech
   const { onPromptChange } = useTtsSpeechLines(config, index, onUpdateConfig);
 
   return (
-    <div className="space-y-2">
+    <div className="card-stack--md">
 
       <textarea
         value={config.prompt}

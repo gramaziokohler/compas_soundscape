@@ -13,10 +13,10 @@
  *   AcousticsSection.tsx (orchestration layer)
   ├── useAcousticsMaterials() - loads Choras materials
   ├── useAcousticsMaterials() - loads Pyroom materials
-  ├── SimulationSetupContent - renders summary bar + settings
-  │   ├── SimulationSummaryBar
+  ├── SimulationSetupContent - renders Choras / Pyroom settings
   │   ├── ChorasSimulationSettings
   │   └── PyroomAcousticsSimulationSettings
+  ├── SimulationSummaryBar - footer count dots (left of Start Simulation)
   ├── ResonanceContent
   └── SimulationResultContent
  */
@@ -29,6 +29,7 @@ import { CardSection, type CardTypeOption } from '@/components/ui/CardSection';
 import { Card } from '@/components/ui/Card';
 import { Notice } from '@/components/ui/Notice';
 import { RangeSlider } from '@/components/ui/RangeSlider';
+import { ToggleField } from '@/components/ui/ToggleField';
 import { apiService } from '@/services/api';
 import { CARD_TYPE_LABELS } from '@/types/card';
 import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGridListenersStore, useAudioControlsStore, useSoundscapeStore, notifyError, resolveSimulationLayerName } from '@/store';
@@ -42,6 +43,7 @@ import {
   getSimulationResultCollapsedInfo,
 } from '@/components/layout/sidebar/acoustics/SimulationResultContent';
 import { SimulationSetupContent } from '@/components/layout/sidebar/acoustics/SimulationSetupContent';
+import { SimulationSummaryBar } from '@/components/layout/sidebar/acoustics/SimulationSummaryBar';
 import { SpeckleSurfaceMaterialsSection } from '@/components/acoustics/SpeckleSurfaceMaterialsSection';
 
 // Hooks
@@ -1729,7 +1731,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
                 onListenerAssignmentCleared={config.type === 'import-irs' ? handleListenerAssignmentCleared : undefined}
           />
           {config.type === 'import-irs' && (
-            <div className="mt-3">
+            <div>
               <button
                 onClick={() => handleUpdateConfig(index, { advancedSettingsExpanded: !(config as any).advancedSettingsExpanded } as any)}
                 className="flex items-center gap-1.5 w-full text-left text-xs text-secondary-light hover:text-neutral-300 transition-colors"
@@ -1738,16 +1740,12 @@ export function AcousticsSection(props: AcousticsSectionProps) {
                 <span>Advanced Settings</span>
               </button>
               {(config as any).advancedSettingsExpanded && (
-                <div className="mt-2 space-y-3">
-                  <label className="flex items-center gap-2 text-xs text-neutral-300 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={!!(config as any).materialAssignmentsEnabled}
-                      onChange={(e) => handleUpdateConfig(index, { materialAssignmentsEnabled: e.target.checked } as any)}
-                      className="rounded accent-info"
-                    />
-                    Enable material assignment
-                  </label>
+                <div className="card-collapse-body card-stack">
+                  <ToggleField
+                    checked={!!(config as any).materialAssignmentsEnabled}
+                    onChange={(enabled) => handleUpdateConfig(index, { materialAssignmentsEnabled: enabled } as any)}
+                    label="Enable material assignment"
+                  />
                   {(config as any).materialAssignmentsEnabled && (
                     <SpeckleSurfaceMaterialsSection
                       viewerRef={viewerRef}
@@ -1771,7 +1769,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
                       onIsolationChange={(ids) => handleUpdateConfig(index, { speckleIsolatedObjectIds: ids } as any)}
                     />
                   )}
-                  <div className="space-y-1">
+                  <div>
                     {(() => {
                       const irGainDb = (config as any).irGainDb ?? 0;
                       const applyIRGain = (value: number) => {
@@ -1798,21 +1796,16 @@ export function AcousticsSection(props: AcousticsSectionProps) {
                       );
                     })()}
                   </div>
-                  <label className="flex items-center gap-2 text-xs text-neutral-300 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={!!(config as any).irNormalizeEnabled}
-                      onChange={(e) => {
-                        const enabled = e.target.checked;
-                        handleUpdateConfig(index, { irNormalizeEnabled: enabled } as any);
-                        if (onIRNormalizeChange && index === activeSimulationIndex) {
-                          onIRNormalizeChange(index, enabled);
-                        }
-                      }}
-                      className="rounded accent-info"
-                    />
-                    Normalize IR (peak to {IMPULSE_RESPONSE.NORMALIZATION_SCALE})
-                  </label>
+                  <ToggleField
+                    checked={!!(config as any).irNormalizeEnabled}
+                    onChange={(enabled) => {
+                      handleUpdateConfig(index, { irNormalizeEnabled: enabled } as any);
+                      if (onIRNormalizeChange && index === activeSimulationIndex) {
+                        onIRNormalizeChange(index, enabled);
+                      }
+                    }}
+                    label={`Normalize IR (peak to ${IMPULSE_RESPONSE.NORMALIZATION_SCALE})`}
+                  />
                 </div>
               )}
             </div>
@@ -1884,6 +1877,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             // Simulation action button props (for choras/pyroomacoustics)
             onRun={isSimulationType ? async () => await runSimulation(index) : undefined}
             onCancel={isSimulationType ? () => cancelSimulation(index) : undefined}
+            footerPrefix={isSimulationType ? <SimulationSummaryBar /> : undefined}
             actionButtonLabel="Start Simulation"
             actionButtonDisabled={actionButtonDisabled}
             actionButtonDisabledReason={actionButtonDisabledReason}

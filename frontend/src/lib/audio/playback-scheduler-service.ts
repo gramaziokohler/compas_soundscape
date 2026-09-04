@@ -157,7 +157,8 @@ export class PlaybackSchedulerService {
                   ? soundEventInterval
                   : AUDIO_PLAYBACK.DEFAULT_INTERVAL_SECONDS;
 
-              const jitterMs = useAudioControlsStore.getState().intervalJitterSeconds * 1000;
+              const { soundIntervalJitter } = useAudioControlsStore.getState();
+              const jitterMs = (soundIntervalJitter?.[soundId] ?? 0) * 1000;
               let initialDelayMs = 0;
               let iterationOffsets: number[] | undefined = undefined;
 

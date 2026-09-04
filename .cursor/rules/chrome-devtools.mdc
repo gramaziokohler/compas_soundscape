@@ -143,6 +143,26 @@ bookkeeping:
   source edit, walk the React fiber tree from `document.documentElement`
   (`__reactFiber$...`) — see `debug-ui-visual-bug` skill §Step 2 for the walker.
 
+### Verifying token-driven card spacing (and CSS staleness)
+
+Card vertical gaps are produced by `--card-space-*` / `--card-gap-*` tokens in `globals.css`
+consumed by the rhythm classes (`.card-shell`, `.card-stack*`, `.card-field*`, `.card-label`,
+`.card-collapse-body`). Confirm the real applied value, never eyeball:
+
+```js
+() => {
+  const root = document.documentElement;
+  const ctrl = getComputedStyle(root).getPropertyValue('--card-gap-control').trim();
+  const el = document.querySelector('.card-stack');
+  return { ctrl, gap: el ? getComputedStyle(el).gap : null };
+}
+```
+
+A component only reflects tokens its own classes reference (a single-child `.card-stack` shows no
+gap). If a `globals.css` token edit is not reflected after a reload, the served CSS chunk is stale
+(Turbopack on Windows sometimes does not re-emit) — restart `pnpm dev`, delete `frontend/.next`,
+hard-refresh. Don't chase it as an app-state bug.
+
 ## Screenshot caveats
 
 - IF your model is DeepSeek or OpenCode , NEVER TAKE screenshots, as you cannot read images.

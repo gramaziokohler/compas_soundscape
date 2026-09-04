@@ -35,8 +35,13 @@ export interface AudioControlsStoreState {
   mutedSounds: Set<string>;
   soloedSound: string | null;
   previewingSoundId: string | null;
-  /** Absolute jitter applied to each iteration's playback interval (seconds). */
-  intervalJitterSeconds: number;
+  /**
+   * Per-track variability (jitter) in seconds applied to each interval-mode
+   * iteration's gap. Keyed by the card/timeline-track sound id (primary
+   * variant), so it applies to a whole card and all its variants. Absent key
+   * means 0 (no variability). Replaces the old global intervalJitterSeconds.
+   */
+  soundIntervalJitter: Record<string, number>;
   /** Fixed timeline length in milliseconds — both visual and audio are bounded to this. */
   timelineDurationMs: number;
   /** Internal: synced from useSoundGeneration. Used by playAll / stopAll / handleVariantChange. */
@@ -88,7 +93,14 @@ export interface AudioControlsStoreState {
   handleVariantChange: (promptIdx: number, variantIdx: number) => void;
   handleVolumeChange: (soundId: string, volumeDbfs: number) => void;
   handleIntervalChange: (soundId: string, intervalSeconds: number) => void;
-  handleSchedulingModeChange: (soundId: string, mode: 'interval' | 'timestamps', soundDurationSeconds?: number) => void;
+  handleSchedulingModeChange: (
+    soundId: string,
+    mode: 'interval' | 'timestamps',
+    soundDurationSeconds?: number,
+    /** Optional pre-computed timestamps (seconds) used when materializing an
+     *  interval-mode track into timestamp mode ("re-use the tracks exactly"). */
+    explicitTimestampsSeconds?: number[],
+  ) => void;
   handleTimestampsChange: (soundId: string, timestamps: number[]) => void;
   handleRemoveTimestamp: (soundId: string, iterationIndex: number) => void;
   setIterationLink: (soundId: string, iterationIndex: number, link: Partial<IterationLink>) => void;
@@ -107,7 +119,10 @@ export interface AudioControlsStoreState {
    * landed so the user can keep a manual trim if desired.
    */
   toggleSoundLoopable: (soundId: string, url: string) => Promise<void>;
-  setIntervalJitter: (seconds: number) => void;
+  /** Set the per-track variability (jitter) in seconds for a card/timeline track. */
+  setSoundIntervalJitter: (soundId: string, seconds: number) => void;
+  /** Clear all per-track variability overrides (reset to defaults). */
+  clearAllSoundIntervalJitter: () => void;
   setTimelineDurationMs: (ms: number) => void;
   resetTimelineDurationMs: () => void;
   /** Global base volume reference level for all generated sounds (dBFS). */
@@ -164,7 +179,7 @@ export const audioControlsPartialize = (state: AudioControlsStoreState) => ({
   selectedVariants: { ...state.selectedVariants },
   mutedSounds: new Set(state.mutedSounds),
   soloedSound: state.soloedSound,
-  intervalJitterSeconds: state.intervalJitterSeconds,
+  soundIntervalJitter: { ...state.soundIntervalJitter },
   timelineDurationMs: state.timelineDurationMs,
   globalBaseDbfs: state.globalBaseDbfs,
   maximumFoleySounds: state.maximumFoleySounds,
@@ -190,7 +205,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         mutedSounds: new Set(),
         soloedSound: null,
         previewingSoundId: null,
-        intervalJitterSeconds: AUDIO_PLAYBACK.DEFAULT_INTERVAL_JITTER_SECONDS,
+        soundIntervalJitter: {},
         timelineDurationMs: AUDIO_PLAYBACK.TIMELINE_FIXED_DURATION_MS,
         globalBaseDbfs: DEFAULT_DBFS,
         maximumFoleySounds: DEFAULT_MAXIMUM_FOLEY_SOUNDS,
@@ -316,29 +331,39 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           );
         },
 
-        handleSchedulingModeChange: (soundId, mode, soundDurationSeconds) => {
+        handleSchedulingModeChange: (soundId, mode, soundDurationSeconds, explicitTimestampsSeconds) => {
           get().stopAll();
           set(
             (state) => {
               let newTimestamps = { ...state.soundTimestamps };
 
               if (mode === 'timestamps') {
-                // Auto-generate timestamps packed tightly (gap = 0) from t=0 up to the
-                // timeline duration.  Use the actual buffer duration if provided so
-                // sounds sit exactly back-to-back; fall back to a single t=0 sentinel
-                // so the list is never empty.
-                const timelineDurationSec = state.timelineDurationMs / 1000;
-                const autoTs: number[] = [];
-                if (soundDurationSeconds && soundDurationSeconds > 0) {
-                  let t = 0;
-                  while (t + soundDurationSeconds <= timelineDurationSec && autoTs.length < 200) {
-                    autoTs.push(parseFloat(t.toFixed(3)));
-                    t += soundDurationSeconds;
+                if (explicitTimestampsSeconds && explicitTimestampsSeconds.length > 0) {
+                  // Materialize the interval-mode track exactly as it was shown:
+                  // the caller (DAW lock toggle) passes the currently displayed
+                  // iteration start times in seconds.
+                  newTimestamps = {
+                    ...newTimestamps,
+                    [soundId]: explicitTimestampsSeconds.map((s) => parseFloat(s.toFixed(3))),
+                  };
+                } else {
+                  // Auto-generate timestamps packed tightly (gap = 0) from t=0 up to the
+                  // timeline duration.  Use the actual buffer duration if provided so
+                  // sounds sit exactly back-to-back; fall back to a single t=0 sentinel
+                  // so the list is never empty.
+                  const timelineDurationSec = state.timelineDurationMs / 1000;
+                  const autoTs: number[] = [];
+                  if (soundDurationSeconds && soundDurationSeconds > 0) {
+                    let t = 0;
+                    while (t + soundDurationSeconds <= timelineDurationSec && autoTs.length < 200) {
+                      autoTs.push(parseFloat(t.toFixed(3)));
+                      t += soundDurationSeconds;
+                    }
                   }
+                  // Always seed at least one timestamp
+                  if (autoTs.length === 0) autoTs.push(0);
+                  newTimestamps = { ...newTimestamps, [soundId]: autoTs };
                 }
-                // Always seed at least one timestamp
-                if (autoTs.length === 0) autoTs.push(0);
-                newTimestamps = { ...newTimestamps, [soundId]: autoTs };
               } else {
                 // Switching back to interval mode — clear the timestamps
                 const { [soundId]: _removed, ...rest } = newTimestamps;
@@ -553,8 +578,17 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           }
         },
 
-        setIntervalJitter: (seconds) =>
-          set({ intervalJitterSeconds: seconds }, false, 'audio/setIntervalJitter'),
+        setSoundIntervalJitter: (soundId, seconds) =>
+          set(
+            (state) => ({
+              soundIntervalJitter: { ...state.soundIntervalJitter, [soundId]: seconds },
+            }),
+            false,
+            'audio/setSoundIntervalJitter',
+          ),
+
+        clearAllSoundIntervalJitter: () =>
+          set({ soundIntervalJitter: {} }, false, 'audio/clearAllSoundIntervalJitter'),
 
         setTimelineDurationMs: (ms) =>
           set({ timelineDurationMs: ms }, false, 'audio/setTimelineDurationMs'),
@@ -1451,7 +1485,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         past.mutedSounds.size === current.mutedSounds.size &&
         [...past.mutedSounds].every((id) => current.mutedSounds.has(id)) &&
         past.soloedSound === current.soloedSound &&
-        past.intervalJitterSeconds === current.intervalJitterSeconds &&
+        JSON.stringify(past.soundIntervalJitter) === JSON.stringify(current.soundIntervalJitter) &&
         past.timelineDurationMs === current.timelineDurationMs &&
         past.globalBaseDbfs === current.globalBaseDbfs &&
         JSON.stringify(past.soundSchedulingModes) === JSON.stringify(current.soundSchedulingModes) &&

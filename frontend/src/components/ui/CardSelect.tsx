@@ -11,20 +11,8 @@
  * the native `<select>` everywhere so all dropdowns share one visual language.
  * When there are `CARD_SELECT_INLINE_MAX_OPTIONS` or fewer choices, renders
  * `TextSelect` instead (horizontal plain-text labels).
- *
- * Usage:
- * ```tsx
- * <CardSelect
- *   value={mode}
- *   onChange={setMode}
- *   options={[
- *     { value: 'anechoic', label: 'No Acoustics' },
- *     { value: 'resonance', label: 'ShoeBox Acoustics' },
- *   ]}
- * />
- * ```
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { CARD_SELECT_INLINE_MAX_OPTIONS } from "@/utils/constants";
@@ -34,10 +22,10 @@ export interface CardSelectOption {
   value: string;
   label: string;
   disabled?: boolean;
-  /** Native tooltip shown on hover (trigger uses the selected option's title). */
   title?: string;
-  /** Inline style for this option row (e.g. material-absorption color coding). */
   style?: CSSProperties;
+  /** Small filled circle shown at the left of the option (and trigger when selected). */
+  badgeColor?: string;
 }
 
 export interface CardSelectProps {
@@ -47,20 +35,54 @@ export interface CardSelectProps {
   placeholder?: string;
   disabled?: boolean;
   className?: string;
-  /** Compact trigger (smaller padding) for inline rows like the method selector. */
   compact?: boolean;
-  /** Inline style for the trigger button (e.g. material-absorption color coding). */
   triggerStyle?: CSSProperties;
-  /** Max height of the option menu before it scrolls. Default 240px. */
   menuMaxHeight?: number;
-  /** Always render the floating menu, even when there are few options. */
   forceMenu?: boolean;
+  /** Shrink trigger to selected label width. Pair with `alignMenu="right"` in tight rows. */
+  fitContent?: boolean;
+  alignMenu?: "left" | "right";
+  menuHeader?: ReactNode;
+  onOpenChange?: (open: boolean) => void;
+  onOptionMouseEnter?: (option: CardSelectOption, e: React.MouseEvent<HTMLDivElement>) => void;
+  onOptionMouseLeave?: () => void;
+  onTriggerMouseEnter?: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  onTriggerMouseLeave?: () => void;
+  /** Max width of the trigger; label truncates with ellipsis when exceeded. */
+  triggerMaxWidth?: number | string;
+  /** Max width of the dropdown menu. */
+  menuMaxWidth?: number | string;
+  /**
+   * `trigger` — menu matches trigger width (default for full-width selects).
+   * `content` — menu sizes to the longest option (independent of trigger width).
+   */
+  menuWidth?: "trigger" | "content";
+  /** Badge color on the trigger when a value is selected (overrides option badge). */
+  triggerBadgeColor?: string;
 }
 
 const MENU_MAX_HEIGHT = 240;
 const MENU_GAP = 4;
-/** Below this, opening downward would leave too few options visible — fall back to upward. */
 const MIN_USABLE_MENU_HEIGHT = 120;
+
+function SelectLabel({
+  label,
+  badgeColor,
+  truncate = false,
+}: {
+  label: string;
+  badgeColor?: string;
+  truncate?: boolean;
+}) {
+  return (
+    <span className={`select-trigger-label ${truncate ? "min-w-0" : ""}`}>
+      {badgeColor && (
+        <span className="select-opt-badge" style={{ backgroundColor: badgeColor }} aria-hidden />
+      )}
+      <span className={truncate ? "truncate" : "whitespace-nowrap"}>{label}</span>
+    </span>
+  );
+}
 
 export function CardSelect({
   value,
@@ -73,10 +95,27 @@ export function CardSelect({
   triggerStyle,
   menuMaxHeight = MENU_MAX_HEIGHT,
   forceMenu = false,
+  fitContent = false,
+  alignMenu = "left",
+  menuHeader,
+  onOpenChange,
+  onOptionMouseEnter,
+  onOptionMouseLeave,
+  onTriggerMouseEnter,
+  onTriggerMouseLeave,
+  triggerMaxWidth,
+  menuMaxWidth,
+  menuWidth = "trigger",
+  triggerBadgeColor,
 }: CardSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
-  const [menuPos, setMenuPos] = useState<{ left: number; top: number; width: number } | null>(null);
+  const [menuPos, setMenuPos] = useState<{
+    left: number;
+    top: number;
+    transform?: string;
+    triggerWidth?: number;
+  } | null>(null);
   const [menuHeight, setMenuHeight] = useState(menuMaxHeight);
 
   const rootRef = useRef<HTMLDivElement>(null);
@@ -84,25 +123,28 @@ export function CardSelect({
   const menuRef = useRef<HTMLDivElement>(null);
 
   const selected = options.find((o) => o.value === value);
+  const resolvedMenuWidth = menuWidth === "content" || fitContent ? "content" : "trigger";
+
+  const setOpen = (open: boolean) => {
+    setIsOpen(open);
+    onOpenChange?.(open);
+  };
 
   useEffect(() => {
     if (!isOpen) return;
-    // Clicks inside the trigger root or inside the portal'd menu must NOT close it.
     const insideMenu = (node: Node | null) => !!menuRef.current?.contains(node);
     const onDown = (e: MouseEvent) => {
       if (insideMenu(e.target as Node)) return;
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setIsOpen(false);
+        setOpen(false);
       }
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setIsOpen(false);
+      if (e.key === "Escape") setOpen(false);
     };
-    // Only close when a scroll happens OUTSIDE the menu — scrolling its own
-    // scrollable option list must not dismiss it.
     const onScroll = (e: Event) => {
       if (insideMenu(e.target as Node)) return;
-      setIsOpen(false);
+      setOpen(false);
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -114,6 +156,7 @@ export function CardSelect({
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onScroll);
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   const handleTriggerClick = () => {
@@ -124,25 +167,33 @@ export function CardSelect({
       const vh = window.innerHeight;
       const spaceBelow = vh - rect.bottom - MENU_GAP;
       const spaceAbove = rect.top - MENU_GAP;
-      // The menu is a fixed-position portal, so it is never clipped by a
-      // parent panel's overflow — it can freely extend past the panel's own
-      // edge. Prefer opening downward (below the trigger) even when that
-      // means overflowing outside a small enclosing panel; only flip upward
-      // when there is truly too little room below AND more room above.
       const wantsUpward = spaceBelow < MIN_USABLE_MENU_HEIGHT && spaceAbove > spaceBelow;
-      const left = Math.min(rect.left, vw - 8);
       const height = wantsUpward
         ? Math.min(menuMaxHeight, spaceAbove)
         : Math.min(menuMaxHeight, Math.max(spaceBelow, MIN_USABLE_MENU_HEIGHT));
+      const top = wantsUpward
+        ? Math.max(4, rect.top - height - MENU_GAP)
+        : rect.bottom + MENU_GAP;
+
       setOpenUpward(wantsUpward);
       setMenuHeight(height);
-      setMenuPos({
-        left,
-        top: wantsUpward ? Math.max(4, rect.top - height - MENU_GAP) : rect.bottom + MENU_GAP,
-        width: rect.width,
-      });
+
+      if (alignMenu === "right") {
+        setMenuPos({
+          left: rect.right,
+          top,
+          transform: "translateX(-100%)",
+          triggerWidth: rect.width,
+        });
+      } else {
+        setMenuPos({
+          left: Math.min(rect.left, vw - 8),
+          top,
+          triggerWidth: rect.width,
+        });
+      }
     }
-    setIsOpen((v) => !v);
+    setOpen(!isOpen);
   };
 
   if (!forceMenu && options.length <= CARD_SELECT_INLINE_MAX_OPTIONS) {
@@ -158,8 +209,43 @@ export function CardSelect({
     );
   }
 
+  const rootClass = [
+    "select",
+    fitContent ? "fit-content" : "",
+    fitContent && alignMenu === "right" ? "fit-content-right" : "",
+    className,
+  ].filter(Boolean).join(" ");
+
+  const triggerClass = [
+    "select-trigger",
+    isOpen ? "open" : "",
+    compact ? "compact" : "",
+    fitContent ? "fit-content" : "",
+  ].filter(Boolean).join(" ");
+
+  const resolvedTriggerBadge = triggerBadgeColor ?? selected?.badgeColor;
+  const displayLabel = selected ? selected.label : placeholder;
+
+  const mergedTriggerStyle: CSSProperties = {
+    ...triggerStyle,
+    ...(triggerMaxWidth !== undefined ? { maxWidth: triggerMaxWidth } : {}),
+  };
+
+  const menuStyle: CSSProperties = {
+    position: "fixed",
+    left: menuPos?.left,
+    top: menuPos?.top,
+    transform: menuPos?.transform,
+    width: resolvedMenuWidth === "content" ? "max-content" : menuPos?.triggerWidth,
+    minWidth: resolvedMenuWidth === "content" ? menuPos?.triggerWidth : undefined,
+    maxWidth: menuMaxWidth,
+    maxHeight: `${menuHeight}px`,
+    overflowY: "auto",
+    zIndex: 99999,
+  };
+
   return (
-    <div ref={rootRef} className={`select ${className}`}>
+    <div ref={rootRef} className={rootClass}>
       <button
         ref={triggerRef}
         type="button"
@@ -168,11 +254,17 @@ export function CardSelect({
         aria-haspopup="listbox"
         disabled={disabled}
         onClick={handleTriggerClick}
-        className={`select-trigger ${isOpen ? "open" : ""} ${compact ? "compact" : ""}`}
-        style={triggerStyle}
-        title={selected?.title}
+        onMouseEnter={onTriggerMouseEnter}
+        onMouseLeave={onTriggerMouseLeave}
+        className={triggerClass}
+        style={mergedTriggerStyle}
+        title={selected?.title ?? displayLabel}
       >
-        <span className="truncate">{selected ? selected.label : placeholder}</span>
+        <SelectLabel
+          label={displayLabel}
+          badgeColor={resolvedTriggerBadge}
+          truncate={!!triggerMaxWidth || !fitContent}
+        />
         <svg
           viewBox="0 0 24 24"
           fill="none"
@@ -189,34 +281,40 @@ export function CardSelect({
           <div
             ref={menuRef}
             role="listbox"
-            className={`select-menu open ${openUpward ? "upward" : ""}`}
-            style={{
-              position: "fixed",
-              left: menuPos.left,
-              top: menuPos.top,
-              width: menuPos.width,
-              maxHeight: `${menuHeight}px`,
-              overflowY: "auto",
-              zIndex: 99999,
-            }}
+            className={`select-menu open ${openUpward ? "upward" : ""} ${compact ? "compact" : ""}`}
+            style={menuStyle}
           >
+            {menuHeader && (
+              <div className="p-1 border-b border-secondary-light mb-0.5" onClick={(e) => e.stopPropagation()}>
+                {menuHeader}
+              </div>
+            )}
             {options.map((opt) => {
               const active = opt.value === value;
+              const hasBadge = !!opt.badgeColor;
               return (
                 <div
                   key={opt.value}
                   role="option"
                   aria-selected={active}
-                  className={`select-opt ${active ? "active" : ""} ${opt.disabled ? "opacity-40 cursor-not-allowed" : ""}`}
+                  className={[
+                    "select-opt",
+                    active ? "active" : "",
+                    compact ? "compact" : "",
+                    hasBadge ? "has-badge" : "",
+                    opt.disabled ? "opacity-40 cursor-not-allowed" : "",
+                  ].filter(Boolean).join(" ")}
                   style={opt.style}
-                  title={opt.title}
+                  title={opt.title ?? opt.label}
+                  onMouseEnter={(e) => onOptionMouseEnter?.(opt, e)}
+                  onMouseLeave={onOptionMouseLeave}
                   onClick={() => {
                     if (opt.disabled) return;
                     onChange(opt.value);
-                    setIsOpen(false);
+                    setOpen(false);
                   }}
                 >
-                  {opt.label}
+                  <SelectLabel label={opt.label} badgeColor={opt.badgeColor} truncate />
                 </div>
               );
             })}

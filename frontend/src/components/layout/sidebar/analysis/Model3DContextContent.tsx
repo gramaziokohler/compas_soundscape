@@ -224,7 +224,7 @@ export function Model3DContextContent({
   const hasSelectedEntities = config.selectedDiverseEntities.length > 0;
 
   return (
-    <div className="space-y-3">
+    <div className="card-stack">
       {/* Model not loaded message */}
       {!hasModelLoaded && (
         <div
@@ -240,9 +240,9 @@ export function Model3DContextContent({
 
       {/* Model loaded UI */}
       {hasModelLoaded && (
-        <div className="space-y-3">
+        <div className="card-stack">
           {/* Model info */}
-            <div className="mx-4 text-xs text-secondary-hover">
+            <div className="text-xs text-secondary-hover">
               {!(config.selectedDiverseEntities.length > 0)
                 // ? `${config.modelEntities.length} objects`
                 ? 'Select diverse objects from the model or auto-select below.' 

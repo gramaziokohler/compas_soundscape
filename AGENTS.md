@@ -52,7 +52,7 @@ backend/
 
 frontend/src/
   app/page.tsx             # Single "use client" orchestration page (intentionally large)
-  app/globals.css          # ALL CSS tokens (colors, shadows) — single source of truth
+  app/globals.css          # ALL CSS tokens (colors, shadows, card spacing) — single source of truth
   components/              # UI components by domain
   store/                   # 24 Zustand stores — always import from @/store barrel
   lib/audio/               # Audio pipeline (AudioOrchestrator, modes, decoders)

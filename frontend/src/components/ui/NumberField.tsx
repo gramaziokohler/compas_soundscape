@@ -118,13 +118,13 @@ export function NumberField({
           }
           onKeyDown?.(e);
         }}
-        className={`xyz-input w-full ${prefix ? "pl-5 pr-1 text-left" : "text-center"} ${onBlueBackground ? "on-blue" : ""} ${className} ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}
+        className={`xyz-input w-full ${prefix ? "pl-4 pr-0.5 text-left" : "text-center"} ${onBlueBackground ? "on-blue" : ""} ${className} ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}
         {...rest}
       />
       {prefix && (
         <span
           aria-hidden
-          className={`pointer-events-none absolute left-1.5 top-1/2 -translate-y-1/2 text-[9px] font-medium uppercase select-none ${onBlueBackground ? "" : "text-text-3"}`}
+          className={`pointer-events-none absolute left-0.5 top-1/2 -translate-y-1/2 pr-1 text-[9px] font-medium uppercase select-none ${onBlueBackground ? "" : "text-text-3"}`}
           style={onBlueBackground ? { color: 'var(--color-on-blue-muted)' } : undefined}
         >
           {prefix}

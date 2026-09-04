@@ -68,3 +68,14 @@ export function subscribeColorTheme(onChange: () => void): () => void {
   window.addEventListener(COLOR_THEME_EVENT, onChange);
   return () => window.removeEventListener(COLOR_THEME_EVENT, onChange);
 }
+
+/** Resolved light/dark theme for the current document (reads `html[data-theme]`). */
+export function getResolvedColorTheme(): ResolvedColorTheme {
+  if (typeof document === 'undefined') return 'light';
+  const attr = document.documentElement.dataset.theme;
+  if (attr === 'light' || attr === 'dark') return attr;
+  if (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    return 'dark';
+  }
+  return 'light';
+}

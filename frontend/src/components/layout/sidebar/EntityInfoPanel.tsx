@@ -39,6 +39,7 @@ export function EntityInfoPanel({
   const selectedVariants = useAudioControlsStore((s) => s.selectedVariants);
   const soundVolumes = useAudioControlsStore((s) => s.soundVolumes);
   const soundIntervals = useAudioControlsStore((s) => s.soundIntervals);
+  const soundIntervalJitter = useAudioControlsStore((s) => s.soundIntervalJitter);
   const mutedSounds = useAudioControlsStore((s) => s.mutedSounds);
   const onVolumeChange = useAudioControlsStore((s) => s.handleVolumeChange);
   const onIntervalChange = useAudioControlsStore((s) => s.handleIntervalChange);
@@ -115,6 +116,7 @@ export function EntityInfoPanel({
             isMuted={isMuted}
             soundVolumes={soundVolumes ?? {}}
             soundIntervals={soundIntervals ?? {}}
+            soundIntervalJitter={soundIntervalJitter ?? {}}
             onPreviewPlayPause={handleLocalPlayPause}
             onPreviewStop={handleLocalStop}
             onVolumeChange={onVolumeChange}

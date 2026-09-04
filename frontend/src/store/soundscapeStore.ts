@@ -244,9 +244,13 @@ export interface SoundscapeStoreState {
   handleResetToDefaults: () => void;
   clearOrchestrateTrigger: (configIndex: number, iterationIndex: number) => void;
   handleResetSoundConfig: (index: number) => void;
+  /** Reload the deterministic bundled sample into any sample-audio config that
+   *  lost its (blob) clip — used after a soundscape restore / page refresh. */
+  rehydrateSampleAudioConfigs: () => Promise<void>;
   handleReorderSoundConfigs: (from: number, to: number) => void;
   handleDuplicateConfig: (index: number) => void;
-  /** Delete a single variant (by copy_index) from a generated sound card. */
+  /** Delete a single variant from a generated sound card (ML/TTS variants, and
+   *  SED-extracted segment variants — the latter also removes the backend WAV). */
   handleDeleteVariant: (promptIndex: number, variantIdx: number) => void;
   /** Ctrl+drag duplicate — deep-clones the config at `from` (and soundscape data) and inserts at `toInsertion`. */
   duplicateConfigAt: (from: number, toInsertion: number) => void;
@@ -1475,6 +1479,48 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           );
         },
 
+        rehydrateSampleAudioConfigs: async () => {
+          // A sample-audio card's clip is the deterministic bundled sample, loaded
+          // once at card creation. Its blob URL does not survive a refresh, so after
+          // a soundscape restore any sample-audio config without a loaded clip
+          // re-fetches the sample (keeps "Reset to configuration UI" working).
+          const { soundConfigs } = get();
+          const targets = soundConfigs
+            .map((c, idx) => ({ c, idx }))
+            .filter(
+              ({ c, idx }) =>
+                c.type === 'sample-audio' && idx >= 0 && !c.uploadedAudioUrl && !c.uploadedAudioInfo,
+            );
+          for (const { idx } of targets) {
+            try {
+              const sampleFile = await apiService.loadSampleAudio();
+              const result = await loadAudioFile(sampleFile);
+              set(
+                (s) => ({
+                  soundConfigs: s.soundConfigs.map((c, i) =>
+                    i === idx && c.type === 'sample-audio' && !c.uploadedAudioUrl
+                      ? {
+                          ...c,
+                          uploadedAudioBuffer: result.audioBuffer,
+                          uploadedAudioInfo: result.audioInfo,
+                          uploadedAudioUrl: result.audioUrl,
+                        }
+                      : c,
+                  ),
+                }),
+                false,
+                'soundscape/sampleRehydrate',
+              );
+            } catch (error) {
+              console.warn(
+                '[soundscapeStore] Failed to reload bundled sample for config',
+                idx,
+                error,
+              );
+            }
+          }
+        },
+
         handleLibrarySearch: async (index) => {
           const { soundConfigs } = get();
           const config = soundConfigs[index];
@@ -1629,7 +1675,12 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           const { soundConfigs } = get();
           const config = soundConfigs[index];
           if (!config) return;
-          if (config.uploadedAudioUrl) {
+          // For upload / sample-audio cards the source clip IS the configuration —
+          // "Reset to configuration UI" must keep it loaded so the card can be
+          // re-run (or the audio edited via the ✕ button). Only non-clip card
+          // types (which never own a blob here) drop the uploaded-audio fields.
+          const keepsSourceClip = config.type === 'upload' || config.type === 'sample-audio';
+          if (!keepsSourceClip && config.uploadedAudioUrl) {
             try { URL.revokeObjectURL(config.uploadedAudioUrl); } catch {}
           }
           set(
@@ -1639,9 +1690,9 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   ? {
                       ...c,
                       display_name: undefined,
-                      uploadedAudioBuffer: undefined,
-                      uploadedAudioInfo: undefined,
-                      uploadedAudioUrl: undefined,
+                      uploadedAudioBuffer: keepsSourceClip ? c.uploadedAudioBuffer : undefined,
+                      uploadedAudioInfo: keepsSourceClip ? c.uploadedAudioInfo : undefined,
+                      uploadedAudioUrl: keepsSourceClip ? c.uploadedAudioUrl : undefined,
                       selectedLibrarySound: undefined,
                       librarySearchState: undefined,
                       selectedCatalogSound: undefined,
@@ -1700,18 +1751,26 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           );
         },
 
-        handleDeleteVariant: (promptIndex, variantIdx) => {
+        handleDeleteVariant: async (promptIndex, variantIdx) => {
           const { soundscapeData } = get();
           if (!soundscapeData) return;
 
-          // Get variants for this prompt sorted by copy_index
+          // Order variants by their variant index. Regular generated/TTS events
+          // carry `copy_index`; injected SED-extracted segments instead store
+          // their segment index in `total_copies` (see injectExtractedSEDSounds)
+          // and have no trailing numeric in their id to fall back on.
+          const variantIndexFor = (s: any): number => {
+            if (s.copy_index !== undefined) return Number(s.copy_index);
+            if (String(s.id ?? '').startsWith('sed-') && s.total_copies !== undefined) {
+              return Number(s.total_copies);
+            }
+            const trailing = /(\d+)$/.exec(String(s.id ?? ''));
+            return trailing ? Number(trailing[1]) : 0;
+          };
+
           const variants = soundscapeData
             .filter((s: any) => s.prompt_index === promptIndex)
-            .sort((a: any, b: any) => {
-              const ca = a.copy_index ?? parseInt(a.id?.split('_').pop() ?? '0', 10);
-              const cb = b.copy_index ?? parseInt(b.id?.split('_').pop() ?? '0', 10);
-              return ca - cb;
-            });
+            .sort((a: any, b: any) => variantIndexFor(a) - variantIndexFor(b));
 
           if (variants.length <= 1 || variantIdx < 0 || variantIdx >= variants.length) return;
 
@@ -1730,6 +1789,22 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             false,
             'soundscape/deleteVariant',
           );
+
+          // SED-extracted segment variants reference a real WAV on the backend
+          // (unlike ML/TTS variants, whose files are intentionally kept on disk
+          // for dedup/regeneration). Remove the file too so a deleted segment
+          // does not linger and reappear after a refresh.
+          if (
+            String(target.id ?? '').startsWith('sed-') &&
+            target.url &&
+            !target.url.startsWith('blob:')
+          ) {
+            try {
+              await apiService.deleteSedSegmentAudio(target.url);
+            } catch (err) {
+              console.warn('[soundscapeStore] Failed to delete SED segment file:', err);
+            }
+          }
         },
 
         duplicateConfigAt: (from, toInsertion) => {

@@ -127,7 +127,7 @@ export class SpeckleAudioCoordinator {
 
     this.receiverManager = new ReceiverManager(scene, scaleForSounds, customObjectsGroup);
     this.gridReceiverManager = new GridReceiverManager(scene, scaleForSounds, customObjectsGroup);
-    this.eventBridge = new SpeckleEventBridge(this.viewer, this.adapter, this.selectionExtension);
+    this.eventBridge = new SpeckleEventBridge(this.viewer, this.adapter, this.selectionExtension, this.cameraController);
 
     // Wire FilteringExtension for mode-agnostic hidden-object-aware selection
     try {
@@ -528,12 +528,14 @@ export class SpeckleAudioCoordinator {
     this.hideListenerMeshForFPS(receiverId ?? null, position);
 
     this.speckleCameraController.enableFirstPersonMode(position, target);
+    this.eventBridge?.setFirstPersonModeActive(true);
   }
 
   public disableFirstPersonMode(): void {
     if (!this.speckleCameraController) return;
     this.restoreListenerMeshForFPS();
     this.speckleCameraController.disableFirstPersonMode();
+    this.eventBridge?.setFirstPersonModeActive(false);
   }
 
   /**

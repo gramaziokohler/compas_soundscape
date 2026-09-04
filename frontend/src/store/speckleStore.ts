@@ -539,8 +539,8 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         }
 
         // Scenario preview highlight (expanded scenario card). Same FilteringExtension
-        // mechanism as the hover highlight, but with the light primary colour. Inserted
-        // BEFORE the hover block so a hovered reference (success green) still wins over
+        // mechanism as the hover highlight, but with the light warning colour. Inserted
+        // BEFORE the hover block so a hovered reference (warning orange) still wins over
         // the scenario highlight for the same object.
         const scenarioPreviewIds = _scenarioPreviewIds.filter((id) => !isExcluded(id));
         if (scenarioPreviewIds.length > 0) {
@@ -550,10 +550,10 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
               if (idx !== -1) g.objectIds.splice(idx, 1);
             }
           }
-          const primaryLightColor = getComputedStyle(document.documentElement)
-            .getPropertyValue('--color-success-light')
+          const scenarioPreviewColor = getComputedStyle(document.documentElement)
+            .getPropertyValue('--color-warning-light')
             .trim();
-          colorGroups.push({ objectIds: scenarioPreviewIds, color: primaryLightColor });
+          colorGroups.push({ objectIds: scenarioPreviewIds, color: scenarioPreviewColor });
         }
 
         // Hover highlight (scenario object reference hover)
@@ -585,10 +585,10 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
               if (idx !== -1) g.objectIds.splice(idx, 1);
             }
           }
-          const successColor = getComputedStyle(document.documentElement)
-            .getPropertyValue('--color-success')
+          const warningColor = getComputedStyle(document.documentElement)
+            .getPropertyValue('--color-warning')
             .trim();
-          colorGroups.push({ objectIds: expandedHoverIds, color: successColor });
+          colorGroups.push({ objectIds: expandedHoverIds, color: warningColor });
         }
 
         const sanitised = colorGroups

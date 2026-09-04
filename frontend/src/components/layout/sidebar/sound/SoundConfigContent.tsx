@@ -61,7 +61,7 @@ export function SoundConfigContent({
   const cardType = config.type || 'text-to-audio';
 
   return (
-    <div className="space-y-3">
+    <div className="card-stack">
       {/* Type-specific UI based on CardType */}
       {cardType === 'text-to-audio' && (
         <TextToAudioMode

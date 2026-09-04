@@ -25,11 +25,10 @@ import { EmptyState } from '@/components/ui/EmptyState';
 
 interface ObjectExplorerProps {
   resetAllRef?: React.MutableRefObject<(() => void) | null>;
-  onItemCountChange?: (count: number) => void;
   maxTreeHeight?: number;
 }
 
-export function ObjectExplorer({ resetAllRef, onItemCountChange, maxTreeHeight }: ObjectExplorerProps = {}) {
+export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerProps = {}) {
   const { modelFileName, worldTreeVersion, getViewerRef, setSelectedEntity } = useSpeckleStore();
   const viewMode = useSpeckleStore((s) => s.viewMode);
   const selectedAcousticLayerName = useAcousticLayerStore((s) => s.selectedAcousticLayerName);
@@ -174,11 +173,6 @@ export function ObjectExplorer({ resetAllRef, onItemCountChange, maxTreeHeight }
       return true;
     });
   }, [virtualItems, isAcousticMode, selectedAcousticLayerName, isWholeModel]);
-
-  // Report item count to parent panel
-  useEffect(() => {
-    onItemCountChange?.(filteredVirtualItems.length);
-  }, [filteredVirtualItems.length, onItemCountChange]);
 
   // Expose reset-all function to parent panel
   useEffect(() => {

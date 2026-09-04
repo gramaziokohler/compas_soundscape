@@ -49,7 +49,7 @@ export function DAWMiniTransport({
       className="pointer-events-auto"
       style={{
         position: 'fixed',
-        left: '51.8%',
+        left: '50%',
         bottom: `${DAW_MINI_TRANSPORT.BOTTOM}px`,
         transform: 'translateX(-50%)',
         zIndex: DAW_MINI_TRANSPORT.Z_INDEX,
@@ -67,7 +67,7 @@ export function DAWMiniTransport({
             <DAWPauseIcon />
           </DAWTransportBtn>
         ) : (
-          <DAWTransportBtn onClick={onPlay} title="Play">
+          <DAWTransportBtn onClick={onPlay} title="Play" active>
             <DAWPlayIcon />
           </DAWTransportBtn>
         )}

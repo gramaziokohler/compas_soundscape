@@ -55,6 +55,11 @@ let _analysisAbortController: AbortController | null = null;
 let _sedTaskId: string | null = null;
 let _sedPollInterval: ReturnType<typeof setInterval> | null = null;
 
+// Upload token used only as a URL path segment for the session-scoped
+// soundscape audio endpoint — the backend writes to the session's audio dir
+// regardless of the token value, so no real model needs to be loaded yet.
+const AUDIO_CONTEXT_PERSIST_MODEL_TOKEN = '__audio-context__';
+
 // ─── SSE helper ───────────────────────────────────────────────────────────────
 
 /**
@@ -310,6 +315,12 @@ export interface AnalysisStoreState {
   analysisResults: AnalysisResult[];
   /** Indices of configs currently being uploaded. Not in zundo history. */
   uploadingConfigs: Set<number>;
+  /** Indices of restored `audio` context configs whose saved source file is being
+   *  re-fetched + decoded after a soundscape restore. Not in zundo history. */
+  rehydratingAudioConfigs: Set<number>;
+  /** Indices of restored `audio` context configs whose saved source file could NOT be
+   *  reloaded (missing on the server, or decode failure). Not in zundo history. */
+  audioRehydrateFailedConfigs: Set<number>;
   analysisStatus: string;
   analyzingConfigIndex: number | null;
 
@@ -323,6 +334,9 @@ export interface AnalysisStoreState {
 
   handleModelFileUpload: (index: number, file: File, worldTree?: any) => Promise<void>;
   handleAudioFileUpload: (index: number, file: File) => Promise<void>;
+  /** Re-fetch + rebuild the File/buffer of audio context cards that were persisted with a
+   *  `persistedAudioFilename`, so the SED waveform + detected-sounds results survive refresh. */
+  rehydrateAudioContextSources: (audioBaseUrl: string) => Promise<void>;
 
   handleAnalyze: (
     index: number,
@@ -370,6 +384,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
         analysisError: null,
         analysisResults: [],
         uploadingConfigs: new Set<number>(),
+        rehydratingAudioConfigs: new Set<number>(),
+        audioRehydrateFailedConfigs: new Set<number>(),
         analysisStatus: '',
         analyzingConfigIndex: null,
 
@@ -669,14 +685,52 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           const config = analysisConfigs[index] as AudioAnalysisConfig;
           if (config?.type !== 'audio') return;
 
+          // A newly chosen File is always a distinct object — if a different file was
+          // already loaded & persisted, drop the old reference so the fresh copy below
+          // replaces it (keeps the persisted source in sync with the loaded audio).
+          const replacingDifferentFile =
+            !!config.audioFile && config.audioFile !== file && !!config.persistedAudioFilename;
+
           try {
             const result = await loadAudioFileWithBuffer(file);
             if (result) {
-              handleUpdateConfig(index, {
+              const updates: Partial<AudioAnalysisConfig> = {
                 audioFile: file,
                 audioInfo: result.audioInfo,
                 audioBuffer: result.audioBuffer,
-              } as Partial<AudioAnalysisConfig>);
+              };
+              // Pin the original filename as the card title so a refresh (which rebuilds
+              // the File from the server-side persisted copy under a generated name) does
+              // not rename the card to the persisted file's id.
+              if (!config.display_name) {
+                updates.display_name = file.name;
+              }
+              if (replacingDifferentFile) {
+                updates.persistedAudioFilename = undefined;
+              }
+              handleUpdateConfig(index, updates as Partial<AnalysisConfig>);
+
+              // Persist a copy of the source audio to the session's data dir so the
+              // SED waveform + detected-sounds results can be rebuilt after a refresh.
+              // Session-scoped (same cookie namespace as the soundscape save), so no real
+              // model is required — the token only appears in the upload URL path.
+              if (replacingDifferentFile || !config.persistedAudioFilename) {
+                try {
+                  const { filename } = await apiService.uploadSoundscapeAudio(
+                    AUDIO_CONTEXT_PERSIST_MODEL_TOKEN,
+                    `ctx-audio-${index}-${Date.now()}`,
+                    file,
+                  );
+                  get().handleUpdateConfig(index, {
+                    persistedAudioFilename: filename,
+                  } as Partial<AnalysisConfig>);
+                } catch (persistErr) {
+                  console.warn(
+                    `[analysisStore] Failed to persist audio context source for config ${index}:`,
+                    persistErr,
+                  );
+                }
+              }
             } else {
               throw new Error('Failed to load audio file');
             }
@@ -686,6 +740,95 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               false,
               'analysis/audioLoadError',
             );
+          }
+        },
+
+        rehydrateAudioContextSources: async (audioBaseUrl) => {
+          const { analysisConfigs } = get();
+          const audioConfigs = analysisConfigs
+            .map((c, idx) => ({ config: c as AudioAnalysisConfig, idx }))
+            .filter(
+              ({ config }) =>
+                config?.type === 'audio' &&
+                !!config.persistedAudioFilename &&
+                !config.audioFile,
+            );
+          if (audioConfigs.length === 0) return;
+
+          // Mark every targeted config as "restoring its saved audio" so the cards
+          // render a loading state instead of a misleading empty upload dropzone.
+          const targetIdx = audioConfigs.map(({ idx }) => idx);
+          const markDone = (idx: number, ok: boolean) => {
+            set(
+              (s) => {
+                const loading = new Set(s.rehydratingAudioConfigs);
+                loading.delete(idx);
+                const failed = new Set(s.audioRehydrateFailedConfigs);
+                if (ok) failed.delete(idx);
+                else failed.add(idx);
+                return { rehydratingAudioConfigs: loading, audioRehydrateFailedConfigs: failed };
+              },
+              false,
+              'analysis/rehydrateItem',
+            );
+          };
+          set(
+            (s) => ({
+              rehydratingAudioConfigs: new Set([
+                ...s.rehydratingAudioConfigs,
+                ...targetIdx.filter((i) => !s.rehydratingAudioConfigs.has(i)),
+              ]),
+              audioRehydrateFailedConfigs: new Set(
+                [...s.audioRehydrateFailedConfigs].filter((i) => !targetIdx.includes(i)),
+              ),
+            }),
+            false,
+            'analysis/rehydrateStart',
+          );
+
+          const base = audioBaseUrl.replace(/\/$/, '');
+          for (const { config, idx } of audioConfigs) {
+            const filename = config.persistedAudioFilename!;
+            try {
+              const res = await fetch(`${base}/${encodeURIComponent(filename)}`, {
+                credentials: 'include',
+              });
+              if (!res.ok) {
+                console.warn(
+                  `[analysisStore] Audio context source missing on server: ${filename} (${res.status})`,
+                );
+                markDone(idx, false);
+                continue;
+              }
+              const blob = await res.blob();
+              const file = new File([blob], filename, {
+                type: blob.type || 'audio/wav',
+              });
+              const loaded = await loadAudioFileWithBuffer(file);
+              if (!loaded) {
+                console.warn(
+                  `[analysisStore] Failed to decode restored audio context source: ${filename}`,
+                );
+                markDone(idx, false);
+                continue;
+              }
+              const { handleUpdateConfig } = get();
+              const current = get().analysisConfigs[idx] as AudioAnalysisConfig;
+              if (current?.type === 'audio' && !current.audioFile) {
+                handleUpdateConfig(idx, {
+                  audioFile: file,
+                  audioInfo: loaded.audioInfo,
+                  audioBuffer: loaded.audioBuffer,
+                } as Partial<AudioAnalysisConfig>);
+              }
+              markDone(idx, true);
+            } catch (err) {
+              console.warn(
+                `[analysisStore] Failed to rehydrate audio context source for config ${idx}:`,
+                err,
+              );
+              markDone(idx, false);
+            }
           }
         },
 
@@ -1688,6 +1831,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             analysisError: null,
             analysisStatus: '',
             analyzingConfigIndex: null,
+            rehydratingAudioConfigs: new Set<number>(),
+            audioRehydrateFailedConfigs: new Set<number>(),
           });
         },
 

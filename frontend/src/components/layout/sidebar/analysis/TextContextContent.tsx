@@ -3,7 +3,7 @@
 import type { TextAnalysisConfig } from '@/types/analysis';
 import { NUM_SOUNDS_MAX, NUM_SOUNDS_MIN, DEFAULT_NUM_SOUNDS } from '@/utils/constants';
 import { RangeSlider } from '@/components/ui/RangeSlider';
-import { CheckboxField } from '@/components/ui/CheckboxField';
+import { ToggleField } from '@/components/ui/ToggleField';
 import { Notice } from '@/components/ui/Notice';
 import { useAreaDrawing } from '@/hooks/useAreaDrawing';
 import { pauseStore, commitStore, globalUndo, globalRedo } from '@/store';
@@ -38,10 +38,10 @@ export function TextContextContent({
   );
 
   return (
-    <div className="space-y-0.5">
+    <div className="card-stack">
       {/* Text input field */}
       <div>
-        <label htmlFor={`text-input-${index}`} className="text-xxs font-medium block mb-2 text-neutral-500">
+        <label htmlFor={`text-input-${index}`} className="text-xxs font-medium card-label text-neutral-500">
           Text Description
         </label>
         <textarea
@@ -94,11 +94,11 @@ export function TextContextContent({
       />
 
       {/* Use model as context checkbox */}
-      <CheckboxField
+      <ToggleField
         checked={config.useModelAsContext}
         onChange={(checked) => {
           // Ensure any pending text-typing undo step is committed first, so the
-          // checkbox click becomes its own independent undo entry.
+          // toggle click becomes its own independent undo entry.
           commitStore('analysis');
           onUpdateConfig(index, { useModelAsContext: checked });
         }}

@@ -84,10 +84,11 @@ export function ListenersSection({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gridListeners.length]);
 
-  // Force-expand a specific single listener from outside
+  // Force-expand a specific single listener from outside (go-to-listener / scene double-click)
   useEffect(() => {
-    if (forcedExpandedId != null && forcedExpandedId !== expandedId) {
+    if (forcedExpandedId != null) {
       setExpandedId(forcedExpandedId);
+      onExpandedGridListenerChange(null);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [forcedExpandedId]);

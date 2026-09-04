@@ -7,6 +7,7 @@ import { API_BASE_URL, DEFAULT_DBFS } from '@/utils/constants';
 import { dbfsToLinear } from '@/utils/utils';
 import { useUIStore } from '@/store';
 import { subscribeColorTheme } from '@/utils/color-theme';
+import { Spinner } from '@/components/ui/Spinner';
 
 const WAVEFORM_HEIGHT_MIN = 20;
 const WAVEFORM_HEIGHT_MAX = 300;
@@ -84,6 +85,7 @@ export function WaveSurferPlayer({
   const wsRef = useRef<WaveSurfer | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [isReady, setIsReady] = useState(false);
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
 
@@ -120,6 +122,7 @@ export function WaveSurferPlayer({
     abortRef.current = new AbortController();
 
     setIsReady(false);
+    setIsLoadingAudio(true);
     setCurrentTime(0);
 
     const { waveColor, progressColor } = resolveWaveColors(onBlueBackground);
@@ -156,6 +159,7 @@ export function WaveSurferPlayer({
 
     ws.on('ready', () => {
       setIsReady(true);
+      setIsLoadingAudio(false);
       setDuration(ws.getDuration());
     });
 
@@ -176,11 +180,13 @@ export function WaveSurferPlayer({
     ws.on('error', (error: Error) => {
       if (error.name === 'AbortError' || error.message?.includes('aborted')) return;
       console.error('[WaveSurferPlayer] Error:', error);
+      setIsLoadingAudio(false);
     });
 
     ws.load(resolveAudioUrl(audioUrl)).catch((error: Error) => {
       if (error.name === 'AbortError' || error.message?.includes('aborted')) return;
       console.error('[WaveSurferPlayer] Load error:', error);
+      setIsLoadingAudio(false);
     });
 
     wsRef.current = ws;
@@ -192,6 +198,7 @@ export function WaveSurferPlayer({
       try { ws.destroy(); } catch { /* ignore */ }
       wsRef.current = null;
       setIsReady(false);
+      setIsLoadingAudio(false);
     };
   }, [audioUrl, isSpectrogramMode, waveformHeight, interact, onBlueBackground]);
 
@@ -380,6 +387,33 @@ export function WaveSurferPlayer({
           )}
 
           {children}
+
+          {/* Streaming overlay — shown while a (usually remote saved) audio file
+              downloads + decodes, so the waveform area never reads as "broken". */}
+          {isLoadingAudio && (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                pointerEvents: 'none',
+                zIndex: 6,
+              }}
+            >
+              <span
+                style={{
+                  display: 'flex',
+                  color: onBlueBackground
+                    ? 'var(--color-on-blue-muted)'
+                    : 'var(--color-secondary-hover)',
+                }}
+              >
+                <Spinner size={18} />
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Resize handle — bottom edge */}

@@ -184,6 +184,14 @@ export const UI_CARD = {
 /** CardSelect with this many options or fewer renders as TextSelect (inline labels). */
 export const CARD_SELECT_INLINE_MAX_OPTIONS = 3;
 
+/** Material dropdown max widths — trigger crops text; menu fits longest option up to max. */
+export const MATERIAL_SELECT = {
+  OBJECT_EXPLORER_TRIGGER_MAX_PX: 180,
+  OBJECT_EXPLORER_MENU_MAX_PX: 220,
+  RESONANCE_TRIGGER_MAX_PX: 128,
+  RESONANCE_MENU_MAX_PX: 220,
+} as const;
+
 // Overlays (3D Scene UI)
 export const UI_OVERLAY = {
   BACKDROP_BLUR: "8px",      // backdrop-blur-sm
@@ -323,9 +331,9 @@ export const UI_SIDEBAR_TOGGLE = {
 // Never hardcode fractions or px for these surfaces elsewhere.
 export const UI_SCALE = {
   /** Left sidebar content width — clamped-fluid fraction of viewport width. */
-  LEFT_SIDEBAR: { FRACTION: 0.30, DEFAULT_FRACTION: 0.18, MIN: 240, MAX: 720 },
+  LEFT_SIDEBAR: { FRACTION: 0.30, DEFAULT_FRACTION: 0.19, MIN: 240, MAX: 720 },
   /** Right sidebar width — clamped-fluid fraction of viewport width. */
-  RIGHT_SIDEBAR: { FRACTION: 0.30, DEFAULT_FRACTION: 0.18, MIN: 240, MAX: 720 },
+  RIGHT_SIDEBAR: { FRACTION: 0.30, DEFAULT_FRACTION: 0.19, MIN: 240, MAX: 720 },
   /**
    * Max height of scrollable card bodies / list panels as a clamped-fluid
    * fraction of viewport height, so they neither clip on short screens nor
@@ -466,7 +474,7 @@ export const TTS_VOICES = [
 ] as const;
 
 export const TTS_DEFAULT_VOICE = "Kore";
-export const TTS_DEFAULT_LANGUAGE = "Chinese";
+export const TTS_DEFAULT_LANGUAGE = "English";
 
 export const LLM_MODEL_NAMES: Record<string, string> = {
   [LLM_MODEL_GEMINI_FLASH]: "Gemini 2.5 Flash",
@@ -585,11 +593,19 @@ export const UI_VOLUME_SLIDER = {
   MAX_LABEL: `${DBFS_MAX}`
 } as const;
 
+// Variability (per-track jitter) Slider Settings
+export const UI_VARIABILITY_SLIDER = {
+  MIN: 0,            // Minimum variability in seconds
+  MAX: 15,           // Maximum variability in seconds
+  STEP: 0.5,         // Step size for variability adjustments
+  LABEL: 'Variability (s)',
+} as const;
+
 // Interval Slider Settings
 export const UI_INTERVAL_SLIDER = {
   MIN: 0,            // Minimum interval in seconds (0 = continuous loop)
   MAX: 300,          // Maximum interval in seconds (5 minutes)
-  STEP: 5,           // Step size for interval adjustments (5 second increments)
+  STEP: 0.1,         // Step size for interval adjustments (0.1 second increments)
   LABEL: 'Playback Interval (s)',
   LOOP_TEXT: 'Loop',
   MIN_LABEL: '0',
@@ -953,10 +969,18 @@ export const AUDIO_VISUALIZATION = {
   // Number of waveform points to visualize (affects performance/detail trade-off)
   WAVEFORM_POINTS: 800,
 
-  // Canvas dimensions for sidebar waveform
-  WAVEFORM_WIDTH: 320,
-  WAVEFORM_HEIGHT: 160, // Increased to accommodate bottom time labels
+  // Canvas dimensions for IR hover waveform overlay
+  WAVEFORM_WIDTH: 304,
+  WAVEFORM_HEIGHT: 144,
 
+  /** Axis padding inside the waveform canvas (CSS px) */
+  AXIS: {
+    PAD_LEFT: 4,
+    PAD_RIGHT: 4,
+    PAD_TOP: 18,
+    PAD_BOTTOM: 14,
+    PK_GAP: 6,
+  },
 } as const;
 
 
@@ -1037,7 +1061,9 @@ export const SOUND_SPHERE = {
   /** Sphere opacity when its sound card (or one of its variants) is muted. */
   MUTED_OPACITY: 0.25,
   /** Normal (non-muted) sphere opacity in light/default mode. */
-  BASE_OPACITY: 0.7,
+  BASE_OPACITY: 0.75,
+  /** Pre-generation placeholder sphere opacity — same look as generated, slightly dimmer. */
+  PENDING_OPACITY: 0.40,
   // Rendering order (always on top, same as receivers)
   RENDER_ORDER: 999,
   DEPTH_TEST: false,

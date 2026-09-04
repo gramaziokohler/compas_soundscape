@@ -129,6 +129,8 @@ export function ContextSection({
   const diverseCount = diverseSelectedObjectIds.size;
   const analysisStatus = useAnalysisStore((s) => s.analysisStatus);
   const analyzingConfigIndex = useAnalysisStore((s) => s.analyzingConfigIndex);
+  const rehydratingAudioConfigs = useAnalysisStore((s) => s.rehydratingAudioConfigs);
+  const audioRehydrateFailedConfigs = useAnalysisStore((s) => s.audioRehydrateFailedConfigs);
   const handleReorderConfigs = useAnalysisStore((s) => s.handleReorderConfigs);
   const duplicateConfigAt = useAnalysisStore((s) => s.duplicateConfigAt);
 
@@ -322,13 +324,13 @@ export function ContextSection({
               (c as AnalysisBaseConfig).parentContextOriginalIndex === originalIndex,
           );
           return (
-            <div className="px-1 py-2 text-xs space-y-1" style={{ color: 'var(--color-on-blue-muted)' }}>
+            <div className="text-xs card-stack">
               {childUsage.length === 0 ? (
-                <p>No usage cards linked. Click &quot;Next: Usage&quot; to add usage scenarios.</p>
+                <p style={{ color: 'var(--color-on-blue-muted)' }}>No usage cards linked. Click &quot;Next: Usage&quot; to add usage scenarios.</p>
               ) : (
                 <>
-                  <p className="font-medium mb-1" style={{ color: 'var(--color-on-blue)' }}>Linked usage cards:</p>
-                  <ul className="space-y-0.5">
+                  <p className="font-medium" style={{ color: 'var(--color-on-blue)' }}>Linked usage cards:</p>
+                  <ul className="card-stack--tight">
                     {childUsage.map((c, i) => (
                       <li key={i} className="flex items-center gap-1">
                         <span>•</span>
@@ -361,22 +363,27 @@ export function ContextSection({
       if (!result) return null;
       if (config.type === 'audio') {
         const audioConfig = config as AudioAnalysisConfig;
-        if (audioConfig.audioFile) {
-          return (
-            <AudioAnalysisAfterContent
-              analysisResult={result}
-              audioFile={audioConfig.audioFile}
-              audioDuration={audioConfig.audioInfo?.duration ?? 0}
-              onTogglePromptSelection={onTogglePromptSelection}
-              applyNoiseReduction={audioConfig.applyNoiseReduction ?? false}
-              onNoiseReductionChange={(val) => onUpdateConfig(originalIndex, { applyNoiseReduction: val } as Partial<AnalysisConfig>)}
-            />
-          );
-        }
+        const audioReloading = rehydratingAudioConfigs.has(originalIndex);
+        const audioReloadFailed = audioRehydrateFailedConfigs.has(originalIndex);
+        // Always show the saved detected-sounds list once a result exists — the waveform
+        // itself is only rendered when the source audio File is available (audioFile may be
+        // null after a refresh while it reloads, or permanently if reload failed).
+        return (
+          <AudioAnalysisAfterContent
+            analysisResult={result}
+            audioFile={audioConfig.audioFile}
+            audioDuration={audioConfig.audioInfo?.duration ?? 0}
+            audioReloading={audioReloading}
+            audioReloadFailed={audioReloadFailed}
+            onTogglePromptSelection={onTogglePromptSelection}
+            applyNoiseReduction={audioConfig.applyNoiseReduction ?? false}
+            onNoiseReductionChange={(val) => onUpdateConfig(originalIndex, { applyNoiseReduction: val } as Partial<AnalysisConfig>)}
+          />
+        );
       }
       return null;
     },
-    [getResult, onTogglePromptSelection],
+    [getResult, onTogglePromptSelection, rehydratingAudioConfigs, audioRehydrateFailedConfigs],
   );
 
   // Build action button state for a context card

@@ -89,9 +89,10 @@ export class AudioScheduler {
     const scheduled = this.scheduledSounds.get(soundId);
     if (!scheduled) return;
 
-    // Read live jitter and trim from store so slider changes apply to future iterations
+    // Read live jitter and trim from store so slider changes apply to future iterations.
+    // Jitter is per-track (variability) keyed by the track/primary sound id.
     const storeState = useAudioControlsStore.getState();
-    const jitterMs = storeState.intervalJitterSeconds * 1000;
+    const jitterMs = (storeState.soundIntervalJitter?.[soundId] ?? 0) * 1000;
     
     // Use pre-generated iteration offset if available, otherwise fallback to on-the-fly random
     const currentIteration = scheduled.currentIteration || 0;

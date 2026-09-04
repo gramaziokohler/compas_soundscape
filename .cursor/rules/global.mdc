@@ -72,7 +72,10 @@ simulation synchronously inside a request handler. Always enqueue via `task_queu
 - Colors via CSS custom properties from `frontend/src/app/globals.css` only.
 - Never write hex, rgba, or named colors in component files or `constants.ts`.
 - Tailwind classes (`text-primary`, `bg-secondary-light`, `shadow-md`) work via `@theme inline` in `globals.css`.
-- See `ui-conventions.mdc` for Three.js and Canvas 2D color patterns.
+- Card vertical spacing is token-driven (`--card-space-*` / `--card-gap-*` + `.card-shell`,
+  `.card-stack*`, `.card-field*`, `.card-label`, `.card-collapse-body` in `globals.css`). Never add
+  ad-hoc `space-y-*`/`mb-*`/`px-*` spacing to card content — Card owns the inset.
+- See `ui-conventions.mdc` for Three.js / Canvas 2D color patterns and the Card rhythm tokens.
 
 ### TypeScript
 

@@ -58,7 +58,7 @@ export function GridListenerContent({ grid, color, onComputeBounds }: GridListen
   }, [grid.id, updateGridListener]);
 
   return (
-    <div className="space-y-2">
+    <div className="card-stack">
       {/* Top control row */}
       <ObjectPickerBar
         isSelecting={isSelecting}
@@ -85,7 +85,7 @@ export function GridListenerContent({ grid, color, onComputeBounds }: GridListen
       )}
 
       <RangeSlider
-        label="X"
+        label="X spacing"
         value={grid.xSpacing}
         min={GRID_LISTENER_CONFIG.MIN_SPACING}
         max={GRID_LISTENER_CONFIG.MAX_SPACING}
@@ -98,7 +98,7 @@ export function GridListenerContent({ grid, color, onComputeBounds }: GridListen
         onChangeCommitted={(v) => handleDragEnd('xSpacing', v)}
       />
       <RangeSlider
-        label="Y"
+        label="Y spacing"
         value={grid.ySpacing}
         min={GRID_LISTENER_CONFIG.MIN_SPACING}
         max={GRID_LISTENER_CONFIG.MAX_SPACING}
@@ -111,7 +111,7 @@ export function GridListenerContent({ grid, color, onComputeBounds }: GridListen
         onChangeCommitted={(v) => handleDragEnd('ySpacing', v)}
       />
       <RangeSlider
-        label="Z"
+        label="Z offset"
         value={grid.zOffset}
         min={GRID_LISTENER_CONFIG.MIN_Z_OFFSET}
         max={GRID_LISTENER_CONFIG.MAX_Z_OFFSET}

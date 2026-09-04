@@ -575,13 +575,24 @@ export function Sidebar(props: SidebarProps) {
       useUIStore.getState().setActiveSoundParentIndex(usageIdx);
     } else {
       // The usage parent is scoped to THIS context only — a usage card belonging
-      // to another context must never be reused (independent trees).
+      // to another context must never be reused (independent trees). Prefer the
+      // currently expanded usage card (the one whose child count the Sounds
+      // breadcrumb is showing) over a previously-active sibling, then the
+      // last-active usage, then the first usage of this context.
       const isThisContextsUsage = (c: AnalysisConfig) =>
         SIDEBAR_USAGE_TYPES.includes(c.type as CardType) &&
         !(c.type === 'freeform' && (c as any).parentContextOriginalIndex === undefined) &&
         (c as any).parentContextOriginalIndex === ctxIdx;
       let usageIdx: number | null = null;
       if (
+        currentStep === 1 &&
+        usageExpandedOriginalIndex !== null &&
+        usageExpandedOriginalIndex >= 0 &&
+        usageExpandedOriginalIndex < props.analysisConfigs.length &&
+        isThisContextsUsage(props.analysisConfigs[usageExpandedOriginalIndex])
+      ) {
+        usageIdx = usageExpandedOriginalIndex;
+      } else if (
         activeUsageOriginalIndex !== null &&
         activeUsageOriginalIndex !== undefined &&
         activeUsageOriginalIndex >= 0 &&

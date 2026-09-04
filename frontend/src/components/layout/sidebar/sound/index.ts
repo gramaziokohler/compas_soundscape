@@ -15,6 +15,10 @@ export type { SoundResultContentProps } from './SoundResultContent';
 export { SoundCardBody } from './SoundCardBody';
 export type { SoundCardBodyProps } from './SoundCardBody';
 
+// Per-track interval-mode controls (post-gen, interval mode only)
+export { IntervalModeControls } from './IntervalModeControls';
+export type { IntervalModeControlsProps } from './IntervalModeControls';
+
 // Pre-generation card content (beforeContent for Card)
 export { SoundPreContent } from './SoundPreContent';
 

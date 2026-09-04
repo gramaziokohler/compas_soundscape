@@ -15,6 +15,22 @@ export function computePositionKey(
 }
 
 /**
+ * Parse a position key (e.g. "pos_1100.00_850.00_250.00") back into its quantized
+ * [x, y, z] coordinates. Returns null when the string isn't a valid position key
+ * (e.g. a real sound/receiver UUID passed through a manual-upload pairing context).
+ *
+ * These are the exact values the backend embeds as `source_id` in generated IR
+ * filenames (`sim_{simId}_src_{posKey}_rcv_{receiverId}.wav` /
+ * `choras_{simId}_src_{posKey}_rcv_{receiverId}.wav`), since `computePositionKey()`'s
+ * output is sent verbatim as `source_id` in `source_receiver_pairs`.
+ */
+export function parsePositionKey(posKey: string): [number, number, number] | null {
+  const match = posKey.match(/^pos_(-?\d+(?:\.\d+)?)_(-?\d+(?:\.\d+)?)_(-?\d+(?:\.\d+)?)$/);
+  if (!match) return null;
+  return [parseFloat(match[1]), parseFloat(match[2]), parseFloat(match[3])];
+}
+
+/**
  * Check if two positions fall within the same precision grid cell.
  */
 export function positionsMatch(

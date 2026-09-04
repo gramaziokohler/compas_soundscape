@@ -81,6 +81,11 @@ export function VariantsBar({
       className={`tag-row flex overflow-x-auto flex-shrink-0 items-center ${onBlueBackground ? 'on-blue' : ''}`}
       style={{ scrollbarWidth: 'thin', scrollbarColor: onBlueBackground ? 'var(--color-on-blue) transparent' : 'var(--card-color, var(--color-primary)) transparent' }}
     >
+      <span
+        className={`text-xxs whitespace-nowrap flex-shrink-0 ${onBlueBackground ? 'text-on-blue-muted' : 'text-secondary-hover'}`}
+      >
+        Variants
+      </span>
       {items.map((item, idx) => {
         const isSelected = idx === selectedIndex;
         return (
@@ -126,6 +131,7 @@ export function VariantsBar({
         <DashedAddButton
           onClick={onAdd}
           title="Add variant"
+          onBlueBackground={onBlueBackground}
           className="relative flex-shrink-0"
         />
       )}

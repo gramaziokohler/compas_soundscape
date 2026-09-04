@@ -3,8 +3,7 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { VerticalVolumeSlider } from '@/components/ui/VerticalVolumeSlider';
 import { PositionWidget } from '@/components/ui/PositionWidget';
-import { TimestampList } from './TimestampList';
-import { UI_VOLUME_SLIDER, UI_INTERVAL_SLIDER, DEFAULT_DBFS, AUDIO_PLAYBACK } from '@/utils/constants';
+import { UI_VOLUME_SLIDER, DEFAULT_DBFS } from '@/utils/constants';
 import { useBatchedSlider } from '@/hooks/useBatchedSlider';
 
 /**
@@ -15,8 +14,12 @@ import { useBatchedSlider } from '@/hooks/useBatchedSlider';
  *   - Left column:
  *       1. Mode-specific main content (textarea, upload area, waveform, ...)
  *       2. Position (x/y/z) widget — always visible
- *       3. Optional settings summary (post-gen sound cards)
- *   - Right column: interval slider / timestamp list + volume slider
+ *       3. Left-column footer (e.g. the Interval mode group via `leftColumnFooter`)
+ *   - Right column: volume slider
+ *
+ * The interval control lives in `IntervalModeControls` (post-gen, interval
+ * mode only) and is slotted into the left column through `leftColumnFooter`;
+ * the vertical "Int." slider was removed.
  *
  * All slider state and batched-undo logic live here so it never needs to be
  * duplicated between SoundResultContent and SoundPreContent.
@@ -27,14 +30,11 @@ export interface SoundCardBodyProps {
   mainContent: ReactNode;
   /** Rendered full-width above the flex row — use for headers that span both columns. */
   fullWidthHeader?: ReactNode;
-  /** Rendered in the left column below the position widget (e.g. post-gen settings recap). */
-  settingsSummary?: ReactNode;
+  /** Extra content rendered at the bottom of the LEFT column (e.g. the Interval-mode group). */
+  leftColumnFooter?: ReactNode;
 
   // ── Shared data ──────────────────────────────────────────────────────────
   volumeDbfs: number;
-  intervalSeconds: number;
-  schedulingMode: 'interval' | 'timestamps';
-  timestamps: number[];
   position?: [number, number, number];
   /** When defined the sound is entity-linked; position inputs are disabled. */
   entityIndex?: number;
@@ -45,8 +45,6 @@ export interface SoundCardBodyProps {
 
   // ── Callbacks ─────────────────────────────────────────────────────────────
   onVolumeChange?: (dbfs: number) => void;
-  onIntervalChange?: (sec: number) => void;
-  onTimestampsChange?: (ts: number[]) => void;
   onUpdatePosition?: (pos: [number, number, number]) => void;
   onUnlinkEntity?: () => void;
 
@@ -59,18 +57,13 @@ export interface SoundCardBodyProps {
 export function SoundCardBody({
   mainContent,
   fullWidthHeader,
-  settingsSummary,
+  leftColumnFooter,
   volumeDbfs,
-  intervalSeconds,
-  schedulingMode,
-  timestamps,
   position,
   entityIndex,
   isMuted = false,
   onMuteChange,
   onVolumeChange,
-  onIntervalChange,
-  onTimestampsChange,
   onUpdatePosition,
   onUnlinkEntity,
   storeContext,
@@ -78,11 +71,9 @@ export function SoundCardBody({
 }: SoundCardBodyProps) {
   // Local slider state for smooth visual feedback while dragging
   const [tempVolumeDbfs, setTempVolumeDbfs] = useState(volumeDbfs);
-  const [tempIntervalSeconds, setTempIntervalSeconds] = useState(intervalSeconds);
 
   // Sync with external state (e.g. undo/redo)
   useEffect(() => { setTempVolumeDbfs(volumeDbfs); }, [volumeDbfs]);
-  useEffect(() => { setTempIntervalSeconds(intervalSeconds); }, [intervalSeconds]);
 
   const volumeSlider = useBatchedSlider<number>(
     storeContext,
@@ -95,12 +86,6 @@ export function SoundCardBody({
         onMuteChange?.(false);
       }
     },
-  );
-
-  const intervalSlider = useBatchedSlider<number>(
-    storeContext,
-    (v) => setTempIntervalSeconds(Math.round(v)),
-    onIntervalChange ? (v) => onIntervalChange(Math.round(v)) : undefined,
   );
 
   const isLinked = entityIndex !== undefined;
@@ -147,34 +132,13 @@ export function SoundCardBody({
           </div>
         )}
 
-        {settingsSummary}
+        {/* 3. Left-column footer (e.g. Interval mode group) — left of the volume slider */}
+        {leftColumnFooter}
       </div>
 
-      {/* ── Right column: vertical sliders ── */}
-      <div className="flex gap-2">
-        {/* Interval slider (interval mode) */}
-        {schedulingMode === 'interval' && onIntervalChange && (
-          <VerticalVolumeSlider
-            value={tempIntervalSeconds}
-            min={UI_INTERVAL_SLIDER.MIN}
-            max={UI_INTERVAL_SLIDER.MAX}
-            step={1}
-            unit="s"
-            precision={0}
-            defaultValue={AUDIO_PLAYBACK.DEFAULT_INTERVAL_SECONDS}
-            label="Int."
-            hoverText="Playback interval: Time between sound repetitions in the timeline. Set to 0 for continuous loop. Double-click to reset."
-            onDragStart={intervalSlider.onDragStart}
-            onChange={intervalSlider.onChange}
-            onChangeCommitted={intervalSlider.onCommit}
-            onBlueBackground={onBlueBackground}
-          />
-        )}
-
-        {/* Timestamp list removed — the DAW timeline manages timestamps in timestamp mode */}
-
-        {/* Volume slider */}
-        {onVolumeChange && (
+      {/* ── Right column: volume slider ── */}
+      {onVolumeChange && (
+        <div className="flex gap-2 items-stretch">
           <VerticalVolumeSlider
             value={tempVolumeDbfs}
             min={UI_VOLUME_SLIDER.MIN}
@@ -189,11 +153,11 @@ export function SoundCardBody({
             onChange={volumeSlider.onChange}
             onChangeCommitted={volumeSlider.onCommit}
             onBlueBackground={onBlueBackground}
+            fillHeight
           />
-        )}
-      </div>
+        </div>
+      )}
     </div>
   </div>
   );
 }
-

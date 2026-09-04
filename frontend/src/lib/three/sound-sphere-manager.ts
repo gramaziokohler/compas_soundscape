@@ -701,15 +701,15 @@ export class SoundSphereManager {
       sphereGeom = new THREE.SphereGeometry(sphereRadius, 32, 32);
     }
 
-    // Use muted gray for pending (pre-generation) spheres
-    const sphereColor = soundEvent.isPending
-      ? getCssColorHex('--color-pending')
-      : getCssColorHex('--color-primary');
+    // Pending (pre-generation) placeholders share the generated sphere's primary
+    // look but render slightly dimmer (PENDING_OPACITY vs BASE_OPACITY).
+    const isPendingSphere = !!soundEvent.isPending;
+    const sphereColor = getCssColorHex('--color-primary');
 
     const material = new THREE.MeshBasicMaterial({
       color: sphereColor,
       transparent: true,
-      opacity: SOUND_SPHERE.BASE_OPACITY,
+      opacity: isPendingSphere ? SOUND_SPHERE.PENDING_OPACITY : SOUND_SPHERE.BASE_OPACITY,
       fog: true,
       depthWrite: true,
       depthTest: true,
@@ -1175,12 +1175,14 @@ export class SoundSphereManager {
     });
     this.darkModePointLights.clear();
 
-    // Restore sphere colors to primary pink and transparency
+    // Restore per-state sphere visuals: pending placeholders come back dimmer
+    // (PENDING_OPACITY), everything else at the normal transparent-primary opacity.
     this.soundMeshes.forEach(mesh => {
       const material = mesh.material as THREE.MeshBasicMaterial;
+      const isPending = !!((mesh.userData.soundEvent as SoundEvent | undefined)?.isPending);
       material.color.setHex(getCssColorHex('--color-primary'));
       material.transparent = true;
-      material.opacity = 0.7;
+      material.opacity = isPending ? SOUND_SPHERE.PENDING_OPACITY : SOUND_SPHERE.BASE_OPACITY;
       material.needsUpdate = true;
     });
   }
@@ -1238,9 +1240,14 @@ export class SoundSphereManager {
     });
     if (!mesh) return;
     const material = mesh.material as THREE.MeshBasicMaterial;
+    const isPending = !!((mesh.userData.soundEvent as SoundEvent | undefined)?.isPending);
     mesh.userData.isMuted = muted;
     material.transparent = true;
-    material.opacity = muted ? SOUND_SPHERE.MUTED_OPACITY : SOUND_SPHERE.BASE_OPACITY;
+    // Unmute restores the per-state base opacity: pending placeholders are dimmer
+    // (PENDING_OPACITY) than generated spheres (BASE_OPACITY).
+    material.opacity = muted
+      ? SOUND_SPHERE.MUTED_OPACITY
+      : (isPending ? SOUND_SPHERE.PENDING_OPACITY : SOUND_SPHERE.BASE_OPACITY);
     material.needsUpdate = true;
   }
 
@@ -1264,9 +1271,8 @@ export class SoundSphereManager {
    * (e.g. Speckle render passes during drag operations).
    *
    * Spheres carrying a MANAGED color are skipped:
-   * - `--color-success`    → selection highlight (useSpeckleSoundHighlight)
+   * - `--color-warning`    → selection highlight (useSpeckleSoundHighlight)
    * - `--color-error`      → simulation mismatch (useSpeckleSimulationMismatch)
-   * - `--color-pending` → pending pre-generation sphere
    * - `userData.isMuted`   → 50%-opacity muted state (audioControlsStore)
    *
    * Otherwise the enforcement would paint every sphere back to primary blue
@@ -1275,9 +1281,8 @@ export class SoundSphereManager {
   public enforceDarkModeColors(): void {
     if (!this.darkModeEnabled) return;
     const primaryHex = getCssColorHex('--color-primary');
-    const successHex = getCssColorHex('--color-success');
+    const warningHex = getCssColorHex('--color-warning');
     const errorHex = getCssColorHex('--color-error');
-    const pendingHex = getCssColorHex('--color-pending');
 
     this.soundMeshes.forEach(mesh => {
       const material = mesh.material as THREE.MeshBasicMaterial;
@@ -1285,10 +1290,8 @@ export class SoundSphereManager {
 
       if (
         currentHex !== primaryHex &&
-        currentHex !== successHex &&
-        currentHex !== errorHex &&
-        currentHex !== pendingHex
-      ) {
+        currentHex !== warningHex &&
+        currentHex !== errorHex      ) {
         material.color.setHex(primaryHex);
         material.needsUpdate = true;
       }

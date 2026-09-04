@@ -57,6 +57,9 @@ export interface AudioAnalysisConfig extends AnalysisBaseConfig {
   analysisOptions: SEDAnalysisOptions;
   /** Whether to apply noise reduction when extracting SED audio segments */
   applyNoiseReduction?: boolean;
+  /** Basename of the source audio persisted under data/soundscapes/<session>/audio/ so the
+   *  SED waveform + detected-sounds results can be reconstructed after a page refresh. */
+  persistedAudioFilename?: string;
 }
 
 /**

@@ -3,20 +3,21 @@
 /**
  * MaterialSelect
  *
- * Custom dropdown for acoustic material assignment.
- * - Trigger identical in size/colour to the original <select>
- * - List opens upward or downward based on available viewport space
- * - List is as wide as the longest option (max-content)
- * - Hovering an option shows a 260×156 absorption-spectrum histogram to its left
+ * Acoustic material dropdown built on `CardSelect`. Options show a colour badge;
+ * hovering an option in the expanded list shows a histogram preview.
+ * The collapsed trigger shows a small bars-only histogram icon; clicking it
+ * scales up the full histogram from the icon's center. The popup closes when
+ * the pointer leaves it. If mouseleave is skipped (e.g. scrolling the option
+ * list), the preview also hides 1s after the pointer is no longer over it.
  */
 
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { UI_BORDER_RADIUS } from '@/utils/constants';
-import { drawAbsorptionHistogram } from '@/lib/audio/utils/absorption-histogram-utils';
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import type { CSSProperties } from 'react';
+import { UI_BORDER_RADIUS, MATERIAL_SELECT } from '@/utils/constants';
+import { buildAbsorptionHistogramSVG, buildMiniHistogramSVG } from '@/lib/audio/utils/absorption-histogram-utils';
 import { getScale } from '@/utils/scale';
 import { SearchBar } from '@/components/ui/SearchBar';
-
-// ── Types ──────────────────────────────────────────────────────────────────────
+import { CardSelect, type CardSelectOption } from '@/components/ui/CardSelect';
 
 export interface MaterialOption {
   id: string;
@@ -26,27 +27,62 @@ export interface MaterialOption {
   center_freqs?: number[];
 }
 
+export type MaterialSelectVariant = 'explorer' | 'resonance';
+
 interface MaterialSelectProps {
   value: string;
   onChange: (value: string) => void;
   materials: MaterialOption[];
   materialColors: Map<string, string>;
   placeholder?: string;
-  /** Applied to the trigger only, matching the original <select> opacity behaviour */
-  opacity?: number;
-  /** When true and no value selected, show the trigger in pink instead of grey */
   isMixed?: boolean;
-  /** When true, opening the dropdown replaces the trigger with a search box that filters options by name */
   showSearch?: boolean;
+  /** Layout preset — sets max widths and right-alignment defaults. */
+  variant?: MaterialSelectVariant;
+  /** When false, the clear / placeholder row is omitted from the menu. */
+  allowClear?: boolean;
+  fitContent?: boolean;
+  alignRight?: boolean;
 }
 
-// ── Constants ──────────────────────────────────────────────────────────────────
-
-const HIST_W = 260;
-const HIST_H = 156;
+/** Full histogram popup dimensions (75 % of old 260×156). */
+const HIST_W = 195;
+const HIST_H = 117;
 const LIST_MAX_HEIGHT = 160;
 
-// ── Component ──────────────────────────────────────────────────────────────────
+/** Mini icon size (px) — fits inside tree-item row height. */
+const MINI_ICON_SIZE = 18;
+/** Fallback hide delay when the pointer has left but mouseleave did not fire (e.g. list scroll). */
+const HIST_POINTER_OFF_HIDE_MS = 1000;
+
+const VARIANT_DEFAULTS: Record<MaterialSelectVariant, {
+  triggerMaxWidth?: number;
+  menuMaxWidth: number;
+  fitContent: boolean;
+  alignRight: boolean;
+}> = {
+  explorer: {
+    triggerMaxWidth: MATERIAL_SELECT.OBJECT_EXPLORER_TRIGGER_MAX_PX,
+    menuMaxWidth: MATERIAL_SELECT.OBJECT_EXPLORER_MENU_MAX_PX,
+    fitContent: true,
+    alignRight: true,
+  },
+  resonance: {
+    menuMaxWidth: MATERIAL_SELECT.RESONANCE_MENU_MAX_PX,
+    fitContent: true,
+    alignRight: true,
+  },
+};
+
+function materialLabel(mat: MaterialOption): string {
+  return `${mat.name} (${(mat.absorption * 100).toFixed(0)}%)`;
+}
+
+function isPointerOverHistogramUi(x: number, y: number): boolean {
+  const el = document.elementFromPoint(x, y);
+  if (!el) return false;
+  return !!(el.closest('[data-absorption-histogram]') || el.closest('.select-menu'));
+}
 
 export function MaterialSelect({
   value,
@@ -54,232 +90,295 @@ export function MaterialSelect({
   materials,
   materialColors,
   placeholder = 'Select...',
-  opacity = 1,
   isMixed = false,
   showSearch = false,
+  variant = 'explorer',
+  allowClear = true,
+  fitContent: fitContentProp,
+  alignRight: alignRightProp,
 }: MaterialSelectProps) {
-  const [isOpen, setIsOpen]       = useState(false);
-  const [openUpward, setOpenUpward] = useState(false);
+  const variantDefaults = VARIANT_DEFAULTS[variant];
+  const fitContent = fitContentProp ?? variantDefaults.fitContent;
+  const alignRight = alignRightProp ?? variantDefaults.alignRight;
+
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [histPos, setHistPos]     = useState<{ x: number; y: number } | null>(null);
-  const [dropdownPos, setDropdownPos] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
+  const [histPos, setHistPos] = useState<{ x: number; y: number } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const triggerRef   = useRef<HTMLDivElement>(null);
-  const canvasRef    = useRef<HTMLCanvasElement | null>(null);
+  /** Whether the histogram is triggered by the mini icon (scale-from-center) vs option hover. */
+  const [histFromIcon, setHistFromIcon] = useState(false);
+  const histFromIconRef = useRef(false);
+  const histArmedRef = useRef(false);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastPointerRef = useRef({ x: 0, y: 0 });
+  const [iconCenter, setIconCenter] = useState<{ x: number; y: number } | null>(null);
 
-  const selectedMat  = materials.find((m) => m.id === value);
-  const triggerBg    = value
-    ? (materialColors.get(value) ?? 'var(--color-secondary-hover)')
-    : isMixed
-      ? 'var(--color-mixed)'
-      : 'var(--color-secondary-hover)';
-  const triggerLabel = selectedMat
-    ? `${selectedMat.name} (${(selectedMat.absorption * 100).toFixed(0)}%)`
-    : placeholder;
-
-  // Close on outside click
-  useEffect(() => {
-    if (!isOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setIsOpen(false);
-        setHoveredId(null);
-        setHistPos(null);
-      }
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [isOpen]);
-
-  // Redraw histogram when hovered material changes
-  useEffect(() => {
-    if (!canvasRef.current || !hoveredId) return;
-    const mat = materials.find((m) => m.id === hoveredId);
-    if (mat?.coeffs && mat.center_freqs) {
-      drawAbsorptionHistogram(canvasRef.current, mat.coeffs, mat.center_freqs);
+  const clearHideTimer = useCallback(() => {
+    if (hideTimerRef.current !== null) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
     }
-  }, [hoveredId, materials]);
+  }, []);
 
-  // Clear the search query whenever the dropdown closes
-  useEffect(() => {
-    if (!isOpen) setSearchQuery('');
-  }, [isOpen]);
+  const hideHistogram = useCallback(() => {
+    clearHideTimer();
+    histFromIconRef.current = false;
+    histArmedRef.current = false;
+    setHoveredId(null);
+    setHistPos(null);
+    setHistFromIcon(false);
+    setIconCenter(null);
+  }, [clearHideTimer]);
 
-  // Filter options by name when search is active
+  const scheduleHideIfPointerOff = useCallback(() => {
+    if (hideTimerRef.current !== null) return;
+    hideTimerRef.current = setTimeout(() => {
+      hideTimerRef.current = null;
+      hideHistogram();
+    }, HIST_POINTER_OFF_HIDE_MS);
+  }, [hideHistogram]);
+
+  const selectedMat = materials.find((m) => m.id === value);
+
   const filteredMaterials = useMemo(() => {
     if (!showSearch || !searchQuery.trim()) return materials;
     const q = searchQuery.trim().toLowerCase();
     return materials.filter((mat) => mat.name.toLowerCase().includes(q));
   }, [materials, searchQuery, showSearch]);
 
-  const handleTriggerClick = () => {
-    if (!isOpen && triggerRef.current) {
-      const rect = triggerRef.current.getBoundingClientRect();
-      const vp = getScale().viewport;
-      const spaceBelow = vp.height - rect.bottom;
-      const wantsUpward = spaceBelow < LIST_MAX_HEIGHT && rect.top > spaceBelow;
-      setOpenUpward(wantsUpward);
-      setDropdownPos({
-        left: rect.left,
-        top: wantsUpward ? rect.top - LIST_MAX_HEIGHT - 2 : rect.bottom + 2,
-      });
-    }
-    setIsOpen((prev) => !prev);
-  };
+  const cardOptions: CardSelectOption[] = useMemo(() => {
+    const materialOpts: CardSelectOption[] = filteredMaterials.map((mat) => ({
+      value: mat.id,
+      label: materialLabel(mat),
+      badgeColor: materialColors.get(mat.id) ?? 'var(--color-secondary-hover)',
+    }));
 
-  const handleOptionEnter = useCallback((e: React.MouseEvent<HTMLDivElement>, matId: string) => {
-    const rect = e.currentTarget.getBoundingClientRect();
+    if (showSearch && searchQuery.trim() && materialOpts.length === 0) {
+      const empty: CardSelectOption[] = [{ value: '__empty__', label: 'No materials found', disabled: true }];
+      if (allowClear) {
+        return [{ value: '', label: placeholder, style: { color: 'var(--color-primary)' } }, ...empty];
+      }
+      return empty;
+    }
+
+    if (!allowClear) return materialOpts;
+
+    return [
+      { value: '', label: placeholder, style: { color: 'var(--color-primary)' } },
+      ...materialOpts,
+    ];
+  }, [filteredMaterials, materialColors, placeholder, allowClear, showSearch, searchQuery]);
+
+  const triggerStyle = useMemo((): CSSProperties => {
+    if (!value) {
+      if (isMixed) return { color: 'var(--color-mixed)' };
+      return { color: 'var(--color-primary)' };
+    }
+    return {};
+  }, [value, isMixed]);
+
+  const triggerBadgeColor = value
+    ? (materialColors.get(value) ?? 'var(--color-secondary-hover)')
+    : undefined;
+
+  /** Position the full histogram next to an anchor rect (for option hover). */
+  const showHistogramFor = useCallback((matId: string, anchorRect: DOMRect) => {
+    const mat = materials.find((m) => m.id === matId);
+    if (!mat?.coeffs || !mat.center_freqs) return;
+
+    histFromIconRef.current = false;
     setHoveredId(matId);
+    setHistFromIcon(false);
+    setIconCenter(null);
+
+    const vp = getScale().viewport;
+    const spaceLeft = anchorRect.left;
+    const spaceRight = vp.width - anchorRect.right;
+    const fitsLeft = spaceLeft >= HIST_W + 8;
+    const fitsRight = spaceRight >= HIST_W + 8;
+    const preferLeft = fitsLeft && (!fitsRight || spaceLeft >= spaceRight);
+
+    let x: number;
+    if (preferLeft) {
+      x = anchorRect.left - HIST_W - 8;
+    } else if (fitsRight) {
+      x = anchorRect.right + 8;
+    } else {
+      x = Math.max(4, Math.min(anchorRect.left, vp.width - HIST_W - 4));
+    }
+
     setHistPos({
-      x: rect.left - HIST_W - 8,
-      y: Math.max(4, Math.min(getScale().viewport.height - HIST_H - 4, rect.top + rect.height / 2 - HIST_H / 2)),
+      x: Math.max(4, Math.min(x, vp.width - HIST_W - 4)),
+      y: Math.max(4, Math.min(vp.height - HIST_H - 4, anchorRect.top + anchorRect.height / 2 - HIST_H / 2)),
     });
-  }, []);
+  }, [materials]);
+
+  const handleOptionEnter = useCallback((opt: CardSelectOption, e: React.MouseEvent<HTMLDivElement>) => {
+    if (!opt.value) return;
+    lastPointerRef.current = { x: e.clientX, y: e.clientY };
+    clearHideTimer();
+    showHistogramFor(opt.value, e.currentTarget.getBoundingClientRect());
+  }, [showHistogramFor, clearHideTimer]);
 
   const handleOptionLeave = useCallback(() => {
-    setHoveredId(null);
-    setHistPos(null);
-  }, []);
+    if (histFromIconRef.current) return;
+    scheduleHideIfPointerOff();
+  }, [scheduleHideIfPointerOff]);
 
-  const hoveredMat    = hoveredId ? materials.find((m) => m.id === hoveredId) : null;
+  /** Show full histogram scaled from the mini icon center. */
+  const handleIconClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!selectedMat?.coeffs || !selectedMat.center_freqs) return;
+
+    if (histFromIconRef.current) {
+      hideHistogram();
+      return;
+    }
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+
+    lastPointerRef.current = { x: cx, y: cy };
+    histFromIconRef.current = true;
+    histArmedRef.current = false;
+    setHoveredId(selectedMat.id);
+    setHistFromIcon(true);
+    setIconCenter({ x: cx, y: cy });
+    setHistPos({ x: cx - HIST_W / 2, y: cy - HIST_H / 2 });
+    window.setTimeout(() => { histArmedRef.current = true; }, 50);
+  }, [selectedMat, hideHistogram]);
+
+  const handleHistMouseEnter = useCallback(() => {
+    clearHideTimer();
+  }, [clearHideTimer]);
+
+  const handleHistMouseLeave = useCallback(() => {
+    if (!histFromIconRef.current || !histArmedRef.current) return;
+    scheduleHideIfPointerOff();
+  }, [scheduleHideIfPointerOff]);
+
+  const hoveredMat = hoveredId ? materials.find((m) => m.id === hoveredId) : null;
   const showHistogram = !!(hoveredMat?.coeffs && hoveredMat.center_freqs && histPos);
+  const histSvg = hoveredMat?.coeffs && hoveredMat.center_freqs
+    ? buildAbsorptionHistogramSVG(hoveredMat.coeffs, hoveredMat.center_freqs)
+    : '';
+
+  useEffect(() => {
+    if (!showHistogram) {
+      clearHideTimer();
+      return;
+    }
+
+    const considerPointer = (x: number, y: number) => {
+      lastPointerRef.current = { x, y };
+      if (isPointerOverHistogramUi(x, y)) {
+        clearHideTimer();
+      } else {
+        scheduleHideIfPointerOff();
+      }
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      considerPointer(e.clientX, e.clientY);
+    };
+    const onScroll = () => {
+      const { x, y } = lastPointerRef.current;
+      considerPointer(x, y);
+    };
+
+    document.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      document.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('scroll', onScroll, true);
+    };
+  }, [showHistogram, clearHideTimer, scheduleHideIfPointerOff]);
+
+  // Build mini icon SVG for the trigger
+  const miniIconSvg = useMemo(() => {
+    if (!selectedMat?.coeffs) return null;
+    return buildMiniHistogramSVG(selectedMat.coeffs, MINI_ICON_SIZE);
+  }, [selectedMat]);
 
   return (
-    <div
-      ref={containerRef}
-      style={{ position: 'relative', width: '140px', flexShrink: 0 }}
-    >
-      {/* ── Trigger ─ same width/height/colours as original <select> ──────────── */}
-      {/* When open with search enabled, the trigger slot becomes a search box that filters the list below */}
-      {isOpen && showSearch ? (
-        <SearchBar
-          value={searchQuery}
-          onChange={setSearchQuery}
-          placeholder="Search materials..."
-          autoFocus
-          debounceMs={0}
-          className="w-full"
+    <>
+      <div className="material-select flex items-center gap-1 min-w-0">
+        {miniIconSvg && (
+          <button
+            type="button"
+            className="shrink-0 cursor-pointer p-0 border-0 bg-transparent"
+            style={{ width: MINI_ICON_SIZE, height: MINI_ICON_SIZE, borderRadius: 2, overflow: 'hidden' }}
+            aria-label="Show absorption histogram"
+            onClick={handleIconClick}
+            dangerouslySetInnerHTML={{ __html: miniIconSvg }}
+          />
+        )}
+        <CardSelect
+          value={value}
+          onChange={onChange}
+          options={cardOptions}
+          placeholder={placeholder}
+          forceMenu
+          compact
+          fitContent={fitContent}
+          alignMenu={alignRight ? 'right' : 'left'}
+          menuWidth="content"
+          menuMaxHeight={LIST_MAX_HEIGHT}
+          {...(variantDefaults.triggerMaxWidth !== undefined
+            ? { triggerMaxWidth: variantDefaults.triggerMaxWidth }
+            : {})}
+          menuMaxWidth={variantDefaults.menuMaxWidth}
+          triggerStyle={triggerStyle}
+          triggerBadgeColor={triggerBadgeColor}
+          menuHeader={showSearch ? (
+            <SearchBar
+              value={searchQuery}
+              onChange={setSearchQuery}
+              placeholder="Search materials..."
+              autoFocus
+              debounceMs={0}
+              className="w-full"
+            />
+          ) : undefined}
+          onOpenChange={(open) => {
+            if (!open) {
+              setSearchQuery('');
+              if (!histFromIconRef.current) hideHistogram();
+            }
+          }}
+          onOptionMouseEnter={handleOptionEnter}
+          onOptionMouseLeave={handleOptionLeave}
         />
-      ) : (
-        <div
-          ref={triggerRef}
-          role="button"
-          tabIndex={0}
-          onClick={handleTriggerClick}
-          onKeyDown={(e) => e.key === 'Enter' && handleTriggerClick()}
-          onMouseEnter={(e) => {
-            if (!selectedMat?.coeffs || !selectedMat.center_freqs) return;
-            const rect = e.currentTarget.getBoundingClientRect();
-            setHoveredId(selectedMat.id);
-            setHistPos({
-              x: rect.left - HIST_W - 8,
-              y: Math.max(4, Math.min(getScale().viewport.height - HIST_H - 4, rect.top + rect.height / 2 - HIST_H / 2)),
-            });
-          }}
-          onMouseLeave={() => {
-            if (!isOpen) { setHoveredId(null); setHistPos(null); }
-          }}
-          className="select-trigger compact text-xs rounded cursor-pointer focus:outline-none"
-          style={{
-            backgroundColor: triggerBg,
-            opacity,
-            width: '100%',
-            boxSizing: 'border-box',
-            overflow: 'hidden',
-            whiteSpace: 'nowrap',
-            textOverflow: 'ellipsis',
-            userSelect: 'none',
-          }}
-        >
-          {triggerLabel}
-        </div>
-      )}
+      </div>
 
-      {/* ── Dropdown list ─────────────────────────────────────────────────────── */}
-      {isOpen && (
-        <div
-            className="select-menu compact"
-            style={{
-            position: 'fixed',
-            left: dropdownPos.left,
-            top: dropdownPos.top,
-            width: 'max-content',
-            right: 'auto',
-            maxHeight: `${LIST_MAX_HEIGHT}px`,
-            overflowY: 'auto',
-            zIndex: 99999,
-            backgroundColor: 'var(--color-surface-2)',
-          }}
-        >
-          {/* Placeholder / clear option */}
-          <div
-            className="select-opt compact cursor-pointer hover:!bg-primary-lighter hover:!text-foreground dark:hover:!bg-surface-2 dark:hover:brightness-[1.15] dark:hover:!text-secondary-hover"
-            style={{ color: 'var(--color-secondary-hover)' }}
-            onClick={() => { onChange(''); setIsOpen(false); }}
-          >
-            {placeholder}
-          </div>
-
-          {filteredMaterials.length === 0 ? (
-            <div
-              className="select-opt compact"
-              style={{ color: 'var(--color-secondary-hover)', backgroundColor: 'var(--color-surface-2)', cursor: 'default' }}
-            >
-              No materials found
-            </div>
-          ) : (
-            filteredMaterials.map((mat) => {
-              const bg = materialColors.get(mat.id) ?? 'var(--color-secondary-hover)';
-              return (
-                <div
-                  key={mat.id}
-                  className="select-opt compact cursor-pointer hover:brightness-90 dark:hover:brightness-[1.15]"
-                  style={{ backgroundColor: bg, color: 'var(--color-on-blue)' }}
-                  onMouseEnter={(e) => {
-                    handleOptionEnter(e, mat.id);
-                  }}
-                  onMouseLeave={handleOptionLeave}
-                  onClick={() => {
-                    onChange(mat.id);
-                    setIsOpen(false);
-                    setHoveredId(null);
-                    setHistPos(null);
-                  }}
-                >
-                  {mat.name} ({(mat.absorption * 100).toFixed(0)}%)
-                </div>
-              );
-            })
-          )}
-        </div>
-      )}
-
-      {/* ── Histogram ─ fixed-positioned to the left of the hovered option ──── */}
       {showHistogram && histPos && (
         <div
-          className="fixed pointer-events-none"
+          data-absorption-histogram=""
+          className={histFromIcon ? 'fixed' : 'fixed pointer-events-none'}
+          onMouseEnter={handleHistMouseEnter}
+          onMouseLeave={handleHistMouseLeave}
+          dangerouslySetInnerHTML={{ __html: histSvg }}
           style={{
-            left: Math.max(4, histPos.x),
+            left: histPos.x,
             top: histPos.y,
             width: HIST_W,
             height: HIST_H,
             borderRadius: `${UI_BORDER_RADIUS.SM}px`,
             overflow: 'hidden',
             border: '1px solid var(--color-secondary-light)',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.7)',
-            zIndex: 99999,
+            boxShadow: 'var(--shadow-lg)',
+            zIndex: 100000,
+            ...(histFromIcon && iconCenter
+              ? {
+                  transformOrigin: `${iconCenter.x - histPos.x}px ${iconCenter.y - histPos.y}px`,
+                  animation: 'hist-scale-in 0.15s ease-out forwards',
+                }
+              : {}),
           }}
-        >
-          <canvas
-            ref={canvasRef}
-            width={HIST_W}
-            height={HIST_H}
-            style={{ display: 'block' }}
-          />
-        </div>
+        />
       )}
-    </div>
+    </>
   );
 }

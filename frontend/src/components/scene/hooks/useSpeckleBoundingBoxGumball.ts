@@ -110,7 +110,8 @@ export function useSpeckleBoundingBoxGumball({
     transformControls.addEventListener('dragging-changed', (event) => {
       const dragging = !!(event as { value?: boolean }).value;
       isDragging = dragging;
-      const { cameraController, selectionExtension } = useSpeckleEngineStore.getState();
+      const { cameraController, selectionExtension, boundingBoxManager: bbmForDrag } = useSpeckleEngineStore.getState();
+      bbmForDrag?.setDragging(dragging);
       if (cameraController) {
         if (dragging) {
           cameraController.enabled = false;

@@ -113,7 +113,7 @@ export function AnalyzeModelResultContent({ config, configIndex }: Props) {
   if (!result || objects.length === 0) return null;
 
   return (
-    <div className="space-y-1.5 px-4 pb-2">
+    <div className="card-stack">
       {spaceDescription && (
         <>
         <p
@@ -133,7 +133,7 @@ export function AnalyzeModelResultContent({ config, configIndex }: Props) {
       </div>
 
       {/* Object group list */}
-      <div className="max-h-[min(280px,50dvh)] overflow-y-auto pr-0.5 space-y-0.5">
+      <div className="card-stack--tight max-h-[min(280px,50dvh)] overflow-y-auto pr-0.5">
         {objects.map((obj, i) => {
           const color = getAnalysisGroupColor(i);
           const ids = Object.keys(obj.object_ids ?? {});
@@ -169,7 +169,7 @@ export function AnalyzeModelResultContent({ config, configIndex }: Props) {
               {/* Expanded: info mode */}
               {isExpanded && !isEditing && (
                 <div
-                  className="mt-1 mb-1 ml-1 space-y-2 px-2 py-2 rounded"
+                  className="mt-1 mb-1 ml-1 card-stack--md px-2 py-2 rounded"
                   style={{ borderLeft: `2px solid ${color}`, backgroundColor: 'var(--color-blue-chip-bg)' }}
                   onMouseEnter={() => ids.length > 0 && setHoveredIndex(i)}
                   onMouseLeave={() => setHoveredIndex(null)}
@@ -225,7 +225,7 @@ export function AnalyzeModelResultContent({ config, configIndex }: Props) {
               {/* Expanded: editing mode */}
               {isExpanded && isEditing && (
                 <div
-                  className="mt-1 mb-1 ml-1 space-y-1.5 px-2 py-2 rounded"
+                  className="mt-1 mb-1 ml-1 card-stack--md px-2 py-2 rounded"
                   style={{ borderLeft: `2px solid ${color}`, backgroundColor: 'var(--color-blue-chip-bg)' }}
                   onMouseEnter={() => ids.length > 0 && setHoveredIndex(i)}
                   onMouseLeave={() => setHoveredIndex(null)}

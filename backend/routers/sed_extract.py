@@ -12,9 +12,11 @@ import uuid
 import numpy as np
 import soundfile as sf
 import librosa
-from fastapi import APIRouter, File, UploadFile, HTTPException, Form
+from pathlib import Path
+from fastapi import APIRouter, File, UploadFile, HTTPException, Form, Request
 from typing import Optional
 from utils.audio_processing import ensure_mono
+from services.paths import GENERATED_SOUNDS_PARENT, user_audio_dir
 
 router = APIRouter()
 
@@ -163,3 +165,47 @@ async def extract_sed_segments(
                 os.remove(source_path)
             except Exception:
                 pass
+
+
+@router.delete("/api/extract-sed-segments/{filename}")
+async def delete_sed_segment(filename: str, request: Request):
+    """
+    Delete a single extracted SED segment audio file.
+
+    Called by the frontend when the user deletes a variant of an audio-analysis
+    (SED-extracted) sound card. Removes the WAV from both candidate locations:
+      1. The persistent copy under data/soundscapes/<session_id>/audio/
+         (present after a soundscape save/load round-trip).
+      2. The live generated-sounds directory where extraction wrote it.
+
+    Only files created by this extraction router (`sed_*.wav`) can be deleted
+    here — ML-generated, uploaded, library and TTS files are never touched.
+
+    Response:
+        { "deleted": ["/abs/path/..." ] }
+    """
+    # Guard against path traversal and non-SED files.
+    if os.path.basename(filename) != filename:
+        raise HTTPException(status_code=400, detail="Invalid segment filename")
+    if not filename.startswith("sed_") or not filename.endswith(".wav"):
+        raise HTTPException(status_code=400, detail="Only extracted SED segment files can be deleted")
+
+    session_id = getattr(getattr(request, "state", None), "session_id", None)
+
+    candidates: list[Path] = [Path(GENERATED_SOUNDS_PARENT) / filename]
+    if session_id:
+        candidates.append(user_audio_dir(session_id) / filename)
+
+    removed: list[str] = []
+    for candidate in candidates:
+        try:
+            if candidate.is_file():
+                candidate.unlink()
+                removed.append(str(candidate))
+        except Exception as e:
+            print(f"[SED Extract] Failed to delete {candidate}: {e}")
+
+    if not removed:
+        raise HTTPException(status_code=404, detail="Segment file not found")
+
+    return {"deleted": removed}

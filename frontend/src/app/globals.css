@@ -56,7 +56,7 @@
   --color-error-hover: #dc2626;
   --color-error-light: #fee2e2;
   
-  --color-warning: #F59E0B;
+  --color-warning: #f5b30b;
   --color-warning-hover: #d97706;
   --color-warning-light: #fef3c7;
   
@@ -316,8 +316,14 @@ canvas {
   }
 }
 
+/* MaterialSelect — histogram scale-in from mini icon */
+@keyframes hist-scale-in {
+  from { transform: scale(0); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
 /* GenerateButton — icon hover spin: rotate with pauses (delays) built into the
- * keyframe percentages so each quarter-turn stops briefly before continuing. */
+   * keyframe percentages so each quarter-turn stops briefly before continuing. */
 @keyframes generate-spin-delayed {
   0%   { transform: rotate(0deg) scale(1.15); }
   50%  { transform: rotate(90deg) scale(1.15); }
@@ -398,6 +404,51 @@ canvas {
    Card design system — shared presentation classes (token-only)
    ========================================================================== */
 
+/* Card vertical rhythm — single source of truth for all card spacing.
+   Scale stays on the 4px grid the UI already uses; semantic tokens make the
+   rules uniform and tunable in one place. Theme-independent (no dark flip). */
+:root {
+  --card-space-xxs: 2px;   /* collapsed-info / captions under a title    */
+  --card-space-xs:  4px;   /* tight rows inside a list / group           */
+  --card-space-sm:  6px;   /* label → its control                        */
+  --card-space-md:  8px;   /* collapsible body, header↔content, inset    */
+  --card-space-lg:  12px;  /* between sibling control components         */
+  --card-space-xl:  16px;  /* wide separations                           */
+
+  /* Semantic roles */
+  --card-inset:        var(--card-space-md);  /* uniform card inner padding */
+  --card-gap-header:   var(--card-space-xs);  /* header row → body / footer */
+  --card-gap-label:    var(--card-space-xs);  /* label → control            */
+  --card-gap-control:  var(--card-space-xs);  /* between components/blocks  */
+  --card-gap-row:      var(--card-space-xs);  /* rows within a group/list   */
+  --card-gap-collapse: var(--card-space-xs);  /* collapsible trigger → body */
+  --card-gap-info:     var(--card-space-xxs); /* info line under title      */
+}
+
+/* Uniform inner padding of the card shell — content components must NOT add
+   their own horizontal/vertical edge padding (Card owns the inset). */
+.card-shell { padding: var(--card-inset); }
+
+/* Vertical stacks — gap driven by tokens. */
+.card-stack        { display: flex; flex-direction: column; gap: var(--card-gap-control); } /* 12px component blocks */
+.card-stack--md    { display: flex; flex-direction: column; gap: var(--card-space-md); }    /* 8px  mid groupings     */
+.card-stack--tight { display: flex; flex-direction: column; gap: var(--card-gap-row); }     /* 4px  list rows         */
+
+/* Label directly above a control: uniform gap below the label is the constant;
+   sizing/color utilities stay on the element itself. */
+.card-label { display: block; margin-bottom: var(--card-gap-label); }
+/* Label over control via container gap (no per-label margin). */
+.card-field     { display: flex; flex-direction: column; gap: var(--card-gap-label); }
+.card-field--row{ display: flex; align-items: center; gap: var(--card-gap-label); }
+
+/* Expanded body of a collapsible/disclosure group. */
+.card-collapse-body { margin-top: var(--card-gap-collapse); }
+
+/* Small info/caption line under a card title (collapsed info, version). */
+.card-title-info { margin-top: var(--card-gap-info); }
+/* Title meta row (version + info popover) — slightly larger than a caption. */
+.card-title-meta { margin-top: var(--card-space-xs); }
+
 /* x/y/z numeric widget */
 .position-widget { display: flex; gap: 2px; align-items: flex-end; }
 .xyz-input {
@@ -455,6 +506,51 @@ canvas {
 .select-trigger.open svg { transform: rotate(180deg); }
 .select-trigger.compact { padding: 4px 6px; font-size: 10px; }
 .select-trigger.compact svg { width: 11px; height: 11px; }
+.select.fit-content { width: fit-content; max-width: 100%; }
+.select.fit-content-right { margin-left: auto; }
+.select-trigger.fit-content { width: auto; gap: 4px; }
+.select-trigger-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex: 1;
+}
+.select-opt-badge {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.select-opt.has-badge {
+  display: flex;
+  align-items: center;
+  color: var(--foreground);
+}
+.select-opt.has-badge:hover {
+  color: var(--color-blue-text);
+  background: var(--color-secondary-lighter);
+}
+.select-opt.has-badge.active {
+  color: var(--color-blue-text);
+  background: var(--color-blue-tint);
+}
+
+/* Material selects — same surface trigger inside generated (blue) cards */
+.material-select .select-trigger {
+  background: var(--color-secondary-lighter);
+  border-color: var(--color-border);
+  color: var(--foreground);
+}
+.card-generated .material-select .select-trigger {
+  background: var(--color-secondary-lighter);
+  border-color: var(--color-border);
+  color: var(--foreground);
+}
+.material-select .select-trigger svg,
+.card-generated .material-select .select-trigger svg {
+  color: var(--color-text-3);
+}
 .select-menu {
   position: absolute;
   top: calc(100% + 4px);
@@ -598,8 +694,8 @@ canvas {
 /* Generating state */
 .gen-status {
   font-size: 11.5px;
-  color: var(--color-info);
-  margin-bottom: 9px;
+  color: var(--color-primary);
+  margin-bottom: var(--card-space-md);
   display: flex;
   justify-content: space-between;
 }
@@ -623,8 +719,9 @@ canvas {
 .progress-track { height: 3px; background: var(--color-border-strong); border-radius: 2px; overflow: hidden; }
 .progress-fill { height: 100%; background: var(--color-primary); border-radius: 2px; transition: width 0.3s; }
 
-/* Variant tags */
-.tag-row { display: flex; gap: 6px; margin-top: 1px; }
+/* Variant tags — spacing from the content above is owned by the card body
+   stack (Card renders the bar in the card-stack container), not by the row. */
+.tag-row { display: flex; gap: 6px; }
 .tag {
   width: 22px;
   height: 22px;
@@ -676,6 +773,22 @@ canvas {
 .on-blue-btn:hover { color: var(--color-on-blue); background: rgba(0, 0, 0, 0.2); }
 .on-blue-btn.close:hover { color: var(--color-error); background: var(--color-error-light); }
 
+/* Go-to-listener target icon on simulation result cards */
+.goto-listener-btn:hover {
+  transform: scale(1.25);
+  background: color-mix(in srgb, var(--color-receiver) 20%, transparent);
+}
+.goto-listener-btn--active {
+  transform: scale(1.1);
+  background: color-mix(in srgb, var(--color-receiver) 30%, transparent);
+}
+.goto-listener-btn--active:hover {
+  background: color-mix(in srgb, var(--color-receiver) 38%, transparent);
+}
+.goto-listener-btn:active {
+  transform: scale(0.92);
+}
+
 /* Checkbox — custom 14px box */
 .ck-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px;}
 .ck-row:last-child { margin-bottom: 0;}
@@ -705,6 +818,64 @@ canvas {
 .ck-row label,
 .ck-row > span:last-child { font-size: 10px; color: var(--color-text-3); cursor: pointer; }
 .ck-row.checked > span:last-child { color: var(--color-primary); }
+
+/* Toggle switch — label left, switch right. Rows carry a 4px bottom margin on
+   generic (non-card) surfaces; inside the card rhythm stacks the margin is
+   zeroed so spacing is owned by the container gap (see card-stack rules above). */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  user-select: none;
+}
+.toggle-row:last-child { margin-bottom: 0; }
+.card-stack .toggle-row,
+.card-stack--md .toggle-row,
+.card-stack--tight .toggle-row,
+.card-field .toggle-row { margin-bottom: 0; }
+.toggle-row__content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+.toggle-row__label {
+  font-size: 10px;
+  color: var(--color-text-3);
+  transition: color 0.15s ease;
+}
+.toggle-row.checked .toggle-row__label { color: var(--color-primary); }
+.toggle-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 28px;
+  height: 16px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-secondary-light);
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.toggle-switch.checked {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+.toggle-switch::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-on-blue);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 12%, transparent);
+  transform: translateY(-50%);
+  transition: left 0.15s ease;
+}
+.toggle-switch.checked::after { left: calc(100% - 12px); }
 
 /* Generated (blue) card — page-surface tokens would read as dark-mode leftovers
  * on the primary fill, so chrome and type switch to on-blue. */
@@ -813,6 +984,27 @@ canvas {
 .card-generated .ck-row.checked > span:last-child {
   color: var(--color-on-blue);
 }
+.card-generated .toggle-row__label {
+  color: var(--color-on-blue-muted);
+}
+.card-generated .toggle-row.checked .toggle-row__label {
+  color: var(--color-on-blue);
+}
+.card-generated .toggle-switch {
+  border-color: var(--color-on-blue-faint);
+  background: var(--color-blue-chip-bg);
+}
+.card-generated .toggle-switch.checked {
+  background: var(--color-on-blue);
+  border-color: var(--color-on-blue);
+}
+.card-generated .toggle-switch::after {
+  background: var(--color-primary);
+  box-shadow: none;
+}
+.card-generated .toggle-switch.checked::after {
+  background: var(--color-primary);
+}
 .card-generated .gen-status {
   color: var(--color-on-blue-muted);
 }
@@ -849,6 +1041,32 @@ canvas {
 .card-generated .info-trigger:hover {
   color: var(--color-on-blue);
   background: var(--color-blue-chip-bg);
+}
+
+/* Card right-click context menu — opened from a generated (blue) card */
+.card-context-menu--generated {
+  background: color-mix(in srgb, var(--color-primary) 88%, black);
+  border-color: var(--color-on-blue-faint);
+  color: var(--color-on-blue);
+}
+.card-context-menu--generated .card-context-menu-item {
+  color: var(--color-on-blue);
+}
+.card-context-menu--generated .card-context-menu-item:hover:not(:disabled):not(.active) {
+  background: var(--color-blue-chip-bg);
+}
+.card-context-menu--generated .card-context-menu-item.active {
+  background: var(--color-blue-chip-bg);
+  color: var(--color-on-blue);
+}
+.card-context-menu--generated .card-context-menu-item:disabled {
+  color: var(--color-on-blue-muted);
+}
+.card-context-menu--generated .card-context-menu-divider {
+  border-color: var(--color-on-blue-faint);
+}
+.card-context-menu--generated .card-context-menu-chevron {
+  color: var(--color-on-blue-muted);
 }
 
 .font-sans { font-family: var(--font-sans); }

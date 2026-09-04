@@ -70,21 +70,20 @@ export function SingleListenerContent({ receiver, color, onUpdatePosition }: Sin
   }, [liveYaw, livePitch, liveRoll, receiver.id, updateReceiverOrientation]);
 
   return (
-    <div className="text-xs text-secondary-hover">
-      <div className="mb-2.5">
+    <div className="card-stack text-xs text-secondary-hover">
+      <div>
         <Notice
           type="info"
           message="Viewer in locked FPS viewmode. Press Esc or reduce this card to cancel it."
         />
       </div>
-      <div className="font-medium mb-1.5" style={{ color }}>Position</div>
       <PositionWidget
         position={receiver.position}
         onUpdatePosition={(pos) => onUpdatePosition(receiver.id, pos)}
       />
 
-      <div className="font-medium mb-1.5 mt-2.5" style={{ color }}>Orientation</div>
-      <div className="flex flex-col gap-1 mb-2">
+      <div className="font-medium card-label" style={{ color }}>Orientation</div>
+      <div className="card-stack--tight">
         <div className="flex items-center gap-1.5">
           <span className="text-[10px] text-secondary-hover">
             Y: {toDeg(liveYaw)}&deg;&ensp;P: {toDeg(livePitch)}&deg;&ensp;R: {toDeg(liveRoll)}&deg;

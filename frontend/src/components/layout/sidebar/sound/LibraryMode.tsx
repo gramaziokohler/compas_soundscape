@@ -32,7 +32,7 @@ export function LibraryMode({
   const searchError = config.librarySearchState?.error;
 
   return (
-    <div className="space-y-2">
+    <div className="card-stack--md">
       {/* Search input and button */}
       <div className="flex gap-2">
         <textarea
@@ -73,7 +73,7 @@ export function LibraryMode({
           <p className="text-xs font-medium text-secondary-hover">
             Found {results.length} results:
           </p>
-          <div className="space-y-1">
+          <div className="card-stack--tight">
             {results.map((result) => (
               <button
                 key={result.location}
@@ -85,7 +85,7 @@ export function LibraryMode({
                 }`}
               >
                 <div className="font-medium truncate">{result.description}</div>
-                <div className="text-[10px] opacity-75 flex justify-between mt-0.5">
+                <div className="card-title-info text-[10px] opacity-75 flex justify-between">
                   <Badge variant="neutral">{result.category}</Badge>
                   <span>{result.duration}</span>
                 </div>

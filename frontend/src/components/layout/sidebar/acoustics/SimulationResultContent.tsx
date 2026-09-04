@@ -15,12 +15,13 @@ import { ImpulseResponseUpload } from '@/components/audio/ImpulseResponseUpload'
 import type { SimulationConfig } from '@/types/acoustics';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from '@/types/audio';
 import { Notice } from '@/components/ui/Notice';
+import { Spinner } from '@/components/ui/Spinner';
 import { CardSelect } from '@/components/ui/CardSelect';
 import { NumberField } from '@/components/ui/NumberField';
 import type { GradientMetric } from '@/store/uiStore';
 import { useUIStore } from '@/store/uiStore';
 import { useGridListenersStore } from '@/store';
-import { fetchPerReceiverMetrics, type PerReceiverMetrics } from '@/utils/acousticMetrics';
+import { fetchPerReceiverMetrics, fetchPyroomAcousticMetrics, fetchChorasAcousticMetrics, type PerReceiverMetrics, type AcousticParameters } from '@/utils/acousticMetrics';
 import { GradientMapManager } from '@/lib/three/gradient-map-manager';
 import { SIMULATION_POSITION_THRESHOLD } from '@/utils/constants';
 
@@ -65,6 +66,140 @@ function detectGridReceivers(mapping: SourceReceiverIRMapping | undefined): bool
     }
   }
   return false;
+}
+
+type MetricWarning = { metricKey: string; message: string };
+
+function getMetricWarnings(params: AcousticParameters): MetricWarning[] {
+  const warnings: MetricWarning[] = [];
+  if (params.rt60 !== null && params.rt60IsEstimate) {
+    warnings.push({
+      metricKey: 'rt60',
+      message: 'RT60 is an estimate: ISM-only simulation, no ray-traced diffuse tail',
+    });
+  }
+  if (params.rt60 !== null && params.rt60Reliable === false) {
+    warnings.push({
+      metricKey: 'rt60',
+      message: 'RT60 is unreliable (low measured decay range)',
+    });
+  }
+  if (params.edt !== null && params.edtReliable === false) {
+    warnings.push({
+      metricKey: 'edt',
+      message: 'EDT is unreliable (low measured decay range)',
+    });
+  }
+  return warnings;
+}
+
+function getWarningForMetric(warnings: MetricWarning[], metricKey: string): string | undefined {
+  const matches = warnings.filter((w) => w.metricKey === metricKey);
+  return matches.length > 0 ? matches.map((w) => w.message).join(' · ') : undefined;
+}
+
+/** Compact spinner shown while the acoustic-metrics JSON is fetched from the backend. */
+function MetricsLoading() {
+  return (
+    <div
+      className="flex items-center gap-2 py-1.5 text-[11px]"
+      style={{ color: 'var(--color-on-blue-muted)' }}
+    >
+      <Spinner size={12} />
+      Loading metrics…
+    </div>
+  );
+}
+
+function AcousticMetricsPanel({ params }: { params: AcousticParameters }) {
+  const warnings = getMetricWarnings(params);
+  const columns: Array<{ key: string; label: string; value: string; unit?: string; warning?: string }> = [];
+
+  if (params.rt60 !== null) {
+    columns.push({
+      key: 'rt60',
+      label: 'RT60',
+      value: params.rt60.toFixed(2),
+      unit: 's',
+      warning: getWarningForMetric(warnings, 'rt60'),
+    });
+  }
+  if (params.edt !== null) {
+    columns.push({
+      key: 'edt',
+      label: 'EDT',
+      value: params.edt.toFixed(2),
+      unit: 's',
+      warning: getWarningForMetric(warnings, 'edt'),
+    });
+  }
+  if (params.d50 !== null) {
+    columns.push({
+      key: 'd50',
+      label: 'D50',
+      value: (params.d50 * 100).toFixed(0),
+      unit: '%',
+    });
+  }
+  if (params.c50 !== null) {
+    columns.push({
+      key: 'c50',
+      label: 'C50',
+      value: params.c50.toFixed(1),
+      unit: ' dB',
+    });
+  }
+  if (params.spl !== null && params.spl !== undefined) {
+    columns.push({
+      key: 'spl',
+      label: params.splIsRelative ? 'Energy' : 'SPL',
+      value: params.spl.toFixed(1),
+      unit: ' dB',
+    });
+  }
+
+  if (columns.length === 0) return null;
+
+  const cellBorder = { borderColor: 'var(--color-on-blue-faint)' };
+
+  return (
+    <div className="card-stack--md">
+      <h3 className="text-xs font-semibold" style={{ color: 'var(--color-on-blue)' }}>
+        Acoustic Metrics
+      </h3>
+      <table className="w-full border-collapse table-fixed">
+        <thead>
+          <tr>
+            {columns.map((col) => (
+              <th
+                key={col.key}
+                className="border px-1.5 py-0.5 text-[9px] font-medium"
+                style={{ ...cellBorder, color: 'var(--color-on-blue-muted)' }}
+              >
+                {col.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            {columns.map((col) => (
+              <td
+                key={col.key}
+                className={`border px-1.5 py-1 text-center text-[10px] font-semibold tabular-nums ${col.warning ? 'text-warning' : ''}`}
+                style={col.warning ? cellBorder : { ...cellBorder, color: 'var(--color-on-blue)' }}
+                title={col.warning}
+              >
+                {col.value}
+                {col.warning ? '*' : ''}
+                {col.unit}
+              </td>
+            ))}
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -141,22 +276,13 @@ export function SimulationResultContent({
   const simulationConfig = config as any;
   const results: string | null = simulationConfig.simulationResults;
 
-  // formatAcousticMetrics appends a "Note:" section for reliability / ISM-estimate
-  // warnings — split it out so the card renders it in warning color and smaller type.
-  // Legacy strings also use "\nNote: ", so match the bare marker (not "\nNote:\n").
-  const noteMarker = '\nNote:';
-  const noteIdx = results ? results.indexOf(noteMarker) : -1;
-  let metricsBody: string | null = results;
-  let metricsNote: string | null = null;
-  if (noteIdx !== -1 && results) {
-    metricsBody = results.slice(0, noteIdx);
-    metricsNote = results.slice(noteIdx + noteMarker.length).trim();
-  }
-
   const sourceReceiverIRMapping: SourceReceiverIRMapping | undefined = simulationConfig.sourceReceiverIRMapping;
   const simulationId: string | undefined = simulationConfig.currentSimulationId;
   const simType: 'pyroomacoustics' | 'choras' | undefined =
     config.type === 'pyroomacoustics' || config.type === 'choras' ? config.type : undefined;
+  const simulationSourcePositions = (simulationConfig.simulationPositions as {
+    sources?: Record<string, [number, number, number]>;
+  } | undefined)?.sources;
 
   const [lowEnergyIRIds, setLowEnergyIRIds] = useState<Set<string>>(new Set());
   const handleLowEnergyIdsChange = useCallback((ids: Set<string>) => setLowEnergyIRIds(ids), []);
@@ -259,6 +385,8 @@ export function SimulationResultContent({
   const hasGridReceivers = useMemo(() => detectGridReceivers(sourceReceiverIRMapping), [sourceReceiverIRMapping]);
 
   const [perReceiverMetrics, setPerReceiverMetrics] = useState<PerReceiverMetrics | null>(null);
+  const [acousticParams, setAcousticParams] = useState<AcousticParameters | null>(null);
+  const [metricsLoading, setMetricsLoading] = useState(false);
   const selectedMetric = controlledMetric;
   const setSelectedMetric = onMetricChange ?? (() => {});
 
@@ -270,9 +398,38 @@ export function SimulationResultContent({
   // Fetch per-receiver metrics once when grid receivers are present and we have a simulationId
   useEffect(() => {
     if (!hasGridReceivers || !simulationId || !simType) return;
-    fetchPerReceiverMetrics(simulationId, simType).then((m) => {
-      if (Object.keys(m).length > 0) setPerReceiverMetrics(m);
-    });
+    let cancelled = false;
+    setMetricsLoading(true);
+    fetchPerReceiverMetrics(simulationId, simType)
+      .then((m) => {
+        if (cancelled) return;
+        if (Object.keys(m).length > 0) setPerReceiverMetrics(m);
+      })
+      .finally(() => {
+        if (!cancelled) setMetricsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [hasGridReceivers, simulationId, simType]);
+
+  // Fetch aggregate acoustic metrics for the text-metrics panel (non-grid simulations)
+  useEffect(() => {
+    if (hasGridReceivers || !simulationId || !simType) {
+      setAcousticParams(null);
+      return;
+    }
+    let cancelled = false;
+    setMetricsLoading(true);
+    const fetchMetrics = simType === 'pyroomacoustics'
+      ? fetchPyroomAcousticMetrics
+      : fetchChorasAcousticMetrics;
+    fetchMetrics(simulationId)
+      .then((params) => {
+        if (!cancelled) setAcousticParams(params);
+      })
+      .finally(() => {
+        if (!cancelled) setMetricsLoading(false);
+      });
+    return () => { cancelled = true; };
   }, [hasGridReceivers, simulationId, simType]);
 
   // ── Gradient map: compute point values and dispatch to uiStore ──────────
@@ -354,7 +511,7 @@ export function SimulationResultContent({
 
   // ── Render ──────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-3">
+    <div className="card-stack">
       {isExpanded && mismatchedNames.length > 0 && (
         <Notice type="error" message={
           <div className="flex-1 flex flex-col gap-1.5">
@@ -376,10 +533,13 @@ export function SimulationResultContent({
 
       {/* Gradient metric selector (replaces text metrics when grid receivers used) */}
       {hasGridReceivers && perReceiverMetrics ? (
-        <div className="space-y-2">
+        <div className="card-stack--md">
+          <h3 className="text-xs font-semibold" style={{ color: 'var(--color-on-blue)' }}>
+            Acoustic Metrics
+          </h3>
           {/* Metric dropdown */}
           <div className="flex items-center gap-2">
-            <span className="text-[10px] shrink-0" style={{ color: 'var(--color-on-blue-muted)' }}>Acoustic Metric</span>
+            <span className="text-[10px] shrink-0" style={{ color: 'var(--color-on-blue-muted)' }}>Metric</span>
             <CardSelect
               value={selectedMetric ?? ''}
               onChange={(v) => setSelectedMetric((v || null) as GradientMetric | null)}
@@ -395,7 +555,7 @@ export function SimulationResultContent({
 
           {/* Gradient legend */}
           {selectedMetric && legendRange && (
-            <div className="space-y-1">
+            <div className="card-stack--tight">
               <div
                 className="h-3.5 w-full rounded"
                 style={{ background: GradientMapManager.CSS_GRADIENT }}
@@ -426,20 +586,12 @@ export function SimulationResultContent({
             </div>
           )}
         </div>
+      ) : hasGridReceivers ? (
+        metricsLoading ? <MetricsLoading /> : null
+      ) : metricsLoading ? (
+        <MetricsLoading />
       ) : (
-        /* Text metrics block (no grid receivers) — recessed chip so numbers stay
-           legible on the solid-blue generated card. */
-        metricsBody && (
-          <div
-            className="rounded p-2.5 overflow-x-auto border"
-            style={{ backgroundColor: 'var(--color-blue-chip-bg)', borderColor: 'var(--color-on-blue-faint)', color: 'var(--color-on-blue)' }}
-          >
-            <pre className="whitespace-pre-wrap font-sans text-[10px] leading-relaxed">{metricsBody}</pre>
-            {metricsNote && (
-              <pre className="whitespace-pre-wrap font-sans text-[9px] leading-relaxed mt-1 text-warning">{metricsNote}</pre>
-            )}
-          </div>
-        )
+        acousticParams && <AcousticMetricsPanel params={acousticParams} />
       )}
 
       {lowEnergyIRIds.size > 0 && (
@@ -461,6 +613,8 @@ export function SimulationResultContent({
         onLowEnergyIdsChange={handleLowEnergyIdsChange}
         sourceDisplayNames={sourceDisplayNames}
         receiverDisplayNames={receiverDisplayNames}
+        simulationSourcePositions={simulationSourcePositions}
+        currentSoundPositions={currentSoundPositions}
         receiverGroups={receiverGroups}
         onGoToReceiver={onGoToReceiver}
         fpsExitTrigger={fpsExitTrigger}

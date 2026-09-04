@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { ResonanceAudioMaterialUI } from '@/components/acoustics/ResonanceAudioMaterialUI';
-import { CheckboxField } from '@/components/ui/CheckboxField';
+import { ToggleField } from '@/components/ui/ToggleField';
 import { RefreshIcon } from '@/components/ui/Icon';
 import type { ResonanceAudioConfig, ResonanceRoomMaterial } from '@/types/audio';
 
@@ -58,11 +58,12 @@ export function ResonanceAudioControls({
   };
 
   return (
-    <div className={`flex flex-col gap-1.5 min-w-0 ${className}`}>
+    <div className={`card-stack min-w-0 ${className}`}>
       {/* Bounding Box Visualization Toggle */}
       {enabled && (
         <div className="flex items-center justify-between gap-1">
-          <CheckboxField
+          <ToggleField
+            className="flex-1 min-w-0"
             checked={showBoundingBox}
             onChange={onToggleBoundingBox}
             label="Show Bounding Box"

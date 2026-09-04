@@ -121,7 +121,7 @@ export function AnalyzeModelContent({
   const hasModel = config.speckleData !== undefined || config.modelEntities.length > 0;
 
   return (
-    <div className="space-y-3">
+    <div className="card-stack">
       {!hasModel && (
         <div
           className="rounded p-3 text-xs text-center"
@@ -136,10 +136,10 @@ export function AnalyzeModelContent({
 
       {hasModel && (
 
-        <div className="space-y-1">
+        <div className="card-stack">
 
           {/* Entity count */}
-          <div className="mx-2 text-xxs" style={{ color: 'var(--color-text-3)' }}>
+          <div className="text-xxs" style={{ color: 'var(--color-text-3)' }}>
             {entityCount > 0
               ? `${entityCount} object${entityCount !== 1 ? 's' : ''} detected`
               : 'Loading model objects…'}
@@ -147,7 +147,7 @@ export function AnalyzeModelContent({
 
 
           {/* Optional user context */}
-          <div className="px-2 space-y-1">
+          <div className="card-field">
             <label className="text-xxs font-medium" style={{ color: 'var(--color-secondary-hover)' }}>
               Context (optional)
             </label>
@@ -243,7 +243,7 @@ function CaptureViewSection({ index, screenshots, screenshotFilenames, onUpdateC
   );
 
   return (
-    <div className="px-2 space-y-1">
+    <div className="card-field">
       <label className="text-xxs font-medium" style={{ color: 'var(--color-secondary-hover)' }}>
         Screenshots (optional)
       </label>

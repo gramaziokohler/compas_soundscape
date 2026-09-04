@@ -1,12 +1,8 @@
 /**
  * TreeItemAcousticControls
  *
- * The two extra Object Explorer columns shown while acoustic material assignment
- * is active: a material dropdown and (for Pyroomacoustics) a scattering text input.
- *
- * Operates on the geometry-leaf IDs of a tree row, so assigning at a parent/layer
- * row cascades to all of its child surfaces. Assignments are owned by
- * useAcousticMaterialStore (keyed by raw Speckle geometry IDs).
+ * Material dropdown + scattering field for Object Explorer rows.
+ * Renders as two grid cells when the parent row uses `objectExplorerAcousticGridStyle`.
  */
 
 'use client';
@@ -15,18 +11,19 @@ import { useMemo } from 'react';
 import { useAcousticMaterialStore } from '@/store';
 import { MaterialSelect, type MaterialOption } from '@/components/ui/MaterialSelect';
 import { NumberField } from '@/components/ui/NumberField';
+import { OBJECT_EXPLORER_SCATTERING_FIELD_CH } from '@/components/scene/objectExplorerAcousticLayout';
 import {
   PYROOMACOUSTICS_DEFAULT_SCATTERING,
   PYROOMACOUSTICS_SCATTERING_MIN,
   PYROOMACOUSTICS_SCATTERING_MAX,
 } from '@/utils/constants';
 
+export { OBJECT_EXPLORER_SCATTERING_FIELD_CH };
+
 interface TreeItemAcousticControlsProps {
-  /** Raw Speckle geometry IDs this row controls (node + descendant surfaces). */
   geometryIds: string[];
   sortedMaterials: MaterialOption[];
   materialColors: Map<string, string>;
-  /** Whether to show the scattering column (Pyroomacoustics only). */
   showScattering: boolean;
 }
 
@@ -41,7 +38,6 @@ export function TreeItemAcousticControls({
   const assignMaterialToObjects = useAcousticMaterialStore((s) => s.assignMaterialToObjects);
   const assignScatteringToObjects = useAcousticMaterialStore((s) => s.assignScatteringToObjects);
 
-  // Common material across this row's geometry (null when mixed / unassigned)
   const { commonMaterialId, isMixed } = useMemo(() => {
     const assigned = new Set<string>();
     for (const id of geometryIds) {
@@ -54,7 +50,6 @@ export function TreeItemAcousticControls({
     };
   }, [geometryIds, materialAssignments]);
 
-  // Common scattering across this row's geometry
   const { commonScattering, scatteringMixed } = useMemo(() => {
     if (geometryIds.length === 0) return { commonScattering: null as number | null, scatteringMixed: false };
     const values = new Set<number>();
@@ -67,41 +62,61 @@ export function TreeItemAcousticControls({
     };
   }, [geometryIds, scatteringAssignments]);
 
-  if (geometryIds.length === 0) return null;
+  if (geometryIds.length === 0) {
+    return (
+      <>
+        <div className="justify-self-end" aria-hidden />
+        {showScattering && <div className="justify-self-center" aria-hidden />}
+      </>
+    );
+  }
 
   return (
-    <div className="flex items-center gap-1 shrink-0" data-no-drag onClick={(e) => e.stopPropagation()}>
-      <MaterialSelect
-        value={commonMaterialId || ''}
-        onChange={(matId) => assignMaterialToObjects(geometryIds, matId)}
-        materials={sortedMaterials}
-        materialColors={materialColors}
-        placeholder={isMixed ? '(mixed)' : 'Select...'}
-        opacity={isMixed ? 0.7 : 1}
-        isMixed={isMixed}
-        showSearch
-      />
+    <>
+      <div
+        className="flex justify-end min-w-0 justify-self-end"
+        data-no-drag
+        onClick={(e) => e.stopPropagation()}
+      >
+        <MaterialSelect
+          value={commonMaterialId || ''}
+          onChange={(matId) => assignMaterialToObjects(geometryIds, matId)}
+          materials={sortedMaterials}
+          materialColors={materialColors}
+          placeholder={isMixed ? '(mixed)' : 'Select...'}
+          isMixed={isMixed}
+          showSearch
+          variant="explorer"
+        />
+      </div>
 
       {showScattering && (
-        <NumberField
-          value={commonScattering}
-          step={0.01}
-          placeholder={scatteringMixed ? 'mix' : String(PYROOMACOUSTICS_DEFAULT_SCATTERING)}
-          title="Scattering coefficient (0–1)"
-          containerStyle={{ width: '48px' }}
-          onCommit={(v) => {
-            if (v === null) {
-              assignScatteringToObjects(geometryIds, PYROOMACOUSTICS_DEFAULT_SCATTERING);
-              return;
-            }
-            const clamped = Math.min(
-              PYROOMACOUSTICS_SCATTERING_MAX,
-              Math.max(PYROOMACOUSTICS_SCATTERING_MIN, v),
-            );
-            assignScatteringToObjects(geometryIds, clamped);
-          }}
-        />
+        <div
+          className="flex justify-center min-w-0 justify-self-center"
+          data-no-drag
+          onClick={(e) => e.stopPropagation()}
+        >
+          <NumberField
+            value={commonScattering}
+            precision={2}
+            placeholder={scatteringMixed ? 'mix' : String(PYROOMACOUSTICS_DEFAULT_SCATTERING)}
+            title="Scattering coefficient (0–1)"
+            containerStyle={{ width: `${OBJECT_EXPLORER_SCATTERING_FIELD_CH}ch` }}
+            className="!text-xs !py-0.5 !text-primary placeholder:text-primary"
+            onCommit={(v) => {
+              if (v === null) {
+                assignScatteringToObjects(geometryIds, PYROOMACOUSTICS_DEFAULT_SCATTERING);
+                return;
+              }
+              const clamped = Math.min(
+                PYROOMACOUSTICS_SCATTERING_MAX,
+                Math.max(PYROOMACOUSTICS_SCATTERING_MIN, v),
+              );
+              assignScatteringToObjects(geometryIds, clamped);
+            }}
+          />
+        </div>
       )}
-    </div>
+    </>
   );
 }

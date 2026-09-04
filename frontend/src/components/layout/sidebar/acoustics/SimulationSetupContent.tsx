@@ -2,8 +2,8 @@
  * SimulationSetupContent Component
  *
  * Wrapper component for simulation setup UI.
- * Shows the simulation summary bar (sources / listeners / materials) and the
- * simulation-specific settings (Choras or Pyroomacoustics).
+ * Shows the simulation-specific settings (Choras or Pyroomacoustics).
+ * Source / listener / material counts live in the card footer (SimulationSummaryBar).
  *
  * Also mounts the headless SpeckleSurfaceMaterialsSection so the acoustic
  * material store stays activated while a simulation card exists — this drives
@@ -17,7 +17,6 @@
 import { SpeckleSurfaceMaterialsSection } from '@/components/acoustics/SpeckleSurfaceMaterialsSection';
 import { ChorasSimulationSettings } from './ChorasSimulationSettings';
 import { PyroomAcousticsSimulationSettings } from './PyroomAcousticsSimulationSettings';
-import { SimulationSummaryBar } from './SimulationSummaryBar';
 import type { SimulationConfig, ChorasSimulationConfig, PyroomAcousticsSimulationConfig } from '@/types/acoustics';
 import type { AcousticMaterial } from '@/types/materials';
 import type { Viewer } from '@speckle/viewer';
@@ -59,7 +58,7 @@ export function SimulationSetupContent({
   const initialIsolatedObjectIds = (config as any).speckleIsolatedObjectIds as string[] | null | undefined;
 
   return (
-    <div className="space-y-1">
+    <div className="card-stack">
       {/* Headless — activates the acoustic material store so the Object Explorer
           shows the material/scattering assignment columns for this simulation */}
       <SpeckleSurfaceMaterialsSection
@@ -76,9 +75,6 @@ export function SimulationSetupContent({
         initialIsolatedObjectIds={initialIsolatedObjectIds}
         onIsolationChange={onIsolationChange}
       />
-
-      {/* Source / listener / material summary */}
-      <SimulationSummaryBar />
 
       {/* Choras Settings */}
       {config.type === 'choras' && (

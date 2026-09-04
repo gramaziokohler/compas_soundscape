@@ -285,6 +285,10 @@ export interface SerializedAnalysisConfig {
   likeliness?: number;
   analysisOptions?: Record<string, boolean>;
   applyNoiseReduction?: boolean;
+  /** Audio context card: basename of the source audio persisted under the session's
+   *  data/soundscapes/<session>/audio/ dir — used to rebuild the File/buffer on load so
+   *  the SED waveform and detected-sounds results survive a page refresh. */
+  audio_filename?: string;
   // 3D model analysis result (strip raw from entities)
   analysisResult?: {
     analysisId: string;

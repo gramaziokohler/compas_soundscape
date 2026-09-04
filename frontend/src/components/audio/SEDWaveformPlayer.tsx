@@ -83,7 +83,6 @@ export function SEDWaveformPlayer({
     >
       {/* Detection region overlays — hovered sound only */}
       {detectedSounds.map((sound, soundIdx) => {
-        if (!selectedMask[soundIdx]) return null;
         if (hoveredSoundIndex !== soundIdx) return null;
 
         return sound.detection_segments.map((seg, segIdx) => {
@@ -98,7 +97,7 @@ export function SEDWaveformPlayer({
                 left: `${left}%`,
                 width: `${width}%`,
                 height: '100%',
-                backgroundColor: 'var(--color-primary-hover)',
+                backgroundColor: 'var(--color-warning)',
                 opacity: 0.75,
                 pointerEvents: 'none',
                 transition: 'opacity 0.25s ease',

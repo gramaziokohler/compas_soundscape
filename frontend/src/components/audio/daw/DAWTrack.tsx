@@ -9,10 +9,11 @@ import { WAVESURFER_TIMELINE } from '@/utils/constants';
 
 const LABEL_WIDTH = 120;
 
-/** Closed-lock SVG (interval mode — position is locked, drag disabled) */
+/** Closed-lock SVG (interval mode — position is locked, drag disabled).
+ *  Drawn as an outline only (no fill), in blue, to match the open lock's line style. */
 function LockClosedIcon({ color }: { color: string }) {
   return (
-    <svg width="10" height="10" viewBox="0 0 24 24" fill={color} stroke={color} strokeWidth="2">
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
       <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
       <path d="M7 11V7a5 5 0 0 1 10 0v4" />
     </svg>
@@ -77,8 +78,15 @@ export function DAWTrack({
 
   const handleToggleLock = useCallback(() => {
     const nextMode = schedulingMode === 'interval' ? 'timestamps' : 'interval';
-    handleSchedulingModeChange(sound.id, nextMode, sound.soundDurationMs / 1000);
-  }, [schedulingMode, handleSchedulingModeChange, sound.id, sound.soundDurationMs]);
+    // Switching interval → timestamps: freeze the currently displayed interval
+    // track positions (iteration start times in ms) as explicit timestamps so the
+    // timestamp track reuses exactly what interval mode produced.
+    const explicitTsSec: number[] | undefined =
+      nextMode === 'timestamps' && sound.scheduledIterations?.length
+        ? sound.scheduledIterations.map((ms) => parseFloat((ms / 1000).toFixed(3)))
+        : undefined;
+    handleSchedulingModeChange(sound.id, nextMode, sound.soundDurationMs / 1000, explicitTsSec);
+  }, [schedulingMode, handleSchedulingModeChange, sound.id, sound.soundDurationMs, sound.scheduledIterations]);
 
   return (
     <div

@@ -62,9 +62,30 @@ export function computeInitialDelay(soundId: string, maxDelayMs: number): number
 }
 
 /**
+ * Finalize a 32-bit integer hash so a 1-bit difference in any input bit
+ * (e.g. consecutive iteration indices, which differ only in low bits) is
+ * diffused across all 32 bits. Without an avalanche, djb2's trailing ASCII
+ * digit only toggles the low bits of the final value, so consecutive indices
+ * hash to near-identical offsets and the "random" gaps collapse into fixed,
+ * block-wise spacing (first N iterations all share one gap, next block another).
+ */
+function fmix32(h: number): number {
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
+/**
  * Compute a deterministic jitter offset for a sound's specific iteration.
  * Uses sound ID + iteration index to ensure the offset is stable across renders,
  * preventing timeline refreshes when metadata updates trigger re-extraction.
+ *
+ * The hash is run through an fmix32 avalanche so consecutive iteration indices
+ * produce well-distributed, independent-looking offsets in [-maxJitterMs, maxJitterMs]
+ * rather than the blocky values raw djb2 yields for incrementing indices.
  *
  * @param soundId - Unique sound identifier
  * @param iterationIndex - Zero-based iteration number (0, 1, 2, ...)
@@ -82,8 +103,11 @@ export function computeIterationJitter(soundId: string, iterationIndex: number, 
     hash = hash >>> 0;
   }
 
+  // Avalanche: diffuse the low-bit differences of incrementing indices.
+  hash = fmix32(hash);
+
   // Map hash to range [0, 1]
-  const normalized = hash / 0xffffffff;
+  const normalized = hash / 0x100000000;
   // Map to [-1, 1] then multiply by maxJitterMs
   return (normalized * 2 - 1) * maxJitterMs;
 }
@@ -262,7 +286,7 @@ export function extractTimelineSoundsFromData(
   timelineDuration: number = AUDIO_TIMELINE.DEFAULT_DURATION_MS,
   soundEvents?: SoundEvent[],
   soundTrims?: Record<string, { start: number; end: number }>,
-  intervalJitterSeconds: number = 3,
+  soundIntervalJitter?: Record<string, number>,
   soundSchedulingModes?: Record<string, 'interval' | 'timestamps'>,
   soundTimestamps?: Record<string, number[]>,
   soundIterationDurations?: Record<string, number[]>,
@@ -335,13 +359,17 @@ export function extractTimelineSoundsFromData(
 
     const schedulingMode = soundSchedulingModes?.[soundId] ?? 'interval';
 
+    // Per-track variability (jitter) — keyed by the track's primary sound id.
+    // Absent override means 0. Replaces the removed global intervalJitterSeconds.
+    const trackJitterSeconds = soundIntervalJitter?.[soundId] ?? 0;
+
     console.log(`[DEBUG-TIMELINE] soundId=${soundId} schedulingMode=${schedulingMode} (from store: ${soundSchedulingModes?.[soundId] ?? 'MISSING'}) cat="${(eventOverride as any)?.category ?? (metadata.soundEvent as any).category ?? 'MISSING'}" promptIdx=${eventOverride?.prompt_index ?? metadata.soundEvent.prompt_index}`);
 
     // Timestamps mode: no stagger delay, no jitter — iterations are absolute positions.
     // Interval mode: apply stagger delay so visual offset matches the audio scheduler.
     const initialDelayMs = schedulingMode === 'timestamps'
       ? 0
-      : computeInitialDelay(soundId, intervalJitterSeconds * 1000);
+      : computeInitialDelay(soundId, trackJitterSeconds * 1000);
 
     let iterations: number[];
     let iterationOffsets: number[];
@@ -387,7 +415,7 @@ export function extractTimelineSoundsFromData(
       iterationOffsets = [];
     } else {
       // Interval mode: calculate iterations from interval (original logic)
-      const jitterMs = intervalJitterSeconds * 1000;
+      const jitterMs = trackJitterSeconds * 1000;
       const baseGapMs = intervalSeconds * 1000;
       iterations = [];
       iterationOffsets = [];

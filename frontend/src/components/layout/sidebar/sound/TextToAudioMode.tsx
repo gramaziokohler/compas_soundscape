@@ -42,7 +42,7 @@ export function TextToAudioSliders({
 
   return (
     <>
-      <div className="grid gap-1">
+      <div className="card-stack--tight">
         <RangeSlider
           label="Duration"
           value={config.duration}
@@ -106,7 +106,7 @@ export function AdditionalSettings({
         <span>Additional settings</span>
       </button>
       {isExpanded && (
-        <div className="mt-2">
+        <div className="card-collapse-body">
           <TextToAudioSliders config={config} index={index} onUpdateConfig={onUpdateConfig} />
         </div>
       )}

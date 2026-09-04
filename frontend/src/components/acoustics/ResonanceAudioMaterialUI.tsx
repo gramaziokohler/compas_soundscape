@@ -3,15 +3,6 @@
  *
  * Material assignment UI for Resonance Audio (ShoeBox acoustics).
  * Allows assigning materials to the 6 faces of the room with cascading inheritance.
- *
- * Hierarchy:
- * - All faces (global)
- *   - Left
- *   - Right
- *   - Front
- *   - Back
- *   - Floor (down)
- *   - Ceiling (up)
  */
 
 'use client';
@@ -41,7 +32,6 @@ const FACE_LABELS: Record<RoomFace, string> = {
 
 const FACE_ORDER: RoomFace[] = ['left', 'right', 'front', 'back', 'down', 'up'];
 
-/** Display names for Resonance Audio room materials (keys match MATERIAL_ABSORPTION). */
 const MATERIAL_LABELS: Record<string, string> = {
   transparent: 'Open (No Reflection)',
   'acoustic-ceiling-tiles': 'Acoustic Tiles',
@@ -125,7 +115,6 @@ export function ResonanceAudioMaterialUI({
 
   return (
     <div className="flex flex-col w-full min-w-0 text-xs overflow-hidden">
-      {/* All Faces Root */}
       <div className="flex items-center gap-1 w-full min-w-0">
         <button
           onClick={() => setExpandedAll(!expandedAll)}
@@ -137,21 +126,23 @@ export function ResonanceAudioMaterialUI({
             className={`shrink-0 transition-transform duration-150 ${expandedAll ? 'rotate-90' : ''}`}
           />
         </button>
-        <span className="font-medium text-foreground shrink-0 w-12 truncate">Materials</span>
-        <MaterialSelect
-          value={allFacesMaterial || ''}
-          onChange={handleAllFacesChange}
-          materials={sortedMaterials}
-          materialColors={materialColors}
-          placeholder={isAllFacesMixed ? '(mixed)' : 'Select...'}
-          opacity={isAllFacesMixed ? 0.7 : 1}
-          isMixed={isAllFacesMixed}
-        />
+        <span className="font-medium text-foreground shrink-0 whitespace-nowrap">Materials</span>
+        <div className="ml-auto shrink-0">
+          <MaterialSelect
+            value={allFacesMaterial ?? ''}
+            onChange={handleAllFacesChange}
+            materials={sortedMaterials}
+            materialColors={materialColors}
+            placeholder={isAllFacesMixed ? '(mixed)' : undefined}
+            isMixed={isAllFacesMixed}
+            variant="resonance"
+            allowClear={false}
+          />
+        </div>
       </div>
 
-      {/* Individual Faces */}
       {expandedAll && (
-        <div className="flex flex-col gap-0.5 mt-0.5 w-full min-w-0">
+        <div className="card-collapse-body card-stack--tight w-full min-w-0">
           {FACE_ORDER.map((face) => {
             const faceLabel = FACE_LABELS[face];
             const faceMaterial = materials[face];
@@ -161,13 +152,17 @@ export function ResonanceAudioMaterialUI({
                 key={face}
                 className="flex items-center gap-1 w-full min-w-0 pl-5"
               >
-                <span className="shrink-0 w-12 text-xxs text-secondary-hover truncate">{faceLabel}</span>
-                <MaterialSelect
-                  value={faceMaterial}
-                  onChange={(v) => handleFaceChange(face, v)}
-                  materials={sortedMaterials}
-                  materialColors={materialColors}
-                />
+                <span className="shrink-0 w-12 text-xxs text-secondary-hover whitespace-nowrap">{faceLabel}</span>
+                <div className="ml-auto shrink-0">
+                  <MaterialSelect
+                    value={faceMaterial}
+                    onChange={(v) => handleFaceChange(face, v)}
+                    materials={sortedMaterials}
+                    materialColors={materialColors}
+                    variant="resonance"
+                    allowClear={false}
+                  />
+                </div>
               </div>
             );
           })}

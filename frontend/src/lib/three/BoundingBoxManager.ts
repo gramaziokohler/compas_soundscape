@@ -53,6 +53,12 @@ export class BoundingBoxManager {
   public currentBounds: BoundingBoxBounds | null = null;
   public gumballHandles: THREE.Mesh[] = [];
   public activeGumball: THREE.Mesh | null = null;
+  /** True while a gumball resize drag is in progress. Set by useSpeckleBoundingBoxGumball.ts. */
+  public isDragging = false;
+  /** True for a short window after a gumball drag ends, so the native 'click' that
+   *  follows the drag release (SpeckleEventBridge.handleCanvasClick) can be suppressed. */
+  public justFinishedDragging = false;
+  private justFinishedDraggingTimer: ReturnType<typeof setTimeout> | null = null;
   /** Per-face screen-space labels (Right/Left/Ceiling/Floor/Front/Back). */
   private faceLabels: THREE.Sprite[] = [];
   /** Per-face gumball arrow groups (scaled per-frame for constant screen size). */
@@ -491,6 +497,28 @@ export class BoundingBoxManager {
     });
   }
 
+  /**
+   * Track gumball resize drag state (mirrors SpeckleDragHandler's isDragging/
+   * justFinishedDragging pattern). Called from useSpeckleBoundingBoxGumball.ts's
+   * TransformControls 'dragging-changed' listener.
+   */
+  public setDragging(dragging: boolean): void {
+    this.isDragging = dragging;
+    if (this.justFinishedDraggingTimer) {
+      clearTimeout(this.justFinishedDraggingTimer);
+      this.justFinishedDraggingTimer = null;
+    }
+    if (dragging) {
+      this.justFinishedDragging = false;
+    } else {
+      this.justFinishedDragging = true;
+      this.justFinishedDraggingTimer = setTimeout(() => {
+        this.justFinishedDragging = false;
+        this.justFinishedDraggingTimer = null;
+      }, 200);
+    }
+  }
+
   public setHoveredGumball(mesh: THREE.Mesh | null) {
     if (this.activeGumball && this.activeGumball !== mesh) {
       const mat = this.activeGumball.userData.visualArrowMaterial;
@@ -667,5 +695,9 @@ export class BoundingBoxManager {
    */
   public dispose(): void {
     this.disposeBoundingBox();
+    if (this.justFinishedDraggingTimer) {
+      clearTimeout(this.justFinishedDraggingTimer);
+      this.justFinishedDraggingTimer = null;
+    }
   }
 }

@@ -1,11 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import type { SoundEvent, CardBaseConfig } from '@/types';
-import { SettingsSummary, getSettingsTitle, getSettingsRows } from '@/components/ui/SettingsSummary';
+import type { SoundEvent } from '@/types';
 import { DEFAULT_DBFS } from '@/utils/constants';
 import { SoundCardWaveSurfer } from '@/components/audio/SoundCardWaveSurfer';
 import { SoundCardBody } from './SoundCardBody';
+import { IntervalModeControls } from './IntervalModeControls';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { HelperHint } from '@/components/ui/HelperHint';
 
@@ -13,7 +13,15 @@ import { HelperHint } from '@/components/ui/HelperHint';
  * SoundResultContent Component
  *
  * Renders the playback controls for a generated sound.
- * Shows waveform, volume slider, interval slider.
+ * Shows waveform, volume slider, and — when the track is in interval mode —
+ * the per-track "Interval mode" controls (interval + variability), rendered in
+ * the card's left column (below the Position widget, left of the volume slider).
+ *
+ * Track/card-level scheduling values (schedulingMode, interval, variability)
+ * are keyed by `cardSoundId` (the card's primary sound id) so they apply to
+ * the whole card and all of its variants, regardless of which variant is
+ * currently selected.
+ *
  * The letter-square variant selector is rendered by the Card component
  * (see Card `variants` / `showVariantsPostGen`), not here.
  *
@@ -31,16 +39,17 @@ export interface SoundResultContentProps {
   silent?: boolean;
   soundVolumes: { [soundId: string]: number };
   soundIntervals: { [soundId: string]: number };
-  /** Per-sound scheduling mode: 'interval' (default) or 'timestamps'. */
+  /** Per-track variability (jitter) in seconds, keyed by the card/track sound id. */
+  soundIntervalJitter: { [soundId: string]: number };
+  /** Track/card-level scheduling mode: 'interval' (default) or 'timestamps'. */
   schedulingMode?: 'interval' | 'timestamps';
-  /** Per-sound explicit timestamps in seconds (used when schedulingMode is 'timestamps'). */
-  soundTimestamps?: { [soundId: string]: number[] };
+  /** Primary (track) sound id of this card — track-level settings key. */
+  cardSoundId?: string;
   onPreviewPlayPause?: (soundId: string) => void;
   onPreviewStop?: (soundId: string) => void;
   onVolumeChange?: (soundId: string, volumeDbfs: number) => void;
   onIntervalChange?: (soundId: string, intervalSeconds: number) => void;
-  onSchedulingModeChange?: (soundId: string, mode: 'interval' | 'timestamps') => void;
-  onTimestampsChange?: (soundId: string, timestamps: number[]) => void;
+  onIntervalJitterChange?: (soundId: string, seconds: number) => void;
   onUpdatePosition?: (soundId: string, position: [number, number, number]) => void;
   onUnlinkEntity?: () => void;
   onMute?: (soundId: string) => void;
@@ -48,8 +57,6 @@ export interface SoundResultContentProps {
   isRegenerating?: boolean;
   /** The index of the variant that is currently being generated (variants.length). */
   pendingVariantIdx?: number;
-  /** Card config used to derive the post-gen "Sound Settings" summary. */
-  cardConfig?: CardBaseConfig;
 }
 
 /** Spinner icon reused across the pending-variant placeholder. */
@@ -72,29 +79,21 @@ export function SoundResultContent({
   silent = false,
   soundVolumes,
   soundIntervals,
+  soundIntervalJitter,
   schedulingMode = 'interval',
-  soundTimestamps,
+  cardSoundId,
   onPreviewPlayPause,
   onPreviewStop,
   onVolumeChange,
   onIntervalChange,
-  onSchedulingModeChange: _onSchedulingModeChange,
-  onTimestampsChange,
+  onIntervalJitterChange,
   onUpdatePosition,
   onUnlinkEntity,
   onMute,
   isRegenerating = false,
   pendingVariantIdx: _pendingVariantIdx,
-  cardConfig,
 }: SoundResultContentProps) {
   const isShowingPending = isRegenerating && selectedVariantIdx === _pendingVariantIdx;
-
-  const settingsSummary = cardConfig ? (
-    <SettingsSummary
-      title={getSettingsTitle(cardConfig)}
-      rows={getSettingsRows(cardConfig)}
-    />
-  ) : undefined;
 
   // Unlink confirmation — clicking the link/unlink button asks first.
   const [showUnlinkConfirm, setShowUnlinkConfirm] = useState(false);
@@ -116,18 +115,32 @@ export function SoundResultContent({
     />
   );
 
-  // Volume and interval from live state
+  // Volume from live state (per selected variant, mirrors card preview).
   const currentVolumeDbfs = soundVolumes[generatedSound.id] ?? generatedSound.volume_dbfs ?? DEFAULT_DBFS;
   // The WAV is calibrated to this level — the preview gain is applied relative to it.
   const baseVolumeDbfs = generatedSound.volume_dbfs ?? DEFAULT_DBFS;
-  const currentIntervalSeconds = soundIntervals[generatedSound.id] ?? generatedSound.interval_seconds ?? 30;
 
-  // Resolve current timestamps: prefer store, then fall back to SoundEvent.timestamps (MM:SS → seconds)
-  const currentTimestamps: number[] = soundTimestamps?.[generatedSound.id] ??
-    generatedSound.timestamps?.map((t) => {
-      const [mm, ss] = t.split(':').map(Number);
-      return (mm ?? 0) * 60 + (ss ?? 0);
-    }) ?? [];
+  // Track/card-level interval + variability — keyed by the card's primary
+  // (track) sound id so the values match the DAW timeline track and apply to
+  // every variant of this card. Fall back to the selected variant's id when no
+  // card id is resolved.
+  const trackId = cardSoundId ?? generatedSound.id;
+  const currentIntervalSeconds = soundIntervals[trackId] ?? generatedSound.interval_seconds ?? 30;
+  const currentJitterSeconds = soundIntervalJitter[trackId] ?? 0;
+
+  // Interval-mode controls group — only in interval mode and only when the
+  // store writes are wired up. Slotted into the card's LEFT column (below the
+  // waveform + position widget, i.e. left of the volume slider) via
+  // SoundCardBody's `leftColumnFooter`.
+  const intervalModeControls =
+    schedulingMode === 'interval' && onIntervalChange && onIntervalJitterChange ? (
+      <IntervalModeControls
+        intervalSeconds={currentIntervalSeconds}
+        onIntervalChange={(s) => onIntervalChange(trackId, s)}
+        jitterSeconds={currentJitterSeconds}
+        onJitterChange={(s) => onIntervalJitterChange(trackId, s)}
+      />
+    ) : null;
 
   // When showing the pending variant (regenerating), render a progress placeholder
   if (isShowingPending) {
@@ -136,7 +149,6 @@ export function SoundResultContent({
         {unlinkConfirm}
         {unlinkHint}
         <SoundCardBody
-        settingsSummary={settingsSummary}
         mainContent={
           <div className="flex items-center gap-2 py-1 px-2">
             <SpinnerIcon />
@@ -146,14 +158,9 @@ export function SoundResultContent({
           </div>
         }
         volumeDbfs={currentVolumeDbfs}
-        intervalSeconds={currentIntervalSeconds}
-        schedulingMode={schedulingMode}
-        timestamps={currentTimestamps}
         position={generatedSound.position}
         entityIndex={generatedSound.entity_index}
         onVolumeChange={onVolumeChange ? (dbfs) => onVolumeChange(generatedSound.id, dbfs) : undefined}
-        onIntervalChange={onIntervalChange ? (s) => onIntervalChange(generatedSound.id, s) : undefined}
-        onTimestampsChange={onTimestampsChange ? (ts) => onTimestampsChange(generatedSound.id, ts) : undefined}
         onUpdatePosition={onUpdatePosition ? (pos) => onUpdatePosition(generatedSound.id, pos) : undefined}
         onUnlinkEntity={onUnlinkEntity ? () => setShowUnlinkConfirm(true) : undefined}
         isMuted={isMuted}
@@ -172,7 +179,6 @@ export function SoundResultContent({
       {unlinkConfirm}
       {unlinkHint}
       <SoundCardBody
-      settingsSummary={settingsSummary}
       mainContent={
         <SoundCardWaveSurfer
           audioUrl={generatedSound.url}
@@ -187,14 +193,9 @@ export function SoundResultContent({
         />
       }
       volumeDbfs={currentVolumeDbfs}
-      intervalSeconds={currentIntervalSeconds}
-      schedulingMode={schedulingMode}
-      timestamps={currentTimestamps}
       position={generatedSound.position}
       entityIndex={generatedSound.entity_index}
       onVolumeChange={onVolumeChange ? (dbfs) => onVolumeChange(generatedSound.id, dbfs) : undefined}
-      onIntervalChange={onIntervalChange ? (s) => onIntervalChange(generatedSound.id, s) : undefined}
-      onTimestampsChange={onTimestampsChange ? (ts) => onTimestampsChange(generatedSound.id, ts) : undefined}
       onUpdatePosition={onUpdatePosition ? (pos) => onUpdatePosition(generatedSound.id, pos) : undefined}
       onUnlinkEntity={onUnlinkEntity ? () => setShowUnlinkConfirm(true) : undefined}
       isMuted={isMuted}
@@ -203,6 +204,7 @@ export function SoundResultContent({
       } : undefined}
       storeContext="audioControls"
       onBlueBackground
+      leftColumnFooter={intervalModeControls}
     />
     </>
   );

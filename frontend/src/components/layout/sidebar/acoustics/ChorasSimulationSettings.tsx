@@ -48,11 +48,11 @@ export function ChorasSimulationSettings({
   };
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="card-stack">
 
       {/* Method selector */}
       <div>
-        <label className="text-xs block mb-1 text-neutral-700">
+        <label className="text-xs card-label text-neutral-700">
           Method
         </label>
         <CardSelect

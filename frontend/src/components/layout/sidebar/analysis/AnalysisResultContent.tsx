@@ -1,12 +1,12 @@
 'use client';
 
 import type { AnalysisResult } from '@/types/analysis';
-import { CheckboxField } from '@/components/ui/CheckboxField';
+import { ToggleField } from '@/components/ui/ToggleField';
 
 /**
  * AnalysisResultContent Component
  * 
- * Displays the list of generated text prompts with checkboxes for selection.
+ * Displays the list of generated text prompts with toggles for selection.
  * This is the shared "after generation" UI used by all analysis types.
  */
 
@@ -23,7 +23,7 @@ export function AnalysisResultContent({
   const selectedCount = analysisResult.prompts.filter(p => p.selected).length;
 
   return (
-    <div className="space-y-2">
+    <div className="card-stack--md">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="text-xs font-semibold text-on-blue">
@@ -36,12 +36,12 @@ export function AnalysisResultContent({
 
       {/* Prompt list */}
       <div
-        className="max-h-[min(256px,50dvh)] overflow-y-auto space-y-1"
+        className="card-stack--tight max-h-[min(256px,50dvh)] overflow-y-auto"
       >
         {analysisResult.prompts.map((prompt) => (
-          <label
+          <div
             key={prompt.id}
-            className="flex items-start gap-0 p-1 rounded cursor-pointer transition-colors"
+            className="p-1 rounded transition-colors"
             style={{
               backgroundColor: prompt.selected ? 'var(--color-on-blue-faint)' : 'transparent',
               borderRadius: '6px'
@@ -57,30 +57,26 @@ export function AnalysisResultContent({
               }
             }}
           >
-            <CheckboxField
+            <ToggleField
               checked={prompt.selected}
               onChange={() => onTogglePromptSelection(analysisResult.configIndex, prompt.id)}
-              label=""
+              label={prompt.text}
+              className="!mb-0"
             />
-            <div className="flex-1 text-xs text-on-blue">
-              {prompt.text}
-              
-              {/* Metadata display (if available) */}
-              {prompt.metadata && (
-                <div className="flex gap-3 mt-1 text-[10px]" style={{ color: 'var(--color-on-blue-muted)' }}>
-                  {prompt.metadata.dbfs !== undefined && (
-                    <span>Level: {prompt.metadata.dbfs}dBFS</span>
-                  )}
-                  {prompt.metadata.interval_seconds !== undefined && (
-                    <span>Interval: {prompt.metadata.interval_seconds}s</span>
-                  )}
-                  {prompt.metadata.confidence !== undefined && (
-                    <span>Confidence: {(prompt.metadata.confidence * 100).toFixed(0)}%</span>
-                  )}
-                </div>
-              )}
-            </div>
-          </label>
+            {prompt.metadata && (
+              <div className="card-title-info flex gap-3 pl-0 text-[10px]" style={{ color: 'var(--color-on-blue-muted)' }}>
+                {prompt.metadata.dbfs !== undefined && (
+                  <span>Level: {prompt.metadata.dbfs}dBFS</span>
+                )}
+                {prompt.metadata.interval_seconds !== undefined && (
+                  <span>Interval: {prompt.metadata.interval_seconds}s</span>
+                )}
+                {prompt.metadata.confidence !== undefined && (
+                  <span>Confidence: {(prompt.metadata.confidence * 100).toFixed(0)}%</span>
+                )}
+              </div>
+            )}
+          </div>
         ))}
       </div>
     </div>

@@ -39,9 +39,16 @@ export function PositionWidget({
 }: PositionWidgetProps) {
   return (
     <div
-      className="position-widget"
+      className="flex flex-col"
       title={disabled ? disabledTitle : undefined}
     >
+      <span
+        className={`text-[10px] mb-1 ${onBlueBackground ? "" : "text-secondary-hover"}`}
+        style={onBlueBackground ? { color: "var(--color-on-blue-muted)" } : undefined}
+      >
+        Position
+      </span>
+      <div className="position-widget">
       {(["x", "y", "z"] as const).map((axis, axisIdx) => {
         const val = position?.[axisIdx] ?? 0;
         return (
@@ -53,7 +60,13 @@ export function PositionWidget({
             disabled={disabled}
             onBlueBackground={onBlueBackground}
             precision={POSITION_PRECISION}
-            containerStyle={{ width: estimatePrefixedNumberFieldWidth(val, POSITION_PRECISION), opacity: disabled ? 0.4 : 1 }}
+            containerStyle={{
+              width: estimatePrefixedNumberFieldWidth(val, POSITION_PRECISION),
+              opacity: disabled ? 0.4 : 1,
+              // `ch` on the wrapper must match the mono input font so width tracks digits.
+              fontFamily: "var(--font-mono)",
+              fontSize: "0.75rem",
+            }}
             className="!text-xs !py-0.5"
             onChange={(n) => {
               const newPos: [number, number, number] = [
@@ -67,6 +80,7 @@ export function PositionWidget({
           />
         );
       })}
+      </div>
     </div>
   );
 }

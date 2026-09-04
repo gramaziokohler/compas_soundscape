@@ -30,11 +30,6 @@ export function SoundPreContent(props: SoundPreContentProps) {
   // ── Derive shared-control values from config ──────────────────────────────
   const volumeDbfs = config.dbfs ?? DEFAULT_DBFS;
 
-  // ── Scheduling defaults (pre-generation) ──────────────────────────────────
-  const intervalSeconds = config.interval_seconds ?? 30;
-  const schedulingMode: 'interval' | 'timestamps' = 'interval';
-  const timestamps: number[] = [];
-
   // Entity is linked when config.entity exists
   const entityIndex: number | undefined = config.entity
     ? (typeof config.entity.index === 'number' ? config.entity.index : -1)
@@ -95,9 +90,6 @@ export function SoundPreContent(props: SoundPreContentProps) {
         />
       }
       volumeDbfs={volumeDbfs}
-      intervalSeconds={intervalSeconds}
-      schedulingMode={schedulingMode}
-      timestamps={timestamps}
       position={displayedPosition}
       entityIndex={entityIndex}
       onVolumeChange={handleVolumeChange}
