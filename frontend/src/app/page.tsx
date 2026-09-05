@@ -161,6 +161,7 @@ function HomeContent() {
         negativePrompt: restored.globalSettings.negativePrompt,
         audioModel: restored.globalSettings.audioModel,
         ttsModel: restored.globalSettings.ttsModel,
+        orchestrateSoundsEnabled: restored.globalSettings.orchestrateSoundsEnabled,
       });
       // sample-audio cards lost their (blob) clip on refresh — reload the bundled sample.
       void soundGen.rehydrateSampleAudioConfigs();
@@ -1332,15 +1333,22 @@ function HomeContent() {
         const normalizedCategory = (p.metadata?.category || '').toLowerCase().replace(/[\s-]+/g, '_');
         const isBackground = normalizedCategory === 'background' || normalizedCategory === 'background_sound';
         const orchestrateMeta = p.metadata?.orchestrateMeta;
-        const isSpeech = orchestrateMeta?.isSpeech || normalizedCategory === 'speech';
+        const scenarioSource = p.metadata?.scenarioSource;
+        const isSpeech = orchestrateMeta?.isSpeech
+          || scenarioSource?.isSpeech
+          || normalizedCategory === 'speech';
         const variantCount = orchestrateMeta?.variants?.length
           ? Math.max(...orchestrateMeta.variants, 1)
-          : 1;
+          : (scenarioSource?.copyCount ?? 1);
 
-        // Resolve entities: for orchestrateMeta with allObjectIds, resolve all of them
+        // Resolve entities: orchestrateMeta.allObjectIds, or scenarioSource.objectsInvolved,
+        // or the prompt's resolved entity.
         const resolvedEntities = (() => {
-          if (orchestrateMeta?.allObjectIds?.length) {
-            return orchestrateMeta.allObjectIds.map((objId: string) => {
+          const allIds = orchestrateMeta?.allObjectIds?.length
+            ? orchestrateMeta.allObjectIds
+            : (scenarioSource?.objectsInvolved?.length ? scenarioSource.objectsInvolved : null);
+          if (allIds && allIds.length) {
+            return allIds.map((objId: string) => {
               const primaryRaw = { id: objId, foleyPosition: p.position };
               return resolveEntityFromTreeId(objId, primaryRaw.foleyPosition);
             }).filter(Boolean);
@@ -1352,7 +1360,9 @@ function HomeContent() {
         })();
 
         const config: SoundGenerationConfig = {
-          prompt: isSpeech ? (orchestrateMeta?.speechLines?.[0] || p.text) : p.text,
+          prompt: isSpeech
+            ? (orchestrateMeta?.speechLines?.[0] || scenarioSource?.speechLines?.[0] || scenarioSource?.script || p.text)
+            : p.text,
           duration: isBackground ? 10 : (p.metadata?.duration_seconds ?? 10),
           guidance_scale: 4.5,
           negative_prompt: '',
@@ -1364,7 +1374,7 @@ function HomeContent() {
           entities: resolvedEntities,
           entity: resolvedEntities?.[0], // backward compat
           type: isSpeech ? 'text-to-speech' : undefined,
-          voice_name: isSpeech ? (orchestrateMeta?.voiceName || 'Kore') : undefined,
+          voice_name: isSpeech ? (orchestrateMeta?.voiceName || scenarioSource?.voiceName || 'Kore') : undefined,
           ...(p.position && !resolvedEntities?.length ? { position: p.position } : {}),
           ...(!isBackground && p.metadata?.timestamps?.length ? { timestamps: p.metadata.timestamps } : {}),
           ...(p.metadata?.category ? { category: p.metadata.category } : {}),
@@ -1382,6 +1392,7 @@ function HomeContent() {
               timestamps: orchestrateMeta.timestamps,
             },
           } : {}),
+          ...(scenarioSource ? { scenarioSource } : {}),
         };
         return config;
       });
@@ -1391,6 +1402,12 @@ function HomeContent() {
 
       // Add to sound generation
       soundGen.setSoundConfigsFromPrompts(newConfigs);
+
+      // Scenario-derived cards default the "orchestrate sounds" toggle ON, so a
+      // freshly-created scenario sound section orchestrates on its first generate.
+      if (newConfigs.some((c) => c.scenarioSource)) {
+        soundGen.setOrchestrateSoundsEnabled(true);
+      }
       
       // Set up orchestrate iteration links and initial schedule bake
       const hasOrchestrateMeta = newConfigs.some(c => c.orchestrateMeta);
@@ -1536,6 +1553,7 @@ function HomeContent() {
             negativePrompt: restored.globalSettings.negativePrompt,
             audioModel: restored.globalSettings.audioModel,
             ttsModel: restored.globalSettings.ttsModel,
+            orchestrateSoundsEnabled: restored.globalSettings.orchestrateSoundsEnabled,
           }
         );
 
@@ -1849,6 +1867,7 @@ function HomeContent() {
           negativePrompt: soundGen.globalNegativePrompt,
           audioModel: soundGen.audioModel,
           ttsModel: soundGen.ttsModel,
+          orchestrateSoundsEnabled: soundGen.orchestrateSoundsEnabled,
         },
         useAudioControlsStore.getState().soundVolumes,
         useAudioControlsStore.getState().soundIntervals,

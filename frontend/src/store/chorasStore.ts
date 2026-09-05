@@ -30,7 +30,7 @@ import {
 } from '@/utils/constants';
 import { groupSoundsByPosition, collapseVariantsToOne } from '@/utils/positionKey';
 import { notifyError } from './errorsStore';
-import { resolveSimulationLayerName } from './acousticLayerStore';
+import { resolveSimulationLayerName, resolveSimulationGeometryObjectIds } from './acousticLayerStore';
 import { useUIStore } from './uiStore';
 import { useAudioControlsStore } from './audioControlsStore';
 import type { SourceReceiverIRMapping } from '@/types/audio';
@@ -429,7 +429,7 @@ export const useChorasStore = create<ChorasStoreState>()(
                 dg_cfl:               simulationSettings.dg_cfl,
               },
               sourceReceiverPairs,
-              geometryObjectIds,
+              geometryObjectIds?.length ? geometryObjectIds : resolveSimulationGeometryObjectIds(),
             );
 
             // Poll until completion

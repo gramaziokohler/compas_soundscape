@@ -913,8 +913,14 @@ async def cancel_speech_agent_stream(speech_id: str):
 
 class OrchestrateStreamRequest(BaseModel):
     scenario_id: str
-    foley_id: str
-    speech_id: str
+    foley_id: str | None = None
+    speech_id: str | None = None
+    # Optional inline (user-edited) foley/speech results. When provided, they take
+    # precedence over loading the saved JSON files, so the frontend can feed back
+    # its edits (deleted cards, removed speech lines, changed copy counts) into
+    # the orchestrate input at generation time.
+    foley_data: dict | None = None
+    speech_data: dict | None = None
     llm_model: str = DEFAULT_LLM_MODEL
 
 
@@ -922,8 +928,9 @@ class OrchestrateStreamRequest(BaseModel):
 async def orchestrate_stream(request: OrchestrateStreamRequest):
     """SSE endpoint: streams orchestrated playlist entries one by one.
 
-    Loads scenario, foley, and speech JSON files from disk, then calls the
-    orchestrate agent to compile the final parametric audio playlist.
+    Loads scenario, foley, and speech JSON files from disk (or uses inline
+    user-edited foley_data / speech_data), then calls the orchestrate agent to
+    compile the final parametric audio playlist.
 
     Events:
       - {"type":"queued","orchestrate_id":"<uuid>","queue_position":N,"queue_total":M}
@@ -945,49 +952,74 @@ async def orchestrate_stream(request: OrchestrateStreamRequest):
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
-    if not _re.match(r'^[0-9a-f-]+$', request.foley_id):
-        return StreamingResponse(
-            make_error_stream("Invalid foley_id"),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
-    if not _re.match(r'^[0-9a-f-]+$', request.speech_id):
-        return StreamingResponse(
-            make_error_stream("Invalid speech_id"),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
 
     scenario_file = Path(TEMP_ANALYSIS_DIR) / f"scenarios_{request.scenario_id}.json"
-    foley_file = Path(TEMP_ANALYSIS_DIR) / f"foley_{request.foley_id}.json"
-    speech_file = Path(TEMP_ANALYSIS_DIR) / f"speech_{request.speech_id}.json"
-
     if not scenario_file.exists():
         return StreamingResponse(
             make_error_stream("Scenario not found"),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
-    if not foley_file.exists():
-        return StreamingResponse(
-            make_error_stream("Foley result not found"),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
-    if not speech_file.exists():
-        return StreamingResponse(
-            make_error_stream("Speech result not found"),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
+
+    # ── Resolve foley input: inline (user-edited) or saved file ─────────────
+    foley_data: dict | None = None
+    if request.foley_data is not None:
+        foley_data = request.foley_data
+    else:
+        if not request.foley_id or not _re.match(r'^[0-9a-f-]+$', request.foley_id):
+            return StreamingResponse(
+                make_error_stream("Invalid foley_id"),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        foley_file = Path(TEMP_ANALYSIS_DIR) / f"foley_{request.foley_id}.json"
+        if not foley_file.exists():
+            return StreamingResponse(
+                make_error_stream("Foley result not found"),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        try:
+            with open(foley_file, "r", encoding="utf-8") as f:
+                foley_data = json.load(f)
+        except Exception as e:
+            return StreamingResponse(
+                make_error_stream(f"Failed to load foley data: {e}"),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
+    # ── Resolve speech input: inline (user-edited) or saved file ────────────
+    speech_data: dict | None = None
+    if request.speech_data is not None:
+        speech_data = request.speech_data
+    else:
+        if not request.speech_id or not _re.match(r'^[0-9a-f-]+$', request.speech_id):
+            return StreamingResponse(
+                make_error_stream("Invalid speech_id"),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        speech_file = Path(TEMP_ANALYSIS_DIR) / f"speech_{request.speech_id}.json"
+        if not speech_file.exists():
+            return StreamingResponse(
+                make_error_stream("Speech result not found"),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        try:
+            with open(speech_file, "r", encoding="utf-8") as f:
+                speech_data = json.load(f)
+        except Exception as e:
+            return StreamingResponse(
+                make_error_stream(f"Failed to load speech data: {e}"),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
 
     try:
         with open(scenario_file, "r", encoding="utf-8") as f:
             scenario_data = json.load(f)
-        with open(foley_file, "r", encoding="utf-8") as f:
-            foley_data = json.load(f)
-        with open(speech_file, "r", encoding="utf-8") as f:
-            speech_data = json.load(f)
     except Exception as e:
         return StreamingResponse(
             make_error_stream(f"Failed to load data: {e}"),

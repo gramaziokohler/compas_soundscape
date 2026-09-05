@@ -56,6 +56,10 @@ let _activeCount = 0;              // concurrent generation invocations in fligh
 let _targetGlobal = false;         // any active invocation is a "generate all"
 const _targetIndices = new Set<number>();
 
+// Latest orchestrate-agent status string, so the generation poll can combine it
+// into the progress line ("Generating … · Orchestrating …"). Cleared per invocation.
+let _orchestrateProgressStatus: string | null = null;
+
 // Per-type config-validation error shown inline on the sound card (mirrors the
 // "Assign materials first" card-error pattern — not a toast). Also used as the
 // disabled-reason on the per-card Generate button.
@@ -161,6 +165,201 @@ function applyTrimRegions(events: any[]): void {
   }
 }
 
+// ─── Orchestrate (parallel with generation) ───────────────────────────────────
+
+/** Combine the generation poll status with any active orchestrate-agent status. */
+function combinedProgress(status: string): string {
+  return _orchestrateProgressStatus ? `${status} · ${_orchestrateProgressStatus}` : status;
+}
+
+/** One orchestrate playlist entry (timeline dynamics + levels), keyed by entry id. */
+interface OrchestrateDynamics {
+  trigger: { type: string; expression: string[]; delay: number[] };
+  variants: number[];
+  spl: string;
+}
+
+/** POST an SSE endpoint and yield parsed JSON events (mirrors analysisStore.streamPrompts). */
+async function* streamOrchestrate(
+  url: string,
+  body: object,
+  signal: AbortSignal,
+): AsyncGenerator<any> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Orchestration failed' }));
+    throw new Error(err.detail || 'Orchestration failed');
+  }
+  if (!res.body) throw new Error('No response body from orchestrate stream');
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop() ?? '';
+      for (const block of parts) {
+        const dataLine = block.split('\n').find((l) => l.startsWith('data: '));
+        if (!dataLine) continue;
+        const data = dataLine.slice(6).trim();
+        if (data === '[DONE]') return;
+        const event = JSON.parse(data);
+        if (event.type === 'error') throw new Error(event.message);
+        yield event;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+/**
+ * Run the orchestrate agent for each unique scenario source, rebuilding the
+ * foley + speech input from the user's current (edited) cards. Runs fully in
+ * parallel with sound generation — the returned maps are applied at the sync
+ * point once both settle.
+ */
+async function runOrchestrationForSources(
+  scenarioGroups: Map<string, SoundGenerationConfig[]>,
+  signal: AbortSignal,
+  onProgress?: (status: string) => void,
+): Promise<{ entryById: Map<string, OrchestrateDynamics>; orchestrateIdByScenario: Map<string, string> }> {
+  const entryById = new Map<string, OrchestrateDynamics>();
+  const orchestrateIdByScenario = new Map<string, string>();
+  let entryCount = 0;
+
+  for (const [scenarioId, configs] of scenarioGroups) {
+    const foleySounds: any[] = [];
+    const speeches: any[] = [];
+    configs.forEach((config) => {
+      const src = config.scenarioSource!;
+      if (src.isSpeech) {
+        speeches.push({
+          id: src.entryId,
+          timestamps: src.timestamps,
+          character: src.character,
+          script: (src.speechLines.length ? src.speechLines : [src.script]).join('; '),
+          position: src.position,
+          copyCount: src.speechLines.length || 1,
+        });
+      } else {
+        foleySounds.push({
+          id: src.entryId,
+          soundName: src.soundName,
+          description: src.description,
+          category: src.category,
+          duration: src.duration,
+          timestamps: src.timestamps,
+          objectsInvolved: src.objectsInvolved,
+          position: src.position,
+          copyCount: src.copyCount,
+        });
+      }
+    });
+
+    try {
+      let orchestrateId = '';
+      for await (const event of streamOrchestrate(
+        `${API_BASE_URL}/api/orchestrate-stream`,
+        {
+          scenario_id: scenarioId,
+          foley_data: { sounds: foleySounds },
+          speech_data: { speeches },
+          llm_model: DEFAULT_LLM_MODEL,
+        },
+        signal,
+      )) {
+        if (event.type === 'queued') {
+          onProgress?.('Orchestrating timeline… queued');
+        } else if (event.type === 'entry') {
+          entryCount += 1;
+          onProgress?.(`Orchestrating timeline… ${entryCount} sound${entryCount === 1 ? '' : 's'}`);
+          const entry = event.entry as { id: string } & OrchestrateDynamics;
+          if (entry.id) {
+            entryById.set(entry.id, {
+              trigger: entry.trigger,
+              variants: entry.variants,
+              spl: entry.spl,
+            });
+          }
+        } else if (event.type === 'done') {
+          orchestrateId = (event.orchestrate_id as string) ?? '';
+        }
+      }
+      orchestrateIdByScenario.set(scenarioId, orchestrateId);
+    } catch (e) {
+      // Orchestration is a best-effort enhancement — degrade to an un-orchestrated
+      // (interval-mode) schedule rather than failing the whole generation.
+      console.warn('[soundscapeStore] Orchestration failed, continuing without parametric schedule:', e);
+    }
+  }
+
+  return { entryById, orchestrateIdByScenario };
+}
+
+/**
+ * Apply orchestrate dynamics (trigger/variants/SPL) to the scenario-source configs
+ * and generated events. Called at the sync point once both orchestration and sound
+ * generation have settled, so the parametric schedule (bakeOrchestrateSchedule) can
+ * use the compiled timeline.
+ */
+function applyOrchestrateDynamics(
+  entryById: Map<string, OrchestrateDynamics>,
+  orchestrateIdByScenario: Map<string, string>,
+): void {
+  const state = useSoundscapeStore.getState();
+  const splByIndex = new Map<number, number>();
+
+  const nextConfigs = state.soundConfigs.map((c, index) => {
+    const src = c.scenarioSource;
+    if (!src) return c;
+    const dynamics = entryById.get(src.entryId);
+    if (!dynamics) return c;
+    const splMatch = dynamics.spl?.match(/(-?\d+(?:\.\d+)?)/);
+    const dbfsVal = splMatch ? parseFloat(splMatch[1]) : undefined;
+    if (dbfsVal !== undefined) splByIndex.set(index, dbfsVal);
+    return {
+      ...c,
+      ...(dbfsVal !== undefined ? { dbfs: dbfsVal } : {}),
+      orchestrateMeta: {
+        orchestrateId: orchestrateIdByScenario.get(src.scenarioId) ?? '',
+        entryId: src.entryId,
+        trigger: dynamics.trigger,
+        variants: dynamics.variants,
+        allObjectIds: src.objectsInvolved,
+        isSpeech: src.isSpeech,
+        voiceName: src.voiceName,
+        speechLines: src.isSpeech ? src.speechLines : undefined,
+        timestamps: src.timestamps,
+      },
+    };
+  });
+
+  const withVolume = (events: any[] | null): any[] | null => {
+    if (!events || splByIndex.size === 0) return events;
+    return events.map((e) => {
+      const spl = splByIndex.get(e.prompt_index);
+      return spl !== undefined ? { ...e, volume_dbfs: spl } : e;
+    });
+  };
+
+  useSoundscapeStore.setState({
+    soundConfigs: nextConfigs,
+    generatedSounds: withVolume(state.generatedSounds) ?? state.generatedSounds,
+    soundscapeData: withVolume(state.soundscapeData),
+  });
+}
+
 // ─── Partialize ───────────────────────────────────────────────────────────────
 
 export const soundscapePartialize = (state: SoundscapeStoreState) => ({
@@ -185,6 +384,7 @@ export const soundscapePartialize = (state: SoundscapeStoreState) => ({
   audioModel: state.audioModel,
   llmModel: state.llmModel,
   ttsModel: state.ttsModel,
+  orchestrateSoundsEnabled: state.orchestrateSoundsEnabled,
 });
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -209,6 +409,9 @@ export interface SoundscapeStoreState {
   audioModel: string;
   llmModel: string;
   ttsModel: string;
+  /** When true, generating scenario-derived sounds also runs the orchestrate agent
+   *  in parallel to compile the parametric timeline (trigger/variants/SPL). */
+  orchestrateSoundsEnabled: boolean;
 
   handleAddConfig: (type?: CardType) => void;
   handleBatchAddConfigs: (count: number) => number;
@@ -236,6 +439,7 @@ export interface SoundscapeStoreState {
   setAudioModel: (model: string) => void;
   setLlmModel: (model: string) => void;
   setTtsModel: (model: string) => void;
+  setOrchestrateSoundsEnabled: (val: boolean) => void;
   handleUploadAudio: (index: number, file: File) => Promise<void>;
   handleClearUploadedAudio: (index: number) => void;
   handleLibrarySearch: (index: number) => Promise<void>;
@@ -261,7 +465,7 @@ export interface SoundscapeStoreState {
   restoreSoundscape: (
     configs: SoundGenerationConfig[],
     events: any[],
-    settings?: { negativePrompt?: string; audioModel?: string; llmModel?: string; ttsModel?: string },
+    settings?: { negativePrompt?: string; audioModel?: string; llmModel?: string; ttsModel?: string; orchestrateSoundsEnabled?: boolean },
   ) => void;
   injectExtractedSEDSounds: (sounds: Array<{
     name: string;
@@ -296,6 +500,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         llmModel: DEFAULT_LLM_MODEL,
         audioModel: DEFAULT_AUDIO_MODEL,
         ttsModel: DEFAULT_TTS_MODEL,
+        orchestrateSoundsEnabled: false,
 
         handleAddConfig: (type = 'text-to-audio') => {
           const { globalDuration, globalSteps, soundConfigs } = get();
@@ -644,6 +849,34 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           beginSoundGeneration();
           trackGenerationTargets(targetIndices);
 
+          // ── Orchestrate (launched in PARALLEL with generation) ─────────────
+          // The orchestrate agent's inputs (scenario + user-edited foley/speech) are
+          // independent of the generated audio, so it runs concurrently with the ML /
+          // TTS / ElevenLabs paths and is joined at the sync point below.
+          const orchestrateEnabled = get().orchestrateSoundsEnabled;
+          const scenarioGroups = new Map<string, SoundGenerationConfig[]>();
+          if (orchestrateEnabled) {
+            soundConfigs.forEach((config) => {
+              const src = config.scenarioSource;
+              if (!src) return;
+              const arr = scenarioGroups.get(src.scenarioId) ?? [];
+              arr.push(config);
+              scenarioGroups.set(src.scenarioId, arr);
+            });
+          }
+          // Only launch orchestration when this invocation actually generates
+          // scenario-derived sounds (targeted), but feed it the FULL edited set
+          // so the compiled timeline still references every scenario sound.
+          const hasTargetedScenario = withIndices.some(({ config }) => config.scenarioSource);
+          _orchestrateProgressStatus = null;
+          const orchestratePromise =
+            orchestrateEnabled && hasTargetedScenario && scenarioGroups.size > 0
+              ? runOrchestrationForSources(scenarioGroups, controller.signal, (status) => {
+                  _orchestrateProgressStatus = status;
+                  set({ soundGenProgress: status }, false, 'soundscape/orchestrateProgress');
+                })
+              : null;
+
           try {
             let generatedEvents: any[] = [];
 
@@ -742,7 +975,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   onStatus: (s) => {
                     set(
                       {
-                        soundGenProgress: s.status,
+                        soundGenProgress: combinedProgress(s.status),
                         soundGenProgressValue: s.progress,
                       },
                       false,
@@ -886,7 +1119,11 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 ttsConfigs.map(c => ({ origIndex: c.originalIndex, type: c.config.type, promptLen: c.config.prompt?.length, speechLines: (c.config as any).orchestrateMeta?.speechLines?.length })));
               const ttsTexts: any[] = [];
               ttsConfigs.forEach(({ config, originalIndex }) => {
-                const speechLines = (config as any).orchestrateMeta?.speechLines as string[] | undefined;
+                // Speech lines come from either an orchestrate-compiled entry
+                // (orchestrateMeta.speechLines) or a scenario-derived "incomplete"
+                // card (scenarioSource.speechLines, pre-orchestrate).
+                const speechLines = ((config as any).orchestrateMeta?.speechLines
+                  ?? config.scenarioSource?.speechLines) as string[] | undefined;
                 if (speechLines && speechLines.length > 0) {
                   // Each speech line is an independent dialogue sample — generate all
                   // of them as variants of the same card (same prompt_index, different
@@ -983,7 +1220,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   onStatus: (s) => {
                     set(
                       {
-                        soundGenProgress: s.status,
+                        soundGenProgress: combinedProgress(s.status),
                         soundGenProgressValue: s.progress,
                       },
                       false,
@@ -1092,6 +1329,15 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               'soundscape/generateDone',
             );
             applyTrimRegions(allEvents);
+
+            // ── Orchestrate sync point: join the parallel orchestrate agent and
+            // apply its dynamics (trigger/variants/SPL) before the final bake. ──
+            if (orchestratePromise) {
+              const { entryById, orchestrateIdByScenario } = await orchestratePromise;
+              if (entryById.size > 0) {
+                applyOrchestrateDynamics(entryById, orchestrateIdByScenario);
+              }
+            }
           } catch (err: any) {
             if (err.name === 'AbortError' || err.message === 'AbortError') {
               const msg = 'Sound generation stopped by user.';
@@ -1165,7 +1411,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 onStatus: (s) => {
                   set(
                     {
-                      soundGenProgress: s.status,
+                      soundGenProgress: combinedProgress(s.status),
                       soundGenProgressValue: s.progress,
                     },
                     false,
@@ -1430,6 +1676,9 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
 
         setTtsModel: (model) =>
           set({ ttsModel: model }, false, 'soundscape/setTtsModel'),
+
+        setOrchestrateSoundsEnabled: (val) =>
+          set({ orchestrateSoundsEnabled: val }, false, 'soundscape/setOrchestrateSoundsEnabled'),
 
         handleUploadAudio: async (index, file) => {
           try {
@@ -2006,6 +2255,9 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               ...(settings?.audioModel !== undefined && { audioModel: settings.audioModel }),
               ...(settings?.llmModel !== undefined && { llmModel: settings.llmModel }),
               ...(settings?.ttsModel !== undefined && { ttsModel: settings.ttsModel }),
+              ...(settings?.orchestrateSoundsEnabled !== undefined && {
+                orchestrateSoundsEnabled: settings.orchestrateSoundsEnabled,
+              }),
             },
             false,
             'soundscape/restore',

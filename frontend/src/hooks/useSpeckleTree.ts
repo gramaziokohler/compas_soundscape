@@ -581,12 +581,16 @@ export function useSpeckleTree(worldTree: any, updateTrigger?: number, modelFile
     });
   }, [rootNodes]);
 
+  const setSelection = useCallback((objectIds: string[]) => {
+    setSelectedObjectIds(objectIds);
+  }, []);
+
   const selectObject = useCallback((objectId: string) => {
     setSelectedObjectIds([objectId]);
   }, []);
 
   const addToSelection = useCallback((objectId: string) => {
-    setSelectedObjectIds(prev => [...prev, objectId]);
+    setSelectedObjectIds(prev => prev.includes(objectId) ? prev : [...prev, objectId]);
   }, []);
 
   const clearSelection = useCallback(() => {
@@ -604,6 +608,7 @@ export function useSpeckleTree(worldTree: any, updateTrigger?: number, modelFile
     selectedObjectIds,
     toggleNodeExpansion,
     expandToShowObject,
+    setSelection,
     selectObject,
     addToSelection,
     clearSelection,

@@ -1345,11 +1345,18 @@ For the duration estimation (in seconds with 0.1 precision):
         duration: int,
         people_count: int,
         likeliness: int,
+        has_furniture: bool = True,
+        room_bounds: str | None = None,
     ) -> tuple[str, str]:
         """Build system and user prompts for the scenarist agent.
 
         Always generates exactly 1 scenario.
         Single source of truth used by both scenarist_agent and stream_scenarist_agent.
+
+        When ``has_furniture`` is False the LLM must NOT hallucinate linked entity IDs;
+        instead it anchors actions to fixed positions. If ``room_bounds`` is provided
+        (the full 3D model bounding box, available even with no furniture), the scene
+        is placed strictly inside those extents.
         """
         duration_mmss = f"{duration // 60}:{duration % 60:02d}"
         context_note = (
@@ -1357,11 +1364,68 @@ For the duration estimation (in seconds with 0.1 precision):
             if user_context
             else ""
         )
+
+        if has_furniture:
+            spatial_grounding = (
+                "You must anchor every human movement, gesture, and pathing decision strictly within the "
+                "physical layout provided by the object bounding boxes."
+            )
+            constraint_1 = (
+                "1. Object Referencing: When an object is interacted with, you MUST reference it exactly "
+                "as `object.name (ids: HEX_KEY_1, HEX_KEY_2)`. Use multiple hex keys if associated with "
+                "multiple objects."
+            )
+            spatial_analysis_step = (
+                "1. Spatial Analysis: Identify the primary paths, seating capacities, and dead zones "
+                "based on the bounding boxes."
+            )
+            example_description = (
+                'Detailed behavioral description referencing objects as '
+                'object.name (ids: hex1, hex2).'
+            )
+        elif room_bounds:
+            spatial_grounding = (
+                "You must anchor every human movement, gesture, and pathing decision strictly within the "
+                f"room extents {room_bounds}. No object list is available — do NOT invent object references, "
+                "IDs, or linked entities; describe each action at an explicit fixed [x, y, z] position."
+            )
+            constraint_1 = (
+                "1. Spatial Positioning (no object list available): The space has NO resolvable object IDs. "
+                f"The room extents are: {room_bounds}. Place every action at a fixed [x, y, z] position "
+                "INSIDE these extents. Do NOT invent object references, IDs, or linked entities — describe "
+                "positions explicitly (e.g. 'at [3.2, 1.0, 1.5] near the east wall')."
+            )
+            spatial_analysis_step = (
+                f"1. Spatial Analysis: Work strictly within the room extents {room_bounds}. "
+                "Identify plausible zones (center, corners, edges) for each action."
+            )
+            example_description = (
+                'Detailed behavioral description with an explicit fixed [x, y, z] position '
+                'inside the room extents (no object IDs).'
+            )
+        else:
+            spatial_grounding = (
+                "You must anchor every human movement, gesture, and pathing decision within a plausible "
+                "room layout. No object list or room extents are available — do NOT invent object references, "
+                "IDs, or linked entities; describe each action at an explicit fixed [x, y, z] position."
+            )
+            constraint_1 = (
+                "1. Spatial Positioning (no object list, no room extents): Do NOT invent object references "
+                "or linked entity IDs. Describe each action at a fixed, self-consistent [x, y, z] position "
+                "within a plausible room layout."
+            )
+            spatial_analysis_step = (
+                "1. Spatial Analysis: Assume a plausible room layout and anchor actions to fixed positions."
+            )
+            example_description = (
+                'Detailed behavioral description with an explicit fixed [x, y, z] position '
+                '(no object IDs).'
+            )
+
         system_prompt = (
             "You are an expert architectural scenarist and spatial behavioral psychologist. "
             "Your job is to simulate hyper-realistic human interactions within a 3D architectural space.\n\n"
-            "You must anchor every human movement, gesture, and pathing decision strictly within the "
-            "physical layout provided by the object bounding boxes.\n\n"
+            f"{spatial_grounding}\n\n"
             "### Core Operational Directives\n"
             "1. Spatial Grounding: Do not allow humans to walk through objects. Account for proximity, "
             "clearance, sightlines, comfort, and group effects (e.g., people crowding around a table "
@@ -1386,9 +1450,7 @@ For the duration estimation (in seconds with 0.1 precision):
             f"- Space Typology & Bounds: {furniture_context}"
             f"{context_note}\n\n"
             f"### Constraints & Rules\n"
-            f"1. Object Referencing: When an object is interacted with, you MUST reference it exactly "
-            f"as `object.name (ids: HEX_KEY_1, HEX_KEY_2)`. Use multiple hex keys if associated with "
-            f"multiple objects.\n"
+            f"{constraint_1}\n"
             f"2. Timeline Continuity: The `events` array must be sequential. Timestamps cannot overlap, "
             f"and there must be no gaps between events. Each event block must span between 5 to 30 seconds.\n"
             f"3. Scale to People Count:\n"
@@ -1399,8 +1461,7 @@ For the duration estimation (in seconds with 0.1 precision):
             f"   - Large Groups: Focus on spatial crowding, bottlenecks, and split-group dynamics.\n\n"
             f"### Step-by-Step Generation Process\n"
             f"Follow these steps inside your thinking process:\n"
-            f"1. Spatial Analysis: Identify the primary paths, seating capacities, and dead zones "
-            f"based on the bounding boxes.\n"
+            f"{spatial_analysis_step}\n"
             f"2. Affordance Mapping: Which objects invite specific actions based on the likeliness score?\n"
             f"3. Narrative Arc: Draft a realistic sequence of human behaviors matching the required duration.\n\n"
             f"### Expected Output Format\n"
@@ -1414,13 +1475,50 @@ For the duration estimation (in seconds with 0.1 precision):
             f'  "events": [\n'
             f'    {{\n'
             f'      "timestamp": "MM:SS-MM:SS",\n'
-            f'      "description": "Detailed behavioral description referencing objects as '
-            f'object.name (ids: hex1, hex2)."\n'
+            f'      "description": "{example_description}"\n'
             f'    }}\n'
             f'  ]\n'
             f"}}]"
         )
         return system_prompt, user_prompt
+
+    @staticmethod
+    def _scenarist_furniture_context(furniture_list: dict | None) -> tuple[str, bool, str | None]:
+        """Derive the scenarist context inputs from the (optional) analysis result.
+
+        Returns:
+            (furniture_context, has_furniture, room_bounds)
+            - furniture_context: JSON string of the full furniture_list (or "{}").
+            - has_furniture:    True when architectural objects are present.
+            - room_bounds:      Human-readable "[min] to [max] (w x d x h)" of the
+                                full 3D model bounding box (available even with no
+                                furniture), or None.
+        """
+        furniture_context = json.dumps(furniture_list, indent=2) if furniture_list else "{}"
+        meta = (furniture_list or {}).get("meta") or {}
+        bounds = meta.get("total_bounds") or {}
+
+        has_furniture = bool(
+            (furniture_list or {}).get("architecturalObjects")
+            or (furniture_list or {}).get("objects")
+        )
+
+        room_bounds: str | None = None
+        mn = bounds.get("min") or []
+        mx = bounds.get("max") or []
+        if len(mn) >= 3 and len(mx) >= 3:
+            dims = []
+            for key in ("width", "depth", "height"):
+                v = bounds.get(key)
+                if v is not None:
+                    dims.append(f"{float(v):.2f}")
+            extents = (
+                f"[{float(mn[0]):.2f}, {float(mn[1]):.2f}, {float(mn[2]):.2f}] to "
+                f"[{float(mx[0]):.2f}, {float(mx[1]):.2f}, {float(mx[2]):.2f}]"
+            )
+            room_bounds = extents + (f" ({' x '.join(dims)})" if dims else "")
+
+        return furniture_context, has_furniture, room_bounds
 
     def _build_foley_prompts(
         self,
@@ -1444,36 +1542,43 @@ For the duration estimation (in seconds with 0.1 precision):
             "DO NOT include speech or conversations (handled by another agent). "
             "Use the object bounding boxes from the architectural space information to derive accurate "
             "spatial positions for sounds linked to objects, and as spatial reference when estimating "
-            "positions for unlinked sounds (footsteps, ambient, etc.)."
+            "positions for unlinked sounds (footsteps, ambient, etc.). "
+            "If no object list is provided, use the room extents (meta.total_bounds) as the sole spatial "
+            "reference for positions."
         )
         user_prompt = (
             "Your task is to extract all physical, material, and ambient actions that can produce a sound "
             "from the narrative scenario and group them into similar sound types.\n\n"
             "1. Example sonic actions to extract: footsteps, object placements, mechanical chair adjustments, "
             "door movements, glass handlings, ambient background tones, HVAC sound.\n"
-            "2. STRICT GLOBAL DEDUPLICATION: You must group all actions of a similar audio category into a "
+            "2. AUDIBILITY FILTER (MANDATORY): Only include sounds that are clearly audible and meaningful in the "
+            "mix. STRICTLY EXCLUDE near-silent micro-sounds such as clothes/fabric rustling, cloth movement, "
+            "breathing, hair or skin contact, subtle fidgeting of fabric, or any sound a listener would struggle "
+            "to hear over room ambience. When a narrative action would only produce such an inaudible sound, "
+            "skip it entirely rather than fabricating a barely-audible entry.\n"
+            "3. STRICT GLOBAL DEDUPLICATION: You must group all actions of a similar audio category into a "
             "single object entry, even if they happen multiple times in the script. "
             'E.g.: "walking on the carpet", "footsteps on the floor", "John walks past the door" '
             '→ 1 sound: "footsteps".\n'
-            '3. It is STRICTLY FORBIDDEN to append personal names, character roles, or scene numbers to the '
+            '4. It is STRICTLY FORBIDDEN to append personal names, character roles, or scene numbers to the '
             '"soundName" or "id" fields (e.g., "laptop_placement_sarah" or "footsteps_michael" are WRONG).\n'
-            '4. The "description" must focus on a SINGLE generic instance of that acoustic profile, optimized '
+            '5. The "description" must focus on a SINGLE generic instance of that acoustic profile, optimized '
             "for a Text-to-Audio (TTA) generation model. "
             '(e.g., use "An office chair" instead of "Multiple chairs").\n'
-            '5. The "objectsInvolved" array must collect ALL the target object hex IDs from the spatial context '
+            '6. The "objectsInvolved" array must collect ALL the target object hex IDs from the spatial context '
             "that execute this specific sound type across the entire story timeline. "
             "Order them chronologically as they appear in the text.\n"
-            "6. Spatial positioning — for EVERY entry, populate exactly ONE of these two fields:\n"
+            "7. Spatial positioning — for EVERY entry, populate exactly ONE of these two fields:\n"
             '   - "objectsInvolved": non-empty hex ID list → set "position" to an empty list []. '
             "The position will be derived from the linked objects by the audio engine.\n"
             '   - "position": when objectsInvolved is empty (e.g. footsteps, ambient hum, HVAC), '
             "provide a plausible [x, y, z] centroid within the room using the bounding box and nearby object "
             "bounds as reference. Ambient/background sounds should be placed at the room centroid.\n"
-            "7. Always add at least one background sound that matches the space.\n"
-            '8. Classify each entry with a "category": use "background" for continuous/ambient '
+            "8. Always add at least one background sound that matches the space.\n"
+            '9. Classify each entry with a "category": use "background" for continuous/ambient '
             'beds (HVAC, room tone, distant traffic) and "sound event" for discrete, punctual actions '
             "(footsteps, door, object placement).\n"
-            '9. Estimate a realistic "duration" (MM:SS) for a SINGLE occurrence of the sound: short for '
+            '10. Estimate a realistic "duration" (MM:SS) for a SINGLE occurrence of the sound: short for '
             "impacts (e.g. 00:02), longer for continuous beds (e.g. 00:20).\n\n"
             "Output Format — respond ONLY with a JSON array:\n"
             "[\n"
@@ -1659,9 +1764,10 @@ For the duration estimation (in seconds with 0.1 precision):
             dict with a "scenarios" key — list containing 1 scenario dict with:
             title, duration, peopleCount, likeliness, events.
         """
-        furniture_context = json.dumps(furniture_list, indent=2) if furniture_list else "{}"
+        furniture_context, has_furniture, room_bounds = self._scenarist_furniture_context(furniture_list)
         system_prompt, user_prompt = self._build_scenarist_prompts(
-            user_context, furniture_context, duration, people_count, likeliness
+            user_context, furniture_context, duration, people_count, likeliness,
+            has_furniture=has_furniture, room_bounds=room_bounds,
         )
 
         # ── Retry with exponential back-off ───────────────────────────────────
@@ -1703,9 +1809,10 @@ For the duration estimation (in seconds with 0.1 precision):
         """
         from models.schemas import ScenarioResponse as _ScenarioResponse
 
-        furniture_context = json.dumps(furniture_list, indent=2) if furniture_list else "{}"
+        furniture_context, has_furniture, room_bounds = self._scenarist_furniture_context(furniture_list)
         system_prompt, user_prompt = self._build_scenarist_prompts(
-            user_context, furniture_context, duration, people_count, likeliness
+            user_context, furniture_context, duration, people_count, likeliness,
+            has_furniture=has_furniture, room_bounds=room_bounds,
         )
 
         import uuid as _uuid
@@ -2149,7 +2256,11 @@ For the duration estimation (in seconds with 0.1 precision):
                 "6. For each foley entry, estimate how many variants should be provided in the variants array "
                 "to create a realistic effect depending on repetitions, and order them in a list (e.g [1,2,1]). "
                 "For speech, create an arithmetic series of variants corresponding to the length of timestamps "
-                "[1,2,3,4,...].\n\n"
+                "[1,2,3,4,...]. "
+                "IMPORTANT: the number of audio copies for each entry is USER-AUTHORITATIVE. If an input foley or "
+                "speech entry carries a \"copyCount\" (or its script is split into N semicolon-separated lines), "
+                "the maximum value in its 'variants' array MUST equal that copy count (or N for speech) — do not "
+                "exceed it, and do not under-provision it below the entry's occurrence count.\n\n"
                 "SPL (loudness levels)\n"
                 "7. Estimate a realistic 'spl' (target loudness in dBFS) for every entry, expressed as a "
                 "float string with units (e.g. \"-18 dBFS\"). dBFS is relative to digital full scale, so "

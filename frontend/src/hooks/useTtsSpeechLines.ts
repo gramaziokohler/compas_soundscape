@@ -35,22 +35,36 @@ export function createTtsSpeechLines(
   index: number,
   onUpdateConfig: UpdateConfig,
 ): TtsSpeechLinesHandlers {
-  const speechLines = config.orchestrateMeta?.speechLines ?? [];
+  // Speech lines live in either the orchestrate-compiled metadata
+  // (orchestrateMeta.speechLines) or the scenario pipeline reference for an
+  // "incomplete" (pre-orchestrate) card (scenarioSource.speechLines).
+  const useScenarioSource = !config.orchestrateMeta?.speechLines && !!config.scenarioSource;
+  const speechLines = config.orchestrateMeta?.speechLines ?? config.scenarioSource?.speechLines ?? [];
   const promptIdx = speechLines.indexOf(config.prompt);
   const selectedIndex = promptIdx >= 0 ? promptIdx : undefined;
 
   const updateSpeechLines = (newLines: string[], nextPrompt?: string) => {
-    onUpdateConfig(index, 'orchestrateMeta', {
-      orchestrateId: config.orchestrateMeta?.orchestrateId ?? '',
-      entryId: config.orchestrateMeta?.entryId ?? '',
-      trigger: config.orchestrateMeta?.trigger ?? { type: '', expression: [], delay: [] },
-      variants: config.orchestrateMeta?.variants ?? [],
-      allObjectIds: config.orchestrateMeta?.allObjectIds ?? [],
-      speechLines: newLines,
-      isSpeech: config.orchestrateMeta?.isSpeech ?? true,
-      voiceName: config.orchestrateMeta?.voiceName ?? config.voice_name,
-      timestamps: config.orchestrateMeta?.timestamps ?? [],
-    });
+    if (useScenarioSource) {
+      // Editing a scenario-derived card's speech lines also updates its copy
+      // count so generation produces one variant per remaining line.
+      onUpdateConfig(index, 'scenarioSource', {
+        ...config.scenarioSource,
+        speechLines: newLines,
+        copyCount: newLines.length,
+      });
+    } else {
+      onUpdateConfig(index, 'orchestrateMeta', {
+        orchestrateId: config.orchestrateMeta?.orchestrateId ?? '',
+        entryId: config.orchestrateMeta?.entryId ?? '',
+        trigger: config.orchestrateMeta?.trigger ?? { type: '', expression: [], delay: [] },
+        variants: config.orchestrateMeta?.variants ?? [],
+        allObjectIds: config.orchestrateMeta?.allObjectIds ?? [],
+        speechLines: newLines,
+        isSpeech: config.orchestrateMeta?.isSpeech ?? true,
+        voiceName: config.orchestrateMeta?.voiceName ?? config.voice_name,
+        timestamps: config.orchestrateMeta?.timestamps ?? [],
+      });
+    }
     if (nextPrompt !== undefined) {
       onUpdateConfig(index, 'prompt', nextPrompt);
     }

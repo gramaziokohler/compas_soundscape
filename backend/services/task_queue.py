@@ -42,6 +42,14 @@ POOL_MAP: Dict[str, ThreadPoolExecutor] = {
     "analyze_stream":  IO_POOL,
     "scenario":        IO_POOL,
     "foley":           IO_POOL,
+    # Inline async-stream LLM agents (SSE) — pinned to IO_POOL so they can always
+    # run in parallel with TTS ("tts") and GPU sound generation ("sound"), never
+    # competing with the CPU/GPU pools. Each stream holds one IO worker thread
+    # while its SSE generator runs in the asyncio event loop.
+    "scenarist_stream":  IO_POOL,
+    "foley_stream":      IO_POOL,
+    "speech_stream":     IO_POOL,
+    "orchestrate_stream": IO_POOL,
     "sed":             CPU_POOL,
     "pyroomacoustics": CPU_POOL,
     "choras":          CPU_POOL,

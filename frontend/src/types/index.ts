@@ -27,6 +27,7 @@ import type {
   SpeechResult,
   OrchestrateResult,
   OrchestrateEntry,
+  ScenarioSource,
 } from './analysis';
 export type {
   ModelAnalysisConfig,
@@ -39,6 +40,7 @@ export type {
   SpeechResult,
   OrchestrateResult,
   OrchestrateEntry,
+  ScenarioSource,
 };
 
 // Import and re-export Acoustics types
@@ -219,6 +221,8 @@ export interface SoundGenerationConfig {
     /** Original foley/speech timestamps (MM:SS) — fallback when trigger resolution fails. */
     timestamps?: string[];
   };
+  /** Scenario pipeline reference for an "incomplete" card (foley+speech only, pre-orchestrate). */
+  scenarioSource?: import('./analysis').ScenarioSource;
 }
 
 /** A sound selected from the Google Sound Library catalog */

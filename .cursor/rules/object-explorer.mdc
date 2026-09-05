@@ -1,5 +1,5 @@
 ---
-description: Object Explorer, filtering/isolation system, view modes (Acoustic / Default / Dark), FilteringExtension compose rules
+description: Object Explorer, unified visibility model, view modes (Acoustic / Default / Dark), FilteringExtension semantics
 globs: frontend/src/components/layout/ObjectExplorer.tsx,frontend/src/hooks/useSpeckleFiltering.ts,frontend/src/hooks/useAcousticLayerIsolation.ts,frontend/src/store/speckleStore.ts,frontend/src/components/scene/VirtualTreeItem.tsx,frontend/src/store/acousticLayerStore.ts
 ---
 
@@ -10,95 +10,108 @@ globs: frontend/src/components/layout/ObjectExplorer.tsx,frontend/src/hooks/useS
 ```
 ObjectExplorer              ← renders VirtualTreeItem tree from Speckle world tree
   ├─ useSpeckleTree         ← flattens tree, manages expansion/selection
-  ├─ useSpeckleFiltering    ← hide/show/isolate via FilteringExtension
+  ├─ useSpeckleFiltering    ← thin wrapper over speckleStore (hide/show/isolate intent)
   └─ useSpeckleInteractions ← hover highlight, zoom-to
 
-useAcousticLayerIsolation   ← manages acoustic-layer-specific isolate/hide state
-                               across Acoustic ↔ Default viewMode switches
-                               (runs in SpeckleScene, NOT in ObjectExplorer)
+useAcousticLayerIsolation   ← auto-detects the acoustic layer, publishes its geometry-id
+                               union, and triggers applyVisibility() (runs in SpeckleScene)
+speckleStore.applyVisibility ← THE single place that applies hide/isolate to the viewer
 ```
+
+## Unified Visibility Model (speckleStore)
+
+FilteringExtension keeps ONE global `hiddenObjects` array and ONE global
+`isolatedObjects` array (see `FilteringState`) — hide and isolate are mutually
+exclusive, and a `stateKey`/command-family change resets the internal ids dict.
+The app no longer fights this with two stateKeys + a rAF re-apply loop. Instead:
+
+- **Intent** lives in speckleStore: `userHiddenIds`, `userIsolatedIds` (DV),
+  `acousticExplorerHiddenIds` (AV "exclude").
+- **`applyVisibility()`** derives a single target `{ hidden | isolated }` from
+  `viewMode + acoustic layer + intent` and applies it **atomically**:
+  `resetFilters()` → one `isolateObjects`/`hideObjects` on the single stateKey
+  `'explorer'` → `applyFilterColors()` (restore user colors).
+- Idempotent — compares against `_appliedHiddenIds`/`_appliedIsolatedIds`.
+- `useSpeckleFiltering` is now just a thin wrapper that mutates intent and calls
+  `applyVisibility()`; its `hiddenObjects`/`isolatedObjects` read the applied sets.
 
 ## View Modes
 
 | Mode      | Behavior |
 |-----------|----------|
-| `default` | All objects visible. Acoustic layer objects are **hidden** in the 3D viewer (via `useAcousticLayerIsolation`) but visible in the ObjectExplorer tree. ObjectExplorer hide/isolate controls are active. |
-| `acoustic`| **Only** the acoustic layer is isolated (ghosted others). ObjectExplorer tree filters to acoustic layer subtree only. Hide/isolate buttons are hidden; toggle-visibility switches to isolate/un-isolate. |
-| `dark`    | All filtering disabled; `applyFilterColors()` returns early. UI-only mode. |
+| `default` | If user isolated → `isolated = userIsolatedIds`; else `hidden = userHiddenIds ∪ acousticLayerIds`. Acoustic layer hidden from the viewer (shown in the tree). |
+| `acoustic`| **Hide-based isolation** — `hidden = (all model geometry − acoustic layer) ∪ excluded`. The acoustic layer (minus excluded) is the ONLY thing visible; non-acoustic objects are fully hidden (not ghosted). |
+| `dark`    | `applyFilterColors()` returns early. UI-only mode. |
 
-View mode is **not persisted** through Zustand `persist` — it's stored in a separate `localStorage` key `compas-view-mode` and restored 300ms after viewer init in `SpeckleScene.tsx`.
+Why hide-based in acoustic mode: `isolateObjects(ghost=true)` cannot express
+"isolate the layer AND fully hide one excluded object" (hide/isolate are
+mutually exclusive). Using `hideObjects(ghost=false)` lets "exclude" fully hide.
 
-## ObjectExplorer — Hide & Isolate
+View mode is **not persisted** through Zustand `persist` — it's stored in a
+separate `localStorage` key `compas-view-mode` and restored 300ms after viewer
+init in `SpeckleScene.tsx`.
 
-Two distinct buttons per tree item:
+## FilteringExtension — Verified Semantics (@speckle/viewer@2.26.9)
 
-| Button  | Method | Speckle call | Collision risk |
-|---------|--------|-------------|----------------|
-| Hide/Show | `hideObjects` / `showObjects` | `hideObjects(ids, stateKey)` | None — `ghost=false` |
-| Isolate | `isolateObjects` | `isolateObjects(ids, stateKey, true, true)` | High — `ghost=true` |
+Read from the minified bundle (`dist/index.js`). Command enum:
+`HIDE=10, SHOW=11, ISOLATE=20, UNISOLATE=21, NONE=30`.
 
-In `acoustic` mode: the isolate button is hidden (`hideIsolateButton=true`), and the visibility toggle delegates to isolate/un-isolate instead of hide/show.
+- `setVisibilityState` resets its internal `ids` dict when
+  `stateKey` changes **or** `|command − prevCommand| > 1` (a family change).
+  Same stateKey + same family = additive (HIDE/ISOLATE merge ids) or delete
+  (SHOW/UNISOLATE remove only the given ids — NOT clear-all).
+- `resetFilters()` clears `UserspaceColorState` (user colors) → you MUST re-run
+  `applyFilterColors()` after it, or entity/material colors vanish.
+- `setFilters()` applies HIDDEN/GHOST first, then **COLORED (user colors) LAST**.
+  So a colored render view overrides its own hide — colors must be filtered
+  against the hidden/isolated set.
+- `hideObjects`/`isolateObjects`/`showObjects`/`unIsolateObjects`/`setUserObjectColors`
+  AND `highlightObjects`/`resetHighlight`/`resetSelection`/`selectObjects` are all
+  methods on the **Viewer**, NOT on `getRenderer()` (which is the SpeckleRenderer).
+  `useSpeckleInteractions` must call `viewer.highlightObjects(ids)` /
+  `viewer.resetHighlight()`, never `viewer.getRenderer().highlightObjects(...)`.
 
-The ObjectExplorer's `stateKey` is `'explorer-default'`. The acoustic layer's `stateKey` is `'acoustic-materials'`. These are DIFFERENT keys, but Speckle does NOT compose state across keys — see "FilteringExtension Mutex" below.
+## Shared Render View (Brep + display Mesh)
 
-## FilteringExtension — Mutually Exclusive Operations
+A Brep and its display Mesh resolve to the SAME render view (`getRenderViewsForNodeId`
+returns the same `guid`/`batchStart` for both — one `atomic:false`, one `atomic:true`).
+When the cascade material assignment colors both, hiding the Brep leaves the display
+Mesh in the color group, and COLORED (applied after HIDDEN) keeps the shared render
+view visible. **Fix:** in `applyFilterColors`, exclude any material color id whose
+render view is in the hide set (`filteringExt.VisibilityState.rvs` guids).
 
-**`ext.isolateObjects` and `ext.hideObjects` are mutually exclusive regardless of `stateKey`.** The last call wins — calling one clears the state set by the other.
+## Selection / Hover Override
 
-### Compose Pattern
+The SelectionExtension and HighlightExtension apply materials AFTER the
+FilteringExtension, so a selected/hovered object visually "reappears" after being
+hidden. `applyVisibility()` clears both for now-hidden ids BEFORE applying the
+filter (via `clearSelectionAndHighlight` — `SelectionExtension.clearSelection()` +
+`viewer.resetHighlight()`).
 
-When you need both isolate and hide simultaneously, compose them in a single synchronous block:
+## Multi-select Acoustic Layer
 
-```typescript
-// isolate → re-hide → re-isolate → render
-ext.isolateObjects(targetIds, 'explorer-default', true, true);
-reapplyPostIsolateHides();                         // ext.hideObjects on acoustic-materials key
-ext.isolateObjects(targetIds, 'explorer-default', true, true); // re-establish after hide cleared it
-viewerRef.current?.requestRender();
-```
+`acousticLayerStore` holds `selectedAcousticLayerIds`/`selectedAcousticLayerNames`
+(lists; primary = first). The Object Explorer's selection mode multi-toggles layers,
+previews via `setSelectionPreviewIds()`, and commits with `setAcousticLayers()`.
+`useAcousticLayerIsolation` publishes the union of leaf ids via
+`setAcousticLayerAllIds()` + `setAllModelGeometryIds()` and triggers
+`applyVisibility()`. Simulation hand-off sends the union via
+`resolveSimulationGeometryObjectIds()` → `geometry_object_ids`.
 
-### unIsolateObjects Pitfall
+## Hide does NOT un-assign material
 
-`ext.unIsolateObjects` clears **ALL** isolation for the given `stateKey`, not just the specified IDs. To remove specific IDs while keeping others:
-
-```typescript
-const remaining = existingIds.filter((id) => !idsToRemove.includes(id));
-if (remaining.length > 0) {
-  ext.isolateObjects(remaining, stateKey, true, true); // re-isolate remaining
-} else {
-  ext.unIsolateObjects(objectIds, stateKey, true, false);
-}
-```
-
-### Re-apply Guard
-
-Any rAF/setInterval loop that calls `ext.hideObjects` will clear active isolation. **Always check for active isolation before re-hiding:**
-
-```typescript
-const explorerIsolated = getExplorerIsolatedIds('explorer-default');
-if (explorerIsolated && explorerIsolated.length > 0) return; // skip re-hide
-```
-
-## useAcousticLayerIsolation — Five Sections
-
-| § | Purpose | When |
-|---|---------|------|
-| 1  | Show acoustic objects | Entering Acoustic mode |
-| 1b | Hide acoustic objects | First load in Default mode |
-| 2  | Auto-detect "Acoustics" layer | World tree loads |
-| 3  | Apply/remove acoustic isolation | viewMode or layerId changes |
-| 4  | Open ObjectExplorer in selection mode | Entering Acoustic mode, no layer set |
-| 5  | Re-apply isolate/hide state (rAF loop) | Every frame |
-
-`hiddenGeometryIdsRef` tracks which acoustic-layer geometry IDs should be hidden in default mode. Synced to `speckleStore.setPostIsolateHideIds()` so `useSpeckleFiltering` can re-hide after each isolate/un-isolate call.
+Hiding an object only changes visibility. Its acoustic material assignment stays
+in `useAcousticMaterialStore.materialAssignments` (dropdown keeps its value, and it
+is still sent to the backend simulation). Do not call `assignMaterialToObjects(id, '')`
+from a hide handler.
 
 ## Key Files
 
 | File | Role |
 |------|------|
-| `ObjectExplorer.tsx` | Tree UI, dispatches hide/isolate to `useSpeckleFiltering` |
-| `useSpeckleFiltering.ts` | Hide/show/isolate/un-isolate via FilteringExtension, compose pattern, tracked in `speckleStore` |
-| `useAcousticLayerIsolation.ts` | Acoustic-layer-specific visibility management across viewMode switches |
-| `speckleStore.ts` | Module-level refs for `_postIsolateHideIds`, tracking functions, `applyFilterColors` |
-| `acousticLayerStore.ts` | Persisted acoustic layer selection (which layer = "Acoustics") |
+| `ObjectExplorer.tsx` | Tree UI; hide/isolate dispatch intent; multi-select acoustic layer |
+| `useSpeckleFiltering.ts` | Thin wrapper over speckleStore's unified visibility model |
+| `useAcousticLayerIsolation.ts` | Auto-detect layer, publish geometry-id union, trigger applyVisibility |
+| `speckleStore.ts` | `applyVisibility`, `applyFilterColors`, intent + applied state |
+| `acousticLayerStore.ts` | Persisted multi-select acoustic layer |
 | `VirtualTreeItem.tsx` | Renders a single tree row with hide/isolate buttons |

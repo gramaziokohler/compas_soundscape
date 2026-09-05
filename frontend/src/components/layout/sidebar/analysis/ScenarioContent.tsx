@@ -133,15 +133,15 @@ function formatTimestampRange(ts: string): string {
 }
 
 // ─── Pipeline status / progress ───────────────────────────────────────────────
-// Maps the scenario→foley→speech→orchestrate pipeline to a single status line
+// Maps the scenario→foley→speech pipeline to a single status line
 // and a monotonic progress value, surfaced in the Card's collapsed progress bar
 // (the "reduced" card). Replaces the inline text helpers that used to live in
 // the expanded card body.
 //   scenarist streaming  → "Imagining usage scenarios…"            (10%)
 //   scenarist done       → "Crafting foley + speech prompts…"      (35%)
-//   foley ready          → "Foley ready (N sounds) · …speech…"     (55%)
-//   speech ready         → "Speech ready (N characters) · …"       (80%)
-//   orchestrate done     → "Playlist ready (N entries) — sent…"    (100%)
+//   foley ready          → "Foley ready (N sounds) · …speech…"     (60%)
+//   speech ready         → "Ready — N foley + M speech (send…)"    (100%)
+// (Orchestration no longer runs here — it runs in parallel at generation time.)
 
 export function getScenarioPipelineStatus(
   config: ScenarioConfig,
@@ -152,30 +152,22 @@ export function getScenarioPipelineStatus(
   const scenarioCompleted = !!config.scenarioId;
   const hasFoley = !!config.foleyResult;
   const hasSpeech = !!config.speechResult;
-  const hasOrchestrate = !!config.orchestrateResult;
 
   const foleyCount = config.foleyResult?.scenarios?.reduce(
     (sum, s) => sum + (s.sound_events?.length ?? 0), 0,
   ) ?? 0;
   const speechCount = config.speechResult?.speeches?.length ?? 0;
-  const playlistCount = config.orchestrateResult?.playlist?.length ?? 0;
 
-  if (hasOrchestrate) {
-    return {
-      status: `Playlist ready${playlistCount ? ` (${playlistCount} entries)` : ''} — sent to generation`,
-      progress: 100,
-    };
-  }
   if (hasSpeech) {
     return {
-      status: `Speech ready${speechCount ? ` (${speechCount} characters)` : ''} · compiling playlist…`,
-      progress: 80,
+      status: `Ready — ${foleyCount} foley · ${speechCount} speech`,
+      progress: 100,
     };
   }
   if (hasFoley) {
     return {
       status: `Foley ready${foleyCount ? ` (${foleyCount} sounds)` : ''} · generating speech…`,
-      progress: 55,
+      progress: 60,
     };
   }
   if (scenarioCompleted) {
@@ -191,8 +183,7 @@ export function getScenarioPipelineStatus(
 //   scenarist done       → scenario events + "Call Foley Artist" button
 //   foley+speech loading → spinner (scenarioId set, no foley/speech yet)
 //   speech loading       → foley done, waiting for speech
-//   orchestrate loading  → foley+speech done, waiting for orchestrate
-//   orchestrate done     → auto-sent to sound generation
+//   foley+speech done    → ready to send (incomplete cards → sounds step)
 // Step-by-step progress is surfaced in the collapsed Card progress bar via
 // getScenarioPipelineStatus — not as inline text in the expanded body.
 
@@ -204,7 +195,6 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
   const scenarioCompleted = !!config.scenarioId;
   const hasFoley = !!config.foleyResult;
   const hasSpeech = !!config.speechResult;
-  const hasOrchestrate = !!config.orchestrateResult;
 
   // Always show scenario events — foley sounds are shown in the Sounds step, not here
   const scenarios = config.scenarioResult?.scenarios ?? [];
@@ -290,8 +280,8 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
         </div>
       )}
 
-      {/* Re-generate — shown when pipeline completed, clicking re-runs orchestrate */}
-      {scenarioCompleted && !isOperationRunning && hasOrchestrate && (
+      {/* Re-send — shown when foley + speech are done, clicking re-sends the cards */}
+      {scenarioCompleted && !isOperationRunning && hasFoley && hasSpeech && (
         <button
           onClick={() => handleAnalyze(index)}
           className="w-full py-1.5 px-3 text-xs font-medium rounded hover:opacity-80 transition-opacity"

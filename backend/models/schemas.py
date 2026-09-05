@@ -312,6 +312,9 @@ class SoundscapeGlobalSettings(BaseModel):
     negative_prompt: str = ""
     audio_model: str = "tangoflux"
     tts_model: str = DEFAULT_TTS_MODEL
+    # "Orchestrate sounds following the scenario" toggle (parallel orchestrate at
+    # generation time) — persisted so the preference survives refresh.
+    orchestrate_sounds_enabled: bool = False
 
 
 class SoundscapeSoundConfig(BaseModel):
@@ -336,6 +339,9 @@ class SoundscapeSoundConfig(BaseModel):
     entity_node_ids: Optional[list[str]] = None
     # Sound category from foley/scenario analysis (e.g. "background", "sound_event", "speech")
     category: Optional[str] = None
+    # Scenario pipeline reference (scenarioId + foley/speech ids + raw entry fields),
+    # persisted so orchestration can be re-run from edited cards after refresh.
+    scenario_source: Optional[dict] = None
 
 
 class SoundscapeSoundEvent(BaseModel):

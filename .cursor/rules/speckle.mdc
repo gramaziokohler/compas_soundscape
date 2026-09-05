@@ -222,27 +222,26 @@ Key facts (verified against `@speckle/viewer@2.26.9`):
 - `operations.receive()` blocks — run in `asyncio.get_event_loop().run_in_executor(None, ...)` for async routes.
 - `get_member_names()` skips `@`-prefixed members by default; `@` prefix = detached chunks (large arrays).
 
-## FilteringExtension — Mutually Exclusive Operations
+## FilteringExtension — Semantics (verified @speckle/viewer@2.26.9)
 
 **`ext.isolateObjects` and `ext.hideObjects` are mutually exclusive — the last call wins
 regardless of `stateKey`.** The `stateKey` parameter partitions internal tracking state but
 does NOT compose visibility. Calling `hideObjects` clears `isolatedObjects` and vice versa.
 
-When you need both hide AND isolate simultaneously (e.g. ObjectExplorer isolate + acoustic
-layer hide), you must compose the calls manually in a single synchronous block:
+Command enum: `HIDE=10, SHOW=11, ISOLATE=20, UNISOLATE=21, NONE=30`.
 
-```typescript
-// Compose pattern: isolate → re-hide → re-isolate → render
-ext.isolateObjects(targetIds, key1, true, true);
-ext.hideObjects(hiddenIds, key2, true, false);
-ext.isolateObjects(targetIds, key1, true, true);   // re-establish after hide cleared it
-viewerRef.current?.requestRender();
-```
+`setVisibilityState` resets its internal `ids` dict when `stateKey` changes **or**
+`|command − prevCommand| > 1` (a command-family change). Same `stateKey` + same family is
+additive (HIDE/ISOLATE merge ids) or delete (SHOW/UNISOLATE remove **only** the given ids —
+NOT clear-all). `resetFilters()` clears `UserspaceColorState` (user colors), so always re-run
+color application after it. `setFilters()` applies HIDDEN/GHOST first, then COLORED (user
+colors) LAST — a colored render view overrides its own hide.
 
-Re-apply timers / rAF loops that call `hideObjects` will also clear any active isolation.
-**Always check for active isolation before re-hiding** and skip the re-hide if isolation
-is active. Apply the re-hide after the user un-isolates.
+Because hide/isolate don't compose, the app drives visibility through ONE stateKey via
+`speckleStore.applyVisibility()`, which computes a single target `{hidden|isolated}` from
+`viewMode + acoustic layer + user intent` and applies it atomically (`resetFilters()` → one
+call → re-apply colors). See `.cursor/rules/object-explorer.mdc` for the full model.
 
-**`ext.unIsolateObjects` clears ALL isolation for the given `stateKey`**, not just the
-specified IDs. To remove specific IDs from isolation while keeping others, compute the
-remaining IDs and call `ext.isolateObjects(remainingIds, ...)` instead.
+`hideObjects`/`isolateObjects`/`showObjects`/`unIsolateObjects`/`setUserObjectColors` and
+`highlightObjects`/`resetHighlight`/`resetSelection`/`selectObjects` are methods on the
+**Viewer**, NOT on `getRenderer()` (the SpeckleRenderer). Call them on the viewer instance.

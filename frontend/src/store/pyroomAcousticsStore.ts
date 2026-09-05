@@ -28,7 +28,7 @@ import {
 } from '@/utils/constants';
 import { groupSoundsByPosition, collapseVariantsToOne } from '@/utils/positionKey';
 import { notifyError } from './errorsStore';
-import { resolveSimulationLayerName } from './acousticLayerStore';
+import { resolveSimulationLayerName, resolveSimulationGeometryObjectIds } from './acousticLayerStore';
 import { useUIStore } from './uiStore';
 import { useAudioControlsStore } from './audioControlsStore';
 import type { SourceReceiverIRMapping } from '@/types/audio';
@@ -394,6 +394,7 @@ export const usePyroomAcousticsStore = create<PyroomAcousticsStoreState>()(
                 sound_speed: useUIStore.getState().globalSoundSpeed,
               },
               sourceReceiverPairs,
+              resolveSimulationGeometryObjectIds(),
             );
 
             patchInstance(set, instanceId, { currentSimulationId: simulation_id, status: 'Queued...' }, 'pyroom/queued');

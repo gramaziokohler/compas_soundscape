@@ -58,43 +58,51 @@ export function getAnalysisResultGroups(): ArchitecturalObject[] {
 }
 /** True while setUserObjectColors is active on the FilteringExtension (cleared by removeUserObjectColors) */
 let _userColorsApplied = false;
-/** IDs explicitly hidden — keyed by stateKey for per-context tracking (ObjectExplorer states, acoustic materials) */
-let _explorerHiddenIdsByKey: Map<string, Set<string>> = new Map();
-/** Currently isolated object IDs — keyed by stateKey, null means no isolation active for that key */
-let _explorerIsolatedIdsByKey: Map<string, Set<string>> = new Map();
 
-// ── Post-isolate hide compensation ──────────────────────────────────────────
-// Speckle's isolateObjects(ghost=true) clears hidden state from ALL stateKeys,
-// not just its own. After each isolate call, we must immediately re-apply
-// the acoustic layer's hide state before the viewer renders.
-let _postIsolateHideIds: string[] | null = null;
+// ── Unified visibility model ────────────────────────────────────────────────
+// FilteringExtension keeps ONE global hiddenObjects array and ONE global
+// isolatedObjects array (see FilteringState). hide/isolate are mutually
+// exclusive, and a stateKey or command-family change resets the internal ids
+// dict (verified against @speckle/viewer@2.26.9 source). To make ObjectExplorer
+// hide/isolate + acoustic-layer visibility compose reliably, we keep the user's
+// INTENT in the sets below, derive a single target {hidden|isolated}, and apply
+// it atomically via applyVisibility() using ONE stateKey. No per-frame re-apply.
+const VISIBILITY_STATE_KEY = 'explorer';
 
-/** Set by useAcousticLayerIsolation whenever the hidden geometry set changes. */
-export function setPostIsolateHideIds(ids: string[] | null) {
-  _postIsolateHideIds = ids;
-}
-
-/** Called by useSpeckleFiltering immediately after isolateObjects to re-apply
-  * the acoustic layer's hide state that Speckle just cleared. Does NOT request
-  * a render — the caller handles that after re-isolating. */
-export function reapplyPostIsolateHides() {
-  if (!_viewerRef || !_postIsolateHideIds || _postIsolateHideIds.length === 0) return;
-  try {
-    const ext = _viewerRef.getExtension(FilteringExtension);
-    if (ext) {
-      ext.hideObjects(_postIsolateHideIds, 'acoustic-materials', true, false);
-    }
-  } catch { /* non-critical */ }
-}
+/** Non-acoustic ids the user hid in Default/Dark mode. */
+let _userHiddenIds = new Set<string>();
+/** Non-acoustic ids the user isolated in Default/Dark mode. */
+let _userIsolatedIds = new Set<string>();
+/** Last applied hidden/isolated sets (my own bookkeeping for idempotency). */
+let _appliedHiddenIds: string[] = [];
+let _appliedIsolatedIds: string[] = [];
 
 // ── Acoustic explorer hidden tracking ──────────────────────────────────────
 // When the ObjectExplorer's "Hide" button is clicked in acoustic mode, the
-// target IDs are stored here. The acoustic layer isolation must exclude these
-// IDs so the user's hide action actually takes effect. Module-level (not in
-// Zustand) so the rAF re-apply loop in useAcousticLayerIsolation can read
-// them without stale closure issues.
+// target IDs are stored here ("exclude from acoustic layer"). The acoustic
+// layer isolation excludes these IDs so the user's action takes effect.
 let _acousticExplorerHiddenIds = new Set<string>();
 let _acousticLayerAllIds: string[] = [];
+/** All geometry leaf ids in the loaded model — needed to hide "non-acoustic"
+  * objects in acoustic mode (hide-based isolation). */
+let _allModelGeometryIds: string[] = [];
+
+/** Temporary acoustic-layer preview ids while the user is in acoustic layer
+  * selection mode (not yet committed). When non-null, applyVisibility uses these
+  * instead of the committed _acousticLayerAllIds. Cleared on commit/cancel. */
+let _selectionPreviewIds: string[] | null = null;
+
+export function setSelectionPreviewIds(ids: string[] | null): void {
+  _selectionPreviewIds = ids;
+}
+
+export function getAllModelGeometryIds(): string[] {
+  return _allModelGeometryIds;
+}
+
+export function setAllModelGeometryIds(ids: string[]): void {
+  _allModelGeometryIds = ids;
+}
 
 export function getAcousticLayerAllIds(): string[] {
   return _acousticLayerAllIds;
@@ -112,34 +120,63 @@ export function clearAcousticExplorerHiddenIds(): void {
   _acousticExplorerHiddenIds = new Set<string>();
 }
 
-function getOrCreateHiddenSet(key: string): Set<string> {
-  let s = _explorerHiddenIdsByKey.get(key);
-  if (!s) { s = new Set<string>(); _explorerHiddenIdsByKey.set(key, s); }
-  return s;
+function arraysEqualSorted(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const sa = [...a].sort();
+  const sb = [...b].sort();
+  for (let i = 0; i < sa.length; i++) if (sa[i] !== sb[i]) return false;
+  return true;
 }
 
-function getOrCreateIsolatedSet(key: string): Set<string> {
-  let s = _explorerIsolatedIdsByKey.get(key);
-  if (!s) { s = new Set<string>(); _explorerIsolatedIdsByKey.set(key, s); }
-  return s;
-}
-
-function getUnionHidden(): Set<string> {
-  const all = new Set<string>();
-  for (const s of _explorerHiddenIdsByKey.values()) {
-    for (const id of s) all.add(id);
+/** Clear the SelectionExtension selection and the hover highlight for the given
+  * ids. The SelectionExtension/highlight materials are applied AFTER the
+  * FilteringExtension materials, so a selected/hovered object would otherwise
+  * visually "reappear" right after being hidden. We clear the whole selection
+  * (no id re-resolution through the WorldTree, which breaks on duplicated ids)
+  * and the hover highlight via the Viewer's own reset helpers. */
+function clearSelectionAndHighlight(hidden: string[]): void {
+  if (!_viewerRef || hidden.length === 0) return;
+  let clearedSelection = false;
+  try {
+    const sel = _viewerRef.getExtension(SelectionExtension);
+    if (sel && typeof sel.clearSelection === 'function') {
+      if (typeof sel.getSelectedObjects === 'function' && sel.getSelectedObjects().length > 0) {
+        clearedSelection = true;
+      }
+      sel.clearSelection();
+    }
+  } catch { /* non-critical */ }
+  try {
+    const viewer = _viewerRef as unknown as { resetHighlight?: () => void };
+    if (typeof viewer.resetHighlight === 'function') viewer.resetHighlight();
+  } catch { /* non-critical */ }
+  // Keep the canonical selection in sync so the ObjectExplorer row highlight
+  // does not stay stale when hiding cleared the viewer's SelectionExtension.
+  if (clearedSelection) {
+    try { useSpeckleStore.getState().setSelectedObjectIds([]); } catch { /* non-critical */ }
   }
-  return all;
 }
 
-function getUnionIsolated(): Set<string> | null {
-  let all: Set<string> | null = null;
-  for (const s of _explorerIsolatedIdsByKey.values()) {
-    if (s.size === 0) continue;
-    if (!all) all = new Set<string>();
-    for (const id of s) all.add(id);
-  }
-  return all;
+/** Read the live hidden ids from the FilteringExtension (ground truth). */
+function readFilteringHidden(): Set<string> {
+  if (!_viewerRef) return new Set();
+  try {
+    const ext = _viewerRef.getExtension(FilteringExtension);
+    const hidden = ext?.filteringState?.hiddenObjects;
+    if (hidden) return new Set<string>(hidden);
+  } catch { /* fall through */ }
+  return new Set();
+}
+
+/** Read the live isolated ids from the FilteringExtension (ground truth). */
+function readFilteringIsolated(): string[] | null {
+  if (!_viewerRef) return null;
+  try {
+    const ext = _viewerRef.getExtension(FilteringExtension);
+    const isolated = ext?.filteringState?.isolatedObjects;
+    if (isolated && isolated.length > 0) return Array.from(new Set<string>(isolated));
+  } catch { /* fall through */ }
+  return null;
 }
 
 /** Model fileName from SpeckleViewerContext */
@@ -205,19 +242,23 @@ export interface SpeckleStoreState {
   clearFilterColors: () => void;
   registerMaterialColors: (colors: ColorGroup[]) => void;
   clearMaterialColors: () => void;
-  // Object Explorer hide/show tracking (so applyFilterColors can suppress colors for hidden objects)
-  trackExplorerHide: (ids: string[], stateKey: string) => void;
-  trackExplorerShow: (ids: string[], stateKey: string) => void;
-  clearExplorerHidden: (stateKey: string) => void;
-  /** Returns the live set of object IDs hidden via the ObjectExplorer for the given stateKey, or union of all if omitted. */
-  getExplorerHiddenIds: (stateKey?: string) => Set<string>;
-  // Object Explorer isolation tracking (so applyFilterColors can suppress colors for non-isolated objects)
-  trackExplorerIsolate: (ids: string[], stateKey: string) => void;
-  /** Remove specific IDs from the isolation set (un-isolate without clearing all isolation) */
-  removeFromExplorerIsolation: (ids: string[], stateKey: string) => void;
-  clearExplorerIsolation: (stateKey: string) => void;
-  /** Reactive copy of _explorerIsolatedIdsRef — null means no isolation active */
-  explorerIsolatedIds: string[] | null;
+  // ── Unified visibility model ──────────────────────────────────────────────
+  /** Reactive mirror of the user's DV hide intent (non-acoustic ids). */
+  userHiddenIds: string[];
+  /** Reactive mirror of the user's DV isolate intent (non-acoustic ids). */
+  userIsolatedIds: string[];
+  /** Reactive mirror of the currently applied hidden ids. */
+  appliedHiddenIds: string[];
+  /** Reactive mirror of the currently applied isolated ids. */
+  appliedIsolatedIds: string[];
+  hideUserObjects: (ids: string[]) => void;
+  showUserObjects: (ids: string[]) => void;
+  isolateUserObjects: (ids: string[]) => void;
+  unIsolateUserObjects: (ids: string[]) => void;
+  /** Reset all user visibility intent (hide + isolate + acoustic excludes). */
+  resetUserVisibility: () => void;
+  /** Compute + apply the single target FilteringExtension state. Idempotent. */
+  applyVisibility: () => void;
 
   // Actions — mode
   setFilteringEnabled: (enabled: boolean) => void;
@@ -229,7 +270,10 @@ export interface SpeckleStoreState {
   clearAnalysisObjectGroups: () => void;
 
   // Isolation state reader (synchronous, bypasses Zustand to avoid re-renders)
-  getExplorerIsolatedIds: (stateKey?: string) => string[] | null;
+  /** Live set of ids hidden in the viewer (ground truth from FilteringExtension). */
+  getExplorerHiddenIds: () => Set<string>;
+  /** Live isolated ids in the viewer, or null if none. */
+  getExplorerIsolatedIds: () => string[] | null;
 
   // Selector helper
   getObjectLinkState: (objectId: string) => {
@@ -244,7 +288,6 @@ export interface SpeckleStoreState {
   addAcousticExplorerHiddenId: (id: string) => void;
   removeAcousticExplorerHiddenId: (id: string) => void;
   clearAcousticExplorerHiddenIds: () => void;
-  applyAcousticExplorerHiddenIsolation: () => void;
 
   // Scenario hover/zoom helpers
   highlightObjectForHover: (objectId: string | string[]) => void;
@@ -274,7 +317,31 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
       getViewerRef: () => _viewerRef,
 
       setViewer: (viewer) => {
+        const isNewViewer = viewer !== null && viewer !== _viewerRef;
         _viewerRef = viewer;
+        // A fresh viewer means a fresh model: reset the unified visibility
+        // intent/applied state so stale ids from the previous model don't leak.
+        if (isNewViewer) {
+          _userHiddenIds = new Set();
+          _userIsolatedIds = new Set();
+          _acousticExplorerHiddenIds = new Set();
+          _acousticLayerAllIds = [];
+          _allModelGeometryIds = [];
+          _selectionPreviewIds = null;
+          _appliedHiddenIds = [];
+          _appliedIsolatedIds = [];
+          set(
+            {
+              userHiddenIds: [],
+              userIsolatedIds: [],
+              appliedHiddenIds: [],
+              appliedIsolatedIds: [],
+              acousticExplorerHiddenIds: [],
+            },
+            false,
+            'speckle/setViewerReset',
+          );
+        }
         // Re-apply any pending colors (material colors OR entity-sound links)
         // that were registered before the viewer was ready. Retry at increasing
         // intervals since FilteringExtension may take time to initialize.
@@ -310,7 +377,10 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
       filteringEnabled: false,
       viewMode: 'default',
       linkedObjectIds: new Set(),
-      explorerIsolatedIds: null,
+      userHiddenIds: [],
+      userIsolatedIds: [],
+      appliedHiddenIds: [],
+      appliedIsolatedIds: [],
       analysisObjectGroups: [],
       acousticExplorerHiddenIds: [],
 
@@ -448,17 +518,45 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         if (!_viewerRef) return;
         if (_viewModeRef === 'dark') return;
 
-        const filteringExt = _viewerRef.getExtension(FilteringExtension);
+        const viewer = _viewerRef;
+        const filteringExt = viewer.getExtension(FilteringExtension);
         if (!filteringExt) return;
 
-        // Use explicitly-tracked hidden IDs (union of all stateKeys so colors are suppressed
-        // regardless of which ObjectExplorer context hid them).
-        const hiddenSet = getUnionHidden();
-        // When isolation is active, objects NOT in the isolated set are ghosted/hidden too
-        // (union of all stateKeys).
-        const isolatedSet = getUnionIsolated();
+        // Read the applied visibility from the FilteringExtension (single source
+        // of truth — applyVisibility keeps it coherent). Colors are suppressed for
+        // hidden ids and, when isolation is active, for non-isolated ids.
+        const fs = filteringExt.filteringState;
+        const hiddenSet = new Set<string>(fs?.hiddenObjects ?? []);
+        const isolatedArr = fs?.isolatedObjects ?? [];
+        const isolatedSet = isolatedArr.length > 0 ? new Set<string>(isolatedArr) : null;
         const isExcluded = (id: string) =>
           hiddenSet.has(id) || (isolatedSet !== null && !isolatedSet.has(id));
+
+        // A Brep shares its display mesh's render view with the display Mesh
+        // object (both resolve to the same render view). If one object is hidden
+        // and the other is still colored, setFilters applies COLORED after
+        // HIDDEN, so the shared render view stays visible. Detect this: exclude
+        // a color id when ANY of its render views is in the hide set.
+        let hiddenRvGuids: Set<string> | null = null;
+        try {
+          const vs = (filteringExt as unknown as { VisibilityState?: { rvs?: { guid?: string }[] } })
+            .VisibilityState;
+          if (vs?.rvs?.length) {
+            hiddenRvGuids = new Set(vs.rvs.map((rv) => rv.guid as string).filter(Boolean));
+          }
+        } catch { /* ignore */ }
+        const hasHiddenRenderView = (id: string): boolean => {
+          if (!hiddenRvGuids) return false;
+          try {
+            const rvs = viewer
+              .getWorldTree()
+              .getRenderTree()
+              .getRenderViewsForNodeId(id);
+            return (rvs || []).some((rv) => hiddenRvGuids!.has(rv.guid));
+          } catch {
+            return false;
+          }
+        };
 
         const currentLinks = _objectSoundLinksRef;
         const currentGenerated = _generatedSoundObjectIdsRef;
@@ -468,10 +566,18 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         const colorGroups: { objectIds: string[]; color: string }[] = [];
 
         if (materialColors.length > 0) {
-          // Material colors bypass the exclusion check — they are explicit
-          // user assignments and should always render. The FilteringExtension
-          // independently handles visibility of hidden/isolated objects.
-          colorGroups.push(...materialColors);
+          // Material colors must respect visibility: setFilters applies user
+          // colors AFTER the HIDDEN/GHOST material, so a colored object would
+          // override its own hide and stay visible. Filter hidden (and, when
+          // isolation is active, non-isolated) ids out of the material groups,
+          // plus any id whose (shared) render view is already hidden.
+          const filtered = materialColors
+            .map((g) => ({
+              ...g,
+              objectIds: g.objectIds.filter((id) => !isExcluded(id) && !hasHiddenRenderView(id)),
+            }))
+            .filter((g) => g.objectIds.length > 0);
+          colorGroups.push(...filtered);
         }
 
         // Analysis object groups (model-analysis card coloring)
@@ -675,58 +781,128 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         }
       },
 
-      // ── Object Explorer hide tracking ─────────────────────────────────────
-      // These keep _explorerHiddenIdsByKey / _explorerIsolatedIdsByKey in sync so
-      // applyFilterColors can suppress colors for hidden/isolated objects per stateKey.
-      getExplorerHiddenIds: (stateKey) => {
-        if (stateKey !== undefined) {
-          return new Set(getOrCreateHiddenSet(stateKey));
-        }
-        // When no key is given, read the merged state from the FilteringExtension
-        // (the ground truth), falling back to the local union of all tracked keys.
-        if (_viewerRef) {
-          try {
-            const ext = _viewerRef.getExtension(FilteringExtension);
-            const hidden = ext?.filteringState?.hiddenObjects;
-            if (hidden) return new Set<string>(hidden);
-          } catch { /* fall through */ }
-        }
-        return getUnionHidden();
+      // ── Unified visibility model ──────────────────────────────────────────
+      getExplorerHiddenIds: () => readFilteringHidden(),
+
+      hideUserObjects: (ids) => {
+        ids.forEach((id) => _userHiddenIds.add(id));
+        set({ userHiddenIds: [..._userHiddenIds] }, false, 'speckle/hideUserObjects');
+        get().applyVisibility();
+      },
+      showUserObjects: (ids) => {
+        ids.forEach((id) => _userHiddenIds.delete(id));
+        set({ userHiddenIds: [..._userHiddenIds] }, false, 'speckle/showUserObjects');
+        get().applyVisibility();
+      },
+      isolateUserObjects: (ids) => {
+        const existing = new Set(_userIsolatedIds);
+        ids.forEach((id) => {
+          existing.add(id);
+          _userHiddenIds.delete(id); // isolating un-hides
+        });
+        _userIsolatedIds = existing;
+        set(
+          { userIsolatedIds: [..._userIsolatedIds], userHiddenIds: [..._userHiddenIds] },
+          false,
+          'speckle/isolateUserObjects',
+        );
+        get().applyVisibility();
+      },
+      unIsolateUserObjects: (ids) => {
+        const existing = new Set(_userIsolatedIds);
+        ids.forEach((id) => existing.delete(id));
+        _userIsolatedIds = existing;
+        set({ userIsolatedIds: [..._userIsolatedIds] }, false, 'speckle/unIsolateUserObjects');
+        get().applyVisibility();
+      },
+      resetUserVisibility: () => {
+        _userHiddenIds = new Set();
+        _userIsolatedIds = new Set();
+        _acousticExplorerHiddenIds = new Set();
+        set(
+          {
+            userHiddenIds: [],
+            userIsolatedIds: [],
+            acousticExplorerHiddenIds: [],
+          },
+          false,
+          'speckle/resetUserVisibility',
+        );
+        get().applyVisibility();
       },
 
-      trackExplorerHide: (ids, stateKey) => {
-        const s = getOrCreateHiddenSet(stateKey);
-        ids.forEach((id) => s.add(id));
+      applyVisibility: () => {
+        if (!_viewerRef) return;
+        const ext = _viewerRef.getExtension(FilteringExtension);
+        if (!ext) return;
+
+        const mode = _viewModeRef;
+        const acousticIds = _selectionPreviewIds ?? _acousticLayerAllIds;
+        const excluded = _acousticExplorerHiddenIds;
+
+        let isolated: string[] = [];
+        let hidden: string[] = [];
+
+        if (mode === 'acoustic') {
+          // Hide-based isolation: hide everything that is NOT in the acoustic
+          // layer, plus any excluded acoustic objects. This lets "exclude" fully
+          // hide an object (FilteringExtension cannot express both an isolated
+          // set AND a separate hidden set). When no acoustic layer is defined
+          // yet (selection mode / whole model), show everything.
+          if (acousticIds.length > 0) {
+            const acousticSet = new Set(acousticIds);
+            hidden = [
+              ..._allModelGeometryIds.filter((id) => !acousticSet.has(id)),
+              ...Array.from(excluded),
+            ];
+          }
+        } else {
+          const userIso = Array.from(_userIsolatedIds);
+          if (userIso.length > 0) {
+            isolated = userIso;
+          } else {
+            hidden = [...Array.from(_userHiddenIds), ...acousticIds];
+          }
+        }
+
+        // Idempotency: skip if this exact target is already applied.
+        if (
+          arraysEqualSorted(isolated, _appliedIsolatedIds) &&
+          arraysEqualSorted(hidden, _appliedHiddenIds)
+        ) {
+          return;
+        }
+
+        // Selection / hover highlight materials override FilteringExtension's
+        // HIDDEN material — deselect & un-highlight now-hidden ids BEFORE the
+        // filter is applied, otherwise a selected/hovered object visually
+        // "reappears" right after being hidden.
+        clearSelectionAndHighlight(hidden);
+
+        try {
+          // resetFilters clears visibility AND user object colors; a single
+          // command on one stateKey then re-establishes the target atomically.
+          ext.resetFilters();
+          if (isolated.length > 0) {
+            ext.isolateObjects(isolated, VISIBILITY_STATE_KEY, true, true);
+          } else if (hidden.length > 0) {
+            ext.hideObjects(hidden, VISIBILITY_STATE_KEY, true, false);
+          }
+        } catch (err) {
+          console.error('[speckleStore] applyVisibility failed:', err);
+        }
+
+        _appliedHiddenIds = hidden;
+        _appliedIsolatedIds = isolated;
+        set(
+          { appliedHiddenIds: hidden, appliedIsolatedIds: isolated },
+          false,
+          'speckle/applyVisibility',
+        );
+
+        // resetFilters wiped setUserObjectColors — restore entity/material colors.
         get().applyFilterColors();
-      },
-      trackExplorerShow: (ids, stateKey) => {
-        const s = getOrCreateHiddenSet(stateKey);
-        ids.forEach((id) => s.delete(id));
-        get().applyFilterColors();
-      },
-      clearExplorerHidden: (stateKey) => {
-        getOrCreateHiddenSet(stateKey).clear();
-        get().applyFilterColors();
-      },
-      trackExplorerIsolate: (ids, stateKey) => {
-        const isolatedSet = getOrCreateIsolatedSet(stateKey);
-        const hiddenSet = getOrCreateHiddenSet(stateKey);
-        ids.forEach((id) => hiddenSet.delete(id));
-        ids.forEach((id) => isolatedSet.add(id));
-        set({ explorerIsolatedIds: Array.from(isolatedSet) }, false, 'speckle/trackExplorerIsolate');
-        get().applyFilterColors();
-      },
-      removeFromExplorerIsolation: (ids, stateKey) => {
-        const s = getOrCreateIsolatedSet(stateKey);
-        if (s.size === 0) return;
-        ids.forEach((id) => s.delete(id));
-        set({ explorerIsolatedIds: s.size > 0 ? Array.from(s) : null }, false, 'speckle/removeFromExplorerIsolation');
-        get().applyFilterColors();
-      },
-      clearExplorerIsolation: (stateKey) => {
-        getOrCreateIsolatedSet(stateKey).clear();
-        set({ explorerIsolatedIds: null }, false, 'speckle/clearExplorerIsolation');
-        get().applyFilterColors();
+        _viewerRef.requestRender();
       },
 
       // ── Acoustic explorer hidden tracking ────────────────────────────────
@@ -734,62 +910,20 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         if (_acousticExplorerHiddenIds.has(id)) return;
         _acousticExplorerHiddenIds.add(id);
         set({ acousticExplorerHiddenIds: [..._acousticExplorerHiddenIds] }, false, 'speckle/addAcousticExplorerHiddenId');
+        get().applyVisibility();
       },
 
       removeAcousticExplorerHiddenId: (id) => {
         if (!_acousticExplorerHiddenIds.has(id)) return;
         _acousticExplorerHiddenIds.delete(id);
         set({ acousticExplorerHiddenIds: [..._acousticExplorerHiddenIds] }, false, 'speckle/removeAcousticExplorerHiddenId');
+        get().applyVisibility();
       },
 
       clearAcousticExplorerHiddenIds: () => {
         _acousticExplorerHiddenIds = new Set<string>();
         set({ acousticExplorerHiddenIds: [] }, false, 'speckle/clearAcousticExplorerHiddenIds');
-      },
-
-      applyAcousticExplorerHiddenIsolation: () => {
-        if (!_viewerRef) return;
-        try {
-          const ext = _viewerRef.getExtension(FilteringExtension);
-          if (!ext) return;
-          if (_acousticLayerAllIds.length === 0) return;
-          const filtered = _acousticLayerAllIds.filter(
-            (id) => !_acousticExplorerHiddenIds.has(id),
-          );
-          if (filtered.length === 0) return;
-
-          // FilteringExtension's internal VisibilityState.ids dict is additive
-          // (Object.assign) across consecutive isolateObjects calls on the same
-          // stateKey + command family — it only resets when the stateKey or the
-          // command family (isolate vs hide) changes. Re-calling isolateObjects
-          // with a SMALLER list therefore never shrinks the isolated set: ids
-          // missing from the new list simply stay isolated forever. The usual
-          // "sandwich a hide-family call in between to force a reset" compose
-          // pattern doesn't help here either, since reapplyPostIsolateHides()
-          // is a no-op in acoustic mode (postIsolateHideIds is null while
-          // isolation is active). Instead, diff against the previously tracked
-          // isolated set and issue targeted unIsolateObjects/isolateObjects
-          // calls only for the ids that actually changed — unIsolateObjects
-          // explicitly deletes specific ids from the dict without resetting it.
-          const isolatedSet = getOrCreateIsolatedSet('acoustic-materials');
-          const desired = new Set(filtered);
-          const toRemove = Array.from(isolatedSet).filter((id) => !desired.has(id));
-          const toAdd = filtered.filter((id) => !isolatedSet.has(id));
-
-          if (toRemove.length > 0) {
-            ext.unIsolateObjects(toRemove, 'acoustic-materials', true, true);
-          }
-          if (toAdd.length > 0) {
-            ext.isolateObjects(toAdd, 'acoustic-materials', true, true);
-          }
-          _viewerRef.requestRender();
-
-          // Also update the tracked isolation set for the acoustic-materials key.
-          isolatedSet.clear();
-          filtered.forEach((id) => isolatedSet.add(id));
-          set({ explorerIsolatedIds: Array.from(isolatedSet) }, false, 'speckle/applyAcousticExplorerHiddenIsolation');
-          get().applyFilterColors();
-        } catch { /* non-critical */ }
+        get().applyVisibility();
       },
 
       // ── Mode ──────────────────────────────────────────────────────────────
@@ -799,26 +933,11 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
       setViewMode: (mode) => {
         _viewModeRef = mode;
         set({ viewMode: mode }, false, 'speckle/setViewMode');
+        get().applyVisibility();
       },
 
       // ── Isolation state reader ────────────────────────────────────────────
-      getExplorerIsolatedIds: (stateKey) => {
-        // When a specific stateKey is given, return its tracked set.
-        if (stateKey !== undefined) {
-          const s = _explorerIsolatedIdsByKey.get(stateKey);
-          return s && s.size > 0 ? Array.from(s) : null;
-        }
-        // When no key is given, read from FilteringExtension for the complete merged
-        // set — includes all descendants isolated via includeDescendants=true under any key.
-        if (_viewerRef) {
-          try {
-            const ext = _viewerRef.getExtension(FilteringExtension);
-            const isolated = ext?.filteringState?.isolatedObjects;
-            if (isolated && isolated.length > 0) return Array.from(new Set<string>(isolated));
-          } catch { /* fall through */ }
-        }
-        return getUnionIsolated() ? Array.from(getUnionIsolated()!) : null;
-      },
+      getExplorerIsolatedIds: () => readFilteringIsolated(),
 
       // ── Selector helper ───────────────────────────────────────────────────
       getObjectLinkState: (objectId) => {

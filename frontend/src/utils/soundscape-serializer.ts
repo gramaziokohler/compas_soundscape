@@ -75,6 +75,7 @@ export function buildSoundscapeSavePayload(
     negativePrompt: string;
     audioModel: string;
     ttsModel?: string;
+    orchestrateSoundsEnabled?: boolean;
   },
   /** User-adjusted volumes keyed by sound ID (from audioControls) */
   soundVolumes?: Record<string, number>,
@@ -147,6 +148,8 @@ export function buildSoundscapeSavePayload(
       // Parametric trigger links between sounds (re-baked/edited after load)
       orchestrate_meta: config.orchestrateMeta,
       category: (config as any).category || undefined,
+      // Scenario pipeline reference for "incomplete" (pre-orchestrate) cards.
+      scenario_source: (config as any).scenarioSource || undefined,
     };
   });
 
@@ -224,6 +227,7 @@ export function buildSoundscapeSavePayload(
     negative_prompt: globalSettings.negativePrompt,
     audio_model: globalSettings.audioModel,
     tts_model: globalSettings.ttsModel,
+    orchestrate_sounds_enabled: globalSettings.orchestrateSoundsEnabled ?? false,
   };
 
   // Serialize receivers (strip non-serializable mesh property)
@@ -475,6 +479,7 @@ export function restoreSoundscapeState(
     negativePrompt: string;
     audioModel: string;
     ttsModel?: string;
+    orchestrateSoundsEnabled: boolean;
   };
   receivers: ReceiverData[];
   gridListeners: GridListenerData[];
@@ -520,6 +525,7 @@ export function restoreSoundscapeState(
       parentUsageOriginalIndex: (saved as any).parent_usage_original_index,
       orchestrateMeta: saved.orchestrate_meta as SoundGenerationConfig['orchestrateMeta'],
       category: saved.category,
+      scenarioSource: (saved as any).scenario_source as SoundGenerationConfig['scenarioSource'],
       entity: undefined, // deprecated — use entities[] below
       entities: (() => {
         // New multi-entity format: entity_indices[] array
@@ -662,6 +668,7 @@ export function restoreSoundscapeState(
     negativePrompt: loadedData.global_settings.negative_prompt,
     audioModel: loadedData.global_settings.audio_model,
     ttsModel: loadedData.global_settings.tts_model,
+    orchestrateSoundsEnabled: (loadedData.global_settings as any).orchestrate_sounds_enabled ?? false,
   };
 
   // Build authoritative receiver position map from simulation configs

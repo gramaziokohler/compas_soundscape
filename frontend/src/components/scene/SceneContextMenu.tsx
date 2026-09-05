@@ -63,7 +63,6 @@ export function SceneContextMenu({
   const acousticExplorerHiddenIds = useSpeckleStore((s) => s.acousticExplorerHiddenIds);
   const addAcousticExplorerHiddenId = useSpeckleStore((s) => s.addAcousticExplorerHiddenId);
   const removeAcousticExplorerHiddenId = useSpeckleStore((s) => s.removeAcousticExplorerHiddenId);
-  const applyAcousticExplorerHiddenIsolation = useSpeckleStore((s) => s.applyAcousticExplorerHiddenIsolation);
   const selectedAcousticLayerName = useAcousticLayerStore((s) => s.selectedAcousticLayerName);
 
   const viewerRef = useMemo<React.RefObject<any>>(() => ({
@@ -114,7 +113,7 @@ export function SceneContextMenu({
   const handleToggleVisibility = useCallback(() => {
     if (geometryLeafIds.length === 0) return;
 
-    if (isAcousticMode) {
+    if (isAcousticMode && hasDefinedLayer) {
       const allHidden = geometryLeafIds.every((id) => acousticExplorerHiddenIds.includes(id));
       geometryLeafIds.forEach((id) => {
         if (allHidden) {
@@ -123,7 +122,6 @@ export function SceneContextMenu({
           addAcousticExplorerHiddenId(id);
         }
       });
-      applyAcousticExplorerHiddenIsolation();
     } else {
       const currentlyHidden = filtering.areObjectsHidden(geometryLeafIds);
       if (currentlyHidden) {
@@ -132,9 +130,8 @@ export function SceneContextMenu({
         filtering.hideObjects(geometryLeafIds);
       }
     }
-  }, [geometryLeafIds, isAcousticMode, acousticExplorerHiddenIds,
-      addAcousticExplorerHiddenId, removeAcousticExplorerHiddenId,
-      applyAcousticExplorerHiddenIsolation, filtering]);
+  }, [geometryLeafIds, isAcousticMode, hasDefinedLayer, acousticExplorerHiddenIds,
+      addAcousticExplorerHiddenId, removeAcousticExplorerHiddenId, filtering]);
 
   const handleToggleIsolation = useCallback(() => {
     if (geometryLeafIds.length === 0) return;

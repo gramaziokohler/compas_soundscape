@@ -64,6 +64,11 @@ export class SpeckleEventBridge {
   // Saved state for unified selection correction after Speckle processes a click
   private savedFilterSnapshot: FilterSnapshot | null = null;
   private expectedSpeckleHitId: string | null = null;
+  /** SelectionExtension ids captured at pointerdown — i.e. BEFORE Speckle's own
+   *  pointerup-driven auto-select mutates it. Lets us rebuild an accumulated
+   *  shift+click selection ourselves instead of trusting Speckle's internals. */
+  private selectionBeforeClick: string[] = [];
+  private lastClickWasShift = false;
 
   // Orbit/drag detection to prevent selection while orbiting the camera
   private static readonly DRAG_THRESHOLD_PX = 4;
@@ -137,18 +142,6 @@ export class SpeckleEventBridge {
       (state?.isolatedObjects?.length ?? 0) > 0 &&
       !state?.isolatedObjects?.includes(objectId);
     return isHidden || isExcludedByIsolation;
-  }
-
-  /**
-   * Check against a *saved* snapshot (pre-click) rather than live state,
-   * because Speckle's click handling may have corrupted the live state.
-   */
-  private wasFilteredInSnapshot(objectId: string, snap: FilterSnapshot | null): boolean {
-    if (!snap || !objectId) return false;
-    const wasHidden = snap.hiddenObjects.includes(objectId);
-    const wasExcluded =
-      snap.isolatedObjects.length > 0 && !snap.isolatedObjects.includes(objectId);
-    return wasHidden || wasExcluded;
   }
 
   /**
@@ -226,65 +219,68 @@ export class SpeckleEventBridge {
   /**
    * Unified Speckle object selection handler.
    *
-   * Called ~50 ms after a click to let Speckle's internal handling run first.
-   * Verifies the result and corrects it when:
-   *   1. A hidden/non-isolated object was selected  → correct to the visible one
-   *   2. Nothing was selected but a visible object exists → select it
-   *
-   * This replaces the old checkSpeckleSelection() and is mode-agnostic.
+   * Called ~50 ms after a click. Rebuilds the desired selection deterministically
+   * from the pointerdown snapshot + the visible object under the cursor:
+   *   - plain single-click on an object  → replace with that object
+   *   - plain single-click on empty space → clear
+   *   - shift+click on an object          → add to the existing selection
+   *   - shift+click on empty space        → keep the existing selection
+   * then applies it to the SelectionExtension (so the viewer highlight is exactly
+   * the same set we report). The ids we report are the render-data ids resolved by
+   * findVisibleSpeckleHit — the same ids the box-select path uses — so the
+   * ObjectExplorer can map them onto rows consistently.
    */
   private handleSpeckleSelection(): void {
     try {
-      const selectedObjects = this.selectionExtension.getSelectedObjects() || [];
-      const selectedIds: string[] = selectedObjects.map((obj: any) => {
-        if (typeof obj === 'string') return obj;
-        return obj?.id || String(obj);
-      });
-
       const snap = this.savedFilterSnapshot;
       const expectedId = this.expectedSpeckleHitId;
+      const shift = this.lastClickWasShift;
+      const before = this.selectionBeforeClick;
 
       // Clear saved state
       this.savedFilterSnapshot = null;
       this.expectedSpeckleHitId = null;
+      this.lastClickWasShift = false;
+      this.selectionBeforeClick = [];
 
-      // ---- Case 1: Speckle selected a filtered object ----
-      const hasFilteredSelection = selectedIds.some(
-        (id) => this.wasFilteredInSnapshot(id, snap) || this.isObjectFilteredOut(id)
-      );
+      // Previous selection minus anything that is currently filtered out —
+      // a hidden/non-isolated object should never stay selected.
+      const previousValid = before.filter((id) => !this.isObjectFilteredOut(id));
 
-      if (hasFilteredSelection) {
+      let desired: string[];
+      if (shift) {
+        // Additive. Clicking an object adds it (if not already present);
+        // clicking empty space leaves the current selection untouched.
+        desired = previousValid;
+        if (expectedId && !desired.includes(expectedId)) desired.push(expectedId);
+      } else if (expectedId) {
+        desired = [expectedId];
+      } else {
+        desired = [];
+      }
+
+      // Speckle's own auto-select may have selected a hidden object and reset the
+      // FilteringExtension ranges — restore the pre-click filter state if it drifted.
+      this.restoreFilterSnapshot(snap);
+
+      if (desired.length > 0) {
+        this.selectionExtension.selectObjects(desired);
+      } else {
         this.selectionExtension.clearSelection();
-        this.restoreFilterSnapshot(snap);
-
-        if (expectedId) {
-          this.selectionExtension.selectObjects([expectedId]);
-        }
-        if (this.onSpeckleObjectSelected) {
-          this.onSpeckleObjectSelected(expectedId ? [expectedId] : []);
-        }
-        return;
       }
 
-      // ---- Case 2: Nothing selected, but a visible object was expected ----
-      if (selectedIds.length === 0 && expectedId) {
-        this.selectionExtension.selectObjects([expectedId]);
-        if (this.onSpeckleObjectSelected) {
-          this.onSpeckleObjectSelected([expectedId]);
-        }
-        return;
-      }
-
-      // ---- Case 3: Selection is valid — pass through ----
-      if (selectedIds.length > 0 && this.lastClickedObject) {
+      // Selecting a Speckle object clears any previously active custom-object
+      // (sound sphere / receiver) selection.
+      if (desired.length > 0 && this.lastClickedObject) {
         if (this.onSelectionCleared) {
           this.onSelectionCleared();
         }
         this.lastClickedObject = null;
+        this.lastClickedObjectKey = null;
       }
 
       if (this.onSpeckleObjectSelected) {
-        this.onSpeckleObjectSelected(selectedIds);
+        this.onSpeckleObjectSelected(desired);
       }
     } catch (error) {
       console.error('[SpeckleEventBridge] handleSpeckleSelection error:', error);
@@ -305,6 +301,21 @@ export class SpeckleEventBridge {
     this.wasOrbiting = false;
 
     this.applyCameraRemapForButton(e);
+
+    // Snapshot the current Speckle selection on left-press, BEFORE Speckle's own
+    // pointerup-driven auto-select mutates it. We use it to rebuild shift+click
+    // additive selections deterministically in handleSpeckleSelection.
+    if (e.button === 0 && !this.isFirstPersonModeActive) {
+      try {
+        const objs = this.selectionExtension.getSelectedObjects() || [];
+        this.selectionBeforeClick = (objs as any[]).map((o: any) => {
+          if (typeof o === 'string') return o;
+          return o?.id || String(o);
+        });
+      } catch {
+        this.selectionBeforeClick = [];
+      }
+    }
 
     if (e.button === 0 && !this.isFirstPersonModeActive && !this.isExclusiveDragTarget(e)) {
       this.startBoxSelectTracking(e.clientX, e.clientY);
@@ -626,6 +637,8 @@ export class SpeckleEventBridge {
     if (this.isBoundingBoxGumballDragging()) {
       return;
     }
+
+    this.lastClickWasShift = event.shiftKey;
 
     this.updateMouseFromEvent(event);
 

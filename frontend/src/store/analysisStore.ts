@@ -25,7 +25,6 @@ import type {
   ScenarioResult,
   FoleyResult,
   SpeechResult,
-  OrchestrateResult,
   FreeformConfig,
 } from '@/types/analysis';
 import type { CardType } from '@/types/card';
@@ -591,12 +590,54 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             ? `${cloned.display_name} (copy)`
             : undefined;
 
+          // A duplicated scenario card must NOT share its pipeline results/IDs with the
+          // source — regenerating it must produce a fresh scenario, foley, speech and
+          // orchestrate run (and a new sound section), not re-link to the source card's.
+          if (cloned.type === 'scenario') {
+            cloned.scenarioRawText = '';
+            cloned.scenarioResult = null;
+            cloned.scenarioId = null;
+            cloned.foleyResult = null;
+            cloned.selectedFoleyKeys = [];
+            cloned.speechResult = null;
+            cloned.speechId = null;
+            cloned.orchestrateResult = null;
+            cloned.orchestrateId = null;
+          }
+
           // Insert the clone — toInsertion is the gap index (0 = before first, n = after last).
           // If the clone lands at or after the source, shift by -1 since the clone is inserted
           // before the source shifts.
           const newConfigs = [...analysisConfigs];
           const insertAt = toInsertion > from ? toInsertion - 1 : toInsertion;
           newConfigs.splice(insertAt, 0, cloned);
+
+          // Remap sound-children linkage so each sound card keeps following its parent
+          // usage/context card across the insertion (the fresh clone has no children of its
+          // own). Without this, a clone inserted at or before the source shifts the source's
+          // index and silently orphans its children onto the clone.
+          const soundStore = useSoundscapeStore.getState();
+          const remapParentUsageIndex = (pui: number | undefined): number | undefined => {
+            if (pui === undefined) return pui;
+            if (pui >= 0) return pui >= insertAt ? pui + 1 : pui;
+            // Negative namespace: -(contextIndex + 1) for audio-context bypass cards.
+            const ctxIndex = -pui - 1;
+            const newCtxIndex = ctxIndex >= insertAt ? ctxIndex + 1 : ctxIndex;
+            return -(newCtxIndex + 1);
+          };
+          let soundLinkageChanged = false;
+          const remappedSoundConfigs = soundStore.soundConfigs.map((sc) => {
+            const pui = (sc as any).parentUsageOriginalIndex as number | undefined;
+            const next = remapParentUsageIndex(pui);
+            if (next !== pui) {
+              soundLinkageChanged = true;
+              return { ...sc, parentUsageOriginalIndex: next };
+            }
+            return sc;
+          });
+          if (soundLinkageChanged) {
+            useSoundscapeStore.setState({ soundConfigs: remappedSoundConfigs });
+          }
 
           // Duplicate the linked analysis result if one exists for this config
           const newResults = [...analysisResults];
@@ -854,15 +895,12 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               return;
             } else if (config.type === 'scenario') {
               const sc = config as ScenarioConfig;
-              if (sc.orchestrateResult) {
-                // Full pipeline already completed — re-send to generation
+              if (sc.foleyResult && sc.speechResult) {
+                // Foley + speech done → (re-)send the incomplete cards to generation
                 get().handleSendToSoundGeneration(undefined, index);
                 return;
-              } else if (sc.foleyResult && sc.speechResult) {
-                // Foley + speech done → run orchestrate
-                await get().handleFoleyArtist(index);
               } else if (sc.scenarioResult) {
-                // Scenario generated → call foley artist
+                // Scenario generated → run foley + speech (parallel)
                 await get().handleFoleyArtist(index);
               } else {
                 await get().handleScenarioAnalyze(index);
@@ -1338,15 +1376,21 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                   },
                 });
               });
-            } else if (sc.foleyResult) {
-            // Legacy foley path (fallback when orchestrate is not available)
+            } else if (sc.foleyResult || sc.speechResult) {
+            // Incomplete path: foley + speech only (no orchestrate yet). Orchestration
+            // runs in parallel at generation time, so these cards carry a `scenarioSource`
+            // reference (raw entry fields + user-editable copy counts) that lets the sound
+            // section rebuild the orchestrate input from the user's edits.
             const selectedKeys = new Set(sc.selectedFoleyKeys ?? []);
-            sc.foleyResult.scenarios.forEach((scenario, si) => {
+            const scenarioId = sc.scenarioId ?? '';
+            const foleyId = sc.foleyResult?.foleyId ?? null;
+            const speechId = sc.speechResult?.speechId ?? null;
+
+            // ── Foley sounds ──
+            (sc.foleyResult?.scenarios ?? []).forEach((scenario, si) => {
               scenario.sound_events.forEach((sound, ei) => {
                 const key = `${scenario.scenario_title}__${sound.soundName}`;
                 if (!selectedKeys.has(key)) return;
-                const splMatch = sound.spl?.match(/(-?\d+(?:\.\d+)?)/);
-                const dbfsVal = splMatch ? parseFloat(splMatch[1]) : DEFAULT_DBFS;
                 const durationSec = (() => {
                   const d = sound.duration ?? '';
                   const colonIdx = d.indexOf(':');
@@ -1356,17 +1400,16 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                     return mm * 60 + ss;
                   }
                   const n = parseFloat(d);
-                  return isNaN(n) ? 5 : n;
+                  return isNaN(n) ? 10 : n;
                 })();
                 const pos = sound.position;
                 const involvedIds = sound.objectsInvolved?.filter(Boolean) ?? [];
-                const linkedObjectId = involvedIds.length > 0
-                  ? involvedIds[Math.floor(Math.random() * involvedIds.length)]
-                  : null;
+                const linkedObjectId = involvedIds.length > 0 ? involvedIds[0] : null;
                 const normalizedCategory = (sound.category || '').toLowerCase().replace(/[\s-]+/g, '_');
                 const isBgFoley = normalizedCategory === 'background' || normalizedCategory === 'background_sound';
+
                 foleyPrompts.push({
-                  id: `foley-${sc.foleyResult!.foleyId}-${si}-${ei}`,
+                  id: `foley-${foleyId}-${si}-${ei}`,
                   text: sound.description || sound.soundName,
                   displayName: sound.soundName,
                   selected: true,
@@ -1395,13 +1438,81 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                       }
                     : undefined,
                   metadata: {
-                    dbfs: dbfsVal,
+                    dbfs: DEFAULT_DBFS,
                     duration_seconds: isBgFoley ? 10 : durationSec,
                     interval_seconds: LLM_SUGGESTED_INTERVAL_SECONDS,
                     timestamps: isBgFoley ? undefined : (sound.timestamps?.length ? sound.timestamps : undefined),
                     category: sound.category,
+                    scenarioSource: {
+                      scenarioId,
+                      foleyId,
+                      speechId,
+                      entryId: sound.id,
+                      isSpeech: false,
+                      copyCount: 1,
+                      soundName: sound.soundName,
+                      description: sound.description,
+                      category: sound.category,
+                      duration: sound.duration ?? '',
+                      timestamps: sound.timestamps ?? [],
+                      objectsInvolved: involvedIds,
+                      position: Array.isArray(pos) ? pos : [],
+                      character: '',
+                      script: '',
+                      speechLines: [],
+                    },
                   },
                 });
+              });
+            });
+
+            // ── Speech entries ──
+            (sc.speechResult?.speeches ?? []).forEach((speech, si) => {
+              const speechLines = (speech.script ?? '')
+                .split(';')
+                .map((s) => s.trim())
+                .filter(Boolean);
+              const character = (speech.character || '').trim();
+              const matched = character
+                ? TTS_VOICES.find((v) => v.label.toLowerCase() === character.toLowerCase())
+                : undefined;
+              const voiceName = matched?.value ?? TTS_VOICES[0].value;
+              const pos = speech.position;
+
+              foleyPrompts.push({
+                id: `speech-${speechId}-${si}`,
+                text: speech.script,
+                displayName: character || speech.id,
+                selected: true,
+                position: Array.isArray(pos) && pos.length >= 3
+                  ? [pos[0], pos[1], pos[2]]
+                  : undefined,
+                metadata: {
+                  dbfs: DEFAULT_DBFS,
+                  duration_seconds: 5,
+                  interval_seconds: 5,
+                  timestamps: speech.timestamps?.length ? speech.timestamps : undefined,
+                  category: 'speech',
+                  scenarioSource: {
+                    scenarioId,
+                    foleyId,
+                    speechId,
+                    entryId: speech.id,
+                    isSpeech: true,
+                    copyCount: speechLines.length || 1,
+                    soundName: character || 'Speech',
+                    description: speech.script,
+                    category: 'speech',
+                    duration: '',
+                    timestamps: speech.timestamps ?? [],
+                    objectsInvolved: [],
+                    position: Array.isArray(pos) ? pos : [],
+                    character,
+                    script: speech.script,
+                    speechLines,
+                    voiceName,
+                  },
+                },
               });
             });
             }
@@ -1515,10 +1626,9 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               console.warn('[analyzeModel] live worldTree re-extraction failed, using config.modelEntities:', extractErr);
             }
 
-            // Use speckleStore's explorer hidden IDs — kept in sync by
-            // useSpeckleFiltering.hideObjects → trackExplorerHide, which is what
-            // the ObjectExplorer uses. objectExplorerStore._viewerRef is never
-            // set so its syncFromExtension() is a no-op.
+            // Use speckleStore's live hidden IDs — read directly from the
+            // FilteringExtension (the single source of truth, kept coherent by
+            // applyVisibility). This is what the ObjectExplorer drives.
             const hiddenIdsForAnalysis = useSpeckleStore.getState().getExplorerHiddenIds();
             // When a layer is isolated in the Object Explorer, only that layer and
             // its descendants are "shown" — everything else is implicitly hidden.
@@ -1854,6 +1964,18 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             selectedFoleyKeys: [],
           } as Partial<ScenarioConfig>);
 
+          // Regenerating a scenario on an already-generated sound scene must reset its
+          // sound section: drop every sound card (and its generated events) linked to
+          // this usage card, so the new foley + speech repopulate it fresh.
+          const soundStore = useSoundscapeStore.getState();
+          const linkedSoundIndices = soundStore.soundConfigs
+            .map((sc, i) => ({ sc, i }))
+            .filter(({ sc }) => (sc as any).parentUsageOriginalIndex === index)
+            .map(({ i }) => i);
+          if (linkedSoundIndices.length > 0) {
+            soundStore.handleRemoveConfigs(linkedSoundIndices);
+          }
+
           // Find analysis_id from the most recent 'model-analysis' config with a result
           let analysisId: string | undefined;
           if (config.useAnalysisResult) {
@@ -2090,64 +2212,6 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
 
             await Promise.all([foleyPromise, speechPromise]);
           }
-
-          // ── Step 2: Orchestrate (foley + speech → playlist) ──
-          const updatedConfig = get().analysisConfigs[index] as ScenarioConfig;
-          const foleyId = updatedConfig.foleyResult?.foleyId;
-          const speechId = updatedConfig.speechResult?.speechId;
-
-          if (!foleyId || !speechId) {
-            console.error('[handleFoleyArtist] Missing foley or speech result for orchestrate');
-            return;
-          }
-
-          const orchestrateBody = {
-            scenario_id: config.scenarioId,
-            foley_id: foleyId,
-            speech_id: speechId,
-            llm_model: 'gemini-2.5-flash',
-          };
-
-          const orchestrator = new AbortController();
-          let workingOrchestrate: OrchestrateResult = { playlist: [], orchestrateId: '' };
-
-          try {
-            for await (const event of streamPrompts(
-              `${API_BASE_URL}/api/orchestrate-stream`,
-              orchestrateBody,
-              orchestrator.signal,
-            )) {
-              if (event.type === 'entry') {
-                const entry = event.entry as OrchestrateResult['playlist'][number];
-                workingOrchestrate = {
-                  ...workingOrchestrate,
-                  playlist: [...workingOrchestrate.playlist, entry],
-                };
-                handleUpdateConfig(index, {
-                  orchestrateResult: workingOrchestrate,
-                } as Partial<ScenarioConfig>);
-              } else if (event.type === 'done') {
-                const finalResult: OrchestrateResult = {
-                  playlist: event.result?.playlist ?? workingOrchestrate.playlist,
-                  orchestrateId: (event.orchestrate_id as string) ?? '',
-                };
-                handleUpdateConfig(index, {
-                  orchestrateResult: finalResult,
-                  orchestrateId: finalResult.orchestrateId,
-                } as Partial<ScenarioConfig>);
-              } else if (event.type === 'error') {
-                console.error('[handleFoleyArtist] Orchestrate SSE error:', event.message);
-              }
-            }
-          } catch (e) {
-            if (e instanceof Error && e.name === 'AbortError') return;
-            console.error('[handleFoleyArtist] Orchestrate stream error:', e);
-            notifySectionError(e instanceof Error ? e.message : 'Soundscape orchestration failed');
-            return;
-          }
-
-          // ── Step 3: Send orchestrate results to sound generation ──
-          get().handleSendToSoundGeneration(undefined, index);
         },
       }),
       { name: 'analysisStore' },

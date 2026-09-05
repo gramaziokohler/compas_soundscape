@@ -13,6 +13,7 @@ import { ObjectPickerBar } from "@/components/ui/ObjectPickerBar";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { SoundPreContent, SoundResultContent } from "./sound";
 import { Badge } from "@/components/ui/Badge";
+import { ToggleField } from "@/components/ui/ToggleField";
 import type { VariantsBarProps } from "@/components/ui/VariantsBar";
 import { createTtsSpeechLines } from "@/hooks/useTtsSpeechLines";
 import { apiService } from "@/services/api";
@@ -129,6 +130,8 @@ export function SoundGenerationSection({
   const updateSoundPosition         = useSoundscapeStore((s) => s.updateSoundPosition);
   const handleDetachSoundFromEntity = useSoundscapeStore((s) => s.handleDetachSoundFromEntity);
   const regeneratingIndices         = useSoundscapeStore((s) => s.regeneratingIndices);
+  const orchestrateSoundsEnabled    = useSoundscapeStore((s) => s.orchestrateSoundsEnabled);
+  const setOrchestrateSoundsEnabled = useSoundscapeStore((s) => s.setOrchestrateSoundsEnabled);
 
   // Copied position for the right-click "Paste position" menu item (shared across
   // sound + listener cards). Null when nothing has been copied yet.
@@ -1271,8 +1274,16 @@ export function SoundGenerationSection({
   );
   const showGenerateAll = pendingCardCount > 2;
 
-  const footer = (isSoundGenerating || showGenerateAll) ? (
-    <div className="flex gap-2 pt-2">
+  // Orchestrate toggle — only shown when scenario-derived (incomplete) sound cards
+  // exist, so the user can opt into running the orchestrate agent in parallel with
+  // generation to compile the parametric timeline.
+  const hasScenarioData = useMemo(
+    () => soundConfigs.some((c) => c.scenarioSource),
+    [soundConfigs],
+  );
+
+  const footer = (isSoundGenerating || showGenerateAll || hasScenarioData) ? (
+    <div className="flex flex-col gap-2 pt-2">
       {isSoundGenerating ? (
         /* Progress replaces the generate button while running */
         <GenerateButton
@@ -1288,6 +1299,13 @@ export function SoundGenerationSection({
           label="Generate Sounds"
           disabled={shouldDisableGenerateButton}
           onGenerate={handleGenerateAll}
+        />
+      )}
+      {hasScenarioData && !isSoundGenerating && (
+        <ToggleField
+          label="Orchestrate sounds following the scenario"
+          checked={orchestrateSoundsEnabled}
+          onChange={(checked) => setOrchestrateSoundsEnabled(checked)}
         />
       )}
     </div>

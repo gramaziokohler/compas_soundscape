@@ -12,6 +12,7 @@ export interface SoundscapeGlobalSettings {
   negative_prompt: string;
   audio_model: string;
   tts_model?: string;
+  orchestrate_sounds_enabled?: boolean;
 }
 
 /** Serializable sound configuration (one card) */
@@ -38,6 +39,8 @@ export interface SoundscapeSoundConfig {
   orchestrate_meta?: SoundscapeOrchestrateMeta;
   /** Sound category from foley/scenario analysis (e.g. "background", "sound_event", "speech"). */
   category?: string;
+  /** Scenario pipeline reference for "incomplete" (pre-orchestrate) cards. */
+  scenario_source?: Record<string, unknown>;
 }
 
 /** Serializable orchestration metadata (parametric trigger links). */

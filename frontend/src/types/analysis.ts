@@ -155,6 +155,7 @@ export interface ScenarioResult {
 }
 
 export interface FoleySoundEvent {
+  id: string;
   soundName: string;
   description: string;
   duration: string;
@@ -214,6 +215,37 @@ export interface OrchestrateEntry {
 export interface OrchestrateResult {
   playlist: OrchestrateEntry[];
   orchestrateId: string;
+}
+
+/**
+ * Reference a sound card carries back to the scenario pipeline (scenario + foley +
+ * speech) that produced it, so orchestration can be re-run at generation time from
+ * the user's edited cards. Carries the raw foley/speech entry fields needed to
+ * rebuild the orchestrate agent input (deleted cards, removed speech lines, changed
+ * copy counts are all reflected here at generation time).
+ */
+export interface ScenarioSource {
+  scenarioId: string;
+  foleyId: string | null;
+  speechId: string | null;
+  /** Foley `sound.id` or speech `speech.id` — links orchestrate output back to this card. */
+  entryId: string;
+  isSpeech: boolean;
+  /** User-controlled number of audio copies to generate. */
+  copyCount: number;
+  // ── raw entry fields used to rebuild the orchestrate input ──
+  soundName: string;
+  description: string;
+  category: string;
+  duration: string;
+  timestamps: string[];
+  objectsInvolved: string[];
+  position: number[];
+  character: string;
+  script: string;
+  speechLines: string[];
+  /** Resolved TTS voice value (Gemini prebuilt voice) for speech cards. */
+  voiceName?: string;
 }
 
 /**
@@ -287,6 +319,8 @@ export interface TextPromptResult {
       /** Original foley/speech timestamps (MM:SS) — fallback when trigger resolution fails. */
       timestamps?: string[];
     };
+    /** Scenario pipeline reference for an "incomplete" card (foley+speech only, pre-orchestrate). */
+    scenarioSource?: ScenarioSource;
   };
 }
 

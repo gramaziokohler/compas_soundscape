@@ -71,9 +71,12 @@ export function useSpeckleCoordinatorCallbacks({
       if (!onSelectSoundCard) return;
       const promptIndex = parseInt(promptKey.split('_')[1]);
       if (!isNaN(promptIndex)) {
+        // A custom object takes over the selection — clear the Speckle object
+        // selection (store + explorer) so only one object type is highlighted.
+        skipDeselectionRef.current = true;
+        setSelectedSpeckleObjectIds([]);
         console.log('[SpeckleScene] Sound sphere clicked, selecting card:', promptIndex);
         setExpandedSoundCardIdx(null);
-        skipDeselectionRef.current = true;
         onSelectSoundCard(promptIndex);
       }
     });
@@ -83,6 +86,7 @@ export function useSpeckleCoordinatorCallbacks({
       const receiver = receivers.find(r => r.id === receiverId);
       if (receiver) {
         skipDeselectionRef.current = true;
+        setSelectedSpeckleObjectIds([]);
         setSelectedEntity({
           objectId: receiver.id,
           objectName: receiver.name,
@@ -113,5 +117,6 @@ export function useSpeckleCoordinatorCallbacks({
     applyFilterColors,
     receivers,
     setSelectedEntity,
+    setSelectedSpeckleObjectIds,
   ]);
 }
