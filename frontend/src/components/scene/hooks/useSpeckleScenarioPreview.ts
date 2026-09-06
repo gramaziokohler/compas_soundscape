@@ -188,7 +188,7 @@ function resolveStopPosition(
  *     (see `speckleStore.setScenarioPreviewHighlight`), and
  *   - dashed arrows are drawn between the bounds centers of consecutive parcours
  *     stops (per scenario), only while the viewer "Show scenario parcours"
- *     toggle (`uiStore.showScenarioParcours`) is on. Each segment is
+ *     toggle (`uiStore.showScenarioParcours`, scenario card footer) is on. Each segment is
  *     colored along the acoustic-material gradient (teal → orange → red) by its
  *     order of appearance. The arrows are THREE overlays added to the scene
  *     (independent of FilteringExtension).

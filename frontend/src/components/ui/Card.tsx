@@ -124,6 +124,7 @@ export function Card<TConfig extends CardBaseConfig>({
   showVariantsPreGen = false,
   showVariantsPostGen = false,
   showSettingsSummary = true,
+  beforeSettingsSummary,
   description,
 }: CardProps<TConfig>) {
   // Compute default name if not provided
@@ -454,6 +455,7 @@ export function Card<TConfig extends CardBaseConfig>({
           </div>
 
           {/* Read-only recap — always pinned below scrollable content, above the footer bar */}
+          {beforeSettingsSummary}
           {showSettingsSummary && hasResult && (
             <SettingsSummary title={getSettingsTitle(config)} rows={getSettingsRows(config)} />
           )}

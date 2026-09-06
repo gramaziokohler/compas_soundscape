@@ -105,7 +105,7 @@ export interface UIStoreState {
   setShowSoundSpheres: (v: boolean) => void;
   showSceneListeners: boolean;
   setShowSceneListeners: (v: boolean) => void;
-  /** Draw the dashed-arrow scenario parcours in the 3D viewer (Advanced Settings → Viewer) */
+  /** Draw the dashed-arrow scenario parcours in the 3D viewer (scenario card footer toggle) */
   showScenarioParcours: boolean;
   setShowScenarioParcours: (v: boolean) => void;
 

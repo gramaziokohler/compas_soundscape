@@ -107,8 +107,6 @@ export interface SidebarProps {
   onShowSoundSpheresChange: (v: boolean) => void;
   showSceneListeners: boolean;
   onShowSceneListenersChange: (v: boolean) => void;
-  showScenarioParcours: boolean;
-  onShowScenarioParcoursChange: (v: boolean) => void;
   showGroundGrid: boolean;
   onShowGroundGridChange: (v: boolean) => void;
   groundGridSpacing: number;

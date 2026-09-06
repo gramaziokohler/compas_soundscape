@@ -1267,22 +1267,23 @@ export function SoundGenerationSection({
     onGenerateFiltered(pendingIndices);
   }, [filteredCardItems, isSoundGenerated, soundConfigs, onGenerateFiltered]);
 
-  // Pending count for the generate-all button visibility gate (hide unless > 2 pending)
+  // Pending count for the generate-all button visibility gate (hide unless ≥ 2 pending)
   const pendingCardCount = useMemo(
     () => filteredCardItems.filter((item) => !isSoundGenerated(item.originalIndex)).length,
     [filteredCardItems, isSoundGenerated],
   );
-  const showGenerateAll = pendingCardCount > 2;
+  const showGenerateAll = pendingCardCount >= 2;
 
-  // Orchestrate toggle — only shown when scenario-derived (incomplete) sound cards
-  // exist, so the user can opt into running the orchestrate agent in parallel with
-  // generation to compile the parametric timeline.
-  const hasScenarioData = useMemo(
-    () => soundConfigs.some((c) => c.scenarioSource),
-    [soundConfigs],
+  // Orchestrate toggle — only shown when pending scenario-derived sound cards exist
+  // (orchestration runs in parallel with generation to compile the parametric timeline).
+  const hasPendingScenarioCards = useMemo(
+    () => filteredCardItems.some(
+      (item) => item.originalConfig.scenarioSource && !isSoundGenerated(item.originalIndex),
+    ),
+    [filteredCardItems, isSoundGenerated],
   );
 
-  const footer = (isSoundGenerating || showGenerateAll || hasScenarioData) ? (
+  const footer = (isSoundGenerating || showGenerateAll || hasPendingScenarioCards) ? (
     <div className="flex flex-col gap-2 pt-2">
       {isSoundGenerating ? (
         /* Progress replaces the generate button while running */
@@ -1292,16 +1293,16 @@ export function SoundGenerationSection({
           statusText={displayProgress}
           onStop={onStopGeneration}
         />
-      ) : (
+      ) : showGenerateAll ? (
         <GenerateButton
           status="idle"
           progress={0}
-          label="Generate Sounds"
+          label="Generate all sounds"
           disabled={shouldDisableGenerateButton}
           onGenerate={handleGenerateAll}
         />
-      )}
-      {hasScenarioData && !isSoundGenerating && (
+      ) : null}
+      {hasPendingScenarioCards && !isSoundGenerating && (
         <ToggleField
           label="Orchestrate sounds following the scenario"
           checked={orchestrateSoundsEnabled}

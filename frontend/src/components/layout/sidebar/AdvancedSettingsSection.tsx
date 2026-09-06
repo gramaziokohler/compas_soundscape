@@ -95,8 +95,6 @@ export interface AdvancedSettingsSectionProps {
   onShowSoundSpheresChange: (value: boolean) => void;
   showSceneListeners: boolean;
   onShowSceneListenersChange: (value: boolean) => void;
-  showScenarioParcours: boolean;
-  onShowScenarioParcoursChange: (value: boolean) => void;
   showGroundGrid: boolean;
   onShowGroundGridChange: (value: boolean) => void;
   groundGridSpacing: number;
@@ -125,7 +123,7 @@ const SECTION_KEYS: SectionKey[] = ['display', 'acoustic', 'tokens', 'llm', 'ren
 
 type SettingKey =
   | 'label-sprites' | 'hovering-highlight' | 'sound-spheres' | 'listeners' | 'ground-grid'
-  | 'scenario-parcours' | 'appearance'
+  | 'appearance'
   | 'grid-spacing' | 'grid-color'
   | 'sound-speed' | 'mesh-length'
   | 'tokens'
@@ -147,7 +145,6 @@ const SETTINGS: SettingEntry[] = [
   { section: 'display', key: 'hovering-highlight', terms: ['hovering highlight', 'hover', 'highlight'] },
   { section: 'display', key: 'sound-spheres', terms: ['sound spheres', 'sphere'] },
   { section: 'display', key: 'listeners', terms: ['listeners', 'listener'] },
-  { section: 'display', key: 'scenario-parcours', terms: ['scenario parcours', 'parcours', 'scenario', 'arrow', 'path'] },
   { section: 'display', key: 'ground-grid', terms: ['ground grid', 'grid'] },
   { section: 'display', key: 'grid-spacing', terms: ['grid spacing', 'spacing', 'grid'] },
   { section: 'display', key: 'grid-color', terms: ['grid color', 'color', 'grid'] },
@@ -505,8 +502,6 @@ export function AdvancedSettingsSection({
   onShowSoundSpheresChange,
   showSceneListeners,
   onShowSceneListenersChange,
-  showScenarioParcours,
-  onShowScenarioParcoursChange,
   showGroundGrid,
   onShowGroundGridChange,
   groundGridSpacing,
@@ -687,13 +682,6 @@ export function AdvancedSettingsSection({
               )}
               {isVisible('listeners') && (
                 <ToggleField checked={showSceneListeners} onChange={onShowSceneListenersChange} label="Show listeners" />
-              )}
-              {isVisible('scenario-parcours') && (
-                <ToggleField
-                  checked={showScenarioParcours}
-                  onChange={onShowScenarioParcoursChange}
-                  label="Show scenario parcours"
-                />
               )}
               {isVisible('ground-grid') && (
                 <ToggleField checked={showGroundGrid} onChange={onShowGroundGridChange} label="Show ground grid" />

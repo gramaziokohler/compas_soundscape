@@ -16,6 +16,7 @@ import { Card } from '@/components/ui/Card';
 import { TextContextContent } from '@/components/layout/sidebar/analysis/TextContextContent';
 import { ScenarioContent } from '@/components/layout/sidebar/analysis/ScenarioContent';
 import { ScenarioAfterView, getScenarioPipelineStatus } from '@/components/layout/sidebar/analysis/ScenarioContent';
+import { ScenarioParcoursToggle } from '@/components/layout/sidebar/analysis/ScenarioResultContent';
 import { AnalysisResultContent } from '@/components/layout/sidebar/analysis/AnalysisResultContent';
 import { useAnalysisStore, useSoundscapeStore, useAreaDrawingStore } from '@/store';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
@@ -486,6 +487,11 @@ export function UsageSection({
           color="primary"
           customButtons={customButtons}
           version={getCardVersion(config)}
+          beforeSettingsSummary={
+            config.type === 'scenario' && (config as ScenarioConfig).scenarioResult
+              ? <ScenarioParcoursToggle />
+              : undefined
+          }
         />
       );
 

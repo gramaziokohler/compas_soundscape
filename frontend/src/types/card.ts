@@ -344,6 +344,8 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
    * @default true
    */
   showSettingsSummary?: boolean;
+  /** Optional content pinned above the settings summary (e.g. scenario parcours toggle). */
+  beforeSettingsSummary?: ReactNode;
 }
 
 

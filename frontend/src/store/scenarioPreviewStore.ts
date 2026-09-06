@@ -10,8 +10,8 @@ import { devtools } from 'zustand/middleware';
  *   - colors every `objectIds` entry light-primary via the FilteringExtension
  *     (same pipeline as the hover highlight — always while the card is expanded),
  *   - draws dashed-arrow segments between consecutive stops of each `parcours`
- *     line, only while the viewer's "Show scenario parcours" toggle
- *     (`uiStore.showScenarioParcours`, Advanced Settings → Viewer) is on.
+ *     line, only while the scenario card's "Show scenario parcours" toggle
+ *     (`uiStore.showScenarioParcours`) is on.
  *
  * `parcours` holds one stop per object REFERENCE in the scenario text (an
  * object repeated in the text yields repeated stops), so the arrow count is

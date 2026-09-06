@@ -470,7 +470,6 @@ function HomeContent() {
     showHoveringHighlight, setShowHoveringHighlight,
     showSoundSpheres, setShowSoundSpheres,
     showSceneListeners, setShowSceneListeners,
-    showScenarioParcours, setShowScenarioParcours,
     showAdvancedSettings, setShowAdvancedSettings,
     showGroundGrid, setShowGroundGrid,
     groundGridSpacing, setGroundGridSpacing,
@@ -2455,7 +2454,7 @@ function HomeContent() {
     setShowHoveringHighlight(true);
     setShowSoundSpheres(true);
     setShowSceneListeners(true);
-    setShowScenarioParcours(false);
+    useUIStore.getState().setShowScenarioParcours(false);
     setGlobalSoundSpeed(343);
     setGlobalMeshLc(1.5);
     const audio = useAudioControlsStore.getState();
@@ -2470,7 +2469,6 @@ function HomeContent() {
     setGroundGridColor('#888888');
   }, [soundGen.handleResetToDefaults, audioNormalization.reset,
       setShowLabelSprites, setShowHoveringHighlight, setShowSoundSpheres, setShowSceneListeners,
-      setShowScenarioParcours,
       setGlobalSoundSpeed, setGlobalMeshLc,
       setShowGroundGrid, setGroundGridSpacing, setGroundGridColor]);
 
@@ -3231,8 +3229,6 @@ function HomeContent() {
         onShowSoundSpheresChange={setShowSoundSpheres}
         showSceneListeners={showSceneListeners}
         onShowSceneListenersChange={setShowSceneListeners}
-        showScenarioParcours={showScenarioParcours}
-        onShowScenarioParcoursChange={setShowScenarioParcours}
         showGroundGrid={showGroundGrid}
         onShowGroundGridChange={setShowGroundGrid}
         groundGridSpacing={groundGridSpacing}
@@ -3275,8 +3271,6 @@ function HomeContent() {
         onShowSoundSpheresChange={setShowSoundSpheres}
         showSceneListeners={showSceneListeners}
         onShowSceneListenersChange={setShowSceneListeners}
-        showScenarioParcours={showScenarioParcours}
-        onShowScenarioParcoursChange={setShowScenarioParcours}
         showGroundGrid={showGroundGrid}
         onShowGroundGridChange={setShowGroundGrid}
         groundGridSpacing={groundGridSpacing}

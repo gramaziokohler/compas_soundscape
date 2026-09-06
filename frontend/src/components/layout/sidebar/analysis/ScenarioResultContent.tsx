@@ -1,8 +1,24 @@
 'use client';
 
 import type { FoleyResult, FoleySoundEvent, FoleyScenario } from '@/types/analysis';
-import { useSpeckleStore } from '@/store';
+import { useSpeckleStore, useUIStore } from '@/store';
 import { ToggleField } from '@/components/ui/ToggleField';
+
+/** Pinned above "Analysis Settings" on generated scenario cards. */
+export function ScenarioParcoursToggle() {
+  const showScenarioParcours = useUIStore((s) => s.showScenarioParcours);
+  const setShowScenarioParcours = useUIStore((s) => s.setShowScenarioParcours);
+
+  return (
+    <ToggleField
+      checked={showScenarioParcours}
+      onChange={setShowScenarioParcours}
+      label="Show scenario parcours"
+      onBlueBackground
+      className="!mb-0"
+    />
+  );
+}
 
 interface ScenarioResultContentProps {
   foleyResult: FoleyResult;

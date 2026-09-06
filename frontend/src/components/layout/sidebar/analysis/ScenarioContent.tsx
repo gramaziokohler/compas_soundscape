@@ -201,8 +201,8 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
 
   // ── 3D preview: color-highlight all scenario objects while this card is
   // expanded (always on), plus a dashed-arrow parcours between the objects in
-  // scenario order. The parcours visibility is controlled by the "Show scenario
-  // parcours" toggle in Advanced Settings → Viewer (uiStore.showScenarioParcours).
+  // scenario order. The parcours visibility is controlled by the scenario card's
+  // "Show scenario parcours" toggle (uiStore.showScenarioParcours).
   const setPreview = useScenarioPreviewStore((s) => s.setPreview);
   const clearPreview = useScenarioPreviewStore((s) => s.clearPreview);
 

@@ -11,4 +11,4 @@ export { TextContextContent } from './TextContextContent';
 export { AnalyzeModelContent } from './AnalyzeModelContent';
 export { AnalyzeModelResultContent } from './AnalyzeModelResultContent';
 export { ScenarioContent, ScenarioAfterView } from './ScenarioContent';
-export { ScenarioResultContent } from './ScenarioResultContent';
+export { ScenarioResultContent, ScenarioParcoursToggle } from './ScenarioResultContent';
