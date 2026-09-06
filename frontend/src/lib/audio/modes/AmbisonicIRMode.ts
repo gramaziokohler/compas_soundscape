@@ -102,6 +102,9 @@ export class AmbisonicIRMode implements IAudioMode {
 
   // Per-source chains
   private sourceChains: Map<string, SourceChain> = new Map();
+
+  /** Independent, transient playback voices per source (see startVoice/IAudioMode). */
+  private voices: Map<string, Set<AudioBufferSourceNode>> = new Map();
   
   // Receiver mode lock (position fixed, only rotation allowed)
   private receiverPosition: Position | null = null;
@@ -719,6 +722,8 @@ export class AmbisonicIRMode implements IAudioMode {
 
     // Cleanup nodes
     this.cleanupSourceChain(chain);
+    this.stopAllVoicesForSource(sourceId);
+    this.voices.delete(sourceId);
 
     // Remove from map
     this.sourceChains.delete(sourceId);
@@ -801,13 +806,69 @@ export class AmbisonicIRMode implements IAudioMode {
   }
 
   /**
-   * Stop all audio sources immediately
+   * Stop all audio sources immediately (both the legacy single-slot playback and
+   * any independent voices started via startVoice).
    */
   stopAllSources(): void {
     console.log(`[AmbisonicIRMode] Stopping all ${this.sourceChains.size} sources`);
     this.sourceChains.forEach((_, sourceId) => {
       this.stopSource(sourceId);
     });
+    this.stopAllVoices();
+  }
+
+  /**
+   * Start an independent playback voice for `sourceId`, connected into that
+   * source's persistent gain chain (feeds normGain → muteGain → irGain →
+   * convolver, so it is convolved with exactly the same IR every other voice
+   * on this source uses). See IAudioMode.startVoice.
+   */
+  startVoice(sourceId: string, when: number, offset: number = 0, duration?: number, opts?: FadeOptions): void {
+    if (!this.audioContext) return;
+    const chain = this.sourceChains.get(sourceId);
+    if (!chain) {
+      console.warn(`[AmbisonicIRMode] startVoice: source ${sourceId} not found`);
+      return;
+    }
+
+    const node = this.audioContext.createBufferSource();
+    node.buffer = chain.audioBuffer;
+    node.loop = false;
+    applyFadeInOut(node, chain.gainNode, opts ? { ...opts, durationSec: duration } : {});
+
+    if (duration !== undefined && duration > 0) {
+      node.start(when, offset, duration);
+    } else {
+      node.start(when, offset);
+    }
+
+    let set = this.voices.get(sourceId);
+    if (!set) {
+      set = new Set();
+      this.voices.set(sourceId, set);
+    }
+    set.add(node);
+    node.onended = () => {
+      set!.delete(node);
+    };
+  }
+
+  stopAllVoicesForSource(sourceId: string): void {
+    const set = this.voices.get(sourceId);
+    if (!set) return;
+    set.forEach((node) => {
+      try {
+        node.stop();
+        node.disconnect();
+      } catch {
+        // Already stopped
+      }
+    });
+    set.clear();
+  }
+
+  stopAllVoices(): void {
+    this.voices.forEach((_set, sourceId) => this.stopAllVoicesForSource(sourceId));
   }
 
   /**
@@ -895,6 +956,7 @@ export class AmbisonicIRMode implements IAudioMode {
       this.cleanupSourceChain(chain);
     });
     this.sourceChains.clear();
+    this.voices.clear();
     
     // Disconnect and cleanup nodes
     if (this.binauralDecoder) {

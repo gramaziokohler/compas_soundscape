@@ -71,6 +71,34 @@ export interface IAudioMode {
   stopAllSources(): void;
 
   /**
+   * Start a new, independent playback VOICE for an already-registered source, at an
+   * ABSOLUTE AudioContext time. Unlike `playSource` (which owns a single source slot
+   * and stops whatever was previously playing), multiple voices may be in flight
+   * simultaneously for the same source — e.g. overlapping DAW clips — and they all
+   * route through that source's persistent gain/mute/convolver chain (built by
+   * `createSource`), so mixer and IR state stay correct no matter how many voices
+   * are playing at once. This is the primitive `Transport` uses for all timeline
+   * playback; `playSource`/`stopSource` remain for other single-shot callers.
+   * @param sourceId - Source identifier (must already exist via createSource)
+   * @param when - Absolute `audioContext.currentTime` to start at (may be in the
+   *   past — Web Audio starts immediately in that case)
+   * @param offset - Start playback from this position in seconds (default: 0)
+   * @param duration - Maximum playback duration in seconds (trim end)
+   * @param opts - Optional fade-in/out to smooth a loop seam
+   */
+  startVoice(sourceId: string, when: number, offset?: number, duration?: number, opts?: FadeOptions): void;
+
+  /** Immediately stop every in-flight voice for one source (started via startVoice). */
+  stopAllVoicesForSource(sourceId: string): void;
+
+  /**
+   * Immediately stop every in-flight voice for every source. The single "kill
+   * everything" primitive `Transport.stop()`/`seek()` rely on for guaranteed silence
+   * — no id-matching between what was scheduled and what is playing can go stale.
+   */
+  stopAllVoices(): void;
+
+  /**
    * Get the output node for connecting to binaural decoder or destination
    * @returns AudioNode that outputs processed audio
    */

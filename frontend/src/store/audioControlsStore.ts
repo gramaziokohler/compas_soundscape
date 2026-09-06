@@ -23,6 +23,7 @@ import { pausePreviewInstance, pauseAllPreviewInstances } from '@/lib/audio/prev
 import { AUDIO_PLAYBACK, AUDIO_TIMELINE, DEFAULT_DBFS, DEFAULT_MAXIMUM_FOLEY_SOUNDS, TTS_DEFAULT_LANGUAGE } from '@/utils/constants';
 import { apiService } from '@/services/api';
 import { useSoundscapeStore } from './soundscapeStore';
+import { useSpeckleEngineStore } from './speckleEngineStore';
 
 
 export interface AudioControlsStoreState {
@@ -102,7 +103,11 @@ export interface AudioControlsStoreState {
     explicitTimestampsSeconds?: number[],
   ) => void;
   handleTimestampsChange: (soundId: string, timestamps: number[]) => void;
+  /** Apply timestamp updates for multiple tracks in a single store commit — one undo entry per gesture, instead of one per affected track. */
+  handleTimestampsChangeBatch: (updates: Record<string, number[]>) => void;
   handleRemoveTimestamp: (soundId: string, iterationIndex: number) => void;
+  /** Shift iterationLinks for one track so a newly-inserted clip at `insertAt` doesn't silently reassign existing overrides. */
+  remapIterationLinksForInsert: (soundId: string, insertAt: number) => void;
   setIterationLink: (soundId: string, iterationIndex: number, link: Partial<IterationLink>) => void;
   clearIterationLink: (soundId: string, iterationIndex: number) => void;
   clearAllIterationLinksForSound: (soundId: string) => void;
@@ -321,7 +326,9 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           ),
 
         handleIntervalChange: (soundId, intervalSeconds) => {
-          get().stopAll();
+          // No stopAll(): the transport rebuilds its score reactively from the new
+          // timeline sounds on the very next render — a structural edit like this
+          // no longer needs to interrupt playback to take effect (see Transport.ts).
           set(
             (state) => ({
               soundIntervals: { ...state.soundIntervals, [soundId]: intervalSeconds },
@@ -332,7 +339,6 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         },
 
         handleSchedulingModeChange: (soundId, mode, soundDurationSeconds, explicitTimestampsSeconds) => {
-          get().stopAll();
           set(
             (state) => {
               let newTimestamps = { ...state.soundTimestamps };
@@ -381,7 +387,9 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         },
 
         handleTimestampsChange: (soundId, timestamps) => {
-          get().stopAll();
+          // No stopAll(): the transport rebuilds its score reactively (see
+          // Transport.ts) — dragging/deleting/duplicating a clip no longer needs to
+          // interrupt playback for the change to take effect on the next tick.
           set(
             (state) => ({
               soundTimestamps: { ...state.soundTimestamps, [soundId]: timestamps },
@@ -391,15 +399,81 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           );
         },
 
+        handleTimestampsChangeBatch: (updates) => {
+          // No stopAll(): see handleTimestampsChange. A single set() call here means
+          // one drag that propagates through several trigger-linked tracks produces
+          // exactly one undo entry, instead of one per affected track.
+          set(
+            (state) => ({
+              soundTimestamps: { ...state.soundTimestamps, ...updates },
+            }),
+            false,
+            'audio/handleTimestampsChangeBatch',
+          );
+        },
+
         handleRemoveTimestamp: (soundId, iterationIndex) =>
           set(
             (state) => {
               const timestamps = state.soundTimestamps[soundId] ?? [];
               const newTimestamps = timestamps.filter((_, i) => i !== iterationIndex);
-              return { soundTimestamps: { ...state.soundTimestamps, [soundId]: newTimestamps } };
+
+              // Remap iterationLinks so overrides on iterations AFTER the removed one
+              // keep following their own clip instead of being silently reassigned by
+              // the array-index shift — this was one of two root causes of variant/
+              // entity overrides appearing to "revert" after deleting an earlier clip.
+              const prefix = `${soundId}-`;
+              const remapped: Record<string, IterationLink> = {};
+              Object.entries(state.iterationLinks).forEach(([key, link]) => {
+                if (!key.startsWith(prefix)) {
+                  remapped[key] = link;
+                  return;
+                }
+                const idx = parseInt(key.slice(prefix.length), 10);
+                if (Number.isNaN(idx)) {
+                  remapped[key] = link;
+                  return;
+                }
+                if (idx === iterationIndex) return; // dropped with the removed clip
+                const newIdx = idx > iterationIndex ? idx - 1 : idx;
+                remapped[`${soundId}-${newIdx}`] = link;
+              });
+
+              return {
+                soundTimestamps: { ...state.soundTimestamps, [soundId]: newTimestamps },
+                iterationLinks: remapped,
+              };
             },
             false,
             'audio/handleRemoveTimestamp',
+          ),
+
+        remapIterationLinksForInsert: (soundId, insertAt) =>
+          set(
+            (state) => {
+              // Shift every iterationLink at/after `insertAt` up by one index — used
+              // when a new clip (e.g. from duplicate) is spliced into the middle of a
+              // track's timestamp array, so existing overrides keep following their
+              // own clip instead of the array-index shift silently reassigning them.
+              const prefix = `${soundId}-`;
+              const remapped: Record<string, IterationLink> = {};
+              Object.entries(state.iterationLinks).forEach(([key, link]) => {
+                if (!key.startsWith(prefix)) {
+                  remapped[key] = link;
+                  return;
+                }
+                const idx = parseInt(key.slice(prefix.length), 10);
+                if (Number.isNaN(idx)) {
+                  remapped[key] = link;
+                  return;
+                }
+                const newIdx = idx >= insertAt ? idx + 1 : idx;
+                remapped[`${soundId}-${newIdx}`] = link;
+              });
+              return { iterationLinks: remapped };
+            },
+            false,
+            'audio/remapIterationLinksForInsert',
           ),
 
         setIterationLink: (soundId, iterationIndex, link) =>
@@ -1331,6 +1405,13 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
 
         handlePreviewPlayPause: (soundId) => {
           const { individualSoundStates, previewingSoundId } = get();
+          // Starting a card preview must stop the timeline transport (not just the
+          // legacy individualSoundStates bookkeeping) so the two playback paths
+          // never sound simultaneously.
+          const scheduler = useSpeckleEngineStore.getState().playbackScheduler;
+          if (scheduler?.isPlaying()) {
+            scheduler.stop();
+          }
           if (Object.values(individualSoundStates).some((s) => s === 'playing')) {
             const stopped: Record<string, SoundState> = {};
             Object.keys(individualSoundStates).forEach((id) => { stopped[id] = 'stopped'; });

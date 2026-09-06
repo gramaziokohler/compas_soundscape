@@ -1,10 +1,10 @@
 'use client';
 
-import { useRef, useState, useCallback, useEffect } from 'react';
-import WaveSurfer from 'wavesurfer.js';
+import { useRef, useState, useCallback, useEffect, memo } from 'react';
 import { API_BASE_URL } from '@/utils/constants';
 import { subscribeColorTheme } from '@/utils/color-theme';
 import { Spinner } from '@/components/ui/Spinner';
+import { getAudioPeaks, type AudioPeaks } from '@/lib/audio/peaks-cache';
 import type { IterationLink } from '@/types/audio';
 
 export interface IterationContextMenuData {
@@ -16,6 +16,64 @@ export interface IterationContextMenuData {
 function waveformColor(muted: boolean): string {
   const styles = getComputedStyle(document.documentElement);
   return styles.getPropertyValue(muted ? '--color-border-strong' : '--color-secondary-hover').trim();
+}
+
+/**
+ * Draws a static waveform thumbnail from cached min/max peaks on a plain canvas.
+ * Replaces mounting a full WaveSurfer instance per DAW block — this block never
+ * plays audio, it only visualizes it, so it doesn't need a decoder/audio graph/
+ * plugin system, just pixels.
+ */
+function PeaksCanvas({ peaks, color }: { peaks: AudioPeaks; color: string }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+
+    const draw = () => {
+      const widthPx = container.clientWidth;
+      const heightPx = container.clientHeight;
+      if (widthPx <= 0 || heightPx <= 0) return;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.round(widthPx * dpr));
+      canvas.height = Math.max(1, Math.round(heightPx * dpr));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, widthPx, heightPx);
+      ctx.fillStyle = color;
+
+      const mid = heightPx / 2;
+      const n = peaks.min.length;
+      const barWidth = 2;
+      const barGap = 1;
+      const step = barWidth + barGap;
+      const barsToShow = Math.max(1, Math.floor(widthPx / step));
+
+      for (let i = 0; i < barsToShow; i++) {
+        const peakIdx = Math.min(n - 1, Math.floor((i / barsToShow) * n));
+        const max = peaks.max[peakIdx] ?? 0;
+        const min = peaks.min[peakIdx] ?? 0;
+        const y1 = mid - max * mid;
+        const y2 = mid - min * mid;
+        ctx.fillRect(i * step, y1, barWidth, Math.max(1, y2 - y1));
+      }
+    };
+
+    draw();
+    const ro = new ResizeObserver(draw);
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, [peaks, color]);
+
+  return (
+    <div ref={containerRef} style={{ width: '100%', height: '100%' }}>
+      <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block' }} />
+    </div>
+  );
 }
 
 export interface DAWIterationProps {
@@ -44,7 +102,7 @@ export interface DAWIterationProps {
   onHoverEnd?: () => void;
 }
 
-export function DAWIteration({
+function DAWIterationImpl({
   soundId,
   iterationIndex,
   startMs,
@@ -69,12 +127,16 @@ export function DAWIteration({
   const [isHovered, setIsHovered] = useState(false);
   const [isLoadingWaveform, setIsLoadingWaveform] = useState(false);
   const [dragOffsetMs, setDragOffsetMs] = useState(0);
+  // Real React state (not just a ref) so drag visuals — grabbing cursor, dashed
+  // copy outline, reduced opacity — actually appear during the gesture instead of
+  // only incidentally when some other state change happens to trigger a re-render.
+  const [isDragging, setIsDragging] = useState(false);
+  const [isDuplicating, setIsDuplicating] = useState(false);
   const isDraggingRef = useRef(false);
   const isDuplicatingRef = useRef(false);
   const startXRef = useRef(0);
   const dragOffsetMsRef = useRef(0);
-  const waveContainerRef = useRef<HTMLDivElement>(null);
-  const wsRef = useRef<WaveSurfer | null>(null);
+  const [peaks, setPeaks] = useState<AudioPeaks | null>(null);
 
   const leftPx = ((startMs + dragOffsetMs) / 1000) * pxPerSecond;
   const clippedEndMs = Math.min(startMs + dragOffsetMs + durationMs, timelineDurationMs);
@@ -102,9 +164,12 @@ export function DAWIteration({
     [siblings, startMs, durationMs, timelineDurationMs],
   );
 
-  // ── WaveSurfer ─────────────────────────────────────────────────────────────
+  // ── Waveform peaks (cached — decoded once per URL, never per block) ────────
   useEffect(() => {
-    if (!waveContainerRef.current || !audioUrl) return;
+    if (!audioUrl) {
+      setPeaks(null);
+      return;
+    }
     const resolvedUrl =
       audioUrl.startsWith('blob:') || audioUrl.startsWith('http')
         ? audioUrl
@@ -112,39 +177,22 @@ export function DAWIteration({
 
     let active = true;
     setIsLoadingWaveform(true);
+    setPeaks(null);
 
-    const ws = WaveSurfer.create({
-      container: waveContainerRef.current,
-      height: 28,
-      waveColor: waveformColor(isMuted),
-      progressColor: 'transparent',
-      cursorWidth: 0,
-      interact: false,
-      barWidth: 2,
-      barGap: 1,
-      barRadius: 1,
+    getAudioPeaks(audioUrl, resolvedUrl).then((result) => {
+      if (!active) return;
+      setPeaks(result);
+      setIsLoadingWaveform(false);
     });
-    ws.on('ready', () => { if (active) setIsLoadingWaveform(false); });
-    ws.on('error', () => { if (active) setIsLoadingWaveform(false); });
-    ws.load(resolvedUrl).catch(() => { if (active) setIsLoadingWaveform(false); });
-    wsRef.current = ws;
+
     return () => {
       active = false;
-      try { ws.destroy(); } catch { /* ignore */ }
-      wsRef.current = null;
-      setIsLoadingWaveform(false);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audioUrl]);
 
-  useEffect(() => {
-    const applyWaveColor = () => {
-      if (!wsRef.current) return;
-      wsRef.current.setOptions({ waveColor: waveformColor(isMuted) });
-    };
-    applyWaveColor();
-    return subscribeColorTheme(applyWaveColor);
-  }, [isMuted]);
+  // Re-render the canvas on theme change (color tokens flip in dark mode).
+  const [themeVersion, setThemeVersion] = useState(0);
+  useEffect(() => subscribeColorTheme(() => setThemeVersion((v) => v + 1)), []);
 
   // ── Pointer drag / duplicate ───────────────────────────────────────────────
   const handlePointerDown = useCallback(
@@ -153,10 +201,22 @@ export function DAWIteration({
       if (e.button === 2) return; // right-click handled separately
       e.preventDefault();
       e.stopPropagation();
+
+      // Pointer capture: this element keeps receiving move/up events for this
+      // pointer even if it leaves the element's bounds (fast drag, or the block
+      // shrinking under the cursor), and capture is released automatically on
+      // pointerup — eliminating the "pointer escaped the window listener target
+      // mid-drag and the block gets stuck in drag state" failure mode that plain
+      // `window.addEventListener` was prone to.
+      const target = e.currentTarget;
+      target.setPointerCapture(e.pointerId);
+
       isDraggingRef.current = true;
       isDuplicatingRef.current = e.ctrlKey || e.metaKey;
       startXRef.current = e.clientX;
       dragOffsetMsRef.current = 0;
+      setIsDragging(true);
+      setIsDuplicating(isDuplicatingRef.current);
 
       const handleMove = (ev: PointerEvent) => {
         if (!isDraggingRef.current) return;
@@ -166,13 +226,16 @@ export function DAWIteration({
         setDragOffsetMs(newStart - startMs);
       };
 
-      const handleUp = () => {
+      const endDrag = (ev: PointerEvent) => {
         if (!isDraggingRef.current) return;
         isDraggingRef.current = false;
         const finalDelta = dragOffsetMsRef.current;
         const isDup = isDuplicatingRef.current;
         setDragOffsetMs(0);
         dragOffsetMsRef.current = 0;
+        setIsDragging(false);
+        setIsDuplicating(false);
+        try { target.releasePointerCapture(ev.pointerId); } catch { /* already released */ }
 
         if (Math.abs(finalDelta) > 3) {
           const newStart = clampToFree(startMs + finalDelta);
@@ -184,12 +247,14 @@ export function DAWIteration({
         } else {
           onClick();
         }
-        window.removeEventListener('pointermove', handleMove);
-        window.removeEventListener('pointerup', handleUp);
+        target.removeEventListener('pointermove', handleMove);
+        target.removeEventListener('pointerup', endDrag);
+        target.removeEventListener('pointercancel', endDrag);
       };
 
-      window.addEventListener('pointermove', handleMove);
-      window.addEventListener('pointerup', handleUp);
+      target.addEventListener('pointermove', handleMove);
+      target.addEventListener('pointerup', endDrag);
+      target.addEventListener('pointercancel', endDrag);
     },
     [isDraggable, pxPerSecond, startMs, clampToFree, onDuplicate, onDragEnd, onClick],
   );
@@ -221,27 +286,26 @@ export function DAWIteration({
         borderRadius: '3px',
         border: `1px solid ${isMuted ? 'rgba(150,150,150,0.4)' : color}`,
         cursor: isDraggable
-          ? isDraggingRef.current
-            ? isDuplicatingRef.current ? 'copy' : 'grabbing'
+          ? isDragging
+            ? isDuplicating ? 'copy' : 'grabbing'
             : 'grab'
           : 'pointer',
         overflow: 'hidden',
         boxSizing: 'border-box',
-        transition: isDraggingRef.current ? 'none' : 'opacity 0.1s',
-        opacity: isDraggingRef.current ? 0.8 : 1,
-        zIndex: isDraggingRef.current ? 30 : 10,
+        transition: isDragging ? 'none' : 'opacity 0.1s',
+        opacity: isDragging ? 0.8 : 1,
+        zIndex: isDragging ? 30 : 10,
         userSelect: 'none',
         outline:
-          isDraggingRef.current && isDuplicatingRef.current
+          isDragging && isDuplicating
             ? `2px dashed ${color}`
             : 'none',
       }}
     >
-      {/* Waveform */}
-      <div
-        ref={waveContainerRef}
-        style={{ width: '100%', height: '100%', pointerEvents: 'none', opacity: 0.75 }}
-      />
+      {/* Waveform — drawn from cached peaks, no per-block decode */}
+      <div style={{ width: '100%', height: '100%', pointerEvents: 'none', opacity: 0.75 }}>
+        {peaks && <PeaksCanvas key={themeVersion} peaks={peaks} color={waveformColor(isMuted)} />}
+      </div>
 
       {/* Loading overlay while the saved audio WAV streams in */}
       {isLoadingWaveform && (
@@ -355,5 +419,13 @@ export function DAWIteration({
     </div>
   );
 }
+
+/**
+ * Memoized: with the peaks cache in place, the remaining re-render cost is
+ * cheap layout/paint, but avoiding it entirely for blocks whose props are
+ * referentially unchanged (siblings array size aside) still helps once a
+ * track has many iterations.
+ */
+export const DAWIteration = memo(DAWIterationImpl);
 
 

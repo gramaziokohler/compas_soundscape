@@ -1457,6 +1457,31 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   }
 
   /**
+   * Start an independent playback voice for `sourceId` at an absolute AudioContext
+   * time. This is the primitive `Transport` uses for all timeline playback — see
+   * IAudioMode.startVoice for why it is distinct from playSource/stopSource.
+   */
+  startVoice(sourceId: string, when: number, offset: number = 0, duration?: number, opts?: FadeOptions): void {
+    if (!this.currentModeInstance) return;
+    this.currentModeInstance.startVoice(sourceId, when, offset, duration, opts);
+  }
+
+  /** Immediately stop every in-flight voice for one source. */
+  stopAllVoicesForSource(sourceId: string): void {
+    this.currentModeInstance?.stopAllVoicesForSource(sourceId);
+  }
+
+  /** Immediately stop every in-flight voice for every source — the transport's "kill everything" primitive. */
+  stopAllVoices(): void {
+    this.currentModeInstance?.stopAllVoices();
+  }
+
+  /** Returns the duration (seconds) of the buffer registered for `sourceId`, or undefined if unknown. */
+  getSourceBufferDuration(sourceId: string): number | undefined {
+    return this.sourceRegistry.get(sourceId)?.buffer.duration;
+  }
+
+  /**
    * Update listener position and orientation (called every frame)
    * Routes to current mode implementation
    * Also updates binaural decoder for head rotation

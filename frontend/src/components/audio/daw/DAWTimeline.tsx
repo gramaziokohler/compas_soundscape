@@ -192,7 +192,9 @@ export function DAWTimeline({
   const soundTimestamps = useAudioControlsStore((s) => s.soundTimestamps);
   const isBakingSchedule = useAudioControlsStore((s) => s.isBakingSchedule);
   const handleTimestampsChange = useAudioControlsStore((s) => s.handleTimestampsChange);
+  const handleTimestampsChangeBatch = useAudioControlsStore((s) => s.handleTimestampsChangeBatch);
   const handleRemoveTimestamp = useAudioControlsStore((s) => s.handleRemoveTimestamp);
+  const remapIterationLinksForInsert = useAudioControlsStore((s) => s.remapIterationLinksForInsert);
   const handleMute = useAudioControlsStore((s) => s.handleMute);
   const handleSolo = useAudioControlsStore((s) => s.handleSolo);
 
@@ -496,10 +498,18 @@ export function DAWTimeline({
 
   const handleIterationHover = useCallback((soundId: string, iterationIndex: number) => {
     setHoveredIteration({ soundId, iterationIndex });
-  }, []);
+    // Connect the DAW to the 3D viewer: hovering a clip with a linked entity
+    // highlights that entity, so the user can see which object a clip drives
+    // without leaving the timeline.
+    const link = iterationLinks[`${soundId}-${iterationIndex}`];
+    if (link?.entityNodeId) {
+      useSpeckleStore.getState().highlightObjectForHover(link.entityNodeId);
+    }
+  }, [iterationLinks]);
 
   const handleIterationHoverEnd = useCallback(() => {
     setHoveredIteration(null);
+    useSpeckleStore.getState().clearHoverHighlight();
   }, []);
 
   /** Schedule orchestrate re-bake after variant change (non-blocking). */
@@ -700,7 +710,6 @@ export function DAWTimeline({
 
       const newTsSec = [...currentTsSec];
       newTsSec[iterationIndex] = parseFloat((newStartMs / 1000).toFixed(3));
-      handleTimestampsChange(soundId, newTsSec);
 
       const linkKey = `${soundId}-${iterationIndex}`;
       if (iterationLinks[linkKey] && sound.promptIndex !== undefined) {
@@ -708,6 +717,11 @@ export function DAWTimeline({
           'oldMs:', oldStartMs.toFixed(0), 'newMs:', newStartMs.toFixed(0), 'delta:', deltaMs.toFixed(0));
         clearOrchestrateTrigger(sound.cardIndex ?? sound.promptIndex, iterationIndex);
       }
+
+      // Collect every move (the dragged clip + all transitive trigger-linked
+      // dependents) and commit them in ONE store write — one drag is one undo
+      // entry, instead of one entry per affected track.
+      const batch: Record<string, number[]> = { [soundId]: newTsSec };
 
       if (Math.abs(deltaMs) > 0.5) {
         const visited = new Set<string>();
@@ -730,24 +744,21 @@ export function DAWTimeline({
           }
         }
 
-        // Track locally-updated timestamps so deps on the same track see the latest values.
-        const localTsCache = new Map<string, number[]>();
-        localTsCache.set(soundId, newTsSec);
-
         transitiveDeps.forEach((dep) => {
-          const baseTs = localTsCache.get(dep.soundId) ?? soundTimestamps[dep.soundId] ?? [];
+          const baseTs = batch[dep.soundId] ?? soundTimestamps[dep.soundId] ?? [];
           if (baseTs[dep.iterationIndex] != null) {
             const oldDepStartMs = (baseTs[dep.iterationIndex] ?? 0) * 1000;
             const newDepStartMs = Math.max(0, oldDepStartMs + deltaMs);
             const newDepTs = [...baseTs];
             newDepTs[dep.iterationIndex] = parseFloat((newDepStartMs / 1000).toFixed(3));
-            localTsCache.set(dep.soundId, newDepTs);
-            handleTimestampsChange(dep.soundId, newDepTs);
+            batch[dep.soundId] = newDepTs;
           }
         });
       }
+
+      handleTimestampsChangeBatch(batch);
     },
-    [sounds, soundTimestamps, handleTimestampsChange, iterationLinks, clearOrchestrateTrigger, triggerGraph],
+    [sounds, soundTimestamps, handleTimestampsChangeBatch, iterationLinks, clearOrchestrateTrigger, triggerGraph],
   );
 
   /* ---- Delete iteration handler ---- */
@@ -762,10 +773,48 @@ export function DAWTimeline({
   const handleDuplicate = useCallback(
     (soundId: string, newStartMs: number) => {
       const current = soundTimestamps[soundId] ?? [];
-      const newTs = [...current, parseFloat((newStartMs / 1000).toFixed(3))].sort((a, b) => a - b);
+      const newStartSec = parseFloat((newStartMs / 1000).toFixed(3));
+
+      // Insert at the sorted position via splice (not append + sort). Appending
+      // then sorting silently renumbers every clip whose insertion lands before
+      // it — which is why duplicating a clip in the middle of a track used to
+      // "revert" every later clip's variant/entity override to the wrong iteration.
+      let insertAt = current.length;
+      for (let i = 0; i < current.length; i++) {
+        if (newStartSec < current[i]) {
+          insertAt = i;
+          break;
+        }
+      }
+      const newTs = [...current];
+      newTs.splice(insertAt, 0, newStartSec);
+
+      // Shift iterationLinks for indices at/after the insertion point BEFORE
+      // committing the new timestamps array, so overrides stay attached to their
+      // own clip instead of the array-index shift reassigning them.
+      remapIterationLinksForInsert(soundId, insertAt);
       handleTimestampsChange(soundId, newTs);
     },
-    [soundTimestamps, handleTimestampsChange],
+    [soundTimestamps, handleTimestampsChange, remapIterationLinksForInsert],
+  );
+
+  /**
+   * Double-clicking a track name already zooms the viewer to the sound's own
+   * sphere (triggerZoomToSoundCard). When the card has linked Speckle entities,
+   * also zoom/frame those entities directly — this is the "click a track linked
+   * to entity 1, see entity 1" connection between the DAW and the 3D viewer.
+   */
+  const handleZoomToLinkedEntity = useCallback(
+    (configIdx: number) => {
+      const entities = soundConfigs[configIdx]?.entities;
+      if (!entities || entities.length === 0) return;
+      const nodeIds = entities
+        .map((e) => e.nodeId || e.id)
+        .filter((id): id is string => !!id);
+      if (nodeIds.length === 0) return;
+      useSpeckleStore.getState().zoomToObjectById(nodeIds);
+    },
+    [soundConfigs],
   );
 
   /* ---- Download handler ---- */
@@ -1102,7 +1151,10 @@ export function DAWTimeline({
                   }
                   onDoubleClickSoundCard={
                     configIdx !== undefined
-                      ? () => triggerZoomToSoundCard(configIdx)
+                      ? () => {
+                          triggerZoomToSoundCard(configIdx);
+                          handleZoomToLinkedEntity(configIdx);
+                        }
                       : undefined
                   }
                   onIterationContextMenu={(data) => handleIterationContextMenu(sound.id, data)}

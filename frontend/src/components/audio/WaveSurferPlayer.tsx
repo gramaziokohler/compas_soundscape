@@ -98,6 +98,10 @@ export function WaveSurferPlayer({
   const resizeStartYRef = useRef(0);
   const resizeStartHeightRef = useRef(waveformHeight);
   const [pendingHeight, setPendingHeight] = useState<number | null>(null);
+  // Throttles the 'audioprocess' → setState re-render (native event fires far
+  // faster than a text time display needs to update) without dropping the
+  // onAudioProcess callback rate for consumers that need precise timing.
+  const lastAudioProcessUpdateRef = useRef(0);
 
   // Hover state for spectrogram labels
   const [isHovered, setIsHovered] = useState(false);
@@ -165,7 +169,14 @@ export function WaveSurferPlayer({
 
     ws.on('audioprocess', () => {
       const t = ws.getCurrentTime();
-      setCurrentTime(t);
+      // Throttle the React re-render to ~5/s — plenty for a text time readout —
+      // while still invoking onAudioProcess at native event rate for consumers
+      // (e.g. trim-end auto-pause) that need precise timing.
+      const now = performance.now();
+      if (now - lastAudioProcessUpdateRef.current > 200) {
+        lastAudioProcessUpdateRef.current = now;
+        setCurrentTime(t);
+      }
       onAudioProcess?.(t, ws.getDuration());
     });
 
@@ -200,7 +211,28 @@ export function WaveSurferPlayer({
       setIsReady(false);
       setIsLoadingAudio(false);
     };
-  }, [audioUrl, isSpectrogramMode, waveformHeight, interact, onBlueBackground]);
+    // Deliberately NOT depending on waveformHeight/interact/onBlueBackground:
+    // those are cosmetic/interaction options WaveSurfer supports updating live
+    // via setOptions() below — recreating (and re-fetching + re-decoding) the
+    // whole instance for a resize-handle drag or a mute-color change was the
+    // cause of the spinner flash on every such interaction. Only the audio
+    // source itself and the spectrogram plugin wiring need a real recreate.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioUrl, isSpectrogramMode]);
+
+  // Live cosmetic/interaction updates — no re-decode, no instance recreation.
+  useEffect(() => {
+    const ws = wsRef.current;
+    if (!ws) return;
+    const { waveColor, progressColor } = resolveWaveColors(onBlueBackground);
+    ws.setOptions({
+      waveColor,
+      progressColor,
+      cursorColor: progressColor,
+      height: isSpectrogramMode ? 0 : waveformHeight,
+      interact,
+    });
+  }, [onBlueBackground, waveformHeight, interact, isSpectrogramMode, isReady]);
 
   useEffect(() => {
     const applyWaveColors = () => {

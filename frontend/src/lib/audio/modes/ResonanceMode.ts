@@ -88,6 +88,9 @@ export class ResonanceMode implements IAudioMode {
     isMuted: boolean;
   }> = new Map();
 
+  /** Independent, transient playback voices per source (see startVoice/IAudioMode). */
+  private voices: Map<string, Set<AudioBufferSourceNode>> = new Map();
+
   /**
    * Load Resonance Audio library dynamically (browser-only)
    */
@@ -191,6 +194,12 @@ export class ResonanceMode implements IAudioMode {
 
       const muteGainNode = this.audioContext.createGain();
       muteGainNode.gain.value = 1.0; // Not muted by default
+
+      // Wire the persistent chain now (not lazily inside playSource) so that
+      // startVoice() can play through it even if the legacy single-slot
+      // playSource() is never called for this source.
+      gainNode.connect(muteGainNode);
+      muteGainNode.connect(resonanceSource.input);
 
       // Configure source properties
       resonanceSource.setRolloff(DEFAULT_ROLLOFF);
@@ -299,13 +308,68 @@ export class ResonanceMode implements IAudioMode {
   }
 
   /**
-   * Stop all audio sources immediately
+   * Stop all audio sources immediately (both the legacy single-slot playback and
+   * any independent voices started via startVoice).
    */
   stopAllSources(): void {
     console.log(`[ResonanceMode] Stopping all ${this.resonanceSources.size} sources`);
     this.resonanceSources.forEach((_, sourceId) => {
       this.stopSource(sourceId);
     });
+    this.stopAllVoices();
+  }
+
+  /**
+   * Start an independent playback voice for `sourceId`, connected into that
+   * source's persistent gain chain (feeds muteGain → Resonance source input,
+   * same as the legacy single-slot path). See IAudioMode.startVoice.
+   */
+  startVoice(sourceId: string, when: number, offset: number = 0, duration?: number, opts?: FadeOptions): void {
+    if (!this.audioContext) return;
+    const source = this.resonanceSources.get(sourceId);
+    if (!source) {
+      console.warn(`[ResonanceMode] startVoice: source ${sourceId} not found`);
+      return;
+    }
+
+    const node = this.audioContext.createBufferSource();
+    node.buffer = source.buffer;
+    node.loop = false;
+    applyFadeInOut(node, source.gainNode, opts ? { ...opts, durationSec: duration } : {});
+
+    if (duration !== undefined && duration > 0) {
+      node.start(when, offset, duration);
+    } else {
+      node.start(when, offset);
+    }
+
+    let set = this.voices.get(sourceId);
+    if (!set) {
+      set = new Set();
+      this.voices.set(sourceId, set);
+    }
+    set.add(node);
+    node.onended = () => {
+      set!.delete(node);
+    };
+  }
+
+  stopAllVoicesForSource(sourceId: string): void {
+    const set = this.voices.get(sourceId);
+    if (!set) return;
+    set.forEach((node) => {
+      try {
+        node.stop();
+        node.disconnect();
+      } catch {
+        // Already stopped
+      }
+    });
+    set.clear();
+  }
+
+  stopAllVoices(): void {
+    this.voices.forEach((_set, sourceId) => this.stopAllVoicesForSource(sourceId));
   }
 
   /**
@@ -336,6 +400,8 @@ export class ResonanceMode implements IAudioMode {
 
     // Stop if playing
     this.stopSource(sourceId);
+    this.stopAllVoicesForSource(sourceId);
+    this.voices.delete(sourceId);
 
     // Resonance Audio sources don't have explicit cleanup
     // Just remove from tracking
@@ -618,6 +684,7 @@ export class ResonanceMode implements IAudioMode {
     }
 
     this.resonanceSources.clear();
+    this.voices.clear();
     this.resonanceAudioScene = null;
     this.audioContext = null;
   }

@@ -5,7 +5,7 @@ import { SpeckleAudioCoordinator } from '@/lib/three/speckle-audio-coordinator';
 import { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
 import { BoundingBoxManager } from '@/lib/three/BoundingBoxManager';
 import { GradientMapManager } from '@/lib/three/gradient-map-manager';
-import { useTimelinePlayback } from '@/hooks/useTimelinePlayback';
+import { useTransportClock } from '@/hooks/useTransportClock';
 import { useSpeckleStore, useAcousticsSimulationStore, useGridListenersStore, notifyError } from '@/store';
 import { useAcousticMaterialStore } from '@/store';
 import { useRightSidebarStore } from '@/store/rightSidebarStore';
@@ -288,21 +288,14 @@ export function SpeckleScene({
   const cameraControllerRef = useRef<CameraController | null>(null);
   const playbackSchedulerRef = useRef<PlaybackSchedulerService | null>(null);
 
-  // Set to true when Play All is pressed; playTimeline() fires after scheduling completes
-  const playAfterSchedulingRef = useRef<boolean>(false);
-
   // ── Audio controls from store ──
   const selectedVariants     = useAudioControlsStore((s) => s.selectedVariants);
-  const individualSoundStates = useAudioControlsStore((s) => s.individualSoundStates);
   const soundVolumes            = useAudioControlsStore((s) => s.soundVolumes);
   const soundIntervals          = useAudioControlsStore((s) => s.soundIntervals);
   const soundTrims              = useAudioControlsStore((s) => s.soundTrims);
   const timelineDurationMs      = useAudioControlsStore((s) => s.timelineDurationMs);
   const mutedSounds          = useAudioControlsStore((s) => s.mutedSounds);
   const soloedSound          = useAudioControlsStore((s) => s.soloedSound);
-  const isAnyPlaying         = useAudioControlsStore((s) =>
-    Object.values(s.individualSoundStates).some((st) => st === 'playing')
-  );
   const storePlayAll  = useAudioControlsStore((s) => s.playAll);
   const storePauseAll = useAudioControlsStore((s) => s.pauseAll);
   const storeStopAll  = useAudioControlsStore((s) => s.stopAll);
@@ -1148,28 +1141,27 @@ export function SpeckleScene({
   // No sync from props to context needed - context is source of truth.
 
   // ============================================================================
-  // Timeline Playback Hook
+  // Transport Clock — thin React adapter around Transport (via PlaybackSchedulerService).
+  // This hook only READS playback time (rAF-polled for the playhead/time readout);
+  // Transport's own audio-clock lookahead loop is the only thing that starts/stops
+  // audio and the only source of truth for "when". See useTransportClock.ts.
   // ============================================================================
-
-  const stopTimelineRef = useRef<(() => void) | null>(null);
-
-  const handleTimelineEnd = useCallback(() => {
-    storeStopAll();
-    stopTimelineRef.current?.();
-  }, [storeStopAll]);
-
-  const { playbackState, play: playTimeline, pause: pauseTimeline, stop: stopTimeline, seekTo } = useTimelinePlayback({
-    sounds: timelineSounds,
-    duration: timelineDurationMs,
-    onEnd: handleTimelineEnd
+  const { playbackState, play: playTimeline, pause: pauseTimeline, stop: stopTimeline, seekTo } = useTransportClock({
+    scheduler: playbackSchedulerRef,
   });
 
+  // Natural end-of-timeline: Transport stops itself and invokes this callback.
   useEffect(() => {
-    stopTimelineRef.current = stopTimeline;
-  }, [stopTimeline]);
+    enginePlaybackScheduler?.setOnEnd(() => storeStopAll());
+    return () => enginePlaybackScheduler?.setOnEnd(null);
+  }, [enginePlaybackScheduler, storeStopAll]);
 
   // ============================================================================
-  // Effect - Control Individual Sound Playback
+  // Effect - Push the current score (tracks/clips/durations) into the transport
+  // whenever the timeline changes. Safe to call at any time, including mid-
+  // playback — the transport's lookahead loop reads the score fresh every tick,
+  // so structural edits made during playback take effect on the next tick with
+  // no stop/restart needed.
   // ============================================================================
   useEffect(() => {
     const playbackScheduler = playbackSchedulerRef.current;
@@ -1177,21 +1169,8 @@ export function SpeckleScene({
     if (!playbackScheduler || !soundSphereManager) return;
 
     const soundMetadata = soundSphereManager.getAllAudioSources();
-
-    (async () => {
-      await playbackScheduler.updateSoundPlayback(
-        soundMetadata,
-        individualSoundStates,
-        soundIntervals,
-        timelineSounds
-      );
-
-      if (playAfterSchedulingRef.current) {
-        playAfterSchedulingRef.current = false;
-        playTimeline();
-      }
-    })();
-  }, [individualSoundStates, soundIntervals, playTimeline]);
+    playbackScheduler.updateScore(timelineSounds, timelineDurationMs, soundMetadata);
+  }, [timelineSounds, timelineDurationMs, enginePlaybackScheduler]);
 
   // ============================================================================
   // Effects - Viewer Visibility Settings
@@ -1242,63 +1221,25 @@ export function SpeckleScene({
   // ============================================================================
   // Playback Control Handlers (controlling both audio and timeline)
   // ============================================================================
-  const handlePlayAll = useCallback(async () => {
-    console.log('[SpeckleScene] Play All clicked');
-    const isPausedResume = !playbackState.isPlaying && playbackState.currentTime > 0;
-
-    if (isPausedResume) {
-      // Resume from pause: seek restores audio, then start cursor immediately
-      const soundSphereManager = coordinatorRef.current?.getSoundSphereManager();
-      if (playbackSchedulerRef.current && soundSphereManager) {
-        const currentStates = useAudioControlsStore.getState().individualSoundStates;
-        const playingStates: Record<string, string> = { ...currentStates };
-        Object.keys(playingStates).forEach((id) => {
-          if (playingStates[id] === 'paused') playingStates[id] = 'playing';
-        });
-
-        const soundMetadata = soundSphereManager.getAllAudioSources();
-        await playbackSchedulerRef.current.seekToTime(
-          playbackState.currentTime,
-          soundMetadata,
-          playingStates as any,
-          soundIntervals,
-          timelineSounds
-        );
-      }
-      // Start timeline cursor (preserves currentTime)
-      playTimeline();
-      // Update store states (updateSoundPlayback will skip — prevStates synced by seekToTime)
-      storePlayAll();
-      return;
-    }
-
-    // Fresh start: defer playTimeline() until after scheduleSound() calls complete.
-    // The updateSoundPlayback effect reads this flag and starts the cursor post-scheduling.
-    playAfterSchedulingRef.current = true;
-    console.debug('[SpeckleScene] Fresh play — deferring cursor until scheduling complete');
+  const handlePlayAll = useCallback(() => {
+    // Transport.play() resumes from wherever it was paused/stopped automatically —
+    // no separate "resume" branch or seek-to-restore-audio dance needed; that was
+    // only required by the old setTimeout-chain scheduler.
+    playTimeline();
     storePlayAll();
-  }, [playTimeline, storePlayAll, playbackState.isPlaying, playbackState.currentTime, soundIntervals]);
+  }, [playTimeline, storePlayAll]);
 
   const handlePauseAll = useCallback(() => {
-    // Pause timeline cursor
     pauseTimeline();
-    // Notify store to update sound states
     storePauseAll();
   }, [pauseTimeline, storePauseAll]);
 
   const handleStopAll = useCallback(() => {
-    // Immediately kill all audio at the lowest level. This stops every active
-    // source node (including remapped variant source IDs) and suspends the
-    // AudioContext, so the currently-playing iteration is silenced instantly
-    // instead of running to its natural end. Fire-and-forget: the synchronous
-    // stopAllSources()/suspend() inside execute before the first await, so the
-    // kill takes effect immediately; the trailing await only restores the
-    // context for the next playback.
-    void playbackSchedulerRef.current?.stopAllSounds();
-    // Notify store to update sound states FIRST
-    storeStopAll();
-    // Reset timeline cursor to start
+    // Transport.stop() kills every in-flight voice unconditionally (not just the
+    // primary source id per track), so this is a complete, synchronous silence —
+    // no emergency-kill fallback needed.
     stopTimeline();
+    storeStopAll();
   }, [stopTimeline, storeStopAll]);
 
   const handleToggleAuralization = useCallback(() => {
@@ -1320,46 +1261,11 @@ export function SpeckleScene({
     }
   }, [viewMode, setViewMode]);
 
-  const handleSeek = useCallback(async (timeMs: number) => {
-    const soundSphereManager = coordinatorRef.current?.getSoundSphereManager();
-    if (!playbackSchedulerRef.current || !soundSphereManager) return;
-
-    // Get sound metadata
-    const soundMetadata = soundSphereManager.getAllAudioSources();
-
-    // Update timeline cursor position
+  const handleSeek = useCallback((timeMs: number) => {
+    // Seek is kill-and-restart inside Transport, never arithmetic reconstruction —
+    // a single call is the complete operation, synchronously.
     seekTo(timeMs);
-
-    // Update audio playback to match new timeline position
-    await playbackSchedulerRef.current.seekToTime(
-      timeMs,
-      soundMetadata,
-      individualSoundStates,
-      soundIntervals,
-      timelineSounds
-    );
-  }, [seekTo, individualSoundStates, soundIntervals]);
-
-  // ============================================================================
-  // Effect - Sync Timeline Playback with Individual Sounds
-  // ============================================================================
-  useEffect(() => {
-    const anySoundPlaying = Object.values(individualSoundStates).some(state => state === 'playing');
-    const anySoundPaused = Object.values(individualSoundStates).some(state => state === 'paused');
-    const allSoundsStopped = Object.values(individualSoundStates).every(state => state === 'stopped' || state === undefined);
-
-    // When the timeline ends naturally it sets isPlaying=false AND currentTime=duration.
-    // Restarting here would create an infinite loop before handleTimelineEnd fires.
-    const timelineAtEnd = playbackState.currentTime >= timelineDurationMs;
-
-    if (anySoundPlaying && !playbackState.isPlaying && !timelineAtEnd) {
-      if (!playAfterSchedulingRef.current) playTimeline();
-    } else if (!anySoundPlaying && anySoundPaused && playbackState.isPlaying) {
-      pauseTimeline();
-    } else if (allSoundsStopped && (playbackState.isPlaying || playbackState.currentTime > 0)) {
-      stopTimeline();
-    }
-  }, [individualSoundStates, playbackState.isPlaying, playbackState.currentTime, playTimeline, pauseTimeline, stopTimeline, timelineDurationMs]);
+  }, [seekTo]);
 
   // (object overlay extracted to useSpeckleObjectOverlay)
 
@@ -1468,7 +1374,7 @@ export function SpeckleScene({
           onPause={handlePauseAll}
           onStop={handleStopAll}
           onClose={handleCloseTimeline}
-          isAnyPlaying={isAnyPlaying}
+          isAnyPlaying={playbackState.isPlaying}
           onSelectSoundCard={onSelectSoundCard}
           originalIRChannelCount={audioOrchestrator?.getIRState().channelCount ?? 0}
         />

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, memo } from 'react';
 
 interface DAWGroupProps {
   groupName: string;
@@ -8,7 +8,7 @@ interface DAWGroupProps {
   children: React.ReactNode;
 }
 
-export function DAWGroup({ groupName, soundCount, children }: DAWGroupProps) {
+function DAWGroupImpl({ groupName, soundCount, children }: DAWGroupProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   return (
@@ -80,3 +80,5 @@ export function DAWGroup({ groupName, soundCount, children }: DAWGroupProps) {
     </div>
   );
 }
+
+export const DAWGroup = memo(DAWGroupImpl);

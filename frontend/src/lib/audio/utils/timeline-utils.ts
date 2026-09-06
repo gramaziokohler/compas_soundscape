@@ -6,10 +6,9 @@
  */
 
 import { AUDIO_TIMELINE } from '@/utils/constants';
-import type { TimelineSound, ScheduledSound, SoundMetadata, IterationLink } from '@/types/audio';
+import type { TimelineSound, SoundMetadata, IterationLink } from '@/types/audio';
 import type { SoundEvent } from '@/types';
-import type { AudioScheduler } from '@/lib/audio-scheduler';
-import { resolveVariantSoundId } from '@/lib/audio/utils/variant-sound-id';
+import { resolveVariantSoundIdByPrompt } from '@/lib/audio/utils/variant-sound-id';
 
 /** Per-iteration audio URL + duration derived from the assigned variant's loaded buffer. */
 function getIterationVariantInfo(
@@ -24,7 +23,14 @@ function getIterationVariantInfo(
 ): { audioUrl: string; durationMs: number } {
   const link = iterationLinks?.[`${primarySoundId}-${iterationIndex}`];
   const variantIdx = link?.variantIndex ?? 0;
-  const variantId = resolveVariantSoundId(primarySoundId, variantIdx);
+  // Resolve by explicit prompt_index + copy_index grouping (works for every id
+  // shape, including duplicated/AI-detected tracks) — not by parsing the id.
+  const variantId = resolveVariantSoundIdByPrompt(
+    primarySoundId,
+    variantIdx,
+    primaryMetadata.soundEvent.prompt_index,
+    soundEvents ?? [],
+  );
   const variantMeta = soundMetadata.get(variantId);
   if (link?.variantIndex !== undefined) {
     console.log(`[DEBUG-TIMELINE-VARIANT] iterLink[${primarySoundId}-${iterationIndex}] variantIdx=${link.variantIndex} variantId=${variantId} metaFound=${variantMeta !== undefined} variantHasBuffer=${!!variantMeta?.buffer}`);
@@ -137,135 +143,6 @@ function getSoundColor(metadata: SoundMetadata): string {
 
   // Text-to-Audio (TangoFlux generated)
   return 'var(--color-primary)';
-}
-
-/**
- * Extract timeline sounds from multiple AudioSchedulers
- *
- * Calculates scheduled iterations for each sound based on interval and duration.
- * Limits iterations to prevent performance issues.
- *
- * @param audioSchedulers - Map of AudioScheduler instances (one per sound)
- * @param timelineDuration - Timeline duration in milliseconds
- * @param soundSchedulingModes - Optional per-sound scheduling modes from store
- * @param soundTimestamps - Optional per-sound explicit timestamps in seconds from store
- * @returns Array of TimelineSound objects ready for visualization
- */
-export function extractTimelineSounds(
-  audioSchedulers: Map<string, AudioScheduler>,
-  timelineDuration: number = AUDIO_TIMELINE.DEFAULT_DURATION_MS,
-  soundSchedulingModes?: Record<string, 'interval' | 'timestamps'>,
-  soundTimestamps?: Record<string, number[]>
-): TimelineSound[] {
-  const timelineSounds: TimelineSound[] = [];
-
-  audioSchedulers.forEach((scheduler) => {
-    const scheduledSounds = scheduler.getScheduledSounds();
-
-    scheduledSounds.forEach((scheduled, schedSoundId) => {
-      const metadata = scheduled.metadata;
-      const soundDurationMs = metadata.buffer ? metadata.buffer.duration * 1000 : 0;
-      const intervalMs = scheduled.intervalMs;
-      const initialDelayMs = scheduled.initialDelayMs || 0;
-
-      // Get display name from metadata
-      const displayName = metadata.soundEvent.display_name || schedSoundId;
-
-      // Get color based on generation method
-      const color = getSoundColor(metadata);
-
-      const schedulingMode = soundSchedulingModes?.[schedSoundId] ?? 'interval';
-
-      let iterations: number[];
-      let iterationOriginalIndices: number[] | undefined;
-
-      if (schedulingMode === 'timestamps' && soundTimestamps?.[schedSoundId]) {
-        // Timestamps mode: use explicit timestamps directly (converted to ms).
-        // Filter on START time only (not end) so that sounds starting near the boundary
-        // are still visible even if they clip. The sentinel 999_999_000 for unresolved
-        // iterations is naturally excluded because 999_999_000 >= timelineDuration.
-        // We also track the ORIGINAL iteration index so that DAWTrack can still look up
-        // the correct iterationLink badge even when some earlier iterations are filtered out.
-        const rawMs = soundTimestamps[schedSoundId].map((s) => s * 1000);
-        iterations = [];
-        iterationOriginalIndices = [];
-        for (let idx = 0; idx < rawMs.length && iterations.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY; idx++) {
-          const ms = rawMs[idx];
-          if (ms >= 0 && ms < timelineDuration) {
-            iterations.push(ms);
-            iterationOriginalIndices.push(idx);
-          }
-        }
-      } else {
-        // Interval mode: calculate iterations from interval (original logic)
-        iterations = [];
-        let currentTime = initialDelayMs;
-        while (
-          currentTime + soundDurationMs <= timelineDuration &&
-          iterations.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY
-        ) {
-          iterations.push(currentTime);
-          currentTime += intervalMs;
-        }
-      }
-
-      // Extract audio URL from metadata (for WaveSurfer waveform visualization)
-      const audioUrl = metadata.soundEvent.url;
-
-      timelineSounds.push({
-        id: schedSoundId,
-        displayName,
-        color,
-        intervalMs,
-        soundDurationMs,
-        scheduledIterations: iterations,
-        scheduledIterationOriginalIndices: iterationOriginalIndices,
-        audioUrl: audioUrl || undefined,
-        initialDelayMs,
-        schedulingMode,
-        promptIndex: metadata.soundEvent.prompt_index,
-      });
-    });
-  });
-
-  return timelineSounds;
-}
-
-/**
- * Calculate optimal timeline duration based on scheduled sounds from multiple schedulers
- *
- * Ensures all sounds have at least a few iterations visible.
- *
- * @param audioSchedulers - Map of AudioScheduler instances
- * @param minIterationsPerSound - Minimum iterations to show per sound (default: 3)
- * @returns Optimal timeline duration in milliseconds
- */
-export function calculateTimelineDuration(
-  audioSchedulers: Map<string, AudioScheduler>,
-  minIterationsPerSound: number = AUDIO_TIMELINE.MIN_ITERATIONS_PER_SOUND
-): number {
-  if (audioSchedulers.size === 0) {
-    return AUDIO_TIMELINE.DEFAULT_DURATION_MS;
-  }
-
-  // Start at 0 — let actual content drive the duration (no artificial floor)
-  let maxDuration = 0;
-
-  audioSchedulers.forEach((scheduler) => {
-    const scheduledSounds = scheduler.getScheduledSounds();
-
-    scheduledSounds.forEach((scheduled) => {
-      // Duration needed for minimum iterations
-      const neededDuration = scheduled.intervalMs * minIterationsPerSound;
-      maxDuration = Math.max(maxDuration, neededDuration);
-    });
-  });
-
-  if (maxDuration === 0) {
-    return AUDIO_TIMELINE.DEFAULT_DURATION_MS;
-  }
-
-  return Math.min(maxDuration, AUDIO_TIMELINE.MAX_DURATION_MS);
 }
 
 /**

@@ -1,608 +1,110 @@
-import type { AudioOrchestrator } from "@/lib/audio/AudioOrchestrator";
-import { AudioScheduler } from "@/lib/audio-scheduler";
-import { AUDIO_PLAYBACK } from "@/utils/constants";
-import { emergencyKillAllAudio, restoreAudioAfterKill } from "@/lib/audio/utils/emergency-audio-kill";
-import { computeInitialDelay } from "@/lib/audio/utils/timeline-utils";
-import type { SoundState } from "@/types";
-import type { SoundMetadata, TimelineSound } from "@/types/audio";
-import { useAudioControlsStore } from "@/store/audioControlsStore";
-import * as THREE from 'three';
-
 /**
  * PlaybackSchedulerService
  *
- * Manages sound scheduling and playback control.
+ * Thin coordinator around `Transport` — the audio-clock lookahead engine that owns
+ * all timeline playback. This class exists so callers (SpeckleScene, the React
+ * transport-clock hook) have a stable object to hold a reference to across the
+ * async viewer/orchestrator initialization sequence; all the actual scheduling
+ * logic lives in `Transport` and `buildScoreFromTimelineSounds`.
  *
- * Responsibilities:
- * - Individual sound playback scheduling with intervals
- * - Play All detection and staggered start
- * - Sound state management (playing, paused, stopped)
- * - Scheduler lifecycle management
- *
- * Architecture:
- * - Uses AudioOrchestrator for playback routing (ensures mode-specific processing)
- * - Supports all 6 audio modes: ThreeJS, Resonance, Anechoic, Mono IR, Stereo IR, Ambisonic IR
+ * Architecture: see `frontend/src/lib/audio/transport/Transport.ts` for the single
+ * time invariant every part of playback derives from, and why this replaces the
+ * old `setTimeout`-chain `AudioScheduler` entirely.
  */
+import * as THREE from 'three';
+import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
+import { Transport } from '@/lib/audio/transport/Transport';
+import { buildScoreFromTimelineSounds } from '@/lib/audio/transport/build-score';
+import type { SoundMetadata, TimelineSound } from '@/types/audio';
+
 export class PlaybackSchedulerService {
-  private audioOrchestrator: AudioOrchestrator | null = null;
-  private audioContext: AudioContext | null = null;
-
-  // Audio schedulers (one per sound)
-  private audioSchedulers: Map<string, AudioScheduler> = new Map();
-
-  // Track setTimeout timers created during seek (for proper cleanup)
-  private seekTimers: Map<string, NodeJS.Timeout> = new Map();
-
-  // Previous state tracking for granular updates
-  private prevIndividualSoundStates: { [key: string]: SoundState } = {};
-  private prevSoundIntervals: { [key: string]: number } = {};
-  private isPlayAll: boolean = false;
+  private transport: Transport;
 
   constructor(audioOrchestrator?: AudioOrchestrator | null, audioContext?: AudioContext | null) {
-    this.audioOrchestrator = audioOrchestrator || null;
-    this.audioContext = audioContext || null;
+    this.transport = new Transport(audioOrchestrator || null, audioContext || null);
   }
 
   /**
    * Set the audio orchestrator after construction.
    *
-   * The scalar is created before the async orchestrator init completes, so the
-   * constructor may capture a null orchestrator. The coordinator handles this via
-   * setAudioOrchestrator(); the scheduler needs the same treatment so that
-   * AudioScheduler.triggerPlayback doesn't silently no-op on `if (this.audioOrchestrator)`.
+   * The scheduler is created before the async orchestrator init completes, so the
+   * constructor may capture a null orchestrator; the coordinator handles this via
+   * setAudioOrchestrator() once it becomes available.
    */
   public setAudioOrchestrator(orchestrator: AudioOrchestrator | null): void {
-    this.audioOrchestrator = orchestrator || null;
+    this.transport.setAudioOrchestrator(orchestrator);
+  }
 
-    // Propagate to schedulers that may already exist (created with a null orchestrator).
-    this.audioSchedulers.forEach((scheduler) => {
-      scheduler.setAudioOrchestrator(this.audioOrchestrator);
-    });
+  public setAudioContext(audioContext: AudioContext | null): void {
+    this.transport.setAudioContext(audioContext);
+  }
+
+  /** Register a callback fired exactly once when the transport reaches the end of the timeline. */
+  public setOnEnd(cb: (() => void) | null): void {
+    this.transport.setOnEnd(cb);
   }
 
   /**
-   * Update individual sound playback states (granular updates only)
+   * Rebuild the declarative score from the current timeline sounds and push it into
+   * the transport. Safe to call at any time, including mid-playback — the
+   * transport's lookahead loop reads the score fresh every tick, so structural
+   * edits made during playback take effect on the next tick with no stop/restart.
+   *
+   * @param soundMetadata - Used only to resolve each track's DEFAULT (non-overridden)
+   *   world position, exactly mirroring what `createSource` originally registered it
+   *   with; per-clip position overrides come from `iterationLinks` inside the score.
    */
-  public async updateSoundPlayback(
-    soundMetadata: Map<string, SoundMetadata>,
-    individualSoundStates: { [key: string]: SoundState },
-    soundIntervals: { [key: string]: number },
-    timelineSounds?: TimelineSound[]
-  ): Promise<void> {
-    if (soundMetadata.size === 0) return;
+  public updateScore(
+    timelineSounds: TimelineSound[],
+    timelineDurationMs: number,
+    soundMetadata?: Map<string, SoundMetadata>,
+  ): void {
+    const score = buildScoreFromTimelineSounds(timelineSounds, timelineDurationMs);
 
-    // CRITICAL: Resume audio context if suspended (required for playback to start)
-    // This must happen BEFORE scheduling sounds, otherwise they won't play
-    // MUST AWAIT to ensure context is ready before sounds are scheduled
-
-    if (this.audioContext && this.audioContext.state === 'suspended') {
-      try {
-        await this.audioContext.resume();
-      } catch (error) {
-        console.error('[PlaybackScheduler] Failed to resume audio context:', error);
-        return; // Don't schedule sounds if resume failed
-      }
-    } else if (this.audioContext && this.audioContext.state !== 'running') {
-      try {
-        await this.audioContext.resume();
-      } catch (error) {
-        console.error('[PlaybackScheduler] Failed to resume audio context:', error);
-      }
-    }
-
-    const prevStates = this.prevIndividualSoundStates;
-    const prevIntervals = this.prevSoundIntervals;
-
-    // Only process sounds that have changed
-    const allSoundIds = new Set([
-      ...Object.keys(individualSoundStates),
-      ...Object.keys(prevStates)
-    ]);
-
-    // Detect if this is a "Play All" scenario (multiple sounds changing to 'playing' at once)
-    const storeState = useAudioControlsStore.getState();
-    if (storeState._pendingPlayAllStagger) {
-      this.isPlayAll = true;
-      useAudioControlsStore.setState({ _pendingPlayAllStagger: false }, false);
-    } else {
-      this.isPlayAll = false;
-    }
-
-    allSoundIds.forEach(soundId => {
-      const currentState = individualSoundStates[soundId];
-      const prevState = prevStates[soundId];
-      const currentInterval = soundIntervals[soundId];
-      const prevInterval = prevIntervals[soundId];
-
-      const stateChanged = currentState !== prevState;
-      const intervalChanged = currentInterval !== prevInterval;
-
-      const metadata = soundMetadata.get(soundId);
-      if (!metadata) {
-        console.warn(`[PlaybackScheduler] No metadata for soundId: ${soundId}`);
-        return;
-      }
-
-      const displayName = metadata.soundEvent.display_name || soundId;
-
-      // Skip if nothing changed for this sound
-      if (!stateChanged && !intervalChanged) {
-        return;
-      }
-
-      if (!metadata.buffer) {
-        return;
-      }
-
-      // Get or create scheduler for this sound
-      let scheduler = this.audioSchedulers.get(soundId);
-      if (!scheduler) {
-        scheduler = new AudioScheduler(this.audioOrchestrator, this.audioContext);
-        this.audioSchedulers.set(soundId, scheduler);
-      }
-
-      // Handle state changes
-      if (stateChanged) {
-        switch (currentState) {
-          case 'playing':
-            // Only schedule if not already scheduled (prevents restart)
-            const isAlreadyScheduled = scheduler.isScheduled(soundId);
-
-            if (!isAlreadyScheduled) {
-              // Get interval from soundIntervals (UI), fall back to metadata (sound event), or default
-              const soundEventInterval = metadata.soundEvent.interval_seconds;
-              const intervalSeconds = (currentInterval !== undefined && currentInterval !== null)
-                ? currentInterval
-                : (soundEventInterval !== undefined && soundEventInterval !== null)
-                  ? soundEventInterval
-                  : AUDIO_PLAYBACK.DEFAULT_INTERVAL_SECONDS;
-
-              const { soundIntervalJitter } = useAudioControlsStore.getState();
-              const jitterMs = (soundIntervalJitter?.[soundId] ?? 0) * 1000;
-              let initialDelayMs = 0;
-              let iterationOffsets: number[] | undefined = undefined;
-
-              const ts = timelineSounds?.find(t => t.id === soundId);
-
-              if (ts?.schedulingMode === 'timestamps' && ts.scheduledIterations.length > 0) {
-                // Use the FULL timestamps array from the store (seconds → ms) so that
-                // scheduleSoundAtTimestamps can compute the correct originalIdx even when
-                // some earlier iterations are unresolved (sentinel 999_999 s) and have been
-                // filtered out of ts.scheduledIterations.
-                const { soundTimestamps: storeTimestamps } = useAudioControlsStore.getState();
-                const fullTsMs = storeTimestamps[soundId]?.map((s) => s * 1000) ?? ts.scheduledIterations;
-                scheduler.scheduleSoundAtTimestamps(soundId, metadata, fullTsMs, 0);
-              } else {
-                if (ts && ts.initialDelayMs !== undefined) {
-                  initialDelayMs = ts.initialDelayMs;
-                  iterationOffsets = ts.iterationOffsets;
-                }
-
-                if (!timelineSounds && this.isPlayAll) {
-                  initialDelayMs = computeInitialDelay(soundId, jitterMs);
-                }
-
-                scheduler.scheduleSound(soundId, metadata, intervalSeconds, initialDelayMs, iterationOffsets);
-              }
-            }
-            break;
-
-          case 'paused':
-            // Unschedule and pause
-            scheduler.unscheduleSound(soundId);
-
-            // CRITICAL: Stop orchestrator source (direct playback from seek)
-            if (this.audioOrchestrator) {
-              try {
-                this.audioOrchestrator.stopSource(soundId);
-              } catch (error) {
-                console.warn(`[PlaybackScheduler] Failed to stop source ${soundId}:`, error);
-              }
-            }
-
-            // CRITICAL: Clear seek timer for this sound
-            // This prevents seek timers from restarting paused sounds
-            const pauseSeekTimer = this.seekTimers.get(soundId);
-            if (pauseSeekTimer) {
-              clearTimeout(pauseSeekTimer);
-              this.seekTimers.delete(soundId);
-            }
-            break;
-
-          case 'stopped':
-            // Unschedule and stop
-            scheduler.unscheduleSound(soundId);
-
-            // CRITICAL: Stop orchestrator source (direct playback from seek)
-            // This is the key fix - seek creates direct buffer sources that need stopping
-            if (this.audioOrchestrator) {
-              try {
-                this.audioOrchestrator.stopSource(soundId);
-              } catch (error) {
-                console.warn(`[PlaybackScheduler] Failed to stop source ${soundId}:`, error);
-              }
-            }
-
-            // CRITICAL: Clear seek timer for this sound
-            // This prevents seek timers from restarting stopped sounds
-            const seekTimer = this.seekTimers.get(soundId);
-            if (seekTimer) {
-              clearTimeout(seekTimer);
-              this.seekTimers.delete(soundId);
-            }
-            break;
-        }
-      }
-      // Handle interval changes (only if sound is playing and interval changed)
-      else if (intervalChanged && currentState === 'playing' && scheduler.isScheduled(soundId)) {
-        // Get interval from soundIntervals (UI), fall back to metadata (sound event), or default
-        const soundEventInterval = metadata.soundEvent.interval_seconds;
-        // Use nullish coalescing carefully: 0 is falsy but valid, so check for null/undefined explicitly
-        const intervalSeconds = (currentInterval !== undefined && currentInterval !== null)
-          ? currentInterval
-          : (soundEventInterval !== undefined && soundEventInterval !== null)
-            ? soundEventInterval
-            : AUDIO_PLAYBACK.DEFAULT_INTERVAL_SECONDS;
-        scheduler.updateInterval(soundId, intervalSeconds);
+    const defaultPositions = new Map<string, THREE.Vector3>();
+    soundMetadata?.forEach((meta, id) => {
+      if (meta.position) {
+        defaultPositions.set(id, new THREE.Vector3(meta.position.x, meta.position.y, meta.position.z));
       }
     });
 
-    // Update previous values
-    this.prevIndividualSoundStates = { ...individualSoundStates };
-    this.prevSoundIntervals = { ...soundIntervals };
+    this.transport.setScore(score, defaultPositions);
   }
 
-  /**
-   * Stop and unschedule all sounds
-   * Called when variants change or when stopping all playback
-   */
-  public async stopAllSounds(): Promise<void> {
-    // CRITICAL: Clear seek timers FIRST to prevent delayed playback
-    // This prevents the bug where sounds restart after being stopped
-    this.seekTimers.forEach((timer) => {
-      clearTimeout(timer);
-    });
-    this.seekTimers.clear();
+  /** Start (or resume) playback from `fromMs`, defaulting to the last paused/stopped position. */
+  public play(fromMs?: number): Promise<void> {
+    return this.transport.play(fromMs);
+  }
 
-    // CRITICAL: Stop all sources through the orchestrator FIRST
-    // This ensures the actual audio buffers are stopped immediately
-    if (this.audioOrchestrator) {
-      this.audioOrchestrator.stopAllSources();
-    }
+  public pause(): void {
+    this.transport.pause();
+  }
 
-    // EMERGENCY KILL SWITCH - Immediately silence all audio at the lowest level
-    emergencyKillAllAudio(this.audioOrchestrator, this.audioContext);
+  public stop(): void {
+    this.transport.stop();
+  }
 
-    // Unschedule ALL schedulers (including old variants that might still be scheduled)
-    this.audioSchedulers.forEach((scheduler, soundId) => {
-      scheduler.unscheduleSound(soundId);
-    });
+  /** Seek is kill-and-restart, never arithmetic reconstruction of "which iteration am I in". */
+  public seek(ms: number): void {
+    this.transport.seek(ms);
+  }
 
-    // Clear all schedulers since we stopped everything
-    this.audioSchedulers.clear();
+  public getPositionMs(): number {
+    return this.transport.getPositionMs();
+  }
 
-    // CRITICAL: Clear previous state tracking to prevent re-scheduling
-    // This ensures that after Stop All, updateSoundPlayback won't see any state changes
-    const stoppedSnapshot: { [key: string]: SoundState } = {};
-    Object.keys(this.prevIndividualSoundStates).forEach(id => {
-      stoppedSnapshot[id] = 'stopped';
-    });
-    this.prevIndividualSoundStates = stoppedSnapshot;
-    this.prevSoundIntervals = {};
-    this.isPlayAll = false;
+  public getDurationMs(): number {
+    return this.transport.getDurationMs();
+  }
 
-    // Restore audio system (ready for next play)
-    // MUST await to ensure audio context is resumed before next playback
-    await restoreAudioAfterKill(this.audioContext);
+  public isPlaying(): boolean {
+    return this.transport.isPlaying();
   }
 
   /**
    * Dispose of all resources
    */
   public dispose(): void {
-    // Clear seek timers
-    this.seekTimers.forEach((timer) => {
-      clearTimeout(timer);
-    });
-    this.seekTimers.clear();
-
-    // Cleanup all schedulers
-    this.audioSchedulers.forEach(scheduler => scheduler.dispose());
-    this.audioSchedulers.clear();
-
-    // Reset state
-    this.prevIndividualSoundStates = {};
-    this.prevSoundIntervals = {};
-    this.isPlayAll = false;
-  }
-
-  /**
-   * Get all audio schedulers for timeline visualization
-   */
-  public getAudioSchedulers(): Map<string, AudioScheduler> {
-    return this.audioSchedulers;
-  }
-
-  /**
-   * Seek to a specific time in the timeline
-   * NUCLEAR APPROACH: Completely dispose all schedulers and wait for event loop to clear
-   *
-   * @param seekTimeMs - The time to seek to in milliseconds
-   * @param soundMetadata - Map of all sound metadata
-   * @param individualSoundStates - Current sound states
-   * @param soundIntervals - Sound intervals configuration
-   */
-  public async seekToTime(
-    seekTimeMs: number,
-    soundMetadata: Map<string, SoundMetadata>,
-    individualSoundStates: { [key: string]: SoundState },
-    soundIntervals: { [key: string]: number },
-    timelineSounds?: TimelineSound[]
-  ): Promise<void> {
-
-    // NUCLEAR STEP 1: Clear ALL seek timers
-    this.seekTimers.forEach((timer) => {
-      clearTimeout(timer);
-    });
-    this.seekTimers.clear();
-
-    // NUCLEAR STEP 2: Stop all orchestrator sources IMMEDIATELY
-    if (this.audioOrchestrator) {
-      this.audioOrchestrator.stopAllSources();
-    }
-
-    // NUCLEAR STEP 3: DISPOSE ALL SCHEDULERS (not just unschedule)
-    // This ensures all internal timers are cleared
-    this.audioSchedulers.forEach((scheduler) => {
-      scheduler.dispose();
-    });
-    this.audioSchedulers.clear();
-
-    // NUCLEAR STEP 4: Wait for event loop to clear
-    // This ensures any queued timer callbacks have executed and been rejected
-    await new Promise(resolve => setTimeout(resolve, 50));
-
-    // Count sounds that should be playing
-    const soundsToSchedule = Array.from(soundMetadata.keys()).filter(
-      soundId => individualSoundStates[soundId] === 'playing'
-    );
-    // Track what happens with each sound
-    const seekResults: { [key: string]: string } = {};
-
-    // Step 3: For each sound that should be playing, calculate when to play/schedule
-    soundMetadata.forEach((metadata, soundId) => {
-      const displayName = metadata.soundEvent.display_name || soundId;
-      const currentState = individualSoundStates[soundId];
-
-      // Only process sounds that are in 'playing' state
-      if (currentState !== 'playing') {
-        seekResults[displayName] = `❌ SKIPPED - State: ${currentState || 'undefined'}`;
-        return;
-      }
-
-      if (!metadata.buffer) {
-        seekResults[displayName] = `❌ SKIPPED - No audio buffer`;
-        return;
-      }
-
-      // Get interval configuration
-      const soundEventInterval = metadata.soundEvent.interval_seconds;
-      const intervalSeconds = (soundIntervals[soundId] !== undefined && soundIntervals[soundId] !== null)
-        ? soundIntervals[soundId]
-        : (soundEventInterval !== undefined && soundEventInterval !== null)
-          ? soundEventInterval
-          : AUDIO_PLAYBACK.DEFAULT_INTERVAL_SECONDS;
-
-      const bufferDurationMs = metadata.buffer.duration * 1000;
-      const trim = useAudioControlsStore.getState().soundTrims[soundId];
-      const soundDurationMs = trim ? bufferDurationMs * (trim.end - trim.start) : bufferDurationMs;
-      const totalIntervalMs = (intervalSeconds * 1000) + soundDurationMs;
-
-      // Create NEW scheduler (fresh, no old state)
-      const scheduler = new AudioScheduler(this.audioOrchestrator, this.audioContext);
-      this.audioSchedulers.set(soundId, scheduler);
-
-      let timeIntoIteration = 0;
-      let nextIterationDelayMs = 0;
-      let isWithinSound = false;
-      let iterationOffsets: number[] | undefined = undefined;
-      // Track the active iteration index so we can apply per-iteration position on seek.
-      let seekIterIdx = 0;
-
-      const ts = timelineSounds?.find(t => t.id === soundId);
-      if (ts && ts.scheduledIterations && ts.scheduledIterations.length > 0) {
-        iterationOffsets = ts.iterationOffsets;
-
-        let activeIterIndex = -1;
-        let actualIterationStart = 0;
-
-        for (let i = 0; i < ts.scheduledIterations.length; i++) {
-          const iterVisualStart = ts.scheduledIterations[i];
-          if (iterVisualStart <= seekTimeMs) {
-            activeIterIndex = i;
-            actualIterationStart = iterVisualStart;
-          } else {
-            break;
-          }
-        }
-
-        if (activeIterIndex >= 0) {
-          timeIntoIteration = seekTimeMs - actualIterationStart;
-          isWithinSound = timeIntoIteration < ts.soundDurationMs;
-          seekIterIdx = activeIterIndex;
-
-          if (!isWithinSound) {
-            if (activeIterIndex + 1 < ts.scheduledIterations.length) {
-              const nextIterVisualStart = ts.scheduledIterations[activeIterIndex + 1];
-              nextIterationDelayMs = nextIterVisualStart - seekTimeMs;
-            } else {
-              nextIterationDelayMs = totalIntervalMs - timeIntoIteration;
-              nextIterationDelayMs = Math.max(0, nextIterationDelayMs);
-            }
-          }
-
-          scheduler.getScheduledSounds().set(soundId, {
-            metadata,
-            intervalMs: ts.intervalMs,
-            timerId: null,
-            isScheduled: true,
-            iterationOffsets: ts.iterationOffsets,
-            currentIteration: isWithinSound ? activeIterIndex + 1 : activeIterIndex + 1,
-            initialDelayMs: ts.initialDelayMs ?? 0
-          });
-        } else {
-          isWithinSound = false;
-          const firstIterVisualStart = ts.scheduledIterations[0];
-          nextIterationDelayMs = firstIterVisualStart - seekTimeMs;
-
-          scheduler.getScheduledSounds().set(soundId, {
-            metadata,
-            intervalMs: ts.intervalMs,
-            timerId: null,
-            isScheduled: true,
-            iterationOffsets: ts.iterationOffsets,
-            currentIteration: 0,
-            initialDelayMs: Math.max(0, nextIterationDelayMs)
-          });
-        }
-      } else {
-        let iterationStartTime = 0;
-        let iterationIndex = 0;
-        while (iterationStartTime + totalIntervalMs <= seekTimeMs) {
-          iterationIndex++;
-          iterationStartTime += totalIntervalMs;
-        }
-
-        timeIntoIteration = seekTimeMs - iterationStartTime;
-        isWithinSound = timeIntoIteration < soundDurationMs;
-        seekIterIdx = iterationIndex;
-        if (!isWithinSound) {
-          nextIterationDelayMs = totalIntervalMs - timeIntoIteration;
-        }
-      }
-
-      if (isWithinSound) {
-        const trimStartSec = trim ? trim.start * (metadata.buffer.duration) : 0;
-        const trimDurationSec = trim ? (trim.end - trim.start) * metadata.buffer.duration : undefined;
-        const offsetSeconds = trimStartSec + (timeIntoIteration / 1000);
-
-        if (this.audioOrchestrator) {
-          try {
-            // Apply per-iteration entity position before resuming playback after seek.
-            // This mirrors the same logic in AudioScheduler.triggerPlayback.
-            const { iterationLinks } = useAudioControlsStore.getState();
-            const seekLink = iterationLinks[`${soundId}-${seekIterIdx}`];
-            if (seekLink?.entityPosition) {
-              const pos = seekLink.entityPosition;
-              this.audioOrchestrator.updateSourcePosition(
-                soundId,
-                new THREE.Vector3(pos[0], pos[1], pos[2]),
-              );
-            } else if (metadata.position) {
-              this.audioOrchestrator.updateSourcePosition(
-                soundId,
-                new THREE.Vector3(metadata.position.x, metadata.position.y, metadata.position.z),
-              );
-            }
-
-            // Loopable sounds dip each window edge to silence so the wrap is seamless.
-            const audioControls = useAudioControlsStore.getState();
-            const loopable = !!audioControls.soundLoopable[soundId];
-            const fadeOpts = loopable
-              ? {
-                  fadeInMs: AUDIO_PLAYBACK.LOOPABLE_SEAM_FADE_MS,
-                  fadeOutMs: AUDIO_PLAYBACK.LOOPABLE_SEAM_FADE_MS,
-                }
-              : undefined;
-
-            this.audioOrchestrator.playSource(
-              soundId,
-              false,
-              offsetSeconds,
-              trimDurationSec !== undefined ? trimDurationSec - (timeIntoIteration / 1000) : undefined,
-              fadeOpts,
-            );
-          } catch (error) {
-            console.warn(`[PlaybackScheduler] ❌ Orchestrator playback failed for "${displayName}":`, error);
-          }
-          } else {
-            console.error(`[PlaybackScheduler] No orchestrator available for "${displayName}"`);
-          }
-
-        let preciseDelayUntilNextStart = 0;
-        let currentIteration = 0;
-
-        if (ts && ts.scheduledIterations) {
-           for (let i = 0; i < ts.scheduledIterations.length; i++) {
-             if (ts.scheduledIterations[i] <= seekTimeMs) {
-               currentIteration = i + 1;
-             } else {
-               break;
-             }
-           }
-
-           if (ts.scheduledIterations.length > currentIteration) {
-             const nextVisualStart = ts.scheduledIterations[currentIteration];
-             if (nextVisualStart > seekTimeMs) {
-               preciseDelayUntilNextStart = nextVisualStart - seekTimeMs;
-             } else {
-               preciseDelayUntilNextStart = 0;
-             }
-           } else {
-             preciseDelayUntilNextStart = Infinity;
-           }
-        } else {
-           const remainingTimeInIterationMs = soundDurationMs - timeIntoIteration;
-           preciseDelayUntilNextStart = remainingTimeInIterationMs + (totalIntervalMs - soundDurationMs);
-           currentIteration = Math.floor(seekTimeMs / totalIntervalMs) + 1;
-        }
-
-
-        if (preciseDelayUntilNextStart === Infinity) {
-          seekResults[displayName] = `✅ PLAYING final iteration from ${(timeIntoIteration / 1000).toFixed(1)}s, STOPPING afterwards`;
-        } else {
-          preciseDelayUntilNextStart = Math.max(0, preciseDelayUntilNextStart);
-          seekResults[displayName] = `✅ PLAYING from ${(timeIntoIteration / 1000).toFixed(1)}s, next in ${(preciseDelayUntilNextStart / 1000).toFixed(1)}s`;
-
-          const timer = setTimeout(() => {
-            const currentScheduler = this.audioSchedulers.get(soundId);
-            if (!currentScheduler) {
-              return;
-            }
-
-            currentScheduler.scheduleSound(soundId, metadata, intervalSeconds, 0, ts?.iterationOffsets, currentIteration);
-            this.seekTimers.delete(soundId);
-          }, preciseDelayUntilNextStart);
-
-          this.seekTimers.set(soundId, timer);
-        }
-
-      } else {
-        seekResults[displayName] = `⏰ SCHEDULED to play in ${(nextIterationDelayMs / 1000).toFixed(1)}s`;
-
-        let gapIter = 0;
-        if (ts && ts.scheduledIterations) {
-           for (let i = 0; i < ts.scheduledIterations.length; i++) {
-             if (ts.scheduledIterations[i] > seekTimeMs) {
-               gapIter = i;
-               break;
-             }
-           }
-           if (gapIter >= ts.scheduledIterations.length || (gapIter === 0 && ts.scheduledIterations[0] <= seekTimeMs)) {
-             seekResults[displayName] = `🛑 PAST VISUAL DURATION; stopping`;
-             return;
-           }
-        } else {
-           gapIter = Math.ceil(seekTimeMs / totalIntervalMs);
-        }
-
-        scheduler.scheduleSound(soundId, metadata, intervalSeconds, nextIterationDelayMs, ts?.iterationOffsets, gapIter);
-      }
-    });
-
-    // Sync prevIndividualSoundStates so that the next updateSoundPlayback call
-    // sees no diff and skips rescheduling (prevents double-scheduling after seek).
-    this.prevIndividualSoundStates = { ...individualSoundStates };
-    this.prevSoundIntervals = { ...soundIntervals };
+    this.transport.dispose();
   }
 }

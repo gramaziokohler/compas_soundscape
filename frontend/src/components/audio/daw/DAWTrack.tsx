@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useState, memo } from 'react';
 import { DAWIteration } from './DAWIteration';
 import type { IterationContextMenuData } from './DAWIteration';
 import type { TimelineSound, IterationLink } from '@/types/audio';
@@ -48,7 +48,7 @@ interface DAWTrackProps {
   onIterationHoverEnd?: () => void;
 }
 
-export function DAWTrack({
+function DAWTrackImpl({
   sound,
   pxPerSecond,
   timelineDurationMs,
@@ -279,3 +279,5 @@ export function DAWTrack({
     </div>
   );
 }
+
+export const DAWTrack = memo(DAWTrackImpl);
