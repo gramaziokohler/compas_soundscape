@@ -936,7 +936,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   position = originalConfig.position as number[];
                 }
 
-                // Carry foley timestamps from the original config to the SoundEvent
+                // Carry foley timestamps from the original config to the SoundEvent —
+                // except backgrounds, which auto-pack via interval_seconds (0 = back-to-back).
                 const configTimestamps = originalConfig?.timestamps;
                 const configCategory = originalConfig?.category;
                 const normalizedCategory = (configCategory || '').toLowerCase().replace(/[\s-]+/g, '_');
@@ -949,17 +950,9 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   position,
                   geometry: sound.geometry || { vertices: [], faces: [] },
                   ...(entityIndex !== undefined && { entity_index: entityIndex }),
-                  ...(configTimestamps?.length && {
-                    timestamps: configTimestamps,
-                    scheduling_mode: 'timestamps' as const,
-                  }),
+                  ...(!isBg && configTimestamps?.length ? { timestamps: configTimestamps } : {}),
                   // Carry foley category for DAW grouping
                   ...(originalConfig?.category ? { category: originalConfig.category } : {}),
-                  // Background sounds: force interval mode (no timestamps, no timestamp scheduling)
-                  ...(isBg ? {
-                    timestamps: undefined as any,
-                    scheduling_mode: 'interval' as const,
-                  } : {}),
                 };
                 return event;
               };

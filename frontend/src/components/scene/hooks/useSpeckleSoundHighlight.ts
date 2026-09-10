@@ -10,6 +10,8 @@ interface SoundHighlightProps {
   selectedCardIndex: number | null;
   soundscapeData: SoundEvent[] | null;
   selectedVariants: Record<number, number>;
+  /** Card whose sphere should tint while hovered (e.g. a DAW track/clip) — additive, doesn't move the drag gizmo. */
+  hoveredSoundCardIndex?: number | null;
   /** Simulation-time source/receiver positions. Reactivity signal only — forces this
    *  hook to re-run whenever the active simulation changes so the base-color reset
    *  below clears the mismatch-red on spheres that are no longer out of position. */
@@ -26,6 +28,7 @@ export function useSpeckleSoundHighlight({
   soundscapeData,
   selectedVariants,
   activeSimulationPositions,
+  hoveredSoundCardIndex = null,
 }: SoundHighlightProps) {
   const expandedSoundCardIndex = useUIStore(s => s.expandedSoundCardIndex);
   const zoomToSoundCardTrigger = useUIStore(s => s.zoomToSoundCardTrigger);
@@ -94,6 +97,18 @@ export function useSpeckleSoundHighlight({
       }
     }
 
+    // Hover tint (e.g. hovering a DAW track/clip) — additive, never touches the gizmo.
+    if (hoveredSoundCardIndex !== null && hoveredSoundCardIndex !== effectiveIndex) {
+      const hoverSphere = sphereMeshes.find(s => s.userData.promptKey === `prompt_${hoveredSoundCardIndex}`);
+      if (hoverSphere) {
+        const material = hoverSphere.material as THREE.MeshStandardMaterial;
+        if (material.color && hoverSphere.userData.simMismatch !== true) {
+          material.color.setHex(getCssColorHex('--color-warning'));
+          material.needsUpdate = true;
+        }
+      }
+    }
+
     // Drag gizmo follows the highlighted sound sphere: when a different card is
     // expanded/selected (or the current one loses its highlight), re-attach the
     // gizmo to the highlighted sphere so it never stays on a previously clicked one.
@@ -120,7 +135,7 @@ export function useSpeckleSoundHighlight({
     }
 
     viewer?.requestRender();
-  }, [isViewerReady, selectedCardIndex, expandedSoundCardIndex, soundscapeData, selectedVariants, activeSimulationPositions]);
+  }, [isViewerReady, selectedCardIndex, expandedSoundCardIndex, soundscapeData, selectedVariants, activeSimulationPositions, hoveredSoundCardIndex]);
 
   // Zoom to sound sphere when card is double-clicked in sidebar
   useEffect(() => {

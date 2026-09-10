@@ -62,6 +62,15 @@ type ReceiverGroup = {
   sources: Array<{ sourceId: string; receiverId: string; ir: ImpulseResponseMetadata | null }>;
 };
 
+/** True when a peak amplitude marks a low-energy / silent IR: non-finite or non-positive
+ *  values (a negative value means the peak is stored/displayed in dB, e.g. -89.9 dB) or an
+ *  amplitude below IR_LOW_ENERGY_THRESHOLD. */
+function isLowEnergyPeak(peak: number | null | undefined): boolean {
+  if (peak === undefined || peak === null) return false;
+  if (!Number.isFinite(peak) || peak <= 0) return true;
+  return peak < IR_LOW_ENERGY_THRESHOLD;
+}
+
 export function ImpulseResponseUpload({
   onClearIR,
   simulationResults = null,
@@ -166,7 +175,7 @@ export function ImpulseResponseUpload({
   useEffect(() => {
     for (const ir of impulseResponses) {
       const peak = (ir as any).peak_amplitude ?? ir.peakAmplitude;
-      if (peak !== undefined && peak !== null && peak < IR_LOW_ENERGY_THRESHOLD) {
+      if (isLowEnergyPeak(peak)) {
         setLowEnergyIRIds(prev => prev.has(ir.id) ? prev : new Set(prev).add(ir.id));
       }
     }
@@ -224,7 +233,7 @@ export function ImpulseResponseUpload({
           for (let i = 0; i < data.length; i++) { const abs = Math.abs(data[i]); if (abs > chPeak) chPeak = abs; }
           peakSum += chPeak;
         }
-        if (peakSum / audioBuffer.numberOfChannels < IR_LOW_ENERGY_THRESHOLD) {
+        if (isLowEnergyPeak(peakSum / audioBuffer.numberOfChannels)) {
           setLowEnergyIRIds(prev => new Set(prev).add(ir.id));
         }
         setBufferCache(prev => { const m = new Map(prev); m.set(ir.id, audioBuffer); return m; });
@@ -457,7 +466,7 @@ export function ImpulseResponseUpload({
         if (!ir) continue;
         // Metadata-based check first (instant, no download)
         const peak = (ir as any).peak_amplitude ?? ir.peakAmplitude;
-        if (peak !== undefined && peak !== null && peak < IR_LOW_ENERGY_THRESHOLD) {
+        if (isLowEnergyPeak(peak)) {
           setLowEnergyIRIds(prev => prev.has(ir.id) ? prev : new Set(prev).add(ir.id));
         }
         // Buffer load for hover preview / legacy fallback
@@ -554,7 +563,7 @@ export function ImpulseResponseUpload({
       <div
         key={`${sourceId}-${receiverId}-${ir.id}`}
         className={`flex items-center gap-2 px-1 py-1.5 rounded transition-colors ${
-          isLowEnergy ? 'border border-error/30' : ''
+          isLowEnergy ? 'border-2 border-warning/70' : ''
         }`}
         onMouseEnter={(e) => handleRowMouseEnter(e, ir, sourceId, receiverId)}
         onMouseLeave={handleRowMouseLeave}
@@ -575,7 +584,7 @@ export function ImpulseResponseUpload({
             <span className={rowMutedClass} style={rowMutedStyle}>Sounds in position: </span>
             <span className="font-medium tabular-nums">{soundCount}</span>
             {isLowEnergy && (
-              <Badge variant="error" size="xs" className="ml-1.5">Low energy</Badge>
+              <Badge variant="warning" size="xs" className="ml-1.5 !text-warning !border-warning/70">Low energy</Badge>
             )}
           </div>
         </div>
@@ -583,6 +592,7 @@ export function ImpulseResponseUpload({
           audioBuffer={irBuffer}
           loading={bufferLoadingIds.has(ir.id)}
           onBlueBackground={!!simulationResults}
+          lowEnergy={isLowEnergy}
         />
       </div>
     );
@@ -613,7 +623,7 @@ export function ImpulseResponseUpload({
         key={`${sourceId}-${receiverId}`}
         className={`rounded border px-2 py-2 ${
           isLowEnergy
-            ? 'border-error/30 bg-error/10'
+            ? 'border-warning/60 bg-warning/30'
             : 'border-neutral-700/50'
         }`}
         style={isLowEnergy ? undefined : { backgroundColor: 'var(--color-blue-chip-bg)' }}
@@ -788,7 +798,7 @@ export function ImpulseResponseUpload({
                             {groupName}
                           </span>
                           {hasLowEnergy && (
-                            <span className="text-[9px] text-error shrink-0 ml-0.5">!</span>
+                            <span className="text-[9px] font-bold text-warning shrink-0 ml-0.5">!</span>
                           )}
                           <span className={`text-[9px] shrink-0 ${countLabelClass}`} style={countLabelStyle}>
                             ({sources.length})
@@ -858,7 +868,7 @@ export function ImpulseResponseUpload({
                   <div
                     key={ir.id}
                     className={`p-2 rounded transition-colors relative ${
-                      isLowEnergy ? 'border border-error' : ''
+                      isLowEnergy ? 'border-2 border-warning' : ''
                     }`}
                     onMouseEnter={async (e) => {
                       if (hideTimeoutRef.current) { clearTimeout(hideTimeoutRef.current); hideTimeoutRef.current = null; }
@@ -881,7 +891,7 @@ export function ImpulseResponseUpload({
                           {ir.name}
                         </div>
                         <div className="flex items-center gap-2 mt-1 whitespace-nowrap">
-                          {isLowEnergy && <Badge variant="error">Low energy</Badge>}
+                          {isLowEnergy && <Badge variant="warning" className="!text-warning-hover !border-warning/70">Low energy</Badge>}
                           <span className={`text-xs flex-shrink-0 ${simulationResults ? '' : 'text-secondary-hover'}`}
                             style={simulationResults ? { color: 'var(--color-on-blue-muted)' } : undefined}
                           >
@@ -893,6 +903,7 @@ export function ImpulseResponseUpload({
                         audioBuffer={irBuffer}
                         loading={bufferLoadingIds.has(ir.id)}
                         onBlueBackground={!!simulationResults}
+                        lowEnergy={isLowEnergy}
                       />
                     </div>
                   </div>

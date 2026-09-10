@@ -247,21 +247,16 @@ export function SoundGenerationSection({
   const individualSoundStates = useAudioControlsStore((s) => s.individualSoundStates);
   const onToggleSound        = useAudioControlsStore((s) => s.toggleSound);
   const onVolumeChange       = useAudioControlsStore((s) => s.handleVolumeChange);
-  const onIntervalChange     = useAudioControlsStore((s) => s.handleIntervalChange);
   const onMute               = useAudioControlsStore((s) => s.handleMute);
   const onSolo               = useAudioControlsStore((s) => s.handleSolo);
   const onVariantChange      = useAudioControlsStore((s) => s.handleVariantChange);
   const mutedSounds          = useAudioControlsStore((s) => s.mutedSounds);
   const soloedSound          = useAudioControlsStore((s) => s.soloedSound);
   const soundVolumes         = useAudioControlsStore((s) => s.soundVolumes);
-  const soundIntervals       = useAudioControlsStore((s) => s.soundIntervals);
   const selectedVariants     = useAudioControlsStore((s) => s.selectedVariants);
   const previewingSoundId    = useAudioControlsStore((s) => s.previewingSoundId);
   const onPreviewPlayPause   = useAudioControlsStore((s) => s.handlePreviewPlayPause);
   const onPreviewStop        = useAudioControlsStore((s) => s.handlePreviewStop);
-  const soundSchedulingModes = useAudioControlsStore((s) => s.soundSchedulingModes);
-  const soundIntervalJitter  = useAudioControlsStore((s) => s.soundIntervalJitter);
-  const onIntervalJitterChange = useAudioControlsStore((s) => s.setSoundIntervalJitter);
   const iterationLinks       = useAudioControlsStore((s) => s.iterationLinks);
   const isDeferredCycleBakePending = useAudioControlsStore(s => s.isDeferredCycleBakePending);
   const soundLoopable         = useAudioControlsStore((s) => s.soundLoopable);
@@ -605,10 +600,8 @@ export function SoundGenerationSection({
       });
     }
 
-    // Scheduling mode toggle removed from kebab — use the lock icon in the DAW timeline instead.
-
     // Make loopable (only if generated): analyses the audio and narrows
-    // interval playback to a seamless loop region with a seam-smoothing fade.
+    // playback to a seamless loop region with a seam-smoothing fade.
     if (isGenerated && generatedSound) {
       const isLoopable = generatedSound.id ? (soundLoopable[generatedSound.id] ?? false) : false;
       const isAnalyzingLoop = generatedSound.id ? (loopAnalysisInProgress[generatedSound.id] ?? false) : false;
@@ -1165,15 +1158,9 @@ export function SoundGenerationSection({
               isPreviewPlaying={previewingSoundId === generatedSound.id}
               isMuted={isMuted}
               soundVolumes={soundVolumes}
-              soundIntervals={soundIntervals}
-              soundIntervalJitter={soundIntervalJitter}
-              cardSoundId={primarySoundId || undefined}
-              schedulingMode={(primarySoundId ? soundSchedulingModes[primarySoundId] : undefined) ?? 'interval'}
               onPreviewPlayPause={onPreviewPlayPause}
               onPreviewStop={onPreviewStop}
               onVolumeChange={onVolumeChange}
-              onIntervalChange={onIntervalChange}
-              onIntervalJitterChange={onIntervalJitterChange}
               onMute={onMute}
               onUpdatePosition={handleUpdateSoundPosition}
               onUnlinkEntity={() => handleDetachSoundFromEntity(originalIndex)}
@@ -1200,7 +1187,6 @@ export function SoundGenerationSection({
     isSoundGenerating,
     soundGenTargetIndices,
     soundVolumes,
-    soundIntervals,
     previewingSoundId,
     availableTypes,
     handleUpdateConfig,
@@ -1227,10 +1213,6 @@ export function SoundGenerationSection({
     onPreviewPlayPause,
     onPreviewStop,
     onVolumeChange,
-    onIntervalChange,
-    soundSchedulingModes,
-    soundIntervalJitter,
-    onIntervalJitterChange,
     onVariantChange,
     handleUpdateSoundPosition,
     handleDetachSoundFromEntity,

@@ -1,8 +1,11 @@
 # backend/main.py
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from starlette.requests import Request
+from starlette.responses import Response
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,13 +16,23 @@ from services.llm_service import LLMService
 from services.audio_service import AudioService
 from services.impulse_response_service import ImpulseResponseService
 from services.tts_service import TTSService
+from services.job_store import job_store
+from services.io_jobs import sweep_orphaned_io_jobs
 # from services.modal_analysis_service import ModalAnalysisService
 
 # Import routers
-from routers import upload, generation, sounds, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, speckle, soundscape, tokens, tts, loop_analysis
+from routers import upload, generation, sounds, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, speckle, soundscape, tokens, tts, loop_analysis, jobs
+
+# Import constants
+from config.constants import (
+    JOB_REAPER_INTERVAL_S,
+    TEMP_JANITOR_INTERVAL_S,
+    TEMP_JANITOR_MAX_AGE_H,
+    REDIS_URL,
+)
 
 # Import utilities
-from utils.file_operations import cleanup_all_temp_directories, ensure_all_temp_directories
+from utils.file_operations import ensure_all_temp_directories, janitor_cleanup_temp
 
 # Import constants
 from config.constants import (
@@ -80,56 +93,137 @@ tts.init_tts_router(tts_service_instance)
 ensure_all_temp_directories()
 
 
+class NoStoreStaticFiles(StaticFiles):
+    """StaticFiles that always sends `Cache-Control: no-store`.
+
+    Generated audio, IRs, analysis JSONs and saved soundscape files are written
+    in place / deleted at runtime (reprocess, calibrate, delete-sound, save),
+    so browsers and Cloudflare must never serve a stale copy of the same URL.
+    """
+
+    async def get_response(self, path: str, scope) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+
 # --- Application Lifespan ---
+async def _job_store_loop() -> None:
+    """Supervise Redis-dependent background work for the whole API process.
+
+    Combines the orphaned-IO sweep (once, when Redis first answers) and the
+    stale-heartbeat reaper. It runs continuously so a late-starting Redis (local
+    dev, no nssm) is picked up without an API restart, and it logs a single
+    clear warning when Redis is unreachable instead of spamming an exception
+    trace every cycle.
+    """
+    reported_down = False
+    swept = False
+    while True:
+        try:
+            await job_store.redis.ping()
+        except Exception:
+            if not reported_down:
+                print(
+                    "[job-store] Redis is not reachable at "
+                    f"{REDIS_URL}. Start Redis first (see deploy/README.md) - "
+                    "background jobs are disabled until it is up. Retrying..."
+                )
+                reported_down = True
+            await asyncio.sleep(JOB_REAPER_INTERVAL_S)
+            continue
+
+        if reported_down:
+            print("[job-store] Redis connection restored — background jobs enabled.")
+            reported_down = False
+
+        # Sweep IO jobs orphaned by a previous process (in-process asyncio jobs
+        # die with the API — see services/io_jobs.py). Only meaningful once per
+        # process lifetime, but deferred until Redis is actually reachable.
+        if not swept:
+            try:
+                swept_count = await sweep_orphaned_io_jobs()
+                if swept_count:
+                    print(f"[job-store] marked {swept_count} orphaned in-process IO job(s) as error")
+            except Exception as exc:
+                print(f"[job-store] orphaned-IO sweep failed: {exc}")
+            swept = True
+
+        try:
+            await job_store.reap_once()
+        except Exception as exc:
+            print(f"[job-reaper] error: {exc}")
+        await asyncio.sleep(JOB_REAPER_INTERVAL_S)
+
+
+async def _temp_janitor_loop() -> None:
+    """Hourly age-based cleanup of temp/ (replaces the startup wipe)."""
+    while True:
+        await asyncio.sleep(TEMP_JANITOR_INTERVAL_S)
+        try:
+            await asyncio.to_thread(janitor_cleanup_temp, TEMP_JANITOR_MAX_AGE_H)
+        except Exception as exc:
+            print(f"[temp-janitor] error: {exc}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Application lifespan context manager.
     Handles startup and shutdown events.
     """
-    # Startup: clean temp files/empty dirs, then recreate required dirs
-    print("Starting up: Cleaning temporary directories...")
-    cleanup_all_temp_directories()
+    # Startup: recreate required dirs, then start the Redis job-store supervisor
+    # (orphaned-IO sweep + reaper) and the temp janitor. NOTE: temp/ files are
+    # NOT wiped at startup anymore — that destroyed every user's live audio on
+    # redeploy. If Redis is down (local dev), the supervisor logs one clear
+    # warning and keeps retrying instead of erroring on every tick.
+    print("Starting up: ensuring temp directories...")
     ensure_all_temp_directories()
+
+    job_store_task = asyncio.create_task(_job_store_loop())
+    janitor_task = asyncio.create_task(_temp_janitor_loop())
     print("Startup complete.")
-    
+
     yield
-    
+
     # Shutdown: Add any cleanup needed on shutdown here
     print("Shutting down...")
+    job_store_task.cancel()
+    janitor_task.cancel()
+    await job_store.close()
 
 
 # Launch the API
 app = FastAPI(lifespan=lifespan)
 
 # This makes files in "static/" available at "http://.../static/"
-app.mount(STATIC_MOUNT_PATH, StaticFiles(directory=STATIC_FILES_DIRECTORY), name="static")
+app.mount(STATIC_MOUNT_PATH, NoStoreStaticFiles(directory=STATIC_FILES_DIRECTORY), name="static")
 
 # Mount impulse response directory
 app.mount(
     "/static/impulse_responses",
-    StaticFiles(directory=IMPULSE_RESPONSE_DIR),
+    NoStoreStaticFiles(directory=IMPULSE_RESPONSE_DIR),
     name="impulse_responses"
 )
 
 # Mount simulations directory for Choras/Pyroomacoustics results
 app.mount(
     "/static/temp",
-    StaticFiles(directory=TEMP_SIMULATIONS_DIR),
+    NoStoreStaticFiles(directory=TEMP_SIMULATIONS_DIR),
     name="temp"
 )
 
 # Mount soundscapes directory (persistent, outside temp/)
 app.mount(
     SOUNDSCAPE_DATA_URL_PREFIX,
-    StaticFiles(directory=SOUNDSCAPE_DATA_DIR),
+    NoStoreStaticFiles(directory=SOUNDSCAPE_DATA_DIR),
     name="soundscapes"
 )
 
 # Mount Choras RIR output directory
 app.mount(
     "/static/choras_rir",
-    StaticFiles(directory=CHORAS_RIR_DIR),
+    NoStoreStaticFiles(directory=CHORAS_RIR_DIR),
     name="choras_rir"
 )
 
@@ -175,6 +269,7 @@ app.include_router(soundscape.router)
 app.include_router(tokens.router)
 app.include_router(tts.router)
 app.include_router(loop_analysis.router)
+app.include_router(jobs.router)
 
 
 @app.get("/")
@@ -205,10 +300,3 @@ def get_service_versions(llm_model: str = None):
         "edg_acoustics": ChorasService.get_dg_version_info(),
         "gemini-tts": TTSService.get_service_version_info(),
     }
-
-
-@app.get("/api/queue/status")
-async def queue_status():
-    """Return pending task counts per pool."""
-    from services.task_queue import unified_queue
-    return unified_queue.get_pool_depths()

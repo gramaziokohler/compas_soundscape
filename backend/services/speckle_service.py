@@ -86,11 +86,15 @@ class SpeckleService:
             bool: True if authentication successful, False otherwise
         """
         try:
+            from services.runtime_config import resolve_speckle_token
+            token = resolve_speckle_token()
+        except Exception:
             token = os.getenv("SPECKLE_TOKEN")
-            if not token:
-                logger.error("SPECKLE_TOKEN environment variable not set")
-                return False
+        if not token:
+            logger.error("SPECKLE_TOKEN is not configured (env var or Redis runtime config)")
+            return False
 
+        try:
             # Create and authenticate client
             self.client = SpeckleClient(host=SPECKLE_SERVER_URL)
             self.client.authenticate_with_token(token)

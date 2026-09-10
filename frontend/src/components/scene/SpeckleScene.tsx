@@ -276,6 +276,8 @@ export function SpeckleScene({
   const globalSoundSpeed = useUIStore((s) => s.globalSoundSpeed);
   const showAdvancedSettings = useUIStore((s) => s.showAdvancedSettings);
   const setShowAdvancedSettings = useUIStore((s) => s.setShowAdvancedSettings);
+  const timelineDockHeight = useUIStore((s) => s.timelineDock.height);
+  const hoveredSoundCardIndex = useUIStore((s) => s.hoveredSoundCardIndex);
   const enableAutoSave = useUIStore((s) => s.enableAutoSave);
   const gradientMapManagerRef = useRef<GradientMapManager | null>(null);
 
@@ -291,7 +293,6 @@ export function SpeckleScene({
   // ── Audio controls from store ──
   const selectedVariants     = useAudioControlsStore((s) => s.selectedVariants);
   const soundVolumes            = useAudioControlsStore((s) => s.soundVolumes);
-  const soundIntervals          = useAudioControlsStore((s) => s.soundIntervals);
   const soundTrims              = useAudioControlsStore((s) => s.soundTrims);
   const timelineDurationMs      = useAudioControlsStore((s) => s.timelineDurationMs);
   const mutedSounds          = useAudioControlsStore((s) => s.mutedSounds);
@@ -302,7 +303,6 @@ export function SpeckleScene({
 
   const [refreshKey, setRefreshKey] = useState(0);
   const showObjectExplorer = useUIStore((s) => s.showObjectExplorer);
-
   // Track whether the user explicitly closed the Object Explorer so we don't
   // re-open it automatically when expanding another acoustic simulation card.
   const userClosedExplorerRef = useRef(false);
@@ -813,14 +813,13 @@ export function SpeckleScene({
 
   // ── Timeline ──
   const {
-    timelineSounds, soundMetadataReady, showTimeline, setShowTimeline,
-    handleRefreshTimeline, handleDownloadTimeline,
+    timelineSounds, soundMetadataReady, showTimeline,
+    handleDownloadTimeline,
     handleCloseTimeline, handleToggleTimeline,
   } = useSpeckleTimeline({
     isViewerReady,
     soundscapeData,
     selectedVariants,
-    soundIntervals,
     soundTrims,
     timelineDurationMs,
     audioOrchestrator,
@@ -938,6 +937,7 @@ export function SpeckleScene({
     soundscapeData,
     selectedVariants,
     activeSimulationPositions,
+    hoveredSoundCardIndex,
   });
 
   // ── IR Hover Line ──
@@ -1306,6 +1306,13 @@ export function SpeckleScene({
   // Combined loading state: viewer init, parent upload/conversion, or the instant
   // post-selection feedback. Keeps the spinner up for the whole select→upload→load chain.
   const isModelLoading = isLoading || isUploadingModel || isPreparingModel;
+
+  // How much vertical space the docked DAW actually occupies at the bottom of the
+  // scene. It lifts the floating scene controls only when the DAW panel is really
+  // extended — i.e. the active sidebar holds at least one generated sound AND the
+  // timeline is expanded — not merely because the "Show timeline" toggle is on.
+  const dockBottomSpace = showTimeline && timelineSounds.length > 0 ? timelineDockHeight : 0;
+
   return (
     <div
       className={`relative w-full h-full ${className || ''}`}
@@ -1368,7 +1375,6 @@ export function SpeckleScene({
           leftSidebarContentWidth={leftSidebarContentWidth}
           rightSidebarWidth={rightSidebarWidth}
           onSeek={handleSeek}
-          onRefresh={handleRefreshTimeline}
           onDownload={handleDownloadTimeline}
           onPlay={handlePlayAll}
           onPause={handlePauseAll}
@@ -1377,6 +1383,8 @@ export function SpeckleScene({
           isAnyPlaying={playbackState.isPlaying}
           onSelectSoundCard={onSelectSoundCard}
           originalIRChannelCount={audioOrchestrator?.getIRState().channelCount ?? 0}
+          sampleRate={audioContext?.sampleRate}
+          playbackSchedulerRef={playbackSchedulerRef}
         />
       )}
 
@@ -1464,14 +1472,16 @@ export function SpeckleScene({
         onResetZoom={handleResetZoom}
         onRefreshScene={handleRefreshScene}
         onToggleTimeline={handleToggleTimeline}
+        bottomOffset={dockBottomSpace}
       />
 
       {/* Object Explorer toggle — bottom right */}
       {isViewerReady && (
         <div
-          className="absolute bottom-4 flex flex-col items-center pointer-events-auto z-20 transition-all duration-300"
+          className="absolute flex flex-col items-center pointer-events-auto z-20 transition-all duration-300"
           style={{
             gap: UI_SCENE_BUTTON.GAP,
+            bottom: `${16 + dockBottomSpace}px`,
             right: isRightSidebarExpanded ? `${(rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH) + 10}px` : '10px',
           }}
         >

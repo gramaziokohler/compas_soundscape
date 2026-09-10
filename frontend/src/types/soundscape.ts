@@ -286,6 +286,8 @@ export interface SerializedAnalysisConfig {
   useAnalysisResult?: boolean;
   peopleCount?: number;
   likeliness?: number;
+  /** Per-scenario DAW sound-scene length in ms (scenario cards only). */
+  timelineDurationMs?: number;
   analysisOptions?: Record<string, boolean>;
   applyNoiseReduction?: boolean;
   /** Audio context card: basename of the source audio persisted under the session's

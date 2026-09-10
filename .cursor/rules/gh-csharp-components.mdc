@@ -314,16 +314,21 @@ worker catch block. This is the ground truth that distinguishes "component never
 
 ## Backend Contract (pyroomacoustics)
 
-- `POST /api/pyroomacoustics/run-simulation-geometry` → `{simulation_id}` immediately.
+- `POST /api/pyroomacoustics/run-simulation-geometry` → `{job_id, position, total}` immediately.
   Body: `{vertices, faces, face_groups, materials, units, sources, receivers, settings, simulation_name}`.
   Vertices/faces come from the Rhino mesh (quads triangulated to `ABC` + `ACD`), units from
   `RhinoDoc.ModelUnitSystem` (mm/cm/ft/m).
-- `GET /api/pyroomacoustics/simulation-status/{id}` → `{progress (0-100), status, completed, error, result:{ir_files:[…]}}`.
+- Poll `GET /api/jobs/{job_id}` → unified `JobStatusResponse`:
+  `{job_id, type, status(queued|running|completed|cancelled|error), progress, status_text, partial, result, error}`.
+  The terminal `result` carries the legacy shape `{simulation_id, message, ir_files:[…], results_file}`.
+  Cancel a running/queued job with `POST /api/jobs/{job_id}/cancel`. There are **no** per-domain
+  `simulation-status`/`cancel-simulation` routes anymore — the GH client (`BackendClient.cs` and the
+  GHPython `code.py`) must poll `/api/jobs/{id}`.
 - `GET /api/pyroomacoustics/get-result-file/{id}/wav?ir_filename=…` and `…/json` (metrics).
 - Default ISM reflection order is **3** (`PYROOMACOUSTICS_RAY_TRACING_RECOMMENDED_MAX_ORDER`);
   send `settings.max_order` explicitly — never default to the old 15.
-- Backend work is async (task queue + subprocess); the component MUST poll — never block on the
-  simulation itself.
+- Backend work is async (Redis job store + worker child process); the component MUST poll
+  `GET /api/jobs/{id}` — never block on the simulation itself.
 
 ## Golden Pitfall Checklist
 

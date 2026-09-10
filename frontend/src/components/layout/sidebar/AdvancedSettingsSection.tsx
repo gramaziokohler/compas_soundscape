@@ -25,12 +25,10 @@ import { setElevenLabsApiKey, isElevenLabsKeySet } from "@/services/elevenlabs";
 import { useServiceVersions } from "@/hooks/useServiceVersions";
 import { useAudioControlsStore } from "@/store/audioControlsStore";
 import { useUIStore } from "@/store/uiStore";
-import { AUDIO_PLAYBACK } from "@/utils/constants";
 import type { ColorThemePreference } from "@/utils/color-theme";
 import {
   UI_BORDER_RADIUS,
   AUDIO_MODEL_TANGOFLUX,
-  AUDIO_MODEL_AUDIOLDM2,
   AUDIO_MODEL_ELEVENLABS,
   AUDIO_MODEL_NAMES,
   AUDIO_MODEL_DESCRIPTIONS,
@@ -129,7 +127,7 @@ type SettingKey =
   | 'tokens'
   | 'llm-model' | 'tts-model' | 'tts-language' | 'audio-model'
   | 'diffusion-steps' | 'negative-prompt' | 'noise-reduction' | 'trim-silence'
-  | 'listener-orientation' | 'timeline' | 'spectrograms'
+  | 'listener-orientation' | 'spectrograms'
   | 'base-spl' | 'max-foley'
   | 'auto-save' | 'delete-history';
 
@@ -164,7 +162,6 @@ const SETTINGS: SettingEntry[] = [
   { section: 'llm', key: 'trim-silence', terms: ['trim silence', 'silence', 'trim', 'text-to-audio settings'] },
 
   { section: 'rendering', key: 'listener-orientation', terms: ['listener orientation', 'orientation', 'listener', 'x', 'y', 'z'] },
-  { section: 'rendering', key: 'timeline', terms: ['timeline', 'duration', 'time', 'timeline settings'] },
   { section: 'rendering', key: 'spectrograms', terms: ['spectrograms', 'spectrogram'] },
   { section: 'rendering', key: 'base-spl', terms: ['base level', 'base spl', 'spl', 'volume', 'db', 'decibel'] },
   { section: 'rendering', key: 'max-foley', terms: ['max sounds', 'max foley', 'foley', 'maximum sounds', 'prompt'] },
@@ -571,8 +568,6 @@ export function AdvancedSettingsSection({
     if (tokenSettingsTrigger > 0) setActiveSection('tokens');
   }, [tokenSettingsTrigger]);
 
-  const timelineDurationMs = useAudioControlsStore((s) => s.timelineDurationMs);
-  const setTimelineDurationMs = useAudioControlsStore((s) => s.setTimelineDurationMs);
   const globalBaseDbfs = useAudioControlsStore((s) => s.globalBaseDbfs);
   const setGlobalBaseDbfs = useAudioControlsStore((s) => s.setGlobalBaseDbfs);
   const maximumFoleySounds = useAudioControlsStore((s) => s.maximumFoleySounds);
@@ -820,11 +815,6 @@ export function AdvancedSettingsSection({
                         title: AUDIO_MODEL_DESCRIPTIONS[AUDIO_MODEL_TANGOFLUX],
                       },
                       {
-                        value: AUDIO_MODEL_AUDIOLDM2,
-                        label: AUDIO_MODEL_NAMES[AUDIO_MODEL_AUDIOLDM2],
-                        title: AUDIO_MODEL_DESCRIPTIONS[AUDIO_MODEL_AUDIOLDM2],
-                      },
-                      {
                         value: AUDIO_MODEL_ELEVENLABS,
                         label: AUDIO_MODEL_NAMES[AUDIO_MODEL_ELEVENLABS],
                         title: AUDIO_MODEL_DESCRIPTIONS[AUDIO_MODEL_ELEVENLABS],
@@ -893,23 +883,6 @@ export function AdvancedSettingsSection({
                   defaultValue={DEFAULT_DBFS}
                   hoverText="Reference level in dBFS used in audio calibration for all generated sounds. Double-click to reset to -18 dBFS."
                 />
-              )}
-              {isVisible('timeline') && (
-                <CollapsibleGroup title="Timeline settings" forceExpanded={isSearchActive}>
-                  {isVisible('timeline') && (
-                    <RangeSlider
-                      label="Duration"
-                      value={timelineDurationMs / 1_000}
-                      min={30}
-                      max={600}
-                      step={30}
-                      unit="s"
-                      onChange={(v) => setTimelineDurationMs(v * 1_000)}
-                      defaultValue={AUDIO_PLAYBACK.TIMELINE_FIXED_DURATION_MS / 1_000}
-                      hoverText="Fixed length of the visual and audio timeline in seconds. Sounds that extend past this boundary are trimmed. Double-click to reset to 180 s (3 min)."
-                    />
-                  )}
-                </CollapsibleGroup>
               )}
               {isVisible('spectrograms') && (
                 <ToggleField

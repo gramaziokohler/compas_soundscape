@@ -35,20 +35,6 @@ export interface SoundMetadata {
   };
 }
 
-export interface ScheduledSound {
-  metadata: SoundMetadata;
-  intervalMs: number;
-  timerId: NodeJS.Timeout | null;
-  isScheduled: boolean;
-  initialDelayMs: number; // Initial delay before first playback
-  iterationOffsets?: number[]; // Pre-generated random offsets for each playback iteration
-  currentIteration?: number; // Tracks which iteration we are currently on
-  /** Explicit playback timestamps in ms (used in 'timestamps' scheduling mode). */
-  timestampsMs?: number[];
-  /** Timer IDs for each timestamp-based one-shot playback. */
-  timestampTimers?: NodeJS.Timeout[];
-}
-
 export interface WAVHeader {
   sampleRate: number;
   channels: number;
@@ -88,16 +74,11 @@ export interface TimelineSound {
   id: string;
   displayName: string;
   color: string;
-  intervalMs: number;
   soundDurationMs: number;
   scheduledIterations: number[]; // Array of timestamps (ms) when sound will play
   audioUrl?: string; // Optional audio URL for WaveSurfer waveform visualization
   trimStartFraction?: number; // Fraction (0-1) where trim starts
   trimEndFraction?: number;   // Fraction (0-1) where trim ends
-  initialDelayMs?: number; // Delay before first playback (ms) — from stagger scheduling
-  iterationOffsets?: number[]; // Array of pre-generated random offsets for each iteration
-  /** Scheduling mode for this sound ('interval' = default, 'timestamps' = explicit). */
-  schedulingMode?: 'interval' | 'timestamps';
   /** Prompt index — the sound's original prompt_index from the backend.
    *  For speech-line TTS sounds this may be encoded (cardIndex * 10000 + lineIdx);
    *  use cardIndex for config-array lookups. */

@@ -5,10 +5,11 @@ import type { ScenarioConfig } from '@/types/analysis';
 import type { AnalyzeModelConfig } from '@/types/analysis';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { ToggleField } from '@/components/ui/ToggleField';
-import { useAnalysisStore, useAudioControlsStore, useScenarioPreviewStore, useSpeckleStore } from '@/store';
+import { useAnalysisStore, useScenarioPreviewStore, useSpeckleStore } from '@/store';
 import { pauseStore, commitStore } from '@/store';
 import type { ScenarioPreviewParcours, ScenarioPreviewStop } from '@/store';
 import { ScenarioResultContent } from './ScenarioResultContent';
+import { AUDIO_PLAYBACK, SCENARIO_TIMELINE } from '@/utils/constants';
 
 // ─── Object-reference renderer ────────────────────────────────────────────────
 
@@ -316,7 +317,6 @@ export function ScenarioContent({
   onUpdateConfig,
 }: ScenarioContentProps) {
   const { analysisConfigs } = useAnalysisStore();
-  const { timelineDurationMs } = useAudioControlsStore();
 
   const hasAnalysisResult = useMemo(
     () =>
@@ -325,8 +325,6 @@ export function ScenarioContent({
       ),
     [analysisConfigs],
   );
-
-  const durationSeconds = Math.round(timelineDurationMs / 1000);
 
   return (
     <div className="card-stack">
@@ -392,9 +390,23 @@ export function ScenarioContent({
         </div>
       </div>
 
-      <p className="text-xs opacity-50">
-        Duration: <span className="font-medium opacity-100">{durationSeconds}s</span> (from timeline)
-      </p>
+      <RangeSlider
+        label="Duration"
+        value={config.timelineDurationMs / 1_000}
+        min={SCENARIO_TIMELINE.MIN_SECONDS}
+        max={SCENARIO_TIMELINE.MAX_SECONDS}
+        step={SCENARIO_TIMELINE.STEP_SECONDS}
+        unit="s"
+        defaultValue={AUDIO_PLAYBACK.TIMELINE_FIXED_DURATION_MS / 1_000}
+        onChange={(v) => onUpdateConfig(index, { timelineDurationMs: v * 1_000 })}
+        onDragStart={() => pauseStore('analysis')}
+        onChangeCommitted={(v) => {
+          onUpdateConfig(index, { timelineDurationMs: v * 1_000 });
+          commitStore('analysis');
+        }}
+        disabled={isAnalyzing}
+        hoverText="Length of this scenario's generated sound scene — bounds this scenario's DAW timeline in seconds. Double-click to reset to the default."
+      />
 
     </div>
   );

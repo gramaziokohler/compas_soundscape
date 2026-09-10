@@ -20,7 +20,6 @@ interface TimelineProps {
   isViewerReady: boolean;
   soundscapeData: SoundEvent[] | null;
   selectedVariants: any;
-  soundIntervals: any;
   soundTrims: any;
   timelineDurationMs: number;
   audioOrchestrator: AudioOrchestrator | null;
@@ -47,7 +46,6 @@ export function useSpeckleTimeline({
   isViewerReady,
   soundscapeData,
   selectedVariants,
-  soundIntervals,
   soundTrims,
   timelineDurationMs,
   audioOrchestrator,
@@ -87,11 +85,9 @@ export function useSpeckleTimeline({
     }
   }, [showTimeline, setShowTimeline]);
 
-  // Subscribe to scheduling mode + timestamps so the timeline rerenders when they change
-  const soundSchedulingModes    = useAudioControlsStore((s) => s.soundSchedulingModes);
+  // Subscribe to timestamps + per-iteration durations so the timeline rerenders when they change
   const soundTimestamps         = useAudioControlsStore((s) => s.soundTimestamps);
   const soundIterationDurations = useAudioControlsStore((s) => s.soundIterationDurations);
-  const soundIntervalJitter      = useAudioControlsStore((s) => s.soundIntervalJitter);
   const isBakingSchedule        = useAudioControlsStore((s) => s.isBakingSchedule);
   const iterationLinks          = useAudioControlsStore((s) => s.iterationLinks);
   const soundBufferDurations    = useAudioControlsStore((s) => s.soundBufferDurations);
@@ -126,12 +122,9 @@ export function useSpeckleTimeline({
           console.log('[useSpeckleTimeline] condition met, extracting...');
           const sounds = extractTimelineSoundsFromData(
             soundMetadata,
-            soundIntervals,
             timelineDurationMs,
             soundscapeData ?? undefined,
             soundTrims,
-            soundIntervalJitter,
-            soundSchedulingModes,
             soundTimestamps,
             soundIterationDurations,
             iterationLinks,
@@ -150,7 +143,7 @@ export function useSpeckleTimeline({
     return () => clearTimeout(timeoutId);
     // soundMetadataReady is included so the effect re-runs when polling marks it ready.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [soundscapeData, selectedVariants, soundIntervals, soundTrims, soundMetadataReady, soundIntervalJitter, timelineDurationMs, soundSchedulingModes, soundTimestamps, soundIterationDurations, isBakingSchedule, iterationLinks, soundBufferDurations]);
+  }, [soundscapeData, selectedVariants, soundTrims, soundMetadataReady, timelineDurationMs, soundTimestamps, soundIterationDurations, isBakingSchedule, iterationLinks, soundBufferDurations]);
 
   // ============================================================================
   // Effect - Poll for Sound Metadata Readiness
@@ -240,12 +233,9 @@ export function useSpeckleTimeline({
     if (soundMetadata && soundMetadata.size > 0) {
       const sounds = extractTimelineSoundsFromData(
         soundMetadata,
-        soundIntervals,
         timelineDurationMs,
         soundscapeData ?? undefined,
         soundTrims,
-        soundIntervalJitter,
-        soundSchedulingModes,
         soundTimestamps,
         soundIterationDurations,
         iterationLinks,
@@ -253,7 +243,7 @@ export function useSpeckleTimeline({
       setTimelineSounds(sounds);
       console.log('[useSpeckleTimeline] 🔄 Timeline refreshed:', sounds.length, 'sounds');
     }
-  }, [soundIntervals, soundTrims, soundscapeData, soundIntervalJitter, timelineDurationMs, soundSchedulingModes, soundTimestamps, soundIterationDurations, iterationLinks]);
+  }, [soundTrims, soundscapeData, timelineDurationMs, soundTimestamps, soundIterationDurations, iterationLinks]);
 
   // ============================================================================
   // Callback - Download Soundscape as WAV

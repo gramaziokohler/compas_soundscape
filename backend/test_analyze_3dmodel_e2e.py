@@ -199,7 +199,7 @@ def run_analyze(
 
     Returns (furniture_list_for_downstream, json_path).
     """
-    from services.model_analysis_worker import _normalize_objects
+    from utils.llm_result_normalization import normalize_analysis_objects
 
     print(f"\n[2] analyze_agent  (provider={llm_model}, entities={len(entities)}, "
           f"screenshots={len(screenshots)}) …")
@@ -212,7 +212,7 @@ def run_analyze(
     )
     elapsed = time.time() - t0
 
-    objects = _normalize_objects(raw.get("objects", []))
+    objects = normalize_analysis_objects(raw.get("objects", []))
     space_description = raw.get("space_description", "")
 
     print(f"\n{_hr()}")

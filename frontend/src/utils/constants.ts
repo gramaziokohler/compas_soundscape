@@ -9,8 +9,10 @@
  * Logic:
  * - If NEXT_PUBLIC_API_BASE_URL is set in .env.local, use it (for manual override)
  * - Otherwise, detect the current hostname:
- *   - localhost/127.0.0.1 → http://localhost:8000
- *   - Network IP (e.g., 129.132.205.138) → http://[same-IP]:8000
+ *   - localhost/127.0.0.1 → http://localhost:8000 (local dev, cross-port)
+ *   - Anything else (production behind the nginx origin) → '' so every request
+ *     is SAME-ORIGIN (/api, /static, /soundscapes are reverse-proxied to the
+ *     FastAPI backend by nginx) — no CORS, no cookie friction.
  */
 function getApiBaseUrl(): string {
   // If explicitly set in environment, use that
@@ -31,8 +33,9 @@ function getApiBaseUrl(): string {
     return 'http://localhost:8000';
   }
 
-  // Network access: use the same IP as the frontend but port 8000
-  return `http://${hostname}:8000`;
+  // Production / non-local access: same origin. nginx routes /api, /static and
+  // /soundscapes to the backend, so empty base URL keeps everything same-origin.
+  return '';
 }
 
 export const API_BASE_URL = getApiBaseUrl();
@@ -665,8 +668,10 @@ export const SCENARIO_PREVIEW = {
 } as const;
 
 // IR low-energy detection threshold
-// If the average of all channel peak amplitudes is below this value, the IR is flagged as low energy
-export const IR_LOW_ENERGY_THRESHOLD = 0.01;
+// If the average of all channel peak amplitudes is below this value (pk < 0.05,
+// i.e. ~ -26 dBFS and quieter — including near-silent IRs whose pk reads as large
+// negative dB such as -89.9 dB), the IR is flagged as low energy.
+export const IR_LOW_ENERGY_THRESHOLD = 0.05;
 
 // Impulse Response Processing Constants
 export const IMPULSE_RESPONSE = {
@@ -1362,6 +1367,17 @@ export const AUDIO_TIMELINE = {
 } as const;
 
 // ============================================================================
+// Scenario Sound-Scene Timeline Configuration
+// Per-scenario DAW timeline length (seconds) — a scenario card sets its own,
+// which bounds that scenario's generated sound scene in the DAW.
+// ============================================================================
+export const SCENARIO_TIMELINE = {
+  MIN_SECONDS: 30,
+  MAX_SECONDS: 600,
+  STEP_SECONDS: 30,
+} as const;
+
+// ============================================================================
 // WaveSurfer Enhanced Timeline Configuration
 // ============================================================================
 export const WAVESURFER_TIMELINE = {
@@ -1387,6 +1403,27 @@ export const WAVESURFER_TIMELINE = {
   // Width calculation
   PIXELS_PER_SECOND: 10,              // Pixels per second — fixed (no zoom)
   MIN_WIDTH: 420,                    // Minimum component width (keeps header controls readable)
+} as const;
+
+// ============================================================================
+// DAW Dock (bottom-docked mini-DAW) Layout Constants
+// ============================================================================
+export const DAW = {
+  TRACK_HEIGHT: 52,
+  MIN_TRACK_HEIGHT: 28,
+  MAX_TRACK_HEIGHT: 120,
+  /** Below this track height, the track head's sub-label ("Background · 5 clips") is hidden. */
+  TRACK_HEIGHT_SUBLABEL_MIN: 44,
+  HEAD_WIDTH: 168,
+  RULER_HEIGHT: 26,
+  STATUS_HEIGHT: 32,
+  TOP_BAR_HEIGHT: 14,
+  SNAP_MAGNET_PX: 6,
+  EDGE_AUTOSCROLL_PX: 40,
+  MIN_DOCK_HEIGHT: 140,
+  MAX_DOCK_HEIGHT_MARGIN: 120, // keep this much viewport above the dock
+  MIN_PX_PER_SECOND: 1,
+  MAX_PX_PER_SECOND: 200,
 } as const;
 
 

@@ -10,7 +10,7 @@
 
 'use client';
 
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { ImpulseResponseUpload } from '@/components/audio/ImpulseResponseUpload';
 import type { SimulationConfig } from '@/types/acoustics';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from '@/types/audio';
@@ -284,11 +284,7 @@ export function SimulationResultContent({
     sources?: Record<string, [number, number, number]>;
   } | undefined)?.sources;
 
-  const [lowEnergyIRIds, setLowEnergyIRIds] = useState<Set<string>>(new Set());
-  const handleLowEnergyIdsChange = useCallback((ids: Set<string>) => setLowEnergyIRIds(ids), []);
-
   const gridListeners = useGridListenersStore((s) => s.gridListeners);
-
   // ── Position mismatch detection ─────────────────────────────────────────
   const mismatchInfo = useMemo<{
     names: string[];
@@ -594,14 +590,6 @@ export function SimulationResultContent({
         acousticParams && <AcousticMetricsPanel params={acousticParams} />
       )}
 
-      {lowEnergyIRIds.size > 0 && (
-        <Notice type="error" message={
-          lowEnergyIRIds.size === 1
-            ? '1 impulse response has very low energy and may produce poor auralization.'
-            : `${lowEnergyIRIds.size} impulse responses have very low energy and may produce poor auralization.`
-        } />
-      )}
-
       {/* IR Library */}
       <ImpulseResponseUpload
         onClearIR={onClearIR}
@@ -610,7 +598,6 @@ export function SimulationResultContent({
         simulationIRIds={simulationConfig.importedIRIds}
         sourceReceiverIRMapping={sourceReceiverIRMapping}
         onIRHover={onIRHover}
-        onLowEnergyIdsChange={handleLowEnergyIdsChange}
         sourceDisplayNames={sourceDisplayNames}
         receiverDisplayNames={receiverDisplayNames}
         simulationSourcePositions={simulationSourcePositions}

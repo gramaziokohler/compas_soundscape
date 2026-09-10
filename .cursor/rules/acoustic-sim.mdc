@@ -1,6 +1,6 @@
 ---
 description: Room acoustics simulation — pyroomacoustics and Choras FEM/DG solver, plus applying simulation results to sounds (IR matching, muting, IR panel, mismatch coloring)
-globs: backend/services/pyroomacoustics_service.py,backend/services/choras_service.py,backend/choras_backend/**,backend/routers/pyroomacoustics.py,backend/routers/choras.py,backend/utils/acoustic_measurement.py,backend/utils/speckle_geometry_mapper.py,backend/services/pyroomacoustics_worker.py,frontend/src/lib/audio/AudioOrchestrator.ts,frontend/src/lib/audio/modes/AmbisonicIRMode.ts,frontend/src/components/layout/sidebar/AcousticsSection.tsx,frontend/src/components/audio/ImpulseResponseUpload.tsx,frontend/src/components/scene/hooks/useSpeckleSimulationMismatch.ts,frontend/src/components/scene/hooks/useSpeckleSoundHighlight.ts
+globs: backend/services/pyroomacoustics_service.py,backend/services/choras_service.py,backend/services/choras_job.py,backend/choras_backend/**,backend/routers/pyroomacoustics.py,backend/routers/choras.py,backend/workers/**,backend/routers/jobs.py,backend/utils/acoustic_measurement.py,backend/utils/speckle_geometry_mapper.py,backend/services/pyroomacoustics_worker.py,frontend/src/lib/audio/AudioOrchestrator.ts,frontend/src/lib/audio/modes/AmbisonicIRMode.ts,frontend/src/components/layout/sidebar/AcousticsSection.tsx,frontend/src/components/audio/ImpulseResponseUpload.tsx,frontend/src/components/scene/hooks/useSpeckleSimulationMismatch.ts,frontend/src/components/scene/hooks/useSpeckleSoundHighlight.ts
 ---
 
 # Acoustic Simulation Rules
@@ -32,22 +32,28 @@ Both routers receive identical geometry inputs as `multipart/form-data`:
 
 ```
 POST /api/pyroomacoustics/run-simulation-speckle
-  └─ router: validate → enqueue via unified_queue (make_subprocess_runner) → return simulation_id
+  └─ router: validate params → job_store.enqueue("pyroomacoustics", ...) → {job_id, position, total}
 
-  subprocess: pyroomacoustics_worker.run_pyroomacoustics_simulation()
-    1. SpeckleService.get_model_geometry()   # vertices, faces, object_face_ranges, units
-    2. Build face_material_map              # object_id → face range → absorption coefficient
-    3. PyroomacousticsService.weld_mesh()   # deduplicate verts, drop degenerate/non-manifold faces
-    4. Group source-receiver pairs by source_id
-    5. For each unique source:
-       PyroomacousticsService.create_room_from_mesh()  # build pra.Room from triangulated mesh
-       PyroomacousticsService.add_receiver_to_room()   # add mono mic or FOA MicrophoneArray
-       room.add_source(source_position)
-       if ray_tracing: room.enable_ray_tracing(n_rays=n_rays)
-       room.compute_rir()
-       → WAV file per source-receiver pair → temp/static/pyroomacoustics_rir/
+  CPU worker: python -m workers.worker_main --role cpu  leases queue:cpu
+    └─ spawns a child process running pyroomacoustics_worker.run_pyroomacoustics_simulation()
+       (Speckle fetch + room build + compute_rir) — hard-killable on cancel
+      1. SpeckleService.get_model_geometry()   # vertices, faces, object_face_ranges, units
+      2. Build face_material_map              # object_id → face range → absorption coefficient
+      3. PyroomacousticsService.weld_mesh()   # deduplicate verts, drop degenerate/non-manifold faces
+      4. Group source-receiver pairs by source_id
+      5. For each unique source:
+         PyroomacousticsService.create_room_from_mesh()  # build pra.Room from triangulated mesh
+         PyroomacousticsService.add_receiver_to_room()   # add mono mic or FOA MicrophoneArray
+         room.add_source(source_position)
+         if ray_tracing: room.enable_ray_tracing(n_rays=n_rays)
+         room.compute_rir()
+         → WAV file per source-receiver pair → temp/static/pyroomacoustics_rir/
 
-GET /api/pyroomacoustics/simulation-status/{simulation_id}   # polls progress JSON
+  The child writes a local progress JSON; workers/_subprocess_common.py polls it
+  and forwards progress/heartbeat to Redis (job:<id> hash).
+
+GET /api/jobs/{job_id}   # unified poll (progress / status_text / result)
+POST /api/jobs/{job_id}/cancel   # kills the child process
 GET /api/pyroomacoustics/get-result-file/{simulation_id}/{file_type}  # download WAV / JSON
 ```
 
@@ -106,9 +112,10 @@ Computed from the WAV IR after `compute_rir()`, reported in the result JSON.
 ### Output Paths
 
 - IR WAVs: `backend/temp/static/pyroomacoustics_rir/sim_<simulation_id>_src_<id>_rcv_<id>.wav`
-- Progress: `backend/temp/simulations/progress_<simulation_id>.json`
-- Result: `backend/temp/simulations/result_<simulation_id>.json`
-- Dispatched via **`CPU_POOL`** subprocess — never run synchronously in the router.
+- Child progress/result JSON: `backend/temp/simulations/job_progress_<job_id>.json` /
+  `job_result_<job_id>.json` (written by the child, forwarded to Redis)
+- Dispatched via the **CPU worker child process** (`workers/cpu_runner.py`) — never run
+  synchronously in the router.
 
 ---
 
@@ -118,14 +125,27 @@ Computed from the WAV IR after `compute_rir()`, reported in the result JSON.
 
 ```
 POST /api/choras/run-simulation-speckle
-  └─ router (synchronous setup — fail fast):
+  └─ router: validate params → job_store.enqueue("choras", ...) → {job_id, position, total}
+     (fail fast only — no geometry work in the router)
+
+  Choras worker: python -m workers.worker_main --role choras  leases queue:choras
+    └─ spawns a child process running services/choras_job.run_choras_job()
+       (Speckle fetch + .geo write + solve moved out of the router) — hard-killable on cancel
        1. SpeckleService.get_model_geometry()   # same as pyroomacoustics
        2. build_choras_temp_dir(simulation_id)  # temp/choras_sims/<simulation_id>/
        3. write_geo_from_mesh(...)              # write shared room.geo
        4. build_material_absorption_dict()      # object_id → per-frequency absorption coefficients
-       5. unified_queue.enqueue(...)            # IO_POOL thread, return simulation_id immediately
+       5. DE method (per source-receiver pair) / DG method (per unique source) — see below
 
-  IO_POOL thread: _run_simulation_in_thread()
+  The child writes a local progress JSON; workers/_subprocess_common.py polls it
+  and forwards progress/heartbeat to Redis (job:<id> hash).
+
+GET /api/jobs/{job_id}   # unified poll (progress / status_text / result)
+POST /api/jobs/{job_id}/cancel   # kills the child process
+```
+
+### Method Execution (inside the child process)
+
     DE method (per source-receiver pair):
       pair_dir = sim_dir / pair_<src>_<rcv>/
       copy room.geo → pair_dir/room.geo
@@ -140,8 +160,6 @@ POST /api/choras/run-simulation-speckle
       build_dg_json_input() → source_dir/input_dg.json
       ChorasService.run_dg_simulation()  # dg_method(json_path) via DGinterface.py
         → gmsh meshes from GEO, time-domain DG solver runs, outputs IR WAV
-
-GET /api/choras/simulation-status/{simulation_id}   # polls task.progress / task.status in real time
 ```
 
 ### Method Choice
@@ -153,11 +171,12 @@ GET /api/choras/simulation-status/{simulation_id}   # polls task.progress / task
 
 ### The .geo File
 
-The `.geo` file is a **Gmsh geometry description** of the architectural room. It is created
-**synchronously in the router** before queuing (so errors surface immediately), then copied to each
-pair/source subdirectory before the solver runs.
+The `.geo` file is a **Gmsh geometry description** of the architectural room. It is created inside
+the Choras worker **child process** (`services/choras_job.py`, via
+`utils/speckle_geometry_mapper.write_geo_from_mesh()`), then copied to each pair/source
+subdirectory before the solver runs.
 
-Created by `utils/speckle_geometry_mapper.write_geo_from_mesh()`:
+Created by `write_geo_from_mesh()`:
 1. Deduplicate vertices (6 decimal place tolerance)
 2. BFS re-orient triangles for consistent winding — **required** for Gmsh to form a valid
    Surface Loop from which it generates interior tetrahedra
@@ -189,24 +208,26 @@ The JSON payload consumed by `de_method()` / `dg_method()`:
 }
 ```
 
-### Choras Progress — Real-time stdout Capture
+### Choras Progress — stdout Capture feeds the progress JSON
 
-Unlike pyroomacoustics (progress file polling), Choras progress is updated in real time by
-`_ProgressCapture`, a thread-local `sys.stdout` wrapper that parses solver output:
+Each Choras simulation now owns its whole child OS process (`services/choras_job.py`). A
+`_ProgressCapture`-style `sys.stdout` wrapper inside that child parses the solver output and calls
+`_write_progress(...)` on the atomic progress file; the parent runner (`workers/choras_runner.py` →
+`workers/_subprocess_common.py`) polls that file and forwards progress to Redis:
 - Gmsh meshing lines → `"Meshing: N pts, M elements..."`
-- DE: `"40% of main calculation completed"` → maps to task.progress
-- DG: `"Current/Total step N/M"` and `"Percentage done: P %"` → task.progress
+- DE: `"40% of main calculation completed"` → maps to progress
+- DG: `"Current/Total step N/M"` and `"Percentage done: P %"` → progress
 
-**Do not add `print()` calls inside the Choras simulation thread** — they will be parsed as
-progress events and may confuse the frontend progress bar.
+**Do not add `print()` calls inside the Choras solve code** — they will be parsed as progress
+events and may confuse the frontend progress bar.
 
 ### Output Paths
 
 - Choras temp dir: `backend/temp/choras_sims/<simulation_id>/`
 - IR WAVs: `backend/temp/choras_rirs/<simulation_id>_<pair_key>.wav`
-- Dispatched via **`IO_POOL`** thread (not a subprocess — gmsh `initialize()`/`finalize()` must run
-  in the same process; `_gmsh_initialize()` in `choras_service.py` handles SIGINT safety for
-  non-main threads).
+- Dispatched via the **Choras worker child process** (`workers/choras_runner.py`) — gmsh
+  `initialize()`/`finalize()` run in the child's main thread; `_gmsh_initialize()` in
+  `choras_service.py` handles SIGINT safety for non-main threads.
 
 ---
 

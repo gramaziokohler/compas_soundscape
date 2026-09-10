@@ -14,6 +14,7 @@ from utils.audio_processing import (
 )
 from config.constants import (
     TANGOFLUX_MODEL_NAME,
+    TANGOFLUX_DTYPE,
     AUDIO_MODEL_TANGOFLUX,
     AUDIO_MODEL_AUDIOLDM2,
     DEFAULT_AUDIO_MODEL,
@@ -110,7 +111,9 @@ class AudioService:
         """Lazy initialization of the TangoFlux model"""
         if self.tangoflux_model is None:
             print("Initializing TangoFlux model...")
-            self.tangoflux_model = TangoFluxInference(name=TANGOFLUX_MODEL_NAME, device=self.device)
+            self.tangoflux_model = TangoFluxInference(
+                name=TANGOFLUX_MODEL_NAME, device=self.device, dtype=TANGOFLUX_DTYPE
+            )
         return self.tangoflux_model
 
     def _clear_cuda_cache(self):
@@ -146,6 +149,7 @@ class AudioService:
         negative_prompt: str = "",
         progress_callback: callable = None,
         stage_callback: callable = None,
+        should_stop: callable = None,
     ) -> None:
         """Generate a single audio file from a text prompt with dBFS calibration and optional denoising
 
@@ -161,6 +165,8 @@ class AudioService:
             negative_prompt: Negative prompt (used by AudioLDM2)
             progress_callback: Callback(step, total) fired each diffusion step
             stage_callback: Callback(stage_str) fired at post-processing stages (denoising, calibration)
+            should_stop: Callback() -> bool polled each diffusion step (TangoFlux only);
+                raises tangoflux.model.GenerationCancelled to abort early
         """
         denoise_suffix = " + denoising" if apply_denoising else ""
         print(f"Generating sound with {audio_model}: {prompt} (Target level: {dbfs} dBFS{denoise_suffix})")
@@ -199,7 +205,8 @@ class AudioService:
                         prompt,
                         steps=steps,
                         duration=duration,
-                        guidance_scale=guidance_scale
+                        guidance_scale=guidance_scale,
+                        should_stop=should_stop,
                     )
 
                 # Clear CUDA cache after generation
@@ -223,7 +230,8 @@ class AudioService:
                             prompt,
                             steps=steps,
                             duration=duration,
-                            guidance_scale=guidance_scale
+                            guidance_scale=guidance_scale,
+                            should_stop=should_stop,
                         )
 
                     # Restore original device preference for next generation

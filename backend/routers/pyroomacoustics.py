@@ -2,19 +2,14 @@
 Pyroomacoustics acoustic simulation endpoints.
 
 POST /pyroomacoustics/run-simulation-speckle
-  Validates basic params, queues the job, returns simulation_id immediately.
-  Speckle fetch + room build + compute_rir run in a subprocess.
+  Validates basic params, enqueues a "pyroomacoustics" job on the Redis job
+  store, returns {job_id, position, total} immediately. Speckle fetch + room
+  build + compute_rir run in a worker child process (workers/cpu_runner.py).
 
 POST /pyroomacoustics/run-simulation-geometry
   Direct-geometry variant (Grasshopper → JSON).  Geometry is supplied inline
-  as a JSON body instead of being fetched from Speckle.  Same queue/worker
-  machinery, same polling endpoint.
-
-GET  /pyroomacoustics/simulation-status/{id}
-  Poll for progress, queue position, or completed result.
-
-POST /pyroomacoustics/cancel-simulation/{id}
-  Kill the subprocess immediately (hard kill).
+  as a JSON body instead of being fetched from Speckle.  Same job store,
+  same polling endpoint (GET /api/jobs/{job_id}).
 """
 from __future__ import annotations
 
@@ -37,22 +32,18 @@ from config.constants import PYROOMACOUSTICS_RAY_TRACING_N_RAYS
 from config.constants import PYROOMACOUSTICS_RIR_DIR
 from config.constants import PYROOMACOUSTICS_SIMULATION_MODE_FOA
 from config.constants import PYROOMACOUSTICS_SIMULATION_MODE_MONO
-from config.constants import PYROOMACOUSTICS_TASK_CLEANUP_DELAY_SECONDS
 from config.constants import TEMP_SIMULATIONS_DIR
+from config.constants import JOB_TYPE_PYROOMACOUSTICS
 from fastapi import APIRouter
 from fastapi import Form
 from fastapi import HTTPException
+from fastapi import Request
 from fastapi.responses import FileResponse
 from models.schemas import PyroomacousticsGeometryRequest
-from models.schemas import PyroomacousticsSimulationResult
-from models.schemas import PyroomacousticsSimulationStartResponse
-from models.schemas import PyroomacousticsSimulationStatusResponse
+from models.schemas import JobEnqueueResponse
 from pydantic import BaseModel
+from services.job_store import job_store
 from services.pyroomacoustics_service import PyroomacousticsService
-from services.pyroomacoustics_worker import run_pyroomacoustics_simulation
-from services.pyroomacoustics_worker import run_pyroomacoustics_simulation_from_geometry
-from services.task_queue import make_subprocess_runner
-from services.task_queue import unified_queue
 
 router = APIRouter(prefix="/api")
 
@@ -153,9 +144,10 @@ async def get_result_file(simulation_id: str, file_type: str, ir_filename: Optio
 
 @router.post(
     "/pyroomacoustics/run-simulation-speckle",
-    response_model=PyroomacousticsSimulationStartResponse,
+    response_model=JobEnqueueResponse,
 )
 async def run_simulation_speckle(
+    req: Request,
     simulation_name: str = Form(...),
     speckle_project_id: str = Form(...),
     speckle_version_id: str = Form(...),
@@ -172,12 +164,12 @@ async def run_simulation_speckle(
     source_receiver_pairs: str = Form(...),
 ):
     """
-    Validate basic params and enqueue the simulation.  Returns simulation_id
-    immediately — Speckle fetch and compute happen in a subprocess.
-
-    Poll GET /pyroomacoustics/simulation-status/{simulation_id} for updates.
+    Validate basic params and enqueue the simulation.  Returns {job_id,
+    position, total} immediately — Speckle fetch and compute happen in a
+    worker child process. Poll GET /api/jobs/{job_id} for updates.
     """
     simulation_id = str(uuid.uuid4())
+    session_id = getattr(getattr(req, "state", None), "session_id", None)
 
     try:
         pairs_data = json.loads(source_receiver_pairs)
@@ -212,44 +204,33 @@ async def run_simulation_speckle(
         print(f"Layer: {layer_name}  Mode: {simulation_mode}  Pairs: {len(pairs_data)}")
         print(f"{'='*60}\n")
 
-        progress_file = str(TEMP_DIR / f"progress_{simulation_id}.json")
-        result_file   = str(TEMP_DIR / f"result_{simulation_id}.json")
+        payload = {
+            "variant": "pyroomacoustics_speckle",
+            "kwargs": dict(
+                simulation_id=simulation_id,
+                speckle_project_id=speckle_project_id,
+                speckle_version_id=speckle_version_id,
+                layer_name=layer_name,
+                object_ids_filter=object_ids_filter,
+                object_materials_dict=object_materials_dict,
+                object_scattering_dict=object_scattering_dict,
+                simulation_mode=simulation_mode,
+                max_order=max_order,
+                ray_tracing=ray_tracing,
+                air_absorption=air_absorption,
+                n_rays=n_rays,
+                sound_speed=sound_speed,
+                pairs_data=pairs_data,
+                simulation_name=simulation_name,
+                rir_output_dir=str(RIR_OUTPUT_DIR),
+                temp_dir=str(TEMP_DIR),
+            ),
+        }
 
-        worker_kwargs = dict(
-            simulation_id=simulation_id,
-            progress_file=progress_file,
-            result_file=result_file,
-            speckle_project_id=speckle_project_id,
-            speckle_version_id=speckle_version_id,
-            layer_name=layer_name,
-            object_ids_filter=object_ids_filter,
-            object_materials_dict=object_materials_dict,
-            object_scattering_dict=object_scattering_dict,
-            simulation_mode=simulation_mode,
-            max_order=max_order,
-            ray_tracing=ray_tracing,
-            air_absorption=air_absorption,
-            n_rays=n_rays,
-            sound_speed=sound_speed,
-            pairs_data=pairs_data,
-            simulation_name=simulation_name,
-            rir_output_dir=str(RIR_OUTPUT_DIR),
-            temp_dir=str(TEMP_DIR),
-        )
-
-        run_fn = make_subprocess_runner(
-            run_pyroomacoustics_simulation,
-            worker_kwargs,
-            progress_file,
-            result_file,
-            error_prefix="Simulation",
-        )
-
-        pos, total = unified_queue.enqueue(
-            simulation_id, "pyroomacoustics", run_fn, PYROOMACOUSTICS_TASK_CLEANUP_DELAY_SECONDS
-        )
-        print(f"Simulation {simulation_id} queued at position {pos} of {total}")
-        return PyroomacousticsSimulationStartResponse(simulation_id=simulation_id)
+        job_id = await job_store.enqueue(JOB_TYPE_PYROOMACOUSTICS, session_id, payload)
+        view = await job_store.get(job_id)
+        print(f"Simulation {job_id} queued at position {view.position} of {view.total}")
+        return JobEnqueueResponse(job_id=job_id, position=view.position or 1, total=view.total or 1)
 
     except HTTPException:
         raise
@@ -270,18 +251,21 @@ _UNIT_TO_METERS = {
 
 @router.post(
     "/pyroomacoustics/run-simulation-geometry",
-    response_model=PyroomacousticsSimulationStartResponse,
+    response_model=JobEnqueueResponse,
 )
-async def run_simulation_geometry(req: PyroomacousticsGeometryRequest):
+async def run_simulation_geometry(body: PyroomacousticsGeometryRequest, http_req: Request):
     """
     Direct-geometry simulation: the room mesh, materials, sources and receivers
     are supplied inline as a JSON body (e.g. from a Grasshopper component).
 
     Faces whose group has no material entry are skipped by the worker.  Units
-    are converted to meters here so the subprocess always works in meters.
-    Returns simulation_id immediately — poll GET .../simulation-status/{id}.
+    are converted to meters here so the worker child process always works in
+    meters. Returns {job_id, position, total} immediately — poll
+    GET /api/jobs/{job_id}.
     """
     simulation_id = str(uuid.uuid4())
+    session_id = getattr(getattr(http_req, "state", None), "session_id", None)
+    req = body
 
     try:
         settings = req.settings
@@ -383,38 +367,27 @@ async def run_simulation_geometry(req: PyroomacousticsGeometryRequest):
         with open(geometry_file, "w") as f:
             json.dump(geometry_payload, f)
 
-        progress_file = str(TEMP_DIR / f"progress_{simulation_id}.json")
-        result_file   = str(TEMP_DIR / f"result_{simulation_id}.json")
+        payload = {
+            "variant": "pyroomacoustics_geometry",
+            "kwargs": dict(
+                simulation_id=simulation_id,
+                geometry_file=geometry_file,
+                simulation_mode=settings.simulation_mode,
+                max_order=settings.max_order,
+                ray_tracing=settings.ray_tracing,
+                air_absorption=settings.air_absorption,
+                n_rays=settings.n_rays,
+                sound_speed=settings.sound_speed,
+                simulation_name=req.simulation_name,
+                rir_output_dir=str(RIR_OUTPUT_DIR),
+                temp_dir=str(TEMP_DIR),
+            ),
+        }
 
-        worker_kwargs = dict(
-            simulation_id=simulation_id,
-            progress_file=progress_file,
-            result_file=result_file,
-            geometry_file=geometry_file,
-            simulation_mode=settings.simulation_mode,
-            max_order=settings.max_order,
-            ray_tracing=settings.ray_tracing,
-            air_absorption=settings.air_absorption,
-            n_rays=settings.n_rays,
-            sound_speed=settings.sound_speed,
-            simulation_name=req.simulation_name,
-            rir_output_dir=str(RIR_OUTPUT_DIR),
-            temp_dir=str(TEMP_DIR),
-        )
-
-        run_fn = make_subprocess_runner(
-            run_pyroomacoustics_simulation_from_geometry,
-            worker_kwargs,
-            progress_file,
-            result_file,
-            error_prefix="Simulation",
-        )
-
-        pos, total = unified_queue.enqueue(
-            simulation_id, "pyroomacoustics", run_fn, PYROOMACOUSTICS_TASK_CLEANUP_DELAY_SECONDS
-        )
-        print(f"Simulation {simulation_id} queued at position {pos} of {total}")
-        return PyroomacousticsSimulationStartResponse(simulation_id=simulation_id)
+        job_id = await job_store.enqueue(JOB_TYPE_PYROOMACOUSTICS, session_id, payload)
+        view = await job_store.get(job_id)
+        print(f"Simulation {job_id} queued at position {view.position} of {view.total}")
+        return JobEnqueueResponse(job_id=job_id, position=view.position or 1, total=view.total or 1)
 
     except HTTPException:
         raise
@@ -423,46 +396,6 @@ async def run_simulation_geometry(req: PyroomacousticsGeometryRequest):
         raise HTTPException(status_code=500, detail=f"Simulation setup failed: {str(exc)}")
 
 
-# ─── Status endpoint ───────────────────────────────────────────────────────────
-
-@router.get(
-    "/pyroomacoustics/simulation-status/{simulation_id}",
-    response_model=PyroomacousticsSimulationStatusResponse,
-)
-async def get_simulation_status(simulation_id: str):
-    task = unified_queue.get_task(simulation_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Simulation not found")
-
-    q_pos, q_total = unified_queue.get_queue_status(simulation_id)
-    status_str = f"Queued — position {q_pos} of {q_total}" if q_pos is not None else task.status
-
-    result_obj = None
-    if task.completed and task.result and not task.error and not task.cancelled:
-        result_obj = PyroomacousticsSimulationResult(**task.result)
-
-    return PyroomacousticsSimulationStatusResponse(
-        simulation_id=simulation_id,
-        progress=task.progress,
-        status=status_str,
-        completed=task.completed,
-        cancelled=task.cancelled,
-        error=task.error,
-        result=result_obj,
-        queue_position=q_pos,
-        queue_total=q_total,
-    )
-
-
-# ─── Cancel endpoint ───────────────────────────────────────────────────────────
-
-@router.post("/pyroomacoustics/cancel-simulation/{simulation_id}")
-async def cancel_simulation(simulation_id: str):
-    if not unified_queue.get_task(simulation_id):
-        raise HTTPException(status_code=404, detail="Simulation not found")
-    unified_queue.cancel(simulation_id)
-    return {"cancelled": True}
-
-
 def init_pyroomacoustics_router():
     return router
+

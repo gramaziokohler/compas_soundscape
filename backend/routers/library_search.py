@@ -5,6 +5,7 @@ Endpoints for searching and retrieving sounds from the BBC Sound Effects library
 """
 
 from fastapi import APIRouter, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from typing import List
 from pathlib import Path
@@ -61,7 +62,7 @@ async def search_library(request: SearchRequest):
     try:
         print(f"[Library API] Searching for: {request.prompt}")
 
-        results = search_sounds(request.prompt, request.max_results)
+        results = await run_in_threadpool(search_sounds, request.prompt, request.max_results)
 
         search_results = [
             SearchResult(
@@ -110,7 +111,7 @@ async def download_library_sound(request: DownloadRequest):
 
         output_path = LIBRARY_DOWNLOADS_DIR / f"{safe_filename}_{request.location}.wav"
 
-        success = download_sound(request.location, output_path)
+        success = await run_in_threadpool(download_sound, request.location, output_path)
 
         if not success or not output_path.exists():
             raise HTTPException(status_code=404, detail="Sound could not be downloaded")

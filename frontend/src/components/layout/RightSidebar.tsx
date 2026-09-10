@@ -259,6 +259,7 @@ export function RightSidebar({
       </div>
 
       <aside
+        data-sidebar="right"
         className="fixed top-0 right-0 h-screen flex flex-col transition-all duration-300 ease-in-out"
         style={{
           width: isExpanded ? `${sidebarWidth}px` : '0px',

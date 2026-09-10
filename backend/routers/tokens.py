@@ -2,6 +2,7 @@
 # Runtime API token management
 
 import os
+import asyncio
 import logging
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -31,8 +32,9 @@ class TokenStatusResponse(BaseModel):
 async def get_token_status():
     """Return which tokens are currently configured (values are never exposed)."""
     from config.constants import SPECKLE_PROJECT_NAME
+    from services.runtime_config import speckle_token_is_set
     return {
-        "speckle_token_set": bool(os.environ.get("SPECKLE_TOKEN")),
+        "speckle_token_set": speckle_token_is_set() or bool(os.environ.get("SPECKLE_TOKEN")),
         "speckle_project_name": os.environ.get("SPECKLE_PROJECT_NAME", SPECKLE_PROJECT_NAME),
         "google_api_key_set": bool(os.environ.get("GOOGLE_API_KEY")),
         "openai_api_key_set": bool(os.environ.get("OPENAI_API_KEY")),
@@ -42,12 +44,19 @@ async def get_token_status():
 
 @router.post("", response_model=TokenStatusResponse)
 async def update_tokens(request: TokenUpdateRequest):
-    """Update API tokens at runtime (overwrites environment variables in-process)."""
+    """Update API tokens at runtime (overwrites environment variables in-process).
+
+    The Speckle token is additionally persisted to Redis (`config:speckle_token`)
+    so worker child processes — which never see this request — can pick it up on
+    their next job (see services/runtime_config.py).
+    """
     if request.speckle_token is not None:
+        from services.runtime_config import set_speckle_token
         if request.speckle_token:
             os.environ["SPECKLE_TOKEN"] = request.speckle_token
         else:
             os.environ.pop("SPECKLE_TOKEN", None)
+        await asyncio.to_thread(set_speckle_token, request.speckle_token or "")
         _reset_speckle_client()
 
     if request.speckle_project_name is not None:

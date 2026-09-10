@@ -256,6 +256,9 @@ export interface ScenarioConfig extends AnalysisBaseConfig {
   userContext: string;
   peopleCount: number;
   likeliness: number;
+  /** Length (ms) of the single generated sound scene this scenario produces —
+   *  drives this scenario's DAW timeline section when its sounds are active. */
+  timelineDurationMs: number;
   /** If true, pass the most recent model-analysis result as furniture context */
   useAnalysisResult: boolean;
   /** Raw streamed text (typewriter) */

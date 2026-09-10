@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from services.audio_service import AudioService
 from services.paths import user_sounds_dir
 from utils.audio_processing import compute_noise_trim_region_from_file
@@ -47,9 +48,13 @@ async def reprocess_sounds(request: ReprocessRequest, req: Request):
                 continue
 
             try:
-                audio_service.reprocess_audio_file(file_path, request.apply_denoising)
+                await run_in_threadpool(
+                    audio_service.reprocess_audio_file, file_path, request.apply_denoising
+                )
                 if request.trim_silence:
-                    reprocessed_trims[url] = compute_noise_trim_region_from_file(file_path)
+                    reprocessed_trims[url] = await run_in_threadpool(
+                        compute_noise_trim_region_from_file, file_path
+                    )
                 reprocessed_sounds.append(url)
             except Exception as e:
                 print(f"Error reprocessing {filename}: {str(e)}")

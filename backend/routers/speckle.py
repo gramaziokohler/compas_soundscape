@@ -6,6 +6,7 @@ import base64
 import logging
 import requests as _requests
 from fastapi import APIRouter, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from config.constants import SPECKLE_SERVER_URL
@@ -27,10 +28,10 @@ speckle_service = SpeckleService()
 
 def _ensure_authenticated() -> None:
     """Authenticate and initialise the Speckle project if not already done."""
+    from services.runtime_config import speckle_token_is_set
     if not speckle_service.client:
         if not speckle_service.authenticate():
-            token_set = bool(os.environ.get("SPECKLE_TOKEN"))
-            if not token_set:
+            if not speckle_token_is_set():
                 raise HTTPException(
                     status_code=503,
                     detail="SPECKLE_TOKEN is not configured. Get a token at app.speckle.systems and add it in Advanced Settings."
@@ -57,7 +58,7 @@ async def get_project_models():
     """
     _ensure_authenticated()
 
-    result = speckle_service.get_project_models_detailed()
+    result = await run_in_threadpool(speckle_service.get_project_models_detailed)
 
     if result is None:
         raise HTTPException(status_code=500, detail="Failed to retrieve Speckle models")
@@ -78,7 +79,8 @@ async def get_model_entities(request: SpeckleModelRequest):
     """
     _ensure_authenticated()
 
-    entities = speckle_service.get_model_entities(
+    entities = await run_in_threadpool(
+        speckle_service.get_model_entities,
         project_id=request.project_id,
         version_id_or_object_id=request.version_id,
     )
@@ -97,7 +99,8 @@ async def get_model_preview(request: SpeckleModelRequest):
     # Resolve the version's preview_url from specklepy (authoritative path)
     preview_url: str | None = None
     try:
-        version = speckle_service.client.version.get(
+        version = await run_in_threadpool(
+            speckle_service.client.version.get,
             version_id=request.version_id,
             project_id=request.project_id,
         )
@@ -111,11 +114,12 @@ async def get_model_preview(request: SpeckleModelRequest):
             f"/preview/{request.project_id}/commits/{request.version_id}"
         )
 
-    token = os.getenv("SPECKLE_TOKEN", "")
+    from services.runtime_config import resolve_speckle_token
+    token = resolve_speckle_token()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
 
     try:
-        resp = _requests.get(preview_url, headers=headers, timeout=30)
+        resp = await run_in_threadpool(_requests.get, preview_url, headers=headers, timeout=30)
         resp.raise_for_status()
         preview_bytes = resp.content
     except Exception as exc:

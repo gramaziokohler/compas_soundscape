@@ -39,9 +39,6 @@ export interface ThreeSceneProps {
   /** Volume levels in dBFS for each sound (keyed by sound ID) */
   soundVolumes: { [key: string]: number };
 
-  /** Playback intervals in seconds for each sound (keyed by sound ID) */
-  soundIntervals: { [key: string]: number };
-
   /** Set of muted sound IDs */
   mutedSounds: Set<string>;
 
@@ -56,9 +53,6 @@ export interface ThreeSceneProps {
 
   /** Callback when a sound's volume is changed (in dBFS) */
   onVolumeChange: (soundId: string, volumeDbfs: number) => void;
-
-  /** Callback when a sound's interval is changed */
-  onIntervalChange: (soundId: string, intervalSeconds: number) => void;
 
   /** Callback when a sound is muted/unmuted */
   onMute: (soundId: string) => void;

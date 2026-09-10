@@ -7,6 +7,7 @@ Provides consistent file upload, sanitization, and cleanup functionality.
 
 import os
 import re
+import time
 import aiofiles
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -16,6 +17,7 @@ from config.constants import (
     TEMP_UPLOADS_DIR, TEMP_PARENT_DIR, TEMP_LIBRARY_DIR, TEMP_SIMULATIONS_DIR,
     TEMP_STATIC_DIR, IMPULSE_RESPONSE_DIR, PYROOMACOUSTICS_RIR_DIR,
     CHORAS_RIR_DIR, CHORAS_TEMP_DIR, SOUNDSCAPE_DATA_DIR, GENERATED_SOUNDS_DIR,
+    TEMP_JANITOR_MAX_AGE_H,
 )
 
 
@@ -202,61 +204,49 @@ def ensure_all_temp_directories() -> None:
     print(f"Ensured {len(dirs)} application directories exist.")
 
 
-def cleanup_all_temp_directories() -> dict[str, int]:
+def janitor_cleanup_temp(max_age_h: float = TEMP_JANITOR_MAX_AGE_H) -> dict[str, int]:
     """
-    Clean up all temporary directories used by the application.
+    Age-based janitor for `temp/` — the distributed-backend replacement for the
+    boot-time temp wipe that used to run on every API start.
 
-    This function should be called on application startup to ensure
-    a clean state. It recursively removes all files from the parent
-    temporary directory and all its subdirectories.
+    Deleting everything at boot would destroy every user's live session audio
+    and IRs on every redeploy. Instead this deletes files whose mtime is older
+    than `max_age_h` (default 24 h) and then prunes directories that were
+    emptied by that pass. It is intended to run periodically (hourly) from the
+    API lifespan, NOT on every restart.
 
     Returns:
-        dict[str, int]: Dictionary mapping directory paths to number of files deleted
-
-    Example:
-        ```python
-        results = cleanup_all_temp_directories()
-        print(f"Cleaned up {sum(results.values())} total files")
-        ```
+        dict[str, int]: {"files": <deleted>, "directories": <removed>}
     """
     parent_path = Path(TEMP_PARENT_DIR)
-    results = {}
-
-    # If parent directory doesn't exist, nothing to clean
     if not parent_path.exists():
-        print("No temporary files to clean up (directory doesn't exist)")
-        return results
+        return {"files": 0, "directories": 0}
 
-    # Recursively clean all subdirectories and the parent directory
-    for dirpath, dirnames, filenames in os.walk(parent_path, topdown=False):
-        dir_path = Path(dirpath)
-        deleted_count = 0
+    cutoff = time.time() - float(max_age_h) * 3600.0
+    files_deleted = 0
+    dirs_removed = 0
 
-        # Delete all files in current directory
+    for dirpath, _dirnames, filenames in os.walk(parent_path, topdown=False):
         for filename in filenames:
-            file_path = dir_path / filename
+            file_path = Path(dirpath) / filename
             try:
-                file_path.unlink()
-                deleted_count += 1
-            except OSError as e:
-                print(f"Warning: Failed to delete {file_path}: {e}")
-
-        if deleted_count > 0:
-            results[str(dir_path)] = deleted_count
-            print(f"Cleaned up {deleted_count} file(s) from {dir_path}")
-
-        # Remove empty subdirectories (skip the parent temp dir itself)
-        if dir_path != parent_path:
-            try:
-                dir_path.rmdir()  # Only succeeds if empty
-                print(f"Removed empty directory: {dir_path}")
+                if file_path.stat().st_mtime < cutoff:
+                    file_path.unlink()
+                    files_deleted += 1
             except OSError:
                 pass
 
-    total_deleted = sum(results.values())
-    if total_deleted > 0:
-        print(f"Total: Cleaned up {total_deleted} temporary file(s)")
-    else:
-        print("No temporary files to clean up")
+        # Remove directories that this pass emptied (never the temp root).
+        dir_path = Path(dirpath)
+        if dir_path != parent_path:
+            try:
+                if not any(dir_path.iterdir()) and dir_path.stat().st_mtime < cutoff:
+                    dir_path.rmdir()
+                    dirs_removed += 1
+            except OSError:
+                pass
 
-    return results
+    if files_deleted or dirs_removed:
+        print(f"Janitor: deleted {files_deleted} file(s) older than {max_age_h}h, "
+              f"removed {dirs_removed} emptied directory/ies")
+    return {"files": files_deleted, "directories": dirs_removed}

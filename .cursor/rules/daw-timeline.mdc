@@ -1,6 +1,6 @@
 ---
-description: DAW timeline, WaveSurfer integration, playback sync, export formats
-globs: frontend/src/components/audio/daw/**,frontend/src/components/audio/WaveSurferPlayer.tsx,frontend/src/components/audio/SoundCardWaveSurfer.tsx,frontend/src/hooks/useTimelinePlayback.ts,frontend/src/hooks/useWaveformInteraction.ts,frontend/src/store/audioControlsStore.ts
+description: DAW timeline dock, drag/snap/selection, WaveSurfer-free peak rendering, playback sync, export formats
+globs: frontend/src/components/audio/daw/**,frontend/src/components/audio/WaveSurferPlayer.tsx,frontend/src/components/audio/SoundCardWaveSurfer.tsx,frontend/src/hooks/useWaveformInteraction.ts,frontend/src/store/audioControlsStore.ts
 ---
 
 # DAW Timeline Rules
@@ -8,82 +8,77 @@ globs: frontend/src/components/audio/daw/**,frontend/src/components/audio/WaveSu
 ## Component Hierarchy
 
 ```
-DAWTimeline.tsx              ← main container: ruler, export buttons, global playback controls
-  └─ DAWGroup.tsx            ← groups sounds by usage parent
-       └─ DAWTrack.tsx       ← one track per sound; mute/solo state; drag-to-reorder iterations
-            └─ DAWIteration.tsx  ← one WaveSurfer instance per audio iteration
+DAWDock.tsx                  ← bottom-docked shell: state, gestures, context menu, connection lines
+  ├─ DAWToolbar.tsx          ← transport, timecode, snap select, zoom, export dropdown, bake banner
+  ├─ DAWRuler.tsx            ← adaptive tick ladder, drag-scrub, shift-drag loop region
+  ├─ DAWTrackHead.tsx        ← per-track: color badge, name, sub-label, M/S, fader, kebab menu
+  ├─ DAWLane.tsx             ← per-track clip lane (grid background, overlap detection)
+  │    └─ DAWClip.tsx        ← one clip block (cached-peaks canvas, name label, badges)
+  ├─ DAWClipMenu.tsx         ← right-click context menu (variant / linked-entity override)
+  └─ DAWStatusBar.tsx        ← duration, track/clip/selection counts, zoom %, snap mode, sample rate
 ```
 
-All files: `frontend/src/components/audio/daw/`
+Supporting hooks/utils, all in `frontend/src/components/audio/daw/`:
+`useDawView.ts` (zoom / snap mode / dock height), `useClipSelection.ts` (click / ctrl / shift / marquee
+selection), `useClipGesture.ts` (drag, group drag, duplicate — one store commit per gesture),
+`daw-snap.ts` (pure snap resolution: off / 0.1 / 0.5 / 1 / smart + edge magnetism).
 
-## WaveSurfer — One Instance Per Iteration
+Kept unchanged: `DAWMiniTransport.tsx` (compact bar shown when the dock is collapsed),
+`DAWTransportBtn.tsx`, `frontend/src/lib/audio/peaks-cache.ts`.
 
-**Never share a WaveSurfer instance between iterations or tracks.**
-Each `DAWIteration` creates and owns its own instance:
+A clip's identity is `clipKey = ${soundId}-${originalIterationIndex}` — do not parse it, only
+construct/compare it.
 
-```typescript
-// DAWIteration.tsx — standard lifecycle
-const wsRef = useRef<WaveSurfer | null>(null)
+## No Lock Toggle — Every Track Is Draggable
 
-useEffect(() => {
-  wsRef.current = WaveSurfer.create({
-    container: containerRef.current,
-    ...WAVESURFER_TIMELINE,            // constants from utils/constants.ts
-  })
-  wsRef.current.load(audioUrl)
-  return () => {
-    wsRef.current?.destroy()
-    wsRef.current = null
-  }
-}, [audioUrl])
-```
+The old interval/timestamps lock button is gone. Dragging (or deleting) a clip on a track still in
+`'interval'` scheduling mode auto-converts it to `'timestamps'` first via
+`ensureTimestampsMode()` (exported from `useClipGesture.ts`), freezing the currently displayed
+positions before applying the move. The track head shows a small `auto` chip while a track is
+still in `'interval'` mode. `soundSchedulingModes` and `bakeOrchestrateSchedule` in
+`audioControlsStore` are unchanged.
 
-WaveSurfer config constants: `frontend/src/utils/constants.ts` → `WAVESURFER_TIMELINE`
+## Waveform Rendering — Cached Peaks, No WaveSurfer in the Dock
 
-## Timeline Playback Sync
+`DAWClip` draws from `peaks-cache.ts` (`getAudioPeaks`) onto a plain `<canvas>` — it never mounts a
+WaveSurfer instance. This is a static thumbnail only; it never plays audio. WaveSurfer is still used
+elsewhere for `WaveSurferPlayer.tsx` / `SoundCardWaveSurfer.tsx` sidebar cards.
 
-`useTimelinePlayback` is the single source of playback time:
+## Playback Sync
 
-- Returns `{ isPlaying, currentTime, duration, play, pause, stop, seek }`
-- Uses a `requestAnimationFrame` loop while playing — updates `currentTime` at ≈60fps
-- Each `DAWIteration` reads `currentTime` and calls `ws.seekTo(currentTime / duration)`
-
-**Do not** create secondary `requestAnimationFrame` loops inside individual track or iteration
-components. All time updates must flow from `useTimelinePlayback`.
+`DAWDock` receives `currentTime`/`isPlaying` from `SceneTimeline` → `SpeckleScene`'s playback state,
+plus an optional `playbackSchedulerRef` (`PlaybackSchedulerService`) for future ref-driven playhead
+updates. `Transport`/`playback-scheduler-service.ts` are never modified by DAW UI work.
 
 ## audioControlsStore — Playback Control State
 
-Single source of truth for all runtime playback state.
-Import from `@/store` barrel: `const { soundVolumes, mutedSounds } = useAudioControlsStore()`
+Single source of truth for all runtime playback state. Import from `@/store` barrel.
 
 | Field | Type | Purpose |
 | ----- | ---- | ------- |
-| `soundVolumes` | `Record<soundId, number>` | Per-sound volume 0–1 |
-| `selectedVariants` | `Record<soundId, variantId>` | Active audio variant per sound |
-| `soundIntervals` | `Record<soundId, IntervalConfig>` | Loop interval / start offset per sound |
+| `soundVolumes` | `Record<soundId, number>` | Per-sound volume, dBFS |
+| `soundTimestamps` | `Record<soundId, number[]>` | Explicit clip start times (seconds), 'timestamps' mode |
+| `soundSchedulingModes` | `Record<soundId, 'interval' \| 'timestamps'>` | Per-track scheduling mode |
 | `mutedSounds` | `Set<soundId>` | Muted sound IDs |
 | `soloedSound` | `soundId \| null` | Exclusively audible sound (`null` = none) |
+| `iterationLinks` | `Record<clipKey, IterationLink>` | Per-clip variant/entity overrides |
 | `timelineDurationMs` | `number` | Total timeline length in milliseconds |
+
+`handleTimestampsChange`/`handleTimestampsChangeBatch` never sort — free drag and overlap are safe.
+Use the batch variant so one drag/nudge/delete-multi is as few undo entries as possible.
 
 ## Export Formats
 
-`frontend/src/lib/audio/SoundscapeExporter.ts` handles all export formats:
-
-| Format | Channels | Use for |
-| ------ | -------- | ------- |
-| Mono | 1 | Basic reference / checking mix |
-| Binaural | 2 | Headphone listening |
-| FOA | 4 | 1st-order ambisonics (VR, spatial audio) |
-| TOA | 16 | 3rd-order ambisonics (high-quality spatial) |
-
-Exporter accepts an optional limiter flag to prevent clipping on multi-sound mixdowns.
+`frontend/src/lib/audio/SoundscapeExporter.ts` handles all export formats (mono / binaural / FOA /
+TOA), exposed via the export dropdown in `DAWToolbar.tsx`.
 
 ## Adding New DAW Features
 
 | Feature type | Where to edit |
 | ------------ | ------------- |
-| Per-track UI (e.g. record button) | `DAWTrack.tsx` |
-| Per-iteration visual (e.g. waveform colour) | `DAWIteration.tsx` |
-| Global control (e.g. master tempo) | `DAWTimeline.tsx` + new field in `audioControlsStore` |
-| New export format | `SoundscapeExporter.ts` + expose option in `DAWTimeline.tsx` |
-| Playback behaviour change | `useTimelinePlayback.ts` only — do not split logic across components |
+| Per-track UI (mute/solo/fader/kebab) | `DAWTrackHead.tsx` |
+| Per-clip visual | `DAWClip.tsx` |
+| Drag / snap / selection behaviour | `useClipGesture.ts`, `useClipSelection.ts`, `daw-snap.ts` — do not split gesture math across components |
+| Global control (transport, zoom, export) | `DAWToolbar.tsx` + new field in `audioControlsStore` if it's persisted state |
+| New export format | `SoundscapeExporter.ts` + expose option in `DAWToolbar.tsx` |
+

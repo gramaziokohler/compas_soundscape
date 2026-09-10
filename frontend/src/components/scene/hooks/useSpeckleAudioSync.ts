@@ -23,8 +23,21 @@ export function useSpeckleAudioSync({
   // ============================================================================
   useEffect(() => {
     if (audioOrchestrator && soundscapeData) {
+      // A track's fader writes soundVolumes keyed by the PRIMARY (lowest copy_index)
+      // sound id. A clip overridden to a different variant plays a sibling event with
+      // its own id, so it wouldn't otherwise see the fader move — resolve one override
+      // per prompt_index group and apply it to every sibling that doesn't have its own.
+      const promptVolumeOverride = new Map<number, number>();
+      soundscapeData.forEach((se) => {
+        const pi = (se as any).prompt_index ?? 0;
+        if (soundVolumes[se.id] !== undefined && !promptVolumeOverride.has(pi)) {
+          promptVolumeOverride.set(pi, soundVolumes[se.id]);
+        }
+      });
+
       soundscapeData.forEach((soundEvent) => {
-        const targetVolumeDbfs = soundVolumes[soundEvent.id] ?? soundEvent.volume_dbfs ?? DEFAULT_DBFS;
+        const pi = (soundEvent as any).prompt_index ?? 0;
+        const targetVolumeDbfs = soundVolumes[soundEvent.id] ?? promptVolumeOverride.get(pi) ?? soundEvent.volume_dbfs ?? DEFAULT_DBFS;
         const baseVolumeDbfs = soundEvent.volume_dbfs ?? DEFAULT_DBFS;
 
         const dbDiff = targetVolumeDbfs - baseVolumeDbfs;

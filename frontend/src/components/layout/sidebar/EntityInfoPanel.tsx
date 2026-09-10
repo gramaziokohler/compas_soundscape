@@ -38,11 +38,8 @@ export function EntityInfoPanel({
   // ── Audio controls store ──
   const selectedVariants = useAudioControlsStore((s) => s.selectedVariants);
   const soundVolumes = useAudioControlsStore((s) => s.soundVolumes);
-  const soundIntervals = useAudioControlsStore((s) => s.soundIntervals);
-  const soundIntervalJitter = useAudioControlsStore((s) => s.soundIntervalJitter);
   const mutedSounds = useAudioControlsStore((s) => s.mutedSounds);
   const onVolumeChange = useAudioControlsStore((s) => s.handleVolumeChange);
-  const onIntervalChange = useAudioControlsStore((s) => s.handleIntervalChange);
   const onVariantChange = useAudioControlsStore((s) => s.handleVariantChange);
 
   // Local independent playback state for the EntityInfoPanel sound player
@@ -115,12 +112,9 @@ export function EntityInfoPanel({
             isPreviewPlaying={localPreviewId === generatedSound.id}
             isMuted={isMuted}
             soundVolumes={soundVolumes ?? {}}
-            soundIntervals={soundIntervals ?? {}}
-            soundIntervalJitter={soundIntervalJitter ?? {}}
             onPreviewPlayPause={handleLocalPlayPause}
             onPreviewStop={handleLocalStop}
             onVolumeChange={onVolumeChange}
-            onIntervalChange={onIntervalChange}
           />
           <VariantsBar
             items={variants.map((v, i) => ({ key: v.id, title: String.fromCharCode(65 + i) }))}

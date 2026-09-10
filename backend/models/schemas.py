@@ -37,53 +37,35 @@ class SoundGenerationRequest(BaseModel):
     base_dbfs: float = DEFAULT_DBFS
 
 
-class SoundGenerationStartResponse(BaseModel):
-    generation_id: str
+# ─── Unified job store (Redis) ─────────────────────────────────────────────────
+
+class JobEnqueueResponse(BaseModel):
+    job_id: str
+    position: int
+    total: int
 
 
-class SoundGenerationStatusResponse(BaseModel):
-    generation_id: str
-    progress: int           # 0–100
-    status: str             # "Generating sound 3/5 (bird_chirp)..."
-    completed: bool
-    cancelled: bool
-    error: Optional[str] = None
-    result: Optional[list[dict]] = None      # final list of all generated sounds
-    partial_sounds: Optional[list[dict]] = None  # sounds ready so far (incremental UX)
+class JobStatusResponse(BaseModel):
+    job_id: str
+    type: str
+    status: str              # "queued" | "running" | "completed" | "cancelled" | "error"
+    progress: int             # 0-100
+    status_text: str
     queue_position: Optional[int] = None
     queue_total: Optional[int] = None
-
-
-class LLMGenerationStartResponse(BaseModel):
-    generation_id: str
-
-
-class LLMGenerationStatusResponse(BaseModel):
-    generation_id: str
-    progress: int
-    status: str
-    completed: bool
-    cancelled: bool
+    partial: Optional[object] = None
+    result: Optional[object] = None
     error: Optional[str] = None
-    result: Optional[dict] = None   # {text, sounds, prompts, selected_entities}
-    queue_position: Optional[int] = None
-    queue_total: Optional[int] = None
 
 
-class SEDAnalysisStartResponse(BaseModel):
-    task_id: str
-
-
-class SEDAnalysisStatusResponse(BaseModel):
-    task_id: str
-    progress: int
-    status: str
-    completed: bool
+class JobCancelResponse(BaseModel):
     cancelled: bool
-    error: Optional[str] = None
-    result: Optional[dict] = None  # {audio_info, detected_sounds, total_classes_analyzed}
-    queue_position: Optional[int] = None
-    queue_total: Optional[int] = None
+
+
+class QueueStatusResponse(BaseModel):
+    gpu: int
+    cpu: int
+    choras: int
 
 
 # ─── Loop Analysis Schemas ────────────────────────────────────────────────────
@@ -91,22 +73,6 @@ class SEDAnalysisStatusResponse(BaseModel):
 class LoopAnalysisRequest(BaseModel):
     """Request to detect a seamless loop region for an existing sound."""
     sound_url: str
-
-
-class LoopAnalysisStartResponse(BaseModel):
-    analysis_id: str
-
-
-class LoopAnalysisStatusResponse(BaseModel):
-    analysis_id: str
-    progress: int
-    status: str
-    completed: bool
-    cancelled: bool
-    error: Optional[str] = None
-    result: Optional[dict] = None  # {start, end, length_sec, match_score} or None
-    queue_position: Optional[int] = None
-    queue_total: Optional[int] = None
 
 
 class UnifiedPromptGenerationRequest(BaseModel):
@@ -140,22 +106,6 @@ class ModelAnalysisRequest(BaseModel):
 
 class ModelAnalysisResponse(BaseModel):
     objects: list[ModelObjectResult]
-
-
-class ModelAnalysisStartResponse(BaseModel):
-    analysis_id: str
-
-
-class ModelAnalysisStatusResponse(BaseModel):
-    analysis_id: str
-    progress: int
-    status: str
-    completed: bool
-    cancelled: bool
-    error: Optional[str] = None
-    result: Optional[dict] = None   # ModelAnalysisResponse serialised as dict
-    queue_position: Optional[int] = None
-    queue_total: Optional[int] = None
 
 
 class IRFormat(str, Enum):
@@ -508,65 +458,6 @@ class ChorasDGSettings(BaseModel):
     frequencies: list[int] = [125, 250, 500, 1000, 2000]
 
 
-class ChorasSimulationResult(BaseModel):
-    """Response from a completed Choras simulation."""
-    simulation_id: str
-    message: str
-    ir_files: list[str]
-    results_file: str
-    method: str   # "DE" or "DG"
-
-
-class ChorasSimulationStartResponse(BaseModel):
-    """Immediate response when a simulation is queued (non-blocking)."""
-    simulation_id: str
-    total_steps: int   # number of pairs (DE) or source groups (DG)
-    method: str        # "DE" or "DG"
-
-
-class ChorasSimulationStatusResponse(BaseModel):
-    """Response from the polling status endpoint."""
-    simulation_id: str
-    progress: int      # 0-100
-    status: str
-    completed: bool
-    cancelled: bool
-    error: Optional[str] = None
-    result: Optional[ChorasSimulationResult] = None  # populated when completed=True
-    queue_position: Optional[int] = None
-    queue_total: Optional[int] = None
-
-
-# ============================================================================
-# Pyroomacoustics Async Queue Schemas
-# ============================================================================
-
-class PyroomacousticsSimulationStartResponse(BaseModel):
-    """Immediate response when a pyroomacoustics simulation is queued (non-blocking)."""
-    simulation_id: str
-
-
-class PyroomacousticsSimulationResult(BaseModel):
-    """Result from a completed pyroomacoustics simulation."""
-    simulation_id: str
-    message: str
-    ir_files: list[str]
-    results_file: str
-
-
-class PyroomacousticsSimulationStatusResponse(BaseModel):
-    """Response from the pyroomacoustics polling status endpoint."""
-    simulation_id: str
-    progress: int           # 0–100
-    status: str             # human-readable status string
-    completed: bool
-    cancelled: bool
-    error: Optional[str] = None
-    result: Optional[PyroomacousticsSimulationResult] = None
-    queue_position: Optional[int] = None   # 1-based queue slot; None when running or done
-    queue_total: Optional[int] = None      # total jobs in system (running + queued)
-
-
 class PyroomacousticsGeometryMaterial(BaseModel):
     """Material assignment for a face group.
 
@@ -797,20 +688,3 @@ class TTSGenerationRequest(BaseModel):
     url_prefix: str = "/static/sounds/generated/tts"
     language: Optional[str] = None
     tts_model: Optional[str] = None
-
-
-class TTSGenerationStartResponse(BaseModel):
-    generation_id: str
-
-
-class TTSGenerationStatusResponse(BaseModel):
-    generation_id: str
-    progress: int
-    status: str
-    completed: bool
-    cancelled: bool
-    error: Optional[str] = None
-    result: Optional[list[dict]] = None
-    partial_sounds: Optional[list[dict]] = None
-    queue_position: Optional[int] = None
-    queue_total: Optional[int] = None

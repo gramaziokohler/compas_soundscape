@@ -49,7 +49,8 @@ Never instantiate services inside routers or utils.
 ### Heavy Jobs — Never Block
 
 See `task-queue.mdc` for detail. Short version: **never** call ML inference, an LLM API, or acoustic
-simulation synchronously inside a request handler. Always enqueue via `task_queue.py` and return a job ID.
+simulation synchronously inside a request handler. Always enqueue via `services/job_store.py.enqueue()`
+and return `{job_id, position, total}` immediately.
 
 ---
 

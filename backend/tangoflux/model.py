@@ -11,9 +11,13 @@ import torch.nn.functional as F
 import numpy as np
 from tqdm import tqdm
 
-from typing import Optional, Union, List
+from typing import Callable, Optional, Union, List
 from math import pi
 import inspect
+
+
+class GenerationCancelled(Exception):
+    """Raised inside inference_flow when should_stop() returns True between steps."""
 
 
 class StableAudioPositionalEmbedding(nn.Module):
@@ -282,8 +286,13 @@ class TangoFlux(nn.Module):
         duration=10,
         disable_progress=False,
         num_samples_per_prompt=1,
+        should_stop: Optional[Callable[[], bool]] = None,
     ):
-        """Only tested for single inference. Haven't test for batch inference"""
+        """Only tested for single inference. Haven't test for batch inference.
+
+        should_stop: optional callable polled once per diffusion step; if it
+        returns True, raises GenerationCancelled to abort early (cooperative cancel).
+        """
 
         bsz = num_samples_per_prompt
         device = self.transformer.device
@@ -349,6 +358,9 @@ class TangoFlux(nn.Module):
         encoder_hidden_states = encoder_hidden_states.to(device)
 
         for i, t in enumerate(timesteps):
+
+            if should_stop is not None and should_stop():
+                raise GenerationCancelled()
 
             latents_input = (
                 torch.cat([latents] * 2) if classifier_free_guidance else latents

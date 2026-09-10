@@ -432,6 +432,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                   userContext: '',
                   peopleCount: 5,
                   likeliness: 9,
+                  timelineDurationMs: useAudioControlsStore.getState().timelineDurationMs,
                   useAnalysisResult: true,
                   scenarioRawText: '',
                   scenarioResult: null,
@@ -2004,6 +2005,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           const { timelineDurationMs } = await import('@/store/audioControlsStore').then(
             (m) => m.useAudioControlsStore.getState(),
           );
+          const scenarioDurationMs = config.timelineDurationMs ?? timelineDurationMs;
 
           const body = {
             user_context: config.userContext || undefined,
@@ -2011,7 +2013,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             analysis_id: analysisId,
             people_count: config.peopleCount,
             likeliness: config.likeliness,
-            duration: Math.round(timelineDurationMs / 1000),
+            duration: Math.round(scenarioDurationMs / 1000),
           };
 
           const controller = new AbortController();

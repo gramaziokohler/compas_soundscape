@@ -5,7 +5,6 @@ import type { SoundEvent } from '@/types';
 import { DEFAULT_DBFS } from '@/utils/constants';
 import { SoundCardWaveSurfer } from '@/components/audio/SoundCardWaveSurfer';
 import { SoundCardBody } from './SoundCardBody';
-import { IntervalModeControls } from './IntervalModeControls';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { HelperHint } from '@/components/ui/HelperHint';
 
@@ -13,14 +12,7 @@ import { HelperHint } from '@/components/ui/HelperHint';
  * SoundResultContent Component
  *
  * Renders the playback controls for a generated sound.
- * Shows waveform, volume slider, and — when the track is in interval mode —
- * the per-track "Interval mode" controls (interval + variability), rendered in
- * the card's left column (below the Position widget, left of the volume slider).
- *
- * Track/card-level scheduling values (schedulingMode, interval, variability)
- * are keyed by `cardSoundId` (the card's primary sound id) so they apply to
- * the whole card and all of its variants, regardless of which variant is
- * currently selected.
+ * Shows waveform, position, volume slider, and mute controls.
  *
  * The letter-square variant selector is rendered by the Card component
  * (see Card `variants` / `showVariantsPostGen`), not here.
@@ -38,18 +30,9 @@ export interface SoundResultContentProps {
   /** Silent mode: waveform renders visually but produces no audio (prevents double playback) */
   silent?: boolean;
   soundVolumes: { [soundId: string]: number };
-  soundIntervals: { [soundId: string]: number };
-  /** Per-track variability (jitter) in seconds, keyed by the card/track sound id. */
-  soundIntervalJitter: { [soundId: string]: number };
-  /** Track/card-level scheduling mode: 'interval' (default) or 'timestamps'. */
-  schedulingMode?: 'interval' | 'timestamps';
-  /** Primary (track) sound id of this card — track-level settings key. */
-  cardSoundId?: string;
   onPreviewPlayPause?: (soundId: string) => void;
   onPreviewStop?: (soundId: string) => void;
   onVolumeChange?: (soundId: string, volumeDbfs: number) => void;
-  onIntervalChange?: (soundId: string, intervalSeconds: number) => void;
-  onIntervalJitterChange?: (soundId: string, seconds: number) => void;
   onUpdatePosition?: (soundId: string, position: [number, number, number]) => void;
   onUnlinkEntity?: () => void;
   onMute?: (soundId: string) => void;
@@ -78,15 +61,9 @@ export function SoundResultContent({
   isMuted,
   silent = false,
   soundVolumes,
-  soundIntervals,
-  soundIntervalJitter,
-  schedulingMode = 'interval',
-  cardSoundId,
   onPreviewPlayPause,
   onPreviewStop,
   onVolumeChange,
-  onIntervalChange,
-  onIntervalJitterChange,
   onUpdatePosition,
   onUnlinkEntity,
   onMute,
@@ -119,28 +96,6 @@ export function SoundResultContent({
   const currentVolumeDbfs = soundVolumes[generatedSound.id] ?? generatedSound.volume_dbfs ?? DEFAULT_DBFS;
   // The WAV is calibrated to this level — the preview gain is applied relative to it.
   const baseVolumeDbfs = generatedSound.volume_dbfs ?? DEFAULT_DBFS;
-
-  // Track/card-level interval + variability — keyed by the card's primary
-  // (track) sound id so the values match the DAW timeline track and apply to
-  // every variant of this card. Fall back to the selected variant's id when no
-  // card id is resolved.
-  const trackId = cardSoundId ?? generatedSound.id;
-  const currentIntervalSeconds = soundIntervals[trackId] ?? generatedSound.interval_seconds ?? 30;
-  const currentJitterSeconds = soundIntervalJitter[trackId] ?? 0;
-
-  // Interval-mode controls group — only in interval mode and only when the
-  // store writes are wired up. Slotted into the card's LEFT column (below the
-  // waveform + position widget, i.e. left of the volume slider) via
-  // SoundCardBody's `leftColumnFooter`.
-  const intervalModeControls =
-    schedulingMode === 'interval' && onIntervalChange && onIntervalJitterChange ? (
-      <IntervalModeControls
-        intervalSeconds={currentIntervalSeconds}
-        onIntervalChange={(s) => onIntervalChange(trackId, s)}
-        jitterSeconds={currentJitterSeconds}
-        onJitterChange={(s) => onIntervalJitterChange(trackId, s)}
-      />
-    ) : null;
 
   // When showing the pending variant (regenerating), render a progress placeholder
   if (isShowingPending) {
@@ -204,7 +159,6 @@ export function SoundResultContent({
       } : undefined}
       storeContext="audioControls"
       onBlueBackground
-      leftColumnFooter={intervalModeControls}
     />
     </>
   );

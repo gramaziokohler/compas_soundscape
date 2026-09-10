@@ -118,6 +118,61 @@ export function computeIterationJitter(soundId: string, iterationIndex: number, 
   return (normalized * 2 - 1) * maxJitterMs;
 }
 
+export interface GenerateLoopTimestampsArgs {
+  /** Seed id so deterministic jitter offsets are stable per track. */
+  soundId: string;
+  /**
+   * Seconds of each consecutive iteration, used to advance to the next start
+   * (start_{i+1} = start_i + dur_i + gap_i). Falls back to the last entry then to
+   * `fallbackDurationSec`. Absent/empty ⇒ every iteration uses `fallbackDurationSec`.
+   */
+  durationSecPerIteration?: number[];
+  /** Duration to use when no per-iteration durations are provided. */
+  fallbackDurationSec: number;
+  /** Base gap (seconds) between the end of one clip and the start of the next. 0 = back-to-back. */
+  intervalSec: number;
+  /** Max deterministic per-iteration offset (seconds) applied to each gap (humanizing variability). */
+  jitterSec: number;
+  /** Timeline length (seconds). Iterations are generated from t=0 until this is reached. */
+  timelineSec: number;
+}
+
+/**
+ * Generate a default/repeated clip schedule as explicit timestamps (seconds).
+ *
+ * This is the materialisation of the old "interval mode" algorithm: the first
+ * clip sits at t=0 (staggered by a deterministic initial delay when jitter > 0),
+ * then each clip starts `clipDuration` + `interval ± jitter` after the previous
+ * one, filling the timeline. It is used both as the reactive "auto" default for
+ * tracks with no stored schedule and as the one-shot "Distribute evenly" tool.
+ */
+export function generateLoopTimestamps({
+  soundId,
+  durationSecPerIteration,
+  fallbackDurationSec,
+  intervalSec,
+  jitterSec,
+  timelineSec,
+}: GenerateLoopTimestampsArgs): number[] {
+  const jitterMs = Math.max(0, jitterSec) * 1000;
+  const baseGapMs = Math.max(0, intervalSec) * 1000;
+  const out: number[] = [];
+  let tMs = jitterMs > 0 ? computeInitialDelay(soundId, jitterMs) : 0;
+  let idx = 0;
+
+  while (tMs < timelineSec * 1000 && out.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY) {
+    out.push(parseFloat((tMs / 1000).toFixed(3)));
+    const perIter = durationSecPerIteration?.[idx]
+      ?? durationSecPerIteration?.[durationSecPerIteration.length - 1];
+    const durSec = perIter ?? fallbackDurationSec;
+    const gapMs = Math.max(0, baseGapMs + computeIterationJitter(soundId, idx, jitterMs));
+    tMs += Math.max(0, durSec) * 1000 + gapMs;
+    idx++;
+  }
+
+  return out;
+}
+
 /**
  * Get color based on sound generation method
  * @param metadata - Sound metadata containing soundEvent
@@ -152,19 +207,19 @@ function getSoundColor(metadata: SoundMetadata): string {
  * independent of whether sounds are currently playing/scheduled.
  * Used to keep timeline visible when sounds are stopped.
  *
+ * Scheduling is purely timestamp-driven. A track either has an explicit
+ * `soundTimestamps` entry (store) or is "auto" — in which case a default loop is
+ * derived reactively from the event's interval_seconds (0 = back-to-back pack).
+ *
  * @param soundMetadata - Map of sound metadata (contains buffers, URLs, display names)
- * @param soundIntervals - Current interval settings per sound
  * @param timelineDuration - Timeline duration in milliseconds
  * @returns Array of TimelineSound objects ready for visualization
  */
 export function extractTimelineSoundsFromData(
   soundMetadata: Map<string, SoundMetadata>,
-  soundIntervals: { [key: string]: number },
   timelineDuration: number = AUDIO_TIMELINE.DEFAULT_DURATION_MS,
   soundEvents?: SoundEvent[],
   soundTrims?: Record<string, { start: number; end: number }>,
-  soundIntervalJitter?: Record<string, number>,
-  soundSchedulingModes?: Record<string, 'interval' | 'timestamps'>,
   soundTimestamps?: Record<string, number[]>,
   soundIterationDurations?: Record<string, number[]>,
   iterationLinks?: Record<string, IterationLink>,
@@ -223,10 +278,6 @@ export function extractTimelineSoundsFromData(
     const trim = soundTrims?.[soundId];
     const soundDurationMs = trim ? bufferDurationMs * (trim.end - trim.start) : bufferDurationMs;
 
-    // Get interval from soundIntervals, fall back to metadata
-    const intervalSeconds = soundIntervals[soundId] ?? metadata.soundEvent.interval_seconds ?? 30;
-    const intervalMs = (intervalSeconds * 1000) + soundDurationMs;
-
     // Override display name from soundEvents if available (reflects user renames via handleSaveName)
     const eventOverride = soundEvents?.find(e => e.id === soundId);
     const displayName = eventOverride?.display_name || metadata.soundEvent.display_name || soundId;
@@ -234,95 +285,64 @@ export function extractTimelineSoundsFromData(
     // Get color based on generation method
     const color = getSoundColor(metadata);
 
-    const schedulingMode = soundSchedulingModes?.[soundId] ?? 'interval';
+    console.log(`[DEBUG-TIMELINE] soundId=${soundId} cat="${(eventOverride as any)?.category ?? (metadata.soundEvent as any).category ?? 'MISSING'}" promptIdx=${eventOverride?.prompt_index ?? metadata.soundEvent.prompt_index}`);
 
-    // Per-track variability (jitter) — keyed by the track's primary sound id.
-    // Absent override means 0. Replaces the removed global intervalJitterSeconds.
-    const trackJitterSeconds = soundIntervalJitter?.[soundId] ?? 0;
-
-    console.log(`[DEBUG-TIMELINE] soundId=${soundId} schedulingMode=${schedulingMode} (from store: ${soundSchedulingModes?.[soundId] ?? 'MISSING'}) cat="${(eventOverride as any)?.category ?? (metadata.soundEvent as any).category ?? 'MISSING'}" promptIdx=${eventOverride?.prompt_index ?? metadata.soundEvent.prompt_index}`);
-
-    // Timestamps mode: no stagger delay, no jitter — iterations are absolute positions.
-    // Interval mode: apply stagger delay so visual offset matches the audio scheduler.
-    const initialDelayMs = schedulingMode === 'timestamps'
-      ? 0
-      : computeInitialDelay(soundId, trackJitterSeconds * 1000);
-
-    let iterations: number[];
-    let iterationOffsets: number[];
-    let iterationOriginalIndices: number[] | undefined;
-    let iterationDurationsMs: number[] | undefined;
-    let iterationAudioUrls: string[] | undefined;
-
-    if (schedulingMode === 'timestamps' && soundTimestamps?.[soundId]) {
-      // Timestamps mode: use explicit timestamps (converted to ms), filtered to timeline bounds.
-      // ms >= 0 guards against the UNRESOLVED sentinel (999_999 s) and any negative values.
-      // Track original index so DAWTrack can look up the correct iterationLink badge even when
-      // earlier iterations are filtered out (e.g. unresolved parametric references).
-      const rawMs = soundTimestamps[soundId].map((s) => s * 1000);
-      console.log('[timeline:extract] soundId:', soundId, 'timelineDurMs:', timelineDuration,
-        'rawTsMs:', rawMs.map(m => Math.round(m)));
-      const rawDurs = soundIterationDurations?.[soundId];
-      iterations = [];
-      iterationOriginalIndices = [];
-      iterationDurationsMs = [];
-      iterationAudioUrls = [];
-      for (let idx = 0; idx < rawMs.length && iterations.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY; idx++) {
-        const ms = rawMs[idx];
-        if (ms >= 0 && ms < timelineDuration) {
-          iterations.push(ms);
-          iterationOriginalIndices.push(idx);
-          const storeDur = rawDurs?.[idx];
-          const fallbackDur = storeDur && storeDur > 0 ? storeDur : soundDurationMs;
-          const variantInfo = getIterationVariantInfo(
-            soundId,
-            idx,
-            soundMetadata,
-            metadata,
-            iterationLinks,
-            soundTrims,
-            fallbackDur,
-            soundEvents,
-          );
-          iterationDurationsMs.push(variantInfo.durationMs);
-          iterationAudioUrls.push(variantInfo.audioUrl);
-        }
-      }
-      // No jitter offsets for timestamps mode
-      iterationOffsets = [];
+    // ── Resolve the track's source schedule (seconds) ────────────────────────
+    // Explicit store entries win. When a track has NO entry it is "auto": use
+    // authored MM:SS timestamps if present, else derive a default loop from the
+    // event's interval_seconds (0 = back-to-back pack) with no variability.
+    const explicitSec = soundTimestamps?.[soundId];
+    let sourceSec: number[];
+    if (explicitSec !== undefined) {
+      sourceSec = explicitSec;
     } else {
-      // Interval mode: calculate iterations from interval (original logic)
-      const jitterMs = trackJitterSeconds * 1000;
-      const baseGapMs = intervalSeconds * 1000;
-      iterations = [];
-      iterationOffsets = [];
-      iterationDurationsMs = [];
-      iterationAudioUrls = [];
-      let currentTime = initialDelayMs;
-      let iterIdx = 0;
+      const rawEvent = metadata.soundEvent as any;
+      const authored = rawEvent.timestamps?.length
+        ? (rawEvent.timestamps as string[]).map((t) => {
+            const [mm, ss] = String(t).split(':').map(Number);
+            return (mm ?? 0) * 60 + (ss ?? 0);
+          })
+        : null;
+      sourceSec = authored ?? generateLoopTimestamps({
+        soundId,
+        fallbackDurationSec: soundDurationMs / 1000,
+        intervalSec: rawEvent.current_interval_seconds ?? rawEvent.interval_seconds ?? 30,
+        jitterSec: 0,
+        timelineSec: timelineDuration / 1000,
+      });
+    }
 
-      while (
-        currentTime < timelineDuration &&
-        iterations.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY
-      ) {
-        iterations.push(currentTime);
-        const randomOffset = computeIterationJitter(soundId, iterations.length - 1, jitterMs);
-        iterationOffsets.push(randomOffset);
+    // ── Build visible clips: source timestamps (seconds) → ms, filtered to the
+    // timeline bounds. Original index is tracked so the DAW can look up the
+    // correct iterationLink badge even when earlier iterations are filtered out
+    // (e.g. UNRESOLVED/out-of-range parametric slots).
+    const rawMs = sourceSec.map((s) => s * 1000);
+    console.log('[timeline:extract] soundId:', soundId, 'timelineDurMs:', timelineDuration,
+      'rawTsMs:', rawMs.map(m => Math.round(m)));
+    const rawDurs = soundIterationDurations?.[soundId];
+    const iterations: number[] = [];
+    const iterationOriginalIndices: number[] = [];
+    const iterationDurationsMs: number[] = [];
+    const iterationAudioUrls: string[] = [];
+    for (let idx = 0; idx < rawMs.length && iterations.length < AUDIO_TIMELINE.MAX_ITERATIONS_TO_DISPLAY; idx++) {
+      const ms = rawMs[idx];
+      if (ms >= 0 && ms < timelineDuration) {
+        iterations.push(ms);
+        iterationOriginalIndices.push(idx);
+        const storeDur = rawDurs?.[idx];
+        const fallbackDur = storeDur && storeDur > 0 ? storeDur : soundDurationMs;
         const variantInfo = getIterationVariantInfo(
           soundId,
-          iterIdx,
+          idx,
           soundMetadata,
           metadata,
           iterationLinks,
           soundTrims,
-          soundDurationMs,
+          fallbackDur,
           soundEvents,
         );
         iterationDurationsMs.push(variantInfo.durationMs);
         iterationAudioUrls.push(variantInfo.audioUrl);
-        const actualGapMs = Math.max(0, baseGapMs + randomOffset);
-        currentTime += variantInfo.durationMs + actualGapMs;
-        iterIdx++;
       }
     }
 
@@ -351,7 +371,6 @@ export function extractTimelineSoundsFromData(
       id: soundId,
       displayName,
       color,
-      intervalMs,
       soundDurationMs,
       scheduledIterations: iterations,
       scheduledIterationOriginalIndices: iterationOriginalIndices,
@@ -360,9 +379,6 @@ export function extractTimelineSoundsFromData(
       audioUrl: audioUrl || undefined,
       trimStartFraction: trim?.start,
       trimEndFraction: trim?.end,
-      initialDelayMs,
-      iterationOffsets,
-      schedulingMode,
       soundGroup,
       promptIndex: rawPromptIndex,
       cardIndex,
@@ -381,49 +397,10 @@ export function extractTimelineSoundsFromData(
   console.log('[DEBUG-TIMELINE] === extractTimelineSoundsFromData summary ===');
   console.log('[DEBUG-TIMELINE] total timelineSounds:', timelineSounds.length);
   for (const ts of timelineSounds) {
-    console.log(`[DEBUG-TIMELINE]   sound id=${ts.id} name="${ts.displayName}" group=${ts.soundGroup} sched=${ts.schedulingMode} iterations=${ts.scheduledIterations.length}`);
+    console.log(`[DEBUG-TIMELINE]   sound id=${ts.id} name="${ts.displayName}" group=${ts.soundGroup} iterations=${ts.scheduledIterations.length}`);
   }
 
   return timelineSounds;
-}
-
-/**
- * Calculate optimal timeline duration from soundscape data (when schedulers don't exist)
- *
- * @param soundMetadata - Map of sound metadata
- * @param soundIntervals - Current interval settings per sound
- * @param minIterationsPerSound - Minimum iterations to show per sound (default: 3)
- * @returns Optimal timeline duration in milliseconds
- */
-export function calculateTimelineDurationFromData(
-  soundMetadata: Map<string, SoundMetadata>,
-  soundIntervals: { [key: string]: number },
-  minIterationsPerSound: number = AUDIO_TIMELINE.MIN_ITERATIONS_PER_SOUND
-): number {
-  if (soundMetadata.size === 0) {
-    return AUDIO_TIMELINE.DEFAULT_DURATION_MS;
-  }
-
-  // Start at 0 — let actual content drive the duration (no artificial floor)
-  let maxDuration = 0;
-
-  soundMetadata.forEach((metadata, soundId) => {
-    if (!metadata.buffer) return;
-
-    const soundDurationMs = metadata.buffer.duration * 1000;
-    const intervalSeconds = soundIntervals[soundId] ?? metadata.soundEvent.interval_seconds ?? 30;
-    const intervalMs = (intervalSeconds * 1000) + soundDurationMs;
-
-    // Duration needed for minimum iterations
-    const neededDuration = intervalMs * minIterationsPerSound;
-    maxDuration = Math.max(maxDuration, neededDuration);
-  });
-
-  if (maxDuration === 0) {
-    return AUDIO_TIMELINE.DEFAULT_DURATION_MS;
-  }
-
-  return Math.min(maxDuration, AUDIO_TIMELINE.MAX_DURATION_MS);
 }
 
 /**

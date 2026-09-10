@@ -2,51 +2,50 @@
 Sound generation endpoints.
 
 POST /api/generate-sounds
-  Validates input, queues the job, returns generation_id immediately.
-  ML generation runs in a subprocess (one job at a time, FIFO).
-
-GET  /api/sound-generation-status/{generation_id}
-  Poll for progress, queue position, or completed result.
-
-POST /api/cancel-sound-generation/{generation_id}
-  Kill the subprocess immediately (hard kill).
+  Validates input, builds a flat clip plan, enqueues a "sound" job on the
+  Redis job store (services/job_store.py), returns {job_id, position, total}
+  immediately. Poll/cancel via GET/POST /api/jobs/{job_id}(/cancel) — see
+  routers/jobs.py. Generation itself runs in a resident GPU worker process
+  (workers/gpu_runner.py), not a per-request subprocess.
 """
 from __future__ import annotations
 
-import json
+import hashlib
 import os
 import tempfile
 import traceback
 import uuid
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
 from services.audio_service import AudioService
-from services.sounds_worker import run_sound_generation
-from services.task_queue import unified_queue, make_subprocess_runner
+from services.job_store import job_store, GpuQueueFullError
 from services.paths import user_sounds_dir
 from utils.audio_processing import compute_noise_trim_region_from_file
 from models.schemas import (
     SoundGenerationRequest,
-    SoundGenerationStartResponse,
-    SoundGenerationStatusResponse,
+    JobEnqueueResponse,
 )
 from config.constants import (
     GENERATED_SOUNDS_DIR,
     GENERATED_SOUND_URL_PREFIX,
     DEFAULT_DBFS,
     DEFAULT_AUDIO_MODEL,
-    SOUND_GENERATION_TASK_CLEANUP_DELAY_SECONDS,
-    TEMP_SIMULATIONS_DIR,
+    DEFAULT_DURATION_SECONDS,
+    DEFAULT_GUIDANCE_SCALE,
+    DEFAULT_DIFFUSION_STEPS,
+    DEFAULT_SEED_COPIES,
+    DEFAULT_INTERVAL_BETWEEN_SOUNDS,
+    FILENAME_MAX_LENGTH,
+    PARAM_HASH_LENGTH,
+    WINDOWS_ILLEGAL_FILENAME_CHARS,
+    JOB_TYPE_SOUND,
     TEMP_PARENT_DIR,
 )
 
 router = APIRouter()
-
-TEMP_DIR = Path(TEMP_SIMULATIONS_DIR)
-TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 # Injected by main.py
 audio_service = None
@@ -57,23 +56,78 @@ def init_sounds_router(service: AudioService):
     audio_service = service
 
 
+def _build_clip_plan(sound_configs: list[dict], apply_denoising: bool, audio_model: str, base_dbfs: float | None) -> list[dict]:
+    """Flatten sound_configs (one entry per prompt, seed_copies>=1) into one
+    descriptor per individual audio file ("clip") to generate. Filenames are
+    deterministic (same hashing scheme as the pre-refactor sounds_worker) so
+    re-running with identical parameters skips already-generated clips.
+    """
+    clips: list[dict] = []
+    for idx, cfg in enumerate(sound_configs):
+        prompt = cfg.get("prompt", "")
+        if not prompt:
+            continue
+        duration = cfg.get("duration_seconds") or cfg.get("duration", DEFAULT_DURATION_SECONDS)
+        guidance_scale = cfg.get("guidance_scale", DEFAULT_GUIDANCE_SCALE)
+        seed_copies = cfg.get("seed_copies", DEFAULT_SEED_COPIES)
+        steps = cfg.get("steps", DEFAULT_DIFFUSION_STEPS)
+        dbfs = cfg.get("dbfs") if cfg.get("dbfs") is not None else (base_dbfs if base_dbfs is not None else DEFAULT_DBFS)
+        interval_seconds = cfg.get("interval_seconds", DEFAULT_INTERVAL_BETWEEN_SOUNDS)
+        negative_prompt = cfg.get("negative_prompt", "")
+        display_name = cfg.get("display_name") or prompt
+
+        short_prompt = prompt[:FILENAME_MAX_LENGTH]
+        for char in WINDOWS_ILLEGAL_FILENAME_CHARS:
+            short_prompt = short_prompt.replace(char, "_")
+        short_prompt = short_prompt.replace(" ", "_")
+
+        param_string = f"{prompt}_{duration}_{guidance_scale}_{steps}_{apply_denoising}_{audio_model}"
+        regeneration_ts = cfg.get("_regeneration_ts", "")
+        if regeneration_ts:
+            param_string += f"_{regeneration_ts}"
+        param_hash = hashlib.md5(param_string.encode()).hexdigest()[:PARAM_HASH_LENGTH]
+
+        entity = cfg.get("entity")
+        if entity and entity.get("position"):
+            position = entity["position"]
+            entity_index = entity.get("index")
+        else:
+            position = [0, 0, 0]
+            entity_index = None
+
+        for copy_idx in range(seed_copies):
+            clips.append({
+                "id": f"generated_{idx}_{copy_idx}",
+                "prompt": prompt,
+                "prompt_index": idx,
+                "display_name": display_name,
+                "duration": duration,
+                "guidance_scale": guidance_scale,
+                "steps": steps,
+                "dbfs": dbfs,
+                "copy_index": copy_idx,
+                "total_copies": seed_copies,
+                "position": position,
+                "entity_index": entity_index,
+                "interval_seconds": interval_seconds,
+                "negative_prompt": negative_prompt,
+                "filename": f"{short_prompt}_{param_hash}_copy{copy_idx}.wav",
+            })
+    return clips
+
+
 # ─── Generate sounds (async) ──────────────────────────────────────────────────
 
-@router.post("/api/generate-sounds", response_model=SoundGenerationStartResponse)
+@router.post("/api/generate-sounds", response_model=JobEnqueueResponse)
 async def generate_sounds(request: SoundGenerationRequest, req: Request):
     """
-    Enqueue ML sound generation.  Returns generation_id immediately.
-    Poll GET /api/sound-generation-status/{generation_id} for updates.
+    Enqueue ML sound generation on the GPU job queue. Returns {job_id, position,
+    total} immediately. Poll GET /api/jobs/{job_id} for progress/partials/result.
     """
-    generation_id = str(uuid.uuid4())
-
     try:
         ml_configs = [s for s in request.sounds if s.get("prompt", "").strip()]
         if not ml_configs:
             raise HTTPException(status_code=400, detail="No valid sound prompts provided")
-
-        progress_file = str(TEMP_DIR / f"sound_progress_{generation_id}.json")
-        result_file   = str(TEMP_DIR / f"sound_result_{generation_id}.json")
 
         # Per-session output directory
         session_id = getattr(getattr(req, "state", None), "session_id", None)
@@ -84,77 +138,36 @@ async def generate_sounds(request: SoundGenerationRequest, req: Request):
         sounds_out.mkdir(parents=True, exist_ok=True)
         url_prefix = f"{GENERATED_SOUND_URL_PREFIX}/{session_id}"
 
-        worker_kwargs = dict(
-            generation_id=generation_id,
-            progress_file=progress_file,
-            result_file=result_file,
-            sound_configs=ml_configs,
-            apply_denoising=request.apply_denoising,
-            trim_silence=request.trim_silence,
-            audio_model=request.audio_model or DEFAULT_AUDIO_MODEL,
-            base_dbfs=request.base_dbfs,
-            output_dir=str(sounds_out),
-            url_prefix=url_prefix,
-        )
+        audio_model = request.audio_model or DEFAULT_AUDIO_MODEL
+        clips = _build_clip_plan(ml_configs, request.apply_denoising, audio_model, request.base_dbfs)
+        if not clips:
+            raise HTTPException(status_code=400, detail="No valid sound prompts provided")
 
-        run_fn = make_subprocess_runner(
-            run_sound_generation,
-            worker_kwargs,
-            progress_file,
-            result_file,
-            error_prefix="Sound generation",
-        )
+        payload = {
+            "clips": clips,
+            "total_clips": len(clips),
+            "completed_sounds": [],
+            "apply_denoising": request.apply_denoising,
+            "trim_silence": request.trim_silence,
+            "audio_model": audio_model,
+            "output_dir": str(sounds_out),
+            "url_prefix": url_prefix,
+        }
 
-        pos, total = unified_queue.enqueue(
-            generation_id, "sound", run_fn, SOUND_GENERATION_TASK_CLEANUP_DELAY_SECONDS
-        )
-        print(f"Sound generation {generation_id} queued at position {pos} of {total}")
-        return SoundGenerationStartResponse(generation_id=generation_id)
+        try:
+            job_id = await job_store.enqueue(JOB_TYPE_SOUND, session_id, payload)
+        except GpuQueueFullError as exc:
+            raise HTTPException(status_code=429, detail=str(exc))
+
+        view = await job_store.get(job_id)
+        print(f"Sound generation {job_id} queued at position {view.position} of {view.total}")
+        return JobEnqueueResponse(job_id=job_id, position=view.position or 1, total=view.total or 1)
 
     except HTTPException:
         raise
     except Exception as exc:
         print(f"Sound generation setup error: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Sound generation setup failed: {str(exc)}")
-
-
-# ─── Status endpoint ──────────────────────────────────────────────────────────
-
-@router.get(
-    "/api/sound-generation-status/{generation_id}",
-    response_model=SoundGenerationStatusResponse,
-)
-async def get_sound_generation_status(generation_id: str):
-    task = unified_queue.get_task(generation_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Sound generation task not found")
-
-    q_pos, q_total = unified_queue.get_queue_status(generation_id)
-    status_str = f"Queued — position {q_pos} of {q_total}" if q_pos is not None else task.status
-
-    return SoundGenerationStatusResponse(
-        generation_id=generation_id,
-        progress=task.progress,
-        status=status_str,
-        completed=task.completed,
-        cancelled=task.cancelled,
-        error=task.error,
-        result=task.result if (task.completed and not task.error and not task.cancelled) else None,
-        partial_sounds=task.partial_sounds,
-        queue_position=q_pos,
-        queue_total=q_total,
-    )
-
-
-# ─── Cancel endpoint ──────────────────────────────────────────────────────────
-
-@router.post("/api/cancel-sound-generation/{generation_id}")
-async def cancel_sound_generation(generation_id: str):
-    """Immediately kills a running subprocess, or removes a queued job."""
-    if not unified_queue.get_task(generation_id):
-        raise HTTPException(status_code=404, detail="Sound generation task not found")
-    unified_queue.cancel(generation_id)
-    return {"cancelled": True}
 
 
 # ─── Other sound endpoints ─────────────────────────────────────────────────────
@@ -202,7 +215,8 @@ async def calibrate_audio(
         filename = f"calibrated_{uuid.uuid4().hex}_{int(dbfs)}dBFS.wav"
         output_path = os.path.join(out_dir, filename)
 
-        audio_service.calibrate_audio_file(
+        await run_in_threadpool(
+            audio_service.calibrate_audio_file,
             tmp_input.name,
             output_path,
             target_dbfs=dbfs,
@@ -212,7 +226,9 @@ async def calibrate_audio(
         url_prefix = f"{GENERATED_SOUND_URL_PREFIX}/{session_id}" if session_id else GENERATED_SOUND_URL_PREFIX
         response: dict = {"url": f"{url_prefix}/{filename}"}
         if trim_silence:
-            response["noise_trim"] = compute_noise_trim_region_from_file(output_path)
+            response["noise_trim"] = await run_in_threadpool(
+                compute_noise_trim_region_from_file, output_path
+            )
         return response
 
     except Exception as e:

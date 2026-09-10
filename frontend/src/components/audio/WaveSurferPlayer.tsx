@@ -8,6 +8,11 @@ import { dbfsToLinear } from '@/utils/utils';
 import { useUIStore } from '@/store';
 import { subscribeColorTheme } from '@/utils/color-theme';
 import { Spinner } from '@/components/ui/Spinner';
+import {
+  createSilhouetteRenderFunction,
+  resolveSilhouettePalette,
+  type SilhouettePalette,
+} from '@/lib/audio/waveform-silhouette';
 
 const WAVEFORM_HEIGHT_MIN = 20;
 const WAVEFORM_HEIGHT_MAX = 300;
@@ -129,7 +134,8 @@ export function WaveSurferPlayer({
     setIsLoadingAudio(true);
     setCurrentTime(0);
 
-    const { waveColor, progressColor } = resolveWaveColors(onBlueBackground);
+    const palette = resolveSilhouettePalette(onBlueBackground);
+    const renderFunction = createSilhouetteRenderFunction(palette);
 
     const plugins = [];
     if (isSpectrogramMode && spectrogramContainerRef.current) {
@@ -146,19 +152,19 @@ export function WaveSurferPlayer({
       // WebAudio backend routes volume through a GainNode, which allows gains > 1.
       // The MediaElement backend clamps volume to [0, 1] and throws on boost.
       backend: 'WebAudio',
-      waveColor,
-      progressColor,
-      cursorColor: progressColor,
+      waveColor: palette.fill,
+      progressColor: palette.progress,
+      cursorColor: palette.progress,
       cursorWidth: 2,
       height: isSpectrogramMode ? 0 : waveformHeight,
-      barWidth: 2,
-      barGap: 1,
-      barRadius: 2,
+      // No barWidth/barGap: the waveform is a continuous filled shape whose
+      // fill spans every amplitude edge (custom renderFunction below).
       normalize: true,
       fillParent: true,
       interact,
       hideScrollbar: true,
       plugins,
+      renderFunction,
     });
 
     ws.on('ready', () => {
@@ -224,13 +230,15 @@ export function WaveSurferPlayer({
   useEffect(() => {
     const ws = wsRef.current;
     if (!ws) return;
-    const { waveColor, progressColor } = resolveWaveColors(onBlueBackground);
+    const palette = resolveSilhouettePalette(onBlueBackground);
+    const renderFunction = createSilhouetteRenderFunction(palette);
     ws.setOptions({
-      waveColor,
-      progressColor,
-      cursorColor: progressColor,
+      waveColor: palette.fill,
+      progressColor: palette.progress,
+      cursorColor: palette.progress,
       height: isSpectrogramMode ? 0 : waveformHeight,
       interact,
+      renderFunction,
     });
   }, [onBlueBackground, waveformHeight, interact, isSpectrogramMode, isReady]);
 
@@ -238,11 +246,13 @@ export function WaveSurferPlayer({
     const applyWaveColors = () => {
       const ws = wsRef.current;
       if (!ws) return;
-      const { waveColor, progressColor } = resolveWaveColors(onBlueBackground);
+      const palette = resolveSilhouettePalette(onBlueBackground);
+      const renderFunction = createSilhouetteRenderFunction(palette);
       ws.setOptions({
-        waveColor,
-        progressColor,
-        cursorColor: progressColor,
+        waveColor: palette.fill,
+        progressColor: palette.progress,
+        cursorColor: palette.progress,
+        renderFunction,
       });
     };
     applyWaveColors();
@@ -536,26 +546,4 @@ export function WaveSurferPlayer({
       </div>
     </div>
   );
-}
-
-function resolveCssVar(variable: string, fallback = '#888888'): string {
-  if (typeof window === 'undefined') return fallback;
-  if (!variable.startsWith('var(')) return variable;
-  const match = variable.match(/var\(\s*(--[^,)]+)/);
-  if (!match) return fallback;
-  const val = getComputedStyle(document.documentElement).getPropertyValue(match[1]).trim();
-  return val || fallback;
-}
-
-function resolveWaveColors(onBlueBackground: boolean): { waveColor: string; progressColor: string } {
-  if (onBlueBackground) {
-    return {
-      waveColor: resolveCssVar('var(--color-on-blue-muted)'),
-      progressColor: resolveCssVar('var(--color-on-blue)'),
-    };
-  }
-  return {
-    waveColor: resolveCssVar('var(--color-secondary-hover)'),
-    progressColor: resolveCssVar('var(--color-primary)'),
-  };
 }

@@ -14,13 +14,23 @@ ambisonic / binaural spatial audio rendering.
 | Backend  | FastAPI + Uvicorn                   | 8000 |
 | Frontend | Next.js 15 + React 19 (App Router)  | 3000 |
 | State    | Zustand v5 + zundo undo/redo        | —    |
+| Job store| Redis (job hashes + worker queues)  | 6379 |
 
 ## Run Commands
 
 ```bash
+# Redis must be up first (Memurai or redis-windows) — see deploy/README.md
+redis-cli ping   # → PONG
+
 # Backend (from repo root), to run the app
 mamba activate compas-toy
 cd backend && uvicorn main:app --reload --log-config log_config.json
+
+# Worker processes (one terminal each; required for GPU/CPU/Choras job queues)
+cd backend
+python -m workers.worker_main --role gpu --slots 1 --worker-id gpu-1     # ×2 for two GPU lanes
+python -m workers.worker_main --role cpu --slots 4 --worker-id cpu-1
+python -m workers.worker_main --role choras --slots 1 --worker-id choras-1
 
 # Frontend (from repo root), to run the app
 cd frontend && pnpm dev
@@ -38,8 +48,13 @@ backend/
   main.py                  # App factory, lifespan, service injection, router registration
   config/constants.py      # ALL backend constants — never hardcode literals elsewhere
   models/schemas.py        # ALL Pydantic request/response schemas
-  routers/                 # 14 routers — validate input, dispatch to service, return response
+  routers/                 # 14+ routers — validate input, dispatch to service, return response
   services/                # Business logic, ML model wrappers, external API clients
+    job_store.py           # Redis-backed job store (AsyncJobStore + WorkerJobStore)
+    io_jobs.py             # LLM/model-analysis/TTS asyncio jobs + SSE keepalive helper
+    runtime_config.py      # Redis-persisted runtime config (e.g. Speckle token)
+  workers/                 # Resident worker processes (GPU / CPU / Choras)
+    worker_main.py         # python -m workers.worker_main --role gpu|cpu|choras
   middleware/session.py    # UUID cookie injection → request.state.session_id
   utils/                   # Stateless helpers (audio_processing, file_operations, etc.)
   choras_backend/          # Choras FEM/DG acoustic solver interfaces
@@ -57,16 +72,19 @@ frontend/src/
   store/                   # 24 Zustand stores — always import from @/store barrel
   lib/audio/               # Audio pipeline (AudioOrchestrator, modes, decoders)
   hooks/                   # Domain-scoped custom hooks
-  services/api.ts          # All backend API calls via fetchWithErrorHandling()
+  services/api.ts          # All backend API calls via fetchWithErrorHandling(); unified /api/jobs polling
   types/                   # TypeScript types — barrel export from types/index.ts
   utils/constants.ts       # Frontend constants (AMBISONIC, WAVESURFER_TIMELINE, HRTF, etc.)
 ```
 
 ## Global Hard Rules
 
-1. **No database.** Persistence is filesystem-only under `backend/temp/`.
-2. **Never block the request thread.** Heavy jobs (ML, LLM, acoustics) go through
-   `services/task_queue.py` pools; return a job ID immediately.
+1. **No database.** Persistence is filesystem-only under `backend/temp/` (session files) and
+   `backend/data/` (saved soundscapes). Redis is a job store / ephemeral state, not a database.
+2. **Never block the request thread.** Heavy jobs (ML, acoustics) go through the Redis job store
+   (`services/job_store.py.enqueue()`) and run in resident worker processes
+   (`workers/worker_main.py --role gpu|cpu|choras`); LLM/TTS/model-analysis run as in-process
+   asyncio tasks (`services/io_jobs.py`). Always return `{job_id, position, total}` immediately.
 3. **Session-scope all file writes** via `request.state.session_id` (from `middleware/session.py`).
 4. **TypeScript strict** — `pnpm build` must pass with 0 errors. No `any`.
 5. **One source of truth per layer** — constants in `config/constants.py` (backend) or
@@ -95,13 +113,13 @@ touch matching files (Cursor by glob, Opencode via `opencode.json`, Claude Code 
 | `persistence.mdc`     | Refresh survival, save/load   | `page.tsx`, `soundscape-serializer.ts`, `soundscape.py`, stores with persist |
 | `acoustic-sim.mdc`    | Room acoustics simulation     | `backend/services/pyroomacoustics_service.py`, `choras_backend/**`    |
 | `zustand-stores.mdc`  | State management              | `frontend/src/store/**`                                               |
-| `task-queue.mdc`      | Background job system         | `backend/services/task_queue.py`, `**/*_worker.py`                    |
+| `task-queue.mdc`      | Background job system         | `backend/services/job_store.py`, `backend/services/io_jobs.py`, `backend/workers/**`, `backend/routers/jobs.py` |
 | `ui-conventions.mdc`  | UI styling & components       | `frontend/src/components/**`, `globals.css`                           |
 | `speckle.mdc`         | Speckle 3D platform           | `backend/services/speckle_service.py`, `backend/routers/speckle.py`   |
 | `object-explorer.mdc` | ObjectExplorer, filtering, isolation, view modes | `ObjectExplorer.tsx`, `useSpeckleFiltering.ts`, `useAcousticLayerIsolation.ts`, `VirtualTreeItem.tsx` |
 | `sound-rendering.mdc` | Spatial audio pipeline        | `frontend/src/lib/audio/**`                                           |
 | `daw-timeline.mdc`    | DAW timeline & WaveSurfer     | `frontend/src/components/audio/daw/**`                                |
-| `audio-generation.mdc`| AI audio generation pipeline  | `backend/routers/sounds.py`, `backend/services/sounds_worker.py`, `frontend/src/store/soundscapeStore.ts`, `SoundResultContent.tsx` |
+| `audio-generation.mdc`| AI audio generation pipeline  | `backend/routers/sounds.py`, `backend/workers/gpu_runner.py`, `frontend/src/store/soundscapeStore.ts`, `SoundResultContent.tsx` |
 | `gh-csharp-components.mdc` | Grasshopper C# (.gha) component development | `src/compas_acoustics_gh_components/**`, `**/*.csproj`, `**/build_gha.ps1` |
 | `frontend-ux.mdc`     | Sidebar wizard & card flow    | `frontend/src/components/layout/**`, `store/cardFlowStore.ts`         |
 | `chrome-devtools.mdc` | Browser debugging via chrome-devtools MCP | `frontend/**`, dev-mode `_next/static/chunks` reverse-engineering |

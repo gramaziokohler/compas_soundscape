@@ -13,6 +13,8 @@ interface MiniIRWaveformProps {
   onBlueBackground?: boolean;
   /** When true and no buffer is available yet, shows a small spinner (WAV still downloading/decoding). */
   loading?: boolean;
+  /** When true (low-energy / very quiet IR), the thumbnail border and strokes render red. */
+  lowEnergy?: boolean;
 }
 
 const WIDTH = 56;
@@ -28,14 +30,17 @@ export function MiniIRWaveform({
   className = '',
   onBlueBackground = false,
   loading = false,
+  lowEnergy = false,
 }: MiniIRWaveformProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const colorTheme = useResolvedColorTheme();
   const height = audioBuffer?.numberOfChannels === 4 ? FOA_HEIGHT : MONO_HEIGHT;
 
-  const borderStyle = onBlueBackground
-    ? { borderColor: 'var(--color-on-blue)' }
-    : { borderColor: 'var(--color-border-strong)' };
+  const borderStyle = lowEnergy
+    ? { borderColor: 'var(--color-warning)' }
+    : onBlueBackground
+      ? { borderColor: 'var(--color-on-blue)' }
+      : { borderColor: 'var(--color-border-strong)' };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -58,9 +63,11 @@ export function MiniIRWaveform({
     const getCssVar = (v: string, fallback: string) =>
       getComputedStyle(root).getPropertyValue(v).trim() || fallback;
 
-    const lineColor = onBlueBackground
-      ? getCssVar('--color-on-blue', '#ffffff')
-      : getCssVar('--color-primary', '#002aff');
+    const lineColor = lowEnergy
+      ? getCssVar('--color-warning', '#d97706')
+      : onBlueBackground
+        ? getCssVar('--color-on-blue', '#ffffff')
+        : getCssVar('--color-primary', '#002aff');
 
     ctx.clearRect(0, 0, WIDTH, canvasHeight);
 
@@ -87,12 +94,14 @@ export function MiniIRWaveform({
         ctx.stroke();
       }
     });
-  }, [audioBuffer, colorTheme, onBlueBackground]);
+  }, [audioBuffer, colorTheme, onBlueBackground, lowEnergy]);
+
+  const borderClass = lowEnergy ? ' border-2' : '';
 
   if (!audioBuffer) {
     return (
       <div
-        className={`shrink-0 rounded border bg-transparent ${className}`}
+        className={`shrink-0 rounded border bg-transparent${borderClass} ${className}`}
         style={{
           width: WIDTH,
           height: MONO_HEIGHT,
@@ -119,7 +128,7 @@ export function MiniIRWaveform({
   return (
     <canvas
       ref={canvasRef}
-      className={`shrink-0 rounded border bg-transparent ${className}`}
+      className={`shrink-0 rounded border bg-transparent${borderClass} ${className}`}
       style={borderStyle}
       width={WIDTH}
       height={height}

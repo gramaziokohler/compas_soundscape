@@ -1,78 +1,156 @@
 ---
-description: Background job system — task queue, worker pools, subprocess pattern
-globs: backend/services/task_queue.py,backend/**/*_worker.py,backend/routers/sounds.py,backend/routers/pyroomacoustics.py,backend/routers/choras.py,backend/routers/sed_analysis.py,backend/routers/modal_analysis.py
+description: Background job system — Redis job store, resident worker processes, asyncio IO jobs
+globs: backend/services/job_store.py,backend/services/io_jobs.py,backend/workers/**,backend/routers/jobs.py,backend/routers/sounds.py,backend/routers/pyroomacoustics.py,backend/routers/choras.py,backend/routers/sed_analysis.py,backend/routers/loop_analysis.py,backend/routers/tts.py,backend/routers/generation.py
 ---
 
-# Task Queue Rules
+# Task Queue Rules (Redis job store + resident workers)
 
 ## The Prime Rule
 
 **Never call ML inference, LLM APIs, or acoustic simulation synchronously inside a request handler.**
 
-Always enqueue, return a job ID immediately, and expose a polling endpoint.
-Violating this freezes the Uvicorn worker, blocks all other requests, and can OOM the GPU.
+Always enqueue, return `{job_id, position, total}` immediately, and let the client poll
+`GET /api/jobs/{id}`. Violating this freezes the Uvicorn event loop / worker, blocks all other
+requests, and can OOM the GPU.
 
-## Three Worker Pools
+## Architecture
 
-| Pool       | Workers | Use for                                                               |
-| ---------- | ------- | --------------------------------------------------------------------- |
-| `GPU_POOL` | 1       | TangoFlux, AudioLDM2 — single worker prevents CUDA OOM crashes        |
-| `IO_POOL`  | 6       | Gemini / OpenAI / Anthropic, TTS, Freesound / BBC API, SSE streaming  |
-| `CPU_POOL` | 2       | pyroomacoustics, Choras, YAMNet SED — CPU-bound                       |
+Single FastAPI process + Redis (`REDIS_URL`, default `redis://127.0.0.1:6379/0`) + separate
+long-lived worker processes. See `.cursor/plans/multi-user_distributed_backend_a4752c5d.plan.md`.
 
-Pools are defined and exported from `backend/services/task_queue.py`.
+```
+Browser ──POST /api/generate-sounds──▶ FastAPI (routers/sounds.py)
+                                        └─ job_store.enqueue("sound", session_id, payload)
+                                             → Redis hash job:{id} + RPUSH queue:gpu
+Worker: python -m workers.worker_main --role gpu|cpu|choras --slots N --worker-id X
+        └─ lease() (BLPOP) → run → heartbeat/set_progress/complete/fail
+Client polls GET /api/jobs/{id}  (routers/jobs.py reads the Redis hash)
+```
 
-## Subprocess Pattern
+| Layer | Files |
+| ----- | ----- |
+| Job store (Redis) | `services/job_store.py` — `AsyncJobStore` (API), `WorkerJobStore` (workers), `job_store` singleton |
+| Unified endpoints | `routers/jobs.py` — `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `GET /api/queue/status` |
+| Worker entry | `workers/worker_main.py` — `--role gpu\|cpu\|choras`, `--slots N`, `--worker-id X` |
+| Runners | `workers/gpu_runner.py`, `workers/cpu_runner.py`, `workers/choras_runner.py`, `workers/_subprocess_common.py` |
+| In-process IO jobs | `services/io_jobs.py` (LLM / model-analysis / TTS asyncio tasks) |
 
-GPU and CPU-intensive jobs run in a **child process** (not just a thread) to isolate CUDA memory
-and prevent import-time side effects from polluting the main process:
+## Roles, Queues and Concurrency
+
+| Job type | Redis queue | Runs on | Slots |
+| -------- | ----------- | ------- | ----- |
+| `sound` (TangoFlux) | `queue:gpu` | `worker_main --role gpu` (1 model per process, resident) | `GPU_WORKER_SLOTS` (2) |
+| `pyroomacoustics`, `sed`, `loop` | `queue:cpu` | `--role cpu` — child process per job | `CPU_WORKER_SLOTS` (4) |
+| `choras` (DE/DG) | `queue:choras` | `--role choras` — child process per job (gmsh in child main thread) | `CHORAS_WORKER_SLOTS` (1) |
+| `llm`, `model_analysis`, `tts` | *(none)* | **Inside the API process** as `asyncio.create_task`, semaphore-gated | `LLM_MAX_CONCURRENT` (8), `TTS_MAX_CONCURRENT` (2) |
+
+- GPU jobs get a per-session fairness cap: max `GPU_QUEUE_PER_SESSION_MAX` (3) pending per
+  session → the enqueue raises `GpuQueueFullError` → the router returns **HTTP 429**.
+- IO jobs never sit in a BLPOP queue: `enqueue_io()` creates the hash, then
+  `services/io_jobs.start_io_job()` runs the coroutine in-process behind a semaphore so polling
+  (`GET /api/jobs/{id}`) and startup recovery stay uniform.
+- CPU/Choras runners set `CUDA_VISIBLE_DEVICES=-1` in child envs so TensorFlow/YAMNet never
+  touch VRAM. Child-process-per-job is what makes a running `compute_rir()`/gmsh job
+  **hard-killable** (`process.kill()`) on cancel.
+
+## Enqueueing From a Router (correct pattern)
 
 ```python
-# In a router — correct enqueue pattern
-from services.task_queue import GPU_POOL, make_subprocess_runner
+from services.job_store import job_store, GpuQueueFullError
+from config.constants import JOB_TYPE_SOUND
 
-@router.post("/generate-sounds")
-async def generate_sounds(req: GenerateSoundsRequest, request: Request):
-    generation_id = str(uuid.uuid4())
-    GPU_POOL.submit(
-        make_subprocess_runner(
-            target=audio_service.run_generation,
-            kwargs={
-                "prompt": req.prompt,
-                "session_id": request.state.session_id,
-                "generation_id": generation_id,
-            }
-        )
-    )
-    return {"generation_id": generation_id}
+@router.post("/api/generate-sounds", response_model=JobEnqueueResponse)
+async def generate_sounds(request: SoundGenerationRequest, req: Request):
+    payload = {...}          # validated, session-scoped paths resolved here
+    try:
+        job_id = await job_store.enqueue(JOB_TYPE_SOUND, session_id, payload)
+    except GpuQueueFullError as exc:
+        raise HTTPException(status_code=429, detail=str(exc))
+    return JobEnqueueResponse(job_id=job_id, position=view.position or 1, total=view.total or 1)
 ```
+
+## Job Lifecycle
+
+1. `enqueue()` writes hash `job:{id}` (`status=queued`, `payload` JSON) and `RPUSH`s the queue.
+   Sound jobs also add the id to `session:{sid}:pending_gpu` (removed on complete/fail/cancel).
+2. Worker `lease()` `BLPOP`s the queue, bumps `attempts`, sets `status=running`, and returns the
+   job. It heartbeats every `WORKER_HEARTBEAT_INTERVAL_S` (10 s).
+3. Worker reports progress with `set_progress(job_id, value, text, partial=None)` — `value` is
+   0–100, `text` is human-readable, `partial` is the streaming payload (e.g. `partial_sounds`).
+4. Terminal states via `complete(job_id, result)` / `fail(job_id, err)` /
+   `mark_cancelled(job_id)`. Results/errors expire after `JOB_RESULT_TTL_S` (3600 s).
+5. Cancel: `AsyncJobStore.cancel()` — `LREM`s the queue if queued; if running it sets
+   `cancel_requested` and `PUBLISH`es to `job:cancel`. GPU workers poll the flag between diffusion
+   steps (cooperative, via the `should_stop` callback into `tangoflux`); CPU/Choras workers
+   `process.kill()` their child.
+6. Reaper (asyncio task in `main.py` lifespan): every `JOB_REAPER_INTERVAL_S`, running jobs whose
+   heartbeat is older than `JOB_HEARTBEAT_TIMEOUT_S` (90 s) are re-queued (up to `JOB_MAX_ATTEMPTS`)
+   or failed.
+
+## GPU Worker — Resident Model, Clip-Level Yielding, Cooperative Cancel
+
+`gpu_runner.py` loads the TangoFlux model **once** at process start and warms it up
+(`TANGOFLUX_WARMUP_*`) so the first user pays nothing. A multi-clip job:
+
+- streams each completed clip via `set_progress(..., partial=completed_sounds)` (the `partial_sounds`
+  shape consumed by the frontend);
+- yields its queue slot after each clip when another job is waiting
+  (`requeue_tail(job_id, remaining_payload)` under the same `job_id`) so one 10-clip request never
+  blocks another session for more than one clip;
+- aborts mid-step when `should_stop()` returns true — the `GenerationCancelled` exception from
+  `tangoflux/model.py` propagates and the job is marked cancelled.
+
+Deterministic filenames + a `_regeneration_ts` salt live in `routers/sounds.py:_build_clip_plan`
+(previously `sounds_worker.py`, now removed).
+
+## CPU/Choras Child-Process Contract
+
+The legacy per-domain subprocess workers (`services/pyroomacoustics_worker.py`,
+`sed_worker.py`, `loop_worker.py`, `choras_job.py`) still write the JSON contract below —
+`_subprocess_common.py` spawns them, polls `progress_file`, forwards
+progress/heartbeat to Redis, and reads `result_file` on exit:
+
+```json
+// progress_file: temp/simulations/job_progress_<id>.json
+{ "value": 0, "status": "Loading model..." }
+// result_file:  temp/simulations/job_result_<id>.json
+{ "type": "done",  "result": { ... } }
+{ "type": "error", "message": "..." }
+```
+
+Add new CPU-bound job families by (1) giving the job type a `queue:cpu` mapping in
+`config/constants.py` `JOB_TYPE_QUEUE`, (2) registering a top-level worker function in
+`workers/cpu_runner.py::_TARGET_FNS` under the payload `variant`, and (3) routing the job
+through `job_store.enqueue`.
 
 ## Progress Polling Convention
 
-1. Worker writes progress JSON to `backend/temp/simulations/<type>_progress_<id>.json`
-2. Expose `GET /api/<domain>/status/<id>` that reads and returns that JSON
-3. Frontend polls this endpoint (no WebSocket needed)
+1. Worker writes progress/result to Redis via the job store (`set_progress`/`complete`).
+2. Client polls `GET /api/jobs/{id}` → `JobStatusResponse`:
+   `{job_id, type, status, progress, status_text, queue_position, queue_total, partial, result, error}`.
+3. There are **no per-domain status/cancel routes anymore** — all job types use the unified
+   endpoints. Frontend wrappers in `frontend/src/services/api.ts` translate the unified shape back
+   into the legacy `{completed, cancelled, partial_sounds, ...}` envelope the stores expect.
 
-Standard progress JSON shape — follow this across all job types:
+## Which Mechanism to Use
 
-```json
-{
-  "status": "in_progress | completed | failed",
-  "progress": 0.0,
-  "result": null,
-  "error": null
-}
-```
+| Task type | Mechanism |
+| --------- | --------- |
+| Text-to-audio (TangoFlux) | GPU worker queue (`queue:gpu`) — AudioLDM2 is NOT loaded by workers |
+| LLM API call (Gemini / OpenAI / Anthropic) | in-process asyncio task (`LLM_SEMAPHORE`) |
+| Gemini TTS | in-process asyncio task (`TTS_SEMAPHORE`) + `run_in_threadpool` per item |
+| 3D model analysis | in-process asyncio task (`run_blocking` for sync `analyze_3dmodel`) |
+| SSE agent streams | acquire `LLM_SEMAPHORE` directly; keepalive `: ping` every `SSE_KEEPALIVE_INTERVAL_S` |
+| pyroomacoustics / SED / loop | CPU worker (child process per job) |
+| Choras DE/DG | Choras worker (child process per job) |
+| BBC/Freesound search, reprocess, calibrate, sed-extract, Speckle listing | `await run_in_threadpool(...)` in the handler |
 
-## Which Pool to Use
+## Conventions
 
-| Task type                            | Pool       |
-| ------------------------------------ | ---------- |
-| Text-to-audio (TangoFlux / AudioLDM2) | `GPU_POOL` |
-| LLM API call (Gemini / OpenAI)       | `IO_POOL`  |
-| TTS generation                       | `IO_POOL`  |
-| Sound library search (Freesound/BBC) | `IO_POOL`  |
-| pyroomacoustics simulation           | `CPU_POOL` |
-| Choras FEM/DG simulation             | `CPU_POOL` |
-| YAMNet SED analysis                  | `CPU_POOL` |
-| Mixed LLM → GPU pipeline             | `IO_POOL` for LLM step, hand off result to `GPU_POOL` |
+- All job/worker constants live in `config/constants.py` (`JOB_TYPE_*`, `JOB_STATUS_*`,
+  `JOB_TYPE_QUEUE`, `REDIS_URL`, slot counts, timeouts, TTLs). Never hardcode them in routers.
+- Speckle token set at runtime via `POST /api/tokens` is persisted to Redis `config:speckle_token`
+  (`services/runtime_config.py`) so worker child processes can read it.
+- The old `services/task_queue.py` threadpool system was deleted — do not reintroduce
+  `GPU_POOL` / `IO_POOL` / `CPU_POOL` / `unified_queue` / `make_subprocess_runner`.
+- Never block the request thread (see AGENTS.md Hard Rule 2).

@@ -6,11 +6,16 @@
  * can all read from one source of truth without prop drilling through page.tsx.
  *
  * Sync:  page.tsx must call syncGeneratedSounds() whenever soundGen.generatedSounds
- *        changes so that playAll / stopAll / handleVariantChange / handleIntervalChange
+ *        changes so that playAll / stopAll / handleVariantChange / handleVolumeChange
  *        have the correct sound list available.
  *
- * zundo partializes on: soundVolumes, soundIntervals, selectedVariants, mutedSounds,
- *                       soloedSound  (the "user-facing" config — excludes play state).
+ * zundo partializes on: soundVolumes, soundTrims, soundTimestamps, selectedVariants,
+ *                       mutedSounds, soloedSound  (the "user-facing" config — excludes play state).
+ *
+ * Scheduling is purely timestamp-driven: `soundTimestamps[soundId]` is the only stored
+ * schedule. A track with NO entry is an "auto" track — the timeline derives a default
+ * loop from its event's interval_seconds (0 = back-to-back) reactively; the first DAW
+ * edit freezes those positions into soundTimestamps (see ensureTrackMaterialized).
  */
 
 import { create } from 'zustand';
@@ -24,6 +29,34 @@ import { AUDIO_PLAYBACK, AUDIO_TIMELINE, DEFAULT_DBFS, DEFAULT_MAXIMUM_FOLEY_SOU
 import { apiService } from '@/services/api';
 import { useSoundscapeStore } from './soundscapeStore';
 import { useSpeckleEngineStore } from './speckleEngineStore';
+import { useUIStore } from './uiStore';
+import { useAnalysisStore } from './analysisStore';
+import type { ScenarioConfig } from '@/types/analysis';
+
+/**
+ * Write-through: when the active sound section belongs to a scenario card, persist any
+ * DAW timeline-length change (inline DAW edit, bake auto-extend) back to that scenario's
+ * own timelineDurationMs, so each scenario keeps its own sound-scene duration across
+ * section switches and page refreshes. Non-scenario sections keep the global value.
+ */
+function syncTimelineToActiveScenario(ms: number): void {
+  const active = useUIStore.getState().activeSoundParentIndex;
+  if (active === null || active === undefined) return;
+  const cfg = useAnalysisStore.getState().analysisConfigs[active];
+  if (!cfg || cfg.type !== 'scenario') return;
+  if (cfg.timelineDurationMs === ms) return;
+  useAnalysisStore.getState().handleUpdateConfig(active, { timelineDurationMs: ms } as Partial<ScenarioConfig>);
+}
+
+/** Timeline bound of the currently-active scenario section (ms), or null when none. */
+function getActiveScenarioTimelineMs(): number | null {
+  const active = useUIStore.getState().activeSoundParentIndex;
+  if (active === null || active === undefined) return null;
+  const cfg = useAnalysisStore.getState().analysisConfigs[active];
+  if (!cfg || cfg.type !== 'scenario') return null;
+  const ms = cfg.timelineDurationMs;
+  return ms && ms > 0 ? ms : null;
+}
 
 
 export interface AudioControlsStoreState {
@@ -31,18 +64,10 @@ export interface AudioControlsStoreState {
   individualSoundStates: Record<string, SoundState>;
   selectedVariants: Record<number, number>;
   soundVolumes: Record<string, number>;
-  soundIntervals: Record<string, number>;
   soundTrims: Record<string, { start: number; end: number }>;
   mutedSounds: Set<string>;
   soloedSound: string | null;
   previewingSoundId: string | null;
-  /**
-   * Per-track variability (jitter) in seconds applied to each interval-mode
-   * iteration's gap. Keyed by the card/timeline-track sound id (primary
-   * variant), so it applies to a whole card and all its variants. Absent key
-   * means 0 (no variability). Replaces the old global intervalJitterSeconds.
-   */
-  soundIntervalJitter: Record<string, number>;
   /** Fixed timeline length in milliseconds — both visual and audio are bounded to this. */
   timelineDurationMs: number;
   /** Internal: synced from useSoundGeneration. Used by playAll / stopAll / handleVariantChange. */
@@ -51,12 +76,14 @@ export interface AudioControlsStoreState {
   _soundConfigs: SoundGenerationConfig[];
   /** Actual decoded audio buffer durations (seconds), keyed by soundId. Set by SoundSphereManager on load. */
   soundBufferDurations: Record<string, number>;
-  /** Per-sound scheduling mode: 'interval' (default) or 'timestamps'. */
-  soundSchedulingModes: Record<string, 'interval' | 'timestamps'>;
-  /** Per-sound explicit playback timestamps in seconds (used when mode is 'timestamps'). */
+  /**
+   * Per-sound explicit playback timestamps in seconds. This is the ONLY stored
+   * schedule. A track with NO entry is "auto": the timeline derives a default
+   * loop from its event's interval_seconds (see extractTimelineSoundsFromData).
+   */
   soundTimestamps: Record<string, number[]>;
   /**
-   * Per-sound loopable flag, keyed by soundId. When true, DAW interval playback
+   * Per-sound loopable flag, keyed by soundId. When true, DAW playback
    * narrows to the detected loop region (the sound's trim) and applies a seam
    * fade so the loop wraps without clicking.
    */
@@ -93,15 +120,6 @@ export interface AudioControlsStoreState {
   toggleSound: (soundId: string) => void;
   handleVariantChange: (promptIdx: number, variantIdx: number) => void;
   handleVolumeChange: (soundId: string, volumeDbfs: number) => void;
-  handleIntervalChange: (soundId: string, intervalSeconds: number) => void;
-  handleSchedulingModeChange: (
-    soundId: string,
-    mode: 'interval' | 'timestamps',
-    soundDurationSeconds?: number,
-    /** Optional pre-computed timestamps (seconds) used when materializing an
-     *  interval-mode track into timestamp mode ("re-use the tracks exactly"). */
-    explicitTimestampsSeconds?: number[],
-  ) => void;
   handleTimestampsChange: (soundId: string, timestamps: number[]) => void;
   /** Apply timestamp updates for multiple tracks in a single store commit — one undo entry per gesture, instead of one per affected track. */
   handleTimestampsChangeBatch: (updates: Record<string, number[]>) => void;
@@ -119,15 +137,11 @@ export interface AudioControlsStoreState {
   /**
    * Toggle "loopable" for a generated sound. Turning it on runs the client-side
    * loop analysis against `url`, then narrows the sound's trim to the detected
-   * periodic loop region (so DAW interval playback loops seamlessly with a seam
+   * periodic loop region (so DAW playback loops seamlessly with a seam
    * fade). Turning it off restores nothing else — the trim is left wherever it
    * landed so the user can keep a manual trim if desired.
    */
   toggleSoundLoopable: (soundId: string, url: string) => Promise<void>;
-  /** Set the per-track variability (jitter) in seconds for a card/timeline track. */
-  setSoundIntervalJitter: (soundId: string, seconds: number) => void;
-  /** Clear all per-track variability overrides (reset to defaults). */
-  clearAllSoundIntervalJitter: () => void;
   setTimelineDurationMs: (ms: number) => void;
   resetTimelineDurationMs: () => void;
   /** Global base volume reference level for all generated sounds (dBFS). */
@@ -163,14 +177,12 @@ export interface AudioControlsStoreState {
   stopAll: () => void;
   isAnyPlaying: () => boolean;
   forceStopAll: () => void;
-  restoreVolumeAndIntervals: (
-    volumes: Record<string, number>,
-    intervals: Record<string, number>,
-  ) => void;
-  restoreSchedulingModes: (
-    modes: Record<string, 'interval' | 'timestamps'>,
-    timestamps: Record<string, number[]>,
-  ) => void;
+  /** Restore per-sound volumes after a soundscape load. */
+  restoreVolumes: (volumes: Record<string, number>) => void;
+  /** Restore the stored per-track timestamps after a soundscape load. Tracks without an entry stay "auto". */
+  restoreSoundTimestamps: (timestamps: Record<string, number[]>) => void;
+  /** Remove a track's stored schedule entirely — it returns to its auto default loop. */
+  clearSoundTimestampsEntry: (soundId: string) => void;
   restoreIterationLinks: (links: Record<string, IterationLink>) => void;
   restoreMuteSolo: (mutedSoundIds: string[], soloedSoundId: string | null) => void;
 }
@@ -179,16 +191,13 @@ export interface AudioControlsStoreState {
 
 export const audioControlsPartialize = (state: AudioControlsStoreState) => ({
   soundVolumes: { ...state.soundVolumes },
-  soundIntervals: { ...state.soundIntervals },
   soundTrims: { ...state.soundTrims },
   selectedVariants: { ...state.selectedVariants },
   mutedSounds: new Set(state.mutedSounds),
   soloedSound: state.soloedSound,
-  soundIntervalJitter: { ...state.soundIntervalJitter },
   timelineDurationMs: state.timelineDurationMs,
   globalBaseDbfs: state.globalBaseDbfs,
   maximumFoleySounds: state.maximumFoleySounds,
-  soundSchedulingModes: { ...state.soundSchedulingModes },
   soundTimestamps: { ...state.soundTimestamps },
   soundLoopable: { ...state.soundLoopable },
 });
@@ -205,12 +214,10 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         individualSoundStates: {},
         selectedVariants: {},
         soundVolumes: {},
-        soundIntervals: {},
         soundTrims: {},
         mutedSounds: new Set(),
         soloedSound: null,
         previewingSoundId: null,
-        soundIntervalJitter: {},
         timelineDurationMs: AUDIO_PLAYBACK.TIMELINE_FIXED_DURATION_MS,
         globalBaseDbfs: DEFAULT_DBFS,
         maximumFoleySounds: DEFAULT_MAXIMUM_FOLEY_SOUNDS,
@@ -218,7 +225,6 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         _generatedSounds: [],
         _soundConfigs: [],
         soundBufferDurations: {},
-        soundSchedulingModes: {},
         soundTimestamps: {},
         soundLoopable: {},
         loopAnalysisInProgress: {},
@@ -324,67 +330,6 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             false,
             'audio/handleVolumeChange',
           ),
-
-        handleIntervalChange: (soundId, intervalSeconds) => {
-          // No stopAll(): the transport rebuilds its score reactively from the new
-          // timeline sounds on the very next render — a structural edit like this
-          // no longer needs to interrupt playback to take effect (see Transport.ts).
-          set(
-            (state) => ({
-              soundIntervals: { ...state.soundIntervals, [soundId]: intervalSeconds },
-            }),
-            false,
-            'audio/handleIntervalChange',
-          );
-        },
-
-        handleSchedulingModeChange: (soundId, mode, soundDurationSeconds, explicitTimestampsSeconds) => {
-          set(
-            (state) => {
-              let newTimestamps = { ...state.soundTimestamps };
-
-              if (mode === 'timestamps') {
-                if (explicitTimestampsSeconds && explicitTimestampsSeconds.length > 0) {
-                  // Materialize the interval-mode track exactly as it was shown:
-                  // the caller (DAW lock toggle) passes the currently displayed
-                  // iteration start times in seconds.
-                  newTimestamps = {
-                    ...newTimestamps,
-                    [soundId]: explicitTimestampsSeconds.map((s) => parseFloat(s.toFixed(3))),
-                  };
-                } else {
-                  // Auto-generate timestamps packed tightly (gap = 0) from t=0 up to the
-                  // timeline duration.  Use the actual buffer duration if provided so
-                  // sounds sit exactly back-to-back; fall back to a single t=0 sentinel
-                  // so the list is never empty.
-                  const timelineDurationSec = state.timelineDurationMs / 1000;
-                  const autoTs: number[] = [];
-                  if (soundDurationSeconds && soundDurationSeconds > 0) {
-                    let t = 0;
-                    while (t + soundDurationSeconds <= timelineDurationSec && autoTs.length < 200) {
-                      autoTs.push(parseFloat(t.toFixed(3)));
-                      t += soundDurationSeconds;
-                    }
-                  }
-                  // Always seed at least one timestamp
-                  if (autoTs.length === 0) autoTs.push(0);
-                  newTimestamps = { ...newTimestamps, [soundId]: autoTs };
-                }
-              } else {
-                // Switching back to interval mode — clear the timestamps
-                const { [soundId]: _removed, ...rest } = newTimestamps;
-                newTimestamps = rest;
-              }
-
-              return {
-                soundSchedulingModes: { ...state.soundSchedulingModes, [soundId]: mode },
-                soundTimestamps: newTimestamps,
-              };
-            },
-            false,
-            'audio/handleSchedulingModeChange',
-          );
-        },
 
         handleTimestampsChange: (soundId, timestamps) => {
           // No stopAll(): the transport rebuilds its score reactively (see
@@ -617,7 +562,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
               false,
               'audio/setSoundLoopableOn',
             );
-            // The loop region IS the trim — DAW blocks, interval playback and the
+            // The loop region IS the trim — DAW blocks, playback and the
             // card preview all narrow to it automatically.
             get().setSoundTrim(soundId, {
               start: startFrac,
@@ -652,20 +597,10 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           }
         },
 
-        setSoundIntervalJitter: (soundId, seconds) =>
-          set(
-            (state) => ({
-              soundIntervalJitter: { ...state.soundIntervalJitter, [soundId]: seconds },
-            }),
-            false,
-            'audio/setSoundIntervalJitter',
-          ),
-
-        clearAllSoundIntervalJitter: () =>
-          set({ soundIntervalJitter: {} }, false, 'audio/clearAllSoundIntervalJitter'),
-
-        setTimelineDurationMs: (ms) =>
-          set({ timelineDurationMs: ms }, false, 'audio/setTimelineDurationMs'),
+        setTimelineDurationMs: (ms) => {
+          syncTimelineToActiveScenario(ms);
+          set({ timelineDurationMs: ms }, false, 'audio/setTimelineDurationMs');
+        },
 
         resetTimelineDurationMs: () =>
           set({ timelineDurationMs: AUDIO_PLAYBACK.TIMELINE_FIXED_DURATION_MS }, false, 'audio/resetTimelineDurationMs'),
@@ -767,7 +702,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           setTimeout(() => {
           if (bakeId !== _pendingBakeId) return; // superseded by a newer bake call
 
-          const { _soundConfigs, _generatedSounds, soundTrims, soundTimestamps, soundSchedulingModes, soundBufferDurations, soundIterationDurations } = get();
+          const { _soundConfigs, _generatedSounds, soundTrims, soundTimestamps, soundBufferDurations, soundIterationDurations } = get();
 
           if (!_soundConfigs.some(c => c.orchestrateMeta)) {
             if (bakeId === _pendingBakeId) set({ isBakingSchedule: false }, false, 'audio/bakeOrchestrateSchedule/noop');
@@ -800,7 +735,8 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           _soundConfigs.forEach((config, configIndex) => {
             const meta = config.orchestrateMeta;
             if (!meta) return;
-            // Background sounds stay in interval mode — don't bake them into timestamps.
+            // Background sounds are not parametrically placed — they keep their own
+            // auto/back-to-back schedule and are never overwritten by the bake.
             // Normalize category to handle variations like "background sound" / "background_sound".
             const normCat = (config.category ?? '').toLowerCase().replace(/[\s_-]+/g, '_');
             if (normCat === 'background' || normCat === 'background_sound') return;
@@ -1306,13 +1242,14 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           // Apply resolved timestamps — use actual generated sound ID as key.
           const UNRESOLVED = 999999; // >> any real timeline duration (seconds)
           const newTimestamps = { ...soundTimestamps };
-          const newModes = { ...soundSchedulingModes };
           let anyChange = false;
           let maxResolvedSec = 0; // track furthest resolved timestamp for auto-extending
 
           entryMap.forEach(({ soundId, timestamps, meta, variantDurations }) => {
             if (!soundId) return;
 
+            // Interval-type triggers with nothing resolved yet stay "auto" (no
+            // stored timestamps) — writing UNRESOLVED sentinels would empty them.
             const isIntervalType = meta.trigger.type === 'interval';
             if (isIntervalType && !timestamps.some(t => t !== null)) return;
 
@@ -1344,20 +1281,22 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
               newTimestamps[soundId] = finalTs;
               anyChange = true;
             }
-            if (newModes[soundId] !== 'timestamps') {
-              newModes[soundId] = 'timestamps';
-              anyChange = true;
-            }
           });
 
           // Auto-extend timeline so that all resolved content is visible.
           // Round up to the nearest 30s with a 10s margin.
           const currentDurationMs = get().timelineDurationMs;
           const requiredMs = Math.ceil((maxResolvedSec + 10) / 30) * 30 * 1000;
-          const newDurationMs = Math.min(
-            requiredMs > currentDurationMs ? requiredMs : currentDurationMs,
-            AUDIO_TIMELINE.MAX_DURATION_MS,
-          );
+          // When the active sound section is a scenario card, its own slider
+          // duration is the authoritative DAW timeline bound — never auto-extend
+          // past it (content beyond the bound is trimmed, like any fixed timeline).
+          const activeScenarioMs = getActiveScenarioTimelineMs();
+          const newDurationMs = activeScenarioMs !== null
+            ? activeScenarioMs
+            : Math.min(
+                requiredMs > currentDurationMs ? requiredMs : currentDurationMs,
+                AUDIO_TIMELINE.MAX_DURATION_MS,
+              );
 
           // Compute per-iteration durations (ms) so each DAW block shows its
           // actual variant length rather than the primary copy's length.
@@ -1374,7 +1313,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             newIterDurations[soundId] = iterDursMs;
           });
 
-          // Check whether iteration durations changed separately from timestamps/modes
+          // Check whether iteration durations changed separately from timestamps
           // (buffers can load AFTER timestamps are already resolved, so timestamps won't
           //  flag anyChange but the per-iteration widths still need updating).
           const iterDurationsChanged = Object.keys(newIterDurations).some(k => {
@@ -1389,14 +1328,13 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           if (anyChange || newDurationMs !== currentDurationMs || iterDurationsChanged) {
             set({
               soundTimestamps: newTimestamps,
-              soundSchedulingModes: newModes,
               soundIterationDurations: newIterDurations,
               timelineDurationMs: newDurationMs,
               isBakingSchedule: false,
               isDeferredCycleBakePending: !allDurationsKnown,
             }, false, 'audio/bakeOrchestrateSchedule');
           } else {
-            // Timestamps / modes unchanged but still clear the loading flag.
+            // Timestamps unchanged but still clear the loading flag.
             // Always write newIterDurations so UI picks up correct variant widths.
             set({ isBakingSchedule: false, soundIterationDurations: newIterDurations, isDeferredCycleBakePending: !allDurationsKnown }, false, 'audio/bakeOrchestrateSchedule/done');
           }
@@ -1520,23 +1458,33 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
 
         forceStopAll: () =>
           set(
-            { individualSoundStates: {}, soundVolumes: {}, soundIntervals: {} },
+            { individualSoundStates: {}, soundVolumes: {} },
             false,
             'audio/forceStopAll',
           ),
 
-        restoreVolumeAndIntervals: (volumes, intervals) =>
+        restoreVolumes: (volumes) =>
           set(
-            { soundVolumes: volumes, soundIntervals: intervals },
+            { soundVolumes: volumes },
             false,
-            'audio/restoreVolumeAndIntervals',
+            'audio/restoreVolumes',
           ),
 
-        restoreSchedulingModes: (modes, timestamps) =>
+        restoreSoundTimestamps: (timestamps) =>
           set(
-            { soundSchedulingModes: modes, soundTimestamps: timestamps },
+            { soundTimestamps: timestamps },
             false,
-            'audio/restoreSchedulingModes',
+            'audio/restoreSoundTimestamps',
+          ),
+
+        clearSoundTimestampsEntry: (soundId) =>
+          set(
+            (state) => {
+              const { [soundId]: _removed, ...rest } = state.soundTimestamps;
+              return { soundTimestamps: rest };
+            },
+            false,
+            'audio/clearSoundTimestampsEntry',
           ),
 
         restoreIterationLinks: (links) =>
@@ -1560,16 +1508,13 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
       partialize: audioControlsPartialize,
       equality: (past, current) =>
         JSON.stringify(past.soundVolumes) === JSON.stringify(current.soundVolumes) &&
-        JSON.stringify(past.soundIntervals) === JSON.stringify(current.soundIntervals) &&
         JSON.stringify(past.soundTrims) === JSON.stringify(current.soundTrims) &&
         JSON.stringify(past.selectedVariants) === JSON.stringify(current.selectedVariants) &&
         past.mutedSounds.size === current.mutedSounds.size &&
         [...past.mutedSounds].every((id) => current.mutedSounds.has(id)) &&
         past.soloedSound === current.soloedSound &&
-        JSON.stringify(past.soundIntervalJitter) === JSON.stringify(current.soundIntervalJitter) &&
         past.timelineDurationMs === current.timelineDurationMs &&
         past.globalBaseDbfs === current.globalBaseDbfs &&
-        JSON.stringify(past.soundSchedulingModes) === JSON.stringify(current.soundSchedulingModes) &&
         JSON.stringify(past.soundTimestamps) === JSON.stringify(current.soundTimestamps) &&
         JSON.stringify(past.soundLoopable) === JSON.stringify(current.soundLoopable),
     },

@@ -14,6 +14,7 @@ import soundfile as sf
 import librosa
 from pathlib import Path
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form, Request
+from fastapi.concurrency import run_in_threadpool
 from typing import Optional
 from utils.audio_processing import ensure_mono
 from services.paths import GENERATED_SOUNDS_PARENT, user_audio_dir
@@ -90,7 +91,9 @@ async def extract_sed_segments(
 
         # Read audio once for slicing — librosa handles formats libsndfile
         # cannot decode (m4a/aac/mp3), and returns mono float in [-1, 1]
-        audio_np, sample_rate = librosa.load(source_path, sr=None, mono=True)
+        audio_np, sample_rate = await run_in_threadpool(
+            librosa.load, source_path, sr=None, mono=True
+        )
         audio_np = ensure_mono(audio_np)
         total_samples = audio_np.shape[0]
 
@@ -128,7 +131,8 @@ async def extract_sed_segments(
                 out_filename = f"sed_{safe_name}_{seg_idx}_{session_id}.wav"
                 out_path = os.path.join(GENERATED_SOUNDS_DIR, out_filename)
                 try:
-                    _audio_service.calibrate_audio_file(
+                    await run_in_threadpool(
+                        _audio_service.calibrate_audio_file,
                         input_path=temp_seg_path,
                         output_path=out_path,
                         target_dbfs=target_dbfs,

@@ -48,6 +48,78 @@ async function fetchWithErrorHandling(
   }
 }
 
+// ─── Unified job-store polling (GET/POST /api/jobs/{id} and /cancel) ────────
+//
+// All generation/simulation jobs now live on the Redis job store and are polled
+// and cancelled through the unified routers/jobs.py endpoints. The per-domain
+// status/cancel routes were deleted. The wrappers below translate the unified
+// response back into the legacy envelope the stores/hooks were written against,
+// so call sites keep working unchanged.
+
+const JOB_LIMIT_MESSAGE =
+  'Too many generations already running for this session. Please wait for one to finish before starting another.';
+
+/** Raw unified job-store status (JobStatusResponse from routers/jobs.py). */
+interface UnifiedJobStatus {
+  job_id: string;
+  type: string;
+  status: string; // 'queued' | 'running' | 'completed' | 'cancelled' | 'error'
+  progress: number;
+  status_text: string;
+  queue_position: number | null;
+  queue_total: number | null;
+  // Result shape varies per job type (array of sounds, dict, metrics, …).
+  partial: any;
+  result: any;
+  error: string | null;
+}
+
+/** GET /api/jobs/{id} → raw unified status. */
+async function getUnifiedJobStatus(jobId: string): Promise<UnifiedJobStatus> {
+  const response = await fetchWithErrorHandling(
+    `${API_BASE_URL}/api/jobs/${jobId}`,
+    undefined,
+    'Job status'
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: 'Failed to get job status' }));
+    throw new Error(err.detail || 'Failed to get job status');
+  }
+  return response.json();
+}
+
+/** POST /api/jobs/{id}/cancel — cancel is best-effort, never throws. */
+async function cancelUnifiedJob(jobId: string): Promise<void> {
+  try {
+    await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/jobs/${jobId}/cancel`,
+      { method: 'POST' },
+      'Cancel job'
+    );
+  } catch {
+    // Silently fail — cancel is best-effort
+  }
+}
+
+/**
+ * Translate the unified job-store status into the legacy per-domain envelope
+ * (`completed`/`cancelled` booleans, human `status` text, `partial_sounds`
+ * alias for `partial`) so stores and hooks don't need to change.
+ */
+function toLegacyJobStatus(job: UnifiedJobStatus) {
+  return {
+    progress: job.progress,
+    status: job.status_text || job.status,
+    completed: job.status === 'completed',
+    cancelled: job.status === 'cancelled',
+    error: job.error,
+    result: job.result,
+    partial_sounds: job.partial,
+    queue_position: job.queue_position,
+    queue_total: job.queue_total,
+  };
+}
+
 export interface ServiceVersionInfo {
   name: string;
   version: string;
@@ -194,13 +266,14 @@ export const apiService = {
         throw new Error(errorMessage);
       }
 
-      return await response.json();
+      const json = await response.json();
+      return { ...json, generation_id: json.job_id };
     } catch (error) {
       handleApiError(error, 'Generate text');
     }
   },
 
-  // Poll text generation status
+  // Poll text generation status (via unified /api/jobs/{id})
   async getTextGenerationStatus(generationId: string): Promise<{
     generation_id: string;
     progress: number;
@@ -212,36 +285,16 @@ export const apiService = {
     queue_position?: number | null;
     queue_total?: number | null;
   }> {
-    try {
-      const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/text-generation-status/${generationId}`,
-        undefined,
-        'Text generation status'
-      );
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({ detail: 'Failed to get status' }));
-        throw new Error(err.detail || 'Failed to get text generation status');
-      }
-      return await response.json();
-    } catch (error) {
-      handleApiError(error, 'Text generation status');
-    }
+    const job = await getUnifiedJobStatus(generationId);
+    return { generation_id: generationId, ...toLegacyJobStatus(job) };
   },
 
-  // Cancel text generation
+  // Cancel text generation (via unified /api/jobs/{id}/cancel)
   async cancelTextGeneration(generationId: string): Promise<void> {
-    try {
-      await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/cancel-text-generation/${generationId}`,
-        { method: 'POST' },
-        'Cancel text generation'
-      );
-    } catch {
-      // Silently fail — cancel is best-effort
-    }
+    await cancelUnifiedJob(generationId);
   },
 
-  // Generate Sounds (async — returns generation_id for polling)
+  // Generate Sounds (async — returns job_id for polling via /api/jobs/{id})
   async generateSounds(data: {
     sounds: SoundGenerationConfig[];
     bounding_box: { min: number[]; max: number[] } | null;
@@ -249,7 +302,7 @@ export const apiService = {
     trim_silence?: boolean;
     audio_model?: string;
     base_dbfs?: number;
-  }): Promise<{ generation_id: string }> {
+  }): Promise<{ generation_id: string } & { job_id: string }> {
     try {
       const response = await fetchWithErrorHandling(
         `${API_BASE_URL}/api/generate-sounds`,
@@ -263,16 +316,22 @@ export const apiService = {
 
       if (!response.ok) {
         const err = await response.json().catch(() => ({ detail: 'Failed to generate sounds' }));
+        if (response.status === 429) {
+          throw new Error(JOB_LIMIT_MESSAGE);
+        }
         throw new Error(err.detail || 'Failed to generate sounds');
       }
 
-      return await response.json();
+      const json = await response.json();
+      // Backend now returns {job_id, position, total} — expose the legacy
+      // generation_id alias so existing call sites keep working.
+      return { ...json, generation_id: json.job_id };
     } catch (error) {
       handleApiError(error, 'Generate sounds');
     }
   },
 
-  // Poll sound generation status
+  // Poll sound generation status (via unified /api/jobs/{id})
   async getSoundGenerationStatus(generationId: string): Promise<{
     generation_id: string;
     progress: number;
@@ -285,33 +344,13 @@ export const apiService = {
     queue_position?: number | null;
     queue_total?: number | null;
   }> {
-    try {
-      const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/sound-generation-status/${generationId}`,
-        undefined,
-        'Sound generation status'
-      );
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({ detail: 'Failed to get status' }));
-        throw new Error(err.detail || 'Failed to get sound generation status');
-      }
-      return await response.json();
-    } catch (error) {
-      handleApiError(error, 'Sound generation status');
-    }
+    const job = await getUnifiedJobStatus(generationId);
+    return { generation_id: generationId, ...toLegacyJobStatus(job) };
   },
 
-  // Cancel sound generation
+  // Cancel sound generation (via unified /api/jobs/{id}/cancel)
   async cancelSoundGeneration(generationId: string): Promise<void> {
-    try {
-      await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/cancel-sound-generation/${generationId}`,
-        { method: 'POST' },
-        'Cancel sound generation'
-      );
-    } catch {
-      // Silently fail — cancel is best-effort
-    }
+    await cancelUnifiedJob(generationId);
   },
 
   // Delete a single SED-extracted segment audio file (one variant of an
@@ -344,12 +383,12 @@ export const apiService = {
     }
   },
 
-  // Generate TTS (async — returns generation_id for polling)
+  // Generate TTS (async — returns job_id for polling via /api/jobs/{id})
   async generateTTS(data: {
     texts: { text: string; voice_name?: string; display_name?: string; position?: number[]; dbfs?: number; prompt_index?: number; copy_index?: number; total_copies?: number }[];
     language?: string;
     tts_model?: string;
-  }): Promise<{ generation_id: string }> {
+  }): Promise<{ generation_id: string } & { job_id: string }> {
     try {
       const response = await fetchWithErrorHandling(
         `${API_BASE_URL}/api/generate-tts`,
@@ -364,13 +403,14 @@ export const apiService = {
         const err = await response.json().catch(() => ({ detail: 'Failed to generate TTS' }));
         throw new Error(err.detail || 'Failed to generate TTS');
       }
-      return await response.json();
+      const json = await response.json();
+      return { ...json, generation_id: json.job_id };
     } catch (error) {
       handleApiError(error, 'Generate TTS');
     }
   },
 
-  // Poll TTS generation status
+  // Poll TTS generation status (via unified /api/jobs/{id})
   async getTTSGenerationStatus(generationId: string): Promise<{
     generation_id: string;
     progress: number;
@@ -383,37 +423,13 @@ export const apiService = {
     queue_position?: number | null;
     queue_total?: number | null;
   }> {
-    try {
-      const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/tts-generation-status/${generationId}`,
-        undefined,
-        'TTS generation status'
-      );
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({ detail: 'Failed to get TTS status' }));
-        throw new Error(err.detail || 'Failed to get TTS generation status');
-      }
-      const json = await response.json();
-      if (json.result || json.partial_sounds) {
-        const list = json.result || json.partial_sounds;
-      }
-      return json;
-    } catch (error) {
-      handleApiError(error, 'TTS generation status');
-    }
+    const job = await getUnifiedJobStatus(generationId);
+    return { generation_id: generationId, ...toLegacyJobStatus(job) };
   },
 
-  // Cancel TTS generation
+  // Cancel TTS generation (via unified /api/jobs/{id}/cancel)
   async cancelTTSGeneration(generationId: string): Promise<void> {
-    try {
-      await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/cancel-tts-generation/${generationId}`,
-        { method: 'POST' },
-        'Cancel TTS generation'
-      );
-    } catch {
-      // Silently fail — cancel is best-effort
-    }
+    await cancelUnifiedJob(generationId);
   },
 
   // Calibrate Audio (normalize RMS + dBFS calibration for non-ML audio modes)
@@ -452,9 +468,9 @@ export const apiService = {
   /**
    * Enqueue a seamless-loop-region analysis for an existing generated sound.
    * @param soundUrl - The generated sound's static URL (e.g. /static/sounds/generated/<sid>/<file>.wav)
-   * @returns analysis_id to poll with getLoopAnalysisStatus
+   * @returns analysis_id to poll via /api/jobs/{id}
    */
-  async analyzeLoop(soundUrl: string): Promise<{ analysis_id: string }> {
+  async analyzeLoop(soundUrl: string): Promise<{ analysis_id: string } & { job_id: string }> {
     try {
       const response = await fetchWithErrorHandling(
         `${API_BASE_URL}/api/analyze-loop`,
@@ -471,7 +487,8 @@ export const apiService = {
         throw new Error(err.detail || 'Loop analysis failed');
       }
 
-      return await response.json();
+      const json = await response.json();
+      return { ...json, analysis_id: json.job_id };
     } catch (error) {
       handleApiError(error, 'Loop analysis');
     }
@@ -484,25 +501,12 @@ export const apiService = {
     status: string;
     progress: number;
     completed: boolean;
+    cancelled: boolean;
     error?: string | null;
     result?: { start: number; end: number; length_sec?: number; match_score?: number } | null;
   }> {
-    try {
-      const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/analyze-loop-status/${analysisId}`,
-        { method: 'GET' },
-        'Loop analysis status'
-      );
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({ detail: 'Status failed' }));
-        throw new Error(err.detail || 'Loop analysis status failed');
-      }
-
-      return await response.json();
-    } catch (error) {
-      handleApiError(error, 'Loop analysis status');
-    }
+    const job = await getUnifiedJobStatus(analysisId);
+    return toLegacyJobStatus(job);
   },
 
   // Cleanup Generated Sounds
@@ -786,7 +790,7 @@ export const apiService = {
     }>,
     geometryObjectIds?: string[],
     objectScattering?: Record<string, number>
-  ): Promise<{ simulation_id: string }> {
+  ): Promise<{ simulation_id: string } & { job_id: string }> {
     try {
       const formData = new FormData();
       formData.append('simulation_name', simulationName);
@@ -827,14 +831,16 @@ export const apiService = {
         throw new Error(error.detail || 'Speckle simulation failed');
       }
 
-      return response.json();
+      const json = await response.json();
+      return { ...json, simulation_id: json.job_id };
     } catch (error) {
       handleApiError(error, 'Run Pyroomacoustics Speckle simulation');
     }
   },
 
   /**
-   * Poll the status of a queued or running Pyroomacoustics simulation.
+   * Poll the status of a queued or running Pyroomacoustics simulation (via
+   * unified GET /api/jobs/{id}).
    * Call every ~1 second while isRunning=true.
    */
   async getPyroomacousticsSimulationStatus(simulationId: string): Promise<{
@@ -853,36 +859,16 @@ export const apiService = {
     queue_position?: number | null;
     queue_total?: number | null;
   }> {
-    try {
-      const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/pyroomacoustics/simulation-status/${simulationId}`,
-        undefined,
-        'Get Pyroomacoustics simulation status'
-      );
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ detail: 'Status check failed' }));
-        throw new Error(error.detail || 'Status check failed');
-      }
-      return response.json();
-    } catch (error) {
-      handleApiError(error, 'Get Pyroomacoustics simulation status');
-    }
+    const job = await getUnifiedJobStatus(simulationId);
+    return { simulation_id: simulationId, ...toLegacyJobStatus(job) };
   },
 
   /**
-   * Signal the backend to cancel a running or queued Pyroomacoustics simulation.
+   * Signal the backend to cancel a running or queued Pyroomacoustics simulation
+   * (via unified POST /api/jobs/{id}/cancel).
    */
   async cancelPyroomacousticsSimulation(simulationId: string): Promise<void> {
-    try {
-      await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/pyroomacoustics/cancel-simulation/${simulationId}`,
-        { method: 'POST' },
-        'Cancel Pyroomacoustics simulation'
-      );
-    } catch (error) {
-      // Non-fatal: log but don't rethrow
-      console.warn('cancelPyroomacousticsSimulation:', error);
-    }
+    await cancelUnifiedJob(simulationId);
   },
 
   /**
@@ -897,11 +883,10 @@ export const apiService = {
     irFilename: string
   ): Promise<Blob> {
     try {
-      const url = new URL(`${API_BASE_URL}/api/pyroomacoustics/get-result-file/${simulationId}/wav`);
-      url.searchParams.append('ir_filename', irFilename);
+      const url = `${API_BASE_URL}/api/pyroomacoustics/get-result-file/${simulationId}/wav?ir_filename=${encodeURIComponent(irFilename)}`;
 
       const response = await fetchWithErrorHandling(
-        url.toString(),
+        url,
         undefined,
         'Get Pyroomacoustics IR file'
       );
@@ -975,11 +960,7 @@ export const apiService = {
       receiver_id: string;
     }>,
     geometryObjectIds?: string[],
-  ): Promise<{
-    simulation_id: string;
-    total_steps: number;
-    method: string;
-  }> {
+  ): Promise<{ simulation_id: string } & { job_id: string }> {
     try {
       const formData = new FormData();
       formData.append('simulation_name', simulationName);
@@ -1013,14 +994,16 @@ export const apiService = {
         const error = await response.json().catch(() => ({ detail: 'Choras simulation failed' }));
         throw new Error(error.detail || 'Choras simulation failed');
       }
-      return response.json();
+      const json = await response.json();
+      return { ...json, simulation_id: json.job_id };
     } catch (error) {
       handleApiError(error, 'Start Choras Speckle simulation');
     }
   },
 
   /**
-   * Poll the status of a running (or recently completed) Choras simulation.
+   * Poll the status of a running (or recently completed) Choras simulation (via
+   * unified GET /api/jobs/{id}).
    * Call every ~1 second while isRunning=true.
    */
   async getChorasSimulationStatus(simulationId: string): Promise<{
@@ -1037,38 +1020,19 @@ export const apiService = {
       results_file: string;
       method: string;
     } | null;
+    queue_position?: number | null;
+    queue_total?: number | null;
   }> {
-    try {
-      const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/choras/simulation-status/${simulationId}`,
-        undefined,
-        'Get Choras simulation status'
-      );
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ detail: 'Status check failed' }));
-        throw new Error(error.detail || 'Status check failed');
-      }
-      return response.json();
-    } catch (error) {
-      handleApiError(error, 'Get Choras simulation status');
-    }
+    const job = await getUnifiedJobStatus(simulationId);
+    return { simulation_id: simulationId, ...toLegacyJobStatus(job) };
   },
 
   /**
-   * Signal the backend to cancel a running Choras simulation.
-   * The worker thread stops after the current pair/source step completes.
+   * Signal the backend to cancel a running Choras simulation (via unified
+   * POST /api/jobs/{id}/cancel). The worker kills the child process.
    */
   async cancelChorasSimulation(simulationId: string): Promise<void> {
-    try {
-      await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/choras/cancel-simulation/${simulationId}`,
-        { method: 'POST' },
-        'Cancel Choras simulation'
-      );
-    } catch (error) {
-      // Non-fatal: log but don't rethrow — UI already shows cancelled state
-      console.warn('cancelChorasSimulation:', error);
-    }
+    await cancelUnifiedJob(simulationId);
   },
 
   /**
@@ -1076,11 +1040,10 @@ export const apiService = {
    */
   async getChorasIRFile(simulationId: string, irFilename: string): Promise<Blob> {
     try {
-      const url = new URL(`${API_BASE_URL}/api/choras/get-result-file/${simulationId}/wav`);
-      url.searchParams.append('ir_filename', irFilename);
+      const url = `${API_BASE_URL}/api/choras/get-result-file/${simulationId}/wav?ir_filename=${encodeURIComponent(irFilename)}`;
 
       const response = await fetchWithErrorHandling(
-        url.toString(),
+        url,
         undefined,
         'Get Choras IR file'
       );
@@ -1338,7 +1301,7 @@ export const apiService = {
 
   // ── SED analysis (queued) ─────────────────────────────────────────────────
 
-  async startSEDAnalysis(formData: FormData): Promise<{ task_id: string }> {
+  async startSEDAnalysis(formData: FormData): Promise<{ task_id: string } & { job_id: string }> {
     const response = await fetchWithErrorHandling(
       `${API_BASE_URL}/api/analyze-sound-events`,
       {
@@ -1351,7 +1314,8 @@ export const apiService = {
       const err = await response.json().catch(() => ({ detail: 'Failed to start SED analysis' }));
       throw new Error(err.detail || 'Failed to start SED analysis');
     }
-    return response.json();
+    const json = await response.json();
+    return { ...json, task_id: json.job_id };
   },
 
   async getSEDAnalysisStatus(taskId: string): Promise<{
@@ -1360,26 +1324,17 @@ export const apiService = {
     status: string;
     completed: boolean;
     cancelled: boolean;
-    error?: string;
+    error?: string | null;
     result?: { audio_info: any; detected_sounds: any[]; total_classes_analyzed: number };
-    queue_position?: number;
-    queue_total?: number;
+    queue_position?: number | null;
+    queue_total?: number | null;
   }> {
-    const response = await fetchWithErrorHandling(
-      `${API_BASE_URL}/api/sed-analysis-status/${taskId}`,
-      undefined,
-      'SED analysis status',
-    );
-    if (!response.ok) throw new Error('Failed to get SED analysis status');
-    return response.json();
+    const job = await getUnifiedJobStatus(taskId);
+    return { task_id: taskId, ...toLegacyJobStatus(job) };
   },
 
   async cancelSEDAnalysis(taskId: string): Promise<void> {
-    await fetchWithErrorHandling(
-      `${API_BASE_URL}/api/cancel-sed-analysis/${taskId}`,
-      { method: 'POST' },
-      'Cancel SED analysis',
-    );
+    await cancelUnifiedJob(taskId);
   },
 
   // ─── 3D Model Analysis ─────────────────────────────────────────────────────
@@ -1389,7 +1344,7 @@ export const apiService = {
     screenshots?: string[] | null;
     user_context?: string | null;
     llm_model?: string;
-  }): Promise<{ analysis_id: string }> {
+  }): Promise<{ analysis_id: string } & { job_id: string }> {
     const response = await fetchWithErrorHandling(
       `${API_BASE_URL}/api/analyze-3dmodel`,
       {
@@ -1403,42 +1358,28 @@ export const apiService = {
       const err = await response.json().catch(() => ({ detail: 'Failed to start model analysis' }));
       throw new Error(err.detail || 'Failed to start model analysis');
     }
-    return response.json();
+    const json = await response.json();
+    return { ...json, analysis_id: json.job_id };
   },
 
   async getModelAnalysisStatus(analysisId: string): Promise<ModelAnalysisStatusResponse> {
-    const response = await fetchWithErrorHandling(
-      `${API_BASE_URL}/api/analyze-3dmodel-status/${analysisId}`,
-      undefined,
-      'Model analysis status',
-    );
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ detail: 'Failed to get status' }));
-      throw new Error(err.detail || 'Failed to get model analysis status');
-    }
-    return response.json();
+    const job = await getUnifiedJobStatus(analysisId);
+    return { analysis_id: analysisId, ...toLegacyJobStatus(job) };
   },
 
   async cancelModelAnalysis(analysisId: string): Promise<void> {
-    try {
-      await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/cancel-model-analysis/${analysisId}`,
-        { method: 'POST' },
-        'Cancel model analysis',
-      );
-    } catch {
-      // Silently fail — cancel is best-effort
-    }
+    await cancelUnifiedJob(analysisId);
   },
 
   // ─── Job Recovery ───────────────────────────────────────────────────────
 
   /**
-   * Generic job status polling — dispatches to the correct endpoint based on jobType.
-   * Used by useJobRecovery to resume polling for in-flight jobs after a page refresh.
+   * Generic job status polling — routes every job type to the unified
+   * GET /api/jobs/{id} endpoint (the per-domain status routes were deleted).
+   * Used by useJobRecovery to resume polling for in-flight jobs after a refresh.
    *
-   * Returns a JobStatus envelope. The `result` field shape varies by job type;
-   * callers handle it based on jobType.
+   * Returns a JobStatus envelope translated from the unified response. The
+   * `result` field shape varies by job type; callers handle it based on jobType.
    */
   async getJobStatus(jobType: JobType, jobId: string): Promise<{
     completed: boolean;
@@ -1449,31 +1390,11 @@ export const apiService = {
     result?: any;
     partial_sounds?: any[];
   }> {
-    const endpointMap: Record<JobType, string> = {
-      sound: `${API_BASE_URL}/api/sound-generation-status/${jobId}`,
-      tts: `${API_BASE_URL}/api/tts-generation-status/${jobId}`,
-      llm: `${API_BASE_URL}/api/text-generation-status/${jobId}`,
-      sed: `${API_BASE_URL}/api/sed-analysis-status/${jobId}`,
-      choras: `${API_BASE_URL}/api/choras/simulation-status/${jobId}`,
-      pyroom: `${API_BASE_URL}/api/pyroomacoustics/simulation-status/${jobId}`,
-      model_analysis: `${API_BASE_URL}/api/analyze-3dmodel-status/${jobId}`,
-    };
-
-    const url = endpointMap[jobType];
-    if (!url) {
-      throw new Error(`Unknown job type: ${jobType}`);
-    }
-
-    const response = await fetchWithErrorHandling(
-      url,
-      undefined,
-      `Get job status for ${jobType}/${jobId}`,
-    );
-
-    if (!response.ok) {
+    try {
+      const job = await getUnifiedJobStatus(jobId);
+      return toLegacyJobStatus(job);
+    } catch {
       return { completed: false, cancelled: false, error: 'Job not found or expired', progress: 0, status: 'unknown' };
     }
-
-    return response.json();
   },
 };

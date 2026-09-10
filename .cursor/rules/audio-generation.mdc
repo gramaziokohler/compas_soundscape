@@ -1,6 +1,6 @@
 ---
-description: AI audio generation pipeline — TangoFlux / AudioLDM2, sounds worker, variant system, store generation flow
-globs: backend/routers/sounds.py,backend/services/audio_service.py,backend/services/sounds_worker.py,frontend/src/store/soundscapeStore.ts,frontend/src/components/layout/sidebar/sound/SoundResultContent.tsx,frontend/src/components/layout/sidebar/SoundGenerationSection.tsx,frontend/src/components/layout/sidebar/sound/SoundPreContent.tsx,frontend/src/components/layout/sidebar/sound/TextToAudioMode.tsx
+description: AI audio generation pipeline — TangoFlux GPU worker, clip plan, variant system, store generation flow
+globs: backend/routers/sounds.py,backend/services/audio_service.py,backend/workers/gpu_runner.py,backend/workers/worker_main.py,frontend/src/store/soundscapeStore.ts,frontend/src/components/layout/sidebar/sound/SoundResultContent.tsx,frontend/src/components/layout/sidebar/SoundGenerationSection.tsx,frontend/src/components/layout/sidebar/sound/SoundPreContent.tsx,frontend/src/components/layout/sidebar/sound/TextToAudioMode.tsx
 ---
 
 # Audio Generation Rules
@@ -11,24 +11,26 @@ globs: backend/routers/sounds.py,backend/services/audio_service.py,backend/servi
 User clicks "Generate"
   └─ soundscapeStore.handleGenerateInternal()
        └─ apiService.generateSounds({ sounds: configs[], ... })
-            └─ POST /api/generate-sounds  →  router enqueues
-                 └─ sounds_worker.run_sound_generation()  [subprocess]
-                      └─ AudioService.generate_sound_file()  [TangoFlux / AudioLDM2]
-                           → WAV saved to temp/static/sounds/generated/<session_id>/
-  └─ Poll GET /api/sound-generation-status/<generation_id>  every 1500ms
-       └─ Streams partial_sounds into generatedSounds as they complete
+            └─ POST /api/generate-sounds  →  routers/sounds.py builds the clip plan
+                 └─ job_store.enqueue("sound", ...)  →  Redis queue:gpu
+                      └─ workers/gpu_runner.py  [resident TangoFlux model]
+                           └─ AudioService.generate_sound_file()
+                                → WAV saved to temp/static/sounds/generated/<session_id>/
+  └─ Poll GET /api/jobs/<job_id>  every 1500ms (via apiService.getSoundGenerationStatus)
+       └─ Streams partial_sounds into generatedSounds as each clip completes
 ```
 
 ## Key Files
 
 | File | Role |
 |------|------|
-| `backend/routers/sounds.py` | `POST /api/generate-sounds` — validates, enqueues via `unified_queue`, returns `generation_id` |
-| `backend/services/sounds_worker.py` | Subprocess runner — iterates configs, generates each WAV, writes progress/result JSON atomically |
-| `backend/services/audio_service.py` | ML model wrappers — `TangoFluxInference`, `AudioLDM2Service`, post-processing (RMS norm, denoise, SPL calibration) |
-| `backend/services/task_queue.py` | `make_subprocess_runner` + progress-file polling + cancel support |
+| `backend/routers/sounds.py` | `POST /api/generate-sounds` — validates, builds the flat clip plan (`_build_clip_plan`), enqueues via `job_store.enqueue`, returns `{job_id, position, total}` |
+| `backend/workers/gpu_runner.py` | Resident-TangoFlux GPU worker — leases `queue:gpu`, warms the model once, cooperative cancel, clip-level yielding |
+| `backend/workers/worker_main.py` | `python -m workers.worker_main --role gpu --slots 1 --worker-id gpu-1` (×2 for two lanes) |
+| `backend/services/audio_service.py` | ML model wrappers — `TangoFluxInference` (AudioLDM2 is NOT loaded by workers), post-processing (RMS norm, denoise, SPL calibration) |
+| `backend/services/job_store.py` | Redis job store — `enqueue`/`set_progress`/`complete`/`requeue_tail`, per-session GPU cap (HTTP 429) |
 | `frontend/src/store/soundscapeStore.ts` | `handleGenerateInternal`, `handleGenerateSingle`, `handleRegenerateSingle`, `handleDeleteVariant` |
-| `frontend/src/services/api.ts` | `generateSounds()`, `getSoundGenerationStatus()` |
+| `frontend/src/services/api.ts` | `generateSounds()`, `getSoundGenerationStatus()` (wraps unified `GET /api/jobs/{id}`) |
 | `frontend/src/components/layout/sidebar/SoundGenerationSection.tsx` | Card list rendering, pre-gen / post-gen view switching |
 | `frontend/src/components/layout/sidebar/sound/SoundResultContent.tsx` | Post-gen card body — WaveSurfer, variant bar (A/B/C + add + delete) |
 | `frontend/src/components/layout/sidebar/sound/SoundPreContent.tsx` | Pre-gen card body — config UI (text-to-audio, upload, library pickers) |
@@ -48,13 +50,13 @@ The store exposes three generation entry points, all routing into `handleGenerat
 `handleGenerateInternal` (at soundscapeStore.ts:392) is the core orchestrator. It:
 1. Skips already-generated config indices (tracks `alreadyGenerated` set from `soundscapeData`)
 2. Splits configs by type: ML generation (TangoFlux/AudioLDM2), ElevenLabs, TTS, upload, library, catalog
-3. For ML: submits via `apiService.generateSounds()`, polls via `getSoundGenerationStatus()`, streams `partial_sounds` into `generatedSounds` as each sound completes
+3. For ML: submits via `apiService.generateSounds()`, polls via `getSoundGenerationStatus()` (wraps the unified `GET /api/jobs/{job_id}`), streams `partial_sounds` into `generatedSounds` as each sound completes
 4. `mapBackendSound()` remaps batch-relative IDs to config-absolute IDs to avoid collision
 5. Merges results into `soundscapeData` and `generatedSounds`
 
 ## Backend — Hash-Based Deduplication
 
-The worker (`sounds_worker.py:129`) computes a parameter hash to determine the output filename:
+The clip plan builder (`routers/sounds.py::_build_clip_plan`) computes a parameter hash to determine the output filename:
 
 ```python
 param_string = f"{prompt}_{duration}_{guidance_scale}_{steps}_{apply_denoising}_{audio_model}"
@@ -62,24 +64,25 @@ param_hash = hashlib.md5(param_string.encode()).hexdigest()[:PARAM_HASH_LENGTH]
 filename = f"{short_prompt}_{param_hash}_copy{copy_idx}.wav"
 ```
 
-If the file already exists, generation is **skipped** and the existing file URL is returned.
+If the file already exists, the GPU worker **skips** generation and returns the existing file URL.
 This means identical parameters produce identical filenames — perfect for deduplication on re-submission,
 but **prevents regeneration from producing a genuinely new file**.
 
 ### Regeneration Uniqueness Fix
 
 For regeneration (user clicks "+" on a variant bar), the frontend adds `_regeneration_ts: Date.now()`
-to the config dict. The worker checks for this field:
+to the config dict. The clip plan builder checks for this field:
 
 ```python
-# sounds_worker.py:130-132
+# routers/sounds.py — _build_clip_plan()
 regeneration_ts = cfg.get("_regeneration_ts", "")
 if regeneration_ts:
     param_string += f"_{regeneration_ts}"
 ```
 
-**The hash lives in a single place — `sounds_worker.py`.** Keep the `_regeneration_ts` field in sync
-with the frontend; omitting it causes silent deduplication on regenerate.
+**The hash lives in a single place — `routers/sounds.py::_build_clip_plan`.** Keep the
+`_regeneration_ts` field in sync with the frontend; omitting it causes silent deduplication on
+regenerate.
 
 ## Variant System
 

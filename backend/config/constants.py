@@ -144,6 +144,12 @@ FORCE_CPU_MODE = os.environ.get("FORCE_CPU_MODE", "false").lower() == "true"
 
 # TangoFlux Model
 TANGOFLUX_MODEL_NAME = "declare-lab/TangoFlux"
+# Optional: "bfloat16" halves VRAM (~9-10GB vs ~18-20GB fp32) at a small quality cost.
+# Leave unset (None) for full fp32 precision.
+TANGOFLUX_DTYPE = os.environ.get("TANGOFLUX_DTYPE") or None
+# GPU worker warm-up generation (paid once at process startup, not per-request)
+TANGOFLUX_WARMUP_DURATION_SECONDS = 1
+TANGOFLUX_WARMUP_STEPS = 2
 
 # AudioLDM2 Model
 AUDIOLDM2_MODEL_NAME = "cvssp/audioldm2-large"
@@ -665,7 +671,7 @@ SPECKLE_SUPPORTED_FORMATS = ["3dm", "obj", "ifc"]
 # ============================================================================
 
 # Local storage for saved soundscapes (per model_id)
-# Lives outside temp/ so it is NOT cleared on startup by cleanup_all_temp_directories
+# Lives outside temp/ so it is NOT touched by the age-based temp janitor
 SOUNDSCAPE_DATA_DIR = str(BACKEND_DIR / "data" / "soundscapes")
 SOUNDSCAPE_DATA_URL_PREFIX = "/soundscapes"
 
@@ -675,3 +681,68 @@ SPECKLE_SOUNDSCAPE_PINK_COLOR = -720712
 SPECKLE_SOUNDSCAPE_COLLECTION_NAME = "Soundscape"
 SPECKLE_SOUND_SOURCES_COLLECTION_NAME = "Sound Sources"
 SPECKLE_RECEIVERS_COLLECTION_NAME = "Receivers"
+
+# ============================================================================
+# Job Store (Redis) Configuration
+# ============================================================================
+
+# Connection
+REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
+
+# Worker pool sizes (env-configurable so a single machine can be retuned
+# without a code change; see deploy/README.md)
+GPU_WORKER_SLOTS = int(os.environ.get("GPU_WORKER_SLOTS", "2"))
+CPU_WORKER_SLOTS = int(os.environ.get("CPU_WORKER_SLOTS", "4"))
+CHORAS_WORKER_SLOTS = int(os.environ.get("CHORAS_WORKER_SLOTS", "1"))
+
+# Fairness / rate limiting
+GPU_QUEUE_PER_SESSION_MAX = int(os.environ.get("GPU_QUEUE_PER_SESSION_MAX", "3"))
+
+# In-process asyncio concurrency (LLM / TTS — network-bound, no subprocess)
+LLM_MAX_CONCURRENT = int(os.environ.get("LLM_MAX_CONCURRENT", "8"))
+TTS_MAX_CONCURRENT = int(os.environ.get("TTS_MAX_CONCURRENT", "2"))
+
+# Job lifecycle
+JOB_HEARTBEAT_TIMEOUT_S = int(os.environ.get("JOB_HEARTBEAT_TIMEOUT_S", "90"))
+JOB_RESULT_TTL_S = int(os.environ.get("JOB_RESULT_TTL_S", "3600"))
+JOB_REAPER_INTERVAL_S = int(os.environ.get("JOB_REAPER_INTERVAL_S", "30"))
+JOB_MAX_ATTEMPTS = int(os.environ.get("JOB_MAX_ATTEMPTS", "2"))
+WORKER_HEARTBEAT_INTERVAL_S = int(os.environ.get("WORKER_HEARTBEAT_INTERVAL_S", "10"))
+
+# SSE
+SSE_KEEPALIVE_INTERVAL_S = int(os.environ.get("SSE_KEEPALIVE_INTERVAL_S", "15"))
+
+# Janitor (replaces the startup temp wipe — see utils/file_operations.py)
+TEMP_JANITOR_MAX_AGE_H = int(os.environ.get("TEMP_JANITOR_MAX_AGE_H", "24"))
+TEMP_JANITOR_INTERVAL_S = int(os.environ.get("TEMP_JANITOR_INTERVAL_S", "3600"))
+
+# Job types (queue names in Redis)
+JOB_TYPE_SOUND = "sound"
+JOB_TYPE_PYROOMACOUSTICS = "pyroomacoustics"
+JOB_TYPE_SED = "sed"
+JOB_TYPE_LOOP = "loop"
+JOB_TYPE_CHORAS = "choras"
+
+# IO job types (asyncio.create_task in the API process — no queue, no worker)
+JOB_TYPE_LLM = "llm"
+JOB_TYPE_MODEL_ANALYSIS = "model_analysis"
+JOB_TYPE_TTS = "tts"
+IO_JOB_TYPES = (JOB_TYPE_LLM, JOB_TYPE_MODEL_ANALYSIS, JOB_TYPE_TTS)
+
+# Job statuses
+JOB_STATUS_QUEUED = "queued"
+JOB_STATUS_RUNNING = "running"
+JOB_STATUS_COMPLETED = "completed"
+JOB_STATUS_CANCELLED = "cancelled"
+JOB_STATUS_ERROR = "error"
+
+# Redis queue names per job type -> worker role
+JOB_TYPE_QUEUE = {
+    JOB_TYPE_SOUND: "queue:gpu",
+    JOB_TYPE_PYROOMACOUSTICS: "queue:cpu",
+    JOB_TYPE_SED: "queue:cpu",
+    JOB_TYPE_LOOP: "queue:cpu",
+    JOB_TYPE_CHORAS: "queue:choras",
+}
+
+JOB_CANCEL_CHANNEL = "job:cancel"

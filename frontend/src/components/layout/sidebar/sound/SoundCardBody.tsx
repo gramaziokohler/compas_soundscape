@@ -14,12 +14,11 @@ import { useBatchedSlider } from '@/hooks/useBatchedSlider';
  *   - Left column:
  *       1. Mode-specific main content (textarea, upload area, waveform, ...)
  *       2. Position (x/y/z) widget — always visible
- *       3. Left-column footer (e.g. the Interval mode group via `leftColumnFooter`)
  *   - Right column: volume slider
  *
- * The interval control lives in `IntervalModeControls` (post-gen, interval
- * mode only) and is slotted into the left column through `leftColumnFooter`;
- * the vertical "Int." slider was removed.
+ * The vertical "Int." slider and the per-track "Interval mode" group were
+ * removed — track interval settings now live in the DAW timeline's per-track
+ * "Distribute evenly" panel.
  *
  * All slider state and batched-undo logic live here so it never needs to be
  * duplicated between SoundResultContent and SoundPreContent.
@@ -30,8 +29,6 @@ export interface SoundCardBodyProps {
   mainContent: ReactNode;
   /** Rendered full-width above the flex row — use for headers that span both columns. */
   fullWidthHeader?: ReactNode;
-  /** Extra content rendered at the bottom of the LEFT column (e.g. the Interval-mode group). */
-  leftColumnFooter?: ReactNode;
 
   // ── Shared data ──────────────────────────────────────────────────────────
   volumeDbfs: number;
@@ -57,7 +54,6 @@ export interface SoundCardBodyProps {
 export function SoundCardBody({
   mainContent,
   fullWidthHeader,
-  leftColumnFooter,
   volumeDbfs,
   position,
   entityIndex,
@@ -118,9 +114,6 @@ export function SoundCardBody({
 
           </div>
         )}
-
-        {/* 3. Left-column footer (e.g. Interval mode group) — left of the volume slider */}
-        {leftColumnFooter}
       </div>
 
       {/* ── Right column: volume slider ── */}

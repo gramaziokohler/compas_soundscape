@@ -1,9 +1,13 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { UI_BORDER_RADIUS } from "@/utils/constants";
 
 interface ConfirmDialogProps {
-  message: string;
+  message?: string;
+  /** Optional content rendered between the message and the action buttons
+   *  (e.g. sliders/inputs for a transient settings panel). */
+  children?: ReactNode;
   onConfirm: () => void;
   onCancel: () => void;
   confirmLabel?: string;
@@ -14,15 +18,20 @@ interface ConfirmDialogProps {
   variant?: "danger" | "default";
   /** When true, recolors the "default" variant for legibility on a solid-blue generated card. */
   onBlueBackground?: boolean;
+  /** When true, uses a solid theme-aware surface instead of the translucent tint
+   *  (for popovers on the DAW track head / scene overlays where glass would be unreadable). */
+  solidBackground?: boolean;
 }
 
 /**
  * ConfirmDialog Component
  *
- * Inline confirmation prompt with Cancel / Confirm buttons.
+ * Inline confirmation prompt with Cancel / Confirm buttons, optionally hosting
+ * arbitrary content (children) above the buttons for transient settings panels.
  *
  * Features:
  * - Two variants: "danger" (red, destructive) and "default" (primary, neutral)
+ * - Optional `children` content slot between the message and the action row
  * - Disabled state for in-flight operations (shows loading label)
  * - Color tokens from CSS custom properties — no hex values
  * - Consistent border radius from UI_BORDER_RADIUS design system
@@ -41,6 +50,7 @@ interface ConfirmDialogProps {
  */
 export function ConfirmDialog({
   message,
+  children,
   onConfirm,
   onCancel,
   confirmLabel = "Confirm",
@@ -49,6 +59,7 @@ export function ConfirmDialog({
   disableConfirm = false,
   variant = "default",
   onBlueBackground = false,
+  solidBackground = false,
 }: ConfirmDialogProps) {
   const isDanger = variant === "danger";
   const accentColor = isDanger ? "var(--color-error)" : "var(--color-primary)";
@@ -57,21 +68,33 @@ export function ConfirmDialog({
     : onBlueBackground
       ? "color-mix(in srgb, var(--color-on-blue) 60%, transparent)"
       : "color-mix(in srgb, var(--color-confirm-tint) 65%, transparent)";
+  const panelBg = solidBackground ? "var(--color-surface-2)" : accentBg;
+  const messageColor = isDanger
+    ? "var(--color-error)"
+    : onBlueBackground
+      ? "var(--color-on-blue)"
+      : solidBackground
+        ? "var(--color-blue-text)"
+        : accentColor;
   const confirmDisabled = disabled || disableConfirm;
 
   return (
     <div
       className="flex flex-col gap-2 p-2 rounded"
       style={{
-        background: accentBg
+        background: panelBg,
+        border: solidBackground ? '1px solid var(--color-border-strong)' : undefined,
       }}
     >
-      <p
-        className="text-[10px] font-medium"
-        style={{ color: accentColor }}
-      >
-        {message}
-      </p>
+      {message && (
+        <p
+          className="text-[10px] font-medium"
+          style={{ color: messageColor }}
+        >
+          {message}
+        </p>
+      )}
+      {children}
       <div className="flex gap-2">
         <button
           onClick={onCancel}

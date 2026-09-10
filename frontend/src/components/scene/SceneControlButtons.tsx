@@ -18,6 +18,8 @@ interface SceneControlButtonsProps {
   onResetZoom: () => void;
   onRefreshScene: () => void;
   onToggleTimeline: () => void;
+  /** Extra bottom offset (px) so the docked DAW timeline doesn't cover these controls. */
+  bottomOffset?: number;
 }
 
 export function SceneControlButtons({
@@ -30,6 +32,7 @@ export function SceneControlButtons({
   onResetZoom,
   onRefreshScene,
   onToggleTimeline,
+  bottomOffset = 0,
 }: SceneControlButtonsProps) {
   const [globalVolume, setGlobalVolume] = useState(0.8);
   const [isHoveringVolume, setIsHoveringVolume] = useState(false);
@@ -51,20 +54,25 @@ export function SceneControlButtons({
 
   return (
     <div
-      className="absolute bottom-12 flex flex-col items-center pointer-events-auto z-20 transition-all duration-300"
+      className="absolute flex flex-col items-center pointer-events-auto z-20 transition-all duration-300"
       style={{
         gap: UI_SCENE_BUTTON.GAP,
+        bottom: `${48 + bottomOffset}px`,
         right: isRightSidebarExpanded ? `${(rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH) + 10}px` : '10px',
       }}
     >
       {/* Global Volume Control with Hover Slider */}
       <div
-        className="flex flex-col items-center"
+        className="relative flex items-center"
         onMouseEnter={() => setIsHoveringVolume(true)}
         onMouseLeave={() => setIsHoveringVolume(false)}
       >
         {isHoveringVolume && (
-          <div data-volume-slider className="mb-1 flex items-center justify-center">
+          <div
+            data-volume-slider
+            className="absolute bottom-full mb-1 flex items-center justify-center"
+            style={{ left: '50%', transform: 'translateX(-50%)' }}
+          >
             <VerticalVolumeSlider value={globalVolume} onChange={handleGlobalVolumeChange} defaultValue={0.8} precision={2} />
           </div>
         )}

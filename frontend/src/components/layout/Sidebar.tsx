@@ -615,21 +615,59 @@ export function Sidebar(props: SidebarProps) {
   // Go to the Usage section, creating a placeholder context parent when none
   // exists. Audio contexts land on their placeholder usage card (created on
   // extraction), so the breadcrumb is clickable for them too.
+  // Rule: we expand the first child when moving down, or the corresponding parent card when moving back up.
   const handleUsageBreadcrumbClick = useCallback(() => {
     hasInteractedRef.current = true;
 
-    let ctxIdx = findContextIndex();
-    if (ctxIdx === null) ctxIdx = createPlaceholderContext();
+    let targetUsageIdx: number | null = null;
+    let ctxIdx: number | null = null;
+
+    // Moving back up from Sounds (step 2): expand the corresponding parent card (activeUsageOriginalIndex)
+    if (
+      currentStep > 1 &&
+      activeUsageOriginalIndex !== null &&
+      activeUsageOriginalIndex >= 0 &&
+      activeUsageOriginalIndex < props.analysisConfigs.length
+    ) {
+      const usageCfg = props.analysisConfigs[activeUsageOriginalIndex];
+      if (usageCfg && SIDEBAR_USAGE_TYPES.includes(usageCfg.type as CardType)) {
+        targetUsageIdx = activeUsageOriginalIndex;
+        const parentCtx = (usageCfg as any)?.parentContextOriginalIndex;
+        if (typeof parentCtx === 'number' && parentCtx >= 0 && parentCtx < props.analysisConfigs.length) {
+          ctxIdx = parentCtx;
+        }
+      }
+    }
+
+    if (ctxIdx === null) {
+      ctxIdx = findContextIndex();
+    }
+    if (ctxIdx === null) {
+      ctxIdx = createPlaceholderContext();
+    }
+
+    // Moving down (from Context, step 0) or fallback: expand the first child
+    if (targetUsageIdx === null) {
+      targetUsageIdx = getFirstUsageChildIndex(ctxIdx);
+    }
 
     setActiveContextOriginalIndex(ctxIdx);
     setContextExpandedOriginalIndex(null);
     setBypassedUsage(false);
     useUIStore.getState().setActiveSoundParentIndex(null);
     useUIStore.getState().setIsInSoundsStep(false);
-    setUsageExpandedOriginalIndex(getFirstUsageChildIndex(ctxIdx));
+    setUsageExpandedOriginalIndex(targetUsageIdx);
     setCurrentStep(1);
     setIsExpanded(true);
-  }, [contextExpandedOriginalIndex, activeContextOriginalIndex, props.analysisConfigs, props.onAddAnalysisConfig, props.onUpdateAnalysisConfig]);
+  }, [
+    currentStep,
+    activeUsageOriginalIndex,
+    contextExpandedOriginalIndex,
+    activeContextOriginalIndex,
+    props.analysisConfigs,
+    props.onAddAnalysisConfig,
+    props.onUpdateAnalysisConfig,
+  ]);
 
   // ─── Breadcrumb "has cards" state ───────────────────────────────────────────
   // A breadcrumb is greyed (but still clickable) when its section contains no
@@ -757,6 +795,7 @@ export function Sidebar(props: SidebarProps) {
 
       {/* Sidebar content panel */}
       <aside
+        data-sidebar="left"
         className="fixed top-0 left-0 h-screen flex flex-col transition-all duration-300 ease-in-out"
         style={{
           width: isExpanded ? `${contentWidth}px` : '0px',
@@ -820,11 +859,24 @@ export function Sidebar(props: SidebarProps) {
               onClick={() => {
                 hasInteractedRef.current = true;
                 setUsageExpandedOriginalIndex(null);
-                setContextExpandedOriginalIndex(
-                  activeContextOriginalIndex !== null && activeContextOriginalIndex < props.analysisConfigs.length
+                let targetContextIdx =
+                  activeContextOriginalIndex !== null &&
+                  activeContextOriginalIndex >= 0 &&
+                  activeContextOriginalIndex < props.analysisConfigs.length
                     ? activeContextOriginalIndex
-                    : getFirstContextIndex()
-                );
+                    : null;
+                if (targetContextIdx === null) {
+                  const refUsageIdx = currentStep === 1 ? usageExpandedOriginalIndex : activeUsageOriginalIndex;
+                  if (refUsageIdx !== null && refUsageIdx >= 0 && refUsageIdx < props.analysisConfigs.length) {
+                    const parentCtx = (props.analysisConfigs[refUsageIdx] as any)?.parentContextOriginalIndex;
+                    if (typeof parentCtx === 'number' && parentCtx >= 0 && parentCtx < props.analysisConfigs.length) {
+                      targetContextIdx = parentCtx;
+                    }
+                  }
+                }
+                const resolvedContext = targetContextIdx !== null ? targetContextIdx : getFirstContextIndex();
+                setContextExpandedOriginalIndex(resolvedContext);
+                setActiveContextOriginalIndex(resolvedContext);
                 setBypassedUsage(false);
                 useUIStore.getState().setActiveSoundParentIndex(null);
                 useUIStore.getState().setIsInSoundsStep(false);

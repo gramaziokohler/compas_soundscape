@@ -151,7 +151,7 @@ const storage: PersistStorage<State> = {
 
 | Store | Key | Notes |
 |-------|-----|-------|
-| `uiStore` | `compas-ui-state` | Partialize excludes model-bound fields. Also persists: `isLeftSidebarExpanded`, `sidebarWizardStep`, `showTimeline`, `showObjectExplorer`, `expandedSimulationTabIndex`, `objectExplorerPanel`, `timelinePanel`, `expandedSoundCardIndex`. |
+| `uiStore` | `compas-ui-state` | Partialize excludes model-bound fields. Also persists: `isLeftSidebarExpanded`, `sidebarWizardStep`, `showTimeline`, `showObjectExplorer`, `expandedSimulationTabIndex`, `objectExplorerPanel`, `timelineDock`, `expandedSoundCardIndex`. |
 | `cardFlowStore` | `compas-cardflow-state` | Custom storage for Map/Set. Also persists: `activeContextOriginalIndex`, `activeUsageOriginalIndex`. |
 | `audioControlsStore` | `compas-audio-controls` | Converts `mutedSounds` Set ↔ array |
 | `rightSidebarStore` | `compas-right-sidebar` | Only persists `isExpanded` |

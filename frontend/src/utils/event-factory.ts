@@ -99,7 +99,7 @@ export function createSoundEventFromUpload(
     prompt_index: originalIndex,
     total_copies: 1,
     volume_dbfs: config.dbfs ?? DEFAULT_SOUND_CONFIG.dbfs, // Default to -18 dBFS
-    interval_seconds: config.interval_seconds ?? DEFAULT_SOUND_CONFIG.interval_seconds, // Default to 5 seconds
+    interval_seconds: config.interval_seconds ?? DEFAULT_SOUND_CONFIG.interval_seconds, // 0 = back-to-back auto loop
     isUploaded: true, // Mark as uploaded/library sound
     // Include entity_index (primary) and entity_indices (all) if entities are present.
     // For entities with a Speckle ID but no numeric index, use originalIndex as a sentinel
@@ -109,21 +109,15 @@ export function createSoundEventFromUpload(
       : (config.entities?.[0]?.nodeId || config.entities?.[0]?.id)
         ? { entity_index: originalIndex, entity_indices: [originalIndex] }
         : {}),
-    // Carry foley timestamps through to the SoundEvent
-    ...(config.timestamps?.length && {
-      timestamps: config.timestamps,
-      scheduling_mode: 'timestamps' as const,
-    }),
-    // Carry foley category through for DAW grouping
-    ...(config.category ? { category: config.category } : {}),
-    // Background sounds: force interval mode (no timestamps, no timestamp scheduling)
+    // Carry foley timestamps through to the SoundEvent — except backgrounds,
+    // which auto-pack via interval_seconds (0 = back-to-back) instead.
     ...((() => {
       const normalized = (config.category || '').toLowerCase().replace(/[\s-]+/g, '_');
-      return normalized === 'background' || normalized === 'background_sound';
-    })() ? {
-      timestamps: undefined as any,
-      scheduling_mode: 'interval' as const,
-    } : {}),
+      const isBackground = normalized === 'background' || normalized === 'background_sound';
+      return !isBackground && config.timestamps?.length ? { timestamps: config.timestamps } : {};
+    })()),
+    // Carry foley category through for DAW grouping
+    ...(config.category ? { category: config.category } : {}),
   };
 }
 

@@ -23,7 +23,7 @@ import type {
 import type { GridListenerData } from '@/types/receiver';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping, ResonanceAudioConfig } from '@/types/audio';
 import type { AnalysisConfig, AnalysisResult, TextPromptResult } from '@/types/analysis';
-import { API_BASE_URL } from '@/utils/constants';
+import { API_BASE_URL, AUDIO_PLAYBACK } from '@/utils/constants';
 
 /**
  * Extract the filename from a sound URL path.
@@ -79,8 +79,6 @@ export function buildSoundscapeSavePayload(
   },
   /** User-adjusted volumes keyed by sound ID (from audioControls) */
   soundVolumes?: Record<string, number>,
-  /** User-adjusted intervals keyed by sound ID (from audioControls) */
-  soundIntervals?: Record<string, number>,
   /** Server filenames for blob-URL sounds (uploaded via upload-audio endpoint) */
   uploadedFilenames?: Record<string, string>,
   /** Receiver positions to persist */
@@ -95,8 +93,6 @@ export function buildSoundscapeSavePayload(
   activeSimulationIndex?: number | null,
   /** Resonance Audio global config */
   resonanceAudioConfig?: ResonanceAudioConfig,
-  /** Per-track timeline scheduling mode keyed by sound ID (from audioControls) */
-  soundSchedulingModes?: Record<string, 'interval' | 'timestamps'>,
   /** Per-track explicit timestamps (seconds) keyed by sound ID (from audioControls) */
   soundTimestamps?: Record<string, number[]>,
   /** Per-iteration variant/entity links keyed by `${soundId}-${iterationIndex}` (from audioControls) */
@@ -175,22 +171,19 @@ export function buildSoundscapeSavePayload(
         audioUrls.push(event.url);
       }
 
-      // Merge user-adjusted volume/interval from audioControls maps
-      // These override the SoundEvent's own current_* fields
+      // Merge user-adjusted volume from audioControls maps (overrides the event's own current_* field)
       const adjustedVolume = soundVolumes?.[event.id] ?? event.current_volume_dbfs;
-      const adjustedInterval = soundIntervals?.[event.id] ?? event.current_interval_seconds;
 
-      // Per-track timeline scheduling — prefer the live audioControls maps
-      // (authoritative after baking / user edits), fall back to the event's own hint.
-      const schedulingMode = soundSchedulingModes?.[event.id] ?? event.scheduling_mode;
+      // Stored per-track explicit schedule (only tracks that have been baked/edited
+      // have an entry — untouched tracks re-derive their auto loop on load).
       const trackTimestamps = soundTimestamps?.[event.id];
 
       console.log('[serializer:save] event:', event.id, 'promptIdx:', event.prompt_index,
-        'schedMode:', schedulingMode, 'ts:', trackTimestamps?.length ?? 0);
+        'ts:', trackTimestamps?.length ?? 0);
       const evCat = (event as any).category;
       const evCopyIdx = (event as any).copy_index;
       if (evCat || evCopyIdx != null) {
-        console.log(`[DEBUG-SERIALIZE-SAVE] event ${event.id} category="${evCat}" copy_index=${evCopyIdx} schedMode=${schedulingMode} tsCount=${trackTimestamps?.length ?? 0}`);
+        console.log(`[DEBUG-SERIALIZE-SAVE] event ${event.id} category="${evCat}" copy_index=${evCopyIdx} tsCount=${trackTimestamps?.length ?? 0}`);
       }
 
       // Resolve entity_node_id from the matching config (events only have entity_index)
@@ -208,12 +201,10 @@ export function buildSoundscapeSavePayload(
         volume_dbfs: event.volume_dbfs,
         current_volume_dbfs: adjustedVolume,
         interval_seconds: event.interval_seconds,
-        current_interval_seconds: adjustedInterval,
         is_uploaded: event.isUploaded || false,
         entity_index: event.entity_index,
         entity_node_id: eventEntityNodeId,
         entity_indices: event.entity_indices,
-        scheduling_mode: schedulingMode,
         timestamps: trackTimestamps,
         category: (event as any).category || undefined,
         copy_index: (event as any).copy_index ?? undefined,
@@ -469,8 +460,6 @@ export function restoreSoundscapeState(
   soundConfigs: SoundGenerationConfig[];
   soundEvents: SoundEvent[];
   soundVolumes: Record<string, number>;
-  soundIntervals: Record<string, number>;
-  soundSchedulingModes: Record<string, 'interval' | 'timestamps'>;
   soundTimestamps: Record<string, number[]>;
   iterationLinks: Record<string, SoundscapeIterationLink>;
   globalSettings: {
@@ -553,12 +542,11 @@ export function restoreSoundscapeState(
     })
   );
 
-  // Rebuild user-adjusted volume/interval maps (keyed by sound ID)
+  // Rebuild user-adjusted volume map (keyed by sound ID)
   const soundVolumes: Record<string, number> = {};
-  const soundIntervals: Record<string, number> = {};
-  // Rebuild per-track scheduling maps (keyed by sound ID).
-  // When a saved event has no scheduling_mode (older saves), default to "timestamps".
-  const soundSchedulingModes: Record<string, 'interval' | 'timestamps'> = {};
+  // Rebuild stored per-track schedules (keyed by sound ID). Only tracks that
+  // were baked/edited have an entry — the rest stay "auto" and re-derive a
+  // default loop from interval_seconds on load.
   const soundTimestamps: Record<string, number[]> = {};
 
   // Rebuild SoundEvent[] with resolved audio URLs
@@ -568,28 +556,20 @@ export function restoreSoundscapeState(
     const hasAudio = !!saved.audio_filename;
     const url = hasAudio ? `${baseUrl}/${saved.audio_filename}` : '';
 
-    // Populate user-adjusted volume/interval maps from current_* fields
+    // Populate user-adjusted volume map from current_* fields
     if (saved.current_volume_dbfs != null) {
       soundVolumes[saved.id] = saved.current_volume_dbfs;
     }
-    if (saved.current_interval_seconds != null) {
-      soundIntervals[saved.id] = saved.current_interval_seconds;
-    }
-
-    // Restore the per-track scheduling mode; default to "timestamps" when the
-    // save predates this field (so loaded soundscapes no longer fall back to interval).
-    const restoredMode: 'interval' | 'timestamps' = saved.scheduling_mode ?? 'timestamps';
-    soundSchedulingModes[saved.id] = restoredMode;
     if (saved.timestamps?.length) {
       soundTimestamps[saved.id] = saved.timestamps;
       console.log('[serializer:load] restored ts for', saved.id, 'promptIdx:', saved.prompt_index,
-        'mode:', restoredMode, 'ts:', saved.timestamps);
+        'ts:', saved.timestamps);
     } else {
-      console.log('[serializer:load] no ts for', saved.id, 'promptIdx:', saved.prompt_index, 'mode:', restoredMode);
+      console.log('[serializer:load] no ts for', saved.id, 'promptIdx:', saved.prompt_index);
     }
     const cat = (saved as any).category;
-    if (cat || restoredMode === 'interval') {
-      console.log(`[DEBUG-DESERIALIZE] event ${saved.id} restored: schedMode=${restoredMode} cat="${cat}" tsCount=${saved.timestamps?.length ?? 0} copyIdx=${saved.copy_index}`);
+    if (cat) {
+      console.log(`[DEBUG-DESERIALIZE] event ${saved.id} restored: cat="${cat}" tsCount=${saved.timestamps?.length ?? 0} copyIdx=${saved.copy_index}`);
     }
 
     // Build the event — only include entity_index when it's a real number.
@@ -608,7 +588,6 @@ export function restoreSoundscapeState(
       interval_seconds: saved.interval_seconds,
       current_interval_seconds: saved.current_interval_seconds ?? undefined,
       isUploaded: saved.is_uploaded,
-      scheduling_mode: restoredMode,
       category: (saved as any).category || undefined,
     };
     (event as any).copy_index = saved.copy_index ?? undefined;
@@ -877,8 +856,6 @@ export function restoreSoundscapeState(
     soundConfigs,
     soundEvents,
     soundVolumes,
-    soundIntervals,
-    soundSchedulingModes,
     soundTimestamps,
     iterationLinks: loadedData.iteration_links ?? {},
     globalSettings,
@@ -930,6 +907,7 @@ export function buildAnalysisStateSave(
     if ('useAnalysisResult' in config) base.useAnalysisResult = (config as any).useAnalysisResult;
     if ('peopleCount' in config) base.peopleCount = (config as any).peopleCount;
     if ('likeliness' in config) base.likeliness = (config as any).likeliness;
+    if ('timelineDurationMs' in config) base.timelineDurationMs = (config as any).timelineDurationMs;
     if ('analysisOptions' in config) base.analysisOptions = (config as any).analysisOptions;
     if ('applyNoiseReduction' in config) base.applyNoiseReduction = (config as any).applyNoiseReduction;
     if (config.type === 'audio' && (config as any).persistedAudioFilename) {
@@ -1124,6 +1102,7 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
     if (saved.useAnalysisResult !== undefined) config.useAnalysisResult = saved.useAnalysisResult;
     if (saved.peopleCount !== undefined) config.peopleCount = saved.peopleCount;
     if (saved.likeliness !== undefined) config.likeliness = saved.likeliness;
+    if (saved.timelineDurationMs !== undefined) config.timelineDurationMs = saved.timelineDurationMs;
     if (saved.analysisOptions) config.analysisOptions = saved.analysisOptions;
     if (saved.applyNoiseReduction !== undefined) config.applyNoiseReduction = saved.applyNoiseReduction;
 
@@ -1159,6 +1138,7 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
       config.scenarioId = saved.scenarioId ?? null;
       config.foleyResult = saved.foleyResult || null;
       config.selectedFoleyKeys = saved.selectedFoleyKeys || [];
+      config.timelineDurationMs = saved.timelineDurationMs ?? AUDIO_PLAYBACK.TIMELINE_FIXED_DURATION_MS;
     }
 
     if (saved.prompts && saved.prompts.length > 0) {

@@ -165,8 +165,8 @@ function HomeContent() {
       });
       // sample-audio cards lost their (blob) clip on refresh — reload the bundled sample.
       void soundGen.rehydrateSampleAudioConfigs();
-      useAudioControlsStore.getState().restoreVolumeAndIntervals(restored.soundVolumes, restored.soundIntervals);
-      useAudioControlsStore.getState().restoreSchedulingModes(restored.soundSchedulingModes, restored.soundTimestamps);
+      useAudioControlsStore.getState().restoreVolumes(restored.soundVolumes);
+      useAudioControlsStore.getState().restoreSoundTimestamps(restored.soundTimestamps);
 
       let maxEndSec = 0;
       for (const timestamps of Object.values(restored.soundTimestamps)) {
@@ -311,22 +311,21 @@ function HomeContent() {
     syncSoundConfigs(soundGen.soundConfigs);
   }, [soundGen.soundConfigs, syncSoundConfigs]);
 
-  // Auto-initialize timestamp scheduling for sounds that carry foley timestamps.
-  // Runs whenever generatedSounds changes; uses getState() to avoid store subscriptions.
+  // Auto-initialize an explicit schedule for freshly generated sounds that carry
+  // authored foley timestamps (MM:SS). Tracks WITHOUT authored timestamps stay
+  // "auto" — the timeline derives a default loop from interval_seconds. Tracks
+  // that already have a stored schedule (incl. a cleared []) are never touched,
+  // so manual DAW edits survive. Runs whenever generatedSounds changes.
   useEffect(() => {
     const audioStore = useAudioControlsStore.getState();
     soundGen.generatedSounds.forEach((sound: any) => {
       if (!sound.timestamps?.length) return;
-      if (audioStore.soundSchedulingModes[sound.id]) {
-        console.log('[page:autoInit] SKIP — mode already set for', sound.id, 'mode:', audioStore.soundSchedulingModes[sound.id]);
-        return;
-      }
+      if (audioStore.soundTimestamps[sound.id] !== undefined) return;
       const timestampsSec = (sound.timestamps as string[]).map((t) => {
         const [mm, ss] = t.split(':').map(Number);
         return (mm ?? 0) * 60 + (ss ?? 0);
       });
-      console.log('[page:autoInit] OVERWRITING ts for', sound.id, 'from foley timestamps:', timestampsSec);
-      audioStore.handleSchedulingModeChange(sound.id, 'timestamps');
+      console.log('[page:autoInit] materializing authored ts for', sound.id, ':', timestampsSec);
       audioStore.handleTimestampsChange(sound.id, timestampsSec);
     });
   }, [soundGen.generatedSounds]);
@@ -1077,6 +1076,28 @@ function HomeContent() {
     useSpeckleStore.getState().applyFilterColors();
   }, [activeSoundParentIndex, isInSoundsStep]);
 
+  // ── Active-scenario → DAW timeline binding ─────────────────────────────────────
+  // Each scenario card owns its sound-scene timeline length (scenario.timelineDurationMs,
+  // set via the Duration slider on the scenario card). While that scenario is the active
+  // sound section, its duration drives the single DAW timeline store value. Switching to
+  // another scenario section therefore re-bounds the DAW to that section's own duration.
+  // Non-scenario sections (or "all sounds") keep the global store value. Writes from the
+  // DAW (inline edit, bake auto-extend) are persisted back to the scenario by
+  // setTimelineDurationMs, so this effect never fights user edits.
+  const timelineDurationMs = useAudioControlsStore((s) => s.timelineDurationMs);
+  const setTimelineDurationMs = useAudioControlsStore((s) => s.setTimelineDurationMs);
+  const activeScenarioDurationMs = useMemo(() => {
+    if (activeSoundParentIndex === null || activeSoundParentIndex === undefined) return null;
+    const cfg = analysis.analysisConfigs[activeSoundParentIndex];
+    if (!cfg || cfg.type !== 'scenario') return null;
+    return cfg.timelineDurationMs;
+  }, [activeSoundParentIndex, analysis.analysisConfigs]);
+  useEffect(() => {
+    if (activeScenarioDurationMs === null) return;
+    if (activeScenarioDurationMs === timelineDurationMs) return;
+    setTimelineDurationMs(activeScenarioDurationMs);
+  }, [activeScenarioDurationMs, timelineDurationMs, setTimelineDurationMs]);
+
   // ── Unified soundscape data ────────────────────────────────────────────────────
   // One entry per visible sound config for the active parent.
   // Before generation: lightweight isPending placeholder (light-colored sphere).
@@ -1559,26 +1580,15 @@ function HomeContent() {
         // sample-audio cards lost their (blob) clip on refresh — reload the bundled sample.
         void soundGen.rehydrateSampleAudioConfigs();
 
-        // Restore user-adjusted volume and interval values
-        useAudioControlsStore.getState().restoreVolumeAndIntervals(
-          restored.soundVolumes,
-          restored.soundIntervals,
-        );
+        // Restore user-adjusted volume values
+        useAudioControlsStore.getState().restoreVolumes(restored.soundVolumes);
 
-        // Restore per-track timeline scheduling modes + timestamps (defaults to
-        // "timestamps" mode for any track whose mode wasn't saved).
-        useAudioControlsStore.getState().restoreSchedulingModes(
-          restored.soundSchedulingModes,
-          restored.soundTimestamps,
-        );
-        console.log('[DEBUG-LOAD] after restoreSchedulingModes:');
-        console.log('[DEBUG-LOAD]   modes:', JSON.stringify(useAudioControlsStore.getState().soundSchedulingModes));
+        // Restore stored per-track schedules. Only baked/edited tracks have an
+        // entry — the rest stay "auto" and re-derive a default loop from
+        // interval_seconds.
+        useAudioControlsStore.getState().restoreSoundTimestamps(restored.soundTimestamps);
+        console.log('[DEBUG-LOAD] after restoreSoundTimestamps:');
         console.log('[DEBUG-LOAD]   timestamps keys:', Object.keys(useAudioControlsStore.getState().soundTimestamps));
-        for (const [k, v] of Object.entries(useAudioControlsStore.getState().soundSchedulingModes)) {
-          if (v === 'interval') {
-            console.log(`[DEBUG-LOAD]   INTERVAL track: ${k} mode=${v} tsCount=${useAudioControlsStore.getState().soundTimestamps[k]?.length ?? 0}`);
-          }
-        }
 
         // Extend timeline duration to accommodate all restored timestamps
         // (bakeOrchestrateSchedule is suppressed during load, so auto-extend
@@ -1832,14 +1842,12 @@ function HomeContent() {
       const saveTimestamps = useAudioControlsStore.getState().soundTimestamps;
       console.log('[page:save] saving soundTimestamps, keys:', Object.keys(saveTimestamps).length,
         'entries:', Object.entries(saveTimestamps).map(([k, v]) => `${k}:${v?.length ?? 0}ts`).join(' '));
-      const saveModes = useAudioControlsStore.getState().soundSchedulingModes;
       const saveLinks = useAudioControlsStore.getState().iterationLinks;
       const saveMuted = [...useAudioControlsStore.getState().mutedSounds];
       const saveSoloed = useAudioControlsStore.getState().soloedSound;
       console.log('[DEBUG-SAVE] === save payload debug ===');
       console.log('[DEBUG-SAVE] mutedSounds:', JSON.stringify(saveMuted));
       console.log('[DEBUG-SAVE] soloedSound:', JSON.stringify(saveSoloed));
-      console.log('[DEBUG-SAVE] soundSchedulingModes:', JSON.stringify(saveModes));
       console.log('[DEBUG-SAVE] soundTimestamps keys:', Object.keys(saveTimestamps));
       console.log('[DEBUG-SAVE] iterationLinks:', JSON.stringify(Object.keys(saveLinks)));
       for (const [k, v] of Object.entries(saveLinks)) {
@@ -1848,7 +1856,7 @@ function HomeContent() {
       console.log('[DEBUG-SAVE] soundscapeData (events) count:', soundGen.soundscapeData?.length ?? 0);
       if (soundGen.soundscapeData) {
         for (const ev of soundGen.soundscapeData.slice(0, 5)) {
-          console.log(`[DEBUG-SAVE]   event id=${ev.id} promptIdx=${ev.prompt_index} category=${(ev as any).category} copy_index=${(ev as any).copy_index} sched=${ev.scheduling_mode}`);
+          console.log(`[DEBUG-SAVE]   event id=${ev.id} promptIdx=${ev.prompt_index} category=${(ev as any).category} copy_index=${(ev as any).copy_index}`);
         }
       }
       console.log('[DEBUG-SAVE] soundConfigs count:', soundGen.soundConfigs.length);
@@ -1869,7 +1877,6 @@ function HomeContent() {
           orchestrateSoundsEnabled: soundGen.orchestrateSoundsEnabled,
         },
         useAudioControlsStore.getState().soundVolumes,
-        useAudioControlsStore.getState().soundIntervals,
         uploadedFilenames,
         receivers.receivers,
         gridListeners.gridListeners,
@@ -1877,7 +1884,6 @@ function HomeContent() {
         acousticsSimulation.simulationConfigs,
         acousticsSimulation.activeSimulationIndex,
         resonanceAudioConfig,
-        useAudioControlsStore.getState().soundSchedulingModes,
         useAudioControlsStore.getState().soundTimestamps,
         useAudioControlsStore.getState().iterationLinks,
         [...useAudioControlsStore.getState().mutedSounds],
@@ -2460,7 +2466,6 @@ function HomeContent() {
     const audio = useAudioControlsStore.getState();
     audio.resetGlobalBaseDbfs();
     audio.setTtsLanguage(TTS_DEFAULT_LANGUAGE);
-    audio.clearAllSoundIntervalJitter();
     audio.resetTimelineDurationMs();
     audio.setMaximumFoleySounds(DEFAULT_MAXIMUM_FOLEY_SOUNDS);
     useUIStore.getState().setEnableAutoSave(true);

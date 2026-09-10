@@ -138,6 +138,9 @@ export interface UIStoreState {
   /** Incremented each time the user double-clicks a sound card to zoom to its sphere. */
   zoomToSoundCardTrigger: { index: number; version: number } | null;
   triggerZoomToSoundCard: (index: number) => void;
+  /** Card whose sound sphere should highlight while hovered (e.g. a DAW track/clip). Not persisted. */
+  hoveredSoundCardIndex: number | null;
+  setHoveredSoundCardIndex: (index: number | null) => void;
   /** Active parent (usage or context) index filtering the Sounds section. Null = no filter. */
   activeSoundParentIndex: number | null;
   setActiveSoundParentIndex: (index: number | null) => void;
@@ -180,8 +183,11 @@ export interface UIStoreState {
   // ── Floating panel positions & sizes (survive refresh) ──────────────────────
   objectExplorerPanel: { x: number; y: number; width: number; height: number } | null;
   setObjectExplorerPanel: (state: { x: number; y: number; width: number; height: number } | null) => void;
-  timelinePanel: { x: number; y: number; width: number; height: number } | null;
-  setTimelinePanel: (state: { x: number; y: number; width: number; height: number } | null) => void;
+  /** Bottom-docked DAW height in px (survives refresh). `autoFit` = the dock
+   * sizes itself to the number of tracks present; it flips to `false` the first
+   * time the user drags the top edge, after which the height is fully manual. */
+  timelineDock: { height: number; autoFit: boolean };
+  setTimelineDock: (state: Partial<{ height: number; autoFit: boolean }>) => void;
 
   // ── Simulation cards expanded tab (survives refresh) ────────────────────────
   expandedSimulationTabIndex: number | null;
@@ -335,6 +341,8 @@ export const useUIStore = create<UIStoreState>()(
           false,
           'ui/triggerZoomToSoundCard',
         ),
+      hoveredSoundCardIndex: null,
+      setHoveredSoundCardIndex: (index) => set({ hoveredSoundCardIndex: index }, false, 'ui/setHoveredSoundCardIndex'),
       activeSoundParentIndex: null,
       setActiveSoundParentIndex: (index) =>
         set(
@@ -383,8 +391,9 @@ export const useUIStore = create<UIStoreState>()(
       // ── Floating panel positions & sizes ───────────────────────────────────
       objectExplorerPanel: null,
       setObjectExplorerPanel: (s) => set({ objectExplorerPanel: s }, false, 'ui/setObjectExplorerPanel'),
-      timelinePanel: null,
-      setTimelinePanel: (s) => set({ timelinePanel: s }, false, 'ui/setTimelinePanel'),
+      timelineDock: { height: 260, autoFit: true },
+      setTimelineDock: (patch) =>
+        set((s) => ({ timelineDock: { ...s.timelineDock, ...patch } }), false, 'ui/setTimelineDock'),
 
       // ── Simulation cards expanded tab ──────────────────────────────────────
       expandedSimulationTabIndex: null,
@@ -404,7 +413,7 @@ export const useUIStore = create<UIStoreState>()(
       const { globalModelFile, globalSpeckleData, speckleModelUrl, speckleBounds,
         hoveredIRSourceReceiver, activeGradientMap, selectedIRId, selectedIRMetadata,
         irRefreshTrigger, refreshBoundingBoxTrigger, roomScale, isUploadingGlobalModel,
-        isSavingSoundscape, zoomToSoundCardTrigger,
+        isSavingSoundscape, zoomToSoundCardTrigger, hoveredSoundCardIndex,
         activeSoundParentIndex, isInSoundsStep, showBoundingBox,
         cameraPosition, cameraTarget, acousticLayerSelectionMode, soundsNavTrigger, ...persistable } = state;
       return persistable;
