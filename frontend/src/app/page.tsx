@@ -50,6 +50,7 @@ import type { SelectedGeometry, AcousticMaterial } from "@/types/materials";
 import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSelector";
 import { buildSoundscapeSavePayload, restoreSoundscapeState, getBlobUrlSounds, buildAnalysisStateSave, restoreAnalysisState } from "@/utils/soundscape-serializer";
 import { getStoredJobs, recordInflightJob } from "@/lib/job-tracker";
+import { PrivacyNotice } from "@/components/layout/PrivacyNotice";
 
 /**
  * Build a map from applicationId (Rhino GUID) → current Speckle tree ID.
@@ -3034,6 +3035,7 @@ function HomeContent() {
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-background">
+      <PrivacyNotice />
       {/* Main 3D Scene - Fixed at screen center, full size, lowest z-index */}
       <main className="absolute inset-0">
         {/* Viewer Toggle Button - Top Left */}

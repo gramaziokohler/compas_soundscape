@@ -17,6 +17,9 @@ requests==2.32.3
 httpx==0.28.1
 aiofiles==24.1.0
 
+# --- Auth (Cloudflare Access identity) ---
+PyJWT[crypto]==2.10.1
+
 # --- Job store ---
 redis>=5
 

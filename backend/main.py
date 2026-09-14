@@ -18,10 +18,11 @@ from services.impulse_response_service import ImpulseResponseService
 from services.tts_service import TTSService
 from services.job_store import job_store
 from services.io_jobs import sweep_orphaned_io_jobs
+from services.metadata_store import metadata_store
 # from services.modal_analysis_service import ModalAnalysisService
 
 # Import routers
-from routers import upload, generation, sounds, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, speckle, soundscape, tokens, tts, loop_analysis, jobs
+from routers import upload, generation, sounds, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, speckle, soundscape, tokens, tts, loop_analysis, jobs, auth
 
 # Import constants
 from config.constants import (
@@ -180,6 +181,10 @@ async def lifespan(app: FastAPI):
     print("Starting up: ensuring temp directories...")
     ensure_all_temp_directories()
 
+    # Metadata store (users/sessions/workspaces). Durable, so initialize before
+    # the middleware starts resolving identities.
+    metadata_store.init_db()
+
     job_store_task = asyncio.create_task(_job_store_loop())
     janitor_task = asyncio.create_task(_temp_janitor_loop())
     print("Startup complete.")
@@ -252,6 +257,7 @@ app.add_middleware(
 )
 
 # --- Include Routers ---
+app.include_router(auth.router)
 app.include_router(upload.router)
 # app.include_router(analysis.router)
 app.include_router(generation.router)

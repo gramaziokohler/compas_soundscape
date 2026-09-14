@@ -17,6 +17,7 @@ from services.paths import (
     user_model_dir,
     user_sounds_dir,
 )
+from services.metadata_store import metadata_store, ROLE_OWNER
 from models.schemas import (
     SoundscapeSaveRequest,
     SoundscapeSaveResponse,
@@ -262,6 +263,37 @@ def _drop_missing_audio_filenames(data: SoundscapeData, missing: list[str]) -> N
         _drop(data.analysis_state)
 
 
+def _model_referenced_audio(model_dir: Path) -> set[str]:
+    """Audio filenames referenced by a model's saved soundscape.json."""
+    json_path = model_dir / SOUNDSCAPE_JSON_FILENAME
+    if not json_path.exists():
+        return set()
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = SoundscapeData(**json.load(f))
+    except Exception as e:
+        logger.warning(f"Failed to read {json_path}: {e}")
+        return set()
+    return set(_collect_referenced_audio(data))
+
+
+def _workspace_audio_referenced_by_others(workspace_id: str, exclude_model_id: str) -> set[str]:
+    """Filenames referenced by every OTHER model in the workspace.
+
+    Used so deleting one model's history never removes a file another model in
+    the same (shared) workspace still needs.
+    """
+    root = user_data_dir(workspace_id)
+    refs: set[str] = set()
+    if not root.exists():
+        return refs
+    for child in root.iterdir():
+        if not child.is_dir() or child.name == "audio" or child.name == exclude_model_id:
+            continue
+        refs |= _model_referenced_audio(child)
+    return refs
+
+
 def _copy_ir_files(session_id: str, model_id: str, ir_urls: list[str]) -> int:
     """Copy IR files from temp directories to model-linked ir_files dir."""
     dest_dir = user_model_dir(session_id, model_id) / "ir_files"
@@ -428,6 +460,15 @@ async def save_soundscape(request: SoundscapeSaveRequest, req: Request):
     audio_base_url = f"{SOUNDSCAPE_DATA_URL_PREFIX}/{session_id}/audio"
     ir_base_url = f"{SOUNDSCAPE_DATA_URL_PREFIX}/{session_id}/{model_id}/ir_files"
 
+    # Index the model → workspace so ?model_id= bootstrap can resolve the
+    # workspace owner from any user, and bump the workspace revision
+    # (optimistic-concurrency token for shared sessions).
+    try:
+        metadata_store.link_model(model_id, session_id)
+        metadata_store.bump_revision(session_id)
+    except Exception as e:  # metadata is best-effort; never fail the save
+        logger.warning(f"Failed to update workspace metadata for {model_id}: {e}")
+
     return SoundscapeSaveResponse(
         success=True,
         local_folder=str(model_dir),
@@ -587,42 +628,75 @@ async def upload_soundscape_audio(
 @router.delete("/{model_id}")
 async def delete_soundscape(model_id: str, req: Request):
     """
-    Delete a project's saved history.
+    Delete ONE model's saved history from the current workspace.
 
-    Removes the model-linked directory (soundscape.json, IR files, analysis files,
-    simulation results) and the session-level audio directory for the current session.
+    Removes only this model's directory (soundscape.json, ir_files, analysis,
+    simulation results) and the audio files it references that no OTHER model in
+    the workspace still needs. The workspace itself is left intact.
     """
     session_id = _get_session_id(req)
 
     model_dir = user_model_dir(session_id, model_id)
     audio_dir = user_audio_dir(session_id)
-    session_dir = user_data_dir(session_id)
 
     deleted_model = False
-    deleted_audio = False
+    deleted_audio = 0
 
     if model_dir.exists():
+        # Resolve this model's audio refs BEFORE removing its soundscape.json,
+        # then only delete files no other model in the workspace references.
+        model_refs = _model_referenced_audio(model_dir)
+        shared_refs = _workspace_audio_referenced_by_others(session_id, model_id)
+        for filename in model_refs - shared_refs:
+            candidate = audio_dir / filename
+            if candidate.is_file():
+                try:
+                    candidate.unlink()
+                    deleted_audio += 1
+                except OSError as e:
+                    logger.warning(f"Failed to delete audio {filename}: {e}")
+
         shutil.rmtree(str(model_dir))
         deleted_model = True
         logger.info(f"Deleted model directory: {model_dir}")
 
-    if audio_dir.exists():
-        shutil.rmtree(str(audio_dir))
-        deleted_audio = True
-        logger.info(f"Deleted session audio directory: {audio_dir}")
-
-    # Remove session dir if empty after deletions
-    if session_dir.exists():
-        remaining = list(session_dir.iterdir())
-        if len(remaining) == 0:
-            shutil.rmtree(str(session_dir))
-            logger.info(f"Removed empty session directory: {session_dir}")
+    try:
+        metadata_store.unlink_model(model_id)
+        metadata_store.bump_revision(session_id)
+    except Exception as e:
+        logger.warning(f"Failed to update workspace metadata after delete: {e}")
 
     return {
         "success": True,
         "deleted_model": deleted_model,
-        "deleted_audio": deleted_audio,
+        "deleted_audio_files": deleted_audio,
     }
+
+
+@router.delete("/workspace/{workspace_id}")
+async def delete_workspace(workspace_id: str, req: Request):
+    """
+    Delete an entire workspace (all models + media). Owner-only.
+
+    This is the destructive "delete the whole session/workspace" action, kept
+    clearly separate from deleting a single model's history.
+    """
+    user_hash = getattr(req.state, "user_hash", None)
+    if not user_hash:
+        raise HTTPException(status_code=400, detail="No identity for this session")
+
+    role = metadata_store.get_member_role(workspace_id, user_hash)
+    if role != ROLE_OWNER:
+        raise HTTPException(status_code=403, detail="Only the workspace owner can delete it")
+
+    workspace_dir = user_data_dir(workspace_id)
+    deleted = False
+    if workspace_dir.exists():
+        shutil.rmtree(str(workspace_dir))
+        deleted = True
+        logger.info(f"Deleted workspace directory: {workspace_dir}")
+
+    return {"success": True, "deleted_workspace": deleted}
 
 
 def _format_bytes(size: int) -> str:
@@ -709,11 +783,20 @@ async def get_soundscape_stats(model_id: str, req: Request):
         except Exception:
             pass
 
-    # Walk audio directory
-    audio_stats = _get_dir_stats(audio_dir)
-    stats["audio_files"] = audio_stats["count"]
-    stats["audio_size_bytes"] = audio_stats["total_bytes"]
-    stats["audio_size_formatted"] = _format_bytes(audio_stats["total_bytes"])
+    # Count only the audio files THIS model references (the workspace audio dir
+    # is shared across models in a workspace).
+    referenced_audio = _model_referenced_audio(model_dir) if json_path.exists() else set()
+    audio_count = 0
+    audio_bytes = 0
+    for filename in referenced_audio:
+        candidate = audio_dir / filename
+        if candidate.is_file():
+            audio_count += 1
+            audio_bytes += candidate.stat().st_size
+    audio_stats = {"count": audio_count, "total_bytes": audio_bytes}
+    stats["audio_files"] = audio_count
+    stats["audio_size_bytes"] = audio_bytes
+    stats["audio_size_formatted"] = _format_bytes(audio_bytes)
 
     # Walk IR files
     ir_dir = model_dir / "ir_files"
@@ -753,15 +836,20 @@ async def get_soundscape_stats(model_id: str, req: Request):
     stats["total_size_bytes"] = total_bytes
     stats["total_size_formatted"] = _format_bytes(total_bytes)
 
-    # Determine overall last modified time across all files in the model dir + audio dir
+    # Determine overall last modified time across the model dir + its audio files
     last_modified = 0.0
-    for directory in (model_dir, audio_dir):
-        if directory.exists():
-            for f in directory.rglob("*"):
-                if f.is_file():
-                    mtime = f.stat().st_mtime
-                    if mtime > last_modified:
-                        last_modified = mtime
+    if model_dir.exists():
+        for f in model_dir.rglob("*"):
+            if f.is_file():
+                mtime = f.stat().st_mtime
+                if mtime > last_modified:
+                    last_modified = mtime
+    for filename in referenced_audio:
+        candidate = audio_dir / filename
+        if candidate.is_file():
+            mtime = candidate.stat().st_mtime
+            if mtime > last_modified:
+                last_modified = mtime
     stats["last_modified"] = (
         datetime.fromtimestamp(last_modified, tz=timezone.utc).isoformat()
         if last_modified > 0 else None

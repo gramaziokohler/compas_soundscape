@@ -166,6 +166,25 @@ export interface TokenUpdate {
   anthropic_api_key?: string;
 }
 
+/** Identity resolved from the Cloudflare Access JWT (or anonymous fallback). */
+export interface CurrentUser {
+  email: string | null;
+  user_id: string | null;
+  display_name: string | null;
+  workspace_id: string | null;
+}
+
+export interface WorkspaceSummary {
+  id: string;
+  owner_hash: string;
+  name: string;
+  sharing_mode: 'private' | 'link';
+  revision: number;
+  role: 'owner' | 'editor' | 'viewer';
+  created_at: string;
+  updated_at: string;
+}
+
 // ─── 3D Model Analysis types ──────────────────────────────────────────────────
 
 export interface ModelObjectResult {
@@ -197,6 +216,48 @@ export interface ModelAnalysisStatusResponse {
 
 // API Service Layer
 export const apiService = {
+  // ─── Identity ─────────────────────────────────────────────────────────────
+  /** Current identity (email from Cloudflare Access; anonymous fallback). */
+  async getCurrentUser(): Promise<CurrentUser> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/me`,
+      undefined,
+      'Get current user'
+    );
+    if (!response.ok) {
+      throw new Error('Failed to resolve identity');
+    }
+    return response.json();
+  },
+
+  async setDisplayName(displayName: string): Promise<CurrentUser> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/me/display-name`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ display_name: displayName }),
+      },
+      'Set display name'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Failed to set display name' }));
+      throw new Error(err.detail || 'Failed to set display name');
+    }
+    return response.json();
+  },
+
+  async listWorkspaces(): Promise<WorkspaceSummary[]> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/workspaces`,
+      undefined,
+      'List workspaces'
+    );
+    if (!response.ok) return [];
+    const data = await response.json();
+    return data.workspaces ?? [];
+  },
+
   // File Upload
   async uploadFile(file: File): Promise<FileUploadResponse | CompasGeometry> {
     try {

@@ -79,13 +79,17 @@ frontend/src/
 
 ## Global Hard Rules
 
-1. **No database.** Persistence is filesystem-only under `backend/temp/` (session files) and
-   `backend/data/` (saved soundscapes). Redis is a job store / ephemeral state, not a database.
+1. **Metadata in SQLite, media on disk.** Durable metadata (users, sessions, workspaces,
+   membership, invites, blob refs) lives in `backend/data/app.db` via
+   `services/metadata_store.py`. Audio/media stays on the filesystem under `backend/temp/`
+   (transient) and `backend/data/` (saved). Redis is a job store / ephemeral state, not a database.
 2. **Never block the request thread.** Heavy jobs (ML, acoustics) go through the Redis job store
    (`services/job_store.py.enqueue()`) and run in resident worker processes
    (`workers/worker_main.py --role gpu|cpu|choras`); LLM/TTS/model-analysis run as in-process
    asyncio tasks (`services/io_jobs.py`). Always return `{job_id, position, total}` immediately.
-3. **Session-scope all file writes** via `request.state.session_id` (from `middleware/session.py`).
+3. **Scope all file writes to a workspace.** `request.state.session_id` is set by
+   `middleware/session.py` to the **workspace id** (identity comes from the Cloudflare Access JWT
+   email, or an anonymous session cookie in dev). Use it for every path.
 4. **TypeScript strict** — `pnpm build` must pass with 0 errors. No `any`.
 5. **One source of truth per layer** — constants in `config/constants.py` (backend) or
    `utils/constants.ts` (frontend); never duplicate magic numbers.

@@ -746,3 +746,31 @@ JOB_TYPE_QUEUE = {
 }
 
 JOB_CANCEL_CHANNEL = "job:cancel"
+
+# ============================================================================
+# Auth / Identity (Cloudflare Access + anonymous fallback)
+# ============================================================================
+# When CF_ACCESS_TEAM_DOMAIN + CF_ACCESS_AUD are set, every request must carry
+# a valid Cloudflare Access JWT and the verified `email` claim is the user's
+# identity (no custom login screen). If they are unset, the app falls back to
+# the anonymous session cookie — local dev / legacy behaviour.
+CF_ACCESS_TEAM_DOMAIN = os.environ.get("CF_ACCESS_TEAM_DOMAIN", "").strip()
+CF_ACCESS_AUD = os.environ.get("CF_ACCESS_AUD", "").strip()
+AUTH_DEV_BYPASS = os.environ.get("AUTH_DEV_BYPASS", "").lower() in ("true", "1", "yes")
+DEV_USER_EMAIL = os.environ.get("DEV_USER_EMAIL", "dev@localhost").strip().lower()
+CF_ACCESS_JWT_HEADER = "Cf-Access-Jwt-Assertion"
+CF_ACCESS_COOKIE = "CF_Authorization"
+CF_ACCESS_JWKS_CACHE_TTL_S = int(os.environ.get("CF_ACCESS_JWKS_CACHE_TTL_S", "3600"))
+
+# Opaque session cookie. Sessions are non-expiring (sliding): the cookie is
+# re-issued on every visit and the server-side row never expires.
+SESSION_COOKIE = "compas_session"
+SESSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 365 * 10  # ~10 years (browsers cap ~400d, re-issued on each visit)
+SESSION_TOKEN_BYTES = 32
+
+# ============================================================================
+# SQLite metadata store (workspaces/users/membership/blob refs)
+# ============================================================================
+# Metadata only — audio/media stays on the filesystem. Note this amends the
+# former "no database" rule; durable workspace data still lives under data/.
+APP_DB_PATH = str(BACKEND_DIR / "data" / "app.db")

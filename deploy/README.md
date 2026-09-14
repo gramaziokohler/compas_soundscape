@@ -54,6 +54,9 @@ repo root. Create/keep them there. Recognized keys (values never printed here):
 | `REDIS_URL` | Default `redis://127.0.0.1:6379/0` | optional override |
 | `GPU_WORKER_SLOTS`, `CPU_WORKER_SLOTS`, `CHORAS_WORKER_SLOTS` | Slot counts read by `--slots` defaults / docs | optional |
 | `LLM_MAX_CONCURRENT` (8), `TTS_MAX_CONCURRENT` (2), `GPU_QUEUE_PER_SESSION_MAX` (3) | Concurrency tuning | optional |
+| `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` | Cloudflare Access team domain + app Audience tag. When set, the verified Access email is the user identity (multi-user mode). | for multi-user behind Cloudflare |
+| `AUTH_DEV_BYPASS`, `DEV_USER_EMAIL` | Local dev identity without Cloudflare | optional |
+| `COOKIE_SECURE` (default `true`) | Secure session cookie; set `false` only for plain-HTTP LAN tests | optional |
 | `FRONTEND_ORIGIN` | CORS origin (default `http://localhost:3000`) | only when changed |
 | `CORS_ALLOW_ALL` | `true` = open CORS (dev only) | optional |
 
