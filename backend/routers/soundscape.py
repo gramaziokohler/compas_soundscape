@@ -153,6 +153,115 @@ def _copy_audio_files(session_id: str, model_id: str, audio_urls: list[str]) -> 
     return copied
 
 
+def _collect_referenced_audio(data: SoundscapeData) -> list[str]:
+    """Every audio filename a saved soundscape references.
+
+    Covers both 3D sound events (`audio_filename`) and analysis audio-context
+    sources (`persisted_audio_filename` nested anywhere in `analysis_state`).
+    """
+    filenames: list[str] = []
+
+    for event in data.sound_events or []:
+        name = (event.audio_filename or "").strip()
+        if name:
+            filenames.append(name)
+
+    def _walk(node: object) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if (
+                    key in ("audio_filename", "persisted_audio_filename")
+                    and isinstance(value, str)
+                    and value.strip()
+                ):
+                    filenames.append(value.strip())
+                else:
+                    _walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item)
+
+    if data.analysis_state:
+        _walk(data.analysis_state)
+
+    return filenames
+
+
+def _recover_missing_audio(session_id: str, filenames: list[str]) -> list[str]:
+    """Best-effort restore of referenced audio into the session audio dir.
+
+    On load some events reference audio that never made it into the persistent
+    `audio/` folder (e.g. the file was generated after the last autosave, or the
+    save-time copy failed). The generated/temp copy may still exist (< janitor
+    age) — copy it in so the served URL resolves instead of returning 404.
+
+    Returns the filenames still missing after recovery.
+    """
+    if not filenames:
+        return []
+
+    dest_dir = user_audio_dir(session_id)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    missing: list[str] = []
+    for filename in dict.fromkeys(filenames):
+        dest = dest_dir / filename
+        if dest.is_file():
+            continue
+        # _resolve_audio_source falls back to a basename search across every
+        # generated dir, the tts dir, and every persisted data audio dir — so a
+        # stale source path still finds the file wherever it currently lives.
+        source = _resolve_audio_source(
+            f"{STATIC_MOUNT_PATH}/sounds/generated/{session_id}/{filename}",
+            session_id,
+        )
+        if source is None:
+            missing.append(filename)
+            continue
+        try:
+            if source.resolve() != dest.resolve():
+                shutil.copy2(str(source), str(dest))
+        except Exception as e:
+            logger.warning(f"Failed to restore audio {filename}: {e}")
+            missing.append(filename)
+
+    return missing
+
+
+def _drop_missing_audio_filenames(data: SoundscapeData, missing: list[str]) -> None:
+    """Clear audio filename refs whose file is gone.
+
+    The frontend only builds a URL when the filename is set, so clearing it
+    prevents requests for files that do not exist (and the resulting 404s). The
+    event/card keeps its position/timeline state — only the audio ref goes.
+    """
+    if not missing:
+        return
+    missing_set = set(missing)
+
+    for event in data.sound_events or []:
+        if (event.audio_filename or "").strip() in missing_set:
+            event.audio_filename = ""
+
+    def _drop(node: object) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if (
+                    key in ("audio_filename", "persisted_audio_filename")
+                    and isinstance(value, str)
+                    and value.strip() in missing_set
+                ):
+                    node[key] = ""
+                else:
+                    _drop(value)
+        elif isinstance(node, list):
+            for item in node:
+                _drop(item)
+
+    if data.analysis_state:
+        _drop(data.analysis_state)
+
+
 def _copy_ir_files(session_id: str, model_id: str, ir_urls: list[str]) -> int:
     """Copy IR files from temp directories to model-linked ir_files dir."""
     dest_dir = user_model_dir(session_id, model_id) / "ir_files"
@@ -385,11 +494,21 @@ async def load_soundscape(model_id: str, req: Request):
         soundscape = _load_json(json_path)
         if soundscape:
             logger.info(f"Loaded soundscape from session path: {json_path}")
+            missing_audio = _recover_missing_audio(
+                session_id, _collect_referenced_audio(soundscape)
+            )
+            if missing_audio:
+                logger.warning(
+                    f"{len(missing_audio)} referenced audio file(s) missing for model "
+                    f"{model_id}: {missing_audio}"
+                )
+                _drop_missing_audio_filenames(soundscape, missing_audio)
             return SoundscapeLoadResponse(
                 soundscape_data=soundscape,
                 audio_base_url=audio_base_url,
                 ir_base_url=ir_base_url,
                 found=True,
+                missing_audio_filenames=missing_audio,
             )
 
     # FALLBACK: Try old flat path (pre-session-isolation saves)
@@ -398,6 +517,16 @@ async def load_soundscape(model_id: str, req: Request):
         soundscape = _load_json(legacy_json)
         if soundscape:
             logger.info(f"Loaded soundscape from legacy path: {legacy_json}")
+            # Legacy audio lives next to the model dir, not under <session>/audio.
+            missing_audio = _recover_missing_audio(
+                session_id, _collect_referenced_audio(soundscape)
+            )
+            if missing_audio:
+                logger.warning(
+                    f"{len(missing_audio)} referenced audio file(s) missing for legacy "
+                    f"model {model_id}: {missing_audio}"
+                )
+                _drop_missing_audio_filenames(soundscape, missing_audio)
             legacy_audio_base = f"{SOUNDSCAPE_DATA_URL_PREFIX}/{model_id}"
             legacy_ir_base = f"{SOUNDSCAPE_DATA_URL_PREFIX}/{model_id}/ir_files"
             return SoundscapeLoadResponse(
@@ -405,6 +534,7 @@ async def load_soundscape(model_id: str, req: Request):
                 audio_base_url=legacy_audio_base,
                 ir_base_url=legacy_ir_base,
                 found=True,
+                missing_audio_filenames=missing_audio,
             )
 
     return SoundscapeLoadResponse(

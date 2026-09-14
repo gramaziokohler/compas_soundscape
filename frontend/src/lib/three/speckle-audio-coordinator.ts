@@ -6,6 +6,7 @@ import { SpeckleCameraController } from './speckle-camera-controller';
 import { SpeckleEventBridge } from './speckle-event-bridge';
 import { SpeckleDragHandler } from './speckle-drag-handler';
 import { SoundSphereManager } from './sound-sphere-manager';
+import type { EntitySurfaceInfo } from './sound-sphere-manager';
 import { ReceiverManager } from './receiver-manager';
 import { GridReceiverManager } from './grid-receiver-manager';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
@@ -154,7 +155,10 @@ export class SpeckleAudioCoordinator {
 
     this.eventBridge.setOnCustomObjectSelected((object: THREE.Object3D, type: 'sound' | 'receiver') => {
       if (this.dragHandler) {
-        this.dragHandler.selectObjects([object]);
+        // Large-object labels are click proxies for an invisible marker group —
+        // select the marker itself so the surface gumball attaches there.
+        const target = (object.userData?.markerTarget as THREE.Object3D | undefined) ?? object;
+        this.dragHandler.selectObjects([target]);
       }
     });
 
@@ -234,6 +238,24 @@ export class SpeckleAudioCoordinator {
         if (objectType === 'sound') {
           const promptKey = object.userData.promptKey;
 
+          // Surface marker (large linked object): move the marker + its light,
+          // not a sphere.
+          if (object.userData.isSurfaceMarker) {
+            const promptIdx = parseInt(String(promptKey).replace('prompt_', ''), 10);
+            const pos: [number, number, number] = [object.position.x, object.position.y, object.position.z];
+            if (!Number.isNaN(promptIdx)) {
+              this.soundSphereManager!.updateMarkerPosition(promptIdx, pos);
+            }
+            const soundId = object.userData.soundEvent?.id || object.userData.positionKey;
+            if (soundId) {
+              this.soundSphereManager!.setEntityDarkModeLightPosition(soundId, pos);
+              if (this.onSoundPositionUpdatedCallback) {
+                this.onSoundPositionUpdatedCallback(soundId, pos);
+              }
+            }
+            continue;
+          }
+
           // Update internal position map + orchestrator source position.
           this.soundSphereManager!.updateSpherePosition(promptKey, object.position);
 
@@ -289,7 +311,8 @@ export class SpeckleAudioCoordinator {
     scaleForSounds: number,
     auralizationConfig: AuralizationConfig,
     // bounds?: BoundingBoxBounds | null, // Bounding-box placement removed — camera-based only
-    cameraFrontPosition?: THREE.Vector3 | null
+    cameraFrontPosition?: THREE.Vector3 | null,
+    entitySurfaceInfo?: EntitySurfaceInfo
   ): void {
     if (!this.soundSphereManager) return;
 
@@ -302,7 +325,8 @@ export class SpeckleAudioCoordinator {
       scaleForSounds,
       auralizationConfig,
       // bounds, // Bounding-box placement removed
-      cameraFrontPosition
+      cameraFrontPosition,
+      entitySurfaceInfo
     );
 
     // Sync newly placed positions (from spiral placement) back to React state

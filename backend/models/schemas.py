@@ -536,6 +536,10 @@ class SoundscapeLoadResponse(BaseModel):
     audio_base_url: str = ""
     ir_base_url: str = ""
     found: bool = False
+    # Referenced audio filenames that could not be found on disk (even after
+    # attempting recovery from the generated/temp dirs). Their `audio_filename`
+    # is cleared in `soundscape_data` so the client does not build URLs that 404.
+    missing_audio_filenames: list[str] = []
 
 
 # ── LLM Analysis Output Schemas ───────────────────────────────────────────────

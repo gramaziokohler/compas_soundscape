@@ -46,6 +46,7 @@ import { applyFadeInOut } from '../utils/fade-envelope';
 import type { IBinauralDecoder } from '../core/interfaces/IBinauralDecoder';
 import { AudioMode } from '@/types/audio';
 import { OmnitoneDecoder } from '../decoders/OmnitoneDecoder';
+import { SourceLevelMeter } from '../utils/source-level';
 import { AUDIO_CONTROL, IMPULSE_RESPONSE } from '@/utils/constants';
 
 // Lazy load ambisonics to avoid SSR issues (window is not defined)
@@ -70,6 +71,9 @@ interface SourceChain {
   normGainNode: GainNode;
   muteGainNode: GainNode;
   irGainNode: GainNode;
+
+  // Realtime level probe (inline pass-through) for audio-reactive visuals
+  levelMeter: SourceLevelMeter;
 
   // JSAmbisonics convolver (handles all orders)
   convolver: any; // ambisonics.convolver
@@ -447,6 +451,10 @@ export class AmbisonicIRMode implements IAudioMode {
     // Create JSAmbisonics convolver for multi-channel IR
     const convolver = new ambisonics.convolver(this.audioContext, this.ambisonicOrder);
 
+    // Realtime level probe — inserted inline (transparent pass-through) so the
+    // visuals layer can read the post-volume signal level without touching routing.
+    const levelMeter = new SourceLevelMeter(this.audioContext);
+
     // Set IR buffer if available (global IR mode)
     // In simulation mode, IR will be set per-source via setSourceImpulseResponse()
     // Convert SN3D → N3D if JSAmbisonics decoder is active
@@ -454,8 +462,9 @@ export class AmbisonicIRMode implements IAudioMode {
       convolver.updateFilters(this.getConvolverIR(this.irBuffer));
     }
 
-    // Connect: GainNode → NormGain → MuteGain → IRGain → Convolver → Decoder
-    gainNode.connect(normGainNode);
+    // Connect: GainNode → LevelMeter → NormGain → MuteGain → IRGain → Convolver → Decoder
+    gainNode.connect(levelMeter.node);
+    levelMeter.node.connect(normGainNode);
     normGainNode.connect(muteGainNode);
     muteGainNode.connect(irGainNode);
     irGainNode.connect(convolver.in);
@@ -480,6 +489,7 @@ export class AmbisonicIRMode implements IAudioMode {
       normGainNode,
       muteGainNode,
       irGainNode,
+      levelMeter,
       convolver,
       sourceIRBuffer: null, // No per-source IR yet (will be set in simulation mode)
       normGainValue: this.globalNormGain,
@@ -872,6 +882,30 @@ export class AmbisonicIRMode implements IAudioMode {
   }
 
   /**
+   * Smoothed realtime signal level (0..1) for a source.
+   */
+  getSourceLevel(sourceId: string): number {
+    const chain = this.sourceChains.get(sourceId);
+    if (!chain) return 0;
+    return chain.levelMeter.read();
+  }
+
+  /**
+   * Sources with at least one in-flight voice, or the legacy single-slot source
+   * still playing.
+   */
+  getPlayingSourceIds(): string[] {
+    const ids = new Set<string>();
+    this.voices.forEach((set, sourceId) => {
+      if (set.size > 0) ids.add(sourceId);
+    });
+    this.sourceChains.forEach((chain, sourceId) => {
+      if (chain.isPlaying) ids.add(sourceId);
+    });
+    return Array.from(ids);
+  }
+
+  /**
    * Update listener orientation (rotation only - position is LOCKED in receiver mode)
    * Uses camera orientation for head rotation in the ambisonic field.
    */
@@ -1095,6 +1129,7 @@ export class AmbisonicIRMode implements IAudioMode {
     try {
       chain.gainNode.disconnect();
       chain.muteGainNode.disconnect();
+      chain.levelMeter.dispose();
 
       // Disconnect JSAmbisonics convolver
       if (chain.convolver && chain.convolver.out) {

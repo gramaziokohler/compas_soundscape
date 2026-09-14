@@ -94,6 +94,55 @@ export const DARK_MODE = {
   SHADOW_MAP_SIZE: 512,       // per-face resolution of the cube shadow map
   SHADOW_CAMERA_NEAR: 0.1,   // near plane of the shadow frustum
   SHADOW_BIAS: -0.005,        // reduces shadow acne on angled surfaces
+  /** Extra normal offset sampling — the main cure for cube-shadow banding
+   *  (stripes) on grazed surfaces from point lights. */
+  SHADOW_NORMAL_BIAS: 0.05,
+
+  // ---------------------------------------------------------------------------
+  // Realtime playing reactivity (root-cause lag fix + highlight feature)
+  // ---------------------------------------------------------------------------
+  /**
+   * Maximum number of sound point lights allowed to cast shadows. A shadow-
+   * casting PointLight renders the scene 6× into a cube map, so this is the
+   * dominant GPU cost with many sources. Default 0 = shadows off entirely
+   * (shadow maps were the main source of blotchy/streaked shading with several
+   * overlapping lights). Raise to 1–2 to re-enable.
+   */
+  MAX_SHADOW_CASTING_LIGHTS: 0,
+  /**
+   * Hard cap on simultaneously VISIBLE sound point lights. Three includes every
+   * visible light in every standard material's shader; beyond this the fragment
+   * uniform budget can be exceeded on modest GPUs (shader link failure → objects
+   * render unlit/black). Lights beyond the cap (furthest from the camera) are
+   * hidden each frame. Raise only if you know the GPU can take it.
+   */
+  MAX_ACTIVE_LIGHTS: 12,
+  /** Idempotent enforcement safety-net interval (ms). Full passes are skipped
+   *  unless the visibility/selection/link signature actually changed. */
+  ENFORCEMENT_INTERVAL_MS: 300,
+  /** Light intensity multipliers around the light's base value while playing.
+   *  level 0 → MIN, level 1 → MAX. Idle lights are restored to base (1.0). */
+  PLAYING_LIGHT_MIN_FACTOR: 0.25,
+  PLAYING_LIGHT_MAX_FACTOR: 1.8,
+  /** Sound-sphere scale pulse amplitude while playing (0 = no pulse). */
+  PLAYING_SPHERE_PULSE: 0.22,
+
+  // ---------------------------------------------------------------------------
+  // Large linked objects (surface point sources)
+  // ---------------------------------------------------------------------------
+  /** Linked objects whose AABB max dimension exceeds this (metres) are treated
+   *  as surface point sources: no sphere, marker + light, surface gumball. */
+  LARGE_ENTITY_THRESHOLD_M: 1.0,
+  /** Marker ring reticle (flat disc on the surface) and vertical pin. */
+  MARKER_RING_RADIUS: 0.35,
+  MARKER_RING_INNER_RADIUS: 0.22,
+  MARKER_PIN_HEIGHT: 0.45,
+  MARKER_OPACITY: 0.9,
+  MARKER_RENDER_ORDER: 1000,
+  /** Marker world radius = distance * SCREEN_SPACE_SIZE (constant apparent size). */
+  MARKER_SCREEN_SPACE_SIZE: 0.045,
+  MARKER_MIN_SCALE: 0.15,
+  MARKER_MAX_SCALE: 12,
 } as const;
 
 // ============================================================================
@@ -478,6 +527,64 @@ export const TTS_VOICES = [
 
 export const TTS_DEFAULT_VOICE = "Kore";
 export const TTS_DEFAULT_LANGUAGE = "English";
+
+/**
+ * Bare character name → Gemini TTS voice value. Mirrors the backend
+ * `TTS_VOICE_CHARACTERS` in backend/config/constants.py (keep the two in sync).
+ * The speech agent picks character names EXCLUSIVELY from these keys, so this is
+ * the authoritative lookup — do NOT match against `TTS_VOICES[].label` (which is
+ * e.g. "Alex (Friendly)" and never equals the bare character name "Alex").
+ */
+export const TTS_CHARACTER_VOICES: Record<string, string> = {
+  Chloe: "Kore",
+  Felix: "Fenrir",
+  Max: "Puck",
+  Leo: "Charon",
+  Emma: "Leda",
+  Lucas: "Orus",
+  Alex: "Achird",
+  Sofia: "Achernar",
+  David: "Algenib",
+  Oliver: "Algieba",
+  Thomas: "Alnilam",
+  Mia: "Aoede",
+  Anna: "Autonoe",
+  Elena: "Callirrhoe",
+  Clara: "Despina",
+  Gabriel: "Encelade",
+  Eva: "Erinome",
+  Luna: "Gacrux",
+  Victor: "Iapetus",
+  Lara: "Laomedeia",
+  Sara: "Léda",
+  Julia: "Pulcherrima",
+  Oscar: "Rasalgethi",
+  Arthur: "Sadachbia",
+  Louis: "Sadaltager",
+  Marcus: "Schedar",
+  Maya: "Sulafat",
+  Simon: "Umbriel",
+  Nina: "Vindemiatrix",
+  Zoe: "Zephyr",
+  Benjamin: "Zubenelgenubi",
+};
+
+/** Reverse map: Gemini voice value → character display name (e.g. "Achird" → "Alex"). */
+export const TTS_VOICE_TO_CHARACTER: Record<string, string> = Object.fromEntries(
+  Object.entries(TTS_CHARACTER_VOICES).map(([character, voice]) => [voice, character]),
+);
+
+/** Resolve a bare character name to its Gemini voice value (case-insensitive); undefined when unknown. */
+export function resolveVoiceForCharacter(character: string | undefined | null): string | undefined {
+  if (!character) return undefined;
+  const key = character.trim();
+  if (!key) return undefined;
+  const direct = TTS_CHARACTER_VOICES[key];
+  if (direct) return direct;
+  const lower = key.toLowerCase();
+  const match = Object.keys(TTS_CHARACTER_VOICES).find((c) => c.toLowerCase() === lower);
+  return match ? TTS_CHARACTER_VOICES[match] : undefined;
+}
 
 export const LLM_MODEL_NAMES: Record<string, string> = {
   [LLM_MODEL_GEMINI_FLASH]: "Gemini 2.5 Flash",
@@ -1079,6 +1186,20 @@ export const SOUND_SPHERE = {
   MIN_SCALE: 0.8,
   /** Maximum scale factor (prevents objects from becoming huge when far away) */
   MAX_SCALE: 10,
+} as const;
+
+// Source Level Metering (realtime audio-reactive visuals)
+export const AUDIO_LEVEL = {
+  /** Analyser window size — small is enough for RMS and cheap to read. */
+  FFT_SIZE: 256,
+  /** Linear scale applied to RMS before clamping to 0..1. */
+  RMS_SCALE: 3.5,
+  /** Smoothing factor when the level rises (0..1, higher = snappier). */
+  ATTACK: 0.5,
+  /** Smoothing factor when the level falls (lower = slower trail-off). */
+  RELEASE: 0.12,
+  /** Below this scaled level the source is treated as silent. */
+  SILENCE_THRESHOLD: 0.01,
 } as const;
 
 // Receiver Configuration

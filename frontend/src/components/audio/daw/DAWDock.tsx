@@ -355,11 +355,15 @@ export function DAWDock({
     clearAllIterationLinksForSound(sound.id);
   }, [handleTimestampsChange, clearAllIterationLinksForSound]);
 
-  /** Reset to the auto default loop: drop the stored schedule so the timeline derives it again. */
+  /**
+   * Reset a track. For an orchestrator-derived track, restores the timestamps +
+   * iteration links saved from the orchestrator result (so a dragged iteration
+   * returns to its original slot, NOT time 0). For a plain track, drops the stored
+   * schedule so the timeline derives the auto default loop again.
+   */
   const handleResetTrack = useCallback((sound: TimelineSound) => {
-    useAudioControlsStore.getState().clearSoundTimestampsEntry(sound.id);
-    clearAllIterationLinksForSound(sound.id);
-  }, [clearAllIterationLinksForSound]);
+    useAudioControlsStore.getState().resetTrack(sound.id);
+  }, []);
 
   /* ---- Context menu (variant / entity override) ---- */
   const [contextMenu, setContextMenu] = useState<{ soundId: string; iterationIndex: number; x: number; y: number } | null>(null);
@@ -701,7 +705,7 @@ export function DAWDock({
                   trackHeight={trackHeight}
                   isMuted={mutedSounds.has(sound.id)}
                   isSoloed={soloedSound === sound.id}
-                  volumeDbfs={soundVolumes[sound.id] ?? DEFAULT_DBFS}
+                  volumeDbfs={soundVolumes[sound.id] ?? soundConfigs[configIdx ?? -1]?.dbfs ?? DEFAULT_DBFS}
                   onMute={() => handleMute(sound.id)}
                   onSolo={() => handleSolo(sound.id)}
                   onVolumeChange={(db) => handleVolumeChange(sound.id, db)}

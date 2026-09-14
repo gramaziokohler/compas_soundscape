@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
+import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { DEFAULT_DBFS } from '@/utils/constants';
 import type { SoundEvent } from '@/types';
 
@@ -18,6 +19,12 @@ export function useSpeckleAudioSync({
   soloedSound: string | null;
   globalSoundSpeed: number;
 }) {
+  // Calibration anchor: every generated/processed WAV is normalized to this
+  // level, so playback gain = target − globalBaseDbfs. This is what makes the
+  // orchestrator's per-sound SPL (stored in event.volume_dbfs) audible instead
+  // of every source playing at the uniform anchor.
+  const globalBaseDbfs = useAudioControlsStore((s) => s.globalBaseDbfs);
+
   // ============================================================================
   // Effect - Apply Volume Changes (dBFS-based)
   // ============================================================================
@@ -38,16 +45,15 @@ export function useSpeckleAudioSync({
       soundscapeData.forEach((soundEvent) => {
         const pi = (soundEvent as any).prompt_index ?? 0;
         const targetVolumeDbfs = soundVolumes[soundEvent.id] ?? promptVolumeOverride.get(pi) ?? soundEvent.volume_dbfs ?? DEFAULT_DBFS;
-        const baseVolumeDbfs = soundEvent.volume_dbfs ?? DEFAULT_DBFS;
 
-        const dbDiff = targetVolumeDbfs - baseVolumeDbfs;
+        const dbDiff = targetVolumeDbfs - globalBaseDbfs;
         const gainFactor = Math.pow(10, dbDiff / 20);
         const clampedGain = Math.max(0.0, Math.min(10.0, gainFactor));
 
         audioOrchestrator.setSourceVolume(soundEvent.id, clampedGain);
       });
     }
-  }, [soundVolumes, soundscapeData, audioOrchestrator]);
+  }, [soundVolumes, soundscapeData, audioOrchestrator, globalBaseDbfs]);
 
   // ============================================================================
   // Effect - Apply Mute/Solo States

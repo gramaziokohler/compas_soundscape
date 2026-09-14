@@ -33,6 +33,7 @@ import type { AudioMode, Position, Orientation, AmbisonicOrder } from '@/types/a
 import type { FadeOptions } from '../utils/fade-envelope';
 import { applyFadeInOut } from '../utils/fade-envelope';
 import { cartesianToSpherical } from '../utils/ambisonic-utils';
+import { SourceLevelMeter } from '../utils/source-level';
 import { AUDIO_CONTROL } from '@/utils/constants';
 
 // Lazy load ambisonics to avoid SSR issues (window is not defined)
@@ -57,6 +58,9 @@ interface AnechoicSource {
   gainNode: GainNode;       // User volume
   muteGainNode: GainNode;   // Mute control
   distanceGainNode: GainNode; // Distance attenuation
+
+  // Realtime level probe (inline pass-through) for audio-reactive visuals
+  levelMeter: SourceLevelMeter;
 
   // JSAmbisonics encoder
   encoder: any; // ambisonics.monoEncoder
@@ -161,6 +165,10 @@ export class AnechoicMode implements IAudioMode {
     const distanceGainNode = this.audioContext.createGain();
     distanceGainNode.gain.value = 1.0;
 
+    // Realtime level probe — inserted inline (transparent pass-through) so the
+    // visuals layer can read the post-volume signal level without touching routing.
+    const levelMeter = new SourceLevelMeter(this.audioContext);
+
     // Create JSAmbisonics monoEncoder
     // Note: monoEncoder uses GainNode matrix, not ConvolverNode, so no normalize property to set
     const encoder = new ambisonics.monoEncoder(this.audioContext, this.ambisonicOrder);
@@ -177,8 +185,9 @@ export class AnechoicMode implements IAudioMode {
     const distanceGain = refDistance / distance;
     distanceGainNode.gain.value = distanceGain;
 
-    // Connect audio graph: Gain → MuteGain → DistanceGain → Encoder
-    gainNode.connect(muteGainNode);
+    // Connect audio graph: Gain → LevelMeter → MuteGain → DistanceGain → Encoder
+    gainNode.connect(levelMeter.node);
+    levelMeter.node.connect(muteGainNode);
     muteGainNode.connect(distanceGainNode);
     distanceGainNode.connect(encoder.in);
 
@@ -195,6 +204,7 @@ export class AnechoicMode implements IAudioMode {
       gainNode,
       muteGainNode,
       distanceGainNode,
+      levelMeter,
       encoder,
       isPlaying: false,
       startTime: 0,
@@ -391,6 +401,30 @@ export class AnechoicMode implements IAudioMode {
   }
 
   /**
+   * Smoothed realtime signal level (0..1) for a source.
+   */
+  getSourceLevel(sourceId: string): number {
+    const source = this.sources.get(sourceId);
+    if (!source) return 0;
+    return source.levelMeter.read();
+  }
+
+  /**
+   * Sources with at least one in-flight voice, or the legacy single-slot source
+   * still playing.
+   */
+  getPlayingSourceIds(): string[] {
+    const ids = new Set<string>();
+    this.voices.forEach((set, sourceId) => {
+      if (set.size > 0) ids.add(sourceId);
+    });
+    this.sources.forEach((source, sourceId) => {
+      if (source.isPlaying) ids.add(sourceId);
+    });
+    return Array.from(ids);
+  }
+
+  /**
    * Remove audio source
    */
   removeSource(sourceId: string): void {
@@ -414,6 +448,7 @@ export class AnechoicMode implements IAudioMode {
     source.gainNode.disconnect();
     source.muteGainNode.disconnect();
     source.distanceGainNode.disconnect();
+    source.levelMeter.dispose();
 
     // Disconnect JSAmbisonics encoder
     if (source.encoder && source.encoder.out) {

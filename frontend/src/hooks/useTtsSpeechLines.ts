@@ -53,11 +53,17 @@ export function createTtsSpeechLines(
         copyCount: newLines.length,
       });
     } else {
+      // Keep the orchestrator's per-iteration variant array the SAME length as the
+      // speech lines, so deleting/adding a line can never bake a phantom iteration
+      // (extra iterations previously survived deletion and reappeared in the DAW).
+      const nextVariants = newLines.map(
+        (_, i) => config.orchestrateMeta?.variants?.[i] ?? 1,
+      );
       onUpdateConfig(index, 'orchestrateMeta', {
         orchestrateId: config.orchestrateMeta?.orchestrateId ?? '',
         entryId: config.orchestrateMeta?.entryId ?? '',
         trigger: config.orchestrateMeta?.trigger ?? { type: '', expression: [], delay: [] },
-        variants: config.orchestrateMeta?.variants ?? [],
+        variants: nextVariants,
         allObjectIds: config.orchestrateMeta?.allObjectIds ?? [],
         speechLines: newLines,
         isSpeech: config.orchestrateMeta?.isSpeech ?? true,
@@ -65,6 +71,8 @@ export function createTtsSpeechLines(
         timestamps: config.orchestrateMeta?.timestamps ?? [],
       });
     }
+    // The bake sizes variant durations from seed_copies — keep it aligned.
+    onUpdateConfig(index, 'seed_copies', Math.max(1, newLines.length));
     if (nextPrompt !== undefined) {
       onUpdateConfig(index, 'prompt', nextPrompt);
     }

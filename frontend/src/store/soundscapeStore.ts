@@ -28,6 +28,8 @@ import {
   LIBRARY_MAX_SEARCH_RESULTS,
   DUPLICATE_POSITION_OFFSET,
   DEFAULT_DBFS,
+  DBFS_MIN,
+  DBFS_MAX,
   TTS_DEFAULT_VOICE,
 } from '@/utils/constants';
 import { loadAudioFile, revokeAudioUrl } from '@/lib/audio/utils/audio-upload';
@@ -224,6 +226,63 @@ async function* streamOrchestrate(
 }
 
 /**
+ * Build the foley/speech payload fed to the orchestrate agent from the current
+ * (user-edited) scenario-source cards. Single source of truth for both running
+ * the agent and detecting whether its inputs changed.
+ */
+function buildOrchestrateInputs(
+  configs: SoundGenerationConfig[],
+): { foleySounds: any[]; speeches: any[] } {
+  const foleySounds: any[] = [];
+  const speeches: any[] = [];
+  configs.forEach((config) => {
+    const src = config.scenarioSource;
+    if (!src) return;
+    if (src.isSpeech) {
+      const lines = src.speechLines?.length ? src.speechLines : [src.script];
+      speeches.push({
+        id: src.entryId,
+        timestamps: src.timestamps,
+        character: src.character,
+        script: lines.join('; '),
+        position: src.position,
+        copyCount: src.speechLines?.length || 1,
+      });
+    } else {
+      foleySounds.push({
+        id: src.entryId,
+        soundName: src.soundName,
+        description: src.description,
+        category: src.category,
+        duration: src.duration,
+        timestamps: src.timestamps,
+        objectsInvolved: src.objectsInvolved,
+        position: src.position,
+        copyCount: src.copyCount,
+      });
+    }
+  });
+  return { foleySounds, speeches };
+}
+
+/**
+ * Stable signature of the orchestrate-agent inputs plus the per-entry variant
+ * count. Compared against the baseline captured after the last orchestration to
+ * decide whether the "Re-orchestrate timeline" button should be offered — any
+ * change (edited speech lines, copy counts, timestamps, objects, or a deleted
+ * variant) flips it.
+ */
+export function orchestrateInputsSignature(configs: SoundGenerationConfig[]): string {
+  const relevant = configs.filter((c) => c.scenarioSource);
+  const inputs = buildOrchestrateInputs(relevant);
+  const variantSummary = relevant.map((c) => ({
+    entryId: c.scenarioSource!.entryId,
+    variantCount: c.orchestrateMeta?.variants?.length ?? c.scenarioSource!.copyCount,
+  }));
+  return JSON.stringify({ inputs, variantSummary });
+}
+
+/**
  * Run the orchestrate agent for each unique scenario source, rebuilding the
  * foley + speech input from the user's current (edited) cards. Runs fully in
  * parallel with sound generation — the returned maps are applied at the sync
@@ -239,33 +298,7 @@ async function runOrchestrationForSources(
   let entryCount = 0;
 
   for (const [scenarioId, configs] of scenarioGroups) {
-    const foleySounds: any[] = [];
-    const speeches: any[] = [];
-    configs.forEach((config) => {
-      const src = config.scenarioSource!;
-      if (src.isSpeech) {
-        speeches.push({
-          id: src.entryId,
-          timestamps: src.timestamps,
-          character: src.character,
-          script: (src.speechLines.length ? src.speechLines : [src.script]).join('; '),
-          position: src.position,
-          copyCount: src.speechLines.length || 1,
-        });
-      } else {
-        foleySounds.push({
-          id: src.entryId,
-          soundName: src.soundName,
-          description: src.description,
-          category: src.category,
-          duration: src.duration,
-          timestamps: src.timestamps,
-          objectsInvolved: src.objectsInvolved,
-          position: src.position,
-          copyCount: src.copyCount,
-        });
-      }
-    });
+    const { foleySounds, speeches } = buildOrchestrateInputs(configs);
 
     try {
       let orchestrateId = '';
@@ -326,7 +359,12 @@ function applyOrchestrateDynamics(
     const dynamics = entryById.get(src.entryId);
     if (!dynamics) return c;
     const splMatch = dynamics.spl?.match(/(-?\d+(?:\.\d+)?)/);
-    const dbfsVal = splMatch ? parseFloat(splMatch[1]) : undefined;
+    // Clamp to the valid dBFS range — the orchestrator is asked for negative dBFS
+    // (−60..0) but can occasionally emit an out-of-range value; without clamping a
+    // rogue positive value would drive the playback gain into its ceiling.
+    const dbfsVal = splMatch
+      ? Math.max(DBFS_MIN, Math.min(DBFS_MAX, parseFloat(splMatch[1])))
+      : undefined;
     if (dbfsVal !== undefined) splByIndex.set(index, dbfsVal);
     return {
       ...c,
@@ -412,6 +450,11 @@ export interface SoundscapeStoreState {
   /** When true, generating scenario-derived sounds also runs the orchestrate agent
    *  in parallel to compile the parametric timeline (trigger/variants/SPL). */
   orchestrateSoundsEnabled: boolean;
+  /** Signature of the orchestrate-agent inputs captured after the last orchestration.
+   *  The "Re-orchestrate timeline" button shows only when the current inputs differ. */
+  orchestrateBaselineSignature: string | null;
+  /** True while the "Re-orchestrate timeline" LLM run is in flight. */
+  isReorchestrating: boolean;
 
   handleAddConfig: (type?: CardType) => void;
   handleBatchAddConfigs: (count: number) => number;
@@ -456,6 +499,12 @@ export interface SoundscapeStoreState {
   /** Delete a single variant from a generated sound card (ML/TTS variants, and
    *  SED-extracted segment variants — the latter also removes the backend WAV). */
   handleDeleteVariant: (promptIndex: number, variantIdx: number) => void;
+  /**
+   * Re-run the orchestrate agent on the current edited scene, then apply its new
+   * triggers/variants/SPL and re-bake the timeline. Used by the "Re-orchestrate
+   * timeline" button. Falls back to a pure re-bake when no scenario sources exist.
+   */
+  reorchestrateTimeline: () => Promise<void>;
   /** Ctrl+drag duplicate — deep-clones the config at `from` (and soundscape data) and inserts at `toInsertion`. */
   duplicateConfigAt: (from: number, toInsertion: number) => void;
   handleDetachSoundFromEntity: (index: number) => void;
@@ -501,6 +550,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         audioModel: DEFAULT_AUDIO_MODEL,
         ttsModel: DEFAULT_TTS_MODEL,
         orchestrateSoundsEnabled: false,
+        orchestrateBaselineSignature: null,
+        isReorchestrating: false,
 
         handleAddConfig: (type = 'text-to-audio') => {
           const { globalDuration, globalSteps, soundConfigs } = get();
@@ -559,7 +610,48 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           useAudioControlsStore.getState().stopSoundcardPreview();
           const { soundConfigs, activeSoundConfigTab, soundscapeData, generatedSounds } = get();
           const removedSet = new Set(indices);
-          const newConfigs = soundConfigs.filter((_, i) => !removedSet.has(i));
+
+          // Orphaned generated sounds of the removed configs — their per-sound
+          // state (timestamps / iterationLinks / durations / volumes) must be
+          // pruned so it can never be baked back into the timeline.
+          const removedSoundIds = [
+            ...new Set(
+              [...(soundscapeData ?? []), ...(generatedSounds ?? [])]
+                .filter((s: any) => removedSet.has(s.prompt_index))
+                .map((s: any) => s.id)
+                .filter(Boolean),
+            ),
+          ] as string[];
+
+          // Entry ids owned by removed configs — drop any parametric after()/
+          // alignEnd() reference to them from the remaining cards' triggers so the
+          // bake never resolves against a deleted entry.
+          const removedEntryIds = new Set<string>(
+            soundConfigs
+              .filter((_, i) => removedSet.has(i))
+              .flatMap((c) => [c.orchestrateMeta?.entryId, c.scenarioSource?.entryId])
+              .filter((e): e is string => !!e),
+          );
+          const pruneTriggerRefs = (c: SoundGenerationConfig): SoundGenerationConfig => {
+            const meta = c.orchestrateMeta;
+            if (!meta || removedEntryIds.size === 0) return c;
+            let changed = false;
+            const expression = meta.trigger.expression.map((expr) => {
+              const m = expr?.match(/^(after|alignEnd)\((.+)_(\d+)\)$/);
+              if (m && removedEntryIds.has(m[2])) {
+                changed = true;
+                return '';
+              }
+              return expr;
+            });
+            if (!changed) return c;
+            const delay = (meta.trigger.delay ?? []).map((d, i) => (expression[i] === '' ? 0 : d));
+            return { ...c, orchestrateMeta: { ...meta, trigger: { ...meta.trigger, expression, delay } } };
+          };
+
+          const newConfigs = soundConfigs
+            .filter((_, i) => !removedSet.has(i))
+            .map(pruneTriggerRefs);
           const remainingIndices = soundConfigs.map((_, i) => i).filter((i) => !removedSet.has(i));
           let newTab = activeSoundConfigTab;
           if (removedSet.has(newTab)) {
@@ -580,6 +672,17 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             false,
             'soundscape/removeConfigs',
           );
+
+          // Re-sync the audio store and re-bake so the deleted track disappears
+          // from the timeline immediately (and no stale iteration survives).
+          const audioStore = useAudioControlsStore.getState();
+          audioStore.syncSoundConfigs(newConfigs);
+          audioStore.syncGeneratedSounds(newGenerated);
+          audioStore.pruneSounds(removedSoundIds);
+          if (newConfigs.some((c) => c.orchestrateMeta)) {
+            audioStore.setOrchestrateIterationLinks(newConfigs);
+            audioStore.bakeOrchestrateSchedule();
+          }
         },
 
         handleReorderSoundConfigs: (from, to) => {
@@ -800,6 +903,36 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             elevenLabsConfigs.length +
             ttsConfigs.length;
 
+          // ── Unified sample count across ALL sound kinds (bug: separate TTA/TTS
+          // denominators showed "1/9" then "1/8" instead of "1/17"). The
+          // denominator is the number of generated AUDIO SAMPLES (variants/clips),
+          // and the numerator advances monotonically across the sequential stages.
+          const mlClipCount = generationConfigs.reduce(
+            (n, { config }) => n + Math.max(1, config.seed_copies ?? 1),
+            0,
+          );
+          const ttsClipCount = ttsConfigs.reduce((n, { config }) => {
+            const lines = (config.orchestrateMeta?.speechLines
+              ?? config.scenarioSource?.speechLines) as string[] | undefined;
+            return n + (lines && lines.length > 0 ? lines.length : Math.max(1, config.seed_copies ?? 1));
+          }, 0);
+          const otherClipCount =
+            uploadedConfigs.length + libraryConfigs.length + catalogConfigs.length + elevenLabsConfigs.length;
+          const totalSamples = mlClipCount + ttsClipCount + otherClipCount;
+          let samplesDone = 0;
+          const reportSamples = (label: string) => {
+            const clamped = Math.min(samplesDone, totalSamples);
+            set(
+              {
+                soundGenProgress: `${clamped}/${totalSamples} ${label}`,
+                soundGenProgressValue:
+                  totalSamples > 0 ? Math.round((clamped / totalSamples) * 100) : 0,
+              },
+              false,
+              'soundscape/generateProgress',
+            );
+          };
+
           if (total === 0) {
             // No targeted config is ready — surface a per-card config error inline
             // (same pattern as "Assign materials first" on simulation cards).
@@ -872,8 +1005,10 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           const orchestratePromise =
             orchestrateEnabled && hasTargetedScenario && scenarioGroups.size > 0
               ? runOrchestrationForSources(scenarioGroups, controller.signal, (status) => {
+                  // Kept off the visible generation status — the "Orchestrating
+                  // timeline…" message is shown once, at the very end, after every
+                  // sound has been generated (see the finalize block below).
                   _orchestrateProgressStatus = status;
-                  set({ soundGenProgress: status }, false, 'soundscape/orchestrateProgress');
                 })
               : null;
 
@@ -966,14 +1101,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 startPolling({
                   fetchStatus: () => apiService.getSoundGenerationStatus(generation_id),
                   onStatus: (s) => {
-                    set(
-                      {
-                        soundGenProgress: combinedProgress(s.status),
-                        soundGenProgressValue: s.progress,
-                      },
-                      false,
-                      'soundscape/generatePoll',
-                    );
+                    samplesDone = Math.max(samplesDone, s.partial_sounds?.length ?? 0);
+                    reportSamples('generating sounds…');
 
                     // Stream newly-completed sounds into the UI
                     if (s.partial_sounds && s.partial_sounds.length > lastPartialCount) {
@@ -1010,9 +1139,13 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               const audioFileUrl = config.uploadedAudioUrl;
               if (!audioFileUrl) continue;
               const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
+              // Files are calibrated to the GLOBAL base anchor; the per-sound
+              // target level (resolvedDbfs / orchestrator SPL) is applied at
+              // playback relative to that anchor. This keeps every source on one
+              // calibration reference so orchestrator mix levels are audible.
               const { url: audioUrl, noise_trim } = await calibrateBlobUrl(
                 audioFileUrl,
-                resolvedDbfs,
+                globalBaseDbfs,
                 applyDenoising,
                 trimSilence,
               );
@@ -1029,6 +1162,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 useAudioControlsStore.getState().setSoundTrim(uploadedEvent.id, { start: noise_trim[0], end: noise_trim[1] });
               }
             }
+            samplesDone = Math.max(samplesDone, mlClipCount + uploadedEvents.length);
+            reportSamples('processing uploaded audio…');
 
             // ── Library ───────────────────────────────────────────────────────
             const libraryEvents: any[] = [];
@@ -1048,7 +1183,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
                 const { url: audioUrl, noise_trim } = await calibrateBlobUrl(
                   await dlRes.blob(),
-                  resolvedDbfs,
+                  globalBaseDbfs,
                   applyDenoising,
                   trimSilence,
                 );
@@ -1068,6 +1203,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 console.error('[soundscapeStore] Library download error:', error);
               }
             }
+            samplesDone = Math.max(samplesDone, mlClipCount + uploadedEvents.length + libraryEvents.length);
+            reportSamples('processing library sounds…');
 
             // ── Catalog ───────────────────────────────────────────────────────
             const catalogEvents: any[] = [];
@@ -1081,7 +1218,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
                 const { url: audioUrl, noise_trim } = await calibrateBlobUrl(
                   await dlRes.blob(),
-                  resolvedDbfs,
+                  globalBaseDbfs,
                   applyDenoising,
                   trimSilence,
                 );
@@ -1104,6 +1241,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 get().handleUpdateConfig(originalIndex, 'error', errorMsg);
               }
             }
+            samplesDone = Math.max(samplesDone, mlClipCount + uploadedEvents.length + libraryEvents.length + catalogEvents.length);
+            reportSamples('processing catalog sounds…');
 
             // ── TTS (Gemini Text-to-Speech) ────────────────────────────────────
             let ttsEvents: any[] = [];
@@ -1128,7 +1267,9 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                       voice_name: config.voice_name,
                       display_name: config.display_name || lineText,
                       position: config.position,
-                      dbfs: config.dbfs ?? globalBaseDbfs,
+                      // Calibrate the WAV to the global anchor; the per-sound level
+                      // (config.dbfs / orchestrator SPL) is applied at playback.
+                      dbfs: globalBaseDbfs,
                       prompt_index: originalIndex,
                       copy_index: lineIdx,
                       total_copies: speechLines.length,
@@ -1144,7 +1285,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                       voice_name: config.voice_name,
                       display_name: config.display_name || config.prompt,
                       position: config.position,
-                      dbfs: config.dbfs ?? globalBaseDbfs,
+                      dbfs: globalBaseDbfs,
                       // Carry the card's config index + variant index so the backend can
                       // echo them back. Mirrors the text-to-audio flow (sounds_worker),
                       // making variant grouping robust to backend re-indexing/filtering.
@@ -1199,7 +1340,9 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   position,
                   geometry: sound.geometry || { vertices: [], faces: [] },
                   isUploaded: true,
-                  volume_dbfs: sound.volume_dbfs ?? originalConfig?.dbfs ?? globalBaseDbfs,
+                  // Backend echoes the calibration dbfs (global anchor) — the
+                  // playback TARGET is the card's own level / orchestrator SPL.
+                  volume_dbfs: originalConfig?.dbfs ?? globalBaseDbfs,
                   category: originalConfig?.category || 'speech',
                   display_name: ttsDisplayName,
                 };
@@ -1211,14 +1354,11 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                 startPolling({
                   fetchStatus: () => apiService.getTTSGenerationStatus(generation_id),
                   onStatus: (s) => {
-                    set(
-                      {
-                        soundGenProgress: combinedProgress(s.status),
-                        soundGenProgressValue: s.progress,
-                      },
-                      false,
-                      'soundscape/ttsPoll',
+                    samplesDone = Math.max(
+                      samplesDone,
+                      mlClipCount + otherClipCount - elevenLabsConfigs.length + (s.partial_sounds?.length ?? 0),
                     );
+                    reportSamples('generating speech…');
 
                     if (s.partial_sounds && s.partial_sounds.length > ttsLastPartialCount) {
                       const newPartials = s.partial_sounds.slice(ttsLastPartialCount).map(mapTtsSound);
@@ -1260,7 +1400,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               const resolvedDbfs = config.dbfs ?? globalBaseDbfs;
                 const { url: audioUrl, noise_trim } = await calibrateBlobUrl(
                   rawUrl,
-                  resolvedDbfs,
+                  globalBaseDbfs,
                   applyDenoising,
                   trimSilence,
                 );
@@ -1323,13 +1463,50 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             );
             applyTrimRegions(allEvents);
 
+            samplesDone = totalSamples;
+            reportSamples('finalizing…');
+
             // ── Orchestrate sync point: join the parallel orchestrate agent and
             // apply its dynamics (trigger/variants/SPL) before the final bake. ──
             if (orchestratePromise) {
+              // Show the orchestrating phase once, at the very end, after every
+              // sound has been generated and its duration is known.
+              set(
+                { soundGenProgress: 'Orchestrating timeline…', soundGenProgressValue: 100 },
+                false,
+                'soundscape/orchestrateStart',
+              );
               const { entryById, orchestrateIdByScenario } = await orchestratePromise;
               if (entryById.size > 0) {
                 applyOrchestrateDynamics(entryById, orchestrateIdByScenario);
               }
+            }
+
+            // ── Final orchestrator finalize — now that ALL generated sounds (ML +
+            // TTS + upload/library/catalog/ElevenLabs) are merged. Stamp the
+            // variant/entity links from orchestrateMeta and re-bake the parametric
+            // schedule so after()/alignEnd() use real durations. Driven by the
+            // pipeline (not a React effect) so it always runs with fresh state. ──
+            {
+              const audioStore = useAudioControlsStore.getState();
+              audioStore.setGenerationInProgress(false);
+              const finalConfigs = get().soundConfigs;
+              if (finalConfigs.some((c) => c.orchestrateMeta)) {
+                audioStore.syncSoundConfigs(finalConfigs);
+                audioStore.syncGeneratedSounds(get().generatedSounds);
+                audioStore.setOrchestrateIterationLinks(finalConfigs);
+                // Capture the orchestrator result for "Reset track" once the bake applies.
+                audioStore.bakeOrchestrateSchedule(() => {
+                  useAudioControlsStore.getState().saveOrchestrateResult();
+                });
+              }
+              // Baseline for the "Re-orchestrate timeline" button: the agent inputs
+              // as they are right now (post-generation, pre-user-edit).
+              set(
+                { orchestrateBaselineSignature: orchestrateInputsSignature(finalConfigs) },
+                false,
+                'soundscape/orchestrateBaseline',
+              );
             }
           } catch (err: any) {
             if (err.name === 'AbortError' || err.message === 'AbortError') {
@@ -1346,6 +1523,8 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             untrackGenerationTargets(targetIndices);
             set({ soundGenProgress: '', soundGenProgressValue: 0 }, false, 'soundscape/generateEnd');
             _abortControllers.delete(controller);
+            // Safety net — never leave the bake gate stuck on after the pipeline ends.
+            useAudioControlsStore.getState().setGenerationInProgress(false);
           }
         },
 
@@ -1673,6 +1852,76 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         setOrchestrateSoundsEnabled: (val) =>
           set({ orchestrateSoundsEnabled: val }, false, 'soundscape/setOrchestrateSoundsEnabled'),
 
+        reorchestrateTimeline: async () => {
+          const { soundConfigs } = get();
+
+          // Group the current (edited) scenario-source cards by scenario id.
+          const scenarioGroups = new Map<string, SoundGenerationConfig[]>();
+          soundConfigs.forEach((config) => {
+            const src = config.scenarioSource;
+            if (!src) return;
+            const arr = scenarioGroups.get(src.scenarioId) ?? [];
+            arr.push(config);
+            scenarioGroups.set(src.scenarioId, arr);
+          });
+
+          // Re-stamp links + re-bake helper (used by both branches below).
+          const applyAndBake = (advanceBaseline: boolean) => {
+            const audioStore = useAudioControlsStore.getState();
+            const finalConfigs = get().soundConfigs;
+            audioStore.syncSoundConfigs(finalConfigs);
+            audioStore.syncGeneratedSounds(get().generatedSounds);
+            audioStore.setOrchestrateIterationLinks(finalConfigs);
+            // Capture the orchestrator result for "Reset track" once the bake applies.
+            audioStore.bakeOrchestrateSchedule(() => {
+              useAudioControlsStore.getState().saveOrchestrateResult();
+            });
+            if (advanceBaseline) {
+              set(
+                { orchestrateBaselineSignature: orchestrateInputsSignature(finalConfigs) },
+                false,
+                'soundscape/reorchestrateBaseline',
+              );
+            }
+          };
+
+          // No scenario source (e.g. a fully pre-orchestrated scene) — nothing to
+          // send to the agent. Fall back to re-stamping links + re-baking.
+          if (scenarioGroups.size === 0) {
+            applyAndBake(true);
+            return;
+          }
+
+          set(
+            { isReorchestrating: true, soundGenProgress: 'Orchestrating timeline…', soundGenProgressValue: 100 },
+            false,
+            'soundscape/reorchestrateStart',
+          );
+          const controller = new AbortController();
+          try {
+            const { entryById, orchestrateIdByScenario } = await runOrchestrationForSources(
+              scenarioGroups,
+              controller.signal,
+            );
+            if (entryById.size > 0) {
+              applyOrchestrateDynamics(entryById, orchestrateIdByScenario);
+              // Only advance the baseline when the agent actually produced results,
+              // so a failed run keeps the button visible for a retry.
+              applyAndBake(true);
+            } else {
+              applyAndBake(false);
+            }
+          } catch (e) {
+            console.warn('[soundscapeStore] re-orchestrate failed:', e);
+            notifySectionError('Re-orchestration failed', 'error');
+          } finally {
+            set(
+              { isReorchestrating: false, soundGenProgress: '', soundGenProgressValue: 0 },
+              false,
+              'soundscape/reorchestrateEnd',
+            );
+          }
+        },
         handleUploadAudio: async (index, file) => {
           try {
             const result = await loadAudioFile(file);
@@ -2032,6 +2281,34 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             'soundscape/deleteVariant',
           );
 
+          // Keep the orchestrator's per-iteration variant array consistent with the
+          // reduced variant set: references to the deleted variant fall back to A,
+          // later references shift down, and seed_copies tracks the new count.
+          // Without this, the bake/iterationLinks would keep pointing at a variant
+          // that no longer exists (the deleted variant kept reappearing in the DAW).
+          const config = get().soundConfigs[promptIndex];
+          if (config?.orchestrateMeta) {
+            const deletedOneBased = variantIdx + 1;
+            const newVariants = config.orchestrateMeta.variants.map((v) =>
+              v === deletedOneBased ? 1 : v > deletedOneBased ? v - 1 : v,
+            );
+            get().handleUpdateConfig(promptIndex, 'orchestrateMeta', {
+              ...config.orchestrateMeta,
+              variants: newVariants,
+            });
+            get().handleUpdateConfig(promptIndex, 'seed_copies', Math.max(1, variants.length - 1));
+          }
+
+          // Re-sync the audio store and re-bake so the deleted variant leaves the
+          // timeline and no orphaned per-sound state survives.
+          audioStore.syncSoundConfigs(get().soundConfigs);
+          audioStore.syncGeneratedSounds(newData);
+          audioStore.pruneSounds([target.id]);
+          if (get().soundConfigs.some((c) => c.orchestrateMeta)) {
+            audioStore.setOrchestrateIterationLinks(get().soundConfigs);
+            audioStore.bakeOrchestrateSchedule();
+          }
+
           // SED-extracted segment variants reference a real WAV on the backend
           // (unlike ML/TTS variants, whose files are intentionally kept on disk
           // for dedup/regeneration). Remove the file too so a deleted segment
@@ -2119,6 +2396,19 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
 
         handleDetachSoundFromEntity: (index) => {
           const { soundConfigs, soundscapeData, generatedSounds } = get();
+
+          // Remove the Speckle highlight for every object linked to this prompt.
+          // objectSoundLinks maps objectId → prompt index, so this needs no appId
+          // mapping and covers all unlink entry points (entity overlay, card, …).
+          import('./speckleStore')
+            .then(({ useSpeckleStore }) => {
+              const { objectSoundLinks, unlinkObjectFromSound } = useSpeckleStore.getState();
+              objectSoundLinks.forEach((promptIdx, objectId) => {
+                if (promptIdx === index) unlinkObjectFromSound(objectId);
+              });
+            })
+            .catch(() => { /* store not ready — non-critical */ });
+
           const newConfigs = soundConfigs.map((c, i) =>
             i === index ? { ...c, entities: undefined } : c,
           );
@@ -2251,6 +2541,9 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               ...(settings?.orchestrateSoundsEnabled !== undefined && {
                 orchestrateSoundsEnabled: settings.orchestrateSoundsEnabled,
               }),
+              // Restored scene is already orchestrated — its editing baseline is
+              // the inputs as loaded, so the re-orchestrate button starts hidden.
+              orchestrateBaselineSignature: orchestrateInputsSignature(configs),
             },
             false,
             'soundscape/restore',

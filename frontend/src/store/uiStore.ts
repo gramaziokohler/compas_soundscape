@@ -103,6 +103,9 @@ export interface UIStoreState {
   setShowHoveringHighlight: (v: boolean) => void;
   showSoundSpheres: boolean;
   setShowSoundSpheres: (v: boolean) => void;
+  /** Highlight sound spheres (and modulate their light) in realtime while they play. */
+  showPlayingHighlight: boolean;
+  setShowPlayingHighlight: (v: boolean) => void;
   showSceneListeners: boolean;
   setShowSceneListeners: (v: boolean) => void;
   /** Draw the dashed-arrow scenario parcours in the 3D viewer (scenario card footer toggle) */
@@ -306,6 +309,8 @@ export const useUIStore = create<UIStoreState>()(
       setShowHoveringHighlight: (v) => set({ showHoveringHighlight: v }, false, 'ui/setShowHoveringHighlight'),
       showSoundSpheres: true,
       setShowSoundSpheres: (v) => set({ showSoundSpheres: v }, false, 'ui/setShowSoundSpheres'),
+      showPlayingHighlight: true,
+      setShowPlayingHighlight: (v) => set({ showPlayingHighlight: v }, false, 'ui/setShowPlayingHighlight'),
       showSceneListeners: true,
       setShowSceneListeners: (v) => set({ showSceneListeners: v }, false, 'ui/setShowSceneListeners'),
       showScenarioParcours: false,

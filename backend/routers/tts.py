@@ -118,7 +118,10 @@ async def generate_tts(request: TTSGenerationRequest, req: Request):
                 # Echo back the original card index for speech lines so the frontend
                 # can look up the correct SoundGenerationConfig via speech_card_index.
                 "speech_card_index": item.get("speech_card_index"),
-                "display_name": f"{voice_name} speech {voice_num}",
+                # Prefer the caller-supplied display name (the character label, e.g.
+                # "Alex") over an internal "{voice} speech {n}" placeholder so 3D
+                # sound spheres are named after the character, not the TTS voice.
+                "display_name": display_name,
                 "url": f"{url_prefix}/{filename}",
                 "duration": round(real_duration_seconds, 3),
                 "position": item.get("position", [0, 0, 0]),

@@ -36,6 +36,7 @@ import {
   SED_MIN_CONFIDENCE,
   SED_TOP_N_CLASSES,
   TTS_VOICES,
+  resolveVoiceForCharacter,
 } from '@/utils/constants';
 import { loadAudioFileWithBuffer } from '@/lib/audio/utils/audio-info';
 import { apiService } from '@/services/api';
@@ -1308,16 +1309,14 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
 
                 let voiceName: string | undefined;
                 if (isSpeech) {
-                  // Prefer the character chosen by the speech agent: it is a TTS voice
-                  // label (e.g. "Clara") — map it back to its Gemini voice value.
+                  // Prefer the character chosen by the speech agent: it is a bare
+                  // character name (e.g. "Clara") — map it to its Gemini voice value
+                  // via the authoritative character map (NOT the display labels,
+                  // which are "Clara (Smooth)" and never match a bare name).
                   const character = (entry.character || '').trim();
-                  const matched = character
-                    ? TTS_VOICES.find(
-                        (v) => v.label.toLowerCase() === character.toLowerCase(),
-                      )
-                    : undefined;
-                  if (matched) {
-                    voiceName = matched.value;
+                  const resolved = resolveVoiceForCharacter(character);
+                  if (resolved) {
+                    voiceName = resolved;
                   } else {
                     // Fallback: round-robin a stable voice per character/sound.
                     const key = character || entry.soundName || entry.id;
@@ -1474,10 +1473,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 .map((s) => s.trim())
                 .filter(Boolean);
               const character = (speech.character || '').trim();
-              const matched = character
-                ? TTS_VOICES.find((v) => v.label.toLowerCase() === character.toLowerCase())
-                : undefined;
-              const voiceName = matched?.value ?? TTS_VOICES[0].value;
+              const voiceName = resolveVoiceForCharacter(character) ?? TTS_VOICES[0].value;
               const pos = speech.position;
 
               foleyPrompts.push({

@@ -31,6 +31,7 @@ import { useSpeckleBoundingBox } from '@/components/scene/hooks/useSpeckleBoundi
 import { useSpeckleSoundSpheres } from '@/components/scene/hooks/useSpeckleSoundSpheres';
 import { useSpeckleSceneObjects } from '@/components/scene/hooks/useSpeckleSceneObjects';
 import { useSpeckleSoundHighlight } from '@/components/scene/hooks/useSpeckleSoundHighlight';
+import { useSpecklePlayingVisuals } from '@/components/scene/hooks/useSpecklePlayingVisuals';
 import { useSpeckleSimulationMismatch } from '@/components/scene/hooks/useSpeckleSimulationMismatch';
 import { useSpeckleIRHoverLine } from '@/components/scene/hooks/useSpeckleIRHoverLine';
 import { useSpeckleScenarioPreview } from '@/components/scene/hooks/useSpeckleScenarioPreview';
@@ -193,6 +194,9 @@ interface SpeckleSceneProps {
   /** True while the parent is uploading/converting the model file (before the viewer URL exists). */
   isUploadingModel?: boolean;
 
+  /** True while the parent is bootstrapping the model from the ?model_id= URL param. */
+  isBootstrappingModel?: boolean;
+
   className?: string;
 }
 
@@ -254,6 +258,7 @@ export function SpeckleScene({
   onReceiverDoubleClicked,
   onFPSExited,
   isUploadingModel = false,
+  isBootstrappingModel = false,
   className,
 }: SpeckleSceneProps) {
   // Refs
@@ -272,6 +277,7 @@ export function SpeckleScene({
   const showLabelSprites = useUIStore((s) => s.showLabelSprites);
   const showHoveringHighlight = useUIStore((s) => s.showHoveringHighlight);
   const showSoundSpheres = useUIStore((s) => s.showSoundSpheres);
+  const showPlayingHighlight = useUIStore((s) => s.showPlayingHighlight);
   const showSceneListeners = useUIStore((s) => s.showSceneListeners);
   const globalSoundSpeed = useUIStore((s) => s.globalSoundSpeed);
   const showAdvancedSettings = useUIStore((s) => s.showAdvancedSettings);
@@ -297,6 +303,7 @@ export function SpeckleScene({
   const timelineDurationMs      = useAudioControlsStore((s) => s.timelineDurationMs);
   const mutedSounds          = useAudioControlsStore((s) => s.mutedSounds);
   const soloedSound          = useAudioControlsStore((s) => s.soloedSound);
+  const previewingSoundId    = useAudioControlsStore((s) => s.previewingSoundId);
   const storePlayAll  = useAudioControlsStore((s) => s.playAll);
   const storePauseAll = useAudioControlsStore((s) => s.pauseAll);
   const storeStopAll  = useAudioControlsStore((s) => s.stopAll);
@@ -850,6 +857,16 @@ export function SpeckleScene({
     isDarkModeRef,
   });
 
+  // ── Realtime playing visuals (sphere pulse + reactive lights) ──
+  useSpecklePlayingVisuals({
+    isViewerReady,
+    audioOrchestrator,
+    showPlayingHighlight,
+    isDarkMode,
+    soundscapeData,
+    previewingSoundId,
+  });
+
   // ── Bounding Box Gumball ── (Phase 5 — owns draggedBoundsOverride state)
   const { draggedBoundsOverride } = useSpeckleBoundingBoxGumball({
     isViewerReady,
@@ -1303,9 +1320,10 @@ export function SpeckleScene({
   // ============================================================================
   // Render
   // ============================================================================
-  // Combined loading state: viewer init, parent upload/conversion, or the instant
-  // post-selection feedback. Keeps the spinner up for the whole select→upload→load chain.
-  const isModelLoading = isLoading || isUploadingModel || isPreparingModel;
+  // Combined loading state: viewer init, parent upload/conversion, the instant
+  // post-selection feedback, or a ?model_id= URL bootstrap in progress. Keeps the
+  // spinner up for the whole select→upload→load chain.
+  const isModelLoading = isLoading || isUploadingModel || isPreparingModel || isBootstrappingModel;
 
   // How much vertical space the docked DAW actually occupies at the bottom of the
   // scene. It lifts the floating scene controls only when the DAW panel is really
@@ -1344,7 +1362,7 @@ export function SpeckleScene({
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-background/50">
           <div className="flex flex-col items-center gap-3">
             <Spinner size={48} />
-            <p className="text-xs text-neutral-400">{isLoading ? 'Loading model...' : 'Uploading model...'}</p>
+            <p className="text-xs text-neutral-400">{isLoading || isBootstrappingModel ? 'Loading model...' : 'Uploading model...'}</p>
           </div>
         </div>
       )}

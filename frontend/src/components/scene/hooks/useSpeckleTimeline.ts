@@ -11,7 +11,7 @@ import {
   type SoundscapeExportConfig,
   type ExportFormat,
 } from '@/lib/audio/SoundscapeExporter';
-import { UI_TIMING, DEFAULT_DBFS } from '@/utils/constants';
+import { UI_TIMING } from '@/utils/constants';
 import type { SoundEvent } from '@/types';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 import type { TimelineSound } from '@/types/audio';
@@ -58,6 +58,8 @@ export function useSpeckleTimeline({
   const [timelineSounds, setTimelineSounds] = useState<TimelineSound[]>([]);
   const [soundMetadataReady, setSoundMetadataReady] = useState(false);
   const showTimeline = useUIStore((s) => s.showTimeline);
+  // Calibration anchor — playback/export gain is target − globalBaseDbfs.
+  const globalBaseDbfs = useAudioControlsStore((s) => s.globalBaseDbfs);
   const setShowTimeline = useUIStore((s) => s.setShowTimeline);
   const userClosedTimelineRef = useRef(false);
 
@@ -260,9 +262,8 @@ export function useSpeckleTimeline({
       const soundGains = new Map<string, number>();
       timelineSounds.forEach((ts) => {
         const soundEvent = soundscapeData?.find((s) => s.id === ts.id);
-        const baseVolumeDbfs = soundEvent?.volume_dbfs ?? DEFAULT_DBFS;
-        const targetVolumeDbfs = soundVolumes[ts.id] ?? baseVolumeDbfs;
-        const dbDiff = targetVolumeDbfs - baseVolumeDbfs;
+        const targetVolumeDbfs = soundVolumes[ts.id] ?? soundEvent?.volume_dbfs ?? globalBaseDbfs;
+        const dbDiff = targetVolumeDbfs - globalBaseDbfs;
         const gain = Math.pow(10, dbDiff / 20);
         soundGains.set(ts.id, Math.max(0, Math.min(10, gain)));
       });
@@ -304,6 +305,7 @@ export function useSpeckleTimeline({
     timelineDurationMs,
     soundscapeData,
     soundVolumes,
+    globalBaseDbfs,
     mutedSounds,
     soloedSound,
     soundTrims,

@@ -11,6 +11,7 @@ import type {
   ScenarioConfig,
 } from '@/types/analysis';
 import type { SoundGenerationConfig } from '@/types';
+import { useAudioControlsStore } from '@/store';
 
 /**
  * SettingsSummary Component
@@ -218,10 +219,23 @@ export function getSettingsRows(config: CardBaseConfig): SettingsRow[] {
           rows.push({ label: 'Variants', value: String(original.seed_copies) });
           if (original.steps) rows.push({ label: 'Steps', value: String(original.steps) });
           break;
-        case 'text-to-speech':
-          if (original.prompt) rows.push({ label: 'Prompt', value: original.prompt, expandable: true });
-          if (original.voice_name) rows.push({ label: 'Voice', value: original.voice_name });
+        case 'text-to-speech': {
+          // Show only the CURRENTLY selected variant's prompt (not one row per
+          // variant). The active variant is selectedVariants[card index].
+          const speechLines = original.orchestrateMeta?.speechLines
+            ?? original.scenarioSource?.speechLines
+            ?? [];
+          const originalIndex = (config as unknown as { originalIndex?: number }).originalIndex;
+          let promptText = original.prompt;
+          if (speechLines.length > 0) {
+            const selectedIdx = originalIndex !== undefined
+              ? (useAudioControlsStore.getState().selectedVariants[originalIndex] ?? 0)
+              : 0;
+            promptText = speechLines[selectedIdx] ?? speechLines[0] ?? original.prompt;
+          }
+          if (promptText) rows.push({ label: 'Prompt', value: promptText, expandable: true });
           break;
+        }
         case 'upload':
         case 'sample-audio': {
           const filename = original.uploadedAudioInfo?.filename;

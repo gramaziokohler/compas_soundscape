@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { GeometryType } from '@speckle/viewer';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
-import { useSpeckleStore } from '@/store';
 import { DARK_MODE } from '@/utils/constants';
 import { getCssColorHex } from '@/utils/utils';
 
@@ -23,22 +22,30 @@ export function useSpeckleDarkMode({
   isDarkModeRef: React.MutableRefObject<boolean>;
 }) {
   // Persistent ref — survives between effect runs so the disable branch can read
-  // the values saved by the enable branch.  Mirrors darkModeStateRef in backup.
+  // the values saved by the enable branch.
   type DarkModeState = {
     sunIntensity: number;
     iblIntensity: number;
-    ambientLights: Array<{ light: THREE.AmbientLight; intensity: number }>;
+    /** All scene lights captured at enable (ambient/directional/hemisphere/…) —
+     *  zeroed every tick so a render pass that restores them can't leak ambient. */
+    ambientLights: Array<{ light: THREE.Light; intensity: number }>;
     sceneBackground: THREE.Color | THREE.Texture | null;
     clearColor: THREE.Color;
     clearAlpha: number;
+    /** Object-center lights only (entity/marker lights now live in SoundSphereManager). */
     entityPointLights: THREE.PointLight[];
     entityObjectIds: string[];
     entityRenderViews: any[];
-    entityEmissiveMat: THREE.MeshStandardMaterial | null;
+    /** SelectionExtension options saved before dark mode overrode the selection fill. */
+    prevSelectionOptions: any;
     enforcementIntervalId: ReturnType<typeof setInterval> | null;
     pipelineShadowHookCleanup: (() => void) | null;
   };
   const darkModeStateRef = useRef<DarkModeState | null>(null);
+
+  // Cheap change signature — a full material pass only runs when the visibility/
+  // selection/link state actually changes. Resets on re-enable.
+  const signatureRef = useRef<string>('');
 
   // ============================================================================
   // Effect - Dark Mode (Sound Source Lighting)
@@ -57,14 +64,16 @@ export function useSpeckleDarkMode({
     if (isDarkMode) {
       // --- ENABLE DARK MODE ---
       isDarkModeRef.current = true;
+      signatureRef.current = '';
 
       // 1. Save original light state
       const sunLight = speckleRenderer.sunLight;
 
-      const ambientLights: Array<{ light: THREE.AmbientLight; intensity: number }> = [];
+      const ambientLights: Array<{ light: THREE.Light; intensity: number }> = [];
       scene.traverse((obj: THREE.Object3D) => {
-        if (obj instanceof THREE.AmbientLight) {
-          ambientLights.push({ light: obj, intensity: obj.intensity });
+        const maybeLight = obj as THREE.Light;
+        if ((maybeLight as unknown as { isLight?: boolean }).isLight) {
+          ambientLights.push({ light: maybeLight, intensity: maybeLight.intensity });
         }
       });
 
@@ -138,62 +147,87 @@ export function useSpeckleDarkMode({
         entityPointLights: [],
         entityObjectIds,
         entityRenderViews,
-        entityEmissiveMat: null,
+        prevSelectionOptions: null,
         enforcementIntervalId: null,
         pipelineShadowHookCleanup: null,
       };
       const dm = darkModeStateRef.current;
 
-      // Shared materials
+      // Shared materials. Fully rough + non-metallic + zero env intensity so it
+      // cannot pick up the selection-highlight color as a specular/env tint on
+      // neighbouring objects (which read as stray colored bands).
       const darkOpaqueMat = new THREE.MeshStandardMaterial({
         color: 0x1a1a2e,
         side: THREE.DoubleSide,
         transparent: false,
-        roughness: 0.85,
-        metalness: 0.05,
-      });
-
-      const entityEmissiveMat = new THREE.MeshStandardMaterial({
-        color: 0x000000,
-        emissive: new THREE.Color(getCssColorHex('--color-primary')),
-        emissiveIntensity: DARK_MODE.ENTITY_EMISSIVE_INTENSITY,
-        roughness: 0,
+        roughness: 1,
         metalness: 0,
-        side: THREE.DoubleSide,
+        envMapIntensity: 0,
       });
-      dm.entityEmissiveMat = entityEmissiveMat;
 
       const darkBackground = new THREE.Color(0x000000);
 
-      const applyDarkModeState = () => {
+      /** Fast FNV-1a hash of a string-id array for the change signature. */
+      const hashIds = (ids: Array<string> | undefined | null): string => {
+        if (!ids || ids.length === 0) return '0';
+        let h = 2166136261;
+        for (let i = 0; i < ids.length; i++) {
+          const s = ids[i];
+          for (let j = 0; j < s.length; j++) {
+            h ^= s.charCodeAt(j);
+            h = Math.imul(h, 16777619);
+          }
+        }
+        return `${ids.length}:${(h >>> 0).toString(36)}`;
+      };
+
+      const applyDarkModeState = (force: boolean) => {
         if (!isDarkModeRef.current || !viewer) return;
         const r = viewer.getRenderer();
         const s = r.scene;
 
+        // Always kill ambient/IBL/background. This is cheap (a handful of
+        // intensity writes) and must run every tick because some Speckle render
+        // passes restore them — the old 150ms loop masked that by re-zeroing the
+        // whole scene each tick. Kept out of the gated material pass below.
         r.sunLight.intensity = 0;
         r.indirectIBLIntensity = 0;
-        s.traverse((obj: THREE.Object3D) => {
-          if (obj instanceof THREE.AmbientLight) obj.intensity = 0;
-        });
-
+        for (const { light } of dm.ambientLights) light.intensity = 0;
         s.background = darkBackground;
         r.renderer.setClearColor(0x000000, 1);
 
-        const entityLinkedSet = new Set(darkModeStateRef.current?.entityObjectIds ?? []);
+        // Build the gate/filter sets once per pass.
+        let hiddenSet: Set<string> | null = null;
+        let isolatedSet: Set<string> | null = null;
+        let selectedSet: Set<string> | null = null;
+        let selObjs: any[] = [];
         try {
           const filterState = filtExt?.filteringState;
-          const hiddenSet = filterState?.hiddenObjects?.length
-            ? new Set(filterState.hiddenObjects)
-            : null;
-          const isolatedSet = filterState?.isolatedObjects?.length
-            ? new Set(filterState.isolatedObjects)
-            : null;
-          const selObjs = selExt?.getSelectedObjects() ?? [];
-          const selectedSet = selObjs.length > 0
-            ? new Set((selObjs as any[]).map((o) => o.id as string).filter(Boolean))
-            : null;
+          if (filterState?.hiddenObjects?.length) hiddenSet = new Set(filterState.hiddenObjects);
+          if (filterState?.isolatedObjects?.length) isolatedSet = new Set(filterState.isolatedObjects);
+          selObjs = selExt?.getSelectedObjects() ?? [];
+          if (selObjs.length > 0) {
+            selectedSet = new Set((selObjs as any[]).map((o) => o.id as string).filter(Boolean));
+          }
+        } catch { /* non-critical */ }
 
-          const needsFilter = hiddenSet || isolatedSet || selectedSet || entityLinkedSet.size > 0;
+        // Idempotency: skip the expensive material pass when nothing relevant changed.
+        const signature = [
+          hashIds(hiddenSet ? Array.from(hiddenSet) : null),
+          hashIds(isolatedSet ? Array.from(isolatedSet) : null),
+          hashIds(selectedSet ? Array.from(selectedSet) : null),
+          hashIds(darkModeStateRef.current?.entityObjectIds),
+        ].join('|');
+
+        if (!force && signature === signatureRef.current) {
+          // Cheap path — keep sphere colors/opacity coherent, no material churn.
+          soundSphereManager?.enforceDarkModeColors();
+          return;
+        }
+        signatureRef.current = signature;
+
+        try {
+          const needsFilter = hiddenSet || isolatedSet || selectedSet;
           const batchIds: string[] = (r as any).getBatchIds();
           for (const id of batchIds) {
             const batch = (r as any).getBatch(id);
@@ -206,101 +240,90 @@ export function useSpeckleDarkMode({
                   if (hiddenSet?.has(objId)) return false;
                   if (isolatedSet && !isolatedSet.has(objId)) return false;
                   if (selectedSet?.has(objId)) return false;
-                  if (entityLinkedSet.has(objId)) return false;
                   return true;
                 })
               : batch.renderViews;
 
             if (rvs.length > 0) r.setMaterial(rvs, darkOpaqueMat);
           }
-
-          if (selObjs.length > 0) {
-            try {
-              const ids = (selObjs as any[]).map((o: any) => o.id as string).filter(Boolean);
-              selExt?.selectObjects(ids);
-            } catch { /* non-critical */ }
-          }
         } catch { /* non-critical */ }
 
-        if (entityLinkedSet.size > 0) {
-          try {
-            const entityRvs: any[] = [];
-            const bIds: string[] = (r as any).getBatchIds();
-            for (const bid of bIds) {
-              const b = (r as any).getBatch(bid);
-              if (!b || b.geometryType !== GeometryType.MESH) continue;
-              for (const rv of b.renderViews) {
-                const objId: string | undefined = rv.renderData?.id;
-                if (objId && entityLinkedSet.has(objId)) entityRvs.push(rv);
-              }
-            }
-            if (entityRvs.length > 0 && dm.entityEmissiveMat) r.setMaterial(entityRvs, dm.entityEmissiveMat);
-          } catch { /* non-critical */ }
-        }
-
-        if (coordinator) {
-          const ssm = coordinator.getSoundSphereManager();
-          if (ssm) ssm.enforceDarkModeColors();
-        }
-
+        soundSphereManager?.enforceDarkModeColors();
         r.shadowMapNeedsUpdate = true;
         r.needsRender = true;
       };
 
-      applyDarkModeState();
+      applyDarkModeState(true);
 
-      // Hook each GEOMETRY pass to ensure shadow maps render correctly in dark mode
-      const pipeline = speckleRenderer.pipeline as any;
-      const allStagePasses: any[] = [
-        ...(pipeline.dynamicStage ?? []),
-        ...(pipeline.progressiveStage ?? []),
-        ...(pipeline.passthroughStage ?? []),
-      ];
-      const uniquePasses = [...new Set(allStagePasses)];
-      const geometryPasses = uniquePasses.filter((p: any) => p.displayName === 'GEOMETRY');
+      // In dark mode, strip the selection FILL and any applied filter/main
+      // material color: the selected object keeps the dark fill and shows only
+      // the stencil outline border (outlineColor). This is what makes a selected
+      // mesh read as "outlined" instead of flooded with the highlight color.
+      try {
+        if (selExt?.options) {
+          dm.prevSelectionOptions = selExt.options;
+          const baseSel: any = selExt.options.selectionMaterialData;
+          (selExt as any).options = {
+            ...selExt.options,
+            selectionMaterialData: {
+              ...baseSel,
+              color: 0x1a1a2e,
+              emissive: 0,
+              opacity: 1,
+              outlineColor: getCssColorHex('--color-primary'),
+            },
+          };
+          // Repaint the current selection with the new material.
+          const cur = (selExt.getSelectedObjects?.() ?? []) as any[];
+          const ids = cur.map((o) => (typeof o === 'string' ? o : o?.id)).filter(Boolean) as string[];
+          if (ids.length) selExt.selectObjects(ids);
+        }
+      } catch { /* non-critical */ }
 
+      // Hook each GEOMETRY pass to ensure shadow maps render correctly in dark
+      // mode. Only needed while shadows are actually enabled (budget > 0).
       const passCleanups: Array<() => void> = [];
-      geometryPasses.forEach((p: any) => {
-        const origOnBeforeRender = p.onBeforeRender;
-        p.onBeforeRender = () => {
-          if (isDarkModeRef.current) speckleRenderer.shadowMapNeedsUpdate = true;
-          origOnBeforeRender?.();
-        };
-        passCleanups.push(() => { p.onBeforeRender = origOnBeforeRender; });
-      });
+      if (DARK_MODE.MAX_SHADOW_CASTING_LIGHTS > 0) {
+        const pipeline = speckleRenderer.pipeline as any;
+        const allStagePasses: any[] = [
+          ...(pipeline.dynamicStage ?? []),
+          ...(pipeline.progressiveStage ?? []),
+          ...(pipeline.passthroughStage ?? []),
+        ];
+        const uniquePasses = [...new Set(allStagePasses)];
+        const geometryPasses = uniquePasses.filter((p: any) => p.displayName === 'GEOMETRY');
+
+        geometryPasses.forEach((p: any) => {
+          const origOnBeforeRender = p.onBeforeRender;
+          p.onBeforeRender = () => {
+            if (isDarkModeRef.current) speckleRenderer.shadowMapNeedsUpdate = true;
+            origOnBeforeRender?.();
+          };
+          passCleanups.push(() => { p.onBeforeRender = origOnBeforeRender; });
+        });
+      }
       dm.pipelineShadowHookCleanup = () => { passCleanups.forEach(fn => fn()); };
 
       // Enable dark mode on sound spheres
       if (soundSphereManager) soundSphereManager.enableDarkMode();
 
-      // Add point lights at entity positions
-      if (soundSphereManager && adapter) {
+      // Add point lights at entity positions (managed + shadow-budgeted by the manager)
+      if (soundSphereManager) {
         const entityPositions = soundSphereManager.getEntityLinkedSoundPositions();
-        const customGroup = adapter.getCustomObjectsGroup();
-
         entityPositions.forEach(({ id, position }: { id: string; position: [number, number, number] }) => {
-          const light = new THREE.PointLight(
-            getCssColorHex('--color-primary'),
+          soundSphereManager.addEntityDarkModeLight(
+            id,
+            position,
             DARK_MODE.ENTITY_LIGHT_INTENSITY,
-            DARK_MODE.ENTITY_LIGHT_DISTANCE,
-            DARK_MODE.POINT_LIGHT_DECAY
+            DARK_MODE.ENTITY_LIGHT_DISTANCE
           );
-          light.name = `DarkModeEntityLight_${id}`;
-          light.position.set(position[0], position[1], position[2]);
-          light.layers.enableAll();
-          light.castShadow = true;
-          light.shadow.mapSize.width = DARK_MODE.SHADOW_MAP_SIZE;
-          light.shadow.mapSize.height = DARK_MODE.SHADOW_MAP_SIZE;
-          light.shadow.camera.near = DARK_MODE.SHADOW_CAMERA_NEAR;
-          light.shadow.camera.far = DARK_MODE.ENTITY_LIGHT_DISTANCE;
-          light.shadow.bias = DARK_MODE.SHADOW_BIAS;
-          customGroup.add(light);
-          dm.entityPointLights.push(light);
         });
       }
 
-      // Start enforcement interval
-      const intervalId = setInterval(applyDarkModeState, 150);
+      // Idempotent enforcement safety-net. Full passes are skipped unless the
+      // visibility/selection/link signature changed; the cheap sphere-color
+      // guard still runs every tick.
+      const intervalId = setInterval(() => applyDarkModeState(false), DARK_MODE.ENFORCEMENT_INTERVAL_MS);
       dm.enforcementIntervalId = intervalId;
 
       viewer.requestRender(8);
@@ -308,10 +331,12 @@ export function useSpeckleDarkMode({
 
       console.log('[useSpeckleDarkMode] Dark mode enabled', {
         entityObjects: dm.entityObjectIds.length,
+        shadowCasters: DARK_MODE.MAX_SHADOW_CASTING_LIGHTS,
       });
     } else {
       // --- DISABLE DARK MODE ---
       isDarkModeRef.current = false;
+      signatureRef.current = '';
 
       // Read the state saved when dark mode was enabled
       const saved = darkModeStateRef.current;
@@ -338,6 +363,17 @@ export function useSpeckleDarkMode({
 
       try {
         speckleRenderer.resetMaterials();
+      } catch { /* non-critical */ }
+
+      // Restore the original SelectionExtension material (undo the dark-mode
+      // outline-only override) and repaint the current selection.
+      try {
+        if (saved.prevSelectionOptions && selExt) {
+          (selExt as any).options = saved.prevSelectionOptions;
+          const cur = (selExt.getSelectedObjects?.() ?? []) as any[];
+          const ids = cur.map((o) => (typeof o === 'string' ? o : o?.id)).filter(Boolean) as string[];
+          if (ids.length) selExt.selectObjects(ids);
+        }
       } catch { /* non-critical */ }
 
       try {
@@ -404,7 +440,7 @@ export function useSpeckleDarkMode({
   }, [isDarkMode, isViewerReady]);
 
   // ============================================================================
-  // Effect - Sync entityObjectIds + object-center point lights in dark mode
+  // Effect - Ensure a (reactive) light exists for every linked sound
   // ============================================================================
   useEffect(() => {
     if (!isDarkMode || !darkModeStateRef.current) return;
@@ -414,65 +450,21 @@ export function useSpeckleDarkMode({
     // Update entityObjectIds on the persistent ref so the enforcement interval picks up changes
     darkModeStateRef.current.entityObjectIds = Array.from(linkedObjectIds);
 
-    const adapter = coordinator?.getAdapter();
-    if (!adapter) return;
-
-    const r = viewer.getRenderer();
-    const customGroup = adapter.getCustomObjectsGroup();
-
-    // Remove previously placed object-center lights (from scene AND from tracking array)
-    // Mirrors the backup: filter entityPointLights to keep only DarkModeEntityLight_* entries
-    if (darkModeStateRef.current) {
-      darkModeStateRef.current.entityPointLights = darkModeStateRef.current.entityPointLights.filter((light) => {
-        if (light.name.startsWith('DarkModeObjectLight_')) {
-          customGroup.remove(light);
-          light.dispose();
-          return false;
-        }
-        return true;
+    // Linked objects are lit ONLY by the SoundSphereManager's entity light, which
+    // is keyed by the sound id and therefore reacts to playback exactly like the
+    // per-sphere lights. (The old, separate object-center light is gone: it was
+    // static, duplicated the entity light, and never turned off during playback.)
+    const ssm = coordinator?.getSoundSphereManager();
+    if (ssm) {
+      ssm.getEntityLinkedSoundPositions().forEach(({ id, position }) => {
+        ssm.addEntityDarkModeLight(
+          id,
+          position,
+          DARK_MODE.ENTITY_LIGHT_INTENSITY,
+          DARK_MODE.ENTITY_LIGHT_DISTANCE
+        );
       });
+      viewer.requestRender();
     }
-
-    if (linkedObjectIds.size === 0) return;
-
-    const entitySet = new Set(linkedObjectIds);
-    const boxPerObject = new Map<string, THREE.Box3>();
-
-    try {
-      const bIds: string[] = (r as any).getBatchIds();
-      for (const bid of bIds) {
-        const b = (r as any).getBatch(bid);
-        if (!b || b.geometryType !== GeometryType.MESH) continue;
-        for (const rv of b.renderViews) {
-          const objId: string | undefined = rv.renderData?.id;
-          if (!objId || !entitySet.has(objId)) continue;
-          const rvAabb: THREE.Box3 = rv.aabb;
-          if (!rvAabb) continue;
-          if (!boxPerObject.has(objId)) {
-            boxPerObject.set(objId, rvAabb.clone());
-          } else {
-            boxPerObject.get(objId)!.union(rvAabb);
-          }
-        }
-      }
-    } catch { /* non-critical */ }
-
-    const center = new THREE.Vector3();
-    boxPerObject.forEach((box, objId) => {
-      if (box.isEmpty()) return;
-      box.getCenter(center);
-      const light = new THREE.PointLight(
-        getCssColorHex('--color-primary'),
-        DARK_MODE.POINT_LIGHT_INTENSITY,
-        DARK_MODE.POINT_LIGHT_DISTANCE,
-        DARK_MODE.POINT_LIGHT_DECAY
-      );
-      light.name = `DarkModeObjectLight_${objId}`;
-      light.position.copy(center);
-      light.layers.enableAll();
-      customGroup.add(light);
-      // Track in the persistent state so the disable branch can remove them
-      darkModeStateRef.current?.entityPointLights.push(light);
-    });
   }, [isDarkMode, linkedObjectIds]);
 }

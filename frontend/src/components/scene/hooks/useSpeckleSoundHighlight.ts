@@ -40,7 +40,7 @@ export function useSpeckleSoundHighlight({
 
   // Mesh the drag gizmo is currently attached to via the highlight-follow logic —
   // avoids re-attaching on every effect re-run and detects mesh recreation.
-  const dragTargetSphereRef = useRef<THREE.Mesh | null>(null);
+  const dragTargetSphereRef = useRef<THREE.Object3D | null>(null);
 
   // Note: Speckle object coloring (linked/diverse) is handled by the context's FilteringExtension.
   // This effect only handles sound sphere highlighting.
@@ -78,6 +78,7 @@ export function useSpeckleSoundHighlight({
     const effectiveIndex = expandedSoundCardIndex ?? selectedCardIndex;
 
     let highlightedSphere: THREE.Mesh | undefined;
+    let highlightedMarker: THREE.Object3D | undefined;
     if (effectiveIndex !== null) {
       // A sound sphere represents the whole sound CARD: all variants collapse to a
       // single sphere keyed by promptKey. Match by prompt — never by a specific
@@ -86,6 +87,14 @@ export function useSpeckleSoundHighlight({
       // this naturally yields no highlight for them.
       const promptKey = `prompt_${effectiveIndex}`;
       highlightedSphere = sphereMeshes.find(s => s.userData.promptKey === promptKey);
+
+      // Large linked objects have no sphere but DO have a surface marker; attach
+      // the gumball to it so the user can move the source across the surface.
+      if (!highlightedSphere) {
+        highlightedMarker = soundSphereManager
+          .getMarkerObjects()
+          .find(m => m.userData.promptKey === promptKey);
+      }
     }
 
     if (highlightedSphere) {
@@ -113,13 +122,14 @@ export function useSpeckleSoundHighlight({
     // expanded/selected (or the current one loses its highlight), re-attach the
     // gizmo to the highlighted sphere so it never stays on a previously clicked one.
     const dragHandler = coordinator.getDragHandler();
+    const attachTarget: THREE.Object3D | undefined = highlightedSphere ?? highlightedMarker;
     if (dragHandler && !dragHandler.getIsDragging()) {
-      if (highlightedSphere) {
-        const attached = dragHandler.getSelectedObjects()?.[0] as THREE.Mesh | undefined;
-        if (attached !== highlightedSphere) {
-          dragHandler.selectObjects([highlightedSphere]);
+      if (attachTarget) {
+        const attached = dragHandler.getSelectedObjects()?.[0];
+        if (attached !== attachTarget) {
+          dragHandler.selectObjects([attachTarget]);
         }
-        dragTargetSphereRef.current = highlightedSphere;
+        dragTargetSphereRef.current = attachTarget;
       } else {
         // No highlighted sphere: detach the gizmo from ANY attached sound sphere.
         // This covers gizmos attached by the event bridge click handler (where

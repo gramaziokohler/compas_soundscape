@@ -30,6 +30,7 @@ import {
   useGridListenersStore,
   useErrorsStore,
   useCardFlowStore,
+  notifyError,
 } from "@/store";
 import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
 import * as THREE from "three";
@@ -73,6 +74,11 @@ function buildAppIdMap(node: any, map: Map<string, string> = new Map()): Map<str
 
 let _viewerLoadComplete = false;
 
+// Set when a model is opened from the Home page (as opposed to a refresh of an
+// existing ?model_id= session). In that case the camera must default to the
+// model's bounding box instead of restoring a previously saved POV.
+let _fitCameraToBoundingBoxOnLoad = false;
+
 function HomeContent() {
   useUndoRedo();
 
@@ -97,6 +103,8 @@ function HomeContent() {
     const gsd = useUIStore.getState().globalSpeckleData;
     if (gsd !== null) return; // model already loaded via normal flow
     bootstrappedRef.current = true;
+    // Show a loading state (not the Home model browser) while the model loads.
+    setIsBootstrappingModel(true);
 
     console.log('[page:bootstrap] Loading soundscape for model_id from URL:', urlModelId);
     apiService.loadSoundscapeFromSpeckle(urlModelId).then(loadResponse => {
@@ -106,6 +114,7 @@ function HomeContent() {
           const model = speckleResponse.models.find(m => m.id === urlModelId);
           if (!model || !model.latest_version) {
             console.log('[page:bootstrap] Model not found in Speckle project:', urlModelId);
+            setIsBootstrappingModel(false);
             return;
           }
           const v = model.latest_version;
@@ -126,6 +135,7 @@ function HomeContent() {
           console.log('[page:bootstrap] Viewer reconstructed from Speckle API for', urlModelId);
         }).catch(err => {
           console.error('[page:bootstrap] Failed to look up model from Speckle API:', err);
+          setIsBootstrappingModel(false);
         });
         return;
       }
@@ -133,6 +143,12 @@ function HomeContent() {
       const data = loadResponse.soundscape_data;
       const audioBaseUrl = `${API_BASE_URL}${loadResponse.audio_base_url}`;
       const irBaseUrl = loadResponse.ir_base_url || undefined;
+      if (loadResponse.missing_audio_filenames?.length) {
+        notifyError(
+          `${loadResponse.missing_audio_filenames.length} saved sound file(s) could not be found on the server and were skipped.`,
+          'warning',
+        );
+      }
 
       // Reconstruct SpeckleData from the saved fields so the viewer can load geometry
       if (data.project_id) {
@@ -245,8 +261,10 @@ function HomeContent() {
         });
       }
       console.log('[page:bootstrap] Soundscape restored from URL param');
+      setIsBootstrappingModel(false);
     }).catch(err => {
       console.error('[page:bootstrap] Failed to load soundscape:', err);
+      setIsBootstrappingModel(false);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -468,6 +486,7 @@ function HomeContent() {
     showLabelSprites, setShowLabelSprites,
     showHoveringHighlight, setShowHoveringHighlight,
     showSoundSpheres, setShowSoundSpheres,
+    showPlayingHighlight, setShowPlayingHighlight,
     showSceneListeners, setShowSceneListeners,
     showAdvancedSettings, setShowAdvancedSettings,
     showGroundGrid, setShowGroundGrid,
@@ -484,6 +503,11 @@ function HomeContent() {
   // Sidebar resize widths — kept in sync via callbacks from each sidebar
   const [leftSidebarContentWidth, setLeftSidebarContentWidth] = useState<number | undefined>(undefined);
   const [rightSidebarWidth, setRightSidebarWidth] = useState<number | undefined>(undefined);
+
+  // True while the ?model_id= URL bootstrap is fetching the saved soundscape /
+  // model data. Used to show a loading state instead of the Home model browser
+  // on a refresh of an existing model page.
+  const [isBootstrappingModel, setIsBootstrappingModel] = useState(false);
 
   // Sync model bounding box → Resonance Audio room bounds
   useEffect(() => {
@@ -603,16 +627,37 @@ function HomeContent() {
     }
   }, [globalSpeckleData]);
 
+  // Once the model data is available, the viewer loading overlay takes over
+  useEffect(() => {
+    if (globalSpeckleData) {
+      setIsBootstrappingModel(false);
+    }
+  }, [globalSpeckleData]);
+
   // Callback when Speckle viewer is loaded
   const handleSpeckleViewerLoaded = useCallback((viewer: import('@speckle/viewer').Viewer) => {
     _viewerLoadComplete = true;
     console.log('[page:camera:restore] Viewer loaded');
+
+    // When a model was opened from the Home page, ignore any camera POV saved
+    // for a previously-loaded model and frame the new model's bounding box.
+    // A refresh of an existing ?model_id= session keeps restoring the saved POV.
+    const fitToBoundingBox = _fitCameraToBoundingBoxOnLoad;
+    _fitCameraToBoundingBoxOnLoad = false;
+    if (fitToBoundingBox) {
+      console.log('[page:camera:restore] Model opened from Home — ignoring saved POV, fitting to bounding box');
+      useUIStore.getState().setCameraState(null, null);
+      try {
+        localStorage.removeItem('compas-camera-state');
+      } catch (e) { /* ignore */ }
+    }
+
     // Try Zustand store first (may have been rehydrated), then fall back to direct localStorage
-    let savedPos = useUIStore.getState().cameraPosition;
-    let savedTarget = useUIStore.getState().cameraTarget;
+    let savedPos = fitToBoundingBox ? null : useUIStore.getState().cameraPosition;
+    let savedTarget = fitToBoundingBox ? null : useUIStore.getState().cameraTarget;
     let savedUp: [number, number, number] | undefined;
     let savedOrbitTarget: [number, number, number] | undefined;
-    if (!savedPos || !savedTarget) {
+    if ((!savedPos || !savedTarget) && !fitToBoundingBox) {
       try {
         const raw = localStorage.getItem('compas-camera-state');
         if (raw) {
@@ -1537,6 +1582,9 @@ function HomeContent() {
     display_name?: string;
   }) => {
     console.log('[page.tsx] Speckle model selected:', speckleData.url);
+    // Opening a model from the Home page frames its bounding box on load —
+    // do NOT restore a camera POV saved for a previously-loaded model.
+    _fitCameraToBoundingBoxOnLoad = true;
     setGlobalSpeckleData(speckleData);
     setSpeckleModelUrl(speckleData.url);
     if (speckleData.display_name) {
@@ -1556,6 +1604,12 @@ function HomeContent() {
         // because AudioOrchestrator prepends the host when fetching IR files
         const irBaseUrl = loadResponse.ir_base_url || undefined;
         const restored = restoreSoundscapeState(loadResponse.soundscape_data, audioBaseUrl, irBaseUrl);
+        if (loadResponse.missing_audio_filenames?.length) {
+          notifyError(
+            `${loadResponse.missing_audio_filenames.length} saved sound file(s) could not be found on the server and were skipped.`,
+            'warning',
+          );
+        }
 
         // We restore the exact baked timestamps + iteration links below, so suppress the
         // one-shot auto-rebake that the generatedSounds change would otherwise trigger.
@@ -3001,6 +3055,7 @@ function HomeContent() {
               return globalSpeckleData;
             })()}
             onViewerLoaded={handleSpeckleViewerLoaded}
+            isBootstrappingModel={isBootstrappingModel}
             // Audio system props
             audioOrchestrator={audioOrchestrator.orchestrator}
             audioContext={audioOrchestrator.audioContext}
@@ -3232,6 +3287,8 @@ function HomeContent() {
         onShowHoveringHighlightChange={setShowHoveringHighlight}
         showSoundSpheres={showSoundSpheres}
         onShowSoundSpheresChange={setShowSoundSpheres}
+        showPlayingHighlight={showPlayingHighlight}
+        onShowPlayingHighlightChange={setShowPlayingHighlight}
         showSceneListeners={showSceneListeners}
         onShowSceneListenersChange={setShowSceneListeners}
         showGroundGrid={showGroundGrid}
@@ -3274,6 +3331,8 @@ function HomeContent() {
         onShowHoveringHighlightChange={setShowHoveringHighlight}
         showSoundSpheres={showSoundSpheres}
         onShowSoundSpheresChange={setShowSoundSpheres}
+        showPlayingHighlight={showPlayingHighlight}
+        onShowPlayingHighlightChange={setShowPlayingHighlight}
         showSceneListeners={showSceneListeners}
         onShowSceneListenersChange={setShowSceneListeners}
         showGroundGrid={showGroundGrid}

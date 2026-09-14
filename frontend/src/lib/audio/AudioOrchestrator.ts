@@ -1476,6 +1476,19 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     this.currentModeInstance?.stopAllVoices();
   }
 
+  /**
+   * Smoothed realtime signal level (0..1) for a source, or 0 if unknown.
+   * Drives audio-reactive visuals (playing highlight / dark-mode light intensity).
+   */
+  getSourceLevel(sourceId: string): number {
+    return this.currentModeInstance?.getSourceLevel(sourceId) ?? 0;
+  }
+
+  /** IDs of sources currently producing sound (in-flight voices or legacy playback). */
+  getPlayingSourceIds(): string[] {
+    return this.currentModeInstance?.getPlayingSourceIds() ?? [];
+  }
+
   /** Returns the duration (seconds) of the buffer registered for `sourceId`, or undefined if unknown. */
   getSourceBufferDuration(sourceId: string): number | undefined {
     return this.sourceRegistry.get(sourceId)?.buffer.duration;

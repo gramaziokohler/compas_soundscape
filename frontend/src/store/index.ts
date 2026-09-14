@@ -21,7 +21,7 @@ import {
 } from './acousticsSimulationStore';
 import { usePyroomAcousticsStore, pyroomAcousticsPartialize } from './pyroomAcousticsStore';
 import { useChorasStore, chorasPartialize } from './chorasStore';
-import { useSoundscapeStore, soundscapePartialize, configValidationError } from './soundscapeStore';
+import { useSoundscapeStore, soundscapePartialize, configValidationError, orchestrateInputsSignature } from './soundscapeStore';
 import { useTextGenerationStore, textGenerationPartialize } from './textGenerationStore';
 import { useAnalysisStore, analysisPartialize } from './analysisStore';
 import { useSEDStore, sedPartialize } from './sedStore';
@@ -175,7 +175,7 @@ export type {
   ChorasSimulationSettings,
 } from './chorasStore';
 
-export { useSoundscapeStore, configValidationError };
+export { useSoundscapeStore, configValidationError, orchestrateInputsSignature };
 export type { SoundscapeStoreState } from './soundscapeStore';
 
 export { useTextGenerationStore };

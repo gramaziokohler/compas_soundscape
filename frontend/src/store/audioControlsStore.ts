@@ -167,8 +167,9 @@ export interface AudioControlsStoreState {
    * Re-bakes all orchestrate schedule timestamps from the dependency graph.
    * Safe to call repeatedly — only updates when values change.
    * Call after: initial config load, each sound generation, or trim changes.
+   * @param onDone Optional callback fired after the (async) bake applies its result.
    */
-  bakeOrchestrateSchedule: () => void;
+  bakeOrchestrateSchedule: (onDone?: () => void) => void;
   handlePreviewPlayPause: (soundId: string) => void;
   handlePreviewStop: (soundId: string) => void;
   stopSoundcardPreview: () => void;
@@ -185,6 +186,27 @@ export interface AudioControlsStoreState {
   clearSoundTimestampsEntry: (soundId: string) => void;
   restoreIterationLinks: (links: Record<string, IterationLink>) => void;
   restoreMuteSolo: (mutedSoundIds: string[], soloedSoundId: string | null) => void;
+  /**
+   * Snapshot of the LAST orchestrator-produced schedule (per-track timestamps +
+   * iteration links), captured right after an orchestrate bake. "Reset track"
+   * restores a track from this so it reverts to the orchestrator's result rather
+   * than to an empty/auto loop.
+   */
+  orchestrateResult: {
+    timestamps: Record<string, number[]>;
+    iterationLinks: Record<string, IterationLink>;
+  } | null;
+  /** Capture the current schedule as the orchestrator result (called after an orchestrate bake). */
+  saveOrchestrateResult: () => void;
+  /** Restore a track from the saved orchestrator result; falls back to clearing it. */
+  resetTrack: (soundId: string) => void;
+  /**
+   * Drop all per-sound state (timestamps / iteration durations / volumes / trims
+   * / loop flags / iterationLinks / mute-solo membership) for the given sound IDs.
+   * Used when a sound config is deleted so its orphaned schedule can never be
+   * baked back into the timeline, then re-bakes the parametric schedule.
+   */
+  pruneSounds: (soundIds: string[]) => void;
 }
 
 // ─── Partialize (exported for snapshot registry) ───────────────────────────
@@ -204,6 +226,10 @@ export const audioControlsPartialize = (state: AudioControlsStoreState) => ({
 
 // Module-level counter used to cancel superseded bake calls (set inside setTimeout).
 let _pendingBakeId = 0;
+// Carried across superseded bakes: if the bake that requested a callback is
+// replaced by a newer bake (e.g. a late buffer load), the newer bake invokes it
+// instead — so the final applied schedule is the one captured.
+let _pendingBakeOnDone: (() => void) | null = null;
 
 export const useAudioControlsStore = create<AudioControlsStoreState>()(
   persist(
@@ -234,6 +260,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         _pendingPlayAllStagger: false,
         _generationInProgress: false,
         iterationLinks: {},
+        orchestrateResult: null,
 
         // ── Sync ──
         syncGeneratedSounds: (sounds) => {
@@ -693,19 +720,21 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
           );
         },
 
-        bakeOrchestrateSchedule: () => {
+        bakeOrchestrateSchedule: (onDone) => {
+          if (onDone) _pendingBakeOnDone = onDone;
           // Show loading indicator immediately, then do computation in the next tick
           // so React can render the skeleton before the synchronous work blocks the thread.
           const bakeId = ++_pendingBakeId;
           set({ isBakingSchedule: true }, false, 'audio/bakeOrchestrateSchedule/start');
 
           setTimeout(() => {
-          if (bakeId !== _pendingBakeId) return; // superseded by a newer bake call
+          if (bakeId !== _pendingBakeId) return; // superseded — the newer bake will run the pending callback
 
           const { _soundConfigs, _generatedSounds, soundTrims, soundTimestamps, soundBufferDurations, soundIterationDurations } = get();
 
           if (!_soundConfigs.some(c => c.orchestrateMeta)) {
             if (bakeId === _pendingBakeId) set({ isBakingSchedule: false }, false, 'audio/bakeOrchestrateSchedule/noop');
+            const cb = _pendingBakeOnDone; _pendingBakeOnDone = null; cb?.();
             return;
           }
 
@@ -747,8 +776,11 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             const variantDurations: (number | null)[] = new Array(numCopies).fill(null);
 
             generatedForConfig.forEach((s: any) => {
-              // Use actual buffer duration as fallback when the API response omits duration
-              const rawDur = s.duration ?? soundBufferDurations[s.id] ?? 0;
+              // Prefer the REAL decoded buffer duration over the requested/reported
+              // `s.duration` — for ML (TangoFlux) the backend reports the requested
+              // length, which differs from the actual WAV, so using it makes
+              // after()/alignEnd() place dependent sounds at the wrong time.
+              const rawDur = soundBufferDurations[s.id] ?? s.duration ?? 0;
               if (rawDur <= 0) return;
               const copyIdx = parseSoundCopyIndex(s.id, s.copy_index);
               // Trim is keyed by the primary timeline sound id (sound card level)
@@ -1338,6 +1370,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             // Always write newIterDurations so UI picks up correct variant widths.
             set({ isBakingSchedule: false, soundIterationDurations: newIterDurations, isDeferredCycleBakePending: !allDurationsKnown }, false, 'audio/bakeOrchestrateSchedule/done');
           }
+          const cb = _pendingBakeOnDone; _pendingBakeOnDone = null; cb?.();
           }, 0); // end of setTimeout
         },
 
@@ -1500,6 +1533,101 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             false,
             'audio/restoreMuteSolo',
           ),
+
+        pruneSounds: (soundIds) => {
+          if (soundIds.length === 0) return;
+          const remove = new Set(soundIds);
+          // iterationLinks keys are `${soundId}-${iterIdx}` and soundIds may
+          // themselves contain '-' (duplicate-*, sed-*), so strip the trailing
+          // iteration segment with lastIndexOf.
+          const stripIteration = (key: string): string => {
+            const dash = key.lastIndexOf('-');
+            return dash > 0 ? key.substring(0, dash) : key;
+          };
+          set(
+            (state) => {
+              const keep = <T,>(obj: Record<string, T>): Record<string, T> => {
+                const next: Record<string, T> = {};
+                for (const [k, v] of Object.entries(obj)) if (!remove.has(k)) next[k] = v;
+                return next;
+              };
+              const keepLinks = (obj: Record<string, IterationLink>): Record<string, IterationLink> => {
+                const next: Record<string, IterationLink> = {};
+                for (const [k, v] of Object.entries(obj)) if (!remove.has(stripIteration(k))) next[k] = v;
+                return next;
+              };
+              const newMuted = new Set(state.mutedSounds);
+              soundIds.forEach((id) => newMuted.delete(id));
+              const prunedOrchestrateResult = state.orchestrateResult
+                ? {
+                    timestamps: keep(state.orchestrateResult.timestamps),
+                    iterationLinks: keepLinks(state.orchestrateResult.iterationLinks),
+                  }
+                : state.orchestrateResult;
+              return {
+                soundTimestamps: keep(state.soundTimestamps),
+                soundIterationDurations: keep(state.soundIterationDurations),
+                soundVolumes: keep(state.soundVolumes),
+                soundTrims: keep(state.soundTrims),
+                soundLoopable: keep(state.soundLoopable),
+                iterationLinks: keepLinks(state.iterationLinks),
+                orchestrateResult: prunedOrchestrateResult,
+                mutedSounds: newMuted,
+                soloedSound: state.soloedSound && remove.has(state.soloedSound) ? null : state.soloedSound,
+              };
+            },
+            false,
+            'audio/pruneSounds',
+          );
+          // Callers are responsible for re-syncing _soundConfigs / _generatedSounds
+          // and re-baking afterwards (they own the fresh config arrays).
+        },
+
+        saveOrchestrateResult: () => {
+          const { soundTimestamps, iterationLinks } = get();
+          set(
+            {
+              orchestrateResult: {
+                timestamps: JSON.parse(JSON.stringify(soundTimestamps)),
+                iterationLinks: JSON.parse(JSON.stringify(iterationLinks)),
+              },
+            },
+            false,
+            'audio/saveOrchestrateResult',
+          );
+        },
+
+        resetTrack: (soundId) => {
+          const { orchestrateResult } = get();
+          const savedTs = orchestrateResult?.timestamps[soundId];
+          if (!savedTs || savedTs.length === 0) {
+            // Not an orchestrator track (or no saved result) — fall back to the
+            // previous behaviour: drop the schedule so it reverts to the auto loop.
+            get().clearSoundTimestampsEntry(soundId);
+            get().clearAllIterationLinksForSound(soundId);
+            return;
+          }
+          set(
+            (state) => {
+              // Restore this track's timestamps + iteration links from the saved
+              // orchestrator result, leaving every other track untouched.
+              const prefix = `${soundId}-`;
+              const restoredLinks: Record<string, IterationLink> = {};
+              Object.entries(state.iterationLinks).forEach(([k, v]) => {
+                if (!k.startsWith(prefix)) restoredLinks[k] = v;
+              });
+              Object.entries(orchestrateResult!.iterationLinks).forEach(([k, v]) => {
+                if (k.startsWith(prefix)) restoredLinks[k] = v;
+              });
+              return {
+                soundTimestamps: { ...state.soundTimestamps, [soundId]: [...savedTs] },
+                iterationLinks: restoredLinks,
+              };
+            },
+            false,
+            'audio/resetTrack',
+          );
+        },
       }),
       { name: 'AudioControlsStore' },
     ),

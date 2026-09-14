@@ -25,6 +25,18 @@ interface SoundMeshData {
 }
 
 /**
+ * Runtime surface info for entity-linked sounds, supplied by React (from
+ * speckleStore.objectSoundLinks + viewer AABBs). A prompt is "large" when the
+ * union AABB of its linked objects exceeds DARK_MODE.LARGE_ENTITY_THRESHOLD_M;
+ * large prompts render a surface marker (no sphere) with a movable point.
+ */
+export interface EntitySurfaceInfo {
+  largePrompts: Set<number>;
+  objectIdsByPrompt: Map<number, string[]>;
+  boxByPrompt: Map<number, THREE.Box3>;
+}
+
+/**
  * SoundSphereManager
  *
  * Manages sound sphere creation, updates, animations, and sound event visualization.
@@ -69,6 +81,8 @@ export class SoundSphereManager {
   private latestSounds: SoundEvent[] = [];
   // Track which sounds are entity-linked (for change detection in updateSounds)
   private entityLinkedIds: Set<string> = new Set();
+  // sound id → prompt index (for deciding large-marker light behaviour).
+  private soundPromptIndex: Map<string, number> = new Map();
   // Previous visible sound ID set — used to detect sound-set changes for the fast path.
   // soundMetadata intentionally contains ALL non-pending variants (not just the visible
   // selection), so a size comparison against it is invalid for multi-variant prompts.
@@ -78,6 +92,19 @@ export class SoundSphereManager {
   // Dark mode state
   private darkModeEnabled: boolean = false;
   private darkModePointLights: Map<string, THREE.PointLight> = new Map();
+  /** Group holding entity/marker dark-mode lights (not parented to a mesh). */
+  private darkModeLightsGroup: THREE.Group | null = null;
+  /** Sound IDs currently allowed to cast shadows (bounded by the shadow budget). */
+  private darkModeShadowCasters: Set<string> = new Set();
+  /** When true, non-playing sound lights are hidden (active playback). */
+  private idleLightsOff: boolean = false;
+
+  // Playing state — prompt indices currently producing audio. Keyed by prompt
+  // (not variant sound id) so the visible variant's sphere pulses even when the
+  // timeline is playing a different copy. Drives the scale pulse and, in dark
+  // mode, the reactive light intensity.
+  private playingPrompts: Set<number> = new Set();
+  private playingPromptLevels: Map<number, number> = new Map();
 
   // Cached scale for mesh factory (set before calling updateDraggableMeshes)
   private scaleForSounds: number = 1.0;
@@ -95,6 +122,15 @@ export class SoundSphereManager {
 
   // Label sprites for entity-linked sounds (no mesh), keyed by sound ID
   private entityLabelSprites: Map<string, THREE.Sprite> = new Map();
+
+  // Surface markers for large entity-linked sounds (no sphere), keyed by prompt index
+  private markerGroups: Map<number, THREE.Group> = new Map();
+  // Surface info supplied by React — decides which prompts get a marker.
+  private entitySurfaceInfo: EntitySurfaceInfo = {
+    largePrompts: new Set<number>(),
+    objectIdsByPrompt: new Map<number, string[]>(),
+    boxByPrompt: new Map<number, THREE.Box3>(),
+  };
 
   constructor(
     scene: THREE.Scene,
@@ -157,10 +193,13 @@ export class SoundSphereManager {
     scaleForSounds: number,
     auralizationConfig: AuralizationConfig,
     // bounds?: BoundingBoxBounds | null, // Bounding-box placement removed — camera-based only
-    cameraFrontPosition?: THREE.Vector3 | null
+    cameraFrontPosition?: THREE.Vector3 | null,
+    entitySurfaceInfo?: EntitySurfaceInfo
   ): Map<string, [number, number, number]> {
     // Store scale for mesh factory
     this.scaleForSounds = scaleForSounds;
+
+    if (entitySurfaceInfo) this.entitySurfaceInfo = entitySurfaceInfo;
 
     // Handle empty case — clear everything
     if (!soundscapeData || soundscapeData.length === 0) {
@@ -177,6 +216,11 @@ export class SoundSphereManager {
     // They must NOT enter the variant-selection or audio-loading pipelines — only labels.
     const iterationLabels = soundscapeData.filter(s => s.id.includes('_iter_'));
     const realSoundData   = soundscapeData.filter(s => !s.id.includes('_iter_'));
+
+    // Refresh the sound → prompt map (drives large-marker light behaviour).
+    realSoundData.forEach((s) => {
+      this.soundPromptIndex.set(s.id, (s as any).prompt_index ?? 0);
+    });
 
     console.log('[SoundSphereManager:update] soundscapeData.length:', soundscapeData.length,
       'realSoundData.length:', realSoundData.length,
@@ -293,10 +337,26 @@ export class SoundSphereManager {
         }
       });
       this.syncLabelSprites(this.soundMeshes);
+      // Keep surface markers in sync with the current large-prompt set, then
+      // (re)wire labels. Markers must exist before labels so a large sound's
+      // label becomes its click target in the same pass.
+      const keepMarkers = new Set<number>();
+      visibleSounds.forEach(se => {
+        if (se.entity_index === undefined) return;
+        const pi = (se as any).prompt_index ?? 0;
+        if (this.entitySurfaceInfo.largePrompts.has(pi)) {
+          const pos = this.spherePositions.get(se.id) ?? (se.position as [number, number, number]);
+          this.upsertMarker(pi, se, pos);
+          keepMarkers.add(pi);
+        }
+      });
+      this.pruneMarkers(keepMarkers);
+
       this.syncEntityLabelSprites([
         ...visibleSounds.filter(s => s.entity_index !== undefined),
         ...iterationLabels,
       ]);
+
       this.lastVisibleSoundIds = new Set(newSoundIds);
       return new Map();
     }
@@ -438,6 +498,7 @@ export class SoundSphereManager {
 
     this.soundMeshes = result.meshes;
     this.draggableObjects = result.draggableObjects;
+    this.pruneOwnerlessLights();
 
     // Update userData.soundEvent on every mesh to reflect the latest data
     // (e.g. display_name changes). updateDraggableMeshes reuses existing
@@ -454,15 +515,36 @@ export class SoundSphereManager {
     // Force group matrix update after mesh changes
     this.soundSpheresGroup.updateMatrixWorld(true);
 
-    // Handle entity-linked sounds: store positions (no mesh) and sync labels
+    // Handle entity-linked sounds: store positions (no mesh) and sync labels.
+    // Large linked objects additionally get a surface marker (no sphere) whose
+    // position is a deterministic random point inside the object's AABB.
+    const keepMarkers = new Set<number>();
     entitySounds.forEach(soundEvent => {
       const promptIdx = (soundEvent as any).prompt_index ?? 0;
-      // ALWAYS use soundEvent.position for entity-linked sounds — it contains
-      // the entity's bounding box center (set by useSoundGeneration.linkSoundToEntity)
       const position = soundEvent.position as [number, number, number];
       this.spherePositions.set(soundEvent.id, position);
       this.promptPositions.set(promptIdx, position);
+
+      if (this.entitySurfaceInfo.largePrompts.has(promptIdx)) {
+        const box = this.entitySurfaceInfo.boxByPrompt.get(promptIdx);
+        let finalPos = position;
+        if (box && !box.isEmpty()) {
+          const center = box.getCenter(new THREE.Vector3());
+          const atCenter =
+            Math.hypot(position[0] - center.x, position[1] - center.y, position[2] - center.z) < 1e-3;
+          if (atCenter) {
+            finalPos = this.randomPointInBox(box, soundEvent.id);
+            this.spherePositions.set(soundEvent.id, finalPos);
+            this.promptPositions.set(promptIdx, finalPos);
+            newlyPlacedPositions.set(soundEvent.id, finalPos);
+          }
+        }
+        this.upsertMarker(promptIdx, soundEvent, finalPos);
+        keepMarkers.add(promptIdx);
+      }
     });
+    // Remove markers that no longer belong to a large entity source (unlink/shrink).
+    this.pruneMarkers(keepMarkers);
 
     // Register per-iteration label positions so updateScreenSpaceScale can find them.
     // These entries are label-only (no audio source, no mesh) and were excluded from the
@@ -552,6 +634,12 @@ export class SoundSphereManager {
    * Called by syncAudioSources for new sounds only.
    */
   private loadAudioForSound(soundEvent: SoundEvent): void {
+    // Missing audio (e.g. a saved event whose file no longer exists on the
+    // server — the backend clears its audio_filename) has no URL. Skip the load
+    // instead of fetching the API base URL, which would fail noisily.
+    if (!soundEvent.url) {
+      return;
+    }
     const audioPosition = this.spherePositions.get(soundEvent.id);
     if (!audioPosition) {
       console.warn(`[SoundSphereManager] No position for sound ${soundEvent.id} (pi:${(soundEvent as any).prompt_index} sci:${(soundEvent as any).speech_card_index}), skipping audio load`);
@@ -660,6 +748,7 @@ export class SoundSphereManager {
     disposeMeshes(this.soundSpheresGroup, this.soundMeshes);
     this.soundMeshes = [];
     this.draggableObjects = [];
+    this.pruneOwnerlessLights();
     this.labelSprites.forEach((sprite) => {
       this.soundSpheresGroup.remove(sprite);
       disposeLabelSprite(sprite);
@@ -672,6 +761,9 @@ export class SoundSphereManager {
     this.entityLabelSprites.clear();
     this.labelUpdateTimers.forEach(timer => clearTimeout(timer));
     this.labelUpdateTimers.clear();
+
+    // Remove all surface markers
+    Array.from(this.markerGroups.keys()).forEach((promptIdx) => this.removeMarker(promptIdx));
   }
 
   /**
@@ -708,8 +800,10 @@ export class SoundSphereManager {
 
     const material = new THREE.MeshBasicMaterial({
       color: sphereColor,
-      transparent: true,
-      opacity: isPendingSphere ? SOUND_SPHERE.PENDING_OPACITY : SOUND_SPHERE.BASE_OPACITY,
+      // In dark mode spheres are opaque self-lit emitters (matching enableDarkMode),
+      // including spheres created after dark mode was turned on.
+      transparent: this.darkModeEnabled ? false : true,
+      opacity: this.darkModeEnabled ? 1 : (isPendingSphere ? SOUND_SPHERE.PENDING_OPACITY : SOUND_SPHERE.BASE_OPACITY),
       fog: true,
       depthWrite: true,
       depthTest: true,
@@ -997,7 +1091,10 @@ export class SoundSphereManager {
     // Pending placeholders (pre-generation) have a frozen label — never rebuild
     // them while pending. When the sound is generated the pending event is
     // replaced by a generated event (new id), which creates a fresh label then.
-    if (existing && (soundEvent as any).isPending) return;
+    if (existing && (soundEvent as any).isPending) {
+      this.applyMarkerLabelUserData(existing, soundEvent);
+      return;
+    }
 
     // Recreate when text, slot index, or group size has changed
     const needsRebuild = existing && (
@@ -1006,7 +1103,11 @@ export class SoundSphereManager {
       existing.userData.entityGroupSize !== groupSize
     );
 
-    if (existing && !needsRebuild) return;
+    if (existing && !needsRebuild) {
+      // Keep the click-target wiring current even when the sprite is reused.
+      this.applyMarkerLabelUserData(existing, soundEvent);
+      return;
+    }
 
     if (existing) {
       // Redraw the existing canvas/texture in place — no sprite recreation, so
@@ -1014,6 +1115,7 @@ export class SoundSphereManager {
       updateLabelSprite(existing, text);
       existing.userData.entitySlot = slotIdx;
       existing.userData.entityGroupSize = groupSize;
+      this.applyMarkerLabelUserData(existing, soundEvent);
       return;
     }
 
@@ -1022,8 +1124,157 @@ export class SoundSphereManager {
     sprite.position.set(pos[0], pos[1], pos[2]);
     sprite.userData.entitySlot = slotIdx;
     sprite.userData.entityGroupSize = groupSize;
+    this.applyMarkerLabelUserData(sprite, soundEvent);
     this.soundSpheresGroup.add(sprite);
     this.entityLabelSprites.set(soundEvent.id, sprite);
+  }
+
+  // ============================================================================
+  // Surface Markers (large entity-linked sounds)
+  // ============================================================================
+
+  /** Deterministic 0..1 PRNG seeded from a string (stable across reloads). */
+  private seededRandom(seed: string): () => number {
+    let h = 2166136261;
+    for (let i = 0; i < seed.length; i++) {
+      h ^= seed.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    let state = h >>> 0;
+    return () => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return state / 4294967296;
+    };
+  }
+
+  /** A deterministic random point inside a box (80% of each half-extent). */
+  private randomPointInBox(
+    box: THREE.Box3,
+    seed: string,
+  ): [number, number, number] {
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const rnd = this.seededRandom(seed);
+    return [
+      center.x + (rnd() - 0.5) * size.x * 0.8,
+      center.y + (rnd() - 0.5) * size.y * 0.8,
+      center.z + (rnd() - 0.5) * size.z * 0.8,
+    ];
+  }
+
+  private createMarkerGroup(soundEvent: SoundEvent): THREE.Group {
+    // Large linked sounds show NO fixed UI (ring/pin/head) — only their point
+    // light. The marker is an invisible position proxy; the gumball is summoned
+    // by clicking the sound's label sprite (see applyMarkerLabelUserData).
+    const group = new THREE.Group();
+    group.name = `SoundMarker_${soundEvent.id}`;
+    group.visible = false;
+    group.layers.enableAll();
+    return group;
+  }
+
+  /**
+   * Make an entity label sprite the click target for a large surface marker:
+   * clicking it selects the (invisible) marker group so the gumball appears.
+   */
+  private applyMarkerLabelUserData(sprite: THREE.Sprite, soundEvent: SoundEvent): void {
+    const promptIdx = (soundEvent as any).prompt_index ?? 0;
+    const markerGroup = this.markerGroups.get(promptIdx);
+    if (markerGroup && this.entitySurfaceInfo.largePrompts.has(promptIdx)) {
+      sprite.userData.customObjectType = 'sound';
+      sprite.userData.isSurfaceMarker = true;
+      sprite.userData.promptKey = `prompt_${promptIdx}`;
+      sprite.userData.positionKey = soundEvent.id;
+      sprite.userData.surfaceObjectIds = this.entitySurfaceInfo.objectIdsByPrompt.get(promptIdx) ?? [];
+      sprite.userData.markerTarget = markerGroup;
+    } else {
+      delete sprite.userData.customObjectType;
+      delete sprite.userData.isSurfaceMarker;
+      delete sprite.userData.markerTarget;
+    }
+  }
+
+  private upsertMarker(
+    promptIdx: number,
+    soundEvent: SoundEvent,
+    position: [number, number, number],
+  ): void {
+    let group = this.markerGroups.get(promptIdx);
+    if (!group) {
+      group = this.createMarkerGroup(soundEvent);
+      this.soundSpheresGroup.add(group);
+      this.markerGroups.set(promptIdx, group);
+    }
+    group.position.set(position[0], position[1], position[2]);
+    group.userData.customObjectType = 'sound';
+    group.userData.isSurfaceMarker = true;
+    group.userData.soundEvent = soundEvent;
+    group.userData.promptKey = `prompt_${promptIdx}`;
+    group.userData.positionKey = soundEvent.id;
+    group.userData.surfaceObjectIds = this.entitySurfaceInfo.objectIdsByPrompt.get(promptIdx) ?? [];
+  }
+
+  private removeMarker(promptIdx: number): void {
+    const group = this.markerGroups.get(promptIdx);
+    if (!group) return;
+
+    // Clear the click-target wiring on any label that points at this marker so a
+    // stale sprite can't re-select a removed marker (e.g. after unlinking).
+    this.entityLabelSprites.forEach((sprite) => {
+      if (sprite.userData.markerTarget === group) {
+        delete sprite.userData.customObjectType;
+        delete sprite.userData.isSurfaceMarker;
+        delete sprite.userData.markerTarget;
+        delete sprite.userData.surfaceObjectIds;
+      }
+    });
+
+    group.traverse((child) => {
+      const mesh = child as THREE.Mesh;
+      if (mesh.geometry) mesh.geometry.dispose();
+      const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+      if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+      else mat?.dispose();
+    });
+    this.soundSpheresGroup.remove(group);
+    this.markerGroups.delete(promptIdx);
+  }
+
+  /**
+   * Remove markers whose prompt no longer qualifies as a large entity source
+   * (e.g. the sound was unlinked or the linked object shrank below threshold).
+   * Without this, an unlinked sound left its marker + gumball behind.
+   */
+  private pruneMarkers(keepPrompts: Set<number>): void {
+    for (const promptIdx of Array.from(this.markerGroups.keys())) {
+      if (!keepPrompts.has(promptIdx)) this.removeMarker(promptIdx);
+    }
+  }
+
+  /** Surface marker objects (for the surface-constrained gumball + picking). */
+  public getMarkerObjects(): THREE.Group[] {
+    return Array.from(this.markerGroups.values());
+  }
+
+  /** Object ids bound to a prompt's marker (for the surface raycast). */
+  public getMarkerSurfaceObjectIds(promptIdx: number): string[] {
+    return this.entitySurfaceInfo.objectIdsByPrompt.get(promptIdx) ?? [];
+  }
+
+  /**
+   * Move a marker (and its audio source / stored position) — called live while
+   * the surface gumball drags, and on commit.
+   */
+  public updateMarkerPosition(promptIdx: number, position: [number, number, number]): void {
+    const group = this.markerGroups.get(promptIdx);
+    if (!group) return;
+    group.position.set(position[0], position[1], position[2]);
+
+    const soundEvent = group.userData.soundEvent as SoundEvent | undefined;
+    if (!soundEvent) return;
+    this.spherePositions.set(soundEvent.id, position);
+    this.promptPositions.set(promptIdx, position);
+    this.audioOrchestrator?.updateSourcePosition(soundEvent.id, new THREE.Vector3(...position));
   }
 
   /**
@@ -1047,10 +1298,20 @@ export class SoundSphereManager {
       // Scale mesh so world radius = distance × SCREEN_SPACE_SIZE, clamped to min/max
       const rawScale = (distance * SOUND_SPHERE.SCREEN_SPACE_SIZE) / baseRadius;
       const scale = Math.max(SOUND_SPHERE.MIN_SCALE, Math.min(SOUND_SPHERE.MAX_SCALE, rawScale));
-      mesh.scale.setScalar(scale);
+
+      // Realtime playing pulse — a subtle scale "breath" proportional to the
+      // source's live level. Applied on top of the screen-space scale so it is
+      // visible in every view mode (scale is recomputed each frame here).
+      const soundId = mesh.userData.soundEvent?.id as string;
+      const promptIdx = (mesh.userData.soundEvent as SoundEvent | undefined)?.prompt_index ?? 0;
+      let pulse = 1;
+      if (this.playingPrompts.has(promptIdx)) {
+        const level = this.playingPromptLevels.get(promptIdx) ?? 0.5;
+        pulse = 1 + DARK_MODE.PLAYING_SPHERE_PULSE * (0.35 + 0.65 * level);
+      }
+      mesh.scale.setScalar(scale * pulse);
 
       // Position and scale the corresponding label sprite (use same clamped ratio)
-      const soundId = mesh.userData.soundEvent?.id as string;
       const label = soundId ? this.labelSprites.get(soundId) : null;
       if (label) {
         const clampRatio = scale / rawScale;
@@ -1095,6 +1356,47 @@ export class SoundSphereManager {
       labelPos.z += zOffset;
       label.position.copy(labelPos);
       label.scale.set(labelWidth, h, 1);
+    }
+
+    // Surface markers keep a constant apparent size at any zoom.
+    this.markerGroups.forEach((group) => {
+      const distance = camera.position.distanceTo(group.position);
+      if (distance < 0.01) return;
+      const rawScale = (distance * DARK_MODE.MARKER_SCREEN_SPACE_SIZE) / DARK_MODE.MARKER_RING_RADIUS;
+      const scale = Math.max(DARK_MODE.MARKER_MIN_SCALE, Math.min(DARK_MODE.MARKER_MAX_SCALE, rawScale));
+      group.scale.setScalar(scale);
+    });
+
+    // Bound the number of VISIBLE sound lights. Three compiles every visible
+    // light into every standard material's shader; beyond a modest count the
+    // fragment uniform budget can be exceeded, which blacks out / mangles the
+    // shading (the "not all lit / messy" symptom with many sources). Keep only
+    // the closest lights that want to be visible.
+    if (this.darkModePointLights.size > 0) {
+      const candidates: Array<{ light: THREE.PointLight; dist: number }> = [];
+      const tmpLightPos = new THREE.Vector3();
+      this.darkModePointLights.forEach((light) => {
+        // Per-sphere lights track their mesh (they are not mesh children, so
+        // hiding sound spheres no longer hides the light).
+        const owner = light.userData.ownerMesh as THREE.Mesh | undefined;
+        if (owner) {
+          owner.getWorldPosition(tmpLightPos);
+          light.position.copy(tmpLightPos);
+        }
+        const wants =
+          light.userData.muted !== true && light.userData.wantVisible !== false;
+        if (!wants) {
+          light.visible = false;
+          return;
+        }
+        light.getWorldPosition(tmpLightPos);
+        candidates.push({ light, dist: camera.position.distanceTo(tmpLightPos) });
+      });
+      candidates.sort((a, b) => a.dist - b.dist);
+      const cap = DARK_MODE.MAX_ACTIVE_LIGHTS;
+      candidates.forEach((c, i) => {
+        c.light.visible = i < cap;
+      });
     }
   }
 
@@ -1174,6 +1476,14 @@ export class SoundSphereManager {
       light.dispose();
     });
     this.darkModePointLights.clear();
+    this.darkModeShadowCasters.clear();
+
+    // Remove the entity/marker lights group
+    if (this.darkModeLightsGroup) {
+      this.scene.remove(this.darkModeLightsGroup);
+      this.darkModeLightsGroup.clear();
+      this.darkModeLightsGroup = null;
+    }
 
     // Restore per-state sphere visuals: pending placeholders come back dimmer
     // (PENDING_OPACITY), everything else at the normal transparent-primary opacity.
@@ -1200,17 +1510,205 @@ export class SoundSphereManager {
     );
     light.name = `DarkModeLight_${soundId}`;
     light.layers.enableAll();
+    light.userData.baseIntensity = DARK_MODE.POINT_LIGHT_INTENSITY;
+    light.userData.wantVisible = true;
+    // The light lives in the dedicated lights group (NOT as a child of the mesh)
+    // so hiding sound spheres does not also hide the light. Its position is
+    // synced from the mesh each frame in updateScreenSpaceScale.
+    light.userData.ownerMesh = mesh;
 
-    // Enable shadow casting so geometry blocks the light
+    // Shadow budget: only a bounded number of lights cast shadows.
+    this.applyShadowBudget(light, soundId);
+
+    this.ensureDarkModeLightsGroup().add(light);
+    this.darkModePointLights.set(soundId, light);
+  }
+
+  /**
+   * Enable a light as a shadow caster only if the budget allows; otherwise keep
+   * it a plain (cheap) point light. A shadow-casting PointLight renders the
+   * scene 6× per frame, so this cap is the main guard against multi-source lag.
+   */
+  private applyShadowBudget(light: THREE.PointLight, soundId: string): void {
+    // Large surface markers must NOT cast shadows: the surface would occlude the
+    // light and only one face would be lit. Shadowless, it shines through and
+    // lights both faces (material is DoubleSide).
+    if (light.userData.noShadow === true) {
+      light.castShadow = false;
+      return;
+    }
+    const canCast = this.darkModeShadowCasters.size < DARK_MODE.MAX_SHADOW_CASTING_LIGHTS;
+    if (!canCast) {
+      light.castShadow = false;
+      return;
+    }
     light.castShadow = true;
     light.shadow.mapSize.width = DARK_MODE.SHADOW_MAP_SIZE;
     light.shadow.mapSize.height = DARK_MODE.SHADOW_MAP_SIZE;
     light.shadow.camera.near = DARK_MODE.SHADOW_CAMERA_NEAR;
-    light.shadow.camera.far = DARK_MODE.POINT_LIGHT_DISTANCE;
+    light.shadow.camera.far = light.distance;
     light.shadow.bias = DARK_MODE.SHADOW_BIAS;
+    light.shadow.normalBias = DARK_MODE.SHADOW_NORMAL_BIAS;
+    this.darkModeShadowCasters.add(soundId);
+  }
 
-    mesh.add(light);
+  /** True when a sound belongs to a large surface-marker prompt. */
+  private isLargeMarkerLight(soundId: string): boolean {
+    const promptIdx = this.soundPromptIndex.get(soundId);
+    return promptIdx !== undefined && this.entitySurfaceInfo.largePrompts.has(promptIdx);
+  }
+
+  private ensureDarkModeLightsGroup(): THREE.Group {
+    if (!this.darkModeLightsGroup) {
+      const group = new THREE.Group();
+      group.name = 'DarkModeLightsGroup';
+      group.layers.enableAll();
+      this.scene.add(group);
+      this.darkModeLightsGroup = group;
+    }
+    return this.darkModeLightsGroup;
+  }
+
+  /**
+   * Create a dark-mode point light for an entity/marker sound (which has no
+   * sphere mesh). Idempotent per sound ID.
+   */
+  public addEntityDarkModeLight(
+    soundId: string,
+    position: [number, number, number],
+    intensity: number,
+    distance: number
+  ): THREE.PointLight | null {
+    const existing = this.darkModePointLights.get(soundId);
+    if (existing) {
+      existing.position.set(position[0], position[1], position[2]);
+      return existing;
+    }
+    const light = new THREE.PointLight(
+      getCssColorHex('--color-primary'),
+      intensity,
+      distance,
+      DARK_MODE.POINT_LIGHT_DECAY
+    );
+    light.name = `DarkModeEntityLight_${soundId}`;
+    light.position.set(position[0], position[1], position[2]);
+    light.layers.enableAll();
+    light.userData.baseIntensity = intensity;
+    light.userData.wantVisible = true;
+    // Large surface markers must shine through the surface (light both faces).
+    light.userData.noShadow = this.isLargeMarkerLight(soundId);
+    this.applyShadowBudget(light, soundId);
+    this.ensureDarkModeLightsGroup().add(light);
     this.darkModePointLights.set(soundId, light);
+    return light;
+  }
+
+  /** Remove an entity/marker dark-mode light for a sound ID. */
+  public removeEntityDarkModeLight(soundId: string): void {
+    const light = this.darkModePointLights.get(soundId);
+    if (!light) return;
+    light.parent?.remove(light);
+    light.dispose();
+    this.darkModePointLights.delete(soundId);
+    this.darkModeShadowCasters.delete(soundId);
+  }
+
+  /** Drop lights whose owner mesh no longer exists (mesh removed/replaced). */
+  private pruneOwnerlessLights(): void {
+    if (this.darkModePointLights.size === 0) return;
+    const live = new Set<THREE.Object3D>(this.soundMeshes);
+    const toRemove: string[] = [];
+    this.darkModePointLights.forEach((light, soundId) => {
+      const owner = light.userData.ownerMesh as THREE.Object3D | undefined;
+      if (owner && !live.has(owner)) toRemove.push(soundId);
+    });
+    toRemove.forEach((id) => this.removeEntityDarkModeLight(id));
+  }
+
+  /** Move an entity/marker dark-mode light (e.g. while dragging the marker). */
+  public setEntityDarkModeLightPosition(soundId: string, position: [number, number, number]): void {
+    const light = this.darkModePointLights.get(soundId);
+    if (light) light.position.set(position[0], position[1], position[2]);
+  }
+
+  /**
+   * Re-assign shadow-casting status so only the currently playing sounds (up to
+   * MAX_SHADOW_CASTING_LIGHTS) cast shadows. Called by the playing-visuals loop.
+   */
+  public setShadowCasters(activeIds: Iterable<string>): void {
+    const active = new Set(activeIds);
+    let count = 0;
+    this.darkModePointLights.forEach((light, soundId) => {
+      // Large surface-marker lights never cast (they must light both faces).
+      const noShadow = light.userData.noShadow === true || this.isLargeMarkerLight(soundId);
+      const shouldCast = !noShadow && active.has(soundId) && count < DARK_MODE.MAX_SHADOW_CASTING_LIGHTS;
+      if (shouldCast) count++;
+      if (light.castShadow !== shouldCast) {
+        light.castShadow = shouldCast;
+        if (shouldCast) {
+          light.shadow.mapSize.width = DARK_MODE.SHADOW_MAP_SIZE;
+          light.shadow.mapSize.height = DARK_MODE.SHADOW_MAP_SIZE;
+          light.shadow.camera.near = DARK_MODE.SHADOW_CAMERA_NEAR;
+          light.shadow.camera.far = light.distance;
+          light.shadow.bias = DARK_MODE.SHADOW_BIAS;
+          light.shadow.normalBias = DARK_MODE.SHADOW_NORMAL_BIAS;
+        }
+      }
+      if (shouldCast) this.darkModeShadowCasters.add(soundId);
+      else this.darkModeShadowCasters.delete(soundId);
+    });
+  }
+
+  /**
+   * Set a sound light's reactive intensity from a realtime level (0..1).
+   *
+   * - playing  → intensity scales with the live level (base × factor).
+   * - idle, playback active (`idleLightsOff`) → light hidden entirely, so the
+   *   scene goes dark and only the sounding source(s) light it.
+   * - idle, nothing playing → restored to base so the static dark scene is lit.
+   *
+   * Visibility is only a *desire* here; the per-frame cap in
+   * `updateScreenSpaceScale` is the single authority that turns lights on/off
+   * (so it can bound the shader's visible-light count without flicker).
+   */
+  public setSoundLightReactive(soundId: string, playing: boolean, level01: number): void {
+    const light = this.darkModePointLights.get(soundId);
+    if (!light) return;
+    const base = (light.userData.baseIntensity as number | undefined) ?? light.intensity;
+
+    light.userData.wantVisible = playing ? true : !this.idleLightsOff;
+
+    if (playing) {
+      const clamped = Math.max(0, Math.min(1, level01));
+      const factor = DARK_MODE.PLAYING_LIGHT_MIN_FACTOR
+        + (DARK_MODE.PLAYING_LIGHT_MAX_FACTOR - DARK_MODE.PLAYING_LIGHT_MIN_FACTOR) * clamped;
+      light.intensity = base * factor;
+    } else if (light.intensity !== base) {
+      light.intensity = base;
+    }
+  }
+
+  /**
+   * When true, every non-playing sound light is hidden. Set while any playback
+   * (timeline/preview) is active so starting playback darkens the scene and only
+   * the sounding sources remain lit. Restored to false when playback stops.
+   */
+  public setIdleLightsOff(off: boolean): void {
+    this.idleLightsOff = off;
+  }
+
+  /**
+   * Publish the current playing set + per-prompt level. Drives the sphere scale
+   * pulse (all modes) and is read by the dark-mode light reactivity.
+   */
+  public setPlayingPrompts(promptIds: Iterable<number>, levels: Map<number, number>): void {
+    this.playingPrompts = new Set(promptIds);
+    this.playingPromptLevels = levels;
+  }
+
+  /** Whether a prompt (sound card) is currently producing audio. */
+  public isPromptPlaying(promptIndex: number): boolean {
+    return this.playingPrompts.has(promptIndex);
   }
 
   /**
@@ -1219,9 +1717,8 @@ export class SoundSphereManager {
    */
   public setSourceMuted(soundId: string, muted: boolean): void {
     const light = this.darkModePointLights.get(soundId);
-    if (light) {
-      light.visible = !muted;
-    }
+    if (!light) return;
+    light.userData.muted = muted;
   }
 
   /**
@@ -1357,8 +1854,18 @@ export class SoundSphereManager {
     this.labelUpdateTimers.forEach(timer => clearTimeout(timer));
     this.labelUpdateTimers.clear();
 
+    // Dispose all surface markers
+    Array.from(this.markerGroups.keys()).forEach((promptIdx) => this.removeMarker(promptIdx));
+
     // Remove sound spheres group from scene
     this.scene.remove(this.soundSpheresGroup);
+
+    // Remove dark-mode lights group from scene
+    if (this.darkModeLightsGroup) {
+      this.scene.remove(this.darkModeLightsGroup);
+      this.darkModeLightsGroup.clear();
+      this.darkModeLightsGroup = null;
+    }
 
     // Clear tracking
     this.spherePositions.clear();

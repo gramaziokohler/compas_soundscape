@@ -92,6 +92,20 @@ export interface IAudioMode {
   stopAllVoicesForSource(sourceId: string): void;
 
   /**
+   * Current smoothed realtime signal level for a source (0..1). Used by
+   * audio-reactive visuals (playing sphere highlight / light intensity).
+   * Returns 0 when the source is unknown or the mode does not meter.
+   */
+  getSourceLevel(sourceId: string): number;
+
+  /**
+   * IDs of sources that currently have at least one in-flight playback voice
+   * (timeline `startVoice`) or an active legacy single-slot playback. This is
+   * the exact "sounding right now" set for the visuals layer.
+   */
+  getPlayingSourceIds(): string[];
+
+  /**
    * Immediately stop every in-flight voice for every source. The single "kill
    * everything" primitive `Transport.stop()`/`seek()` rely on for guaranteed silence
    * — no id-matching between what was scheduled and what is playing can go stale.

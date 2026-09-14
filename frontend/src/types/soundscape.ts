@@ -244,6 +244,8 @@ export interface SoundscapeLoadResponse {
   audio_base_url: string;
   ir_base_url: string;
   found: boolean;
+  /** Referenced audio files that are gone on the server (no URL is built for them). */
+  missing_audio_filenames?: string[];
 }
 
 /** Response from GET /api/speckle/soundscape/{model_id}/stats */

@@ -91,6 +91,8 @@ export interface AdvancedSettingsSectionProps {
   onShowHoveringHighlightChange: (value: boolean) => void;
   showSoundSpheres: boolean;
   onShowSoundSpheresChange: (value: boolean) => void;
+  showPlayingHighlight: boolean;
+  onShowPlayingHighlightChange: (value: boolean) => void;
   showSceneListeners: boolean;
   onShowSceneListenersChange: (value: boolean) => void;
   showGroundGrid: boolean;
@@ -120,7 +122,7 @@ const SECTION_LABELS: Record<SectionKey, string> = {
 const SECTION_KEYS: SectionKey[] = ['display', 'acoustic', 'tokens', 'llm', 'rendering', 'history'];
 
 type SettingKey =
-  | 'label-sprites' | 'hovering-highlight' | 'sound-spheres' | 'listeners' | 'ground-grid'
+  | 'label-sprites' | 'hovering-highlight' | 'sound-spheres' | 'playing-highlight' | 'listeners' | 'ground-grid'
   | 'appearance'
   | 'grid-spacing' | 'grid-color'
   | 'sound-speed' | 'mesh-length'
@@ -142,6 +144,7 @@ const SETTINGS: SettingEntry[] = [
   { section: 'display', key: 'label-sprites', terms: ['label sprites', 'label', 'sprite'] },
   { section: 'display', key: 'hovering-highlight', terms: ['hovering highlight', 'hover', 'highlight'] },
   { section: 'display', key: 'sound-spheres', terms: ['sound spheres', 'sphere'] },
+  { section: 'display', key: 'playing-highlight', terms: ['playing highlight', 'playing', 'realtime', 'highlight', 'audio reactive'] },
   { section: 'display', key: 'listeners', terms: ['listeners', 'listener'] },
   { section: 'display', key: 'ground-grid', terms: ['ground grid', 'grid'] },
   { section: 'display', key: 'grid-spacing', terms: ['grid spacing', 'spacing', 'grid'] },
@@ -497,6 +500,8 @@ export function AdvancedSettingsSection({
   onShowHoveringHighlightChange,
   showSoundSpheres,
   onShowSoundSpheresChange,
+  showPlayingHighlight,
+  onShowPlayingHighlightChange,
   showSceneListeners,
   onShowSceneListenersChange,
   showGroundGrid,
@@ -674,6 +679,9 @@ export function AdvancedSettingsSection({
               )}
               {isVisible('sound-spheres') && (
                 <ToggleField checked={showSoundSpheres} onChange={onShowSoundSpheresChange} label="Show sound spheres" />
+              )}
+              {isVisible('playing-highlight') && (
+                <ToggleField checked={showPlayingHighlight} onChange={onShowPlayingHighlightChange} label="Highlight playing sounds" />
               )}
               {isVisible('listeners') && (
                 <ToggleField checked={showSceneListeners} onChange={onShowSceneListenersChange} label="Show listeners" />

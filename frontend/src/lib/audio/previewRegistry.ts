@@ -30,3 +30,36 @@ export function pauseAllPreviewInstances(): void {
     try { ws.pause(); } catch { /* ignore */ }
   });
 }
+
+/**
+ * Smoothed-ish realtime level (0..1) of a preview player by reading the RMS of
+ * its decoded buffer around the current playhead. Preview playback goes through
+ * WaveSurfer (not the AudioOrchestrator), so there is no shared AnalyserNode to
+ * tap; reading the decoded samples is accurate enough for a light/reactivity
+ * pulse and does not mutate the audio graph.
+ */
+export function getPreviewLevel(key: string): number {
+  const ws = instances.get(key);
+  if (!ws) return 0;
+  try {
+    const buffer = ws.getDecodedData();
+    if (!buffer) return 0;
+
+    const sr = buffer.sampleRate;
+    const t = ws.getCurrentTime();
+    const start = Math.max(0, Math.floor((t - 0.05) * sr));
+    const end = Math.min(buffer.length, Math.floor((t + 0.01) * sr));
+    if (end <= start) return 0;
+
+    const channel = buffer.getChannelData(0);
+    let sum = 0;
+    for (let i = start; i < end; i++) {
+      const v = channel[i];
+      sum += v * v;
+    }
+    const rms = Math.sqrt(sum / (end - start));
+    return Math.min(1, rms * 3.5);
+  } catch {
+    return 0;
+  }
+}

@@ -17,7 +17,7 @@ import { ToggleField } from "@/components/ui/ToggleField";
 import type { VariantsBarProps } from "@/components/ui/VariantsBar";
 import { createTtsSpeechLines } from "@/hooks/useTtsSpeechLines";
 import { apiService } from "@/services/api";
-import { useAudioControlsStore, useSoundscapeStore, usePositionClipboardStore, useSpeckleStore, configValidationError } from "@/store";
+import { useAudioControlsStore, useSoundscapeStore, usePositionClipboardStore, useSpeckleStore, configValidationError, orchestrateInputsSignature } from "@/store";
 import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
 import { useUIStore } from "@/store/uiStore";
 import { useServiceVersions } from "@/hooks/useServiceVersions";
@@ -132,6 +132,9 @@ export function SoundGenerationSection({
   const regeneratingIndices         = useSoundscapeStore((s) => s.regeneratingIndices);
   const orchestrateSoundsEnabled    = useSoundscapeStore((s) => s.orchestrateSoundsEnabled);
   const setOrchestrateSoundsEnabled = useSoundscapeStore((s) => s.setOrchestrateSoundsEnabled);
+  const reorchestrateTimeline       = useSoundscapeStore((s) => s.reorchestrateTimeline);
+  const orchestrateBaselineSignature = useSoundscapeStore((s) => s.orchestrateBaselineSignature);
+  const isReorchestrating           = useSoundscapeStore((s) => s.isReorchestrating);
 
   // Copied position for the right-click "Paste position" menu item (shared across
   // sound + listener cards). Null when nothing has been copied yet.
@@ -169,28 +172,11 @@ export function SoundGenerationSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSoundGenerating]); // intentionally snapshot once when generation starts
 
-  // ── Detect generation completion → trigger final parametric bake ──
-  const prevGeneratingRef = useRef(false);
-  useEffect(() => {
-    if (!isSoundGenerating && prevGeneratingRef.current) {
-      // Generation just completed — wait one tick for store state to settle
-      // then run the final bake with real WAV durations.
-      const audioStore = useAudioControlsStore.getState();
-      audioStore.setGenerationInProgress(false);
-      // Sync the latest sound configs before the final bake so that generated
-      // sound IDs and durations are available.
-      if (soundConfigs.some(c => c.orchestrateMeta)) {
-        audioStore.syncSoundConfigs(soundConfigs);
-        audioStore.syncGeneratedSounds(generatedSounds);
-        audioStore.setOrchestrateIterationLinks(soundConfigs);
-        setTimeout(() => {
-          audioStore.bakeOrchestrateSchedule();
-        }, 0);
-      }
-    }
-    prevGeneratingRef.current = isSoundGenerating;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSoundGenerating]);
+  // The final orchestrator sync + parametric bake now runs inside
+  // `soundscapeStore.handleGenerateInternal`, at the very end of the pipeline
+  // (after the parallel orchestrate agent joins and all sounds are merged), so
+  // it always sees fresh store state and real buffer durations. See
+  // `handleGenerateInternal` → "Final orchestrator finalize".
 
   // Find the current generating card index by matching config object references.
   // This is stable even if the user reorders cards, since the reference stays the same.
@@ -239,9 +225,9 @@ export function SoundGenerationSection({
 
   const currentGeneratingCardIndex = getCurrentGeneratingCardIndex();
 
-  const displayProgress = (isSoundGenerating && soundGenProgress && pendingAtStartRef.current > 0)
-    ? soundGenProgress.replace(/\/\d+/, `/${pendingAtStartRef.current}`)
-    : (soundGenProgress || 'Generating Sounds...');
+  // The store now emits a single unified "N/total <stage>" progress string across
+  // all sound kinds (TTA + TTS + others), so no denominator rewriting is needed.
+  const displayProgress = soundGenProgress || 'Generating Sounds...';
 
   // ── Audio controls from store ──
   const individualSoundStates = useAudioControlsStore((s) => s.individualSoundStates);
@@ -258,6 +244,7 @@ export function SoundGenerationSection({
   const onPreviewPlayPause   = useAudioControlsStore((s) => s.handlePreviewPlayPause);
   const onPreviewStop        = useAudioControlsStore((s) => s.handlePreviewStop);
   const iterationLinks       = useAudioControlsStore((s) => s.iterationLinks);
+  const isBakingSchedule     = useAudioControlsStore((s) => s.isBakingSchedule);
   const isDeferredCycleBakePending = useAudioControlsStore(s => s.isDeferredCycleBakePending);
   const soundLoopable         = useAudioControlsStore((s) => s.soundLoopable);
   const loopAnalysisInProgress = useAudioControlsStore((s) => s.loopAnalysisInProgress);
@@ -1265,7 +1252,30 @@ export function SoundGenerationSection({
     [filteredCardItems, isSoundGenerated],
   );
 
-  const footer = (isSoundGenerating || showGenerateAll || hasPendingScenarioCards) ? (
+  // "Re-orchestrate timeline" — shown once a scenario-derived scene is fully
+  // generated AND one of the orchestrate-agent inputs has changed since the last
+  // orchestration (edited speech lines, copy counts, timestamps, objects, …).
+  const hasReorchestratableCards = useMemo(
+    () => filteredCardItems.some(
+      (item) => isSoundGenerated(item.originalIndex) && !!item.originalConfig.scenarioSource,
+    ),
+    [filteredCardItems, isSoundGenerated],
+  );
+  const currentOrchestrateSignature = useMemo(
+    () => orchestrateInputsSignature(soundConfigs),
+    [soundConfigs],
+  );
+  const showReorchestrate = !isSoundGenerating
+    && pendingCardCount === 0
+    && hasReorchestratableCards
+    && orchestrateBaselineSignature !== null
+    && currentOrchestrateSignature !== orchestrateBaselineSignature;
+
+  const handleReorchestrate = useCallback(() => {
+    void reorchestrateTimeline();
+  }, [reorchestrateTimeline]);
+
+  const footer = (isSoundGenerating || showGenerateAll || hasPendingScenarioCards || showReorchestrate) ? (
     <div className="flex flex-col gap-2 pt-2">
       {isSoundGenerating ? (
         /* Progress replaces the generate button while running */
@@ -1275,14 +1285,33 @@ export function SoundGenerationSection({
           statusText={displayProgress}
           onStop={onStopGeneration}
         />
-      ) : showGenerateAll ? (
-        <GenerateButton
-          status="idle"
-          progress={0}
-          label="Generate all sounds"
-          disabled={shouldDisableGenerateButton}
-          onGenerate={handleGenerateAll}
-        />
+      ) : (showGenerateAll || showReorchestrate) ? (
+        <div className="flex items-stretch gap-2">
+          {showGenerateAll && (
+            <div className="flex-1">
+              <GenerateButton
+                status="idle"
+                progress={0}
+                label="Generate all sounds"
+                disabled={shouldDisableGenerateButton}
+                onGenerate={handleGenerateAll}
+              />
+            </div>
+          )}
+          {showReorchestrate && (
+            <div className="flex-1">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={handleReorchestrate}
+                disabled={isBakingSchedule || isReorchestrating}
+                title="Re-run the orchestrate agent on the edited sounds and rebuild the timeline"
+              >
+                <span>{(isBakingSchedule || isReorchestrating) ? 'Re-orchestrating…' : 'Re-orchestrate timeline'}</span>
+              </button>
+            </div>
+          )}
+        </div>
       ) : null}
       {hasPendingScenarioCards && !isSoundGenerating && (
         <ToggleField

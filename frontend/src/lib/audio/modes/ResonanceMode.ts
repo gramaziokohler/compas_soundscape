@@ -26,6 +26,7 @@ import type { Position, Orientation } from '@/types/audio';
 import { AudioMode } from '@/types/audio';
 import type { FadeOptions } from '../utils/fade-envelope';
 import { applyFadeInOut } from '../utils/fade-envelope';
+import { SourceLevelMeter } from '../utils/source-level';
 import { AUDIO_CONTROL, DEFAULT_SPEED_OF_SOUND } from '@/utils/constants';
 
 // Dynamic import type
@@ -84,6 +85,8 @@ export class ResonanceMode implements IAudioMode {
     sourceNode: AudioBufferSourceNode | null;
     gainNode: GainNode;
     muteGainNode: GainNode;
+    /** Realtime level probe (inline pass-through) for audio-reactive visuals. */
+    levelMeter: SourceLevelMeter;
     isPlaying: boolean;
     isMuted: boolean;
   }> = new Map();
@@ -195,10 +198,15 @@ export class ResonanceMode implements IAudioMode {
       const muteGainNode = this.audioContext.createGain();
       muteGainNode.gain.value = 1.0; // Not muted by default
 
+      // Realtime level probe — inserted inline (transparent pass-through) so the
+      // visuals layer can read the post-volume signal level without touching routing.
+      const levelMeter = new SourceLevelMeter(this.audioContext);
+
       // Wire the persistent chain now (not lazily inside playSource) so that
       // startVoice() can play through it even if the legacy single-slot
       // playSource() is never called for this source.
-      gainNode.connect(muteGainNode);
+      gainNode.connect(levelMeter.node);
+      levelMeter.node.connect(muteGainNode);
       muteGainNode.connect(resonanceSource.input);
 
       // Configure source properties
@@ -222,6 +230,7 @@ export class ResonanceMode implements IAudioMode {
         sourceNode: null,
         gainNode,
         muteGainNode,
+        levelMeter,
         isPlaying: false,
         isMuted: false
       });
@@ -263,10 +272,10 @@ export class ResonanceMode implements IAudioMode {
     // sourceNode → gainNode connection.)
     applyFadeInOut(sourceNode, source.gainNode, opts ? { ...opts, durationSec: duration } : {});
 
-    // Chain: sourceNode → gainNode → muteGainNode → Resonance source input
+    // Persistent chain is already wired in createSource
+    // (gainNode → levelMeter → muteGainNode → Resonance source input); only the
+    // transient sourceNode → gainNode connection is created here.
     source.sourceNode = sourceNode;
-    source.gainNode.connect(source.muteGainNode);
-    source.muteGainNode.connect(source.source.input);
 
     // Set up ended callback
     sourceNode.onended = () => {
@@ -373,6 +382,30 @@ export class ResonanceMode implements IAudioMode {
   }
 
   /**
+   * Smoothed realtime signal level (0..1) for a source.
+   */
+  getSourceLevel(sourceId: string): number {
+    const source = this.resonanceSources.get(sourceId);
+    if (!source) return 0;
+    return source.levelMeter.read();
+  }
+
+  /**
+   * Sources with at least one in-flight voice, or the legacy single-slot source
+   * still playing.
+   */
+  getPlayingSourceIds(): string[] {
+    const ids = new Set<string>();
+    this.voices.forEach((set, sourceId) => {
+      if (set.size > 0) ids.add(sourceId);
+    });
+    this.resonanceSources.forEach((source, sourceId) => {
+      if (source.isPlaying) ids.add(sourceId);
+    });
+    return Array.from(ids);
+  }
+
+  /**
    * Update source position
    */
   updateSourcePosition(sourceId: string, position: Position): void {
@@ -402,6 +435,15 @@ export class ResonanceMode implements IAudioMode {
     this.stopSource(sourceId);
     this.stopAllVoicesForSource(sourceId);
     this.voices.delete(sourceId);
+
+    // Disconnect the persistent chain and the level probe
+    try {
+      source.gainNode.disconnect();
+      source.muteGainNode.disconnect();
+    } catch {
+      // Already disconnected
+    }
+    source.levelMeter.dispose();
 
     // Resonance Audio sources don't have explicit cleanup
     // Just remove from tracking

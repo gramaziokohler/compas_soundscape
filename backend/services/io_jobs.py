@@ -91,17 +91,30 @@ async def iter_with_keepalive(
 
     Used by SSE agent endpoints so a slow LLM turn doesn't leave the
     connection idle long enough for Cloudflare/nginx to close it.
+
+    Keep a SINGLE in-flight ``__anext__`` task alive across keepalive
+    timeouts. ``asyncio.wait_for(it.__anext__(), ...)`` would cancel the
+    coroutine on every timeout, and cancelling a suspended async generator's
+    ``__anext__`` throws CancelledError into it at its current ``await``,
+    closing the generator — the next ``__anext__`` then raises
+    StopAsyncIteration and the SSE stream ends silently after one interval.
     """
     it = aiterable.__aiter__()
-    while True:
-        try:
-            item = await asyncio.wait_for(it.__anext__(), timeout=keepalive_s)
-        except asyncio.TimeoutError:
-            yield ("ping", None)
-            continue
-        except StopAsyncIteration:
-            return
-        yield ("item", item)
+    pending: asyncio.Future = asyncio.ensure_future(it.__anext__())
+    try:
+        while True:
+            done, _ = await asyncio.wait({pending}, timeout=keepalive_s)
+            if not done:
+                yield ("ping", None)
+                continue
+            try:
+                item = pending.result()
+            except StopAsyncIteration:
+                return
+            yield ("item", item)
+            pending = asyncio.ensure_future(it.__anext__())
+    finally:
+        pending.cancel()
 
 
 async def sweep_orphaned_io_jobs() -> int:

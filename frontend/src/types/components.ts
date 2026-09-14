@@ -105,6 +105,8 @@ export interface SidebarProps {
   onShowHoveringHighlightChange: (v: boolean) => void;
   showSoundSpheres: boolean;
   onShowSoundSpheresChange: (v: boolean) => void;
+  showPlayingHighlight: boolean;
+  onShowPlayingHighlightChange: (v: boolean) => void;
   showSceneListeners: boolean;
   onShowSceneListenersChange: (v: boolean) => void;
   showGroundGrid: boolean;

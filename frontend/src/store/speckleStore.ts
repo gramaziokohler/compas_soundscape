@@ -76,6 +76,12 @@ let _userIsolatedIds = new Set<string>();
 /** Last applied hidden/isolated sets (my own bookkeeping for idempotency). */
 let _appliedHiddenIds: string[] = [];
 let _appliedIsolatedIds: string[] = [];
+/** View mode of the last apply. A mode change must ALWAYS re-run
+ *  resetFilters() + apply even when the target hidden/isolated set is identical
+ *  (e.g. Default → Dark, whose target equals Default's): stale user object
+ *  colors (COLORED, applied after HIDDEN) would otherwise keep the acoustic
+ *  layer visible. */
+let _appliedViewMode: ViewMode | null = null;
 
 // ── Acoustic explorer hidden tracking ──────────────────────────────────────
 // When the ObjectExplorer's "Hide" button is clicked in acoustic mode, the
@@ -330,6 +336,7 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
           _selectionPreviewIds = null;
           _appliedHiddenIds = [];
           _appliedIsolatedIds = [];
+          _appliedViewMode = null;
           set(
             {
               userHiddenIds: [],
@@ -865,8 +872,13 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
           }
         }
 
-        // Idempotency: skip if this exact target is already applied.
+        // Idempotency: skip only when this exact target is already applied for the
+        // SAME view mode. A mode change must always re-run resetFilters() + apply
+        // even when the target set is unchanged (e.g. Default → Dark): resetFilters()
+        // is what clears stale user object colors (COLORED, applied after HIDDEN)
+        // that would otherwise keep the acoustic layer visible in dark mode.
         if (
+          mode === _appliedViewMode &&
           arraysEqualSorted(isolated, _appliedIsolatedIds) &&
           arraysEqualSorted(hidden, _appliedHiddenIds)
         ) {
@@ -883,6 +895,7 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
           // resetFilters clears visibility AND user object colors; a single
           // command on one stateKey then re-establishes the target atomically.
           ext.resetFilters();
+          _userColorsApplied = false;
           if (isolated.length > 0) {
             ext.isolateObjects(isolated, VISIBILITY_STATE_KEY, true, true);
           } else if (hidden.length > 0) {
@@ -894,6 +907,7 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
 
         _appliedHiddenIds = hidden;
         _appliedIsolatedIds = isolated;
+        _appliedViewMode = mode;
         set(
           { appliedHiddenIds: hidden, appliedIsolatedIds: isolated },
           false,

@@ -47,8 +47,9 @@ export function SoundPreContent(props: SoundPreContentProps) {
     : config.position;
 
   // ── Callbacks ─────────────────────────────────────────────────────────────
-
-  const handleVolumeChange = (dbfs: number) => onUpdateConfig(index, 'dbfs', dbfs);
+  // NOTE: no volume slider on pending cards — the level is only meaningful once
+  // the sound exists (and, for scenario sounds, is set by the orchestrator). The
+  // slider is rendered by SoundResultContent on generated cards only.
 
   const handleUpdatePosition = (pos: [number, number, number]) =>
     onUpdateConfig(index, 'position', pos);
@@ -92,7 +93,6 @@ export function SoundPreContent(props: SoundPreContentProps) {
       volumeDbfs={volumeDbfs}
       position={displayedPosition}
       entityIndex={entityIndex}
-      onVolumeChange={handleVolumeChange}
       onUpdatePosition={handleUpdatePosition}
       onUnlinkEntity={handleUnlinkEntity}
       storeContext="soundscape"

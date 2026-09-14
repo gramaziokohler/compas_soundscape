@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import type { SoundEvent } from '@/types';
 import { DEFAULT_DBFS } from '@/utils/constants';
+import { useAudioControlsStore } from '@/store';
 import { SoundCardWaveSurfer } from '@/components/audio/SoundCardWaveSurfer';
 import { SoundCardBody } from './SoundCardBody';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -92,10 +93,18 @@ export function SoundResultContent({
     />
   );
 
-  // Volume from live state (per selected variant, mirrors card preview).
-  const currentVolumeDbfs = soundVolumes[generatedSound.id] ?? generatedSound.volume_dbfs ?? DEFAULT_DBFS;
-  // The WAV is calibrated to this level — the preview gain is applied relative to it.
-  const baseVolumeDbfs = generatedSound.volume_dbfs ?? DEFAULT_DBFS;
+  // Volume is keyed by the PRIMARY (lowest copy_index) variant so the sound card
+  // and the DAW track fader read/write the SAME entry and stay in sync. The
+  // orchestrator's per-sound SPL lives on the event's volume_dbfs.
+  const primaryVariant = [...variants].sort(
+    (a, b) => ((a as any).copy_index ?? 0) - ((b as any).copy_index ?? 0),
+  )[0];
+  const volumeKey = primaryVariant?.id ?? generatedSound.id;
+  const currentVolumeDbfs = soundVolumes[volumeKey] ?? generatedSound.volume_dbfs ?? DEFAULT_DBFS;
+  // The WAV is calibrated to the GLOBAL base anchor — the preview gain is applied
+  // relative to it so the card preview matches timeline playback / export.
+  const globalBaseDbfs = useAudioControlsStore((s) => s.globalBaseDbfs);
+  const baseVolumeDbfs = globalBaseDbfs;
 
   // When showing the pending variant (regenerating), render a progress placeholder
   if (isShowingPending) {
@@ -115,7 +124,7 @@ export function SoundResultContent({
         volumeDbfs={currentVolumeDbfs}
         position={generatedSound.position}
         entityIndex={generatedSound.entity_index}
-        onVolumeChange={onVolumeChange ? (dbfs) => onVolumeChange(generatedSound.id, dbfs) : undefined}
+        onVolumeChange={onVolumeChange ? (dbfs) => onVolumeChange(volumeKey, dbfs) : undefined}
         onUpdatePosition={onUpdatePosition ? (pos) => onUpdatePosition(generatedSound.id, pos) : undefined}
         onUnlinkEntity={onUnlinkEntity ? () => setShowUnlinkConfirm(true) : undefined}
         isMuted={isMuted}
@@ -150,7 +159,7 @@ export function SoundResultContent({
       volumeDbfs={currentVolumeDbfs}
       position={generatedSound.position}
       entityIndex={generatedSound.entity_index}
-      onVolumeChange={onVolumeChange ? (dbfs) => onVolumeChange(generatedSound.id, dbfs) : undefined}
+      onVolumeChange={onVolumeChange ? (dbfs) => onVolumeChange(volumeKey, dbfs) : undefined}
       onUpdatePosition={onUpdatePosition ? (pos) => onUpdatePosition(generatedSound.id, pos) : undefined}
       onUnlinkEntity={onUnlinkEntity ? () => setShowUnlinkConfirm(true) : undefined}
       isMuted={isMuted}
