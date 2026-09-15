@@ -1332,7 +1332,6 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   const AVAILABLE_TYPES: CardTypeOption[] = [
     { type: 'resonance', label: CARD_TYPE_LABELS['resonance'], enabled: true },
     { type: 'pyroomacoustics', label: CARD_TYPE_LABELS['pyroomacoustics'], enabled: true },
-    { type: 'choras', label: CARD_TYPE_LABELS['choras'], enabled: true },
     { type: 'import-irs', label: CARD_TYPE_LABELS['import-irs'], enabled: true },
   ];
 
