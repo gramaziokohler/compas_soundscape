@@ -17,7 +17,7 @@ from services.paths import (
     user_model_dir,
     user_sounds_dir,
 )
-from services.metadata_store import metadata_store, ROLE_OWNER
+from services.metadata_store import metadata_store, ROLE_OWNER, ROLE_EDITOR
 from models.schemas import (
     SoundscapeSaveRequest,
     SoundscapeSaveResponse,
@@ -423,6 +423,19 @@ async def save_soundscape(request: SoundscapeSaveRequest, req: Request):
     if not data.created_at:
         data.created_at = datetime.now(timezone.utc).isoformat()
 
+    # Optimistic concurrency: if the client sent the revision it last saw and
+    # the workspace has moved on (another member saved), reject the write.
+    workspace = metadata_store.get_workspace(session_id)
+    current_revision = int(workspace["revision"]) if workspace else 0
+    if request.base_revision is not None and request.base_revision != current_revision:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "This workspace changed since you last loaded it. Reload before saving.",
+                "revision": current_revision,
+            },
+        )
+
     # Create folders
     model_dir = user_model_dir(session_id, model_id)
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -463,9 +476,10 @@ async def save_soundscape(request: SoundscapeSaveRequest, req: Request):
     # Index the model → workspace so ?model_id= bootstrap can resolve the
     # workspace owner from any user, and bump the workspace revision
     # (optimistic-concurrency token for shared sessions).
+    new_revision = current_revision
     try:
         metadata_store.link_model(model_id, session_id)
-        metadata_store.bump_revision(session_id)
+        new_revision = metadata_store.bump_revision(session_id)
     except Exception as e:  # metadata is best-effort; never fail the save
         logger.warning(f"Failed to update workspace metadata for {model_id}: {e}")
 
@@ -481,6 +495,7 @@ async def save_soundscape(request: SoundscapeSaveRequest, req: Request):
             f"{ir_copied} IR files, "
             f"{len(data.simulation_configs)} simulations"
         ),
+        revision=new_revision,
     )
 
 
@@ -492,9 +507,40 @@ async def load_soundscape(model_id: str, req: Request):
     Also restores IR files and analysis files from persistent storage back to temp.
     """
     session_id = _get_session_id(req)
+    user_hash = getattr(req.state, "user_hash", None)
+    session_token = getattr(req.state, "session_token", None)
+
+    # ÔöÇÔöÇ Resolve the workspace that owns this model ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+    # A user opening `?model_id=` may not have the model in their own workspace
+    # yet (shared project). Resolve the owning workspace; members are switched to
+    # it, link-shared workspaces auto-join, private non-member workspaces signal
+    # `requires_invite`.
+    requires_invite = False
+    candidate_json = user_model_dir(session_id, model_id) / SOUNDSCAPE_JSON_FILENAME
+    if not candidate_json.exists():
+        owner_wid = metadata_store.resolve_model_workspace(model_id)
+        if owner_wid and owner_wid != session_id:
+            owner_ws = metadata_store.get_workspace(owner_wid)
+            role = metadata_store.get_member_role(owner_wid, user_hash) if user_hash else None
+            if role:
+                session_id = owner_wid
+                if session_token:
+                    metadata_store.set_session_workspace(session_token, owner_wid)
+                req.state.workspace_id = owner_wid
+                req.state.session_id = owner_wid
+            elif owner_ws and owner_ws.get("sharing_mode") == "link" and user_hash and session_token:
+                metadata_store.add_member(owner_wid, user_hash, ROLE_EDITOR)
+                metadata_store.set_session_workspace(session_token, owner_wid)
+                session_id = owner_wid
+                req.state.workspace_id = owner_wid
+                req.state.session_id = owner_wid
+            elif owner_ws and owner_ws.get("sharing_mode") == "private":
+                requires_invite = True
 
     audio_base_url = f"{SOUNDSCAPE_DATA_URL_PREFIX}/{session_id}/audio"
     ir_base_url = f"{SOUNDSCAPE_DATA_URL_PREFIX}/{session_id}/{model_id}/ir_files"
+    workspace = metadata_store.get_workspace(session_id)
+    revision = int(workspace["revision"]) if workspace else 0
 
     audio_dir = user_audio_dir(session_id)
     if audio_dir.exists():
@@ -550,6 +596,9 @@ async def load_soundscape(model_id: str, req: Request):
                 ir_base_url=ir_base_url,
                 found=True,
                 missing_audio_filenames=missing_audio,
+                workspace_id=session_id,
+                revision=revision,
+                requires_invite=requires_invite,
             )
 
     # FALLBACK: Try old flat path (pre-session-isolation saves)
@@ -576,6 +625,8 @@ async def load_soundscape(model_id: str, req: Request):
                 ir_base_url=legacy_ir_base,
                 found=True,
                 missing_audio_filenames=missing_audio,
+                workspace_id=session_id,
+                revision=revision,
             )
 
     return SoundscapeLoadResponse(
@@ -583,6 +634,9 @@ async def load_soundscape(model_id: str, req: Request):
         audio_base_url=audio_base_url,
         ir_base_url=ir_base_url,
         found=False,
+        workspace_id=session_id,
+        revision=revision,
+        requires_invite=requires_invite,
     )
 
 

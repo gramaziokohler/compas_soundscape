@@ -10,6 +10,17 @@ from services.metadata_store import metadata_store
 router = APIRouter(prefix="/api", tags=["identity"])
 
 
+@router.get("/healthz")
+async def healthz() -> dict:
+    """Liveness probe for the local supervisor/watchdog.
+
+    Deliberately unauthenticated and DB-free: the supervisor runs on the same
+    host and must be able to poll it even when Cloudflare Access enforcement is
+    on (the middleware exempts this path).
+    """
+    return {"status": "ok"}
+
+
 class CurrentUser(BaseModel):
     email: Optional[str] = None
     user_id: Optional[str] = None

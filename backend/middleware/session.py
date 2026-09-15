@@ -28,6 +28,7 @@ from starlette.responses import JSONResponse
 
 from config.constants import (
     AUTH_DEV_BYPASS,
+    CF_ACCESS_REQUIRE,
     DEV_USER_EMAIL,
     SESSION_COOKIE,
     SESSION_COOKIE_MAX_AGE,
@@ -64,6 +65,15 @@ class SessionMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         cookie_token = request.cookies.get(SESSION_COOKIE)
 
+        # Unauthenticated liveness probe (used by the local supervisor).
+        if request.url.path == "/api/healthz":
+            request.state.session_id = ""
+            request.state.workspace_id = ""
+            request.state.user_email = None
+            request.state.user_hash = None
+            request.state.session_token = ""
+            return await call_next(request)
+
         if request.url.path.startswith(_SKIP_PREFIXES):
             # Media/static: no identity, no DB, no cookie mutation.
             request.state.session_id = cookie_token or ""
@@ -77,10 +87,9 @@ class SessionMiddleware(BaseHTTPMiddleware):
         email = None
         if cf_configured():
             email = extract_email(request)
-            if not email:
-                # Cloudflare Access is enforced but this request carries no valid
-                # token. In normal operation Access redirects before reaching the
-                # origin; reject defensively if the origin is ever hit directly.
+            if not email and CF_ACCESS_REQUIRE:
+                # Access is enforced but this request carries no valid token.
+                # Reject defensively if the origin is ever hit directly.
                 return JSONResponse(
                     {"detail": "Not authenticated (Cloudflare Access)"},
                     status_code=401,

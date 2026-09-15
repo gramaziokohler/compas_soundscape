@@ -193,6 +193,8 @@ export type { ScenarioPreviewStoreState, ScenarioPreviewParcours, ScenarioPrevie
 export { useModalImpactStore };
 export type { ModalImpactStoreState } from './modalImpactStore';
 
+export { useWorkspaceStore } from './workspaceStore';
+
 export {
   registerTemporalStore,
   globalUndo,

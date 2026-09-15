@@ -25,6 +25,7 @@ import { setElevenLabsApiKey, isElevenLabsKeySet } from "@/services/elevenlabs";
 import { useServiceVersions } from "@/hooks/useServiceVersions";
 import { useAudioControlsStore } from "@/store/audioControlsStore";
 import { useUIStore } from "@/store/uiStore";
+import { CollaborationPanel } from "@/components/layout/CollaborationPanel";
 import type { ColorThemePreference } from "@/utils/color-theme";
 import {
   UI_BORDER_RADIUS,
@@ -932,6 +933,7 @@ export function AdvancedSettingsSection({
 
           {activeSection === 'history' && (
             <div className="flex flex-col gap-2">
+              <CollaborationPanel />
               {isVisible('auto-save') && (
                 <ToggleField
                   checked={enableAutoSave}

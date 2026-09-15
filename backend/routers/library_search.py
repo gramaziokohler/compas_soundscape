@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/library", tags=["library"])
 
 # Temporary download directory for library sounds
 LIBRARY_DOWNLOADS_DIR = Path(TEMP_LIBRARY_DIR)
-LIBRARY_DOWNLOADS_DIR.mkdir(exist_ok=True)
+LIBRARY_DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class SearchRequest(BaseModel):

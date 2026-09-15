@@ -1,6 +1,7 @@
 from diffusers import AutoencoderOobleck
 import torch
 import json
+from pathlib import Path
 from .model import TangoFlux, GenerationCancelled
 from huggingface_hub import snapshot_download
 from safetensors.torch import load_file
@@ -12,17 +13,31 @@ class TangoFluxInference:
         name="declare-lab/TangoFlux",
         device="cuda" if torch.cuda.is_available() else ("mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu"),
         dtype: str | None = None,
+        local_dir: str | None = None,
     ):
 
         self.vae = AutoencoderOobleck()
 
-        paths = snapshot_download(repo_id=name)
+        paths = snapshot_download(repo_id=name, local_dir=local_dir)
         vae_weights = load_file("{}/vae.safetensors".format(paths))
         self.vae.load_state_dict(vae_weights)
         weights = load_file("{}/tangoflux.safetensors".format(paths))
 
         with open("{}/config.json".format(paths), "r") as f:
             config = json.load(f)
+
+        # The text encoder is pulled lazily by TangoFlux via from_pretrained, which
+        # goes through the HF hub cache (symlinks). Mirror it into local_dir so the
+        # whole model tree stays symlink-free on Windows.
+        text_encoder_name = config.get("text_encoder_name")
+        if local_dir and text_encoder_name and not Path(text_encoder_name).exists():
+            config["text_encoder_name"] = snapshot_download(
+                repo_id=text_encoder_name,
+                local_dir=str(Path(local_dir).parent / text_encoder_name.rsplit("/", 1)[-1]),
+                # Skip TF/Flax/ONNX/pytorch-bin duplicates — safetensors is what loads.
+                allow_patterns=["*.json", "*.safetensors", "*.model"],
+            )
+
         self.model = TangoFlux(config)
         self.model.load_state_dict(weights, strict=False)
 

@@ -30,6 +30,7 @@ import {
   useGridListenersStore,
   useErrorsStore,
   useCardFlowStore,
+  useWorkspaceStore,
   notifyError,
 } from "@/store";
 import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
@@ -109,6 +110,12 @@ function HomeContent() {
 
     console.log('[page:bootstrap] Loading soundscape for model_id from URL:', urlModelId);
     apiService.loadSoundscapeFromSpeckle(urlModelId).then(loadResponse => {
+      if (loadResponse.requires_invite) {
+        notifyError(
+          'This project belongs to a private workspace. Ask a member for an invite link to collaborate.',
+          'warning',
+        );
+      }
       if (!loadResponse.found || !loadResponse.soundscape_data) {
         console.log('[page:bootstrap] No saved soundscape found for', urlModelId, '- looking up model from Speckle API');
         apiService.getSpeckleModels().then(speckleResponse => {
@@ -287,6 +294,9 @@ function HomeContent() {
       const liveModelId = useUIStore.getState().globalSpeckleData?.model_id ?? null;
       if (!autosaveEnabledRef.current) return;
       if (!liveModelId) return;
+      // Shared-session guard: when other members are active on the same
+      // workspace, pause autosave so concurrent writes don't clobber each other.
+      if (useWorkspaceStore.getState().presence > 1) return;
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
       autosaveTimerRef.current = setTimeout(() => {
         lastSaveSourceRef.current = 'autosave';
@@ -310,6 +320,34 @@ function HomeContent() {
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Workspace/collaboration state (shared sessions): load the active workspace
+  // and start the presence heartbeat.
+  useEffect(() => {
+    void useWorkspaceStore.getState().init();
+  }, []);
+
+  // Accept an invite link (?invite=<token>): join the shared workspace, then
+  // strip the token from the URL so it is not bookmarked/reshared accidentally.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("invite");
+    if (!token) return;
+    void (async () => {
+      try {
+        await useWorkspaceStore.getState().init();
+        await useWorkspaceStore.getState().join(token);
+        notifyError("Joined the shared workspace.", "info");
+      } catch (err) {
+        notifyError(err instanceof Error ? err.message : "Failed to join workspace", "warning");
+      } finally {
+        params.delete("invite");
+        const qs = params.toString();
+        window.history.replaceState({}, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`);
+      }
+    })();
   }, []);
 
   const fileUpload = useFileUploadStore();
@@ -1598,6 +1636,12 @@ function HomeContent() {
     // Auto-load saved soundscape for this model
     try {
       const loadResponse = await apiService.loadSoundscapeFromSpeckle(speckleData.model_id);
+      if (loadResponse.requires_invite) {
+        notifyError(
+          'This project belongs to a private workspace. Ask a member for an invite link to collaborate.',
+          'warning',
+        );
+      }
       if (loadResponse.found && loadResponse.soundscape_data) {
         console.log('[page.tsx] Restoring saved soundscape:', loadResponse.soundscape_data);
         const audioBaseUrl = `${API_BASE_URL}${loadResponse.audio_base_url}`;
@@ -1965,10 +2009,28 @@ function HomeContent() {
       payload.analysis_ids = analysisStateData.analysis_ids.length > 0 ? analysisStateData.analysis_ids : undefined;
       payload.scenario_ids = analysisStateData.scenario_ids.length > 0 ? analysisStateData.scenario_ids : undefined;
 
+      // Optimistic-concurrency token for shared workspaces. The backend rejects
+      // the save with 409 if another member has written since we last loaded.
+      payload.base_revision = useWorkspaceStore.getState().revision;
+
       // 4. Save Soundscape
       const result = await apiService.saveSoundscapeToSpeckle(payload);
+      if (typeof result.revision === 'number') {
+        useWorkspaceStore.setState({ revision: result.revision });
+      }
       console.log('[page.tsx] Soundscape saved:', result.message);
     } catch (err) {
+      const conflictRevision = (err as { conflictRevision?: number }).conflictRevision;
+      if (conflictRevision !== undefined) {
+        useWorkspaceStore.setState({ conflictRevision });
+        console.warn('[page.tsx] Save rejected (workspace changed); refreshing.', conflictRevision);
+        notifyError(
+          'This shared workspace changed while you were editing. Your changes were not saved ÔÇö reload to get the latest version.',
+          'warning',
+        );
+        void useWorkspaceStore.getState().refresh();
+        return;
+      }
       console.error('[page.tsx] Failed to save soundscape:', err);
       handleApiError(err, 'Failed to save soundscape');
     } finally {

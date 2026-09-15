@@ -224,6 +224,12 @@ class MetadataStore:
             (mode, _now(), workspace_id),
         )
 
+    def rename_workspace(self, workspace_id: str, name: str) -> None:
+        self._execute(
+            "UPDATE workspaces SET name = ?, updated_at = ? WHERE id = ?",
+            (name, _now(), workspace_id),
+        )
+
     def bump_revision(self, workspace_id: str) -> int:
         self._execute(
             "UPDATE workspaces SET revision = revision + 1, updated_at = ? WHERE id = ?",
@@ -256,6 +262,21 @@ class MetadataStore:
             (user_hash,),
         )
         return [dict(r) for r in rows]
+
+    def list_members(self, workspace_id: str) -> list[dict]:
+        rows = self._query(
+            "SELECT m.user_hash, m.role, m.joined_at, u.email, u.display_name "
+            "FROM workspace_members m LEFT JOIN users u ON u.user_hash = m.user_hash "
+            "WHERE m.workspace_id = ? ORDER BY m.joined_at ASC",
+            (workspace_id,),
+        )
+        return [dict(r) for r in rows]
+
+    def remove_member(self, workspace_id: str, user_hash: str) -> None:
+        self._execute(
+            "DELETE FROM workspace_members WHERE workspace_id = ? AND user_hash = ?",
+            (workspace_id, user_hash),
+        )
 
     # ── sessions ─────────────────────────────────────────────────────────
     def get_session(self, token: str) -> Optional[dict]:
