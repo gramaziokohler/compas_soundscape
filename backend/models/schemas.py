@@ -241,6 +241,7 @@ class SpeckleModelDetail(BaseModel):
     author: Optional[SpeckleModelAuthor] = None
     versions_count: int = 0
     latest_version: Optional[SpeckleVersionSummary] = None
+    last_saved_at: Optional[str] = None
 
 
 class SpeckleProjectModelsResponse(BaseModel):

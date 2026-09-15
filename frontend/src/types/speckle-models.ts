@@ -30,6 +30,8 @@ export interface SpeckleModelDetail {
   author?: SpeckleModelAuthor;
   versions_count: number;
   latest_version?: SpeckleVersionSummary;
+  /** Time this workspace last saved a soundscape for the model (local save). */
+  last_saved_at?: string;
 }
 
 /** Response envelope from GET /api/speckle/models */

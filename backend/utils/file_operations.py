@@ -10,6 +10,7 @@ import re
 import time
 import aiofiles
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncGenerator
 from fastapi import UploadFile
@@ -202,6 +203,41 @@ def ensure_all_temp_directories() -> None:
     for d in dirs:
         ensure_directory(d)
     print(f"Ensured {len(dirs)} application directories exist.")
+
+
+def list_saved_soundscape_models(session_id: str) -> dict[str, str]:
+    """
+    Map ``model_id -> last local soundscape save time`` for a workspace.
+
+    Scans ``data/soundscapes/<session_id>/<model_id>/soundscape.json`` and uses
+    the file's mtime as the "last saved by this workspace" time. This is the
+    app's own save (SoundscapeStore autosave), intentionally distinct from
+    Speckle's model ``updated_at`` (which any collaborator/commit can move).
+
+    Returns:
+        dict[str, str]: ``{model_id: ISO-8601 UTC timestamp}``. Empty when the
+        workspace has never saved (or the directory does not exist).
+    """
+    root = Path(SOUNDSCAPE_DATA_DIR) / session_id
+    saved: dict[str, str] = {}
+    if not session_id or not root.is_dir():
+        return saved
+
+    for entry in root.iterdir():
+        if not entry.is_dir() or entry.name == "audio":
+            continue
+        json_path = entry / "soundscape.json"
+        if not json_path.is_file():
+            continue
+        try:
+            mtime = json_path.stat().st_mtime
+        except OSError:
+            continue
+        saved[entry.name] = datetime.fromtimestamp(
+            mtime, tz=timezone.utc
+        ).isoformat()
+
+    return saved
 
 
 def janitor_cleanup_temp(max_age_h: float = TEMP_JANITOR_MAX_AGE_H) -> dict[str, int]:

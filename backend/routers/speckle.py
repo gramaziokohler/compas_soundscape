@@ -5,13 +5,14 @@ import os
 import base64
 import logging
 import requests as _requests
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from config.constants import SPECKLE_SERVER_URL
 from services.speckle_service import SpeckleService
 from models.schemas import SpeckleProjectModelsResponse
+from utils.file_operations import list_saved_soundscape_models
 
 
 class SpeckleModelRequest(BaseModel):
@@ -49,12 +50,16 @@ def _ensure_authenticated() -> None:
 
 
 @router.get("/models", response_model=SpeckleProjectModelsResponse)
-async def get_project_models():
+async def get_project_models(req: Request):
     """
     List all models in the current Speckle project with detailed metadata.
 
     Returns model list including author, timestamps, preview URLs and
     the latest version summary for each model.
+
+    Each model is also annotated with ``last_saved_at`` — the time this
+    workspace last saved a soundscape for that model (local SoundscapeStore
+    save), which is independent of Speckle's own ``updated_at``.
     """
     _ensure_authenticated()
 
@@ -62,6 +67,17 @@ async def get_project_models():
 
     if result is None:
         raise HTTPException(status_code=500, detail="Failed to retrieve Speckle models")
+
+    # Annotate models the workspace has saved so the browser can surface them
+    # first. Best-effort: a filesystem hiccup must not fail the model listing.
+    try:
+        saved = list_saved_soundscape_models(
+            getattr(getattr(req, "state", None), "session_id", "") or ""
+        )
+        for model in result.get("models", []):
+            model["last_saved_at"] = saved.get(model.get("id"))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Could not resolve saved soundscape models: {exc}")
 
     # Attach auth_token so the frontend viewer can authenticate
     result["auth_token"] = speckle_service.auth_token

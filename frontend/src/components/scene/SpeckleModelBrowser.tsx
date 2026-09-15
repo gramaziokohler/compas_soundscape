@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { apiService } from '@/services/api';
 import { isAuthError } from '@/utils/authErrors';
 import { useTextGenerationStore } from '@/store/textGenerationStore';
 import { Spinner } from '@/components/ui/Spinner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Notice } from '@/components/ui/Notice';
+import { Badge } from '@/components/ui/Badge';
 import type { SpeckleModelDetail, SpeckleProjectModelsResponse } from '@/types/speckle-models';
 import { getScale } from '@/utils/scale';
 
@@ -243,15 +244,27 @@ function ModelCard({
             {sourceApp && (
               <span
                 className="text-xs px-1 rounded"
+                title={sourceApp}
                 style={{ backgroundColor: 'var(--color-secondary-lighter)', color: 'var(--color-secondary-hover)' }}
               >
-                {sourceApp}
+                {sourceApp.slice(0, 3)}
               </span>
             )}
-            {model.versions_count > 0 && (
-              <span className="text-xs text-neutral-400">
-                {formatRelativeTime(model.updated_at)}
-              </span>
+            {model.last_saved_at ? (
+              <>
+                <Badge variant="primary" title="Last saved by you in this workspace">
+                  Yours
+                </Badge>
+                <span className="text-xs text-neutral-500">
+                  saved {formatRelativeTime(model.last_saved_at)}
+                </span>
+              </>
+            ) : (
+              model.versions_count > 0 && (
+                <span className="text-xs text-neutral-400">
+                  {formatRelativeTime(model.updated_at)}
+                </span>
+              )
             )}
           </div>
         </div>
@@ -367,6 +380,32 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
     [projectId, authToken, onModelSelect],
   );
 
+  // Group + order: models this workspace last saved come first (most recent
+  // save first), then all remaining models by Speckle's updated_at.
+  const { savedModels, otherModels, loadableCount } = useMemo(() => {
+    const loadable = models.filter((m) => m.latest_version);
+    const saved = loadable
+      .filter((m) => m.last_saved_at)
+      .sort(
+        (a, b) =>
+          new Date(b.last_saved_at as string).getTime() -
+          new Date(a.last_saved_at as string).getTime(),
+      );
+    const savedIds = new Set(saved.map((m) => m.id));
+    const others = loadable
+      .filter((m) => !savedIds.has(m.id))
+      .sort(
+        (a, b) =>
+          new Date(b.updated_at ?? 0).getTime() -
+          new Date(a.updated_at ?? 0).getTime(),
+      );
+    return {
+      savedModels: saved,
+      otherModels: others,
+      loadableCount: loadable.length,
+    };
+  }, [models]);
+
   // ── Loading state ──────────────────────────────────────────────────────
   if (isLoading) {
     return (
@@ -419,12 +458,18 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
   }
 
   // ── Model list ─────────────────────────────────────────────────────────
-  // Filter out models without a usable latest_version
-  const loadableModels = models.filter((m) => m.latest_version);
-
-  if (loadableModels.length === 0) {
+  if (loadableCount === 0) {
     return <EmptyState message="No loadable models available." />;
   }
+
+  const renderCard = (model: SpeckleModelDetail) => (
+    <ModelCard
+      key={model.id}
+      model={model}
+      projectId={projectId}
+      onSelect={() => handleSelect(model)}
+    />
+  );
 
   return (
     <div className="w-full">
@@ -441,14 +486,23 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
           overflowX: 'visible',
         }}
       >
-        {loadableModels.map((model) => (
-          <ModelCard
-            key={model.id}
-            model={model}
-            projectId={projectId}
-            onSelect={() => handleSelect(model)}
-          />
-        ))}
+        {savedModels.length > 0 && (
+          <>
+            <p className="text-[10px] font-medium uppercase tracking-wide text-neutral-400" style={{ paddingLeft: 2 }}>
+              Last saved by you
+            </p>
+            {savedModels.map(renderCard)}
+            {otherModels.length > 0 && (
+              <p
+                className="text-[10px] font-medium uppercase tracking-wide text-neutral-400"
+                style={{ paddingLeft: 2, marginTop: MODEL_BROWSER_STYLES.CARD_GAP / 2 }}
+              >
+                All models
+              </p>
+            )}
+          </>
+        )}
+        {otherModels.map(renderCard)}
       </div>
     </div>
   );
