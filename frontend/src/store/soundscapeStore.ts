@@ -435,6 +435,10 @@ export interface SoundscapeStoreState {
   soundGenError: string | null;
   soundGenProgress: string;
   soundGenProgressValue: number;
+  /** Granular backend status for the currently-generating sound card
+   *  (e.g. "Generating sound 1/8 (prompt): step 15/25…"). Shown on the active
+   *  card in place of the global sample-count message. */
+  soundGenStatusText: string;
   generatedSounds: any[];
   soundscapeData: any[] | null;
   globalDuration: number;
@@ -536,6 +540,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         soundGenError: null,
         soundGenProgress: '',
         soundGenProgressValue: 0,
+        soundGenStatusText: '',
         generatedSounds: [],
         soundscapeData: null,
         globalDuration: DEFAULT_DURATION_SECONDS,
@@ -921,13 +926,14 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             uploadedConfigs.length + libraryConfigs.length + catalogConfigs.length + elevenLabsConfigs.length;
           const totalSamples = mlClipCount + ttsClipCount + otherClipCount;
           let samplesDone = 0;
-          const reportSamples = (label: string) => {
+          const reportSamples = (label: string, statusText = '') => {
             const clamped = Math.min(samplesDone, totalSamples);
             set(
               {
                 soundGenProgress: `${clamped}/${totalSamples} ${label}`,
                 soundGenProgressValue:
                   totalSamples > 0 ? Math.round((clamped / totalSamples) * 100) : 0,
+                soundGenStatusText: statusText,
               },
               false,
               'soundscape/generateProgress',
@@ -971,6 +977,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               soundGenError: null,
               soundGenProgress: '',
               soundGenProgressValue: 0,
+              soundGenStatusText: '',
               soundConfigs: s.soundConfigs.map((c, i) =>
                 generatedTargets.has(i) ? { ...c, error: null } : c,
               ),
@@ -1103,7 +1110,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                   fetchStatus: () => apiService.getSoundGenerationStatus(generation_id),
                   onStatus: (s) => {
                     samplesDone = Math.max(samplesDone, s.partial_sounds?.length ?? 0);
-                    reportSamples('generating sounds…');
+                    reportSamples('generating sounds…', s.status);
 
                     // Stream newly-completed sounds into the UI
                     if (s.partial_sounds && s.partial_sounds.length > lastPartialCount) {
@@ -1359,7 +1366,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                       samplesDone,
                       mlClipCount + otherClipCount - elevenLabsConfigs.length + (s.partial_sounds?.length ?? 0),
                     );
-                    reportSamples('generating speech…');
+                    reportSamples('generating speech…', s.status);
 
                     if (s.partial_sounds && s.partial_sounds.length > ttsLastPartialCount) {
                       const newPartials = s.partial_sounds.slice(ttsLastPartialCount).map(mapTtsSound);
@@ -1522,7 +1529,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
           } finally {
             endSoundGeneration();
             untrackGenerationTargets(targetIndices);
-            set({ soundGenProgress: '', soundGenProgressValue: 0 }, false, 'soundscape/generateEnd');
+            set({ soundGenProgress: '', soundGenProgressValue: 0, soundGenStatusText: '' }, false, 'soundscape/generateEnd');
             _abortControllers.delete(controller);
             // Safety net — never leave the bake gate stuck on after the pipeline ends.
             useAudioControlsStore.getState().setGenerationInProgress(false);
@@ -1555,6 +1562,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             {
               soundGenProgress: 'Regenerating...',
               soundGenProgressValue: 0,
+              soundGenStatusText: '',
               regeneratingIndices: [...regeneratingIndices, targetIndex],
             },
             false,
@@ -1586,6 +1594,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
                     {
                       soundGenProgress: combinedProgress(s.status),
                       soundGenProgressValue: s.progress,
+                      soundGenStatusText: combinedProgress(s.status),
                     },
                     false,
                     'soundscape/regenPoll',
@@ -1666,6 +1675,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               {
                 soundGenProgress: '',
                 soundGenProgressValue: 0,
+                soundGenStatusText: '',
                 regeneratingIndices: get().regeneratingIndices.filter(i => i !== targetIndex),
               },
               false,
@@ -1707,6 +1717,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
               soundGenError: 'Sound generation stopped by user.',
               soundGenProgress: '',
               soundGenProgressValue: 0,
+              soundGenStatusText: '',
               regeneratingIndices: [],
             },
             false,

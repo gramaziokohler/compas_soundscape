@@ -334,6 +334,8 @@ export function useAudioOrchestrator() {
     orchestratorRef.current.updateListener(position as any, orientation);
   }, []);
 
+
+
   return {
     orchestrator: orchestratorRef.current,
     audioContext: audioContextRef.current,

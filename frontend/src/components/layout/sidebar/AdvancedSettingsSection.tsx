@@ -26,6 +26,7 @@ import { useServiceVersions } from "@/hooks/useServiceVersions";
 import { useAudioControlsStore } from "@/store/audioControlsStore";
 import { useUIStore } from "@/store/uiStore";
 import { CollaborationPanel } from "@/components/layout/CollaborationPanel";
+import { OutputDeviceSelector } from "@/components/audio/OutputDeviceSelector";
 import type { ColorThemePreference } from "@/utils/color-theme";
 import {
   UI_BORDER_RADIUS,
@@ -131,7 +132,7 @@ type SettingKey =
   | 'llm-model' | 'tts-model' | 'tts-language' | 'audio-model'
   | 'diffusion-steps' | 'negative-prompt' | 'noise-reduction' | 'trim-silence'
   | 'listener-orientation' | 'spectrograms'
-  | 'base-spl' | 'max-foley'
+  | 'base-spl' | 'max-foley' | 'output-device'
   | 'auto-save' | 'delete-history';
 
 interface SettingEntry {
@@ -165,6 +166,7 @@ const SETTINGS: SettingEntry[] = [
   { section: 'llm', key: 'noise-reduction', terms: ['noise reduction', 'denoising', 'noise', 'reduction', 'text-to-audio settings'] },
   { section: 'llm', key: 'trim-silence', terms: ['trim silence', 'silence', 'trim', 'text-to-audio settings'] },
 
+  { section: 'rendering', key: 'output-device', terms: ['output device', 'audio device', 'sound device', 'audio card', 'sound card', 'speaker', 'output', 'sink', 'device'] },
   { section: 'rendering', key: 'listener-orientation', terms: ['listener orientation', 'orientation', 'listener', 'x', 'y', 'z'] },
   { section: 'rendering', key: 'spectrograms', terms: ['spectrograms', 'spectrogram'] },
   { section: 'rendering', key: 'base-spl', terms: ['base level', 'base spl', 'spl', 'volume', 'db', 'decibel'] },
@@ -880,6 +882,9 @@ export function AdvancedSettingsSection({
 
           {activeSection === 'rendering' && (
             <div className="flex flex-col gap-2">
+              {isVisible('output-device') && (
+                <OutputDeviceSelector />
+              )}
               {isVisible('base-spl') && (
                 <RangeSlider
                   label="Base Level"

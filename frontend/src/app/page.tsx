@@ -37,6 +37,8 @@ import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
 import * as THREE from "three";
 import { useAudioNormalization } from "@/hooks/useAudioNormalization";
 import { useAudioOrchestrator } from "@/hooks/useAudioOrchestrator";
+import { useAudioOutputDeviceSync } from "@/hooks/useAudioOutputDeviceSync";
+import { applyOutputDevice } from "@/lib/audio/output-device";
 import { useViewportScale } from "@/hooks/useViewportScale";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { useJobRecovery } from "@/hooks/useJobRecovery";
@@ -483,6 +485,17 @@ function HomeContent() {
   useEffect(() => {
     orchestratorRef.current = audioOrchestrator.orchestrator;
   }, [audioOrchestrator.orchestrator]);
+
+  // Route every speaker-reaching audio path (orchestrator, modal impact, card
+  // previews) to the device chosen in Audio settings. Registered targets pick
+  // up the current device automatically, so this only fires on user changes.
+  const outputDeviceId = useAudioControlsStore((s) => s.outputDeviceId);
+  useEffect(() => {
+    applyOutputDevice(outputDeviceId);
+  }, [outputDeviceId]);
+
+  // Fall back to the system default when the selected device is unplugged.
+  useAudioOutputDeviceSync();
 
   // Audio feature hooks (modular, integrate with orchestrator)
   const audioNormalization = useAudioNormalization(audioOrchestrator.orchestrator);

@@ -935,6 +935,15 @@ export const AUDIO_CONTROL = {
 } as const;
 
 // ============================================================================
+// Audio Output Device Constants
+// ============================================================================
+export const AUDIO_OUTPUT = {
+  // Sentinel value for the system default output device. Translated to ''
+  // when passed to AudioContext.setSinkId().
+  DEFAULT_DEVICE_ID: 'default',
+} as const;
+
+// ============================================================================
 // Resonance Audio Configuration
 // ============================================================================
 export const RESONANCE_AUDIO = {

@@ -124,12 +124,14 @@ function updateProgress(jobType: JobType, progress: number, statusText: string):
       useSoundscapeStore.setState({
         soundGenProgress: statusText,
         soundGenProgressValue: progress,
+        soundGenStatusText: statusText,
       });
       break;
     case 'tts':
       useSoundscapeStore.setState({
         soundGenProgress: `TTS: ${statusText}`,
         soundGenProgressValue: progress,
+        soundGenStatusText: statusText,
       });
       break;
     case 'llm':
@@ -164,6 +166,7 @@ function resetJobState(jobType: JobType): void {
       useSoundscapeStore.setState({
         soundGenProgress: '',
         soundGenProgressValue: 0,
+        soundGenStatusText: '',
       });
       break;
     case 'llm':
@@ -211,11 +214,13 @@ function processCompletedJob(
           generatedSounds: merged,
           soundGenProgress: '',
           soundGenProgressValue: 0,
+          soundGenStatusText: '',
         });
       } else {
         useSoundscapeStore.setState({
           soundGenProgress: '',
           soundGenProgressValue: 0,
+          soundGenStatusText: '',
         });
       }
       break;
@@ -237,11 +242,13 @@ function processCompletedJob(
           generatedSounds: merged,
           soundGenProgress: '',
           soundGenProgressValue: 0,
+          soundGenStatusText: '',
         });
       } else {
         useSoundscapeStore.setState({
           soundGenProgress: '',
           soundGenProgressValue: 0,
+          soundGenStatusText: '',
         });
       }
       break;

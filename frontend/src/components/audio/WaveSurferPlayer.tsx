@@ -13,6 +13,7 @@ import {
   resolveSilhouettePalette,
   type SilhouettePalette,
 } from '@/lib/audio/waveform-silhouette';
+import { registerOutputDeviceTarget } from '@/lib/audio/output-device';
 
 const WAVEFORM_HEIGHT_MIN = 20;
 const WAVEFORM_HEIGHT_MAX = 300;
@@ -167,6 +168,11 @@ export function WaveSurferPlayer({
       renderFunction,
     });
 
+    // Route preview playback to the user-selected output device / sound card.
+    // WaveSurfer exposes setSinkId at runtime (not in its .d.ts); the registry
+    // feature-detects it.
+    const unregisterOutputDevice = registerOutputDeviceTarget(ws);
+
     ws.on('ready', () => {
       setIsReady(true);
       setIsLoadingAudio(false);
@@ -211,6 +217,7 @@ export function WaveSurferPlayer({
 
     return () => {
       if (abortRef.current) abortRef.current.abort();
+      unregisterOutputDevice();
       onWavesurferReady?.(null);
       try { ws.destroy(); } catch { /* ignore */ }
       wsRef.current = null;

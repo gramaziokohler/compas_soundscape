@@ -124,6 +124,7 @@ export function SoundGenerationSection({
   // ── Sound generation progress from store ──
   const soundGenProgress          = useSoundscapeStore((s) => s.soundGenProgress);
   const soundGenProgressValue     = useSoundscapeStore((s) => s.soundGenProgressValue);
+  const soundGenStatusText        = useSoundscapeStore((s) => s.soundGenStatusText);
   const soundGenTargetIndices     = useSoundscapeStore((s) => s.soundGenTargetIndices);
   const handleReorderSoundConfigs   = useSoundscapeStore((s) => s.handleReorderSoundConfigs);
   const duplicateConfigAt           = useSoundscapeStore((s) => s.duplicateConfigAt);
@@ -1074,7 +1075,7 @@ export function SoundGenerationSection({
         status={
           (isSoundGenerating && originalIndex === currentGeneratingCardIndex)
           || regeneratingIndices.includes(originalIndex)
-            ? (soundGenProgress || (regeneratingIndices.includes(originalIndex) ? 'Regenerating...' : 'Generating...'))
+            ? (soundGenStatusText || soundGenProgress || (regeneratingIndices.includes(originalIndex) ? 'Regenerating...' : 'Generating...'))
             : !isGenerated && isSoundGenerating && (soundGenTargetIndices === null || soundGenTargetIndices.includes(originalIndex))
               ? 'Queued'
               : undefined
@@ -1212,6 +1213,7 @@ export function SoundGenerationSection({
     currentGeneratingCardIndex,
     soundGenProgress,
     soundGenProgressValue,
+    soundGenStatusText,
     onGenerateSingle,
     isConfigValid,
     copiedPosition,

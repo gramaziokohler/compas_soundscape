@@ -58,6 +58,7 @@ import {
   formatAudioBufferInfo
 } from './utils/audio-file-decoder';
 import { AUDIO_CONTROL, DEFAULT_SPEED_OF_SOUND, API_BASE_URL } from '@/utils/constants';
+import { registerOutputDeviceTarget } from './output-device';
 
 export class AudioOrchestrator implements IAudioOrchestrator {
   private audioContext: AudioContext | null = null;
@@ -155,6 +156,9 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   // Limiter node to prevent harsh clipping
   private limiter: DynamicsCompressorNode | null = null;
 
+  // Detaches this context from the shared output-device registry on dispose.
+  private unregisterOutputDeviceTarget: (() => void) | null = null;
+
   async initialize(audioContext: AudioContext): Promise<void> {
     if (this.initialized) {
       console.warn('[AudioOrchestrator] Already initialized');
@@ -162,7 +166,10 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     }
 
     this.audioContext = audioContext;
-    
+
+    // Route playback to the user-selected output device / sound card.
+    this.unregisterOutputDeviceTarget = registerOutputDeviceTarget(audioContext);
+
     // Create brick-wall limiter to prevent saturation/clipping
     this.limiter = audioContext.createDynamicsCompressor();
     this.limiter.threshold.value = AUDIO_CONTROL.LIMITER.THRESHOLD_DB;
@@ -1582,5 +1589,10 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     this.currentModeInstance = null;
     this.audioContext = null;
     this.initialized = false;
+
+    if (this.unregisterOutputDeviceTarget) {
+      this.unregisterOutputDeviceTarget();
+      this.unregisterOutputDeviceTarget = null;
+    }
   }
 }

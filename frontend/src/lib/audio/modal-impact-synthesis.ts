@@ -6,6 +6,7 @@
  */
 
 import { AUDIO_SAMPLE_RATE, IMPACT_SOUND } from '@/utils/constants';
+import { registerOutputDeviceTarget } from './output-device';
 import type {
   ImpactParameters,
   ModalAnalysisResult,
@@ -24,6 +25,8 @@ export class ModalImpactSynthesizer {
 
   constructor(audioContext?: AudioContext) {
     this.audioContext = audioContext || new AudioContext({ sampleRate: AUDIO_SAMPLE_RATE });
+    // Route impact playback to the user-selected output device / sound card.
+    registerOutputDeviceTarget(this.audioContext);
   }
 
   /**

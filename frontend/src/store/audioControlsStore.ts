@@ -25,7 +25,7 @@ import type { SoundState, SoundGenerationConfig } from '@/types';
 import type { IterationLink } from '@/types/audio';
 import { parseSoundCopyIndex } from '@/lib/audio/utils/variant-sound-id';
 import { pausePreviewInstance, pauseAllPreviewInstances } from '@/lib/audio/previewRegistry';
-import { AUDIO_PLAYBACK, AUDIO_TIMELINE, DEFAULT_DBFS, DEFAULT_MAXIMUM_FOLEY_SOUNDS, TTS_DEFAULT_LANGUAGE } from '@/utils/constants';
+import { AUDIO_PLAYBACK, AUDIO_TIMELINE, AUDIO_OUTPUT, DEFAULT_DBFS, DEFAULT_MAXIMUM_FOLEY_SOUNDS, TTS_DEFAULT_LANGUAGE } from '@/utils/constants';
 import { apiService } from '@/services/api';
 import { useSoundscapeStore } from './soundscapeStore';
 import { useSpeckleEngineStore } from './speckleEngineStore';
@@ -154,6 +154,12 @@ export interface AudioControlsStoreState {
   /** Language instruction passed to Gemini TTS as part of the prompt. */
   ttsLanguage: string;
   setTtsLanguage: (lang: string) => void;
+  /**
+   * Selected audio output device (`AudioDeviceInfo.deviceId`). The sentinel
+   * AUDIO_OUTPUT.DEFAULT_DEVICE_ID routes playback to the system default output.
+   */
+  outputDeviceId: string;
+  setOutputDeviceId: (deviceId: string) => void;
   /** Set actual buffer duration for a sound — called by SoundSphereManager on buffer load. */
   setSoundBufferDuration: (soundId: string, durationSec: number) => void;
   /** Set generation-in-progress flag — gates bake during active generation. */
@@ -248,6 +254,7 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         globalBaseDbfs: DEFAULT_DBFS,
         maximumFoleySounds: DEFAULT_MAXIMUM_FOLEY_SOUNDS,
         ttsLanguage: TTS_DEFAULT_LANGUAGE,
+        outputDeviceId: AUDIO_OUTPUT.DEFAULT_DEVICE_ID,
         _generatedSounds: [],
         _soundConfigs: [],
         soundBufferDurations: {},
@@ -643,6 +650,9 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
 
         setTtsLanguage: (lang) =>
           set({ ttsLanguage: lang }, false, 'audio/setTtsLanguage'),
+
+        setOutputDeviceId: (deviceId) =>
+          set({ outputDeviceId: deviceId }, false, 'audio/setOutputDeviceId'),
 
         setOrchestrateIterationLinks: (configs) => {
           const { _generatedSounds, iterationLinks } = get();
