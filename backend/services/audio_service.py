@@ -15,6 +15,7 @@ from utils.audio_processing import (
 from config.constants import (
     TANGOFLUX_MODEL_NAME,
     TANGOFLUX_DTYPE,
+    TANGOFLUX_LOCAL_DIR,
     AUDIO_MODEL_TANGOFLUX,
     AUDIO_MODEL_AUDIOLDM2,
     DEFAULT_AUDIO_MODEL,
@@ -112,7 +113,10 @@ class AudioService:
         if self.tangoflux_model is None:
             print("Initializing TangoFlux model...")
             self.tangoflux_model = TangoFluxInference(
-                name=TANGOFLUX_MODEL_NAME, device=self.device, dtype=TANGOFLUX_DTYPE
+                name=TANGOFLUX_MODEL_NAME,
+                device=self.device,
+                dtype=TANGOFLUX_DTYPE,
+                local_dir=TANGOFLUX_LOCAL_DIR,
             )
         return self.tangoflux_model
 

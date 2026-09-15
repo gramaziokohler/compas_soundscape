@@ -185,6 +185,19 @@ export interface WorkspaceSummary {
   updated_at: string;
 }
 
+export interface WorkspaceMember {
+  user_hash: string;
+  email: string | null;
+  display_name: string | null;
+  role: 'owner' | 'editor' | 'viewer';
+  joined_at: string;
+}
+
+export interface WorkspaceDetail extends WorkspaceSummary {
+  members?: WorkspaceMember[];
+  presence?: number;
+}
+
 // ─── 3D Model Analysis types ──────────────────────────────────────────────────
 
 export interface ModelObjectResult {
@@ -256,6 +269,102 @@ export const apiService = {
     if (!response.ok) return [];
     const data = await response.json();
     return data.workspaces ?? [];
+  },
+
+  // ÔöÇÔöÇÔöÇ Workspaces / collaboration ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+  async getWorkspace(workspaceId: string): Promise<WorkspaceDetail> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/workspaces/${encodeURIComponent(workspaceId)}`,
+      undefined,
+      'Get workspace'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Failed to load workspace' }));
+      throw new Error(typeof err.detail === 'string' ? err.detail : 'Failed to load workspace');
+    }
+    return response.json();
+  },
+
+  async createWorkspace(name?: string): Promise<WorkspaceDetail> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/workspaces`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      },
+      'Create workspace'
+    );
+    if (!response.ok) throw new Error('Failed to create workspace');
+    return response.json();
+  },
+
+  async switchWorkspace(workspaceId: string): Promise<WorkspaceDetail> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/workspaces/${encodeURIComponent(workspaceId)}/switch`,
+      { method: 'POST' },
+      'Switch workspace'
+    );
+    if (!response.ok) throw new Error('Failed to switch workspace');
+    return response.json();
+  },
+
+  async updateWorkspace(workspaceId: string, patch: { name?: string; sharing_mode?: 'private' | 'link' }): Promise<WorkspaceDetail> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/workspaces/${encodeURIComponent(workspaceId)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      },
+      'Update workspace'
+    );
+    if (!response.ok) throw new Error('Failed to update workspace');
+    return response.json();
+  },
+
+  async createWorkspaceInvite(workspaceId: string, role: 'editor' | 'viewer' = 'editor'): Promise<{ token: string; role: string; url: string }> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/workspaces/${encodeURIComponent(workspaceId)}/invites`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role }),
+      },
+      'Create invite'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Failed to create invite' }));
+      throw new Error(typeof err.detail === 'string' ? err.detail : 'Failed to create invite');
+    }
+    return response.json();
+  },
+
+  async joinWorkspace(token: string): Promise<WorkspaceDetail> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/workspaces/join`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      },
+      'Join workspace'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Failed to join workspace' }));
+      throw new Error(typeof err.detail === 'string' ? err.detail : 'Failed to join workspace');
+    }
+    return response.json();
+  },
+
+  async workspaceHeartbeat(workspaceId: string): Promise<{ presence: number; revision: number }> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/workspaces/${encodeURIComponent(workspaceId)}/presence`,
+      { method: 'POST' },
+      'Workspace presence'
+    );
+    if (!response.ok) return { presence: 1, revision: 0 };
+    return response.json();
   },
 
   // File Upload
@@ -1189,11 +1298,18 @@ export const apiService = {
       if (!response.ok) {
         const error = await response.json().catch(() => ({ detail: 'Failed to save soundscape' }));
         const detail = error.detail;
+        // Optimistic-concurrency conflict (shared workspace): surface the
+        // current revision so the caller can refetch instead of clobbering.
+        if (response.status === 409 && detail && typeof detail === 'object') {
+          const conflict = new Error(detail.message || 'This workspace changed since you last loaded it.');
+          (conflict as Error & { conflictRevision?: number }).conflictRevision = detail.revision;
+          throw conflict;
+        }
         if (Array.isArray(detail)) {
           const msgs = detail.map((d: any) => `${d.loc?.join('.') ?? '?'}: ${d.msg}`).join('; ');
           throw new Error(msgs || 'Failed to save soundscape');
         }
-        throw new Error(detail || 'Failed to save soundscape');
+        throw new Error(typeof detail === 'string' ? detail : 'Failed to save soundscape');
       }
 
       return response.json();

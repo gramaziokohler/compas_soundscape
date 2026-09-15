@@ -4,13 +4,29 @@ import asyncio
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from dotenv import load_dotenv, find_dotenv
+
+# --- Load environment variables FIRST ---
+# .env.local takes precedence over .env. This MUST run before importing
+# config/services so module-level constants (e.g. CF_ACCESS_*, REDIS_URL) read
+# the configured values instead of their defaults.
+# find_dotenv() searches upward from main.py's directory, so it finds files
+# at the repo root even when uvicorn is launched from a different CWD.
+_env_local = find_dotenv('.env.local', raise_error_if_not_found=False, usecwd=False)
+_env = find_dotenv('.env', raise_error_if_not_found=False, usecwd=False)
+if _env_local:
+    load_dotenv(_env_local, override=True)   # admin overrides (not shipped to users)
+if _env:
+    load_dotenv(_env)
+print(f"[env] .env.local: {_env_local or 'not found'}")
+print(f"[env] .env:       {_env or 'not found'}")
+
 from starlette.requests import Request
 from starlette.responses import Response
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from middleware.session import SessionMiddleware
-from dotenv import load_dotenv, find_dotenv
 # Import services
 from services.llm_service import LLMService
 from services.audio_service import AudioService
@@ -22,7 +38,7 @@ from services.metadata_store import metadata_store
 # from services.modal_analysis_service import ModalAnalysisService
 
 # Import routers
-from routers import upload, generation, sounds, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, speckle, soundscape, tokens, tts, loop_analysis, jobs, auth
+from routers import upload, generation, sounds, sed_analysis, sed_extract, library_search, reprocess, impulse_responses, modal_analysis, choras, pyroomacoustics, speckle, soundscape, tokens, tts, loop_analysis, jobs, auth, workspaces
 
 # Import constants
 from config.constants import (
@@ -47,18 +63,6 @@ from config.constants import (
     )
 
 # --- Initialization ---
-
-# Load environment variables — .env.local takes precedence over .env.
-# find_dotenv() searches upward from main.py's directory, so it finds files
-# at the repo root even when uvicorn is launched from a different CWD.
-_env_local = find_dotenv('.env.local', raise_error_if_not_found=False, usecwd=False)
-_env = find_dotenv('.env', raise_error_if_not_found=False, usecwd=False)
-if _env_local:
-    load_dotenv(_env_local, override=True)   # admin overrides (not shipped to users)
-if _env:
-    load_dotenv(_env)
-print(f"[env] .env.local: {_env_local or 'not found'}")
-print(f"[env] .env:       {_env or 'not found'}")
 
 # Configure the Google AI client — optional; user can supply the key at runtime
 from services.llm_service import GOOGLE_GENAI_AVAILABLE
@@ -258,6 +262,7 @@ app.add_middleware(
 
 # --- Include Routers ---
 app.include_router(auth.router)
+app.include_router(workspaces.router)
 app.include_router(upload.router)
 # app.include_router(analysis.router)
 app.include_router(generation.router)

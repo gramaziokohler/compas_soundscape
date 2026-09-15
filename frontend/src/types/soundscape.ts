@@ -226,6 +226,8 @@ export interface SoundscapeSavePayload {
   ir_urls: string[];
   analysis_ids?: string[];
   scenario_ids?: string[];
+  /** Workspace revision the client last saw (optimistic concurrency). */
+  base_revision?: number;
 }
 
 /** Response from POST /api/speckle/soundscape/save */
@@ -236,6 +238,7 @@ export interface SoundscapeSaveResponse {
   audio_files_copied: number;
   ir_files_copied: number;
   message: string;
+  revision?: number;
 }
 
 /** Response from GET /api/speckle/soundscape/{model_id} */
@@ -246,6 +249,11 @@ export interface SoundscapeLoadResponse {
   found: boolean;
   /** Referenced audio files that are gone on the server (no URL is built for them). */
   missing_audio_filenames?: string[];
+  /** Workspace context for shared sessions. */
+  workspace_id?: string;
+  revision?: number;
+  /** Model belongs to a private workspace the caller is not a member of. */
+  requires_invite?: boolean;
 }
 
 /** Response from GET /api/speckle/soundscape/{model_id}/stats */

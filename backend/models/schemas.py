@@ -434,6 +434,9 @@ class SoundscapeSaveRequest(BaseModel):
     ir_urls: list[str] = []  # IR file URLs to copy
     analysis_ids: list[str] = []  # Analysis result IDs to persist
     scenario_ids: list[str] = []  # Scenario IDs to persist
+    # Optimistic-concurrency token: the workspace revision the client last saw.
+    # If set and stale, the save is rejected with 409 (shared workspaces).
+    base_revision: Optional[int] = None
 
 
 # ============================================================================
@@ -528,6 +531,7 @@ class SoundscapeSaveResponse(BaseModel):
     audio_files_copied: int = 0
     ir_files_copied: int = 0
     message: str = ""
+    revision: int = 0
 
 
 class SoundscapeLoadResponse(BaseModel):
@@ -540,6 +544,12 @@ class SoundscapeLoadResponse(BaseModel):
     # attempting recovery from the generated/temp dirs). Their `audio_filename`
     # is cleared in `soundscape_data` so the client does not build URLs that 404.
     missing_audio_filenames: list[str] = []
+    # Workspace context for shared sessions.
+    workspace_id: Optional[str] = None
+    revision: int = 0
+    # True when the model belongs to a private workspace the caller is not a
+    # member of (the client should ask for an invite rather than retry).
+    requires_invite: bool = False
 
 
 # ── LLM Analysis Output Schemas ───────────────────────────────────────────────

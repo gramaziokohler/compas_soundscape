@@ -546,6 +546,7 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
         trimSilence: false,
         applyNoiseReduction: true,
         regeneratingIndices: [],
+        soundGenTargetIndices: null,
         llmModel: DEFAULT_LLM_MODEL,
         audioModel: DEFAULT_AUDIO_MODEL,
         ttsModel: DEFAULT_TTS_MODEL,

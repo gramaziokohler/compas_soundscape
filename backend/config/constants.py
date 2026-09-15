@@ -147,6 +147,11 @@ TANGOFLUX_MODEL_NAME = "declare-lab/TangoFlux"
 # Optional: "bfloat16" halves VRAM (~9-10GB vs ~18-20GB fp32) at a small quality cost.
 # Leave unset (None) for full fp32 precision.
 TANGOFLUX_DTYPE = os.environ.get("TANGOFLUX_DTYPE") or None
+# Local weights copy. Unlike the HF hub cache (symlinks, needs Windows Developer
+# Mode/admin), downloading with `local_dir` copies plain files — required on Windows.
+TANGOFLUX_LOCAL_DIR = os.environ.get("TANGOFLUX_LOCAL_DIR") or str(
+    BACKEND_DIR / "data" / "models" / "TangoFlux"
+)
 # GPU worker warm-up generation (paid once at process startup, not per-request)
 TANGOFLUX_WARMUP_DURATION_SECONDS = 1
 TANGOFLUX_WARMUP_STEPS = 2
@@ -758,6 +763,11 @@ CF_ACCESS_TEAM_DOMAIN = os.environ.get("CF_ACCESS_TEAM_DOMAIN", "").strip()
 CF_ACCESS_AUD = os.environ.get("CF_ACCESS_AUD", "").strip()
 AUTH_DEV_BYPASS = os.environ.get("AUTH_DEV_BYPASS", "").lower() in ("true", "1", "yes")
 DEV_USER_EMAIL = os.environ.get("DEV_USER_EMAIL", "dev@localhost").strip().lower()
+# When true, requests without a valid Access JWT are rejected (401). Leave
+# false during rollout so direct/local requests fall back to an anonymous
+# session instead of locking anyone out; set true once the tunnel-only origin
+# is confirmed. The origin should only be reachable through Cloudflare anyway.
+CF_ACCESS_REQUIRE = os.environ.get("CF_ACCESS_REQUIRE", "").lower() in ("true", "1", "yes")
 CF_ACCESS_JWT_HEADER = "Cf-Access-Jwt-Assertion"
 CF_ACCESS_COOKIE = "CF_Authorization"
 CF_ACCESS_JWKS_CACHE_TTL_S = int(os.environ.get("CF_ACCESS_JWKS_CACHE_TTL_S", "3600"))
