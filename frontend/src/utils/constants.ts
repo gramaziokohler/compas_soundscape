@@ -772,6 +772,17 @@ export const SCENARIO_PREVIEW = {
   ARROW_MAX_RADIUS: 0.25,
   /** Arrowhead length as a multiple of its radius */
   ARROW_HEAD_LENGTH_FACTOR: 2.5,
+  /** Label sprite for the first stop of a parcours */
+  START_LABEL: 'Start',
+  /** Label sprite for the last stop of a parcours */
+  END_LABEL: 'End',
+  /** Endpoints closer than this (meters) share one label — a single-stop parcours,
+   *  a loop back to the start, or two scenarios meeting at the same object render
+   *  a combined "Start / End" sprite instead of two overlapping ones. */
+  LABEL_OVERLAP_THRESHOLD: 0.25,
+  /** Label floats above its anchor by this multiple of its own world height
+   *  (along the camera-up axis) so it clears the arrow endpoint / object center. */
+  LABEL_UP_OFFSET_FACTOR: 0.8,
 } as const;
 
 // IR low-energy detection threshold

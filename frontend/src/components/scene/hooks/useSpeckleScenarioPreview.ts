@@ -1,9 +1,14 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
-import { useScenarioPreviewStore, useSpeckleStore, useUIStore, type ScenarioPreviewStop } from '@/store';
+import { useScenarioPreviewStore, useSpeckleStore, useUIStore, type ScenarioPreviewParcours, type ScenarioPreviewStop } from '@/store';
 import { getMaterialColorByAbsorption } from '@/utils/utils';
 import { SCENARIO_PREVIEW } from '@/utils/constants';
+import {
+  computeLabelWorldHeight,
+  createLabelSprite,
+  disposeLabelSprite,
+} from '@/lib/three/label-sprite-factory';
 
 interface ScenarioPreviewProps {
   isViewerReady: boolean;
@@ -12,6 +17,10 @@ interface ScenarioPreviewProps {
 
 function disposeGroup(group: THREE.Group) {
   group.traverse((obj) => {
+    if ((obj as THREE.Sprite).isSprite) {
+      disposeLabelSprite(obj as THREE.Sprite);
+      return;
+    }
     const mesh = obj as THREE.Mesh;
     if (mesh.geometry) mesh.geometry.dispose();
     const material = (mesh as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
@@ -179,6 +188,88 @@ function resolveStopPosition(
   return box.getCenter(new THREE.Vector3());
 }
 
+type ParcoursEndpointKind = 'start' | 'end';
+
+interface ParcoursEndpointLabel {
+  anchor: THREE.Vector3;
+  kinds: Set<ParcoursEndpointKind>;
+}
+
+/**
+ * Start/End anchors for every scenario's parcours. Endpoints closer than
+ * `SCENARIO_PREVIEW.LABEL_OVERLAP_THRESHOLD` collapse into one entry whose
+ * `kinds` set collects every role at that spot — so a single-stop parcours, a
+ * loop back to the start, or two scenarios meeting at the same object render a
+ * single combined "Start / End" sprite instead of two sprites stacked exactly
+ * on top of each other.
+ */
+function resolveEndpointLabels(
+  worldTree: any,
+  parcours: ScenarioPreviewParcours,
+): ParcoursEndpointLabel[] {
+  const labels: ParcoursEndpointLabel[] = [];
+
+  const push = (anchor: THREE.Vector3, kind: ParcoursEndpointKind) => {
+    for (const entry of labels) {
+      if (entry.anchor.distanceTo(anchor) < SCENARIO_PREVIEW.LABEL_OVERLAP_THRESHOLD) {
+        entry.kinds.add(kind);
+        return;
+      }
+    }
+    labels.push({ anchor: anchor.clone(), kinds: new Set([kind]) });
+  };
+
+  for (const scenarioStops of parcours) {
+    const positions: THREE.Vector3[] = [];
+    for (const stop of scenarioStops) {
+      const pos = resolveStopPosition(worldTree, stop);
+      if (pos) positions.push(pos);
+    }
+    if (positions.length === 0) continue;
+    push(positions[0], 'start');
+    push(positions[positions.length - 1], 'end');
+  }
+
+  return labels;
+}
+
+/** Human text for a merged endpoint label, ordered Start then End. */
+function endpointLabelText(kinds: Set<ParcoursEndpointKind>): string {
+  const parts: string[] = [];
+  if (kinds.has('start')) parts.push(SCENARIO_PREVIEW.START_LABEL);
+  if (kinds.has('end')) parts.push(SCENARIO_PREVIEW.END_LABEL);
+  return parts.join(' / ');
+}
+
+/**
+ * Keep every Start/End sprite at a constant apparent size and floating above its
+ * anchor. The parcours group lives directly in the scene (no manager), so it has
+ * no access to the coordinator's per-frame screen-space pass and drives its own
+ * rAF loop while visible.
+ */
+function updateScenarioLabels(group: THREE.Group): void {
+  const { viewer } = useSpeckleEngineStore.getState();
+  const camera = viewer?.getRenderer().renderingCamera as THREE.PerspectiveCamera | undefined;
+  if (!camera) return;
+
+  const cameraUp = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+  group.traverse((obj) => {
+    const sprite = obj as THREE.Sprite;
+    if (!sprite.isSprite) return;
+    const anchor = sprite.userData.anchor as THREE.Vector3 | undefined;
+    if (!anchor) return;
+
+    const distance = camera.position.distanceTo(anchor);
+    if (distance < 0.01) return;
+
+    const h = computeLabelWorldHeight(camera, distance);
+    sprite.scale.set(h * ((sprite.userData.aspectRatio as number) || 3), h, 1);
+    sprite.position
+      .copy(anchor)
+      .addScaledVector(cameraUp, h * SCENARIO_PREVIEW.LABEL_UP_OFFSET_FACTOR);
+  });
+}
+
 /**
  * Scenario 3D preview.
  *
@@ -191,7 +282,11 @@ function resolveStopPosition(
  *     toggle (`uiStore.showScenarioParcours`, scenario card footer) is on. Each segment is
  *     colored along the acoustic-material gradient (teal → orange → red) by its
  *     order of appearance. The arrows are THREE overlays added to the scene
- *     (independent of FilteringExtension).
+ *     (independent of FilteringExtension), and
+ *   - a "Start" / "End" label sprite marks the first / last stop of each scenario's
+ *     parcours, floating above the endpoint. Endpoints that coincide collapse into
+ *     one combined "Start / End" sprite (single-stop parcours, loop, or two
+ *     scenarios meeting at the same object).
  */
 export function useSpeckleScenarioPreview({ isViewerReady, worldTree }: ScenarioPreviewProps) {
   const enabled = useScenarioPreviewStore((s) => s.enabled);
@@ -258,14 +353,35 @@ export function useSpeckleScenarioPreview({ isViewerReady, worldTree }: Scenario
       group.add(createParcoursSegment(segment.from, segment.to, color));
     });
 
+    // Start / End label sprites — overlapping endpoints share one combined sprite
+    for (const endpoint of resolveEndpointLabels(worldTree, parcours)) {
+      const sprite = createLabelSprite(endpointLabelText(endpoint.kinds));
+      sprite.userData.anchor = endpoint.anchor.clone();
+      sprite.position.copy(endpoint.anchor);
+      group.add(sprite);
+    }
+
     const scene = viewer.getRenderer().scene;
     if (scene && group.children.length > 0) {
       scene.add(group);
       groupRef.current = group;
+      updateScenarioLabels(group);
       viewer.requestRender();
+    } else {
+      disposeGroup(group);
+    }
+
+    let rafId: number | null = null;
+    if (groupRef.current === group) {
+      const tick = () => {
+        updateScenarioLabels(group);
+        rafId = requestAnimationFrame(tick);
+      };
+      rafId = requestAnimationFrame(tick);
     }
 
     return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
       const { viewer: v } = useSpeckleEngineStore.getState();
       if (groupRef.current) {
         const s = v?.getRenderer().scene;
