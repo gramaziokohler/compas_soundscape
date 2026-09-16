@@ -683,6 +683,14 @@ export const SPECKLE_VIEWER_RETRY = {
   RETRY_DELAY_MS: 2000,         // Delay between retries in milliseconds (2 seconds)
 } as const;
 
+// Speckle file ingestion polling configuration.
+// `startFileIngestion` is asynchronous on Speckle's side — after upload we poll the
+// ingestion status until the model version is created (or the job fails).
+export const SPECKLE_INGESTION = {
+  POLL_INTERVAL_MS: 2000,       // Delay between status polls
+  MAX_ATTEMPTS: 150,            // 5 minutes — large IFC/RVT conversions can be slow
+} as const;
+
 // ============================================================================
 // Sound Event Detection (SED) Configuration
 // ============================================================================

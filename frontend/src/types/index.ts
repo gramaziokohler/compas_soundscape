@@ -79,6 +79,8 @@ export interface SpeckleUploadData {
   file_id: string;
   url: string;
   object_id: string;
+  /** Async Speckle file-ingestion job id — poll `/api/speckle/ingestion/{id}` for the version. */
+  ingestion_id?: string;
   auth_token?: string;
 }
 

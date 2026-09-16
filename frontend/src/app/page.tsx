@@ -1604,6 +1604,8 @@ function HomeContent() {
       const uploadResponse = await apiService.uploadFile(file);
 
       // Extract speckle data from response
+      // (`apiService.uploadFile` already waited for Speckle ingestion, so version_id
+      // / object_id are resolved by the time we get here.)
       const speckleData = 'speckle' in uploadResponse ? uploadResponse.speckle : undefined;
 
       if (speckleData) {

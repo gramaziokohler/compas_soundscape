@@ -1,4 +1,4 @@
-import { API_BASE_URL } from '@/utils/constants';
+import { API_BASE_URL, SPECKLE_INGESTION } from '@/utils/constants';
 import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType } from '@/types';
 import type { ImpulseResponseMetadata } from '@/types/audio';
 import type { ModalAnalysisRequest, ModalAnalysisResult } from '@/types/modal';
@@ -46,6 +46,64 @@ async function fetchWithErrorHandling(
   } catch (error) {
     handleApiError(error, context);
   }
+}
+
+// ─── Speckle file-ingestion polling ─────────────────────────────────────────
+//
+// `POST /api/upload` triggers Speckle's `startFileIngestion`, which creates the
+// model version asynchronously. Every upload caller (viewer, file-upload store,
+// 3d-model analysis) needs the real version_id/object_id, so `uploadFile` waits
+// here until ingestion succeeds instead of each caller racing the pipeline.
+
+export interface SpeckleIngestionStatus {
+  status: string;
+  progress_message: string | null;
+  version_id: string | null;
+  object_id: string | null;
+  error: string | null;
+}
+
+/** Single probe of an ingestion job's status. Throws on transport/HTTP error. */
+async function fetchSpeckleIngestionStatus(ingestionId: string): Promise<SpeckleIngestionStatus> {
+  const response = await fetchWithErrorHandling(
+    `${API_BASE_URL}/api/speckle/ingestion/${encodeURIComponent(ingestionId)}`,
+    undefined,
+    'Speckle ingestion status'
+  );
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: 'Failed to get ingestion status' }));
+    throw new Error(err.detail || 'Failed to get ingestion status');
+  }
+
+  return response.json();
+}
+
+/**
+ * Poll an ingestion job until it produces a model version.
+ * Transient probe failures are retried; terminal job states throw.
+ */
+async function waitForSpeckleIngestion(
+  ingestionId: string
+): Promise<{ versionId: string; objectId: string }> {
+  for (let attempt = 0; attempt < SPECKLE_INGESTION.MAX_ATTEMPTS; attempt++) {
+    let terminalError: Error | null = null;
+    try {
+      const status = await fetchSpeckleIngestionStatus(ingestionId);
+      if (status.status === 'success' && status.version_id) {
+        return { versionId: status.version_id, objectId: status.object_id ?? '' };
+      }
+      if (status.status === 'failed' || status.status === 'cancelled' || status.status === 'invalid') {
+        terminalError = new Error(status.error || `Speckle ingestion ${status.status}`);
+      }
+    } catch (err) {
+      // Transient polling failures (network/502) — keep waiting.
+      console.warn('[api] Speckle ingestion status poll failed, retrying:', err);
+    }
+    if (terminalError) throw terminalError;
+    await new Promise((resolve) => setTimeout(resolve, SPECKLE_INGESTION.POLL_INTERVAL_MS));
+  }
+  throw new Error('Speckle ingestion did not finish in time');
 }
 
 // ─── Unified job-store polling (GET/POST /api/jobs/{id} and /cancel) ────────
@@ -387,7 +445,18 @@ export const apiService = {
         throw new Error(err.detail || 'File upload failed');
       }
 
-      return await response.json();
+      const data = await response.json();
+
+      // Speckle file ingestion is asynchronous — wait for the created model version so
+      // the viewer can load it and simulations have a valid version_id.
+      const speckle = (data as FileUploadResponse | undefined)?.speckle;
+      if (speckle?.ingestion_id && !speckle.version_id) {
+        const resolved = await waitForSpeckleIngestion(speckle.ingestion_id);
+        speckle.version_id = resolved.versionId;
+        speckle.object_id = resolved.objectId;
+      }
+
+      return data;
     } catch (error) {
       handleApiError(error, 'File upload');
     }

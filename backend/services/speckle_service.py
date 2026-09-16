@@ -264,6 +264,79 @@ class SpeckleService:
             logger.error(f"Model exists but cannot be retrieved. Available models: {fetch_model_by_name('')}")
             raise Exception(f"Could not create or find model '{model_name}'. The model exists but cannot be retrieved. Error: {create_error}")
 
+    def get_ingestion_status(self, ingestion_id: str) -> Optional[Dict]:
+        """
+        Read the current status of a Speckle file ingestion job (single, non-blocking probe).
+
+        `fileUploadMutations.startFileIngestion` is asynchronous: the model version
+        (and therefore the object the viewer loads) is only created once ingestion
+        succeeds. The client polls this to know when the new model is loadable and
+        to obtain the resolved version/object ids.
+
+        Args:
+            ingestion_id: The `id` returned by `startFileIngestion`.
+
+        Returns:
+            dict: {status, progress_message, version_id, object_id, error} or None on
+            transport failure. `status` is the ModelIngestionStatus enum value
+            (queued | processing | success | failed | cancelled | invalid).
+        """
+        if not self.client or not self.project_id:
+            logger.error("Not authenticated or no project selected.")
+            return None
+
+        status_query = gql("""
+        query IngestionStatus($ingestionId: ID!, $projectId: String!) {
+            project(id: $projectId) {
+                ingestion(id: $ingestionId) {
+                    statusData {
+                        ... on ModelIngestionQueuedStatus { status progressMessage }
+                        ... on ModelIngestionProcessingStatus { status progressMessage }
+                        ... on ModelIngestionSuccessStatus { status versionId }
+                        ... on ModelIngestionFailedStatus { status errorReason }
+                        ... on ModelIngestionCancelledStatus { status }
+                        ... on ModelIngestionInvalidStatus { status }
+                    }
+                }
+            }
+        }
+        """)
+
+        try:
+            result = self.client.httpclient.execute(
+                status_query,
+                {"ingestionId": ingestion_id, "projectId": self.project_id},
+            )
+            status_data = (
+                (result.get("project") or {}).get("ingestion") or {}
+            ).get("statusData") or {}
+        except Exception as exc:
+            logger.warning(f"Ingestion status query failed: {exc}")
+            return None
+
+        status = status_data.get("status")
+        version_id = status_data.get("versionId")
+
+        object_id = None
+        if status == "success" and version_id:
+            try:
+                version = self.client.version.get(
+                    version_id=version_id, project_id=self.project_id
+                )
+                object_id = getattr(version, "referenced_object", None)
+            except Exception as exc:
+                logger.warning(
+                    f"Could not resolve referenced object for version {version_id}: {exc}"
+                )
+
+        return {
+            "status": status,
+            "progress_message": status_data.get("progressMessage"),
+            "version_id": version_id,
+            "object_id": object_id,
+            "error": status_data.get("errorReason"),
+        }
+
     def upload_model(self, file_path: str, file_type: str, model_name: str = None) -> Optional[Dict]:
         """
         Upload 3dm/obj/ifc file to Speckle using the file upload API.
@@ -272,8 +345,8 @@ class SpeckleService:
         1. Generate presigned upload URL
         2. Upload file to S3
         3. Get or create model (reuses existing model to create new version)
-        4. Trigger file import
-        5. Return result (import happens asynchronously)
+        4. Trigger file ingestion (startFileIngestion) — asynchronous on Speckle's side
+        5. Return model_id + URL + ingestion_id; the client polls for the created version
 
         **Version Handling:**
         - If a model with the same name exists, the file will be uploaded as a NEW VERSION
@@ -352,14 +425,25 @@ class SpeckleService:
 
             model = self._get_or_create_model(model_name, file_type, file_name)
 
-            # Step 4: Trigger file import
-            logger.info("Step 4/5: Triggering file import...")
-            start_import_mutation = gql("""
-            mutation StartFileImport($input: StartFileImportInput!) {
+            # Step 4: Trigger file ingestion
+            # NOTE: `startFileImport` was removed from the Speckle Server GraphQL API
+            # (2026.9 release) — calling it now fails with a 400 UNSUPPORTED_FILE_TYPE.
+            # The replacement is `fileUploadMutations.startFileIngestion`, which takes the
+            # same `StartFileImportInput` and returns a `ModelIngestion` with a `statusData` union.
+            logger.info("Step 4/5: Triggering file ingestion...")
+            start_ingestion_mutation = gql("""
+            mutation StartFileIngestion($input: StartFileImportInput!) {
                 fileUploadMutations {
-                    startFileImport(input: $input) {
+                    startFileIngestion(input: $input) {
                         id
-                        convertedStatus
+                        statusData {
+                            ... on ModelIngestionQueuedStatus { status }
+                            ... on ModelIngestionProcessingStatus { status }
+                            ... on ModelIngestionSuccessStatus { status }
+                            ... on ModelIngestionFailedStatus { status }
+                            ... on ModelIngestionCancelledStatus { status }
+                            ... on ModelIngestionInvalidStatus { status }
+                        }
                     }
                 }
             }
@@ -374,29 +458,29 @@ class SpeckleService:
                 }
             }
             
-            import_response = self.client.httpclient.execute(start_import_mutation, import_variables)
-            import_id = import_response["fileUploadMutations"]["startFileImport"]["id"]
-            import_status = import_response["fileUploadMutations"]["startFileImport"]["convertedStatus"]
-            logger.info(f"File import started: {import_id}, status: {import_status}")
+            import_response = self.client.httpclient.execute(start_ingestion_mutation, import_variables)
+            ingestion = import_response["fileUploadMutations"]["startFileIngestion"]
+            ingestion_id = ingestion["id"]
+            import_status = (ingestion.get("statusData") or {}).get("status")
+            logger.info(f"File ingestion started: {ingestion_id}, status: {import_status}")
 
-            # Step 5: Return URL immediately - import happens asynchronously
-            # The frontend can access the model once it's ready
-            logger.info("Step 5/5: Import queued - Speckle will process the file in the background")
-            
-            # Build Speckle viewer URL pointing to the specific version
-            # Include the version ID so the viewer can load the specific upload : REMOVED
+            # Step 5: Return immediately — ingestion runs asynchronously on Speckle.
+            # The client polls `get_ingestion_status(ingestion_id)` until the version exists,
+            # then loads the model. We must NOT return the ingestion id as `version_id`: for
+            # simulations the app needs the real version id, which only exists after ingestion.
             viewer_url = f"https://{SPECKLE_SERVER_URL}/projects/{self.project_id}/models/{model.id}"
-            
+
             result = {
                 "model_id": model.id,
-                "version_id": import_id,
+                "version_id": "",          # resolved by the client once ingestion succeeds
                 "file_id": file_id,
                 "url": viewer_url,
-                "object_id": import_id
+                "object_id": "",
+                "ingestion_id": ingestion_id,
             }
 
-            logger.info(f"File upload initiated: {result['url']}")
-            logger.info("Note: Model will be available once Speckle completes the import")
+            logger.info(f"File upload initiated: {result['url']} (ingestion {ingestion_id})")
+            logger.info("Ingestion is async — client polls for status until the model is ready")
             return result
 
         except Exception as e:

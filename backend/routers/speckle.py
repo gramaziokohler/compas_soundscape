@@ -85,6 +85,26 @@ async def get_project_models(req: Request):
     return result
 
 
+@router.get("/ingestion/{ingestion_id}")
+async def get_ingestion_status(ingestion_id: str):
+    """
+    Poll the status of an asynchronous Speckle file ingestion.
+
+    `POST /api/upload` triggers `startFileIngestion`, which creates the model
+    version asynchronously. Clients poll this until ``status == "success"`` to get
+    the resolved ``version_id`` / ``object_id`` (needed both to load the model in
+    the viewer and to run acoustic simulations), or until a terminal failure.
+    """
+    _ensure_authenticated()
+
+    status = await run_in_threadpool(speckle_service.get_ingestion_status, ingestion_id)
+
+    if status is None:
+        raise HTTPException(status_code=502, detail="Failed to query Speckle ingestion status")
+
+    return status
+
+
 @router.post("/model-entities")
 async def get_model_entities(request: SpeckleModelRequest):
     """

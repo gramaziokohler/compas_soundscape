@@ -488,18 +488,7 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
       >
         {savedModels.length > 0 && (
           <>
-            <p className="text-[10px] font-medium uppercase tracking-wide text-neutral-400" style={{ paddingLeft: 2 }}>
-              Last saved by you
-            </p>
             {savedModels.map(renderCard)}
-            {otherModels.length > 0 && (
-              <p
-                className="text-[10px] font-medium uppercase tracking-wide text-neutral-400"
-                style={{ paddingLeft: 2, marginTop: MODEL_BROWSER_STYLES.CARD_GAP / 2 }}
-              >
-                All models
-              </p>
-            )}
           </>
         )}
         {otherModels.map(renderCard)}

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Spinner } from '@/components/ui/Spinner';
 
 interface UploadedFileLike {
@@ -35,6 +35,7 @@ export function FileUploadArea({
 }: FileUploadAreaProps) {
   const [localLoading, setLocalLoading] = useState(false);
   const [pendingFileName, setPendingFileName] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (file) {
@@ -67,14 +68,25 @@ export function FileUploadArea({
     }
   };
 
+  const handleInternalDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    // Required synchronously so the browser allows a drop at all.
+    e.preventDefault();
+    onDragOver(e);
+  };
+
   const handleInternalDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.persist?.();
+    // Must run synchronously: awaiting before this lets the browser's default
+    // drop action (open/download the file) fire before onDrop is reached.
+    e.preventDefault();
+    e.stopPropagation();
     const files = e.dataTransfer.files ? Array.from(e.dataTransfer.files) : [];
     if (files.length > 0) {
       setLocalLoading(true);
       setPendingFileName(files[0].name);
     }
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Call synchronously: DataTransfer is only valid during the drop dispatch,
+    // so the consumer must read e.dataTransfer.files before any await.
     try {
       await onDrop(e);
     } catch (error) {
@@ -88,12 +100,20 @@ export function FileUploadArea({
   const isLoading = isUploading || localLoading;
   const displayName = file?.name || pendingFileName;
 
+  const openFilePicker = () => {
+    if (isLoading) return;
+    inputRef.current?.click();
+  };
+
   return (
     <div
-      onDragOver={onDragOver}
+      onDragOver={handleInternalDragOver}
       onDragLeave={onDragLeave}
       onDrop={handleInternalDrop}
+      onClick={openFilePicker}
       className={`relative border-2 border-dashed rounded-lg p-4 text-center transition-colors border-primary bg-blue-tint text-foreground hover:bg-primary-lighter dark:border-primary-hover dark:bg-primary-light dark:text-on-blue-muted dark:hover:border-primary dark:hover:bg-primary-hover ${
+        isLoading ? 'cursor-default' : 'cursor-pointer'
+      } ${
         isDragging ? 'border-primary bg-primary-lighter dark:border-primary dark:bg-primary-hover' : ''
       }`}
     >
@@ -120,12 +140,11 @@ export function FileUploadArea({
             <p className="text-xs text-text-3 dark:text-on-blue-muted">
               {(file.size / 1024 / 1024).toFixed(2)} MB
             </p>
-            <label
-              htmlFor={inputId}
-              className="cursor-pointer font-medium text-xs text-blue-text hover:opacity-80 transition-opacity dark:text-primary"
+            <span
+              className="font-medium text-xs text-blue-text hover:opacity-80 transition-opacity dark:text-primary"
             >
               Choose different file
-            </label>
+            </span>
           </>
         ) : (
           <>
@@ -135,22 +154,22 @@ export function FileUploadArea({
             <p className="text-xs font-medium">
               Drag &amp; drop or
             </p>
-            <label
-              htmlFor={inputId}
-              className="cursor-pointer font-medium text-xs text-blue-text hover:opacity-80 transition-opacity dark:text-secondary-hover"
+            <span
+              className="font-medium text-xs text-blue-text hover:opacity-80 transition-opacity dark:text-secondary-hover"
             >
               Browse ({acceptedExtensions})
-            </label>
+            </span>
           </>
         )}
         <input
+          ref={inputRef}
           id={inputId}
           type="file"
           onChange={handleInternalFileChange}
           accept={acceptedFormats}
           multiple={multiple}
           disabled={isLoading}
-          className={`absolute inset-0 w-full h-full opacity-0 z-10 ${isLoading ? 'cursor-default pointer-events-none' : 'cursor-pointer'}`}
+          className="hidden"
         />
       </div>
     </div>

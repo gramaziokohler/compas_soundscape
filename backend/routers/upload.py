@@ -5,6 +5,7 @@ import os
 import shutil
 import logging
 from fastapi import APIRouter, File, UploadFile, HTTPException
+from fastapi.concurrency import run_in_threadpool
 
 from services.speckle_service import SpeckleService
 from config.constants import TEMP_UPLOADS_DIR, SAMPLE_IFC_FILE_PATH
@@ -71,12 +72,16 @@ async def upload_and_process_file(file: UploadFile = File(...)):
                 if speckle_service.authenticate():
                     speckle_service.get_or_create_project()
             
-            # Upload model to Speckle
+            # Upload model to Speckle.
+            # `upload_model` performs blocking HTTP (S3 upload + GraphQL) so it must
+            # run off the event loop. Speckle ingestion is async — the client polls
+            # `/api/speckle/ingestion/{id}` for the created version.
             if speckle_service.project_id:
-                speckle_data = speckle_service.upload_model(
+                speckle_data = await run_in_threadpool(
+                    speckle_service.upload_model,
                     file_path=temp_path,
                     file_type=file_type,
-                    model_name=os.path.splitext(file.filename)[0]
+                    model_name=os.path.splitext(file.filename)[0],
                 )
                 
                 if speckle_data:
