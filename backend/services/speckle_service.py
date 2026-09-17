@@ -44,6 +44,7 @@ Documentation:
 import os
 import json
 import logging
+import threading
 from typing import Optional, Dict, List
 from dotenv import load_dotenv
 from gql import gql
@@ -61,10 +62,63 @@ from config.constants import (
     SPECKLE_SERVER_URL,
     SPECKLE_PROJECT_NAME,
     SPECKLE_SUPPORTED_FORMATS,
+    REDIS_URL,
 )
 
 
 logger = logging.getLogger(__name__)
+
+# Speckle's 2026.9 file ingestion creates *bundle-only* versions (referencedObject
+# `bundle.<project>.<model>.<version>`) whose data lives in parquet artifacts on the
+# `/api/v2` rail — there is no legacy object graph. The web viewer pinned in this app
+# (and the acoustic pipeline) can only read classic object graphs, so a bundle version
+# is re-materialized once into a normal version and the result is cached here (keyed by
+# the bundle version id) to keep polled ingestion checks idempotent.
+_LEGACY_VERSION_CACHE: Dict[str, Dict[str, str]] = {}
+_LEGACY_VERSION_LOCK = threading.Lock()
+_MATERIALIZE_LOCK = threading.Lock()
+_LEGACY_VERSION_REDIS_PREFIX = "speckle:legacy_version:"
+_redis_client = None
+
+
+def _get_redis():
+    """Lazily create a short-timeout sync Redis client (best-effort cache)."""
+    global _redis_client
+    if _redis_client is None:
+        import redis as _redis
+
+        _redis_client = _redis.from_url(
+            REDIS_URL, decode_responses=True, socket_connect_timeout=2, socket_timeout=2
+        )
+    return _redis_client
+
+
+def _cache_get_legacy_version(bundle_version_id: str) -> Optional[Dict[str, str]]:
+    with _LEGACY_VERSION_LOCK:
+        cached = _LEGACY_VERSION_CACHE.get(bundle_version_id)
+    if cached:
+        return cached
+    try:
+        raw = _get_redis().get(_LEGACY_VERSION_REDIS_PREFIX + bundle_version_id)
+        if raw:
+            data = json.loads(raw)
+            with _LEGACY_VERSION_LOCK:
+                _LEGACY_VERSION_CACHE[bundle_version_id] = data
+            return data
+    except Exception as exc:
+        logger.warning(f"Legacy-version Redis cache read failed: {exc}")
+    return None
+
+
+def _cache_set_legacy_version(bundle_version_id: str, data: Dict[str, str]) -> None:
+    with _LEGACY_VERSION_LOCK:
+        _LEGACY_VERSION_CACHE[bundle_version_id] = data
+    try:
+        _get_redis().set(
+            _LEGACY_VERSION_REDIS_PREFIX + bundle_version_id, json.dumps(data)
+        )
+    except Exception as exc:
+        logger.warning(f"Legacy-version Redis cache write failed: {exc}")
 
 
 class SpeckleService:
@@ -201,7 +255,9 @@ class SpeckleService:
                 }
                 """)
 
-                result = self.client.httpclient.execute(query, {"projectId": self.project_id})
+                result = self.client.httpclient.execute(
+                    query, variable_values={"projectId": self.project_id}
+                )
                 models = result.get("project", {}).get("models", {}).get("items", [])
 
                 logger.info(f"Found {len(models)} models in project")
@@ -264,6 +320,88 @@ class SpeckleService:
             logger.error(f"Model exists but cannot be retrieved. Available models: {fetch_model_by_name('')}")
             raise Exception(f"Could not create or find model '{model_name}'. The model exists but cannot be retrieved. Error: {create_error}")
 
+    def _materialize_legacy_version(self, bundle_version_id: str) -> Optional[Dict[str, str]]:
+        """
+        Convert a bundle-only version into a classic legacy version the app can load.
+
+        Speckle's new ingestion stores uploaded files as bundles with no legacy object
+        graph. This reads the bundle (``operations.receive`` dispatches on the
+        ``bundle.`` reference), re-sends it as a normal object graph, and creates a
+        new version pointing at it. The web viewer and the acoustic pipeline then work
+        exactly as they do for connector-published models.
+
+        Args:
+            bundle_version_id: A version id whose ``referencedObject`` is a bundle ref.
+
+        Returns:
+            dict: {"version_id", "object_id"} of the legacy version, or None on failure.
+        """
+        cached = _cache_get_legacy_version(bundle_version_id)
+        if cached:
+            return cached
+
+        if not self.client or not self.project_id:
+            logger.error("Not authenticated or no project selected.")
+            return None
+
+        try:
+            # Serialize the heavy materialization: concurrent ingestion polls must not
+            # each download + re-send the (potentially large) bundle.
+            with _MATERIALIZE_LOCK:
+                cached = _cache_get_legacy_version(bundle_version_id)
+                if cached:
+                    return cached
+
+                version = self.client.version.get(
+                    version_id=bundle_version_id, project_id=self.project_id
+                )
+                referenced_object = getattr(version, "referenced_object", None)
+                if not referenced_object:
+                    logger.error(f"Version {bundle_version_id} has no referenced object")
+                    return None
+
+                # Already a classic object graph — nothing to materialize.
+                if not referenced_object.startswith("bundle."):
+                    result = {"version_id": version.id, "object_id": referenced_object}
+                    _cache_set_legacy_version(bundle_version_id, result)
+                    return result
+
+                # bundle.<projectId>.<modelId>.<versionId>
+                parts = referenced_object.split(".")
+                if len(parts) != 4:
+                    logger.error(f"Unrecognized bundle reference: {referenced_object}")
+                    return None
+                bundle_model_id = parts[2]
+
+                logger.info(
+                    f"Materializing bundle version {bundle_version_id} into a legacy version..."
+                )
+                transport = ServerTransport(stream_id=self.project_id, client=self.client)
+                base = operations.receive(referenced_object, remote_transport=transport)
+                legacy_object_id = operations.send(base, [transport])
+                legacy_version = self.client.version.create(
+                    CreateVersionInput(
+                        project_id=self.project_id,
+                        model_id=bundle_model_id,
+                        object_id=legacy_object_id,
+                        message="Legacy copy materialized for the soundscape viewer",
+                        source_application="compas-soundscape",
+                    )
+                )
+
+                result = {"version_id": legacy_version.id, "object_id": legacy_object_id}
+                _cache_set_legacy_version(bundle_version_id, result)
+                logger.info(
+                    f"Materialized {bundle_version_id} -> legacy version "
+                    f"{legacy_version.id} (object {legacy_object_id})"
+                )
+                return result
+        except Exception as exc:
+            logger.error(f"Failed to materialize bundle version {bundle_version_id}: {exc}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
+
     def get_ingestion_status(self, ingestion_id: str) -> Optional[Dict]:
         """
         Read the current status of a Speckle file ingestion job (single, non-blocking probe).
@@ -305,7 +443,7 @@ class SpeckleService:
         try:
             result = self.client.httpclient.execute(
                 status_query,
-                {"ingestionId": ingestion_id, "projectId": self.project_id},
+                variable_values={"ingestionId": ingestion_id, "projectId": self.project_id},
             )
             status_data = (
                 (result.get("project") or {}).get("ingestion") or {}
@@ -316,22 +454,33 @@ class SpeckleService:
 
         status = status_data.get("status")
         version_id = status_data.get("versionId")
-
+        progress_message = status_data.get("progressMessage")
         object_id = None
+
         if status == "success" and version_id:
-            try:
-                version = self.client.version.get(
-                    version_id=version_id, project_id=self.project_id
+            # The ingested version is bundle-only; convert it into a classic version the
+            # viewer/simulation pipeline can read. If that fails we report no ids so the
+            # client keeps polling rather than loading an unreadable bundle reference.
+            legacy = self._materialize_legacy_version(version_id)
+            if legacy:
+                version_id = legacy["version_id"]
+                object_id = legacy["object_id"]
+            else:
+                logger.error(
+                    f"Ingestion {ingestion_id} succeeded but {version_id} could not be "
+                    "materialized into a readable legacy version"
                 )
-                object_id = getattr(version, "referenced_object", None)
-            except Exception as exc:
-                logger.warning(
-                    f"Could not resolve referenced object for version {version_id}: {exc}"
-                )
+                return {
+                    "status": status,
+                    "progress_message": "Preparing the model for the viewer...",
+                    "version_id": None,
+                    "object_id": None,
+                    "error": None,
+                }
 
         return {
             "status": status,
-            "progress_message": status_data.get("progressMessage"),
+            "progress_message": progress_message,
             "version_id": version_id,
             "object_id": object_id,
             "error": status_data.get("errorReason"),
@@ -395,7 +544,9 @@ class SpeckleService:
                 }
             }
             
-            response = self.client.httpclient.execute(generate_url_mutation, variables)
+            response = self.client.httpclient.execute(
+                generate_url_mutation, variable_values=variables
+            )
             upload_url = response["fileUploadMutations"]["generateUploadUrl"]["url"]
             file_id = response["fileUploadMutations"]["generateUploadUrl"]["fileId"]
             logger.info(f"Got upload URL and file ID: {file_id}")
@@ -458,7 +609,9 @@ class SpeckleService:
                 }
             }
             
-            import_response = self.client.httpclient.execute(start_ingestion_mutation, import_variables)
+            import_response = self.client.httpclient.execute(
+                start_ingestion_mutation, variable_values=import_variables
+            )
             ingestion = import_response["fileUploadMutations"]["startFileIngestion"]
             ingestion_id = ingestion["id"]
             import_status = (ingestion.get("statusData") or {}).get("status")

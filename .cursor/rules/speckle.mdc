@@ -26,6 +26,11 @@ project_id   (str)  — stable, set in env / project settings
               └── referenced_object  (str)  — root hash to pass to receive()
 ```
 
+`referenced_object` is either a **classic 32-hex object hash** (connector / `operations.send`
+versions — the app can read it) or a **bundle reference** `bundle.<projectId>.<modelId>.<versionId>`
+(created by Speckle's 2026.9 file ingestion — see § File Uploads below). Always branch on the
+`bundle.` prefix before treating it as an object id.
+
 ## Fetching Models & Versions
 
 ```python
@@ -64,6 +69,10 @@ root_object = operations.receive(obj_id=ref_obj, remote_transport=transport)
 ```
 
 `operations.receive()` is **synchronous and blocking** — always run it in an executor for async routes.
+With `specklepy>=2026.9` it also **dispatches on `bundle.` references** (downloads the parquet bundle
+and projects it onto a classic `Collection`/`DataObject` tree) — but only when given an
+**authenticated** `ServerTransport` whose `stream_id` matches the bundle's project. This requires the
+`bundle` extra (`specklepy[bundle]`, pulls in `pyarrow`).
 
 ## Sending / Publishing
 
@@ -75,13 +84,69 @@ obj = DataObject(data={"key": "value"})
 obj_id = operations.send(obj, [transport])
 
 version_input = CreateVersionInput(
-    objectId=obj_id,
-    modelId=model_id,
-    projectId=project_id,
+    object_id=obj_id,          # snake_case (specklepy>=2026.9); aliases for the GraphQL camelCase
+    model_id=model_id,
+    project_id=project_id,
     message="description",
-    sourceApplication="Python",
+    source_application="Python",
 )
 version = client.version.create(version_input)
+```
+
+## File Uploads — Bundle-Only Versions (Speckle 2026.9)
+
+Speckle's 2026.9 file ingestion **removed `startFileImport`** (now hard-fails with
+`UNSUPPORTED_FILE_TYPE`) and replaced it with `startFileIngestion`, which stores uploaded files as
+**bundle-only versions**: `Version.referencedObject = bundle.<projectId>.<modelId>.<versionId>`,
+payload on the `/api/v2` parquet rail, **no legacy object graph**.
+
+- The app's pinned `@speckle/viewer@2.26.9` and `specklepy<2026.9` **cannot read bundle versions**
+  — the objects REST endpoints return `BUNDLE_REFERENCE_NOT_FOUND`. A bundle version never loads in
+  the app (even minutes later) while the official latest Speckle web viewer shows it fine.
+- Connector / `operations.send` versions keep a plain 32-hex `referencedObject` and work as before.
+
+**The app re-materializes every ingested bundle into a normal legacy version.** Flow
+(`routers/upload.py` → `services/speckle_service.py`):
+
+```
+POST /api/upload
+  └─ SpeckleService.upload_model()               # run_in_threadpool (blocking HTTP)
+       ├─ generateUploadUrl + S3 PUT
+       ├─ _get_or_create_model()
+       └─ fileUploadMutations.startFileIngestion # async; returns ModelIngestion.id
+            → {model_id, url, ingestion_id, version_id: ""}
+client polls GET /api/speckle/ingestion/{ingestion_id}
+  └─ get_ingestion_status()
+       └─ on status == "success":
+            _materialize_legacy_version(versionId)
+              ├─ client.version.get() → referencedObject (bundle.<project>.<model>.<version>)
+              ├─ operations.receive(bundle_ref, ServerTransport)  # bundle dispatch → Collection
+              ├─ operations.send(base, [transport])               # classic object graph
+              └─ client.version.create(CreateVersionInput(...))   # legacy version (hex ref)
+            → returns the LEGACY version_id / object_id
+```
+
+Rules:
+
+1. **Never return the ingestion id or the bundle version id as `version_id`.** The frontend viewer
+   and the acoustic pipeline (`get_model_geometry`) both need a classic object graph.
+2. Materialization is cached (in-process dict **+** Redis `speckle:legacy_version:<bundleVersionId>`)
+   so polled status checks are idempotent and concurrent polls do not race (guarded by
+   `_MATERIALIZE_LOCK`).
+3. If materialization fails, `get_ingestion_status` returns `success` with **no** ids so the client
+   keeps polling instead of loading an unreadable bundle.
+4. Requires `specklepy[bundle]==2026.9.0b3` + `gql==4.0.0` (`requirements.txt`).
+5. `Model.to_base()` projection → root `Collection(applicationId="artifact-root")`, nested
+   `Collection`s, `DataObject(displayValue=[Mesh])`, `renderMaterialProxies`,
+   `instanceDefinitionProxies`, `units`, `version = 4`.
+
+### gql 4 API change
+
+`gql>=4` dropped positional variables — always pass them by keyword:
+
+```python
+self.client.httpclient.execute(query, variable_values={"projectId": pid})  # ✅
+self.client.httpclient.execute(query, {"projectId": pid})                  # ❌ TypeError
 ```
 
 ## Traversing the Object Tree
@@ -138,11 +203,15 @@ Scale to metres: `mm=0.001, cm=0.01, ft=0.3048, in=0.0254`.
 | `get_model_geometry(project_id, version_id)` | Returns `{vertices, faces, object_ids, object_names, object_face_ranges, units}` |
 | `get_model_entities(project_id, version_id)` | Derives entity dicts `{id, index, name, type, speckle_type, layer, material, bounds}` |
 | `get_project_models_detailed(project_id)` | Returns project + all models with `latest_version` |
-| `upload_model(file_path, file_type, model_name)` | Converts file → Speckle objects, sends, creates version |
+| `upload_model(file_path, file_type, model_name)` | Uploads file + `startFileIngestion`; returns `{model_id, url, ingestion_id, ...}` (version resolved by the client polling) |
+| `get_ingestion_status(ingestion_id)` | Polls the ingestion job; on success **materializes the bundle into a legacy version** and returns its `version_id` / `object_id` |
+| `_materialize_legacy_version(bundle_version_id)` | Bundle → classic object graph → new legacy version (cached in Redis) |
 
 ## REST Endpoints
 
 - `GET  /api/speckle/models` → project + all models with `latest_version`
+- `POST /api/upload` (multipart) → `{speckle: {model_id, url, ingestion_id, version_id}, geometry}`
+- `GET  /api/speckle/ingestion/{ingestion_id}` → `{status, progress_message, version_id, object_id, error}`
 - `POST /api/speckle/model-entities` `{project_id, version_id}` → entity list
 - `POST /api/speckle/model-screenshots` `{project_id, version_id}` → 3 base64 PNGs
 
@@ -221,6 +290,11 @@ Key facts (verified against `@speckle/viewer@2.26.9`):
 - Passing a `version_id` as `model_id` to `get_versions()` → `BRANCH_NOT_FOUND` GraphQL error.
 - `operations.receive()` blocks — run in `asyncio.get_event_loop().run_in_executor(None, ...)` for async routes.
 - `get_member_names()` skips `@`-prefixed members by default; `@` prefix = detached chunks (large arrays).
+- `fileUploadMutations.startFileImport` is **gone** (400 `UNSUPPORTED_FILE_TYPE`) — use `startFileIngestion`
+  and never return its ingestion id as a version id (see § File Uploads above).
+- `gql>=4`: `httpclient.execute(doc, variables)` raises `TypeError` — pass `variable_values=...`.
+- A `referencedObject` starting with `bundle.` is unreadable by the pinned viewer / old specklepy; it
+  must be re-materialized (see § File Uploads above).
 
 ## FilteringExtension — Semantics (verified @speckle/viewer@2.26.9)
 

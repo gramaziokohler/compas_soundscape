@@ -6,7 +6,8 @@
  *
  * Features:
  * - Expandable/collapsible hierarchy
- * - Hide/isolate buttons
+ * - Acoustic-region checkbox (selection phase)
+ * - Hide/isolate buttons (normal browsing)
  * - Hover highlighting
  * - Selection support
  * - Double-click zoom
@@ -17,12 +18,12 @@
 import React, { CSSProperties, useMemo } from 'react';
 import { VirtualTreeItem as TreeItem, getHeaderAndSubheader, getGeometryLeafIdsFromNode } from '@/hooks/useSpeckleTree';
 import { useSpeckleStore } from '@/store';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { TreeItemAcousticControls } from '@/components/scene/TreeItemAcousticControls';
 import {
   OBJECT_EXPLORER_PANEL_ACTIONS_WIDTH_PX,
   objectExplorerAcousticGridStyle,
 } from '@/components/scene/objectExplorerAcousticLayout';
-import { AudioLines } from 'lucide-react';
 import type { MaterialOption } from '@/components/ui/MaterialSelect';
 
 interface VirtualTreeItemProps {
@@ -42,15 +43,17 @@ interface VirtualTreeItemProps {
   showScattering?: boolean;
   sortedMaterials?: MaterialOption[];
   materialColors?: Map<string, string>;
-  /** When true, do not render the isolate button (used in acoustic mode) */
+  /** When true, do not render the isolate/hide buttons (acoustic mode, selection phase). */
   hideIsolateButton?: boolean;
-  /** When true, render a "Select" button to designate this layer as the acoustic layer */
-  isLayerSelectionMode?: boolean;
-  onSelectAsAcousticLayer?: () => void;
-  /** When true, this row IS the acoustic layer row — render a red reload button instead of hide */
+  /** True while the acoustic-region selection phase is active — renders a checkbox and hides hide/isolate. */
+  selectionPhase?: boolean;
+  /** Tri-state state for the acoustic-region checkbox. */
+  selectionChecked?: boolean;
+  selectionIndeterminate?: boolean;
+  /** Toggle this row's membership in the acoustic region. */
+  onToggleSelection?: (item: TreeItem) => void;
+  /** When true, this row IS (part of) the defined acoustic region — suppress its action buttons. */
   isAcousticLayerRow?: boolean;
-  /** Handler for the red reload button (resets acoustic layer assignment) */
-  onResetAcousticLayer?: () => void;
 }
 
 export function VirtualTreeItem({
@@ -71,10 +74,11 @@ export function VirtualTreeItem({
   sortedMaterials,
   materialColors,
   hideIsolateButton,
-  isLayerSelectionMode,
-  onSelectAsAcousticLayer,
+  selectionPhase = false,
+  selectionChecked = false,
+  selectionIndeterminate = false,
+  onToggleSelection,
   isAcousticLayerRow,
-  onResetAcousticLayer,
 }: VirtualTreeItemProps) {
   const { modelFileName } = useSpeckleStore();
   const rawSpeckleData = item.data.raw;
@@ -129,14 +133,12 @@ export function VirtualTreeItem({
 
   const handleToggleVisibility = (e: React.MouseEvent) => {
     e.stopPropagation();
-    console.log('[VirtualTreeItem] Toggle visibility clicked for:', { header: displayHeader, objectIds, isHidden });
     onToggleVisibility(objectIds);
   };
 
   const handleToggleIsolation = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!onToggleIsolation) return;
-    console.log('[VirtualTreeItem] Toggle isolation clicked for:', { header: displayHeader, objectIds, isIsolated });
     onToggleIsolation(objectIds);
   };
 
@@ -146,6 +148,16 @@ export function VirtualTreeItem({
         className="shrink-0"
         style={{ width: `${(item.indent || 0) * 0.375}rem` }}
       />
+      {selectionPhase && (
+        <span className="mr-0.5 shrink-0 flex items-center">
+          <Checkbox
+            checked={selectionChecked}
+            indeterminate={selectionIndeterminate}
+            onChange={() => onToggleSelection?.(item)}
+            title={selectionChecked ? 'Remove from acoustic region' : 'Add to acoustic region'}
+          />
+        </span>
+      )}
       {item.hasChildren ? (
         <button
           className="h-8 w-4 flex items-center justify-center shrink-0 text-neutral-600 hover:text-neutral-800"
@@ -180,20 +192,6 @@ export function VirtualTreeItem({
           >
             {displayHeader}
           </div>
-          {isAcousticLayerRow && onResetAcousticLayer && (
-            <button
-              type="button"
-              className="shrink-0 text-blue-text hover:opacity-70 transition-opacity"
-              onClick={(e) => {
-                e.stopPropagation();
-                onResetAcousticLayer();
-              }}
-              title="Re-assign acoustic layer"
-              aria-label="Re-assign acoustic layer"
-            >
-              <AudioLines size={12} strokeWidth={2} />
-            </button>
-          )}
         </div>
         {displaySubheader && (
           <div className="truncate text-[10px] text-neutral-500">
@@ -206,7 +204,7 @@ export function VirtualTreeItem({
 
   const actionButtons = (
     <>
-      {!isAcousticLayerRow && (!isRootNode || isLayerSelectionMode) && (
+      {!selectionPhase && !isAcousticLayerRow && !isRootNode && (
         <>
           <button
             className={`p-1 hover:bg-neutral-200 rounded transition-colors ${
@@ -250,23 +248,6 @@ export function VirtualTreeItem({
               )}
             </button>
           )}
-          {isLayerSelectionMode && onSelectAsAcousticLayer && (
-            <button
-              className="ml-1 px-2 py-0.5 text-xs font-medium rounded transition-colors border"
-              style={{
-                backgroundColor: 'var(--color-primary)',
-                color: 'white',
-                borderColor: 'var(--color-primary)',
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                onSelectAsAcousticLayer();
-              }}
-              title="Select as acoustic layer"
-            >
-              Select
-            </button>
-          )}
         </>
       )}
     </>
@@ -307,7 +288,7 @@ export function VirtualTreeItem({
             useAcousticGrid
               ? 'justify-end overflow-hidden'
               : `overflow-hidden group-hover:w-auto transition-all ${
-                  isHidden || isIsolated || isLayerSelectionMode ? 'w-auto' : 'w-0'
+                  isHidden || isIsolated || selectionPhase ? 'w-auto' : 'w-0'
                 }`
           }`}
           style={useAcousticGrid ? { width: `${OBJECT_EXPLORER_PANEL_ACTIONS_WIDTH_PX}px` } : undefined}

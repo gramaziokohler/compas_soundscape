@@ -73,3 +73,13 @@ export function DAWStopIcon() {
     </svg>
   );
 }
+
+/** Double-chevron up — "expand" the compact transport into the full timeline. */
+export function DAWExpandIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="17 11 12 6 7 11" />
+      <polyline points="17 18 12 13 7 18" />
+    </svg>
+  );
+}

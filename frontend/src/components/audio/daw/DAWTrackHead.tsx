@@ -110,6 +110,15 @@ function DAWTrackHeadImpl({
       onMouseEnter={onHoverTrack}
       onMouseLeave={onHoverTrackEnd}
     >
+      {/* Frosted backdrop — lanes/clips scrolling horizontally behind the sticky
+          head column are hidden behind the same glass treatment as the dock.
+          Kept on its own layer (not a backdrop-filter on the root) so the kebab
+          menu's position:fixed is not captured by a containing block. */}
+      <div
+        aria-hidden="true"
+        className="backdrop-blur-lg backdrop-saturate-150"
+        style={{ position: 'absolute', inset: 0, zIndex: -1, pointerEvents: 'none' }}
+      />
       {/* Row 1: badge, name, kebab */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--card-space-xs)' }}>
         <span

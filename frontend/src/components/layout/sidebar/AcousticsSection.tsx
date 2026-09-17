@@ -32,7 +32,7 @@ import { RangeSlider } from '@/components/ui/RangeSlider';
 import { ToggleField } from '@/components/ui/ToggleField';
 import { apiService } from '@/services/api';
 import { CARD_TYPE_LABELS } from '@/types/card';
-import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGridListenersStore, useAudioControlsStore, useSoundscapeStore, notifyError, resolveSimulationLayerName } from '@/store';
+import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGridListenersStore, useAudioControlsStore, useSoundscapeStore, useAcousticLayerStore, notifyError, resolveSimulationLayerName } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useUIStore } from '@/store/uiStore';
 
@@ -891,9 +891,11 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     if (config.type === 'resonance') return;
 
     if (config.type === 'import-irs') {
+      const clonedMapping = (config as any).sourceReceiverIRMapping as Record<string, unknown> | undefined;
+      const hasIRs = !!clonedMapping && Object.keys(clonedMapping).length > 0;
       onUpdateSimulationConfig(newIndex, {
-        state: 'completed',
-        simulationResults: (config as any).simulationResults,
+        state: hasIRs ? 'completed' : 'idle',
+        simulationResults: hasIRs ? (config as any).simulationResults : null,
         sourceReceiverIRMapping: (config as any).sourceReceiverIRMapping,
         importedIRIds: (config as any).importedIRIds,
         simulationPositions: (config as any).simulationPositions,
@@ -962,11 +964,13 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
     if (config.type === 'import-irs') {
       handleUpdateConfig(index, {
-        state: 'completed',
+        state: 'idle',
         error: null,
         simulationResults: null,
         importedIRIds: undefined,
         sourceReceiverIRMapping: undefined,
+        simulationPositions: undefined,
+        completedAt: undefined,
       } as any);
       return;
     }
@@ -1027,6 +1031,18 @@ export function AcousticsSection(props: AcousticsSectionProps) {
     const acousticsTemporalPause = () => useAcousticsSimulationStore.temporal.getState().pause();
     const acousticsTemporalResume = () => useAcousticsSimulationStore.temporal.getState().resume();
 
+    // Snapshot the live acoustic region together with the material assignments.
+    // This is the region the card is generated with, and what the Object Explorer
+    // offers to restore if the user later re-assigns a different region.
+    const acousticSel = useAcousticLayerStore.getState();
+    const acousticSelectionSnapshot = {
+      nodeIds: [...acousticSel.selectedAcousticLayerIds],
+      nodeNames: [...acousticSel.selectedAcousticLayerNames],
+      geometryIds: [...acousticSel.selectedAcousticGeometryIds],
+      isWholeModel: acousticSel.isWholeModel,
+      autoDetected: acousticSel.autoDetected,
+    };
+
     if (config && config.state === 'completed') {
       // Compare with existing persisted assignments to detect actual changes
       const existing = (config as any).speckleMaterialAssignments as Record<string, string> | undefined;
@@ -1043,7 +1059,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             speckleMaterialAssignments: assignments,
             speckleLayerName: layerName,
             speckleGeometryObjectIds: geometryObjectIds,
-            speckleScatteringAssignments: scatteringAssignments
+            speckleScatteringAssignments: scatteringAssignments,
+            speckleAcousticSelection: acousticSelectionSnapshot,
           } as any);
           acousticsTemporalResume();
         }, 0);
@@ -1058,7 +1075,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       speckleMaterialAssignments: assignments,
       speckleLayerName: layerName,
       speckleGeometryObjectIds: geometryObjectIds,
-      speckleScatteringAssignments: scatteringAssignments
+      speckleScatteringAssignments: scatteringAssignments,
+      speckleAcousticSelection: acousticSelectionSnapshot,
     } as any);
     acousticsTemporalResume();
   }, [handleUpdateConfig, simulationConfigs, resetSimulation]);
@@ -1402,8 +1420,10 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         />
     ) : null;
 
-    // Before Content - Simulation Setup
-    const beforeContent = config.type === 'resonance' ? (
+    // Resonance content is rendered as beforeContent for resonance cards. The actual
+    // beforeContent/afterContent assignment happens below the IR-import handlers so the
+    // import-IRS body can be shared between its collecting (neutral) and completed (blue) states.
+    const resonanceContent = config.type === 'resonance' ? (
         <ResonanceContent
             config={config}
             resonanceAudioConfig={resonanceAudioConfig}
@@ -1416,7 +1436,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             roomScale={roomScale}
             onRoomScaleChange={onRoomScaleChange}
         />
-    ) : !isCompleted ? simulationSetup : undefined;
+    ) : null;
 
     // After Content - results + hidden setup (keeps effects mounted for filtering/coloring)
     // Build display name maps from current soundscapeData and receivers for the IR label override.
@@ -1509,6 +1529,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         sourceReceiverIRMapping: nextMapping,
         importedIRIds: Array.from(usedIds),
         simulationResults: 'Manual IR import',
+        state: 'completed',
         completedAt: Date.now(),
         simulationPositions: {
           sources: currentSourcePositions,
@@ -1540,9 +1561,11 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         Object.values(receiverMap).forEach((ir) => usedIds.add(ir.id));
       });
 
+      const hasRemaining = Object.keys(nextMapping).length > 0;
       handleUpdateConfig(index, {
-        sourceReceiverIRMapping: Object.keys(nextMapping).length > 0 ? nextMapping : undefined,
+        sourceReceiverIRMapping: hasRemaining ? nextMapping : undefined,
         importedIRIds: usedIds.size > 0 ? Array.from(usedIds) : undefined,
+        state: hasRemaining ? 'completed' : 'idle',
       } as any);
     };
 
@@ -1563,6 +1586,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         sourceReceiverIRMapping: nextMapping,
         importedIRIds: Array.from(usedIds),
         simulationResults: 'Manual IR import',
+        state: 'completed',
         completedAt: Date.now(),
         simulationPositions: {
           sources: currentSourcePositions,
@@ -1595,9 +1619,11 @@ export function AcousticsSection(props: AcousticsSectionProps) {
         Object.values(receiverMap).forEach((ir) => usedIds.add(ir.id));
       });
 
+      const hasRemaining = Object.keys(nextMapping).length > 0;
       handleUpdateConfig(index, {
-        sourceReceiverIRMapping: Object.keys(nextMapping).length > 0 ? nextMapping : undefined,
+        sourceReceiverIRMapping: hasRemaining ? nextMapping : undefined,
         importedIRIds: usedIds.size > 0 ? Array.from(usedIds) : undefined,
+        state: hasRemaining ? 'completed' : 'idle',
       } as any);
     };
 
@@ -1659,6 +1685,196 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       <Notice type="warning" message="This simulation was generated with sound sources from a different sound section. The impulse responses remain accessible for the available source-receiver pairs." />
     ) : null;
 
+    // Shared SimulationResultContent element — used by both the read-only result list
+    // (choras/pyroomacoustics, and completed import-irs) and the import-irs body.
+    const simResultContent = (
+      <SimulationResultContent
+          config={config}
+          onClearIR={onClearIR}
+          irRefreshTrigger={irRefreshTrigger}
+          onIRHover={props.onIRHover}
+          sourceDisplayNames={sourceDisplayNames}
+          receiverDisplayNames={receiverDisplayNames}
+          isExpanded={isExpanded}
+          selectedMetric={(config as any).selectedGradientMetric ?? null}
+          onMetricChange={(metric) => handleUpdateConfig(index, { selectedGradientMetric: metric } as any)}
+          currentSoundPositions={currentSoundPositions}
+          currentSoundNames={currentSoundNames}
+          currentReceiverPositions={currentReceiverPositions}
+          onResetPositions={handleResetPositions}
+          receiverGroups={receiverGroups}
+          onGoToReceiver={onGoToReceiver}
+          fpsExitTrigger={fpsExitTrigger}
+          forcedActiveGroupId={forcedActiveGroupId}
+          pairDefinitions={config.type === 'import-irs' ? pairDefinitions : undefined}
+          availableSourceCount={config.type === 'import-irs' ? availableSourceCount : undefined}
+          availableReceiverCount={config.type === 'import-irs' ? availableReceiverCount : undefined}
+          allowPairUploads={config.type === 'import-irs'}
+          singleIRPerListener={singleIRMode}
+          onPairIRUploaded={config.type === 'import-irs' ? handlePairIRUploaded : undefined}
+          onPairAssignmentCleared={config.type === 'import-irs' ? handlePairAssignmentCleared : undefined}
+          onListenerIRUploaded={config.type === 'import-irs' ? handleListenerIRUploaded : undefined}
+          onListenerAssignmentCleared={config.type === 'import-irs' ? handleListenerAssignmentCleared : undefined}
+          onBlueBackground={isCompleted}
+      />
+    );
+
+    // Import granularity — one IR per listener (simpler) vs per source–listener pair (precise).
+    const importIrsGranularity = config.type === 'import-irs' ? (
+      <div className="card-field">
+        <label
+          className="text-xxs"
+          style={{ color: isCompleted ? 'var(--color-on-blue-muted)' : 'var(--color-secondary-hover)' }}
+        >
+          Import granularity
+        </label>
+        <div
+          className="flex items-center gap-0.5 p-0.5 rounded-lg border"
+          style={isCompleted
+            ? { borderColor: 'var(--color-on-blue-faint)', backgroundColor: 'var(--color-blue-chip-bg)' }
+            : { borderColor: 'var(--color-border-strong)', backgroundColor: 'var(--color-secondary-lighter)' }}
+        >
+          {([
+            { mode: 'single', label: 'One per listener' },
+            { mode: 'per-pair', label: 'One per pair' },
+          ] as const).map(({ mode, label }) => {
+            const isActive = mode === 'single' ? singleIRMode : !singleIRMode;
+            return (
+              <button
+                key={mode}
+                onClick={() => handleUpdateConfig(index, { irImportMode: mode } as any)}
+                className="flex-1 px-2 py-1 rounded text-[11px] font-medium transition-colors"
+                style={isActive
+                  ? {
+                      backgroundColor: isCompleted ? 'var(--color-on-blue)' : 'var(--color-primary)',
+                      color: isCompleted ? 'var(--color-primary)' : 'var(--color-on-blue)',
+                    }
+                  : { color: isCompleted ? 'var(--color-on-blue-muted)' : 'var(--color-secondary-hover)' }}
+                title={mode === 'single'
+                  ? 'One IR per listener, applied to all its source pairs'
+                  : 'One IR per source–listener pair'}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    ) : null;
+
+    // Advanced settings for the import-irs card (materials, IR gain, normalization).
+    const importIrsAdvanced = config.type === 'import-irs' ? (
+      <div>
+        <button
+          onClick={() => handleUpdateConfig(index, { advancedSettingsExpanded: !(config as any).advancedSettingsExpanded } as any)}
+          aria-expanded={!!(config as any).advancedSettingsExpanded}
+          className={`flex items-center gap-1.5 w-full text-left text-xs rounded transition-colors ${isCompleted ? 'text-on-blue-muted hover:text-on-blue hover:bg-[var(--color-blue-chip-bg)]' : 'text-secondary-hover hover:text-foreground'}`}
+        >
+          {(config as any).advancedSettingsExpanded ? <ChevronDown size={11} className="shrink-0" /> : <ChevronRight size={11} className="shrink-0" />}
+          <span>Advanced settings</span>
+        </button>
+        {(config as any).advancedSettingsExpanded && (
+          <div className="card-collapse-body card-stack">
+            <ToggleField
+              checked={!!(config as any).materialAssignmentsEnabled}
+              onChange={(enabled) => handleUpdateConfig(index, { materialAssignmentsEnabled: enabled } as any)}
+              label="Enable material assignment"
+              onBlueBackground={isCompleted}
+            />
+            {(config as any).materialAssignmentsEnabled && (
+              <SpeckleSurfaceMaterialsSection
+                viewerRef={viewerRef}
+                worldTree={localWorldTree}
+                availableMaterials={currentMaterials}
+                cardType="pyroomacoustics"
+                filteringEnabled={filteringEnabled}
+                isReadOnly={false}
+                onMaterialAssignmentsChange={(assignments, layerName, geometryObjectIds, scatteringAssignments) => {
+                  handleUpdateConfig(index, {
+                    speckleMaterialAssignments: assignments,
+                    speckleLayerName: layerName,
+                    speckleGeometryObjectIds: geometryObjectIds,
+                    speckleScatteringAssignments: scatteringAssignments,
+                  } as any);
+                }}
+                initialAssignments={(config as any).speckleMaterialAssignments}
+                initialLayerName={(config as any).speckleLayerName}
+                initialScatteringAssignments={(config as any).speckleScatteringAssignments}
+                initialIsolatedObjectIds={(config as any).speckleIsolatedObjectIds}
+                onIsolationChange={(ids) => handleUpdateConfig(index, { speckleIsolatedObjectIds: ids } as any)}
+              />
+            )}
+            <div>
+              {(() => {
+                const irGainDb = (config as any).irGainDb ?? 0;
+                const applyIRGain = (value: number) => {
+                  const clamped = Math.min(12, Math.max(-12, value));
+                  handleUpdateConfig(index, { irGainDb: clamped } as any);
+                  if (onIRGainChange && index === activeSimulationIndex) {
+                    onIRGainChange(index, clamped);
+                  }
+                };
+                return (
+                  <RangeSlider
+                    label="IR Gain"
+                    value={irGainDb}
+                    min={-12}
+                    max={12}
+                    step={0.1}
+                    unit="dB"
+                    defaultValue={0}
+                    showLabels
+                    minLabel="-12 dB"
+                    maxLabel="+12 dB"
+                    onBlueBackground={isCompleted}
+                    onChange={applyIRGain}
+                  />
+                );
+              })()}
+            </div>
+            <ToggleField
+              checked={!!(config as any).irNormalizeEnabled}
+              onChange={(enabled) => {
+                handleUpdateConfig(index, { irNormalizeEnabled: enabled } as any);
+                if (onIRNormalizeChange && index === activeSimulationIndex) {
+                  onIRNormalizeChange(index, enabled);
+                }
+              }}
+              label={`Normalize IR (peak to ${IMPULSE_RESPONSE.NORMALIZATION_SCALE})`}
+              onBlueBackground={isCompleted}
+            />
+          </div>
+        )}
+      </div>
+    ) : null;
+
+    // The import-irs body renders in the beforeContent slot while collecting (neutral
+    // surface) and in the afterContent slot once IRs exist (solid blue card).
+    const importIrsContent = config.type === 'import-irs' ? (
+      <>
+        {importIrsGranularity}
+        {simResultContent}
+        {importIrsAdvanced}
+      </>
+    ) : null;
+
+    const beforeContent = config.type === 'resonance'
+      ? resonanceContent
+      : config.type === 'import-irs'
+        ? (!isCompleted ? <>{soundSectionMismatchWarning}{importIrsContent}</> : undefined)
+        : (!isCompleted ? simulationSetup : undefined);
+
+    // Collapsed header summary for the import-irs card: awaiting vs x/N assigned.
+    const importIrsCollapsedInfo = (() => {
+      if (config.type !== 'import-irs') return getSimulationResultCollapsedInfo(config);
+      const total = pairDefinitions.length;
+      const assigned = total - missingPairCount;
+      if (total === 0) return 'Awaiting IRs';
+      if (assigned <= 0) return `Awaiting IRs (0/${total})`;
+      if (assigned >= total) return `(${assigned} IR${assigned === 1 ? '' : 's'})`;
+      return `(${assigned}/${total} assigned)`;
+    })();
+
     const afterContent = isCompleted ? (
         <>
           {soundSectionMismatchWarning}
@@ -1675,140 +1891,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
               <span>{missingPairCount} source-listener pair{missingPairCount === 1 ? '' : 's'} still need an IR. Auralization stays disabled for listener groups with missing assignments.</span>
             </div>
           )} */}
-          {config.type === 'import-irs' && (
-            <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-neutral-800 border border-neutral-700">
-              {([
-                { mode: 'single', label: 'Single IR' },
-                { mode: 'per-pair', label: 'Per-pair IRs' },
-              ] as const).map(({ mode, label }) => {
-                const isActive = mode === 'single' ? singleIRMode : !singleIRMode;
-                return (
-                  <button
-                    key={mode}
-                    onClick={() => handleUpdateConfig(index, { irImportMode: mode } as any)}
-                    className={`flex-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${
-                      isActive
-                        ? 'bg-info text-white'
-                        : 'text-neutral-400 hover:text-neutral-200'
-                    }`}
-                    title={mode === 'single'
-                      ? 'One IR per listener, applied to all its source pairs'
-                      : 'One IR per source-listener pair'}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-          <SimulationResultContent
-              config={config}
-              onClearIR={onClearIR}
-              irRefreshTrigger={irRefreshTrigger}
-              onIRHover={props.onIRHover}
-              sourceDisplayNames={sourceDisplayNames}
-              receiverDisplayNames={receiverDisplayNames}
-              isExpanded={isExpanded}
-              selectedMetric={(config as any).selectedGradientMetric ?? null}
-              onMetricChange={(metric) => handleUpdateConfig(index, { selectedGradientMetric: metric } as any)}
-              currentSoundPositions={currentSoundPositions}
-              currentSoundNames={currentSoundNames}
-              currentReceiverPositions={currentReceiverPositions}
-              onResetPositions={handleResetPositions}
-              receiverGroups={receiverGroups}
-              onGoToReceiver={onGoToReceiver}
-              fpsExitTrigger={fpsExitTrigger}
-              forcedActiveGroupId={forcedActiveGroupId}
-                pairDefinitions={config.type === 'import-irs' ? pairDefinitions : undefined}
-                availableSourceCount={config.type === 'import-irs' ? availableSourceCount : undefined}
-                availableReceiverCount={config.type === 'import-irs' ? availableReceiverCount : undefined}
-                allowPairUploads={config.type === 'import-irs'}
-                singleIRPerListener={singleIRMode}
-                onPairIRUploaded={config.type === 'import-irs' ? handlePairIRUploaded : undefined}
-                onPairAssignmentCleared={config.type === 'import-irs' ? handlePairAssignmentCleared : undefined}
-                onListenerIRUploaded={config.type === 'import-irs' ? handleListenerIRUploaded : undefined}
-                onListenerAssignmentCleared={config.type === 'import-irs' ? handleListenerAssignmentCleared : undefined}
-          />
-          {config.type === 'import-irs' && (
-            <div>
-              <button
-                onClick={() => handleUpdateConfig(index, { advancedSettingsExpanded: !(config as any).advancedSettingsExpanded } as any)}
-                className="flex items-center gap-1.5 w-full text-left text-xs text-secondary-light hover:text-neutral-300 transition-colors"
-              >
-                {(config as any).advancedSettingsExpanded ? <ChevronDown size={11} className="shrink-0" /> : <ChevronRight size={11} className="shrink-0" />}
-                <span>Advanced Settings</span>
-              </button>
-              {(config as any).advancedSettingsExpanded && (
-                <div className="card-collapse-body card-stack">
-                  <ToggleField
-                    checked={!!(config as any).materialAssignmentsEnabled}
-                    onChange={(enabled) => handleUpdateConfig(index, { materialAssignmentsEnabled: enabled } as any)}
-                    label="Enable material assignment"
-                  />
-                  {(config as any).materialAssignmentsEnabled && (
-                    <SpeckleSurfaceMaterialsSection
-                      viewerRef={viewerRef}
-                      worldTree={localWorldTree}
-                      availableMaterials={currentMaterials}
-                      cardType="pyroomacoustics"
-                      filteringEnabled={filteringEnabled}
-                      isReadOnly={false}
-                      onMaterialAssignmentsChange={(assignments, layerName, geometryObjectIds, scatteringAssignments) => {
-                        handleUpdateConfig(index, {
-                          speckleMaterialAssignments: assignments,
-                          speckleLayerName: layerName,
-                          speckleGeometryObjectIds: geometryObjectIds,
-                          speckleScatteringAssignments: scatteringAssignments,
-                        } as any);
-                      }}
-                      initialAssignments={(config as any).speckleMaterialAssignments}
-                      initialLayerName={(config as any).speckleLayerName}
-                      initialScatteringAssignments={(config as any).speckleScatteringAssignments}
-                      initialIsolatedObjectIds={(config as any).speckleIsolatedObjectIds}
-                      onIsolationChange={(ids) => handleUpdateConfig(index, { speckleIsolatedObjectIds: ids } as any)}
-                    />
-                  )}
-                  <div>
-                    {(() => {
-                      const irGainDb = (config as any).irGainDb ?? 0;
-                      const applyIRGain = (value: number) => {
-                        const clamped = Math.min(12, Math.max(-12, value));
-                        handleUpdateConfig(index, { irGainDb: clamped } as any);
-                        if (onIRGainChange && index === activeSimulationIndex) {
-                          onIRGainChange(index, clamped);
-                        }
-                      };
-                      return (
-                        <RangeSlider
-                          label="IR Gain"
-                          value={irGainDb}
-                          min={-12}
-                          max={12}
-                          step={0.1}
-                          unit="dB"
-                          defaultValue={0}
-                          showLabels
-                          minLabel="-12 dB"
-                          maxLabel="+12 dB"
-                          onChange={applyIRGain}
-                        />
-                      );
-                    })()}
-                  </div>
-                  <ToggleField
-                    checked={!!(config as any).irNormalizeEnabled}
-                    onChange={(enabled) => {
-                      handleUpdateConfig(index, { irNormalizeEnabled: enabled } as any);
-                      if (onIRNormalizeChange && index === activeSimulationIndex) {
-                        onIRNormalizeChange(index, enabled);
-                      }
-                    }}
-                    label={`Normalize IR (peak to ${IMPULSE_RESPONSE.NORMALIZATION_SCALE})`}
-                  />
-                </div>
-              )}
-            </div>
-          )}
+          {config.type === 'import-irs' ? importIrsContent : simResultContent}
           {/* Hidden: keeps SpeckleSurfaceMaterialsSection mounted for filtering/coloring effects */}
           <div className="hidden">{simulationSetup}</div>
         </>
@@ -1883,7 +1966,7 @@ export function AcousticsSection(props: AcousticsSectionProps) {
             actionButtonColor='primary'
             color="primary"
             version={cardVersion}
-            collapsedInfo={getSimulationResultCollapsedInfo(config)}
+            collapsedInfo={importIrsCollapsedInfo}
         />
     );
   };

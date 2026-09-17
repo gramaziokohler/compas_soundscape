@@ -266,6 +266,7 @@ export function SpeckleScene({
   
   // Viewer ref — SpeckleScene owns it; registering into store for cross-component access
   const { getViewerRef: _getViewerRef, setViewer, incrementWorldTreeVersion, selectedEntity, setSelectedEntity, setSelectedObjectIds, applyFilterColors, getObjectLinkState, linkedObjectIds, setFilteringEnabled, viewMode, setViewMode } = useSpeckleStore();
+  const selectedObjectIdsForHighlight = useSpeckleStore((s) => s.selectedObjectIds);
 
   // Grid listeners — needed for IR hover line position lookup
   const gridListeners = useGridListenersStore((s) => s.gridListeners);
@@ -1022,6 +1023,21 @@ export function SpeckleScene({
     isAcousticModeRef.current = viewMode === 'acoustic';
   }, [viewMode]);
 
+  // Acoustic mode: re-assert the SelectionExtension highlight after a selection.
+  // Acoustic visibility/colour re-application can drop the per-render-view
+  // selection material, leaving a clicked surface unhighlighted in the viewport.
+  useEffect(() => {
+    if (viewMode !== 'acoustic') return;
+    const ids = selectedObjectIdsForHighlight;
+    if (!ids || ids.length === 0) return;
+    const sel = selectionExtensionRef.current as unknown as { selectObjects?: (ids: string[]) => void } | null;
+    if (!sel || typeof sel.selectObjects !== 'function') return;
+    try {
+      sel.selectObjects(ids);
+      viewerRef.current?.requestRender();
+    } catch { /* non-critical */ }
+  }, [viewMode, selectedObjectIdsForHighlight]);
+
   // ============================================================================
   // Effect - Re-assert IBL intensity when entering Acoustic mode
   // ============================================================================
@@ -1398,6 +1414,7 @@ export function SpeckleScene({
           onPause={handlePauseAll}
           onStop={handleStopAll}
           onClose={handleCloseTimeline}
+          onToggleTimeline={handleToggleTimeline}
           isAnyPlaying={playbackState.isPlaying}
           onSelectSoundCard={onSelectSoundCard}
           originalIRChannelCount={audioOrchestrator?.getIRState().channelCount ?? 0}

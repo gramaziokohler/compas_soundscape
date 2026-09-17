@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
+import { useAudioControlsStore } from '@/store';
 import { getPreviewLevel } from '@/lib/audio/previewRegistry';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
 import type { SoundEvent } from '@/types';
@@ -43,6 +44,13 @@ export function useSpecklePlayingVisuals({
   const lastSampleRef = useRef(0);
   const hadPlayingRef = useRef(false);
 
+  // Track-level mute/solo. A muted (or non-soloed while solo is active) track
+  // must not drive the sphere scale pulse nor its dark-mode point light, even
+  // though its source is still technically "playing" in the orchestrator
+  // (mute is applied as a zero gain, so getPlayingSourceIds still reports it).
+  const mutedSounds = useAudioControlsStore((s) => s.mutedSounds);
+  const soloedSound = useAudioControlsStore((s) => s.soloedSound);
+
   useEffect(() => {
     if (!isViewerReady) return;
 
@@ -57,6 +65,19 @@ export function useSpecklePlayingVisuals({
     (soundscapeData ?? []).forEach((s) => {
       if ((s as { isPending?: boolean }).isPending) return;
       idToPrompt.set(s.id, (s as { prompt_index?: number }).prompt_index ?? 0);
+    });
+
+    // Prompt indices that are actually audible. Under solo, only the soloed
+    // track is audible; otherwise any track with a non-muted variant is.
+    const audiblePrompt = new Set<number>();
+    (soundscapeData ?? []).forEach((s) => {
+      if ((s as { isPending?: boolean }).isPending) return;
+      const pi = (s as { prompt_index?: number }).prompt_index ?? 0;
+      if (soloedSound !== null) {
+        if (s.id === soloedSound) audiblePrompt.add(pi);
+      } else if (!mutedSounds.has(s.id)) {
+        audiblePrompt.add(pi);
+      }
     });
 
     const clearAll = () => {
@@ -95,9 +116,13 @@ export function useSpecklePlayingVisuals({
       if (previewingSoundId) playingIds.add(previewingSoundId);
 
       const promptLevels = new Map<number, number>();
+      let audiblePlayingCount = 0;
       playingIds.forEach((id) => {
         const promptIdx = idToPrompt.get(id);
         if (promptIdx === undefined) return;
+        // Muted / non-soloed tracks stay silent: no pulse, no light.
+        if (!audiblePrompt.has(promptIdx)) return;
+        audiblePlayingCount++;
 
         let level: number;
         if (id === previewingSoundId) {
@@ -116,11 +141,22 @@ export function useSpecklePlayingVisuals({
       soundSphereManager.setPlayingPrompts(playingPrompts, promptLevels);
       // While anything is sounding, hide every non-playing light so the scene
       // goes dark and only the active source(s) remain lit.
-      soundSphereManager.setIdleLightsOff(playingIds.size > 0);
+      soundSphereManager.setIdleLightsOff(audiblePlayingCount > 0);
 
       // Lights: mesh lights are keyed by the visible variant's id; entity/marker
       // lights by the sound id. Promote only playing lights to shadow casters.
+      //
+      // Re-assert the per-light mute flag here too: dark-mode lights may be
+      // created AFTER a track was already muted (enable-dark-mode doesn't replay
+      // mute), so the manager's copy would otherwise stay unmuted and the muted
+      // sphere's light would leak into the scene.
       const shadowCasters: string[] = [];
+      (soundscapeData ?? []).forEach((s) => {
+        if ((s as { isPending?: boolean }).isPending) return;
+        const idMuted = mutedSounds.has(s.id)
+          || (soloedSound !== null && s.id !== soloedSound);
+        soundSphereManager.setSourceMuted(s.id, idMuted);
+      });
       soundSphereManager.getSoundSphereMeshes().forEach((mesh) => {
         const ev = mesh.userData.soundEvent as SoundEvent | undefined;
         const id = ev?.id;
@@ -153,5 +189,5 @@ export function useSpecklePlayingVisuals({
       hadPlayingRef.current = false;
       useSpeckleEngineStore.getState().viewer?.requestRender();
     };
-  }, [isViewerReady, audioOrchestrator, showPlayingHighlight, isDarkMode, soundscapeData, previewingSoundId]);
+  }, [isViewerReady, audioOrchestrator, showPlayingHighlight, isDarkMode, soundscapeData, previewingSoundId, mutedSounds, soloedSound]);
 }

@@ -722,6 +722,18 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
           filteringExt.removeUserObjectColors();
           _userColorsApplied = false;
         }
+
+        // Acoustic mode: applying user colours resets the batch material for every
+        // render view, which drops the SelectionExtension highlight. Re-assert the
+        // current selection so a clicked surface stays highlighted in the viewport.
+        if (_viewModeRef === 'acoustic') {
+          const selIds = get().selectedObjectIds;
+          if (selIds.length > 0) {
+            try {
+              _viewerRef.getExtension(SelectionExtension)?.selectObjects(selIds);
+            } catch { /* non-critical */ }
+          }
+        }
       },
 
       clearFilterColors: () => {

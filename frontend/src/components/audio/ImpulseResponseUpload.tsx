@@ -1,15 +1,16 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Trash2 } from "lucide-react";
 import { AudioWaveformDisplay } from "@/components/audio/AudioWaveformDisplay";
 import { MiniIRWaveform } from "@/components/audio/MiniIRWaveform";
-import { FileUploadArea } from "@/components/controls/FileUploadArea";
+import { FileDropRow } from "@/components/ui/FileDropRow";
 import { apiService } from "@/services/api";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
 import { Notice } from '@/components/ui/Notice';
 import { Badge } from '@/components/ui/Badge';
 import { Spinner } from '@/components/ui/Spinner';
+import { EmptyState } from '@/components/ui/EmptyState';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from "@/types/audio";
 import { API_BASE_URL, IR_HOVER_LINE, IR_LOW_ENERGY_THRESHOLD, SIMULATION_POSITION_MATCH_THRESHOLD } from "@/utils/constants";
 import { trimDisplayName } from "@/utils/utils";
@@ -22,7 +23,6 @@ type SourceReceiverPair = {
 
 interface ImpulseResponseUploadProps {
   onClearIR: () => void;
-  simulationResults?: string | null;
   refreshTrigger?: number;
   simulationIRIds?: string[];
   sourceReceiverIRMapping?: SourceReceiverIRMapping;
@@ -54,6 +54,8 @@ interface ImpulseResponseUploadProps {
   onListenerIRUploaded?: (pairs: SourceReceiverPair[], ir: ImpulseResponseMetadata) => void;
   /** Called when the single IR for a listener is cleared — clears every pair under it */
   onListenerAssignmentCleared?: (pairs: SourceReceiverPair[]) => void;
+  /** True when the IR list renders on a solid generated (blue) card. Drives on-blue tokens. */
+  onBlueBackground?: boolean;
 }
 
 type ReceiverGroup = {
@@ -72,8 +74,6 @@ function isLowEnergyPeak(peak: number | null | undefined): boolean {
 }
 
 export function ImpulseResponseUpload({
-  onClearIR,
-  simulationResults = null,
   refreshTrigger = 0,
   simulationIRIds = undefined,
   sourceReceiverIRMapping,
@@ -96,6 +96,7 @@ export function ImpulseResponseUpload({
   singleIRPerListener = false,
   onListenerIRUploaded,
   onListenerAssignmentCleared,
+  onBlueBackground = false,
 }: ImpulseResponseUploadProps) {
   const handleError = useApiErrorHandler();
   const [impulseResponses, setImpulseResponses] = useState<ImpulseResponseMetadata[]>([]);
@@ -109,9 +110,7 @@ export function ImpulseResponseUpload({
   // Dedupes concurrent buffer loads of the same IR (effects + hover can race).
   const bufferLoadPromisesRef = useRef<Map<string, Promise<AudioBuffer | null>>>(new Map());
   const [lowEnergyIRIds, setLowEnergyIRIds] = useState<Set<string>>(new Set());
-  const [isDragging, setIsDragging] = useState(false);
   const [draggingPairKey, setDraggingPairKey] = useState<string | null>(null);
-  const irLibraryFileInputRef = useRef<HTMLInputElement>(null);
   const simulationIRIdsKey = useMemo(() => (simulationIRIds ?? []).join('|'), [simulationIRIds]);
 
   // Collapsed receiver groups (empty = all expanded)
@@ -279,43 +278,6 @@ export function ImpulseResponseUpload({
     }
   }, [handleError]);
 
-  const uploadFiles = async (files: FileList | File[]) => {
-    const fileArray = Array.from(files);
-    if (fileArray.length === 0) return;
-    setIsUploading(true);
-    setError(null);
-    try {
-      for (let i = 0; i < fileArray.length; i++) {
-        const file = fileArray[i];
-        setUploadProgress(`Uploading ${i + 1} of ${fileArray.length}...`);
-        await apiService.uploadImpulseResponse(file, file.name.replace(/\.[^/.]+$/, ''));
-      }
-      setUploadProgress('All uploads complete!');
-      await loadImpulseResponses();
-      setTimeout(() => setUploadProgress(''), 2000);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Upload failed';
-      setError(errorMessage);
-      handleError(err, errorMessage);
-      setUploadProgress('');
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => { e.preventDefault(); setIsDragging(true); };
-  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => { e.preventDefault(); setIsDragging(false); };
-  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault(); setIsDragging(false);
-    if (e.dataTransfer.files.length > 0) await uploadFiles(e.dataTransfer.files);
-  };
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files?.length) { await uploadFiles(e.target.files); e.target.value = ''; }
-  };
-  const handleIRLibraryUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files?.length) { await uploadFiles(e.target.files); e.target.value = ''; }
-  };
-
   const uploadPairIR = async (files: FileList | File[], sourceId: string, receiverId: string) => {
     const file = Array.from(files)[0];
     if (!file) return;
@@ -456,6 +418,25 @@ export function ImpulseResponseUpload({
     return { groups: Array.from(groups.values()), unmapped };
   }, [sourceReceiverIRMapping, pairDefinitions, impulseResponses, receiverGroups, receiverDisplayNames]);
 
+  // ── Import progress (import-irs card only) ─────────────────────────────────
+  const slotStats = useMemo(() => {
+    if (!allowPairUploads || !groupedByReceiver) return null;
+    if (singleIRPerListener) {
+      const total = groupedByReceiver.groups.length;
+      const assigned = groupedByReceiver.groups.filter((g) => g.sources.some((s) => s.ir)).length;
+      return { total, assigned };
+    }
+    let total = 0;
+    let assigned = 0;
+    for (const g of groupedByReceiver.groups) {
+      for (const s of g.sources) {
+        total++;
+        if (s.ir) assigned++;
+      }
+    }
+    return { total, assigned };
+  }, [allowPairUploads, groupedByReceiver, singleIRPerListener]);
+
   // Safety net: also run the energy check and load buffers for IRs that appear in
   // the grouped view via the sourceReceiverIRMapping / irMeta fallback path — these
   // may not be present in `impulseResponses` when simulationIRIds filtering is active.
@@ -534,14 +515,26 @@ export function ImpulseResponseUpload({
     return { posLabel, soundCount, soundNames };
   }, [simulationSourcePositions, currentSoundPositions, sourceDisplayNames]);
 
-  const countLabelStyle = simulationResults
-    ? { color: 'var(--color-on-blue-muted)' }
-    : undefined;
-  const countLabelClass = simulationResults ? '' : 'text-secondary-hover';
-  const rowTextClass = simulationResults ? '' : 'text-foreground';
-  const rowTextStyle = simulationResults ? { color: 'var(--color-on-blue)' } : undefined;
-  const rowMutedStyle = simulationResults ? { color: 'var(--color-on-blue-muted)' } : undefined;
-  const rowMutedClass = simulationResults ? '' : 'text-secondary-hover';
+  // ── On-blue token helpers (single source for row/summary colors) ────────────
+  const rowTextClass = onBlueBackground ? '' : 'text-foreground';
+  const rowTextStyle = onBlueBackground ? { color: 'var(--color-on-blue)' } : undefined;
+  const rowMutedClass = onBlueBackground ? '' : 'text-secondary-hover';
+  const rowMutedStyle = onBlueBackground ? { color: 'var(--color-on-blue-muted)' } : undefined;
+  const countLabelClass = onBlueBackground ? '' : 'text-secondary-hover';
+  const countLabelStyle = onBlueBackground ? { color: 'var(--color-on-blue-muted)' } : undefined;
+
+  const softChipStyle: React.CSSProperties = onBlueBackground
+    ? { backgroundColor: 'var(--color-blue-chip-bg)', borderColor: 'var(--color-on-blue-faint)' }
+    : { backgroundColor: 'var(--color-secondary-lighter)', borderColor: 'var(--color-border)' };
+
+  const formatBadge = (ir: ImpulseResponseMetadata) => {
+    const channels = ir.channels ?? (ir as any).channelCount;
+    const label = typeof channels === 'number' ? formatChannelLabel(channels) : ir.format ?? null;
+    if (!label) return null;
+    return (
+      <Badge variant="neutral" size="xs" onBlueBackground={onBlueBackground}>{label}</Badge>
+    );
+  };
 
   // ── Render helpers ──────────────────────────────────────────────────────────
 
@@ -552,6 +545,7 @@ export function ImpulseResponseUpload({
     sourceName: string,
     options?: {
       fullName?: string;
+      onClear?: () => void;
     },
   ) => {
     const isLowEnergy = lowEnergyIRIds.has(ir.id);
@@ -562,7 +556,7 @@ export function ImpulseResponseUpload({
     return (
       <div
         key={`${sourceId}-${receiverId}-${ir.id}`}
-        className={`flex items-center gap-2 px-1 py-1.5 rounded transition-colors ${
+        className={`group flex items-center gap-2 px-1 py-1.5 rounded transition-colors ${
           isLowEnergy ? 'border-2 border-warning/70' : ''
         }`}
         onMouseEnter={(e) => handleRowMouseEnter(e, ir, sourceId, receiverId)}
@@ -577,23 +571,37 @@ export function ImpulseResponseUpload({
             )}
           </div>
           <div
-            className={`text-[10px] truncate ${rowTextClass}`}
+            className={`flex items-center gap-1.5 text-[10px] truncate ${rowTextClass}`}
             style={rowTextStyle}
             title={tooltipNames || undefined}
           >
             <span className={rowMutedClass} style={rowMutedStyle}>Sounds in position: </span>
             <span className="font-medium tabular-nums">{soundCount}</span>
+            {formatBadge(ir)}
             {isLowEnergy && (
-              <Badge variant="warning" size="xs" className="ml-1.5 !text-warning !border-warning/70">Low energy</Badge>
+              <Badge variant="warning" size="xs" onBlueBackground={onBlueBackground}>Low energy</Badge>
             )}
           </div>
         </div>
         <MiniIRWaveform
           audioBuffer={irBuffer}
           loading={bufferLoadingIds.has(ir.id)}
-          onBlueBackground={!!simulationResults}
+          onBlueBackground={onBlueBackground}
           lowEnergy={isLowEnergy}
         />
+        {options?.onClear && (
+          <button
+            onClick={(e) => { e.stopPropagation(); options.onClear!(); }}
+            className={`shrink-0 w-5 h-5 flex items-center justify-center rounded-full transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 ${
+              onBlueBackground
+                ? 'on-blue-btn close'
+                : 'text-secondary-hover hover:bg-error-light hover:text-error'
+            }`}
+            title="Clear this IR assignment"
+          >
+            <Trash2 size={11} />
+          </button>
+        )}
       </div>
     );
   };
@@ -606,7 +614,6 @@ export function ImpulseResponseUpload({
     fullName?: string,
   ) => {
     const pairKey = buildPairKey(sourceId, receiverId);
-    const isLowEnergy = ir ? lowEnergyIRIds.has(ir.id) : false;
 
     if (ir) {
       return renderSourceRow(
@@ -614,40 +621,39 @@ export function ImpulseResponseUpload({
         sourceId,
         receiverId,
         sourceName,
-        { fullName },
+        {
+          fullName,
+          onClear: onPairAssignmentCleared ? () => onPairAssignmentCleared(sourceId, receiverId) : undefined,
+        },
       );
     }
 
     return (
       <div
         key={`${sourceId}-${receiverId}`}
-        className={`rounded border px-2 py-2 ${
-          isLowEnergy
-            ? 'border-warning/60 bg-warning/30'
-            : 'border-neutral-700/50'
-        }`}
-        style={isLowEnergy ? undefined : { backgroundColor: 'var(--color-blue-chip-bg)' }}
+        className="rounded border px-2 py-1.5"
+        style={softChipStyle}
       >
-        <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <div className="text-[11px] text-neutral-200 truncate" title={fullName ?? sourceName}>{sourceName}</div>
-            <div className="text-[10px] text-neutral-500 mt-1">
-              No IR imported yet. Auralization stays disabled for this pair.
+            <div className={`text-[10px] truncate ${rowTextClass}`} style={rowTextStyle} title={fullName ?? sourceName}>
+              {sourceName}
             </div>
           </div>
+          <span className={`text-[9px] shrink-0 ${rowMutedClass}`} style={rowMutedStyle}>No IR</span>
         </div>
-
-        <div className="mt-2">
-          <FileUploadArea
-            file={null}
+        <div className="mt-1.5">
+          <FileDropRow
+            inputId={`pair-ir-${sourceId}-${receiverId}`}
+            accept=".wav,.flac,.aif,.aiff,.ogg"
+            acceptLabel="wav, flac, aiff, ogg"
+            onBlueBackground={onBlueBackground}
             isDragging={draggingPairKey === pairKey}
-            acceptedFormats=".wav,.flac,.aif,.aiff,.ogg"
-            acceptedExtensions="wav, flac, aiff, ogg"
+            isUploading={isUploading}
             onFileChange={handlePairFileChange(sourceId, receiverId)}
             onDragOver={handlePairDragOver(pairKey)}
             onDragLeave={handlePairDragLeave(pairKey)}
             onDrop={handlePairDrop(sourceId, receiverId, pairKey)}
-            inputId={`pair-ir-${sourceId}-${receiverId}`}
           />
         </div>
       </div>
@@ -671,28 +677,32 @@ export function ImpulseResponseUpload({
         pairs[0]?.sourceId ?? '',
         pairs[0]?.receiverId ?? '',
         groupName,
+        {
+          onClear: onListenerAssignmentCleared ? () => onListenerAssignmentCleared(pairs) : undefined,
+        },
       );
     }
 
     return (
       <div
         key={groupKey}
-        className="rounded border px-2 py-2 border-neutral-700/50"
-        style={{ backgroundColor: 'var(--color-blue-chip-bg)' }}
+        className="rounded border px-2 py-1.5"
+        style={softChipStyle}
       >
-        <div className="text-[10px] text-neutral-500 mb-2">
+        <div className={`text-[10px] mb-1.5 ${rowMutedClass}`} style={rowMutedStyle}>
           One IR for this listener — applied to all {pairs.length} source pair{pairs.length === 1 ? '' : 's'}.
         </div>
-        <FileUploadArea
-          file={null}
+        <FileDropRow
+          inputId={`listener-ir-${groupId}`}
+          accept=".wav,.flac,.aif,.aiff,.ogg"
+          acceptLabel="wav, flac, aiff, ogg"
+          onBlueBackground={onBlueBackground}
           isDragging={draggingPairKey === groupKey}
-          acceptedFormats=".wav,.flac,.aif,.aiff,.ogg"
-          acceptedExtensions="wav, flac, aiff, ogg"
+          isUploading={isUploading}
           onFileChange={handleListenerFileChange(pairs)}
           onDragOver={handlePairDragOver(groupKey)}
           onDragLeave={handlePairDragLeave(groupKey)}
           onDrop={handleListenerDrop(pairs, groupKey)}
-          inputId={`listener-ir-${groupId}`}
         />
       </div>
     );
@@ -707,12 +717,24 @@ export function ImpulseResponseUpload({
     </svg>
   );
 
+  const handleClearAll = () => {
+    if (!groupedByReceiver) return;
+    const allPairs: SourceReceiverPair[] = groupedByReceiver.groups.flatMap((g) =>
+      g.sources.map(({ sourceId, receiverId }) => ({ sourceId, receiverId })),
+    );
+    if (singleIRPerListener) {
+      onListenerAssignmentCleared?.(allPairs);
+    } else {
+      allPairs.forEach(({ sourceId, receiverId }) => onPairAssignmentCleared?.(sourceId, receiverId));
+    }
+  };
+
   const hoveredIR = impulseResponses.find(ir => ir.id === hoveredIRId);
   const missingPairSetupMessage = (() => {
     if (!allowPairUploads) return null;
     const slotDescription = singleIRPerListener
-      ? 'This card creates one IR upload slot for every listener, applied to all its source pairs.'
-      : 'This card creates one IR upload slot for every source-listener pair.';
+      ? 'This card then creates one IR slot per listener, applied to all its source pairs.'
+      : 'This card then creates one IR slot per source–listener pair.';
     if (availableSourceCount === 0 && availableReceiverCount === 0) {
       return `Add at least one sound source and one listener first. ${slotDescription}`;
     }
@@ -725,15 +747,24 @@ export function ImpulseResponseUpload({
     return null;
   })();
 
+  const progressPct = slotStats && slotStats.total > 0
+    ? Math.round((slotStats.assigned / slotStats.total) * 100)
+    : 0;
+  const canClearAll = !!slotStats && slotStats.assigned > 0 &&
+    (singleIRPerListener ? !!onListenerAssignmentCleared : !!onPairAssignmentCleared);
+
   return (
     <div className="card-stack">
       {error && (
         <Notice type="error" message={error} />
       )}
 
-      {uploadProgress && (
-        <div className="text-xs rounded p-2 bg-neutral-100 dark:bg-neutral-900/40 border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300">
-          {uploadProgress}
+      {(uploadProgress || (isUploading && !uploadProgress)) && (
+        <div className="flex items-center gap-2 text-[11px]">
+          <Spinner size={12} />
+          <span className={rowMutedClass} style={rowMutedStyle}>
+            {uploadProgress || 'Uploading…'}
+          </span>
         </div>
       )}
 
@@ -746,24 +777,70 @@ export function ImpulseResponseUpload({
       )}
 
       {missingPairSetupMessage && (
-        <Notice type="info" message={missingPairSetupMessage} />
+        <EmptyState message={missingPairSetupMessage} />
       )}
 
       {/* IR Library — grouped by receiver when mapping is available */}
       {(groupedByReceiver || impulseResponses.length > 0) && (
-        <div>
-          <div className="flex items-center justify-between mb-2">
+        <div className="card-stack--md">
+          <div className="flex items-center justify-between gap-2">
             <h3
-              className={`text-xs font-semibold ${simulationResults ? '' : 'text-foreground'}`}
-              style={simulationResults ? { color: 'var(--color-on-blue)' } : undefined}
+              className={`text-xs font-semibold ${onBlueBackground ? '' : 'text-foreground'}`}
+              style={onBlueBackground ? { color: 'var(--color-on-blue)' } : undefined}
             >
               {allowPairUploads
-                ? (singleIRPerListener ? 'Listener IRs' : 'Source-listener IRs')
+                ? (singleIRPerListener ? 'Listener IRs' : 'Source–listener IRs')
                 : `Impulse Responses (${impulseResponses.length})`}
             </h3>
+            {slotStats && (
+              <span
+                className={`text-[10px] tabular-nums shrink-0 ${countLabelClass}`}
+                style={countLabelStyle}
+              >
+                {slotStats.assigned} / {slotStats.total} assigned
+              </span>
+            )}
           </div>
 
-          <div ref={scrollContainerRef} className="space-y-0.5 max-h-[min(320px,40dvh)] overflow-y-auto">
+          {/* Import progress bar (import-irs card only) */}
+          {slotStats && slotStats.total > 0 && (
+            <div className="flex items-center gap-2">
+              <div
+                className="h-1 flex-1 rounded-full overflow-hidden"
+                style={{ backgroundColor: onBlueBackground ? 'var(--color-blue-chip-bg)' : 'var(--color-secondary-light)' }}
+              >
+                <div
+                  className="h-full rounded-full transition-all duration-200"
+                  style={{
+                    width: `${progressPct}%`,
+                    backgroundColor: onBlueBackground ? 'var(--color-on-blue)' : 'var(--color-primary)',
+                  }}
+                />
+              </div>
+              {canClearAll && (
+                <button
+                  onClick={handleClearAll}
+                  className={`text-[10px] shrink-0 transition-colors ${
+                    onBlueBackground ? 'on-blue-btn' : 'text-secondary-hover hover:text-error'
+                  }`}
+                  title="Clear all imported IRs"
+                >
+                  Clear all
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Onboarding hint when nothing is assigned yet */}
+          {slotStats && slotStats.assigned === 0 && (
+            <p className={`text-[10px] ${rowMutedClass}`} style={rowMutedStyle}>
+              {singleIRPerListener
+                ? 'Import one measured impulse response per listener below. It is applied to every source under that listener.'
+                : 'Import one measured impulse response for each source–listener pair below.'}
+            </p>
+          )}
+
+          <div ref={scrollContainerRef} className="card-stack--tight max-h-[min(320px,40dvh)] overflow-y-auto">
             {groupedByReceiver ? (
               <>
                 {/* Receiver-grouped list */}
@@ -771,6 +848,10 @@ export function ImpulseResponseUpload({
                   const isCollapsed = collapsedGroups.has(groupId);
                   const hasLowEnergy = sources.some((s) => s.ir && lowEnergyIRIds.has(s.ir.id));
                   const isActive = activeGroupId === groupId;
+                  const assignedCount = singleIRPerListener
+                    ? (sources.some((s) => s.ir) ? 1 : 0)
+                    : sources.filter((s) => s.ir).length;
+                  const groupTotal = singleIRPerListener ? 1 : sources.length;
                   return (
                     <div
                       key={groupId}
@@ -788,20 +869,20 @@ export function ImpulseResponseUpload({
                         >
                           <ChevronRight
                             size={10}
-                            className={`shrink-0 transition-transform duration-150 ${isCollapsed ? '' : 'rotate-90'} ${simulationResults ? '' : 'text-secondary-hover'}`}
-                            style={simulationResults ? { color: 'var(--color-on-blue-muted)' } : undefined}
+                            className={`shrink-0 transition-transform duration-150 ${isCollapsed ? '' : 'rotate-90'} ${onBlueBackground ? '' : 'text-secondary-hover'}`}
+                            style={onBlueBackground ? { color: 'var(--color-on-blue-muted)' } : undefined}
                           />
                           <span
-                            className={`text-[11px] font-medium truncate ${simulationResults ? '' : 'text-foreground'}`}
-                            style={simulationResults ? { color: 'var(--color-on-blue)' } : undefined}
+                            className={`text-[11px] font-medium truncate ${onBlueBackground ? '' : 'text-foreground'}`}
+                            style={onBlueBackground ? { color: 'var(--color-on-blue)' } : undefined}
                           >
                             {groupName}
                           </span>
                           {hasLowEnergy && (
                             <span className="text-[9px] font-bold text-warning shrink-0 ml-0.5">!</span>
                           )}
-                          <span className={`text-[9px] shrink-0 ${countLabelClass}`} style={countLabelStyle}>
-                            ({sources.length})
+                          <span className={`text-[9px] shrink-0 tabular-nums ${countLabelClass}`} style={countLabelStyle}>
+                            ({assignedCount}/{groupTotal})
                           </span>
                         </button>
                         {onGoToReceiver && (
@@ -821,7 +902,7 @@ export function ImpulseResponseUpload({
 
                       {/* Source rows */}
                       {!isCollapsed && (
-                        <div className="ml-3 space-y-0.5 pb-1 pt-0.5">
+                        <div className="ml-3 card-stack--tight pb-1 pt-0.5">
                           {allowPairUploads && singleIRPerListener
                             ? renderListenerUploadRow(groupId, groupName, sources)
                             : sources.map(({ sourceId, receiverId, ir }) => {
@@ -842,7 +923,7 @@ export function ImpulseResponseUpload({
 
                 {/* Unmapped IRs (legacy / manual uploads) — flat */}
                 {groupedByReceiver.unmapped.length > 0 && (
-                  <div className="pt-1 space-y-1">
+                  <div className="pt-1 card-stack--tight">
                     {groupedByReceiver.unmapped.map(ir => {
                       const pair = (() => {
                         if (!sourceReceiverIRMapping) return null;
@@ -885,15 +966,15 @@ export function ImpulseResponseUpload({
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
-                        <div className={`text-xs font-medium truncate ${simulationResults ? '' : 'text-foreground'}`}
-                          style={simulationResults ? { color: 'var(--color-on-blue)' } : undefined}
+                        <div className={`text-xs font-medium truncate ${onBlueBackground ? '' : 'text-foreground'}`}
+                          style={onBlueBackground ? { color: 'var(--color-on-blue)' } : undefined}
                         >
                           {ir.name}
                         </div>
                         <div className="flex items-center gap-2 mt-1 whitespace-nowrap">
-                          {isLowEnergy && <Badge variant="warning" className="!text-warning-hover !border-warning/70">Low energy</Badge>}
-                          <span className={`text-xs flex-shrink-0 ${simulationResults ? '' : 'text-secondary-hover'}`}
-                            style={simulationResults ? { color: 'var(--color-on-blue-muted)' } : undefined}
+                          {isLowEnergy && <Badge variant="warning" onBlueBackground={onBlueBackground}>Low energy</Badge>}
+                          <span className={`text-xs flex-shrink-0 ${onBlueBackground ? '' : 'text-secondary-hover'}`}
+                            style={onBlueBackground ? { color: 'var(--color-on-blue-muted)' } : undefined}
                           >
                             {ir.duration.toFixed(2)}s
                           </span>
@@ -902,7 +983,7 @@ export function ImpulseResponseUpload({
                       <MiniIRWaveform
                         audioBuffer={irBuffer}
                         loading={bufferLoadingIds.has(ir.id)}
-                        onBlueBackground={!!simulationResults}
+                        onBlueBackground={onBlueBackground}
                         lowEnergy={isLowEnergy}
                       />
                     </div>
@@ -912,6 +993,11 @@ export function ImpulseResponseUpload({
             )}
           </div>
         </div>
+      )}
+
+      {/* Empty state — pair slots exist but nothing imported and no library rows */}
+      {allowPairUploads && !missingPairSetupMessage && slotStats && slotStats.total === 0 && (
+        <EmptyState message="No source–listener pairs yet. Add sound sources and listeners to create IR slots." />
       )}
 
       {/* Waveform Overlay */}
@@ -948,12 +1034,11 @@ export function ImpulseResponseUpload({
         </div>
       )}
 
-      {/* Help text — only outside simulation context */}
-      {!simulationResults && (
-        <div className="text-xs text-neutral-500">
-          <strong>Supported formats:</strong> Mono (1-ch), Binaural (2-ch), FOA (4-ch), TOA (16-ch)
-          <br />
-          Multi-channel files (8-32ch) are auto-extracted to FOA or TOA.
+      {/* Help text — only for the read-only simulation result list */}
+      {!allowPairUploads && !onBlueBackground && (
+        <div className="text-[10px] text-secondary-hover">
+          <strong>Supported formats:</strong> Mono (1-ch), Binaural (2-ch), FOA (4-ch), TOA (16-ch).
+          Multi-channel files (8–32ch) are auto-extracted to FOA or TOA.
         </div>
       )}
     </div>

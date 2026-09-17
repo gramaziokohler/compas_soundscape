@@ -23,6 +23,8 @@ interface SceneTimelineProps {
   onPause: () => void;
   onStop: () => void;
   onClose: () => void;
+  /** Reveals the full DAW timeline from the compact transport (same as "Show timeline"). */
+  onToggleTimeline: () => void;
   isAnyPlaying?: boolean;
   onSelectSoundCard?: (promptIndex: number) => void;
   originalIRChannelCount?: number;
@@ -44,6 +46,7 @@ export function SceneTimeline({
   onPause,
   onStop,
   onClose,
+  onToggleTimeline,
   isAnyPlaying,
   onSelectSoundCard,
   originalIRChannelCount,
@@ -105,6 +108,7 @@ export function SceneTimeline({
         onPlay={onPlay}
         onPause={onPause}
         onStop={onStop}
+        onExpand={onToggleTimeline}
       />
     );
   }

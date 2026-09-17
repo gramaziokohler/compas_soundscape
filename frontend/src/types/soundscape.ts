@@ -143,6 +143,19 @@ export interface SoundscapeSimulationSettings {
   enable_grid: boolean;
 }
 
+/**
+ * Acoustic-region selection snapshot captured when a simulation config's
+ * materials/region were last set. Used to detect that the live region was
+ * re-assigned after the card was generated, and to restore it.
+ */
+export interface SoundscapeAcousticSelection {
+  node_ids: string[];
+  node_names: string[];
+  geometry_ids: string[];
+  is_whole_model: boolean;
+  auto_detected: boolean;
+}
+
 /** Serializable simulation configuration */
 export interface SoundscapeSimulationConfig {
   id: string;
@@ -155,6 +168,8 @@ export interface SoundscapeSimulationConfig {
   speckle_layer_name?: string;
   speckle_geometry_object_ids?: string[];
   speckle_scattering_assignments?: Record<string, number>;
+  /** Acoustic region this card was simulated with (see SoundscapeAcousticSelection). */
+  speckle_acoustic_selection?: SoundscapeAcousticSelection;
   simulation_results?: string;
   current_simulation_id?: string;
   imported_ir_ids?: string[];

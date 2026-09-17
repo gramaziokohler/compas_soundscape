@@ -573,19 +573,25 @@ export function DAWDock({
     if (dockHeight !== target) setDockHeight(target);
   }, [dockAutoFit, dockHeight, rows.length, trackHeight, setDockHeight]);
 
-  /* ---- Ctrl+wheel: vertical track-height zoom (horizontal zoom lives in the footer +/- buttons) ---- */
+  /* ---- Wheel zoom while over the dock: Ctrl/Meta+wheel = vertical track-height
+       zoom, Alt+wheel = horizontal timeline zoom (px/sec). ---- */
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey && !e.metaKey) return;
       const dock = dockRef.current;
       if (!dock || !dock.contains(e.target as Node)) return;
-      e.preventDefault();
       const factor = e.deltaY < 0 ? 1.1 : 0.9;
+      if (e.altKey) {
+        e.preventDefault();
+        setPxPerSecond((prev) => prev * factor);
+        return;
+      }
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
       setTrackHeight((prev) => prev * factor);
     };
     document.addEventListener('wheel', handleWheel, { passive: false });
     return () => document.removeEventListener('wheel', handleWheel);
-  }, [setTrackHeight]);
+  }, [setTrackHeight, setPxPerSecond]);
 
   const totalDurationSec = timelineDurationMs / 1000;
   const contentWidth = totalDurationSec * pxPerSecond;

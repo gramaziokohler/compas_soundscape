@@ -1,11 +1,15 @@
 'use client';
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { ObjectExplorer } from '@/components/layout/ObjectExplorer';
 import { useUIStore } from '@/store/uiStore';
-import { useAcousticMaterialStore, useAcousticLayerStore } from '@/store';
+import { useAcousticMaterialStore, useAcousticLayerStore, useSpeckleStore, useAcousticsSimulationStore } from '@/store';
 import { RefreshIcon } from '@/components/ui/Icon';
 import { CardButton, CloseIcon } from '@/components/ui/Card';
+import { Badge } from '@/components/ui/Badge';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { Info, TriangleAlert } from 'lucide-react';
 import {
   OBJECT_EXPLORER_ROW_PADDING_PX,
   objectExplorerAcousticGridStyle,
@@ -38,9 +42,155 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
   const resetAllRef = useRef<(() => void) | null>(null);
   const isAcousticMaterialActive = useAcousticMaterialStore((s) => s.isActive);
   const acousticCardType = useAcousticMaterialStore((s) => s.cardType);
-  const selectedAcousticLayerName = useAcousticLayerStore((s) => s.selectedAcousticLayerName);
-  const showAcousticColumns = isAcousticMaterialActive && !!selectedAcousticLayerName;
+  const selectedAcousticLayerIds = useAcousticLayerStore((s) => s.selectedAcousticLayerIds);
+  const autoDetected = useAcousticLayerStore((s) => s.autoDetected);
+  const viewMode = useSpeckleStore((s) => s.viewMode);
+  const acousticLayerSelectionMode = useUIStore((s) => s.acousticLayerSelectionMode);
+  /** While defining the acoustic region, the panel needs more vertical room. */
+  const minHeight = acousticLayerSelectionMode ? Math.round(MIN_HEIGHT * 1.5) : MIN_HEIGHT;
+  const minHeightRef = useRef(minHeight);
+  useEffect(() => { minHeightRef.current = minHeight; }, [minHeight]);
+  const hasAcousticRegion = selectedAcousticLayerIds.length > 0;
+  const showAcousticColumns = isAcousticMaterialActive && hasAcousticRegion;
   const showScatteringColumn = showAcousticColumns && acousticCardType === 'pyroomacoustics';
+  /** Re-assign is an Acoustics-viewmode action only. */
+  const showReassign = viewMode === 'acoustic' && hasAcousticRegion;
+
+  // ── Generated card vs live region mismatch ────────────────────────────────
+  // The active card snapshots the acoustic region it was generated with. If the
+  // user re-assigns a different region afterwards, warn on the Re-assign button
+  // and offer to restore the region the card actually used.
+  const simulationConfigs = useAcousticsSimulationStore((s) => s.simulationConfigs);
+  const activeSimulationIndex = useAcousticsSimulationStore((s) => s.activeSimulationIndex);
+  const [showRestoreDialog, setShowRestoreDialog] = useState(false);
+
+  const activeConfig = activeSimulationIndex !== null
+    ? simulationConfigs[activeSimulationIndex]
+    : undefined;
+  const cardAcousticSelection = activeConfig && activeConfig.state === 'completed'
+    ? activeConfig.speckleAcousticSelection
+    : undefined;
+
+  const acousticRegionMismatch = useMemo(() => {
+    if (!cardAcousticSelection) return false;
+    const cardIds = [...cardAcousticSelection.nodeIds].sort();
+    const liveIds = [...selectedAcousticLayerIds].sort();
+    return cardIds.length !== liveIds.length
+      || cardIds.some((id, i) => id !== liveIds[i]);
+  }, [cardAcousticSelection, selectedAcousticLayerIds]);
+
+  const handleReassignAcoustic = useCallback(() => {
+    useAcousticLayerStore.getState().clearAcousticLayer();
+    useAcousticMaterialStore.getState().deactivateViewer();
+    useUIStore.getState().setAcousticLayerSelectionMode(true);
+    useUIStore.getState().setShowObjectExplorer(true);
+  }, []);
+
+  // Restore the exact acoustic region the active card was generated with.
+  const handleRestoreCardRegion = useCallback(() => {
+    const snap = cardAcousticSelection;
+    if (snap) {
+      useAcousticLayerStore.getState().setAcousticSelection({
+        nodeIds: [...snap.nodeIds],
+        nodeNames: [...snap.nodeNames],
+        geometryIds: [...snap.geometryIds],
+        isWholeModel: snap.isWholeModel,
+        autoDetected: snap.autoDetected,
+      });
+      useUIStore.getState().setAcousticLayerSelectionMode(false);
+      useUIStore.getState().setShowObjectExplorer(true);
+      useSpeckleStore.getState().applyVisibility();
+    }
+    setShowRestoreDialog(false);
+  }, [cardAcousticSelection]);
+
+  const handleReassignClick = useCallback(() => {
+    if (acousticRegionMismatch) {
+      setShowRestoreDialog(true);
+      return;
+    }
+    handleReassignAcoustic();
+  }, [acousticRegionMismatch, handleReassignAcoustic]);
+
+  const handleReassignDifferent = useCallback(() => {
+    setShowRestoreDialog(false);
+    handleReassignAcoustic();
+  }, [handleReassignAcoustic]);
+
+  /** "Re-assign acoustic layer" text button, warning-colored, placed right of the title. */
+  const reassignButton = showReassign ? (
+    <button
+      data-no-drag
+      onClick={handleReassignClick}
+      className="shrink-0 px-1.5 py-0.5 rounded border text-[10px] font-medium whitespace-nowrap transition-colors"
+      style={{
+        color: acousticRegionMismatch ? 'var(--color-warning)' : 'var(--color-secondary-hover)',
+        borderColor: acousticRegionMismatch ? 'var(--color-warning)' : 'var(--color-secondary)',
+        backgroundColor: 'transparent',
+      }}
+      title={acousticRegionMismatch
+        ? 'This simulation was generated with different acoustic layers — click to restore them'
+        : 'Re-assign acoustic layer'}
+    >
+      <span className="flex items-center gap-1">
+        {acousticRegionMismatch && (
+          <TriangleAlert size={11} strokeWidth={2.5} className="shrink-0" aria-hidden />
+        )}
+        Re-assign
+      </span>
+    </button>
+  ) : null;
+
+  /** Portal popup: restore the region the active card was generated with. */
+  const restoreDialog = showRestoreDialog && typeof document !== 'undefined'
+    ? createPortal(
+        <div
+          className="fixed inset-0 flex items-center justify-center"
+          style={{ backgroundColor: 'var(--color-overlay-bg)', zIndex: 10001 }}
+          onClick={() => setShowRestoreDialog(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Restore acoustic layers"
+            className="flex flex-col gap-2 rounded shadow-2xl"
+            style={{
+              width: '340px',
+              maxWidth: 'calc(100vw - 32px)',
+              padding: '16px',
+              backgroundColor: 'var(--color-surface)',
+              border: '1.5px solid var(--color-primary)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-2">
+              <TriangleAlert
+                size={16}
+                strokeWidth={2.5}
+                className="shrink-0 mt-0.5"
+                style={{ color: 'var(--color-warning)' }}
+                aria-hidden
+              />
+              <div className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
+                Acoustic layers were re-assigned
+              </div>
+            </div>
+            <p className="text-xs leading-snug" style={{ color: 'var(--color-secondary-hover)' }}>
+              The active simulation was generated with different acoustic layers than the ones
+              currently selected. Restore the layers it was generated with?
+            </p>
+            <ConfirmDialog
+              confirmLabel="Restore layers"
+              cancelLabel="Re-assign new"
+              onConfirm={handleRestoreCardRegion}
+              onCancel={handleReassignDifferent}
+              solidBackground
+            />
+          </div>
+        </div>,
+        document.body,
+      )
+    : null;
 
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -100,7 +250,7 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
     lastViewportRef.current = cur;
     const ratioX = prev.width > 0 ? cur.width / prev.width : 1;
     const ratioY = prev.height > 0 ? cur.height / prev.height : 1;
-    setSize((s) => ({ ...s, height: clampToViewportHeight(s.height, MIN_HEIGHT, PANEL_MARGIN) }));
+    setSize((s) => ({ ...s, height: clampToViewportHeight(s.height, minHeight, PANEL_MARGIN) }));
     setPosition((p) => {
       const nx = Math.round(p.x * ratioX);
       const ny = Math.round(p.y * ratioY);
@@ -108,7 +258,14 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
       if (c.x === p.x && c.y === p.y) return p;
       return c;
     });
-  }, [scale.viewport.width, scale.viewport.height, positionReady]);
+  }, [scale.viewport.width, scale.viewport.height, positionReady, minHeight]);
+
+  // Grow the panel when the minimum height increases (entering the region-selection
+  // phase), so the taller "define the acoustic region" UI always fits.
+  useEffect(() => {
+    if (!positionReady) return;
+    setSize((s) => (s.height < minHeight ? { ...s, height: minHeight } : s));
+  }, [minHeight, positionReady]);
 
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ mouseX: 0, mouseY: 0, panelX: 0, panelY: 0 });
@@ -135,7 +292,7 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
         const dy = e.clientY - resizeStartRef.current.mouseY;
         setSize({
           width: Math.max(MIN_WIDTH, resizeStartRef.current.width + dx),
-          height: Math.max(MIN_HEIGHT, resizeStartRef.current.height + dy),
+          height: Math.max(minHeightRef.current, resizeStartRef.current.height + dy),
         });
       }
     };
@@ -231,7 +388,15 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
           }}
           onMouseDown={handleDragStart}
         >
-          <span className="text-sm font-semibold text-foreground truncate min-w-0">Object Explorer</span>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-sm font-semibold text-foreground truncate min-w-0">Object Explorer</span>
+            {autoDetected && (
+              <Badge variant="primary" title="Auto-selected from a layer named 'Acoustics'">
+                <Info size={10} strokeWidth={3} />
+              </Badge>
+            )}
+            {reassignButton}
+          </div>
           <span className="pr-6 text-[10px] text-primary whitespace-nowrap text-right justify-self-end">
             Acoustic material
           </span>
@@ -282,7 +447,15 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
         }}
         onMouseDown={handleDragStart}
       >
-        <span className="text-sm font-semibold text-foreground shrink-0">Object Explorer</span>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="text-sm font-semibold text-foreground shrink-0">Object Explorer</span>
+          {autoDetected && (
+            <Badge variant="primary" title="Auto-selected from a layer named 'Acoustics'">
+              <Info size={10} strokeWidth={3} />
+            </Badge>
+          )}
+          {reassignButton}
+        </div>
         <div className="flex items-center gap-2 shrink-0">
           <button
             data-no-drag
@@ -323,7 +496,7 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
       >
         <ObjectExplorer
           resetAllRef={resetAllRef}
-          maxTreeHeight={Math.max(MIN_HEIGHT - HEADER_HEIGHT - CONTENT_PADDING * 2, size.height - HEADER_HEIGHT - CONTENT_PADDING * 2)}
+          maxTreeHeight={Math.max(minHeight - HEADER_HEIGHT - CONTENT_PADDING * 2, size.height - HEADER_HEIGHT - CONTENT_PADDING * 2)}
         />
       </div>
 
@@ -347,6 +520,8 @@ export function ObjectExplorerPanel({ onClose, isVisible, isRightSidebarExpanded
           <path d="M9 1L1 9M9 5L5 9" stroke="var(--color-secondary-hover)" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
       </div>
+
+      {restoreDialog}
     </div>
   );
 }

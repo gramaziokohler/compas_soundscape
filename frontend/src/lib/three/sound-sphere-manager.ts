@@ -1512,6 +1512,9 @@ export class SoundSphereManager {
     light.layers.enableAll();
     light.userData.baseIntensity = DARK_MODE.POINT_LIGHT_INTENSITY;
     light.userData.wantVisible = true;
+    // Inherit the track's current mute state: a sound muted before dark mode was
+    // enabled must not start lighting the scene.
+    light.userData.muted = mesh.userData.isMuted === true;
     // The light lives in the dedicated lights group (NOT as a child of the mesh)
     // so hiding sound spheres does not also hide the light. Its position is
     // synced from the mesh each frame in updateScreenSpaceScale.

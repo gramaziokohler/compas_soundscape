@@ -1,14 +1,18 @@
 'use client';
 
 import React from 'react';
-import { useSpeckleStore } from '@/store';
+import { useSpeckleStore, useAcousticLayerStore, useUIStore } from '@/store';
 
 export function SceneViewModeToolbar() {
   const { viewMode, setViewMode } = useSpeckleStore();
+  const acousticGeometryIds = useAcousticLayerStore((s) => s.selectedAcousticGeometryIds);
+  const acousticFaceCount = useAcousticLayerStore((s) => s.selectedAcousticFaceCount);
+  const isWholeModel = useAcousticLayerStore((s) => s.isWholeModel);
+  const hasAcousticRegion = useAcousticLayerStore((s) => s.selectedAcousticLayerIds.length > 0);
 
   return (
     <div
-      className="absolute top-4 z-20 pointer-events-auto"
+      className="absolute top-4 z-20 pointer-events-auto flex flex-col items-center gap-1"
       style={{ left: '50%', transform: 'translateX(-50%)' }}
     >
       <div
@@ -23,7 +27,7 @@ export function SceneViewModeToolbar() {
         {([
           { mode: 'dark', label: 'Sounds', title: 'Sound events are represented as blue light' },
           { mode: 'default', label: 'Default', title: 'Architectural viewmode with ambient light' },
-          { mode: 'acoustic', label: 'Acoustics', title: 'Acoustic materials layer isolation (needs a simulation tab expanded)' },
+          { mode: 'acoustic', label: 'Acoustics', title: 'Acoustics — pick the surfaces that bound your room, assign materials, and run a simulation' },
         ] as const).map(({ mode, label, title }) => {
           const isActive = viewMode === mode;
           return (
@@ -47,6 +51,27 @@ export function SceneViewModeToolbar() {
           );
         })}
       </div>
+
+      {/* Acoustic region status chip — always tells the user what Acoustics mode is showing. */}
+      {viewMode === 'acoustic' && (
+        <button
+          type="button"
+          onClick={() => useUIStore.getState().setShowObjectExplorer(true)}
+          className="rounded-full px-2.5 py-1 text-[10px] font-medium transition-colors"
+          style={{
+            backgroundColor: 'var(--color-overlay-bg)',
+            border: '1px solid var(--color-overlay-border)',
+            color: 'var(--color-secondary-hover)',
+          }}
+          title="Open the Object Explorer to change the acoustic region"
+        >
+          {hasAcousticRegion
+            ? (isWholeModel
+              ? `Acoustic region · whole model · ${acousticFaceCount.toLocaleString()} faces`
+              : `Acoustic region · ${acousticGeometryIds.length} surface${acousticGeometryIds.length === 1 ? '' : 's'} · ${acousticFaceCount.toLocaleString()} faces`)
+            : 'No acoustic region yet — pick surfaces'}
+        </button>
+      )}
     </div>
   );
 }

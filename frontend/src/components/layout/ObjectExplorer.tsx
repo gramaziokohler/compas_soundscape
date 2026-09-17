@@ -2,25 +2,29 @@
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { VirtualTreeItem } from '@/components/scene/VirtualTreeItem';
-import { useSpeckleTree, getRootNodesForModel, getGeometryLeafIdsFromNode } from '@/hooks/useSpeckleTree';
+import { useSpeckleTree, getRootNodesForModel, getGeometryLeafIdsFromNode, getHeaderAndSubheader, countTopLevelLayers } from '@/hooks/useSpeckleTree';
 import { useSpeckleFiltering } from '@/hooks/useSpeckleFiltering';
 import { useSpeckleInteractions } from '@/hooks/useSpeckleInteractions';
-import { useSpeckleStore, useAcousticLayerStore, useUIStore } from '@/store';
+import { useObjectSelectionPhase } from '@/hooks/useObjectSelectionPhase';
+import { useSpeckleStore, useAcousticLayerStore, useUIStore, useAcousticMaterialStore } from '@/store';
 import { setSelectionPreviewIds } from '@/store/speckleStore';
 import type { VirtualTreeItem as TreeItem } from '@/hooks/useSpeckleTree';
-import { useAcousticMaterialStore } from '@/store';
-import { getHeaderAndSubheader } from '@/hooks/useSpeckleTree';
 import { getMaterialColorByAbsorption } from '@/utils/utils';
 import type { MaterialOption } from '@/components/ui/MaterialSelect';
 import { UI_RIGHT_SIDEBAR } from '@/utils/constants';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelperHint } from '@/components/ui/HelperHint';
 
 /**
  * ObjectExplorer Component
- * 
+ *
  * Displays a hierarchical tree view of objects from the Speckle viewer.
  * Supports selection, visibility control, isolation, and filtering.
- * Extracted from Model3DContextContent to live in the right sidebar.
+ *
+ * When the acoustic-region selection phase is active, every row (layer AND
+ * child object) renders a tri-state checkbox. Clicks in the tree or the 3D
+ * viewer (single click, shift-click, box-drag) additively build the region;
+ * the union of the picked geometry surfaces is previewed live in the viewer.
  */
 
 interface ObjectExplorerProps {
@@ -32,15 +36,17 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
   const { modelFileName, worldTreeVersion, getViewerRef, setSelectedEntity, setSelectedObjectIds: storeSetSelectedObjectIds } = useSpeckleStore();
   const storeSelectedObjectIds = useSpeckleStore((s) => s.selectedObjectIds);
   const viewMode = useSpeckleStore((s) => s.viewMode);
-  const selectedAcousticLayerName = useAcousticLayerStore((s) => s.selectedAcousticLayerName);
   const selectedAcousticLayerNames = useAcousticLayerStore((s) => s.selectedAcousticLayerNames);
+  const selectedAcousticLayerIds = useAcousticLayerStore((s) => s.selectedAcousticLayerIds);
+  const selectedAcousticGeometryIds = useAcousticLayerStore((s) => s.selectedAcousticGeometryIds);
+  const modelFaceCounts = useAcousticLayerStore((s) => s.modelFaceCounts);
   const isWholeModel = useAcousticLayerStore((s) => s.isWholeModel);
-  const setAcousticLayers = useAcousticLayerStore((s) => s.setAcousticLayers);
-  const clearAcousticLayer = useAcousticLayerStore((s) => s.clearAcousticLayer);
+  const setAcousticSelection = useAcousticLayerStore((s) => s.setAcousticSelection);
   const acousticLayerSelectionMode = useUIStore((s) => s.acousticLayerSelectionMode);
   const acousticExplorerHiddenIds = useSpeckleStore((s) => s.acousticExplorerHiddenIds);
   const isAcousticMode = viewMode === 'acoustic';
-  const hasDefinedLayer = !!selectedAcousticLayerName;
+  const hasDefinedLayer = selectedAcousticLayerIds.length > 0;
+  const phase = isAcousticMode && acousticLayerSelectionMode;
   // Stable RefObject-like shim so hooks that expect RefObject<Viewer> keep working
   const viewerRef = useMemo<React.RefObject<any>>(() => ({
     get current() { return getViewerRef(); }
@@ -57,9 +63,14 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
   const treeContainerRef = useRef<HTMLDivElement>(null);
   const pendingScrollIdRef = useRef<string | null>(null);
   const virtualItemsRef = useRef<typeof virtualItems>([]);
-  // Track which layer IDs have been clicked in selection mode (multi-select toggles).
-  // Maps layerId -> { name, leafIds } so we can preview + commit the union.
-  const clickedLayerIdsRef = useRef<Map<string, { name: string; leafIds: string[]; isRoot: boolean }>>(new Map());
+
+  // ── Acoustic-region draft (selection phase) ──────────────────────────────
+  // Canonical draft = the set of geometry leaf ids picked so far. Viewer
+  // selection feeds it; tree checkboxes toggle it. `draftVersion` forces the
+  // checkbox/preview re-render (the ref itself is non-reactive for perf).
+  const draftLeafIdsRef = useRef<Set<string>>(new Set());
+  const [draftVersion, setDraftVersion] = useState(0);
+  const lastDraftSyncRef = useRef<string>('[]');
   
   // Initialize tree management hooks
   const {
@@ -70,6 +81,7 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
     toggleNodeExpansion,
     setSelection,
     clearSelection,
+    collapseToRoot,
     expandToShowObject
   } = useSpeckleTree(worldTree, treeUpdateTrigger, modelFileName) || {
     rootNodes: [],
@@ -79,6 +91,7 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
     toggleNodeExpansion: () => {},
     setSelection: () => {},
     clearSelection: () => {},
+    collapseToRoot: () => {},
     expandToShowObject: () => {}
   };
   
@@ -103,25 +116,112 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
     selectObjects,
     clearSelection: clearViewerSelection
   } = useSpeckleInteractions(viewerRef);
-  
+
   const hasIsolatedObjectsInGeneral = isolatedObjects.size > 0;
 
-  // Wrapper that also clears clicked-layer tracking + selection mode
+  // All model geometry leaf ids (denominator for "N of M surfaces" + whole-model check)
+  // and per-object mesh-face counts (from the viewer BVH, published by
+  // useAcousticLayerIsolation since raw Speckle `faces` are emptied on load).
+  const allModelGeometryIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const node of rootNodes) {
+      for (const id of getGeometryLeafIdsFromNode(node)) s.add(id);
+    }
+    return s;
+  }, [rootNodes]);
+
+  // Number of top-level selectable layers — multi-layer models start collapsed
+  // after an acoustic region is assigned (see effect below).
+  const topLevelLayerCount = useMemo(() => countTopLevelLayers(worldTree), [worldTree]);
+
+  const totalFaceCount = useMemo(
+    () => Object.values(modelFaceCounts).reduce((sum, n) => sum + n, 0),
+    [modelFaceCounts],
+  );
+
+  const selectedFaceCount = useMemo(() => {
+    let sum = 0;
+    draftLeafIdsRef.current.forEach((id) => { sum += modelFaceCounts[id] ?? 0; });
+    return sum;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftVersion, modelFaceCounts]);
+
+  // Reactive checkbox state (leaf id → selected).
+  const selectedLeafSet = useMemo(
+    () => new Set(draftLeafIdsRef.current),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [draftVersion],
+  );
+
+  // Sync the draft into the canonical store selection + 3D highlight.
+  const syncDraftToViewer = useCallback(() => {
+    const next = Array.from(draftLeafIdsRef.current);
+    lastDraftSyncRef.current = JSON.stringify([...next].sort());
+    setDraftVersion((v) => v + 1);
+    setDisableScrollOnNextSelection(true);
+    storeSetSelectedObjectIds(next);
+    if (next.length === 0) {
+      clearViewerSelection();
+    } else {
+      selectObjects(next);
+    }
+  }, [storeSetSelectedObjectIds, clearViewerSelection, selectObjects]);
+
+  // Wrapper that also clears draft tracking + selection mode
   const clearAll = useCallback(() => {
     clearFilters();
     clearSelection();
-    clickedLayerIdsRef.current.clear();
+    draftLeafIdsRef.current = new Set();
+    setDraftVersion((v) => v + 1);
     setSelectionPreviewIds(null);
     useUIStore.getState().setAcousticLayerSelectionMode(false);
   }, [clearFilters, clearSelection]);
 
-  // Exclude the "Soundscape" layer (and all its descendants).
-  // In acoustic mode: show ONLY the selected acoustic layer subtrees.
-  // In default/dark mode: hide the selected acoustic layer subtrees.
+  // ── Selection phase lifecycle ────────────────────────────────────────────
+  // Start-of-phase: reset the draft (a fresh pick, including "Re-assign").
+  useEffect(() => {
+    if (!phase) return;
+    draftLeafIdsRef.current = new Set();
+    lastDraftSyncRef.current = JSON.stringify([]);
+    setDraftVersion((v) => v + 1);
+    setSelectionPreviewIds(null);
+    useSpeckleStore.getState().applyVisibility();
+    useSpeckleStore.getState().clearViewerSelection();
+    clearSelection();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
+  // Viewer → draft (additive): every geometry id the viewer selects is added.
+  useEffect(() => {
+    if (!phase) return;
+    const incoming = storeSelectedObjectIds;
+    const key = JSON.stringify([...incoming].sort());
+    if (key === lastDraftSyncRef.current) return;
+    let changed = false;
+    for (const id of incoming) {
+      if (!draftLeafIdsRef.current.has(id)) {
+        draftLeafIdsRef.current.add(id);
+        changed = true;
+      }
+    }
+    if (changed) setDraftVersion((v) => v + 1);
+  }, [storeSelectedObjectIds, phase]);
+
+  // Draft → live preview (hide everything outside the picked union).
+  useEffect(() => {
+    if (!phase) return;
+    const union = Array.from(draftLeafIdsRef.current);
+    setSelectionPreviewIds(union.length > 0 ? union : null);
+    useSpeckleStore.getState().applyVisibility();
+  }, [draftVersion, phase]);
+
+  // ── Filtering (view-mode dependent) ──────────────────────────────────────
+  // Exclude the "Soundscape" layer. With a defined region: in acoustic mode show
+  // only rows whose geometry intersects the region; elsewhere hide those rows.
+  // During the selection phase (or no region / whole model) show everything.
   const filteredVirtualItems = useMemo(() => {
     let soundscapeSkipIndent: number | null = null;
-    const selectedLayerNameSet = new Set<string>(isWholeModel ? [] : selectedAcousticLayerNames);
-    let acousticSubtreeIndent = -1;
+    const acousticSet = new Set(isWholeModel ? [] : selectedAcousticGeometryIds);
 
     return virtualItems.filter(item => {
       // ── Always filter out Soundscape ──
@@ -134,33 +234,14 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
         return false;
       }
 
-      // ── ViewMode-dependent acoustic layer filtering ──
-      // Whole model: skip filtering entirely (everything IS the acoustic layer).
-      if (isWholeModel) return true;
+      // ── ViewMode-dependent acoustic filtering ──
+      if (phase || isWholeModel || acousticSet.size === 0) return true;
 
-      // No layers selected (selection mode / none defined) — show everything.
-      if (selectedLayerNameSet.size === 0) return true;
-
-      const name = item.data.raw?.name ?? '';
-
-      // Inside a selected layer's subtree: show in acoustic mode, hide otherwise.
-      if (acousticSubtreeIndent !== -1) {
-        if (item.indent > acousticSubtreeIndent) {
-          return isAcousticMode;
-        }
-        acousticSubtreeIndent = -1;
-      }
-
-      // This item is itself a selected layer.
-      if (selectedLayerNameSet.has(name)) {
-        acousticSubtreeIndent = item.indent;
-        return isAcousticMode;
-      }
-
-      // Outside any selected layer: hide in acoustic mode, show otherwise.
-      return !isAcousticMode;
+      const leaves = getGeometryLeafIdsFromNode(item.data);
+      const intersects = leaves.some((id) => acousticSet.has(id));
+      return isAcousticMode ? intersects : !intersects;
     });
-  }, [virtualItems, isAcousticMode, selectedAcousticLayerNames, isWholeModel]);
+  }, [virtualItems, isAcousticMode, selectedAcousticGeometryIds, isWholeModel, phase]);
 
   // Expose reset-all function to parent panel
   useEffect(() => {
@@ -173,11 +254,9 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
   }, [resetAllRef, clearAll]);
 
   // Trigger tree fetch when viewer/world tree becomes available
-  // worldTreeVersion is a proper reactive dependency that changes when the tree loads
   useEffect(() => {
     if (!viewerRef?.current) return;
 
-    // Reset per-load flags so tree loading runs fresh on each viewer init
     hasLoadedTreeRef.current = false;
 
     const attemptTreeLoad = () => {
@@ -198,10 +277,8 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
       return false;
     };
 
-    // Try immediately (worldTreeVersion change means tree should be ready)
     if (attemptTreeLoad()) return;
 
-    // Fallback: retry with delays if immediate load fails
     const timeouts: NodeJS.Timeout[] = [];
     const delays = [500, 1000, 1500, 2000, 2500, 3000];
 
@@ -335,19 +412,11 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
   }, [filteredVirtualItems.length, doScrollToItem]);
   
   // ===== Viewer → Explorer selection sync =====
-  // The viewer writes its selection (single click, shift+click, box-select) to
-  // the canonical `speckleStore.selectedObjectIds`. We mirror it into the tree:
-  // reveal + highlight every matching row and scroll to the most recent one.
-  // Explorer-initiated updates set `disableScrollOnNextSelection` first so their
-  // own echo through the store does not re-reveal/re-scroll.
   const resolveSelectionRowIds = useCallback((ids: string[]): string[] => {
     const items = virtualItemsRef.current;
     const resolved = new Set<string>();
 
     for (const id of ids) {
-      // Prefer the DEEPEST row that owns the id so a click highlights the actual
-      // child object, not its top-most ancestor. Exact node match first; then any
-      // row whose geometry leaves contain the id (Brep/display-mesh case).
       let bestNodeId: string | null = null;
       let bestIndent = -1;
       let bestOrder = -1;
@@ -372,18 +441,23 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
   const prevStoreSelectionRef = useRef<string[]>([]);
   const pendingRevealRef = useRef<string[] | null>(null);
 
-  // Stage 1: when the viewer selection changes, open every collapsed ancestor
-  // layer that contains a selected object so the actual leaf row exists in the
-  // flattened list (children of a collapsed layer are not rendered).
-  // expandToShowObject walks the FULL tree, so it works even when the target
-  // row is not currently visible.
   useEffect(() => {
     const storeIds = storeSelectedObjectIds;
     const prev = prevStoreSelectionRef.current;
     prevStoreSelectionRef.current = storeIds;
 
-    // Explorer-initiated updates are already reflected in the tree — consume the
-    // flag, drop any stale reveal, and skip re-reveal/re-scroll of our own echo.
+    // The viewer → explorer mirror (reveal / expand / scroll / highlight) runs in
+    // Default mode and in Acoustic mode whenever the region-selection phase is NOT
+    // active (during that phase the viewer feeds the draft via the effect above and
+    // the tree rows use checkboxes instead of a highlight).
+    const mirrorEnabled = viewMode === 'default'
+      || (viewMode === 'acoustic' && !acousticLayerSelectionMode);
+    if (!mirrorEnabled) {
+      pendingRevealRef.current = null;
+      setDisableScrollOnNextSelection(false);
+      return;
+    }
+
     if (disableScrollOnNextSelection) {
       pendingRevealRef.current = null;
       setDisableScrollOnNextSelection(false);
@@ -400,18 +474,21 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
     for (const id of storeIds) {
       expandToShowObject(id);
     }
-  }, [storeSelectedObjectIds, disableScrollOnNextSelection, expandToShowObject, clearSelection]);
+  }, [viewMode, acousticLayerSelectionMode, storeSelectedObjectIds, disableScrollOnNextSelection, expandToShowObject, clearSelection]);
 
-  // Stage 2: once the expansion above has committed and the flattened list
-  // includes the newly-revealed rows, highlight the deepest matching rows and
-  // scroll to the most recent selection.
   useEffect(() => {
     const ids = pendingRevealRef.current;
     if (!ids) return;
 
+    const mirrorEnabled = viewMode === 'default'
+      || (viewMode === 'acoustic' && !acousticLayerSelectionMode);
+    if (!mirrorEnabled) {
+      pendingRevealRef.current = null;
+      return;
+    }
+
     const targetIds = resolveSelectionRowIds(ids);
     if (targetIds.length === 0) {
-      // Expansion committed but no row owns the selection — nothing to reveal.
       pendingRevealRef.current = null;
       clearSelection();
       return;
@@ -419,19 +496,15 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
     pendingRevealRef.current = null;
     setSelection(targetIds);
     scrollToSelectedItem(targetIds[targetIds.length - 1]);
-  }, [virtualItems, resolveSelectionRowIds, setSelection, scrollToSelectedItem, clearSelection]);
+  }, [viewMode, acousticLayerSelectionMode, virtualItems, resolveSelectionRowIds, setSelection, scrollToSelectedItem, clearSelection]);
   
-  // ===== Selected entity sync =====
-  // setSelectedEntity is already destructured from the store above
-
-  // ===== Auto-expand/scroll to acoustic layer =====
+  // ===== Auto-expand/scroll to acoustic material layer =====
   const expandToLayerId = useAcousticMaterialStore((s) => s.expandToLayerId);
   const isAcousticMaterialActive = useAcousticMaterialStore((s) => s.isActive);
   const acousticCardType = useAcousticMaterialStore((s) => s.cardType);
   const acousticMaterials = useAcousticMaterialStore((s) => s.availableMaterials);
   const lastProcessedLayerIdRef = useRef<string | null>(null);
 
-  // Material options + color map for the acoustic dropdown columns (memoized once)
   const sortedMaterials = useMemo<MaterialOption[]>(() => {
     if (!isAcousticMaterialActive) return [];
     return [...acousticMaterials]
@@ -453,74 +526,153 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
       return;
     }
 
-    // Skip if already processed this layer
     if (lastProcessedLayerIdRef.current === expandToLayerId) return;
     lastProcessedLayerIdRef.current = expandToLayerId;
 
-    // Expand ancestors to reveal the layer node
     expandToShowObject(expandToLayerId);
 
-    // After a short delay, expand the layer node itself and scroll to it
     setTimeout(() => {
       toggleNodeExpansion(expandToLayerId);
       scrollToSelectedItem(expandToLayerId);
     }, 150);
   }, [expandToLayerId, isAcousticMaterialActive, expandToShowObject, toggleNodeExpansion, scrollToSelectedItem]);
 
-  // Auto-expand the acoustic layer node in the tree when in acoustic mode
+  // After an acoustic region is assigned, keep multi-layer models collapsed so
+  // the layer list stays compact (the user expands a layer to assign materials).
+  // Single-layer models still expand straight to the region node.
   const acousticLayerExpandedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!isAcousticMode || !selectedAcousticLayerName) return;
-    if (acousticLayerExpandedRef.current === selectedAcousticLayerName) return;
+    if (!isAcousticMode || selectedAcousticLayerIds.length === 0) return;
+    const expandKey = selectedAcousticLayerIds.join('|');
+    if (acousticLayerExpandedRef.current === expandKey) return;
+
+    // Multi-layer model: collapse everything once the region is assigned (the
+    // tree may still be loading, so only mark handled after acting).
+    if (topLevelLayerCount > 1) {
+      acousticLayerExpandedRef.current = expandKey;
+      collapseToRoot();
+      return;
+    }
 
     const acousticItem = filteredVirtualItems.find(
-      (item) => item.data.raw?.name === selectedAcousticLayerName,
+      (item) => selectedAcousticLayerIds.includes(item.data.raw?.id)
+        || selectedAcousticLayerNames.includes(item.data.raw?.name),
     );
     if (!acousticItem || acousticItem.isExpanded) return;
 
-    // Expand ancestors to reveal the layer node, then expand the layer itself
     const layerId = acousticItem.data.raw?.id;
     if (!layerId) return;
 
-    acousticLayerExpandedRef.current = selectedAcousticLayerName;
+    acousticLayerExpandedRef.current = expandKey;
     expandToShowObject(layerId);
     setTimeout(() => {
       toggleNodeExpansion(layerId);
       scrollToSelectedItem(layerId);
     }, 200);
-  }, [isAcousticMode, selectedAcousticLayerName, filteredVirtualItems, expandToShowObject, toggleNodeExpansion, scrollToSelectedItem]);
+  }, [isAcousticMode, selectedAcousticLayerIds, selectedAcousticLayerNames, filteredVirtualItems, expandToShowObject, toggleNodeExpansion, scrollToSelectedItem, topLevelLayerCount, collapseToRoot]);
+
+  // ── Acoustic-region selection handlers ───────────────────────────────────
+  const toggleSelectionForItem = useCallback((item: TreeItem) => {
+    const leaves = getGeometryLeafIdsFromNode(item.data);
+    if (leaves.length === 0) return;
+    const draft = draftLeafIdsRef.current;
+    const allIn = leaves.every((id) => draft.has(id));
+    if (allIn) {
+      leaves.forEach((id) => draft.delete(id));
+    } else {
+      leaves.forEach((id) => draft.add(id));
+    }
+    syncDraftToViewer();
+  }, [syncDraftToViewer]);
+
+  const handleSelectAll = useCallback(() => {
+    draftLeafIdsRef.current = new Set(allModelGeometryIds);
+    syncDraftToViewer();
+  }, [allModelGeometryIds, syncDraftToViewer]);
+
+  const handleCancelSelection = useCallback(() => {
+    draftLeafIdsRef.current = new Set();
+    lastDraftSyncRef.current = JSON.stringify([]);
+    setDraftVersion((v) => v + 1);
+    setSelectionPreviewIds(null);
+    useSpeckleStore.getState().applyVisibility();
+    useSpeckleStore.getState().clearViewerSelection();
+    clearSelection();
+  }, [clearSelection]);
+
+  const handleConfirmSelection = useCallback(() => {
+    const draft = draftLeafIdsRef.current;
+    if (draft.size === 0) return;
+
+    const wholeModel = allModelGeometryIds.size > 0
+      && draft.size === allModelGeometryIds.size
+      && Array.from(draft).every((id) => allModelGeometryIds.has(id));
+
+    // Collapse the draft into the top-most fully-selected rows, so the stored
+    // selection stays compact (a whole layer instead of its every surface).
+    const picked: { id: string; name: string }[] = [];
+    let ancestorIndent: number | null = null;
+    for (const item of virtualItemsRef.current) {
+      const indent = item.indent ?? 0;
+      if (ancestorIndent !== null) {
+        if (indent > ancestorIndent) continue;
+        ancestorIndent = null;
+      }
+      const leaves = getGeometryLeafIdsFromNode(item.data);
+      if (leaves.length === 0) continue;
+      if (!leaves.every((id) => draft.has(id))) continue;
+      const nodeId = item.data.raw?.id || item.data.model?.id || item.id;
+      if (!nodeId) continue;
+      const { header } = getHeaderAndSubheader(item.data.raw, modelFileName, indent === 0);
+      picked.push({ id: nodeId, name: header });
+      ancestorIndent = indent;
+    }
+
+    const nodeIds = picked.length > 0 ? picked.map((p) => p.id) : Array.from(draft);
+    const nodeNames = picked.length > 0 ? picked.map((p) => p.name) : ['Custom selection'];
+
+    setAcousticSelection({
+      nodeIds,
+      nodeNames,
+      geometryIds: Array.from(draft),
+      faceCount: selectedFaceCount,
+      isWholeModel: wholeModel,
+      autoDetected: false,
+    });
+    setSelectionPreviewIds(null);
+    useSpeckleStore.getState().applyVisibility();
+    useSpeckleStore.getState().clearViewerSelection();
+    useUIStore.getState().setAcousticLayerSelectionMode(false);
+    draftLeafIdsRef.current = new Set();
+    setDraftVersion((v) => v + 1);
+    clearSelection();
+  }, [allModelGeometryIds, modelFileName, setAcousticSelection, selectedFaceCount, clearSelection]);
+
+  // Keyboard: Enter confirms, Escape clears the draft.
+  useObjectSelectionPhase({
+    active: phase,
+    hasConfirmedSelection: false,
+    onCommit: () => {
+      handleConfirmSelection();
+      return true;
+    },
+    onEscape: handleCancelSelection,
+    ignoreTyping: true,
+  });
 
   // Tree item callbacks
   const handleItemClick = useCallback((item: TreeItem, event: React.MouseEvent) => {
     const objectId = item.data.raw?.id;
     if (!objectId) return;
 
-    const isCurrentlySelected = selectedObjectIds.includes(objectId);
-
-    // In selection mode: clicking a layer toggles it (multi-select) and previews
-    // the union isolation. Commit happens via the "Select" button / banner.
-    if (acousticLayerSelectionMode && item.hasChildren) {
-      const leafIds = getGeometryLeafIdsFromNode(item.data);
-      const itemName = item.data.raw?.name || '';
-      const map = clickedLayerIdsRef.current;
-
-      if (map.has(objectId)) {
-        map.delete(objectId);
-      } else {
-        map.set(objectId, { name: itemName, leafIds, isRoot: item.indent === 0 });
-      }
-
-      // Preview: isolate the union of all toggled layers.
-      const union = new Set<string>();
-      map.forEach((v) => v.leafIds.forEach((id) => union.add(id)));
-      setSelectionPreviewIds(union.size > 0 ? Array.from(union) : null);
-      useSpeckleStore.getState().applyVisibility();
-      setTreeUpdateTrigger((prev) => prev + 1);
+    // Selection phase: clicking a row toggles its checkbox (tri-state).
+    if (phase) {
+      toggleSelectionForItem(item);
       return;
     }
 
-    // Compute the target selection: shift toggles membership (off if already
-    // selected, on otherwise); no shift replaces the whole selection.
+    const isCurrentlySelected = selectedObjectIds.includes(objectId);
+
     let next: string[];
     if (event.shiftKey) {
       next = isCurrentlySelected
@@ -530,13 +682,8 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
       next = [objectId];
     }
 
-    // Mark this update as explorer-initiated so the store-driven mirror effect
-    // (which also fires from our own store write below) does not re-reveal/scroll.
     setDisableScrollOnNextSelection(true);
 
-    // Reflect the exact selection into the tree, the viewer SelectionExtension,
-    // and the canonical store so both directions stay consistent — including
-    // multi-selection toggled via shift.
     setSelection(next);
     if (next.length === 0) {
       clearViewerSelection();
@@ -545,8 +692,6 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
     }
     storeSetSelectedObjectIds(next);
 
-    // A plain single-select of a not-yet-selected row updates the
-    // EntityInfoPanel immediately (no need to wait for a canvas interaction).
     if (!event.shiftKey && !isCurrentlySelected) {
       const { header, subheader } = getHeaderAndSubheader(item.data.raw, modelFileName);
       const displayType = item.hasChildren ? 'Layer' : (subheader || 'Speckle Object');
@@ -560,7 +705,7 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
     if (next.length > 0 && item.hasChildren && !item.isExpanded) {
       toggleNodeExpansion(item.id);
     }
-  }, [selectedObjectIds, setSelection, selectObjects, clearViewerSelection, storeSetSelectedObjectIds, toggleNodeExpansion, setSelectedEntity, modelFileName, acousticLayerSelectionMode]);
+  }, [phase, toggleSelectionForItem, selectedObjectIds, setSelection, selectObjects, clearViewerSelection, storeSetSelectedObjectIds, toggleNodeExpansion, setSelectedEntity, modelFileName]);
 
   const handleItemDoubleClick = useCallback((objectId: string) => {
     zoomToObjects([objectId]);
@@ -569,7 +714,6 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
   const handleToggleVisibility = useCallback((objectIds: string[]) => {
     if (isAcousticMode && hasDefinedLayer) {
       const hiddenSet = useSpeckleStore.getState().acousticExplorerHiddenIds;
-      // Check if ALL the object IDs are in the hidden set
       const allHidden = objectIds.every((id) => hiddenSet.includes(id));
 
       objectIds.forEach((id) => {
@@ -598,18 +742,6 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
     }
   }, [areObjectsIsolated, unIsolateObjects, isolateObjects, isolatedObjects.size]);
 
-  const handleConfirmSelection = useCallback(() => {
-    const map = clickedLayerIdsRef.current;
-    if (map.size === 0) return;
-    const ids = Array.from(map.keys());
-    const names = ids.map((id) => map.get(id)!.name);
-    const wholeModel = ids.length === 1 && map.get(ids[0])!.isRoot;
-    setAcousticLayers(ids, names, wholeModel);
-    setSelectionPreviewIds(null);
-    clickedLayerIdsRef.current.clear();
-    useUIStore.getState().setAcousticLayerSelectionMode(false);
-  }, [setAcousticLayers]);
-
   const handleMouseEnter = useCallback((objectIds: string[]) => {
     highlightObjects(objectIds);
   }, [highlightObjects]);
@@ -617,7 +749,10 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
   const handleMouseLeave = useCallback((objectIds: string[]) => {
     unhighlightObjects(objectIds);
   }, [unhighlightObjects]);
-  
+
+  const selectedCount = draftLeafIdsRef.current.size;
+  const totalCount = allModelGeometryIds.size;
+
   // Don't render anything if no viewer
   if (!viewerRef?.current) {
     return <EmptyState message="No viewer available" />;
@@ -625,31 +760,72 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
   
   return (
     <div className="flex flex-col min-h-0 space-y-2">
-      {/* Layer selection mode banner */}
-      {isAcousticMode && acousticLayerSelectionMode && (
+      {/* Guided setup card — acoustic-region selection phase */}
+      {phase && (
         <div
-          className="text-xs p-2 rounded border"
+          className="text-xs rounded border p-2"
           style={{
-            backgroundColor: 'var(--color-primary-light)',
+            backgroundColor: 'var(--color-primary-lighter)',
             borderColor: 'var(--color-primary)',
             color: 'var(--foreground)',
           }}
         >
-          Select one or more layers as the acoustic layer
-          {clickedLayerIdsRef.current.size > 0 && (
-            <button
-              className="ml-2 px-2 py-0.5 text-xs font-medium rounded transition-colors"
-              style={{
-                backgroundColor: 'var(--color-primary)',
-                color: 'var(--color-on-blue)',
-              }}
-              onClick={handleConfirmSelection}
-            >
-              Confirm {clickedLayerIdsRef.current.size} layer{clickedLayerIdsRef.current.size > 1 ? 's' : ''}
-            </button>
-          )}
+          <div className="font-semibold mb-1">Define the acoustic region</div>
+          <div className="leading-snug mb-1" style={{ color: 'var(--color-secondary-hover)' }}>
+            Select the surfaces that bound your room — they define the geometry used for acoustic simulation.
+          </div>
+          <div className="leading-snug mb-2" style={{ color: 'var(--color-secondary-hover)' }}>
+            Press Enter to confirm, Esc to clear.
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                className="px-2 py-0.5 rounded border transition-colors"
+                style={{ borderColor: 'var(--color-border-strong)', color: 'var(--foreground)' }}
+                onClick={handleSelectAll}
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                className="px-2 py-0.5 rounded border transition-colors disabled:opacity-50"
+                style={{ borderColor: 'var(--color-border-strong)', color: 'var(--foreground)' }}
+                onClick={handleCancelSelection}
+                disabled={selectedCount === 0}
+              >
+                Clear
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-right leading-tight" style={{ color: 'var(--color-secondary-hover)' }}>
+                {selectedCount} / {totalCount} surfaces
+                <br />
+                {selectedFaceCount.toLocaleString()} / {totalFaceCount.toLocaleString()} faces
+              </span>
+              <button
+                type="button"
+                disabled={selectedCount === 0}
+                className="px-2 py-0.5 rounded font-medium transition-colors disabled:opacity-50"
+                style={{
+                  backgroundColor: 'var(--color-primary)',
+                  color: 'var(--color-on-blue)',
+                }}
+                onClick={handleConfirmSelection}
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+            <div className="leading-snug text-xxs" style={{ color: 'var(--color-success)' }}>
+            Tip: Name a layer "Acoustics" in your 3D model to be auto-assigned as the acoustic region.
+            </div>
         </div>
       )}
+
+      <HelperHint
+        text={phase ? 'Pick surfaces in the tree or drag a box in the 3D view. Enter to confirm, Esc to clear.' : null}
+      />
 
       {filteredVirtualItems.length > 0 ? (
         <>
@@ -680,7 +856,12 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
                    objectIds.every((id) => acousticExplorerHiddenIds.includes(id)));
                 const isIsolated = areObjectsIsolated(objectIds);
                 const itemName = item.data.raw?.name || '';
-                const itemId = item.data.raw?.id || '';
+
+                const selectedInRow = phase
+                  ? objectIds.filter((id) => selectedLeafSet.has(id)).length
+                  : 0;
+                const selectionChecked = phase && objectIds.length > 0 && selectedInRow === objectIds.length;
+                const selectionIndeterminate = phase && selectedInRow > 0 && selectedInRow < objectIds.length;
 
                 return (
                   <VirtualTreeItem
@@ -701,21 +882,12 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
                     showScattering={acousticCardType === 'pyroomacoustics'}
                     sortedMaterials={sortedMaterials}
                     materialColors={materialColors}
-                    isLayerSelectionMode={isAcousticMode && acousticLayerSelectionMode && item.hasChildren && clickedLayerIdsRef.current.has(itemId)}
-                    onSelectAsAcousticLayer={isAcousticMode && acousticLayerSelectionMode && item.hasChildren && clickedLayerIdsRef.current.has(itemId)
-                      ? handleConfirmSelection
-                      : undefined}
-                    hideIsolateButton={isAcousticMode && hasDefinedLayer}
-                    isAcousticLayerRow={selectedAcousticLayerNames.includes(itemName)}
-                    onResetAcousticLayer={selectedAcousticLayerNames.includes(itemName)
-                      ? () => {
-                          clearAcousticLayer();
-                          useAcousticMaterialStore.getState().deactivateViewer();
-                          if (isAcousticMode) {
-                            useUIStore.getState().setAcousticLayerSelectionMode(true);
-                            useUIStore.getState().setShowObjectExplorer(true);
-                          }
-                        } : undefined}
+                    selectionPhase={phase}
+                    selectionChecked={selectionChecked}
+                    selectionIndeterminate={selectionIndeterminate}
+                    onToggleSelection={toggleSelectionForItem}
+                    hideIsolateButton={phase || (isAcousticMode && hasDefinedLayer)}
+                    isAcousticLayerRow={hasDefinedLayer && (selectedAcousticLayerIds.includes(item.data.raw?.id) || selectedAcousticLayerNames.includes(itemName))}
                   />
                 );
               } catch (error) {
@@ -730,7 +902,7 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
           </div>
 
           {/* Filter controls */}
-          {((isAcousticMode ? acousticExplorerHiddenIds.length : hiddenObjects.size) > 0 ||
+          {!phase && ((isAcousticMode ? acousticExplorerHiddenIds.length : hiddenObjects.size) > 0 ||
             (!isAcousticMode && isolatedObjects.size > 0)) && (
             <div className="flex gap-2 text-xs">
               {(isAcousticMode ? acousticExplorerHiddenIds.length : hiddenObjects.size) > 0 && (

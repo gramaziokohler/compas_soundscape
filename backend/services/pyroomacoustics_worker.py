@@ -107,6 +107,12 @@ def _run_pyroomacoustics_compute_loop(
         )
     )
 
+    # pyroomacoustics derives each wall's reflection plane from its corner
+    # winding. Speckle/Rhino meshes routinely arrive wound inward, which makes
+    # pra cull every reflection and return a direct-path-only (near-zero) RIR.
+    # Normalize to outward normals once, on the welded faces (idempotent).
+    fix_outward_winding(welded_vertices, welded_faces)
+
     # ── Group pairs by source ───────────────────────────────────────────────
     num_channels = 1 if simulation_mode == PYROOMACOUSTICS_SIMULATION_MODE_MONO else 4
     channel_names_list = ["W", "Y", "Z", "X"]
@@ -532,8 +538,8 @@ def run_pyroomacoustics_simulation_from_geometry(
                 "has a material assigned."
             )
 
-        # Ensure outward-facing triangle normals before building walls.
-        fix_outward_winding(vertices, kept_faces)
+        # Outward-winding normalization happens in the shared compute loop, after
+        # welding (see _run_pyroomacoustics_compute_loop).
 
         print(
             f"[{simulation_id[:8]}] Geometry: {len(vertices)} vertices, "

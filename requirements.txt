@@ -49,8 +49,12 @@ numpy==1.26.4
 matplotlib==3.10.7
 
 # --- Speckle (3D model platform) ---
-specklepy==3.2.3
-gql==3.5.3
+# 2026.9.0b3 is required for bundle-only versions: Speckle's 2026.9 file ingestion
+# stores uploads as bundles with no legacy object graph, and only this SDK line
+# (operations.receive dispatching on `bundle.` refs) can read them. The `bundle`
+# extra pulls in pyarrow, which the parquet artifact rail needs.
+specklepy[bundle]==2026.9.0b3
+gql==4.0.0
 
 # --- Misc ---
 numpy-stl==3.2.0

@@ -2617,6 +2617,10 @@ function HomeContent() {
     } catch {
       // proceed with reload even if API fails
     }
+    // The acoustic region is persisted separately from the project soundscape —
+    // reset it so a deleted project does not resurrect its assigned layers.
+    useAcousticLayerStore.getState().clearAcousticLayer();
+    try { localStorage.removeItem('compas-acoustic-layer'); } catch { /* ignore */ }
     window.location.reload();
   }, []);
 

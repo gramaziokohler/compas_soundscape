@@ -29,6 +29,9 @@ def run_subprocess_job(
     progress_file: str,
     result_file: str,
 ) -> None:
+    # The temp janitor prunes emptied dirs, and worker processes may run without
+    # the API ever having created them — never assume temp/simulations exists.
+    os.makedirs(os.path.dirname(progress_file), exist_ok=True)
     process = multiprocessing.Process(target=target_fn, kwargs=kwargs, daemon=True)
     process.start()
 

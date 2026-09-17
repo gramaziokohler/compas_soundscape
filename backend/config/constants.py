@@ -342,6 +342,7 @@ PYROOMACOUSTICS_TASK_CLEANUP_DELAY_SECONDS = 600  # 10 minutes after completion
 # from a flattened/truncated tail (the classic cause of inflated RT60).
 PYROOMACOUSTICS_METRICS_RT60_MIN_DYNAMIC_RANGE_DB = 15.0   # T30-style: 5→35 dB must be observable
 PYROOMACOUSTICS_METRICS_EDT_MIN_DYNAMIC_RANGE_DB = 6.0    # T10-style: 5→15 dB must be observable
+PYROOMACOUSTICS_METRICS_RT60_SLOPE_REF_RANGE_DB = 10.0    # Reference decay slope fit over the first 10 dB after headroom (T10), not a fixed time window
 PYROOMACOUSTICS_METRICS_DIRECT_SEARCH_FRACTION_S = 0.5    # Direct-arrival search window (s) from sample 0
 PYROOMACOUSTICS_METRICS_DIRECT_THRESHOLD_FRACTION = 0.1   # Fraction of global peak used to detect arrival
 PYROOMACOUSTICS_METRICS_DIRECT_WINDOW_S = 0.002           # Direct-sound window (s) AFTER the arrival for DRR

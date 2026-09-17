@@ -10,6 +10,7 @@ from config.constants import (
     PYROOMACOUSTICS_METRICS_DIRECT_WINDOW_S,
     PYROOMACOUSTICS_METRICS_EDT_MIN_DYNAMIC_RANGE_DB,
     PYROOMACOUSTICS_METRICS_RT60_MIN_DYNAMIC_RANGE_DB,
+    PYROOMACOUSTICS_METRICS_RT60_SLOPE_REF_RANGE_DB,
 )
 
 _P_REF = 2e-5  # acoustic reference pressure [Pa]
@@ -169,7 +170,7 @@ class AcousticMeasurement:
         decay_db: float = 30.0,
         min_range_db: float = PYROOMACOUSTICS_METRICS_RT60_MIN_DYNAMIC_RANGE_DB,
         headroom_db: float = 5.0,
-        ref_win_s: float = 0.1,
+        ref_range_db: float = PYROOMACOUSTICS_METRICS_RT60_SLOPE_REF_RANGE_DB,
         linearity_db: float = 3.0,
     ) -> tuple[float | None, float]:
         """
@@ -178,12 +179,12 @@ class AcousticMeasurement:
         Fits a linear decay in the log domain from ``-headroom_db`` dB to
         ``-(headroom_db + decay_db)`` dB and extrapolates to −60 dB. The fit
         endpoint is the first point where the Schroeder curve deviates from the
-        decay line established over the first ``ref_win_s`` seconds — i.e. the
-        curve either FLATTENS (a long flat noise/reverb tail that would flatten
-        the least-squares slope and inflate RT60) or PLUNGES (a truncation /
-        hard record cut that would steepen it). This is deliberately NOT a
-        tail-estimated noise-floor asymptote: ray-traced and diffuse IRs carry a
-        genuine stochastic late-reverb tail that a naive tail-mean floor
+        decay line established over the first ``ref_range_db`` dB of decay — i.e.
+        the curve either FLATTENS (a long flat noise/reverb tail that would
+        flatten the least-squares slope and inflate RT60) or PLUNGES (a
+        truncation / hard record cut that would steepen it). This is deliberately
+        NOT a tail-estimated noise-floor asymptote: ray-traced and diffuse IRs
+        carry a genuine stochastic late-reverb tail that a naive tail-mean floor
         misclassifies as noise, killing otherwise measurable decays.
 
         If the usable segment covers less than ``min_range_db`` of level drop,
@@ -216,10 +217,15 @@ class AcousticMeasurement:
             return None, 0.0
         i5 = int(i5_candidates[0])
 
-        # Reference decay slope over a short window right after the headroom
-        # point, where a real (non-truncated) decay is still linear.
-        ref_n = max(4, int(ref_win_s * fs))
-        i_ref = min(i5 + ref_n, m - 1)
+        # Reference decay slope, measured over the first ``ref_range_db`` of
+        # decay after the headroom point (the T10 slope). Anchoring the
+        # reference to a fixed dB span — not a fixed time window — keeps it
+        # representative of the whole decay: real ISM/ray-traced IRs start with
+        # a steep early-decay knee, so a short time window captures only that
+        # knee and makes the deviation guard below fire on a healthy convex
+        # diffuse decay (rejecting a perfectly measurable RT60).
+        ref_candidates = np.flatnonzero(sch <= -(headroom_db + ref_range_db))
+        i_ref = int(ref_candidates[0]) if ref_candidates.size else m - 1
         ref_dt = (i_ref - i5) / fs
         ref_slope = (sch[i_ref] - sch[i5]) / ref_dt if ref_dt > 0 else 0.0
         if ref_slope >= 0:

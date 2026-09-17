@@ -41,18 +41,58 @@ function getRootChildren(worldTree: any): any[] {
   return [];
 }
 
-function walkCollectIdMaps(nodes: any[], rawIdToAppId: Map<string, string>, appIdToRawId: Map<string, string>): void {
+function walkCollectIdMaps(nodes: any[], rawIdToAppId: Map<string, string>, appIdToRawIds: Map<string, string[]>): void {
   for (const node of nodes) {
     const raw = node?.raw || node?.model?.raw || {};
     const rawId: string | undefined = raw.id;
     const appId: string | undefined = raw.applicationId;
     if (rawId && appId) {
       rawIdToAppId.set(rawId, appId);
-      if (!appIdToRawId.has(appId)) appIdToRawId.set(appId, rawId);
+      // A Brep/BIM object and its display mesh(es) share the SAME applicationId
+      // (verified against live Speckle data). Persisted assignments are keyed by
+      // applicationId, so record EVERY raw id that carries it — otherwise the
+      // remap resolves only the first (the carrier) and the display-mesh tree rows
+      // in the Object Explorer keep showing "Select...".
+      const existing = appIdToRawIds.get(appId);
+      if (existing) {
+        if (!existing.includes(rawId)) existing.push(rawId);
+      } else {
+        appIdToRawIds.set(appId, [rawId]);
+      }
     }
     const children = node?.model?.children || node?.children || [];
-    if (children.length > 0) walkCollectIdMaps(children, rawIdToAppId, appIdToRawId);
+    if (children.length > 0) walkCollectIdMaps(children, rawIdToAppId, appIdToRawIds);
   }
+}
+
+/**
+ * Expand persisted assignments (keyed by applicationId or raw id) into a Map
+ * keyed by EVERY current raw object id that shares the source applicationId.
+ * This keeps the Object Explorer's mesh rows in sync with the carrier rows and
+ * with the colors the viewer renders.
+ */
+function expandSavedAssignments<T extends string | number>(
+  source: Record<string, T> | undefined,
+  rawIdToAppId: Map<string, string>,
+  appIdToRawIds: Map<string, string[]>,
+): Map<string, T> {
+  const out = new Map<string, T>();
+  if (!source) return out;
+  for (const [key, value] of Object.entries(source)) {
+    if (rawIdToAppId.has(key)) {
+      // Already a current raw id.
+      out.set(key, value);
+      continue;
+    }
+    const raws = appIdToRawIds.get(key);
+    if (raws && raws.length > 0) {
+      for (const id of raws) out.set(id, value);
+      continue;
+    }
+    // Unknown — keep as-is (best effort) until the id maps are ready.
+    out.set(key, value);
+  }
+  return out;
 }
 
 interface SpeckleSurfaceMaterialsSectionProps {
@@ -125,12 +165,14 @@ export function SpeckleSurfaceMaterialsSection({
   const materialAssignments   = useAcousticMaterialStore((s) => s.materialAssignments);
   const scatteringAssignments = useAcousticMaterialStore((s) => s.scatteringAssignments);
 
-  // Whole-model id maps (raw.id <-> applicationId), built once per worldTree
-  const { rawIdToAppId, appIdToRawId } = useMemo(() => {
+  // Whole-model id maps (raw.id <-> applicationId), built once per worldTree.
+  // `appIdToRawIds` is plural because a carrier and its display meshes share an
+  // applicationId (see walkCollectIdMaps).
+  const { rawIdToAppId, appIdToRawIds } = useMemo(() => {
     const rawIdToAppId = new Map<string, string>();
-    const appIdToRawId = new Map<string, string>();
-    if (worldTree) walkCollectIdMaps(getRootChildren(worldTree), rawIdToAppId, appIdToRawId);
-    return { rawIdToAppId, appIdToRawId };
+    const appIdToRawIds = new Map<string, string[]>();
+    if (worldTree) walkCollectIdMaps(getRootChildren(worldTree), rawIdToAppId, appIdToRawIds);
+    return { rawIdToAppId, appIdToRawIds };
   }, [worldTree]);
 
   // ── Activate the store (whole-tree workflow) ──
@@ -160,82 +202,70 @@ export function SpeckleSurfaceMaterialsSection({
     initializedRef.current = true;
     skipNextNotifyRef.current = true;
 
-    const remapKey = (key: string): string | null => {
-      // Already a current raw id
-      if (rawIdToAppId.has(key)) return key;
-      // applicationId → raw id
-      const rawFromApp = appIdToRawId.get(key);
-      if (rawFromApp) return rawFromApp;
-      // Unknown — keep as-is (best effort) until maps are ready
-      return key;
-    };
-
-    const initMaterial = new Map<string, string>();
-    if (initialAssignments) {
-      Object.entries(initialAssignments).forEach(([k, v]) => {
-        const rk = remapKey(k);
-        if (rk) initMaterial.set(rk, v);
-      });
-    }
-    const initScattering = new Map<string, number>();
-    if (initialScatteringAssignments) {
-      Object.entries(initialScatteringAssignments).forEach(([k, v]) => {
-        const rk = remapKey(k);
-        if (rk) initScattering.set(rk, v as number);
-      });
-    }
+    const initMaterial = expandSavedAssignments(initialAssignments, rawIdToAppId, appIdToRawIds);
+    const initScattering = expandSavedAssignments(initialScatteringAssignments, rawIdToAppId, appIdToRawIds);
     loadAssignments(initMaterial, initScattering);
     useAcousticMaterialStore.temporal.getState().clear();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Re-remap once whole-model maps become available (worldTree loads late) ──
+  // ── Late hydration ──
+  // The project soundscape (and thus `initialAssignments`) can load AFTER this
+  // card mounts (bootstrap). On mount the store was still empty, so the effect
+  // above loaded nothing. When the saved assignments arrive and the shared store
+  // is still empty, load them so the Object Explorer shows the materials instead
+  // of "Select...". Guarded on an empty store to avoid clobbering user edits.
+  useEffect(() => {
+    if (!initialAssignments || Object.keys(initialAssignments).length === 0) return;
+    if (useAcousticMaterialStore.getState().materialAssignments.size > 0) return;
+
+    const initMaterial = expandSavedAssignments(initialAssignments, rawIdToAppId, appIdToRawIds);
+    const initScattering = expandSavedAssignments(initialScatteringAssignments, rawIdToAppId, appIdToRawIds);
+
+    skipNextNotifyRef.current = true;
+    loadAssignments(initMaterial, initScattering);
+    useAcousticMaterialStore.temporal.getState().clear();
+  }, [initialAssignments, initialScatteringAssignments, rawIdToAppId, appIdToRawIds, loadAssignments]);
+  // ── Re-expand once the whole-model id maps become available ──
+  // On mount the worldTree (and thus `appIdToRawIds`) may still be empty, so the
+  // effects above kept the persisted applicationId keys verbatim. When the maps
+  // arrive, expand every key to the full set of raw ids sharing that appId — the
+  // carrier AND its display meshes — so the Object Explorer's mesh rows resolve
+  // the same material the viewer already colors.
   const hasRemappedRef = useRef(false);
   useEffect(() => {
     if (hasRemappedRef.current) return;
-    if (appIdToRawId.size === 0) return;
+    if (appIdToRawIds.size === 0) return;
     if (materialAssignments.size === 0) return;
 
     const currentRawIds = new Set(rawIdToAppId.keys());
-
-    let needsRemap = false;
+    let needsExpansion = false;
     materialAssignments.forEach((_, key) => {
-      if (currentRawIds.has(key)) return;
-      if (appIdToRawId.has(key)) { needsRemap = true; return; }
-      needsRemap = true;
+      if (!currentRawIds.has(key)) needsExpansion = true;
     });
 
-    if (!needsRemap) { hasRemappedRef.current = true; return; }
+    if (!needsExpansion) { hasRemappedRef.current = true; return; }
     hasRemappedRef.current = true;
 
-    const remappedMaterial = new Map<string, string>();
-    materialAssignments.forEach((materialId, key) => {
-      if (currentRawIds.has(key)) { remappedMaterial.set(key, materialId); return; }
-      const rawFromApp = appIdToRawId.get(key);
-      if (rawFromApp) remappedMaterial.set(rawFromApp, materialId);
-      // Keep unknown keys as-is: a raw geometry id that is valid in the viewer
-      // tree may not be in rawIdToAppId (walkCollectIdMaps only records objects
-      // that carry an applicationId). Dropping it here would silently unassign
-      // surfaces whose Object Explorer rows (and backends) key off that id.
-      else remappedMaterial.set(key, materialId);
-    });
-
-    const remappedScattering = new Map<string, number>();
-    scatteringAssignments.forEach((value, key) => {
-      if (currentRawIds.has(key)) { remappedScattering.set(key, value); return; }
-      const rawFromApp = appIdToRawId.get(key);
-      if (rawFromApp) remappedScattering.set(rawFromApp, value);
-      else remappedScattering.set(key, value);
-    });
+    const expandedMaterial = expandSavedAssignments(
+      Object.fromEntries(materialAssignments),
+      rawIdToAppId,
+      appIdToRawIds,
+    );
+    const expandedScattering = expandSavedAssignments(
+      Object.fromEntries(scatteringAssignments),
+      rawIdToAppId,
+      appIdToRawIds,
+    );
 
     // If every saved ID was stale (no matches), keep the originals to avoid
     // a false "materialsChanged" reset that loses completed results.
-    if (remappedMaterial.size === 0 && materialAssignments.size > 0) return;
+    if (expandedMaterial.size === 0 && materialAssignments.size > 0) return;
 
     skipNextNotifyRef.current = true;
-    loadAssignments(remappedMaterial, remappedScattering);
+    loadAssignments(expandedMaterial, expandedScattering);
     useAcousticMaterialStore.temporal.getState().clear();
-  }, [appIdToRawId, rawIdToAppId, materialAssignments, scatteringAssignments, loadAssignments]);
+  }, [appIdToRawIds, rawIdToAppId, materialAssignments, scatteringAssignments, loadAssignments]);
 
   // Track previous layer to detect changes
   const previousLayerIdRef = useRef<string | null>(null);

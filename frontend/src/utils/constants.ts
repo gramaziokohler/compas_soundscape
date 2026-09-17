@@ -290,10 +290,17 @@ export const UI_HELPER_HINT = {
 
 // Compact play/pause/stop control shown at the bottom-center of the 3D scene
 // when the DAW timeline panel is hidden. Replaced by DAWTimeline when shown.
+// Chrome mirrors the top-center SceneViewModeToolbar so both read as one system.
 export const DAW_MINI_TRANSPORT = {
   BOTTOM: 48,                 // px — aligns with SceneControlButtons (bottom-12)
   Z_INDEX: 20,                // same stacking as scene control buttons
   GAP: 6,                     // px — matches DAWTimeline transport row
+  PADDING: UI_SPACING.XS,     // container inner padding (matches ViewMode toolbar rhythm)
+  BORDER_RADIUS: UI_BORDER_RADIUS.MD,
+  TIME_BORDER_RADIUS: UI_BORDER_RADIUS.SM,
+  TIME_PADDING_X: 8,          // px — horizontal padding of the time readout chip
+  TIME_PADDING_Y: 4,          // px — vertical padding of the time readout chip
+  TIME_FONT_SIZE: UI_FONT_SIZE.XS,
 } as const;
 
 // Material Assignment UI
@@ -1561,8 +1568,9 @@ export const DAW = {
   TRACK_HEIGHT: 52,
   MIN_TRACK_HEIGHT: 28,
   MAX_TRACK_HEIGHT: 120,
-  /** Below this track height, the track head's sub-label ("Background · 5 clips") is hidden. */
-  TRACK_HEIGHT_SUBLABEL_MIN: 44,
+  /** Below this track height, the track head's sub-label ("Background · 5 clips") is hidden
+   *  so the title and fader rows keep the full track height instead of being clipped. */
+  TRACK_HEIGHT_SUBLABEL_MIN: 60,
   HEAD_WIDTH: 168,
   RULER_HEIGHT: 26,
   STATUS_HEIGHT: 32,

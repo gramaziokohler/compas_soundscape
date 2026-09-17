@@ -311,6 +311,15 @@ export function buildSoundscapeSavePayload(
     const speckleLayerName = pyConfig.speckleLayerName as string | undefined;
     const speckleGeometryObjectIds = pyConfig.speckleGeometryObjectIds as string[] | undefined;
     const speckleScatteringAssignments = pyConfig.speckleScatteringAssignments as Record<string, number> | undefined;
+    // Acoustic region the card was generated with — lets the Object Explorer warn
+    // when the live region was re-assigned and offer to restore this one.
+    const speckleAcousticSelection = pyConfig.speckleAcousticSelection as {
+      nodeIds: string[];
+      nodeNames: string[];
+      geometryIds: string[];
+      isWholeModel: boolean;
+      autoDetected: boolean;
+    } | undefined;
 
     // Build receiver position map from the receivers array
     // This captures the authoritative dragged positions at save time
@@ -368,6 +377,13 @@ export function buildSoundscapeSavePayload(
       speckle_layer_name: speckleLayerName,
       speckle_geometry_object_ids: speckleGeometryObjectIds,
       speckle_scattering_assignments: speckleScatteringAssignments,
+      speckle_acoustic_selection: speckleAcousticSelection ? {
+        node_ids: speckleAcousticSelection.nodeIds,
+        node_names: speckleAcousticSelection.nodeNames,
+        geometry_ids: speckleAcousticSelection.geometryIds,
+        is_whole_model: speckleAcousticSelection.isWholeModel,
+        auto_detected: speckleAcousticSelection.autoDetected,
+      } : undefined,
       simulation_results: pyConfig.simulationResults,
       current_simulation_id: pyConfig.currentSimulationId,
       imported_ir_ids: pyConfig.importedIRIds,
@@ -828,6 +844,13 @@ export function restoreSoundscapeState(
       speckleLayerName: saved.speckle_layer_name,
       speckleGeometryObjectIds: saved.speckle_geometry_object_ids,
       speckleScatteringAssignments: saved.speckle_scattering_assignments,
+      speckleAcousticSelection: saved.speckle_acoustic_selection ? {
+        nodeIds: saved.speckle_acoustic_selection.node_ids,
+        nodeNames: saved.speckle_acoustic_selection.node_names,
+        geometryIds: saved.speckle_acoustic_selection.geometry_ids,
+        isWholeModel: saved.speckle_acoustic_selection.is_whole_model,
+        autoDetected: saved.speckle_acoustic_selection.auto_detected,
+      } : undefined,
       // Import-IRs advanced settings
       irGainDb: saved.ir_gain_db ?? undefined,
       irNormalizeEnabled: saved.ir_normalize_enabled ?? undefined,

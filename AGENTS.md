@@ -104,6 +104,12 @@ frontend/src/
 7. **Debug systematically, not speculatively.** When behavior is unexpected, add `[dbg:*]`-prefixed
    logs at write/read/set sites *before* writing any fix — don't guess-and-check with speculative
    changes (delays, gating, reordering). Full discipline: `global.mdc` § Debugging Discipline.
+8. **Speckle uploads land as bundle-only versions — re-materialize them.** Speckle 2026.9 ingestion
+   (`startFileIngestion`) stores files as bundles (`referencedObject = bundle.<project>.<model>.<version>`)
+   with no legacy object graph; the pinned viewer and the acoustic pipeline cannot read them. The
+   backend re-materializes each bundle into a normal legacy version and the client polls for it. Never
+   return an ingestion id or a bundle version id as `version_id`, and keep `specklepy[bundle]` +
+   `gql>=4` (gql 4 needs `variable_values=`). Full flow and pitfalls: `speckle.mdc` § File Uploads.
 
 ## Scoped Rules
 

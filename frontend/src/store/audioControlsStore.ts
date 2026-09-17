@@ -58,6 +58,21 @@ function getActiveScenarioTimelineMs(): number | null {
   return ms && ms > 0 ? ms : null;
 }
 
+/**
+ * Every sound ID that belongs to the same DAW track as `soundId` — i.e. all
+ * variant copies sharing its `prompt_index`. Mute/solo are track-level: muting
+ * any variant must silence the whole track (the timeline may play a different
+ * copy per iteration). Falls back to `[soundId]` when the sound isn't known or
+ * carries no `prompt_index`.
+ */
+function resolveTrackSoundIds(sounds: any[], soundId: string): string[] {
+  const target = sounds.find((s) => s.id === soundId);
+  const pi = target?.prompt_index;
+  if (pi === undefined || pi === null) return [soundId];
+  const ids = sounds.filter((s) => s.prompt_index === pi).map((s) => s.id);
+  return ids.length > 0 ? ids : [soundId];
+}
+
 
 export interface AudioControlsStoreState {
   // ── State ──
@@ -500,11 +515,26 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         handleMute: (soundId) =>
           set(
             (state) => {
+              // Track-level mute: every variant copy of the sound card is
+              // toggled together, so the DAW's per-iteration variant overrides
+              // all go silent when the track is muted.
+              const sounds = state._generatedSounds.length > 0
+                ? state._generatedSounds
+                : useSoundscapeStore.getState().generatedSounds;
+              const trackIds = resolveTrackSoundIds(sounds, soundId);
               const newMuted = new Set(state.mutedSounds);
-              newMuted.has(soundId) ? newMuted.delete(soundId) : newMuted.add(soundId);
+              const isMuted = trackIds.some((id) => newMuted.has(id));
+              if (isMuted) {
+                trackIds.forEach((id) => newMuted.delete(id));
+              } else {
+                trackIds.forEach((id) => newMuted.add(id));
+              }
               return {
                 mutedSounds: newMuted,
-                soloedSound: state.soloedSound === soundId ? null : state.soloedSound,
+                soloedSound:
+                  state.soloedSound && trackIds.includes(state.soloedSound)
+                    ? null
+                    : state.soloedSound,
               };
             },
             false,
@@ -514,8 +544,14 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
         handleSolo: (soundId) =>
           set(
             (state) => {
+              // Track-level: clearing mute must drop every variant copy, otherwise
+              // a mute→solo→unsolo cycle would leave the track half-muted.
+              const sounds = state._generatedSounds.length > 0
+                ? state._generatedSounds
+                : useSoundscapeStore.getState().generatedSounds;
+              const trackIds = resolveTrackSoundIds(sounds, soundId);
               const newMuted = new Set(state.mutedSounds);
-              newMuted.delete(soundId);
+              trackIds.forEach((id) => newMuted.delete(id));
               return {
                 mutedSounds: newMuted,
                 soloedSound: state.soloedSound === soundId ? null : soundId,

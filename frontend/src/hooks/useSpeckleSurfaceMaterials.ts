@@ -425,6 +425,14 @@ export function useSpeckleSurfaceMaterials(
       }
     }
 
+    // Never auto-overwrite a region the user already assigned through the
+    // Object Explorer selection phase (persisted across refresh). The store is the
+    // source of truth; auto-detect only fills an EMPTY selection.
+    const storeState = useAcousticLayerStore.getState();
+    const hasExistingAcousticSelection = !!storeState.selectedAcousticLayerId
+      || storeState.selectedAcousticLayerIds.length > 0
+      || storeState.selectedAcousticGeometryIds.length > 0;
+
     // Third priority: try to find "Acoustics" layer
     const acousticsLayer = layerOptions.find(
       l => l.name.toLowerCase() === 'acoustics'
@@ -436,13 +444,15 @@ export function useSpeckleSurfaceMaterials(
       // Also set in acousticLayerStore so it becomes the source of truth.
       // A single-layer model is the whole model — no layer filtering anywhere.
       const wholeModel = layerOptions.length === 1;
-      useAcousticLayerStore.getState().setAcousticLayer(acousticsLayer.id, acousticsLayer.name, wholeModel);
+      if (!hasExistingAcousticSelection) {
+        useAcousticLayerStore.getState().setAcousticLayer(acousticsLayer.id, acousticsLayer.name, wholeModel);
+      }
     } else {
       console.log('[useSpeckleSurfaceMaterials] No "Acoustics" layer found, using first layer:', layerOptions[0]);
       setSelectedLayerId(layerOptions[0].id);
       // Single-layer model: mark it as whole-model so ObjectExplorer / backend
       // don't filter by layer name.
-      if (layerOptions.length === 1) {
+      if (layerOptions.length === 1 && !hasExistingAcousticSelection) {
         useAcousticLayerStore.getState().setAcousticLayer(layerOptions[0].id, layerOptions[0].name, true);
       }
     }

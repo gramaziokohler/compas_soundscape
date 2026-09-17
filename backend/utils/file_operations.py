@@ -282,6 +282,12 @@ def janitor_cleanup_temp(max_age_h: float = TEMP_JANITOR_MAX_AGE_H) -> dict[str,
             except OSError:
                 pass
 
+    # The janitor may have pruned emptied temp dirs that other code assumes
+    # exist (e.g. temp/simulations for worker progress/result files). Recreate
+    # the required set so a pruned dir never breaks a later write.
+    if dirs_removed:
+        ensure_all_temp_directories()
+
     if files_deleted or dirs_removed:
         print(f"Janitor: deleted {files_deleted} file(s) older than {max_age_h}h, "
               f"removed {dirs_removed} emptied directory/ies")

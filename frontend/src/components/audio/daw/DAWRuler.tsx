@@ -120,6 +120,13 @@ export function DAWRuler({ totalDurationSec, pxPerSecond, onSeek, loopRegion, on
       }}
       title="Drag to seek — Shift+drag to set a loop region"
     >
+      {/* Frosted backdrop — tracks scrolling vertically behind the sticky ruler
+          are hidden behind the same glass treatment as the dock. */}
+      <div
+        aria-hidden="true"
+        className="backdrop-blur-lg backdrop-saturate-150"
+        style={{ position: 'absolute', inset: 0, zIndex: -1, pointerEvents: 'none' }}
+      />
       <div
         style={{
           width: `${DAW.HEAD_WIDTH}px`, flexShrink: 0, borderRight: '1px solid var(--color-border-strong)',

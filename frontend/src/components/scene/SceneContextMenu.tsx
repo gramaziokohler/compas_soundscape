@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { EntityInfoPanel } from '@/components/layout/sidebar/EntityInfoPanel';
 import { UI_RIGHT_SIDEBAR } from '@/utils/constants';
-import { useSpeckleStore, useAcousticLayerStore } from '@/store';
+import { useSpeckleStore, useAcousticLayerStore, useUIStore } from '@/store';
 import { useSpeckleFiltering } from '@/hooks/useSpeckleFiltering';
 import { getRootNodesForModel, getGeometryLeafIdsFromNode } from '@/hooks/useSpeckleTree';
 import type { SoundEvent } from '@/types';
@@ -63,7 +63,8 @@ export function SceneContextMenu({
   const acousticExplorerHiddenIds = useSpeckleStore((s) => s.acousticExplorerHiddenIds);
   const addAcousticExplorerHiddenId = useSpeckleStore((s) => s.addAcousticExplorerHiddenId);
   const removeAcousticExplorerHiddenId = useSpeckleStore((s) => s.removeAcousticExplorerHiddenId);
-  const selectedAcousticLayerName = useAcousticLayerStore((s) => s.selectedAcousticLayerName);
+  const selectedAcousticLayerIds = useAcousticLayerStore((s) => s.selectedAcousticLayerIds);
+  const acousticLayerSelectionMode = useUIStore((s) => s.acousticLayerSelectionMode);
 
   const viewerRef = useMemo<React.RefObject<any>>(() => ({
     get current() { return getViewerRef(); }
@@ -71,8 +72,8 @@ export function SceneContextMenu({
 
   const filtering = useSpeckleFiltering(viewerRef, 'explorer-default');
   const isAcousticMode = viewMode === 'acoustic';
-  const hasDefinedLayer = !!selectedAcousticLayerName;
-  const hideIsolateButton = isAcousticMode && hasDefinedLayer;
+  const hasDefinedLayer = selectedAcousticLayerIds.length > 0;
+  const hideIsolateButton = isAcousticMode && (hasDefinedLayer || acousticLayerSelectionMode);
 
   // ── Resolve geometry leaf IDs for selected entity ──
   const geometryLeafIds = useMemo(() => {

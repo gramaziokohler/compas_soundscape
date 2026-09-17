@@ -73,7 +73,7 @@ export function SingleListenerContent({ receiver, color, onUpdatePosition }: Sin
     <div className="card-stack text-xs text-secondary-hover">
       <div>
         <Notice
-          type="info"
+          type="warning"
           message="Viewer in locked FPS viewmode. Press Esc or reduce this card to cancel it."
         />
       </div>

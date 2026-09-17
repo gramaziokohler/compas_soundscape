@@ -37,6 +37,19 @@ export type AcousticSimulationMode = 'resonance' | 'choras' | 'pyroomacoustics' 
 export type SimulationState = 'idle' | 'before-simulation' | 'running' | 'completed' | 'error';
 
 /**
+ * Snapshot of the acoustic region (Object Explorer selection) a simulation was
+ * configured with. Captured when the card's materials/region are set (before the
+ * card is generated) so a later region re-assignment can be detected and undone.
+ */
+export interface SimulationAcousticSelection {
+  nodeIds: string[];
+  nodeNames: string[];
+  geometryIds: string[];
+  isWholeModel: boolean;
+  autoDetected: boolean;
+}
+
+/**
  * Base configuration for all acoustic simulations
  */
 export interface BaseSimulationConfig extends CardBaseConfig {
@@ -46,6 +59,8 @@ export interface BaseSimulationConfig extends CardBaseConfig {
   createdAt: number; // Timestamp
   completedAt?: number; // Timestamp when simulation finished
   simulationInstanceId?: string; // Unique ID to track which hook instance this config is bound to
+  /** Acoustic region this card was simulated with (see SimulationAcousticSelection). */
+  speckleAcousticSelection?: SimulationAcousticSelection;
 }
 
 /**

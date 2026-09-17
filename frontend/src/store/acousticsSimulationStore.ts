@@ -174,13 +174,12 @@ export const useAcousticsSimulationStore = create<AcousticsSimulationStoreState>
                 id,
                 display_name: name,
                 type: 'import-irs',
-                state: 'completed',
+                state: 'idle',
                 createdAt: timestamp,
-                completedAt: timestamp,
                 simulationResults: null,
                 importedIRIds: undefined,
                 sourceReceiverIRMapping: undefined,
-                irImportMode: 'per-pair',
+                irImportMode: 'single',
               } as ImportIRsSimulationConfig;
               break;
 

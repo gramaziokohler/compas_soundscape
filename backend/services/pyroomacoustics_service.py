@@ -194,13 +194,23 @@ class PyroomacousticsService:
         # Remap faces, drop degenerate triangles, and remove duplicate faces
         # Two meshes sharing a boundary each contribute a face with the same
         # vertices — after vertex welding those faces become identical.
+        #
+        # Speckle BIM objects are extracted TWICE (the DataObject carrying
+        # ``displayValue`` and its child Mesh).  The frontend assigns materials
+        # by applicationId, and the object-face-range index stores that range for
+        # whichever copy it saw LAST — usually the child Mesh.  The weld keeps
+        # the FIRST copy, so without inheriting the duplicate's map the assigned
+        # material is silently dropped and the wall falls back to a reflective
+        # default.  Keep a face-key → kept-index map so a duplicate can donate its
+        # material/scattering to the surviving face.
         welded_faces = []
         welded_face_materials = {} if face_materials is not None else None
         welded_face_scattering = {} if face_scattering is not None else None
-        seen_faces: set[tuple[int, ...]] = set()
+        seen_faces: dict[tuple[int, ...], int] = {}
         new_idx = 0
         n_degenerate = 0
         n_duplicate = 0
+        n_inherited = 0
 
         for old_idx, face in enumerate(faces):
             remapped = [int(inverse_indices[v]) for v in face]
@@ -213,9 +223,23 @@ class PyroomacousticsService:
             # Canonical key: sorted vertex indices (order-independent)
             face_key = tuple(sorted(remapped))
             if face_key in seen_faces:
+                kept_idx = seen_faces[face_key]
+                if (
+                    face_materials is not None
+                    and old_idx in face_materials
+                    and kept_idx not in welded_face_materials
+                ):
+                    welded_face_materials[kept_idx] = face_materials[old_idx]
+                    n_inherited += 1
+                if (
+                    face_scattering is not None
+                    and old_idx in face_scattering
+                    and kept_idx not in welded_face_scattering
+                ):
+                    welded_face_scattering[kept_idx] = face_scattering[old_idx]
                 n_duplicate += 1
                 continue
-            seen_faces.add(face_key)
+            seen_faces[face_key] = new_idx
 
             welded_faces.append(remapped)
 
@@ -279,7 +303,8 @@ class PyroomacousticsService:
             f"(removed {removed_verts} duplicates), "
             f"{original_face_count} -> {len(welded_faces)} faces "
             f"(removed {n_degenerate} degenerate, {n_duplicate} duplicate, "
-            f"{n_non_manifold_removed} non-manifold)"
+            f"{n_non_manifold_removed} non-manifold, "
+            f"{n_inherited} material assignments inherited from duplicates)"
         )
 
         return (
@@ -288,6 +313,62 @@ class PyroomacousticsService:
             welded_face_materials,
             welded_face_scattering,
         )
+
+    @staticmethod
+    def compute_room_volume(
+        vertices: list[list[float]],
+        faces: list[list[int]],
+    ) -> tuple[float, str]:
+        """
+        Estimate the enclosed room volume for the ray-traced late tail.
+
+        pyroomacoustics derives the tail's echo density from the room volume
+        (``Room.get_volume()`` -> ``poisson_sequence`` in ``simulation/rt.py``).
+        Its default implementation is the divergence theorem, which is only valid
+        for a **watertight, outward-oriented** shell. Real Speckle acoustic
+        layers routinely arrive with small gaps (panel seams) or as furniture
+        surfaces, so the welded mesh has boundary edges and the divergence
+        volume collapses to a tiny, meaningless value — producing an
+        unphysically dense synthetic tail.
+
+        This computes the exact divergence volume when the welded mesh is closed,
+        and falls back to the axis-aligned bounding-box volume when it is not
+        (a stable upper-bound approximation for essentially rectangular rooms).
+
+        Args:
+            vertices: Welded vertex coordinates in metres.
+            faces: Welded triangle index lists.
+
+        Returns:
+            ``(volume_m3, method)`` where method is ``"divergence"``,
+            ``"bounding_box"``, or ``"none"``.
+        """
+        verts = np.asarray(vertices, dtype=np.float64)
+        if verts.ndim != 2 or verts.shape[0] == 0 or not faces:
+            return 0.0, "none"
+
+        # Manifold check: a closed triangle mesh uses every edge exactly twice.
+        edge_faces: dict[tuple[int, int], int] = {}
+        for face in faces:
+            n = len(face)
+            for j in range(n):
+                a, b = face[j], face[(j + 1) % n]
+                edge = (a, b) if a < b else (b, a)
+                edge_faces[edge] = edge_faces.get(edge, 0) + 1
+        is_closed = bool(edge_faces) and all(c == 2 for c in edge_faces.values())
+
+        if is_closed:
+            # Signed tetrahedron volume: V = (1/6) Σ p0 · (p1 × p2)
+            v = 0.0
+            for face in faces:
+                p = verts[face]
+                v += float(np.dot(p[0], np.cross(p[1], p[2])))
+            volume = abs(v) / 6.0
+            if volume > 0:
+                return volume, "divergence"
+
+        extents = verts.max(axis=0) - verts.min(axis=0)
+        return float(np.prod(np.maximum(extents, 0.0))), "bounding_box"
 
     @staticmethod
     def create_room_from_mesh(
@@ -458,6 +539,21 @@ class PyroomacousticsService:
                 )
             finally:
                 pra.constants.set('c', _orig_c)
+
+            # The ray-traced late tail's echo density is derived from the room
+            # volume. pyroomacoustics' divergence-theorem volume is meaningless
+            # for the open (non-watertight) Speckle acoustic layers we build
+            # walls from, so override it with a robust estimate.
+            if ray_tracing:
+                volume, volume_method = PyroomacousticsService.compute_room_volume(
+                    vertices, faces
+                )
+                if volume > 0:
+                    room.get_volume = lambda: float(volume)
+                    print(
+                        f"Room volume for ray-traced tail: {volume:.2f} m^3 "
+                        f"({volume_method})"
+                    )
 
             return room
 

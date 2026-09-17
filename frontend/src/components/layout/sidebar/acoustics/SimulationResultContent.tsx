@@ -241,6 +241,8 @@ interface SimulationResultContentProps {
   singleIRPerListener?: boolean;
   onListenerIRUploaded?: (pairs: Array<{ sourceId: string; receiverId: string }>, ir: ImpulseResponseMetadata) => void;
   onListenerAssignmentCleared?: (pairs: Array<{ sourceId: string; receiverId: string }>) => void;
+  /** True when the card renders as a solid generated (blue) card — drives on-blue tokens. */
+  onBlueBackground?: boolean;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -272,9 +274,9 @@ export function SimulationResultContent({
   singleIRPerListener = false,
   onListenerIRUploaded,
   onListenerAssignmentCleared,
+  onBlueBackground = false,
 }: SimulationResultContentProps) {
   const simulationConfig = config as any;
-  const results: string | null = simulationConfig.simulationResults;
 
   const sourceReceiverIRMapping: SourceReceiverIRMapping | undefined = simulationConfig.sourceReceiverIRMapping;
   const simulationId: string | undefined = simulationConfig.currentSimulationId;
@@ -593,8 +595,8 @@ export function SimulationResultContent({
       {/* IR Library */}
       <ImpulseResponseUpload
         onClearIR={onClearIR}
-        simulationResults={results}
         refreshTrigger={irRefreshTrigger}
+        onBlueBackground={onBlueBackground}
         simulationIRIds={simulationConfig.importedIRIds}
         sourceReceiverIRMapping={sourceReceiverIRMapping}
         onIRHover={onIRHover}

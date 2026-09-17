@@ -101,33 +101,61 @@ export function getGeometryLeafIds(raw: any): string[] {
 }
 
 /**
- * Like getGeometryLeafIds but walks an ExplorerNode's tree structure
- * (model.children / children) rather than raw.children. Container/layer nodes
- * keep their descendants under model.children, so this is what tree rows must
- * use to find the geometry surfaces under a parent layer (and nested layers).
- *
- * Mirrors the backend's inclusion rule: an object is assignable geometry when it
- * IS a Mesh OR HAS a `displayValue` (Brep/BIM objects). Geometry may hang off any
- * property (`elements`, `displayValue`, …), not just `children`, so we also walk
- * each raw object's full property graph.
+ * An object is assignable geometry when it IS a Mesh OR HAS a `displayValue`
+ * (Brep/BIM objects).
  */
-export function getGeometryLeafIdsFromNode(node: any): string[] {
+function rawHasGeometry(raw: any): boolean {
+  if (!raw || typeof raw !== 'object') return false;
+  if (raw.displayValue != null) return true; // Brep / BIM object carrying a mesh
+  const t: string = raw.speckle_type || '';
+  return t.includes('Mesh');
+}
+
+/**
+ * Count the mesh faces of a raw Speckle object. `Mesh.faces` is a flat,
+ * count-prefixed array of polygons; after triangulation a polygon with n
+ * vertices becomes (n − 2) triangles. A Brep/BIM object carries its meshes in
+ * `displayValue` — those are summed.
+ */
+function countMeshFaces(raw: any): number {
+  if (!raw || typeof raw !== 'object') return 0;
+  const faces = (raw as any).faces;
+  if (faces && typeof faces.length === 'number') {
+    let total = 0;
+    let i = 0;
+    while (i < faces.length) {
+      const n = faces[i];
+      if (!Number.isFinite(n) || n < 3) break;
+      total += n - 2;
+      i += n + 1;
+    }
+    return total;
+  }
+  const dv = (raw as any).displayValue;
+  if (dv && typeof dv === 'object' && typeof dv.length === 'number') {
+    let total = 0;
+    for (const m of dv) total += countMeshFaces(m);
+    return total;
+  }
+  if (dv && typeof dv === 'object') return countMeshFaces(dv);
+  return 0;
+}
+
+/**
+ * Walk an ExplorerNode's tree + each raw object's property graph, collecting
+ * geometry leaf ids and their mesh-face counts in one pass.
+ */
+function collectGeometryFromNode(node: any): { ids: string[]; faceCounts: Map<string, number> } {
   const ids = new Set<string>();
+  const faceCounts = new Map<string, number>();
   const seen = new WeakSet<object>();
 
-  const rawHasGeometry = (raw: any): boolean => {
-    if (!raw || typeof raw !== 'object') return false;
-    if (raw.displayValue != null) return true; // Brep / BIM object carrying a mesh
-    const t: string = raw.speckle_type || '';
-    return t.includes('Mesh');
-  };
-
-  // Walk a raw Speckle object graph collecting assignable geometry ids.
   const collectFromRaw = (raw: any) => {
     if (!raw || typeof raw !== 'object' || seen.has(raw)) return;
     seen.add(raw);
     if (raw.id && rawHasGeometry(raw)) {
       ids.add(raw.id);
+      faceCounts.set(raw.id, countMeshFaces(raw));
       return; // assignable unit — don't descend into its display meshes
     }
     for (const key of Object.keys(raw)) {
@@ -141,7 +169,6 @@ export function getGeometryLeafIdsFromNode(node: any): string[] {
     }
   };
 
-  // Walk the ExplorerNode tree (viewer-known nodes) and inspect each node's raw.
   const walkNode = (n: any) => {
     if (!n || typeof n !== 'object' || seen.has(n)) return;
     seen.add(n);
@@ -152,7 +179,30 @@ export function getGeometryLeafIdsFromNode(node: any): string[] {
   };
 
   walkNode(node);
-  return Array.from(ids);
+  return { ids: Array.from(ids), faceCounts };
+}
+
+/**
+ * Like getGeometryLeafIds but walks an ExplorerNode's tree structure
+ * (model.children / children) rather than raw.children. Container/layer nodes
+ * keep their descendants under model.children, so this is what tree rows must
+ * use to find the geometry surfaces under a parent layer (and nested layers).
+ *
+ * Mirrors the backend's inclusion rule: an object is assignable geometry when it
+ * IS a Mesh OR HAS a `displayValue` (Brep/BIM objects). Geometry may hang off any
+ * property (`elements`, `displayValue`, …), not just `children`, so we also walk
+ * each raw object's full property graph.
+ */
+export function getGeometryLeafIdsFromNode(node: any): string[] {
+  return collectGeometryFromNode(node).ids;
+}
+
+/**
+ * Mesh-face counts (triangulated) per geometry leaf id under an ExplorerNode.
+ * Used to total the acoustic region's mesh complexity.
+ */
+export function getGeometryFaceCountMapFromNode(node: any): Map<string, number> {
+  return collectGeometryFromNode(node).faceCounts;
 }
 
 /**
@@ -540,6 +590,28 @@ export function useSpeckleTree(worldTree: any, updateTrigger?: number, modelFile
     return nodes;
   }, [worldTree, updateTrigger, modelFileName]);
 
+  /**
+   * Nodes that must ALWAYS stay expanded: the top-level model roots and the
+   * "Received model" collection (Speckle's `artifact-root`). Collapsing everything
+   * must stop at these so the layer list stays visible.
+   */
+  const pinnedExpandedIds = useMemo(() => {
+    const pinned = new Set<string>();
+    const walk = (nodes: any[], depth: number) => {
+      for (const node of nodes) {
+        const raw = node?.raw || node?.model?.raw || {};
+        const id: string | undefined = raw.id || node?.model?.id || node?.id;
+        if (id && (depth === 0 || raw.applicationId === 'artifact-root' || raw.name === 'Received model')) {
+          pinned.add(id);
+        }
+        const children = node?.model?.children || node?.children || [];
+        if (children.length > 0) walk(children, depth + 1);
+      }
+    };
+    walk(rootNodes, 0);
+    return pinned;
+  }, [rootNodes]);
+
   // Auto-expand single-child chains on initial tree load
   useEffect(() => {
     if (didAutoExpandRef.current) return;
@@ -555,6 +627,19 @@ export function useSpeckleTree(worldTree: any, updateTrigger?: number, modelFile
     }
   }, [rootNodes]);
 
+  // Keep the pinned roots ("Received model") expanded at all times.
+  useEffect(() => {
+    if (pinnedExpandedIds.size === 0) return;
+    setExpandedNodes(prev => {
+      let changed = false;
+      const next = new Set(prev);
+      pinnedExpandedIds.forEach(id => {
+        if (!next.has(id)) { next.add(id); changed = true; }
+      });
+      return changed ? next : prev;
+    });
+  }, [pinnedExpandedIds]);
+
   const virtualItems = useMemo(() => {
     const items = flattenModelTree(rootNodes, expandedNodes, selectedObjectIds);
     console.log('[useSpeckleTree] useMemo recalculating virtualItems:', items.length);
@@ -565,13 +650,15 @@ export function useSpeckleTree(worldTree: any, updateTrigger?: number, modelFile
     setExpandedNodes(prev => {
       const next = new Set(prev);
       if (next.has(nodeId)) {
+        // Pinned roots ("Received model") can never be collapsed.
+        if (pinnedExpandedIds.has(nodeId)) return prev;
         next.delete(nodeId);
       } else {
         next.add(nodeId);
       }
       return next;
     });
-  }, []);
+  }, [pinnedExpandedIds]);
 
   const expandToShowObject = useCallback((objectId: string) => {
     setExpandedNodes(prev => {
@@ -597,6 +684,12 @@ export function useSpeckleTree(worldTree: any, updateTrigger?: number, modelFile
     setSelectedObjectIds([]);
   }, []);
 
+  // Collapse every layer/object, leaving only the pinned roots ("Received model")
+  // expanded so the layer list remains visible.
+  const collapseToRoot = useCallback(() => {
+    setExpandedNodes(new Set(pinnedExpandedIds));
+  }, [pinnedExpandedIds]);
+
   const removeFromSelection = useCallback((objectId: string) => {
     setSelectedObjectIds(prev => prev.filter(id => id !== objectId));
   }, []);
@@ -612,6 +705,7 @@ export function useSpeckleTree(worldTree: any, updateTrigger?: number, modelFile
     selectObject,
     addToSelection,
     clearSelection,
+    collapseToRoot,
     removeFromSelection
   };
 }

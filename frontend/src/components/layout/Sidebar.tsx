@@ -730,13 +730,34 @@ export function Sidebar(props: SidebarProps) {
         ).length
       : 0;
 
+  // Sounds badge at the Context step: aggregate the sound cards of ALL child
+  // usage/scenario cards of the expanded context (not the whole project, and not
+  // just one scenario). Mirrors `soundsBreadcrumbHasCards`' scoping, including
+  // the legacy negative key used by audio contexts that bypassed Usage.
+  const soundChildCountForExpandedContext = (() => {
+    if (currentStep !== 0 || contextExpandedOriginalIndex === null) return 0;
+    const ctxCfg = props.analysisConfigs[contextExpandedOriginalIndex];
+    if (ctxCfg?.type === 'audio') {
+      const audioKey = -(contextExpandedOriginalIndex + 1);
+      return props.soundConfigs.filter((s) => s.parentUsageOriginalIndex === audioKey).length;
+    }
+    return props.soundConfigs.filter((s) => {
+      const uIdx = s.parentUsageOriginalIndex;
+      if (uIdx === null || uIdx === undefined || uIdx < 0) return false;
+      const usg = props.analysisConfigs[uIdx];
+      return !!usg && (usg as any).parentContextOriginalIndex === contextExpandedOriginalIndex;
+    }).length;
+  })();
+
   const soundChildCountForExpandedUsage =
     currentStep === 1 && usageExpandedOriginalIndex !== null
       ? props.soundConfigs.filter((s) => s.parentUsageOriginalIndex === usageExpandedOriginalIndex).length
       : 0;
 
   const usageBreadcrumbBlue = usageChildCountForExpandedContext > 0;
-  const soundsBreadcrumbBlue = soundChildCountForExpandedUsage > 0;
+  const soundsBreadcrumbBlue = soundChildCountForExpandedContext > 0 || soundChildCountForExpandedUsage > 0;
+  const soundsBreadcrumbCount =
+    currentStep === 0 ? soundChildCountForExpandedContext : soundChildCountForExpandedUsage;
 
   // Toggle handle geometry — the button always sits a fixed margin to the
   // right of the sidebar's edge, in both states (never flush on top of it).
@@ -939,7 +960,7 @@ export function Sidebar(props: SidebarProps) {
               </button>
               {soundsBreadcrumbBlue && (
                 <span className="absolute -top-1.5 -right-1.5 z-10 min-w-[14px] h-[14px] px-[3px] rounded-full bg-primary text-on-blue text-[8px] font-bold flex items-center justify-center leading-none pointer-events-none">
-                  {soundChildCountForExpandedUsage}
+                  {soundsBreadcrumbCount}
                 </span>
               )}
             </div>
