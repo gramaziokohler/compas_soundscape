@@ -77,6 +77,20 @@ export function getScale(): Scale {
 }
 
 /**
+ * Read a CSS custom property as px. Used for resolution-banded layout tokens
+ * (e.g. `--sidebar-default-width`) that live in globals.css media queries
+ * rather than as a viewport-width fraction. Returns `fallback` during SSR
+ * or when the property is missing / unparsable.
+ */
+export function readCssPx(property: string, fallback: number): number {
+  if (typeof document === 'undefined') return fallback;
+  const n = parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue(property),
+  );
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/**
  * Clamp a top-left screen position so an element of (width,height) stays fully
  * inside the viewport. Shared by all floating panels/overlays so every popup
  * behaves identically regardless of screen size.

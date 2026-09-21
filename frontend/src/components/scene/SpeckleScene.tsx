@@ -1363,8 +1363,6 @@ export function SpeckleScene({
       <SceneControlsHint
         isViewerReady={isViewerReady}
         isFirstPersonMode={isFirstPersonMode}
-        isLeftSidebarExpanded={isLeftSidebarExpanded}
-        leftSidebarContentWidth={leftSidebarContentWidth}
         bottomOffset={dockBottomSpace}
       />
 

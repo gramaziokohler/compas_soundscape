@@ -36,25 +36,30 @@ export function useSidebarResize({
 
   const startXRef = useRef(0);
   const startWidthRef = useRef(0);
+  // Until the user drags, width tracks the resolution-banded CSS default.
+  // After a drag, only min/max re-clamps apply (window resize must not
+  // re-expand the panel as a fraction of the viewport).
+  const userHasDraggedRef = useRef(false);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
+    userHasDraggedRef.current = true;
     setIsResizing(true);
     startXRef.current = e.clientX;
     startWidthRef.current = width;
   }, [width]);
 
-  // Re-clamp the current width whenever the (possibly viewport-derived) min/max
-  // bounds change, e.g. after a window resize shrinks a fluid max. Never clamps
-  // mid-drag so the user keeps control.
+  // Re-clamp whenever min/max/default change (breakpoint step or viewport
+  // overflow). Never clamps mid-drag so the user keeps control.
   useEffect(() => {
     if (isResizing) return;
-    const clamped = Math.min(maxWidth, Math.max(minWidth, Math.round(width)));
+    const target = userHasDraggedRef.current ? width : initialWidth;
+    const clamped = Math.min(maxWidth, Math.max(minWidth, Math.round(target)));
     if (clamped !== width) {
       setWidth(clamped);
       onWidthChange?.(clamped);
     }
-  }, [width, minWidth, maxWidth, isResizing, onWidthChange]);
+  }, [width, initialWidth, minWidth, maxWidth, isResizing, onWidthChange]);
 
   useEffect(() => {
     if (!isResizing) return;

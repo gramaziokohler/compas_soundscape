@@ -339,16 +339,18 @@ export const UI_RIGHT_SIDEBAR = {
 } as const;
 
 // Sidebar Resize Constraints
+// Live default/min/max come from `--sidebar-*-width` in globals.css (fixed px
+// per resolution band). These values are JS fallbacks when CSS is unavailable.
 export const UI_SIDEBAR_RESIZE = {
   // Left sidebar content panel (excludes vertical tab bar)
   LEFT_MIN_WIDTH: 180,
-  LEFT_MAX_WIDTH: 720,
-  LEFT_DEFAULT_WIDTH: 288,   // 18rem
+  LEFT_MAX_WIDTH: 640,
+  LEFT_DEFAULT_WIDTH: 280,
 
   // Right sidebar total width
   RIGHT_MIN_WIDTH: 180,
-  RIGHT_MAX_WIDTH: 720,
-  RIGHT_DEFAULT_WIDTH: 288,  // 18rem
+  RIGHT_MAX_WIDTH: 640,
+  RIGHT_DEFAULT_WIDTH: 280,
 
   // Right sidebar vertical split — fraction of height taken by the Acoustics
   // (simulation) section; the Listeners section fills the remainder.
@@ -383,16 +385,10 @@ export const UI_SIDEBAR_TOGGLE = {
 //   fluid     — proportional to the viewport (constant fraction of the window)
 //   clamped   — fluid between a hard physical min/max
 //
-// `.FRACTION` is the target viewport share; `.MIN` / `.MAX` are hard physical px.
-// Consumers compute a value at render time via `useViewportScale()` / `getScale()`:
-//   scale.clampW(UI_SCALE.LEFT_SIDEBAR.MIN, UI_SCALE.LEFT_SIDEBAR.FRACTION,
-//                UI_SCALE.LEFT_SIDEBAR.MAX)
-// Never hardcode fractions or px for these surfaces elsewhere.
+// Left/right sidebar widths are NOT fluid. They are fixed CSS px per
+// resolution band (`--sidebar-*-width` in globals.css), with JS fallbacks in
+// UI_SIDEBAR_RESIZE. Other surfaces still use `.FRACTION` + `.MIN` / `.MAX`.
 export const UI_SCALE = {
-  /** Left sidebar content width — clamped-fluid fraction of viewport width. */
-  LEFT_SIDEBAR: { FRACTION: 0.30, DEFAULT_FRACTION: 0.19, MIN: 240, MAX: 720 },
-  /** Right sidebar width — clamped-fluid fraction of viewport width. */
-  RIGHT_SIDEBAR: { FRACTION: 0.30, DEFAULT_FRACTION: 0.19, MIN: 240, MAX: 720 },
   /**
    * Max height of scrollable card bodies / list panels as a clamped-fluid
    * fraction of viewport height, so they neither clip on short screens nor
@@ -675,14 +671,6 @@ export const CATALOG_CDN_BASE = 'https://actions.google.com/sounds/v1';
 export const CATALOG_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 // ENTITY_HIGHLIGHT_DELAY_MS moved to UI_TIMING section
 export const LLM_SUGGESTED_INTERVAL_SECONDS = 0;
-
-// LLM Retry Configuration (matches backend constants)
-export const LLM_RETRY = {
-  MAX_ATTEMPTS: 5,              // Maximum retry attempts (matches backend LLM_MAX_RETRIES)
-  INITIAL_DELAY: 2.0,           // Initial delay in seconds (matches backend LLM_INITIAL_RETRY_DELAY)
-  MAX_DELAY: 30.0,              // Maximum delay in seconds (matches backend LLM_MAX_RETRY_DELAY)
-  BACKOFF_MULTIPLIER: 2.0,      // Exponential backoff multiplier (matches backend LLM_BACKOFF_MULTIPLIER)
-} as const;
 
 // Speckle Viewer Retry Configuration
 export const SPECKLE_VIEWER_RETRY = {

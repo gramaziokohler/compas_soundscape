@@ -91,6 +91,41 @@
   --ui-vw: 100vw;
   --ui-vh: 100vh;
   --ui-dvh: 100dvh;
+
+  /* Sidebar widths — fixed CSS px per resolution band, NOT a viewport fraction.
+   * Crossing a breakpoint steps default/max; dragging the window inside a band
+   * does not grow or shrink the panels. JS reads these via readCssPx(). */
+  --sidebar-min-width: 180px;
+  --sidebar-default-width: 280px;
+  --sidebar-max-width: 400px;
+}
+
+@media (min-width: 1280px) {
+  :root {
+    --sidebar-default-width: 300px;
+    --sidebar-max-width: 440px;
+  }
+}
+
+@media (min-width: 1440px) {
+  :root {
+    --sidebar-default-width: 320px;
+    --sidebar-max-width: 500px;
+  }
+}
+
+@media (min-width: 1920px) {
+  :root {
+    --sidebar-default-width: 360px;
+    --sidebar-max-width: 560px;
+  }
+}
+
+@media (min-width: 2560px) {
+  :root {
+    --sidebar-default-width: 400px;
+    --sidebar-max-width: 640px;
+  }
 }
 
 @theme inline {

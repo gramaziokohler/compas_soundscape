@@ -1,14 +1,10 @@
 """
 Text / LLM generation endpoints.
 
-POST /api/generate-text
-  Enqueues an in-process (asyncio) "llm" job, returns {job_id, position,
-  total} immediately. Poll/cancel via GET/POST /api/jobs/{job_id}(/cancel).
-
-SSE agent endpoints (analyze-3dmodel-stream, scenarist-stream,
-foley-artist-stream, speech-agent-stream, orchestrate-stream) acquire
-LLM_SEMAPHORE directly and stream with keepalive pings — see
-services/io_jobs.py.
+SSE agent endpoints (generate-prompts-stream, analyze-3dmodel-stream,
+scenarist-stream, foley-artist-stream, speech-agent-stream,
+orchestrate-stream) acquire LLM_SEMAPHORE directly and stream with
+keepalive pings — see services/io_jobs.py.
 """
 from __future__ import annotations
 
@@ -17,30 +13,20 @@ import traceback
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from services.llm_service import LLMService
-from services.job_store import job_store
-from services.io_jobs import start_io_job, run_blocking, iter_with_keepalive, LLM_SEMAPHORE
+from services.io_jobs import iter_with_keepalive, LLM_SEMAPHORE
 from models.schemas import (
-    PromptRequest,
     UnifiedPromptGenerationRequest,
-    JobEnqueueResponse,
-    ModelAnalysisRequest,
     ScenaristStreamRequest,
     FoleyArtistRequest,
-    ScenarioResponse,
 )
 from config.constants import (
-    DEFAULT_DBFS,
-    LLM_SUGGESTED_INTERVAL_SECONDS,
-    DEFAULT_DURATION_SECONDS,
     TEMP_ANALYSIS_DIR,
     DEFAULT_LLM_MODEL,
-    JOB_TYPE_LLM,
-    JOB_TYPE_MODEL_ANALYSIS,
 )
 from utils.llm_errors import llm_error_message
 
@@ -120,74 +106,6 @@ def _load_analysis_groups(analysis_id: str) -> tuple[list[dict], str]:
     return entities, space_description
 
 
-@router.post("/api/generate-prompts")
-async def generate_prompts(request: UnifiedPromptGenerationRequest):
-    try:
-        context = request.context
-        entities = request.entities
-
-        # Analysis-driven path: project the full analysis result through the shared
-        # `_create_base_sound_prompt` text strategy (with whole-group ENTITY mapping).
-        if request.analysis_id:
-            groups, space_description = _load_analysis_groups(request.analysis_id)
-            if groups:
-                _, sound_list = await llm_service.generate_analysis_prompts(
-                    groups,
-                    space_description,
-                    request.context,
-                    request.num_sounds,
-                    llm_model=request.llm_model,
-                )
-                return {"prompts": sound_list, "selected_entities": groups}
-
-        if entities and len(entities) > 0:
-            entities_to_use = entities
-            if len(entities) > request.num_sounds * 1.5:
-                entities_to_use = await llm_service.select_diverse_entities(
-                    entities, request.num_sounds, llm_model=request.llm_model
-                )
-            sound_list = await llm_service.generate_prompts_for_entities(
-                entities_to_use, request.num_sounds, context, llm_model=request.llm_model
-            )
-            entity_prompts = []
-            for sound_data in sound_list:
-                entity_indices = sound_data.get("entity_indices", [])
-                entity_objects = [
-                    entities_to_use[i]
-                    for i in entity_indices
-                    if 0 <= i < len(entities_to_use)
-                ]
-                entity_prompts.append({
-                    "entities": entity_objects,
-                    "prompt": sound_data["prompt"],
-                    "display_name": sound_data["display_name"],
-                    "dbfs": sound_data.get("dbfs", DEFAULT_DBFS),
-                    "interval_seconds": sound_data.get("interval_seconds", LLM_SUGGESTED_INTERVAL_SECONDS),
-                    "duration_seconds": sound_data.get("duration_seconds", DEFAULT_DURATION_SECONDS),
-                })
-            return {"prompts": entity_prompts, "selected_entities": entities_to_use}
-
-        elif context and context.strip():
-            raw_text, sound_list = await llm_service.generate_text_based_prompts(
-                context, request.num_sounds, llm_model=request.llm_model
-            )
-            return {"prompts": sound_list, "text": raw_text}
-
-        else:
-            raise HTTPException(status_code=400, detail="Either context or entities must be provided")
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        traceback.print_exc()
-        error_str = str(e)
-        if "429" in error_str or "quota" in error_str.lower() or "RESOURCE_EXHAUSTED" in error_str or "RateLimitError" in type(e).__name__:
-            raise HTTPException(status_code=429, detail=error_str)
-        if "503" in error_str or "overloaded" in error_str.lower() or "UNAVAILABLE" in error_str:
-            raise HTTPException(status_code=503, detail="LLM service is currently overloaded. Please try again in a moment.")
-        raise HTTPException(status_code=500, detail=f"Error generating prompts: {error_str}")
-
-
 @router.post("/api/generate-prompts-stream")
 async def generate_prompts_stream(request: UnifiedPromptGenerationRequest):
     """SSE endpoint: yields one sound object per event as the LLM generates them.
@@ -263,135 +181,6 @@ async def generate_prompts_stream(request: UnifiedPromptGenerationRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-
-
-@router.post("/api/generate-text", response_model=JobEnqueueResponse)
-async def generate_text(request: PromptRequest, req: Request):
-    """
-    Run LLM text/prompt generation as an in-process asyncio task (behind
-    LLM_SEMAPHORE). Returns {job_id, position, total} immediately.
-    Poll GET /api/jobs/{job_id} for progress/result.
-    """
-    if not request.prompt and not request.entities:
-        raise HTTPException(status_code=400, detail="Either prompt or entities must be provided")
-
-    session_id = getattr(getattr(req, "state", None), "session_id", None)
-
-    async def _run(job_id: str) -> None:
-        await job_store.set_progress(job_id, 20, "Generating sound prompts...")
-
-        if request.entities and len(request.entities) > 0:
-            sound_list = await llm_service.generate_prompts_for_entities(
-                request.entities, request.num_sounds, request.prompt, llm_model=request.llm_model,
-            )
-            entity_prompts = []
-            for sound_data in sound_list:
-                entity_idx = sound_data.get("entity_index")
-                entity_data = (
-                    request.entities[entity_idx]
-                    if entity_idx is not None and 0 <= entity_idx < len(request.entities)
-                    else None
-                )
-                entity_prompts.append({
-                    "entity": entity_data,
-                    "prompt": sound_data["prompt"],
-                    "display_name": sound_data["display_name"],
-                    "dbfs": sound_data.get("dbfs", DEFAULT_DBFS),
-                    "interval_seconds": sound_data.get("interval_seconds", LLM_SUGGESTED_INTERVAL_SECONDS),
-                    "duration_seconds": sound_data.get("duration_seconds", DEFAULT_DURATION_SECONDS),
-                })
-            result_payload = {
-                "text": "\n".join(f"{i + 1}. {p['prompt']}" for i, p in enumerate(entity_prompts)),
-                "sounds": [p["prompt"] for p in entity_prompts],
-                "prompts": entity_prompts,
-                "selected_entities": request.entities,
-            }
-        elif request.prompt and request.prompt.strip():
-            raw_text, sound_list = await llm_service.generate_text_based_prompts(
-                request.prompt, request.num_sounds, llm_model=request.llm_model,
-            )
-            result_payload = {
-                "text": raw_text,
-                "sounds": [s["prompt"] for s in sound_list],
-                "prompts": sound_list,
-                "selected_entities": None,
-            }
-        else:
-            raise ValueError("Either prompt or entities must be provided")
-
-        await job_store.complete(job_id, result_payload)
-
-    job_id = await start_io_job(JOB_TYPE_LLM, session_id, _run)
-    return JobEnqueueResponse(job_id=job_id, position=1, total=1)
-
-
-# ─── 3D Model Analysis endpoints ──────────────────────────────────────────────────
-
-def _normalize_analysis_objects(raw: list) -> list[dict]:
-    """Clamp and coerce raw object dicts from the LLM into consistent types."""
-    out = []
-    for obj in raw:
-        if not isinstance(obj, dict):
-            continue
-        try:
-            raw_oids = obj.get("object_ids", {})
-            if isinstance(raw_oids, dict):
-                object_ids: dict[str, dict] = {
-                    str(k): v if isinstance(v, dict) else {}
-                    for k, v in raw_oids.items()
-                }
-            else:
-                object_ids = {str(x): {} for x in raw_oids}
-
-            out.append({
-                "name": str(obj.get("name", "Unknown")),
-                "description": str(obj.get("description", "")),
-                "material": str(obj.get("material", "")),
-                "quantity": max(1, int(obj.get("quantity", 1))),
-                "object_ids": object_ids,
-            })
-        except (ValueError, TypeError):
-            continue
-    return out
-
-
-@router.post("/api/analyze-3dmodel", response_model=JobEnqueueResponse)
-async def analyze_3dmodel(request: ModelAnalysisRequest, req: Request):
-    """
-    Run 3D model analysis as an in-process asyncio task (behind
-    LLM_SEMAPHORE; the underlying LLMService.analyze_3dmodel() call is
-    synchronous, so it runs in a threadpool to avoid blocking the event loop).
-    Returns {job_id, position, total} immediately.
-    """
-    if not request.entities:
-        raise HTTPException(status_code=400, detail="No entities provided")
-
-    session_id = getattr(getattr(req, "state", None), "session_id", None)
-
-    async def _run(job_id: str) -> None:
-        screenshot_count = len(request.screenshots) if request.screenshots else 0
-        await job_store.set_progress(
-            job_id, 20,
-            f"Analyzing {len(request.entities)} objects"
-            + (f" with {screenshot_count} screenshot(s)" if screenshot_count else " (metadata only)")
-            + "...",
-        )
-        raw_result = await run_blocking(
-            llm_service.analyze_3dmodel,
-            entities=request.entities,
-            screenshots=request.screenshots,
-            user_context=request.user_context,
-            llm_model=request.llm_model,
-        )
-        result_payload = {
-            "objects": _normalize_analysis_objects(raw_result.get("objects", [])),
-            "space_title": raw_result.get("space_title", ""),
-            "space_description": raw_result.get("space_description", ""),
-        }
-        await job_store.complete(job_id, result_payload)
-
-    job_id = await start_io_job(JOB_TYPE_MODEL_ANALYSIS, session_id, _run)
-    return JobEnqueueResponse(job_id=job_id, position=1, total=1)
 
 
 # ─── Streaming 3D Model Analysis endpoints ────────────────────────────────────
@@ -720,32 +509,6 @@ async def foley_artist_stream(request: FoleyArtistRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-
-
-@router.put("/api/scenarist-result/{scenario_id}")
-async def update_scenarist_result(
-    scenario_id: str,
-    body: ScenarioResponse,
-):
-    """Overwrite a saved scenario result (e.g., after user edits)."""
-    import re as _re
-    if not _re.match(r'^[0-9a-f-]+$', scenario_id):
-        raise HTTPException(status_code=400, detail="Invalid scenario_id")
-
-    out_file = Path(TEMP_ANALYSIS_DIR) / f"scenarios_{scenario_id}.json"
-    try:
-        analysis_dir = Path(TEMP_ANALYSIS_DIR)
-        analysis_dir.mkdir(parents=True, exist_ok=True)
-        tmp_file = out_file.with_suffix(".tmp")
-        payload = {"scenario_id": scenario_id, **body.model_dump()}
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2)
-        tmp_file.replace(out_file)
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to save scenario: {str(e)}")
-
-    return {"ok": True}
 
 
 class SpeechAgentRequest(BaseModel):

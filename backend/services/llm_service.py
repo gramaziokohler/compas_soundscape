@@ -97,15 +97,6 @@ class LLMService:
         self.gemini_client = client
         self.openai_client = None
         self.anthropic_client = None
-        self.progress_callback = None  # Optional callback for retry progress updates
-
-    def set_progress_callback(self, callback):
-        """Set a callback function to receive progress updates during retries
-
-        Args:
-            callback: Function that accepts (attempt: int, max_attempts: int, delay: float, error_msg: str)
-        """
-        self.progress_callback = callback
 
     @staticmethod
     def _to_json_schema(response_schema) -> dict:
@@ -411,13 +402,6 @@ class LLMService:
                     raise
 
                 wait_time = min(delay, LLM_MAX_RETRY_DELAY)
-                if self.progress_callback:
-                    self.progress_callback(
-                        attempt=attempt,
-                        max_attempts=LLM_MAX_RETRIES,
-                        delay=wait_time,
-                        error_msg=error_str,
-                    )
                 print(f"\n[RETRY] {operation_name} failed (attempt {attempt}/{LLM_MAX_RETRIES}): {type(e).__name__}: {error_str}")
                 print(f"   Retrying in {wait_time:.1f} seconds...")
                 await asyncio.sleep(wait_time)
@@ -815,47 +799,6 @@ For the duration estimation (in seconds with 0.1 precision):
             parsed["entities"] = [groups[i] for i in indices if 0 <= i < len(groups)]
         return parsed
 
-    def _parse_full_sound_response(
-        self, raw_text: str, groups: list[dict] | None = None
-    ) -> list[dict]:
-        """Split a full LLM response into parsed sound dicts (shared by all strategies)."""
-        title = self._extract_title(raw_text)
-        # Drop the leading TITLE line so it isn't mistaken for a sound entry.
-        body = re.sub(r'TITLE\s*:\s*.+?(?:\n|$)', '', raw_text, count=1, flags=re.IGNORECASE)
-        sound_list: list[dict] = []
-        entries = re.split(r'\n\s*\d+[\.\)]\s*', body)
-        for entry in entries:
-            entry = entry.strip()
-            if not entry:
-                continue
-            parsed = self._parse_prompt_and_name(entry)
-            if parsed:
-                sound_list.append(self._finalize_sound(parsed, title, groups))
-                continue
-            # Fallback: treat the entry as a plain prompt.
-            cleaned = re.sub(r'^\d+[\.\)]\s*', '', entry)
-            cleaned = re.sub(r'^[-\*]\s*', '', cleaned)
-            if not cleaned:
-                continue
-            entity_idx = len(sound_list)
-            if groups and entity_idx < len(groups):
-                display_name = (groups[entity_idx].get('name') or 'Sound')[:20].title()
-            else:
-                words = cleaned.split()
-                skip_words = {'a', 'an', 'the', 'subtle', 'gentle', 'soft', 'loud', 'quiet', 'clear', 'heavy', 'light'}
-                name_words = [w for w in words[:5] if w.lower() not in skip_words][:3]
-                display_name = ' '.join(name_words).title() if name_words else 'Sound'
-            sound_list.append({
-                "prompt": cleaned,
-                "display_name": display_name,
-                "dbfs": DEFAULT_DBFS,
-                "interval_seconds": LLM_SUGGESTED_INTERVAL_SECONDS,
-                "duration_seconds": DEFAULT_DURATION_SECONDS,
-                "entity_indices": [],
-                "soundscape_title": title,
-            })
-        return sound_list
-
     async def _stream_sound_entries(
         self,
         llm_prompt: str,
@@ -933,45 +876,6 @@ For the duration estimation (in seconds with 0.1 precision):
             )
             parts.append("\n".join(lines))
         return "\n\n".join(parts)
-
-    async def generate_prompts_for_entities(self, entities: list[dict], num_sounds: int, context: str = None, llm_model: str = DEFAULT_LLM_MODEL) -> list[dict]:
-        """Generate sound prompts mixing entity-based and context-based sounds."""
-        if num_sounds <= 0:
-            return []
-        llm_prompt = self._create_base_sound_prompt(context or "", num_sounds, entities)
-        response_text = str(await self._call_llm(llm_prompt, operation_name="Sound prompt generation", llm_model=llm_model)).strip()
-        print(f"\n=== LLM Raw Response (Mixed Generation: {num_sounds} sounds from {len(entities) if entities else 0} entities) ===")
-        print(response_text)
-        print("=" * 60 + "\n", flush=True)
-        return self._parse_full_sound_response(response_text, entities)
-
-    async def generate_text_based_prompts(self, context: str, num_sounds: int, llm_model: str = DEFAULT_LLM_MODEL) -> tuple[str, list[dict]]:
-        """Generate sound prompts with display names from text description only."""
-        enhanced_prompt = self._create_base_sound_prompt(context, num_sounds, entities=None)
-        raw_text: str = str(await self._call_llm(enhanced_prompt, operation_name="Text-based prompt generation", llm_model=llm_model))
-        print(f"\n=== LLM Raw Response (Text-based generation) ===")
-        print(raw_text)
-        print("=" * 60 + "\n")
-        return raw_text, self._parse_full_sound_response(raw_text)
-
-    async def generate_analysis_prompts(
-        self,
-        groups: list[dict],
-        space_description: str,
-        user_context: str | None,
-        num_sounds: int,
-        llm_model: str = DEFAULT_LLM_MODEL,
-    ) -> tuple[str, list[dict]]:
-        """Generate sound prompts from a 3D model analysis result using the shared
-        text strategy (`_create_base_sound_prompt`, entities=None); ENTITY numbers
-        are mapped back to whole analysis groups."""
-        context = self._analysis_context_text(groups, space_description, user_context, num_sounds)
-        enhanced_prompt = self._create_base_sound_prompt(context, num_sounds, entities=None)
-        raw_text: str = str(await self._call_llm(enhanced_prompt, operation_name="Analysis prompt generation", llm_model=llm_model))
-        print(f"\n=== LLM Raw Response (Analysis-based generation) ===")
-        print(raw_text)
-        print("=" * 60 + "\n")
-        return raw_text, self._parse_full_sound_response(raw_text, groups)
 
     async def stream_generate_text_based_prompts(
         self, context: str, num_sounds: int, llm_model: str = DEFAULT_LLM_MODEL

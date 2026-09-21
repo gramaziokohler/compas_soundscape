@@ -1,17 +1,15 @@
 """
-In-process (asyncio) job execution for LLM / model-analysis / TTS work.
+In-process (asyncio) job execution for TTS, plus the LLM semaphore
+shared by SSE agent streams.
 
-These are network-bound (Gemini/OpenAI/Anthropic, Gemini TTS) — no subprocess,
-no GPU/CPU worker queue. Each job still gets a Redis-visible job_id (uniform
-polling via GET /api/jobs/{id} — see routers/jobs.py) but runs as an
-asyncio.create_task() right here in the API process, gated by a semaphore per
-pool so at most N run concurrently (LLM_MAX_CONCURRENT, TTS_MAX_CONCURRENT).
-
-SSE agent streams (scenarist/foley/speech/orchestrate/analyze-3dmodel-stream)
-don't need a job_id at all — the stream itself is the response — so they just
-acquire LLM_SEMAPHORE directly and use iter_with_keepalive() to inject
-": ping\\n\\n" comments during any gap longer than SSE_KEEPALIVE_INTERVAL_S
-(Cloudflare/nginx drop idle proxied connections after ~100s).
+TTS jobs get a Redis-visible job_id (uniform polling via GET /api/jobs/{id}
+— see routers/jobs.py) and run as asyncio.create_task() in the API process,
+gated by TTS_SEMAPHORE. SSE agent streams (scenarist/foley/speech/orchestrate/
+analyze-3dmodel-stream) don't need a job_id — the stream itself is the
+response — so they acquire LLM_SEMAPHORE directly and use
+iter_with_keepalive() to inject ": ping\\n\\n" comments during any gap
+longer than SSE_KEEPALIVE_INTERVAL_S (Cloudflare/nginx drop idle proxied
+connections after ~100s).
 """
 from __future__ import annotations
 
@@ -25,8 +23,6 @@ from services.job_store import job_store
 from config.constants import (
     LLM_MAX_CONCURRENT,
     TTS_MAX_CONCURRENT,
-    JOB_TYPE_LLM,
-    JOB_TYPE_MODEL_ANALYSIS,
     JOB_TYPE_TTS,
     IO_JOB_TYPES,
     SSE_KEEPALIVE_INTERVAL_S,
@@ -39,8 +35,6 @@ LLM_SEMAPHORE = asyncio.Semaphore(LLM_MAX_CONCURRENT)
 TTS_SEMAPHORE = asyncio.Semaphore(TTS_MAX_CONCURRENT)
 
 _SEMAPHORES = {
-    JOB_TYPE_LLM: LLM_SEMAPHORE,
-    JOB_TYPE_MODEL_ANALYSIS: LLM_SEMAPHORE,
     JOB_TYPE_TTS: TTS_SEMAPHORE,
 }
 
@@ -76,9 +70,8 @@ async def start_io_job(
 async def run_blocking(fn: Callable, *args: Any, **kwargs: Any) -> Any:
     """Run a synchronous (blocking) call off the event loop thread.
 
-    Use for LLMService methods that are `def` (not `async def`) — e.g.
-    analyze_3dmodel() — so a single slow call can't stall every other
-    request the API is serving.
+    Use for synchronous service methods so a single slow call can't stall
+    every other request the API is serving.
     """
     return await run_in_threadpool(fn, *args, **kwargs)
 

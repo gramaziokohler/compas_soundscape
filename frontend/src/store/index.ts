@@ -22,7 +22,7 @@ import {
 import { usePyroomAcousticsStore, pyroomAcousticsPartialize } from './pyroomAcousticsStore';
 import { useChorasStore, chorasPartialize } from './chorasStore';
 import { useSoundscapeStore, soundscapePartialize, configValidationError, orchestrateInputsSignature } from './soundscapeStore';
-import { useTextGenerationStore, textGenerationPartialize } from './textGenerationStore';
+import { useTextGenerationStore } from './textGenerationStore';
 import { useAnalysisStore, analysisPartialize } from './analysisStore';
 import { useSEDStore, sedPartialize } from './sedStore';
 import { useModalImpactStore, modalImpactPartialize } from './modalImpactStore';
@@ -74,11 +74,6 @@ registerTemporalStore(
   'soundscape',
   useSoundscapeStore.temporal,
   () => soundscapePartialize(useSoundscapeStore.getState()),
-);
-registerTemporalStore(
-  'textGeneration',
-  useTextGenerationStore.temporal,
-  () => textGenerationPartialize(useTextGenerationStore.getState()),
 );
 registerTemporalStore(
   'analysis',

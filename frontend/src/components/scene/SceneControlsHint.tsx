@@ -1,24 +1,21 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import { UI_SCENE_BUTTON } from '@/utils/constants';
 import { SceneControlButton } from '@/components/ui/SceneControlButton';
 import { useIsMac } from '@/hooks/useIsMac';
 import { formatShortcutKeys } from '@/utils/platform';
 
-// Left sidebar content width when expanded (matches Sidebar.tsx: 20rem = 320px)
-const LEFT_SIDEBAR_CONTENT_WIDTH = 320;
 // Matches the Object Explorer button's baseline (bottom 16px).
 const BASE_BOTTOM = 16;
 // Matches the Object Explorer button's distance from the border.
 const EDGE_MARGIN = 10;
+const LEFT_SIDEBAR_SELECTOR = '[data-sidebar="left"]';
 const STORAGE_KEY = 'compas-scene-controls-hint-open';
 
 interface SceneControlsHintProps {
   isViewerReady: boolean;
   isFirstPersonMode: boolean;
-  isLeftSidebarExpanded: boolean;
-  leftSidebarContentWidth?: number;
   /** Extra bottom offset (px) so the docked DAW timeline doesn't cover the hint. */
   bottomOffset?: number;
 }
@@ -63,17 +60,51 @@ function readStoredOpen(): boolean {
 export function SceneControlsHint({
   isViewerReady,
   isFirstPersonMode,
-  isLeftSidebarExpanded,
-  leftSidebarContentWidth,
   bottomOffset = 0,
 }: SceneControlsHintProps) {
   const isMac = useIsMac();
   const [isOpen, setIsOpen] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
+  const [leftOffset, setLeftOffset] = useState(EDGE_MARGIN);
+
+  const measureLeftOffset = useCallback(() => {
+    const leftEl = document.querySelector<HTMLElement>(LEFT_SIDEBAR_SELECTOR);
+    const rect = leftEl?.getBoundingClientRect();
+    const next =
+      rect && rect.width > 0 ? Math.round(rect.right) + EDGE_MARGIN : EDGE_MARGIN;
+    setLeftOffset((prev) => (prev === next ? prev : next));
+  }, []);
 
   useEffect(() => {
     setIsOpen(readStoredOpen());
   }, []);
+
+  useLayoutEffect(() => {
+    if (!isViewerReady) return;
+    measureLeftOffset();
+  }, [isViewerReady, measureLeftOffset]);
+
+  useEffect(() => {
+    if (!isViewerReady) return;
+
+    const ro = new ResizeObserver(() => measureLeftOffset());
+    const observeSidebars = () => {
+      ro.disconnect();
+      document.querySelectorAll(LEFT_SIDEBAR_SELECTOR).forEach((el) => ro.observe(el));
+      measureLeftOffset();
+    };
+
+    observeSidebars();
+    const mo = new MutationObserver(observeSidebars);
+    mo.observe(document.body, { childList: true, subtree: true });
+    window.addEventListener('resize', measureLeftOffset);
+
+    return () => {
+      ro.disconnect();
+      mo.disconnect();
+      window.removeEventListener('resize', measureLeftOffset);
+    };
+  }, [isViewerReady, measureLeftOffset]);
 
   const setOpen = (open: boolean) => {
     setIsOpen(open);
@@ -86,11 +117,6 @@ export function SceneControlsHint({
 
   if (!isViewerReady) return null;
 
-  // Mirror the Object Explorer button: 10px from the viewport edge when the
-  // sidebar is collapsed, otherwise 10px right of the expanded sidebar.
-  const leftOffset = isLeftSidebarExpanded
-    ? (leftSidebarContentWidth ?? LEFT_SIDEBAR_CONTENT_WIDTH) + EDGE_MARGIN
-    : EDGE_MARGIN;
   const hints = isFirstPersonMode ? FPS_HINTS : VIEWER_HINTS;
 
   return (

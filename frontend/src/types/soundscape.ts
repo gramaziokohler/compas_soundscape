@@ -362,7 +362,6 @@ export interface SerializedAnalysisConfig {
 export interface AnalysisState {
   active_tab: number;
   configs: SerializedAnalysisConfig[];
-  pending_sound_configs?: any[];
   /** Breadcrumb navigation state: which context/usage cards have children */
   card_flow?: {
     contextAdvanced: number[];

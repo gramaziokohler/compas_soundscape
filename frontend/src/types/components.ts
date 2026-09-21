@@ -38,8 +38,6 @@ export interface SidebarProps {
   audioFile: File | null;
   activeLoadTab: LoadTab;
   modelEntities: any[];
-  aiPrompt: string;
-  numSounds: number;
   soundConfigs: SoundGenerationConfig[];
   activeSoundConfigTab: number;
   generatedSounds: any[];
@@ -55,16 +53,10 @@ export interface SidebarProps {
   showAxesHelper: boolean;
   isUploading: boolean;
   isAnalyzingModel: boolean;
-  isGenerating: boolean;
   isSoundGenerating: boolean;
   isDragging: boolean;
   uploadError: string | null;
-  aiError: string | null;
-  aiResponse: string | null;
   analysisProgress: string;
-  llmProgress: string;
-  showConfirmLoadSounds: boolean;
-  pendingSoundConfigs: any[];
   // File handlers (single upload area)
   onFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onDragOver: (e: React.DragEvent<HTMLDivElement>) => void;
@@ -73,11 +65,6 @@ export interface SidebarProps {
   onUploadModel: () => void;
   onLoadSampleIfc: () => void;
   setActiveLoadTab: (tab: LoadTab) => void;
-  setAiPrompt: (prompt: string) => void;
-  setNumSounds: (num: number) => void;
-  onGenerateText: () => void;
-  onStopGeneration: () => void;
-  onLoadSoundsToGeneration: () => void;
   setActiveSoundConfigTab: (tab: number) => void;
   onAddSoundConfig: (type?: CardType) => void;
   onBatchAddSoundConfigs: (count: number) => number;
@@ -281,23 +268,3 @@ export interface SoundGenerationSectionProps {
   visibleParentUsageIndex?: number | null;
 }
 
-/**
- * Text Generation Section Component Props
- */
-export interface TextGenerationSectionProps {
-  modelEntities: any[];
-  aiPrompt: string;
-  numSounds: number;
-  isGenerating: boolean;
-  isAnalyzingModel: boolean;
-  llmProgress: string;
-  aiError: string | null;
-  aiResponse: string | null;
-  showConfirmLoadSounds: boolean;
-  analysisProgress: string;
-  setAiPrompt: (prompt: string) => void;
-  setNumSounds: (num: number) => void;
-  onGenerateText: () => void;
-  onStopGeneration: () => void;
-  onLoadSoundsToGeneration: () => void;
-}

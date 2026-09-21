@@ -13,7 +13,6 @@ import { buildEntityFromObjectId } from "@/lib/three/speckle-entity-utils";
 import {
   useAudioControlsStore,
   useFileUploadStore,
-  useTextGenerationStore,
   useSoundscapeStore,
   useAnalysisStore,
   useSpeckleStore,
@@ -44,7 +43,7 @@ import { useViewportScale } from "@/hooks/useViewportScale";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { useJobRecovery } from "@/hooks/useJobRecovery";
 import { apiService } from "@/services/api";
-import { API_BASE_URL, DEFAULT_DBFS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, DEFAULT_MAXIMUM_FOLEY_SOUNDS } from "@/utils/constants";
+import { API_BASE_URL, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, DEFAULT_MAXIMUM_FOLEY_SOUNDS } from "@/utils/constants";
 import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
 import type { LoadTab, SoundGenerationConfig } from "@/types";
 import type { AcousticSimulationMode } from "@/types/audio";
@@ -241,9 +240,6 @@ function HomeContent() {
         // Rebuild persisted audio-context source Files so the SED waveform/results
         // render after a cold refresh (the original File object is not JSON-serializable).
         analysis.rehydrateAudioContextSources(audioBaseUrl);
-        if (analysisRestored.pendingSoundConfigs.length > 0) {
-          textGen.setPendingSoundConfigs(analysisRestored.pendingSoundConfigs);
-        }
         if (analysisRestored.soundConfigParentIndices.size > 0) {
           const storeState = useSoundscapeStore.getState();
           const configs = storeState.soundConfigs.map((c: any, i: number) => {
@@ -357,7 +353,6 @@ function HomeContent() {
   const fileUpload = useFileUploadStore();
   const handleApiError = useApiErrorHandler();
   const addError = useErrorsStore((s) => s.addError);
-  const textGen = useTextGenerationStore();
   const soundGen = useSoundscapeStore();
 
   // Sync generated sounds and configs to audioControlsStore
@@ -1022,12 +1017,6 @@ function HomeContent() {
     }
   }, [fileUpload.modelFile, globalModelFile, setModelFileName]);
 
-  // Clear analyzed entities when model changes
-  useEffect(() => {
-    // Clear the analysis when new model is loaded or model is unloaded
-    textGen.handleClearAnalysis();
-  }, [fileUpload.modelFile, fileUpload.modelEntities.length]);
-
   // ============================================================================
   // Effect - Register Entity-Sound Links When Sounds Are Generated
   // This ensures filtering colors are applied for entity-linked sounds from Analysis
@@ -1151,15 +1140,6 @@ function HomeContent() {
     setRoomScale({ x: 1, y: 1, z: 1 });
     triggerBoundingBoxRefresh();
   }, [setRoomScale, triggerBoundingBoxRefresh]);
-
-  // Load sounds from text generation into sound generation tab
-  const handleLoadSoundsToGeneration = useCallback(() => {
-    if (textGen.pendingSoundConfigs.length > 0) {
-      soundGen.setSoundConfigsFromPrompts(textGen.pendingSoundConfigs);
-      setStepAdvanceTrigger(t => t + 1);
-      // Don't clear pendingSoundConfigs - allow loading multiple times
-    }
-  }, [textGen.pendingSoundConfigs, soundGen]);
 
   // Active parent filter from UIStore (set by Sidebar when Sounds step is active)
   const activeSoundParentIndex = useUIStore((s) => s.activeSoundParentIndex);
@@ -1585,12 +1565,12 @@ function HomeContent() {
 
     try {
       // Use numSounds from text generation settings
-      await sed.analyzeSoundEvents(fileUpload.audioFile, textGen.numSounds);
+      await sed.analyzeSoundEvents(fileUpload.audioFile, DEFAULT_NUM_SOUNDS);
       console.log('✓ Sound event analysis complete');
     } catch (error) {
       console.error('Failed to analyze sound events:', error);
     }
-  }, [fileUpload.audioFile, textGen.numSounds, sed]);
+  }, [fileUpload.audioFile, sed]);
 
   // Handler: Load detected sounds to sound generation tab
   const handleLoadSoundsFromSED = useCallback(() => {
@@ -1604,7 +1584,7 @@ function HomeContent() {
     setStepAdvanceTrigger(t => t + 1);
 
     console.log(`Loaded ${newConfigs.length} sounds from SED analysis`);
-  }, [sed, soundGen, textGen]);
+  }, [sed, soundGen]);
 
   // Handler: Upload model file from right sidebar (direct Speckle upload, bypasses useAnalysis)
   const handleRightSidebarModelUpload = useCallback(async (file: File) => {
@@ -1823,12 +1803,11 @@ function HomeContent() {
           `${restored.soundEvents.length} events`
         );
 
-        // Restore analysis state (cards, results, pending sound configs)
+        // Restore analysis state (cards, results)
         if (loadResponse.soundscape_data.analysis_state) {
           const analysisRestored = restoreAnalysisState(loadResponse.soundscape_data.analysis_state);
           console.log('[DEBUG-LOAD-ANALYSIS] restored configs:', analysisRestored.analysisConfigs.length,
             'results:', analysisRestored.analysisResults.length,
-            'pendingSounds:', analysisRestored.pendingSoundConfigs.length,
             'parentIndices:', analysisRestored.soundConfigParentIndices.size,
             'cardFlow:', analysisRestored.cardFlowState ? `${analysisRestored.cardFlowState.contextAdvanced.length}c/${analysisRestored.cardFlowState.usageAdvanced.length}u ctx→use:${Object.keys(analysisRestored.cardFlowState.contextToUsage).length} use→snd:${Object.keys(analysisRestored.cardFlowState.usageToSound).length}` : 'null');
           analysis.restoreAnalysisState({
@@ -1840,9 +1819,6 @@ function HomeContent() {
           // Rebuild persisted audio-context source Files so the SED waveform/results
           // render after a model reload (the original File object is not JSON-serializable).
           analysis.rehydrateAudioContextSources(audioBaseUrl);
-          if (analysisRestored.pendingSoundConfigs.length > 0) {
-            textGen.setPendingSoundConfigs(analysisRestored.pendingSoundConfigs);
-          }
           // Rebuild parentUsageOriginalIndex on sound configs from hierarchical save data
           if (analysisRestored.soundConfigParentIndices.size > 0) {
             const storeState = useSoundscapeStore.getState();
@@ -1883,7 +1859,6 @@ function HomeContent() {
     receivers.restoreReceivers,
     acousticsSimulation.restoreSimulationState,
     analysis.restoreAnalysisState,
-    textGen.setPendingSoundConfigs,
     audioOrchestrator.setAmbisonicOrder,
     audioOrchestrator.setNoIRPreference,
   ]);
@@ -1961,7 +1936,6 @@ function HomeContent() {
       const analysisStateData = buildAnalysisStateSave(
         saveAnalysisState.analysisConfigs,
         saveAnalysisState.analysisResults,
-        textGen.pendingSoundConfigs,
         saveAnalysisState.activeAnalysisTab,
         soundGen.soundConfigs.map(c => ({ parentUsageOriginalIndex: (c as any).parentUsageOriginalIndex })),
         {
@@ -2090,7 +2064,6 @@ function HomeContent() {
     analysis.analysisConfigs,
     analysis.analysisResults,
     analysis.activeAnalysisTab,
-    textGen.pendingSoundConfigs,
     resonanceAudioConfig,
   ]);
 
@@ -3067,21 +3040,6 @@ function HomeContent() {
         onAnalyzeSoundEvents={handleAnalyzeSoundEvents}
         onToggleSEDOption={sed.toggleSEDOption}
         onLoadSoundsFromSED={handleLoadSoundsFromSED}
-
-        // Text generation props
-        aiPrompt={textGen.aiPrompt}
-        numSounds={textGen.numSounds}
-        isGenerating={textGen.isGenerating}
-        aiError={textGen.aiError}
-        aiResponse={textGen.aiResponse}
-        llmProgress={textGen.llmProgress}
-        showConfirmLoadSounds={textGen.showConfirmLoadSounds}
-        pendingSoundConfigs={textGen.pendingSoundConfigs}
-        setAiPrompt={textGen.setAiPrompt}
-        setNumSounds={textGen.setNumSounds}
-        onGenerateText={textGen.handleGenerateText}
-        onStopGeneration={textGen.handleStopGeneration}
-        onLoadSoundsToGeneration={handleLoadSoundsToGeneration}
 
         // Sound generation props
         soundConfigs={soundGen.soundConfigs}

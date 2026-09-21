@@ -730,10 +730,8 @@ JOB_TYPE_LOOP = "loop"
 JOB_TYPE_CHORAS = "choras"
 
 # IO job types (asyncio.create_task in the API process — no queue, no worker)
-JOB_TYPE_LLM = "llm"
-JOB_TYPE_MODEL_ANALYSIS = "model_analysis"
 JOB_TYPE_TTS = "tts"
-IO_JOB_TYPES = (JOB_TYPE_LLM, JOB_TYPE_MODEL_ANALYSIS, JOB_TYPE_TTS)
+IO_JOB_TYPES = (JOB_TYPE_TTS,)
 
 # Job statuses
 JOB_STATUS_QUEUED = "queued"

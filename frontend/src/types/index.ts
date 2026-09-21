@@ -234,7 +234,7 @@ export interface CatalogSoundSelection {
 
 // ─── Job persistence types ────────────────────────────────────────────────────
 
-export type JobType = 'sound' | 'tts' | 'llm' | 'sed' | 'choras' | 'pyroom' | 'model_analysis';
+export type JobType = 'sound' | 'tts' | 'sed' | 'choras' | 'pyroom';
 
 export interface JobRecord {
   jobId: string;

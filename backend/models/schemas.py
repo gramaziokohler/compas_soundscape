@@ -110,17 +110,6 @@ class ModelObjectResult(BaseModel):
     object_ids: dict[str, dict]  # {speckle_hex_id: {"min_bounds": [x,y,z], "max_bounds": [x,y,z]}}
 
 
-class ModelAnalysisRequest(BaseModel):
-    entities: list[dict]
-    screenshots: list[str] | None = None  # base64 data URIs, max 3
-    user_context: str | None = None
-    llm_model: str = DEFAULT_LLM_MODEL
-
-
-class ModelAnalysisResponse(BaseModel):
-    objects: list[ModelObjectResult]
-
-
 class IRFormat(str, Enum):
     """Impulse response format enumeration"""
     MONO = "mono"

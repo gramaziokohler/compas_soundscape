@@ -256,35 +256,6 @@ export interface WorkspaceDetail extends WorkspaceSummary {
   presence?: number;
 }
 
-// ─── 3D Model Analysis types ──────────────────────────────────────────────────
-
-export interface ModelObjectResult {
-  name: string;
-  description: string;
-  material: string;
-  quantity: number;
-  object_ids: string[];
-  confidence: number;
-}
-
-export interface ModelAnalysisResponse {
-  objects: ModelObjectResult[];
-  high_confidence: ModelObjectResult[];
-  low_confidence: ModelObjectResult[];
-}
-
-export interface ModelAnalysisStatusResponse {
-  analysis_id: string;
-  progress: number;
-  status: string;
-  completed: boolean;
-  cancelled: boolean;
-  error: string | null;
-  result: ModelAnalysisResponse | null;
-  queue_position: number | null;
-  queue_total: number | null;
-}
-
 // API Service Layer
 export const apiService = {
   // ─── Identity ─────────────────────────────────────────────────────────────
@@ -479,58 +450,6 @@ export const apiService = {
     } catch (error) {
       handleApiError(error, 'Load sample audio');
     }
-  },
-
-  // Generate Text/Prompts
-  async generateText(data: {
-    prompt?: string;
-    num_sounds: number;
-    entities?: any[];
-    llm_model?: string;
-  }): Promise<{ generation_id: string }> {
-    try {
-      const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/generate-text`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(data),
-        },
-        'Generate text'
-      );
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({ detail: 'Failed to generate text' }));
-        const errorMessage = err.detail || 'Failed to generate text';
-        throw new Error(errorMessage);
-      }
-
-      const json = await response.json();
-      return { ...json, generation_id: json.job_id };
-    } catch (error) {
-      handleApiError(error, 'Generate text');
-    }
-  },
-
-  // Poll text generation status (via unified /api/jobs/{id})
-  async getTextGenerationStatus(generationId: string): Promise<{
-    generation_id: string;
-    progress: number;
-    status: string;
-    completed: boolean;
-    cancelled: boolean;
-    error: string | null;
-    result?: { text: string; sounds: string[]; prompts: any[]; selected_entities: any[] | null } | null;
-    queue_position?: number | null;
-    queue_total?: number | null;
-  }> {
-    const job = await getUnifiedJobStatus(generationId);
-    return { generation_id: generationId, ...toLegacyJobStatus(job) };
-  },
-
-  // Cancel text generation (via unified /api/jobs/{id}/cancel)
-  async cancelTextGeneration(generationId: string): Promise<void> {
-    await cancelUnifiedJob(generationId);
   },
 
   // Generate Sounds (async — returns job_id for polling via /api/jobs/{id})
@@ -1603,40 +1522,6 @@ export const apiService = {
 
   async cancelSEDAnalysis(taskId: string): Promise<void> {
     await cancelUnifiedJob(taskId);
-  },
-
-  // ─── 3D Model Analysis ─────────────────────────────────────────────────────
-
-  async startModelAnalysis(data: {
-    entities: any[];
-    screenshots?: string[] | null;
-    user_context?: string | null;
-    llm_model?: string;
-  }): Promise<{ analysis_id: string } & { job_id: string }> {
-    const response = await fetchWithErrorHandling(
-      `${API_BASE_URL}/api/analyze-3dmodel`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      },
-      'Start model analysis',
-    );
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ detail: 'Failed to start model analysis' }));
-      throw new Error(err.detail || 'Failed to start model analysis');
-    }
-    const json = await response.json();
-    return { ...json, analysis_id: json.job_id };
-  },
-
-  async getModelAnalysisStatus(analysisId: string): Promise<ModelAnalysisStatusResponse> {
-    const job = await getUnifiedJobStatus(analysisId);
-    return { analysis_id: analysisId, ...toLegacyJobStatus(job) };
-  },
-
-  async cancelModelAnalysis(analysisId: string): Promise<void> {
-    await cancelUnifiedJob(analysisId);
   },
 
   // ─── Job Recovery ───────────────────────────────────────────────────────

@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { UI_RIGHT_SIDEBAR, UI_SIDEBAR_RESIZE, UI_SCALE, UI_SIDEBAR_TOGGLE } from '@/utils/constants';
+import { UI_RIGHT_SIDEBAR, UI_SIDEBAR_RESIZE, UI_SIDEBAR_TOGGLE } from '@/utils/constants';
+import { readCssPx, clampToViewportWidth } from '@/utils/scale';
 import { buildSidebarEdgeNotchClipPath } from '@/utils/sidebarEdgeNotch';
 import { useRightSidebarStore } from '@/store';
 import { useSidebarResize } from '@/hooks/useSidebarResize';
@@ -164,19 +165,18 @@ export function RightSidebar({
     useRightSidebarStore.getState().setSidebarWidth(w);
   }, [onWidthChange]);
 
-  // Sidebar width — clamped-fluid (see UI_SCALE.RIGHT_SIDEBAR): proportional to
-  // the viewport width between physical min/max bounds.
+  // Sidebar width — fixed CSS px per resolution band (`--sidebar-*-width` in
+  // globals.css), not a fraction of the viewport. Re-read when the viewport
+  // crosses a breakpoint; overflowing the window is still clamped.
   const scale = useViewportScale();
-  const sidebarMinWidth = scale.physical(UI_SIDEBAR_RESIZE.RIGHT_MIN_WIDTH);
-  const sidebarMaxWidth = scale.clampW(
-    UI_SCALE.RIGHT_SIDEBAR.MIN,
-    UI_SCALE.RIGHT_SIDEBAR.FRACTION,
-    UI_SCALE.RIGHT_SIDEBAR.MAX,
+  const sidebarMinWidth = readCssPx('--sidebar-min-width', UI_SIDEBAR_RESIZE.RIGHT_MIN_WIDTH);
+  const sidebarMaxWidth = clampToViewportWidth(
+    readCssPx('--sidebar-max-width', UI_SIDEBAR_RESIZE.RIGHT_MAX_WIDTH),
+    sidebarMinWidth,
   );
-  const sidebarDefaultWidth = scale.clampW(
-    UI_SCALE.RIGHT_SIDEBAR.MIN,
-    UI_SCALE.RIGHT_SIDEBAR.DEFAULT_FRACTION,
-    UI_SCALE.RIGHT_SIDEBAR.MAX,
+  const sidebarDefaultWidth = clampToViewportWidth(
+    readCssPx('--sidebar-default-width', UI_SIDEBAR_RESIZE.RIGHT_DEFAULT_WIDTH),
+    sidebarMinWidth,
   );
 
   const { width: sidebarWidth, isResizing, handleMouseDown: handleResizeMouseDown } = useSidebarResize({

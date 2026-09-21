@@ -4,7 +4,8 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { ContextSection } from "./sidebar/ContextSection";
 import { UsageSection } from "./sidebar/UsageSection";
 import { SoundGenerationSection } from "./sidebar/SoundGenerationSection";
-import { UI_SIDEBAR_RESIZE, UI_SCALE, UI_SIDEBAR_TOGGLE } from "@/utils/constants";
+import { UI_SIDEBAR_RESIZE, UI_SIDEBAR_TOGGLE } from "@/utils/constants";
+import { readCssPx, clampToViewportWidth } from "@/utils/scale";
 import { buildSidebarEdgeNotchClipPath } from "@/utils/sidebarEdgeNotch";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useViewportScale } from "@/hooks/useViewportScale";
@@ -115,6 +116,7 @@ export function Sidebar(props: SidebarProps) {
       sidebarExpanded = false;
     }
     setIsExpanded(sidebarExpanded);
+    useUIStore.getState().setIsLeftSidebarExpanded(sidebarExpanded);
 
     const savedStep = useUIStore.getState().sidebarWizardStep;
     setCurrentStep(savedStep);
@@ -347,20 +349,18 @@ export function Sidebar(props: SidebarProps) {
     }
   }, [soundsNavTrigger]);
 
-  // Sidebar width — clamped-fluid: proportional to the viewport width between
-  // physical min/max bounds (UI_SCALE.LEFT_SIDEBAR), so it absorbs a wide canvas
-  // but never degenerates on a narrow window.
+  // Sidebar width — fixed CSS px per resolution band (`--sidebar-*-width` in
+  // globals.css), not a fraction of the viewport. Re-read when the viewport
+  // crosses a breakpoint; overflowing the window is still clamped.
   const scale = useViewportScale();
-  const sidebarMinWidth = scale.physical(UI_SIDEBAR_RESIZE.LEFT_MIN_WIDTH);
-  const sidebarMaxWidth = scale.clampW(
-    UI_SCALE.LEFT_SIDEBAR.MIN,
-    UI_SCALE.LEFT_SIDEBAR.FRACTION,
-    UI_SCALE.LEFT_SIDEBAR.MAX,
+  const sidebarMinWidth = readCssPx('--sidebar-min-width', UI_SIDEBAR_RESIZE.LEFT_MIN_WIDTH);
+  const sidebarMaxWidth = clampToViewportWidth(
+    readCssPx('--sidebar-max-width', UI_SIDEBAR_RESIZE.LEFT_MAX_WIDTH),
+    sidebarMinWidth,
   );
-  const sidebarDefaultWidth = scale.clampW(
-    UI_SCALE.LEFT_SIDEBAR.MIN,
-    UI_SCALE.LEFT_SIDEBAR.DEFAULT_FRACTION,
-    UI_SCALE.LEFT_SIDEBAR.MAX,
+  const sidebarDefaultWidth = clampToViewportWidth(
+    readCssPx('--sidebar-default-width', UI_SIDEBAR_RESIZE.LEFT_DEFAULT_WIDTH),
+    sidebarMinWidth,
   );
 
   const { width: contentWidth, isResizing, handleMouseDown: handleResizeMouseDown } = useSidebarResize({

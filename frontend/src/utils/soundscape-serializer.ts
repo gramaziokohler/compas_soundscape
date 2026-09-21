@@ -906,7 +906,6 @@ function stripEntityRaw(entity: any): any {
 export function buildAnalysisStateSave(
   analysisConfigs: AnalysisConfig[],
   analysisResults: AnalysisResult[],
-  pendingSoundConfigs: any[],
   activeTab: number,
   soundConfigs?: Array<{ parentUsageOriginalIndex?: number }>,
   cardFlowState?: { contextAdvanced: number[]; usageAdvanced: number[]; contextToUsage: Record<number, number[]>; usageToSound: Record<number, number[]> },
@@ -1009,7 +1008,6 @@ if (mc.analysisResult?.architecturalObjects) {
   const analysisState: AnalysisState = {
     active_tab: activeTab,
     configs,
-    pending_sound_configs: pendingSoundConfigs.length > 0 ? pendingSoundConfigs : undefined,
   };
 
   if (cardFlowState) {
@@ -1095,7 +1093,6 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
   analysisConfigs: AnalysisConfig[];
   analysisResults: AnalysisResult[];
   activeTab: number;
-  pendingSoundConfigs: any[];
   soundConfigParentIndices: Map<number, number>;
   cardFlowState: {
     contextAdvanced: number[];
@@ -1180,7 +1177,6 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
     analysisConfigs,
     analysisResults,
     activeTab: analysisState.active_tab,
-    pendingSoundConfigs: analysisState.pending_sound_configs || [],
     soundConfigParentIndices: parentIndices,
     cardFlowState: analysisState.card_flow
       ? {

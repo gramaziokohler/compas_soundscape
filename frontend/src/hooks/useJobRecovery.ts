@@ -9,8 +9,6 @@ import { usePyroomAcousticsStore } from '@/store/pyroomAcousticsStore';
 import { useChorasStore } from '@/store/chorasStore';
 import { useAcousticsSimulationStore } from '@/store/acousticsSimulationStore';
 import { useSEDStore } from '@/store/sedStore';
-import { useTextGenerationStore } from '@/store/textGenerationStore';
-import { useAnalysisStore } from '@/store/analysisStore';
 import type { JobType, JobRecord } from '@/types';
 
 const POLL_INTERVAL_MS = 1500;
@@ -134,12 +132,6 @@ function updateProgress(jobType: JobType, progress: number, statusText: string):
         soundGenStatusText: statusText,
       });
       break;
-    case 'llm':
-      useTextGenerationStore.setState({
-        llmProgress: statusText,
-        isGenerating: true,
-      });
-      break;
     case 'sed':
       useSEDStore.setState({
         sedProgress: statusText,
@@ -149,12 +141,6 @@ function updateProgress(jobType: JobType, progress: number, statusText: string):
     case 'choras':
       break;
     case 'pyroom':
-      break;
-    case 'model_analysis':
-      useAnalysisStore.setState({
-        analysisStatus: statusText,
-        isAnalyzing: true,
-      });
       break;
   }
 }
@@ -169,12 +155,6 @@ function resetJobState(jobType: JobType): void {
         soundGenStatusText: '',
       });
       break;
-    case 'llm':
-      useTextGenerationStore.setState({
-        isGenerating: false,
-        llmProgress: '',
-      });
-      break;
     case 'sed':
       useSEDStore.setState({
         isSEDAnalyzing: false,
@@ -183,12 +163,6 @@ function resetJobState(jobType: JobType): void {
       break;
     case 'choras':
     case 'pyroom':
-      break;
-    case 'model_analysis':
-      useAnalysisStore.setState({
-        isAnalyzing: false,
-        analysisStatus: '',
-      });
       break;
   }
 }
@@ -253,13 +227,6 @@ function processCompletedJob(
       }
       break;
     }
-    case 'llm': {
-      useTextGenerationStore.setState({
-        isGenerating: false,
-        llmProgress: '',
-      });
-      break;
-    }
     case 'sed': {
       if (result) {
         useSEDStore.setState({
@@ -280,13 +247,6 @@ function processCompletedJob(
       break;
     }
     case 'choras': {
-      break;
-    }
-    case 'model_analysis': {
-      useAnalysisStore.setState({
-        isAnalyzing: false,
-        analysisStatus: '',
-      });
       break;
     }
   }
