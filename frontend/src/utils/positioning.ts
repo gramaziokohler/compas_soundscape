@@ -171,3 +171,33 @@ export function generatePositionsInArea(
 
   return positions;
 }
+
+/**
+ * Distribute random positions across a bounding box footprint (Z-up).
+ *
+ * Sounds are placed at `hearingHeight` above the model floor (min Z), within
+ * the box's X/Y extent. Used when a text-based card has no drawn area — the
+ * model bounding box is the placement region.
+ *
+ * @param bounds - Model bounding box
+ * @param count - Number of positions to generate
+ * @param hearingHeight - Height above the floor (default 1.5m)
+ * @returns Array of [x, y, z] positions
+ */
+export function generatePositionsInBounds(
+  bounds: GeometryBounds,
+  count: number,
+  hearingHeight: number = AREA_DRAWING.HEARING_HEIGHT,
+): [number, number, number][] {
+  const [minX, minY, minZ] = bounds.min;
+  const [maxX, maxY, maxZ] = bounds.max;
+  const dx = Math.max(0, maxX - minX);
+  const dy = Math.max(0, maxY - minY);
+  const z = Math.min(maxZ, minZ + hearingHeight);
+
+  const positions: [number, number, number][] = [];
+  for (let i = 0; i < count; i++) {
+    positions.push([minX + Math.random() * dx, minY + Math.random() * dy, z]);
+  }
+  return positions;
+}

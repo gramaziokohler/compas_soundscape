@@ -22,6 +22,7 @@ import { Vector2 as ThreeVector2 } from 'three';
 import { useSpeckleViewerInit } from '@/components/scene/hooks/useSpeckleViewerInit';
 import { useSpeckleFPS } from '@/components/scene/hooks/useSpeckleFPS';
 import { useSpeckleAreaDrawing } from '@/components/scene/hooks/useSpeckleAreaDrawing';
+import { useSpeckleAnalysisPreview } from '@/components/scene/hooks/useSpeckleAnalysisPreview';
 import { useSpeckleSelection } from '@/components/scene/hooks/useSpeckleSelection';
 import { useSpeckleTimeline } from '@/components/scene/hooks/useSpeckleTimeline';
 import { useSpeckleAudioSync } from '@/components/scene/hooks/useSpeckleAudioSync';
@@ -42,7 +43,7 @@ import { useSpeckleGroundGrid } from '@/components/scene/hooks/useSpeckleGroundG
 import { useAcousticLayerIsolation } from '@/hooks/useAcousticLayerIsolation';
 // Phase 5 JSX sub-components
 import { SceneViewModeToolbar } from '@/components/scene/SceneViewModeToolbar';
-import { SceneFPSOverlay } from '@/components/scene/SceneFPSOverlay';
+import { SceneControlsHint } from '@/components/scene/SceneControlsHint';
 import { SceneContextMenu } from '@/components/scene/SceneContextMenu';
 import { SceneHoverPreview } from '@/components/scene/SceneHoverPreview';
 import { SceneEmptyState } from '@/components/scene/SceneEmptyState';
@@ -116,11 +117,6 @@ interface SpeckleSceneProps {
 
   // Sound sphere position update (for simulation sync)
   onUpdateSoundPosition?: (soundId: string, position: [number, number, number]) => void;
-
-  // Analysis - Diverse Entity Highlighting (NEW)
-  selectedDiverseEntities?: any[]; // Entities selected for sound generation
-  entitiesWithLinkedSounds?: Set<number>; // Entity indices that have sounds linked
-  onToggleDiverseSelection?: (entity: any) => void; // Toggle entity in diverse selection
 
   // Sound card selection (for expand/highlight logic)
   selectedCardIndex?: number | null; // Currently selected sound card index
@@ -229,9 +225,6 @@ export function SpeckleScene({
   expandedGridListenerId,
   listenerOrientation = { x: 0, y: 1, z: 0 },
   onUpdateSoundPosition,
-  selectedDiverseEntities = [],
-  entitiesWithLinkedSounds = new Set(),
-  onToggleDiverseSelection,
   selectedCardIndex = null,
   onSelectSoundCard,
   isLinkingEntity = false,
@@ -806,6 +799,9 @@ export function SpeckleScene({
   // ── Area Drawing ──
   useSpeckleAreaDrawing({ isViewerReady, containerRef });
 
+  // ── Analysis Result Preview (text-card result phase) ──
+  useSpeckleAnalysisPreview({ isViewerReady });
+
   // ── Object Selection ──
   useSpeckleSelection({
     worldTree,
@@ -1163,15 +1159,14 @@ export function SpeckleScene({
   // (sound highlight + zoom extracted to useSpeckleSoundHighlight)
 
   // ============================================================================
-  // NOTE: Diverse selection is managed by SpeckleSelectionModeContext
+  // NOTE: Object coloring (linked sounds / scenario + analysis preview) is
+  // managed by speckleStore's FilteringExtension pipeline.
   // ============================================================================
-  // The context's FilteringExtension automatically colors:
-  // - Green: Objects in diverseSelectedObjectIds (diverse selection)
+  // The FilteringExtension automatically colors:
   // - Pink: Objects in linkedObjectIds (sound-linked)
+  // - Light-warning: scenario / analysis result-phase preview objects
   //
-  // User interactions (EntityInfoBox link button) update context directly.
-  // Model3DContextContent syncs context state to config for analysis.
-  // No sync from props to context needed - context is source of truth.
+  // User interactions (EntityInfoBox link button) update speckleStore directly.
 
   // ============================================================================
   // Transport Clock — thin React adapter around Transport (via PlaybackSchedulerService).
@@ -1364,13 +1359,13 @@ export function SpeckleScene({
         <SceneViewModeToolbar />
       )}
 
-      {/* First-person overlay */}
-      <SceneFPSOverlay
+      {/* Control hints — bottom-left of the viewer (swaps in first-person mode) */}
+      <SceneControlsHint
+        isViewerReady={isViewerReady}
         isFirstPersonMode={isFirstPersonMode}
         isLeftSidebarExpanded={isLeftSidebarExpanded}
-        isRightSidebarExpanded={isRightSidebarExpanded}
         leftSidebarContentWidth={leftSidebarContentWidth}
-        rightSidebarWidth={rightSidebarWidth}
+        bottomOffset={dockBottomSpace}
       />
 
       {/* Loading overlay */}
@@ -1503,10 +1498,8 @@ export function SpeckleScene({
         rightSidebarWidth={rightSidebarWidth}
         audioOrchestrator={audioOrchestrator}
         soundscapeData={soundscapeData}
-        showTimeline={showTimeline}
         onResetZoom={handleResetZoom}
         onRefreshScene={handleRefreshScene}
-        onToggleTimeline={handleToggleTimeline}
         bottomOffset={dockBottomSpace}
       />
 

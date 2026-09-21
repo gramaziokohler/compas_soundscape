@@ -39,6 +39,12 @@ export interface AreaDrawingStoreState {
   hasArea: (cardIndex: number) => boolean;
   requestConfirmDrawing: () => void;
   clearConfirmDrawing: () => void;
+  /**
+   * Rebuild the runtime area map from persisted analysis configs. Called after
+   * a soundscape restore so drawn areas survive a page refresh (they are stored
+   * per text-card config in soundscape.json).
+   */
+  hydrateFromConfigs: (configs: Array<{ type: string; drawnArea?: DrawnArea | null }>) => void;
 }
 
 export const useAreaDrawingStore = create<AreaDrawingStoreState>()(
@@ -115,6 +121,20 @@ export const useAreaDrawingStore = create<AreaDrawingStoreState>()(
 
         clearConfirmDrawing: () =>
           set({ pendingConfirm: false }, false, 'areaDrawing/clearConfirmDrawing'),
+
+        hydrateFromConfigs: (configs) => {
+          const drawnAreas = new Map<number, DrawnArea>();
+          configs.forEach((config, index) => {
+            if (config.type === 'text' && config.drawnArea) {
+              drawnAreas.set(index, config.drawnArea);
+            }
+          });
+          set(
+            (s) => ({ drawnAreas, version: s.version + 1 }),
+            false,
+            'areaDrawing/hydrateFromConfigs',
+          );
+        },
       }),
       { name: 'areaDrawingStore' },
     ),

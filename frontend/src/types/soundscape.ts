@@ -5,6 +5,8 @@
  * saving/loading soundscape state to/from Speckle + local storage.
  */
 
+import type { DrawnArea } from './area-drawing';
+
 /** Global generation settings for a soundscape session */
 export interface SoundscapeGlobalSettings {
   duration: number;
@@ -307,8 +309,9 @@ export interface SerializedAnalysisConfig {
   numSounds?: number;
   textInput?: string;
   userContext?: string;
-  useModelAsContext?: boolean;
   useAnalysisResult?: boolean;
+  /** Text card: polygon area drawn in the viewer (serializable). */
+  drawnArea?: DrawnArea | null;
   peopleCount?: number;
   likeliness?: number;
   /** Per-scenario DAW sound-scene length in ms (scenario cards only). */
@@ -335,17 +338,6 @@ export interface SerializedAnalysisConfig {
     /** Natural-language description of the space from the analysis. */
     spaceDescription?: string;
   };
-  // 3D-model card: selected diverse entities (strip raw)
-  selectedDiverseEntities?: Array<{
-    id: string;
-    index: number;
-    type: string;
-    name: string;
-    layer: string;
-    speckle_type: string;
-    nodeId: string;
-    bounds?: { min: number[]; max: number[]; center: number[] };
-  }>;
   // Scenario/foley state
   scenarioResult?: any;
   scenarioId?: string | null;

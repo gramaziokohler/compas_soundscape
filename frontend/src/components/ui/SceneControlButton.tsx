@@ -42,14 +42,14 @@ export function SceneControlButton({
   title,
   isActive = false,
   activeColor = 'var(--color-primary)',
-  inactiveBackground = 'var(--color-secondary-lighter)',
+  inactiveBackground = 'var(--sidebar-bg)',
   border = true ,
   background = true
 }: SceneControlButtonProps) {
   return (
     <button
       onClick={onClick}
-      className="backdrop-blur-sm shadow-lg transition-all duration-200 flex items-center justify-center group"
+      className="frosted-surface backdrop-blur-lg backdrop-saturate-150 shadow-lg transition-all duration-200 flex items-center justify-center group"
       style={{
         width: UI_SCENE_BUTTON.SIZE,
         height: UI_SCENE_BUTTON.SIZE,

@@ -46,7 +46,6 @@ let _viewerRef: Viewer | null = null;
 /** Same-render access to objectSoundLinks without stale closure issues */
 let _objectSoundLinksRef: Map<string, number> = new Map();
 let _generatedSoundObjectIdsRef: Set<string> = new Set();
-let _diverseSelectedObjectIdsRef: Set<string> = new Set();
 let _materialColorsRef: ColorGroup[] = [];
 let _analysisObjectGroupsRef: ColorGroup[] = [];
 let _analysisResultGroupsRef: ArchitecturalObject[] = [];
@@ -216,7 +215,6 @@ export interface SpeckleStoreState {
   /** objectId → soundTabIndex */
   objectSoundLinks: Map<string, number>;
   generatedSoundObjectIds: Set<string>;
-  diverseSelectedObjectIds: Set<string>;
   linkVersion: number;
   selectedEntity: SelectedEntityInfo | null;
   /** All currently Speckle-selected object IDs (supports multi-select via shift-click) */
@@ -230,12 +228,6 @@ export interface SpeckleStoreState {
   // Actions — link management
   linkObjectToSound: (objectId: string, soundTabIndex: number, hasGeneratedSound?: boolean) => void;
   unlinkObjectFromSound: (objectId: string) => void;
-
-  // Actions — diverse selection
-  addToDiverseSelection: (objectId: string) => void;
-  removeFromDiverseSelection: (objectId: string) => void;
-  clearDiverseSelection: () => void;
-  setDiverseSelection: (objectIds: string[]) => void;
 
   // Actions — entity selection
   setSelectedEntity: (entity: SelectedEntityInfo | null) => void;
@@ -284,7 +276,6 @@ export interface SpeckleStoreState {
   // Selector helper
   getObjectLinkState: (objectId: string) => {
     isLinked: boolean;
-    isDiverse: boolean;
     linkColor: string;
     linkedSoundIndex?: number;
   };
@@ -355,9 +346,8 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         const hasPendingColors =
           _materialColorsRef.length > 0 ||
           _objectSoundLinksRef.size > 0 ||
-          _diverseSelectedObjectIdsRef.size > 0 ||
           _analysisObjectGroupsRef.length > 0;
-        console.log('[speckleStore] setViewer \u2014 hasPendingColors:', hasPendingColors, '(material:', _materialColorsRef.length, 'links:', _objectSoundLinksRef.size, 'diverse:', _diverseSelectedObjectIdsRef.size, 'analysisGroups:', _analysisObjectGroupsRef.length, ')');
+        console.log('[speckleStore] setViewer \u2014 hasPendingColors:', hasPendingColors, '(material:', _materialColorsRef.length, 'links:', _objectSoundLinksRef.size, 'analysisGroups:', _analysisObjectGroupsRef.length, ')');
         if (viewer && hasPendingColors) {
           setTimeout(() => get().applyFilterColors(), 200);
           setTimeout(() => get().applyFilterColors(), 1000);
@@ -377,7 +367,6 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
       // ── SpeckleSelectionModeContext state ─────────────────────────────────
       objectSoundLinks: new Map(),
       generatedSoundObjectIds: new Set(),
-      diverseSelectedObjectIds: new Set(),
       linkVersion: 0,
       selectedEntity: null,
       selectedObjectIds: [],
@@ -396,7 +385,6 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         const {
           objectSoundLinks,
           generatedSoundObjectIds,
-          diverseSelectedObjectIds,
           linkVersion,
           applyFilterColors,
         } = get();
@@ -416,15 +404,10 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
         }
         _generatedSoundObjectIdsRef = nextGenerated;
 
-        const nextDiverse = new Set(diverseSelectedObjectIds);
-        nextDiverse.delete(objectId);
-        _diverseSelectedObjectIdsRef = nextDiverse;
-
         set(
           {
             objectSoundLinks: nextLinks,
             generatedSoundObjectIds: nextGenerated,
-            diverseSelectedObjectIds: nextDiverse,
             linkedObjectIds: new Set(nextLinks.keys()),
             linkVersion: linkVersion + 1,
           },
@@ -456,50 +439,6 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
           false,
           'speckle/unlinkObjectFromSound',
         );
-        scheduleApplyColors(applyFilterColors);
-      },
-
-      // ── Diverse selection ─────────────────────────────────────────────────
-      addToDiverseSelection: (objectId) => {
-        const { diverseSelectedObjectIds, applyFilterColors } = get();
-        if (diverseSelectedObjectIds.has(objectId)) return;
-        const next = new Set(diverseSelectedObjectIds).add(objectId);
-        _diverseSelectedObjectIdsRef = next;
-        set({ diverseSelectedObjectIds: next }, false, 'speckle/addToDiverseSelection');
-        scheduleApplyColors(applyFilterColors);
-      },
-
-      removeFromDiverseSelection: (objectId) => {
-        const { diverseSelectedObjectIds, applyFilterColors } = get();
-        if (!diverseSelectedObjectIds.has(objectId)) return;
-        const next = new Set(diverseSelectedObjectIds);
-        next.delete(objectId);
-        _diverseSelectedObjectIdsRef = next;
-        set({ diverseSelectedObjectIds: next }, false, 'speckle/removeFromDiverseSelection');
-        scheduleApplyColors(applyFilterColors);
-      },
-
-      clearDiverseSelection: () => {
-        const { diverseSelectedObjectIds, applyFilterColors } = get();
-        if (diverseSelectedObjectIds.size === 0) return;
-        const empty = new Set<string>();
-        _diverseSelectedObjectIdsRef = empty;
-        set({ diverseSelectedObjectIds: empty }, false, 'speckle/clearDiverseSelection');
-        scheduleApplyColors(applyFilterColors);
-      },
-
-      setDiverseSelection: (objectIds) => {
-        const { diverseSelectedObjectIds, applyFilterColors } = get();
-        const prevArr = Array.from(diverseSelectedObjectIds).sort();
-        const nextArr = [...objectIds].sort();
-        if (
-          prevArr.length === nextArr.length &&
-          prevArr.every((id, i) => id === nextArr[i])
-        )
-          return;
-        const next = new Set(objectIds);
-        _diverseSelectedObjectIdsRef = next;
-        set({ diverseSelectedObjectIds: next }, false, 'speckle/setDiverseSelection');
         scheduleApplyColors(applyFilterColors);
       },
 
@@ -567,7 +506,6 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
 
         const currentLinks = _objectSoundLinksRef;
         const currentGenerated = _generatedSoundObjectIdsRef;
-        const currentDiverse = _diverseSelectedObjectIdsRef;
         const materialColors = _materialColorsRef;
 
         const colorGroups: { objectIds: string[]; color: string }[] = [];
@@ -594,12 +532,6 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
             .filter((g) => g.objectIds.length > 0);
           colorGroups.push(...filtered);
         }
-
-        const diverseOnlyIds = Array.from(currentDiverse).filter(
-          (id) => !currentLinks.has(id) && !isExcluded(id),
-        );
-        if (diverseOnlyIds.length > 0)
-          colorGroups.push({ objectIds: diverseOnlyIds, color: 'var(--color-success)' });
 
         // Only color entity-linked objects when in the Sounds step, and only for
         // the active parent's sounds. When activeSoundParentIndex is null (skipped flow),
@@ -967,19 +899,16 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
 
       // ── Selector helper ───────────────────────────────────────────────────
       getObjectLinkState: (objectId) => {
-        const { objectSoundLinks, diverseSelectedObjectIds, generatedSoundObjectIds } = get();
+        const { objectSoundLinks, generatedSoundObjectIds } = get();
         const isLinked = objectSoundLinks.has(objectId);
-        const isDiverse = diverseSelectedObjectIds.has(objectId);
         const hasGenerated = generatedSoundObjectIds.has(objectId);
         const linkedSoundIndex = objectSoundLinks.get(objectId);
         const linkColor = isLinked
           ? hasGenerated
             ? 'var(--color-primary)'
             : 'var(--color-primary-light)'
-          : isDiverse
-            ? 'var(--color-success)'
-            : 'var(--color-secondary-hover)';
-        return { isLinked, isDiverse, linkColor, linkedSoundIndex };
+          : 'var(--color-secondary-hover)';
+        return { isLinked, linkColor, linkedSoundIndex };
       },
 
       highlightObjectForHover: (objectId) => {

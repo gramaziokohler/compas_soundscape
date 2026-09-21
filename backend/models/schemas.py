@@ -37,6 +37,16 @@ class SoundGenerationRequest(BaseModel):
     base_dbfs: float = DEFAULT_DBFS
 
 
+class DeleteGeneratedSoundsRequest(BaseModel):
+    """Static URLs of generated sound files to remove from the session dir.
+
+    Used when a scenario's child sound scene is replaced: regenerating identical
+    foley/speech prompts would otherwise dedup to the existing files on disk.
+    """
+
+    urls: list[str] = []
+
+
 # ─── Unified job store (Redis) ─────────────────────────────────────────────────
 
 class JobEnqueueResponse(BaseModel):
@@ -79,6 +89,9 @@ class UnifiedPromptGenerationRequest(BaseModel):
     context: str | None = None
     num_sounds: int = 5
     entities: list[dict] | None = None
+    # When set, the backend reads the full 3D model analysis JSON for this id,
+    # selects diverse architectural groups, and links prompts to whole groups.
+    analysis_id: str | None = None
     llm_model: str = DEFAULT_LLM_MODEL
 
 

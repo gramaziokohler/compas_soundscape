@@ -37,12 +37,11 @@ export type CardColor =
 /**
  * Card types - identifies the category of card (single source of truth)
  *
- * Analysis types: '3d-model', 'audio', 'text'
+ * Analysis types: 'audio', 'text'
  * Sound types: 'text-to-audio', 'upload', 'library', 'sample-audio'
  * Acoustics types: 'resonance', 'choras', 'pyroomacoustics', 'import-irs'
  */
 export type CardType =
-  | '3d-model'
   | 'audio'
   | 'text'
   | 'text-to-audio'
@@ -65,9 +64,8 @@ export type CardType =
  * Default display names for each card type
  */
 export const CARD_TYPE_LABELS: Record<CardType, string> = {
-  '3d-model': 'Select sonic objects',
   'audio': 'Audio context',
-  'text': 'object-based',
+  'text': 'text-based',
   'text-to-audio': 'Text-to-Audio',
   'text-to-speech': 'Text-to-Speech',
   'upload': 'Upload custom audio',
@@ -91,12 +89,10 @@ export const CARD_TYPE_LABELS: Record<CardType, string> = {
  * Card falls back to these unless a per-card `description` prop is passed.
  */
 export const CARD_TYPE_DESCRIPTIONS: Record<CardType, string> = {
-  '3d-model':
-    'Select 3D objects from the loaded Speckle model that act as sound sources. Each selected object becomes a scene node; sounds placed on it inherit its world position and bounding-box anchor.',
   'audio':
     "Captures the acoustic character of the space via AI audio analysis. Can extract audio features/spectrograms and send them to the Sounds step ('Extract & go to Sounds').",
   'text':
-    'Free-text card. Type a description of the intended soundscape and the LLM converts it into sound-generation prompts.',
+    'Free-text card. Describe the intended soundscape and the LLM converts it into sound-generation prompts. Optionally use the parent 3D model analysis as context to link prompts to objects, and draw an area to place sounds.',
   'text-to-audio':
     'Generate an original clip from a text prompt with AI (TangoFlux / AudioLDM2). Tune duration, guidance scale, denoising and inference steps; each run can produce multiple seed variants (A/B/C).',
   'text-to-speech':
@@ -242,6 +238,11 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
 
   actionButtonColor?: string;
   /**
+   * Marks the action button as AI-driven — renders the sparkle "magic AI" icon
+   * instead of the Play triangle (e.g. LLM analysis, TangoFlux generation).
+   */
+  actionIsAi?: boolean;
+  /**
    * Whether the action button should be disabled
    */
   actionButtonDisabled?: boolean;
@@ -326,6 +327,8 @@ export interface CardProps<TConfig extends CardBaseConfig = CardBaseConfig, TRes
   headerPrefix?: ReactNode;
   /** Optional element rendered to the left of the bottom-bar action (e.g. simulation count dots). Hidden while generating. */
   footerPrefix?: ReactNode;
+  /** Optional element rendered to the right of the bottom-bar action (e.g. a small refresh button). Hidden while generating. */
+  footerSuffix?: ReactNode;
 
   // Variants Bar (letter-square selector for sound cards)
   /**

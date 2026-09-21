@@ -1099,6 +1099,7 @@ export function SoundGenerationSection({
         onRun={async () => onGenerateSingle(originalIndex)}
         onCancel={onStopGeneration}
         actionButtonLabel="Generate sound"
+        actionIsAi={isTextToAudioType || isTtsType}
         actionButtonDisabled={!isConfigValid(config)}
         actionButtonDisabledReason={configValidationError(config)}
         color="primary"
@@ -1245,6 +1246,16 @@ export function SoundGenerationSection({
   );
   const showGenerateAll = pendingCardCount >= 2;
 
+  // Whether any pending card is an AI-generated source (text-to-audio / TTS) —
+  // drives the "Generate all sounds" button's magic-AI icon.
+  const hasPendingAiCards = useMemo(
+    () => filteredCardItems.some(
+      (item) => !isSoundGenerated(item.originalIndex) &&
+        (item.originalConfig.type === 'text-to-audio' || item.originalConfig.type === 'text-to-speech' || !item.originalConfig.type),
+    ),
+    [filteredCardItems, isSoundGenerated],
+  );
+
   // Orchestrate toggle — only shown when pending scenario-derived sound cards exist
   // (orchestration runs in parallel with generation to compile the parametric timeline).
   const hasPendingScenarioCards = useMemo(
@@ -1295,6 +1306,7 @@ export function SoundGenerationSection({
                 status="idle"
                 progress={0}
                 label="Generate all sounds"
+                isAi={hasPendingAiCards}
                 disabled={shouldDisableGenerateButton}
                 onGenerate={handleGenerateAll}
               />

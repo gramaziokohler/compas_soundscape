@@ -926,8 +926,10 @@ export function buildAnalysisStateSave(
     if ('numSounds' in config) base.numSounds = (config as any).numSounds;
     if ('textInput' in config) base.textInput = (config as any).textInput;
     if ('userContext' in config) base.userContext = (config as any).userContext;
-    if ('useModelAsContext' in config) base.useModelAsContext = (config as any).useModelAsContext;
     if ('useAnalysisResult' in config) base.useAnalysisResult = (config as any).useAnalysisResult;
+    if (config.type === 'text' && (config as any).drawnArea) {
+      base.drawnArea = (config as any).drawnArea;
+    }
     if ('peopleCount' in config) base.peopleCount = (config as any).peopleCount;
     if ('likeliness' in config) base.likeliness = (config as any).likeliness;
     if ('timelineDurationMs' in config) base.timelineDurationMs = (config as any).timelineDurationMs;
@@ -966,13 +968,6 @@ if (mc.analysisResult?.architecturalObjects) {
         }
     }
 
-    if (config.type === '3d-model') {
-      const tc = config as any;
-      if (tc.selectedDiverseEntities?.length) {
-        base.selectedDiverseEntities = tc.selectedDiverseEntities.map(stripEntityRaw);
-      }
-    }
-
     if (config.type === 'scenario') {
       const sc = config as any;
       if (sc.scenarioResult) base.scenarioResult = sc.scenarioResult;
@@ -982,7 +977,7 @@ if (mc.analysisResult?.architecturalObjects) {
     }
 
     // Hierarchical: link child sound configs by matching parentUsageOriginalIndex
-    if (soundConfigs && (config.type === 'model-analysis' || config.type === 'text' || config.type === 'audio' || config.type === '3d-model' || config.type === 'scenario' || config.type === 'freeform')) {
+    if (soundConfigs && (config.type === 'model-analysis' || config.type === 'text' || config.type === 'audio' || config.type === 'scenario' || config.type === 'freeform')) {
       const childIndices: number[] = [];
       soundConfigs.forEach((sc, si) => {
         if (sc.parentUsageOriginalIndex === configIndex) {
@@ -1121,7 +1116,6 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
     if (saved.numSounds !== undefined) config.numSounds = saved.numSounds;
     if (saved.textInput !== undefined) config.textInput = saved.textInput;
     if (saved.userContext !== undefined) config.userContext = saved.userContext;
-    if (saved.useModelAsContext !== undefined) config.useModelAsContext = saved.useModelAsContext;
     if (saved.useAnalysisResult !== undefined) config.useAnalysisResult = saved.useAnalysisResult;
     if (saved.peopleCount !== undefined) config.peopleCount = saved.peopleCount;
     if (saved.likeliness !== undefined) config.likeliness = saved.likeliness;
@@ -1135,13 +1129,6 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
       config.modelEntities = [];
       if (saved.analysisResult) config.analysisResult = saved.analysisResult;
     }
-    if (saved.type === '3d-model') {
-      config.modelFile = null;
-      config.modelEntities = [];
-      config.geometryData = undefined;
-      config.selectedDiverseEntities = saved.selectedDiverseEntities || [];
-      config.useModelAsContext = saved.useModelAsContext ?? true;
-    }
     if (saved.type === 'audio') {
       config.audioFile = null;
       config.audioInfo = null;
@@ -1151,6 +1138,7 @@ export function restoreAnalysisState(analysisState: AnalysisState): {
     if (saved.type === 'text') {
       config.isGenerating = false;
       config.generationError = null;
+      config.drawnArea = saved.drawnArea ?? null;
     }
     if (saved.type === 'freeform') {
       config.isEditing = false;

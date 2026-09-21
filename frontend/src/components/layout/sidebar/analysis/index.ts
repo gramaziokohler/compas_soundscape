@@ -5,7 +5,7 @@
  */
 
 export { AnalysisResultContent } from './AnalysisResultContent';
-export { Model3DContextContent } from './Model3DContextContent';
+export { TextResultPreview } from './TextResultPreview';
 export { AudioContextContent } from './AudioContextContent';
 export { TextContextContent } from './TextContextContent';
 export { AnalyzeModelContent } from './AnalyzeModelContent';

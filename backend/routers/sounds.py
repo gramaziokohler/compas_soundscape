@@ -26,6 +26,7 @@ from services.paths import user_sounds_dir
 from utils.audio_processing import compute_noise_trim_region_from_file
 from models.schemas import (
     SoundGenerationRequest,
+    DeleteGeneratedSoundsRequest,
     JobEnqueueResponse,
 )
 from config.constants import (
@@ -184,6 +185,39 @@ async def cleanup_generated_sounds(req: Request):
         return {"message": "Cleanup successful"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error during cleanup: {str(e)}")
+
+
+@router.post("/api/delete-generated-sounds")
+async def delete_generated_sounds(request: DeleteGeneratedSoundsRequest, req: Request):
+    """
+    Delete specific generated sound files by their static URLs (session-scoped).
+
+    Called when a scenario's child sound scene is replaced — without removing the
+    old files, regenerating the same foley/speech prompts would dedup to the
+    existing files (deterministic filename hash) and return the old audio.
+    Only files inside the caller's session directory are touched.
+    """
+    session_id = getattr(getattr(req, "state", None), "session_id", None)
+    if not session_id:
+        raise HTTPException(status_code=400, detail="No session cookie")
+
+    session_dir = user_sounds_dir(session_id).resolve()
+    deleted = 0
+    for url in request.urls:
+        filename = os.path.basename(url.split("?", 1)[0])
+        if not filename or filename in {".", ".."}:
+            continue
+        target = (session_dir / filename).resolve()
+        # Path-traversal guard — only delete files directly inside the session dir.
+        if target.parent != session_dir:
+            continue
+        try:
+            if target.is_file():
+                target.unlink()
+                deleted += 1
+        except OSError:
+            continue
+    return {"deleted": deleted}
 
 
 @router.post("/api/calibrate-audio")

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { clampToViewport } from '@/utils/scale';
 import { CARD_INFO_POPOVER } from '@/utils/constants';
@@ -8,8 +8,14 @@ import { CARD_INFO_POPOVER } from '@/utils/constants';
 export interface InfoPopoverProps {
   /** Popover title (e.g. the card display name). */
   title?: string;
-  /** Main explanatory text shown inside the popover. */
-  text: string;
+  /** Main explanatory text shown inside the popover. Optional when `children` is provided. */
+  text?: string;
+  /** Custom panel body. When provided, replaces `text`. */
+  children?: ReactNode;
+  /** Custom trigger content. When provided, replaces the default "i" glyph. */
+  trigger?: ReactNode;
+  /** Extra classes for the custom trigger button (e.g. text sizing/colour). */
+  triggerClassName?: string;
   /** Applied to the trigger wrapper so callers can position it (e.g. `absolute bottom-1.5 right-1.5`). */
   className?: string;
   /** aria-label / tooltip for the trigger button (defaults to 'Info'). */
@@ -21,11 +27,10 @@ export interface InfoPopoverProps {
 /**
  * InfoPopover Component
  *
- * A circular "i" trigger button that opens a small explanation panel on click.
- * The panel is anchored to the trigger's top-right corner, opens upward (or
- * below the trigger when there is no room above), and is kept fully inside the
- * viewport via `clampToViewport`. Closes on outside pointerdown, Escape, or
- * scroll/resize.
+ * A trigger button that opens a small explanation panel on click. The panel is
+ * anchored to the trigger's top-right corner, opens upward (or below the trigger
+ * when there is no room above), and is kept fully inside the viewport via
+ * `clampToViewport`. Closes on outside pointerdown, Escape, or scroll/resize.
  *
  * Rendered through a portal to `document.body` so it escapes the parent's
  * stacking context — e.g. cards that apply `filter: brightness(...)` create a
@@ -35,9 +40,22 @@ export interface InfoPopoverProps {
  * ```tsx
  * <InfoPopover title="Text-to-Audio" text="Generate an original clip from a text prompt." />
  * <InfoPopover text={description} compact />
+ * // Custom text trigger + rich body:
+ * <InfoPopover title="Shortcuts" trigger="Shortcuts" triggerClassName="text-[9px]">
+ *   <div>…</div>
+ * </InfoPopover>
  * ```
  */
-export function InfoPopover({ title, text, className, label = 'Info', compact = false }: InfoPopoverProps) {
+export function InfoPopover({
+  title,
+  text,
+  children,
+  trigger,
+  triggerClassName,
+  className,
+  label = 'Info',
+  compact = false,
+}: InfoPopoverProps) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const wrapperRef = useRef<HTMLSpanElement>(null);
@@ -155,7 +173,9 @@ export function InfoPopover({ title, text, className, label = 'Info', compact = 
               ×
             </button>
           </div>
-          <div style={{ color: 'var(--color-secondary-hover)' }}>{text}</div>
+          <div style={{ color: 'var(--color-secondary-hover)' }}>
+            {children ?? text}
+          </div>
         </div>,
         document.body
       )
@@ -170,29 +190,39 @@ export function InfoPopover({ title, text, className, label = 'Info', compact = 
         title={label}
         aria-expanded={open}
         aria-haspopup="dialog"
-        className="flex items-center justify-center rounded-full transition-colors cursor-pointer info-trigger text-secondary-hover hover:text-foreground hover:bg-secondary-light"
-        style={{
-          width: compact ? '16px' : CARD_INFO_POPOVER.TRIGGER_SIZE,
-          height: compact ? '16px' : CARD_INFO_POPOVER.TRIGGER_SIZE,
-          border: compact ? 'none' : '1px solid var(--color-secondary-light)',
-        }}
+        className={
+          trigger
+            ? triggerClassName
+            : "flex items-center justify-center rounded-full transition-colors cursor-pointer info-trigger text-secondary-hover hover:text-foreground hover:bg-secondary-light"
+        }
+        style={
+          trigger
+            ? undefined
+            : {
+                width: compact ? '16px' : CARD_INFO_POPOVER.TRIGGER_SIZE,
+                height: compact ? '16px' : CARD_INFO_POPOVER.TRIGGER_SIZE,
+                border: compact ? 'none' : '1px solid var(--color-secondary-light)',
+              }
+        }
       >
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={2}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          style={{
-            width: compact ? '9px' : CARD_INFO_POPOVER.ICON_SIZE,
-            height: compact ? '9px' : CARD_INFO_POPOVER.ICON_SIZE,
-          }}
-        >
-          <circle cx="12" cy="12" r="10" />
-          <line x1="12" y1="16" x2="12" y2="12" />
-          <line x1="12" y1="8" x2="12.01" y2="8" />
-        </svg>
+        {trigger ?? (
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={{
+              width: compact ? '9px' : CARD_INFO_POPOVER.ICON_SIZE,
+              height: compact ? '9px' : CARD_INFO_POPOVER.ICON_SIZE,
+            }}
+          >
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="16" x2="12" y2="12" />
+            <line x1="12" y1="8" x2="12.01" y2="8" />
+          </svg>
+        )}
       </button>
       {panel}
     </span>

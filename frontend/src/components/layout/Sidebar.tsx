@@ -8,6 +8,8 @@ import { UI_SIDEBAR_RESIZE, UI_SCALE, UI_SIDEBAR_TOGGLE } from "@/utils/constant
 import { buildSidebarEdgeNotchClipPath } from "@/utils/sidebarEdgeNotch";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useViewportScale } from "@/hooks/useViewportScale";
+import { useIsMac } from "@/hooks/useIsMac";
+import { formatShortcutKeys } from "@/utils/platform";
 import { useTextGenerationStore } from "@/store/textGenerationStore";
 import { useCardFlowStore } from "@/store/cardFlowStore";
 import { useUIStore } from "@/store/uiStore";
@@ -22,7 +24,7 @@ type Step = 0 | 1 | 2;
 
 // ─── Module-level tooltip helpers ────────────────────────────────────────────
 
-const SIDEBAR_CONTEXT_TYPES: CardType[] = ['model-analysis', '3d-model', 'audio', 'freeform'];
+const SIDEBAR_CONTEXT_TYPES: CardType[] = ['model-analysis', 'audio', 'freeform'];
 const SIDEBAR_USAGE_TYPES: CardType[] = ['scenario', 'text', 'freeform'];
 
 function cardLabelHelper(config: any, fallback: string): string {
@@ -43,6 +45,28 @@ export function Sidebar(props: SidebarProps) {
   const [bypassedUsage, setBypassedUsage] = useState(false);
   const [activeContextOriginalIndex, setActiveContextOriginalIndex] = useState<number | null>(null);
   const [activeUsageOriginalIndex, setActiveUsageOriginalIndex] = useState<number | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(true);
+  const [shortcutsHovered, setShortcutsHovered] = useState(false);
+  const isMac = useIsMac();
+
+  // Restore the shortcuts-hints open/closed preference.
+  useEffect(() => {
+    try {
+      const v = window.localStorage.getItem('compas-sidebar-shortcuts-open');
+      setShortcutsOpen(v === null ? true : v === 'true');
+    } catch {
+      /* ignore unavailable storage */
+    }
+  }, []);
+
+  const setShortcutsOpenPersist = useCallback((open: boolean) => {
+    setShortcutsOpen(open);
+    try {
+      window.localStorage.setItem('compas-sidebar-shortcuts-open', String(open));
+    } catch {
+      /* ignore unavailable storage */
+    }
+  }, []);
 
   // Guard ref that prevents advanceToUsage/advanceToSounds from firing
   // during initial load. ContextSection auto-advances when analysis configs
@@ -351,6 +375,15 @@ export function Sidebar(props: SidebarProps) {
   useEffect(() => {
     props.onExpandedChange?.(isExpanded);
   }, [isExpanded, props.onExpandedChange]);
+
+  // Report the initial content width once so consumers (e.g. the scene controls
+  // hint) can position themselves correctly before the first resize drag.
+  const reportedInitialWidthRef = useRef(false);
+  useEffect(() => {
+    if (reportedInitialWidthRef.current) return;
+    reportedInitialWidthRef.current = true;
+    props.onWidthChange?.(contentWidth);
+  }, [contentWidth, props.onWidthChange]);
 
   // Step navigation helpers
   const advanceToUsage = useCallback((originalIndex: number, _title: string) => {
@@ -1066,6 +1099,48 @@ export function Sidebar(props: SidebarProps) {
               onCatalogSoundSelect={props.onCatalogSoundSelect}
               visibleParentUsageIndex={activeUsageOriginalIndex}
             />
+          )}
+        </div>
+
+        {/* Shortcut hints — very bottom of the sidebar (collapsible) */}
+        <div className="flex-shrink-0 px-4 pt-2 pb-3 border-t border-secondary-light">
+          {shortcutsOpen ? (
+            <div
+              onMouseEnter={() => setShortcutsHovered(true)}
+              onMouseLeave={() => setShortcutsHovered(false)}
+              className="flex flex-col gap-0.5"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] uppercase tracking-wider text-secondary-hover">Shortcuts</span>
+                {shortcutsHovered && (
+                  <button
+                    onClick={() => setShortcutsOpenPersist(false)}
+                    aria-label="Hide shortcuts"
+                    title="Hide shortcuts"
+                    className="flex h-3.5 w-3.5 items-center justify-center rounded-full text-[10px] leading-none text-secondary-hover hover:text-foreground transition-colors"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+              {[
+                { label: 'Duplicate', command: 'Ctrl + drag' },
+                { label: 'Card options', command: 'Right-click' },
+                ...(currentStep === 2 ? [{ label: 'Zoom into sound sphere', command: 'Double-click' }] : []),
+              ].map((row) => (
+                <div key={row.label} className="flex items-baseline gap-1.5 text-[9px] leading-tight">
+                  <span className="font-medium text-foreground">{row.label}</span>
+                  <span className="text-secondary-hover">{formatShortcutKeys(row.command, isMac)}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <button
+              onClick={() => setShortcutsOpenPersist(true)}
+              className="text-[9px] text-secondary-hover hover:text-foreground transition-colors cursor-pointer"
+            >
+              Shortcuts
+            </button>
           )}
         </div>
         </div>

@@ -55,42 +55,99 @@ def init_generation_router(service: LLMService):
     llm_service = service
 
 
-class EntitySelectionRequest(BaseModel):
-    entities: list[dict]
-    max_sounds: int
-    llm_model: str = DEFAULT_LLM_MODEL
+def _load_analysis_groups(analysis_id: str) -> tuple[list[dict], str]:
+    """Load the full 3D model analysis JSON and project it into linkable groups.
 
+    Returns (entities, space_description). Each group entity carries its whole
+    group — name/description/material and ALL Speckle object ids + union bounds —
+    so a generated sound can link to every object in the group.
+    """
+    import re as _re
 
-@router.post("/api/select-entities")
-async def select_entities(request: EntitySelectionRequest):
+    if not _re.match(r'^[0-9a-f-]+$', analysis_id):
+        return [], ""
+
+    analysis_file = Path(TEMP_ANALYSIS_DIR) / f"analysis_{analysis_id}.json"
+    if not analysis_file.exists():
+        return [], ""
+
     try:
-        if not request.entities:
-            raise HTTPException(status_code=400, detail="No entities provided")
-        selected_entities = await llm_service.select_diverse_entities(
-            request.entities, request.max_sounds, llm_model=request.llm_model
-        )
-        return {"selected_entities": selected_entities, "count": len(selected_entities)}
-    except HTTPException:
-        raise
-    except Exception as e:
-        traceback.print_exc()
-        error_str = str(e)
-        if "503" in error_str or "overloaded" in error_str.lower() or "UNAVAILABLE" in error_str:
-            raise HTTPException(status_code=503, detail="LLM service is currently overloaded. Please try again in a moment.")
-        raise HTTPException(status_code=500, detail=f"Error selecting entities: {error_str}")
+        with open(analysis_file, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception as load_err:
+        print(f"[generate-prompts] failed to load analysis {analysis_id}: {load_err}")
+        return [], ""
+
+    space_description = raw.get("space_description") or ""
+    total_bounds = (raw.get("meta") or {}).get("total_bounds")
+
+    entities: list[dict] = []
+    for i, obj in enumerate(raw.get("objects", []) or []):
+        object_ids = obj.get("object_ids")
+        if isinstance(object_ids, dict):
+            ids = [k for k in object_ids.keys()]
+            per_obj_bounds = [v for v in object_ids.values() if isinstance(v, dict)]
+        elif isinstance(object_ids, list):
+            ids = [str(k) for k in object_ids]
+            per_obj_bounds = []
+        else:
+            ids = []
+            per_obj_bounds = []
+
+        # Union the per-object bounds into a single group bounds (if available).
+        mins = [b.get("min_bounds") for b in per_obj_bounds if b.get("min_bounds")]
+        maxs = [b.get("max_bounds") for b in per_obj_bounds if b.get("max_bounds")]
+        bounds = None
+        if mins and maxs:
+            mn = [min(v[i] for v in mins) for i in range(3)]
+            mx = [max(v[i] for v in maxs) for i in range(3)]
+            bounds = {"min": mn, "max": mx, "center": [(mn[i] + mx[i]) / 2 for i in range(3)]}
+
+        entities.append({
+            "index": i,
+            "type": "architectural object",
+            "speckle_type": "architectural object",
+            "name": obj.get("name") or obj.get("description") or f"Object {i + 1}",
+            "description": obj.get("description") or "",
+            "material": obj.get("material") or "",
+            "quantity": obj.get("quantity"),
+            "layer": "",
+            "object_ids": ids,
+            "bounds": bounds,
+            "total_bounds": total_bounds,
+        })
+
+    return entities, space_description
 
 
 @router.post("/api/generate-prompts")
 async def generate_prompts(request: UnifiedPromptGenerationRequest):
     try:
-        if request.entities and len(request.entities) > 0:
-            entities_to_use = request.entities
-            if len(request.entities) > request.num_sounds * 1.5:
+        context = request.context
+        entities = request.entities
+
+        # Analysis-driven path: project the full analysis result through the shared
+        # `_create_base_sound_prompt` text strategy (with whole-group ENTITY mapping).
+        if request.analysis_id:
+            groups, space_description = _load_analysis_groups(request.analysis_id)
+            if groups:
+                _, sound_list = await llm_service.generate_analysis_prompts(
+                    groups,
+                    space_description,
+                    request.context,
+                    request.num_sounds,
+                    llm_model=request.llm_model,
+                )
+                return {"prompts": sound_list, "selected_entities": groups}
+
+        if entities and len(entities) > 0:
+            entities_to_use = entities
+            if len(entities) > request.num_sounds * 1.5:
                 entities_to_use = await llm_service.select_diverse_entities(
-                    request.entities, request.num_sounds, llm_model=request.llm_model
+                    entities, request.num_sounds, llm_model=request.llm_model
                 )
             sound_list = await llm_service.generate_prompts_for_entities(
-                entities_to_use, request.num_sounds, request.context, llm_model=request.llm_model
+                entities_to_use, request.num_sounds, context, llm_model=request.llm_model
             )
             entity_prompts = []
             for sound_data in sound_list:
@@ -110,9 +167,9 @@ async def generate_prompts(request: UnifiedPromptGenerationRequest):
                 })
             return {"prompts": entity_prompts, "selected_entities": entities_to_use}
 
-        elif request.context and request.context.strip():
+        elif context and context.strip():
             raw_text, sound_list = await llm_service.generate_text_based_prompts(
-                request.context, request.num_sounds, llm_model=request.llm_model
+                context, request.num_sounds, llm_model=request.llm_model
             )
             return {"prompts": sound_list, "text": raw_text}
 
@@ -143,15 +200,35 @@ async def generate_prompts_stream(request: UnifiedPromptGenerationRequest):
     """
     async def event_generator():
         try:
-            if request.entities and len(request.entities) > 0:
-                entities_to_use = request.entities
-                if len(request.entities) > request.num_sounds * 1.5:
+            context = request.context
+            entities = request.entities
+
+            # Analysis-driven path: project the full analysis result through the shared
+            # `_create_base_sound_prompt` text strategy (whole-group ENTITY mapping).
+            if request.analysis_id:
+                groups, space_description = _load_analysis_groups(request.analysis_id)
+                if groups:
+                    yield f"data: {json.dumps({'type': 'entities', 'entities': groups})}\n\n"
+                    async for sound in llm_service.stream_generate_analysis_prompts(
+                        groups,
+                        space_description,
+                        request.context,
+                        request.num_sounds,
+                        llm_model=request.llm_model,
+                    ):
+                        sound["type"] = "sound"
+                        yield f"data: {json.dumps(sound)}\n\n"
+                    return
+
+            if entities and len(entities) > 0:
+                entities_to_use = entities
+                if len(entities) > request.num_sounds * 1.5:
                     entities_to_use = await llm_service.select_diverse_entities(
-                        request.entities, request.num_sounds, llm_model=request.llm_model
+                        entities, request.num_sounds, llm_model=request.llm_model
                     )
                 yield f"data: {json.dumps({'type': 'entities', 'entities': entities_to_use})}\n\n"
                 async for sound in llm_service.stream_generate_prompts_for_entities(
-                    entities_to_use, request.num_sounds, request.context, llm_model=request.llm_model
+                    entities_to_use, request.num_sounds, context, llm_model=request.llm_model
                 ):
                     # Resolve entity_indices → fully-hydrated entities list so the frontend
                     # doesn't need to re-resolve from an index cache.
@@ -164,9 +241,9 @@ async def generate_prompts_stream(request: UnifiedPromptGenerationRequest):
                     sound["type"] = "sound"
                     yield f"data: {json.dumps(sound)}\n\n"
 
-            elif request.context and request.context.strip():
+            elif context and context.strip():
                 async for sound in llm_service.stream_generate_text_based_prompts(
-                    request.context, request.num_sounds, llm_model=request.llm_model
+                    context, request.num_sounds, llm_model=request.llm_model
                 ):
                     sound["type"] = "sound"
                     yield f"data: {json.dumps(sound)}\n\n"

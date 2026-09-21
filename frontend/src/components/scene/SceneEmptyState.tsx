@@ -42,7 +42,10 @@ export function SceneEmptyState({
 }: SceneEmptyStateProps) {
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-background/50">
-      <div className="flex flex-col items-center gap-6 p-8" style={{ maxWidth: '400px' }}>
+      <div
+        className="flex flex-col items-center gap-[clamp(1rem,1.5vw,1.5rem)] p-[clamp(1rem,2vw,2rem)]"
+        style={{ width: 'min(92vw, clamp(18rem, 32vw, 30rem))' }}
+      >
         <div className="text-center">
           {/* <div className="flex items-center gap-4 flex-shrink-0 mb-4 justify-center">
             <Image
@@ -54,7 +57,7 @@ export function SceneEmptyState({
               priority
             />
           </div> */}
-<h3 className="text-5xl md:text-7xl font-extrabold tracking-tight mb-3 text-primary">
+<h3 className="text-[clamp(3rem,4.5vw,6.5rem)] leading-none font-extrabold tracking-tight mb-3 text-primary">
   Sound is blue
 </h3>
         </div>
@@ -74,6 +77,7 @@ export function SceneEmptyState({
                 inputId="scene-model-upload"
                 multiple={false}
                 isUploading={isUploadingModel}
+                fluid
               />
             </div>
             {onSpeckleModelSelect && (

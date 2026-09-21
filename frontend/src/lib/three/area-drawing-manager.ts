@@ -13,6 +13,7 @@ import { ObjectLayers, type Viewer } from '@speckle/viewer';
 import type { DrawnArea, PolygonVertex, AreaVisualState } from '@/types/area-drawing';
 import { AREA_DRAWING } from '@/utils/constants';
 import { getCssColorHex } from '@/utils/utils';
+import { createLabelSprite, computeLabelWorldHeight, updateLabelSprite } from './label-sprite-factory';
 import {
   projectOnPlane,
   chooseProjectionAxes,
@@ -50,6 +51,12 @@ interface AreaVisuals {
  */
 const SPECKLE_OVERLAY_LAYER = 4;
 
+/** Truncate an area label to a compact card-title form. */
+function truncateLabel(text: string, max = 24): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 1).trimEnd()}…`;
+}
+
 // ============================================================================
 // AreaDrawingManager
 // ============================================================================
@@ -71,6 +78,23 @@ export class AreaDrawingManager {
 
   // Completed area visuals keyed by cardIndex
   private areaVisuals = new Map<number, AreaVisuals>();
+
+  /** Result-phase sound position previews (independent of drawn areas). */
+  private soundPreviews: THREE.Group | null = null;
+  private previewHighlightId: string | null = null;
+  private previewBaseMat: THREE.MeshBasicMaterial | null = null;
+  private previewHighlightMat: THREE.MeshBasicMaterial | null = null;
+
+  /** World Z of the virtual ground grid — used as the fallback snap plane. */
+  private groundPlaneZ = 0;
+
+  /**
+   * Set the virtual grid height. When no Speckle mesh is under the pointer,
+   * clicks snap to this Z-plane so areas can be drawn on empty space.
+   */
+  setGroundPlaneZ(z: number): void {
+    this.groundPlaneZ = z;
+  }
 
   constructor(viewer: Viewer, scene: THREE.Scene, customObjectsGroup: THREE.Group) {
     this.viewer = viewer;
@@ -133,7 +157,7 @@ export class AreaDrawingManager {
     const ndc = this.eventToNDC(event);
     if (!ndc) return;
 
-    const hit = this.raycastSpeckleSurface(ndc);
+    const hit = this.resolveDrawHit(ndc);
 
     if (!hit) {
       if (this.cursorPoint) this.cursorPoint.visible = false;
@@ -167,7 +191,7 @@ export class AreaDrawingManager {
       this.cursorPoint.visible = true;
       // Change color when snapping
       (this.cursorPoint.material as THREE.MeshBasicMaterial).color.setHex(
-        snapped ? 0xffffff : getCssColorHex('--color-success')
+        snapped ? 0xffffff : getCssColorHex('--color-warning')
       );
     }
 
@@ -191,7 +215,7 @@ export class AreaDrawingManager {
     const ndc = this.eventToNDC(event);
     if (!ndc) return null;
 
-    const hit = this.raycastSpeckleSurface(ndc);
+    const hit = this.resolveDrawHit(ndc);
     if (!hit) return null;
 
     const point = hit.point.clone();
@@ -350,7 +374,7 @@ export class AreaDrawingManager {
 
     const mat = visuals.fill.material as THREE.MeshBasicMaterial;
     mat.color.setHex(
-      state === 'generated' ? getCssColorHex('--color-success-hover') : getCssColorHex('--color-success-light')
+      state === 'generated' ? getCssColorHex('--color-warning') : getCssColorHex('--color-warning-light')
     );
     mat.opacity =
       state === 'generated' ? AREA_DRAWING.FILL_OPACITY_GENERATED : AREA_DRAWING.FILL_OPACITY_DEFAULT;
@@ -379,7 +403,7 @@ export class AreaDrawingManager {
 
     const geo = new THREE.SphereGeometry(AREA_DRAWING.POINT_PREVIEW_SIZE, 8, 8);
     const mat = new THREE.MeshBasicMaterial({
-      color: getCssColorHex('--color-success'),
+      color: getCssColorHex('--color-warning'),
       depthTest: false,
       depthWrite: false,
       transparent: true,
@@ -396,6 +420,148 @@ export class AreaDrawingManager {
 
     visuals.pointPreviews = previewsGroup;
     visuals.group.add(previewsGroup);
+    this.requestRender();
+  }
+
+  /**
+   * Show/hide preview spheres (with labels) at planned sound positions during
+   * the analysis result phase. Independent of any drawn area. `points` carry
+   * their prompt id so a hovered/selected prompt can be emphasised.
+   */
+  setSoundPreviews(
+    points: Array<{
+      promptId: string;
+      position: [number, number, number];
+      label: string;
+      showSphere?: boolean;
+    }>,
+  ): void {
+    if (this.soundPreviews) {
+      this.group.remove(this.soundPreviews);
+      this.disposeObject(this.soundPreviews);
+      this.soundPreviews = null;
+    }
+    this.previewHighlightId = null;
+    if (points.length === 0) {
+      this.requestRender();
+      return;
+    }
+
+    const g = new THREE.Group();
+    g.name = 'AnalysisSoundPreviews';
+    this.enableSpeckleLayers(g);
+
+    const camera = this.viewer.getRenderer().renderingCamera as THREE.PerspectiveCamera | undefined;
+    const geo = new THREE.SphereGeometry(AREA_DRAWING.POINT_PREVIEW_SIZE, 8, 8);
+    const baseMat = new THREE.MeshBasicMaterial({
+      color: getCssColorHex('--color-primary'),
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.85,
+    });
+    const highlightMat = new THREE.MeshBasicMaterial({
+      color: getCssColorHex('--color-warning'),
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 1,
+    });
+    this.previewBaseMat = baseMat;
+    this.previewHighlightMat = highlightMat;
+
+    points.forEach((point) => {
+      // Linked prompts render a label over their first object (no sphere).
+      if (point.showSphere !== false) {
+        const sphere = new THREE.Mesh(geo, baseMat);
+        sphere.position.set(point.position[0], point.position[1], point.position[2]);
+        sphere.renderOrder = AREA_DRAWING.RENDER_ORDER + 1;
+        sphere.userData.promptId = point.promptId;
+        sphere.userData.baseScale = 1;
+        this.enableSpeckleLayers(sphere);
+        g.add(sphere);
+      }
+
+      if (point.label) {
+        const sprite = createLabelSprite(truncateLabel(point.label));
+        sprite.position
+          .set(point.position[0], point.position[1], point.position[2])
+          .addScaledVector(new THREE.Vector3(0, 0, 1), 0.6);
+        sprite.renderOrder = AREA_DRAWING.RENDER_ORDER + 3;
+        sprite.userData.isLabel = true;
+        this.enableSpeckleLayers(sprite);
+        // Set the correct screen-space scale immediately so the label never
+        // renders at its default (1×1) scale for a frame.
+        if (camera && camera.isPerspectiveCamera) {
+          const h = computeLabelWorldHeight(camera, camera.position.distanceTo(sprite.position));
+          sprite.scale.set(h * ((sprite.userData.aspectRatio as number) || 3), h, 1);
+        }
+        g.add(sprite);
+      }
+    });
+
+    this.soundPreviews = g;
+    this.group.add(g);
+    this.requestRender();
+  }
+
+  /** Recolour the preview sphere for a hovered prompt without rebuilding the group. */
+  setPreviewHighlight(promptId: string | null): void {
+    if (this.previewHighlightId === promptId) return;
+    this.previewHighlightId = promptId;
+    if (!this.soundPreviews || !this.previewBaseMat || !this.previewHighlightMat) return;
+
+    for (const child of this.soundPreviews.children) {
+      if (!(child as THREE.Mesh).isMesh) continue;
+      const mesh = child as THREE.Mesh;
+      const isHighlighted = promptId !== null && mesh.userData.promptId === promptId;
+      mesh.material = isHighlighted ? this.previewHighlightMat : this.previewBaseMat;
+      mesh.scale.setScalar(isHighlighted ? 1.4 : 1);
+    }
+    this.requestRender();
+  }
+
+  /**
+   * Per-frame screen-space label scaling — identical treatment to sound sphere
+   * / receiver / bounding-box labels. Called from the coordinator frame loop.
+   */
+  updateScreenSpaceScale(camera: THREE.PerspectiveCamera): void {
+    const scaleLabel = (label: THREE.Sprite) => {
+      const distance = camera.position.distanceTo(label.position);
+      if (distance < 0.01) return;
+      const h = computeLabelWorldHeight(camera, distance);
+      label.scale.set(h * ((label.userData.aspectRatio as number) || 3), h, 1);
+    };
+
+    for (const visuals of this.areaVisuals.values()) {
+      if (visuals.label) scaleLabel(visuals.label);
+    }
+    if (this.soundPreviews) {
+      for (const child of this.soundPreviews.children) {
+        if ((child as THREE.Sprite).isSprite && child.userData.isLabel) {
+          scaleLabel(child as THREE.Sprite);
+        }
+      }
+    }
+  }
+
+  /** Show/hide a completed area's visuals (e.g. only for the expanded card). */
+  setAreaVisible(cardIndex: number, visible: boolean): void {
+    const visuals = this.areaVisuals.get(cardIndex);
+    if (!visuals) return;
+    if (visuals.group.visible !== visible) {
+      visuals.group.visible = visible;
+      this.requestRender();
+    }
+  }
+
+  /** Update a completed area's label text in place (same canvas, no flash). */
+  updateAreaLabel(cardIndex: number, text: string): void {
+    const visuals = this.areaVisuals.get(cardIndex);
+    if (!visuals?.label) return;
+    const truncated = truncateLabel(text);
+    if (visuals.label.userData.labelText === truncated) return;
+    updateLabelSprite(visuals.label, truncated);
     this.requestRender();
   }
 
@@ -463,6 +629,39 @@ export class AreaDrawingManager {
       ((event.clientX - rect.left) / rect.width) * 2 - 1,
       -((event.clientY - rect.top) / rect.height) * 2 + 1
     );
+  }
+
+  /**
+   * Resolve a draw point: prefer a Speckle mesh hit, then fall back to the
+   * virtual ground grid so the user can draw over empty space ("void").
+   */
+  private resolveDrawHit(
+    ndc: THREE.Vector2
+  ): { point: THREE.Vector3; face: { normal: THREE.Vector3 } | null } | null {
+    const surface = this.raycastSpeckleSurface(ndc);
+    if (surface) return surface;
+    return this.raycastGroundPlane(ndc);
+  }
+
+  /** Intersect the camera ray with a Z-up plane at the virtual grid height. */
+  private raycastGroundPlane(
+    ndc: THREE.Vector2
+  ): { point: THREE.Vector3; face: { normal: THREE.Vector3 } | null } | null {
+    try {
+      const renderer = this.viewer.getRenderer();
+      const camera = renderer.renderingCamera;
+      if (!camera) return null;
+
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(ndc, camera);
+      const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -this.groundPlaneZ);
+      const target = new THREE.Vector3();
+      const hit = raycaster.ray.intersectPlane(plane, target);
+      if (!hit) return null;
+      return { point: hit.clone(), face: { normal: new THREE.Vector3(0, 0, 1) } };
+    } catch {
+      return null;
+    }
   }
 
   private raycastSpeckleSurface(
@@ -542,7 +741,7 @@ export class AreaDrawingManager {
 
     const geometry = new THREE.BufferGeometry().setFromPoints(points);
     const material = new THREE.LineBasicMaterial({
-      color: getCssColorHex('--color-success'),
+      color: getCssColorHex('--color-warning'),
       depthTest: false,
       depthWrite: false,
       linewidth: 2,
@@ -584,7 +783,7 @@ export class AreaDrawingManager {
   private addPointMarker(position: THREE.Vector3): void {
     const geo = new THREE.SphereGeometry(0.06, 8, 8);
     const mat = new THREE.MeshBasicMaterial({
-      color: getCssColorHex('--color-success'),
+      color: getCssColorHex('--color-warning'),
       depthTest: false,
       depthWrite: false,
     });
@@ -649,7 +848,7 @@ export class AreaDrawingManager {
     geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
 
     const mat = new THREE.LineBasicMaterial({
-      color: getCssColorHex('--color-success'),
+      color: getCssColorHex('--color-warning'),
       depthTest: false,
       depthWrite: false,
       linewidth: 2,
@@ -694,7 +893,7 @@ export class AreaDrawingManager {
 
     const isGenerated = state === 'generated';
     const mat = new THREE.MeshBasicMaterial({
-      color: isGenerated ? getCssColorHex('--color-success-hover') : getCssColorHex('--color-success-light'),
+      color: isGenerated ? getCssColorHex('--color-warning') : getCssColorHex('--color-warning-light'),
       transparent: true,
       opacity: isGenerated ? AREA_DRAWING.FILL_OPACITY_GENERATED : AREA_DRAWING.FILL_OPACITY_DEFAULT,
       side: THREE.DoubleSide,
@@ -709,49 +908,21 @@ export class AreaDrawingManager {
   }
 
   private buildLabel(text: string, position: THREE.Vector3): THREE.Sprite | null {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-
-    const fontSize = AREA_DRAWING.LABEL_FONT_SIZE;
-    ctx.font = `bold ${fontSize}px sans-serif`;
-    const metrics = ctx.measureText(text);
-    const padding = 6;
-    const width = metrics.width + padding * 2;
-    const height = fontSize + padding * 2;
-
-    canvas.width = Math.ceil(width);
-    canvas.height = Math.ceil(height);
-
-    // Redraw after resize
-    ctx.font = `bold ${fontSize}px sans-serif`;
-    const successColor = getComputedStyle(document.documentElement).getPropertyValue('--color-success').trim() || '#10B981';
-    ctx.fillStyle = `color-mix(in srgb, ${successColor} 85%, transparent)`;
-    ctx.beginPath();
-    ctx.roundRect(0, 0, canvas.width, canvas.height, 4);
-    ctx.fill();
-
-    ctx.fillStyle = 'white';
-    ctx.textBaseline = 'middle';
-    ctx.textAlign = 'center';
-    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
-
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.minFilter = THREE.LinearFilter;
-
-    const mat = new THREE.SpriteMaterial({
-      map: texture,
-      depthTest: false,
-      depthWrite: false,
-      transparent: true,
-    });
-
-    const sprite = new THREE.Sprite(mat);
+    // Same canvas label sprite as sound spheres / receivers.
+    const sprite = createLabelSprite(truncateLabel(text));
     sprite.position.copy(position).addScaledVector(new THREE.Vector3(0, 0, 1), 0.5);
-    sprite.scale.set(width / 80, height / 80, 1);
     sprite.renderOrder = AREA_DRAWING.RENDER_ORDER + 3;
-    this.enableSpeckleLayers(sprite);
 
+    // Screen-space size at creation time (constant apparent size at this distance).
+    const camera = this.viewer.getRenderer().renderingCamera as THREE.PerspectiveCamera | undefined;
+    const distance = camera ? camera.position.distanceTo(position) : 10;
+    const h = camera && camera.isPerspectiveCamera
+      ? computeLabelWorldHeight(camera, distance)
+      : 0.4;
+    const aspect = (sprite.userData.aspectRatio as number) || 6;
+    sprite.scale.set(h * aspect, h, 1);
+
+    this.enableSpeckleLayers(sprite);
     return sprite;
   }
 

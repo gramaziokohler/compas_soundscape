@@ -207,6 +207,14 @@ body {
   background: var(--sidebar-bg);
 }
 
+/* Frosted-glass surfaces floating over the 3D viewer (viewmode toolbar, DAW
+ * mini transport, scene control buttons) — identical surface to the sidebar.
+ * Pair with the Tailwind `backdrop-blur-lg backdrop-saturate-150` utilities in
+ * JSX; raw `backdrop-filter` in custom CSS is stripped by Tailwind v4. */
+.frosted-surface {
+  background: var(--sidebar-bg);
+}
+
 /* Adaptive-contrast text — for labels/text sitting directly on the frosted
  * `.sidebar-glass` panel (breadcrumbs, status counts, empty-state messages),
  * i.e. not on a solid card surface. `mix-blend-mode: difference` against a

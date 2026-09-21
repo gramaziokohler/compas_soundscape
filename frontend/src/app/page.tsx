@@ -31,6 +31,7 @@ import {
   useErrorsStore,
   useCardFlowStore,
   useWorkspaceStore,
+  useAreaDrawingStore,
   notifyError,
 } from "@/store";
 import { useSpeckleEngineStore } from "@/store/speckleEngineStore";
@@ -236,6 +237,7 @@ function HomeContent() {
           analysisResults: analysisRestored.analysisResults,
           activeTab: analysisRestored.activeTab,
         });
+        useAreaDrawingStore.getState().hydrateFromConfigs(analysisRestored.analysisConfigs);
         // Rebuild persisted audio-context source Files so the SED waveform/results
         // render after a cold refresh (the original File object is not JSON-serializable).
         analysis.rehydrateAudioContextSources(audioBaseUrl);
@@ -428,9 +430,6 @@ function HomeContent() {
     unlinkObjectFromSound,
     linkedObjectIds,
     setSelectedEntity,
-    diverseSelectedObjectIds,
-    addToDiverseSelection,
-    removeFromDiverseSelection,
     setModelFileName,
     getViewerRef,
   } = useSpeckleStore();
@@ -1459,7 +1458,7 @@ function HomeContent() {
           : (scenarioSource?.copyCount ?? 1);
 
         // Resolve entities: orchestrateMeta.allObjectIds, or scenarioSource.objectsInvolved,
-        // or the prompt's resolved entity.
+        // or the prompt's resolved analysis group(s) — each group expands to ALL its object ids.
         const resolvedEntities = (() => {
           const allIds = orchestrateMeta?.allObjectIds?.length
             ? orchestrateMeta.allObjectIds
@@ -1470,10 +1469,38 @@ function HomeContent() {
               return resolveEntityFromTreeId(objId, primaryRaw.foleyPosition);
             }).filter(Boolean);
           }
-          const primaryRaw = p.entities?.[0] ?? p.entity;
-          if (!primaryRaw?.id) return undefined;
-          const resolved = resolveEntityFromTreeId(primaryRaw.id, primaryRaw.foleyPosition);
-          return resolved ? [resolved] : undefined;
+
+          const groupEntities = (p.entities ?? (p.entity ? [p.entity] : [])).filter(Boolean);
+          if (groupEntities.length === 0) return undefined;
+
+          const expanded: any[] = [];
+          for (const ent of groupEntities) {
+            const ids: string[] = Array.isArray(ent.object_ids) && ent.object_ids.length
+              ? ent.object_ids
+              : (ent.id ? [ent.id] : []);
+            if (ids.length === 0) continue;
+            const groupBounds = ent.bounds;
+            const fallbackPos: [number, number, number] | undefined = groupBounds?.center
+              ? [groupBounds.center[0], groupBounds.center[1], groupBounds.center[2]]
+              : (Array.isArray(ent.position) && ent.position.length >= 3
+                  ? [ent.position[0], ent.position[1], ent.position[2]]
+                  : p.position);
+            for (const objId of ids) {
+              const resolved = resolveEntityFromTreeId(objId, fallbackPos);
+              if (!resolved) continue;
+              expanded.push({
+                ...resolved,
+                groupName: ent.name,
+                sourceGroupIndex: ent.index,
+                bounds: resolved.bounds ?? groupBounds,
+                position: resolved.position
+                  ?? (groupBounds?.center
+                      ? [groupBounds.center[0], groupBounds.center[1], groupBounds.center[2]]
+                      : fallbackPos),
+              });
+            }
+          }
+          return expanded.length ? expanded : undefined;
         })();
 
         const config: SoundGenerationConfig = {
@@ -1542,18 +1569,10 @@ function HomeContent() {
     }, parentUsageIndex);
   }, [analysis, soundGen]);
 
-  // Handler: Analyze with context data (passes diverse selection + viewerRef to useAnalysis)
-  const handleAnalyzeWithContext = useCallback((index: number) => {
-    return analysis.handleAnalyze(index, {
-      diverseObjectIds: diverseSelectedObjectIds,
-      viewerRef: viewerRef
-    });
-  }, [analysis.handleAnalyze, diverseSelectedObjectIds, viewerRef]);
-
   // Handler: Add analysis config with global model inheritance
   const handleAddAnalysisConfig = useCallback((type: import('@/types/card').CardType) => {
-    // For 3D model configs, pass globalSpeckleData so new card inherits the loaded model
-    if ((type === '3d-model' || type === 'model-analysis') && globalSpeckleData) {
+    // For model-analysis configs, pass globalSpeckleData so a new card inherits the loaded model
+    if (type === 'model-analysis' && globalSpeckleData) {
       analysis.handleAddConfig(type, globalSpeckleData);
     } else {
       analysis.handleAddConfig(type);
@@ -1817,6 +1836,7 @@ function HomeContent() {
             analysisResults: analysisRestored.analysisResults,
             activeTab: analysisRestored.activeTab,
           });
+          useAreaDrawingStore.getState().hydrateFromConfigs(analysisRestored.analysisConfigs);
           // Rebuild persisted audio-context source Files so the SED waveform/results
           // render after a model reload (the original File object is not JSON-serializable).
           analysis.rehydrateAudioContextSources(audioBaseUrl);
@@ -2093,110 +2113,7 @@ function HomeContent() {
     }
   }, [fileUpload, sed]);
 
-  // Note: Auto-upload is handled by the analysis.handleModelFileUpload in the effect below
-  // This prevents duplicate uploads
-
-  // Track configs that need file upload (model without speckleData, audio without buffer)
-  // This avoids re-running on unrelated config changes (e.g. slider moves)
-  const configsNeedingUpload = useMemo(() => {
-    return analysis.analysisConfigs
-      .map((config, index) => ({ config, index }))
-      .filter(({ config }) =>
-        (config.type === '3d-model' && config.modelFile && !config.speckleData) ||
-        (config.type === 'audio' && config.audioFile && !config.audioBuffer)
-      );
-  }, [analysis.analysisConfigs]);
-
-  // Auto-upload files when added to analysis configs
-  useEffect(() => {
-    configsNeedingUpload.forEach(({ config, index }) => {
-      if (config.type === '3d-model' && config.modelFile && !config.speckleData) {
-        const worldTree = viewerRef?.current?.getWorldTree();
-        console.log('[page.tsx] Auto-uploading model file for config', index);
-        analysis.handleModelFileUpload(index, config.modelFile, worldTree);
-      } else if (config.type === 'audio' && config.audioFile && !config.audioBuffer) {
-        analysis.handleAudioFileUpload(index, config.audioFile);
-      }
-    });
-  }, [configsNeedingUpload, viewerRef]);
-
-  // Populate entities from worldTree when it becomes available
-  // (worldTreeReady state + poll effect + appIdToTreeIdMap are declared
-  //  earlier in the component, before entity-link effects that depend on them)
-
-  // Only track 3D model configs that need entity population (speckleData present, entities empty)
-  // This avoids re-running on every slider/config change
-  const modelConfigsNeedingEntities = useMemo(() => {
-    return analysis.analysisConfigs
-      .map((config, index) => ({ config, index }))
-      .filter(({ config }) =>
-        config.type === '3d-model' && config.speckleData && config.modelEntities.length === 0
-      );
-  }, [analysis.analysisConfigs]);
-
-  useEffect(() => {
-    if (!viewerRef?.current || !worldTreeReady) return;
-    if (modelConfigsNeedingEntities.length === 0) return;
-
-    const worldTree = viewerRef.current.getWorldTree();
-    if (!worldTree) return;
-
-    console.log('[page.tsx] WorldTree available, populating entities for', modelConfigsNeedingEntities.length, 'configs');
-
-    modelConfigsNeedingEntities.forEach(({ index }) => {
-      analysis.handleUpdateEntitiesFromWorldTree(index, worldTree);
-    });
-  }, [modelConfigsNeedingEntities, worldTreeReady, analysis.handleUpdateEntitiesFromWorldTree]);
-
-  // Extract the latest 3D model config to derive stable sync keys.
-  // The useMemo returns a new object only when sync-relevant fields change,
-  // not on every slider/numSounds tweak.
-  const latestModelConfig = useMemo(() => {
-    const modelConfigs = analysis.analysisConfigs.filter(c => c.type === '3d-model');
-    if (modelConfigs.length === 0) return null;
-    return modelConfigs[modelConfigs.length - 1] as import('@/types/analysis').ModelAnalysisConfig;
-  }, [analysis.analysisConfigs]);
-
-  // Derive individual stable values so the sync effect only fires when they change
-  const syncGeometryData = latestModelConfig?.geometryData;
-  const syncModelFile = latestModelConfig?.modelFile;
-  const syncModelEntitiesLen = latestModelConfig?.modelEntities.length ?? 0;
-  const syncSpeckleUrl = latestModelConfig?.speckleData?.url;
-  const syncDiverseLen = latestModelConfig?.selectedDiverseEntities.length ?? 0;
-
-  // Sync analysis model to main fileUpload state (for ThreeScene)
-  useEffect(() => {
-    if (!latestModelConfig) return;
-
-    // Only sync if we have geometry data and it's different from current
-    if (latestModelConfig.geometryData && latestModelConfig.geometryData !== fileUpload.geometryData) {
-      fileUpload.processGeometry(latestModelConfig.geometryData);
-    }
-
-    // Sync model file if different
-    if (latestModelConfig.modelFile && latestModelConfig.modelFile !== fileUpload.modelFile) {
-      fileUpload.setModelFile(latestModelConfig.modelFile);
-    }
-
-    // Sync entities if available and different
-    if (latestModelConfig.modelEntities.length > 0 &&
-        JSON.stringify(latestModelConfig.modelEntities) !== JSON.stringify(fileUpload.modelEntities)) {
-      fileUpload.setModelEntities(latestModelConfig.modelEntities);
-    }
-
-    // Sync speckle data for Speckle viewer
-    if (latestModelConfig.speckleData && latestModelConfig.speckleData.url !== speckleModelUrl) {
-      console.log('[page.tsx] Setting Speckle model URL:', latestModelConfig.speckleData.url);
-      setSpeckleModelUrl(latestModelConfig.speckleData.url);
-    }
-
-    // Sync selectedDiverseEntities to textGen for ThreeScene highlighting
-    if (latestModelConfig.selectedDiverseEntities.length > 0 &&
-        JSON.stringify(latestModelConfig.selectedDiverseEntities) !== JSON.stringify(textGen.selectedDiverseEntities)) {
-      textGen.setSelectedDiverseEntities(latestModelConfig.selectedDiverseEntities);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- use derived primitives as deps, not full config
-  }, [syncGeometryData, syncModelFile, syncModelEntitiesLen, syncSpeckleUrl, syncDiverseLen, speckleModelUrl]);
+  // Note: model upload for context cards is handled at load time (global Speckle data).
 
   // Handle sound deletion
   const handleDeleteSound = useCallback((soundId: string, promptIdx: number) => {
@@ -2271,24 +2188,6 @@ function HomeContent() {
     });
   }, [soundGen.generatedSounds, setSelectedEntity]);
 
-  /**
-   * Helper: Get current selectedDiverseEntities from analysis config
-   */
-  const getSelectedDiverseEntities = useCallback(() => {
-    const modelConfig = analysis.analysisConfigs.find(c => c.type === '3d-model');
-    return modelConfig?.type === '3d-model' ? modelConfig.selectedDiverseEntities : [];
-  }, [analysis.analysisConfigs]);
-
-  /**
-   * Helper: Update selectedDiverseEntities in analysis config
-   */
-  const updateSelectedDiverseEntities = useCallback((entities: any[]) => {
-    const modelConfigIndex = analysis.analysisConfigs.findIndex(c => c.type === '3d-model');
-    if (modelConfigIndex !== -1) {
-      analysis.handleUpdateConfig(modelConfigIndex, { selectedDiverseEntities: entities });
-    }
-  }, [analysis]);
-
   // Entity linking handlers
   const handleStartLinkingEntity = useCallback((configIndex: number) => {
     setIsLinkingEntity(true);
@@ -2346,24 +2245,10 @@ function HomeContent() {
       const objectId = entity.nodeId || entity.id;
       if (objectId) linkObjectToSound(objectId, configIndex);
     }
-    // Reflect the new links in the diverse-selection highlights.
-    const selectedEntities = getSelectedDiverseEntities();
-    let diverseChanged = false;
-    const updatedDiverse = [...selectedEntities];
-    for (const entity of newEntities) {
-      const objectId = entity.nodeId || entity.id;
-      if (!selectedEntities.find((e: any) => (e.nodeId || e.id) === objectId)) {
-        updatedDiverse.push(entity);
-        diverseChanged = true;
-      }
-    }
-    if (diverseChanged) updateSelectedDiverseEntities(updatedDiverse);
   }, [
     linkingConfigIndex,
     soundGen,
     linkObjectToSound,
-    getSelectedDiverseEntities,
-    updateSelectedDiverseEntities,
   ]);
 
   // Enter commits the multi-selection, Escape cancels (grid-listener behaviour).
@@ -2425,39 +2310,6 @@ function HomeContent() {
   }, [soundGen, unlinkObjectFromSound, appIdToTreeIdMap]);
 
   /**
-   * Toggle entity in diverse selection (for LLM prompts)
-   * Used from entity overlay link button: grey <-> pink
-   * Works with both Three.js entities (index) and Speckle objects (nodeId/id)
-   *
-   * Uses SpeckleSelectionModeContext directly so it works even without a 3D Model card.
-   * The Model3DContextContent sync effect will update the card config if one exists.
-   */
-  const handleToggleDiverseSelection = useCallback((entity: any) => {
-    const entityId = entity.nodeId || entity.id;
-
-    if (entityId) {
-      // Speckle object: use context methods directly
-      const isCurrentlySelected = diverseSelectedObjectIds.has(entityId);
-
-      if (isCurrentlySelected) {
-        removeFromDiverseSelection(entityId);
-      } else {
-        addToDiverseSelection(entityId);
-      }
-    } else {
-      // Three.js entity (legacy): fall back to config-based approach
-      const selectedEntities = getSelectedDiverseEntities();
-      const isCurrentlySelected = selectedEntities.some(e => e.index === entity.index);
-
-      if (isCurrentlySelected) {
-        updateSelectedDiverseEntities(selectedEntities.filter(e => e.index !== entity.index));
-      } else {
-        updateSelectedDiverseEntities([...selectedEntities, entity]);
-      }
-    }
-  }, [diverseSelectedObjectIds, addToDiverseSelection, removeFromDiverseSelection, getSelectedDiverseEntities, updateSelectedDiverseEntities]);
-
-  /**
    * Detach sound from entity and create sound sphere
    * Used from entity overlay link button when clicking green (linked) state
    */
@@ -2475,37 +2327,14 @@ function HomeContent() {
     // Unlink the entity from the sound config AND update soundscape data
     // This will create a sound sphere in ThreeScene
     soundGen.handleDetachSoundFromEntity(configIndex);
-
-    // Add entity to diverse selection (pink highlight)
-    const selectedEntities = getSelectedDiverseEntities();
-    if (!selectedEntities.some(e => e.index === entity.index)) {
-      updateSelectedDiverseEntities([...selectedEntities, entity]);
-    }
-  }, [soundGen, getSelectedDiverseEntities, updateSelectedDiverseEntities]);
+  }, [soundGen]);
 
   /**
-   * Wrapper for handleUpdateConfig that handles entity unlinking
-   * When an entity is unlinked (set to undefined), also remove it from highlights
+   * Wrapper for handleUpdateConfig (kept for prop compatibility)
    */
   const handleUpdateSoundConfig = useCallback((index: number, field: keyof SoundGenerationConfig, value: any) => {
-    // Check if we're unlinking entities
-    if (field === 'entities' && (!value || (Array.isArray(value) && value.length === 0))) {
-      const currentConfig = soundGen.soundConfigs[index];
-      const previousEntities = currentConfig?.entities || [];
-
-      // Remove all previous entities from highlights
-      if (previousEntities.length) {
-        const selectedEntities = getSelectedDiverseEntities();
-        const updatedEntities = selectedEntities.filter(
-          (e: any) => !previousEntities.some((pe: any) => pe.index === e.index)
-        );
-        updateSelectedDiverseEntities(updatedEntities);
-      }
-    }
-
-    // Call the original handler
     soundGen.handleUpdateConfig(index, field, value);
-  }, [soundGen, getSelectedDiverseEntities, updateSelectedDiverseEntities]);
+  }, [soundGen]);
 
   /**
    * Handle selection of IR from server library
@@ -3126,17 +2955,7 @@ function HomeContent() {
         {/* Toggle between Speckle Scene and Three.js Scene */}
         {useSpeckleViewer ? (
           <SpeckleScene
-            speckleData={(() => {
-              // Priority: config with speckleData > globalSpeckleData
-              const modelConfigs = analysis.analysisConfigs.filter(c => c.type === '3d-model') as import('@/types/analysis').ModelAnalysisConfig[];
-              // Find the latest config that actually has speckleData
-              const configWithSpeckle = [...modelConfigs].reverse().find(c => c.speckleData !== undefined);
-              if (configWithSpeckle?.speckleData) {
-                return configWithSpeckle.speckleData;
-              }
-              // Fall back to globally loaded model
-              return globalSpeckleData;
-            })()}
+            speckleData={globalSpeckleData}
             onViewerLoaded={handleSpeckleViewerLoaded}
             isBootstrappingModel={isBootstrappingModel}
             // Audio system props
@@ -3170,29 +2989,6 @@ function HomeContent() {
                 soundGen.updateSoundPosition(soundId, position);
               }
             }}
-            // Sound Linking (entity linking from SoundCard to Speckle object)
-            entitiesWithLinkedSounds={(() => {
-              const linked = new Set<number>();
-              // Only highlight entities when in the Sounds step
-              if (!isInSoundsStep) return linked;
-              soundGen.soundConfigs.forEach((config) => {
-                // Match same parent logic as unifiedSoundscapeData
-                if (activeSoundParentIndex !== null
-                  ? config.parentUsageOriginalIndex !== activeSoundParentIndex
-                  : config.parentUsageOriginalIndex !== undefined && config.parentUsageOriginalIndex !== null
-                ) return;
-                if (config.entity && config.entity.id !== undefined) {
-                  const entityIndex = typeof config.entity.id === 'number'
-                    ? config.entity.id
-                    : parseInt(config.entity.id, 10);
-                  if (!isNaN(entityIndex)) {
-                    linked.add(entityIndex);
-                  }
-                }
-              });
-              return linked;
-            })()}
-            onToggleDiverseSelection={handleToggleDiverseSelection}
             // Sound card selection (for expand/highlight logic)
             selectedCardIndex={selectedCardIndex}
             onSelectSoundCard={handleSelectSoundCard}
@@ -3251,16 +3047,15 @@ function HomeContent() {
         modelEntities={fileUpload.modelEntities}
         isAnalyzingModel={fileUpload.isAnalyzingModel}
         analysisProgress={fileUpload.analysisProgress}
-        useModelAsContext={fileUpload.useModelAsContext}
         onFileChange={handleFileChangeWithSEDClear}
         onDragOver={fileUpload.handleDragOver}
         onDragLeave={fileUpload.handleDragLeave}
         onDrop={fileUpload.handleDrop}
         onUploadModel={fileUpload.handleUploadModel}
         onLoadSampleIfc={() => {}}
-        setUseModelAsContext={fileUpload.setUseModelAsContext}
         activeLoadTab={activeLoadTab}
         setActiveLoadTab={setActiveLoadTab}
+        onWidthChange={setLeftSidebarContentWidth}
 
         // SED props
         isSEDAnalyzing={sed.isSEDAnalyzing}
@@ -3282,12 +3077,9 @@ function HomeContent() {
         llmProgress={textGen.llmProgress}
         showConfirmLoadSounds={textGen.showConfirmLoadSounds}
         pendingSoundConfigs={textGen.pendingSoundConfigs}
-        selectedDiverseEntities={textGen.selectedDiverseEntities}
-        isAnalyzingEntities={textGen.isAnalyzingEntities}
         setAiPrompt={textGen.setAiPrompt}
         setNumSounds={textGen.setNumSounds}
         onGenerateText={textGen.handleGenerateText}
-        onAnalyzeModel={textGen.handleAnalyzeModel}
         onStopGeneration={textGen.handleStopGeneration}
         onLoadSoundsToGeneration={handleLoadSoundsToGeneration}
 
@@ -3352,7 +3144,7 @@ function HomeContent() {
         onAddAnalysisConfig={handleAddAnalysisConfig}
         onRemoveAnalysisConfig={analysis.handleRemoveConfig}
         onUpdateAnalysisConfig={analysis.handleUpdateConfig}
-        onAnalyze={handleAnalyzeWithContext}
+        onAnalyze={analysis.handleAnalyze}
         onStop={analysis.handleStopAnalysis}
         onTogglePromptSelection={analysis.handleTogglePromptSelection}
         onSendToSoundGeneration={handleSendAnalysisToGeneration}
@@ -3480,12 +3272,7 @@ function HomeContent() {
         onHoverGeometry={handleHoverGeometry}
         onAssignMaterial={handleAssignMaterial}
         modelFile={fileUpload.modelFile}
-        speckleData={(() => {
-          const modelConfigs = analysis.analysisConfigs.filter(c => c.type === '3d-model') as import('@/types/analysis').ModelAnalysisConfig[];
-          const configWithSpeckle = [...modelConfigs].reverse().find(c => c.speckleData !== undefined);
-          if (configWithSpeckle?.speckleData) return configWithSpeckle.speckleData;
-          return globalSpeckleData;
-        })()}
+        speckleData={globalSpeckleData}
         soundscapeData={soundGen.soundscapeData}
         onIRImported={handleIRImported}
         irRefreshTrigger={irRefreshTrigger}

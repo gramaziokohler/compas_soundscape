@@ -69,6 +69,7 @@ export class SpeckleEventBridge {
    *  shift+click selection ourselves instead of trusting Speckle's internals. */
   private selectionBeforeClick: string[] = [];
   private lastClickWasShift = false;
+  private lastClickWasCtrl = false;
 
   // Orbit/drag detection to prevent selection while orbiting the camera
   private static readonly DRAG_THRESHOLD_PX = 4;
@@ -225,6 +226,8 @@ export class SpeckleEventBridge {
    *   - plain single-click on empty space → clear
    *   - shift+click on an object          → add to the existing selection
    *   - shift+click on empty space        → keep the existing selection
+   *   - ctrl/cmd+click on an object       → remove it from the existing selection
+   *   - ctrl/cmd+click on empty space     → keep the existing selection
    * then applies it to the SelectionExtension (so the viewer highlight is exactly
    * the same set we report). The ids we report are the render-data ids resolved by
    * findVisibleSpeckleHit — the same ids the box-select path uses — so the
@@ -235,12 +238,14 @@ export class SpeckleEventBridge {
       const snap = this.savedFilterSnapshot;
       const expectedId = this.expectedSpeckleHitId;
       const shift = this.lastClickWasShift;
+      const ctrl = this.lastClickWasCtrl;
       const before = this.selectionBeforeClick;
 
       // Clear saved state
       this.savedFilterSnapshot = null;
       this.expectedSpeckleHitId = null;
       this.lastClickWasShift = false;
+      this.lastClickWasCtrl = false;
       this.selectionBeforeClick = [];
 
       // Previous selection minus anything that is currently filtered out —
@@ -248,7 +253,11 @@ export class SpeckleEventBridge {
       const previousValid = before.filter((id) => !this.isObjectFilteredOut(id));
 
       let desired: string[];
-      if (shift) {
+      if (ctrl) {
+        // Subtractive. Clicking an object removes it from the current selection;
+        // clicking empty space leaves the current selection untouched.
+        desired = expectedId ? previousValid.filter((id) => id !== expectedId) : previousValid;
+      } else if (shift) {
         // Additive. Clicking an object adds it (if not already present);
         // clicking empty space leaves the current selection untouched.
         desired = previousValid;
@@ -639,6 +648,7 @@ export class SpeckleEventBridge {
     }
 
     this.lastClickWasShift = event.shiftKey;
+    this.lastClickWasCtrl = event.ctrlKey || event.metaKey;
 
     this.updateMouseFromEvent(event);
 

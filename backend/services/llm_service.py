@@ -685,6 +685,8 @@ No explanation, just the JSON array."""
                     desc += f" on layer '{entity['layer']}'"
                 if entity.get('material'):
                     desc += f" with material '{entity['material']}'"
+                if entity.get('description'):
+                    desc += f" — {entity['description']}"
                 entity_descriptions.append(desc)
 
             entities_text = "\n".join(entity_descriptions)
@@ -745,7 +747,10 @@ Generate exactly {num_sounds} sounds total"""
 
 For each sound, provide a 2 to 10 words sound prompt, a short 2-3 word display name, estimate a target loudness level in dBFS (decibels relative to digital full scale), estimate how often this sound would typically occur (in seconds), estimate the typical duration of the sound event (in seconds with 0.1 precision), AND indicate if it's linked to an entity.
 
-Format your response as a numbered list with each sound using this EXACT format, without any extra text:
+First, give a short 2 to 3 word title for the whole soundscape, in title case. Then output the numbered list.
+
+Format your response EXACTLY like this, without any extra text:
+TITLE: [your 2-3 word soundscape title here]
 1. PROMPT: [your sound prompt here]
 NAME: [your 2-3 word display name here]
 SPL: [estimated dBFS value, e.g., -18]
@@ -793,202 +798,219 @@ For the duration estimation (in seconds with 0.1 precision):
     
     """
 
-    async def generate_prompts_for_entities(self, entities: list[dict], num_sounds: int, context: str = None, llm_model: str = DEFAULT_LLM_MODEL) -> list[dict]:
-        """Generate sound prompts mixing entity-based and context-based sounds
+    @staticmethod
+    def _extract_title(text: str) -> str:
+        """Extract a leading `TITLE: ...` line (2-3 word soundscape title)."""
+        match = re.search(r'TITLE\s*:\s*(.+?)(?:\n|$)', text, re.IGNORECASE)
+        if not match:
+            return ""
+        return re.sub(r'^[`"\'*\[\]\s]+|[`"\'*\[\]\s]+$', '', match.group(1).strip())
 
-        Args:
-            entities: List of entity dictionaries from 3D model
-            num_sounds: Total number of sounds to generate (can be more or less than len(entities))
-            context: Optional context description
+    @staticmethod
+    def _finalize_sound(parsed: dict, title: str, groups: list[dict] | None = None) -> dict:
+        """Attach the soundscape title and resolve ENTITY numbers to whole groups."""
+        parsed["soundscape_title"] = title
+        if groups:
+            indices = parsed.get("entity_indices", [])
+            parsed["entities"] = [groups[i] for i in indices if 0 <= i < len(groups)]
+        return parsed
 
-        Returns:
-            list[dict]: List of {"prompt": str, "display_name": str, "dbfs": float, "interval_seconds": float, "duration_seconds": float, "entity_indices": list[int]}
-        """
-        if num_sounds <= 0:
-            return []
-
-        llm_prompt = self._create_base_sound_prompt(context or "", num_sounds, entities)
-
-        try:
-            response_text = str(await self._call_llm(llm_prompt, operation_name="Sound prompt generation", llm_model=llm_model)).strip()
-
-            # Print raw LLM response to terminal
-            print(f"\n=== LLM Raw Response (Mixed Generation: {num_sounds} sounds from {len(entities) if entities else 0} entities) ===")
-            print(response_text)
-            print("=" * 60 + "\n", flush=True)
-
-            sound_list = []
-
-            # Split by numbered entries (1., 2., etc.)
-            entries = re.split(r'\n\s*\d+[\.\)]\s*', response_text)
-
-            for i, entry in enumerate(entries):
-                entry = entry.strip()
-                if not entry:
-                    continue
-
-                # Use unified parsing function
-                parsed = self._parse_prompt_and_name(entry)
-
-                if parsed:
-                    sound_list.append(parsed)
-                else:
-                    # Fallback: treat as plain prompt, extract name from entity
-                    cleaned = re.sub(r'^\d+[\.\)]\s*', '', entry)
-                    cleaned = re.sub(r'^[-\*]\s*', '', cleaned)
-
-                    if cleaned:
-                        # Try to get display name from corresponding entity
-                        entity_idx = len(sound_list)  # Current position in results
-                        if entity_idx < len(entities):
-                            entity = entities[entity_idx]
-                            display_name = entity.get('name') or entity.get('type', 'Sound')
-                            if len(display_name) > 20:
-                                display_name = display_name[:20]
-                            display_name = display_name.title()
-                        else:
-                            # Fallback: extract from prompt
-                            words = cleaned.split()
-                            skip_words = {'a', 'an', 'the', 'subtle', 'gentle', 'soft', 'loud', 'quiet', 'clear', 'heavy', 'light'}
-                            name_words = [w for w in words[:5] if w.lower() not in skip_words][:3]
-                            display_name = ' '.join(name_words).title() if name_words else 'Sound'
-
-                        sound_list.append({
-                            "prompt": cleaned,
-                            "display_name": display_name,
-                            "dbfs": DEFAULT_DBFS,
-                            "interval_seconds": LLM_SUGGESTED_INTERVAL_SECONDS,
-                            "duration_seconds": DEFAULT_DURATION_SECONDS,
-                            "entity_indices": []  # Fallback case: no entity linkage
-                        })
-
-            return sound_list
-
-        except Exception as e:
-            print(f"Error generating prompts for entities: {e}")
-            raise
-
-    async def generate_text_based_prompts(self, context: str, num_sounds: int, llm_model: str = DEFAULT_LLM_MODEL) -> tuple[str, list[dict]]:
-        """Generate sound prompts with display names from text description only
-
-        Returns:
-            tuple: (raw_text, list of {"prompt": str, "display_name": str, "dbfs": float, "interval_seconds": float, "duration_seconds": float, "entity_indices": []})
-        """
-        # Use unified base prompt (no entities)
-        enhanced_prompt = self._create_base_sound_prompt(context, num_sounds, entities=None)
-
-        raw_text: str = str(await self._call_llm(enhanced_prompt, operation_name="Text-based prompt generation", llm_model=llm_model))
-
-        # Print raw LLM response to terminal
-        print(f"\n=== LLM Raw Response (Text-based generation) ===")
-        print(raw_text)
-        print("=" * 60 + "\n")
-
-        sound_list = []
-
-        # Split by numbered entries (1., 2., etc.)
-        entries = re.split(r'\n\s*\d+[\.\)]\s*', raw_text)
-
+    def _parse_full_sound_response(
+        self, raw_text: str, groups: list[dict] | None = None
+    ) -> list[dict]:
+        """Split a full LLM response into parsed sound dicts (shared by all strategies)."""
+        title = self._extract_title(raw_text)
+        # Drop the leading TITLE line so it isn't mistaken for a sound entry.
+        body = re.sub(r'TITLE\s*:\s*.+?(?:\n|$)', '', raw_text, count=1, flags=re.IGNORECASE)
+        sound_list: list[dict] = []
+        entries = re.split(r'\n\s*\d+[\.\)]\s*', body)
         for entry in entries:
             entry = entry.strip()
             if not entry:
                 continue
-
-            # Use unified parsing function
             parsed = self._parse_prompt_and_name(entry)
-
             if parsed:
-                sound_list.append(parsed)
+                sound_list.append(self._finalize_sound(parsed, title, groups))
+                continue
+            # Fallback: treat the entry as a plain prompt.
+            cleaned = re.sub(r'^\d+[\.\)]\s*', '', entry)
+            cleaned = re.sub(r'^[-\*]\s*', '', cleaned)
+            if not cleaned:
+                continue
+            entity_idx = len(sound_list)
+            if groups and entity_idx < len(groups):
+                display_name = (groups[entity_idx].get('name') or 'Sound')[:20].title()
             else:
-                # Fallback: treat as plain prompt, extract name from first few words
-                cleaned = re.sub(r'^\d+[\.\)]\s*', '', entry)
-                cleaned = re.sub(r'^[-\*]\s*', '', cleaned)
+                words = cleaned.split()
+                skip_words = {'a', 'an', 'the', 'subtle', 'gentle', 'soft', 'loud', 'quiet', 'clear', 'heavy', 'light'}
+                name_words = [w for w in words[:5] if w.lower() not in skip_words][:3]
+                display_name = ' '.join(name_words).title() if name_words else 'Sound'
+            sound_list.append({
+                "prompt": cleaned,
+                "display_name": display_name,
+                "dbfs": DEFAULT_DBFS,
+                "interval_seconds": LLM_SUGGESTED_INTERVAL_SECONDS,
+                "duration_seconds": DEFAULT_DURATION_SECONDS,
+                "entity_indices": [],
+                "soundscape_title": title,
+            })
+        return sound_list
 
-                if cleaned:
-                    words = cleaned.split()
-                    # Try to find nouns (skip common adjectives)
-                    skip_words = {'a', 'an', 'the', 'subtle', 'gentle', 'soft', 'loud', 'quiet', 'clear', 'heavy', 'light'}
-                    name_words = [w for w in words[:5] if w.lower() not in skip_words][:3]
-                    display_name = ' '.join(name_words).title() if name_words else 'Sound'
+    async def _stream_sound_entries(
+        self,
+        llm_prompt: str,
+        *,
+        operation_name: str,
+        llm_model: str,
+        groups: list[dict] | None = None,
+    ):
+        """Stream parsed sound dicts from a `_create_base_sound_prompt` response.
+        Shared by the text / entity / analysis strategies (single parse path)."""
+        _ENTRY_START = re.compile(r'\n\s*\d+[\.\)]\s+')
+        buffer = ""
+        title = ""
+        async for chunk in self._stream_llm_chunks(
+            llm_prompt, operation_name=operation_name, llm_model=llm_model
+        ):
+            buffer += chunk
+            while True:
+                match = _ENTRY_START.search(buffer, 1)
+                if not match:
+                    break
+                header = buffer[:match.start()]
+                if not title:
+                    title = self._extract_title(header)
+                buffer = buffer[match.start():]
+                entry_clean = re.sub(r'^\s*\d+[\.\)]\s*', '', header.strip())
+                if entry_clean:
+                    parsed = self._parse_prompt_and_name(entry_clean)
+                    if parsed:
+                        yield self._finalize_sound(parsed, title, groups)
+        if buffer.strip():
+            if not title:
+                title = self._extract_title(buffer)
+            entry_clean = re.sub(r'^\s*\d+[\.\)]\s*', '', buffer.strip())
+            if entry_clean:
+                parsed = self._parse_prompt_and_name(entry_clean)
+                if parsed:
+                    yield self._finalize_sound(parsed, title, groups)
 
-                    sound_list.append({
-                        "prompt": cleaned,
-                        "display_name": display_name,
-                        "dbfs": DEFAULT_DBFS,
-                        "interval_seconds": LLM_SUGGESTED_INTERVAL_SECONDS,
-                        "duration_seconds": DEFAULT_DURATION_SECONDS,
-                        "entity_indices": []  # Text-based prompts have no entity linkage
-                    })
+    def _analysis_context_text(
+        self,
+        groups: list[dict],
+        space_description: str,
+        user_context: str | None,
+        num_sounds: int,
+    ) -> str:
+        """Fold the analysis result into the text context of the shared base prompt."""
+        parts: list[str] = []
+        if space_description and space_description.strip():
+            parts.append(space_description.strip())
+        if user_context and user_context.strip():
+            parts.append(user_context.strip())
+        if groups:
+            lines = ["The space contains these objects:"]
+            for i, g in enumerate(groups):
+                line = f"{i + 1}. {g.get('name') or f'Object {i + 1}'}"
+                if g.get("material"):
+                    line += f" (material: {g['material']})"
+                if g.get("description"):
+                    line += f" — {g['description']}"
+                lines.append(line)
+            # The core strategy is a MIX: entity-linked sounds AND ambient/context
+            # sounds that aren't tied to a specific object. Without this explicit
+            # instruction the model tends to link every sound to an object.
+            max_linked = min(len(groups), max(1, num_sounds - 2))
+            lines.append(
+                f"Generate exactly {num_sounds} sounds as a MIX of two kinds:\n"
+                f"- ENTITY-LINKED sounds produced by the objects above — set ENTITY to the "
+                f"object's number (comma-separate multiple). Use at most {max_linked} of these.\n"
+                f"- NON-ENTITY ambient/context sounds that fit the space but are not tied to any "
+                f"specific object — set ENTITY: NONE. Include at least "
+                f"{max(1, num_sounds - max_linked)} of these (e.g. footsteps, chatter, HVAC, "
+                f"distant traffic, background activity).\n"
+                f"Do NOT link every sound to an object."
+            )
+            parts.append("\n".join(lines))
+        return "\n\n".join(parts)
 
-        return raw_text, sound_list
+    async def generate_prompts_for_entities(self, entities: list[dict], num_sounds: int, context: str = None, llm_model: str = DEFAULT_LLM_MODEL) -> list[dict]:
+        """Generate sound prompts mixing entity-based and context-based sounds."""
+        if num_sounds <= 0:
+            return []
+        llm_prompt = self._create_base_sound_prompt(context or "", num_sounds, entities)
+        response_text = str(await self._call_llm(llm_prompt, operation_name="Sound prompt generation", llm_model=llm_model)).strip()
+        print(f"\n=== LLM Raw Response (Mixed Generation: {num_sounds} sounds from {len(entities) if entities else 0} entities) ===")
+        print(response_text)
+        print("=" * 60 + "\n", flush=True)
+        return self._parse_full_sound_response(response_text, entities)
+
+    async def generate_text_based_prompts(self, context: str, num_sounds: int, llm_model: str = DEFAULT_LLM_MODEL) -> tuple[str, list[dict]]:
+        """Generate sound prompts with display names from text description only."""
+        enhanced_prompt = self._create_base_sound_prompt(context, num_sounds, entities=None)
+        raw_text: str = str(await self._call_llm(enhanced_prompt, operation_name="Text-based prompt generation", llm_model=llm_model))
+        print(f"\n=== LLM Raw Response (Text-based generation) ===")
+        print(raw_text)
+        print("=" * 60 + "\n")
+        return raw_text, self._parse_full_sound_response(raw_text)
+
+    async def generate_analysis_prompts(
+        self,
+        groups: list[dict],
+        space_description: str,
+        user_context: str | None,
+        num_sounds: int,
+        llm_model: str = DEFAULT_LLM_MODEL,
+    ) -> tuple[str, list[dict]]:
+        """Generate sound prompts from a 3D model analysis result using the shared
+        text strategy (`_create_base_sound_prompt`, entities=None); ENTITY numbers
+        are mapped back to whole analysis groups."""
+        context = self._analysis_context_text(groups, space_description, user_context, num_sounds)
+        enhanced_prompt = self._create_base_sound_prompt(context, num_sounds, entities=None)
+        raw_text: str = str(await self._call_llm(enhanced_prompt, operation_name="Analysis prompt generation", llm_model=llm_model))
+        print(f"\n=== LLM Raw Response (Analysis-based generation) ===")
+        print(raw_text)
+        print("=" * 60 + "\n")
+        return raw_text, self._parse_full_sound_response(raw_text, groups)
 
     async def stream_generate_text_based_prompts(
         self, context: str, num_sounds: int, llm_model: str = DEFAULT_LLM_MODEL
     ):
-        """Async generator yielding sound dicts one by one as they are parsed from the live LLM stream.
-
-        Yields:
-            dict: same shape as generate_text_based_prompts result items
-        """
+        """Stream sound dicts from a text description."""
         enhanced_prompt = self._create_base_sound_prompt(context, num_sounds, entities=None)
-        _ENTRY_START = re.compile(r'\n\s*\d+[\.\)]\s+')
-        buffer = ""
-        async for chunk in self._stream_llm_chunks(
+        async for sound in self._stream_sound_entries(
             enhanced_prompt, operation_name="Text-based prompt streaming", llm_model=llm_model
         ):
-            buffer += chunk
-            while True:
-                match = _ENTRY_START.search(buffer, 1)
-                if not match:
-                    break
-                completed = buffer[: match.start()]
-                buffer = buffer[match.start():]
-                entry_clean = re.sub(r'^\s*\d+[\.\)]\s*', '', completed.strip())
-                if entry_clean:
-                    parsed = self._parse_prompt_and_name(entry_clean)
-                    if parsed:
-                        yield parsed
-        # Yield trailing entry
-        if buffer.strip():
-            entry_clean = re.sub(r'^\s*\d+[\.\)]\s*', '', buffer.strip())
-            if entry_clean:
-                parsed = self._parse_prompt_and_name(entry_clean)
-                if parsed:
-                    yield parsed
+            yield sound
+
+    async def stream_generate_analysis_prompts(
+        self,
+        groups: list[dict],
+        space_description: str,
+        user_context: str | None,
+        num_sounds: int,
+        llm_model: str = DEFAULT_LLM_MODEL,
+    ):
+        """Stream sound dicts from a 3D model analysis result (shared text strategy)."""
+        context = self._analysis_context_text(groups, space_description, user_context, num_sounds)
+        llm_prompt = self._create_base_sound_prompt(context, num_sounds, entities=None)
+        async for sound in self._stream_sound_entries(
+            llm_prompt,
+            operation_name="Analysis prompt streaming",
+            llm_model=llm_model,
+            groups=groups,
+        ):
+            yield sound
 
     async def stream_generate_prompts_for_entities(
         self, entities: list[dict], num_sounds: int, context: str | None = None, llm_model: str = DEFAULT_LLM_MODEL
     ):
-        """Async generator yielding sound dicts one by one as they are parsed from the live LLM stream.
-
-        Yields:
-            dict: same shape as generate_prompts_for_entities result items
-        """
+        """Stream sound dicts linked to model entities."""
         llm_prompt = self._create_base_sound_prompt(context or "", num_sounds, entities)
-        _ENTRY_START = re.compile(r'\n\s*\d+[\.\)]\s+')
-        buffer = ""
-        async for chunk in self._stream_llm_chunks(
-            llm_prompt, operation_name="Entity prompt streaming", llm_model=llm_model
+        async for sound in self._stream_sound_entries(
+            llm_prompt, operation_name="Entity prompt streaming", llm_model=llm_model, groups=entities
         ):
-            buffer += chunk
-            while True:
-                match = _ENTRY_START.search(buffer, 1)
-                if not match:
-                    break
-                completed = buffer[: match.start()]
-                buffer = buffer[match.start():]
-                entry_clean = re.sub(r'^\s*\d+[\.\)]\s*', '', completed.strip())
-                if entry_clean:
-                    parsed = self._parse_prompt_and_name(entry_clean)
-                    if parsed:
-                        yield parsed
-        # Yield trailing entry
-        if buffer.strip():
-            entry_clean = re.sub(r'^\s*\d+[\.\)]\s*', '', buffer.strip())
-            if entry_clean:
-                parsed = self._parse_prompt_and_name(entry_clean)
-                if parsed:
-                    yield parsed
+            yield sound
 
     def _parse_architecture_object(self, text: str) -> dict | None:
         """Parse a NAME:/DESCRIPTION:/MATERIAL:/QUANTITY:/IDS: block.

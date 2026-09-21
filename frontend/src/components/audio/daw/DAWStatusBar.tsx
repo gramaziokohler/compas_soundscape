@@ -4,6 +4,9 @@ import { useState, useCallback, useEffect, useRef, useLayoutEffect } from 'react
 import { createPortal } from 'react-dom';
 import { DAWTransportBtn, DAWPlayIcon, DAWPauseIcon, DAWStopIcon } from './DAWTransportBtn';
 import { NumberField } from '@/components/ui/NumberField';
+import { InfoPopover } from '@/components/ui/InfoPopover';
+import { useIsMac } from '@/hooks/useIsMac';
+import { formatShortcutKeys } from '@/utils/platform';
 import { DAW } from '@/utils/constants';
 import type { SnapMode } from './daw-snap';
 import type { ExportFormat } from '@/lib/audio/SoundscapeExporter';
@@ -20,6 +23,20 @@ const SNAP_OPTIONS: Array<{ value: SnapMode; label: string }> = [
   { value: 0.5, label: '0.5s' },
   { value: 1, label: '1s' },
   { value: 'smart', label: 'Smart' },
+];
+
+const TIMELINE_SHORTCUTS: Array<[string, string]> = [
+  ['Ctrl + A', 'Select all clips'],
+  ['Ctrl + C', 'Copy selected'],
+  ['Ctrl + V', 'Paste at playhead'],
+  ['Delete', 'Delete selected'],
+  ['← / →', 'Nudge by snap step'],
+  ['Shift + ← / →', 'Nudge ×10'],
+  ['Shift / Ctrl + click', 'Add to selection'],
+  ['Esc', 'Clear selection'],
+  ['Shift + drag ruler', 'Loop region'],
+  ['Alt + wheel', 'Horizontal zoom'],
+  ['Ctrl + wheel', 'Track height zoom'],
 ];
 
 interface DAWStatusBarProps {
@@ -82,6 +99,7 @@ export function DAWStatusBar({
   const downloadBtnRef = useRef<HTMLButtonElement>(null);
   const downloadMenuRef = useRef<HTMLDivElement>(null);
   const downloadAnchorRef = useRef<{ x: number; y: number } | null>(null);
+  const isMac = useIsMac();
 
   const handleDownload = useCallback(async (format: ExportFormat) => {
     if (!onDownload) return;
@@ -280,9 +298,25 @@ export function DAWStatusBar({
         </span>
       </div>
 
-      {/* Right: snap, zoom, export — pushed to the far edge (the transport is
-          absolutely centred above, so it stays out of the flex flow). */}
-      <label style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 'auto' }}>
+      {/* Right: shortcuts, snap, zoom, export — pushed to the far edge (the
+          transport is absolutely centred above, so it stays out of the flex flow). */}
+      <InfoPopover
+        title="Shortcuts"
+        label="Timeline shortcuts"
+        trigger="Shortcuts"
+        className="ml-auto flex items-center"
+        triggerClassName="text-[9px] text-secondary-hover hover:text-foreground transition-colors cursor-pointer"
+      >
+        <div className="flex flex-col gap-1">
+          {TIMELINE_SHORTCUTS.map(([keys, action]) => (
+            <div key={action} className="flex items-baseline justify-between gap-3 text-[10px]">
+              <span className="text-foreground">{action}</span>
+              <span className="text-secondary-hover whitespace-nowrap">{formatShortcutKeys(keys, isMac)}</span>
+            </div>
+          ))}
+        </div>
+      </InfoPopover>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
         <select
           value={String(snapMode)}
           onChange={(e) => {

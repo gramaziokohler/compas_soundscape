@@ -190,6 +190,9 @@ export type { SEDStoreState } from './sedStore';
 export { useScenarioPreviewStore } from './scenarioPreviewStore';
 export type { ScenarioPreviewStoreState, ScenarioPreviewParcours, ScenarioPreviewStop } from './scenarioPreviewStore';
 
+export { useAnalysisPreviewStore } from './analysisPreviewStore';
+export type { AnalysisPreviewStoreState, AnalysisPreviewPoint } from './analysisPreviewStore';
+
 export { useModalImpactStore };
 export type { ModalImpactStoreState } from './modalImpactStore';
 

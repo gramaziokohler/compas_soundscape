@@ -5,7 +5,7 @@ import type { ScenarioConfig } from '@/types/analysis';
 import type { AnalyzeModelConfig } from '@/types/analysis';
 import { RangeSlider } from '@/components/ui/RangeSlider';
 import { ToggleField } from '@/components/ui/ToggleField';
-import { useAnalysisStore, useScenarioPreviewStore, useSpeckleStore } from '@/store';
+import { useAnalysisStore, useCardFlowStore, useScenarioPreviewStore, useSpeckleStore } from '@/store';
 import { pauseStore, commitStore } from '@/store';
 import type { ScenarioPreviewParcours, ScenarioPreviewStop } from '@/store';
 import { ScenarioResultContent } from './ScenarioResultContent';
@@ -189,13 +189,11 @@ export function getScenarioPipelineStatus(
 // getScenarioPipelineStatus — not as inline text in the expanded body.
 
 export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; index: number }) {
-  const handleAnalyze = useAnalysisStore((s) => s.handleAnalyze);
-  const analyzingConfigIndex = useAnalysisStore((s) => s.analyzingConfigIndex);
-
-  const isOperationRunning = analyzingConfigIndex === index;
-  const scenarioCompleted = !!config.scenarioId;
   const hasFoley = !!config.foleyResult;
-  const hasSpeech = !!config.speechResult;
+
+  // Once this scenario has been sent to the Sounds step, its foley sound list is
+  // no longer shown here — the sounds live in the Sounds step.
+  const sentToSounds = useCardFlowStore((s) => s.usageAdvanced.has(index));
 
   // Always show scenario events — foley sounds are shown in the Sounds step, not here
   const scenarios = config.scenarioResult?.scenarios ?? [];
@@ -267,8 +265,8 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
         </div>
       ))}
 
-      {/* Foley results — toggleable foley sounds (shown when foley done) */}
-      {hasFoley && config.foleyResult && (
+      {/* Foley results — toggleable foley sounds (shown when foley done and not yet sent to Sounds) */}
+      {hasFoley && config.foleyResult && !sentToSounds && (
         <div
           className="border-t"
           style={{ borderTopColor: 'var(--color-on-blue-faint)', paddingTop: 'var(--card-gap-row)' }}
@@ -279,21 +277,6 @@ export function ScenarioAfterView({ config, index }: { config: ScenarioConfig; i
             onToggle={(key) => useAnalysisStore.getState().handleToggleFoleySound(index, key)}
           />
         </div>
-      )}
-
-      {/* Re-send — shown when foley + speech are done, clicking re-sends the cards */}
-      {scenarioCompleted && !isOperationRunning && hasFoley && hasSpeech && (
-        <button
-          onClick={() => handleAnalyze(index)}
-          className="w-full py-1.5 px-3 text-xs font-medium rounded hover:opacity-80 transition-opacity"
-          style={{
-            backgroundColor: 'var(--color-warning)',
-            color: '#fff',
-            borderRadius: '6px',
-          }}
-        >
-          Re-send to Sound Generation
-        </button>
       )}
     </div>
   );
@@ -318,13 +301,13 @@ export function ScenarioContent({
 }: ScenarioContentProps) {
   const { analysisConfigs } = useAnalysisStore();
 
-  const hasAnalysisResult = useMemo(
-    () =>
-      analysisConfigs.some(
-        (c) => c.type === 'model-analysis' && (c as AnalyzeModelConfig).analysisResult?.analysisId,
-      ),
-    [analysisConfigs],
-  );
+  // Parent-only analysis availability (multiple model-analysis cards may exist).
+  const parent = config.parentContextOriginalIndex !== undefined
+    ? analysisConfigs[config.parentContextOriginalIndex]
+    : undefined;
+  const hasAnalysisResult =
+    parent?.type === 'model-analysis' &&
+    !!(parent as AnalyzeModelConfig).analysisResult?.analysisId;
 
   return (
     <div className="card-stack">

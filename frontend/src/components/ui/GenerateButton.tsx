@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Play } from 'lucide-react';
+import { Play, Sparkles } from 'lucide-react';
 
 /**
  * GenerateButton Component
@@ -10,7 +10,7 @@ import { Play } from 'lucide-react';
  * derived by the caller from existing store-driven state (isRunning / hasResult).
  *
  * - `idle`       → transparent row: small left-aligned label + Play icon fixed
- *                  on the right
+ *                  on the right (a sparkle "magic AI" icon when `isAi` is set)
  * - `generating` → tiny polling status text above a thin progress track, with
  *                  the Stop icon superposed in the same right-hand spot as Play
  *                  (same color, hover animation)
@@ -43,6 +43,12 @@ export interface GenerateButtonProps {
   statusText?: string;
   /** Label for the idle-state action button (default: "Generate") */
   label?: string;
+  /**
+   * Marks the idle action as AI-driven — renders the sparkle "magic AI" icon
+   * instead of the Play triangle (e.g. LLM analysis, TangoFlux generation).
+   * The done-state continue action always keeps the Play icon (it navigates).
+   */
+  isAi?: boolean;
   /** Disables the idle-state action button */
   disabled?: boolean;
   /** Error message flashed in red when a disabled button is clicked */
@@ -65,6 +71,7 @@ export function GenerateButton({
   progress,
   statusText,
   label = 'Generate',
+  isAi = false,
   disabled = false,
   disabledReason,
   onGenerate,
@@ -164,7 +171,16 @@ export function GenerateButton({
         aria-label={disabled ? (disabledReason || label) : label}
       >
         <span>{label}</span>
-        <Play size={11} fill="currentColor" />
+        {isAi ? (
+          <Sparkles
+            size={13}
+            fill="currentColor"
+            strokeWidth={1}
+            style={{ width: 13, height: 13 }}
+          />
+        ) : (
+          <Play size={11} fill="currentColor" />
+        )}
       </button>
     </div>
   );

@@ -8,6 +8,7 @@
  */
 
 import type { SEDAudioInfo, SEDAnalysisOptions } from './sed';
+import type { DrawnArea } from './area-drawing';
 import type { CardBaseConfig, CardType } from './card';
 
 // ============================================================================
@@ -23,27 +24,6 @@ export interface AnalysisBaseConfig extends CardBaseConfig {
   parentContextOriginalIndex?: number;
   /** Per-card config-validation error message, rendered as an inline Notice bar (not a toast) */
   error?: string | null;
-}
-
-/**
- * 3D Model Analysis Config
- */
-export interface ModelAnalysisConfig extends AnalysisBaseConfig {
-  type: '3d-model';
-  modelFile: File | null;
-  modelEntities: any[];
-  selectedDiverseEntities: any[];
-  useModelAsContext: boolean;
-  geometryData?: any;
-  liveScreenshots?: string[];
-  speckleData?: {
-    model_id: string;
-    version_id: string;
-    file_id: string;
-    url: string;
-    object_id: string;
-    auth_token?: string;
-  };
 }
 
 /**
@@ -68,7 +48,10 @@ export interface AudioAnalysisConfig extends AnalysisBaseConfig {
 export interface TextAnalysisConfig extends AnalysisBaseConfig {
   type: 'text';
   textInput: string;
-  useModelAsContext: boolean;
+  /** Use the parent 3D model analysis as context (links prompts to analysis groups). */
+  useAnalysisResult: boolean;
+  /** Polygon area drawn in the viewer; sounds are placed inside it when present. */
+  drawnArea?: DrawnArea | null;
 }
 
 /**
@@ -117,7 +100,7 @@ export interface AnalyzeModelConfig extends AnalysisBaseConfig {
 /**
  * Union type for all analysis configs
  */
-export type AnalysisConfig = ModelAnalysisConfig | AudioAnalysisConfig | TextAnalysisConfig | AnalyzeModelConfig | ScenarioConfig | FreeformConfig;
+export type AnalysisConfig = AudioAnalysisConfig | TextAnalysisConfig | AnalyzeModelConfig | ScenarioConfig | FreeformConfig;
 
 // ============================================================================
 // Freeform Config

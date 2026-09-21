@@ -17,7 +17,6 @@ export type { ReceiverData, ReceiverOverlay, GridListenerData };
 
 // Import and re-export Analysis types
 import type {
-  ModelAnalysisConfig,
   AudioAnalysisConfig,
   TextAnalysisConfig,
   AnalysisConfig,
@@ -30,7 +29,6 @@ import type {
   ScenarioSource,
 } from './analysis';
 export type {
-  ModelAnalysisConfig,
   AudioAnalysisConfig,
   TextAnalysisConfig,
   AnalysisConfig,

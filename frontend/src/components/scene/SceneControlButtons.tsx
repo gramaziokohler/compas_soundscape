@@ -14,10 +14,8 @@ interface SceneControlButtonsProps {
   rightSidebarWidth?: number;
   audioOrchestrator: AudioOrchestrator | null;
   soundscapeData: SoundEvent[] | null;
-  showTimeline: boolean;
   onResetZoom: () => void;
   onRefreshScene: () => void;
-  onToggleTimeline: () => void;
   /** Extra bottom offset (px) so the docked DAW timeline doesn't cover these controls. */
   bottomOffset?: number;
 }
@@ -28,10 +26,8 @@ export function SceneControlButtons({
   rightSidebarWidth,
   audioOrchestrator,
   soundscapeData,
-  showTimeline,
   onResetZoom,
   onRefreshScene,
-  onToggleTimeline,
   bottomOffset = 0,
 }: SceneControlButtonsProps) {
   const [globalVolume, setGlobalVolume] = useState(0.8);
@@ -118,27 +114,6 @@ export function SceneControlButtons({
         title="Refresh scene"
         icon={
           <RefreshIcon size="0.8rem" />
-        }
-      />
-
-      {/* Toggle Timeline */}
-      <SceneControlButton
-        onClick={onToggleTimeline}
-        isActive={showTimeline}
-        title={showTimeline ? 'Hide timeline' : 'Show timeline'}
-        icon={
-          <Icon>
-            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-            <line x1="16" y1="2" x2="16" y2="6" />
-            <line x1="8" y1="2" x2="8" y2="6" />
-            <line x1="3" y1="10" x2="21" y2="10" />
-            <path d="M8 14h.01" />
-            <path d="M12 14h.01" />
-            <path d="M16 14h.01" />
-            <path d="M8 18h.01" />
-            <path d="M12 18h.01" />
-            <path d="M16 18h.01" />
-          </Icon>
         }
       />
     </div>

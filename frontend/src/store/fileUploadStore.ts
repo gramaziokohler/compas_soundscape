@@ -37,7 +37,6 @@ export interface FileUploadStoreState {
   analysisProgress: string;
   geometryBounds: { min: [number, number, number]; max: [number, number, number] } | null;
   scaleForSounds: number;
-  useModelAsContext: boolean;
 
   // ── Speckle ────────────────────────────────────────────────────────────────
   speckleModelUrl: string | null;
@@ -59,7 +58,6 @@ export interface FileUploadStoreState {
   clearAudio: () => void;
   setModelFile: (file: File | null) => void;
   setModelEntities: (entities: any[]) => void;
-  setUseModelAsContext: (use: boolean) => void;
   processGeometry: (geometry: CompasGeometry) => void;
   setSpeckleModelUrl: (url: string | null) => void;
   setSpeckleObjectId: (id: string | null) => void;
@@ -80,7 +78,6 @@ export const useFileUploadStore = create<FileUploadStoreState>()(
       analysisProgress: '',
       geometryBounds: null,
       scaleForSounds: 1.0,
-      useModelAsContext: true,
       speckleModelUrl: null,
       speckleObjectId: null,
 
@@ -142,7 +139,7 @@ export const useFileUploadStore = create<FileUploadStoreState>()(
 
       // ── Upload ─────────────────────────────────────────────────────────────
       handleUploadModel: async () => {
-        const { modelFile, useModelAsContext, processGeometry } = get();
+        const { modelFile, processGeometry } = get();
         if (!modelFile) {
           set({ uploadError: 'Please select a model file first.' }, false, 'fileUpload/noFile');
           return;
@@ -173,11 +170,7 @@ export const useFileUploadStore = create<FileUploadStoreState>()(
             processGeometry(geometry);
           }
 
-          if (useModelAsContext) {
-            set({ analysisProgress: 'Model analysis via Speckle workflow' }, false, 'fileUpload/analysisHint');
-          } else {
-            set({ analysisProgress: 'Model loaded for positioning only' }, false, 'fileUpload/positioningHint');
-          }
+          set({ analysisProgress: 'Model loaded for positioning only' }, false, 'fileUpload/positioningHint');
         } catch (err: any) {
           const msg = err.message || 'Failed to upload file';
           set({ uploadError: msg, isAnalyzingModel: false }, false, 'fileUpload/uploadError');
@@ -201,9 +194,6 @@ export const useFileUploadStore = create<FileUploadStoreState>()(
 
       setModelEntities: (entities) =>
         set({ modelEntities: entities }, false, 'fileUpload/setModelEntities'),
-
-      setUseModelAsContext: (use) =>
-        set({ useModelAsContext: use }, false, 'fileUpload/setUseModelAsContext'),
 
       processGeometry: (geometry) => {
         const bounds =

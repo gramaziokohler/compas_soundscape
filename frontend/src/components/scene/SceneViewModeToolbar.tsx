@@ -16,9 +16,8 @@ export function SceneViewModeToolbar() {
       style={{ left: '50%', transform: 'translateX(-50%)' }}
     >
       <div
-        className="flex items-center rounded-md overflow-hidden"
+        className="flex items-center rounded-md overflow-hidden frosted-surface backdrop-blur-lg backdrop-saturate-150"
         style={{
-          backgroundColor: 'var(--color-background)',
           border: '1px solid var(--color-secondary-light)',
         }}
         role="radiogroup"
@@ -57,9 +56,8 @@ export function SceneViewModeToolbar() {
         <button
           type="button"
           onClick={() => useUIStore.getState().setShowObjectExplorer(true)}
-          className="rounded-full px-2.5 py-1 text-[10px] font-medium transition-colors"
+          className="rounded-full px-2.5 py-1 text-[10px] font-medium transition-colors frosted-surface backdrop-blur-lg backdrop-saturate-150"
           style={{
-            backgroundColor: 'var(--color-overlay-bg)',
             border: '1px solid var(--color-overlay-border)',
             color: 'var(--color-secondary-hover)',
           }}

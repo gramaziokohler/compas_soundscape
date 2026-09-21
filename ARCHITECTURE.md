@@ -109,8 +109,8 @@ compas_soundscape/
 │       │   │       │   ├── index.ts
 │       │   │       │   ├── AnalysisResultContent.tsx          # Analysis results display
 │       │   │       │   ├── AudioContextContent.tsx            # Audio context analysis
-│       │   │       │   ├── Model3DContextContent.tsx          # 3D model context analysis
-│       │   │       │   └── TextContextContent.tsx             # Text context analysis
+│       │   │       │   ├── AnalyzeModelContent.tsx           # 3D model analysis
+│       │   │       │   ├── TextContextContent.tsx             # Text-based card
 │       │   │       ├── sound/              # Sound tab sub-components
 │       │   │       │   ├── index.ts
 │       │   │       │   ├── CardTypeSwitcher.tsx               # Sound card type selector
@@ -357,7 +357,7 @@ compas_soundscape/
 │                │  ┌─────────────────────────────────────┐ │     │
 │                │  │    LLMService                       │ │     │
 │                │  │  - Generate prompts                 │ │     │
-│                │  │  - Select diverse entities          │ │     │
+│                │  │  - Select analysis entities        │ │     │
 │                │  │  - Interact with Gemini            │ │     │
 │                │  └─────────────────────────────────────┘ │     │
 │                │                                           │     │

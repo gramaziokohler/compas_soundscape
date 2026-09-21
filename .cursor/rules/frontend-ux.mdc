@@ -15,7 +15,7 @@ Implemented in `frontend/src/components/layout/Sidebar.tsx`.
 
 | Step | Section component | Valid card types | Prerequisite |
 | ---- | ----------------- | ---------------- | ------------ |
-| 0 — Context | `ContextSection` | `model-analysis`, `3d-model`, `audio`, `freeform` | — |
+| 0 — Context | `ContextSection` | `model-analysis`, `audio`, `freeform` | — |
 | 1 — Usage | `UsageSection` | `scenario`, `text`, `freeform` | `parentContextOriginalIndex` set |
 | 2 — Sounds | `SoundGenerationSection` | sound configs | `parentUsageOriginalIndex` set |
 

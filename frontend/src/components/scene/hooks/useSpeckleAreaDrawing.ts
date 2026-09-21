@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
-import { useAreaDrawingStore } from '@/store';
+import { useAreaDrawingStore, useAnalysisStore, useUIStore, useAnalysisPreviewStore } from '@/store';
+import { CARD_TYPE_LABELS } from '@/types/card';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 
 export function useSpeckleAreaDrawing({
@@ -31,7 +32,15 @@ export function useSpeckleAreaDrawing({
     }
 
     // Start drawing — disable SelectionExtension to prevent surface selection
-    manager.startDrawing(drawingCardIndex, `Area ${drawingCardIndex + 1}`);
+    const cardConfig = useAnalysisStore.getState().analysisConfigs[drawingCardIndex];
+    const title =
+      cardConfig?.display_name ||
+      (cardConfig ? CARD_TYPE_LABELS[cardConfig.type as keyof typeof CARD_TYPE_LABELS] : undefined) ||
+      `Area ${drawingCardIndex + 1}`;
+    // Fallback snap plane = floor of the model bounds (or world origin).
+    const bounds = useUIStore.getState().speckleBounds;
+    manager.setGroundPlaneZ(bounds ? bounds.min[2] : 0);
+    manager.startDrawing(drawingCardIndex, title);
     if (selectionExtension) {
       selectionExtension.enabled = false;
     }
@@ -43,12 +52,17 @@ export function useSpeckleAreaDrawing({
       manager.handlePointerMove(e);
     };
 
+    const persistArea = (area: NonNullable<ReturnType<typeof manager.handleClick>>) => {
+      areaDrawingCtx.finishDrawing(drawingCardIndex, area);
+      useAnalysisStore.getState().handleUpdateConfig(drawingCardIndex, { drawnArea: area });
+      manager.addCompletedArea(area, 'default');
+    };
+
     const onClick = (e: MouseEvent) => {
       e.stopPropagation();
       const result = manager.handleClick(e);
       if (result) {
-        areaDrawingCtx.finishDrawing(drawingCardIndex, result);
-        manager.addCompletedArea(result, 'default');
+        persistArea(result);
       }
     };
 
@@ -57,8 +71,7 @@ export function useSpeckleAreaDrawing({
         e.preventDefault();
         const result = manager.confirmDrawing();
         if (result) {
-          areaDrawingCtx.finishDrawing(drawingCardIndex, result);
-          manager.addCompletedArea(result, 'default');
+          persistArea(result);
         }
       }
     };
@@ -101,6 +114,7 @@ export function useSpeckleAreaDrawing({
     const result = manager.confirmDrawing();
     if (result) {
       areaDrawingCtx.finishDrawing(cardIndex, result);
+      useAnalysisStore.getState().handleUpdateConfig(cardIndex, { drawnArea: result });
       manager.addCompletedArea(result, 'default');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -109,6 +123,10 @@ export function useSpeckleAreaDrawing({
   // ============================================================================
   // Effect - Sync Completed Area Visuals
   // ============================================================================
+  const expandedTextCardIndex = useAnalysisPreviewStore((s) => s.expandedTextCardIndex);
+  const sidebarWizardStep = useUIStore((s) => s.sidebarWizardStep);
+  const analysisConfigs = useAnalysisStore((s) => s.analysisConfigs);
+
   useEffect(() => {
     const manager = areaDrawingManager;
     if (!manager) return;
@@ -124,5 +142,26 @@ export function useSpeckleAreaDrawing({
     for (const [cardIndex, state] of areaDrawingCtx.areaVisualStates) {
       manager.updateAreaVisualState(cardIndex, state);
     }
-  }, [areaDrawingCtx.version, areaDrawingManager]);
+
+    // A drawn area is only shown in the Usage step and only for the card that
+    // is currently expanded. Its label follows the (possibly regenerated) title.
+    const inUsageStep = sidebarWizardStep === 1;
+    for (const cardIndex of manager.managedCardIndices) {
+      manager.setAreaVisible(cardIndex, inUsageStep && expandedTextCardIndex === cardIndex);
+      const config = analysisConfigs[cardIndex];
+      const title =
+        config?.display_name ||
+        (config ? CARD_TYPE_LABELS[config.type as keyof typeof CARD_TYPE_LABELS] : undefined) ||
+        `Area ${cardIndex + 1}`;
+      manager.updateAreaLabel(cardIndex, title);
+    }
+  }, [
+    areaDrawingCtx.version,
+    areaDrawingCtx.drawnAreas,
+    areaDrawingCtx.areaVisualStates,
+    areaDrawingManager,
+    sidebarWizardStep,
+    expandedTextCardIndex,
+    analysisConfigs,
+  ]);
 }

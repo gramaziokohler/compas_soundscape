@@ -110,8 +110,8 @@ async def get_model_entities(request: SpeckleModelRequest):
     """
     Extract entity metadata from a Speckle model version.
 
-    Returns entities in the format consumed by select_diverse_entities() and
-    analyze_3dmodel(): [{id, name, speckle_type, layer, material, bounds}, ...]
+    Returns entities in the format consumed by analyze_3dmodel():
+    [{id, name, speckle_type, layer, material, bounds}, ...]
     """
     _ensure_authenticated()
 

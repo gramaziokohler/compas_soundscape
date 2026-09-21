@@ -726,6 +726,10 @@ export class SpeckleAudioCoordinator {
     // Keep bbox gumball arrows / labels a constant apparent size at any zoom.
     useSpeckleEngineStore.getState().boundingBoxManager?.updateScreenSpaceScale(camera);
 
+    // Keep drawn-area + analysis preview labels the same apparent size as
+    // sound sphere / receiver labels.
+    useSpeckleEngineStore.getState().areaDrawingManager?.updateScreenSpaceScale(camera);
+
     // Keep the drag gizmo anchored to its selected object when its position
     // changes externally (undo/redo, etc.) — never leave it floating detached.
     this.dragHandler?.syncAnchorToSelection();

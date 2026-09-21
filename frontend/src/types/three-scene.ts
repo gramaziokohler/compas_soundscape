@@ -87,9 +87,6 @@ export interface ThreeSceneProps {
   /** All entities extracted from the model */
   modelEntities?: EntityData[];
 
-  /** Diverse entities selected for prompts */
-  selectedDiverseEntities?: EntityData[];
-
   /** Auralization configuration (impulse response settings) */
   auralizationConfig: AuralizationConfig;
 
@@ -131,9 +128,6 @@ export interface ThreeSceneProps {
 
   /** Whether the user is currently in entity linking mode for sounds */
   isLinkingEntity?: boolean;
-
-  /** Callback to toggle entity in diverse selection (for LLM prompts) */
-  onToggleDiverseSelection?: (entity: EntityData) => void;
 
   /** Callback to detach linked sound from entity and create sound sphere */
   onDetachSound?: (entity: EntityData) => void;

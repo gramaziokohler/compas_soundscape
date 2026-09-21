@@ -14,7 +14,6 @@ import type {
   AnalysisConfig,
   AnalysisResult,
   TextPromptResult,
-  ModelAnalysisConfig,
   AudioAnalysisConfig,
   TextAnalysisConfig,
   AnalyzeModelConfig,
@@ -40,14 +39,15 @@ import {
 } from '@/utils/constants';
 import { loadAudioFileWithBuffer } from '@/lib/audio/utils/audio-info';
 import { apiService } from '@/services/api';
-import { generatePositionsInArea } from '@/utils/positioning';
+import { generatePositionsInArea, generatePositionsInBounds } from '@/utils/positioning';
 import { getAnalysisGroupColor } from '@/utils/utils';
 import { notifySectionError } from './errorsStore';
 import { useAreaDrawingStore } from './areaDrawingStore';
 import { useSoundscapeStore } from './soundscapeStore';
 import { useAudioControlsStore } from './audioControlsStore';
 import { useSpeckleStore } from './speckleStore';
-import { useObjectExplorerStore } from './objectExplorerStore';
+import { useUIStore } from './uiStore';
+import { useFileUploadStore } from './fileUploadStore';
 
 // ─── Module-level refs ────────────────────────────────────────────────────────
 
@@ -128,9 +128,6 @@ export const analysisPartialize = (state: AnalysisStoreState) => ({
     if (config.type === 'audio') {
       // Store audioFile as null so code never tries to use it as a Blob after undo
       return { ...config, audioFile: null, audioBuffer: null };
-    }
-    if (config.type === '3d-model') {
-      return { ...config, modelFile: null, geometryData: undefined };
     }
     if (config.type === 'model-analysis') {
       return { ...config, liveScreenshots: [], liveScreenshotFilenames: [] };
@@ -305,6 +302,30 @@ function extractNameFromType(speckleType: string): string {
   return typeName.replace(/([A-Z])/g, ' $1').trim();
 }
 
+/**
+ * Resolve the model-analysis `analysis_id` from a card's PARENT context card only.
+ * Multiple model-analysis cards may exist; we never fall back to another card —
+ * a usage card either uses its own parent's analysis result or none at all.
+ */
+function resolveParentAnalysisId(
+  config: AnalysisBaseConfig,
+  configs: AnalysisConfig[],
+): string | undefined {
+  const parentIndex = config.parentContextOriginalIndex;
+  if (parentIndex === undefined) return undefined;
+  const parent = configs[parentIndex];
+  if (parent?.type !== 'model-analysis') return undefined;
+  return (parent as AnalyzeModelConfig).analysisResult?.analysisId ?? undefined;
+}
+
+/** Model bounding box used to distribute non-linked sounds when no area is drawn. */
+function getModelBounds(): { min: [number, number, number]; max: [number, number, number] } | null {
+  const speckleBounds = useUIStore.getState().speckleBounds;
+  if (speckleBounds) return speckleBounds;
+  const geometryBounds = useFileUploadStore.getState().geometryBounds;
+  return geometryBounds ?? null;
+}
+
 // ─── State ────────────────────────────────────────────────────────────────────
 
 export interface AnalysisStoreState {
@@ -332,16 +353,12 @@ export interface AnalysisStoreState {
    *  `displayName`, when provided, seeds the new card's title (ignored if a card already exists). */
   ensureUsageCardForContext: (contextIndex: number, displayName?: string) => number;
 
-  handleModelFileUpload: (index: number, file: File, worldTree?: any) => Promise<void>;
   handleAudioFileUpload: (index: number, file: File) => Promise<void>;
   /** Re-fetch + rebuild the File/buffer of audio context cards that were persisted with a
    *  `persistedAudioFilename`, so the SED waveform + detected-sounds results survive refresh. */
   rehydrateAudioContextSources: (audioBaseUrl: string) => Promise<void>;
 
-  handleAnalyze: (
-    index: number,
-    contextData?: { diverseObjectIds?: Set<string>; viewerRef?: any },
-  ) => Promise<void>;
+  handleAnalyze: (index: number) => Promise<void>;
   handleStopAnalysis: () => void;
 
   handleReorderConfigs: (from: number, to: number) => void;
@@ -349,10 +366,11 @@ export interface AnalysisStoreState {
   duplicateConfigAt: (from: number, toInsertion: number) => void;
 
   handleTogglePromptSelection: (configIndex: number, promptId: string) => void;
+  handleSetAllPromptsSelected: (configIndex: number, selected: boolean) => void;
   handleSendToSoundGeneration: (onSuccess?: (prompts: TextPromptResult[]) => void, onlyConfigIndex?: number) => TextPromptResult[];
+  /** Re-run the LLM inference for a text-based card with the same data, replacing its prompts. */
+  handleRegenerateText: (index: number) => Promise<void>;
   handleReset: (index: number) => void;
-
-  handleUpdateEntitiesFromWorldTree: (index: number, worldTree: any) => void;
 
   handleAnalyzeModel: (index: number) => Promise<void>;
   handleUpdateAnalysisObject: (
@@ -363,6 +381,14 @@ export interface AnalysisStoreState {
 
   handleScenarioAnalyze: (index: number) => Promise<void>;
   handleFoleyArtist: (index: number) => Promise<void>;
+  /**
+   * Re-run the foley + speech agents for an already-sent scenario and replace its
+   * child sound scene: deletes the linked sound configs (frontend) and their
+   * generated audio files (backend), clears the previous foley/speech results,
+   * then relaunches the agents. The caller is responsible for auto-sending the
+   * new results to the Sounds step.
+   */
+  handleRefreshScenario: (index: number) => Promise<void>;
   handleToggleFoleySound: (index: number, key: string) => void;
 
   restoreAnalysisState: (state: {
@@ -402,17 +428,6 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                   modelEntities: [],
                   speckleData: initialSpeckleData,
                 } as AnalyzeModelConfig
-              : type === '3d-model'
-              ? {
-                  type: '3d-model',
-                  numSounds: 5,
-                  modelFile: null,
-                  modelEntities: [],
-                  selectedDiverseEntities: [],
-                  useModelAsContext: true,
-                  speckleData: initialSpeckleData,
-                  geometryData: undefined,
-                }
               : type === 'audio'
                 ? {
                     type: 'audio',
@@ -454,7 +469,8 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                     type: 'text',
                     numSounds: 5,
                     textInput: '',
-                    useModelAsContext: false,
+                    useAnalysisResult: false,
+                    drawnArea: null,
                   };
 
           set(
@@ -497,7 +513,6 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           const removedParent = (removed as AnalysisBaseConfig).parentContextOriginalIndex;
           const isContextCard =
             removedType === 'model-analysis' ||
-            removedType === '3d-model' ||
             removedType === 'audio' ||
             (removedType === 'freeform' && removedParent === undefined);
 
@@ -673,56 +688,6 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
         setActiveAnalysisTab: (index) =>
           set({ activeAnalysisTab: index }, false, 'analysis/setActiveTab'),
 
-        handleModelFileUpload: async (index, file, worldTree) => {
-          const { analysisConfigs, uploadingConfigs, handleUpdateConfig } = get();
-          const config = analysisConfigs[index] as ModelAnalysisConfig;
-          if (config?.type !== '3d-model') return;
-          if (uploadingConfigs.has(index)) return;
-
-          set(
-            (s) => ({ uploadingConfigs: new Set([...s.uploadingConfigs, index]) }),
-            false,
-            'analysis/uploadStart',
-          );
-          try {
-            const uploadResponse = await apiService.uploadFile(file);
-            const geometryData =
-              'geometry' in uploadResponse ? uploadResponse.geometry : uploadResponse;
-            const speckleData = 'speckle' in uploadResponse ? uploadResponse.speckle : undefined;
-
-            let entities: any[] = [];
-            if (speckleData && worldTree) {
-              entities = extractSpeckleEntities(worldTree);
-            }
-
-            handleUpdateConfig(index, {
-              modelFile: file,
-              modelEntities: entities,
-              geometryData,
-              speckleData,
-            } as Partial<ModelAnalysisConfig>);
-          } catch (error) {
-            set(
-              {
-                analysisError:
-                  error instanceof Error ? error.message : 'Failed to upload model',
-              },
-              false,
-              'analysis/uploadError',
-            );
-          } finally {
-            set(
-              (s) => {
-                const next = new Set(s.uploadingConfigs);
-                next.delete(index);
-                return { uploadingConfigs: next };
-              },
-              false,
-              'analysis/uploadEnd',
-            );
-          }
-        },
-
         handleAudioFileUpload: async (index, file) => {
           const { analysisConfigs, handleUpdateConfig } = get();
           const config = analysisConfigs[index] as AudioAnalysisConfig;
@@ -875,7 +840,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           }
         },
 
-        handleAnalyze: async (index, contextData) => {
+        handleAnalyze: async (index) => {
           const { analysisConfigs, analysisResults, handleUpdateConfig } = get();
           const config = analysisConfigs[index];
           if (!config) return;
@@ -908,83 +873,6 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 await get().handleScenarioAnalyze(index);
               }
               return;
-            } else if (config.type === '3d-model') {
-              const modelConfig = config as ModelAnalysisConfig;
-              if (modelConfig.modelEntities.length === 0) throw new Error('No 3D model loaded');
-
-              if (modelConfig.selectedDiverseEntities.length === 0) {
-                // Step 1: select diverse entities
-                set({ analysisStatus: 'Selecting diverse entities...' }, false, 'analysis/selectEntities');
-                const hiddenIds = useObjectExplorerStore.getState().hiddenObjectIds;
-                const visibleEntities = modelConfig.modelEntities.filter(
-                  (e: any) => !hiddenIds.has(e.id),
-                );
-                const res = await fetch(`${API_BASE_URL}/api/select-entities`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    entities: visibleEntities,
-                    max_sounds: config.numSounds,
-                    llm_model: useSoundscapeStore.getState().llmModel,
-                  }),
-                  signal,
-                });
-                if (!res.ok) throw new Error('Failed to select diverse entities');
-                const selectionResult = await res.json();
-                handleUpdateConfig(index, {
-                  selectedDiverseEntities: selectionResult.selected_entities,
-                } as Partial<ModelAnalysisConfig>);
-                set({ isAnalyzing: false, analysisError: null, analysisStatus: '', analyzingConfigIndex: null }, false, 'analysis/selectionDone');
-                return;
-              } else {
-                // Step 2: stream sound prompts one by one
-                set({ analysisStatus: 'Generating sound prompts...' }, false, 'analysis/generatePrompts');
-                const hiddenIdsForPrompts = useObjectExplorerStore.getState().hiddenObjectIds;
-                const visibleDiverseEntities = modelConfig.selectedDiverseEntities.filter(
-                  (e: any) => !hiddenIdsForPrompts.has(e.id),
-                );
-                let soundIdx = 0;
-                for await (const event of streamPrompts(
-                  `${API_BASE_URL}/api/generate-prompts-stream`,
-                  {
-                    context: '',
-                    num_sounds: config.numSounds,
-                    entities: visibleDiverseEntities,
-                    llm_model: useSoundscapeStore.getState().llmModel,
-                  },
-                  signal,
-                )) {
-                  if (event.type !== 'sound') continue;
-                  const { type: _t, ...p } = event;
-                  const prompt: TextPromptResult = {
-                    id: `${index}-${soundIdx++}`,
-                    text: p.prompt,
-                    selected: true,
-                    entities: p.entities || (p.entity ? [p.entity] : undefined),
-                    entity: p.entities?.[0] || p.entity || null, // backward compat
-                    metadata: {
-                      dbfs: p.dbfs ?? DEFAULT_DBFS,
-                      interval_seconds: p.interval_seconds || LLM_SUGGESTED_INTERVAL_SECONDS,
-                      duration_seconds: p.duration_seconds || 10,
-                    },
-                  };
-                  prompts.push(prompt);
-                  set(
-                    (s) => {
-                      const ex = s.analysisResults.findIndex((r) => r.configIndex === index);
-                      const partial = { configIndex: index, prompts: [...prompts], generatedAt: new Date() };
-                      return {
-                        analysisResults:
-                          ex >= 0
-                            ? s.analysisResults.map((r, i) => (i === ex ? partial : r))
-                            : [...s.analysisResults, partial],
-                      };
-                    },
-                    false,
-                    'analysis/soundStreamed',
-                  );
-                }
-              }
             } else if (config.type === 'audio') {
               const audioConfig = config as AudioAnalysisConfig;
               if (!audioConfig.audioFile) throw new Error('No audio file uploaded');
@@ -1095,48 +983,34 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 });
             } else if (config.type === 'text') {
               const textConfig = config as TextAnalysisConfig;
-              if (!textConfig.textInput.trim()) throw new Error('Please enter a text description');
 
-              set({ analysisStatus: 'Generating sound prompts...' }, false, 'analysis/generatingText');
+              // Parent-only analysis resolution — never fall back to another card.
+              const analysisId = resolveParentAnalysisId(textConfig, get().analysisConfigs);
+              const useAnalysis = textConfig.useAnalysisResult && !!analysisId;
 
-              let entitiesToUse: any[] = [];
-              if (textConfig.useModelAsContext) {
-                const diverseIds = contextData?.diverseObjectIds;
-                if (diverseIds && diverseIds.size > 0) {
-                  const allEntities = (get().analysisConfigs as ModelAnalysisConfig[])
-                    .filter((c) => c.type === '3d-model')
-                    .flatMap((c) => c.modelEntities);
-                  entitiesToUse = allEntities.filter((entity) =>
-                    diverseIds.has(entity.nodeId || entity.id),
-                  );
-
-                  if (entitiesToUse.length === 0 && contextData?.viewerRef?.current) {
-                    const worldTree = contextData.viewerRef.current.getWorldTree();
-                    if (worldTree) {
-                      const allWtEntities = extractSpeckleEntities(worldTree);
-                      entitiesToUse = allWtEntities.filter((entity) =>
-                        diverseIds.has(entity.nodeId || entity.id),
-                      );
-                    }
-                  }
-                } else {
-                  const modelConfigs = get().analysisConfigs.filter(
-                    (c) => c.type === '3d-model',
-                  ) as ModelAnalysisConfig[];
-                  if (modelConfigs.length > 0) {
-                    const latest = modelConfigs[modelConfigs.length - 1];
-                    entitiesToUse =
-                      latest.selectedDiverseEntities.length > 0
-                        ? latest.selectedDiverseEntities
-                        : latest.modelEntities;
-                  }
-                }
+              if (!textConfig.textInput.trim() && !useAnalysis) {
+                throw new Error('Please enter a text description');
               }
 
-              const requestBody: any = { context: textConfig.textInput, num_sounds: config.numSounds, llm_model: useSoundscapeStore.getState().llmModel };
-              if (entitiesToUse.length > 0) requestBody.entities = entitiesToUse;
+              set(
+                {
+                  analysisStatus: useAnalysis
+                    ? 'Reading 3D model analysis and generating sound prompts...'
+                    : 'Generating sound prompts...',
+                },
+                false,
+                'analysis/generatingText',
+              );
+
+              const requestBody: any = {
+                context: textConfig.textInput,
+                num_sounds: config.numSounds,
+                llm_model: useSoundscapeStore.getState().llmModel,
+              };
+              if (useAnalysis) requestBody.analysis_id = analysisId;
 
               let soundIdx = 0;
+              let appliedTitle = '';
               for await (const event of streamPrompts(
                 `${API_BASE_URL}/api/generate-prompts-stream`,
                 requestBody,
@@ -1144,6 +1018,11 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               )) {
                 if (event.type !== 'sound') continue;
                 const { type: _t, ...p } = event;
+                // The LLM guesses a 2-3 word soundscape title — use it as the card title.
+                if (p.soundscape_title && p.soundscape_title !== appliedTitle) {
+                  appliedTitle = p.soundscape_title;
+                  handleUpdateConfig(index, { display_name: p.soundscape_title });
+                }
                 const prompt: TextPromptResult = {
                   id: `${index}-${soundIdx++}`,
                   text: p.prompt,
@@ -1173,19 +1052,32 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 );
               }
 
+              // Placement precedence for prompts that are NOT linked to an analysis
+              // group: drawn area → model bounding box → (left unset, camera-front fallback).
+              const linked = (p: TextPromptResult) => (p.entities?.length ?? 0) > 0 || !!p.position;
               const drawnArea = useAreaDrawingStore.getState().getArea(index);
               if (drawnArea) {
-                const needingPositions = prompts.filter((p) => !(p.entities?.[0]?.position || p.entity?.position));
+                const needingPositions = prompts.filter((p) => !linked(p));
                 if (needingPositions.length > 0) {
                   const positions = generatePositionsInArea(drawnArea, needingPositions.length);
                   let posIdx = 0;
-                  for (const prompt of prompts) {
-                    if (!(prompt.entities?.[0]?.position || prompt.entity?.position) && posIdx < positions.length) {
-                      (prompt as any).position = positions[posIdx++];
-                    }
+                  for (const prompt of needingPositions) {
+                    if (posIdx < positions.length) prompt.position = positions[posIdx++];
                   }
                 }
                 useAreaDrawingStore.getState().setAreaVisualState(index, 'generated');
+              } else {
+                const bounds = getModelBounds();
+                if (bounds) {
+                  const needingPositions = prompts.filter((p) => !linked(p));
+                  if (needingPositions.length > 0) {
+                    const positions = generatePositionsInBounds(bounds, needingPositions.length);
+                    let posIdx = 0;
+                    for (const prompt of needingPositions) {
+                      if (posIdx < positions.length) prompt.position = positions[posIdx++];
+                    }
+                  }
+                }
               }
             }
 
@@ -1252,6 +1144,22 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             }),
             false,
             'analysis/togglePrompt',
+          ),
+
+        handleSetAllPromptsSelected: (configIndex, selected) =>
+          set(
+            (s) => ({
+              analysisResults: s.analysisResults.map((result) =>
+                result.configIndex !== configIndex
+                  ? result
+                  : {
+                      ...result,
+                      prompts: result.prompts.map((p) => ({ ...p, selected })),
+                    },
+              ),
+            }),
+            false,
+            'analysis/setAllPrompts',
           ),
 
         handleSendToSoundGeneration: (onSuccess, onlyConfigIndex) => {
@@ -1909,14 +1817,103 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           }
         },
 
-        handleUpdateEntitiesFromWorldTree: (index, worldTree) => {
-          const { analysisConfigs, handleUpdateConfig } = get();
-          const config = analysisConfigs[index] as ModelAnalysisConfig;
-          if (config?.type !== '3d-model' || !config.speckleData) return;
-          if (config.modelEntities.length > 0) return;
+        handleRegenerateText: async (index) => {
+          const { analysisConfigs } = get();
+          const config = analysisConfigs[index] as TextAnalysisConfig;
+          if (config?.type !== 'text') return;
 
-          const entities = extractSpeckleEntities(worldTree);
-          handleUpdateConfig(index, { modelEntities: entities } as Partial<ModelAnalysisConfig>);
+          // Replace the child sound scene: drop every sound card linked to this
+          // usage card and delete its generated audio files from the backend.
+          // Without the file deletion, regenerating identical prompts would dedup
+          // to the existing files (deterministic filename hash).
+          const soundStore = useSoundscapeStore.getState();
+          const linkedSoundIndices = soundStore.soundConfigs
+            .map((sc, i) => ({ sc, i }))
+            .filter(({ sc }) => (sc as any).parentUsageOriginalIndex === index)
+            .map(({ i }) => i);
+          const linkedSet = new Set(linkedSoundIndices);
+          const audioUrls = [
+            ...new Set(
+              [...(soundStore.soundscapeData ?? []), ...soundStore.generatedSounds]
+                .filter((s: any) => linkedSet.has(s.prompt_index))
+                .map((s: any) => s.url)
+                .filter(
+                  (u: any): u is string =>
+                    typeof u === 'string' && u.length > 0 && !u.startsWith('blob:'),
+                ),
+            ),
+          ];
+          if (linkedSoundIndices.length > 0) {
+            soundStore.handleRemoveConfigs(linkedSoundIndices);
+          }
+          if (audioUrls.length > 0) {
+            try {
+              await apiService.deleteGeneratedSounds(audioUrls);
+            } catch (err) {
+              console.warn('[analysisStore] Failed to delete text sound files:', err);
+            }
+          }
+
+          // Clear the previous prompts for this card, then re-run the LLM inference.
+          set(
+            (s) => ({ analysisResults: s.analysisResults.filter((r) => r.configIndex !== index) }),
+            false,
+            'analysis/regenerateTextClear',
+          );
+
+          await get().handleAnalyze(index);
+        },
+
+        handleRefreshScenario: async (index) => {
+          const { analysisConfigs, handleUpdateConfig } = get();
+          const config = analysisConfigs[index] as ScenarioConfig;
+          if (config?.type !== 'scenario' || !config.scenarioResult) return;
+
+          // 1. Replace the child sound scene: drop every sound card linked to this
+          // usage card and delete its generated audio files from the backend.
+          // Without the file deletion, regenerating identical foley/speech prompts
+          // would dedup to the existing files (deterministic filename hash).
+          const soundStore = useSoundscapeStore.getState();
+          const linkedSoundIndices = soundStore.soundConfigs
+            .map((sc, i) => ({ sc, i }))
+            .filter(({ sc }) => (sc as any).parentUsageOriginalIndex === index)
+            .map(({ i }) => i);
+          const linkedSet = new Set(linkedSoundIndices);
+          const audioUrls = [
+            ...new Set(
+              [...(soundStore.soundscapeData ?? []), ...soundStore.generatedSounds]
+                .filter((s: any) => linkedSet.has(s.prompt_index))
+                .map((s: any) => s.url)
+                .filter(
+                  (u: any): u is string =>
+                    typeof u === 'string' && u.length > 0 && !u.startsWith('blob:'),
+                ),
+            ),
+          ];
+          if (linkedSoundIndices.length > 0) {
+            soundStore.handleRemoveConfigs(linkedSoundIndices);
+          }
+          if (audioUrls.length > 0) {
+            try {
+              await apiService.deleteGeneratedSounds(audioUrls);
+            } catch (err) {
+              console.warn('[analysisStore] Failed to delete scenario sound files:', err);
+            }
+          }
+
+          // 2. Clear the previous foley + speech results so the agents re-run.
+          handleUpdateConfig(index, {
+            foleyResult: null,
+            speechResult: null,
+            speechId: null,
+            orchestrateResult: null,
+            orchestrateId: null,
+            selectedFoleyKeys: [],
+          } as Partial<ScenarioConfig>);
+
+          // 3. Relaunch foley + speech — handleAnalyze dispatches to handleFoleyArtist
+          // when scenarioResult exists but foley/speech are missing.
+          await get().handleAnalyze(index);
         },
 
         handleToggleFoleySound: (index, key) => {
@@ -1973,30 +1970,10 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             soundStore.handleRemoveConfigs(linkedSoundIndices);
           }
 
-          // Find analysis_id from the most recent 'model-analysis' config with a result
-          let analysisId: string | undefined;
-          if (config.useAnalysisResult) {
-            // Prefer the model-analysis context card this usage card is parented to,
-            // so each usage card uses its own parent context's analysis result rather
-            // than always falling back to the first model-analysis card.
-            const parentIdx = (config as AnalysisBaseConfig).parentContextOriginalIndex;
-            let analyzeConfig: AnalyzeModelConfig | undefined;
-            if (parentIdx !== undefined) {
-              const parent = analysisConfigs[parentIdx];
-              if (
-                parent?.type === 'model-analysis' &&
-                (parent as AnalyzeModelConfig).analysisResult?.analysisId
-              ) {
-                analyzeConfig = parent as AnalyzeModelConfig;
-              }
-            }
-            if (!analyzeConfig && parentIdx === undefined) {
-              analyzeConfig = analysisConfigs.find(
-                (c) => c.type === 'model-analysis' && (c as AnalyzeModelConfig).analysisResult?.analysisId,
-              ) as AnalyzeModelConfig | undefined;
-            }
-            analysisId = analyzeConfig?.analysisResult?.analysisId ?? undefined;
-          }
+          // Parent-only analysis resolution (never fall back to another card).
+          const analysisId = config.useAnalysisResult
+            ? resolveParentAnalysisId(config, analysisConfigs)
+            : undefined;
 
           const { timelineDurationMs } = await import('@/store/audioControlsStore').then(
             (m) => m.useAudioControlsStore.getState(),
@@ -2078,29 +2055,10 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             (m) => m.useAudioControlsStore.getState(),
           );
 
-          let analysisId: string | undefined;
-          if (config.useAnalysisResult) {
-            // Prefer the model-analysis context card this usage card is parented to,
-            // so each usage card uses its own parent context's analysis result rather
-            // than always falling back to the first model-analysis card.
-            const parentIdx = (config as AnalysisBaseConfig).parentContextOriginalIndex;
-            let analyzeConfig: AnalyzeModelConfig | undefined;
-            if (parentIdx !== undefined) {
-              const parent = analysisConfigs[parentIdx];
-              if (
-                parent?.type === 'model-analysis' &&
-                (parent as AnalyzeModelConfig).analysisResult?.analysisId
-              ) {
-                analyzeConfig = parent as AnalyzeModelConfig;
-              }
-            }
-            if (!analyzeConfig && parentIdx === undefined) {
-              analyzeConfig = analysisConfigs.find(
-                (c) => c.type === 'model-analysis' && (c as AnalyzeModelConfig).analysisResult?.analysisId,
-              ) as AnalyzeModelConfig | undefined;
-            }
-            analysisId = analyzeConfig?.analysisResult?.analysisId ?? undefined;
-          }
+          // Parent-only analysis resolution (never fall back to another card).
+          const analysisId = config.useAnalysisResult
+            ? resolveParentAnalysisId(config, analysisConfigs)
+            : undefined;
 
           // ── Step 1: Foley + Speech in parallel, then check state after each ──
 

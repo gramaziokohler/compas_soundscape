@@ -62,12 +62,11 @@ export function DAWMiniTransport({
       }}
     >
       <div
-        className="flex items-center"
+        className="flex items-center frosted-surface backdrop-blur-lg backdrop-saturate-150"
         style={{
           gap: `${DAW_MINI_TRANSPORT.GAP}px`,
           padding: `${DAW_MINI_TRANSPORT.PADDING}px`,
           borderRadius: `${DAW_MINI_TRANSPORT.BORDER_RADIUS}px`,
-          backgroundColor: 'var(--color-background)',
           border: '1px solid var(--color-secondary-light)',
         }}
       >

@@ -1,7 +1,7 @@
 "use client";
 
 interface SpinnerProps {
-  size?: number;
+  size?: number | string;
   className?: string;
 }
 

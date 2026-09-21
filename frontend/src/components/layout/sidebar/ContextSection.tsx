@@ -4,7 +4,6 @@ import React, { useMemo, useCallback, useEffect, useRef, useState } from 'react'
 import type {
   AnalysisConfig,
   AnalysisResult,
-  ModelAnalysisConfig,
   AudioAnalysisConfig,
   AnalyzeModelConfig,
   AnalysisBaseConfig,
@@ -15,7 +14,6 @@ import type { CardType } from '@/types/card';
 import type { CustomMenuItem } from '@/types/card';
 import { CardSection } from '@/components/ui/CardSection';
 import { Card } from '@/components/ui/Card';
-import { Model3DContextContent } from '@/components/layout/sidebar/analysis/Model3DContextContent';
 import { AudioContextContent } from '@/components/layout/sidebar/analysis/AudioContextContent';
 import { AudioAnalysisAfterContent } from '@/components/layout/sidebar/analysis/AudioAnalysisAfterContent';
 import { AnalyzeModelContent } from '@/components/layout/sidebar/analysis/AnalyzeModelContent';
@@ -93,7 +91,7 @@ export interface ContextSectionProps {
   onExpandedOriginalIndexChange?: (originalIndex: number | null) => void;
 }
 
-const CONTEXT_CARD_TYPES: CardType[] = ['model-analysis', '3d-model', 'audio', 'freeform'];
+const CONTEXT_CARD_TYPES: CardType[] = ['model-analysis', 'audio', 'freeform'];
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -125,8 +123,6 @@ export function ContextSection({
   const handlePreviewStop = useAudioControlsStore((s) => s.handlePreviewStop);
   const serviceVersions = useServiceVersions();
   const llmModel = useSoundscapeStore((s) => s.llmModel);
-  const { diverseSelectedObjectIds, clearDiverseSelection } = useSpeckleStore();
-  const diverseCount = diverseSelectedObjectIds.size;
   const analysisStatus = useAnalysisStore((s) => s.analysisStatus);
   const analyzingConfigIndex = useAnalysisStore((s) => s.analyzingConfigIndex);
   const rehydratingAudioConfigs = useAnalysisStore((s) => s.rehydratingAudioConfigs);
@@ -227,12 +223,6 @@ export function ContextSection({
         const selectedCount = result.prompts.filter((p) => p.selected).length;
         return `(${selectedCount} selected prompt${selectedCount !== 1 ? 's' : ''})`;
       }
-      if (config.type === '3d-model') {
-        const modelConfig = config as ModelAnalysisConfig;
-        if (modelConfig.selectedDiverseEntities.length > 0) {
-          return `(${modelConfig.selectedDiverseEntities.length} selected entities)`;
-        }
-      }
       return '';
     },
     [getResult],
@@ -253,11 +243,8 @@ export function ContextSection({
     if (hasGlobalModelLoaded) return true;
     return analysisConfigs.some(
       (config) =>
-        (config.type === '3d-model' &&
-          ((config as ModelAnalysisConfig).modelFile !== null ||
-            (config as ModelAnalysisConfig).speckleData !== undefined)) ||
-        (config.type === 'model-analysis' &&
-          (config as AnalyzeModelConfig).speckleData !== undefined),
+        config.type === 'model-analysis' &&
+        (config as AnalyzeModelConfig).speckleData !== undefined,
     );
   }, [analysisConfigs, hasGlobalModelLoaded]);
 
@@ -290,15 +277,6 @@ export function ContextSection({
           return (
             <AnalyzeModelContent
               config={config as AnalyzeModelConfig}
-              index={originalIndex}
-              isAnalyzing={isRunning}
-              onUpdateConfig={onUpdateConfig}
-            />
-          );
-        case '3d-model':
-          return (
-            <Model3DContextContent
-              config={config as ModelAnalysisConfig}
               index={originalIndex}
               isAnalyzing={isRunning}
               onUpdateConfig={onUpdateConfig}
@@ -390,20 +368,6 @@ export function ContextSection({
   const getActionButton = useCallback(
     (config: AnalysisConfig, originalIndex: number) => {
       switch (config.type) {
-        case '3d-model': {
-          const modelConfig = config as ModelAnalysisConfig;
-          return {
-            label:
-              modelConfig.selectedDiverseEntities.length === 0
-                ? 'Auto-select diverse entities'
-                : 'Generate Sound Ideas',
-            disabled: modelConfig.modelEntities.length === 0,
-            disabledReason:
-              modelConfig.modelEntities.length === 0 ? 'No 3D model loaded' : undefined,
-            color:
-              modelConfig.selectedDiverseEntities.length === 0 ? 'success' : 'success-hover',
-          };
-        }
         case 'audio': {
           const audioConfig = config as AudioAnalysisConfig;
           return {
@@ -438,10 +402,7 @@ export function ContextSection({
         const v = serviceVersions.yamnet;
         return `${v.name} ${v.version}`;
       }
-      if (
-        config.type === '3d-model' ||
-        config.type === 'model-analysis'
-      ) {
+      if (config.type === 'model-analysis') {
         const providers = serviceVersions.llm_providers;
         const providerKey = LLM_MODEL_TO_PROVIDER[llmModel] ?? 'google';
         const p = providers?.[providerKey as keyof typeof providers];
@@ -558,6 +519,7 @@ export function ContextSection({
           onRun={async () => onRun(originalIndex)}
           onCancel={isExtracting ? undefined : onStop}
           actionButtonLabel={actionBtn.label}
+          actionIsAi={config.type === 'model-analysis' || config.type === 'audio'}
           actionButtonDisabled={actionBtn.disabled}
           actionButtonDisabledReason={actionBtn.disabledReason}
           actionButtonColor={actionBtn.color}
@@ -645,22 +607,6 @@ export function ContextSection({
           }
         }}
       />
-
-      {/* Diverse selection indicator */}
-      {diverseCount > 0 && (
-        <div className="flex items-center justify-between py-2">
-          <span className="text-xs text-primary">
-            {diverseCount} object{diverseCount !== 1 ? 's' : ''} selected
-          </span>
-          <button
-            onClick={clearDiverseSelection}
-            className="w-5 h-5 flex items-center justify-center rounded-full text-secondary-hover hover:bg-secondary-light hover:text-foreground transition-all cursor-pointer"
-            title="Clear diverse selection"
-          >
-            <span className="text-lg leading-none">×</span>
-          </button>
-        </div>
-      )}
     </div>
   );
 }

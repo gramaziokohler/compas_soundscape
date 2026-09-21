@@ -36,7 +36,7 @@ import { InfoPopover } from '@/components/ui/InfoPopover';
  *   onUpdateConfig={handleUpdate}
  *   onRemove={handleRemove}
  *   onReset={handleReset}
- *   beforeContent={<Model3DContextContent ... />}
+ *   beforeContent={<ScenarioContent ... />}
  *   afterContent={<AnalysisResultContent ... />}
  * />
  * ```
@@ -100,12 +100,14 @@ export function Card<TConfig extends CardBaseConfig>({
   customButtons,
   headerPrefix,
   footerPrefix,
+  footerSuffix,
   // Simulation action button props
   onRun,
   onCancel,
   actionButtonLabel = 'Start Simulation',
   actionButtonDisabled = false,
   actionButtonColor,
+  actionIsAi = false,
   actionButtonDisabledReason,
   doneActionLabel,
   onDoneAction,
@@ -272,6 +274,8 @@ export function Card<TConfig extends CardBaseConfig>({
       ? 'done'
       : 'idle';
   const showFooterPrefix = !!footerPrefix && generateStatus !== 'generating';
+  const showFooterSuffix = !!footerSuffix && generateStatus !== 'generating';
+  const showFooterExtras = showFooterPrefix || showFooterSuffix;
 
   const contextMenuItemClass = (
     state: 'default' | 'disabled' | 'active' = 'default',
@@ -469,7 +473,7 @@ export function Card<TConfig extends CardBaseConfig>({
         (isExpanded && generateStatus === 'idle' && !!onRun) ||
         (isExpanded && generateStatus === 'done' && !!doneActionLabel && !!onDoneAction)) && (
         <div
-          className={`border-border${showFooterPrefix ? ' flex items-stretch gap-1.5 overflow-visible' : ''}`}
+          className={`border-border${showFooterExtras ? ' flex items-stretch gap-1.5 overflow-visible' : ''}`}
           style={isGenerated && generateStatus === 'done' ? {
             backgroundColor: 'rgba(0, 0, 0, 0.15)',
             borderBottomLeftRadius: '10px',
@@ -477,12 +481,13 @@ export function Card<TConfig extends CardBaseConfig>({
           } : undefined}
         >
           {showFooterPrefix ? footerPrefix : null}
-          <div className={showFooterPrefix ? 'min-w-0 flex-1' : undefined}>
+          <div className={showFooterExtras ? 'min-w-0 flex-1' : undefined}>
             <GenerateButton
               status={generateStatus}
               progress={progress}
               statusText={status}
               label={actionButtonLabel}
+              isAi={actionIsAi}
               disabled={actionButtonDisabled}
               disabledReason={actionButtonDisabledReason}
               onGenerate={onRun}
@@ -491,6 +496,7 @@ export function Card<TConfig extends CardBaseConfig>({
               onDoneAction={onDoneAction}
             />
           </div>
+          {showFooterSuffix ? footerSuffix : null}
         </div>
       )}
       </div>

@@ -65,7 +65,6 @@ export interface SidebarProps {
   llmProgress: string;
   showConfirmLoadSounds: boolean;
   pendingSoundConfigs: any[];
-  useModelAsContext: boolean;
   // File handlers (single upload area)
   onFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onDragOver: (e: React.DragEvent<HTMLDivElement>) => void;
@@ -119,7 +118,6 @@ export interface SidebarProps {
   listenerOrientation: { x: number; y: number; z: number };
   onListenerOrientationChange: (orientation: { x: number; y: number; z: number }) => void;
   onReprocessSounds?: (applyDenoising: boolean, trimSilence?: boolean) => Promise<void>;
-  setUseModelAsContext: (value: boolean) => void;
   onUploadAudio: (index: number, file: File) => Promise<void>;
   onClearUploadedAudio: (index: number) => void;
   onLibrarySearch: (index: number) => Promise<void>;
@@ -154,10 +152,6 @@ export interface SidebarProps {
   onAnalyzeSoundEvents?: () => void;
   onToggleSEDOption?: (option: keyof SEDAnalysisOptions, value: boolean) => void;
   onLoadSoundsFromSED?: () => void;
-  // Entity analysis props (LLM Step 1)
-  selectedDiverseEntities?: any[];
-  isAnalyzingEntities?: boolean;
-  onAnalyzeModel?: () => void;
   // Analysis props (NEW)
   analysisConfigs: AnalysisConfig[];
   isAnalyzing: boolean;
@@ -195,7 +189,6 @@ export interface ModelLoadSectionProps {
   isAnalyzingModel: boolean;
   uploadError: string | null;
   analysisProgress: string;
-  useModelAsContext: boolean;
   // SED-specific props
   isSEDAnalyzing?: boolean;
   sedAudioInfo?: SEDAudioInfo | null;
@@ -211,17 +204,12 @@ export interface ModelLoadSectionProps {
   onUploadModel: () => void;
   onLoadSampleIfc: () => void;
   setActiveLoadTab: (tab: LoadTab) => void;
-  setUseModelAsContext: (value: boolean) => void;
   // SED-specific handlers
   onAnalyzeSoundEvents?: () => void;
   onToggleSEDOption?: (option: keyof SEDAnalysisOptions, value: boolean) => void;
   onLoadSoundsFromSED?: () => void;
-  // Entity analysis props (LLM Step 1)
-  selectedDiverseEntities?: any[];
-  isAnalyzingEntities?: boolean;
   llmProgress?: string;
   numSounds?: number;
-  onAnalyzeModel?: () => void;
   onStopGeneration?: () => void;
 }
 
@@ -302,7 +290,6 @@ export interface TextGenerationSectionProps {
   numSounds: number;
   isGenerating: boolean;
   isAnalyzingModel: boolean;
-  isAnalyzingEntities?: boolean;  // NEW: for entity analysis state
   llmProgress: string;
   aiError: string | null;
   aiResponse: string | null;

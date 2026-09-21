@@ -6,7 +6,6 @@ import type { CardBaseConfig, CardType } from '@/types/card';
 import type { PyroomAcousticsSimulationConfig, ChorasSimulationConfig } from '@/types/acoustics';
 import type {
   TextAnalysisConfig,
-  ModelAnalysisConfig,
   AnalyzeModelConfig,
   ScenarioConfig,
 } from '@/types/analysis';
@@ -142,7 +141,6 @@ const SIMULATION_TYPES: CardType[] = [
 ];
 
 const ANALYSIS_TYPES: CardType[] = [
-  '3d-model',
   'audio',
   'text',
   'model-analysis',
@@ -262,19 +260,14 @@ export function getSettingsRows(config: CardBaseConfig): SettingsRow[] {
 
   if (ANALYSIS_TYPES.includes(config.type)) {
     switch (config.type) {
-      case '3d-model': {
-        const c = config as ModelAnalysisConfig;
-        rows.push({ label: 'Entities', value: `${c.selectedDiverseEntities.length} selected` });
-        if (c.useModelAsContext) rows.push({ label: 'Use Model as Context', value: 'Yes' });
-        break;
-      }
       case 'audio':
         // deliberately no summary rows
         break;
       case 'text': {
         const c = config as TextAnalysisConfig;
         if (c.textInput) rows.push({ label: 'Prompt', value: c.textInput, expandable: true });
-        if (c.useModelAsContext) rows.push({ label: 'Use Model as Context', value: 'Yes' });
+        if (c.useAnalysisResult) rows.push({ label: 'Use Analysis Result', value: 'Yes' });
+        if (c.drawnArea) rows.push({ label: 'Placement', value: 'Drawn area' });
         break;
       }
       case 'model-analysis': {

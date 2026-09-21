@@ -52,7 +52,7 @@ async function fetchWithErrorHandling(
 //
 // `POST /api/upload` triggers Speckle's `startFileIngestion`, which creates the
 // model version asynchronously. Every upload caller (viewer, file-upload store,
-// 3d-model analysis) needs the real version_id/object_id, so `uploadFile` waits
+// model analysis) needs the real version_id/object_id, so `uploadFile` waits
 // here until ingestion succeeds instead of each caller racing the pipeline.
 
 export interface SpeckleIngestionStatus {
@@ -759,6 +759,28 @@ export const apiService = {
     } catch (error) {
       // Silently fail - cleanup is not critical
       console.warn('Failed to cleanup generated sounds:', error);
+    }
+  },
+
+  /**
+   * Delete specific generated sound files by their static URLs. Used when a
+   * scenario's child sound scene is replaced, so regeneration does not dedup
+   * to the old files on disk.
+   */
+  async deleteGeneratedSounds(urls: string[]): Promise<void> {
+    if (urls.length === 0) return;
+    try {
+      await fetchWithErrorHandling(
+        `${API_BASE_URL}/api/delete-generated-sounds`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ urls }),
+        },
+        'Delete generated sounds'
+      );
+    } catch (error) {
+      console.warn('Failed to delete generated sounds:', error);
     }
   },
 

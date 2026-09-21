@@ -1,11 +1,13 @@
 'use client';
 
 import React, { useMemo, useCallback, useEffect, useRef, useState } from 'react';
+import { RefreshCw } from 'lucide-react';
 import type {
   AnalysisConfig,
   AnalysisResult,
   TextAnalysisConfig,
   ScenarioConfig,
+  AnalyzeModelConfig,
   AnalysisBaseConfig,
 } from '@/types/analysis';
 import type { CardTypeOption } from '@/components/ui/CardSection';
@@ -18,10 +20,10 @@ import { ScenarioContent } from '@/components/layout/sidebar/analysis/ScenarioCo
 import { ScenarioAfterView, getScenarioPipelineStatus } from '@/components/layout/sidebar/analysis/ScenarioContent';
 import { ScenarioParcoursToggle } from '@/components/layout/sidebar/analysis/ScenarioResultContent';
 import { AnalysisResultContent } from '@/components/layout/sidebar/analysis/AnalysisResultContent';
-import { useAnalysisStore, useSoundscapeStore, useAreaDrawingStore } from '@/store';
+import { TextResultPreview } from '@/components/layout/sidebar/analysis/TextResultPreview';
+import { useAnalysisStore, useCardFlowStore, useSoundscapeStore } from '@/store';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
 import { LLM_MODEL_TO_PROVIDER } from '@/utils/constants';
-import type { CustomMenuItem } from '@/types/card';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -51,6 +53,48 @@ export interface UsageSectionProps {
 
 const USAGE_CARD_TYPES: CardType[] = ['scenario', 'text', 'freeform'];
 
+/**
+ * Small square icon button that relaunches an LLM inference for a card with
+ * the same data (new scenario / new sound prompts / refreshed foley+speech).
+ */
+function RegenerateButton({
+  onClick,
+  title,
+  disabled = false,
+}: {
+  onClick: () => void;
+  title: string;
+  disabled?: boolean;
+}) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      aria-label={title}
+      className="flex items-center justify-center transition-colors"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        width: '34px',
+        flexShrink: 0,
+        border: 'none',
+        borderRadius: '6px',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.5 : 1,
+        backgroundColor: hovered
+          ? 'color-mix(in srgb, var(--color-primary) 12%, var(--color-on-blue))'
+          : 'var(--color-on-blue)',
+        color: 'var(--color-primary)',
+      }}
+    >
+      <RefreshCw size={13} />
+    </button>
+  );
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function UsageSection({
@@ -79,7 +123,65 @@ export function UsageSection({
   const analyzingConfigIndex = useAnalysisStore((s) => s.analyzingConfigIndex);
   const handleReorderConfigs = useAnalysisStore((s) => s.handleReorderConfigs);
   const duplicateConfigAt = useAnalysisStore((s) => s.duplicateConfigAt);
-  const areaDrawing = useAreaDrawingStore();
+  const usageAdvanced = useCardFlowStore((s) => s.usageAdvanced);
+  const [refreshingScenarioIndex, setRefreshingScenarioIndex] = useState<number | null>(null);
+
+  // Whether a text card's PARENT context is a model-analysis card with a result.
+  const textHasParentAnalysis = useCallback(
+    (originalIndex: number): boolean => {
+      const config = analysisConfigs[originalIndex];
+      if (config?.type !== 'text') return false;
+      const parentIdx = (config as AnalysisBaseConfig).parentContextOriginalIndex;
+      if (parentIdx === undefined) return false;
+      const parent = analysisConfigs[parentIdx];
+      return (
+        parent?.type === 'model-analysis' &&
+        !!(parent as AnalyzeModelConfig).analysisResult?.analysisId
+      );
+    },
+    [analysisConfigs],
+  );
+
+  // Relaunch foley + speech for a scenario whose sound scene was already sent,
+  // replacing the old child scene with the new result (and re-sending to Sounds).
+  const handleRefreshScenario = useCallback(
+    async (originalIndex: number, title: string) => {
+      setRefreshingScenarioIndex(originalIndex);
+      try {
+        await useAnalysisStore.getState().handleRefreshScenario(originalIndex);
+        onAdvanceToSounds(originalIndex, title);
+      } finally {
+        setRefreshingScenarioIndex(null);
+      }
+    },
+    [onAdvanceToSounds],
+  );
+
+  // Re-run the scenarist inference with the same data (new scenario text).
+  const handleRegenerateScenario = useCallback(
+    async (originalIndex: number) => {
+      setRefreshingScenarioIndex(originalIndex);
+      try {
+        await useAnalysisStore.getState().handleScenarioAnalyze(originalIndex);
+      } finally {
+        setRefreshingScenarioIndex(null);
+      }
+    },
+    [],
+  );
+
+  // Re-run the text-based LLM inference with the same data (new sound prompts).
+  const handleRegenerateText = useCallback(
+    async (originalIndex: number) => {
+      setRefreshingScenarioIndex(originalIndex);
+      try {
+        await useAnalysisStore.getState().handleRegenerateText(originalIndex);
+      } finally {
+        setRefreshingScenarioIndex(null);
+      }
+    },
+    [],
+  );
 
   // Filter to usage card types only, then by active parent context if set
   // Freeform cards without parentContextOriginalIndex belong to Context, exclude them here.
@@ -188,10 +290,14 @@ export function UsageSection({
       const result = analysisResult.find((r) => r.configIndex === originalIndex);
       if (!result) return null;
       return (
-        <AnalysisResultContent
-          analysisResult={result}
-          onTogglePromptSelection={onTogglePromptSelection}
-        />
+        <div className="card-stack">
+          <TextResultPreview configIndex={originalIndex} prompts={result.prompts} />
+          <AnalysisResultContent
+            analysisResult={result}
+            onTogglePromptSelection={onTogglePromptSelection}
+            onSetAllPromptsSelected={useAnalysisStore.getState().handleSetAllPromptsSelected}
+          />
+        </div>
       );
     },
     [analysisResult],
@@ -354,10 +460,17 @@ export function UsageSection({
           analyzingConfigIndex === originalIndex &&
           sc.scenarioId !== null &&
           !sc.foleyResult;
+        const sentToSounds = usageAdvanced.has(originalIndex);
+        const childSoundCount = soundConfigs.filter(
+          (s) => s.parentUsageOriginalIndex === originalIndex,
+        ).length;
 
         if (sc.foleyResult) {
-          // Foley complete → send to sounds (running state shows progress while streaming)
-          doneActionLabel = 'Send to sounds';
+          // Foley complete → "Send to sounds" before the first send; once the
+          // child sound scene exists, "Go to sounds (N)" jumps to it.
+          doneActionLabel = sentToSounds
+            ? `Go to sounds (${childSoundCount})`
+            : 'Send to sounds';
           onDoneAction = () => {
             // onAdvanceToSounds → handleUsageSendToSounds → pushes only this card's sounds
             onAdvanceToSounds(originalIndex, title);
@@ -384,47 +497,6 @@ export function UsageSection({
         }
       }
 
-      // Action button for text cards - draw area custom button
-      let customButtons: CustomMenuItem[] | undefined;
-      if (config.type === 'text') {
-        const cardHasArea = areaDrawing.hasArea(originalIndex);
-        const isDrawingThis =
-          areaDrawing.isDrawing && areaDrawing.drawingCardIndex === originalIndex;
-        customButtons = [
-          {
-            key: 'draw-area',
-            icon: (
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M12 2l8 5v10l-8 5-8-5V7z" />
-              </svg>
-            ),
-            label: isDrawingThis
-              ? 'Cancel drawing'
-              : cardHasArea
-              ? 'Redraw area'
-              : 'Draw area in viewer',
-            isActive: isDrawingThis || cardHasArea,
-            onClick: (e: React.MouseEvent) => {
-              e.stopPropagation();
-              if (isDrawingThis) {
-                areaDrawing.cancelDrawing();
-              } else {
-                areaDrawing.startDrawing(originalIndex);
-              }
-            },
-          },
-        ];
-      }
-
       // Scenario action button label
       let actionButtonLabel = 'Generate Sound Prompts';
       if (config.type === 'scenario') {
@@ -440,7 +512,10 @@ export function UsageSection({
           isExpanded={isExpanded}
           hasResult={configHasResult}
           result={undefined}
-          isRunning={isRunning && analyzingConfigIndex === originalIndex}
+          isRunning={
+            refreshingScenarioIndex === originalIndex ||
+            (isRunning && analyzingConfigIndex === originalIndex)
+          }
           status={
             analyzingConfigIndex === originalIndex
               ? config.type === 'scenario'
@@ -474,18 +549,45 @@ export function UsageSection({
           onRun={config.type === 'freeform' ? async () => onAdvanceToSounds(originalIndex, title) : async () => onRun(originalIndex)}
           onCancel={onStop}
           actionButtonLabel={actionButtonLabel}
+          actionIsAi={config.type === 'scenario' || config.type === 'text'}
           actionButtonDisabled={
-            config.type === 'text' && !(config as TextAnalysisConfig).textInput.trim()
+            config.type === 'text' &&
+            !(config as TextAnalysisConfig).textInput.trim() &&
+            !((config as TextAnalysisConfig).useAnalysisResult && textHasParentAnalysis(originalIndex))
           }
           actionButtonDisabledReason={
-            config.type === 'text' && !(config as TextAnalysisConfig).textInput.trim()
+            config.type === 'text' &&
+            !(config as TextAnalysisConfig).textInput.trim() &&
+            !((config as TextAnalysisConfig).useAnalysisResult && textHasParentAnalysis(originalIndex))
               ? 'Please enter a text description'
               : undefined
           }
           doneActionLabel={doneActionLabel}
           onDoneAction={onDoneAction}
+          footerSuffix={
+            config.type === 'scenario' && (config as ScenarioConfig).scenarioResult ? (
+              <div className="flex gap-1">
+                <RegenerateButton
+                  title="Regenerate scenario with the same data"
+                  onClick={() => handleRegenerateScenario(originalIndex)}
+                  disabled={isRunning && analyzingConfigIndex === originalIndex}
+                />
+                {(config as ScenarioConfig).foleyResult && usageAdvanced.has(originalIndex) ? (
+                  <RegenerateButton
+                    title="Regenerate foley + speech and replace the sound scene"
+                    onClick={() => handleRefreshScenario(originalIndex, title)}
+                  />
+                ) : null}
+              </div>
+            ) : config.type === 'text' && configHasResult ? (
+              <RegenerateButton
+                title="Regenerate sound prompts with the same data"
+                onClick={() => handleRegenerateText(originalIndex)}
+                disabled={isRunning && analyzingConfigIndex === originalIndex}
+              />
+            ) : undefined
+          }
           color="primary"
-          customButtons={customButtons}
           version={getCardVersion(config)}
           beforeSettingsSummary={
             config.type === 'scenario' && (config as ScenarioConfig).scenarioResult
@@ -515,7 +617,13 @@ export function UsageSection({
       onStop,
       onSendToSoundGeneration,
       onAdvanceToSounds,
-      areaDrawing,
+      soundConfigs,
+      usageAdvanced,
+      refreshingScenarioIndex,
+      handleRefreshScenario,
+      handleRegenerateScenario,
+      handleRegenerateText,
+      textHasParentAnalysis,
     ],
   );
 
