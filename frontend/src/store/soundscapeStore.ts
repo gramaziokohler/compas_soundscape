@@ -50,8 +50,10 @@ import { startPolling, createPollRegistry } from '@/lib/poll-until-done';
 // can never clear another job's poll loop.
 
 const soundPollRegistry = createPollRegistry();
+const orchestratePollRegistry = createPollRegistry();
 const _activeSoundJobIds = new Set<string>();
 const _activeTtsJobIds = new Set<string>();
+const _activeOrchestrateJobIds = new Set<string>();
 const _abortControllers = new Set<AbortController>();
 
 let _activeCount = 0;              // concurrent generation invocations in flight
@@ -181,48 +183,19 @@ interface OrchestrateDynamics {
   spl: string;
 }
 
-/** POST an SSE endpoint and yield parsed JSON events (mirrors analysisStore.streamPrompts). */
-async function* streamOrchestrate(
-  url: string,
-  body: object,
-  signal: AbortSignal,
-): AsyncGenerator<any> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(body),
-    signal,
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: 'Orchestration failed' }));
-    throw new Error(err.detail || 'Orchestration failed');
+function playlistToDynamics(playlist: unknown[]): Map<string, OrchestrateDynamics> {
+  const entryById = new Map<string, OrchestrateDynamics>();
+  for (const raw of playlist) {
+    if (!raw || typeof raw !== 'object') continue;
+    const entry = raw as { id?: string } & OrchestrateDynamics;
+    if (!entry.id) continue;
+    entryById.set(entry.id, {
+      trigger: entry.trigger,
+      variants: entry.variants,
+      spl: entry.spl,
+    });
   }
-  if (!res.body) throw new Error('No response body from orchestrate stream');
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split('\n\n');
-      buffer = parts.pop() ?? '';
-      for (const block of parts) {
-        const dataLine = block.split('\n').find((l) => l.startsWith('data: '));
-        if (!dataLine) continue;
-        const data = dataLine.slice(6).trim();
-        if (data === '[DONE]') return;
-        const event = JSON.parse(data);
-        if (event.type === 'error') throw new Error(event.message);
-        yield event;
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
+  return entryById;
 }
 
 /**
@@ -295,42 +268,59 @@ async function runOrchestrationForSources(
 ): Promise<{ entryById: Map<string, OrchestrateDynamics>; orchestrateIdByScenario: Map<string, string> }> {
   const entryById = new Map<string, OrchestrateDynamics>();
   const orchestrateIdByScenario = new Map<string, string>();
-  let entryCount = 0;
 
   for (const [scenarioId, configs] of scenarioGroups) {
     const { foleySounds, speeches } = buildOrchestrateInputs(configs);
 
     try {
-      let orchestrateId = '';
-      for await (const event of streamOrchestrate(
-        `${API_BASE_URL}/api/orchestrate-stream`,
-        {
-          scenario_id: scenarioId,
-          foley_data: { sounds: foleySounds },
-          speech_data: { speeches },
-          llm_model: DEFAULT_LLM_MODEL,
-        },
-        signal,
-      )) {
-        if (event.type === 'queued') {
-          onProgress?.('Orchestrating timeline… queued');
-        } else if (event.type === 'entry') {
-          entryCount += 1;
-          onProgress?.(`Orchestrating timeline… ${entryCount} sound${entryCount === 1 ? '' : 's'}`);
-          const entry = event.entry as { id: string } & OrchestrateDynamics;
-          if (entry.id) {
-            entryById.set(entry.id, {
-              trigger: entry.trigger,
-              variants: entry.variants,
-              spl: entry.spl,
-            });
-          }
-        } else if (event.type === 'done') {
-          orchestrateId = (event.orchestrate_id as string) ?? '';
-        }
+      if (signal.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
       }
-      orchestrateIdByScenario.set(scenarioId, orchestrateId);
+      onProgress?.('Orchestrating timeline…');
+      const { job_id } = await apiService.enqueueLlmJob('/api/orchestrate', {
+        scenario_id: scenarioId,
+        foley_data: { sounds: foleySounds },
+        speech_data: { speeches },
+        llm_model: DEFAULT_LLM_MODEL,
+      });
+      recordInflightJob(job_id, 'llm', { kind: 'orchestrate', scenarioId });
+      _activeOrchestrateJobIds.add(job_id);
+
+      const controller = startPolling({
+        fetchStatus: () => apiService.getJobStatus('llm', job_id),
+        onStatus: (s) => {
+          const items = Array.isArray(s.partial?.items) ? s.partial.items : [];
+          if (items.length > 0) {
+            onProgress?.(
+              `Orchestrating timeline… ${items.length} sound${items.length === 1 ? '' : 's'}`,
+            );
+          } else {
+            onProgress?.(s.status || 'Orchestrating timeline…');
+          }
+        },
+      });
+      orchestratePollRegistry.track(controller);
+
+      const onAbort = () => {
+        controller.stop();
+        apiService.cancelJob(job_id).catch(() => {});
+      };
+      signal.addEventListener('abort', onAbort);
+      try {
+        const result = await controller.done;
+        const playlist = Array.isArray(result?.playlist) ? result.playlist : [];
+        for (const [id, dyn] of playlistToDynamics(playlist)) {
+          entryById.set(id, dyn);
+        }
+        orchestrateIdByScenario.set(scenarioId, (result?.orchestrate_id as string) ?? '');
+      } finally {
+        signal.removeEventListener('abort', onAbort);
+        orchestratePollRegistry.release(controller);
+        _activeOrchestrateJobIds.delete(job_id);
+        removeInflightJob(job_id);
+      }
     } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') throw e;
       // Orchestration is a best-effort enhancement — degrade to an un-orchestrated
       // (interval-mode) schedule rather than failing the whole generation.
       console.warn('[soundscapeStore] Orchestration failed, continuing without parametric schedule:', e);
@@ -338,6 +328,39 @@ async function runOrchestrationForSources(
   }
 
   return { entryById, orchestrateIdByScenario };
+}
+
+export function applyRecoveredOrchestrateResult(result: unknown, scenarioId?: string): void {
+  const payload = result as { playlist?: unknown[]; orchestrate_id?: string } | null;
+  const playlist = Array.isArray(payload?.playlist) ? payload.playlist : [];
+  const entryById = playlistToDynamics(playlist);
+  const orchestrateIdByScenario = new Map<string, string>();
+  if (scenarioId && payload?.orchestrate_id) {
+    orchestrateIdByScenario.set(scenarioId, payload.orchestrate_id);
+  }
+  if (entryById.size > 0) applyOrchestrateDynamics(entryById, orchestrateIdByScenario);
+}
+
+export function resumeOrchestrateJob(jobId: string, scenarioId?: string): void {
+  _activeOrchestrateJobIds.add(jobId);
+  const controller = startPolling({
+    fetchStatus: () => apiService.getJobStatus('llm', jobId),
+    onStatus: (s) => {
+      _orchestrateProgressStatus = s.status || 'Orchestrating timeline…';
+    },
+  });
+  orchestratePollRegistry.track(controller);
+  void controller.done
+    .then((result) => applyRecoveredOrchestrateResult(result, scenarioId))
+    .catch(() => {
+      /* cancelled / error */
+    })
+    .finally(() => {
+      orchestratePollRegistry.release(controller);
+      _activeOrchestrateJobIds.delete(jobId);
+      removeInflightJob(jobId);
+      _orchestrateProgressStatus = null;
+    });
 }
 
 /**
@@ -1700,6 +1723,14 @@ export const useSoundscapeStore = create<SoundscapeStoreState>()(
             removeInflightJob(id);
           }
           _activeTtsJobIds.clear();
+
+          orchestratePollRegistry.stopAll(new Error('AbortError'));
+          for (const id of _activeOrchestrateJobIds) {
+            apiService.cancelJob(id).catch(() => {});
+            removeInflightJob(id);
+          }
+          _activeOrchestrateJobIds.clear();
+          _orchestrateProgressStatus = null;
 
           for (const c of _abortControllers) {
             try { c.abort(); } catch {}

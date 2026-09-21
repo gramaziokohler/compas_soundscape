@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { RangeSlider } from "@/components/ui/RangeSlider";
 import { ToggleField } from "@/components/ui/ToggleField";
+import { getCssColorString } from "@/utils/utils";
 import { CardSelect } from "@/components/ui/CardSelect";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { SearchBar } from "@/components/ui/SearchBar";
@@ -58,6 +59,7 @@ import {
   MAXIMUM_FOLEY_SOUNDS_MAX,
   DEFAULT_MAXIMUM_FOLEY_SOUNDS,
   DEFAULT_DIFFUSION_STEPS,
+  SANDBOX_MODEL_ID,
 } from "@/utils/constants";
 
 function isProviderInstalled(modelKey: string, llmProviders: LLMProviders | null): boolean {
@@ -126,7 +128,7 @@ const SECTION_KEYS: SectionKey[] = ['display', 'acoustic', 'tokens', 'llm', 'ren
 type SettingKey =
   | 'label-sprites' | 'hovering-highlight' | 'sound-spheres' | 'playing-highlight' | 'listeners' | 'ground-grid'
   | 'appearance'
-  | 'grid-spacing' | 'grid-color'
+  | 'grid-spacing' | 'grid-color' | 'grid-labels'
   | 'sound-speed' | 'mesh-length'
   | 'tokens'
   | 'llm-model' | 'tts-model' | 'tts-language' | 'audio-model'
@@ -151,6 +153,7 @@ const SETTINGS: SettingEntry[] = [
   { section: 'display', key: 'ground-grid', terms: ['ground grid', 'grid'] },
   { section: 'display', key: 'grid-spacing', terms: ['grid spacing', 'spacing', 'grid'] },
   { section: 'display', key: 'grid-color', terms: ['grid color', 'color', 'grid'] },
+  { section: 'display', key: 'grid-labels', terms: ['grid labels', 'grid numbers', 'axis labels', 'labels'] },
 
   { section: 'acoustic', key: 'sound-speed', terms: ['sound speed', 'speed', 'velocity'] },
   { section: 'acoustic', key: 'mesh-length', terms: ['mesh length', 'lc', 'characteristic length', 'mesh'] },
@@ -596,11 +599,16 @@ export function AdvancedSettingsSection({
   const setEnableAutoSave = useUIStore((s) => s.setEnableAutoSave);
   const colorTheme = useUIStore((s) => s.colorTheme);
   const setColorTheme = useUIStore((s) => s.setColorTheme);
+  const showGroundGridLabels = useUIStore((s) => s.showGroundGridLabels);
+  const setShowGroundGridLabels = useUIStore((s) => s.setShowGroundGridLabels);
+  const resolvedGridColor = groundGridColor || getCssColorString('--color-primary');
+  const gridColorPickerValue = /^#[0-9a-fA-F]{6}$/.test(resolvedGridColor)
+    ? resolvedGridColor
+    : null;
 
   useEffect(() => {
     if (activeSection !== 'history' || soundscapeStats !== null) return;
-    const modelId = useUIStore.getState().globalSpeckleData?.model_id;
-    if (!modelId) return;
+    const modelId = useUIStore.getState().globalSpeckleData?.model_id ?? SANDBOX_MODEL_ID;
     setStatsLoading(true);
     apiService.getSoundscapeStats(modelId).then((stats) => {
       setSoundscapeStats(stats);
@@ -692,8 +700,15 @@ export function AdvancedSettingsSection({
               {isVisible('ground-grid') && (
                 <ToggleField checked={showGroundGrid} onChange={onShowGroundGridChange} label="Show ground grid" />
               )}
-              {showGroundGrid && isVisible('grid-spacing', 'grid-color') && (
+              {showGroundGrid && isVisible('grid-spacing', 'grid-color', 'grid-labels') && (
                 <div className="flex flex-col gap-1 pl-2 border-l border-secondary-light">
+                  {isVisible('grid-labels') && (
+                    <ToggleField
+                      checked={showGroundGridLabels}
+                      onChange={setShowGroundGridLabels}
+                      label="Show labels"
+                    />
+                  )}
                   {isVisible('grid-spacing') && (
                     <RangeSlider
                       label="Spacing"
@@ -707,12 +722,12 @@ export function AdvancedSettingsSection({
                       hoverText="Distance between grid lines in metres. Double-click to reset to 5 m."
                     />
                   )}
-                  {isVisible('grid-color') && (
+                  {isVisible('grid-color') && gridColorPickerValue && (
                     <div className="flex items-center justify-between gap-2">
                       <label className="text-[10px] text-foreground">Color</label>
                       <input
                         type="color"
-                        value={groundGridColor}
+                        value={gridColorPickerValue}
                         onChange={(e) => onGroundGridColorChange(e.target.value)}
                         className="w-8 h-5 cursor-pointer rounded border border-secondary-light bg-transparent"
                         title="Grid line color"

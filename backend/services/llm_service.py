@@ -36,6 +36,8 @@ except ImportError:
 from config.constants import (
     LLM_MODEL_OPENAI,
     LLM_MODEL_ANTHROPIC,
+    LLM_MODEL_GEMINI_3_FLASH,
+    LLM_MODEL_GEMINI_3_PRO,
     DEFAULT_LLM_MODEL,
     LLM_MODEL_VERSIONS,
     DEFAULT_DBFS,
@@ -51,6 +53,8 @@ from config.constants import (
     LLM_INITIAL_RETRY_DELAY,
     LLM_MAX_RETRY_DELAY,
     LLM_BACKOFF_MULTIPLIER,
+    LLM_PROGRESS_THROTTLE_S,
+    LLM_STATUS_TEXT_MAX_CHARS,
     LLM_PROVIDER_GOOGLE,
     LLM_PROVIDER_OPENAI,
     LLM_PROVIDER_ANTHROPIC,
@@ -60,6 +64,128 @@ from config.constants import (
 
 class Error(Exception):
     pass
+
+
+class LLMCancelled(Exception):
+    """Raised from ``on_progress`` when the owning IO job has been cancelled."""
+
+
+_SENTENCE_END = re.compile(r"[.!?…](?:\s|$)|\n")
+
+
+def _last_status_sentence(text: str, max_chars: int = LLM_STATUS_TEXT_MAX_CHARS) -> str:
+    """Condense a rolling thought summary to one Card-bar line."""
+    cleaned = re.sub(r"\s+", " ", (text or "")).strip()
+    if not cleaned:
+        return "Thinking…"
+    parts = re.split(r"(?<=[.!?…])\s+", cleaned)
+    snippet = parts[-1] if parts else cleaned
+    if len(snippet) > max_chars:
+        snippet = snippet[-max_chars:].lstrip()
+        sp = snippet.find(" ")
+        if 0 < sp < 40:
+            snippet = snippet[sp + 1 :]
+        snippet = "…" + snippet
+    return snippet
+
+
+def _iter_response_parts(chunk) -> list[tuple[bool, str]]:
+    """Return ``[(is_thought, text), ...]`` for a generate_content(_stream) chunk.
+
+    Never use ``chunk.text`` once thought parts are enabled — it can mix
+    thoughts into the JSON answer payload.
+    """
+    out: list[tuple[bool, str]] = []
+    candidates = getattr(chunk, "candidates", None) or []
+    if not candidates:
+        return out
+    content = getattr(candidates[0], "content", None)
+    parts = getattr(content, "parts", None) if content is not None else None
+    if not parts:
+        return out
+    for part in parts:
+        text = getattr(part, "text", None)
+        if not text:
+            continue
+        out.append((bool(getattr(part, "thought", False)), text))
+    return out
+
+
+def _answer_text_from_gemini(response) -> str:
+    parts = _iter_response_parts(response)
+    if parts:
+        return "".join(text for is_thought, text in parts if not is_thought)
+    return getattr(response, "text", None) or ""
+
+
+def _gemini_thinking_config(llm_model: str):
+    """Thought summaries on; budget only for Gemini 2.5 (Gemini 3 uses thinking_level)."""
+    from google.genai import types as _gtypes
+
+    kwargs: dict = {"include_thoughts": True}
+    is_gemini_3 = (
+        llm_model in (LLM_MODEL_GEMINI_3_FLASH, LLM_MODEL_GEMINI_3_PRO)
+        or "gemini-3" in (llm_model or "")
+    )
+    if not is_gemini_3:
+        kwargs["thinking_budget"] = -1
+    return _gtypes.ThinkingConfig(**kwargs)
+
+
+class _ProgressEmitter:
+    """Throttle thought/answer deltas into ``on_progress`` dicts."""
+
+    def __init__(self, on_progress, interval_s: float = LLM_PROGRESS_THROTTLE_S):
+        self._on_progress = on_progress
+        self._interval = interval_s
+        self._last_emit = 0.0
+        self.thought = ""
+        self.phase = "thinking"
+
+    async def push(self, phase: str, delta: str) -> None:
+        if phase == "thinking":
+            self.thought += delta
+        self.phase = phase
+        now = time.monotonic()
+        sentence = bool(_SENTENCE_END.search(delta or ""))
+        if sentence or (now - self._last_emit) >= self._interval:
+            await self.flush()
+
+    async def flush(self) -> None:
+        if self._on_progress is None:
+            return
+        self._last_emit = time.monotonic()
+        text = (
+            _last_status_sentence(self.thought)
+            if self.phase == "thinking"
+            else "Writing JSON…"
+        )
+        await self._on_progress({
+            "phase": self.phase,
+            "text": text,
+            "thought": self.thought,
+        })
+
+
+async def _accumulate_gemini_stream(response_stream, on_progress, *, print_chunks: bool) -> str:
+    emitter = _ProgressEmitter(on_progress)
+    accumulated = ""
+    async for chunk in response_stream:
+        parts = _iter_response_parts(chunk)
+        if not parts:
+            continue
+        for is_thought, text in parts:
+            if print_chunks:
+                print(text, end="", flush=True)
+            if is_thought:
+                await emitter.push("thinking", text)
+            else:
+                accumulated += text
+                await emitter.push("writing", text)
+    await emitter.flush()
+    if print_chunks:
+        print(flush=True)
+    return accumulated
 
 
 class LLMService:
@@ -134,6 +260,7 @@ class LLMService:
         operation_name: str = "LLM request",
         llm_model: str = DEFAULT_LLM_MODEL,
         temperature: float | None = None,
+        on_progress=None,
     ) -> str | dict:
         """Unified async LLM caller with retry, schema enforcement, and optional streaming.
 
@@ -145,6 +272,7 @@ class LLMService:
             streaming:       When True, print chunks live to stdout (same return type).
             operation_name:  Human-readable label for retry/progress messages.
             llm_model:       Provider key (gemini / openai / anthropic).
+            on_progress:     Optional async callable({phase, text, thought}) for live status.
 
         Returns:
             str if response_schema is None, else dict parsed from JSON output.
@@ -169,6 +297,9 @@ class LLMService:
 
         for attempt in range(1, LLM_MAX_RETRIES + 1):
             try:
+                if on_progress and llm_model in (LLM_MODEL_OPENAI, LLM_MODEL_ANTHROPIC):
+                    await on_progress({"phase": "thinking", "text": "Thinking…", "thought": ""})
+
                 # ── OpenAI ────────────────────────────────────────────────────
                 if llm_model == LLM_MODEL_OPENAI:
                     if not OPENAI_AVAILABLE:
@@ -305,69 +436,67 @@ class LLMService:
                         image_bytes = base64.b64decode(b64_data)
                         parts.append(_gtypes.Part.from_bytes(data=image_bytes, mime_type="image/png"))
 
+                    thinking_cfg = _gemini_thinking_config(llm_model)
                     if schema_dict is not None:
                         gemini_config = _gtypes.GenerateContentConfig(
                             response_mime_type="application/json",
                             response_json_schema=schema_dict,
                             system_instruction=system_prompt,
+                            thinking_config=thinking_cfg,
                         )
                         if temperature is not None:
                             gemini_config.temperature = temperature
+                        gemini_contents = [_gtypes.Content(role="user", parts=parts)]
                         if streaming:
-                            accumulated = ""
                             response_stream = await self.gemini_client.aio.models.generate_content_stream(
                                 model=model_to_use,
-                                contents=[_gtypes.Content(role="user", parts=parts)],
+                                contents=gemini_contents,
                                 config=gemini_config,
                             )
-                            async for chunk in response_stream:
-                                if chunk.text:
-                                    print(chunk.text, end="", flush=True)
-                                    accumulated += chunk.text
-                            print(flush=True)
+                            accumulated = await _accumulate_gemini_stream(
+                                response_stream, on_progress, print_chunks=True
+                            )
                             return json.loads(accumulated)
                         else:
                             response = await self.gemini_client.aio.models.generate_content(
                                 model=model_to_use,
-                                contents=[_gtypes.Content(role="user", parts=parts)],
+                                contents=gemini_contents,
                                 config=gemini_config,
                             )
-                            return json.loads(response.text or "{}")
+                            return json.loads(_answer_text_from_gemini(response) or "{}")
                     else:
-                        gemini_config = None
-                        if system_prompt or temperature is not None:
-                            gemini_config = _gtypes.GenerateContentConfig(
-                                system_instruction=system_prompt,
-                            ) if system_prompt else _gtypes.GenerateContentConfig()
-                            if temperature is not None:
-                                gemini_config.temperature = temperature
+                        gemini_config = _gtypes.GenerateContentConfig(
+                            thinking_config=thinking_cfg,
+                        )
+                        if system_prompt:
+                            gemini_config.system_instruction = system_prompt
+                        if temperature is not None:
+                            gemini_config.temperature = temperature
                         contents: list = (  # type: ignore[assignment]
                             [_gtypes.Content(role="user", parts=parts)]
                             if clean_b64
                             else user_prompt  # type: ignore[list-item]
                         )
                         if streaming:
-                            accumulated = ""
                             response_stream = await self.gemini_client.aio.models.generate_content_stream(
                                 model=model_to_use,
                                 contents=contents,
-                                **({"config": gemini_config} if gemini_config else {}),
+                                config=gemini_config,
                             )
-                            async for chunk in response_stream:
-                                if chunk.text:
-                                    print(chunk.text, end="", flush=True)
-                                    accumulated += chunk.text
-                            print(flush=True)
-                            return accumulated
+                            return await _accumulate_gemini_stream(
+                                response_stream, on_progress, print_chunks=True
+                            )
                         else:
                             response = await self.gemini_client.aio.models.generate_content(
                                 model=model_to_use,
                                 contents=contents,
-                                **({"config": gemini_config} if gemini_config else {}),
+                                config=gemini_config,
                             )
-                            return response.text or ""
+                            return _answer_text_from_gemini(response)
 
             except Exception as e:
+                if isinstance(e, LLMCancelled):
+                    raise
                 error_str = str(e)
                 is_quota = (
                     "429" in error_str
@@ -417,11 +546,12 @@ class LLMService:
         screenshots: list[str] | None = None,
         operation_name: str = "LLM stream",
         llm_model: str = DEFAULT_LLM_MODEL,
+        on_progress=None,
     ):
-        """Async generator yielding raw text chunks from the LLM as they arrive.
+        """Async generator yielding raw answer-text chunks from the LLM as they arrive.
 
-        Supports optional screenshots (base64 PNG data URIs) for vision-capable models.
-        Used by streaming generation methods for SSE endpoints.
+        Thought parts (Gemini) are forwarded via ``on_progress`` and never yielded
+        as answer text. Used by streaming generation methods.
         """
         import os as _os
 
@@ -433,6 +563,9 @@ class LLMService:
                 if isinstance(s, str) and s.strip():
                     raw_data_uris.append(s)
                     clean_b64.append(s.split(",", 1)[1] if "," in s else s)
+
+        if on_progress and llm_model in (LLM_MODEL_OPENAI, LLM_MODEL_ANTHROPIC):
+            await on_progress({"phase": "thinking", "text": "Thinking…", "thought": ""})
 
         if llm_model == LLM_MODEL_OPENAI:
             if not OPENAI_AVAILABLE:
@@ -482,7 +615,11 @@ class LLMService:
                 self.gemini_client = genai.Client()
             from google.genai import types as _gtypes
             model_to_use = LLM_MODEL_VERSIONS.get(llm_model, "gemini-2.5-flash")
-            config = _gtypes.GenerateContentConfig(system_instruction=system_prompt) if system_prompt else None
+            config = _gtypes.GenerateContentConfig(
+                thinking_config=_gemini_thinking_config(llm_model),
+            )
+            if system_prompt:
+                config.system_instruction = system_prompt
             if clean_b64:
                 gemini_parts = [_gtypes.Part.from_text(text=user_prompt)]
                 for b64_data in clean_b64:
@@ -494,11 +631,20 @@ class LLMService:
             response_stream = await self.gemini_client.aio.models.generate_content_stream(
                 model=model_to_use,
                 contents=gemini_contents,
-                **({"config": config} if config else {}),
+                config=config,
             )
+            emitter = _ProgressEmitter(on_progress)
             async for chunk in response_stream:
-                if chunk.text:
-                    yield chunk.text
+                parts = _iter_response_parts(chunk)
+                if not parts:
+                    continue
+                for is_thought, text in parts:
+                    if is_thought:
+                        await emitter.push("thinking", text)
+                    else:
+                        await emitter.push("writing", text)
+                        yield text
+            await emitter.flush()
 
     def _parse_prompt_and_name(self, text: str) -> dict:
         """Parse structured PROMPT: ... NAME: ... SPL: ... INTERVAL: ... DURATION: ... ENTITY: ... format into dict
@@ -1533,6 +1679,7 @@ For the duration estimation (in seconds with 0.1 precision):
         screenshots: list[str] | None = None,
         user_context: str | None = None,
         llm_model: str = DEFAULT_LLM_MODEL,
+        on_progress=None,
     ):
         """Async generator yielding architectural object dicts one by one as the LLM streams.
 
@@ -1566,6 +1713,7 @@ For the duration estimation (in seconds with 0.1 precision):
             screenshots=screenshots,
             operation_name="Model analysis streaming",
             llm_model=llm_model,
+            on_progress=on_progress,
         ):
             buffer += chunk
             if not title_yielded:
@@ -1721,6 +1869,7 @@ For the duration estimation (in seconds with 0.1 precision):
         duration: int = 150,
         people_count: int = 5,
         likeliness: int = 9,
+        on_progress=None,
     ):
         """Async generator yielding formatted scenario events one by one.
 
@@ -1751,6 +1900,7 @@ For the duration estimation (in seconds with 0.1 precision):
                 response_schema=_ScenarioResponse,
                 operation_name="Scenarist",
                 llm_model=llm_model,
+                on_progress=on_progress,
             )
             if not isinstance(result, dict):
                 result = result.model_dump() if hasattr(result, "model_dump") else dict(result)
@@ -1759,6 +1909,8 @@ For the duration estimation (in seconds with 0.1 precision):
                 for _ev in _sc.get("events") or []:
                     if isinstance(_ev.get("description"), str):
                         _ev["description"] = self._normalize_object_refs(_ev["description"])
+        except LLMCancelled:
+            raise
         except Exception as e:
             print(f"[stream_scenarist_agent] LLM call failed: {e}")
             yield {"type": "error", "message": str(e)}
@@ -1861,6 +2013,7 @@ For the duration estimation (in seconds with 0.1 precision):
         furniture_list: dict | None = None,
         maximum_number_of_sounds: int = 20,  # kept for API backwards-compat; not used in prompt
         llm_model: str = DEFAULT_LLM_MODEL,
+        on_progress=None,
     ) -> dict:
         """Async version of foley_artist — awaits _call_llm directly.
 
@@ -1884,6 +2037,7 @@ For the duration estimation (in seconds with 0.1 precision):
             response_schema=_FoleyOutput,
             operation_name="Foley artist (async)",
             llm_model=llm_model,
+            on_progress=on_progress,
         )
         if not isinstance(result, dict):
             result = result.model_dump() if hasattr(result, "model_dump") else dict(result)
@@ -1895,6 +2049,7 @@ For the duration estimation (in seconds with 0.1 precision):
         furniture_list: dict | None = None,
         maximum_number_of_sounds: int = 20,
         llm_model: str = DEFAULT_LLM_MODEL,
+        on_progress=None,
     ):
         """Async generator yielding foley sound events one by one.
 
@@ -1912,7 +2067,10 @@ For the duration estimation (in seconds with 0.1 precision):
                 furniture_list=furniture_list,
                 maximum_number_of_sounds=maximum_number_of_sounds,
                 llm_model=llm_model,
+                on_progress=on_progress,
             )
+        except LLMCancelled:
+            raise
         except Exception as e:
             yield {"type": "error", "message": str(e)}
             return
@@ -2027,6 +2185,7 @@ For the duration estimation (in seconds with 0.1 precision):
         furniture_list: dict | None = None,
         llm_model: str = DEFAULT_LLM_MODEL,
         language: str | None = None,
+        on_progress=None,
     ) -> dict:
         """Extract and generate spoken dialogue from scenario events.
 
@@ -2059,6 +2218,7 @@ For the duration estimation (in seconds with 0.1 precision):
             response_schema=_SpeechOutput,
             operation_name="Speech agent",
             llm_model=llm_model,
+            on_progress=on_progress,
         )
         if not isinstance(result, dict):
             result = result.model_dump() if hasattr(result, "model_dump") else dict(result)
@@ -2070,6 +2230,7 @@ For the duration estimation (in seconds with 0.1 precision):
         furniture_list: dict | None = None,
         llm_model: str = DEFAULT_LLM_MODEL,
         language: str | None = None,
+        on_progress=None,
     ):
         """Async generator yielding speech entries one by one.
 
@@ -2084,7 +2245,10 @@ For the duration estimation (in seconds with 0.1 precision):
                 furniture_list=furniture_list,
                 llm_model=llm_model,
                 language=language,
+                on_progress=on_progress,
             )
+        except LLMCancelled:
+            raise
         except Exception as e:
             yield {"type": "error", "message": str(e)}
             return
@@ -2317,6 +2481,7 @@ For the duration estimation (in seconds with 0.1 precision):
         speech_result: dict,
         llm_model: str = DEFAULT_LLM_MODEL,
         temperature: float = 0.1,
+        on_progress=None,
     ) -> dict:
         """Compile the final parametric audio playlist from foley + speech + scenario.
 
@@ -2361,6 +2526,7 @@ For the duration estimation (in seconds with 0.1 precision):
             operation_name="Orchestrate agent",
             llm_model=llm_model,
             temperature=temperature,
+            on_progress=on_progress,
         )
         if not isinstance(llm_result, dict):
             llm_result = llm_result.model_dump() if hasattr(llm_result, "model_dump") else dict(llm_result)
@@ -2376,6 +2542,7 @@ For the duration estimation (in seconds with 0.1 precision):
         speech_result: dict,
         llm_model: str = DEFAULT_LLM_MODEL,
         temperature: float = 0.1,
+        on_progress=None,
     ):
         """Async generator yielding orchestrated playlist entries one by one.
 
@@ -2391,7 +2558,10 @@ For the duration estimation (in seconds with 0.1 precision):
                 speech_result=speech_result,
                 llm_model=llm_model,
                 temperature=temperature,
+                on_progress=on_progress,
             )
+        except LLMCancelled:
+            raise
         except Exception as e:
             yield {"type": "error", "message": str(e)}
             return

@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import * as THREE from 'three';
 import {
   Viewer,
@@ -32,6 +32,8 @@ interface ViewerInitProps {
   scaleForSounds: number;
   onViewerLoaded?: (viewer: Viewer) => void;
   refreshKey: number;
+  /** True while `?model_id=` bootstrap is fetching — do not init the sandbox viewer. */
+  isBootstrappingModel?: boolean;
   /** Ref managed by SpeckleScene, updated by useSpeckleDarkMode. Read by hover patch. */
   isDarkModeRef: React.MutableRefObject<boolean>;
   /** Ref managed by SpeckleScene, synced from viewMode. Read by hover patch. */
@@ -56,6 +58,7 @@ export function useSpeckleViewerInit({
   scaleForSounds,
   onViewerLoaded,
   refreshKey,
+  isBootstrappingModel = false,
   isDarkModeRef,
   isAcousticModeRef,
   showHoveringHighlightRef,
@@ -81,10 +84,13 @@ export function useSpeckleViewerInit({
   // Effect - Initialize Speckle Viewer
   // ============================================================================
   useEffect(() => {
-    if (!modelUrl || !containerRef.current) return;
+    if (!containerRef.current) return;
+    // Wait for URL bootstrap before creating a sandbox viewer, so `?model_id=`
+    // refresh does not flash the placeholder room.
+    if (!modelUrl && isBootstrappingModel) return;
 
     const initViewer = async () => {
-      setIsLoading(true);
+      if (modelUrl) setIsLoading(true);
       setError(null);
       setIsViewerReady(false);
 
@@ -246,6 +252,59 @@ export function useSpeckleViewerInit({
 
         console.log('[useSpeckleViewerInit] Extensions created');
 
+        const completeAudioStack = (loadedWorldTree: boolean) => {
+          console.log('[useSpeckleViewerInit] Viewer ready, initializing SpeckleAudioCoordinator...');
+
+          const coordinator = new SpeckleAudioCoordinator(
+            viewer,
+            cameraController!,
+            selectionExtension!,
+            audioOrchestrator,
+            audioContext
+          );
+          coordinator.initialize(scaleForSounds);
+          setCoordinator(coordinator);
+
+          const renderer = viewer.getRenderer();
+          const scene = renderer.scene;
+          if (scene) {
+            const boundingBoxManager = new BoundingBoxManager(scene);
+            setBoundingBoxManager(boundingBoxManager);
+          } else {
+            console.error('[useSpeckleViewerInit] Failed to get scene from renderer!');
+          }
+
+          const playbackScheduler = new PlaybackSchedulerService(audioOrchestrator, audioContext);
+          setPlaybackScheduler(playbackScheduler);
+
+          setIsLoading(false);
+          setIsViewerReady(true);
+          setViewMode('default');
+          setStoreViewer(viewer);
+
+          if (loadedWorldTree) {
+            const tree = viewer.getWorldTree();
+            if (tree) {
+              console.log('[useSpeckleViewerInit] World tree loaded');
+              setWorldTree(tree);
+              incrementWorldTreeVersion();
+            }
+          }
+
+          if (onViewerLoaded) {
+            console.log('[useSpeckleViewerInit] Calling onViewerLoaded callback');
+            onViewerLoaded(viewer);
+          }
+
+          console.log('[useSpeckleViewerInit] ✅ Initialization complete');
+        };
+
+        // Sandbox path: never call UrlHelper / SpeckleLoader / GraphQL.
+        if (!modelUrl) {
+          completeAudioStack(false);
+          return;
+        }
+
         // Load Speckle model with retry logic
         let lastError: Error | null = null;
 
@@ -270,57 +329,7 @@ export function useSpeckleViewerInit({
               await viewer.loadObject(loader, true);
             }
 
-            // Success — initialize audio coordinator
-            console.log('[useSpeckleViewerInit] Viewer loaded, initializing SpeckleAudioCoordinator...');
-
-            const coordinator = new SpeckleAudioCoordinator(
-              viewer,
-              cameraController!,
-              selectionExtension!,
-              audioOrchestrator,
-              audioContext
-            );
-            coordinator.initialize(scaleForSounds);
-            setCoordinator(coordinator);
-
-            // Initialize bounding box manager
-            const renderer = viewer.getRenderer();
-            const scene = renderer.scene;
-            if (scene) {
-              const boundingBoxManager = new BoundingBoxManager(scene);
-              setBoundingBoxManager(boundingBoxManager);
-            } else {
-              console.error('[useSpeckleViewerInit] Failed to get scene from renderer!');
-            }
-
-            // Initialize playback scheduler
-            const playbackScheduler = new PlaybackSchedulerService(audioOrchestrator, audioContext);
-            setPlaybackScheduler(playbackScheduler);
-
-            setIsLoading(false);
-            setIsViewerReady(true);
-
-            // Always start in Default mode regardless of any persisted state
-            setViewMode('default');
-
-            // Register viewer with selection mode context
-            setStoreViewer(viewer);
-
-            // Load world tree for selection handling
-            const tree = viewer.getWorldTree();
-            if (tree) {
-              console.log('[useSpeckleViewerInit] World tree loaded');
-              setWorldTree(tree);
-              incrementWorldTreeVersion();
-            }
-
-            // Notify parent
-            if (onViewerLoaded) {
-              console.log('[useSpeckleViewerInit] Calling onViewerLoaded callback');
-              onViewerLoaded(viewer);
-            }
-
-            console.log('[useSpeckleViewerInit] ✅ Initialization complete');
+            completeAudioStack(true);
             return;
           } catch (err) {
             lastError = err as Error;
@@ -332,7 +341,7 @@ export function useSpeckleViewerInit({
 
         // All retries failed
         setIsLoading(false);
-        setError(`Failed to load model after ${SPECKLE_VIEWER_RETRY.MAX_ATTEMPTS} attempts`);
+        setError(`Failed to load model after ${SPECKLE_VIEWER_RETRY.MAX_ATTEMPTS} attempts: ${lastError?.message ?? 'unknown error'}`);
       } catch (err) {
         console.error('[useSpeckleViewerInit] Initialization error:', err);
         setIsLoading(false);
@@ -364,7 +373,7 @@ export function useSpeckleViewerInit({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelUrl, onViewerLoaded, refreshKey]);
+  }, [modelUrl, onViewerLoaded, refreshKey, isBootstrappingModel]);
 
   // ============================================================================
   // Effect - Initialize Area Drawing Manager (after viewer is ready)

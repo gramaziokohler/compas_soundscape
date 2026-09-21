@@ -147,6 +147,8 @@ function formatTimestampRange(ts: string): string {
 export function getScenarioPipelineStatus(
   config: ScenarioConfig,
   isOperationRunning: boolean,
+  liveStatus?: string,
+  liveProgress?: number,
 ): { status: string | undefined; progress: number } {
   if (!isOperationRunning) return { status: undefined, progress: 0 };
 
@@ -159,22 +161,30 @@ export function getScenarioPipelineStatus(
   ) ?? 0;
   const speechCount = config.speechResult?.speeches?.length ?? 0;
 
+  let stage: { status: string; progress: number };
   if (hasSpeech) {
-    return {
+    stage = {
       status: `Ready — ${foleyCount} foley · ${speechCount} speech`,
       progress: 100,
     };
-  }
-  if (hasFoley) {
-    return {
+  } else if (hasFoley) {
+    stage = {
       status: `Foley ready${foleyCount ? ` (${foleyCount} sounds)` : ''} · generating speech…`,
       progress: 60,
     };
+  } else if (scenarioCompleted) {
+    stage = { status: 'Crafting foley + speech prompts…', progress: 35 };
+  } else {
+    stage = { status: 'Imagining usage scenarios…', progress: 10 };
   }
-  if (scenarioCompleted) {
-    return { status: 'Crafting foley + speech prompts…', progress: 35 };
+
+  if (liveStatus) {
+    return {
+      status: liveStatus,
+      progress: liveProgress && liveProgress > 0 ? liveProgress : stage.progress,
+    };
   }
-  return { status: 'Imagining usage scenarios…', progress: 10 };
+  return stage;
 }
 
 // ─── ScenarioAfterView ────────────────────────────────────────────────────────

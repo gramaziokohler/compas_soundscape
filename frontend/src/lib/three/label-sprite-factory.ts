@@ -45,6 +45,7 @@ export function computeLabelWorldHeight(
  * @param renderScale - Resolution multiplier applied to the logical (CSS) size
  * @param text - Label text
  * @param showBackground - Draw the dark pill behind the text (false = bare text)
+ * @param textColor - CSS color used to fill the glyph
  * @returns Logical canvas dimensions { width, height } (used for aspect ratio)
  */
 function renderLabelCanvas(
@@ -52,6 +53,7 @@ function renderLabelCanvas(
   renderScale: number,
   text: string,
   showBackground: boolean,
+  textColor: string,
 ): { width: number; height: number } {
   const ctx = canvas.getContext('2d')!;
 
@@ -85,8 +87,7 @@ function renderLabelCanvas(
     ctx.fill();
   }
 
-  // Label text
-  ctx.fillStyle = '#ffffff';
+  ctx.fillStyle = textColor;
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'center';
   ctx.fillText(text, logicalW / 2, logicalH / 2);
@@ -108,15 +109,19 @@ function renderLabelCanvas(
  * can redraw at the same resolution.
  * `userData.showBackground` stores whether the dark pill was drawn so
  * updateLabelSprite redraws it consistently.
+ * `userData.textColor` stores the glyph fill so updateLabelSprite redraws it
+ * consistently.
  *
  * @param text - Label text
- * @param options - Optional settings (`showBackground` defaults to true)
+ * @param options - Optional settings (`showBackground` defaults to true;
+ *   `textColor` defaults to white-on-pill)
  */
 export function createLabelSprite(
   text: string,
-  options?: { showBackground?: boolean },
+  options?: { showBackground?: boolean; textColor?: string },
 ): THREE.Sprite {
   const showBackground = options?.showBackground ?? true;
+  const textColor = options?.textColor ?? '#ffffff';
   const canvas = document.createElement('canvas');
 
   // Render at device pixel ratio so the texture stays crisp at any scale,
@@ -125,7 +130,13 @@ export function createLabelSprite(
   const dpr = Math.min(typeof window !== 'undefined' ? (window.devicePixelRatio || 2) : 2, 3);
   const renderScale = dpr * OBJECT_LABEL.RENDER_SCALE;
 
-  const { width: logicalW, height: logicalH } = renderLabelCanvas(canvas, renderScale, text, showBackground);
+  const { width: logicalW, height: logicalH } = renderLabelCanvas(
+    canvas,
+    renderScale,
+    text,
+    showBackground,
+    textColor,
+  );
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.minFilter = THREE.LinearFilter;
@@ -149,6 +160,7 @@ export function createLabelSprite(
   sprite.userData.isLabel = true;
   sprite.userData.renderScale = renderScale;
   sprite.userData.showBackground = showBackground;
+  sprite.userData.textColor = textColor;
 
   return sprite;
 }
@@ -174,8 +186,15 @@ export function updateLabelSprite(sprite: THREE.Sprite, text: string): void {
     Math.min(typeof window !== 'undefined' ? (window.devicePixelRatio || 2) : 2, 3) * OBJECT_LABEL.RENDER_SCALE;
 
   const showBackground = (sprite.userData.showBackground as boolean) ?? true;
+  const textColor = (sprite.userData.textColor as string) ?? '#ffffff';
 
-  const { width: logicalW, height: logicalH } = renderLabelCanvas(canvas, renderScale, text, showBackground);
+  const { width: logicalW, height: logicalH } = renderLabelCanvas(
+    canvas,
+    renderScale,
+    text,
+    showBackground,
+    textColor,
+  );
 
   // Replace the old GPU texture with a fresh one created from the updated
   // canvas. Setting only map.needsUpdate = true is subject to render-timing

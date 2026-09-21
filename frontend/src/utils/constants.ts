@@ -1136,6 +1136,12 @@ export const SCENE_GRID = {
   DIVISIONS: 20,
 } as const;
 
+// ============================================================================
+// Homepage sandbox (pre-Speckle local room)
+// ============================================================================
+/** Reserved soundscape id for homepage work that has no Speckle model. Not a URL param. */
+export const SANDBOX_MODEL_ID = 'local';
+
 // Arctic Theme
 export const ARCTIC_THEME = {
   MATERIAL_ROUGHNESS: 0.5,

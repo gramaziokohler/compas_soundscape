@@ -93,10 +93,6 @@ export function Sidebar(props: SidebarProps) {
   useEffect(() => {
     isInitializingRef.current = true;
 
-    // Check if a project is loaded — on homepage, force everything collapsed
-    const urlModelId = new URLSearchParams(window.location.search).get('model_id');
-    const hasProject = !!useUIStore.getState().globalSpeckleData || !!urlModelId;
-
     let sidebarExpanded: boolean | null = null;
     // Try direct localStorage first (most reliable, bypasses rehydrate timing)
     try {
@@ -110,10 +106,6 @@ export function Sidebar(props: SidebarProps) {
     } catch {}
     if (sidebarExpanded === null) {
       sidebarExpanded = useUIStore.getState().isLeftSidebarExpanded;
-    }
-    // On homepage, force sidebar collapsed regardless of persisted state
-    if (!hasProject) {
-      sidebarExpanded = false;
     }
     setIsExpanded(sidebarExpanded);
     useUIStore.getState().setIsLeftSidebarExpanded(sidebarExpanded);

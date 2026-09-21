@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import * as THREE from 'three';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import type { BoundingBoxBounds } from '@/lib/three/BoundingBoxManager';
+import { getPlaceholderRoomBounds } from '@/lib/three/placeholder-room-manager';
 import type { SoundEvent } from '@/types';
 
 interface BoundingBoxProps {
@@ -35,7 +36,7 @@ export function useSpeckleBoundingBox({
     // Calculate effective bounds from Speckle viewer (primary method)
     let effectiveBounds = boundingBoxManager.calculateBoundsFromSpeckleBatches(viewer);
 
-    // Fallback to auto-calculate from sound positions
+    // Fallback to auto-calculate from sound positions, then the sandbox room AABB
     if (!effectiveBounds) {
       const soundPositions: THREE.Vector3[] = [];
       if (soundscapeData) {
@@ -45,7 +46,8 @@ export function useSpeckleBoundingBox({
           }
         });
       }
-      effectiveBounds = boundingBoxManager.calculateEffectiveBounds(null, soundPositions);
+      effectiveBounds = boundingBoxManager.calculateEffectiveBounds(null, soundPositions)
+        ?? getPlaceholderRoomBounds();
     }
 
     // Apply room scale around center of bounds

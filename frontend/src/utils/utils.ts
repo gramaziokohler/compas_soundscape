@@ -11,6 +11,15 @@ export function getCssColorHex(cssVar: string): number {
 }
 
 /**
+ * Read a CSS custom property at runtime and return the trimmed string
+ * (e.g. `#rrggbb`). Call only in browser context (not SSR).
+ */
+export function getCssColorString(cssVar: string): string {
+  if (typeof document === 'undefined') return '';
+  return getComputedStyle(document.documentElement).getPropertyValue(cssVar).trim();
+}
+
+/**
  * Generate a gradient color for acoustic materials based on absorption coefficient.
  * Reads gradient stops from CSS custom properties (--color-material-start/mid/end)
  * at call time; falls back to the original values for SSR.

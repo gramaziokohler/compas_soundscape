@@ -124,6 +124,7 @@ export function ContextSection({
   const serviceVersions = useServiceVersions();
   const llmModel = useSoundscapeStore((s) => s.llmModel);
   const analysisStatus = useAnalysisStore((s) => s.analysisStatus);
+  const analysisProgress = useAnalysisStore((s) => s.analysisProgress);
   const analyzingConfigIndex = useAnalysisStore((s) => s.analyzingConfigIndex);
   const rehydratingAudioConfigs = useAnalysisStore((s) => s.rehydratingAudioConfigs);
   const audioRehydrateFailedConfigs = useAnalysisStore((s) => s.audioRehydrateFailedConfigs);
@@ -493,9 +494,10 @@ export function ContextSection({
             isExtracting
               ? 'Extracting…'
               : analyzingConfigIndex === originalIndex
-                ? analysisStatus
+                ? analysisStatus || 'Analyzing 3D model...'
                 : undefined
           }
+          progress={analyzingConfigIndex === originalIndex ? analysisProgress : 0}
           collapsedInfo={getCollapsedInfo(config, originalIndex)}
           isPlayingCollapsedInfo={isAudio && previewingSoundId === `context-audio:${originalIndex}`}
           keepContentMountedWhenCollapsed={isAudio && previewingSoundId === `context-audio:${originalIndex}`}
@@ -551,6 +553,7 @@ export function ContextSection({
       isRunning,
       analyzingConfigIndex,
       analysisStatus,
+      analysisProgress,
       getCollapsedInfo,
       getActionButton,
       getBeforeContent,

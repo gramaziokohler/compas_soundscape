@@ -40,6 +40,7 @@ import { useSpeckleObjectOverlay } from '@/components/scene/hooks/useSpeckleObje
 import { useSpeckleCoordinatorCallbacks } from '@/components/scene/hooks/useSpeckleCoordinatorCallbacks';
 import { useSpeckleBoundingBoxGumball } from '@/components/scene/hooks/useSpeckleBoundingBoxGumball';
 import { useSpeckleGroundGrid } from '@/components/scene/hooks/useSpeckleGroundGrid';
+import { usePlaceholderRoom, getPlaceholderRoomBounds, fitCameraToBounds } from '@/components/scene/hooks/usePlaceholderRoom';
 import { useAcousticLayerIsolation } from '@/hooks/useAcousticLayerIsolation';
 // Phase 5 JSX sub-components
 import { SceneViewModeToolbar } from '@/components/scene/SceneViewModeToolbar';
@@ -332,7 +333,7 @@ export function SpeckleScene({
   const acousticAssignmentActive = useAcousticMaterialStore((s) => s.isActive);
   const prevAcousticActiveRef = useRef(false);
   useEffect(() => {
-    if (acousticAssignmentActive && !prevAcousticActiveRef.current && !userClosedExplorerRef.current) {
+    if (acousticAssignmentActive && !prevAcousticActiveRef.current && !userClosedExplorerRef.current && (viewer_url || speckleData?.url)) {
       useUIStore.getState().setShowObjectExplorer(true);
     }
     prevAcousticActiveRef.current = acousticAssignmentActive;
@@ -368,6 +369,7 @@ export function SpeckleScene({
   // File upload drag state (for empty state)
   const [isDragging, setIsDragging] = useState(false);
   const [speckleTokenSet, setSpeckleTokenSet] = useState<boolean | null>(null);
+  const [showLoadModelPanel, setShowLoadModelPanel] = useState(false);
 
   // Instant loading feedback: set synchronously the moment a file is selected, before the
   // parent kicks off upload/conversion. Cleared once the parent's upload flag takes over,
@@ -390,10 +392,14 @@ export function SpeckleScene({
     scaleForSounds,
     onViewerLoaded,
     refreshKey,
+    isBootstrappingModel,
     isDarkModeRef,
     isAcousticModeRef,
     showHoveringHighlightRef,
   });
+
+  const isSandbox = !modelUrl;
+  usePlaceholderRoom({ isViewerReady, enabled: isSandbox });
 
   // Model load failures surface as a transient toast (replaces the old full-screen overlay)
   useEffect(() => {
@@ -1106,6 +1112,12 @@ export function SpeckleScene({
   // ready, or an error occurred. The combined loading state below keeps the overlay visible
   // throughout the handoff so there is no flicker back to the empty state.
   useEffect(() => {
+    if (modelUrl || isUploadingModel || isPreparingModel) {
+      setShowLoadModelPanel(false);
+    }
+  }, [modelUrl, isUploadingModel, isPreparingModel]);
+
+  useEffect(() => {
     if (isUploadingModel || isViewerReady || error) {
       setIsPreparingModel(false);
     }
@@ -1128,7 +1140,12 @@ export function SpeckleScene({
     if (audioOrchestrator && enginePlaybackScheduler) {
       enginePlaybackScheduler.setAudioOrchestrator(audioOrchestrator);
     }
-  }, [audioOrchestrator, engineCoordinator, enginePlaybackScheduler]);
+    // Sandbox viewer init often finishes before useAudioOrchestrator does.
+    // Transport.play() no-ops without a context; inject it the same way as the orchestrator.
+    if (audioContext && enginePlaybackScheduler) {
+      enginePlaybackScheduler.setAudioContext(audioContext);
+    }
+  }, [audioOrchestrator, audioContext, engineCoordinator, enginePlaybackScheduler]);
 
   // ============================================================================
   // Effect - Compute and Report Bounds When Viewer Ready
@@ -1140,13 +1157,14 @@ export function SpeckleScene({
     }
 
     // Compute bounds from Speckle viewer
-    const bounds = boundingBoxManagerRef.current.calculateBoundsFromSpeckleBatches(viewerRef.current);
+    const bounds = boundingBoxManagerRef.current.calculateBoundsFromSpeckleBatches(viewerRef.current)
+      ?? (isSandbox ? getPlaceholderRoomBounds() : null);
 
     if (bounds && onBoundsComputed) {
       console.log('[SpeckleScene] ✅ Reporting initial bounds to parent:', bounds);
       onBoundsComputed(bounds);
     }
-  }, [isViewerReady, onBoundsComputed]);
+  }, [isViewerReady, onBoundsComputed, isSandbox]);
 
   // (coordinator callbacks extracted to useSpeckleCoordinatorCallbacks)
   // ============================================================================
@@ -1237,14 +1255,17 @@ export function SpeckleScene({
     }
 
     try {
-      // Use setCameraView with undefined objectIds to fit all objects
-      // This uses the CameraController's default fit-to-all behavior
-      cameraControllerRef.current.setCameraView([], true);
+      if (isSandbox) {
+        fitCameraToBounds(cameraControllerRef.current, getPlaceholderRoomBounds());
+      } else {
+        cameraControllerRef.current.setCameraView([], true);
+      }
+      viewerRef.current.requestRender(8);
       console.log('[SpeckleScene] Camera reset to fit all objects');
     } catch (error) {
       console.error('[SpeckleScene] Error resetting camera:', error);
     }
-  }, []);
+  }, [isSandbox]);
 
   // ============================================================================
   // Playback Control Handlers (controlling both audio and timeline)
@@ -1346,6 +1367,9 @@ export function SpeckleScene({
     <div
       className={`relative w-full h-full ${className || ''}`}
       style={{ height: '100vh', backgroundColor: isDarkMode ? 'black' : undefined }}
+      onDragOver={isSandbox ? handleDragOver : undefined}
+      onDragLeave={isSandbox ? handleDragLeave : undefined}
+      onDrop={isSandbox ? handleDrop : undefined}
     >
       {/* Viewer container */}
       <div
@@ -1376,19 +1400,25 @@ export function SpeckleScene({
         </div>
       )}
 
-      {/* Empty state */}
-      {!modelUrl && !isModelLoading && !error && (
-        <SceneEmptyState
-          modelFile={modelFile}
-          isDragging={isDragging}
-          speckleTokenSet={speckleTokenSet}
-          onFileChange={handleFileChange}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          onSpeckleModelSelect={onSpeckleModelSelect}
-          isUploadingModel={isUploadingModel || isPreparingModel}
-        />
+      {/* Load-model popover — does not block the sandbox room */}
+      {isSandbox && isViewerReady && showLoadModelPanel && !isModelLoading && (
+        <div
+          className="absolute inset-0 z-30 flex items-start justify-center pt-16"
+          onClick={() => setShowLoadModelPanel(false)}
+        >
+          <SceneEmptyState
+            modelFile={modelFile}
+            isDragging={isDragging}
+            speckleTokenSet={speckleTokenSet}
+            onFileChange={handleFileChange}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onSpeckleModelSelect={onSpeckleModelSelect}
+            isUploadingModel={isUploadingModel || isPreparingModel}
+            onClose={() => setShowLoadModelPanel(false)}
+          />
+        </div>
       )}
 
       {/* Timeline — full DAW panel, or compact play/pause when the panel is hidden */}
@@ -1427,7 +1457,7 @@ export function SpeckleScene({
         }}
       >
         <UndoRedoToolbar />
-        {isViewerReady && speckleData && onSaveSoundscape && !enableAutoSave && (
+        {isViewerReady && onSaveSoundscape && !enableAutoSave && (
           <SceneControlButton
             onClick={onSaveSoundscape}
             isActive={isSavingSoundscape}
@@ -1453,6 +1483,20 @@ export function SpeckleScene({
                   <polyline points="7 3 7 8 15 8" />
                 </svg>
               )
+            }
+          />
+        )}
+        {isSandbox && isViewerReady && (
+          <SceneControlButton
+            onClick={() => setShowLoadModelPanel((open) => !open)}
+            isActive={showLoadModelPanel}
+            title="Load a Speckle model"
+            icon={
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
             }
           />
         )}
@@ -1483,7 +1527,7 @@ export function SpeckleScene({
 
       {/* Object Explorer floating panel — always mounted so ObjectExplorer initializes (auto-hides Acoustics layer) on load */}
       <ObjectExplorerPanel
-        isVisible={showObjectExplorer}
+        isVisible={showObjectExplorer && !isSandbox}
         onClose={handleCloseExplorer}
         isRightSidebarExpanded={isRightSidebarExpanded}
         rightSidebarWidth={rightSidebarWidth ?? UI_RIGHT_SIDEBAR.WIDTH}
@@ -1501,8 +1545,8 @@ export function SpeckleScene({
         bottomOffset={dockBottomSpace}
       />
 
-      {/* Object Explorer toggle — bottom right */}
-      {isViewerReady && (
+      {/* Object Explorer toggle — bottom right; hidden in sandbox (empty world tree) */}
+      {isViewerReady && !isSandbox && (
         <div
           className="absolute flex flex-col items-center pointer-events-auto z-20 transition-all duration-300"
           style={{

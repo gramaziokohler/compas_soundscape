@@ -1,11 +1,11 @@
 'use client';
 
 import React from 'react';
-import Image from 'next/image';
 import { FileUploadArea } from '@/components/controls/FileUploadArea';
 import { SpeckleModelBrowser } from '@/components/scene/SpeckleModelBrowser';
-import { useTextGenerationStore } from '@/store/textGenerationStore';
+import { useTextGenerationStore } from '@/store';
 import { MODEL_FILE_EXTENSIONS } from '@/utils/constants';
+import { Spinner } from '@/components/ui/Spinner';
 
 interface SpeckleModelSelectData {
   model_id: string;
@@ -27,6 +27,7 @@ interface SceneEmptyStateProps {
   onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
   onSpeckleModelSelect?: (speckleData: SpeckleModelSelectData) => void;
   isUploadingModel?: boolean;
+  onClose?: () => void;
 }
 
 export function SceneEmptyState({
@@ -39,86 +40,92 @@ export function SceneEmptyState({
   onDrop,
   onSpeckleModelSelect,
   isUploadingModel = false,
+  onClose,
 }: SceneEmptyStateProps) {
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-background/50">
-      <div
-        className="flex flex-col items-center gap-[clamp(1rem,1.5vw,1.5rem)] p-[clamp(1rem,2vw,2rem)]"
-        style={{ width: 'min(92vw, clamp(18rem, 32vw, 30rem))' }}
-      >
-        <div className="text-center">
-          {/* <div className="flex items-center gap-4 flex-shrink-0 mb-4 justify-center">
-            <Image
-              className="flex-shrink-0"
-              src="/compas_icon_white.png"
-              alt="compas logo"
-              width={100}
-              height={100}
-              priority
-            />
-          </div> */}
-<h3 className="text-[clamp(3rem,4.5vw,6.5rem)] leading-none font-extrabold tracking-tight mb-3 text-primary">
-  Sound is blue
-</h3>
-        </div>
+    <div
+      className="frosted-surface backdrop-blur-lg backdrop-saturate-150 shadow-lg pointer-events-auto"
+      style={{
+        width: 'min(92vw, 22rem)',
+        border: '1px solid var(--color-overlay-border)',
+        borderRadius: '8px',
+        background: 'var(--color-overlay-bg)',
+        padding: '12px',
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-medium text-foreground">Load model</span>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-xs text-secondary-hover hover:text-foreground px-1"
+            title="Close"
+          >
+            ×
+          </button>
+        )}
+      </div>
 
-        {speckleTokenSet === true ? (
-          <>
-            <div className="w-full">
-              <FileUploadArea
-                file={modelFile}
-                isDragging={isDragging}
-                acceptedFormats={MODEL_FILE_EXTENSIONS.join(',')}
-                acceptedExtensions={MODEL_FILE_EXTENSIONS.join(', ')}
-                onFileChange={onFileChange}
-                onDragOver={onDragOver}
-                onDragLeave={onDragLeave}
-                onDrop={onDrop}
-                inputId="scene-model-upload"
-                multiple={false}
-                isUploading={isUploadingModel}
-                fluid
-              />
-            </div>
-            {onSpeckleModelSelect && (
-              <SpeckleModelBrowser onModelSelect={onSpeckleModelSelect} />
-            )}
-          </>
-        ) : speckleTokenSet === false ? (
-          <div
-            className="w-full rounded-lg p-5 text-center flex flex-col gap-3"
+      {speckleTokenSet === null ? (
+        <div className="flex justify-center py-4">
+          <Spinner size={24} />
+        </div>
+      ) : speckleTokenSet === true ? (
+        <div className="flex flex-col gap-3">
+          <FileUploadArea
+            file={modelFile}
+            isDragging={isDragging}
+            acceptedFormats={MODEL_FILE_EXTENSIONS.join(',')}
+            acceptedExtensions={MODEL_FILE_EXTENSIONS.join(', ')}
+            onFileChange={onFileChange}
+            onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
+            onDrop={onDrop}
+            inputId="scene-model-upload"
+            multiple={false}
+            isUploading={isUploadingModel}
+            fluid
+          />
+          {onSpeckleModelSelect && (
+            <SpeckleModelBrowser onModelSelect={onSpeckleModelSelect} />
+          )}
+        </div>
+      ) : (
+        <div
+          className="rounded-lg p-3 text-center flex flex-col gap-3"
+          style={{
+            border: '1px dashed var(--color-secondary-light)',
+            background: 'var(--color-secondary-lighter)',
+          }}
+        >
+          <p className="text-xs text-secondary-hover">
+            3D models are hosted through{' '}
+            <a
+              href="https://app.speckle.systems"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+              style={{ color: 'var(--color-primary)' }}
+            >
+              app.speckle.systems
+            </a>
+            . Add your Speckle token to upload and browse models. The sandbox room stays usable without it.
+          </p>
+          <button
+            type="button"
+            onClick={() => useTextGenerationStore.getState().triggerOpenTokenSettings()}
+            className="self-center text-xs px-3 py-1.5 rounded transition-colors"
             style={{
-              border: `1px dashed var(--color-secondary-light)`,
-              background: 'var(--color-secondary-lighter)',
+              border: '1px solid var(--color-secondary-light)',
+              color: 'var(--color-secondary-hover)',
             }}
           >
-            <p className="text-xs text-neutral-600">
-              3D models are hosted through{' '}
-              <a
-                href="https://app.speckle.systems"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline"
-                style={{ color: 'var(--color-primary)' }}
-              >
-                app.speckle.systems
-              </a>
-              . Add your Speckle token to upload and browse models.
-            </p>
-            <button
-              type="button"
-              onClick={() => useTextGenerationStore.getState().triggerOpenTokenSettings()}
-              className="self-center text-xs px-3 py-1.5 rounded transition-colors"
-              style={{
-                border: `1px solid var(--color-secondary-light)`,
-                color: 'var(--color-secondary-hover)',
-              }}
-            >
-              Configure Speckle token in Settings →
-            </button>
-          </div>
-        ) : null /* loading — render nothing while checking */}
-      </div>
+            Configure Speckle token in Settings →
+          </button>
+        </div>
+      )}
     </div>
   );
 }

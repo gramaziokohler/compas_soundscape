@@ -332,6 +332,15 @@ class AsyncJobStore:
         })
         await self.redis.expire(key, JOB_RESULT_TTL_S)
 
+    async def mark_cancelled(self, job_id: str) -> None:
+        """Mark an IO job cancelled after the in-process task actually stopped."""
+        key = job_key(job_id)
+        await self.redis.hset(key, mapping={"status": JOB_STATUS_CANCELLED, "status_text": "Cancelled"})
+        await self.redis.expire(key, JOB_RESULT_TTL_S)
+
+    async def is_cancel_requested(self, job_id: str) -> bool:
+        return await self.redis.hget(job_key(job_id), "cancel_requested") == "1"
+
     async def sweep_orphaned_io_jobs(self, job_types: tuple, message: str) -> int:
         """Called once at API startup: any IO job left status=running belonged
         to the previous process and died with it (in-process asyncio tasks

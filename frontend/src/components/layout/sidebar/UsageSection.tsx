@@ -120,6 +120,7 @@ export function UsageSection({
   const llmModel = useSoundscapeStore((s) => s.llmModel);
   const soundConfigs = useSoundscapeStore((s) => s.soundConfigs);
   const analysisStatus = useAnalysisStore((s) => s.analysisStatus);
+  const analysisProgress = useAnalysisStore((s) => s.analysisProgress);
   const analyzingConfigIndex = useAnalysisStore((s) => s.analyzingConfigIndex);
   const handleReorderConfigs = useAnalysisStore((s) => s.handleReorderConfigs);
   const duplicateConfigAt = useAnalysisStore((s) => s.duplicateConfigAt);
@@ -519,14 +520,26 @@ export function UsageSection({
           status={
             analyzingConfigIndex === originalIndex
               ? config.type === 'scenario'
-                ? getScenarioPipelineStatus(config as ScenarioConfig, true).status
+                ? getScenarioPipelineStatus(
+                    config as ScenarioConfig,
+                    true,
+                    analysisStatus,
+                    analysisProgress,
+                  ).status
                 : analysisStatus
               : undefined
           }
           progress={
             config.type === 'scenario'
-              ? getScenarioPipelineStatus(config as ScenarioConfig, analyzingConfigIndex === originalIndex).progress
-              : 0
+              ? getScenarioPipelineStatus(
+                  config as ScenarioConfig,
+                  analyzingConfigIndex === originalIndex,
+                  analyzingConfigIndex === originalIndex ? analysisStatus : undefined,
+                  analysisProgress,
+                ).progress
+              : analyzingConfigIndex === originalIndex
+                ? analysisProgress
+                : 0
           }
           collapsedInfo={getCollapsedInfo(config, originalIndex)}
           defaultName={
@@ -606,6 +619,7 @@ export function UsageSection({
       isRunning,
       analyzingConfigIndex,
       analysisStatus,
+      analysisProgress,
       analysisResult,
       getBeforeContent,
       getAfterContent,

@@ -302,6 +302,9 @@ export class SpeckleAudioCoordinator {
 
     if (this.soundSphereManager) {
       this.soundSphereManager.setAudioOrchestrator(orchestrator);
+      if (orchestrator) {
+        this.soundSphereManager.reregisterAllSources();
+      }
     }
   }
 

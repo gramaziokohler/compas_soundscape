@@ -40,6 +40,12 @@ export interface PollController {
 
 const DEFAULT_INTERVAL_MS = 1500;
 
+function abortError(message = 'AbortError'): Error {
+  const err = new Error(message);
+  err.name = 'AbortError';
+  return err;
+}
+
 /**
  * Start polling a backend job. The returned controller's `done` promise is the
  * only way the caller learns the outcome; the interval handle is private.
@@ -57,13 +63,14 @@ export function startPolling(options: PollOptions): PollController {
   let interval: ReturnType<typeof setInterval> | null = null;
   let settled = false;
 
-  const stop = (reason: Error = new Error('AbortError')) => {
+  const stop = (reason: Error = abortError()) => {
     if (settled) return;
     settled = true;
     if (interval !== null) {
       clearInterval(interval);
       interval = null;
     }
+    if (reason.message === 'AbortError') reason.name = 'AbortError';
     reject(reason);
   };
 
@@ -124,7 +131,7 @@ export function createPollRegistry() {
       controllers.delete(controller);
     },
     /** Stop every tracked poll, clearing intervals and rejecting their promises. */
-    stopAll(reason: Error = new Error('AbortError')): void {
+    stopAll(reason: Error = abortError()): void {
       for (const controller of [...controllers]) {
         controller.stop(reason);
       }

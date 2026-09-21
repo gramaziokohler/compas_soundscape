@@ -61,6 +61,14 @@ LLM_INITIAL_RETRY_DELAY = 2.0  # Initial delay in seconds before first retry
 LLM_MAX_RETRY_DELAY = 30.0  # Maximum delay in seconds between retries
 LLM_BACKOFF_MULTIPLIER = 2.0  # Exponential backoff multiplier
 
+# Live thought-summary progress (Gemini include_thoughts → job status_text)
+LLM_PROGRESS_THROTTLE_S = 0.3
+LLM_STATUS_TEXT_MAX_CHARS = 120
+LLM_PROGRESS_THINKING_MIN = 8
+LLM_PROGRESS_THINKING_MAX = 40
+LLM_PROGRESS_WRITING_MIN = 40
+LLM_PROGRESS_WRITING_MAX = 90
+
 # Default Sound Parameters (consolidated from multiple sources)
 DEFAULT_DBFS = -18.0  # Default volume level in dBFS (decibels relative to full scale)
 DEFAULT_ENTITY_DBFS = -18.0  # Default volume for entity prompts
@@ -731,7 +739,8 @@ JOB_TYPE_CHORAS = "choras"
 
 # IO job types (asyncio.create_task in the API process — no queue, no worker)
 JOB_TYPE_TTS = "tts"
-IO_JOB_TYPES = (JOB_TYPE_TTS,)
+JOB_TYPE_LLM = "llm"
+IO_JOB_TYPES = (JOB_TYPE_TTS, JOB_TYPE_LLM)
 
 # Job statuses
 JOB_STATUS_QUEUED = "queued"

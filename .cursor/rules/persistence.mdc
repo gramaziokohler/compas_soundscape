@@ -96,13 +96,14 @@ callbacks (`advanceToUsage`, `handleContextSendToSounds`) with an `isInitializin
 guard that blocks them for ~1s after mount.
 
 ### 11. Homepage vs project page panel states
-On the homepage (no `?model_id=` URL param, no `globalSpeckleData`), panels must be
-forced collapsed. On a project page, persisted panel states are restored. To avoid
-the homepage overwriting project-session values in localStorage, force the store
-values in `Home()` (outside Suspense) AFTER rehydrate — the persist middleware will
-write them, but the next project load also runs through `Home()` which does NOT
-force-collapse when `urlModelId` is present, so the project-session values from the
-last manual user interaction are restored from localStorage.
+The homepage (no `?model_id=` URL param) is a real workspace: a local Three.js
+sandbox room with the same sidebars as a Speckle project. Persisted panel states
+(`isLeftSidebarExpanded`, `showTimeline`, right-sidebar expand) are restored on
+both homepage and project pages. Do **not** force-collapse panels on `/`.
+
+Sandbox domain state persists under reserved model id `local`
+(`data/soundscapes/<session>/local/soundscape.json`) and is **not** put in the URL.
+A real `?model_id=` still bootstraps Speckle geometry + that model's soundscape.
 
 ## Zustand Persist Pattern (Skip Hydration)
 

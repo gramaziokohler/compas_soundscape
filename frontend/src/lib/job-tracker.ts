@@ -2,11 +2,15 @@ import type { JobRecord, JobType } from '@/types';
 
 const STORAGE_KEY = 'compas-inflight-jobs';
 
-export function recordInflightJob(jobId: string, jobType: JobType): void {
+export function recordInflightJob(
+  jobId: string,
+  jobType: JobType,
+  meta?: JobRecord['meta'],
+): void {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
     const jobs: JobRecord[] = raw ? JSON.parse(raw) : [];
-    jobs.push({ jobId, jobType, timestamp: Date.now() });
+    jobs.push({ jobId, jobType, timestamp: Date.now(), ...(meta ? { meta } : {}) });
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify(jobs));
   } catch {
     // sessionStorage may be unavailable in some contexts

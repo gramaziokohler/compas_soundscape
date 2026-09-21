@@ -2,13 +2,16 @@
 
 import { useEffect, useRef } from 'react';
 import { apiService } from '@/services/api';
-import { getStoredJobs, removeInflightJob, clearAllJobs } from '@/lib/job-tracker';
-import { useSoundscapeStore, beginSoundGeneration, endSoundGeneration } from '@/store/soundscapeStore';
-import { useAudioControlsStore } from '@/store/audioControlsStore';
-import { usePyroomAcousticsStore } from '@/store/pyroomAcousticsStore';
-import { useChorasStore } from '@/store/chorasStore';
-import { useAcousticsSimulationStore } from '@/store/acousticsSimulationStore';
+import { getStoredJobs, removeInflightJob } from '@/lib/job-tracker';
+import {
+  useSoundscapeStore,
+  beginSoundGeneration,
+  endSoundGeneration,
+  applyRecoveredOrchestrateResult,
+  resumeOrchestrateJob,
+} from '@/store/soundscapeStore';
 import { useSEDStore } from '@/store/sedStore';
+import { useAnalysisStore, applyRecoveredLlmResult, resumeLlmJob } from '@/store/analysisStore';
 import type { JobType, JobRecord } from '@/types';
 
 const POLL_INTERVAL_MS = 1500;
@@ -50,11 +53,52 @@ export function useJobRecovery(): { hasInflightJobs: boolean } {
   return { hasInflightJobs: getStoredJobs().length > 0 };
 }
 
+function recoverLlmJob(record: JobRecord, status: Awaited<ReturnType<typeof apiService.getJobStatus>>): void {
+  const { jobId } = record;
+  const kind = record.meta?.kind;
+  const configIndex = record.meta?.configIndex;
+  const scenarioId = record.meta?.scenarioId;
+
+  if (status.cancelled || status.error) {
+    removeInflightJob(jobId);
+    if (kind !== 'orchestrate') {
+      useAnalysisStore.setState({
+        isAnalyzing: false,
+        analysisStatus: '',
+        analysisProgress: 0,
+        analyzingConfigIndex: null,
+      });
+    }
+    return;
+  }
+
+  if (status.completed) {
+    if (kind === 'orchestrate') {
+      applyRecoveredOrchestrateResult(status.result, scenarioId);
+    } else if (configIndex != null && kind) {
+      applyRecoveredLlmResult(kind, configIndex, status.result);
+    }
+    removeInflightJob(jobId);
+    return;
+  }
+
+  if (kind === 'orchestrate') {
+    resumeOrchestrateJob(jobId, scenarioId);
+  } else {
+    resumeLlmJob(jobId, configIndex, kind);
+  }
+}
+
 async function recoverJob(record: JobRecord): Promise<void> {
   const { jobId, jobType } = record;
 
   try {
     const status = await apiService.getJobStatus(jobType, jobId);
+
+    if (jobType === 'llm') {
+      recoverLlmJob(record, status);
+      return;
+    }
 
     if (status.cancelled || status.error) {
       console.log(`[useJobRecovery] Job ${jobId} (${jobType}) is cancelled/error — cleaning up`);
@@ -142,6 +186,8 @@ function updateProgress(jobType: JobType, progress: number, statusText: string):
       break;
     case 'pyroom':
       break;
+    case 'llm':
+      break;
   }
 }
 
@@ -163,6 +209,7 @@ function resetJobState(jobType: JobType): void {
       break;
     case 'choras':
     case 'pyroom':
+    case 'llm':
       break;
   }
 }
@@ -247,6 +294,9 @@ function processCompletedJob(
       break;
     }
     case 'choras': {
+      break;
+    }
+    case 'llm': {
       break;
     }
   }

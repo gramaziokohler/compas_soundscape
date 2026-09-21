@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useLayoutEffect, useRef } from 'react';
 import { UI_RIGHT_SIDEBAR, UI_SIDEBAR_RESIZE, UI_SIDEBAR_TOGGLE } from '@/utils/constants';
 import { readCssPx, clampToViewportWidth } from '@/utils/scale';
 import { buildSidebarEdgeNotchClipPath } from '@/utils/sidebarEdgeNotch';
@@ -186,6 +186,15 @@ export function RightSidebar({
     direction: 'left',
     onWidthChange: handleWidthChange,
   });
+
+  // Report the initial width once so overlays (scene control buttons) align
+  // with the expanded panel before the first resize drag. Mirrors Sidebar.tsx.
+  const reportedInitialWidthRef = useRef(false);
+  useLayoutEffect(() => {
+    if (reportedInitialWidthRef.current) return;
+    reportedInitialWidthRef.current = true;
+    handleWidthChange(sidebarWidth);
+  }, [sidebarWidth, handleWidthChange]);
 
   const {
     ratio: acousticsRatio,

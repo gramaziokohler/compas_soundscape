@@ -234,12 +234,13 @@ export interface CatalogSoundSelection {
 
 // ─── Job persistence types ────────────────────────────────────────────────────
 
-export type JobType = 'sound' | 'tts' | 'sed' | 'choras' | 'pyroom';
+export type JobType = 'sound' | 'tts' | 'sed' | 'choras' | 'pyroom' | 'llm';
 
 export interface JobRecord {
   jobId: string;
   jobType: JobType;
   timestamp: number;
+  meta?: { configIndex?: number; kind?: string; scenarioId?: string };
 }
 
 export type SoundState = 'playing' | 'paused' | 'stopped';

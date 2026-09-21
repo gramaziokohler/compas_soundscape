@@ -95,6 +95,9 @@ export interface UIStoreState {
   setGroundGridSpacing: (v: number) => void;
   groundGridColor: string;
   setGroundGridColor: (v: string) => void;
+  /** Axis names + numeric tick labels on the ground grid. */
+  showGroundGridLabels: boolean;
+  setShowGroundGridLabels: (v: boolean) => void;
 
   // ── Viewer display toggles ────────────────────────────────────────────────
   showLabelSprites: boolean;
@@ -299,8 +302,11 @@ export const useUIStore = create<UIStoreState>()(
       setShowGroundGrid: (v) => set({ showGroundGrid: v }, false, 'ui/setShowGroundGrid'),
       groundGridSpacing: 2,
       setGroundGridSpacing: (v) => set({ groundGridSpacing: v }, false, 'ui/setGroundGridSpacing'),
-      groundGridColor: '#888888',
+      // Empty = follow `--color-primary` at apply time (color picker needs a hex).
+      groundGridColor: '',
       setGroundGridColor: (v) => set({ groundGridColor: v }, false, 'ui/setGroundGridColor'),
+      showGroundGridLabels: true,
+      setShowGroundGridLabels: (v) => set({ showGroundGridLabels: v }, false, 'ui/setShowGroundGridLabels'),
 
       // ── Viewer display toggles ───────────────────────────────────────────
       showLabelSprites: true,

@@ -172,6 +172,7 @@ function toLegacyJobStatus(job: UnifiedJobStatus) {
     cancelled: job.status === 'cancelled',
     error: job.error,
     result: job.result,
+    partial: job.partial,
     partial_sounds: job.partial,
     queue_position: job.queue_position,
     queue_total: job.queue_total,
@@ -1534,6 +1535,32 @@ export const apiService = {
    * Returns a JobStatus envelope translated from the unified response. The
    * `result` field shape varies by job type; callers handle it based on jobType.
    */
+  async cancelJob(jobId: string): Promise<void> {
+    await cancelUnifiedJob(jobId);
+  },
+
+  /**
+   * Enqueue an LLM agent IO job (analyze-3dmodel / scenarist / foley / speech / orchestrate).
+   * Poll GET /api/jobs/{job_id} for thought-summary progress.
+   */
+  async enqueueLlmJob(path: string, body: object): Promise<{ job_id: string }> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}${path}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      'LLM job',
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Failed to start LLM job' }));
+      const msg = err.detail || 'Failed to start LLM job';
+      throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    }
+    return response.json();
+  },
+
   async getJobStatus(jobType: JobType, jobId: string): Promise<{
     completed: boolean;
     cancelled: boolean;
@@ -1541,6 +1568,7 @@ export const apiService = {
     progress: number;
     status: string;
     result?: any;
+    partial?: any;
     partial_sounds?: any[];
   }> {
     try {

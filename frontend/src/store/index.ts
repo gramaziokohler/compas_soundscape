@@ -21,9 +21,9 @@ import {
 } from './acousticsSimulationStore';
 import { usePyroomAcousticsStore, pyroomAcousticsPartialize } from './pyroomAcousticsStore';
 import { useChorasStore, chorasPartialize } from './chorasStore';
-import { useSoundscapeStore, soundscapePartialize, configValidationError, orchestrateInputsSignature } from './soundscapeStore';
+import { useSoundscapeStore, soundscapePartialize, configValidationError, orchestrateInputsSignature, applyRecoveredOrchestrateResult, resumeOrchestrateJob } from './soundscapeStore';
 import { useTextGenerationStore } from './textGenerationStore';
-import { useAnalysisStore, analysisPartialize } from './analysisStore';
+import { useAnalysisStore, analysisPartialize, applyRecoveredLlmResult, resumeLlmJob } from './analysisStore';
 import { useSEDStore, sedPartialize } from './sedStore';
 import { useModalImpactStore, modalImpactPartialize } from './modalImpactStore';
 import { useAreaDrawingStore, areaDrawingPartialize } from './areaDrawingStore';
@@ -170,13 +170,19 @@ export type {
   ChorasSimulationSettings,
 } from './chorasStore';
 
-export { useSoundscapeStore, configValidationError, orchestrateInputsSignature };
+export {
+  useSoundscapeStore,
+  configValidationError,
+  orchestrateInputsSignature,
+  applyRecoveredOrchestrateResult,
+  resumeOrchestrateJob,
+};
 export type { SoundscapeStoreState } from './soundscapeStore';
 
 export { useTextGenerationStore };
 export type { TextGenerationStoreState } from './textGenerationStore';
 
-export { useAnalysisStore };
+export { useAnalysisStore, applyRecoveredLlmResult, resumeLlmJob };
 export type { AnalysisStoreState } from './analysisStore';
 
 export { useSEDStore };

@@ -1,15 +1,10 @@
 """
-In-process (asyncio) job execution for TTS, plus the LLM semaphore
-shared by SSE agent streams.
+In-process (asyncio) job execution for TTS and LLM agents.
 
-TTS jobs get a Redis-visible job_id (uniform polling via GET /api/jobs/{id}
+TTS and LLM jobs get a Redis-visible job_id (uniform polling via GET /api/jobs/{id}
 — see routers/jobs.py) and run as asyncio.create_task() in the API process,
-gated by TTS_SEMAPHORE. SSE agent streams (scenarist/foley/speech/orchestrate/
-analyze-3dmodel-stream) don't need a job_id — the stream itself is the
-response — so they acquire LLM_SEMAPHORE directly and use
-iter_with_keepalive() to inject ": ping\\n\\n" comments during any gap
-longer than SSE_KEEPALIVE_INTERVAL_S (Cloudflare/nginx drop idle proxied
-connections after ~100s).
+gated by TTS_SEMAPHORE / LLM_SEMAPHORE. generate-prompts-stream still uses SSE
+and acquires LLM_SEMAPHORE directly with iter_with_keepalive().
 """
 from __future__ import annotations
 
@@ -24,6 +19,7 @@ from config.constants import (
     LLM_MAX_CONCURRENT,
     TTS_MAX_CONCURRENT,
     JOB_TYPE_TTS,
+    JOB_TYPE_LLM,
     IO_JOB_TYPES,
     SSE_KEEPALIVE_INTERVAL_S,
 )
@@ -36,6 +32,7 @@ TTS_SEMAPHORE = asyncio.Semaphore(TTS_MAX_CONCURRENT)
 
 _SEMAPHORES = {
     JOB_TYPE_TTS: TTS_SEMAPHORE,
+    JOB_TYPE_LLM: LLM_SEMAPHORE,
 }
 
 
@@ -60,6 +57,9 @@ async def start_io_job(
             try:
                 await coro_factory(job_id)
             except Exception as exc:
+                if await job_store.is_cancel_requested(job_id):
+                    await job_store.mark_cancelled(job_id)
+                    return
                 traceback.print_exc()
                 await job_store.fail(job_id, llm_error_message(exc))
 

@@ -43,9 +43,10 @@ import { useViewportScale } from "@/hooks/useViewportScale";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { useJobRecovery } from "@/hooks/useJobRecovery";
 import { apiService } from "@/services/api";
-import { API_BASE_URL, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, DEFAULT_MAXIMUM_FOLEY_SOUNDS } from "@/utils/constants";
+import { API_BASE_URL, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, DEFAULT_MAXIMUM_FOLEY_SOUNDS, SANDBOX_MODEL_ID } from "@/utils/constants";
 import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
 import type { LoadTab, SoundGenerationConfig } from "@/types";
+import type { SoundscapeData } from "@/types/soundscape";
 import type { AcousticSimulationMode } from "@/types/audio";
 import type { AudioAnalysisConfig, AnalysisConfig } from "@/types/analysis";
 import { CARD_TYPE_LABELS } from "@/types/card";
@@ -78,10 +79,105 @@ function buildAppIdMap(node: any, map: Map<string, string> = new Map()): Map<str
 
 let _viewerLoadComplete = false;
 
-// Set when a model is opened from the Home page (as opposed to a refresh of an
+// Set when a model was opened from the Home page (as opposed to a refresh of an
 // existing ?model_id= session). In that case the camera must default to the
 // model's bounding box instead of restoring a previously saved POV.
 let _fitCameraToBoundingBoxOnLoad = false;
+
+function applyRestoredSoundscapePayload(
+  data: SoundscapeData,
+  audioBaseUrl: string,
+  irBaseUrl: string | undefined,
+  suppressOrchestrateBakeRef: { current: boolean },
+) {
+  const restored = restoreSoundscapeState(data, audioBaseUrl, irBaseUrl);
+  const soundGen = useSoundscapeStore.getState();
+  if (restored.soundEvents.length > 0) {
+    suppressOrchestrateBakeRef.current = true;
+  }
+  soundGen.restoreSoundscape(restored.soundConfigs, restored.soundEvents, {
+    negativePrompt: restored.globalSettings.negativePrompt,
+    audioModel: restored.globalSettings.audioModel,
+    ttsModel: restored.globalSettings.ttsModel,
+    orchestrateSoundsEnabled: restored.globalSettings.orchestrateSoundsEnabled,
+  });
+  void soundGen.rehydrateSampleAudioConfigs();
+  useAudioControlsStore.getState().restoreVolumes(restored.soundVolumes);
+  useAudioControlsStore.getState().restoreSoundTimestamps(restored.soundTimestamps);
+
+  let maxEndSec = 0;
+  for (const timestamps of Object.values(restored.soundTimestamps)) {
+    for (const ts of timestamps) maxEndSec = Math.max(maxEndSec, ts + 10);
+  }
+  if (maxEndSec > 0) {
+    const audioDurMs = Math.ceil((maxEndSec + 10) / 30) * 30 * 1000;
+    const currentDurMs = useAudioControlsStore.getState().timelineDurationMs;
+    if (audioDurMs > currentDurMs) {
+      useAudioControlsStore.getState().setTimelineDurationMs(audioDurMs);
+    }
+  }
+
+  useAudioControlsStore.getState().restoreIterationLinks(restored.iterationLinks);
+  useAudioControlsStore.getState().restoreMuteSolo(restored.mutedSounds, restored.soloedSound);
+
+  if (restored.receivers.length > 0) {
+    useReceiversStore.getState().restoreReceivers(restored.receivers, restored.selectedReceiverId);
+  }
+  if (restored.gridListeners.length > 0) {
+    useGridListenersStore.getState().restoreGridListeners(restored.gridListeners);
+  }
+  if (restored.simulationConfigs.length > 0) {
+    restored.simulationConfigs.forEach(config => {
+      if (config.type === 'pyroomacoustics' && config.simulationInstanceId) {
+        usePyroomAcousticsStore.getState().seedInstance(config.simulationInstanceId, {});
+      }
+      if (config.type === 'choras' && config.simulationInstanceId) {
+        useChorasStore.getState().seedInstance(config.simulationInstanceId, {});
+      }
+    });
+    useAcousticsSimulationStore.getState().restoreSimulationState(
+      restored.simulationConfigs,
+      restored.activeSimulationIndex,
+    );
+  }
+  if (data.analysis_state) {
+    const analysisRestored = restoreAnalysisState(data.analysis_state);
+    useAnalysisStore.getState().restoreAnalysisState({
+      analysisConfigs: analysisRestored.analysisConfigs,
+      analysisResults: analysisRestored.analysisResults,
+      activeTab: analysisRestored.activeTab,
+    });
+    useAreaDrawingStore.getState().hydrateFromConfigs(analysisRestored.analysisConfigs);
+    useAnalysisStore.getState().rehydrateAudioContextSources(audioBaseUrl);
+    if (analysisRestored.soundConfigParentIndices.size > 0) {
+      const storeState = useSoundscapeStore.getState();
+      const configs = storeState.soundConfigs.map((c, i) => {
+        const parent = analysisRestored.soundConfigParentIndices.get(i);
+        return parent !== undefined ? { ...c, parentUsageOriginalIndex: parent } : c;
+      });
+      useSoundscapeStore.setState({ soundConfigs: configs });
+    }
+    if (analysisRestored.cardFlowState) {
+      const cf = analysisRestored.cardFlowState;
+      useCardFlowStore.setState({
+        contextAdvanced: new Set(cf.contextAdvanced),
+        usageAdvanced: new Set(cf.usageAdvanced),
+        contextToUsageMap: new Map(Object.entries(cf.contextToUsage).map(([k, v]) => [Number(k), v])),
+        usageToSoundMap: new Map(Object.entries(cf.usageToSound).map(([k, v]) => [Number(k), v])),
+      });
+      if (cf.usageAdvanced.length > 0) {
+        useUIStore.getState().setActiveSoundParentIndex(cf.usageAdvanced[0]);
+      }
+    }
+  }
+  if (restored.resonanceAudioConfig) {
+    const rcfg = restored.resonanceAudioConfig;
+    useRoomMaterialsStore.setState({
+      roomDimensions: rcfg.roomDimensions,
+      roomMaterials: rcfg.roomMaterials,
+    });
+  }
+}
 
 function HomeContent() {
   useUndoRedo();
@@ -102,7 +198,26 @@ function HomeContent() {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     const urlModelId = params.get('model_id');
-    if (!urlModelId) return;
+    if (!urlModelId) {
+      bootstrappedRef.current = true;
+      apiService.loadSoundscapeFromSpeckle(SANDBOX_MODEL_ID).then(loadResponse => {
+        if (!loadResponse.found || !loadResponse.soundscape_data) return;
+        const data = loadResponse.soundscape_data;
+        const audioBaseUrl = `${API_BASE_URL}${loadResponse.audio_base_url}`;
+        const irBaseUrl = loadResponse.ir_base_url || undefined;
+        if (loadResponse.missing_audio_filenames?.length) {
+          notifyError(
+            `${loadResponse.missing_audio_filenames.length} saved sound file(s) could not be found on the server and were skipped.`,
+            'warning',
+          );
+        }
+        applyRestoredSoundscapePayload(data, audioBaseUrl, irBaseUrl, suppressOrchestrateBakeRef);
+        console.log('[page:bootstrap] Sandbox soundscape restored');
+      }).catch(err => {
+        console.warn('[page:bootstrap] No sandbox soundscape to restore:', err);
+      });
+      return;
+    }
 
     const gsd = useUIStore.getState().globalSpeckleData;
     if (gsd !== null) return; // model already loaded via normal flow
@@ -178,96 +293,7 @@ function HomeContent() {
         }
       }
 
-      // Mirror handleSpeckleModelSelect restore flow
-      const restored = restoreSoundscapeState(data, audioBaseUrl, irBaseUrl);
-      if (restored.soundEvents.length > 0) {
-        suppressOrchestrateBakeRef.current = true;
-      }
-      soundGen.restoreSoundscape(restored.soundConfigs, restored.soundEvents, {
-        negativePrompt: restored.globalSettings.negativePrompt,
-        audioModel: restored.globalSettings.audioModel,
-        ttsModel: restored.globalSettings.ttsModel,
-        orchestrateSoundsEnabled: restored.globalSettings.orchestrateSoundsEnabled,
-      });
-      // sample-audio cards lost their (blob) clip on refresh — reload the bundled sample.
-      void soundGen.rehydrateSampleAudioConfigs();
-      useAudioControlsStore.getState().restoreVolumes(restored.soundVolumes);
-      useAudioControlsStore.getState().restoreSoundTimestamps(restored.soundTimestamps);
-
-      let maxEndSec = 0;
-      for (const timestamps of Object.values(restored.soundTimestamps)) {
-        for (const ts of timestamps) maxEndSec = Math.max(maxEndSec, ts + 10);
-      }
-      if (maxEndSec > 0) {
-        const audioDurMs = Math.ceil((maxEndSec + 10) / 30) * 30 * 1000;
-        const currentDurMs = useAudioControlsStore.getState().timelineDurationMs;
-        if (audioDurMs > currentDurMs) {
-          useAudioControlsStore.getState().setTimelineDurationMs(audioDurMs);
-        }
-      }
-
-      useAudioControlsStore.getState().restoreIterationLinks(restored.iterationLinks);
-      useAudioControlsStore.getState().restoreMuteSolo(restored.mutedSounds, restored.soloedSound);
-
-      if (restored.receivers.length > 0) {
-        receivers.restoreReceivers(restored.receivers, restored.selectedReceiverId);
-      }
-      if (restored.gridListeners.length > 0) {
-        gridListeners.restoreGridListeners(restored.gridListeners);
-      }
-      if (restored.simulationConfigs.length > 0) {
-        restored.simulationConfigs.forEach(config => {
-          if (config.type === 'pyroomacoustics' && config.simulationInstanceId) {
-            usePyroomAcousticsStore.getState().seedInstance(config.simulationInstanceId, {});
-          }
-          if (config.type === 'choras' && config.simulationInstanceId) {
-            useChorasStore.getState().seedInstance(config.simulationInstanceId, {});
-          }
-        });
-        acousticsSimulation.restoreSimulationState(
-          restored.simulationConfigs,
-          restored.activeSimulationIndex,
-        );
-      }
-      if (data.analysis_state) {
-        const analysisRestored = restoreAnalysisState(data.analysis_state);
-        analysis.restoreAnalysisState({
-          analysisConfigs: analysisRestored.analysisConfigs,
-          analysisResults: analysisRestored.analysisResults,
-          activeTab: analysisRestored.activeTab,
-        });
-        useAreaDrawingStore.getState().hydrateFromConfigs(analysisRestored.analysisConfigs);
-        // Rebuild persisted audio-context source Files so the SED waveform/results
-        // render after a cold refresh (the original File object is not JSON-serializable).
-        analysis.rehydrateAudioContextSources(audioBaseUrl);
-        if (analysisRestored.soundConfigParentIndices.size > 0) {
-          const storeState = useSoundscapeStore.getState();
-          const configs = storeState.soundConfigs.map((c: any, i: number) => {
-            const parent = analysisRestored.soundConfigParentIndices.get(i);
-            return parent !== undefined ? { ...c, parentUsageOriginalIndex: parent } : c;
-          });
-          useSoundscapeStore.setState({ soundConfigs: configs });
-        }
-        if (analysisRestored.cardFlowState) {
-          const cf = analysisRestored.cardFlowState;
-          useCardFlowStore.setState({
-            contextAdvanced: new Set(cf.contextAdvanced),
-            usageAdvanced: new Set(cf.usageAdvanced),
-            contextToUsageMap: new Map(Object.entries(cf.contextToUsage).map(([k, v]) => [Number(k), v])),
-            usageToSoundMap: new Map(Object.entries(cf.usageToSound).map(([k, v]) => [Number(k), v])),
-          });
-          if (cf.usageAdvanced.length > 0) {
-            useUIStore.getState().setActiveSoundParentIndex(cf.usageAdvanced[0]);
-          }
-        }
-      }
-      if (restored.resonanceAudioConfig) {
-        const rcfg = restored.resonanceAudioConfig;
-        useRoomMaterialsStore.setState({
-          roomDimensions: rcfg.roomDimensions,
-          roomMaterials: rcfg.roomMaterials,
-        });
-      }
+      applyRestoredSoundscapePayload(data, audioBaseUrl, irBaseUrl, suppressOrchestrateBakeRef);
       console.log('[page:bootstrap] Soundscape restored from URL param');
       setIsBootstrappingModel(false);
     }).catch(err => {
@@ -291,9 +317,8 @@ function HomeContent() {
       // Read live store state instead of the render closure — this effect only
       // runs once at mount (deps=[]), so a captured `globalSpeckleData` variable
       // would be frozen at its mount-time value (null on a cold refresh) forever.
-      const liveModelId = useUIStore.getState().globalSpeckleData?.model_id ?? null;
+      const liveModelId = useUIStore.getState().globalSpeckleData?.model_id ?? SANDBOX_MODEL_ID;
       if (!autosaveEnabledRef.current) return;
-      if (!liveModelId) return;
       // Shared-session guard: when other members are active on the same
       // workspace, pause autosave so concurrent writes don't clobber each other.
       if (useWorkspaceStore.getState().presence > 1) return;
@@ -553,7 +578,10 @@ function HomeContent() {
   // True while the ?model_id= URL bootstrap is fetching the saved soundscape /
   // model data. Used to show a loading state instead of the Home model browser
   // on a refresh of an existing model page.
-  const [isBootstrappingModel, setIsBootstrappingModel] = useState(false);
+  const [isBootstrappingModel, setIsBootstrappingModel] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return !!new URLSearchParams(window.location.search).get('model_id');
+  });
 
   // Sync model bounding box → Resonance Audio room bounds
   useEffect(() => {
@@ -681,9 +709,14 @@ function HomeContent() {
   }, [globalSpeckleData]);
 
   // Callback when Speckle viewer is loaded
-  const handleSpeckleViewerLoaded = useCallback((viewer: import('@speckle/viewer').Viewer) => {
+    const handleSpeckleViewerLoaded = useCallback((viewer: import('@speckle/viewer').Viewer) => {
     _viewerLoadComplete = true;
     console.log('[page:camera:restore] Viewer loaded');
+
+    // Sandbox has no Speckle worldBox — the placeholder hook frames the room.
+    if (!useUIStore.getState().globalSpeckleData) {
+      return;
+    }
 
     // When a model was opened from the Home page, ignore any camera POV saved
     // for a previously-loaded model and frame the new model's bounding box.
@@ -1647,8 +1680,20 @@ function HomeContent() {
     // Persist model_id in URL so a page refresh can restore this session
     router.replace(`/?model_id=${encodeURIComponent(speckleData.model_id)}`, { scroll: false });
 
-    // Auto-load saved soundscape for this model
+    const sandboxHasWork =
+      useAnalysisStore.getState().analysisConfigs.length > 0
+      || useSoundscapeStore.getState().soundConfigs.length > 0
+      || useReceiversStore.getState().receivers.length > 0
+      || useAcousticsSimulationStore.getState().simulationConfigs.length > 0;
+
+    // Auto-load saved soundscape for this model unless the sandbox already has work
     try {
+      if (sandboxHasWork) {
+        console.log('[page.tsx] Keeping in-memory sandbox work after Speckle model load');
+        lastSaveSourceRef.current = 'autosave';
+        void saveSoundscapeRef.current?.();
+        return;
+      }
       const loadResponse = await apiService.loadSoundscapeFromSpeckle(speckleData.model_id);
       if (loadResponse.requires_invite) {
         notifyError(
@@ -1882,10 +1927,8 @@ function HomeContent() {
     lastSaveSourceRef.current = 'manual';
     // Save camera POV alongside every soundscape save
     saveCameraToStore();
-    if (!globalSpeckleData?.model_id) return;
+    const modelId = globalSpeckleData?.model_id ?? SANDBOX_MODEL_ID;
     if (isSavingSoundscape) return;
-
-    const modelId = globalSpeckleData.model_id;
     setIsSavingSoundscape(true);
     try {
       // 1. Upload blob-URL audio files (library/uploaded sounds) to the server
@@ -2405,7 +2448,8 @@ function HomeContent() {
     useUIStore.getState().setEnableAutoSave(true);
     setShowGroundGrid(false);
     setGroundGridSpacing(2);
-    setGroundGridColor('#888888');
+    setGroundGridColor('');
+    useUIStore.getState().setShowGroundGridLabels(true);
   }, [soundGen.handleResetToDefaults, audioNormalization.reset,
       setShowLabelSprites, setShowHoveringHighlight, setShowSoundSpheres, setShowSceneListeners,
       setGlobalSoundSpeed, setGlobalMeshLc,
@@ -3268,15 +3312,6 @@ export default function Home() {
     (useAudioControlsStore as any).persist?.rehydrate?.();
     (useRightSidebarStore as any).persist?.rehydrate?.();
     (useAcousticLayerStore as any).persist?.rehydrate?.();
-
-    // On homepage (no model_id URL), force panels collapsed/hidden.
-    const urlModelId = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('model_id') : null;
-    if (!urlModelId) {
-      useUIStore.getState().setIsLeftSidebarExpanded(false);
-      useUIStore.getState().setShowTimeline(false);
-      useUIStore.getState().setShowObjectExplorer(false);
-      useRightSidebarStore.getState().requestCollapse();
-    }
   }, []);
 
   return (

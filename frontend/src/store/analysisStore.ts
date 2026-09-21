@@ -39,6 +39,8 @@ import {
 } from '@/utils/constants';
 import { loadAudioFileWithBuffer } from '@/lib/audio/utils/audio-info';
 import { apiService } from '@/services/api';
+import { startPolling, createPollRegistry } from '@/lib/poll-until-done';
+import { recordInflightJob, removeInflightJob } from '@/lib/job-tracker';
 import { generatePositionsInArea, generatePositionsInBounds } from '@/utils/positioning';
 import { getAnalysisGroupColor } from '@/utils/utils';
 import { notifySectionError } from './errorsStore';
@@ -54,6 +56,8 @@ import { useFileUploadStore } from './fileUploadStore';
 let _analysisAbortController: AbortController | null = null;
 let _sedTaskId: string | null = null;
 let _sedPollInterval: ReturnType<typeof setInterval> | null = null;
+const llmPollRegistry = createPollRegistry();
+const _llmJobIds = new Set<string>();
 
 // Upload token used only as a URL path segment for the session-scoped
 // soundscape audio endpoint — the backend writes to the session's audio dir
@@ -117,6 +121,46 @@ async function* streamPrompts(
     }
   } finally {
     reader.releaseLock();
+  }
+}
+
+interface LlmPartial {
+  kind?: string;
+  thinking?: string;
+  phase?: string;
+  items?: unknown[];
+  analysis_id?: string;
+  space_title?: string;
+  space_description?: string;
+}
+
+async function pollLlmJob(
+  path: string,
+  body: object,
+  configIndex: number,
+  kind: string,
+  onPartial?: (partial: LlmPartial) => void,
+): Promise<any> {
+  const { job_id } = await apiService.enqueueLlmJob(path, body);
+  recordInflightJob(job_id, 'llm', { configIndex, kind });
+  _llmJobIds.add(job_id);
+  const controller = startPolling({
+    fetchStatus: () => apiService.getJobStatus('llm', job_id),
+    onStatus: (s) => {
+      useAnalysisStore.setState({
+        analysisStatus: s.status || '',
+        analysisProgress: typeof s.progress === 'number' ? s.progress : 0,
+      });
+      if (s.partial && onPartial) onPartial(s.partial as LlmPartial);
+    },
+  });
+  llmPollRegistry.track(controller);
+  try {
+    return await controller.done;
+  } finally {
+    llmPollRegistry.release(controller);
+    _llmJobIds.delete(job_id);
+    removeInflightJob(job_id);
   }
 }
 
@@ -343,6 +387,7 @@ export interface AnalysisStoreState {
    *  reloaded (missing on the server, or decode failure). Not in zundo history. */
   audioRehydrateFailedConfigs: Set<number>;
   analysisStatus: string;
+  analysisProgress: number;
   analyzingConfigIndex: number | null;
 
   handleAddConfig: (type: CardType, initialSpeckleData?: any) => void;
@@ -413,6 +458,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
         rehydratingAudioConfigs: new Set<number>(),
         audioRehydrateFailedConfigs: new Set<number>(),
         analysisStatus: '',
+        analysisProgress: 0,
         analyzingConfigIndex: null,
 
         handleAddConfig: (type, initialSpeckleData) => {
@@ -1111,7 +1157,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             }
           } finally {
             _analysisAbortController = null;
-            set({ isAnalyzing: false, analysisStatus: '', analyzingConfigIndex: null }, false, 'analysis/analyzeEnd');
+            set({ isAnalyzing: false, analysisStatus: '', analysisProgress: 0, analyzingConfigIndex: null }, false, 'analysis/analyzeEnd');
           }
         },
 
@@ -1126,7 +1172,12 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             apiService.cancelSEDAnalysis(_sedTaskId).catch(() => {});
             _sedTaskId = null;
           }
-          set({ isAnalyzing: false, analysisStatus: '', analyzingConfigIndex: null }, false, 'analysis/stop');
+          llmPollRegistry.stopAll();
+          for (const jobId of [..._llmJobIds]) {
+            apiService.cancelJob(jobId).catch(() => {});
+          }
+          _llmJobIds.clear();
+          set({ isAnalyzing: false, analysisStatus: '', analysisProgress: 0, analyzingConfigIndex: null }, false, 'analysis/stop');
         },
 
         handleTogglePromptSelection: (configIndex, promptId) =>
@@ -1496,7 +1547,6 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           if (config?.type !== 'model-analysis') return;
 
           _analysisAbortController = new AbortController();
-          const signal = _analysisAbortController.signal;
 
           set(
             { isAnalyzing: true, analysisError: null, analyzingConfigIndex: index, analysisStatus: 'Analyzing 3D model...' },
@@ -1714,31 +1764,10 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
               console.log('[analyzeModel][TRACE] ============================');
             }
 
-            for await (const event of streamPrompts(
-              `${API_BASE_URL}/api/analyze-3dmodel-stream`,
-              {
-                entities: visibleEntitiesForAnalysis,
-                screenshots: config.liveScreenshots,
-                user_context: config.userContext,
-                llm_model: useSoundscapeStore.getState().llmModel,
-              },
-              signal,
-            )) {
-              if (event.type === 'start') {
-                analysisId = event.analysis_id;
-              } else if (event.type === 'space_title') {
-                spaceTitle = event.text || '';
-                handleUpdateConfig(index, {
-                  analysisResult: { analysisId, architecturalObjects: [...objects], spaceTitle, spaceDescription },
-                } as Partial<AnalyzeModelConfig>);
-              } else if (event.type === 'space_description') {
-                spaceDescription = event.text || '';
-                handleUpdateConfig(index, {
-                  analysisResult: { analysisId, architecturalObjects: [...objects], spaceTitle, spaceDescription },
-                } as Partial<AnalyzeModelConfig>);
-              } else if (event.type === 'object') {
-                const { type: _t, ...obj } = event;
-                const archObj = obj as ArchitecturalObject;
+            const ingestObjects = (items: ArchitecturalObject[]) => {
+              if (items.length <= objects.length) return;
+              const newcomers = items.slice(objects.length);
+              for (const archObj of newcomers) {
                 objects.push(archObj);
                 const idx = objects.length - 1;
                 const color = getAnalysisGroupColor(idx);
@@ -1746,15 +1775,40 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
                 if (ids.length > 0) {
                   colorGroups.push({ objectIds: ids, color });
                 }
-                // Partial update
-                useSpeckleStore.getState().setAnalysisObjectGroups([...colorGroups], [...objects]);
+              }
+              useSpeckleStore.getState().setAnalysisObjectGroups([...colorGroups], [...objects]);
+              handleUpdateConfig(index, {
+                analysisResult: { analysisId, architecturalObjects: [...objects], spaceTitle, spaceDescription },
+              } as Partial<AnalyzeModelConfig>);
+            };
+
+            const result = await pollLlmJob(
+              '/api/analyze-3dmodel',
+              {
+                entities: visibleEntitiesForAnalysis,
+                screenshots: config.liveScreenshots,
+                user_context: config.userContext,
+                llm_model: useSoundscapeStore.getState().llmModel,
+              },
+              index,
+              'analyze_3dmodel',
+              (partial) => {
+                if (partial.analysis_id) analysisId = partial.analysis_id;
+                if (partial.space_title) spaceTitle = partial.space_title;
+                if (partial.space_description) spaceDescription = partial.space_description;
+                if (Array.isArray(partial.items)) {
+                  ingestObjects(partial.items as ArchitecturalObject[]);
+                }
                 handleUpdateConfig(index, {
                   analysisResult: { analysisId, architecturalObjects: [...objects], spaceTitle, spaceDescription },
                 } as Partial<AnalyzeModelConfig>);
-              } else if (event.type === 'done') {
-                // Final update handled below
-              }
-            }
+              },
+            );
+
+            if (result?.analysis_id) analysisId = result.analysis_id;
+            if (Array.isArray(result?.objects)) ingestObjects(result.objects as ArchitecturalObject[]);
+            spaceTitle = result?.space_title || spaceTitle;
+            spaceDescription = result?.space_description || spaceDescription;
 
             const resultData: ModelAnalysisResultData = {
               analysisId,
@@ -1776,7 +1830,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             }
           } finally {
             _analysisAbortController = null;
-            set({ isAnalyzing: false, analysisStatus: '', analyzingConfigIndex: null }, false, 'analysis/analyzeModelEnd');
+            set({ isAnalyzing: false, analysisStatus: '', analysisProgress: 0, analyzingConfigIndex: null }, false, 'analysis/analyzeModelEnd');
           }
         },
 
@@ -1934,6 +1988,7 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             isAnalyzing: false,
             analysisError: null,
             analysisStatus: '',
+            analysisProgress: 0,
             analyzingConfigIndex: null,
             rehydratingAudioConfigs: new Set<number>(),
             audioRehydrateFailedConfigs: new Set<number>(),
@@ -1944,6 +1999,21 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
           const { analysisConfigs, handleUpdateConfig } = get();
           const config = analysisConfigs[index] as ScenarioConfig;
           if (config?.type !== 'scenario') return;
+
+          const ownedRun = !get().isAnalyzing;
+          if (ownedRun) {
+            set(
+              {
+                isAnalyzing: true,
+                analysisError: null,
+                analyzingConfigIndex: index,
+                analysisStatus: 'Imagining usage scenarios…',
+                analysisProgress: 0,
+              },
+              false,
+              'analysis/scenarioStart',
+            );
+          }
 
           // Reset previous results
           handleUpdateConfig(index, {
@@ -1989,60 +2059,71 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             duration: Math.round(scenarioDurationMs / 1000),
           };
 
-          const controller = new AbortController();
-          // Working scenarios being built progressively
           let workingScenarios: ScenarioResult['scenarios'] = [];
 
           try {
-            for await (const event of streamPrompts(
-              `${API_BASE_URL}/api/scenarist-stream`,
+            const result = await pollLlmJob(
+              '/api/scenarist',
               body,
-              controller.signal,
-            )) {
-              if (event.type === 'scenario') {
-                // New scenario header — add slot with empty events array
-                const { scenario_index, title, duration, peopleCount, likeliness } = event as {
-                  scenario_index: number; title: string; duration: string;
-                  peopleCount: number; likeliness: number;
-                };
-                const next = [...workingScenarios];
-                next[scenario_index] = { title, duration, peopleCount, likeliness, events: [] };
-                workingScenarios = next;
-                handleUpdateConfig(index, {
-                  display_name: title,
-                  scenarioResult: { scenarios: workingScenarios, scenarioId: '' },
-                } as Partial<ScenarioConfig>);
-              } else if (event.type === 'event') {
-                // Timestamped event for an existing scenario slot
-                const { scenario_index, event: ev } = event as {
-                  scenario_index: number; event: { timestamp: string; description: string };
-                };
-                if (workingScenarios[scenario_index]) {
-                  const next = [...workingScenarios];
-                  next[scenario_index] = {
-                    ...next[scenario_index],
-                    events: [...next[scenario_index].events, ev],
-                  };
-                  workingScenarios = next;
-                  handleUpdateConfig(index, {
-                    scenarioResult: { scenarios: workingScenarios, scenarioId: '' },
-                  } as Partial<ScenarioConfig>);
+              index,
+              'scenarist',
+              (partial) => {
+                const items = Array.isArray(partial.items) ? partial.items : [];
+                for (const event of items as any[]) {
+                  if (event?.type === 'scenario') {
+                    const { scenario_index, title, duration, peopleCount, likeliness } = event;
+                    const next = [...workingScenarios];
+                    next[scenario_index] = {
+                      title,
+                      duration,
+                      peopleCount,
+                      likeliness,
+                      events: next[scenario_index]?.events ?? [],
+                    };
+                    workingScenarios = next;
+                    handleUpdateConfig(index, {
+                      display_name: title,
+                      scenarioResult: { scenarios: workingScenarios, scenarioId: '' },
+                    } as Partial<ScenarioConfig>);
+                  } else if (event?.type === 'event' && workingScenarios[event.scenario_index]) {
+                    const ev = event.event as { timestamp: string; description: string };
+                    const next = [...workingScenarios];
+                    const already = next[event.scenario_index].events.some(
+                      (e) => e.timestamp === ev.timestamp && e.description === ev.description,
+                    );
+                    if (!already) {
+                      next[event.scenario_index] = {
+                        ...next[event.scenario_index],
+                        events: [...next[event.scenario_index].events, ev],
+                      };
+                      workingScenarios = next;
+                      handleUpdateConfig(index, {
+                        scenarioResult: { scenarios: workingScenarios, scenarioId: '' },
+                      } as Partial<ScenarioConfig>);
+                    }
+                  }
                 }
-              } else if (event.type === 'done') {
-                const result = event.result as ScenarioResult;
-                const scenarioId = (event.scenario_id as string) ?? null;
-                handleUpdateConfig(index, {
-                  scenarioResult: { ...result, scenarioId: scenarioId ?? '' },
-                  scenarioId,
-                } as Partial<ScenarioConfig>);
-              } else if (event.type === 'error') {
-                console.error('[handleScenarioAnalyze] SSE error:', event.message);
-              }
-            }
+              },
+            );
+            const scenarios = (result?.scenarios ?? workingScenarios) as ScenarioResult['scenarios'];
+            const scenarioId = (result?.scenario_id as string) ?? '';
+            handleUpdateConfig(index, {
+              display_name: scenarios?.[0]?.title,
+              scenarioResult: { scenarios, scenarioId },
+              scenarioId,
+            } as Partial<ScenarioConfig>);
           } catch (e) {
             if (e instanceof Error && e.name === 'AbortError') return;
-            console.error('[handleScenarioAnalyze] stream error:', e);
+            console.error('[handleScenarioAnalyze] job error:', e);
             notifySectionError(e instanceof Error ? e.message : 'Scenario analysis failed');
+          } finally {
+            if (ownedRun) {
+              set(
+                { isAnalyzing: false, analysisStatus: '', analysisProgress: 0, analyzingConfigIndex: null },
+                false,
+                'analysis/scenarioEnd',
+              );
+            }
           }
         },
 
@@ -2083,85 +2164,72 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
             };
 
             const foleyPromise = hasFoley ? null : (async () => {
-              const controller = new AbortController();
-              let workingResult: FoleyResult = config.foleyResult || { scenarios: [], foleyId: '' };
-              const workingKeys: string[] = [...(config.selectedFoleyKeys ?? [])];
               try {
-                for await (const event of streamPrompts(
-                  `${API_BASE_URL}/api/foley-artist-stream`,
+                const result = await pollLlmJob(
+                  '/api/foley-artist',
                   foleyBody,
-                  controller.signal,
-                )) {
-                  if (event.type === 'sound') {
-                    const { scenario_title, sound } = event as {
-                      scenario_title: string; scenario_index: number; sound: FoleyResult['scenarios'][number]['sound_events'][number];
+                  index,
+                  'foley',
+                  (partial) => {
+                    const items = Array.isArray(partial.items) ? partial.items : [];
+                    if (items.length === 0) return;
+                    const title =
+                      (get().analysisConfigs[index] as ScenarioConfig).scenarioResult?.scenarios?.[0]?.title
+                      || 'Scenario';
+                    const workingResult: FoleyResult = {
+                      scenarios: [{ scenario_title: title, sound_events: items as FoleyResult['scenarios'][number]['sound_events'] }],
+                      foleyId: '',
                     };
-                    const key = `${scenario_title}__${sound.soundName}`;
-                    workingKeys.push(key);
-                    const newScenarios = [...workingResult.scenarios];
-                    const si = newScenarios.findIndex((s) => s.scenario_title === scenario_title);
-                    if (si === -1) {
-                      newScenarios.push({ scenario_title, sound_events: [sound] });
-                    } else {
-                      newScenarios[si] = {
-                        ...newScenarios[si],
-                        sound_events: [...newScenarios[si].sound_events, sound],
-                      };
-                    }
-                    workingResult = { ...workingResult, scenarios: newScenarios };
-                    handleUpdateConfig(index, {
-                      foleyResult: workingResult,
-                      selectedFoleyKeys: [...workingKeys],
-                    } as Partial<ScenarioConfig>);
-                  } else if (event.type === 'done') {
-                    const finalResult: FoleyResult = {
-                      scenarios: event.result?.scenarios ?? workingResult.scenarios,
-                      foleyId: (event.foley_id as string) ?? '',
-                    };
-                    const selectedFoleyKeys = finalResult.scenarios.flatMap((s) =>
+                    const selectedFoleyKeys = workingResult.scenarios.flatMap((s) =>
                       s.sound_events.map((e) => `${s.scenario_title}__${e.soundName}`),
                     );
-                    handleUpdateConfig(index, { foleyResult: finalResult, selectedFoleyKeys } as Partial<ScenarioConfig>);
-                  } else if (event.type === 'error') {
-                    console.error('[handleFoleyArtist] Foley SSE error:', event.message);
-                  }
-                }
+                    handleUpdateConfig(index, { foleyResult: workingResult, selectedFoleyKeys } as Partial<ScenarioConfig>);
+                  },
+                );
+                const title =
+                  (get().analysisConfigs[index] as ScenarioConfig).scenarioResult?.scenarios?.[0]?.title
+                  || 'Scenario';
+                const scenarios = result?.scenarios ?? [{
+                  scenario_title: title,
+                  sound_events: result?.sounds ?? [],
+                }];
+                const finalResult: FoleyResult = {
+                  scenarios,
+                  foleyId: result?.foley_id ?? '',
+                };
+                const selectedFoleyKeys = finalResult.scenarios.flatMap((s) =>
+                  s.sound_events.map((e) => `${s.scenario_title}__${e.soundName}`),
+                );
+                handleUpdateConfig(index, { foleyResult: finalResult, selectedFoleyKeys } as Partial<ScenarioConfig>);
               } catch (e) {
                 if (e instanceof Error && e.name === 'AbortError') return;
-                console.error('[handleFoleyArtist] Foley stream error:', e);
+                console.error('[handleFoleyArtist] Foley job error:', e);
                 notifySectionError(e instanceof Error ? e.message : 'Foley generation failed');
               }
             })();
 
             const speechPromise = hasSpeech ? null : (async () => {
-              const controller = new AbortController();
-              let workingSpeechResult: SpeechResult = config.speechResult || { speeches: [], speechId: '' };
               try {
-                for await (const event of streamPrompts(
-                  `${API_BASE_URL}/api/speech-agent-stream`,
+                const result = await pollLlmJob(
+                  '/api/speech-agent',
                   speechBody,
-                  controller.signal,
-                )) {
-                  if (event.type === 'speech') {
-                    const { speech } = event;
-                    const newSpeeches = [...workingSpeechResult.speeches, speech];
-                    workingSpeechResult = { ...workingSpeechResult, speeches: newSpeeches };
+                  index,
+                  'speech',
+                  (partial) => {
+                    const items = Array.isArray(partial.items) ? partial.items : [];
                     handleUpdateConfig(index, {
-                      speechResult: workingSpeechResult,
+                      speechResult: { speeches: items as SpeechResult['speeches'], speechId: '' },
                     } as Partial<ScenarioConfig>);
-                  } else if (event.type === 'done') {
-                    const finalResult: SpeechResult = {
-                      speeches: event.result?.speeches ?? workingSpeechResult.speeches,
-                      speechId: (event.speech_id as string) ?? '',
-                    };
-                    handleUpdateConfig(index, { speechResult: finalResult, speechId: finalResult.speechId } as Partial<ScenarioConfig>);
-                  } else if (event.type === 'error') {
-                    console.error('[handleFoleyArtist] Speech SSE error:', event.message);
-                  }
-                }
+                  },
+                );
+                const finalResult: SpeechResult = {
+                  speeches: result?.speeches ?? [],
+                  speechId: result?.speech_id ?? '',
+                };
+                handleUpdateConfig(index, { speechResult: finalResult, speechId: finalResult.speechId } as Partial<ScenarioConfig>);
               } catch (e) {
                 if (e instanceof Error && e.name === 'AbortError') return;
-                console.error('[handleFoleyArtist] Speech stream error:', e);
+                console.error('[handleFoleyArtist] Speech job error:', e);
                 notifySectionError(e instanceof Error ? e.message : 'Speech generation failed');
               }
             })();
@@ -2175,3 +2243,104 @@ export const useAnalysisStore = create<AnalysisStoreState>()(
     { partialize: analysisPartialize },
   ),
 );
+
+export function applyRecoveredLlmResult(kind: string, configIndex: number, result: any): void {
+  const { handleUpdateConfig, analysisConfigs } = useAnalysisStore.getState();
+  const config = analysisConfigs[configIndex];
+  if (!config) return;
+
+  if (kind === 'analyze_3dmodel' && config.type === 'model-analysis') {
+    const objects = (result?.objects ?? []) as ArchitecturalObject[];
+    const colorGroups = objects.map((obj, i) => ({
+      objectIds: Object.keys(obj.object_ids ?? {}),
+      color: getAnalysisGroupColor(i),
+    })).filter((g) => g.objectIds.length > 0);
+    handleUpdateConfig(configIndex, {
+      analysisResult: {
+        analysisId: result?.analysis_id ?? '',
+        architecturalObjects: objects,
+        spaceTitle: result?.space_title,
+        spaceDescription: result?.space_description,
+      },
+    } as Partial<AnalyzeModelConfig>);
+    useSpeckleStore.getState().setAnalysisObjectGroups(colorGroups, objects);
+    return;
+  }
+
+  if (kind === 'scenarist' && config.type === 'scenario') {
+    const scenarios = result?.scenarios ?? [];
+    const scenarioId = result?.scenario_id ?? '';
+    handleUpdateConfig(configIndex, {
+      display_name: scenarios?.[0]?.title,
+      scenarioResult: { scenarios, scenarioId },
+      scenarioId,
+    } as Partial<ScenarioConfig>);
+    return;
+  }
+
+  if (kind === 'foley' && config.type === 'scenario') {
+    const title = (config as ScenarioConfig).scenarioResult?.scenarios?.[0]?.title || 'Scenario';
+    const scenarios = result?.scenarios ?? [{
+      scenario_title: title,
+      sound_events: result?.sounds ?? [],
+    }];
+    const finalResult: FoleyResult = { scenarios, foleyId: result?.foley_id ?? '' };
+    const selectedFoleyKeys = finalResult.scenarios.flatMap((s) =>
+      s.sound_events.map((e) => `${s.scenario_title}__${e.soundName}`),
+    );
+    handleUpdateConfig(configIndex, { foleyResult: finalResult, selectedFoleyKeys } as Partial<ScenarioConfig>);
+    return;
+  }
+
+  if (kind === 'speech' && config.type === 'scenario') {
+    handleUpdateConfig(configIndex, {
+      speechResult: { speeches: result?.speeches ?? [], speechId: result?.speech_id ?? '' },
+      speechId: result?.speech_id ?? '',
+    } as Partial<ScenarioConfig>);
+  }
+}
+
+export function resumeLlmJob(jobId: string, configIndex: number | undefined, kind: string | undefined): void {
+  useAnalysisStore.setState({
+    isAnalyzing: true,
+    analyzingConfigIndex: configIndex ?? null,
+    analysisStatus: 'Resuming…',
+  });
+  _llmJobIds.add(jobId);
+  const controller = startPolling({
+    fetchStatus: () => apiService.getJobStatus('llm', jobId),
+    onStatus: (s) => {
+      useAnalysisStore.setState({
+        analysisStatus: s.status || '',
+        analysisProgress: typeof s.progress === 'number' ? s.progress : 0,
+      });
+      if (configIndex != null && kind === 'analyze_3dmodel' && s.partial) {
+        applyRecoveredLlmResult(kind, configIndex, {
+          analysis_id: s.partial.analysis_id,
+          objects: s.partial.items,
+          space_title: s.partial.space_title,
+          space_description: s.partial.space_description,
+        });
+      }
+    },
+  });
+  llmPollRegistry.track(controller);
+  void controller.done
+    .then((result) => {
+      if (configIndex != null && kind) applyRecoveredLlmResult(kind, configIndex, result);
+    })
+    .catch(() => {
+      /* cancelled / error — flags cleared in finally */
+    })
+    .finally(() => {
+      llmPollRegistry.release(controller);
+      _llmJobIds.delete(jobId);
+      removeInflightJob(jobId);
+      useAnalysisStore.setState({
+        isAnalyzing: false,
+        analysisStatus: '',
+        analysisProgress: 0,
+        analyzingConfigIndex: null,
+      });
+    });
+}

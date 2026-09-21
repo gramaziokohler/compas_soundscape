@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
 
 interface UseSidebarResizeOptions {
   initialWidth: number;
@@ -40,6 +40,7 @@ export function useSidebarResize({
   // After a drag, only min/max re-clamps apply (window resize must not
   // re-expand the panel as a fraction of the viewport).
   const userHasDraggedRef = useRef(false);
+  const didReportRef = useRef(false);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -50,13 +51,19 @@ export function useSidebarResize({
   }, [width]);
 
   // Re-clamp whenever min/max/default change (breakpoint step or viewport
-  // overflow). Never clamps mid-drag so the user keeps control.
-  useEffect(() => {
+  // overflow). Always report the initial width even when it did not change —
+  // otherwise consumers (scene control buttons) keep a stale fallback. Runs
+  // in useLayoutEffect so the parent can position overlays before first paint.
+  useLayoutEffect(() => {
     if (isResizing) return;
     const target = userHasDraggedRef.current ? width : initialWidth;
     const clamped = Math.min(maxWidth, Math.max(minWidth, Math.round(target)));
-    if (clamped !== width) {
+    const widthChanged = clamped !== width;
+    if (widthChanged) {
       setWidth(clamped);
+    }
+    if (!didReportRef.current || widthChanged) {
+      didReportRef.current = true;
       onWidthChange?.(clamped);
     }
   }, [width, initialWidth, minWidth, maxWidth, isResizing, onWidthChange]);
