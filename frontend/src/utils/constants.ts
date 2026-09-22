@@ -1142,6 +1142,21 @@ export const SCENE_GRID = {
 /** Reserved soundscape id for homepage work that has no Speckle model. Not a URL param. */
 export const SANDBOX_MODEL_ID = 'local';
 
+/** Minimum world extent (m) of the Home stage ground grid, before the ×0.75 fraction. */
+export const SANDBOX_GRID_MIN_EXTENT = 10;
+/** Home stage grid half-extent = max(modelWidth, modelDepth, MIN_EXTENT) × this. */
+export const SANDBOX_GRID_EXTENT_FRACTION = 0.5;
+/** Extra framing margin so the default/reset camera shows the whole grid. */
+export const SANDBOX_GRID_CAMERA_MARGIN = 3.5;
+/** Fixed world position of the Home Sample sphere (the dot of the title's "i"). */
+export const SANDBOX_SAMPLE_SPHERE_POSITION: [number, number, number] = [0, -2, 1.5];
+/** Vertical bounce for the Home Sample sphere — rhythm mirrors the sidebar
+ *  expand handle's "dropped ball" animation (one large + one small bounce). */
+export const SANDBOX_SPHERE_BOUNCE = {
+  PERIOD_MS: 2000,
+  AMPLITUDE_M: 0.6,
+} as const;
+
 // Arctic Theme
 export const ARCTIC_THEME = {
   MATERIAL_ROUGHNESS: 0.5,

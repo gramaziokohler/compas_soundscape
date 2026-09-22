@@ -47,12 +47,8 @@ const DEFAULT_ROLLOFF = 'logarithmic';
 const DEFAULT_MIN_DISTANCE = 1;
 const DEFAULT_MAX_DISTANCE = 10000;
 
-/**
- * Padding added to each side of the bounding box when computing room dimensions.
- * Ensures sources near the edges are still inside the Resonance Audio room
- * (the library silences room effects when sources are >1m outside).
- */
-const ROOM_BOUNDS_PADDING = 2.0;
+/** Smallest room dimension accepted (m) — guards against a degenerate box. */
+const MIN_ROOM_EXTENT = 1;
 
 export class ResonanceMode implements IAudioMode {
   private audioContext: AudioContext | null = null;
@@ -604,11 +600,13 @@ export class ResonanceMode implements IAudioMode {
   }
 
   /**
-   * Set room bounds from the model bounding box.
+   * Set room bounds from the bounding box shown in the viewer.
    *
-   * Computes room dimensions (with padding) and a center offset so that all
-   * world-space positions are translated to be relative to the Resonance Audio
-   * room origin.  Existing sources are repositioned accordingly.
+   * The bounds already include any logical buffer (they are the room box
+   * visualized on screen), so they map directly to the room dimensions. Computes
+   * a center offset so that all world-space positions are translated to be
+   * relative to the Resonance Audio room origin. Existing sources are
+   * repositioned accordingly.
    *
    * @param min - Bounding box min corner [x, y, z]
    * @param max - Bounding box max corner [x, y, z]
@@ -629,11 +627,11 @@ export class ResonanceMode implements IAudioMode {
       z: (min[2] + max[2]) / 2
     };
 
-    // Compute dimensions with padding on each side
+    // The bounds are the room box (buffer included by the caller) — use them directly.
     const dimensions = {
-      width:  (max[0] - min[0]) + ROOM_BOUNDS_PADDING * 2,
-      height: (max[1] - min[1]) + ROOM_BOUNDS_PADDING * 2,
-      depth:  (max[2] - min[2]) + ROOM_BOUNDS_PADDING * 2
+      width:  Math.max(max[0] - min[0], MIN_ROOM_EXTENT),
+      height: Math.max(max[1] - min[1], MIN_ROOM_EXTENT),
+      depth:  Math.max(max[2] - min[2], MIN_ROOM_EXTENT)
     };
 
     // Apply to Resonance Audio scene

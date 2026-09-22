@@ -1265,6 +1265,31 @@ export const apiService = {
   },
 
   /**
+   * Ensure a model's latest version is loadable by the pinned viewer.
+   *
+   * Re-materializes bundle-only / pre-fix legacy versions into a viewer-safe
+   * version on the backend, then resolves. Best-effort callers should swallow
+   * failures — the viewer still attempts to load the current version.
+   *
+   * @param modelId - The Speckle model ID
+   * @returns The current loadable `{version_id, object_id}`
+   */
+  async ensureSpeckleModelReady(modelId: string): Promise<{ version_id: string; object_id: string }> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/speckle/models/${encodeURIComponent(modelId)}/ensure-ready`,
+      { method: 'POST' },
+      'Prepare Speckle model'
+    );
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Failed to prepare Speckle model' }));
+      throw new Error(error.detail || 'Failed to prepare Speckle model');
+    }
+
+    return response.json();
+  },
+
+  /**
    * Load a specific Speckle model by object ID
    * @param objectId - The Speckle object ID to load
    * @returns Speckle model data
@@ -1389,6 +1414,20 @@ export const apiService = {
     } catch (error) {
       handleApiError(error, 'Upload soundscape audio');
     }
+  },
+
+  /**
+   * List locally saved Home (sandbox) projects for this workspace.
+   */
+  async listHomeProjects(): Promise<{
+    projects: Array<{ model_id: string; name: string; saved_at: string }>;
+  }> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/speckle/soundscape/home-projects`,
+      undefined,
+      'List home projects'
+    );
+    return response.json();
   },
 
   /**

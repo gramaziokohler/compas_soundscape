@@ -245,6 +245,8 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // Active sound parent index from UIStore (controls which sound section is active)
   const activeSoundParentIndex = useUIStore((s) => s.activeSoundParentIndex);
   const isInSoundsStep = useUIStore((s) => s.isInSoundsStep);
+  // Home stage (no model) — ray-tracing simulation is disabled there.
+  const isSandbox = useUIStore((s) => !s.globalSpeckleData);
   const soundConfigsFromStore = useSoundscapeStore((s) => s.soundConfigs);
 
   // Muted sounds from audio controls store
@@ -1349,7 +1351,12 @@ export function AcousticsSection(props: AcousticsSectionProps) {
 
   const AVAILABLE_TYPES: CardTypeOption[] = [
     { type: 'resonance', label: CARD_TYPE_LABELS['resonance'], enabled: true },
-    { type: 'pyroomacoustics', label: CARD_TYPE_LABELS['pyroomacoustics'], enabled: true },
+    {
+      type: 'pyroomacoustics',
+      label: CARD_TYPE_LABELS['pyroomacoustics'],
+      enabled: !isSandbox,
+      disabledTooltip: 'Ray-tracing simulation needs a loaded model. Load one from the Home stage first.',
+    },
     { type: 'import-irs', label: CARD_TYPE_LABELS['import-irs'], enabled: true },
   ];
 

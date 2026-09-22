@@ -2,12 +2,15 @@
 import * as THREE from 'three';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useUIStore } from '@/store';
+import { useResolvedColorTheme } from '@/hooks/useResolvedColorTheme';
 import {
   computeLabelWorldHeight,
   createLabelSprite,
   disposeLabelSprite,
 } from '@/lib/three/label-sprite-factory';
 import { getCssColorString } from '@/utils/utils';
+import { SANDBOX_GRID_MIN_EXTENT, SANDBOX_GRID_EXTENT_FRACTION } from '@/utils/constants';
+import { getSandboxStageBounds } from '@/lib/three/placeholder-room-manager';
 
 // Layer 4 = ObjectLayers.OVERLAY in the Speckle viewer pipeline.
 // Without enabling this layer on every custom Three.js object, Speckle's
@@ -16,6 +19,18 @@ import { getCssColorString } from '@/utils/utils';
 // raycasting and rendering fallbacks.
 // See: area-drawing-manager.ts, BoundingBoxManager.ts, gradient-map-manager.ts
 const SPECKLE_OVERLAY_LAYER = 4;
+
+// Home (sandbox) grid uses a fixed world extent (see SANDBOX_GRID_* constants)
+// so the projected "SOUND IS BLUE" text keeps a constant size regardless of the
+// chosen grid spacing.
+
+interface GroundGridOptions {
+  isViewerReady: boolean;
+  /** Home/sandbox stage: force the grid on, hide numeric labels, project the title text. */
+  isSandbox?: boolean;
+  /** True while a model file is being dragged over the window (Home only). */
+  isDragOver?: boolean;
+}
 
 function enableSpeckleLayers(obj: THREE.Object3D): void {
   obj.layers.enable(0);
@@ -53,6 +68,86 @@ function updateGridLabels(group: THREE.Group): void {
   });
 }
 
+const TITLE_FONT_FAMILY = '"Helvetica Neue", Arial, sans-serif';
+
+/**
+ * Render "SOUND" / "IS" / "BLUE" into a square canvas used as a flat projection
+ * on the Home grid.
+ *
+ * Each letter's capital height is exactly 3 vertical grid squares (6 m at the
+ * default 2 m spacing) — measured from the font metrics so it is exact, not
+ * approximate. Rows are spaced apart, and the "I" of "IS" is centred on the
+ * grid origin so the sound sphere reads as its dot/point.
+ *
+ * `enableGlow` bakes a soft glow around the glyphs (used on the dark stage).
+ */
+function createHomeTextTexture(
+  colorCss: string,
+  halfExtent: number,
+  spacing: number,
+  enableGlow: boolean,
+): THREE.CanvasTexture {
+  const S = 2048;
+  const canvas = document.createElement('canvas');
+  canvas.width = S;
+  canvas.height = S;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    return new THREE.CanvasTexture(canvas);
+  }
+
+  ctx.clearRect(0, 0, S, S);
+  ctx.fillStyle = colorCss;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  if (enableGlow) {
+    ctx.shadowColor = colorCss;
+    ctx.shadowBlur = 48;
+  }
+
+  const pxPerWorld = S / (2 * halfExtent);
+  // One letter = 3 vertical grid squares, always → capital height target.
+  const capWorld = 3 * spacing;
+  const capPx = capWorld * pxPerWorld;
+
+  // Measure the font's capital height, then scale so it equals capPx exactly.
+  const PROBE = 100;
+  ctx.font = `700 ${PROBE}px ${TITLE_FONT_FAMILY}`;
+  const probeMetrics = ctx.measureText('I');
+  const probeCap = probeMetrics.actualBoundingBoxAscent || PROBE * 0.72;
+  const fontPx = PROBE * (capPx / probeCap);
+  ctx.font = `700 ${fontPx}px ${TITLE_FONT_FAMILY}`;
+
+  // Canvas ↔ world mapping (canvas top = +Y, matching the ground plane UVs).
+  const toCanvasX = (wx: number) => (wx + halfExtent) * pxPerWorld;
+  // Baseline is the bottom of the capital letters → place it capWorld/2 below
+  // the row centre.
+  const baselineCanvasY = (rowWorldY: number) =>
+    (halfExtent - (rowWorldY - capWorld / 2)) * pxPerWorld;
+
+  const drawWord = (word: string, rowWorldY: number, centerX = 0) => {
+    const n = word.length;
+    for (let i = 0; i < n; i++) {
+      const wx = centerX + (i - (n - 1) / 2) * capWorld;
+      ctx.fillText(word[i], toCanvasX(wx), baselineCanvasY(rowWorldY));
+    }
+  };
+
+  // Rows spaced ~2 footprints apart; "IS" sits so the "I" top meets the origin.
+  drawWord('SOUND', capWorld * 2);
+  // The capital "I" is centred on x=0 with its top at y=0, so the sound sphere
+  // at the origin reads as the dot/point of the "i"; "S" sits to its right.
+  const isRow = -capWorld / 2;
+  ctx.fillText('I', toCanvasX(0), baselineCanvasY(isRow));
+  ctx.fillText('S', toCanvasX(capWorld), baselineCanvasY(isRow));
+  drawWord('BLUE', -capWorld * 2);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  return texture;
+}
+
 function disposeGroup(group: THREE.Group): void {
   group.traverse((obj) => {
     if ((obj as THREE.Sprite).isSprite) {
@@ -62,19 +157,48 @@ function disposeGroup(group: THREE.Group): void {
     const mesh = obj as THREE.Mesh;
     if (mesh.geometry) mesh.geometry.dispose();
     const material = mesh.material as THREE.Material | THREE.Material[] | undefined;
-    if (Array.isArray(material)) material.forEach((m) => m.dispose());
-    else if (material) material.dispose();
+    if (Array.isArray(material)) {
+      material.forEach((m) => {
+        const mat = m as THREE.MeshBasicMaterial;
+        mat.map?.dispose();
+        m.dispose();
+      });
+    } else if (material) {
+      const mat = material as THREE.MeshBasicMaterial;
+      mat.map?.dispose();
+      material.dispose();
+    }
   });
 }
 
-export function useSpeckleGroundGrid({ isViewerReady }: { isViewerReady: boolean }) {
+export function useSpeckleGroundGrid({
+  isViewerReady,
+  isSandbox = false,
+  isDragOver = false,
+}: GroundGridOptions) {
   const showGroundGrid    = useUIStore((s) => s.showGroundGrid);
   const groundGridSpacing = useUIStore((s) => s.groundGridSpacing);
   const groundGridColor   = useUIStore((s) => s.groundGridColor);
   const showGroundGridLabels = useUIStore((s) => s.showGroundGridLabels);
   const speckleBounds = useUIStore((s) => s.speckleBounds);
+  // The title only glows in dark mode (resolved UI color theme).
+  const isDarkStage = useResolvedColorTheme() === 'dark';
+
+  // The Home grid must stay fixed and independent of the resonance box / sound
+  // layout, so on the sandbox it always uses the fixed Home stage bounds instead
+  // of the live `speckleBounds` (which tracks the sound-fitted resonance room).
+  const gridBoundsKey = isSandbox
+    ? 'sandbox'
+    : speckleBounds
+      ? `${speckleBounds.min.join(',')}:${speckleBounds.max.join(',')}`
+      : 'none';
 
   const groupRef = useRef<THREE.Group | null>(null);
+
+  // On the Home stage the grid is always visible and never shows numeric labels
+  // (the projected title text replaces them).
+  const gridVisible = showGroundGrid || isSandbox;
+  const gridLabelsVisible = showGroundGridLabels && !isSandbox;
 
   useEffect(() => {
     const { viewer } = useSpeckleEngineStore.getState();
@@ -89,20 +213,23 @@ export function useSpeckleGroundGrid({ isViewerReady }: { isViewerReady: boolean
       groupRef.current = null;
     }
 
-    if (!showGroundGrid) {
+    if (!gridVisible) {
       viewer.requestRender();
       return;
     }
 
-    // Center grid on model bounding box; viewer uses Z-up so XY = ground plane
-    const cx     = speckleBounds ? (speckleBounds.min[0] + speckleBounds.max[0]) / 2 : 0;
-    const cy     = speckleBounds ? (speckleBounds.min[1] + speckleBounds.max[1]) / 2 : 0;
-    const floorZ = speckleBounds ? speckleBounds.min[2] : 0;
+    // Center grid on the model bounding box (viewer uses Z-up so XY = ground
+    // plane). On the sandbox the bounds are the fixed Home stage bounds, so the
+    // grid stays put regardless of where the sound spheres / resonance box go.
+    const bounds = isSandbox ? getSandboxStageBounds() : useUIStore.getState().speckleBounds;
+    const cx     = bounds ? (bounds.min[0] + bounds.max[0]) / 2 : 0;
+    const cy     = bounds ? (bounds.min[1] + bounds.max[1]) / 2 : 0;
+    const floorZ = bounds ? bounds.min[2] : 0;
 
-    const mW = speckleBounds ? speckleBounds.max[0] - speckleBounds.min[0] : 50;
-    const mH = speckleBounds ? speckleBounds.max[1] - speckleBounds.min[1] : 50;
+    const mW = bounds ? bounds.max[0] - bounds.min[0] : 50;
+    const mH = bounds ? bounds.max[1] - bounds.min[1] : 50;
     const spacing    = Math.max(0.5, groundGridSpacing);
-    const halfExtent = Math.max(mW, mH, 20) * 0.75;
+    const halfExtent = Math.max(mW, mH, SANDBOX_GRID_MIN_EXTENT) * SANDBOX_GRID_EXTENT_FRACTION;
     const gridCount  = Math.ceil(halfExtent / spacing);
     const extent     = gridCount * spacing;
 
@@ -126,7 +253,7 @@ export function useSpeckleGroundGrid({ isViewerReady }: { isViewerReady: boolean
     const lineMat = new THREE.LineBasicMaterial({
       color,
       transparent: true,
-      opacity: 0.5,
+      opacity: isDragOver ? 0.85 : 0.5,
       depthTest: false,
     });
     const lines = new THREE.LineSegments(geo, lineMat);
@@ -134,7 +261,51 @@ export function useSpeckleGroundGrid({ isViewerReady }: { isViewerReady: boolean
     lines.renderOrder = RENDER_ORDER;
     group.add(lines);
 
-    if (showGroundGridLabels) {
+    if (isSandbox) {
+      // Flat title projection lying on the ground plane, authored in readable
+      // screen space (a 180° in-plane rotation would flip the glyphs).
+      // The title can be wider than the grid (3-square letters), so size the
+      // projection plane to contain it rather than clipping at the grid edge.
+      const textPlaneHalf = Math.max(extent, 3 * spacing * 3.5);
+      const textTexture = createHomeTextTexture(colorCss, textPlaneHalf, spacing, isDarkStage);
+      const textMat = new THREE.MeshBasicMaterial({
+        map: textTexture,
+        transparent: true,
+        opacity: 1,
+        depthTest: false,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const textSize = textPlaneHalf * 2;
+      const textMesh = new THREE.Mesh(new THREE.PlaneGeometry(textSize, textSize), textMat);
+      // Rotate the whole "SOUND IS BLUE" 180° around the grid centre.
+      textMesh.rotation.z = Math.PI;
+      textMesh.position.set(0, 0, 0.02);
+      textMesh.renderOrder = RENDER_ORDER + 1;
+      textMesh.frustumCulled = false;
+      group.add(textMesh);
+
+      // Landing-pad ring under the sphere — visible only while dragging a model.
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(halfExtent * 0.16, halfExtent * 0.19, 96),
+        new THREE.MeshBasicMaterial({
+          color: new THREE.Color(getCssColorString('--color-receiver')),
+          transparent: true,
+          opacity: 0.9,
+          depthTest: false,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        }),
+      );
+      ring.position.set(0, 0, 0.03);
+      ring.renderOrder = RENDER_ORDER + 2;
+      ring.frustumCulled = false;
+      ring.visible = isDragOver;
+      ring.userData.isHomeDropRing = true;
+      group.add(ring);
+    }
+
+    if (gridLabelsVisible) {
       const labelOpts: { showBackground: boolean; textColor: string } = {
         showBackground: false,
         textColor: colorCss,
@@ -173,11 +344,11 @@ export function useSpeckleGroundGrid({ isViewerReady }: { isViewerReady: boolean
 
     scene.add(group);
     groupRef.current = group;
-    if (showGroundGridLabels) updateGridLabels(group);
+    if (gridLabelsVisible) updateGridLabels(group);
     viewer.requestRender();
 
     let rafId: number | null = null;
-    if (showGroundGridLabels) {
+    if (gridLabelsVisible) {
       const tick = () => {
         updateGridLabels(group);
         rafId = requestAnimationFrame(tick);
@@ -194,5 +365,5 @@ export function useSpeckleGroundGrid({ isViewerReady }: { isViewerReady: boolean
       }
       viewer.requestRender();
     };
-  }, [isViewerReady, showGroundGrid, groundGridSpacing, groundGridColor, showGroundGridLabels, speckleBounds]);
+  }, [isViewerReady, gridVisible, gridLabelsVisible, groundGridSpacing, groundGridColor, gridBoundsKey, isSandbox, isDragOver, isDarkStage]);
 }

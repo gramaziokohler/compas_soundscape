@@ -43,9 +43,10 @@ import { useViewportScale } from "@/hooks/useViewportScale";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { useJobRecovery } from "@/hooks/useJobRecovery";
 import { apiService } from "@/services/api";
-import { API_BASE_URL, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, DEFAULT_MAXIMUM_FOLEY_SOUNDS, SANDBOX_MODEL_ID } from "@/utils/constants";
+import { API_BASE_URL, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, DEFAULT_MAXIMUM_FOLEY_SOUNDS, SANDBOX_MODEL_ID, SANDBOX_SAMPLE_SPHERE_POSITION, DEFAULT_DURATION_SECONDS, DEFAULT_DIFFUSION_STEPS } from "@/utils/constants";
+import { loadAudioFile } from "@/lib/audio/utils/audio-upload";
 import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
-import type { LoadTab, SoundGenerationConfig } from "@/types";
+import type { LoadTab, SoundGenerationConfig, SoundEvent } from "@/types";
 import type { SoundscapeData } from "@/types/soundscape";
 import type { AcousticSimulationMode } from "@/types/audio";
 import type { AudioAnalysisConfig, AnalysisConfig } from "@/types/analysis";
@@ -55,6 +56,8 @@ import type { AudioRenderingMode } from "@/components/audio/AudioRenderingModeSe
 import { buildSoundscapeSavePayload, restoreSoundscapeState, getBlobUrlSounds, buildAnalysisStateSave, restoreAnalysisState } from "@/utils/soundscape-serializer";
 import { getStoredJobs, recordInflightJob } from "@/lib/job-tracker";
 import { PrivacyNotice } from "@/components/layout/PrivacyNotice";
+import { ImportSandboxModal } from "@/components/scene/ImportSandboxModal";
+import { HomeProjectModal } from "@/components/scene/HomeProjectModal";
 
 /**
  * Build a map from applicationId (Rhino GUID) → current Speckle tree ID.
@@ -83,6 +86,11 @@ let _viewerLoadComplete = false;
 // existing ?model_id= session). In that case the camera must default to the
 // model's bounding box instead of restoring a previously saved POV.
 let _fitCameraToBoundingBoxOnLoad = false;
+
+// Deterministic Home-stage placeholder card names (used by the seed and to
+// distinguish the untouched seed from real user work).
+const SANDBOX_CONTEXT_NAME = 'Placeholder context';
+const SANDBOX_USAGE_NAME = 'Placeholder usage';
 
 function applyRestoredSoundscapePayload(
   data: SoundscapeData,
@@ -192,30 +200,147 @@ function HomeContent() {
   // 2. Job recovery — resume in-flight jobs that survived a page refresh
   const { hasInflightJobs } = useJobRecovery();
 
+  // Loading the Home stage starts from a clean layout: sidebars collapsed and
+  // every floating panel (settings, object explorer, timeline) hidden. Auto-save
+  // is disabled on Home so the sandbox is always rebuilt deterministically.
+  const resetHomeLayout = () => {
+    const ui = useUIStore.getState();
+    ui.setShowAdvancedSettings(false);
+    ui.setShowObjectExplorer(false);
+    ui.setShowTimeline(false);
+    // Home is always conceptually in the Sounds step so the pending Sample
+    // sphere (and any restored sounds) render.
+    ui.setIsInSoundsStep(true);
+    ui.setIsLeftSidebarExpanded(false);
+    ui.setLeftSidebarExpandCommand(false);
+    ui.setEnableAutoSave(false);
+    useRightSidebarStore.getState().requestCollapse();
+  };
+
+  // Deterministic Home stage. Every load rebuilds the SAME scene from scratch:
+  // a placeholder Context card, a placeholder Usage card, and a pending Sample
+  // sound card parented to that usage. Because the parentage matches the active
+  // usage index, the sample's sphere and its sidebar card stay linked and stable
+  // across refreshes. The bundled clip loads in the background.
+  const seedSandboxSampleScene = () => {
+    const contextCard = { type: 'freeform', display_name: SANDBOX_CONTEXT_NAME } as unknown as AnalysisConfig;
+    const usageCard = {
+      type: 'freeform',
+      display_name: SANDBOX_USAGE_NAME,
+      parentContextOriginalIndex: 0,
+    } as unknown as AnalysisConfig;
+
+    useAnalysisStore.getState().restoreAnalysisState({
+      analysisConfigs: [contextCard, usageCard],
+      analysisResults: [],
+      activeTab: 1,
+    });
+
+    const sampleConfig: SoundGenerationConfig = {
+      prompt: 'Sample',
+      display_name: 'Sample',
+      duration: DEFAULT_DURATION_SECONDS,
+      negative_prompt: '',
+      seed_copies: 1,
+      steps: DEFAULT_DIFFUSION_STEPS,
+      type: 'sample-audio',
+      pinned: true,
+      position: [...SANDBOX_SAMPLE_SPHERE_POSITION] as [number, number, number],
+      parentUsageOriginalIndex: 1,
+    };
+    useSoundscapeStore.getState().restoreSoundscape([sampleConfig], [], {});
+
+    useCardFlowStore.setState({
+      contextAdvanced: new Set([0]),
+      usageAdvanced: new Set([1]),
+      contextToUsageMap: new Map([[0, [1]]]),
+      usageToSoundMap: new Map([[1, [0]]]),
+      activeContextOriginalIndex: 0,
+      activeUsageOriginalIndex: 1,
+    });
+
+    const ui = useUIStore.getState();
+    ui.setIsInSoundsStep(true);
+    ui.setActiveSoundParentIndex(1);
+    ui.setEnableAutoSave(false);
+    // Fresh stage → no active No-model project.
+    ui.setHomeProject(null);
+
+    void (async () => {
+      try {
+        const result = await loadAudioFile(await apiService.loadSampleAudio());
+        useSoundscapeStore.setState((s) => ({
+          soundConfigs: s.soundConfigs.map((c, i) =>
+            i === 0
+              ? {
+                  ...c,
+                  uploadedAudioBuffer: result.audioBuffer,
+                  uploadedAudioInfo: result.audioInfo,
+                  uploadedAudioUrl: result.audioUrl,
+                }
+              : c,
+          ),
+        }));
+      } catch (error) {
+        console.warn('[page:sandbox] Failed to load sample audio', error);
+      }
+    })();
+  };
+
   useEffect(() => {
     if (bootstrappedRef.current) return;
     // Only read the URL on the client — window is not available during SSR
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     const urlModelId = params.get('model_id');
+    const homeProjectId = params.get('home');
     if (!urlModelId) {
       bootstrappedRef.current = true;
-      apiService.loadSoundscapeFromSpeckle(SANDBOX_MODEL_ID).then(loadResponse => {
-        if (!loadResponse.found || !loadResponse.soundscape_data) return;
-        const data = loadResponse.soundscape_data;
-        const audioBaseUrl = `${API_BASE_URL}${loadResponse.audio_base_url}`;
-        const irBaseUrl = loadResponse.ir_base_url || undefined;
-        if (loadResponse.missing_audio_filenames?.length) {
-          notifyError(
-            `${loadResponse.missing_audio_filenames.length} saved sound file(s) could not be found on the server and were skipped.`,
-            'warning',
-          );
-        }
-        applyRestoredSoundscapePayload(data, audioBaseUrl, irBaseUrl, suppressOrchestrateBakeRef);
-        console.log('[page:bootstrap] Sandbox soundscape restored');
-      }).catch(err => {
-        console.warn('[page:bootstrap] No sandbox soundscape to restore:', err);
-      });
+      resetHomeLayout();
+      // Loading a saved Homepage project onto the sandbox stage (no Speckle
+      // geometry). Otherwise the Home stage is rebuilt deterministically.
+      if (homeProjectId) {
+        setIsBootstrappingModel(true);
+        apiService.loadSoundscapeFromSpeckle(homeProjectId).then((loadResponse) => {
+          if (loadResponse.found && loadResponse.soundscape_data) {
+            const audioBaseUrl = `${API_BASE_URL}${loadResponse.audio_base_url}`;
+            const irBaseUrl = loadResponse.ir_base_url || undefined;
+            applyRestoredSoundscapePayload(
+              loadResponse.soundscape_data,
+              audioBaseUrl,
+              irBaseUrl,
+              suppressOrchestrateBakeRef,
+            );
+            // A loaded No-model project is the active project → enables the
+            // Home button and auto-save.
+            useUIStore.getState().setHomeProject({
+              modelId: homeProjectId,
+              name: loadResponse.soundscape_data.model_name || homeProjectId,
+            });
+          }
+          // Sync the mounted Sidebar to the restored usage parent, then collapse.
+          setStepAdvanceTrigger((t) => t + 1);
+          useUIStore.getState().setLeftSidebarExpandCommand(false);
+          setIsBootstrappingModel(false);
+          console.log('[page:bootstrap] Homepage project loaded:', homeProjectId);
+        }).catch((err) => {
+          console.warn('[page:bootstrap] Failed to load homepage project:', err);
+          resetDomainForFreshModel();
+          seedSandboxSampleScene();
+          setIsBootstrappingModel(false);
+        });
+        return;
+      }
+      // Fresh Home stage — rebuilt from scratch every load so it is always
+      // identical and the sphere/card link is stable.
+      resetDomainForFreshModel();
+      seedSandboxSampleScene();
+      // Sync the mounted Sidebar to the seeded usage parent, then keep it
+      // collapsed (resetHomeLayout already set the command; this re-applies it
+      // after the step-advance temporarily expands it).
+      setStepAdvanceTrigger((t) => t + 1);
+      useUIStore.getState().setLeftSidebarExpandCommand(false);
+      console.log('[page:bootstrap] Sandbox stage seeded');
       return;
     }
 
@@ -318,6 +443,10 @@ function HomeContent() {
       // runs once at mount (deps=[]), so a captured `globalSpeckleData` variable
       // would be frozen at its mount-time value (null on a cold refresh) forever.
       const liveModelId = useUIStore.getState().globalSpeckleData?.model_id ?? SANDBOX_MODEL_ID;
+      // Nothing to autosave on the fresh Home sandbox: no model and no loaded
+      // "No-model" project.
+      const uiState = useUIStore.getState();
+      if (!uiState.globalSpeckleData && !uiState.homeProject) return;
       if (!autosaveEnabledRef.current) return;
       // Shared-session guard: when other members are active on the same
       // workspace, pause autosave so concurrent writes don't clobber each other.
@@ -550,6 +679,7 @@ function HomeContent() {
     globalSpeckleData, setGlobalSpeckleData,
     isUploadingGlobalModel, setIsUploadingGlobalModel,
     isSavingSoundscape, setIsSavingSoundscape,
+    homeProject,
     isLeftSidebarExpanded, setIsLeftSidebarExpanded,
     speckleBounds, setSpeckleBounds,
     hoveredIRSourceReceiver, setHoveredIRSourceReceiver,
@@ -582,6 +712,10 @@ function HomeContent() {
     if (typeof window === 'undefined') return false;
     return !!new URLSearchParams(window.location.search).get('model_id');
   });
+
+  // Homepage project save/reload modal.
+  const [showHomeProjectModal, setShowHomeProjectModal] = useState(false);
+  const [isSavingHomeProject, setIsSavingHomeProject] = useState(false);
 
   // Sync model bounding box → Resonance Audio room bounds
   useEffect(() => {
@@ -706,7 +840,10 @@ function HomeContent() {
     if (globalSpeckleData) {
       setIsBootstrappingModel(false);
     }
-  }, [globalSpeckleData]);
+    // Auto-save is off on the fresh Home sandbox and on again once a model or a
+    // saved "No-model" project is open.
+    useUIStore.getState().setEnableAutoSave(globalSpeckleData !== null || homeProject !== null);
+  }, [globalSpeckleData, homeProject]);
 
   // Callback when Speckle viewer is loaded
     const handleSpeckleViewerLoaded = useCallback((viewer: import('@speckle/viewer').Viewer) => {
@@ -1329,6 +1466,11 @@ function HomeContent() {
           prompt_index: index,
           isPending: true,
           entity_index,
+          // Only the deterministic Home Sample is pinned (it carries
+          // config.pinned + SANDBOX_SAMPLE_SPHERE_POSITION). Other sounds —
+          // including user-added sample-audio cards — must follow the normal
+          // camera-front placement, so pin by flag, never by card type.
+          ...(config.pinned ? { pinned: true } : {}),
         }];
       });
   }, [soundGen.soundConfigs, soundGen.generatedSounds, soundGen.soundscapeData, activeSoundParentIndex, isInSoundsStep, iterationLinks, soundTimestampsForCount]);
@@ -1619,6 +1761,133 @@ function HomeContent() {
     console.log(`Loaded ${newConfigs.length} sounds from SED analysis`);
   }, [sed, soundGen]);
 
+  // ============================================================================
+  // Home stage → model transition
+  // ============================================================================
+  type SpeckleModelSelectPayload = {
+    model_id: string;
+    version_id: string;
+    file_id: string;
+    url: string;
+    object_id: string;
+    auth_token?: string;
+    display_name?: string;
+  };
+
+  interface HomeElementsSnapshot {
+    configs: SoundGenerationConfig[];
+    events: SoundEvent[];
+    receivers: ReturnType<typeof useReceiversStore.getState>['receivers'];
+    gridListeners: ReturnType<typeof useGridListenersStore.getState>['gridListeners'];
+  }
+
+  // Pending model switch awaiting the user's import / start-fresh choice.
+  const [pendingModelSwitch, setPendingModelSwitch] = useState<{
+    speckleData: SpeckleModelSelectPayload;
+    home: HomeElementsSnapshot;
+    isUpload: boolean;
+  } | null>(null);
+  const [isApplyingModelSwitch, setIsApplyingModelSwitch] = useState(false);
+
+  /** The bundled Sample card is the Home default — it is not "work to import". */
+  const isDefaultSampleConfig = (c: SoundGenerationConfig) =>
+    c.type === 'sample-audio' && c.display_name === 'Sample';
+
+  /** The two deterministic placeholder cards created on every fresh Home stage. */
+  const isSeedPlaceholderAnalysis = (c: AnalysisConfig) =>
+    c.type === 'freeform' &&
+    (c.display_name === SANDBOX_CONTEXT_NAME || c.display_name === SANDBOX_USAGE_NAME);
+
+  /** Snapshot the importable Home elements (excludes the default Sample). */
+  const captureHomeElements = (): HomeElementsSnapshot => {
+    const sc = useSoundscapeStore.getState();
+    return {
+      configs: sc.soundConfigs.filter((c) => !isDefaultSampleConfig(c)),
+      events: (sc.generatedSounds ?? []).filter((e: { pinned?: boolean }) => !e.pinned) as SoundEvent[],
+      receivers: [...useReceiversStore.getState().receivers],
+      gridListeners: [...useGridListenersStore.getState().gridListeners],
+    };
+  };
+
+  /**
+   * True when the Home stage holds something worth importing — i.e. anything
+   * beyond the deterministic seed (Sample card + placeholder context/usage).
+   */
+  const homeHasImportableWork = (): boolean => {
+    const home = captureHomeElements();
+    const hasNonSeedAnalysis = useAnalysisStore
+      .getState()
+      .analysisConfigs.some((c) => !isSeedPlaceholderAnalysis(c));
+    return (
+      home.configs.length > 0 ||
+      home.events.length > 0 ||
+      home.receivers.length > 0 ||
+      home.gridListeners.length > 0 ||
+      useAcousticsSimulationStore.getState().simulationConfigs.length > 0 ||
+      hasNonSeedAnalysis
+    );
+  };
+
+  /** Empty every domain store so a model opens without the Home elements. */
+  const resetDomainForFreshModel = () => {
+    useSoundscapeStore.getState().restoreSoundscape([], [], {});
+    useReceiversStore.getState().clearReceivers();
+    useGridListenersStore.getState().restoreGridListeners([]);
+    useAcousticsSimulationStore.getState().restoreSimulationState([], null);
+    useAnalysisStore.getState().restoreAnalysisState({
+      analysisConfigs: [],
+      analysisResults: [],
+      activeTab: 0,
+    });
+    const audio = useAudioControlsStore.getState();
+    audio.stopAll();
+    audio.restoreVolumes({});
+    audio.restoreSoundTimestamps({});
+    audio.restoreIterationLinks({});
+    audio.restoreMuteSolo([], null);
+    useAcousticLayerStore.getState().clearAcousticLayer();
+  };
+
+  /**
+   * Append the captured Home elements onto whatever the model now holds.
+   * Sounds/configs are offset + re-keyed so they never collide with the model's
+   * saved entries. Simulations/analysis are intentionally not imported.
+   */
+  const mergeHomeElements = (home: HomeElementsSnapshot) => {
+    const sc = useSoundscapeStore.getState();
+    const offset = sc.soundConfigs.length;
+    const baseEvents = (sc.soundscapeData ?? []) as SoundEvent[];
+
+    const remappedConfigs = home.configs.map((c) => ({
+      ...c,
+      // Home nesting (context/usage parents) does not exist in this model.
+      parentUsageOriginalIndex: undefined,
+    }));
+    const remappedEvents = home.events.map((e) => ({
+      ...e,
+      id: `imported_${e.id}`,
+      prompt_index: (e.prompt_index ?? 0) + offset,
+    }));
+    const mergedEvents = [...baseEvents, ...remappedEvents];
+    useSoundscapeStore.setState({
+      soundConfigs: [...sc.soundConfigs, ...remappedConfigs],
+      generatedSounds: mergedEvents,
+      soundscapeData: mergedEvents.length > 0 ? mergedEvents : null,
+    });
+
+    if (home.receivers.length > 0) {
+      const rc = useReceiversStore.getState();
+      rc.restoreReceivers([...rc.receivers, ...home.receivers], rc.selectedReceiverId);
+    }
+    if (home.gridListeners.length > 0) {
+      const gl = useGridListenersStore.getState();
+      gl.restoreGridListeners([...gl.gridListeners, ...home.gridListeners]);
+    }
+    // Show every imported sound (ungrouped) rather than filtering to the model's
+    // first usage chain, which would hide them.
+    useUIStore.getState().setActiveSoundParentIndex(null);
+  };
+
   // Handler: Upload model file from right sidebar (direct Speckle upload, bypasses useAnalysis)
   const handleRightSidebarModelUpload = useCallback(async (file: File) => {
     console.log('[page.tsx] Model file dropped in right sidebar:', file.name);
@@ -1629,7 +1898,6 @@ function HomeContent() {
     }
 
     setIsUploadingGlobalModel(true);
-    setGlobalModelFile(file);
 
     try {
       // Upload directly to backend for Speckle conversion
@@ -1642,11 +1910,12 @@ function HomeContent() {
 
       if (speckleData) {
         console.log('[page.tsx] Model uploaded to Speckle:', speckleData.url);
-        setGlobalSpeckleData(speckleData);
-        setSpeckleModelUrl(speckleData.url);
-        router.replace(`/?model_id=${encodeURIComponent(speckleData.model_id)}`, { scroll: false });
+        setGlobalModelFile(file);
+        // Route through the shared select flow so the Home import prompt applies.
+        await handleSpeckleModelSelect(speckleData, true);
       } else {
         console.warn('[page.tsx] No Speckle data in upload response');
+        setGlobalModelFile(null);
       }
     } catch (error) {
       console.error('[page.tsx] Failed to upload model:', error);
@@ -1655,24 +1924,24 @@ function HomeContent() {
     } finally {
       setIsUploadingGlobalModel(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isUploadingGlobalModel, handleApiError]);
 
   // Load an existing Speckle model directly (no upload needed)
-  const handleSpeckleModelSelect = useCallback(async (speckleData: {
-    model_id: string;
-    version_id: string;
-    file_id: string;
-    url: string;
-    object_id: string;
-    auth_token?: string;
-    display_name?: string;
-  }) => {
+  const handleSpeckleModelSelect = useCallback(async (speckleData: SpeckleModelSelectPayload, isUpload = false) => {
     console.log('[page.tsx] Speckle model selected:', speckleData.url);
-    // Opening a model from the Home page frames its bounding box on load —
+    // Home stage: if there is work worth keeping, ask the user before switching.
+    if (homeHasImportableWork()) {
+      setPendingModelSwitch({ speckleData, home: captureHomeElements(), isUpload });
+      return;
+    }
+    // Opening a model from the Home page frames its bounding box on load -
     // do NOT restore a camera POV saved for a previously-loaded model.
     _fitCameraToBoundingBoxOnLoad = true;
     setGlobalSpeckleData(speckleData);
     setSpeckleModelUrl(speckleData.url);
+    // A Speckle model is now the active project.
+    useUIStore.getState().setHomeProject(null);
     if (speckleData.display_name) {
       setModelFileName(speckleData.display_name);
     }
@@ -1908,6 +2177,38 @@ function HomeContent() {
     audioOrchestrator.setNoIRPreference,
   ]);
 
+  // Resolve the Home import prompt: import / start fresh / cancel.
+  const handleImportDecision = useCallback(async (choice: 'import' | 'fresh' | 'cancel') => {
+    const pending = pendingModelSwitch;
+    if (!pending) return;
+    if (choice === 'cancel') {
+      setPendingModelSwitch(null);
+      return;
+    }
+    setIsApplyingModelSwitch(true);
+    setPendingModelSwitch(null);
+    try {
+      if (choice === 'import') {
+        // Persist the Home stage first so nothing is lost, then load the model
+        // base and append the Home elements on top.
+        lastSaveSourceRef.current = 'autosave';
+        await saveSoundscapeRef.current?.();
+        const home = pending.home;
+        resetDomainForFreshModel();
+        await handleSpeckleModelSelect(pending.speckleData, pending.isUpload);
+        mergeHomeElements(home);
+        lastSaveSourceRef.current = 'autosave';
+        saveSoundscapeRef.current?.();
+      } else {
+        resetDomainForFreshModel();
+        await handleSpeckleModelSelect(pending.speckleData, pending.isUpload);
+      }
+    } finally {
+      setIsApplyingModelSwitch(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingModelSwitch, handleSpeckleModelSelect]);
+
   // Memoized resonance audio config (used by save/restore, derived from multiple stores)
   const resonanceAudioConfig = useMemo(() => ({
     enabled: audioOrchestrator.status?.currentMode === 'no_ir_resonance',
@@ -1922,12 +2223,23 @@ function HomeContent() {
   ]);
 
   // Save current soundscape state to Speckle + local storage
-  const handleSaveSoundscape = useCallback(async () => {
+  const handleSaveSoundscape = useCallback(async (overrides?: { modelId?: string; modelName?: string }) => {
+    const uiState = useUIStore.getState();
+    const activeHomeProject = uiState.homeProject;
+    // A loaded Speckle model always wins; the No-model project only applies when
+    // no model is open.
+    const overrideModelId =
+      overrides?.modelId ?? (uiState.globalSpeckleData ? undefined : activeHomeProject?.modelId);
+    // Nothing to save on the fresh Home sandbox (no model, no No-model project).
+    if (!overrideModelId && !uiState.globalSpeckleData) return;
     const saveSource = lastSaveSourceRef.current;
     lastSaveSourceRef.current = 'manual';
     // Save camera POV alongside every soundscape save
     saveCameraToStore();
-    const modelId = globalSpeckleData?.model_id ?? SANDBOX_MODEL_ID;
+    const modelId = overrideModelId ?? globalSpeckleData?.model_id ?? SANDBOX_MODEL_ID;
+    const modelName =
+      overrides?.modelName ??
+      (uiState.globalSpeckleData ? modelId : activeHomeProject?.name ?? modelId);
     if (isSavingSoundscape) return;
     setIsSavingSoundscape(true);
     try {
@@ -2016,7 +2328,7 @@ function HomeContent() {
       }
       const payload = buildSoundscapeSavePayload(
         modelId,
-        modelId, // model_name - use model_id as fallback
+        modelName,
         soundGen.soundConfigs,
         soundGen.soundscapeData ?? [],
         {
@@ -2113,6 +2425,28 @@ function HomeContent() {
   // Keep the autosave ref in sync with the latest save handler
   saveSoundscapeRef.current = handleSaveSoundscape;
 
+  // Save the Home sandbox as a named local "Homepage project" (home-<slug>).
+  const handleSaveHomeProject = useCallback(async (name: string) => {
+    const slug =
+      name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'project';
+    const modelId = `home-${slug}`;
+    setIsSavingHomeProject(true);
+    try {
+      await handleSaveSoundscape({ modelId, modelName: name });
+      // The saved project becomes the active one → Home button + auto-save on.
+      useUIStore.getState().setHomeProject({ modelId, name });
+    } finally {
+      setIsSavingHomeProject(false);
+      setShowHomeProjectModal(false);
+    }
+  }, [handleSaveSoundscape]);
+
+  // Reload a saved Homepage project onto the sandbox stage via the URL bootstrap.
+  const handleOpenHomeProject = useCallback((modelId: string) => {
+    setShowHomeProjectModal(false);
+    window.location.href = `/?home=${encodeURIComponent(modelId)}`;
+  }, []);
+
   // Wrapped file change handler to clear SED results and load audio info
   const handleFileChangeWithSEDClear = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     fileUpload.handleFileChange(e);
@@ -2191,6 +2525,12 @@ function HomeContent() {
   const handleSelectSoundCard = useCallback((promptIndex: number) => {
     // Expand the card in the left sidebar
     setSelectedCardIndex(promptIndex);
+
+    // Expand the left sidebar and reveal the Sounds step so the clicked
+    // sound's card is actually visible (the mounted Sidebar reacts to the
+    // soundsNavTrigger, not to setIsLeftSidebarExpanded alone).
+    setIsLeftSidebarExpanded(true);
+    useUIStore.getState().triggerSoundsNav();
 
     // Set selectedEntity with objectType 'Sound' → triggers right sidebar expansion
     const sound = soundGen.generatedSounds.find(s => s.prompt_index === promptIndex);
@@ -2456,7 +2796,10 @@ function HomeContent() {
       setShowGroundGrid, setGroundGridSpacing, setGroundGridColor]);
 
   const handleDeleteHistory = useCallback(async () => {
-    const modelId = useUIStore.getState().globalSpeckleData?.model_id;
+    // Fall back to the reserved sandbox id so Home-stage history can be deleted
+    // too (autosave/stats already use this fallback).
+    const modelId =
+      useUIStore.getState().globalSpeckleData?.model_id ?? SANDBOX_MODEL_ID;
     if (!modelId) return;
     try {
       await apiService.deleteSoundscapeHistory(modelId);
@@ -2963,6 +3306,34 @@ function HomeContent() {
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-background">
       <PrivacyNotice />
+      {/* Home stage → model import prompt */}
+      <ImportSandboxModal
+        open={pendingModelSwitch !== null}
+        modelName={
+          pendingModelSwitch?.speckleData.display_name ||
+          pendingModelSwitch?.speckleData.model_id ||
+          'this model'
+        }
+        summary={{
+          sounds: pendingModelSwitch?.home.configs.length ?? 0,
+          listeners: pendingModelSwitch?.home.receivers.length ?? 0,
+          gridListeners: pendingModelSwitch?.home.gridListeners.length ?? 0,
+        }}
+        busy={isApplyingModelSwitch}
+        onImport={() => { void handleImportDecision('import'); }}
+        onStartFresh={() => { void handleImportDecision('fresh'); }}
+        onCancel={() => { void handleImportDecision('cancel'); }}
+      />
+
+      {/* Save / reload the Home sandbox as a named Homepage project */}
+      <HomeProjectModal
+        open={showHomeProjectModal}
+        onClose={() => setShowHomeProjectModal(false)}
+        onSave={(name) => { void handleSaveHomeProject(name); }}
+        onLoad={handleOpenHomeProject}
+        busy={isSavingHomeProject}
+      />
+
       {/* Main 3D Scene - Fixed at screen center, full size, lowest z-index */}
       <main className="absolute inset-0">
         {/* Viewer Toggle Button - Top Left */}
@@ -3035,7 +3406,9 @@ function HomeContent() {
             // Load existing Speckle model (for empty state model browser)
             onSpeckleModelSelect={handleSpeckleModelSelect}
             // Soundscape persistence
-            onSaveSoundscape={handleSaveSoundscape}
+            onSaveSoundscape={
+              globalSpeckleData ? handleSaveSoundscape : () => setShowHomeProjectModal(true)
+            }
             isSavingSoundscape={isSavingSoundscape}
             // FPS mode programmatic exit
             exitFPSTrigger={exitFPSTrigger}

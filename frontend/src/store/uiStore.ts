@@ -67,10 +67,17 @@ export interface UIStoreState {
   // ── Soundscape persistence ────────────────────────────────────────────────
   isSavingSoundscape: boolean;
   setIsSavingSoundscape: (saving: boolean) => void;
+  /** Currently loaded/saved local "No-model" project (null on the fresh Home
+   *  stage). Its presence enables auto-save and the Home button. */
+  homeProject: { modelId: string; name: string } | null;
+  setHomeProject: (project: { modelId: string; name: string } | null) => void;
 
   // ── Sidebar ───────────────────────────────────────────────────────────────
   isLeftSidebarExpanded: boolean;
   setIsLeftSidebarExpanded: (expanded: boolean) => void;
+  /** Transient command to force the mounted Sidebar expanded/collapsed (seq bump). */
+  leftSidebarExpandCommand: { seq: number; expanded: boolean } | null;
+  setLeftSidebarExpandCommand: (expanded: boolean) => void;
 
   // ── Speckle bounds (updated by SpeckleScene callback) ─────────────────────
   speckleBounds: { min: [number, number, number]; max: [number, number, number] } | null;
@@ -273,11 +280,23 @@ export const useUIStore = create<UIStoreState>()(
       isSavingSoundscape: false,
       setIsSavingSoundscape: (saving) =>
         set({ isSavingSoundscape: saving }, false, 'ui/setIsSavingSoundscape'),
+      homeProject: null,
+      setHomeProject: (project) =>
+        set({ homeProject: project }, false, 'ui/setHomeProject'),
 
       // ── Sidebar ─────────────────────────────────────────────────────────
       isLeftSidebarExpanded: true,
       setIsLeftSidebarExpanded: (expanded) =>
         set({ isLeftSidebarExpanded: expanded }, false, 'ui/setIsLeftSidebarExpanded'),
+      leftSidebarExpandCommand: null,
+      setLeftSidebarExpandCommand: (expanded) =>
+        set(
+          (s) => ({
+            leftSidebarExpandCommand: { seq: (s.leftSidebarExpandCommand?.seq ?? 0) + 1, expanded },
+          }),
+          false,
+          'ui/setLeftSidebarExpandCommand',
+        ),
 
       // ── Speckle bounds ───────────────────────────────────────────────────
       speckleBounds: null,
@@ -426,7 +445,8 @@ export const useUIStore = create<UIStoreState>()(
         irRefreshTrigger, refreshBoundingBoxTrigger, roomScale, isUploadingGlobalModel,
         isSavingSoundscape, zoomToSoundCardTrigger, hoveredSoundCardIndex,
         activeSoundParentIndex, isInSoundsStep, showBoundingBox,
-        cameraPosition, cameraTarget, acousticLayerSelectionMode, soundsNavTrigger, ...persistable } = state;
+        cameraPosition, cameraTarget, acousticLayerSelectionMode, soundsNavTrigger,
+        leftSidebarExpandCommand, homeProject, ...persistable } = state;
       return persistable;
     },
   }),

@@ -5,6 +5,7 @@ Centralized file handling operations to eliminate code duplication.
 Provides consistent file upload, sanitization, and cleanup functionality.
 """
 
+import json
 import os
 import re
 import time
@@ -238,6 +239,47 @@ def list_saved_soundscape_models(session_id: str) -> dict[str, str]:
         ).isoformat()
 
     return saved
+
+
+# Local (non-Speckle) projects saved from the Home sandbox use this model_id prefix.
+HOME_PROJECT_PREFIX = "home-"
+
+
+def list_home_projects(session_id: str) -> list[dict]:
+    """
+    List saved Home ("sandbox") projects for a workspace.
+
+    Home projects are stored like any other soundscape
+    (``data/soundscapes/<session_id>/<model_id>/soundscape.json``) but use a
+    ``home-`` model_id prefix. Returns newest first.
+    """
+    root = Path(SOUNDSCAPE_DATA_DIR) / session_id
+    projects: list[dict] = []
+    if not session_id or not root.is_dir():
+        return projects
+
+    for entry in root.iterdir():
+        if not entry.is_dir() or not entry.name.startswith(HOME_PROJECT_PREFIX):
+            continue
+        json_path = entry / "soundscape.json"
+        if not json_path.is_file():
+            continue
+        try:
+            mtime = json_path.stat().st_mtime
+            with open(json_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        projects.append(
+            {
+                "model_id": entry.name,
+                "name": data.get("model_name") or entry.name,
+                "saved_at": datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat(),
+            }
+        )
+
+    projects.sort(key=lambda p: p["saved_at"], reverse=True)
+    return projects
 
 
 def janitor_cleanup_temp(max_age_h: float = TEMP_JANITOR_MAX_AGE_H) -> dict[str, int]:

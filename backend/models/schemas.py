@@ -295,6 +295,10 @@ class SoundscapeSoundConfig(BaseModel):
     # Scenario pipeline reference (scenarioId + foley/speech ids + raw entry fields),
     # persisted so orchestration can be re-run from edited cards after refresh.
     scenario_source: Optional[dict] = None
+    # Explicit-position sound that must stay where authored (the deterministic
+    # Home Sample at SANDBOX_SAMPLE_SPHERE_POSITION). Persisted so the pin
+    # survives a refresh/save-load without inferring it from the card type.
+    pinned: bool = False
 
 
 class SoundscapeSoundEvent(BaseModel):
@@ -322,6 +326,9 @@ class SoundscapeSoundEvent(BaseModel):
     category: Optional[str] = None
     # 0-based copy index for multi-variant sounds (distinguishes variants of the same prompt)
     copy_index: Optional[int] = None
+    # Explicit-position sound that must stay where authored (Home sandbox Sample
+    # pinned at the origin — the sphere manager otherwise relocates [0,0,0]).
+    pinned: bool = False
 
 
 class SoundscapeReceiver(BaseModel):

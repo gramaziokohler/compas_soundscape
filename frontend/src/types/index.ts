@@ -112,6 +112,12 @@ export interface SoundEvent {
   isPending?: boolean;
   /** Sound category from foley/scenario analysis (e.g. "background", "sound_event", "speech") */
   category?: string;
+  /**
+   * Home sandbox stage sounds (e.g. the default Sample) whose position is
+   * authored explicitly and must not be relocated by camera-front spiral
+   * placement — including a legitimate [0,0,0] origin.
+   */
+  pinned?: boolean;
 }
 
 export interface UIOverlay {
@@ -192,6 +198,8 @@ export interface SoundGenerationConfig {
   timestamps?: string[];
   /** Manual position override for pre-generation sphere placement. */
   position?: [number, number, number];
+  /** Pin the pre-generation sphere to its authored position (incl. the origin). */
+  pinned?: boolean;
   // Uploaded audio fields (when bypassing generation)
   uploadedAudioBuffer?: AudioBuffer; // Audio buffer for playback
   uploadedAudioInfo?: SEDAudioInfo; // Audio metadata for display

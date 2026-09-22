@@ -311,7 +311,10 @@ export class SoundSphereManager {
             // pending placeholder via promptPositions).
             const isZero = newPos[0] === 0 && newPos[1] === 0 && newPos[2] === 0;
             const hasValidStored = oldPos && (oldPos[0] !== 0 || oldPos[1] !== 0 || oldPos[2] !== 0);
-            if (!(isZero && hasValidStored)) {
+            // Pinned sounds (Home Sample at the origin) keep their authored
+            // position even when it is exactly [0,0,0].
+            const isPinned = (soundEvent as any).pinned === true;
+            if (isPinned || !(isZero && hasValidStored)) {
               this.spherePositions.set(soundEvent.id, newPos);
               this.promptPositions.set(promptIdx, newPos);
               // Update 3D mesh position so the viewer reflects undo/redo
@@ -379,7 +382,9 @@ export class SoundSphereManager {
       }
       if (!this.spherePositions.has(s.id) && s.position) {
         const pos = s.position as [number, number, number];
-        const hasSavedPosition = pos.length === 3 && (pos[0] !== 0 || pos[1] !== 0 || pos[2] !== 0);
+        const hasSavedPosition =
+          (s as any).pinned === true ||
+          (pos.length === 3 && (pos[0] !== 0 || pos[1] !== 0 || pos[2] !== 0));
         if (hasSavedPosition) {
           this.spherePositions.set(s.id, pos);
           this.promptPositions.set(promptIdx, pos);
@@ -893,6 +898,22 @@ export class SoundSphereManager {
    */
   public getSoundSphereMeshes(): THREE.Mesh[] {
     return this.soundMeshes;
+  }
+
+  /**
+   * Apply a vertical (world Z) bounce offset to the pinned Home stage sphere,
+   * moving its label sprite with it. The base Z comes from the sound event's
+   * authored position, so dragging still works.
+   */
+  public setHomeBounceOffset(offsetZ: number): void {
+    for (const mesh of this.soundMeshes) {
+      const ev = mesh.userData.soundEvent as SoundEvent | undefined;
+      if (!ev?.pinned) continue;
+      const baseZ = (ev.position?.[2] as number) ?? 0;
+      mesh.position.z = baseZ + offsetZ;
+      const sprite = this.labelSprites.get(ev.id);
+      if (sprite) sprite.position.z = baseZ + offsetZ;
+    }
   }
 
   /**

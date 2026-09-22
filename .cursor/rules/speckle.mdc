@@ -130,15 +130,23 @@ Rules:
 
 1. **Never return the ingestion id or the bundle version id as `version_id`.** The frontend viewer
    and the acoustic pipeline (`get_model_geometry`) both need a classic object graph.
-2. Materialization is cached (in-process dict **+** Redis `speckle:legacy_version:<bundleVersionId>`)
+2. Materialization is cached (in-process dict **+** Redis `speckle:legacy_version:v2:<bundleVersionId>`)
    so polled status checks are idempotent and concurrent polls do not race (guarded by
-   `_MATERIALIZE_LOCK`).
+   `_MATERIALIZE_LOCK`). The `v2` prefix invalidates copies made before the geo-fix below.
 3. If materialization fails, `get_ingestion_status` returns `success` with **no** ids so the client
    keeps polling instead of loading an unreadable bundle.
 4. Requires `specklepy[bundle]==2026.9.0b3` + `gql==4.0.0` (`requirements.txt`).
 5. `Model.to_base()` projection → root `Collection(applicationId="artifact-root")`, nested
    `Collection`s, `DataObject(displayValue=[Mesh])`, `renderMaterialProxies`,
    `instanceDefinitionProxies`, `units`, `version = 4`.
+6. **`Model.to_base()` stamps `applicationId` on BOTH the host object and its `displayValue`
+   meshes** — connector models never do this. `@speckle/viewer`'s `convertInstances` seeds its
+   consumable counter with the number of *unique* definition members but decrements once per
+   matching node, so the duplicates make it stop early and log
+   `Consumable applicationId def-geo-… could not be found` for the remaining definition geometry
+   (instanced geometry missing). `_strip_display_geometry_application_ids()` removes the mesh-level
+   duplicates before `operations.send`; legacy copies created before that fix are healed on demand
+   via `POST /api/speckle/models/{model_id}/ensure-ready` (called by `useSpeckleViewerInit`).
 
 ### gql 4 API change
 

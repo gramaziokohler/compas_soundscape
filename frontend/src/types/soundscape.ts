@@ -43,6 +43,10 @@ export interface SoundscapeSoundConfig {
   category?: string;
   /** Scenario pipeline reference for "incomplete" (pre-orchestrate) cards. */
   scenario_source?: Record<string, unknown>;
+  /** Explicit-position sound that must stay where authored (the deterministic
+   *  Home Sample at SANDBOX_SAMPLE_SPHERE_POSITION). Persisted so the pin
+   *  survives a refresh/save-load without inferring it from the card type. */
+  pinned?: boolean;
 }
 
 /** Serializable orchestration metadata (parametric trigger links). */
@@ -91,6 +95,8 @@ export interface SoundscapeSoundEvent {
   category?: string;
   /** 0-based copy index for multi-variant sounds (distinguishes variants of the same prompt). */
   copy_index?: number;
+  /** Explicit-position sound that must stay where authored (Home Sample at origin). */
+  pinned?: boolean;
 }
 
 /** Serializable receiver position */

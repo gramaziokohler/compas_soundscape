@@ -19,6 +19,7 @@ import { AreaDrawingManager } from '@/lib/three/area-drawing-manager';
 import { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
 import { useSpeckleStore } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
+import { apiService } from '@/services/api';
 import { SPECKLE_VIEWER_RETRY } from '@/utils/constants';
 import { getCssColorHex } from '@/utils/utils';
 import type { AudioOrchestrator } from '@/lib/audio/AudioOrchestrator';
@@ -303,6 +304,20 @@ export function useSpeckleViewerInit({
         if (!modelUrl) {
           completeAudioStack(false);
           return;
+        }
+
+        // Make sure the model's latest version is viewer-safe (bundle uploads are
+        // materialized, pre-fix legacy copies are re-materialized). The model URL
+        // resolves to the latest version, so this must complete before loading.
+        if (speckleData?.model_id) {
+          try {
+            await apiService.ensureSpeckleModelReady(speckleData.model_id);
+          } catch (prepErr) {
+            console.warn(
+              '[useSpeckleViewerInit] ensure-ready failed, loading current version:',
+              prepErr
+            );
+          }
         }
 
         // Load Speckle model with retry logic

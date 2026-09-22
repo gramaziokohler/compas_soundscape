@@ -13,7 +13,12 @@
 
 import * as THREE from 'three';
 import type { CameraController, Viewer } from '@speckle/viewer';
-import { RESONANCE_AUDIO } from '@/utils/constants';
+import {
+  RESONANCE_AUDIO,
+  SANDBOX_GRID_MIN_EXTENT,
+  SANDBOX_GRID_EXTENT_FRACTION,
+  SANDBOX_GRID_CAMERA_MARGIN,
+} from '@/utils/constants';
 import { getCssColorHex } from '@/utils/utils';
 import type { BoundingBoxBounds } from '@/lib/three/BoundingBoxManager';
 
@@ -35,6 +40,77 @@ export function getPlaceholderRoomBounds(): BoundingBoxBounds {
   return {
     min: [-width / 2, -depth / 2, 0],
     max: [width / 2, depth / 2, height],
+  };
+}
+
+/**
+ * Resonance room bounds fitted around the Home stage sound spheres.
+ *
+ * The Home Speckle World only contains the expanded ground-grid stage box
+ * (installed by `installSandboxCameraFarPlane` for the far plane), so it must
+ * not be used to size the resonance room — doing so produces a stage-sized room
+ * that never tracks the sounds. Instead the room is fitted to the sphere AABB
+ * plus a logical buffer (`AUTO_BBOX_THRESHOLD` on each side), with its floor
+ * pinned to the Home ground plane and minimum interior dimensions enforced
+ * (`AUTO_BBOX_MIN_SIZE`). With no sound sources it falls back to the fixed
+ * centred placeholder room.
+ */
+export function getSandboxResonanceBounds(soundPositions: THREE.Vector3[]): BoundingBoxBounds {
+  const fallback = getPlaceholderRoomBounds();
+  if (soundPositions.length === 0) return fallback;
+
+  const buffer = RESONANCE_AUDIO.BOUNDING_BOX.AUTO_BBOX_THRESHOLD;
+  const minSize = RESONANCE_AUDIO.BOUNDING_BOX.AUTO_BBOX_MIN_SIZE;
+
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (const p of soundPositions) {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    minZ = Math.min(minZ, p.z);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+    maxZ = Math.max(maxZ, p.z);
+  }
+
+  // Logical buffer around the sound spheres.
+  minX -= buffer;
+  minY -= buffer;
+  maxX += buffer;
+  maxY += buffer;
+
+  // Pin the floor to the Home ground plane (or lower if a sphere sits below it)
+  // so the room never clips the spheres, then add ceiling clearance above the
+  // highest sphere.
+  const floorZ = Math.min(fallback.min[2], minZ);
+  const ceilingZ = Math.max(maxZ + buffer, floorZ + minSize);
+
+  // Keep the footprint centred on the sphere AABB and enforce a minimum size.
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
+  const halfW = Math.max((maxX - minX) / 2, minSize / 2);
+  const halfD = Math.max((maxY - minY) / 2, minSize / 2);
+
+  return {
+    min: [centerX - halfW, centerY - halfD, floorZ],
+    max: [centerX + halfW, centerY + halfD, ceilingZ],
+  };
+}
+
+/**
+ * Bounds covering the whole Home ground grid. The camera default view and the
+ * reset-zoom button frame this (not the tighter placeholder room AABB), so the
+ * entire "SOUND IS BLUE" stage is visible.
+ */
+export function getSandboxStageBounds(): BoundingBoxBounds {
+  const { width, height, depth } = RESONANCE_AUDIO.DEFAULT_ROOM_DIMENSIONS;
+  const half =
+    Math.max(width, depth, SANDBOX_GRID_MIN_EXTENT) *
+    SANDBOX_GRID_EXTENT_FRACTION *
+    SANDBOX_GRID_CAMERA_MARGIN;
+  return {
+    min: [-half, -half, 0],
+    max: [half, half, height],
   };
 }
 

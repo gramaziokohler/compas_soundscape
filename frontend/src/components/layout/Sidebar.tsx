@@ -341,6 +341,17 @@ export function Sidebar(props: SidebarProps) {
     }
   }, [soundsNavTrigger]);
 
+  // Programmatic collapse/expand command (e.g. collapse everything on Home load).
+  // The mounted Sidebar owns a local `isExpanded`, so it must observe this
+  // command rather than only the persisted store field.
+  const leftSidebarExpandCommand = useUIStore((s) => s.leftSidebarExpandCommand);
+  useEffect(() => {
+    if (!leftSidebarExpandCommand) return;
+    setIsExpanded(leftSidebarExpandCommand.expanded);
+    useUIStore.getState().setIsLeftSidebarExpanded(leftSidebarExpandCommand.expanded);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leftSidebarExpandCommand?.seq]);
+
   // Sidebar width — fixed CSS px per resolution band (`--sidebar-*-width` in
   // globals.css), not a fraction of the viewport. Re-read when the viewport
   // crosses a breakpoint; overflowing the window is still clamped.

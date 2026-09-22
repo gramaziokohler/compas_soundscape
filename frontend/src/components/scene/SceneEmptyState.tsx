@@ -26,6 +26,8 @@ interface SceneEmptyStateProps {
   onDragLeave: (e: React.DragEvent<HTMLDivElement>) => void;
   onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
   onSpeckleModelSelect?: (speckleData: SpeckleModelSelectData) => void;
+  /** Loads a saved local "No-model" project by model id. */
+  onLoadHomeProject?: (modelId: string) => void;
   isUploadingModel?: boolean;
   onClose?: () => void;
 }
@@ -39,6 +41,7 @@ export function SceneEmptyState({
   onDragLeave,
   onDrop,
   onSpeckleModelSelect,
+  onLoadHomeProject,
   isUploadingModel = false,
   onClose,
 }: SceneEmptyStateProps) {
@@ -89,7 +92,10 @@ export function SceneEmptyState({
             fluid
           />
           {onSpeckleModelSelect && (
-            <SpeckleModelBrowser onModelSelect={onSpeckleModelSelect} />
+            <SpeckleModelBrowser
+              onModelSelect={onSpeckleModelSelect}
+              onLoadHomeProject={onLoadHomeProject}
+            />
           )}
         </div>
       ) : (

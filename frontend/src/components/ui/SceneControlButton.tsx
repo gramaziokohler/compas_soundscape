@@ -12,6 +12,8 @@ interface SceneControlButtonProps {
   inactiveBackground?: string;
   border?: boolean
   background?: boolean
+  /** Optional DOM id (e.g. for anchor/animation targets). */
+  buttonId?: string
 }
 
 /**
@@ -44,10 +46,12 @@ export function SceneControlButton({
   activeColor = 'var(--color-primary)',
   inactiveBackground = 'var(--sidebar-bg)',
   border = true ,
-  background = true
+  background = true,
+  buttonId
 }: SceneControlButtonProps) {
   return (
     <button
+      id={buttonId}
       onClick={onClick}
       className="frosted-surface backdrop-blur-lg backdrop-saturate-150 shadow-lg transition-all duration-200 flex items-center justify-center group"
       style={{

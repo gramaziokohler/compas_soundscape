@@ -21,7 +21,7 @@ import { ScenarioAfterView, getScenarioPipelineStatus } from '@/components/layou
 import { ScenarioParcoursToggle } from '@/components/layout/sidebar/analysis/ScenarioResultContent';
 import { AnalysisResultContent } from '@/components/layout/sidebar/analysis/AnalysisResultContent';
 import { TextResultPreview } from '@/components/layout/sidebar/analysis/TextResultPreview';
-import { useAnalysisStore, useCardFlowStore, useSoundscapeStore } from '@/store';
+import { useAnalysisStore, useCardFlowStore, useSoundscapeStore, useUIStore } from '@/store';
 import { useServiceVersions } from '@/hooks/useServiceVersions';
 import { LLM_MODEL_TO_PROVIDER } from '@/utils/constants';
 
@@ -352,13 +352,21 @@ export function UsageSection({
     }
   }, [analysisConfigs.length, onAddConfig, onUpdateConfig, activeContextOriginalIndex]);
 
+  // Scenario-based cards need a model/analysis context — disabled on the Home stage.
+  const isSandbox = useUIStore((s) => !s.globalSpeckleData);
+
   const availableTypes: CardTypeOption[] = useMemo(
     () => [
-      { type: 'scenario', label: CARD_TYPE_LABELS['scenario'], enabled: true },
+      {
+        type: 'scenario',
+        label: CARD_TYPE_LABELS['scenario'],
+        enabled: !isSandbox,
+        disabledTooltip: 'Load a model to use scenario-based cards.',
+      },
       { type: 'text', label: CARD_TYPE_LABELS['text'], enabled: true },
       { type: 'freeform', label: 'Placeholder usage', enabled: true },
     ],
-    [],
+    [isSandbox],
   );
 
   const getBeforeContent = useCallback(

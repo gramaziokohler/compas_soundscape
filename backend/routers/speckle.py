@@ -85,6 +85,26 @@ async def get_project_models(req: Request):
     return result
 
 
+@router.post("/models/{model_id}/ensure-ready")
+async def ensure_model_ready(model_id: str):
+    """
+    Ensure a model's latest version is loadable by the pinned viewer.
+
+    Models uploaded through the app are bundle-only and are re-materialized into a
+    legacy version by the ingestion flow. Copies created before the displayValue
+    applicationId fix are broken (missing instanced geometry), so this re-materializes
+    them from the underlying bundle. Returns the current ``{version_id, object_id}``.
+    """
+    _ensure_authenticated()
+
+    result = await run_in_threadpool(speckle_service.ensure_model_ready, model_id)
+
+    if result is None:
+        raise HTTPException(status_code=502, detail="Failed to prepare the model for the viewer")
+
+    return result
+
+
 @router.get("/ingestion/{ingestion_id}")
 async def get_ingestion_status(ingestion_id: str):
     """

@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import * as THREE from 'three';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import type { BoundingBoxBounds } from '@/lib/three/BoundingBoxManager';
-import { getPlaceholderRoomBounds } from '@/lib/three/placeholder-room-manager';
+import { getSandboxResonanceBounds } from '@/lib/three/placeholder-room-manager';
 import type { SoundEvent } from '@/types';
 
 interface BoundingBoxProps {
@@ -14,6 +14,9 @@ interface BoundingBoxProps {
   onBoundsComputed?: (bounds: { min: [number, number, number]; max: [number, number, number] }) => void;
   roomScale: { x: number; y: number; z: number };
   draggedBoundsOverride: BoundingBoxBounds | null;
+  /** Home stage: fit the resonance room around the sound spheres, never the
+   *  expanded ground-grid stage box that lives in the Speckle World. */
+  isSandbox?: boolean;
 }
 
 export function useSpeckleBoundingBox({
@@ -25,6 +28,7 @@ export function useSpeckleBoundingBox({
   onBoundsComputed,
   roomScale,
   draggedBoundsOverride,
+  isSandbox = false,
 }: BoundingBoxProps) {
   // ============================================================================
   // Effect - Bounding Box Visualization (Resonance Audio Room)
@@ -33,21 +37,27 @@ export function useSpeckleBoundingBox({
     const { viewer, boundingBoxManager } = useSpeckleEngineStore.getState();
     if (!boundingBoxManager || !isViewerReady || !viewer) return;
 
-    // Calculate effective bounds from Speckle viewer (primary method)
-    let effectiveBounds = boundingBoxManager.calculateBoundsFromSpeckleBatches(viewer);
+    // Collect current sound-sphere positions once — used both for the Home fit
+    // and as the non-Speckle fallback.
+    const soundPositions: THREE.Vector3[] = [];
+    if (soundscapeData) {
+      soundscapeData.forEach((sound) => {
+        if (sound.position) {
+          soundPositions.push(new THREE.Vector3(...sound.position));
+        }
+      });
+    }
 
-    // Fallback to auto-calculate from sound positions, then the sandbox room AABB
-    if (!effectiveBounds) {
-      const soundPositions: THREE.Vector3[] = [];
-      if (soundscapeData) {
-        soundscapeData.forEach((sound) => {
-          if (sound.position) {
-            soundPositions.push(new THREE.Vector3(...sound.position));
-          }
-        });
-      }
-      effectiveBounds = boundingBoxManager.calculateEffectiveBounds(null, soundPositions)
-        ?? getPlaceholderRoomBounds();
+    let effectiveBounds: BoundingBoxBounds | null;
+    if (isSandbox) {
+      // Home stage: the Speckle World only holds the expanded ground-grid stage
+      // box, not real geometry. Fit the resonance room around the sound spheres
+      // (with a logical buffer), or fall back to the fixed centred room.
+      effectiveBounds = getSandboxResonanceBounds(soundPositions);
+    } else {
+      // Priority: Speckle geometry bounds, then auto-calculated sound positions.
+      effectiveBounds = boundingBoxManager.calculateBoundsFromSpeckleBatches(viewer)
+        ?? boundingBoxManager.calculateEffectiveBounds(null, soundPositions);
     }
 
     // Apply room scale around center of bounds
@@ -95,5 +105,6 @@ export function useSpeckleBoundingBox({
     onBoundsComputed,
     roomScale,
     draggedBoundsOverride,
+    isSandbox,
   ]);
 }

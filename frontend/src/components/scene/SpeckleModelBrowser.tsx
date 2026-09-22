@@ -44,6 +44,11 @@ interface SpeckleData {
 interface SpeckleModelBrowserProps {
   /** Called when a model card is clicked; passes a SpeckleData payload */
   onModelSelect: (speckleData: SpeckleData) => void;
+  /**
+   * When provided, saved local "No-model" projects are listed above the Speckle
+   * models (only shown when at least one exists). Selecting one loads it.
+   */
+  onLoadHomeProject?: (modelId: string) => void;
 }
 
 // ============================================================================
@@ -332,12 +337,28 @@ function ModelCard({
  * Lists available Speckle project models. Clicking a model constructs a
  * `SpeckleData` payload and calls `onModelSelect` so the viewer can load it.
  */
-export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps) {
+export function SpeckleModelBrowser({ onModelSelect, onLoadHomeProject }: SpeckleModelBrowserProps) {
   const [models, setModels] = useState<SpeckleModelDetail[]>([]);
   const [projectId, setProjectId] = useState<string>('');
   const [authToken, setAuthToken] = useState<string | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [homeProjects, setHomeProjects] = useState<
+    Array<{ model_id: string; name: string; saved_at: string }>
+  >([]);
+
+  const fetchHomeProjects = useCallback(async () => {
+    try {
+      const data = await apiService.listHomeProjects();
+      setHomeProjects(data.projects ?? []);
+    } catch {
+      setHomeProjects([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchHomeProjects();
+  }, [fetchHomeProjects]);
 
   const fetchModels = useCallback(async () => {
     setIsLoading(true);
@@ -406,14 +427,61 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
     };
   }, [models]);
 
+  // Saved local "No-model" projects — only rendered when at least one exists.
+  const renderHomeProjects = () => {
+    if (!onLoadHomeProject || homeProjects.length === 0) return null;
+    return (
+      <div className="w-full flex flex-col gap-2 mb-2">
+        <p className="text-xs font-medium text-neutral-500">No-model projects</p>
+        {homeProjects.map((p) => (
+          <button
+            key={p.model_id}
+            type="button"
+            onClick={() => onLoadHomeProject(p.model_id)}
+            className="w-full text-left transition-colors flex items-center cursor-pointer border border-secondary-light bg-background hover:border-primary hover:bg-primary-lighter"
+            style={{
+              gap: MODEL_BROWSER_STYLES.CARD_GAP + 2,
+              padding: MODEL_BROWSER_STYLES.CARD_PADDING,
+              borderRadius: MODEL_BROWSER_STYLES.CARD_BORDER_RADIUS,
+              width: '100%',
+            }}
+          >
+            <div
+              className="flex items-center justify-center rounded"
+              style={{
+                width: MODEL_BROWSER_STYLES.PREVIEW_SIZE,
+                height: MODEL_BROWSER_STYLES.PREVIEW_SIZE,
+                backgroundColor: 'var(--color-secondary-lighter)',
+                color: 'var(--color-secondary-hover)',
+                fontSize: 22,
+                flexShrink: 0,
+              }}
+            >
+              🏠
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium truncate text-foreground">{p.name}</p>
+              <p className="text-xs mt-0.5 truncate text-neutral-500">
+                No-model project · {formatRelativeTime(p.saved_at)}
+              </p>
+            </div>
+          </button>
+        ))}
+      </div>
+    );
+  };
+
   // ── Loading state ──────────────────────────────────────────────────────
   if (isLoading) {
     return (
-      <div className="w-full text-center py-4">
-        <Spinner size={20} />
-        <p className="text-xs mt-2 text-neutral-500">
-          Loading models...
-        </p>
+      <div className="w-full">
+        {renderHomeProjects()}
+        <div className="w-full text-center py-4">
+          <Spinner size={20} />
+          <p className="text-xs mt-2 text-neutral-500">
+            Loading models...
+          </p>
+        </div>
       </div>
     );
   }
@@ -423,6 +491,7 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
     const isAuth = isAuthError(error);
     return (
       <div className="w-full py-3 flex flex-col gap-2">
+        {renderHomeProjects()}
         <Notice type="error" message={error} />
         {isAuth ? (
           <button
@@ -454,12 +523,22 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
 
   // ── Empty state ────────────────────────────────────────────────────────
   if (models.length === 0) {
-    return <EmptyState message="No models found." />;
+    return (
+      <div className="w-full flex flex-col gap-2">
+        {renderHomeProjects()}
+        <EmptyState message="No models found." />
+      </div>
+    );
   }
 
   // ── Model list ─────────────────────────────────────────────────────────
   if (loadableCount === 0) {
-    return <EmptyState message="No loadable models available." />;
+    return (
+      <div className="w-full flex flex-col gap-2">
+        {renderHomeProjects()}
+        <EmptyState message="No loadable models available." />
+      </div>
+    );
   }
 
   const renderCard = (model: SpeckleModelDetail) => (
@@ -473,7 +552,9 @@ export function SpeckleModelBrowser({ onModelSelect }: SpeckleModelBrowserProps)
 
   return (
     <div className="w-full">
-      <p className="text-xs font-medium mb-2 text-neutral-500">
+      {renderHomeProjects()}
+
+      <p className="text-xs font-medium mb-2 mt-2 text-neutral-500">
         Or load from Speckle
       </p>
 

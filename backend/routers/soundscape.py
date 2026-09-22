@@ -50,6 +50,14 @@ def _get_session_id(request: Request) -> str:
     return sid
 
 
+@router.get("/home-projects")
+async def list_home_projects_endpoint(request: Request):
+    """List locally saved Home (sandbox) projects for this workspace."""
+    from utils.file_operations import list_home_projects
+
+    return {"projects": list_home_projects(_get_session_id(request))}
+
+
 def _resolve_audio_source(url: str, session_id: str) -> Path | None:
     """Resolve an audio URL to an existing file on disk.
 

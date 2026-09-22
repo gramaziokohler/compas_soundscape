@@ -1,6 +1,6 @@
 ﻿'use client';
 
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { SpeckleAudioCoordinator } from '@/lib/three/speckle-audio-coordinator';
 import { PlaybackSchedulerService } from '@/lib/audio/playback-scheduler-service';
 import { BoundingBoxManager } from '@/lib/three/BoundingBoxManager';
@@ -40,14 +40,16 @@ import { useSpeckleObjectOverlay } from '@/components/scene/hooks/useSpeckleObje
 import { useSpeckleCoordinatorCallbacks } from '@/components/scene/hooks/useSpeckleCoordinatorCallbacks';
 import { useSpeckleBoundingBoxGumball } from '@/components/scene/hooks/useSpeckleBoundingBoxGumball';
 import { useSpeckleGroundGrid } from '@/components/scene/hooks/useSpeckleGroundGrid';
-import { usePlaceholderRoom, getPlaceholderRoomBounds, fitCameraToBounds } from '@/components/scene/hooks/usePlaceholderRoom';
+import { useSpeckleHomeSphereBounce } from '@/components/scene/hooks/useSpeckleHomeSphereBounce';
+import { usePlaceholderRoom, getSandboxStageBounds, fitCameraToBounds } from '@/components/scene/hooks/usePlaceholderRoom';
 import { useAcousticLayerIsolation } from '@/hooks/useAcousticLayerIsolation';
 // Phase 5 JSX sub-components
 import { SceneViewModeToolbar } from '@/components/scene/SceneViewModeToolbar';
 import { SceneControlsHint } from '@/components/scene/SceneControlsHint';
 import { SceneContextMenu } from '@/components/scene/SceneContextMenu';
 import { SceneHoverPreview } from '@/components/scene/SceneHoverPreview';
-import { SceneEmptyState } from '@/components/scene/SceneEmptyState';
+import { HomeStageHint } from '@/components/scene/HomeStageHint';
+import { SpeckleModelModal } from '@/components/scene/SpeckleModelModal';
 import { SceneTimeline } from '@/components/scene/SceneTimeline';
 import { SceneControlButtons } from '@/components/scene/SceneControlButtons';
 import { ObjectExplorerPanel } from '@/components/scene/ObjectExplorerPanel';
@@ -267,6 +269,8 @@ export function SpeckleScene({
 
   // Gradient map overlay
   const activeGradientMap = useUIStore((s) => s.activeGradientMap);
+  // Active local "No-model" project (enables the Home button on the sandbox).
+  const homeProject = useUIStore((s) => s.homeProject);
 
   // Viewer display toggles
   const showLabelSprites = useUIStore((s) => s.showLabelSprites);
@@ -368,6 +372,12 @@ export function SpeckleScene({
 
   // File upload drag state (for empty state)
   const [isDragging, setIsDragging] = useState(false);
+  // True while a file is dragged over the whole Home window (brightens the grid,
+  // shows the landing-pad ring, and swaps the hint text).
+  const [isDragOver, setIsDragOver] = useState(false);
+  // True once the Home stage hint has been dismissed (it shrinks toward the
+  // "Load a Speckle model" control button, which stays as the affordance).
+  const [isHintDismissed, setIsHintDismissed] = useState(false);
   const [speckleTokenSet, setSpeckleTokenSet] = useState<boolean | null>(null);
   const [showLoadModelPanel, setShowLoadModelPanel] = useState(false);
 
@@ -822,13 +832,18 @@ export function SpeckleScene({
   });
 
   // ── Timeline ──
+  // Home stage sounds (the pinned Sample) are not part of the DAW timeline.
+  const timelineSoundscapeData = useMemo(
+    () => (isSandbox && soundscapeData ? soundscapeData.filter((s) => !(s as { pinned?: boolean }).pinned) : soundscapeData),
+    [isSandbox, soundscapeData],
+  );
   const {
     timelineSounds, soundMetadataReady, showTimeline,
     handleDownloadTimeline,
     handleCloseTimeline, handleToggleTimeline,
   } = useSpeckleTimeline({
     isViewerReady,
-    soundscapeData,
+    soundscapeData: timelineSoundscapeData,
     selectedVariants,
     soundTrims,
     timelineDurationMs,
@@ -891,6 +906,7 @@ export function SpeckleScene({
     onBoundsComputed,
     roomScale,
     draggedBoundsOverride,
+    isSandbox,
   });
 
   // Use Speckle tree hook for selection handling
@@ -979,7 +995,21 @@ export function SpeckleScene({
   });
 
   // ── Ground Grid ──
-  useSpeckleGroundGrid({ isViewerReady });
+  useSpeckleGroundGrid({ isViewerReady, isSandbox, isDragOver });
+
+  // ── Home Sample sphere bounce ──
+  useSpeckleHomeSphereBounce({ isViewerReady, enabled: isSandbox });
+
+  // Loading a Speckle model disables the ground grid by default (it can be
+  // re-enabled from Advanced Settings → Display).
+  const prevModelUrlForGridRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (prevModelUrlForGridRef.current === modelUrl) return;
+    prevModelUrlForGridRef.current = modelUrl;
+    if (modelUrl) {
+      useUIStore.getState().setShowGroundGrid(false);
+    }
+  }, [modelUrl]);
 
   // ============================================================================
   // Effect - Save viewMode to localStorage for refresh survival.
@@ -1108,6 +1138,62 @@ export function SpeckleScene({
     e.target.value = "";
   }, [onModelFileChange]);
 
+  // ============================================================================
+  // Home stage — full-window drop zone.
+  // The whole viewport is the drop target on the sandbox stage: dragging a file
+  // anywhere brightens the grid, shows the landing-pad ring and swaps the hint
+  // text. A depth counter absorbs the enter/leave churn from nested elements.
+  // ============================================================================
+  useEffect(() => {
+    if (!isSandbox) return;
+    let depth = 0;
+
+    const hasFiles = (e: DragEvent) =>
+      Array.from(e.dataTransfer?.types ?? []).includes('Files');
+
+    const onDragEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth += 1;
+      setIsDragging(true);
+      setIsDragOver(true);
+    };
+    const onDragOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      // Mandatory to allow the drop.
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    };
+    const onDragLeave = () => {
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) {
+        setIsDragging(false);
+        setIsDragOver(false);
+      }
+    };
+    const onDrop = (e: DragEvent) => {
+      depth = 0;
+      e.preventDefault();
+      setIsDragging(false);
+      setIsDragOver(false);
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      if (files.length === 0) return;
+      setIsPreparingModel(true);
+      onModelFileChange?.(files[0]);
+    };
+
+    window.addEventListener('dragenter', onDragEnter);
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragenter', onDragEnter);
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('dragleave', onDragLeave);
+      window.removeEventListener('drop', onDrop);
+    };
+  }, [isSandbox, onModelFileChange]);
+
   // Clear the instant-feedback flag once the parent upload flag takes over, the viewer is
   // ready, or an error occurred. The combined loading state below keeps the overlay visible
   // throughout the handoff so there is no flicker back to the empty state.
@@ -1156,9 +1242,13 @@ export function SpeckleScene({
       return;
     }
 
+    // The Home sandbox World only holds the expanded ground-grid stage box, not
+    // real geometry — reporting it here would clobber the sound-fitted resonance
+    // bounds owned by useSpeckleBoundingBox. Let that hook own the sandbox bounds.
+    if (isSandbox) return;
+
     // Compute bounds from Speckle viewer
-    const bounds = boundingBoxManagerRef.current.calculateBoundsFromSpeckleBatches(viewerRef.current)
-      ?? (isSandbox ? getPlaceholderRoomBounds() : null);
+    const bounds = boundingBoxManagerRef.current.calculateBoundsFromSpeckleBatches(viewerRef.current);
 
     if (bounds && onBoundsComputed) {
       console.log('[SpeckleScene] ✅ Reporting initial bounds to parent:', bounds);
@@ -1256,7 +1346,8 @@ export function SpeckleScene({
 
     try {
       if (isSandbox) {
-        fitCameraToBounds(cameraControllerRef.current, getPlaceholderRoomBounds());
+        // Frame the whole Home grid, not just the placeholder room AABB.
+        fitCameraToBounds(cameraControllerRef.current, getSandboxStageBounds());
       } else {
         cameraControllerRef.current.setCameraView([], true);
       }
@@ -1367,9 +1458,6 @@ export function SpeckleScene({
     <div
       className={`relative w-full h-full ${className || ''}`}
       style={{ height: '100vh', backgroundColor: isDarkMode ? 'black' : undefined }}
-      onDragOver={isSandbox ? handleDragOver : undefined}
-      onDragLeave={isSandbox ? handleDragLeave : undefined}
-      onDrop={isSandbox ? handleDrop : undefined}
     >
       {/* Viewer container */}
       <div
@@ -1378,8 +1466,8 @@ export function SpeckleScene({
         id="speckle-scene-container"
       />
 
-      {/* View Mode Toolbar */}
-      {isViewerReady && (
+      {/* View Mode Toolbar — hidden on the Home sandbox stage */}
+      {isViewerReady && !isSandbox && (
         <SceneViewModeToolbar />
       )}
 
@@ -1400,26 +1488,33 @@ export function SpeckleScene({
         </div>
       )}
 
-      {/* Load-model popover — does not block the sandbox room */}
-      {isSandbox && isViewerReady && showLoadModelPanel && !isModelLoading && (
-        <div
-          className="absolute inset-0 z-30 flex items-start justify-center pt-16"
-          onClick={() => setShowLoadModelPanel(false)}
-        >
-          <SceneEmptyState
-            modelFile={modelFile}
-            isDragging={isDragging}
-            speckleTokenSet={speckleTokenSet}
-            onFileChange={handleFileChange}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            onSpeckleModelSelect={onSpeckleModelSelect}
-            isUploadingModel={isUploadingModel || isPreparingModel}
-            onClose={() => setShowLoadModelPanel(false)}
-          />
-        </div>
+      {/* Home stage hint — the single evident affordance on the empty stage */}
+      {isSandbox && isViewerReady && !showLoadModelPanel && !isModelLoading && !isHintDismissed && (
+        <HomeStageHint
+          isDragOver={isDragOver}
+          onOpenSpeckle={() => setShowLoadModelPanel(true)}
+          targetButtonId="load-speckle-model-button"
+          onDismiss={() => setIsHintDismissed(true)}
+        />
       )}
+
+      {/* Centered Speckle / upload pop-up with a dimmed backdrop */}
+      <SpeckleModelModal
+        open={isSandbox && isViewerReady && showLoadModelPanel && !isModelLoading}
+        onClose={() => setShowLoadModelPanel(false)}
+        modelFile={modelFile}
+        isDragging={isDragging}
+        speckleTokenSet={speckleTokenSet}
+        onFileChange={handleFileChange}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        onSpeckleModelSelect={onSpeckleModelSelect}
+        onLoadHomeProject={(modelId) => {
+          window.location.href = `/?home=${encodeURIComponent(modelId)}`;
+        }}
+        isUploadingModel={isUploadingModel || isPreparingModel}
+      />
 
       {/* Timeline — full DAW panel, or compact play/pause when the panel is hidden */}
       {isViewerReady && timelineSounds.length > 0 && (
@@ -1488,7 +1583,11 @@ export function SpeckleScene({
         )}
         {isSandbox && isViewerReady && (
           <SceneControlButton
-            onClick={() => setShowLoadModelPanel((open) => !open)}
+            buttonId="load-speckle-model-button"
+            onClick={() => {
+              setIsHintDismissed(true);
+              setShowLoadModelPanel((open) => !open);
+            }}
             isActive={showLoadModelPanel}
             title="Load a Speckle model"
             icon={
@@ -1511,7 +1610,7 @@ export function SpeckleScene({
             </svg>
           }
         />
-        {modelUrl && (
+        {(modelUrl || homeProject) && (
           <button
             type="button"
             onClick={() => { window.location.href = window.location.origin; }}

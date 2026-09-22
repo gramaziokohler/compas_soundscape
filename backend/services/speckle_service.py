@@ -77,8 +77,18 @@ logger = logging.getLogger(__name__)
 _LEGACY_VERSION_CACHE: Dict[str, Dict[str, str]] = {}
 _LEGACY_VERSION_LOCK = threading.Lock()
 _MATERIALIZE_LOCK = threading.Lock()
-_LEGACY_VERSION_REDIS_PREFIX = "speckle:legacy_version:"
+# ``v2`` prefix invalidates legacy copies materialized before the displayValue
+# applicationId fix below — an ensure-ready call re-materializes them from the bundle.
+_LEGACY_VERSION_REDIS_PREFIX = "speckle:legacy_version:v2:"
 _redis_client = None
+
+# Appended to the version message of every legacy copy created with the viewer-safe
+# projection. A copy whose message lacks it predates the displayValue applicationId
+# fix and is re-materialized on demand (see ``ensure_model_ready``).
+_PROJECTION_FIX_MARKER = "[geo-fix-v1]"
+_LEGACY_VERSION_MESSAGE = (
+    f"Legacy copy materialized for the soundscape viewer {_PROJECTION_FIX_MARKER}"
+)
 
 
 def _get_redis():
@@ -119,6 +129,52 @@ def _cache_set_legacy_version(bundle_version_id: str, data: Dict[str, str]) -> N
         )
     except Exception as exc:
         logger.warning(f"Legacy-version Redis cache write failed: {exc}")
+
+
+def _strip_display_geometry_application_ids(base: Base) -> bool:
+    """Remove ``applicationId`` from every ``displayValue`` mesh in a projected tree.
+
+    The bundle projection (``specklepy.bundle.base_projection``) stamps each host
+    object's ``applicationId`` onto its ``displayValue`` meshes too, so every id
+    resolves to TWO nodes in the viewer's world tree. ``@speckle/viewer``'s
+    ``convertInstances`` seeds its consumable counter with the number of *unique*
+    instance-definition members but decrements it once per matching node — the counter
+    reaches zero before the tail of the definition geometry is visited and the viewer
+    logs ``Consumable applicationId def-geo-… could not be found``, dropping the
+    instanced geometry (broken model). Connector-published models never put
+    ``applicationId`` on displayValue meshes, so stripping the duplicates restores a
+    one-to-one id → node mapping and keeps the counter exact.
+
+    Returns True if anything was stripped.
+    """
+    changed = False
+    visited: set[int] = set()
+
+    def walk(obj: Base) -> None:
+        nonlocal changed
+        if id(obj) in visited:
+            return
+        visited.add(id(obj))
+
+        display = getattr(obj, "displayValue", None)
+        if display is not None:
+            meshes = display if isinstance(display, list) else [display]
+            for mesh in meshes:
+                if isinstance(mesh, Base) and getattr(mesh, "applicationId", None) is not None:
+                    mesh.applicationId = None
+                    changed = True
+
+        for name in obj.get_member_names():
+            value = getattr(obj, name, None)
+            if isinstance(value, Base):
+                walk(value)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, Base):
+                        walk(item)
+
+    walk(base)
+    return changed
 
 
 class SpeckleService:
@@ -378,13 +434,20 @@ class SpeckleService:
                 )
                 transport = ServerTransport(stream_id=self.project_id, client=self.client)
                 base = operations.receive(referenced_object, remote_transport=transport)
+                # Drop the projection's duplicate applicationIds on displayValue meshes —
+                # otherwise the viewer's instance counter stops early and instances break.
+                if _strip_display_geometry_application_ids(base):
+                    logger.info(
+                        "Stripped duplicate displayValue applicationIds from projection "
+                        f"of {bundle_version_id}"
+                    )
                 legacy_object_id = operations.send(base, [transport])
                 legacy_version = self.client.version.create(
                     CreateVersionInput(
                         project_id=self.project_id,
                         model_id=bundle_model_id,
                         object_id=legacy_object_id,
-                        message="Legacy copy materialized for the soundscape viewer",
+                        message=_LEGACY_VERSION_MESSAGE,
                         source_application="compas-soundscape",
                     )
                 )
@@ -400,6 +463,67 @@ class SpeckleService:
             logger.error(f"Failed to materialize bundle version {bundle_version_id}: {exc}")
             import traceback
             logger.error(traceback.format_exc())
+            return None
+
+    def ensure_model_ready(self, model_id: str) -> Optional[Dict[str, str]]:
+        """Return a viewer-loadable ``{version_id, object_id}`` for a model.
+
+        The app's model loader resolves a model URL to its *latest* version, so a model
+        whose latest version is a bundle (never materialized) or a legacy copy created
+        before the displayValue applicationId fix cannot render correctly. This looks at
+        the latest version and, when needed, re-materializes the underlying bundle so the
+        newly created (latest) version is viewer-safe. No-op for connector versions.
+
+        Best-effort: returns ``None`` when unauthenticated; otherwise the current
+        ``{version_id, object_id}`` even if healing could not be performed.
+        """
+        if not self.client or not self.project_id:
+            logger.error("Not authenticated or no project selected.")
+            return None
+
+        try:
+            mwv = self.client.model.get_with_versions(
+                model_id=model_id, project_id=self.project_id, versions_limit=5
+            )
+            versions = list(mwv.versions.items) if mwv and mwv.versions else []
+            if not versions:
+                return None
+
+            latest = versions[0]
+            ref = getattr(latest, "referenced_object", None) or ""
+            source_app = getattr(latest, "source_application", None)
+            message = getattr(latest, "message", None) or ""
+
+            # Latest is still a bundle-only version → materialize it.
+            if ref.startswith("bundle."):
+                healed = self._materialize_legacy_version(latest.id)
+                if healed:
+                    return healed
+                return {"version_id": latest.id, "object_id": ref}
+
+            # A copy we materialized before the geometry fix → re-materialize from the
+            # newest bundle version still present in the model.
+            if source_app == "compas-soundscape" and _PROJECTION_FIX_MARKER not in message:
+                bundle_version = next(
+                    (
+                        v
+                        for v in versions
+                        if (getattr(v, "referenced_object", "") or "").startswith("bundle.")
+                    ),
+                    None,
+                )
+                if bundle_version is not None:
+                    healed = self._materialize_legacy_version(bundle_version.id)
+                    if healed:
+                        logger.info(
+                            f"Healed pre-fix legacy copy {latest.id} for model {model_id} "
+                            f"-> {healed['version_id']}"
+                        )
+                        return healed
+
+            return {"version_id": latest.id, "object_id": ref}
+        except Exception as exc:
+            logger.warning(f"ensure_model_ready failed for model {model_id}: {exc}")
             return None
 
     def get_ingestion_status(self, ingestion_id: str) -> Optional[Dict]:

@@ -118,6 +118,10 @@ export function createSoundEventFromUpload(
     })()),
     // Carry foley category through for DAW grouping
     ...(config.category ? { category: config.category } : {}),
+    // The deterministic Home Sample keeps its authored position and must stay
+    // pinned through generation (bounce + exclusion from the DAW timeline).
+    // Other sounds leave this unset and use camera-front placement.
+    ...(config.pinned ? { pinned: true } : {}),
   };
 }
 
