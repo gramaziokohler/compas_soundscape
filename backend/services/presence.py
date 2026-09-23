@@ -1,8 +1,10 @@
 """Workspace presence tracking (who else is viewing/editing a workspace).
 
-Lives in Redis (ephemeral by design ÔÇö presence is not durable). Uses a sorted
-set per workspace: member = session token, score = last-heartbeat unix time.
-Stale members are pruned by score, so a crashed tab disappears after the TTL.
+Lives in Redis (ephemeral by design — presence is not durable). Uses a sorted
+set per workspace: member = user_hash, score = last-heartbeat unix time.
+Keying on the *user* (not the session token) means the same person with two tabs
+or devices counts once, so "N people" reflects people, not connections. Stale
+members are pruned by score, so a crashed tab disappears after the TTL.
 
 All helpers degrade gracefully (return a safe default) when Redis is down, so
 presence never blocks the app.
@@ -22,9 +24,9 @@ def _key(workspace_id: str) -> str:
     return f"ws:{workspace_id}:presence"
 
 
-async def heartbeat(redis, workspace_id: str, token: str, ttl_s: int = PRESENCE_TTL_S) -> int:
-    """Record a heartbeat and return the number of active members."""
-    if not workspace_id or not token:
+async def heartbeat(redis, workspace_id: str, user_hash: str, ttl_s: int = PRESENCE_TTL_S) -> int:
+    """Record a heartbeat and return the number of active users."""
+    if not workspace_id or not user_hash:
         return 1
     if redis is None:
         return 1
@@ -33,7 +35,7 @@ async def heartbeat(redis, workspace_id: str, token: str, ttl_s: int = PRESENCE_
     try:
         pipe = redis.pipeline()
         pipe.zremrangebyscore(key, 0, now - ttl_s)
-        pipe.zadd(key, {token: now})
+        pipe.zadd(key, {user_hash: now})
         pipe.expire(key, PRESENCE_KEY_TTL_S)
         pipe.zcard(key)
         results = await pipe.execute()
@@ -43,8 +45,11 @@ async def heartbeat(redis, workspace_id: str, token: str, ttl_s: int = PRESENCE_
         return 1
 
 
-async def active_count(redis, workspace_id: str, ttl_s: int = PRESENCE_TTL_S) -> int:
-    """Return the number of members seen within the TTL window."""
+async def active_count(redis, workspace_id: str, user_hash: Optional[str] = None, ttl_s: int = PRESENCE_TTL_S) -> int:
+    """Return the number of users seen within the TTL window.
+
+    When `user_hash` is given it is counted as present (the caller is obviously
+    here, even if they have not heartbeat yet)."""
     if not workspace_id or redis is None:
         return 1
     now = time.time()
@@ -52,6 +57,8 @@ async def active_count(redis, workspace_id: str, ttl_s: int = PRESENCE_TTL_S) ->
     try:
         pipe = redis.pipeline()
         pipe.zremrangebyscore(key, 0, now - ttl_s)
+        if user_hash:
+            pipe.zadd(key, {user_hash: now})
         pipe.zcard(key)
         results = await pipe.execute()
         count = int(results[-1]) if results else 0

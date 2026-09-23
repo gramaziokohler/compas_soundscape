@@ -25,6 +25,11 @@ interface TreeItemAcousticControlsProps {
   sortedMaterials: MaterialOption[];
   materialColors: Map<string, string>;
   showScattering: boolean;
+  /** True when this row is part of the current row selection. */
+  isSelected?: boolean;
+  /** Geometry-leaf union across all selected rows. When this row is selected,
+   *  material / scattering edits apply to this whole set. */
+  selectedGeometryIds?: string[];
 }
 
 export function TreeItemAcousticControls({
@@ -32,15 +37,28 @@ export function TreeItemAcousticControls({
   sortedMaterials,
   materialColors,
   showScattering,
+  isSelected = false,
+  selectedGeometryIds,
 }: TreeItemAcousticControlsProps) {
   const materialAssignments = useAcousticMaterialStore((s) => s.materialAssignments);
   const scatteringAssignments = useAcousticMaterialStore((s) => s.scatteringAssignments);
   const assignMaterialToObjects = useAcousticMaterialStore((s) => s.assignMaterialToObjects);
   const assignScatteringToObjects = useAcousticMaterialStore((s) => s.assignScatteringToObjects);
 
+  // When this row is selected alongside others, an edit is scoped to the whole
+  // selection. The union is always a superset of this row's own geometry, so a
+  // longer union means other selected rows contributed surfaces.
+  const appliesToSelection = isSelected
+    && !!selectedGeometryIds
+    && selectedGeometryIds.length > geometryIds.length;
+  const targetIds = appliesToSelection ? selectedGeometryIds! : geometryIds;
+  const selectionTitle = appliesToSelection
+    ? `Applies to ${selectedGeometryIds!.length} selected surfaces`
+    : undefined;
+
   const { commonMaterialId, isMixed } = useMemo(() => {
     const assigned = new Set<string>();
-    for (const id of geometryIds) {
+    for (const id of targetIds) {
       const m = materialAssignments.get(id);
       if (m) assigned.add(m);
     }
@@ -48,19 +66,19 @@ export function TreeItemAcousticControls({
       commonMaterialId: assigned.size === 1 ? Array.from(assigned)[0] : null,
       isMixed: assigned.size > 1,
     };
-  }, [geometryIds, materialAssignments]);
+  }, [targetIds, materialAssignments]);
 
   const { commonScattering, scatteringMixed } = useMemo(() => {
-    if (geometryIds.length === 0) return { commonScattering: null as number | null, scatteringMixed: false };
+    if (targetIds.length === 0) return { commonScattering: null as number | null, scatteringMixed: false };
     const values = new Set<number>();
-    for (const id of geometryIds) {
+    for (const id of targetIds) {
       values.add(scatteringAssignments.get(id) ?? PYROOMACOUSTICS_DEFAULT_SCATTERING);
     }
     return {
       commonScattering: values.size === 1 ? Array.from(values)[0] : null,
       scatteringMixed: values.size > 1,
     };
-  }, [geometryIds, scatteringAssignments]);
+  }, [targetIds, scatteringAssignments]);
 
   if (geometryIds.length === 0) {
     return (
@@ -76,11 +94,12 @@ export function TreeItemAcousticControls({
       <div
         className="flex justify-end min-w-0 justify-self-end"
         data-no-drag
+        title={selectionTitle}
         onClick={(e) => e.stopPropagation()}
       >
         <MaterialSelect
           value={commonMaterialId || ''}
-          onChange={(matId) => assignMaterialToObjects(geometryIds, matId)}
+          onChange={(matId) => assignMaterialToObjects(targetIds, matId)}
           materials={sortedMaterials}
           materialColors={materialColors}
           placeholder={isMixed ? '(mixed)' : 'Select...'}
@@ -94,6 +113,7 @@ export function TreeItemAcousticControls({
         <div
           className="flex justify-center min-w-0 justify-self-center"
           data-no-drag
+          title={selectionTitle}
           onClick={(e) => e.stopPropagation()}
         >
           <NumberField
@@ -105,14 +125,14 @@ export function TreeItemAcousticControls({
             className="!text-xs !py-0.5 !text-primary placeholder:text-primary"
             onCommit={(v) => {
               if (v === null) {
-                assignScatteringToObjects(geometryIds, PYROOMACOUSTICS_DEFAULT_SCATTERING);
+                assignScatteringToObjects(targetIds, PYROOMACOUSTICS_DEFAULT_SCATTERING);
                 return;
               }
               const clamped = Math.min(
                 PYROOMACOUSTICS_SCATTERING_MAX,
                 Math.max(PYROOMACOUSTICS_SCATTERING_MIN, v),
               );
-              assignScatteringToObjects(geometryIds, clamped);
+              assignScatteringToObjects(targetIds, clamped);
             }}
           />
         </div>

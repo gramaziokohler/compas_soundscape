@@ -1,109 +1,104 @@
 /**
  * Mode Transition Utilities
  *
- * Handles smooth transitions between audio modes without clicks/pops.
- * Implements fade out/in, source stopping, and audio graph rewiring.
- *
- * Workflow:
- * 1. Fade out current mode
- * 2. Stop all sources
- * 3. Disconnect audio graph
- * 4. Switch to new mode
- * 5. Reconnect audio graph
- * 6. Fade in new mode
+ * Handles the overlapping crossfade used when switching audio modes so there is
+ * no silent gap between the outgoing and incoming mode. The actual voice
+ * re-dispatch is owned by `Transport` (via the orchestrator's graph-changed
+ * event) — this module only shapes the gain envelope of the handover.
  */
 
 import type { IAudioMode } from '../core/interfaces/IAudioMode';
 
 /**
- * Transition configuration
+ * Default crossfade window for an overlapping mode handover.
  */
-export interface TransitionConfig {
-  fadeOutDuration: number; // seconds
-  fadeInDuration: number; // seconds
-  stopSources: boolean; // Stop sources before transition
-}
+export const DEFAULT_CROSSFADE_DURATION = 0.08; // 80ms
 
 /**
- * Default transition configuration
- */
-export const DEFAULT_TRANSITION_CONFIG: TransitionConfig = {
-  fadeOutDuration: 0.05, // 50ms fade out
-  fadeInDuration: 0.05, // 50ms fade in
-  stopSources: true
-};
-
-/**
- * Perform smooth transition between audio modes
+ * Perform an overlapping crossfade between audio modes.
  *
- * @param oldMode - Current mode to fade out
- * @param newMode - New mode to fade in
+ * Unlike the previous fade-out → disable → fade-in sequence, both modes ramp
+ * simultaneously, so there is no silent gap between them. This is used together
+ * with `AudioOrchestrator`'s graph-changed notification: the Transport
+ * re-dispatches its in-flight voices onto `newMode` while the crossfade is
+ * already ramping it up, so timeline playback continues uninterrupted.
+ *
+ * @param oldMode - Mode currently feeding the output (null on first activation)
+ * @param newMode - Mode to bring in
  * @param audioContext - Web Audio context
- * @param config - Transition configuration
+ * @param durationSec - Crossfade window in seconds
  */
-export async function smoothModeTransition(
+export async function crossfadeModes(
   oldMode: IAudioMode | null,
   newMode: IAudioMode,
   audioContext: AudioContext,
-  config: TransitionConfig = DEFAULT_TRANSITION_CONFIG
+  durationSec: number = DEFAULT_CROSSFADE_DURATION
 ): Promise<void> {
-  const now = audioContext.currentTime;
-
-  // Step 1: Fade out old mode
-  if (oldMode) {
-    await fadeOutMode(oldMode, audioContext, config.fadeOutDuration, now);
-    
-    // Step 2: Disable old mode (mutes output)
-    oldMode.disable();
-    
-    // Small delay to ensure fade is complete
-    await delay(config.fadeOutDuration * 1000 + 10);
-  }
-
-  // Step 3: Enable new mode (initially muted)
+  // Enable the new mode first so its enabled-flag bookkeeping is correct.
   newMode.enable();
 
-  // Step 4: Fade in new mode
-  await fadeInMode(newMode, audioContext, config.fadeInDuration);
-}
-
-/**
- * Fade out mode by ramping down gain
- */
-async function fadeOutMode(
-  mode: IAudioMode,
-  audioContext: AudioContext,
-  duration: number,
-  startTime: number
-): Promise<void> {
-  const outputNode = mode.getOutputNode();
-  
-  // Check if output node is a GainNode or has a gain parameter
-  if ('gain' in outputNode && outputNode.gain instanceof AudioParam) {
-    const gainNode = outputNode as GainNode;
-    gainNode.gain.setValueAtTime(gainNode.gain.value, startTime);
-    gainNode.gain.linearRampToValueAtTime(0, startTime + duration);
+  // First activation (no outgoing mode) — make sure the output is audible.
+  if (!oldMode) {
+    rampOutputGain(newMode, audioContext, 1, 1, durationSec);
+    return;
   }
-  // If not a GainNode, mode's disable() will handle muting
-}
 
-/**
- * Fade in mode by ramping up gain
- */
-async function fadeInMode(
-  mode: IAudioMode,
-  audioContext: AudioContext,
-  duration: number
-): Promise<void> {
+  // Same instance (e.g. an IR swap within IR mode) — nothing to crossfade and the
+  // instance was never faded out, so leave its gain untouched.
+  if (oldMode === newMode) {
+    return;
+  }
+
   const now = audioContext.currentTime;
-  const outputNode = mode.getOutputNode();
-  
-  // Check if output node is a GainNode or has a gain parameter
-  if ('gain' in outputNode && outputNode.gain instanceof AudioParam) {
-    const gainNode = outputNode as GainNode;
-    gainNode.gain.setValueAtTime(0, now);
-    gainNode.gain.linearRampToValueAtTime(1, now + duration);
+  const end = now + durationSec;
+
+  // Ramp new in from silence while ramping the old one out, over the same window.
+  rampOutputGain(newMode, audioContext, 0, 1, durationSec);
+  const oldNode = safeGetOutputNode(oldMode);
+  if (oldNode && 'gain' in oldNode && oldNode.gain instanceof AudioParam) {
+    const gainNode = oldNode as GainNode;
+    const current = gainNode.gain.value;
+    gainNode.gain.cancelScheduledValues(now);
+    gainNode.gain.setValueAtTime(current, now);
+    gainNode.gain.linearRampToValueAtTime(0, end);
   }
+
+  // Wait for the ramp to complete before the caller tears the old mode down.
+  await delay(durationSec * 1000 + 10);
+}
+
+/**
+ * Get a mode's output node without throwing if the mode is partially initialized.
+ */
+function safeGetOutputNode(mode: IAudioMode): AudioNode | null {
+  try {
+    return mode.getOutputNode();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ramp a mode's output gain from `from` to `to` over `durationSec`.
+ * Modes whose output is not a GainNode are left untouched.
+ */
+function rampOutputGain(
+  mode: IAudioMode,
+  audioContext: AudioContext,
+  from: number,
+  to: number,
+  durationSec: number
+): void {
+  const outputNode = safeGetOutputNode(mode);
+  if (!outputNode || !('gain' in outputNode) || !(outputNode.gain instanceof AudioParam)) {
+    return;
+  }
+
+  const gainNode = outputNode as GainNode;
+  const now = audioContext.currentTime;
+  gainNode.gain.cancelScheduledValues(now);
+  gainNode.gain.setValueAtTime(from, now);
+  gainNode.gain.linearRampToValueAtTime(to, now + durationSec);
 }
 
 /**

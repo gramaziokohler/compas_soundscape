@@ -144,6 +144,9 @@ export interface AudioControlsStoreState {
   setIterationLink: (soundId: string, iterationIndex: number, link: Partial<IterationLink>) => void;
   clearIterationLink: (soundId: string, iterationIndex: number) => void;
   clearAllIterationLinksForSound: (soundId: string) => void;
+  /** Re-derive every iteration link's stored `entityPosition` from the current
+   *  config entity bounds (called after a model update moves linked objects). */
+  refreshIterationEntityPositions: () => void;
   /** Break trigger link for a single iteration (clears iterationLink + orchestrateMeta trigger). */
   breakIterationTriggerLink: (soundId: string, iterationIndex: number, promptIndex: number) => void;
   handleMute: (soundId: string) => void;
@@ -503,6 +506,54 @@ export const useAudioControlsStore = create<AudioControlsStoreState>()(
             },
             false,
             'audio/clearAllIterationLinksForSound',
+          ),
+
+        refreshIterationEntityPositions: () =>
+          set(
+            (state) => {
+              const { iterationLinks, _soundConfigs, _generatedSounds } = state;
+              if (Object.keys(iterationLinks).length === 0) return {};
+
+              // soundId → config card index (speech sounds encode cardIndex*10000+line).
+              const cardIndexBySoundId = new Map<string, number>();
+              _generatedSounds.forEach((s: any) => {
+                const pi = s.prompt_index;
+                if (pi === undefined || pi === null) return;
+                cardIndexBySoundId.set(s.id, pi >= 10000 ? Math.floor(pi / 10000) : pi);
+              });
+
+              const next: Record<string, IterationLink> = { ...iterationLinks };
+              let changed = false;
+              for (const [key, link] of Object.entries(iterationLinks)) {
+                if (link.entityIndex === undefined) continue;
+                const dash = key.lastIndexOf('-');
+                const soundId = dash > 0 ? key.substring(0, dash) : key;
+                const cardIndex = cardIndexBySoundId.get(soundId);
+                if (cardIndex === undefined) continue;
+                const entity = _soundConfigs[cardIndex]?.entities?.[link.entityIndex];
+                const live = entity?.bounds?.center ?? entity?.position;
+                if (!live || live.length < 3) continue;
+                const prev = link.entityPosition;
+                if (
+                  prev &&
+                  prev[0] === live[0] &&
+                  prev[1] === live[1] &&
+                  prev[2] === live[2]
+                ) {
+                  continue;
+                }
+                next[key] = {
+                  ...link,
+                  entityPosition: [live[0], live[1], live[2]] as [number, number, number],
+                };
+                changed = true;
+              }
+
+              if (!changed) return {};
+              return { iterationLinks: next };
+            },
+            false,
+            'audio/refreshIterationEntityPositions',
           ),
 
         breakIterationTriggerLink: (soundId, iterationIndex, promptIndex) => {

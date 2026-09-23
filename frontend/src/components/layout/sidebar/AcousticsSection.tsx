@@ -32,7 +32,7 @@ import { RangeSlider } from '@/components/ui/RangeSlider';
 import { ToggleField } from '@/components/ui/ToggleField';
 import { apiService } from '@/services/api';
 import { CARD_TYPE_LABELS } from '@/types/card';
-import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGridListenersStore, useAudioControlsStore, useSoundscapeStore, useAcousticLayerStore, notifyError, resolveSimulationLayerName } from '@/store';
+import { useSpeckleStore, useAcousticsSimulationStore, useReceiversStore, useGridListenersStore, useAudioControlsStore, useSoundscapeStore, useAcousticLayerStore, notifyError, resolveSimulationLayerName, resolveSimulationGeometryObjectIds, toBackendGeometryIds } from '@/store';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
 import { useUIStore } from '@/store/uiStore';
 
@@ -159,7 +159,7 @@ interface AcousticsSectionProps {
   worldTree?: any;
 
   // Import-IRs advanced settings
-  onIRGainChange?: (index: number, gainDb: number) => void;
+  onIRGainChange?: (index: number, gainOffset: number) => void;
   onIRNormalizeChange?: (index: number, enabled: boolean) => void;
 }
 
@@ -181,6 +181,45 @@ function buildGridListenerSnapshot(gridListeners: GridListenerData[]): GridListe
       boundingBox: g.boundingBox,
       points: g.points,
     }));
+}
+
+/**
+ * Trimmed IR-gain offset range for an import-irs card.
+ *
+ * The gain slider adds a flat offset to every assigned IR's peak. For a peak `p`
+ * the offset mutes at `-p` and clips at `1-p`, so the safe range is the
+ * intersection across all assigned IRs: `[max(-minPeak), min(1-maxPeak)]`.
+ * With normalization on every effective peak becomes 1, collapsing the range to [-1, 0].
+ */
+function computeIRGainSafeRange(
+  mapping: Record<string, Record<string, ImpulseResponseMetadata>> | undefined,
+  reportedPeaks: Record<string, number> | undefined,
+  normalizeEnabled: boolean,
+): { lo: number; hi: number; hasPeaks: boolean } {
+  const peaks: number[] = [];
+  if (mapping) {
+    const seen = new Set<string>();
+    for (const receiverMap of Object.values(mapping)) {
+      for (const meta of Object.values(receiverMap)) {
+        if (!meta || seen.has(meta.id)) continue;
+        seen.add(meta.id);
+        const metaPeak = (meta as any).peak_amplitude ?? (meta as any).peakAmplitude;
+        const p = (typeof metaPeak === 'number' && metaPeak > 0) ? metaPeak : reportedPeaks?.[meta.id];
+        if (typeof p === 'number' && Number.isFinite(p) && p > 0) peaks.push(p);
+      }
+    }
+  }
+  const effectivePeaks = peaks.map((p) =>
+    (normalizeEnabled && p > IMPULSE_RESPONSE.MIN_AMPLITUDE_THRESHOLD)
+      ? IMPULSE_RESPONSE.NORMALIZATION_SCALE
+      : p
+  );
+  if (effectivePeaks.length === 0) {
+    return { lo: IMPULSE_RESPONSE.GAIN_OFFSET_MIN, hi: IMPULSE_RESPONSE.GAIN_OFFSET_MAX, hasPeaks: false };
+  }
+  const loRaw = Math.max(IMPULSE_RESPONSE.GAIN_OFFSET_MIN, -Math.min(...effectivePeaks));
+  const hiRaw = Math.min(IMPULSE_RESPONSE.GAIN_OFFSET_MAX, 1 - Math.max(...effectivePeaks));
+  return { lo: Math.min(loRaw, hiRaw), hi: Math.max(loRaw, hiRaw), hasPeaks: true };
 }
 
 export function AcousticsSection(props: AcousticsSectionProps) {
@@ -248,6 +287,21 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   // Home stage (no model) — ray-tracing simulation is disabled there.
   const isSandbox = useUIStore((s) => !s.globalSpeckleData);
   const soundConfigsFromStore = useSoundscapeStore((s) => s.soundConfigs);
+
+  // Per-card IR peak amplitudes reported by ImpulseResponseUpload (decoded-buffer fallback
+  // for IRs whose backend metadata lacks peak_amplitude). Keyed by config index.
+  const [irPeaksByCard, setIrPeaksByCard] = useState<Record<number, Record<string, number>>>({});
+  const handleIRPeaksChange = useCallback((configIndex: number, peaks: Record<string, number>) => {
+    setIrPeaksByCard((prev) => {
+      const current = prev[configIndex];
+      if (current) {
+        const same = Object.keys(peaks).length === Object.keys(current).length
+          && Object.entries(peaks).every(([k, v]) => current[k] === v);
+        if (same) return prev;
+      }
+      return { ...prev, [configIndex]: peaks };
+    });
+  }, []);
 
   // Muted sounds from audio controls store
   const mutedSounds = useAudioControlsStore((s) => s.mutedSounds);
@@ -408,6 +462,22 @@ export function AcousticsSection(props: AcousticsSectionProps) {
   const noopUpdateConfig = useCallback((_index: number, _updates: Partial<SimulationConfig>) => {}, []);
   const handleUpdateConfig = onUpdateSimulationConfig || noopUpdateConfig;
 
+  // Keep each import-irs card's stored gain inside its trimmed clip/mute range when the
+  // assigned IR peaks (or the normalize toggle) change. Converges after one write.
+  useEffect(() => {
+    simulationConfigs.forEach((cfg, idx) => {
+      if (cfg.type !== 'import-irs') return;
+      const { lo, hi } = computeIRGainSafeRange(
+        (cfg as any).sourceReceiverIRMapping as Record<string, Record<string, ImpulseResponseMetadata>> | undefined,
+        irPeaksByCard[idx],
+        !!(cfg as any).irNormalizeEnabled
+      );
+      const gain = (cfg as any).irGain ?? IMPULSE_RESPONSE.GAIN_OFFSET_DEFAULT;
+      const clamped = Math.min(hi, Math.max(lo, gain));
+      if (clamped !== gain) handleUpdateConfig(idx, { irGain: clamped } as any);
+    });
+  }, [simulationConfigs, irPeaksByCard, handleUpdateConfig]);
+
   // Add Config with Auto-Exclude Logic
   const handleAddItem = useCallback((type: CardType) => {
     if (!onAddSimulationConfig) return;
@@ -563,7 +633,14 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       const projectId = urlMatch[1];
       const modelId = urlMatch[2];
 
-      const geometryObjectIds = (config as any).speckleGeometryObjectIds as string[] | undefined;
+      // Scope the simulation to the live acoustic region (the user-selected
+      // region), not the whole material-assignment map. Fall back to the
+      // persisted material ids only when no region is defined.
+      const regionGeometryIds = resolveSimulationGeometryObjectIds();
+      const persistedGeometryIds = (config as any).speckleGeometryObjectIds as string[] | undefined;
+      const geometryObjectIds = regionGeometryIds.length > 0
+        ? regionGeometryIds
+        : (persistedGeometryIds ? toBackendGeometryIds(persistedGeometryIds) : persistedGeometryIds);
 
       // Override per-card fields with global acoustic parameters from uiStore
       const { globalSoundSpeed, globalMeshLc } = useUIStore.getState();
@@ -731,7 +808,14 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       const projectId = urlMatch[1];
       const modelId = urlMatch[2];
 
-      const geometryObjectIds = (config as any).speckleGeometryObjectIds as string[] | undefined;
+      // Scope the simulation to the live acoustic region (the user-selected
+      // region), not the whole material-assignment map. Fall back to the
+      // persisted material ids only when no region is defined.
+      const regionGeometryIds = resolveSimulationGeometryObjectIds();
+      const persistedGeometryIds = (config as any).speckleGeometryObjectIds as string[] | undefined;
+      const geometryObjectIds = regionGeometryIds.length > 0
+        ? regionGeometryIds
+        : (persistedGeometryIds ? toBackendGeometryIds(persistedGeometryIds) : persistedGeometryIds);
       const speckleScatteringAssignments = (config as any).speckleScatteringAssignments as Record<string, number> | undefined;
 
       // Start simulation — returns immediately with simulation_id
@@ -1692,6 +1776,19 @@ export function AcousticsSection(props: AcousticsSectionProps) {
       <Notice type="warning" message="This simulation was generated with sound sources from a different sound section. The impulse responses remain accessible for the available source-receiver pairs." />
     ) : null;
 
+    // ── IR gain: peaks of the IRs assigned to THIS card, and the resulting safe offset range ──
+    // The slider value is a flat offset added to each IR's peak; the range is trimmed to the
+    // intersection of every assigned IR's mute (−peak) and clip (1−peak) thresholds.
+    const irNormalizeEnabled = !!(config as any).irNormalizeEnabled;
+    const { lo: safeLo, hi: safeHi, hasPeaks: hasAssignedPeaks } = computeIRGainSafeRange(
+      (config as any).sourceReceiverIRMapping as Record<string, Record<string, ImpulseResponseMetadata>> | undefined,
+      irPeaksByCard[index],
+      irNormalizeEnabled
+    );
+    const derivedIRGain = (config as any).irGain ?? IMPULSE_RESPONSE.GAIN_OFFSET_DEFAULT;
+    const displayedIRGain = Math.min(safeHi, Math.max(safeLo, derivedIRGain));
+    const handleIRPeaksForCard = (peaks: Record<string, number>) => handleIRPeaksChange(index, peaks);
+
     // Shared SimulationResultContent element — used by both the read-only result list
     // (choras/pyroomacoustics, and completed import-irs) and the import-irs body.
     const simResultContent = (
@@ -1723,6 +1820,9 @@ export function AcousticsSection(props: AcousticsSectionProps) {
           onListenerIRUploaded={config.type === 'import-irs' ? handleListenerIRUploaded : undefined}
           onListenerAssignmentCleared={config.type === 'import-irs' ? handleListenerAssignmentCleared : undefined}
           onBlueBackground={isCompleted}
+          irGain={displayedIRGain}
+          irNormalizeEnabled={irNormalizeEnabled}
+          onIRPeaksChange={config.type === 'import-irs' ? handleIRPeaksForCard : undefined}
       />
     );
 
@@ -1811,40 +1911,72 @@ export function AcousticsSection(props: AcousticsSectionProps) {
                 onIsolationChange={(ids) => handleUpdateConfig(index, { speckleIsolatedObjectIds: ids } as any)}
               />
             )}
-            <div>
+            <div className="card-stack--tight">
               {(() => {
-                const irGainDb = (config as any).irGainDb ?? 0;
                 const applyIRGain = (value: number) => {
-                  const clamped = Math.min(12, Math.max(-12, value));
-                  handleUpdateConfig(index, { irGainDb: clamped } as any);
+                  const clamped = Math.min(safeHi, Math.max(safeLo, value));
+                  handleUpdateConfig(index, { irGain: clamped } as any);
                   if (onIRGainChange && index === activeSimulationIndex) {
                     onIRGainChange(index, clamped);
                   }
                 };
+                const markerCount = hasAssignedPeaks ? 2 : 0;
                 return (
-                  <RangeSlider
-                    label="IR Gain"
-                    value={irGainDb}
-                    min={-12}
-                    max={12}
-                    step={0.1}
-                    unit="dB"
-                    defaultValue={0}
-                    showLabels
-                    minLabel="-12 dB"
-                    maxLabel="+12 dB"
-                    onBlueBackground={isCompleted}
-                    onChange={applyIRGain}
-                  />
+                  <>
+                    <RangeSlider
+                      label="IR Gain"
+                      value={displayedIRGain}
+                      min={safeLo}
+                      max={safeHi}
+                      step={IMPULSE_RESPONSE.GAIN_OFFSET_STEP}
+                      precision={2}
+                      defaultValue={Math.min(safeHi, Math.max(safeLo, IMPULSE_RESPONSE.GAIN_OFFSET_DEFAULT))}
+                      showLabels={markerCount === 0}
+                      minLabel={safeLo.toFixed(2)}
+                      maxLabel={safeHi.toFixed(2)}
+                      markers={hasAssignedPeaks
+                        ? [
+                            { value: safeLo, label: 'mute', tone: 'error' as const },
+                            { value: safeHi, label: 'clip', tone: 'warning' as const },
+                          ]
+                        : undefined}
+                      onBlueBackground={isCompleted}
+                      onChange={applyIRGain}
+                      hoverText={hasAssignedPeaks
+                        ? 'Flat offset added to every assigned IR peak. Negative lowers toward mute, positive raises toward clipping.'
+                        : undefined}
+                    />
+                    <p
+                      className="text-[10px]"
+                      style={isCompleted
+                        ? { color: 'var(--color-on-blue-muted)' }
+                        : { color: 'var(--color-secondary-hover)' }}
+                    >
+                      {hasAssignedPeaks
+                        ? `Peak offset: mute at ${safeLo.toFixed(2)}, clip at ${safeHi.toFixed(2)}.`
+                        : 'Import IRs to trim the gain range to their clip/mute thresholds.'}
+                    </p>
+                  </>
                 );
               })()}
             </div>
             <ToggleField
               checked={!!(config as any).irNormalizeEnabled}
               onChange={(enabled) => {
-                handleUpdateConfig(index, { irNormalizeEnabled: enabled } as any);
+                // Normalize collapses every assigned IR to peak 1, so the safe offset range
+                // changes; clamp the stored gain into the new range before applying.
+                const nextRange = computeIRGainSafeRange(
+                  (config as any).sourceReceiverIRMapping as Record<string, Record<string, ImpulseResponseMetadata>> | undefined,
+                  irPeaksByCard[index],
+                  enabled
+                );
+                const nextGain = Math.min(nextRange.hi, Math.max(nextRange.lo, (config as any).irGain ?? 0));
+                handleUpdateConfig(index, { irNormalizeEnabled: enabled, irGain: nextGain } as any);
                 if (onIRNormalizeChange && index === activeSimulationIndex) {
                   onIRNormalizeChange(index, enabled);
+                }
+                if (onIRGainChange && index === activeSimulationIndex) {
+                  onIRGainChange(index, nextGain);
                 }
               }}
               label={`Normalize IR (peak to ${IMPULSE_RESPONSE.NORMALIZATION_SCALE})`}

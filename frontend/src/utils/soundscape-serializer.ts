@@ -138,6 +138,9 @@ export function buildSoundscapeSavePayload(
             .map((e: any) => e.applicationId || e.nodeId || (typeof e.id === 'string' ? e.id as string : undefined))
             .filter((id: string | undefined): id is string => !!id))
         : undefined,
+      entity_meta: config.entities?.length
+        ? config.entities.map((e: any) => ({ name: e.name, layer: e.layer }))
+        : undefined,
       seed_copies: config.seed_copies,
       steps: config.steps,
       parent_usage_original_index: (config as any).parentUsageOriginalIndex,
@@ -304,6 +307,8 @@ export function buildSoundscapeSavePayload(
             file_size: m.fileSize ?? m.file_size ?? 0,
             normalization_convention: m.normalizationConvention ?? m.normalization_convention,
             channel_ordering: m.channelOrdering ?? m.channel_ordering,
+            peak_amplitude: m.peakAmplitude ?? m.peak_amplitude,
+            acoustic_parameters: m.acousticParameters ?? m.acoustic_parameters,
           };
         }
       }
@@ -420,7 +425,7 @@ export function buildSoundscapeSavePayload(
               : undefined,
           }
         : undefined,
-      ir_gain_db: pyConfig.irGainDb ?? undefined,
+      ir_gain: pyConfig.irGain ?? undefined,
       ir_normalize_enabled: pyConfig.irNormalizeEnabled ?? undefined,
       material_assignments_enabled: pyConfig.materialAssignmentsEnabled ?? undefined,
       ir_import_mode: (pyConfig as any).irImportMode ?? undefined,
@@ -547,6 +552,8 @@ export function restoreSoundscapeState(
             nodeId: saved.entity_node_ids?.[i],
             applicationId: saved.entity_node_ids?.[i],
             index: idx,
+            name: saved.entity_meta?.[i]?.name,
+            layer: saved.entity_meta?.[i]?.layer,
           }));
         }
         // Backward compat: old single entity_index format
@@ -749,12 +756,16 @@ export function restoreSoundscapeState(
             file_size: irData.file_size,
             normalization_convention: irData.normalization_convention,
             channel_ordering: irData.channel_ordering,
+            peak_amplitude: irData.peak_amplitude,
+            acoustic_parameters: irData.acoustic_parameters,
             // camelCase aliases (for any code that uses TS interface keys)
             originalChannels: irData.original_channels,
             sampleRate: irData.sample_rate,
             fileSize: irData.file_size,
             normalizationConvention: irData.normalization_convention,
             channelOrdering: irData.channel_ordering,
+            peakAmplitude: irData.peak_amplitude,
+            acousticParameters: irData.acoustic_parameters,
           };
           sourceReceiverIRMapping[sourceId][receiverId] = irMetadata;
         }
@@ -860,7 +871,7 @@ export function restoreSoundscapeState(
         autoDetected: saved.speckle_acoustic_selection.auto_detected,
       } : undefined,
       // Import-IRs advanced settings
-      irGainDb: saved.ir_gain_db ?? undefined,
+      irGain: saved.ir_gain ?? undefined,
       irNormalizeEnabled: saved.ir_normalize_enabled ?? undefined,
       materialAssignmentsEnabled: saved.material_assignments_enabled ?? undefined,
       irImportMode: saved.ir_import_mode ?? undefined,

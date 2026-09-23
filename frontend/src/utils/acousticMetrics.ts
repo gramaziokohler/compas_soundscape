@@ -112,6 +112,47 @@ const allParams = jsonData.results
 }
 
 /**
+ * Aggregate acoustic metrics from a source-receiver IR mapping (import-irs card).
+ *
+ * Each assigned IR carries `acoustic_parameters` measured at upload time by the
+ * backend with the same method as the pyroomacoustics cards. This averages those
+ * per-pair parameters exactly like `fetchPyroomAcousticMetrics` averages a
+ * simulation's per-pair results. Returns null when no IR has metrics.
+ */
+export function buildAcousticMetricsFromIRMapping(
+  mapping: SourceReceiverIRMapping | undefined,
+): AcousticParameters | null {
+  const allParams: any[] = [];
+  for (const receiverMap of Object.values(mapping || {})) {
+    for (const meta of Object.values(receiverMap)) {
+      const params = (meta as any)?.acoustic_parameters ?? (meta as any)?.acousticParameters;
+      if (params) allParams.push(params);
+    }
+  }
+
+  if (allParams.length === 0) return null;
+
+  const contributing = (key: string) =>
+    allParams.filter((p: any) => typeof p[key] === 'number' && !isNaN(p[key]));
+  const allReliable = (key: string) =>
+    contributing(key).length > 0 &&
+    contributing(key).every((p: any) => p[`${key}_reliable`] === undefined || p[`${key}_reliable`] === true);
+
+  return {
+    rt60: calculateAverage(allParams, 'rt60'),
+    edt: calculateAverage(allParams, 'edt'),
+    d50: calculateAverage(allParams, 'd50'),
+    c50: calculateAverage(allParams, 'c50'),
+    spl: calculateAverage(allParams, 'spl'),
+    drr: calculateAverage(allParams, 'drr'),
+    rt60Reliable: allReliable('rt60'),
+    edtReliable: allReliable('edt'),
+    rt60IsEstimate: allParams.some((p: any) => p.rt60_is_estimate === true),
+    splIsRelative: true,
+  };
+}
+
+/**
  * Format acoustic parameters into a display string
  * 
  * @param params - Acoustic parameters to format

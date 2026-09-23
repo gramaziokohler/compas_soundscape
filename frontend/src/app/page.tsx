@@ -9,7 +9,7 @@ import { AdvancedSettingsPanel } from "@/components/scene/AdvancedSettingsPanel"
 import { ErrorToast } from "@/components/ui/ErrorToast";
 import { useApiErrorHandler } from "@/hooks/useApiErrorHandler";
 import { useObjectSelectionPhase } from "@/hooks/useObjectSelectionPhase";
-import { buildEntityFromObjectId } from "@/lib/three/speckle-entity-utils";
+import { buildEntityFromObjectId, resolveStableEntityId, resolveEntityByNameLayer } from "@/lib/three/speckle-entity-utils";
 import {
   useAudioControlsStore,
   useFileUploadStore,
@@ -42,8 +42,9 @@ import { applyOutputDevice } from "@/lib/audio/output-device";
 import { useViewportScale } from "@/hooks/useViewportScale";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
 import { useJobRecovery } from "@/hooks/useJobRecovery";
+import { useModelVersionWatcher } from "@/hooks/useModelVersionWatcher";
 import { apiService } from "@/services/api";
-import { API_BASE_URL, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, DEFAULT_MAXIMUM_FOLEY_SOUNDS, SANDBOX_MODEL_ID, SANDBOX_SAMPLE_SPHERE_POSITION, DEFAULT_DURATION_SECONDS, DEFAULT_DIFFUSION_STEPS } from "@/utils/constants";
+import { API_BASE_URL, DEFAULT_DBFS, DEFAULT_NUM_SOUNDS, RECEIVER_CONFIG, SPIRAL_PLACEMENT, DEFAULT_LISTENER_ORIENTATION, TTS_DEFAULT_LANGUAGE, DEFAULT_MAXIMUM_FOLEY_SOUNDS, SANDBOX_MODEL_ID, SANDBOX_SAMPLE_SPHERE_POSITION, DEFAULT_DURATION_SECONDS, DEFAULT_DIFFUSION_STEPS, MODEL_VERSION_WATCH } from "@/utils/constants";
 import { loadAudioFile } from "@/lib/audio/utils/audio-upload";
 import { getCameraFrontSpiralPosition } from "@/lib/three/spiral-placement";
 import type { LoadTab, SoundGenerationConfig, SoundEvent } from "@/types";
@@ -57,6 +58,7 @@ import { buildSoundscapeSavePayload, restoreSoundscapeState, getBlobUrlSounds, b
 import { getStoredJobs, recordInflightJob } from "@/lib/job-tracker";
 import { PrivacyNotice } from "@/components/layout/PrivacyNotice";
 import { ImportSandboxModal } from "@/components/scene/ImportSandboxModal";
+import { NewModelVersionModal } from "@/components/scene/NewModelVersionModal";
 import { HomeProjectModal } from "@/components/scene/HomeProjectModal";
 
 /**
@@ -187,9 +189,28 @@ function applyRestoredSoundscapePayload(
   }
 }
 
+/**
+ * All IR library ids referenced by a simulation config (import-irs card +
+ * simulation-imported IRs), combining `importedIRIds` and the mapping metadata.
+ */
+function collectSimulationIRIds(config: unknown): Set<string> {
+  const ids = new Set<string>();
+  const cfg = config as {
+    importedIRIds?: string[];
+    sourceReceiverIRMapping?: Record<string, Record<string, { id?: string }>>;
+  } | null | undefined;
+  if (!cfg) return ids;
+  for (const id of cfg.importedIRIds ?? []) if (id) ids.add(id);
+  for (const receiverMap of Object.values(cfg.sourceReceiverIRMapping ?? {})) {
+    for (const meta of Object.values(receiverMap ?? {})) {
+      if (meta?.id) ids.add(meta.id);
+    }
+  }
+  return ids;
+}
+
 function HomeContent() {
   useUndoRedo();
-
   // ── Refresh survival ─────────────────────────────────────────────────────
   // Use window.location.search directly (not useSearchParams) because
   // useSearchParams can return empty values during SSR/hydration in Next.js,
@@ -199,6 +220,13 @@ function HomeContent() {
 
   // 2. Job recovery — resume in-flight jobs that survived a page refresh
   const { hasInflightJobs } = useJobRecovery();
+
+  // 3. Model version watcher — offer to switch when a newer version is published
+  const modelVersion = useModelVersionWatcher();
+  // Switching does a full page reload; no async work to await here.
+  const handleSwitchToLatestVersion = useCallback(() => {
+    modelVersion.switchToLatest();
+  }, [modelVersion]);
 
   // Loading the Home stage starts from a clean layout: sidebars collapsed and
   // every floating panel (settings, object explorer, timeline) hidden. Auto-save
@@ -269,18 +297,27 @@ function HomeContent() {
     void (async () => {
       try {
         const result = await loadAudioFile(await apiService.loadSampleAudio());
-        useSoundscapeStore.setState((s) => ({
-          soundConfigs: s.soundConfigs.map((c, i) =>
-            i === 0
-              ? {
-                  ...c,
-                  uploadedAudioBuffer: result.audioBuffer,
-                  uploadedAudioInfo: result.audioInfo,
-                  uploadedAudioUrl: result.audioUrl,
-                }
-              : c,
-          ),
-        }));
+        useSoundscapeStore.setState((s) => {
+          // The stage may have been replaced while the sample clip was loading
+          // (e.g. a saved model opened from Home) — only apply to the seed Sample
+          // config so the restored soundscape's first config is never clobbered.
+          const first = s.soundConfigs[0];
+          if (!first || first.type !== 'sample-audio' || first.display_name !== 'Sample') {
+            return {};
+          }
+          return {
+            soundConfigs: s.soundConfigs.map((c, i) =>
+              i === 0
+                ? {
+                    ...c,
+                    uploadedAudioBuffer: result.audioBuffer,
+                    uploadedAudioInfo: result.audioInfo,
+                    uploadedAudioUrl: result.audioUrl,
+                  }
+                : c,
+            ),
+          };
+        });
       } catch (error) {
         console.warn('[page:sandbox] Failed to load sample audio', error);
       }
@@ -351,7 +388,7 @@ function HomeContent() {
     setIsBootstrappingModel(true);
 
     console.log('[page:bootstrap] Loading soundscape for model_id from URL:', urlModelId);
-    apiService.loadSoundscapeFromSpeckle(urlModelId).then(loadResponse => {
+    apiService.loadSoundscapeFromSpeckle(urlModelId, useWorkspaceStore.getState().workspace?.id).then(loadResponse => {
       if (loadResponse.requires_invite) {
         notifyError(
           'This project belongs to a private workspace. Ask a member for an invite link to collaborate.',
@@ -434,6 +471,9 @@ function HomeContent() {
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autosaveEnabledRef = useRef(true);
   const lastSaveSourceRef = useRef<string>('manual');
+  // Snapshot of the most recent save payload so a 409 conflict can offer a
+  // "download my changes" escape hatch instead of silently discarding edits.
+  const lastSavePayloadRef = useRef<{ modelId: string; savedAt: number; payload: unknown } | null>(null);
   useEffect(() => {
     const unsubUI = useUIStore.subscribe((_state, _prev) => {
       autosaveEnabledRef.current = _state.enableAutoSave;
@@ -448,6 +488,8 @@ function HomeContent() {
       const uiState = useUIStore.getState();
       if (!uiState.globalSpeckleData && !uiState.homeProject) return;
       if (!autosaveEnabledRef.current) return;
+      // Viewers are read-only: never attempt a save (the backend would reject it).
+      if (useWorkspaceStore.getState().workspace?.role === 'viewer') return;
       // Shared-session guard: when other members are active on the same
       // workspace, pause autosave so concurrent writes don't clobber each other.
       if (useWorkspaceStore.getState().presence > 1) return;
@@ -581,6 +623,7 @@ function HomeContent() {
     setSelectedEntity,
     setModelFileName,
     getViewerRef,
+    worldTreeVersion,
   } = useSpeckleStore();
   // Non-reactive compat shim — .current always returns latest viewer via getter
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -614,14 +657,169 @@ function HomeContent() {
   }, [viewerRef?.current]);
 
   // Map applicationId (Rhino GUID) → current Speckle tree ID.
-  // Rebuilt when worldTree becomes ready. Used to remap entity links from saved soundscapes
-  // (Speckle object IDs change on every commit, applicationId stays stable).
+  // Rebuilt when worldTree becomes ready AND on every worldTreeVersion bump (a new
+  // model version loaded / in-place reload), so late-arriving nodes are included.
+  // Used to remap entity links from saved soundscapes (Speckle object IDs change on
+  // every commit, applicationId stays stable).
   const appIdToTreeIdMap = useMemo<Map<string, string>>(() => {
     if (!worldTreeReady || !viewerRef?.current) return new Map();
     const worldTree = viewerRef.current.getWorldTree() as any;
     const root = worldTree?.tree?._root || worldTree?._root || worldTree?.root || worldTree;
     return buildAppIdMap(root);
-  }, [worldTreeReady]);
+  }, [worldTreeReady, worldTreeVersion]);
+
+  /**
+   * Resolve a persisted entity to a current tree id:
+   *  1. applicationId → current tree id (the stable path), else
+   *  2. name + layer fallback (object replaced but name/layer still present), else
+   *  3. the entity's stored node/id (unchanged model).
+   * Returns null when nothing resolves.
+   */
+  const resolveEntityObjectId = useCallback((ent: any): string | null => {
+    let objectId = ent?.nodeId || ent?.id;
+    if (ent?.applicationId && appIdToTreeIdMap.size > 0) {
+      const mapped = appIdToTreeIdMap.get(ent.applicationId);
+      if (mapped) return mapped;
+    }
+    try {
+      const worldTree = viewerRef.current?.getWorldTree();
+      if (worldTree && ent?.name) {
+        const node = resolveEntityByNameLayer(worldTree, ent.name, ent.layer);
+        if (node) {
+          const treeId = node?.model?.id || node?.raw?.id || node?.id;
+          if (treeId) return treeId;
+        }
+      }
+    } catch { /* ignore */ }
+    return objectId || null;
+  }, [appIdToTreeIdMap, viewerRef]);
+
+  // ============================================================================
+  // Refresh loaded entity links after a model (re)load:
+  //  - objects that moved → re-derive bounds and move the sound marker/audio
+  //  - objects that were deleted → detach the sound, reverting it to a free sphere
+  // ============================================================================
+  const refreshEntityLinksAndPositions = useCallback(() => {
+    const worldTree = viewerRef.current?.getWorldTree?.();
+    if (!worldTree) return;
+    const configs = useSoundscapeStore.getState().soundConfigs;
+    if (!configs.some((c) => c.entities?.length)) return;
+
+    const mapReady = appIdToTreeIdMap.size > 0;
+    let movedCount = 0;
+    let detachedCount = 0;
+
+    configs.forEach((config, index) => {
+      if (!config.entities?.length) return;
+      let changed = false;
+      // entity.index → new center, only for entities whose object actually moved.
+      const movedCenters = new Map<number, [number, number, number]>();
+      const survivors: any[] = [];
+
+      config.entities.forEach((ent: any, entIdx: number) => {
+        const resolvedId = resolveEntityObjectId(ent);
+        // buildEntityFromObjectId returns null ONLY when the node is absent from the
+        // tree (not merely missing a render view), so it is a reliable existence check.
+        const fresh = resolvedId ? buildEntityFromObjectId(worldTree, resolvedId, []) : null;
+
+        if (!fresh) {
+          // AppId map not populated yet → don't misclassify valid links as deleted.
+          if (ent.applicationId && !mapReady) {
+            survivors.push(ent);
+            return;
+          }
+          // Object genuinely gone → drop it (changed so the config is rewritten).
+          changed = true;
+          return;
+        }
+
+        const newCenter: number[] | undefined = fresh.bounds?.center || fresh.position;
+        if (!newCenter) {
+          survivors.push(ent);
+          return;
+        }
+        const oldCenter: number[] | undefined = ent.bounds?.center || ent.position;
+        const isZero = newCenter.every((v) => Math.abs(v) < 1e-6);
+        if (isZero && !(oldCenter && oldCenter.every((v) => Math.abs(v) < 1e-6))) {
+          survivors.push(ent);
+          return;
+        }
+        const moved =
+          !oldCenter || oldCenter.some((v, i) => Math.abs(v - (newCenter[i] ?? 0)) > 1e-4);
+        const identityChanged =
+          (fresh.name && fresh.name !== ent.name) ||
+          (fresh.applicationId && fresh.applicationId !== ent.applicationId);
+        if (!moved && !identityChanged) {
+          survivors.push(ent);
+          return;
+        }
+        changed = true;
+        if (moved) {
+          movedCenters.set(
+            ent.index ?? entIdx,
+            [newCenter[0], newCenter[1], newCenter[2]] as [number, number, number],
+          );
+        }
+        survivors.push({
+          ...ent,
+          name: fresh.name || ent.name,
+          layer: fresh.layer || ent.layer,
+          position: newCenter,
+          bounds: fresh.bounds || ent.bounds,
+          applicationId: fresh.applicationId || ent.applicationId,
+        });
+      });
+
+      if (!changed) return;
+
+      const soundsForPrompt = () =>
+        useSoundscapeStore
+          .getState()
+          .generatedSounds.filter(
+            (s: any) =>
+              s.prompt_index === index ||
+              (s.prompt_index >= 10000 && Math.floor(s.prompt_index / 10000) === index),
+          );
+
+      if (survivors.length === 0) {
+        // Every linked object is gone → revert the sound to a free sphere.
+        useSoundscapeStore.getState().handleDetachSoundFromEntity(index);
+        soundsForPrompt().forEach((s: any) =>
+          useAudioControlsStore.getState().clearAllIterationLinksForSound(s.id),
+        );
+        detachedCount++;
+        return;
+      }
+
+      useSoundscapeStore.getState().handleUpdateConfig(index, 'entities', survivors);
+      if (movedCenters.size === 0) return;
+      movedCount++;
+      const fallbackCenter = movedCenters.values().next().value as
+        | [number, number, number]
+        | undefined;
+      soundsForPrompt().forEach((s: any) => {
+        const center =
+          (s.entity_index !== undefined && movedCenters.get(s.entity_index)) || fallbackCenter;
+        if (center) useSoundscapeStore.getState().updateSoundPosition(s.id, center);
+      });
+    });
+
+    // Refresh per-iteration link positions so the DAW per-entity markers and any
+    // persisted snapshots follow the moved object.
+    useAudioControlsStore.getState().refreshIterationEntityPositions();
+
+    if (movedCount > 0 || detachedCount > 0) {
+      console.log(
+        `[page:entity-refresh] v${worldTreeVersion} map=${appIdToTreeIdMap.size} ` +
+          `moved=${movedCount} detached=${detachedCount}`,
+      );
+    }
+  }, [appIdToTreeIdMap, resolveEntityObjectId, viewerRef, worldTreeVersion]);
+
+  useEffect(() => {
+    if (!worldTreeReady) return;
+    refreshEntityLinksAndPositions();
+  }, [worldTreeReady, worldTreeVersion, refreshEntityLinksAndPositions]);
 
   const sed = useSEDStore();
 
@@ -708,10 +906,13 @@ function HomeContent() {
   // True while the ?model_id= URL bootstrap is fetching the saved soundscape /
   // model data. Used to show a loading state instead of the Home model browser
   // on a refresh of an existing model page.
-  const [isBootstrappingModel, setIsBootstrappingModel] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return !!new URLSearchParams(window.location.search).get('model_id');
-  });
+  //
+  // Always initialise to `false` — never read `window.location` in a useState
+  // initializer. The server has no `window`, so a URL-derived initial value
+  // renders `false` on the server but `true` on the client's first render,
+  // producing a hydration mismatch (server: no loading overlay; client: overlay).
+  // The bootstrap effect below flips it to `true` after mount.
+  const [isBootstrappingModel, setIsBootstrappingModel] = useState(false);
 
   // Homepage project save/reload modal.
   const [showHomeProjectModal, setShowHomeProjectModal] = useState(false);
@@ -858,8 +1059,16 @@ function HomeContent() {
     // When a model was opened from the Home page, ignore any camera POV saved
     // for a previously-loaded model and frame the new model's bounding box.
     // A refresh of an existing ?model_id= session keeps restoring the saved POV.
-    const fitToBoundingBox = _fitCameraToBoundingBoxOnLoad;
+    let fitToBoundingBox = _fitCameraToBoundingBoxOnLoad;
     _fitCameraToBoundingBoxOnLoad = false;
+    // "Switch to latest version" reloads the page and stashes a one-shot flag so
+    // the new version is framed to its bounding box instead of the old POV.
+    try {
+      if (sessionStorage.getItem(MODEL_VERSION_WATCH.FIT_CAMERA_ON_NEXT_LOAD_KEY) === '1') {
+        sessionStorage.removeItem(MODEL_VERSION_WATCH.FIT_CAMERA_ON_NEXT_LOAD_KEY);
+        fitToBoundingBox = true;
+      }
+    } catch { /* sessionStorage unavailable */ }
     if (fitToBoundingBox) {
       console.log('[page:camera:restore] Model opened from Home — ignoring saved POV, fitting to bounding box');
       useUIStore.getState().setCameraState(null, null);
@@ -1080,36 +1289,23 @@ function HomeContent() {
     getSimIRMapping
   ]);
 
-  // Stop timeline when switching between simulation tabs
-  // Skip stopping when both old and new simulations are completed (hot-swap or seamless switch)
+  // Log simulation-tab switches. Playback is intentionally NOT stopped here:
+  // switching cards changes the acoustic rendering, which is handed over
+  // seamlessly by the AudioOrchestrator graph-changed event (Transport re-dispatch).
   const prevActiveIndexRef = useRef<number | null>(acousticsSimulation.activeSimulationIndex);
 
   useEffect(() => {
     const prevIndex = prevActiveIndexRef.current;
     const currentIndex = acousticsSimulation.activeSimulationIndex;
 
-    // Only stop if we're actually switching between simulations (not on initial mount)
     if (prevIndex !== null && prevIndex !== currentIndex) {
-      // Check if both old and new simulations have IR mappings — if so, just hot-swap IRs
       const prevMapping = getSimIRMapping(prevIndex);
       const currentMapping = getSimIRMapping(currentIndex);
 
       if (prevMapping && currentMapping) {
         console.log(`[Page] Switching simulation tabs: ${prevIndex} → ${currentIndex}, hot-swapping IRs (no stop)`);
       } else {
-        // Don't stop when switching between two completed simulations — the IR will update
-        // seamlessly via the auto-select IR effect. Only stop when turning off audio
-        // (currentIndex === null) or switching to/from a non-completed card.
-        const prevConfig = acousticsSimulation.simulationConfigs[prevIndex];
-        const currentConfig = currentIndex !== null ? acousticsSimulation.simulationConfigs[currentIndex] : null;
-        const bothCompleted = prevConfig?.state === 'completed' && currentConfig?.state === 'completed';
-
-        if (bothCompleted) {
-          console.log(`[Page] Switching simulation tabs: ${prevIndex} → ${currentIndex}, both completed - no stop`);
-        } else {
-          console.log(`[Page] Switching simulation tabs: ${prevIndex} → ${currentIndex}, stopping timeline`);
-          useAudioControlsStore.getState().stopAll();
-        }
+        console.log(`[Page] Switching simulation tabs: ${prevIndex} → ${currentIndex}, seamless mode handover`);
       }
     }
 
@@ -1214,12 +1410,9 @@ function HomeContent() {
 
       // Resolve and register each entity in the config
       for (const ent of config.entities) {
-        // Resolve the object ID: if the entity has an applicationId (Rhino GUID from saved data),
-        // remap it to the current Speckle tree ID. Speckle IDs change on every commit.
-        let objectId = ent.nodeId || ent.id;
-        if (ent.applicationId && appIdToTreeIdMap.size > 0) {
-          objectId = appIdToTreeIdMap.get(ent.applicationId) || objectId;
-        }
+        // Resolve the stable object ID to the current Speckle tree ID (appId, then
+        // name+layer fallback). Speckle content hashes change on every commit.
+        const objectId = resolveEntityObjectId(ent);
         if (!objectId) continue;
 
         // Register the entity-sound link in SpeckleSelectionModeContext
@@ -1227,7 +1420,7 @@ function HomeContent() {
         linkObjectToSound(objectId, promptIndex, true);
       }
     });
-  }, [soundGen.generatedSounds, soundGen.soundConfigs, soundGen.soundscapeData, linkObjectToSound, appIdToTreeIdMap]);
+  }, [soundGen.generatedSounds, soundGen.soundConfigs, soundGen.soundscapeData, linkObjectToSound, resolveEntityObjectId]);
 
   // ============================================================================
   // Effect - Apply Pre-Gen Entity Selection After Generation
@@ -1269,17 +1462,15 @@ function HomeContent() {
     soundGen.soundConfigs.forEach((config, index) => {
       if (!config.entities?.length) return;
       for (const ent of config.entities) {
-        // Resolve applicationId (Rhino GUID) to current Speckle tree ID
-        let objectId = ent.nodeId || ent.id;
-        if (ent.applicationId && appIdToTreeIdMap.size > 0) {
-          objectId = appIdToTreeIdMap.get(ent.applicationId) || objectId;
-        }
+        // Resolve the stable id to the current Speckle tree ID (appId → tree id,
+        // then name+layer fallback).
+        const objectId = resolveEntityObjectId(ent);
         if (!objectId || linkedObjectIds.has(objectId)) continue;
         // Register as pending (no generated sound yet) → light pink
         linkObjectToSound(objectId, index);
       }
     });
-  }, [soundGen.soundConfigs, linkedObjectIds, linkObjectToSound, appIdToTreeIdMap]);
+  }, [soundGen.soundConfigs, linkedObjectIds, linkObjectToSound, resolveEntityObjectId]);
 
   // ============================================================================
   // Effect - Unlink objects that no longer have an entity in their sound config
@@ -1292,18 +1483,14 @@ function HomeContent() {
       const config = soundGen.soundConfigs[tabIndex];
       // Check if any entity in config.entities matches this objectId
       const hasMatchingEntity = config?.entities?.some((ent: any) => {
-        let configObjectId = ent.nodeId || ent.id;
-        if (ent.applicationId && appIdToTreeIdMap.size > 0) {
-          configObjectId = appIdToTreeIdMap.get(ent.applicationId) || configObjectId;
-        }
-        return configObjectId === objectId;
+        return resolveEntityObjectId(ent) === objectId;
       });
       // If the config is gone or no entity matches, unlink
       if (!config || !hasMatchingEntity) {
         unlinkObjectFromSound(objectId);
       }
     });
-  }, [soundGen.soundConfigs, unlinkObjectFromSound, appIdToTreeIdMap]);
+  }, [soundGen.soundConfigs, unlinkObjectFromSound, resolveEntityObjectId]);
 
   // Handler: Reset bounding box to its original model-derived size
   const handleRefreshBoundingBox = useCallback(() => {
@@ -1949,11 +2136,13 @@ function HomeContent() {
     // Persist model_id in URL so a page refresh can restore this session
     router.replace(`/?model_id=${encodeURIComponent(speckleData.model_id)}`, { scroll: false });
 
-    const sandboxHasWork =
-      useAnalysisStore.getState().analysisConfigs.length > 0
-      || useSoundscapeStore.getState().soundConfigs.length > 0
-      || useReceiversStore.getState().receivers.length > 0
-      || useAcousticsSimulationStore.getState().simulationConfigs.length > 0;
+    // Seed-aware: the deterministic Home stage (placeholder context/usage + the
+    // bundled Sample card) is NOT "work" — it must never be kept in place of the
+    // model's saved soundscape. Genuine Home work already short-circuited above
+    // via `homeHasImportableWork()`, so reaching here means only the seed remains.
+    // (Raw store counts would wrongly count the seed, leaving the Home sample
+    // scene loaded instead of the saved soundscape.)
+    const sandboxHasWork = homeHasImportableWork();
 
     // Auto-load saved soundscape for this model unless the sandbox already has work
     try {
@@ -1963,7 +2152,7 @@ function HomeContent() {
         void saveSoundscapeRef.current?.();
         return;
       }
-      const loadResponse = await apiService.loadSoundscapeFromSpeckle(speckleData.model_id);
+      const loadResponse = await apiService.loadSoundscapeFromSpeckle(speckleData.model_id, useWorkspaceStore.getState().workspace?.id);
       if (loadResponse.requires_invite) {
         notifyError(
           'This project belongs to a private workspace. Ask a member for an invite link to collaborate.',
@@ -2378,6 +2567,7 @@ function HomeContent() {
       payload.base_revision = useWorkspaceStore.getState().revision;
 
       // 4. Save Soundscape
+      lastSavePayloadRef.current = { modelId, savedAt: Date.now(), payload };
       const result = await apiService.saveSoundscapeToSpeckle(payload);
       if (typeof result.revision === 'number') {
         useWorkspaceStore.setState({ revision: result.revision });
@@ -2389,8 +2579,22 @@ function HomeContent() {
         useWorkspaceStore.setState({ conflictRevision });
         console.warn('[page.tsx] Save rejected (workspace changed); refreshing.', conflictRevision);
         notifyError(
-          'This shared workspace changed while you were editing. Your changes were not saved ÔÇö reload to get the latest version.',
+          'This shared workspace changed while you were editing. Your changes were not saved \u2014 reload to get the latest version.',
           'warning',
+          {
+            label: 'Download my changes',
+            onClick: () => {
+              const snap = lastSavePayloadRef.current;
+              if (!snap) return;
+              const blob = new Blob([JSON.stringify(snap, null, 2)], { type: 'application/json' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `soundscape-unsaved-${snap.modelId}.json`;
+              a.click();
+              URL.revokeObjectURL(url);
+            },
+          },
         );
         void useWorkspaceStore.getState().refresh();
         return;
@@ -2482,14 +2686,11 @@ function HomeContent() {
     // Unlink all entities from Speckle filtering before removing the config
     const config = soundGen.soundConfigs[index];
     for (const ent of config?.entities || []) {
-      let objectId = ent.nodeId || ent.id;
-      if (ent.applicationId && appIdToTreeIdMap.size > 0) {
-        objectId = appIdToTreeIdMap.get(ent.applicationId) || objectId;
-      }
+      const objectId = resolveEntityObjectId(ent);
       if (objectId) unlinkObjectFromSound(objectId);
     }
     soundGen.handleRemoveConfig(index);
-  }, [soundGen.soundConfigs, soundGen.handleRemoveConfig, unlinkObjectFromSound, appIdToTreeIdMap]);
+  }, [soundGen.soundConfigs, soundGen.handleRemoveConfig, unlinkObjectFromSound, resolveEntityObjectId]);
 
   // Handle sound reset (remove generated sound but keep config)
   // Downgrades entity color from full pink → light pink
@@ -2498,10 +2699,7 @@ function HomeContent() {
     // Downgrade entity color from generated (full pink) to pending (light pink)
     const config = soundGen.soundConfigs[promptIndex];
     for (const ent of config?.entities || []) {
-      let objectId = ent.nodeId || ent.id;
-      if (ent.applicationId && appIdToTreeIdMap.size > 0) {
-        objectId = appIdToTreeIdMap.get(ent.applicationId) || objectId;
-      }
+      const objectId = resolveEntityObjectId(ent);
       if (objectId) {
         // Re-link with hasGeneratedSound=false to downgrade color
         linkObjectToSound(objectId, promptIndex, false);
@@ -2519,7 +2717,7 @@ function HomeContent() {
 
     // Reset the sound config atomically (clears display_name, uploaded audio, library search, etc.)
     soundGen.handleResetSoundConfig(promptIndex);
-  }, [soundGen.soundConfigs, soundGen.setSoundscapeData, soundGen.handleResetSoundConfig, linkObjectToSound, appIdToTreeIdMap]);
+  }, [soundGen.soundConfigs, soundGen.setSoundscapeData, soundGen.handleResetSoundConfig, linkObjectToSound, resolveEntityObjectId]);
 
   // Handle sound card selection from ThreeScene (sound sphere click)
   const handleSelectSoundCard = useCallback((promptIndex: number) => {
@@ -2576,9 +2774,16 @@ function HomeContent() {
 
     const currentConfig = soundGen.soundConfigs[configIndex];
     const existingEntities: any[] = currentConfig?.entities || [];
-    const existingIds = new Set(
-      existingEntities.map((e: any) => e.nodeId || e.id).filter(Boolean)
-    );
+    // Dedupe by stable identity (applicationId) AND current tree id, so clicking a
+    // display mesh whose host is already linked does not create a duplicate.
+    const existingIds = new Set<string>();
+    existingEntities.forEach((e: any) => {
+      if (e.applicationId) existingIds.add(e.applicationId);
+      const current = resolveEntityObjectId(e);
+      if (current) existingIds.add(current);
+      if (e.nodeId) existingIds.add(e.nodeId);
+      if (e.id) existingIds.add(e.id);
+    });
 
     // Dedupe against already-linked entities, then append each new one.
     const newEntities: any[] = [];
@@ -2588,6 +2793,9 @@ function HomeContent() {
         ? buildEntityFromObjectId(worldTree, id, [...existingEntities, ...newEntities])
         : null;
       if (!entity) continue;
+      const stableKey = entity.applicationId || entity.nodeId || entity.id;
+      if (stableKey && existingIds.has(stableKey)) continue;
+      if (stableKey) existingIds.add(stableKey);
       newEntities.push(entity);
     }
     if (newEntities.length === 0) return;
@@ -2598,13 +2806,14 @@ function HomeContent() {
     }
     // Link in Speckle context so object↔sound highlight + icon state update.
     for (const entity of newEntities) {
-      const objectId = entity.nodeId || entity.id;
+      const objectId = resolveEntityObjectId(entity);
       if (objectId) linkObjectToSound(objectId, configIndex);
     }
   }, [
     linkingConfigIndex,
     soundGen,
     linkObjectToSound,
+    resolveEntityObjectId,
   ]);
 
   // Enter commits the multi-selection, Escape cancels (grid-listener behaviour).
@@ -2647,10 +2856,7 @@ function HomeContent() {
     const config = soundGen.soundConfigs[configIndex];
     if (!config?.entities?.length) return;
     for (const ent of config.entities) {
-      let objectId = ent.nodeId || ent.id;
-      if (ent.applicationId && appIdToTreeIdMap.size > 0) {
-        objectId = appIdToTreeIdMap.get(ent.applicationId) || objectId;
-      }
+      const objectId = resolveEntityObjectId(ent);
       if (objectId) unlinkObjectFromSound(objectId);
     }
     soundGen.handleDetachSoundFromEntity(configIndex);
@@ -2663,7 +2869,7 @@ function HomeContent() {
     if (genSound) {
       useAudioControlsStore.getState().clearAllIterationLinksForSound(genSound.id);
     }
-  }, [soundGen, unlinkObjectFromSound, appIdToTreeIdMap]);
+  }, [soundGen, unlinkObjectFromSound, resolveEntityObjectId]);
 
   /**
    * Detach sound from entity and create sound sphere
@@ -2745,12 +2951,12 @@ function HomeContent() {
   }, [audioOrchestrator]);
 
   /**
-   * Handle IR gain changes from import-irs advanced settings.
+   * Handle IR gain (linear peak-offset) changes from import-irs advanced settings.
    */
-  const handleIRGainChange = useCallback((_index: number, gainDb: number) => {
+  const handleIRGainChange = useCallback((_index: number, gainOffset: number) => {
     const orchestrator = orchestratorRef.current;
     if (orchestrator && typeof (orchestrator as any).setIRGain === 'function') {
-      (orchestrator as any).setIRGain(gainDb);
+      (orchestrator as any).setIRGain(gainOffset);
     }
   }, []);
 
@@ -2760,6 +2966,33 @@ function HomeContent() {
       (orchestrator as any).setNormalize(enabled);
     }
   }, []);
+
+  // Re-apply the active card's persisted IR gain/normalize whenever the active card
+  // or its config changes — otherwise the values only take effect while dragging.
+  //
+  // The IR peak-offset gain is a GLOBAL control on the mode, but its value is
+  // per-card. Applying a leftover import-irs offset (e.g. -0.87) to a pyroom/choras
+  // IR with a different natural peak drives (peak + offset)/peak to <= 0, i.e. the
+  // gain node mutes and the convolution goes silent. So always re-apply the ACTIVE
+  // card's values, defaulting to 0/off when the card does not define them.
+  useEffect(() => {
+    const idx = acousticsSimulation.activeSimulationIndex;
+    if (idx === null) return;
+    const cfg = acousticsSimulation.simulationConfigs[idx] as {
+      type?: string;
+      irGain?: number;
+      irNormalizeEnabled?: boolean;
+    } | undefined;
+    if (!cfg) return;
+    const orchestrator = audioOrchestrator.orchestrator;
+    if (!orchestrator) return;
+    if (typeof (orchestrator as any).setNormalize === 'function') {
+      (orchestrator as any).setNormalize(!!cfg.irNormalizeEnabled);
+    }
+    if (typeof (orchestrator as any).setIRGain === 'function') {
+      (orchestrator as any).setIRGain(cfg.irGain ?? 0);
+    }
+  }, [audioOrchestrator.orchestrator, acousticsSimulation.activeSimulationIndex, acousticsSimulation.simulationConfigs]);
 
   /**
    * Toggle IR normalization
@@ -2812,6 +3045,32 @@ function HomeContent() {
     try { localStorage.removeItem('compas-acoustic-layer'); } catch { /* ignore */ }
     window.location.reload();
   }, []);
+
+  /**
+   * Remove a simulation card, then delete the IRs it exclusively owned from the
+   * backend library. Scoped to 'import-irs' cards and reference-counted against
+   * the remaining configs so IRs still used elsewhere are never removed.
+   * (Kept out of the store action, which is temporal/undoable.)
+   */
+  const handleRemoveSimulationConfig = useCallback((index: number) => {
+    const store = useAcousticsSimulationStore.getState();
+    const target = store.simulationConfigs[index];
+    const ids = target && target.type === 'import-irs' ? collectSimulationIRIds(target) : new Set<string>();
+
+    store.handleRemoveConfig(index);
+
+    if (ids.size === 0) return;
+
+    const stillReferenced = new Set<string>();
+    for (const cfg of useAcousticsSimulationStore.getState().simulationConfigs) {
+      for (const id of collectSimulationIRIds(cfg)) stillReferenced.add(id);
+    }
+    const toDelete = Array.from(ids).filter((id) => !stillReferenced.has(id));
+    if (toDelete.length === 0) return;
+
+    void Promise.allSettled(toDelete.map((id) => apiService.deleteImpulseResponse(id)))
+      .then(() => triggerIRRefresh());
+  }, [triggerIRRefresh]);
 
   // Handler: Material assignment selection (NEW)
   const handleSelectGeometry = useCallback((selection: SelectedGeometry | null) => {
@@ -2950,11 +3209,10 @@ function HomeContent() {
 
   // Handler: Audio Rendering Mode Change (unified handler for all 3 modes)
   const handleAudioRenderingModeChange = useCallback(async (mode: AudioRenderingMode) => {
-    // Stop playback before switching modes to ensure clean state
-    if (useAudioControlsStore.getState().isAnyPlaying()) {
-      useAudioControlsStore.getState().stopAll();
-    }
-
+    // Playback is intentionally NOT stopped here: acoustic-rendering changes are
+    // handed over seamlessly by the AudioOrchestrator graph-changed event, which
+    // re-dispatches the Transport onto the new mode. Stopping was what made audio
+    // cut out when expanding/collapsing cards or switching simulations.
     setAudioRenderingMode(mode);
     console.log('[Page] Audio rendering mode changed to:', mode);
 
@@ -3334,6 +3592,18 @@ function HomeContent() {
         busy={isSavingHomeProject}
       />
 
+      {/* A newer version of the open Speckle model has been published */}
+      <NewModelVersionModal
+        open={modelVersion.pending !== null}
+        modelName={modelVersion.modelName || 'this model'}
+        createdAt={modelVersion.pending?.created_at}
+        authorName={modelVersion.pending?.author_name}
+        message={modelVersion.pending?.message}
+        busy={modelVersion.busy}
+        onSwitch={handleSwitchToLatestVersion}
+        onKeepCurrent={modelVersion.dismiss}
+      />
+
       {/* Main 3D Scene - Fixed at screen center, full size, lowest z-index */}
       <main className="absolute inset-0">
         {/* Viewer Toggle Button - Top Left */}
@@ -3346,6 +3616,8 @@ function HomeContent() {
             speckleData={globalSpeckleData}
             onViewerLoaded={handleSpeckleViewerLoaded}
             isBootstrappingModel={isBootstrappingModel}
+            hasNewModelVersion={modelVersion.hasUpdate && modelVersion.pending === null}
+            onSwitchToLatest={handleSwitchToLatestVersion}
             // Audio system props
             audioOrchestrator={audioOrchestrator.orchestrator}
             audioContext={audioOrchestrator.audioContext}
@@ -3655,7 +3927,7 @@ function HomeContent() {
         simulationConfigs={acousticsSimulation.simulationConfigs}
         activeSimulationIndex={acousticsSimulation.activeSimulationIndex}
         onAddSimulationConfig={acousticsSimulation.handleAddConfig}
-        onRemoveSimulationConfig={acousticsSimulation.handleRemoveConfig}
+        onRemoveSimulationConfig={handleRemoveSimulationConfig}
         onUpdateSimulationConfig={acousticsSimulation.handleUpdateConfig}
         onSetActiveSimulation={acousticsSimulation.handleSetActiveSimulation}
         onUpdateSimulationName={acousticsSimulation.handleUpdateSimulationName}

@@ -16,6 +16,8 @@ interface SceneControlButtonsProps {
   soundscapeData: SoundEvent[] | null;
   onResetZoom: () => void;
   onRefreshScene: () => void;
+  /** Shows a warning indicator on the Refresh scene button (a newer model version is available). */
+  showUpdateBadge?: boolean;
   /** Extra bottom offset (px) so the docked DAW timeline doesn't cover these controls. */
   bottomOffset?: number;
 }
@@ -28,6 +30,7 @@ export function SceneControlButtons({
   soundscapeData,
   onResetZoom,
   onRefreshScene,
+  showUpdateBadge = false,
   bottomOffset = 0,
 }: SceneControlButtonsProps) {
   const [globalVolume, setGlobalVolume] = useState(0.8);
@@ -109,13 +112,29 @@ export function SceneControlButtons({
       />
 
       {/* Refresh Scene */}
-      <SceneControlButton
-        onClick={onRefreshScene}
-        title="Refresh scene"
-        icon={
-          <RefreshIcon size="0.8rem" />
-        }
-      />
+      <div className="relative flex items-center justify-center">
+        <SceneControlButton
+          onClick={onRefreshScene}
+          title={showUpdateBadge ? 'New model version available — refresh scene' : 'Refresh scene'}
+          isActive={showUpdateBadge}
+          activeColor="var(--color-warning)"
+          icon={
+            <RefreshIcon size="0.8rem" />
+          }
+        />
+        {showUpdateBadge && (
+          <span
+            aria-label="New model version available"
+            className="absolute -top-0.5 -right-0.5 rounded-full pointer-events-none"
+            style={{
+              width: 8,
+              height: 8,
+              backgroundColor: 'var(--color-warning)',
+              border: '1px solid var(--color-surface)',
+            }}
+          />
+        )}
+      </div>
     </div>
   );
 }

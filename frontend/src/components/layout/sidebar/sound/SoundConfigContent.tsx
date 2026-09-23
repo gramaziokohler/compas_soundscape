@@ -38,6 +38,8 @@ export interface SoundConfigContentProps {
   isPreviewPlaying?: boolean;
   onPreviewPlayPause?: () => void;
   onPreviewStop?: () => void;
+  /** Silent mode: waveform renders visually but produces no audio (prevents double playback). */
+  silent?: boolean;
 }
 
 export function SoundConfigContent({
@@ -57,6 +59,7 @@ export function SoundConfigContent({
   isPreviewPlaying,
   onPreviewPlayPause,
   onPreviewStop,
+  silent,
 }: SoundConfigContentProps) {
   const cardType = config.type || 'text-to-audio';
 
@@ -89,6 +92,7 @@ export function SoundConfigContent({
           isPreviewPlaying={isPreviewPlaying}
           onPreviewPlayPause={onPreviewPlayPause}
           onPreviewStop={onPreviewStop}
+          silent={silent}
         />
       )}
 
@@ -120,6 +124,7 @@ export function SoundConfigContent({
           isPreviewPlaying={isPreviewPlaying}
           onPreviewPlayPause={onPreviewPlayPause}
           onPreviewStop={onPreviewStop}
+          silent={silent}
         />
       )}
     </div>

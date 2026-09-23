@@ -196,6 +196,12 @@ interface SpeckleSceneProps {
   /** True while the parent is bootstrapping the model from the ?model_id= URL param. */
   isBootstrappingModel?: boolean;
 
+  /** True when a newer version of the open model exists but is not loaded yet. */
+  hasNewModelVersion?: boolean;
+
+  /** Reload the page to load the latest published version of the open model. */
+  onSwitchToLatest?: () => void;
+
   className?: string;
 }
 
@@ -255,6 +261,8 @@ export function SpeckleScene({
   onFPSExited,
   isUploadingModel = false,
   isBootstrappingModel = false,
+  hasNewModelVersion = false,
+  onSwitchToLatest,
   className,
 }: SpeckleSceneProps) {
   // Refs
@@ -583,7 +591,7 @@ export function SpeckleScene({
             tree.children;
 
           const findNodeWithParent = (node: any, id: string, parent: any): { node: any; parent: any } | null => {
-            const nodeId = node?.raw?.id || node?.model?.id || node?.id;
+            const nodeId = node?.model?.id || node?.raw?.id || node?.id;
             if (nodeId === id) return { node, parent };
             const children = node?.model?.children || node?.children;
             if (children) {
@@ -1233,6 +1241,11 @@ export function SpeckleScene({
     }
   }, [audioOrchestrator, audioContext, engineCoordinator, enginePlaybackScheduler]);
 
+  // Re-dispatch timeline playback whenever the audio graph is rebuilt (mode switch,
+  // ambisonic-order change, IR order change) is owned by PlaybackSchedulerService:
+  // it subscribes the Transport to the orchestrator's graph-changed event as soon
+  // as the orchestrator is injected (see PlaybackSchedulerService.setAudioOrchestrator).
+
   // ============================================================================
   // Effect - Compute and Report Bounds When Viewer Ready
   // This ensures bounds are available for sound generation before any sounds exist
@@ -1332,8 +1345,14 @@ export function SpeckleScene({
   // Refresh Scene Handler (hard reinitialize — same as a page reload for the viewer)
   // ============================================================================
   const handleRefreshScene = useCallback(() => {
+    // A newer model version is available → reload the page so the latest version
+    // (and its geometry) loads, instead of an in-place viewer re-init.
+    if (hasNewModelVersion && onSwitchToLatest) {
+      onSwitchToLatest();
+      return;
+    }
     setRefreshKey((k) => k + 1);
-  }, []);
+  }, [hasNewModelVersion, onSwitchToLatest]);
 
   // ============================================================================
   // Reset Zoom Handler (using Speckle CameraController)
@@ -1480,10 +1499,10 @@ export function SpeckleScene({
 
       {/* Loading overlay */}
       {isModelLoading && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-background/50">
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-background/90">
           <div className="flex flex-col items-center gap-3">
             <Spinner size={48} />
-            <p className="text-xs text-neutral-400">{isLoading || isBootstrappingModel ? 'Loading model...' : 'Uploading model...'}</p>
+            <p className="text-xs text-primary">{isLoading || isBootstrappingModel ? 'Loading model...' : 'Uploading model to Speckle... (this might seconds to minutes depending on the size.)'}</p>
           </div>
         </div>
       )}
@@ -1641,6 +1660,7 @@ export function SpeckleScene({
         soundscapeData={soundscapeData}
         onResetZoom={handleResetZoom}
         onRefreshScene={handleRefreshScene}
+        showUpdateBadge={hasNewModelVersion}
         bottomOffset={dockBottomSpace}
       />
 
@@ -1690,7 +1710,6 @@ export function SpeckleScene({
             setSelectedEntity(null);
           }}
           onOpenExplorer={handleOpenExplorer}
-          generatedSounds={soundscapeData ?? undefined}
         />
       )}
     </div>

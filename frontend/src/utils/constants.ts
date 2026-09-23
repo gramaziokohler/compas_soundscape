@@ -686,6 +686,14 @@ export const SPECKLE_INGESTION = {
   MAX_ATTEMPTS: 150,            // 5 minutes — large IFC/RVT conversions can be slow
 } as const;
 
+// Watches the open model for a newer published version and offers to switch.
+export const MODEL_VERSION_WATCH = {
+  POLL_INTERVAL_MS: 60000,      // Check the model's latest version every 60 s
+  // sessionStorage flag set just before the "switch to latest" page reload so the
+  // next bootstrap frames the model bounding box instead of restoring the saved POV.
+  FIT_CAMERA_ON_NEXT_LOAD_KEY: 'compas-fit-camera-on-next-load',
+} as const;
+
 // ============================================================================
 // Sound Event Detection (SED) Configuration
 // ============================================================================
@@ -810,7 +818,15 @@ export const IMPULSE_RESPONSE = {
 
   // Fixed gain multiplier for ambisonic IRs (used by legacy processImpulseResponse)
   // AmbisonicIRMode bypasses this — passes IR data through unmodified
-  AMBISONIC_IR_GAIN_MULTIPLIER: 1
+  AMBISONIC_IR_GAIN_MULTIPLIER: 1,
+
+  // Linear IR-gain (peak-offset) control for the import-irs card.
+  // The slider value is added to each IR's peak in the [-1, 1] amplitude domain:
+  // peak + offset reaches 1.0 => clip, reaches 0.0 => mute.
+  GAIN_OFFSET_MIN: -1,
+  GAIN_OFFSET_MAX: 1,
+  GAIN_OFFSET_STEP: 0.01,
+  GAIN_OFFSET_DEFAULT: 0
 } as const;
 
 // ============================================================================

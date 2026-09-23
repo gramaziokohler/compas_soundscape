@@ -126,6 +126,23 @@ export type IRFormat = "mono" | "binaural" | "foa" | "toa";
 // Ambisonic order types
 export type AmbisonicOrder = 1 | 2 | 3; // First-order, Second-order, or Third-order
 
+// Raw acoustic parameters measured from an IR by the backend
+// (utils/acoustic_measurement.AcousticMeasurement — same method as pyroomacoustics cards).
+export interface IRAcousticParameters {
+  rt60?: number | null;
+  edt?: number | null;
+  c50?: number | null;
+  d50?: number | null;
+  drr?: number | null;
+  spl?: number | null;
+  energy_level_db?: number | null;
+  spl_is_relative?: boolean;
+  rt60_reliable?: boolean;
+  edt_reliable?: boolean;
+  rt60_is_estimate?: boolean;
+  rt60_dynamic_range_db?: number;
+}
+
 // Impulse Response Metadata
 export interface ImpulseResponseMetadata {
   id: string;
@@ -138,6 +155,9 @@ export interface ImpulseResponseMetadata {
   duration: number; // Duration in seconds
   fileSize: number; // Size in bytes
   peakAmplitude?: number; // Peak absolute amplitude in the float-normalised [-1, 1] domain
+  peak_amplitude?: number; // snake_case variant returned by the backend
+  acousticParameters?: IRAcousticParameters; // Metrics measured at upload time (camel alias)
+  acoustic_parameters?: IRAcousticParameters; // snake_case variant returned by the backend
   normalizationConvention?: 'N3D' | 'SN3D'; // Ambisonic normalization scheme (simulation metadata)
   channelOrdering?: 'AmbiX' | 'FuMa' | 'ACN'; // Ambisonic channel ordering (AmbiX=W,Y,Z,X, FuMa=W,X,Y,Z)
 }

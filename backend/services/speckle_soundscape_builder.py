@@ -101,6 +101,11 @@ def build_object_indices(root_object: Base):
 
     def _index(obj: Base):
         obj_id = getattr(obj, "id", "") or ""
+        # Index by applicationId too: persisted entity links store the stable
+        # applicationId (Rhino GUID), which is NOT the content-hash id.
+        obj_app_id = getattr(obj, "applicationId", "") or ""
+        if obj_app_id and obj_app_id not in hash_to_obj:
+            hash_to_obj[obj_app_id] = obj
         if not obj_id:
             return
         if obj_id not in hash_to_obj:

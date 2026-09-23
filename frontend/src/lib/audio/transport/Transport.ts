@@ -159,6 +159,21 @@ export class Transport {
     }
   }
 
+  /**
+   * Called when the audio graph was rebuilt underneath the transport (mode
+   * switch, ambisonic-order change, IR order change). Voices live on a specific
+   * mode instance and cannot survive a graph rebuild, so while playing we
+   * re-dispatch the current position onto the (now-current) mode. This is a
+   * re-seek at the same position, so timeline time does not jump.
+   *
+   * When paused/stopped there is nothing in flight — the frozen position is
+   * already correct and the next play() dispatches onto the new mode.
+   */
+  handleGraphChanged(): void {
+    if (!this.playing) return;
+    this.seek(this.getPositionMs());
+  }
+
   dispose(): void {
     this.stopLookahead();
     this.killAllVoices();

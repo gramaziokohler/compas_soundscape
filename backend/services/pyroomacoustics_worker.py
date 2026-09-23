@@ -35,7 +35,7 @@ from services.pyroomacoustics_service import PyroomacousticsService
 from services.speckle_service import SpeckleService
 from utils.acoustic_measurement import AcousticMeasurement
 from utils.audio_processing import trim_ir
-from utils.geometry import fix_outward_winding
+from utils.geometry import fix_outward_winding, resolve_object_id
 
 
 def _atomic_replace(src: str, dst: str) -> None:
@@ -174,15 +174,26 @@ def _run_pyroomacoustics_compute_loop(
         if ray_tracing:
             PyroomacousticsService.enable_ray_tracing(room, n_rays=n_rays)
 
-        prog_rir = 20 + src_idx * 70 // n_sources + 35 // n_sources
+        # Each source owns a slice of the 20% -> 90% band; the first 80% of the
+        # slice is compute (reported from inside compute_rir) and the last 20%
+        # is IR export, so progress never goes backwards between sources.
+        prog_rir = prog_build
         if n_pairs_this_source == 1:
             rir_status = f"Computing pair {pair_label_start}/{total_pairs}..."
         else:
             rir_status = f"Computing pairs {pair_label_start}-{pair_label_end}/{total_pairs}..."
         _write_progress(progress_file, prog_rir, rir_status)
 
+        # Realtime progress from inside compute_rir(): the library reports a
+        # fraction in [0, 1] within THIS source (image sources -> chunked ray
+        # tracing -> RIR synthesis). Map it into the first 80% of this source's
+        # slice of the worker's 20% -> 90% band (the tail is reserved for export).
+        def _progress_callback(fraction, text):
+            value = int(20 + 70.0 * (src_idx + 0.8 * fraction) / max(1, n_sources))
+            _write_progress(progress_file, min(value, 90), text)
+
         # Blocking — subprocess is hard-killed here if cancelled
-        room.compute_rir()
+        room.compute_rir(progress_callback=_progress_callback)
 
         # ── Extract and export RIRs for each pair with this source ────────
         for local_pair_idx, pair_dict in enumerate(source_pairs):
@@ -239,9 +250,13 @@ def _run_pyroomacoustics_compute_loop(
                 print(f"  Warning: acoustic params failed for {source_id}->{receiver_id}: {ap_err}")
 
             current_pair = pair_counter + local_pair_idx + 1
+            pair_frac = (local_pair_idx + 1) / n_pairs_this_source
+            export_value = int(
+                20 + 70.0 * (src_idx + 0.8 + 0.2 * pair_frac) / max(1, n_sources)
+            )
             _write_progress(
                 progress_file,
-                90 * current_pair // total_pairs,
+                min(export_value, 90),
                 f"Exporting pair {current_pair}/{total_pairs}...",
             )
 
@@ -378,21 +393,31 @@ def run_pyroomacoustics_simulation(
         # ── Phase 2: Material + scattering mapping ────────────────────────────
         _write_progress(progress_file, 12, "Processing materials...")
         face_material_map: dict[int, str] = {}
+        n_material_matched = 0
+        n_material_skipped = 0
         for obj_id, material_id in object_materials_dict.items():
-            if obj_id not in object_face_ranges:
+            resolved = resolve_object_id(obj_id, object_face_ranges)
+            if resolved is None:
+                n_material_skipped += 1
                 print(f"  Warning: object '{obj_id}' not in geometry — skipping material")
                 continue
-            start_face, end_face = object_face_ranges[obj_id]
+            n_material_matched += 1
+            start_face, end_face = object_face_ranges[resolved]
             for face_idx in range(start_face, end_face + 1):
                 face_material_map[face_idx] = material_id
+        print(
+            f"[{simulation_id[:8]}] Material map: {n_material_matched} object(s) matched "
+            f"({len(face_material_map)} faces), {n_material_skipped} skipped"
+        )
 
         face_scattering_map: Optional[dict[int, float]] = None
         if ray_tracing:
             face_scattering_map = {}
             for obj_id, scatter_val in object_scattering_dict.items():
-                if obj_id not in object_face_ranges:
+                resolved = resolve_object_id(obj_id, object_face_ranges)
+                if resolved is None:
                     continue
-                start_face, end_face = object_face_ranges[obj_id]
+                start_face, end_face = object_face_ranges[resolved]
                 for face_idx in range(start_face, end_face + 1):
                     face_scattering_map[face_idx] = float(scatter_val)
             print(

@@ -24,6 +24,10 @@ export function buildScoreFromTimelineSounds(
   // Full sibling list for prompt_index-based variant resolution — works for every
   // id shape (including duplicated/AI-detected tracks), unlike string parsing.
   const generatedSounds = useSoundscapeStore.getState().generatedSounds;
+  // Live config entities: an entity-linked clip's position must be resolved from
+  // the entity's CURRENT bounds (updated on model load), not the frozen
+  // `link.entityPosition` captured when the iteration was first linked.
+  const soundConfigs = useSoundscapeStore.getState().soundConfigs;
 
   const tracks: ScoreTrack[] = timelineSounds.map((ts): ScoreTrack => {
     const trim = soundTrims[ts.id];
@@ -37,6 +41,20 @@ export function buildScoreFromTimelineSounds(
       const variantIndex = link?.variantIndex ?? 0;
       const sourceId = resolveVariantSoundIdByPrompt(ts.id, variantIndex, ts.promptIndex, generatedSounds);
 
+      // Prefer the linked entity's live position over the persisted snapshot so a
+      // clip whose object moved (new model version) plays from the new location.
+      let position: [number, number, number] | undefined = link?.entityPosition;
+      if (link?.entityIndex !== undefined) {
+        const cardIndex = ts.cardIndex ?? ts.promptIndex;
+        const entity = cardIndex !== undefined
+          ? soundConfigs[cardIndex]?.entities?.[link.entityIndex]
+          : undefined;
+        const live = entity?.bounds?.center ?? entity?.position;
+        if (live && live.length >= 3) {
+          position = [live[0], live[1], live[2]];
+        }
+      }
+
       return {
         clipId: `${ts.id}-${originalIdx}`,
         startMs,
@@ -45,7 +63,7 @@ export function buildScoreFromTimelineSounds(
         trimStartFraction,
         fadeInMs: loopable ? AUDIO_PLAYBACK.LOOPABLE_SEAM_FADE_MS : undefined,
         fadeOutMs: loopable ? AUDIO_PLAYBACK.LOOPABLE_SEAM_FADE_MS : undefined,
-        position: link?.entityPosition,
+        position,
       };
     });
 

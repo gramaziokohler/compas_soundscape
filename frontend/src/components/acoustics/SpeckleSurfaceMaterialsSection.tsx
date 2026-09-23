@@ -19,6 +19,7 @@
 
 import { useEffect, useCallback, useRef, useState, useMemo } from 'react';
 import { useSpeckleSurfaceMaterials } from '@/hooks/useSpeckleSurfaceMaterials';
+import { getExplorerNodeId } from '@/hooks/useSpeckleTree';
 import { useSpeckleFiltering } from '@/hooks/useSpeckleFiltering';
 import { useSpeckleStore } from '@/store';
 import { useAcousticMaterialStore } from '@/store';
@@ -28,9 +29,10 @@ import type { Viewer } from '@speckle/viewer';
 import type { ObjectColorGroup } from '@/types/speckle-materials';
 
 // ── Whole-model id maps ─────────────────────────────────────────────────────
-// The Object Explorer keys assignments by raw Speckle object IDs (raw.id).
-// Persistence uses applicationId (stable across model republishes). Build both
-// directions across the ENTIRE model (not just one layer).
+// The Object Explorer keys assignments by the viewer's UNIQUE node id
+// (model.id — duplicate-id nodes carry a `#N` suffix so each duplicate surface
+// is addressable independently). Persistence uses applicationId (stable across
+// model republishes). Build both directions across the ENTIRE model.
 
 function getRootChildren(worldTree: any): any[] {
   if (!worldTree) return [];
@@ -41,50 +43,50 @@ function getRootChildren(worldTree: any): any[] {
   return [];
 }
 
-function walkCollectIdMaps(nodes: any[], rawIdToAppId: Map<string, string>, appIdToRawIds: Map<string, string[]>): void {
+function walkCollectIdMaps(nodes: any[], geometryIdToAppId: Map<string, string>, appIdToGeometryIds: Map<string, string[]>): void {
   for (const node of nodes) {
     const raw = node?.raw || node?.model?.raw || {};
-    const rawId: string | undefined = raw.id;
+    const geometryId: string | undefined = getExplorerNodeId(node);
     const appId: string | undefined = raw.applicationId;
-    if (rawId && appId) {
-      rawIdToAppId.set(rawId, appId);
+    if (geometryId && appId) {
+      geometryIdToAppId.set(geometryId, appId);
       // A Brep/BIM object and its display mesh(es) share the SAME applicationId
       // (verified against live Speckle data). Persisted assignments are keyed by
-      // applicationId, so record EVERY raw id that carries it — otherwise the
+      // applicationId, so record EVERY geometry id that carries it — otherwise the
       // remap resolves only the first (the carrier) and the display-mesh tree rows
       // in the Object Explorer keep showing "Select...".
-      const existing = appIdToRawIds.get(appId);
+      const existing = appIdToGeometryIds.get(appId);
       if (existing) {
-        if (!existing.includes(rawId)) existing.push(rawId);
+        if (!existing.includes(geometryId)) existing.push(geometryId);
       } else {
-        appIdToRawIds.set(appId, [rawId]);
+        appIdToGeometryIds.set(appId, [geometryId]);
       }
     }
     const children = node?.model?.children || node?.children || [];
-    if (children.length > 0) walkCollectIdMaps(children, rawIdToAppId, appIdToRawIds);
+    if (children.length > 0) walkCollectIdMaps(children, geometryIdToAppId, appIdToGeometryIds);
   }
 }
 
 /**
- * Expand persisted assignments (keyed by applicationId or raw id) into a Map
- * keyed by EVERY current raw object id that shares the source applicationId.
- * This keeps the Object Explorer's mesh rows in sync with the carrier rows and
- * with the colors the viewer renders.
+ * Expand persisted assignments (keyed by applicationId or a current geometry id)
+ * into a Map keyed by EVERY current geometry id that shares the source
+ * applicationId. This keeps the Object Explorer's mesh rows in sync with the
+ * carrier rows and with the colors the viewer renders.
  */
 function expandSavedAssignments<T extends string | number>(
   source: Record<string, T> | undefined,
-  rawIdToAppId: Map<string, string>,
-  appIdToRawIds: Map<string, string[]>,
+  geometryIdToAppId: Map<string, string>,
+  appIdToGeometryIds: Map<string, string[]>,
 ): Map<string, T> {
   const out = new Map<string, T>();
   if (!source) return out;
   for (const [key, value] of Object.entries(source)) {
-    if (rawIdToAppId.has(key)) {
-      // Already a current raw id.
+    if (geometryIdToAppId.has(key)) {
+      // Already a current geometry id.
       out.set(key, value);
       continue;
     }
-    const raws = appIdToRawIds.get(key);
+    const raws = appIdToGeometryIds.get(key);
     if (raws && raws.length > 0) {
       for (const id of raws) out.set(id, value);
       continue;
@@ -166,13 +168,13 @@ export function SpeckleSurfaceMaterialsSection({
   const scatteringAssignments = useAcousticMaterialStore((s) => s.scatteringAssignments);
 
   // Whole-model id maps (raw.id <-> applicationId), built once per worldTree.
-  // `appIdToRawIds` is plural because a carrier and its display meshes share an
+  // `appIdToGeometryIds` is plural because a carrier and its display meshes share an
   // applicationId (see walkCollectIdMaps).
-  const { rawIdToAppId, appIdToRawIds } = useMemo(() => {
-    const rawIdToAppId = new Map<string, string>();
-    const appIdToRawIds = new Map<string, string[]>();
-    if (worldTree) walkCollectIdMaps(getRootChildren(worldTree), rawIdToAppId, appIdToRawIds);
-    return { rawIdToAppId, appIdToRawIds };
+  const { geometryIdToAppId, appIdToGeometryIds } = useMemo(() => {
+    const geometryIdToAppId = new Map<string, string>();
+    const appIdToGeometryIds = new Map<string, string[]>();
+    if (worldTree) walkCollectIdMaps(getRootChildren(worldTree), geometryIdToAppId, appIdToGeometryIds);
+    return { geometryIdToAppId, appIdToGeometryIds };
   }, [worldTree]);
 
   // ── Activate the store (whole-tree workflow) ──
@@ -202,8 +204,8 @@ export function SpeckleSurfaceMaterialsSection({
     initializedRef.current = true;
     skipNextNotifyRef.current = true;
 
-    const initMaterial = expandSavedAssignments(initialAssignments, rawIdToAppId, appIdToRawIds);
-    const initScattering = expandSavedAssignments(initialScatteringAssignments, rawIdToAppId, appIdToRawIds);
+    const initMaterial = expandSavedAssignments(initialAssignments, geometryIdToAppId, appIdToGeometryIds);
+    const initScattering = expandSavedAssignments(initialScatteringAssignments, geometryIdToAppId, appIdToGeometryIds);
     loadAssignments(initMaterial, initScattering);
     useAcousticMaterialStore.temporal.getState().clear();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -219,26 +221,26 @@ export function SpeckleSurfaceMaterialsSection({
     if (!initialAssignments || Object.keys(initialAssignments).length === 0) return;
     if (useAcousticMaterialStore.getState().materialAssignments.size > 0) return;
 
-    const initMaterial = expandSavedAssignments(initialAssignments, rawIdToAppId, appIdToRawIds);
-    const initScattering = expandSavedAssignments(initialScatteringAssignments, rawIdToAppId, appIdToRawIds);
+    const initMaterial = expandSavedAssignments(initialAssignments, geometryIdToAppId, appIdToGeometryIds);
+    const initScattering = expandSavedAssignments(initialScatteringAssignments, geometryIdToAppId, appIdToGeometryIds);
 
     skipNextNotifyRef.current = true;
     loadAssignments(initMaterial, initScattering);
     useAcousticMaterialStore.temporal.getState().clear();
-  }, [initialAssignments, initialScatteringAssignments, rawIdToAppId, appIdToRawIds, loadAssignments]);
+  }, [initialAssignments, initialScatteringAssignments, geometryIdToAppId, appIdToGeometryIds, loadAssignments]);
   // ── Re-expand once the whole-model id maps become available ──
-  // On mount the worldTree (and thus `appIdToRawIds`) may still be empty, so the
+  // On mount the worldTree (and thus `appIdToGeometryIds`) may still be empty, so the
   // effects above kept the persisted applicationId keys verbatim. When the maps
-  // arrive, expand every key to the full set of raw ids sharing that appId — the
+  // arrive, expand every key to the full set of geometry ids sharing that appId — the
   // carrier AND its display meshes — so the Object Explorer's mesh rows resolve
   // the same material the viewer already colors.
   const hasRemappedRef = useRef(false);
   useEffect(() => {
     if (hasRemappedRef.current) return;
-    if (appIdToRawIds.size === 0) return;
+    if (appIdToGeometryIds.size === 0) return;
     if (materialAssignments.size === 0) return;
 
-    const currentRawIds = new Set(rawIdToAppId.keys());
+    const currentRawIds = new Set(geometryIdToAppId.keys());
     let needsExpansion = false;
     materialAssignments.forEach((_, key) => {
       if (!currentRawIds.has(key)) needsExpansion = true;
@@ -249,13 +251,13 @@ export function SpeckleSurfaceMaterialsSection({
 
     const expandedMaterial = expandSavedAssignments(
       Object.fromEntries(materialAssignments),
-      rawIdToAppId,
-      appIdToRawIds,
+      geometryIdToAppId,
+      appIdToGeometryIds,
     );
     const expandedScattering = expandSavedAssignments(
       Object.fromEntries(scatteringAssignments),
-      rawIdToAppId,
-      appIdToRawIds,
+      geometryIdToAppId,
+      appIdToGeometryIds,
     );
 
     // If every saved ID was stale (no matches), keep the originals to avoid
@@ -265,7 +267,7 @@ export function SpeckleSurfaceMaterialsSection({
     skipNextNotifyRef.current = true;
     loadAssignments(expandedMaterial, expandedScattering);
     useAcousticMaterialStore.temporal.getState().clear();
-  }, [appIdToRawIds, rawIdToAppId, materialAssignments, scatteringAssignments, loadAssignments]);
+  }, [appIdToGeometryIds, geometryIdToAppId, materialAssignments, scatteringAssignments, loadAssignments]);
 
   // Track previous layer to detect changes
   const previousLayerIdRef = useRef<string | null>(null);
@@ -315,13 +317,13 @@ export function SpeckleSurfaceMaterialsSection({
 
     const assignmentsObject: Record<string, string> = {};
     materialAssignments.forEach((materialId, objectId) => {
-      const appId = rawIdToAppId.get(objectId) || objectId;
+      const appId = geometryIdToAppId.get(objectId) || objectId;
       assignmentsObject[appId] = materialId;
     });
 
     const scatteringObject: Record<string, number> = {};
     scatteringAssignments.forEach((value, objectId) => {
-      const appId = rawIdToAppId.get(objectId) || objectId;
+      const appId = geometryIdToAppId.get(objectId) || objectId;
       scatteringObject[appId] = value;
     });
 
@@ -332,7 +334,7 @@ export function SpeckleSurfaceMaterialsSection({
     const geometryObjectIds = Array.from(materialAssignments.keys());
 
     onMaterialAssignmentsChangeRef.current(assignmentsObject, layerName, geometryObjectIds, scatteringObject);
-  }, [materialAssignments, scatteringAssignments, selectedLayerId, layerOptions, rawIdToAppId]);
+  }, [materialAssignments, scatteringAssignments, selectedLayerId, layerOptions, geometryIdToAppId]);
 
   /**
    * Clear material colors when component unmounts.

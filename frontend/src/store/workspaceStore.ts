@@ -2,14 +2,16 @@
 
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
-import { apiService, type WorkspaceDetail } from "@/services/api";
+import { apiService, type WorkspaceDetail, type WorkspaceInvite } from "@/services/api";
 
 /**
  * Active workspace + collaboration state (shared sessions).
  *
- * The backend keeps a durable sessionÔåÆworkspace binding; this store mirrors it
+ * The backend keeps a durable session→workspace binding; this store mirrors it
  * in the browser and polls presence so the UI can warn when several people are
- * on the same model (and pause autosave).
+ * on the same model (and pause autosave). Membership actions (invite, role
+ * change, remove, leave, transfer) are all server-authoritative — the returned
+ * workspace view replaces local state.
  */
 
 const HEARTBEAT_MS = 25000;
@@ -23,14 +25,24 @@ interface WorkspaceState {
   /** Set when a save was rejected because the workspace moved on (409). */
   conflictRevision: number | null;
   inviteUrl: string | null;
+  invites: WorkspaceInvite[];
 
   init: () => Promise<void>;
   refresh: () => Promise<void>;
   switchTo: (workspaceId: string) => Promise<void>;
   create: (name?: string) => Promise<void>;
   join: (token: string) => Promise<void>;
-  createInvite: (role?: "editor" | "viewer") => Promise<string | null>;
+  createInvite: (
+    role?: "editor" | "viewer",
+    options?: { expiresInS?: number; maxUses?: number },
+  ) => Promise<string | null>;
+  loadInvites: () => Promise<void>;
+  revokeInvite: (inviteId: string) => Promise<void>;
   setSharingMode: (mode: "private" | "link") => Promise<void>;
+  leave: () => Promise<void>;
+  setMemberRole: (userHash: string, role: "editor" | "viewer") => Promise<void>;
+  removeMember: (userHash: string) => Promise<void>;
+  transferOwnership: (userHash: string) => Promise<void>;
   heartbeat: () => Promise<void>;
   clearConflict: () => void;
 }
@@ -47,6 +59,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
   error: null,
   conflictRevision: null,
   inviteUrl: null,
+  invites: [],
 
   init: async () => {
     set({ loading: true, error: null }, false, "workspace/init");
@@ -91,6 +104,10 @@ export const useWorkspaceStore = create<WorkspaceState>()(
   switchTo: async (workspaceId) => {
     const ws = await apiService.switchWorkspace(workspaceId);
     set({ workspace: ws, presence: ws.presence ?? 1, revision: ws.revision }, false, "workspace/switch");
+    // Domain data (soundscape, jobs, IRs) is scoped to the workspace, so a
+    // switch must rebootstrap. A reload is the safe, simple way to guarantee
+    // no stale state from the previous workspace is autosaved into the new one.
+    if (typeof window !== "undefined") window.location.reload();
   },
 
   create: async (name) => {
@@ -103,13 +120,36 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     set({ workspace: ws, presence: ws.presence ?? 1, revision: ws.revision }, false, "workspace/join");
   },
 
-  createInvite: async (role = "editor") => {
+  createInvite: async (role = "editor", options) => {
     const ws = get().workspace;
     if (!ws) return null;
-    const invite = await apiService.createWorkspaceInvite(ws.id, role);
+    const invite = await apiService.createWorkspaceInvite(ws.id, role, options);
     const url = `${window.location.origin}${invite.url}`;
     set({ inviteUrl: url }, false, "workspace/invite");
+    void get().loadInvites();
     return url;
+  },
+
+  loadInvites: async () => {
+    const ws = get().workspace;
+    if (!ws) return;
+    try {
+      const invites = await apiService.listWorkspaceInvites(ws.id);
+      set({ invites }, false, "workspace/loadInvites");
+    } catch {
+      /* non-critical */
+    }
+  },
+
+  revokeInvite: async (inviteId) => {
+    const ws = get().workspace;
+    if (!ws) return;
+    await apiService.revokeWorkspaceInvite(ws.id, inviteId);
+    set(
+      { invites: get().invites.map((i) => (i.id === inviteId ? { ...i, revoked: true } : i)) },
+      false,
+      "workspace/revokeInvite",
+    );
   },
 
   setSharingMode: async (mode) => {
@@ -117,6 +157,35 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     if (!ws) return;
     const updated = await apiService.updateWorkspace(ws.id, { sharing_mode: mode });
     set({ workspace: { ...ws, ...updated } }, false, "workspace/sharingMode");
+  },
+
+  leave: async () => {
+    const ws = get().workspace;
+    if (!ws) return;
+    await apiService.leaveWorkspace(ws.id);
+    set({ workspace: null, presence: 1, invites: [] }, false, "workspace/leave");
+    if (typeof window !== "undefined") window.location.reload();
+  },
+
+  setMemberRole: async (userHash, role) => {
+    const ws = get().workspace;
+    if (!ws) return;
+    const updated = await apiService.updateWorkspaceMemberRole(ws.id, userHash, role);
+    set({ workspace: { ...ws, ...updated } }, false, "workspace/setMemberRole");
+  },
+
+  removeMember: async (userHash) => {
+    const ws = get().workspace;
+    if (!ws) return;
+    const updated = await apiService.removeWorkspaceMember(ws.id, userHash);
+    set({ workspace: { ...ws, ...updated } }, false, "workspace/removeMember");
+  },
+
+  transferOwnership: async (userHash) => {
+    const ws = get().workspace;
+    if (!ws) return;
+    const updated = await apiService.transferWorkspaceOwnership(ws.id, userHash);
+    set({ workspace: { ...ws, ...updated } }, false, "workspace/transferOwnership");
   },
 
   heartbeat: async () => {

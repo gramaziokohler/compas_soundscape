@@ -39,7 +39,8 @@
   --color-on-blue: #ffffff;
   --color-on-blue-muted: rgba(255, 255, 255, 0.7);
   --color-on-blue-faint: rgba(255, 255, 255, 0.16);
-  --color-blue-chip-bg: rgba(0, 0, 0, 0.22);
+  --color-blue-chip-bg: rgba(0, 0, 0, 0.25);
+  --color-blue-track-bg: rgba(0, 0, 0, 0.5);
 
   /* Sidebar collapse toggle label text (frosted-glass pill) */
   --color-toggle-label: #1c1d21;
@@ -151,6 +152,7 @@
   --color-on-blue-muted: var(--color-on-blue-muted);
   --color-on-blue-faint: var(--color-on-blue-faint);
   --color-blue-chip-bg: var(--color-blue-chip-bg);
+  --color-blue-track-bg: var(--color-blue-track-bg);  
   --color-toggle-label: var(--color-toggle-label);
   --color-pending: var(--color-pending);
   --color-success: var(--color-success);

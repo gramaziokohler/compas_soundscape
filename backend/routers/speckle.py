@@ -105,6 +105,26 @@ async def ensure_model_ready(model_id: str):
     return result
 
 
+@router.get("/models/{model_id}/latest")
+async def get_model_latest_version(model_id: str):
+    """
+    Read-only: latest version summary for a model.
+
+    Used by the frontend version watcher to detect that a newer commit was
+    published, without triggering `ensure-ready`'s materialization side-effects.
+    """
+    _ensure_authenticated()
+
+    result = await run_in_threadpool(
+        speckle_service.get_model_latest_version, model_id
+    )
+
+    if result is None:
+        raise HTTPException(status_code=404, detail="Model version not available")
+
+    return result
+
+
 @router.get("/ingestion/{ingestion_id}")
 async def get_ingestion_status(ingestion_id: str):
     """

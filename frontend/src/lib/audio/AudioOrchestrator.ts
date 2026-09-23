@@ -37,7 +37,7 @@ import {
   getModeDescription
 } from './utils/mode-selector';
 import type { IRState, NoIRPreferences, ModeSelectionResult } from './utils/mode-selector';
-import { smoothModeTransition, safeDisconnect, safeConnect } from './utils/mode-transition';
+import { crossfadeModes, safeDisconnect, safeConnect } from './utils/mode-transition';
 import { computePositionKey } from '@/utils/positionKey';
 import { SIMULATION_POSITION_MATCH_THRESHOLD } from '@/utils/constants';
 import {
@@ -148,6 +148,42 @@ export class AudioOrchestrator implements IAudioOrchestrator {
 
   // Initialization state
   private initialized: boolean = false;
+
+  // Graph-change notification. Fired whenever the audio graph is rebuilt
+  // (mode switch, ambisonic-order change, IR order change). Playback lives in
+  // Transport, not here, so listeners re-dispatch their in-flight voices onto the
+  // new mode instance. This is what lets timeline playback survive a mode switch.
+  private graphChangeListeners = new Set<() => void>();
+
+  // Monotonic counter bumped at the start of each mode switch. A switch only
+  // notifies its listeners if it is still the latest one, so rapid toggling can
+  // never re-dispatch against a half-torn-down intermediate mode.
+  private modeEpoch = 0;
+
+  // Serializes mode switches. Rapid card/IR changes fire setMode() concurrently;
+  // interleaved switches leave freshly-rebuilt source chains voiced/without IR.
+  // Every switch runs to completion (and applies its IRs) before the next starts.
+  private modeSwitchQueue: Promise<void> = Promise.resolve();
+
+  /**
+   * Subscribe to audio-graph rebuilds. Returns an unsubscribe function.
+   */
+  onGraphChanged(callback: () => void): () => void {
+    this.graphChangeListeners.add(callback);
+    return () => {
+      this.graphChangeListeners.delete(callback);
+    };
+  }
+
+  private notifyGraphChanged(): void {
+    for (const listener of this.graphChangeListeners) {
+      try {
+        listener();
+      } catch (error) {
+        console.error('[AudioOrchestrator] graph-change listener failed:', error);
+      }
+    }
+  }
 
   /**
    * Initialize orchestrator with audio context
@@ -283,11 +319,11 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   }
 
   /**
-   * Update IR buffer on a mode instance if it supports impulse responses
-   * @param mode - Mode instance to update
-   * @param irBuffer - New IR buffer to set
+   * Update IR buffer on a mode instance if it supports impulse responses.
+   * @returns true when applying the IR rebuilt the graph (ambisonic order changed),
+   *   which destroys in-flight voices and therefore needs a playback re-dispatch.
    */
-  private updateModeIRBuffer(mode: IAudioMode, irBuffer: AudioBuffer): void {
+  private async updateModeIRBuffer(mode: IAudioMode, irBuffer: AudioBuffer): Promise<boolean> {
     const channels = irBuffer.numberOfChannels;
 
     // Type guard to check if mode has setImpulseResponse method
@@ -295,9 +331,13 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       // Check if buffer matches mode requirements (all supported channel counts)
       if (mode === this.ambisonicIRMode && [1, 2, 4, 9, 16].includes(channels)) {
         console.log('[AudioOrchestrator] Updating AmbisonicIRMode with new IR buffer');
-        this.ambisonicIRMode.setImpulseResponse(irBuffer);
+        const previousOrder = this.ambisonicIRMode!.getAmbisonicOrder();
+        await this.ambisonicIRMode!.setImpulseResponse(irBuffer);
+        const newOrder = this.ambisonicIRMode!.getAmbisonicOrder();
+        return previousOrder !== newOrder;
       }
     }
+    return false;
   }
 
   /**
@@ -396,6 +436,17 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    * Switches between modes with smooth transitions
    */
   async setMode(config: AudioModeConfig): Promise<void> {
+    // Serialize switches through a single queue so overlapping requests cannot
+    // interleave their initialize → recreate-sources → apply-IRs → notify steps.
+    const run = this.modeSwitchQueue.then(
+      () => this.applyMode(config),
+      () => this.applyMode(config)
+    );
+    this.modeSwitchQueue = run.catch(() => {});
+    return run;
+  }
+
+  private async applyMode(config: AudioModeConfig): Promise<void> {
     if (!this.audioContext) {
       throw new Error('[AudioOrchestrator] Not initialized');
     }
@@ -418,38 +469,65 @@ export class AudioOrchestrator implements IAudioOrchestrator {
 
     console.log(`[AudioOrchestrator] Switching from ${this.currentMode} to ${newMode}`);
 
+    // Bump the epoch so a rapid follow-up switch supersedes this one.
+    const epoch = ++this.modeEpoch;
+
     try {
-      // Store references to existing sources (for re-creation after mode switch)
-      const existingSources: Array<{id: string, buffer: AudioBuffer, position: Position}> = [];
-      if (this.currentModeInstance) {
-        // We can't easily extract sources from modes, so we'll rely on external re-registration
-        // This will be handled by SoundSphereManager
+      // Apply the requested ambisonic order BEFORE building the target mode so
+      // initializeMode reads the updated order. This deliberately does NOT go
+      // through setAmbisonicOrder() — that would recreate the outgoing mode just
+      // to tear it down again immediately.
+      if (config.ambisonicOrder && config.ambisonicOrder !== this.ambisonicOrder) {
+        const resolvedOrder = this.clampToSupportedOrder(config.ambisonicOrder);
+        if (this.binauralDecoder) {
+          await this.binauralDecoder.setOrder(resolvedOrder);
+        }
+        this.ambisonicOrder = resolvedOrder;
       }
+
+      const oldMode = this.currentModeInstance;
 
       // Initialize new mode if needed
       const newModeInstance = await this.initializeMode(newMode);
 
-      // Perform smooth transition
-      await smoothModeTransition(
-        this.currentModeInstance,
-        newModeInstance,
-        this.audioContext
-      );
-
-      // Update state
+      // Flip to the new mode BEFORE re-creating sources and notifying listeners,
+      // so the Transport's re-dispatch and per-source IR resolution target the
+      // new instance (startVoice routes through this.currentModeInstance).
       this.currentMode = newMode;
       this.currentModeInstance = newModeInstance;
-
-      // Update ambisonic order if specified
-      if (config.ambisonicOrder && config.ambisonicOrder !== this.ambisonicOrder) {
-        await this.setAmbisonicOrder(config.ambisonicOrder);
-      }
 
       // Update receiver mode constraint
       this.updateReceiverConstraint();
 
-      // Re-create all registered sources in the new mode
-      this.reCreateSourcesInCurrentMode();
+      // Re-create all registered sources in the new mode AND apply their per-source
+      // simulation IRs before notifying playback. Re-dispatching a voice onto a
+      // chain whose convolver has no buffer yet would play silence.
+      await this.reCreateSourcesInCurrentMode();
+
+      // Tell playback to re-issue its in-flight voices onto the new mode while the
+      // crossfade below ramps it up — this is what makes timeline playback survive.
+      // Only the latest switch may notify (epoch guard).
+      if (epoch === this.modeEpoch) {
+        this.notifyGraphChanged();
+      }
+
+      // Overlapping crossfade: no silent gap between the old and new mode.
+      await crossfadeModes(oldMode, newModeInstance, this.audioContext);
+
+      // Free the outgoing mode's voices/nodes now that it is fully faded out.
+      // The instance itself stays cached for a later switch back.
+      if (oldMode && oldMode !== newModeInstance) {
+        try {
+          oldMode.stopAllVoices();
+        } catch {
+          // Already stopped
+        }
+        try {
+          oldMode.stopAllSources();
+        } catch {
+          // Already stopped
+        }
+      }
 
       console.log(`[AudioOrchestrator] Switched to ${newMode}`);
     } catch (error) {
@@ -459,7 +537,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       if (fallbackMode && fallbackMode !== newMode) {
         // Try fallback mode
         console.warn(`[AudioOrchestrator] Attempting fallback to ${fallbackMode}`);
-        await this.setMode({ mode: fallbackMode, ambisonicOrder: 1 });
+        await this.applyMode({ mode: fallbackMode, ambisonicOrder: 1 });
       } else {
         throw error;
       }
@@ -488,6 +566,27 @@ export class AudioOrchestrator implements IAudioOrchestrator {
    */
   getCurrentMode(): AudioMode {
     return this.currentMode;
+  }
+
+  /**
+   * Clamp a requested ambisonic order to what the browser supports, adding a
+   * warning when it is reduced. Shared by setMode() and setAmbisonicOrder().
+   */
+  private clampToSupportedOrder(order: AmbisonicOrder): AmbisonicOrder {
+    const maxSupported = Math.max(
+      this.browserCapabilities.foa ? 1 : 0,
+      this.browserCapabilities.soa ? 2 : 0,
+      this.browserCapabilities.toa ? 3 : 0
+    );
+
+    if (order > maxSupported) {
+      const orderNames = { 1: 'FOA', 2: 'SOA', 3: 'TOA' };
+      console.warn(`[AudioOrchestrator] ${orderNames[order]} not supported - falling back to ${orderNames[maxSupported as 1 | 2 | 3]}`);
+      this.warnings.push(`${orderNames[order]} not supported - using ${orderNames[maxSupported as 1 | 2 | 3]}`);
+      return maxSupported as AmbisonicOrder;
+    }
+
+    return order;
   }
 
   /**
@@ -601,6 +700,12 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       return;
     }
 
+    // Per-source IRs may carry a different ambisonic order than the previously
+    // active (e.g. globally-imported) IR. Applying them can rebuild the mode's
+    // convolvers and kill in-flight voices, so track the order and re-dispatch
+    // playback once afterwards if it changed.
+    const orderBefore = this.ambisonicIRMode?.getAmbisonicOrder();
+
     // For each source in the registry — look up IR by position key
     for (const [sourceId, { position }] of this.sourceRegistry) {
       const posKey = this.resolveSimSourcePosKey([position.x, position.y, position.z]);
@@ -609,7 +714,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       if (irMetadata) {
         try {
           const irBuffer = await this.downloadAndDecodeIR(irMetadata);
-          (this.currentModeInstance as any).setSourceImpulseResponse(sourceId, irBuffer);
+          await (this.currentModeInstance as any).setSourceImpulseResponse(sourceId, irBuffer);
 
           console.log(`[AudioOrchestrator] ✅ Updated IR for source "${sourceId}" (posKey ${posKey}) with receiver "${receiverId}"`);
         } catch (error) {
@@ -619,11 +724,20 @@ export class AudioOrchestrator implements IAudioOrchestrator {
         // Position has no simulation IR for this receiver → the sound cannot be
         // acoustically convolved there; mute it fully instead of erroring/no-op.
         if ('muteSourceImpulseResponse' in this.currentModeInstance) {
-          (this.currentModeInstance as any).muteSourceImpulseResponse(sourceId);
+          await (this.currentModeInstance as any).muteSourceImpulseResponse(sourceId);
         }
         this.sourceIRAppliedKey.set(sourceId, posKey);
         console.log(`[AudioOrchestrator] 🚫 No IR at posKey ${posKey} for "${sourceId}" — muted (out-of-simulation sound)`);
       }
+    }
+
+    if (
+      this.ambisonicIRMode &&
+      orderBefore !== undefined &&
+      this.ambisonicIRMode.getAmbisonicOrder() !== orderBefore
+    ) {
+      console.log('[AudioOrchestrator] Per-source IRs changed ambisonic order — re-dispatching playback');
+      this.notifyGraphChanged();
     }
 
     console.log('[AudioOrchestrator] Finished updating source IRs');
@@ -848,7 +962,18 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       // If currently in an IR mode, update the IR buffer immediately
       // This ensures that switching between IRs works correctly
       if (this.currentModeInstance) {
-        this.updateModeIRBuffer(this.currentModeInstance, audioBuffer);
+        const orderChanged = await this.updateModeIRBuffer(this.currentModeInstance, audioBuffer);
+        // An order change rebuilds the IR graph (killing in-flight voices and
+        // recreating every source chain), so re-apply per-source simulation IRs
+        // onto the fresh chains and tell playback to re-dispatch. Same-order IR
+        // swaps update convolvers in place and are intentionally left alone to
+        // avoid an unnecessary restart.
+        if (orderChanged) {
+          if (this.sourceReceiverIRMapping && this.activeReceiverId && this.simulationMode !== 'none') {
+            await this.updateSourceIRsForReceiver(this.activeReceiverId);
+          }
+          this.notifyGraphChanged();
+        }
       }
 
       // Mode will be auto-selected when IR is activated via selectImpulseResponse()
@@ -962,23 +1087,7 @@ export class AudioOrchestrator implements IAudioOrchestrator {
     }
 
     // Check browser support for requested order
-    const maxSupported = Math.max(
-      this.browserCapabilities.foa ? 1 : 0,
-      this.browserCapabilities.soa ? 2 : 0,
-      this.browserCapabilities.toa ? 3 : 0
-    );
-
-    if (order > maxSupported) {
-      const orderNames = { 1: 'FOA', 2: 'SOA', 3: 'TOA' };
-      
-      // Log warning
-      console.warn(`[AudioOrchestrator] ${orderNames[order]} not supported - falling back to ${orderNames[maxSupported as 1 | 2 | 3]}`);
-      
-      // Add to warnings
-      this.warnings.push(`${orderNames[order]} not supported - using ${orderNames[maxSupported as 1 | 2 | 3]}`);
-      
-      order = maxSupported as AmbisonicOrder;
-    }
+    order = this.clampToSupportedOrder(order);
 
     console.log(`[AudioOrchestrator] Changing ambisonic order from ${this.ambisonicOrder} to ${order}`);
 
@@ -1005,14 +1114,15 @@ export class AudioOrchestrator implements IAudioOrchestrator {
         this.binauralDecoder.setRotationEnabled(true);
       }
 
-      // Smooth transition
-      await smoothModeTransition(oldMode, this.anechoicMode, this.audioContext!);
+      // Swap the active instance, rebuild its sources, and let playback re-dispatch
+      // onto it while the crossfade ramps it up (same handover as setMode).
+      this.currentModeInstance = this.anechoicMode;
+      await this.reCreateSourcesInCurrentMode();
+      this.notifyGraphChanged();
+      await crossfadeModes(oldMode, this.anechoicMode, this.audioContext!);
 
       // Cleanup old mode
       oldMode.dispose();
-
-      // Update current instance
-      this.currentModeInstance = this.anechoicMode;
     } else if (isAmbisonicIR && this.ambisonicIRMode) {
       // AmbisonicIRMode order is determined by IR channel count, cannot be changed manually
       const currentOrder = this.ambisonicIRMode.getAmbisonicOrder();
@@ -1041,12 +1151,12 @@ export class AudioOrchestrator implements IAudioOrchestrator {
   }
 
   /**
-   * Set IR gain in dB applied uniformly to all source chains in AmbisonicIRMode.
-   * @param dB - Gain in decibels (-12 to +12)
+   * Set the IR peak-offset gain applied to all source chains in AmbisonicIRMode.
+   * @param offset - Linear peak offset (-1 to +1): 0 = unchanged, +raises peaks toward clip, -lowers toward mute
    */
-  setIRGain(dB: number): void {
+  setIRGain(offset: number): void {
     if (this.ambisonicIRMode) {
-      (this.ambisonicIRMode as any).setIRGain?.(dB);
+      (this.ambisonicIRMode as any).setIRGain?.(offset);
     }
   }
 
@@ -1255,9 +1365,11 @@ export class AudioOrchestrator implements IAudioOrchestrator {
 
   /**
    * Re-create all registered sources in the current mode
-   * Called after mode switch to ensure sources exist
+   * Called after mode switch to ensure sources exist.
+   * Awaits per-source simulation IR application so a subsequent playback
+   * re-dispatch never starts a voice on a chain whose convolver has no buffer.
    */
-  private reCreateSourcesInCurrentMode(): void {
+  private async reCreateSourcesInCurrentMode(): Promise<void> {
     if (!this.currentModeInstance) return;
 
     console.log(`[AudioOrchestrator] Re-creating ${this.sourceRegistry.size} sources in new mode`);
@@ -1278,12 +1390,15 @@ export class AudioOrchestrator implements IAudioOrchestrator {
       }
     }
 
-    // If in simulation mode with active receiver, re-apply all source IRs
+    // If in simulation mode with active receiver, re-apply all source IRs and wait
+    // for them so the following re-dispatch has convolved chains ready.
     if (this.sourceReceiverIRMapping && this.activeReceiverId && this.simulationMode !== 'none') {
       console.log('[AudioOrchestrator] Re-applying simulation IRs after mode switch');
-      this.updateSourceIRsForReceiver(this.activeReceiverId).catch(error => {
+      try {
+        await this.updateSourceIRsForReceiver(this.activeReceiverId);
+      } catch (error) {
         console.error('[AudioOrchestrator] Failed to re-apply simulation IRs:', error);
-      });
+      }
     }
   }
 

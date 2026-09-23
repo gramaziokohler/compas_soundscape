@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useSpeckleEngineStore } from '@/store/speckleEngineStore';
+import { getExplorerNodeId } from '@/hooks/useSpeckleTree';
 
 export function useSpeckleSelection({
   worldTree,
@@ -70,7 +71,7 @@ export function useSpeckleSelection({
       if (!tree) return null;
 
       const checkNode = (node: any): any => {
-        const nodeId = node?.raw?.id || node?.model?.id || node?.id;
+        const nodeId = getExplorerNodeId(node);
         if (nodeId === id) return node;
 
         const children = node?.model?.children || node?.children;
@@ -101,7 +102,7 @@ export function useSpeckleSelection({
       if (!tree) return undefined;
 
       const checkNode = (node: any, parentNode: any): string | undefined => {
-        const nodeId = node?.raw?.id || node?.model?.id || node?.id;
+        const nodeId = getExplorerNodeId(node);
         if (nodeId === childId && parentNode) {
           return parentNode?.model?.name || parentNode?.raw?.name || undefined;
         }

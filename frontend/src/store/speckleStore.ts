@@ -840,10 +840,15 @@ export const useSpeckleStore = create<SpeckleStoreState>()(
           // command on one stateKey then re-establishes the target atomically.
           ext.resetFilters();
           _userColorsApplied = false;
+          // All callers pass complete geometry-LEAF id sets (never bare parent
+          // ids), so descendant expansion is unnecessary. More importantly the
+          // viewer's descendant expansion maps nodes to their RAW hash — hiding a
+          // duplicate node `hash#N` would re-inject the bare `hash` and hide its
+          // on-another-layer sibling. Keep expansion OFF.
           if (isolated.length > 0) {
-            ext.isolateObjects(isolated, VISIBILITY_STATE_KEY, true, true);
+            ext.isolateObjects(isolated, VISIBILITY_STATE_KEY, false, true);
           } else if (hidden.length > 0) {
-            ext.hideObjects(hidden, VISIBILITY_STATE_KEY, true, false);
+            ext.hideObjects(hidden, VISIBILITY_STATE_KEY, false, false);
           }
         } catch (err) {
           console.error('[speckleStore] applyVisibility failed:', err);

@@ -21,7 +21,7 @@ import { NumberField } from '@/components/ui/NumberField';
 import type { GradientMetric } from '@/store/uiStore';
 import { useUIStore } from '@/store/uiStore';
 import { useGridListenersStore } from '@/store';
-import { fetchPerReceiverMetrics, fetchPyroomAcousticMetrics, fetchChorasAcousticMetrics, type PerReceiverMetrics, type AcousticParameters } from '@/utils/acousticMetrics';
+import { fetchPerReceiverMetrics, fetchPyroomAcousticMetrics, fetchChorasAcousticMetrics, buildAcousticMetricsFromIRMapping, type PerReceiverMetrics, type AcousticParameters } from '@/utils/acousticMetrics';
 import { GradientMapManager } from '@/lib/three/gradient-map-manager';
 import { SIMULATION_POSITION_THRESHOLD } from '@/utils/constants';
 
@@ -243,6 +243,12 @@ interface SimulationResultContentProps {
   onListenerAssignmentCleared?: (pairs: Array<{ sourceId: string; receiverId: string }>) => void;
   /** True when the card renders as a solid generated (blue) card — drives on-blue tokens. */
   onBlueBackground?: boolean;
+  /** Linear IR peak-offset (-1..1) applied to the IR previews. */
+  irGain?: number;
+  /** Whether IR previews peak-normalize to 1.0 (matches the audio normalize toggle). */
+  irNormalizeEnabled?: boolean;
+  /** Reports each IR's peak amplitude upward (used by the import-irs gain slider). */
+  onIRPeaksChange?: (peaks: Record<string, number>) => void;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -275,6 +281,9 @@ export function SimulationResultContent({
   onListenerIRUploaded,
   onListenerAssignmentCleared,
   onBlueBackground = false,
+  irGain = 0,
+  irNormalizeEnabled = false,
+  onIRPeaksChange,
 }: SimulationResultContentProps) {
   const simulationConfig = config as any;
 
@@ -282,6 +291,8 @@ export function SimulationResultContent({
   const simulationId: string | undefined = simulationConfig.currentSimulationId;
   const simType: 'pyroomacoustics' | 'choras' | undefined =
     config.type === 'pyroomacoustics' || config.type === 'choras' ? config.type : undefined;
+  // Import-irs cards carry per-IR metrics in their mapping — no simulation to fetch.
+  const isImportIrs = config.type === 'import-irs';
   const simulationSourcePositions = (simulationConfig.simulationPositions as {
     sources?: Record<string, [number, number, number]>;
   } | undefined)?.sources;
@@ -381,6 +392,8 @@ export function SimulationResultContent({
   const setActiveGradientMap = useUIStore((s) => s.setActiveGradientMap);
 
   const hasGridReceivers = useMemo(() => detectGridReceivers(sourceReceiverIRMapping), [sourceReceiverIRMapping]);
+  // Import-irs cards show the aggregate metrics table only (no per-listener gradient).
+  const canUseGrid = hasGridReceivers && !isImportIrs;
 
   const [perReceiverMetrics, setPerReceiverMetrics] = useState<PerReceiverMetrics | null>(null);
   const [acousticParams, setAcousticParams] = useState<AcousticParameters | null>(null);
@@ -395,7 +408,7 @@ export function SimulationResultContent({
 
   // Fetch per-receiver metrics once when grid receivers are present and we have a simulationId
   useEffect(() => {
-    if (!hasGridReceivers || !simulationId || !simType) return;
+    if (!canUseGrid || !simulationId || !simType) return;
     let cancelled = false;
     setMetricsLoading(true);
     fetchPerReceiverMetrics(simulationId, simType)
@@ -407,11 +420,20 @@ export function SimulationResultContent({
         if (!cancelled) setMetricsLoading(false);
       });
     return () => { cancelled = true; };
-  }, [hasGridReceivers, simulationId, simType]);
+  }, [canUseGrid, simulationId, simType]);
+
+  // Import-irs: derive the aggregate metrics from the assigned IRs' upload-time
+  // metrics. Re-runs whenever the mapping changes (i.e. whenever an IR is added).
+  useEffect(() => {
+    if (!isImportIrs) return;
+    setAcousticParams(buildAcousticMetricsFromIRMapping(sourceReceiverIRMapping));
+    setPerReceiverMetrics(null);
+  }, [isImportIrs, sourceReceiverIRMapping]);
 
   // Fetch aggregate acoustic metrics for the text-metrics panel (non-grid simulations)
   useEffect(() => {
-    if (hasGridReceivers || !simulationId || !simType) {
+    if (isImportIrs) return;
+    if (canUseGrid || !simulationId || !simType) {
       setAcousticParams(null);
       return;
     }
@@ -428,7 +450,7 @@ export function SimulationResultContent({
         if (!cancelled) setMetricsLoading(false);
       });
     return () => { cancelled = true; };
-  }, [hasGridReceivers, simulationId, simType]);
+  }, [isImportIrs, canUseGrid, simulationId, simType]);
 
   // ── Gradient map: compute point values and dispatch to uiStore ──────────
   useEffect(() => {
@@ -530,7 +552,7 @@ export function SimulationResultContent({
       )}
 
       {/* Gradient metric selector (replaces text metrics when grid receivers used) */}
-      {hasGridReceivers && perReceiverMetrics ? (
+      {canUseGrid && perReceiverMetrics ? (
         <div className="card-stack--md">
           <h3 className="text-xs font-semibold" style={{ color: 'var(--color-on-blue)' }}>
             Acoustic Metrics
@@ -584,7 +606,7 @@ export function SimulationResultContent({
             </div>
           )}
         </div>
-      ) : hasGridReceivers ? (
+      ) : canUseGrid ? (
         metricsLoading ? <MetricsLoading /> : null
       ) : metricsLoading ? (
         <MetricsLoading />
@@ -617,6 +639,9 @@ export function SimulationResultContent({
         singleIRPerListener={singleIRPerListener}
         onListenerIRUploaded={onListenerIRUploaded}
         onListenerAssignmentCleared={onListenerAssignmentCleared}
+        irGain={irGain}
+        irNormalizeEnabled={irNormalizeEnabled}
+        onIRPeaksChange={onIRPeaksChange}
       />
     </div>
   );

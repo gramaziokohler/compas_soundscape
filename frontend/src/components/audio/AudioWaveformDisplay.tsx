@@ -29,6 +29,10 @@ interface AudioWaveformDisplayProps {
   compact?: boolean;
   /** Optional: Callback fired when the user clicks "Download IR" — button only renders when provided */
   onDownload?: () => void;
+  /** Optional: Multiplies every sample amplitude (import-irs gain scale). Default 1. */
+  amplitudeScale?: number;
+  /** Optional: Draw against a fixed full-scale 1.0 reference and show clip/mute state. */
+  fullScale?: boolean;
 }
 
 function DownloadIcon() {
@@ -54,6 +58,8 @@ export function AudioWaveformDisplay({
   onClear,
   compact = false,
   onDownload,
+  amplitudeScale,
+  fullScale,
 }: AudioWaveformDisplayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -101,8 +107,11 @@ export function AudioWaveformDisplay({
       AUDIO_VISUALIZATION.WAVEFORM_POINTS
     );
 
-    renderWaveform(canvas, waveformData, resolvedChannelLabels, viewport);
-  }, [audioBuffer, enableWaveform, resolvedChannelLabels, viewport, compact, colorTheme]);
+    renderWaveform(canvas, waveformData, resolvedChannelLabels, viewport, {
+      amplitudeScale: amplitudeScale ?? 1,
+      fullScale: fullScale ?? false,
+    });
+  }, [audioBuffer, enableWaveform, resolvedChannelLabels, viewport, compact, colorTheme, amplitudeScale, fullScale]);
 
   if (!enableWaveform) {
     return (
@@ -209,21 +218,6 @@ export function AudioWaveformDisplay({
           </button>
         )}
 
-        {onClear && (
-          <button
-            type="button"
-            onClick={onClear}
-            className="absolute top-1 right-1 w-5 h-5 flex items-center justify-center rounded text-xs transition-colors"
-            style={{
-              backgroundColor: 'var(--color-overlay-bg)',
-              color: 'var(--color-foreground)',
-              border: '1px solid var(--color-border-strong)',
-            }}
-            title="Remove audio"
-          >
-            ✕
-          </button>
-        )}
       </div>
     </div>
   );

@@ -43,6 +43,9 @@ interface VirtualTreeItemProps {
   showScattering?: boolean;
   sortedMaterials?: MaterialOption[];
   materialColors?: Map<string, string>;
+  /** Geometry-leaf union across the currently selected rows — when this row is
+   *  selected, its material / scattering controls act on the whole selection. */
+  selectedGeometryIds?: string[];
   /** When true, do not render the isolate/hide buttons (acoustic mode, selection phase). */
   hideIsolateButton?: boolean;
   /** True while the acoustic-region selection phase is active — renders a checkbox and hides hide/isolate. */
@@ -73,6 +76,7 @@ export function VirtualTreeItem({
   showScattering = false,
   sortedMaterials,
   materialColors,
+  selectedGeometryIds,
   hideIsolateButton,
   selectionPhase = false,
   selectionChecked = false,
@@ -280,6 +284,8 @@ export function VirtualTreeItem({
             sortedMaterials={sortedMaterials}
             materialColors={materialColors}
             showScattering={showScattering}
+            isSelected={isSelected}
+            selectedGeometryIds={selectedGeometryIds}
           />
         )}
 

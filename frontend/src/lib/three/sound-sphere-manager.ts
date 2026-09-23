@@ -314,20 +314,27 @@ export class SoundSphereManager {
             // Pinned sounds (Home Sample at the origin) keep their authored
             // position even when it is exactly [0,0,0].
             const isPinned = (soundEvent as any).pinned === true;
-            if (isPinned || !(isZero && hasValidStored)) {
-              this.spherePositions.set(soundEvent.id, newPos);
-              this.promptPositions.set(promptIdx, newPos);
-              // Update 3D mesh position so the viewer reflects undo/redo
-              if (mesh) {
-                mesh.position.set(newPos[0], newPos[1], newPos[2]);
+              if (isPinned || !(isZero && hasValidStored)) {
+                this.spherePositions.set(soundEvent.id, newPos);
+                this.promptPositions.set(promptIdx, newPos);
+                // Update 3D mesh position so the viewer reflects undo/redo
+                if (mesh) {
+                  mesh.position.set(newPos[0], newPos[1], newPos[2]);
+                }
+                // Keep scheduler default positions in sync (entity-linked clips
+                // without a per-iteration override fall back to these).
+                this.soundMetadata.forEach((meta) => {
+                  if (meta.soundEvent?.prompt_index === promptIdx) {
+                    meta.position = { x: newPos[0], y: newPos[1], z: newPos[2] };
+                  }
+                });
+                if (this.audioOrchestrator) {
+                  this.audioOrchestrator.updateSourcePosition(
+                    soundEvent.id,
+                    new THREE.Vector3(newPos[0], newPos[1], newPos[2])
+                  );
+                }
               }
-              if (this.audioOrchestrator) {
-                this.audioOrchestrator.updateSourcePosition(
-                  soundEvent.id,
-                  new THREE.Vector3(newPos[0], newPos[1], newPos[2])
-                );
-              }
-            }
           }
         }
       });
@@ -527,12 +534,15 @@ export class SoundSphereManager {
     entitySounds.forEach(soundEvent => {
       const promptIdx = (soundEvent as any).prompt_index ?? 0;
       const position = soundEvent.position as [number, number, number];
+      // Position before this sync — used to detect an entity that moved (e.g. after
+      // loading a new model version) so its audio source is re-spatialised.
+      const prevPos = this.spherePositions.get(soundEvent.id);
       this.spherePositions.set(soundEvent.id, position);
       this.promptPositions.set(promptIdx, position);
 
+      let finalPos = position;
       if (this.entitySurfaceInfo.largePrompts.has(promptIdx)) {
         const box = this.entitySurfaceInfo.boxByPrompt.get(promptIdx);
-        let finalPos = position;
         if (box && !box.isEmpty()) {
           const center = box.getCenter(new THREE.Vector3());
           const atCenter =
@@ -546,6 +556,31 @@ export class SoundSphereManager {
         }
         this.upsertMarker(promptIdx, soundEvent, finalPos);
         keepMarkers.add(promptIdx);
+      }
+
+      // Entity-linked sounds have no mesh, so the fast-path position sync below
+      // never runs for them. Update the audio source AND the scheduler metadata
+      // here whenever the position changed (new model version → object moved).
+      const moved =
+        !prevPos ||
+        prevPos[0] !== finalPos[0] ||
+        prevPos[1] !== finalPos[1] ||
+        prevPos[2] !== finalPos[2];
+      if (moved) {
+        // Keep every variant's scheduler default position in sync with the
+        // entity's new location (Transport falls back to these for clips that
+        // have no per-iteration position override).
+        this.soundMetadata.forEach((meta) => {
+          if (meta.soundEvent?.prompt_index === promptIdx) {
+            meta.position = { x: finalPos[0], y: finalPos[1], z: finalPos[2] };
+          }
+        });
+        if (this.audioOrchestrator) {
+          this.audioOrchestrator.updateSourcePosition(
+            soundEvent.id,
+            new THREE.Vector3(finalPos[0], finalPos[1], finalPos[2])
+          );
+        }
       }
     });
     // Remove markers that no longer belong to a large entity source (unlink/shrink).
@@ -585,6 +620,9 @@ export class SoundSphereManager {
     this.syncAudioSources(allNonPendingSounds);
 
     this.lastVisibleSoundIds = new Set(newSoundIds);
+    // Record the entity-linked set so the next sync can take the fast path
+    // (the full path previously left this stale, forcing a full rebuild every call).
+    this.entityLinkedIds = newEntityLinkedIds;
 
     return newlyPlacedPositions;
   }

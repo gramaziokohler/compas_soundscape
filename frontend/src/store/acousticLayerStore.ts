@@ -259,6 +259,25 @@ export function resolveSimulationLayerName(layerName: string | null | undefined)
  * multi-layer acoustic selection to reach the simulation.
  */
 export function resolveSimulationGeometryObjectIds(): string[] {
-  return getAcousticLayerAllIds();
+  return toBackendGeometryIds(getAcousticLayerAllIds());
+}
+
+/**
+ * Translate viewer geometry ids to the raw Speckle object hashes the backend
+ * simulation routers filter on.
+ *
+ * The viewer disambiguates duplicate-id nodes by suffixing `model.id` with
+ * `#<n>`. The backend keys geometry by the RAW Speckle hash (`obj.id`), so the
+ * suffix must be stripped. Duplicates collapse to one hash here — the backend
+ * cannot separate same-hash copies anyway.
+ */
+export function toBackendGeometryIds(ids: string[]): string[] {
+  const out = new Set<string>();
+  for (const id of ids) {
+    if (!id) continue;
+    const hash = id.indexOf('#') === -1 ? id : id.slice(0, id.indexOf('#'));
+    if (hash) out.add(hash);
+  }
+  return Array.from(out);
 }
 

@@ -17,7 +17,7 @@ export interface SilhouettePalette {
 }
 
 /** Resolve a CSS var (or return non-`var()` strings untouched). */
-function resolveCssVar(variable: string, fallback = '#888888'): string {
+export function resolveCssVar(variable: string, fallback = '#888888'): string {
   if (typeof window === 'undefined') return fallback;
   if (!variable.startsWith('var(')) return variable;
   const match = variable.match(/var\(\s*(--[^,)]+)/);

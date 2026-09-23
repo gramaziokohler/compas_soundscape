@@ -28,6 +28,12 @@ interface SpeckleEngineState {
   // Live camera orientation (updated every frame from animation loop)
   currentCameraOrientation: { yaw: number; pitch: number; roll: number };
 
+  /** Version id currently loaded in the viewer (latest loadable version). */
+  loadedModelVersionId: string | null;
+  /** Server `created_at` of the loaded version — used to tell a genuinely newer
+   *  publish from a re-materialized/derived copy with a different id. */
+  loadedModelVersionCreatedAt: string | null;
+
   // Actions
   setViewer: (viewer: Viewer | null) => void;
   setCoordinator: (coordinator: SpeckleAudioCoordinator | null) => void;
@@ -44,6 +50,8 @@ interface SpeckleEngineState {
   setIsAcousticMode: (isAcousticMode: boolean) => void;
   setShowHoveringHighlight: (showHoveringHighlight: boolean) => void;
   setCurrentCameraOrientation: (orientation: { yaw: number; pitch: number; roll: number }) => void;
+  setLoadedModelVersionId: (versionId: string | null) => void;
+  setLoadedModelVersionCreatedAt: (createdAt: string | null) => void;
 }
 
 export const useSpeckleEngineStore = create<SpeckleEngineState>((set) => ({
@@ -62,6 +70,8 @@ export const useSpeckleEngineStore = create<SpeckleEngineState>((set) => ({
   isAcousticMode: false,
   showHoveringHighlight: true,
   currentCameraOrientation: { yaw: 0, pitch: 0, roll: 0 },
+  loadedModelVersionId: null,
+  loadedModelVersionCreatedAt: null,
 
   setViewer: (viewer) => set({ viewer }),
   setCoordinator: (coordinator) => set({ coordinator }),
@@ -78,4 +88,6 @@ export const useSpeckleEngineStore = create<SpeckleEngineState>((set) => ({
   setIsAcousticMode: (isAcousticMode) => set({ isAcousticMode }),
   setShowHoveringHighlight: (showHoveringHighlight) => set({ showHoveringHighlight }),
   setCurrentCameraOrientation: (currentCameraOrientation) => set({ currentCameraOrientation }),
+  setLoadedModelVersionId: (loadedModelVersionId) => set({ loadedModelVersionId }),
+  setLoadedModelVersionCreatedAt: (loadedModelVersionCreatedAt) => set({ loadedModelVersionCreatedAt }),
 }));

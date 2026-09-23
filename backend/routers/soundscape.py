@@ -50,6 +50,21 @@ def _get_session_id(request: Request) -> str:
     return sid
 
 
+def _require_role(request: Request, workspace_id: str, allowed: tuple[str, ...]) -> str | None:
+    """Guard a mutating route by the caller's workspace role.
+
+    Anonymous/legacy sessions have no user_hash; in that mode there is a single
+    implicit owner (the cookie itself is the workspace), so the guard is a no-op.
+    """
+    user_hash = getattr(getattr(request, "state", None), "user_hash", None)
+    if not user_hash:
+        return None
+    role = metadata_store.get_member_role(workspace_id, user_hash)
+    if role not in allowed:
+        raise HTTPException(status_code=403, detail="Insufficient permission for this workspace")
+    return role
+
+
 @router.get("/home-projects")
 async def list_home_projects_endpoint(request: Request):
     """List locally saved Home (sandbox) projects for this workspace."""
@@ -302,6 +317,53 @@ def _workspace_audio_referenced_by_others(workspace_id: str, exclude_model_id: s
     return refs
 
 
+def _collect_referenced_ir_filenames(data: SoundscapeData) -> set[str]:
+    """IR library filenames referenced by a soundscape's simulated/imported IR mappings."""
+    refs: set[str] = set()
+    for sim_config in (data.simulation_configs or []):
+        mapping = getattr(sim_config, "source_receiver_ir_mapping", None) or {}
+        for receiver_map in mapping.values():
+            for meta in (receiver_map or {}).values():
+                filename = getattr(meta, "filename", None)
+                if filename is None and isinstance(meta, dict):
+                    filename = meta.get("filename")
+                if filename:
+                    refs.add(filename)
+    return refs
+
+
+def _model_referenced_irs(model_dir: Path) -> set[str]:
+    """IR library filenames referenced by a model's saved soundscape.json."""
+    json_path = model_dir / SOUNDSCAPE_JSON_FILENAME
+    if not json_path.exists():
+        return set()
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = SoundscapeData(**json.load(f))
+    except Exception as e:
+        logger.warning(f"Failed to read {json_path}: {e}")
+        return set()
+    return _collect_referenced_ir_filenames(data)
+
+
+def _workspace_irs_referenced_by_others(workspace_id: str, exclude_model_id: str) -> set[str]:
+    """IR filenames referenced by every OTHER model in the workspace.
+
+    The shared IR library (IMPULSE_RESPONSE_DIR) is global, so deleting one
+    model's history must not remove an IR another model in the workspace still
+    references.
+    """
+    root = user_data_dir(workspace_id)
+    refs: set[str] = set()
+    if not root.exists():
+        return refs
+    for child in root.iterdir():
+        if not child.is_dir() or child.name == "audio" or child.name == exclude_model_id:
+            continue
+        refs |= _model_referenced_irs(child)
+    return refs
+
+
 def _copy_ir_files(session_id: str, model_id: str, ir_urls: list[str]) -> int:
     """Copy IR files from temp directories to model-linked ir_files dir."""
     dest_dir = user_model_dir(session_id, model_id) / "ir_files"
@@ -416,6 +478,7 @@ async def save_soundscape(request: SoundscapeSaveRequest, req: Request):
     4. Write soundscape.json as source of truth
     """
     session_id = _get_session_id(req)
+    _require_role(req, session_id, (ROLE_OWNER, ROLE_EDITOR))
     data = request.soundscape_data
     model_id = data.model_id
 
@@ -508,7 +571,7 @@ async def save_soundscape(request: SoundscapeSaveRequest, req: Request):
 
 
 @router.get("/{model_id}", response_model=SoundscapeLoadResponse)
-async def load_soundscape(model_id: str, req: Request):
+async def load_soundscape(model_id: str, req: Request, workspace_id: str | None = None):
     """
     Load soundscape data for a model — local JSON.
 
@@ -518,7 +581,7 @@ async def load_soundscape(model_id: str, req: Request):
     user_hash = getattr(req.state, "user_hash", None)
     session_token = getattr(req.state, "session_token", None)
 
-    # ÔöÇÔöÇ Resolve the workspace that owns this model ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+    # ── Resolve the workspace that owns this model ───────────────────────────
     # A user opening `?model_id=` may not have the model in their own workspace
     # yet (shared project). Resolve the owning workspace; members are switched to
     # it, link-shared workspaces auto-join, private non-member workspaces signal
@@ -526,7 +589,7 @@ async def load_soundscape(model_id: str, req: Request):
     requires_invite = False
     candidate_json = user_model_dir(session_id, model_id) / SOUNDSCAPE_JSON_FILENAME
     if not candidate_json.exists():
-        owner_wid = metadata_store.resolve_model_workspace(model_id)
+        owner_wid = metadata_store.resolve_model_workspace(model_id, prefer_workspace_id=workspace_id)
         if owner_wid and owner_wid != session_id:
             owner_ws = metadata_store.get_workspace(owner_wid)
             role = metadata_store.get_member_role(owner_wid, user_hash) if user_hash else None
@@ -537,7 +600,7 @@ async def load_soundscape(model_id: str, req: Request):
                 req.state.workspace_id = owner_wid
                 req.state.session_id = owner_wid
             elif owner_ws and owner_ws.get("sharing_mode") == "link" and user_hash and session_token:
-                metadata_store.add_member(owner_wid, user_hash, ROLE_EDITOR)
+                metadata_store.ensure_member(owner_wid, user_hash, ROLE_EDITOR)
                 metadata_store.set_session_workspace(session_token, owner_wid)
                 session_id = owner_wid
                 req.state.workspace_id = owner_wid
@@ -665,6 +728,7 @@ async def upload_soundscape_audio(
         raise HTTPException(status_code=400, detail="model_id is required")
 
     session_id = _get_session_id(req)
+    _require_role(req, session_id, (ROLE_OWNER, ROLE_EDITOR))
     dest_dir = user_audio_dir(session_id)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -697,12 +761,14 @@ async def delete_soundscape(model_id: str, req: Request):
     the workspace still needs. The workspace itself is left intact.
     """
     session_id = _get_session_id(req)
+    _require_role(req, session_id, (ROLE_OWNER, ROLE_EDITOR))
 
     model_dir = user_model_dir(session_id, model_id)
     audio_dir = user_audio_dir(session_id)
 
     deleted_model = False
     deleted_audio = 0
+    deleted_irs = 0
 
     if model_dir.exists():
         # Resolve this model's audio refs BEFORE removing its soundscape.json,
@@ -718,6 +784,21 @@ async def delete_soundscape(model_id: str, req: Request):
                 except OSError as e:
                     logger.warning(f"Failed to delete audio {filename}: {e}")
 
+        # Resolve this model's IR refs before removing its soundscape.json, then
+        # delete the shared-library copies no other model still references. The
+        # per-model ir_files/ copies go away with the directory below.
+        model_ir_refs = _model_referenced_irs(model_dir)
+        shared_ir_refs = _workspace_irs_referenced_by_others(session_id, model_id)
+        ir_library_dir = Path(IMPULSE_RESPONSE_DIR)
+        for filename in model_ir_refs - shared_ir_refs:
+            candidate = ir_library_dir / filename
+            if candidate.is_file():
+                try:
+                    candidate.unlink()
+                    deleted_irs += 1
+                except OSError as e:
+                    logger.warning(f"Failed to delete IR {filename}: {e}")
+
         shutil.rmtree(str(model_dir))
         deleted_model = True
         logger.info(f"Deleted model directory: {model_dir}")
@@ -732,6 +813,7 @@ async def delete_soundscape(model_id: str, req: Request):
         "success": True,
         "deleted_model": deleted_model,
         "deleted_audio_files": deleted_audio,
+        "deleted_ir_files": deleted_irs,
     }
 
 
@@ -757,6 +839,19 @@ async def delete_workspace(workspace_id: str, req: Request):
         shutil.rmtree(str(workspace_dir))
         deleted = True
         logger.info(f"Deleted workspace directory: {workspace_dir}")
+
+    # Remove the durable metadata too, and move every affected session to a
+    # workspace its user still owns (otherwise they'd point at a ghost).
+    try:
+        affected = metadata_store.delete_workspace_rows(workspace_id)
+        for uh in affected:
+            user = metadata_store.get_user(uh) or {}
+            name = f"{user.get('display_name') or 'My'}'s workspace"
+            default_ws = metadata_store.get_or_create_default_workspace(uh, name)
+            for sess in metadata_store.sessions_for_user(uh):
+                metadata_store.set_workspace_for_token_hash(sess["token_hash"], default_ws["id"])
+    except Exception as e:
+        logger.warning(f"Failed to clean up workspace metadata for {workspace_id}: {e}")
 
     return {"success": True, "deleted_workspace": deleted}
 

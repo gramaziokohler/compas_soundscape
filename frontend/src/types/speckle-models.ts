@@ -41,3 +41,13 @@ export interface SpeckleProjectModelsResponse {
   total_count: number;
   auth_token?: string;
 }
+
+/** Response from GET /api/speckle/models/{model_id}/latest */
+export interface SpeckleModelLatestVersion {
+  version_id: string;
+  object_id: string;
+  created_at?: string;
+  author_name?: string;
+  source_application?: string;
+  message?: string;
+}

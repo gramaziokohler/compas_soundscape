@@ -5,10 +5,10 @@ from specklepy.api import operations
 from specklepy.objects.geometry import Point, Line, Polyline
 from specklepy.objects import Base
 from specklepy.transports.server import ServerTransport
-from specklepy.core.api.inputs.project_inputs import WorkspaceProjectCreateInput
-from specklepy.core.api.inputs.model_inputs import CreateModelInput
-from specklepy.core.api.inputs.version_inputs import CreateVersionInput
-from specklepy.core.api.enums import ProjectVisibility
+from specklepy.api.inputs.project_inputs import WorkspaceProjectCreateInput
+from specklepy.api.inputs.model_inputs import CreateModelInput
+from specklepy.api.inputs.version_inputs import CreateVersionInput
+from specklepy.api.enums import ProjectVisibility
 
 # 1. Authenticate
 load_dotenv()

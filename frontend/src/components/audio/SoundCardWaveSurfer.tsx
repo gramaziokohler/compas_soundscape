@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import type WaveSurfer from 'wavesurfer.js';
 import { useAudioControlsStore } from '@/store/audioControlsStore';
 import { pauseStore, commitStore } from '@/store';
-import { registerPreviewInstance } from '@/lib/audio/previewRegistry';
+import { registerPreviewInstance, unregisterPreviewInstance, seekPreviewInstances, getPreviewPosition } from '@/lib/audio/previewRegistry';
 import { WaveSurferPlayer } from './WaveSurferPlayer';
 
 interface SoundCardWaveSurferProps {
@@ -53,6 +53,15 @@ export function SoundCardWaveSurfer({
   const onStopRef = useRef(onStop);
   useEffect(() => { onStopRef.current = onStop; }, [onStop]);
 
+  // Drop this player from the preview registry on unmount so stopping a preview
+  // never touches a destroyed WaveSurfer instance.
+  useEffect(() => {
+    return () => {
+      const ws = wsRef.current;
+      if (soundId && ws) unregisterPreviewInstance(soundId, ws);
+    };
+  }, [soundId]);
+
   // Trim state
   const [localTrimStart, setLocalTrimStart] = useState(0);
   const [localTrimEnd, setLocalTrimEnd] = useState(1);
@@ -70,6 +79,9 @@ export function SoundCardWaveSurfer({
   const isDraggingActiveRef = useRef(false);
   const isDraggingRef = useRef(false);
   const [cursor, setCursor] = useState('default');
+  // Which trim handle is revealed — only shown while hovering a track border
+  // (or actively dragging it), so the idle waveform stays clean.
+  const [hoveredHandle, setHoveredHandle] = useState<'left' | 'right' | 'pan' | null>(null);
 
   // Sync trim from store
   useEffect(() => {
@@ -190,12 +202,18 @@ export function SoundCardWaveSurfer({
       const leftPx = localTrimStart * width;
       const rightPx = localTrimEnd * width;
       const isTrimActive = localTrimStart > 0 || localTrimEnd < 1;
-      if (Math.abs(x - leftPx) <= HANDLE_ZONE || Math.abs(x - rightPx) <= HANDLE_ZONE) {
+      const nearLeft = Math.abs(x - leftPx) <= HANDLE_ZONE;
+      const nearRight = Math.abs(x - rightPx) <= HANDLE_ZONE;
+      if (nearLeft || nearRight) {
         setCursor('col-resize');
-      } else if (isTrimActive && x > leftPx && x < rightPx) {
-        setCursor('grab');
+        setHoveredHandle(nearLeft ? 'left' : 'right');
       } else {
-        setCursor('default');
+        setHoveredHandle(null);
+        if (isTrimActive && x > leftPx && x < rightPx) {
+          setCursor('grab');
+        } else {
+          setCursor('default');
+        }
       }
       return;
     }
@@ -209,14 +227,17 @@ export function SoundCardWaveSurfer({
         dragPhaseRef.current = 'dragging-left';
         pauseStore('audioControls');
         setCursor('col-resize');
+        setHoveredHandle('left');
       } else if (phase === 'pending-right') {
         dragPhaseRef.current = 'dragging-right';
         pauseStore('audioControls');
         setCursor('col-resize');
+        setHoveredHandle('right');
       } else if (phase === 'pending-pan') {
         dragPhaseRef.current = 'dragging-pan';
         pauseStore('audioControls');
         setCursor('grabbing');
+        setHoveredHandle('pan');
       }
     }
 
@@ -261,7 +282,11 @@ export function SoundCardWaveSurfer({
         const x = e.clientX - rect.left;
         const frac = Math.max(trimStartRef.current, Math.min(x / rect.width, trimEndRef.current));
         wsRef.current.seekTo(frac);
-        setCurrentTime(frac * (wsRef.current.getDuration() || 0));
+        const seekTime = frac * (wsRef.current.getDuration() || 0);
+        setCurrentTime(seekTime);
+        // Move any other mounted player of this preview (e.g. the sound card)
+        // to the same playhead.
+        if (soundId) seekPreviewInstances(soundId, seekTime);
       }
     }
 
@@ -269,15 +294,32 @@ export function SoundCardWaveSurfer({
     isDraggingActiveRef.current = false;
     isDraggingRef.current = false;
     setCursor('default');
-  }, [commitTrim]);
+
+    // Keep the handle revealed only while the pointer is still over a border.
+    const wrapper = waveformWrapperRef.current;
+    if (wrapper) {
+      const rect = wrapper.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const nearLeft = Math.abs(x - trimStartRef.current * rect.width) <= HANDLE_ZONE;
+      const nearRight = Math.abs(x - trimEndRef.current * rect.width) <= HANDLE_ZONE;
+      setHoveredHandle(nearLeft ? 'left' : nearRight ? 'right' : null);
+    } else {
+      setHoveredHandle(null);
+    }
+  }, [commitTrim, soundId]);
 
   const handlePointerLeave = useCallback(() => {
     if (dragPhaseRef.current === 'none') {
       setCursor('default');
+      setHoveredHandle(null);
     }
   }, []);
 
   const isTrimActive = localTrimStart > 0 || localTrimEnd < 1;
+
+  // Handles are revealed on border hover (or while dragging that handle).
+  const showLeftHandle = hoveredHandle === 'left' || hoveredHandle === 'pan';
+  const showRightHandle = hoveredHandle === 'right' || hoveredHandle === 'pan';
 
   const trimClearButton =
     isTrimActive ? (
@@ -291,6 +333,7 @@ export function SoundCardWaveSurfer({
           if (wsRef.current) {
             wsRef.current.seekTo(0);
             setCurrentTime(0);
+            if (soundId) seekPreviewInstances(soundId, 0);
           }
           onStop();
         }}
@@ -315,9 +358,27 @@ export function SoundCardWaveSurfer({
       color={color}
       backgroundColor="var(--color-blue-chip-bg)"
       onBlueBackground
+      progressColor="var(--color-secondary)"
+      cursorColor="var(--color-warning)"
+      waveformTooltip="Amber line is the playhead · click to seek"
       onWavesurferReady={(ws) => {
+        // Drop the previous instance if the player was recreated (e.g. URL change).
+        if (soundId && wsRef.current && wsRef.current !== ws) {
+          unregisterPreviewInstance(soundId, wsRef.current);
+        }
         wsRef.current = ws;
-        if (soundId) registerPreviewInstance(soundId, ws);
+        if (ws && soundId) {
+          registerPreviewInstance(soundId, ws);
+          // A player that mounts while the same preview is already at a
+          // non-zero playhead (e.g. the card opened after the entity panel
+          // started) must pick that position up once it is ready.
+          const shared = getPreviewPosition(soundId);
+          if (shared !== undefined && shared > 0) {
+            ws.on('ready', () => {
+              try { ws.setTime(shared); } catch { /* ignore */ }
+            });
+          }
+        }
       }}
       onAudioProcess={handleAudioProcess}
       onFinish={handleFinish}
@@ -342,7 +403,7 @@ export function SoundCardWaveSurfer({
             left: 0,
             width: `${localTrimStart * 100}%`,
             height: '100%',
-            backgroundColor: 'var(--color-blue-chip-bg)',
+            backgroundColor: 'var(--color-blue-track-bg)',
             pointerEvents: 'none',
             zIndex: 5,
           }}
@@ -358,7 +419,7 @@ export function SoundCardWaveSurfer({
             left: `${localTrimEnd * 100}%`,
             width: `${(1 - localTrimEnd) * 100}%`,
             height: '100%',
-            backgroundColor: 'var(--color-blue-chip-bg)',
+            backgroundColor: 'var(--color-blue-track-bg)',
             pointerEvents: 'none',
             zIndex: 5,
           }}
@@ -367,6 +428,7 @@ export function SoundCardWaveSurfer({
 
       {/* Left trim handle */}
       <div
+        title="Trim start — drag to adjust"
         style={{
           position: 'absolute',
           top: 0,
@@ -374,10 +436,12 @@ export function SoundCardWaveSurfer({
           transform: 'translateX(-50%)',
           width: '3px',
           height: '100%',
-          backgroundColor: color,
-          pointerEvents: 'none',
-          borderRadius: '2px',
+          backgroundColor: 'var(--color-warning-hover)',
+          pointerEvents: showLeftHandle ? 'auto' : 'none',
+          borderRadius: '1.5px',
           zIndex: 5,
+          opacity: showLeftHandle ? 1 : 0,
+          transition: 'opacity 0.12s ease',
         }}
       >
         <div
@@ -388,7 +452,7 @@ export function SoundCardWaveSurfer({
             transform: 'translate(-50%, -50%)',
             width: '8px',
             height: '14px',
-            backgroundColor: color,
+            backgroundColor: 'var(--color-warning)',
             borderRadius: '3px',
           }}
         />
@@ -396,6 +460,7 @@ export function SoundCardWaveSurfer({
 
       {/* Right trim handle */}
       <div
+        title="Trim end — drag to adjust"
         style={{
           position: 'absolute',
           top: 0,
@@ -403,10 +468,12 @@ export function SoundCardWaveSurfer({
           transform: 'translateX(-50%)',
           width: '3px',
           height: '100%',
-          backgroundColor: color,
-          pointerEvents: 'none',
+          backgroundColor: 'var(--color-warning)',
+          pointerEvents: showRightHandle ? 'auto' : 'none',
           borderRadius: '2px',
           zIndex: 5,
+          opacity: showRightHandle ? 1 : 0,
+          transition: 'opacity 0.12s ease',
         }}
       >
         <div
@@ -417,7 +484,7 @@ export function SoundCardWaveSurfer({
             transform: 'translate(-50%, -50%)',
             width: '8px',
             height: '14px',
-            backgroundColor: color,
+            backgroundColor: 'var(--color-warning)',
             borderRadius: '3px',
           }}
         />

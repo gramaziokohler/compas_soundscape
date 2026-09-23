@@ -153,7 +153,17 @@ export function renderWaveform(
   canvas: HTMLCanvasElement,
   waveformData: WaveformData,
   channelLabels?: string[],
-  viewport?: ViewportState
+  viewport?: ViewportState,
+  renderOptions?: {
+    /** Multiplies every amplitude (e.g. the import-irs gain scale). Default 1. */
+    amplitudeScale?: number;
+    /**
+     * When true, amplitudes are drawn against a fixed full-scale reference of 1.0
+     * (so the on-screen height reflects absolute amplitude) and clamped at ±1.
+     * Default false preserves the self-normalised preview.
+     */
+    fullScale?: boolean;
+  }
 ): void {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -180,6 +190,7 @@ export function renderWaveform(
     root ? getComputedStyle(root).getPropertyValue(v).trim() || fallback : fallback;
 
   const primaryColor = getCssVar('--color-primary', '#002aff');
+  const warningColor = getCssVar('--color-warning', '#F59E0B');
   const labelColor = getCssVar('--color-secondary-hover', '#5c5f66');
   const axisColor = getCssVar('--color-border-strong', 'rgba(0,0,0,0.16)');
   const gridColor = getCssVar('--color-border', 'rgba(0,0,0,0.08)');
@@ -194,9 +205,15 @@ export function renderWaveform(
     1e-6
   );
 
+  const amplitudeScale = renderOptions?.amplitudeScale ?? 1;
+  const fullScale = renderOptions?.fullScale ?? false;
+  // Reference used to convert a linear amplitude into a track fraction.
+  // Full-scale mode pins 1.0 to the track edge so gain/clip is visible.
+  const reference = fullScale ? 1 : globalPeak;
+
   const isFoa = waveformData.numChannels === 4;
   const isMultiChannel = waveformData.numChannels > 1;
-  const peakLabel = formatPeakAmplitude(globalPeak);
+  const peakLabel = formatPeakAmplitude(fullScale ? Math.min(1, globalPeak * amplitudeScale) : globalPeak);
   const pkGap = axis.PK_GAP;
   const foaPkRowHeight = 10;
 
@@ -285,7 +302,9 @@ export function renderWaveform(
   const drawPeakGuides = (trackY: number, trackH: number, channelPeak: number) => {
     const centerY = trackY + trackH / 2;
     const maxAmplitude = trackH / 2;
-    const normalizedPeak = channelPeak / globalPeak;
+    const normalizedPeak = fullScale
+      ? Math.min(1, channelPeak * amplitudeScale)
+      : channelPeak / globalPeak;
     const peakHeight = normalizedPeak * maxAmplitude * zoom;
     const verticalCenter = centerY - panY * trackH * zoom;
 
@@ -337,7 +356,9 @@ export function renderWaveform(
     const endIdx = Math.min(numPoints - 1, Math.ceil(endFraction * numPoints));
 
     for (let i = startIdx; i <= endIdx; i++) {
-      const amplitude = channelData.amplitudes[i] / globalPeak;
+      const amplitude = fullScale
+        ? Math.min(1, channelData.amplitudes[i] * amplitudeScale)
+        : channelData.amplitudes[i] / globalPeak;
       const dataFraction = numPoints > 1 ? i / (numPoints - 1) : 0;
       const viewportFraction = (dataFraction - startFraction) / visibleFraction;
       const x = padding.left + viewportFraction * plotWidth;
@@ -357,10 +378,16 @@ export function renderWaveform(
   waveformData.channels.forEach((channelData, channelIdx) => {
     const { trackY, trackH, pkY } = trackSlots[channelIdx];
 
+    const isClipping = fullScale && channelData.peak * amplitudeScale > 1;
+    const waveColor = isClipping ? warningColor : primaryColor;
+    const displayPeak = fullScale
+      ? Math.min(1, channelData.peak * amplitudeScale)
+      : channelData.peak;
+
     drawDottedGrid(trackY, trackH);
     drawPeakGuides(trackY, trackH, channelData.peak);
     drawCenterAxis(trackY, trackH);
-    drawChannelWaveform(channelData, trackY, trackH, primaryColor);
+    drawChannelWaveform(channelData, trackY, trackH, waveColor);
 
     if (isMultiChannel && !isFoa) {
       ctx.fillStyle = labelColor;
@@ -375,7 +402,21 @@ export function renderWaveform(
       ctx.font = '9px ui-monospace, SFMono-Regular, Menlo, monospace';
       ctx.textAlign = 'left';
       const label = labels[channelIdx] || `Ch ${channelIdx + 1}`;
-      ctx.fillText(`pk ${formatPeakAmplitude(channelData.peak)} · ${label}`, padding.left, pkY);
+      ctx.fillText(`pk ${formatPeakAmplitude(displayPeak)} · ${label}`, padding.left, pkY);
+    }
+
+    if (isClipping) {
+      ctx.save();
+      ctx.strokeStyle = warningColor;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(padding.left, trackY);
+      ctx.lineTo(padding.left + plotWidth, trackY);
+      ctx.moveTo(padding.left, trackY + trackH);
+      ctx.lineTo(padding.left + plotWidth, trackY + trackH);
+      ctx.stroke();
+      ctx.restore();
     }
   });
 

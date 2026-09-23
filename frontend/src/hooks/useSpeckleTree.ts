@@ -142,43 +142,84 @@ function countMeshFaces(raw: any): number {
 }
 
 /**
- * Walk an ExplorerNode's tree + each raw object's property graph, collecting
- * geometry leaf ids and their mesh-face counts in one pass.
+ * Canonical viewer node id for an ExplorerNode / NodeData.
+ *
+ * The app walks the viewer's tree nodes, and for most nodes the object is the
+ * viewer's `NodeData` — which exposes the unique id directly as `.id` (a
+ * `TreeNode` nests it under `.model.id`). When the same content hash appears
+ * twice, the viewer keeps the first as the bare hash and suffixes every later
+ * copy with `#<n>` (`hash#10`). Keying by `raw.id` collapses all duplicates onto
+ * the bare hash, so the acoustic region / visibility sets cannot select one copy.
+ * Prefer `.id`, then `.model.id`, then the raw hash.
+ */
+export function getExplorerNodeId(node: any): string | undefined {
+  return node?.id || node?.model?.id || node?.raw?.id || node?.node?.id;
+}
+
+/**
+ * Walk an ExplorerNode's tree collecting geometry leaf ids and mesh-face counts.
+ *
+ * Geometry units are keyed by the viewer's UNIQUE node id (`node.id`, e.g.
+ * `hash#4`) so each duplicate surface is addressable independently. Raw objects
+ * that only appear inside a property graph (no tree node of their own) are
+ * collected by their raw hash as a fallback — but only when that hash is not
+ * already covered by a node id (otherwise the bare hash would be reintroduced
+ * next to its unique `#N` sibling).
  */
 function collectGeometryFromNode(node: any): { ids: string[]; faceCounts: Map<string, number> } {
   const ids = new Set<string>();
   const faceCounts = new Map<string, number>();
-  const seen = new WeakSet<object>();
+  const seenNodes = new WeakSet<object>();
+  const seenRaw = new WeakSet<object>();
 
-  const collectFromRaw = (raw: any) => {
-    if (!raw || typeof raw !== 'object' || seen.has(raw)) return;
-    seen.add(raw);
+  const addGeometry = (id: string, raw: any) => {
+    if (!ids.has(id)) faceCounts.set(id, countMeshFaces(raw));
+    ids.add(id);
+  };
+
+  // Pass 1 — walk the viewer tree; key node-backed geometry by unique node id.
+  const walkNode = (n: any) => {
+    if (!n || typeof n !== 'object' || seenNodes.has(n)) return;
+    seenNodes.add(n);
+    const raw = n.model?.raw || n.raw;
+    if (raw) {
+      const viewId: string | undefined = n.id || n.model?.id;
+      if (viewId && raw.id && rawHasGeometry(raw)) {
+        addGeometry(viewId, raw);
+        seenRaw.add(raw); // display meshes are walked as child nodes
+      }
+    }
+    const children = n.model?.children || n.children;
+    if (Array.isArray(children)) children.forEach(walkNode);
+  };
+  walkNode(node);
+
+  // Pass 2 — fallback for geometry that has no tree node of its own.
+  const coveredBase = new Set<string>();
+  ids.forEach((id) => {
+    const i = id.indexOf('#');
+    coveredBase.add(i === -1 ? id : id.slice(0, i));
+  });
+  const collectRaw = (raw: any) => {
+    if (!raw || typeof raw !== 'object' || seenRaw.has(raw)) return;
+    seenRaw.add(raw);
     if (raw.id && rawHasGeometry(raw)) {
-      ids.add(raw.id);
-      faceCounts.set(raw.id, countMeshFaces(raw));
+      if (!coveredBase.has(raw.id)) addGeometry(raw.id, raw);
       return; // assignable unit — don't descend into its display meshes
     }
     for (const key of Object.keys(raw)) {
       const v = (raw as any)[key];
       if (!v || typeof v !== 'object') continue;
       if (Array.isArray(v)) {
-        v.forEach((item) => { if (item && typeof item === 'object') collectFromRaw(item); });
+        v.forEach((item) => { if (item && typeof item === 'object') collectRaw(item); });
       } else {
-        collectFromRaw(v);
+        collectRaw(v);
       }
     }
   };
+  const rootRaw = node?.model?.raw || node?.raw;
+  if (rootRaw && !seenRaw.has(rootRaw)) collectRaw(rootRaw);
 
-  const walkNode = (n: any) => {
-    if (!n || typeof n !== 'object' || seen.has(n)) return;
-    seen.add(n);
-    const raw = n.model?.raw || n.raw;
-    if (raw) collectFromRaw(raw);
-    const children = n.model?.children || n.children;
-    if (Array.isArray(children)) children.forEach(walkNode);
-  };
-
-  walkNode(node);
   return { ids: Array.from(ids), faceCounts };
 }
 
@@ -302,8 +343,9 @@ export function flattenModelTree(
   const filteredNodes = filterGeometryNodes(rootNodes);
 
   for (const node of filteredNodes) {
-    // Get node ID - try multiple sources
-    const nodeId = node.raw?.id || node.model?.id || node.id || String(Math.random());
+    // Get the unique viewer node id (duplicate nodes carry a `#N` suffix) so
+    // duplicate rows get distinct keys/expansion state. Fall back to raw/id.
+    const nodeId = getExplorerNodeId(node) || String(Math.random());
 
     // Check for children in both possible locations
     const children = node.model?.children || node.children;
@@ -497,7 +539,7 @@ export function getRootNodesForModel(worldTree: any, modelFileName?: string | nu
  */
 export function findObjectInNodes(nodes: ExplorerNode[], objectId: string): boolean {
   for (const node of nodes) {
-    const nodeId = node.raw?.id || node.model?.id || node.id;
+    const nodeId = getExplorerNodeId(node);
     if (nodeId === objectId) return true;
 
     const children = node.model?.children || node.children;
@@ -519,7 +561,7 @@ export function expandNodesToShowObject(
   nodesToExpand: Set<string>
 ): { found: boolean; expandedNodes: Set<string> } {
   for (const node of nodes) {
-    const nodeId = node.raw?.id || node.model?.id || node.id;
+    const nodeId = getExplorerNodeId(node);
 
     if (nodeId === objectId) {
       return { found: true, expandedNodes: nodesToExpand };
@@ -534,7 +576,7 @@ export function expandNodesToShowObject(
       );
 
       if (result.found) {
-        nodesToExpand.add(nodeId);
+        if (nodeId) nodesToExpand.add(nodeId);
         return { found: true, expandedNodes: nodesToExpand };
       }
     }
@@ -556,7 +598,7 @@ export function getAutoExpandedNodes(
 
   function walk(nodeList: ExplorerNode[]) {
     for (const node of nodeList) {
-      const nodeId = node.raw?.id || node.model?.id || node.id;
+      const nodeId = getExplorerNodeId(node);
       if (!nodeId) continue;
 
       const children = node.model?.children || node.children;
@@ -600,7 +642,7 @@ export function useSpeckleTree(worldTree: any, updateTrigger?: number, modelFile
     const walk = (nodes: any[], depth: number) => {
       for (const node of nodes) {
         const raw = node?.raw || node?.model?.raw || {};
-        const id: string | undefined = raw.id || node?.model?.id || node?.id;
+        const id: string | undefined = getExplorerNodeId(node);
         if (id && (depth === 0 || raw.applicationId === 'artifact-root' || raw.name === 'Received model')) {
           pinned.add(id);
         }

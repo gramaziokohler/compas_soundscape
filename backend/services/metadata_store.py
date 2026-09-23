@@ -33,6 +33,10 @@ ROLE_EDITOR = "editor"
 ROLE_VIEWER = "viewer"
 VALID_ROLES = (ROLE_OWNER, ROLE_EDITOR, ROLE_VIEWER)
 
+# Role precedence. Used by ensure_member() so joining through an invite can only
+# upgrade a membership, never silently demote it (an owner stays owner).
+ROLE_RANK = {ROLE_VIEWER: 1, ROLE_EDITOR: 2, ROLE_OWNER: 3}
+
 SHARING_PRIVATE = "private"
 SHARING_LINK = "link"
 
@@ -98,13 +102,25 @@ CREATE TABLE IF NOT EXISTS invites (
     created_by    TEXT NOT NULL,
     created_at    TEXT NOT NULL,
     expires_at    TEXT,
-    revoked       INTEGER NOT NULL DEFAULT 0
+    revoked       INTEGER NOT NULL DEFAULT 0,
+    max_uses      INTEGER NOT NULL DEFAULT 0,
+    used_count    INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS model_workspace (
     model_id      TEXT PRIMARY KEY,
     workspace_id  TEXT NOT NULL,
     updated_at    TEXT NOT NULL
+);
+
+-- Workspace-scoped model index. Unlike `model_workspace` (a legacy global
+-- one-row-per-model shortcut) this keeps one row per (model, workspace) so two
+-- workspaces using the same Speckle model never overwrite each other's routing.
+CREATE TABLE IF NOT EXISTS model_workspaces (
+    model_id      TEXT NOT NULL,
+    workspace_id  TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    PRIMARY KEY (model_id, workspace_id)
 );
 
 CREATE TABLE IF NOT EXISTS blobs (
@@ -128,6 +144,7 @@ CREATE TABLE IF NOT EXISTS blob_refs (
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_hash);
 CREATE INDEX IF NOT EXISTS idx_members_user ON workspace_members(user_hash);
 CREATE INDEX IF NOT EXISTS idx_model_workspace ON model_workspace(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_model_workspaces_ws ON model_workspaces(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_blob_refs_ws ON blob_refs(workspace_id, model_id);
 """
 
@@ -154,7 +171,16 @@ class MetadataStore:
         with self._lock:
             conn = self._connect()
             conn.executescript(_SCHEMA)
+            self._migrate(conn)
             conn.commit()
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        """Idempotent additive migrations for databases created by older builds."""
+        invite_cols = {r["name"] for r in conn.execute("PRAGMA table_info(invites)").fetchall()}
+        if "max_uses" not in invite_cols:
+            conn.execute("ALTER TABLE invites ADD COLUMN max_uses INTEGER NOT NULL DEFAULT 0")
+        if "used_count" not in invite_cols:
+            conn.execute("ALTER TABLE invites ADD COLUMN used_count INTEGER NOT NULL DEFAULT 0")
 
     def _query(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
         with self._lock:
@@ -248,6 +274,30 @@ class MetadataStore:
             (workspace_id, user_hash, role, _now()),
         )
 
+    def ensure_member(self, workspace_id: str, user_hash: str, role: str) -> tuple[bool, str]:
+        """Add a membership if absent, or upgrade it when ``role`` outranks the
+        current one. Never downgrades — an owner/editor keeps their role even if
+        they open a lower-privilege invite link to their own workspace.
+
+        Returns ``(changed, effective_role)``.
+        """
+        if role not in VALID_ROLES:
+            raise ValueError(f"invalid role: {role}")
+        current = self.get_member_role(workspace_id, user_hash)
+        if current is None:
+            self._execute(
+                "INSERT INTO workspace_members (workspace_id, user_hash, role, joined_at) VALUES (?, ?, ?, ?)",
+                (workspace_id, user_hash, role, _now()),
+            )
+            return True, role
+        if ROLE_RANK.get(role, 0) > ROLE_RANK.get(current, 0):
+            self._execute(
+                "UPDATE workspace_members SET role = ? WHERE workspace_id = ? AND user_hash = ?",
+                (role, workspace_id, user_hash),
+            )
+            return True, role
+        return False, current
+
     def get_member_role(self, workspace_id: str, user_hash: str) -> Optional[str]:
         rows = self._query(
             "SELECT role FROM workspace_members WHERE workspace_id = ? AND user_hash = ?",
@@ -277,6 +327,54 @@ class MetadataStore:
             "DELETE FROM workspace_members WHERE workspace_id = ? AND user_hash = ?",
             (workspace_id, user_hash),
         )
+
+    def set_member_role(self, workspace_id: str, user_hash: str, role: str) -> bool:
+        """Change a non-owner member's role. The owner's role is immutable here
+        (use transfer_ownership) — returns False if the target is the owner."""
+        if role not in VALID_ROLES:
+            raise ValueError(f"invalid role: {role}")
+        if role == ROLE_OWNER:
+            return False
+        with self._lock:
+            conn = self._connect()
+            cur = conn.execute(
+                "UPDATE workspace_members SET role = ? WHERE workspace_id = ? AND user_hash = ? AND role != ?",
+                (role, workspace_id, user_hash, ROLE_OWNER),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def transfer_ownership(self, workspace_id: str, from_hash: str, to_hash: str) -> bool:
+        """Move ownership to another existing member. Caller becomes editor."""
+        with self._lock:
+            conn = self._connect()
+            cur = conn.execute(
+                "UPDATE workspace_members SET role = ? WHERE workspace_id = ? AND user_hash = ? AND role = ?",
+                (ROLE_EDITOR, workspace_id, from_hash, ROLE_OWNER),
+            )
+            if cur.rowcount == 0:
+                conn.rollback()
+                return False
+            cur2 = conn.execute(
+                "UPDATE workspace_members SET role = ? WHERE workspace_id = ? AND user_hash = ?",
+                (ROLE_OWNER, workspace_id, to_hash),
+            )
+            if cur2.rowcount == 0:
+                conn.rollback()
+                return False
+            conn.execute(
+                "UPDATE workspaces SET owner_hash = ?, updated_at = ? WHERE id = ?",
+                (to_hash, _now(), workspace_id),
+            )
+            conn.commit()
+            return True
+
+    def count_members_by_role(self, workspace_id: str, role: str) -> int:
+        rows = self._query(
+            "SELECT COUNT(*) AS n FROM workspace_members WHERE workspace_id = ? AND role = ?",
+            (workspace_id, role),
+        )
+        return int(rows[0]["n"]) if rows else 0
 
     # ── sessions ─────────────────────────────────────────────────────────
     def get_session(self, token: str) -> Optional[dict]:
@@ -313,30 +411,99 @@ class MetadataStore:
             (workspace_id, _now(), hash_token(token)),
         )
 
+    def sessions_for_workspace(self, workspace_id: str) -> list[dict]:
+        rows = self._query("SELECT * FROM sessions WHERE workspace_id = ?", (workspace_id,))
+        return [dict(r) for r in rows]
+
+    def sessions_for_user(self, user_hash: str) -> list[dict]:
+        rows = self._query("SELECT * FROM sessions WHERE user_hash = ?", (user_hash,))
+        return [dict(r) for r in rows]
+
+    def set_workspace_for_token_hash(self, token_hash: str, workspace_id: str) -> None:
+        self._execute(
+            "UPDATE sessions SET workspace_id = ?, last_seen = ? WHERE token_hash = ?",
+            (workspace_id, _now(), token_hash),
+        )
+
     # ── model ↔ workspace index (for ?model_id= bootstrap) ───────────────
     def link_model(self, model_id: str, workspace_id: str) -> None:
+        now = _now()
         self._execute(
             "INSERT INTO model_workspace (model_id, workspace_id, updated_at) VALUES (?, ?, ?) "
             "ON CONFLICT(model_id) DO UPDATE SET workspace_id = excluded.workspace_id, updated_at = excluded.updated_at",
-            (model_id, workspace_id, _now()),
+            (model_id, workspace_id, now),
+        )
+        self._execute(
+            "INSERT INTO model_workspaces (model_id, workspace_id, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(model_id, workspace_id) DO UPDATE SET updated_at = excluded.updated_at",
+            (model_id, workspace_id, now),
         )
 
-    def resolve_model_workspace(self, model_id: str) -> Optional[str]:
-        rows = self._query("SELECT workspace_id FROM model_workspace WHERE model_id = ?", (model_id,))
-        return rows[0]["workspace_id"] if rows else None
+    def resolve_model_workspace(self, model_id: str, prefer_workspace_id: Optional[str] = None) -> Optional[str]:
+        """Resolve which workspace owns `model_id`.
+
+        Prefers the explicitly requested workspace when it has the model, then
+        the most recently updated workspace that still exists. Falls back to the
+        legacy global index for pre-migration databases.
+        """
+        if prefer_workspace_id:
+            rows = self._query(
+                "SELECT 1 FROM model_workspaces WHERE model_id = ? AND workspace_id = ?",
+                (model_id, prefer_workspace_id),
+            )
+            if rows:
+                return prefer_workspace_id
+        rows = self._query(
+            "SELECT mw.workspace_id FROM model_workspaces mw JOIN workspaces w ON w.id = mw.workspace_id "
+            "WHERE mw.model_id = ? ORDER BY mw.updated_at DESC LIMIT 1",
+            (model_id,),
+        )
+        if rows:
+            return rows[0]["workspace_id"]
+        legacy = self._query("SELECT workspace_id FROM model_workspace WHERE model_id = ?", (model_id,))
+        return legacy[0]["workspace_id"] if legacy else None
 
     def unlink_model(self, model_id: str) -> None:
         self._execute("DELETE FROM model_workspace WHERE model_id = ?", (model_id,))
+        self._execute("DELETE FROM model_workspaces WHERE model_id = ?", (model_id,))
+
+    def delete_workspace_rows(self, workspace_id: str) -> list[str]:
+        """Remove all metadata owned by a workspace; returns affected session
+        user_hashes so the caller can rebind those sessions."""
+        with self._lock:
+            conn = self._connect()
+            affected = [
+                r["user_hash"]
+                for r in conn.execute(
+                    "SELECT DISTINCT user_hash FROM sessions WHERE workspace_id = ?", (workspace_id,)
+                ).fetchall()
+            ]
+            conn.execute("DELETE FROM invites WHERE workspace_id = ?", (workspace_id,))
+            conn.execute("DELETE FROM workspace_members WHERE workspace_id = ?", (workspace_id,))
+            conn.execute("DELETE FROM model_workspace WHERE workspace_id = ?", (workspace_id,))
+            conn.execute("DELETE FROM model_workspaces WHERE workspace_id = ?", (workspace_id,))
+            conn.execute("DELETE FROM blob_refs WHERE workspace_id = ?", (workspace_id,))
+            conn.execute("DELETE FROM workspaces WHERE id = ?", (workspace_id,))
+            conn.commit()
+            return affected
 
     # ── invites ──────────────────────────────────────────────────────────
-    def create_invite(self, workspace_id: str, role: str, created_by: str, expires_at: Optional[str] = None) -> str:
+    def create_invite(
+        self,
+        workspace_id: str,
+        role: str,
+        created_by: str,
+        expires_at: Optional[str] = None,
+        max_uses: int = 0,
+    ) -> str:
         if role not in VALID_ROLES:
             raise ValueError(f"invalid role: {role}")
         token = uuid.uuid4().hex
         self._execute(
-            "INSERT INTO invites (token_hash, workspace_id, role, created_by, created_at, expires_at, revoked) "
-            "VALUES (?, ?, ?, ?, ?, ?, 0)",
-            (hash_token(token), workspace_id, role, created_by, _now(), expires_at),
+            "INSERT INTO invites "
+            "(token_hash, workspace_id, role, created_by, created_at, expires_at, revoked, max_uses, used_count) "
+            "VALUES (?, ?, ?, ?, ?, ?, 0, ?, 0)",
+            (hash_token(token), workspace_id, role, created_by, _now(), expires_at, max(0, int(max_uses))),
         )
         return token
 
@@ -350,7 +517,42 @@ class MetadataStore:
         expires = invite.get("expires_at")
         if expires and expires < _now():
             return None
+        max_uses = int(invite.get("max_uses") or 0)
+        if max_uses > 0 and int(invite.get("used_count") or 0) >= max_uses:
+            return None
         return invite
+
+    def record_invite_use(self, token: str) -> None:
+        self._execute(
+            "UPDATE invites SET used_count = used_count + 1 WHERE token_hash = ?",
+            (hash_token(token),),
+        )
+
+    def list_invites(self, workspace_id: str) -> list[dict]:
+        """Invite metadata for management UI. `token_hash` is exposed as `id` —
+        it is a one-way hash and cannot be used to join."""
+        rows = self._query(
+            "SELECT token_hash, role, created_by, created_at, expires_at, revoked, max_uses, used_count "
+            "FROM invites WHERE workspace_id = ? ORDER BY created_at DESC",
+            (workspace_id,),
+        )
+        out: list[dict] = []
+        for r in rows:
+            d = dict(r)
+            d["id"] = d.pop("token_hash")
+            d["revoked"] = bool(d["revoked"])
+            out.append(d)
+        return out
+
+    def revoke_invite_by_id(self, workspace_id: str, invite_id: str) -> bool:
+        with self._lock:
+            conn = self._connect()
+            cur = conn.execute(
+                "UPDATE invites SET revoked = 1 WHERE token_hash = ? AND workspace_id = ?",
+                (invite_id, workspace_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
 
     def revoke_invite(self, token: str) -> None:
         self._execute("UPDATE invites SET revoked = 1 WHERE token_hash = ?", (hash_token(token),))

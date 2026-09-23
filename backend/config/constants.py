@@ -786,6 +786,12 @@ SESSION_COOKIE = "compas_session"
 SESSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 365 * 10  # ~10 years (browsers cap ~400d, re-issued on each visit)
 SESSION_TOKEN_BYTES = 32
 
+# Workspace invites. Links expire by default (7 days) and can be limited in how
+# many times they may be redeemed (0 = unlimited). Owners can revoke any invite.
+INVITE_DEFAULT_TTL_S = int(os.environ.get("INVITE_DEFAULT_TTL_S", str(7 * 24 * 3600)))
+INVITE_MAX_USES_DEFAULT = int(os.environ.get("INVITE_MAX_USES_DEFAULT", "0"))  # 0 = unlimited
+INVITE_MAX_USES_HARD_CAP = 100
+
 # ============================================================================
 # SQLite metadata store (workspaces/users/membership/blob refs)
 # ============================================================================

@@ -5,7 +5,7 @@ import type { SoundGenerationConfig } from '@/types';
 import { DEFAULT_DBFS } from '@/utils/constants';
 import { FileUploadArea } from '@/components/controls/FileUploadArea';
 import { WaveSurferPlayer } from '@/components/audio/WaveSurferPlayer';
-import { registerPreviewInstance } from '@/lib/audio/previewRegistry';
+import { registerPreviewInstance, seekPreviewInstances } from '@/lib/audio/previewRegistry';
 
 /**
  * UploadMode Component
@@ -23,6 +23,8 @@ export interface UploadModeProps {
   isPreviewPlaying?: boolean;
   onPreviewPlayPause?: () => void;
   onPreviewStop?: () => void;
+  /** Silent mode: waveform renders visually but produces no audio (prevents double playback). */
+  silent?: boolean;
 }
 
 export function UploadMode({
@@ -33,6 +35,7 @@ export function UploadMode({
   isPreviewPlaying = false,
   onPreviewPlayPause,
   onPreviewStop,
+  silent = false,
 }: UploadModeProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -102,11 +105,13 @@ export function UploadMode({
             audioUrl={config.uploadedAudioUrl}
             volumeDbfs={DEFAULT_DBFS}
             isPlaying={isPreviewPlaying}
+            silent={silent}
             onPlayPause={() => onPreviewPlayPause?.()}
             onStop={(ws) => {
               if (ws) ws.seekTo(0);
               onPreviewStop?.();
             }}
+            onSeek={(t) => seekPreviewInstances(`pregen:${index}`, t)}
             onWavesurferReady={(ws) => registerPreviewInstance(`pregen:${index}`, ws)}
           />
         </div>

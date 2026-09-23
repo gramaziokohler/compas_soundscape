@@ -11,23 +11,75 @@ import type WaveSurfer from 'wavesurfer.js';
  * card collapse) can all land in the same commit as an unmount, so a prop-driven
  * `isPlaying=false` effect may never get a chance to run before `ws.destroy()`
  * fires, which does not reliably stop in-flight WebAudio playback.
+ *
+ * A single preview key can back more than one mounted WaveSurfer at once — e.g.
+ * the sound card in the Sounds step AND the same sound mirrored in the
+ * EntityInfoPanel context menu. Stopping a preview must pause ALL of them, so
+ * the registry keeps a list per key rather than a single instance.
  */
-const instances = new Map<string, WaveSurfer>();
+const instances = new Map<string, WaveSurfer[]>();
+
+// Shared playhead per preview key. The same preview (e.g. a generated sound)
+// can be mounted in the Sounds-step card AND mirrored in the EntityInfoPanel;
+// seeking either one must move the other, and a player that mounts later must
+// pick up the current playhead.
+const positions = new Map<string, number>();
 
 export function registerPreviewInstance(key: string, ws: WaveSurfer | null): void {
-  if (ws) instances.set(key, ws);
+  if (!ws) {
+    instances.delete(key);
+    return;
+  }
+  const list = instances.get(key) ?? [];
+  if (!list.includes(ws)) list.push(ws);
+  instances.set(key, list);
+}
+
+export function unregisterPreviewInstance(key: string, ws: WaveSurfer): void {
+  const list = instances.get(key);
+  if (!list) return;
+  const next = list.filter((entry) => entry !== ws);
+  if (next.length > 0) instances.set(key, next);
   else instances.delete(key);
 }
 
+/** Current shared playhead (seconds) for a preview key, if any player set it. */
+export function getPreviewPosition(key: string): number | undefined {
+  return positions.get(key);
+}
+
+/**
+ * Seek every mounted player of a preview key to `time`. The player that already
+ * sits at that time (the seek source) is skipped, so propagation is idempotent
+ * and cannot loop.
+ */
+export function seekPreviewInstances(key: string, time: number): void {
+  positions.set(key, time);
+  const list = instances.get(key);
+  if (!list) return;
+  list.forEach((ws) => {
+    try {
+      const dur = ws.getDuration();
+      if (dur <= 0) return;
+      const target = Math.min(Math.max(time, 0), dur);
+      if (Math.abs(ws.getCurrentTime() - target) > 0.08) ws.setTime(target);
+    } catch { /* ignore */ }
+  });
+}
+
 export function pausePreviewInstance(key: string): void {
-  const ws = instances.get(key);
-  if (!ws) return;
-  try { ws.pause(); } catch { /* ignore */ }
+  const list = instances.get(key);
+  if (!list) return;
+  list.forEach((ws) => {
+    try { ws.pause(); } catch { /* ignore */ }
+  });
 }
 
 export function pauseAllPreviewInstances(): void {
-  instances.forEach((ws) => {
-    try { ws.pause(); } catch { /* ignore */ }
+  instances.forEach((list) => {
+    list.forEach((ws) => {
+      try { ws.pause(); } catch { /* ignore */ }
+    });
   });
 }
 
@@ -39,7 +91,8 @@ export function pauseAllPreviewInstances(): void {
  * pulse and does not mutate the audio graph.
  */
 export function getPreviewLevel(key: string): number {
-  const ws = instances.get(key);
+  const list = instances.get(key);
+  const ws = list?.[list.length - 1];
   if (!ws) return 0;
   try {
     const buffer = ws.getDecodedData();

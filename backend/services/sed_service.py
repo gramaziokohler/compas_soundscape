@@ -6,6 +6,10 @@ Provides batch analysis with amplitude statistics and temporal information.
 """
 
 import tensorflow as tf
+
+# tensorflow_hub triggers a spurious `tf.losses.sparse_softmax_cross_entropy`
+# deprecation warning from tf_keras at import time — silence TF's logger first.
+tf.get_logger().setLevel('ERROR')
 import tensorflow_hub as hub
 import numpy as np
 import csv

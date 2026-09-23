@@ -3,7 +3,7 @@
 import type { SoundGenerationConfig } from '@/types';
 import { DEFAULT_DBFS } from '@/utils/constants';
 import { WaveSurferPlayer } from '@/components/audio/WaveSurferPlayer';
-import { registerPreviewInstance } from '@/lib/audio/previewRegistry';
+import { registerPreviewInstance, seekPreviewInstances } from '@/lib/audio/previewRegistry';
 
 /**
  * SampleAudioMode Component
@@ -20,6 +20,8 @@ export interface SampleAudioModeProps {
   isPreviewPlaying?: boolean;
   onPreviewPlayPause?: () => void;
   onPreviewStop?: () => void;
+  /** Silent mode: waveform renders visually but produces no audio (prevents double playback). */
+  silent?: boolean;
 }
 
 export function SampleAudioMode({
@@ -29,6 +31,7 @@ export function SampleAudioMode({
   isPreviewPlaying = false,
   onPreviewPlayPause,
   onPreviewStop,
+  silent = false,
 }: SampleAudioModeProps) {
   const handleClearAudio = () => {
     onPreviewStop?.();
@@ -43,20 +46,15 @@ export function SampleAudioMode({
             audioUrl={config.uploadedAudioUrl}
             volumeDbfs={DEFAULT_DBFS}
             isPlaying={isPreviewPlaying}
+            silent={silent}
             onPlayPause={() => onPreviewPlayPause?.()}
             onStop={(ws) => {
               if (ws) ws.seekTo(0);
               onPreviewStop?.();
             }}
+            onSeek={(t) => seekPreviewInstances(`pregen:${index}`, t)}
             onWavesurferReady={(ws) => registerPreviewInstance(`pregen:${index}`, ws)}
           />
-          <button
-            onClick={handleClearAudio}
-            className="absolute top-1 right-1 bg-black/70 hover:bg-red-600 text-white w-5 h-5 flex items-center justify-center rounded text-xs transition-colors z-10"
-            title="Remove audio"
-          >
-            ✕
-          </button>
         </div>
       )}
     </>

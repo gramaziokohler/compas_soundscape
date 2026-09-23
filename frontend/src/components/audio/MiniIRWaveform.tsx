@@ -15,6 +15,12 @@ interface MiniIRWaveformProps {
   loading?: boolean;
   /** When true (low-energy / very quiet IR), the thumbnail border and strokes render red. */
   lowEnergy?: boolean;
+  /**
+   * Multiplies every amplitude by this factor and draws against a fixed full-scale
+   * 1.0 reference (so the peak visibly grows toward clip / shrinks toward mute).
+   * When omitted, the thumbnail self-normalises to its own peak (legacy behavior).
+   */
+  amplitudeScale?: number;
 }
 
 const WIDTH = 56;
@@ -31,6 +37,7 @@ export function MiniIRWaveform({
   onBlueBackground = false,
   loading = false,
   lowEnergy = false,
+  amplitudeScale,
 }: MiniIRWaveformProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const colorTheme = useResolvedColorTheme();
@@ -68,24 +75,30 @@ export function MiniIRWaveform({
       : onBlueBackground
         ? getCssVar('--color-on-blue', '#ffffff')
         : getCssVar('--color-primary', '#002aff');
+    const clipColor = getCssVar('--color-warning', '#d97706');
 
     ctx.clearRect(0, 0, WIDTH, canvasHeight);
 
     const waveformData = extractWaveformData(audioBuffer, Math.min(120, AUDIO_VISUALIZATION.WAVEFORM_POINTS));
     const trackHeight = canvasHeight / numChannels;
     const globalPeak = Math.max(...waveformData.channels.map((ch) => ch.peak), 1e-6);
+    const fullScale = amplitudeScale !== undefined;
+    const scale = amplitudeScale ?? 1;
 
     waveformData.channels.forEach((channelData, chIdx) => {
       const trackY = chIdx * trackHeight;
       const centerY = trackY + trackHeight / 2;
       const maxAmp = Math.max(trackHeight / 2 - 1, 1);
 
-      ctx.strokeStyle = lineColor;
+      const isClipping = fullScale && channelData.peak * scale > 1;
+      ctx.strokeStyle = isClipping ? clipColor : lineColor;
       ctx.lineWidth = 1;
 
       const numPoints = channelData.amplitudes.length;
       for (let i = 0; i < numPoints; i++) {
-        const amp = channelData.amplitudes[i] / globalPeak;
+        const amp = fullScale
+          ? Math.min(1, channelData.amplitudes[i] * scale)
+          : channelData.amplitudes[i] / globalPeak;
         const x = numPoints > 1 ? (i / (numPoints - 1)) * WIDTH : 0;
         const ampH = amp * maxAmp;
         ctx.beginPath();
@@ -94,7 +107,7 @@ export function MiniIRWaveform({
         ctx.stroke();
       }
     });
-  }, [audioBuffer, colorTheme, onBlueBackground, lowEnergy]);
+  }, [audioBuffer, colorTheme, onBlueBackground, lowEnergy, amplitudeScale]);
 
   const borderClass = lowEnergy ? ' border-2' : '';
 

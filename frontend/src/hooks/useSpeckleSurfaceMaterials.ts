@@ -19,7 +19,7 @@ import type {
 import type { ExplorerNode } from './useSpeckleTree';
 import type { AcousticMaterial } from '@/types/materials';
 import { getMaterialColorByAbsorption } from '@/utils/utils';
-import { getGeometryLeafIdsFromNode } from './useSpeckleTree';
+import { getGeometryLeafIdsFromNode, getExplorerNodeId } from './useSpeckleTree';
 
 /**
  * Hierarchical mesh object with children
@@ -103,7 +103,7 @@ function collectLayerNodesRecursive(nodes: any[], depth: number, layers: Speckle
 
     if (depth >= 2) {
       const name = raw.name || node?.model?.name || 'Unnamed Layer';
-      const id = node?.model?.id || raw.id || node?.id || `layer-${layers.length}`;
+      const id = getExplorerNodeId(node) || `layer-${layers.length}`;
       const meshCount = countGeometryObjects(node);
 
       if (meshCount > 0) {
@@ -171,8 +171,9 @@ function buildHierarchicalTree(node: any): HierarchicalMeshObject | null {
 
   const raw = node?.raw || node?.model?.raw || {};
   const name = raw.name || node?.model?.name || 'Unnamed';
-  // Use node.model.id first (WorldTree indexed key), fallback to raw.id (Speckle hash)
-  const id = node?.model?.id || raw.id || node?.id || `obj-${Math.random()}`;
+  // Use the viewer's unique node id (NodeData `.id`, or TreeNode `.model.id`),
+  // fall back to the raw Speckle hash.
+  const id = getExplorerNodeId(node) || `obj-${Math.random()}`;
   const speckleType = raw.speckle_type || '';
 
   const hasGeometry = isGeometryNode(node);
@@ -209,7 +210,7 @@ function buildHierarchicalTree(node: any): HierarchicalMeshObject | null {
 function findNodeByIdRecursive(nodes: any[], layerId: string): any | null {
   for (const node of nodes) {
     const raw = node?.raw || node?.model?.raw || {};
-    const nodeId = node?.model?.id || raw.id || node?.id;
+    const nodeId = getExplorerNodeId(node);
 
     if (nodeId === layerId) return node;
 

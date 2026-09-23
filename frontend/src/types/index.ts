@@ -163,6 +163,8 @@ export interface SoundEntity {
   nodeId?: string;
   id?: string;
   applicationId?: string;
+  /** Layer path of the entity, used as a fallback identity when applicationId changes. */
+  layer?: string;
   speckle_type?: string;
   geometry?: any;
   /** Foley fallback position used when viewer can't resolve bounds */

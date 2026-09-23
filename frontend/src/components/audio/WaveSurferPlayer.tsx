@@ -10,8 +10,8 @@ import { subscribeColorTheme } from '@/utils/color-theme';
 import { Spinner } from '@/components/ui/Spinner';
 import {
   createSilhouetteRenderFunction,
+  resolveCssVar,
   resolveSilhouettePalette,
-  type SilhouettePalette,
 } from '@/lib/audio/waveform-silhouette';
 import { registerOutputDeviceTarget } from '@/lib/audio/output-device';
 
@@ -31,6 +31,26 @@ const FREQ_LABELS = [
   { freq: 20000, label: '20 kHz' },
 ];
 
+/**
+ * Resolve the silhouette fill plus the played-region / playhead colors. The
+ * progress and cursor colors default to the palette progress color but can be
+ * overridden per call site (e.g. the generated card's darker-grey progress and
+ * warning playhead). Overrides accept a CSS var and are resolved here so they
+ * are re-read on theme change alongside the palette.
+ */
+function resolveWaveColors(
+  onBlueBackground: boolean,
+  progressColor?: string,
+  cursorColor?: string,
+): { fill: string; progress: string; cursor: string } {
+  const palette = resolveSilhouettePalette(onBlueBackground);
+  return {
+    fill: palette.fill,
+    progress: progressColor ? resolveCssVar(progressColor) : palette.progress,
+    cursor: cursorColor ? resolveCssVar(cursorColor) : palette.progress,
+  };
+}
+
 export interface WaveSurferPlayerProps {
   audioUrl: string;
   isPlaying: boolean;
@@ -44,6 +64,8 @@ export interface WaveSurferPlayerProps {
   color?: string;
   onWavesurferReady?: (ws: WaveSurfer | null) => void;
   onAudioProcess?: (currentTime: number, duration: number) => void;
+  /** Fired when the user seeks by interacting with the waveform (click / drag). */
+  onSeek?: (time: number) => void;
   onFinish?: () => void;
   interact?: boolean;
   pointerHandlers?: {
@@ -60,6 +82,12 @@ export interface WaveSurferPlayerProps {
   backgroundColor?: string;
   /** Recolor waveform + transport for a solid-primary (generated) card. */
   onBlueBackground?: boolean;
+  /** Override the played-region (progress) color — CSS var or resolved literal. */
+  progressColor?: string;
+  /** Override the playhead (cursor) color — CSS var or resolved literal. */
+  cursorColor?: string;
+  /** Native tooltip for the waveform interaction area. */
+  waveformTooltip?: string;
 }
 
 export function WaveSurferPlayer({
@@ -74,6 +102,7 @@ export function WaveSurferPlayer({
   color = 'var(--color-primary)',
   onWavesurferReady,
   onAudioProcess,
+  onSeek,
   onFinish,
   interact = true,
   pointerHandlers,
@@ -84,6 +113,9 @@ export function WaveSurferPlayer({
   borderColor,
   backgroundColor = 'var(--color-secondary-lighter)',
   onBlueBackground = false,
+  progressColor,
+  cursorColor,
+  waveformTooltip,
 }: WaveSurferPlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const spectrogramContainerRef = useRef<HTMLDivElement>(null);
@@ -108,6 +140,9 @@ export function WaveSurferPlayer({
   // faster than a text time display needs to update) without dropping the
   // onAudioProcess callback rate for consumers that need precise timing.
   const lastAudioProcessUpdateRef = useRef(0);
+  // Latest onSeek without re-creating the WaveSurfer instance.
+  const onSeekRef = useRef(onSeek);
+  useEffect(() => { onSeekRef.current = onSeek; }, [onSeek]);
 
   // Hover state for spectrogram labels
   const [isHovered, setIsHovered] = useState(false);
@@ -135,7 +170,7 @@ export function WaveSurferPlayer({
     setIsLoadingAudio(true);
     setCurrentTime(0);
 
-    const palette = resolveSilhouettePalette(onBlueBackground);
+    const palette = resolveWaveColors(onBlueBackground, progressColor, cursorColor);
     const renderFunction = createSilhouetteRenderFunction(palette);
 
     const plugins = [];
@@ -155,7 +190,7 @@ export function WaveSurferPlayer({
       backend: 'WebAudio',
       waveColor: palette.fill,
       progressColor: palette.progress,
-      cursorColor: palette.progress,
+      cursorColor: palette.cursor,
       cursorWidth: 2,
       height: isSpectrogramMode ? 0 : waveformHeight,
       // No barWidth/barGap: the waveform is a continuous filled shape whose
@@ -194,6 +229,12 @@ export function WaveSurferPlayer({
 
     ws.on('seeking', () => {
       setCurrentTime(ws.getCurrentTime());
+    });
+
+    // User-initiated seek (click / drag on the waveform). Programmatic
+    // setTime() does NOT emit 'interaction', so propagating this never loops.
+    ws.on('interaction', (newTime: number) => {
+      onSeekRef.current?.(newTime);
     });
 
     ws.on('finish', () => {
@@ -237,34 +278,34 @@ export function WaveSurferPlayer({
   useEffect(() => {
     const ws = wsRef.current;
     if (!ws) return;
-    const palette = resolveSilhouettePalette(onBlueBackground);
+    const palette = resolveWaveColors(onBlueBackground, progressColor, cursorColor);
     const renderFunction = createSilhouetteRenderFunction(palette);
     ws.setOptions({
       waveColor: palette.fill,
       progressColor: palette.progress,
-      cursorColor: palette.progress,
+      cursorColor: palette.cursor,
       height: isSpectrogramMode ? 0 : waveformHeight,
       interact,
       renderFunction,
     });
-  }, [onBlueBackground, waveformHeight, interact, isSpectrogramMode, isReady]);
+  }, [onBlueBackground, progressColor, cursorColor, waveformHeight, interact, isSpectrogramMode, isReady]);
 
   useEffect(() => {
     const applyWaveColors = () => {
       const ws = wsRef.current;
       if (!ws) return;
-      const palette = resolveSilhouettePalette(onBlueBackground);
+      const palette = resolveWaveColors(onBlueBackground, progressColor, cursorColor);
       const renderFunction = createSilhouetteRenderFunction(palette);
       ws.setOptions({
         waveColor: palette.fill,
         progressColor: palette.progress,
-        cursorColor: palette.progress,
+        cursorColor: palette.cursor,
         renderFunction,
       });
     };
     applyWaveColors();
     return subscribeColorTheme(applyWaveColors);
-  }, [onBlueBackground]);
+  }, [onBlueBackground, progressColor, cursorColor]);
 
   // Play/pause sync
   useEffect(() => {
@@ -371,6 +412,7 @@ export function WaveSurferPlayer({
       >
         {/* Overlay for pointer interactions */}
         <div
+          title={waveformTooltip}
           style={{
             position: 'relative',
             cursor,

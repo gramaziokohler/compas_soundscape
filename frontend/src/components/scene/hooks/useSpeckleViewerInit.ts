@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import {
   Viewer,
@@ -74,12 +74,17 @@ export function useSpeckleViewerInit({
     setCameraController,
     setAreaDrawingManager,
     setPlaybackScheduler,
+    setLoadedModelVersionId,
+    setLoadedModelVersionCreatedAt,
   } = useSpeckleEngineStore();
 
   const [isViewerReady, setIsViewerReady] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [worldTree, setWorldTree] = useState<any>(null);
+
+  // Guards the one-time direct URL read in the init effect below (see comment there).
+  const didUrlBootstrapCheckRef = useRef(false);
 
   // ============================================================================
   // Effect - Initialize Speckle Viewer
@@ -89,6 +94,20 @@ export function useSpeckleViewerInit({
     // Wait for URL bootstrap before creating a sandbox viewer, so `?model_id=`
     // refresh does not flash the placeholder room.
     if (!modelUrl && isBootstrappingModel) return;
+
+    // `isBootstrappingModel` is set by the PARENT's mount effect, which runs
+    // AFTER this child effect — so on the first run it is still `false`. Read the
+    // URL directly (client-only) to detect a `?model_id=` / `?home=` bootstrap and
+    // avoid creating a throwaway sandbox viewer before the parent's effect runs.
+    // Only on the first run: later runs trust `isBootstrappingModel`, so a failed
+    // bootstrap still falls back to the sandbox viewer.
+    if (!didUrlBootstrapCheckRef.current) {
+      didUrlBootstrapCheckRef.current = true;
+      if (!modelUrl && typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('model_id') || params.get('home')) return;
+      }
+    }
 
     const initViewer = async () => {
       if (modelUrl) setIsLoading(true);
@@ -311,13 +330,23 @@ export function useSpeckleViewerInit({
         // resolves to the latest version, so this must complete before loading.
         if (speckleData?.model_id) {
           try {
-            await apiService.ensureSpeckleModelReady(speckleData.model_id);
+            const resolved = await apiService.ensureSpeckleModelReady(speckleData.model_id);
+            // Record the version actually loaded so the version watcher can detect
+            // a newer commit on the model. `created_at` distinguishes a genuine new
+            // publish from a re-materialized copy that merely has a different id.
+            setLoadedModelVersionId(resolved?.version_id || speckleData.version_id || null);
+            setLoadedModelVersionCreatedAt(resolved?.created_at || null);
           } catch (prepErr) {
             console.warn(
               '[useSpeckleViewerInit] ensure-ready failed, loading current version:',
               prepErr
             );
+            setLoadedModelVersionId(speckleData.version_id || null);
+            setLoadedModelVersionCreatedAt(null);
           }
+        } else {
+          setLoadedModelVersionId(null);
+          setLoadedModelVersionCreatedAt(null);
         }
 
         // Load Speckle model with retry logic
@@ -384,6 +413,9 @@ export function useSpeckleViewerInit({
         setViewer(null);
       }
       if (playbackScheduler) {
+        // Dispose so the scheduler unsubscribes from the orchestrator's
+        // graph-changed event; otherwise the orphaned transport keeps receiving it.
+        playbackScheduler.dispose();
         setPlaybackScheduler(null);
       }
     };

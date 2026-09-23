@@ -187,7 +187,11 @@ export interface ImportIRsSimulationConfig extends BaseSimulationConfig {
   speckleGeometryObjectIds?: string[];
   speckleScatteringAssignments?: Record<string, number>;
   speckleIsolatedObjectIds?: string[];
-  irGainDb?: number;
+  /**
+   * Linear peak-offset applied to every assigned IR's peak (-1..1).
+   * 0 = unchanged, positive raises peaks toward clipping, negative lowers toward mute.
+   */
+  irGain?: number;
   irNormalizeEnabled?: boolean;
 }
 

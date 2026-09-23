@@ -2,7 +2,7 @@ import { API_BASE_URL, SPECKLE_INGESTION } from '@/utils/constants';
 import type { CompasGeometry, SoundEvent, SoundGenerationConfig, FileUploadResponse, JobType } from '@/types';
 import type { ImpulseResponseMetadata } from '@/types/audio';
 import type { ModalAnalysisRequest, ModalAnalysisResult } from '@/types/modal';
-import type { SpeckleProjectModelsResponse } from '@/types/speckle-models';
+import type { SpeckleProjectModelsResponse, SpeckleModelLatestVersion } from '@/types/speckle-models';
 import type { SoundscapeSavePayload, SoundscapeSaveResponse, SoundscapeLoadResponse, SoundscapeStats } from '@/types/soundscape';
 
 /**
@@ -257,6 +257,18 @@ export interface WorkspaceDetail extends WorkspaceSummary {
   presence?: number;
 }
 
+/** Invite metadata for the management list. `id` is a hash, not the secret token. */
+export interface WorkspaceInvite {
+  id: string;
+  role: 'editor' | 'viewer';
+  created_by: string;
+  created_at: string;
+  expires_at: string | null;
+  revoked: boolean;
+  max_uses: number;
+  used_count: number;
+}
+
 // API Service Layer
 export const apiService = {
   // ─── Identity ─────────────────────────────────────────────────────────────
@@ -301,7 +313,7 @@ export const apiService = {
     return data.workspaces ?? [];
   },
 
-  // ÔöÇÔöÇÔöÇ Workspaces / collaboration ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+  // ─── Workspaces / collaboration ─────────────────────────────────────────
   async getWorkspace(workspaceId: string): Promise<WorkspaceDetail> {
     const response = await fetchWithErrorHandling(
       `${API_BASE_URL}/api/workspaces/${encodeURIComponent(workspaceId)}`,
@@ -353,19 +365,106 @@ export const apiService = {
     return response.json();
   },
 
-  async createWorkspaceInvite(workspaceId: string, role: 'editor' | 'viewer' = 'editor'): Promise<{ token: string; role: string; url: string }> {
+  async createWorkspaceInvite(
+    workspaceId: string,
+    role: 'editor' | 'viewer' = 'editor',
+    options?: { expiresInS?: number; maxUses?: number },
+  ): Promise<{ token: string; role: string; url: string; expires_at: string | null; max_uses: number }> {
     const response = await fetchWithErrorHandling(
       `${API_BASE_URL}/api/workspaces/${encodeURIComponent(workspaceId)}/invites`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role }),
+        body: JSON.stringify({
+          role,
+          expires_in_s: options?.expiresInS,
+          max_uses: options?.maxUses,
+        }),
       },
       'Create invite'
     );
     if (!response.ok) {
       const err = await response.json().catch(() => ({ detail: 'Failed to create invite' }));
       throw new Error(typeof err.detail === 'string' ? err.detail : 'Failed to create invite');
+    }
+    return response.json();
+  },
+
+  async listWorkspaceInvites(workspaceId: string): Promise<WorkspaceInvite[]> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/workspaces/${encodeURIComponent(workspaceId)}/invites`,
+      undefined,
+      'List invites'
+    );
+    if (!response.ok) return [];
+    const data = await response.json();
+    return data.invites ?? [];
+  },
+
+  async revokeWorkspaceInvite(workspaceId: string, inviteId: string): Promise<void> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/workspaces/${encodeURIComponent(workspaceId)}/invites/${encodeURIComponent(inviteId)}`,
+      { method: 'DELETE' },
+      'Revoke invite'
+    );
+    if (!response.ok) throw new Error('Failed to revoke invite');
+  },
+
+  async leaveWorkspace(workspaceId: string): Promise<void> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/workspaces/${encodeURIComponent(workspaceId)}/leave`,
+      { method: 'POST' },
+      'Leave workspace'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Failed to leave workspace' }));
+      throw new Error(typeof err.detail === 'string' ? err.detail : 'Failed to leave workspace');
+    }
+  },
+
+  async updateWorkspaceMemberRole(workspaceId: string, userHash: string, role: 'editor' | 'viewer'): Promise<WorkspaceDetail> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(userHash)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role }),
+      },
+      'Update member role'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Failed to update member role' }));
+      throw new Error(typeof err.detail === 'string' ? err.detail : 'Failed to update member role');
+    }
+    return response.json();
+  },
+
+  async removeWorkspaceMember(workspaceId: string, userHash: string): Promise<WorkspaceDetail> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(userHash)}`,
+      { method: 'DELETE' },
+      'Remove member'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Failed to remove member' }));
+      throw new Error(typeof err.detail === 'string' ? err.detail : 'Failed to remove member');
+    }
+    return response.json();
+  },
+
+  async transferWorkspaceOwnership(workspaceId: string, userHash: string): Promise<WorkspaceDetail> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/workspaces/${encodeURIComponent(workspaceId)}/transfer`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_hash: userHash }),
+      },
+      'Transfer ownership'
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Failed to transfer ownership' }));
+      throw new Error(typeof err.detail === 'string' ? err.detail : 'Failed to transfer ownership');
     }
     return response.json();
   },
@@ -1265,6 +1364,28 @@ export const apiService = {
   },
 
   /**
+   * Read the latest version summary for a single Speckle model.
+   *
+   * Side-effect free (unlike ensure-ready) — safe to poll to detect that a
+   * newer commit was published.
+   */
+  async getModelLatestVersion(modelId: string): Promise<SpeckleModelLatestVersion | null> {
+    const response = await fetchWithErrorHandling(
+      `${API_BASE_URL}/api/speckle/models/${encodeURIComponent(modelId)}/latest`,
+      undefined,
+      'Get latest model version'
+    );
+
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Failed to get latest model version' }));
+      throw new Error(error.detail || 'Failed to get latest model version');
+    }
+
+    return response.json();
+  },
+
+  /**
    * Ensure a model's latest version is loadable by the pinned viewer.
    *
    * Re-materializes bundle-only / pre-fix legacy versions into a viewer-safe
@@ -1274,7 +1395,7 @@ export const apiService = {
    * @param modelId - The Speckle model ID
    * @returns The current loadable `{version_id, object_id}`
    */
-  async ensureSpeckleModelReady(modelId: string): Promise<{ version_id: string; object_id: string }> {
+  async ensureSpeckleModelReady(modelId: string): Promise<{ version_id: string; object_id: string; created_at?: string | null }> {
     const response = await fetchWithErrorHandling(
       `${API_BASE_URL}/api/speckle/models/${encodeURIComponent(modelId)}/ensure-ready`,
       { method: 'POST' },
@@ -1358,10 +1479,11 @@ export const apiService = {
    * Load soundscape data for a Speckle model (local-first, Speckle fallback).
    * @param modelId - Speckle model ID
    */
-  async loadSoundscapeFromSpeckle(modelId: string): Promise<SoundscapeLoadResponse> {
+  async loadSoundscapeFromSpeckle(modelId: string, workspaceId?: string | null): Promise<SoundscapeLoadResponse> {
     try {
+      const qs = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : '';
       const response = await fetchWithErrorHandling(
-        `${API_BASE_URL}/api/speckle/soundscape/${encodeURIComponent(modelId)}`,
+        `${API_BASE_URL}/api/speckle/soundscape/${encodeURIComponent(modelId)}${qs}`,
         undefined,
         'Load soundscape from Speckle'
       );

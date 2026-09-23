@@ -21,14 +21,14 @@
 import { useEffect, useRef } from 'react';
 import type React from 'react';
 import { useSpeckleStore, useAcousticLayerStore, useUIStore } from '@/store';
-import { getRootNodesForModel, getGeometryLeafIdsFromNode, countTopLevelLayers, findSingleTopLevelLayer } from '@/hooks/useSpeckleTree';
+import { getRootNodesForModel, getGeometryLeafIdsFromNode, getExplorerNodeId, countTopLevelLayers, findSingleTopLevelLayer } from '@/hooks/useSpeckleTree';
 import { setAcousticLayerAllIds, setAllModelGeometryIds } from '@/store/speckleStore';
 import { computeGeometryFaceCounts } from '@/utils/face-count';
 
 /** Find a tree node whose own id matches (supports leaf + nested-node picks). */
 function findNodeById(nodes: any[], id: string): any | null {
   for (const node of nodes) {
-    const nodeId = node.raw?.id || node.model?.raw?.id || node.model?.id || node.id;
+    const nodeId = getExplorerNodeId(node);
     if (nodeId === id) return node;
     const children = node.model?.children || node.children;
     if (children && children.length > 0) {
@@ -218,7 +218,7 @@ export function useAcousticLayerIsolation(
       const geometryIds = getGeometryLeafIdsFromNode(acousticsNode);
       if (geometryIds.length > 0) {
         const name = acousticsNode.raw?.name || 'Acoustics';
-        const layerId = acousticsNode.raw?.id || geometryIds[0];
+        const layerId = getExplorerNodeId(acousticsNode) || geometryIds[0];
         const onlyLayer = countTopLevelLayers(worldTree) <= 1;
         console.log(
           '[useAcousticLayerIsolation] Auto-detected Acoustics layer:',
@@ -241,7 +241,7 @@ export function useAcousticLayerIsolation(
       const singleLayer = findSingleTopLevelLayer(worldTree);
       if (singleLayer) {
         const name = singleLayer.raw?.name || singleLayer.model?.name;
-        const layerId = singleLayer.raw?.id || singleLayer.model?.id;
+        const layerId = getExplorerNodeId(singleLayer);
         const geometryIds = getGeometryLeafIdsFromNode(singleLayer);
         if (name && layerId && geometryIds.length > 0) {
           console.log('[useAcousticLayerIsolation] Single-layer model — auto-defined acoustic region as whole model:', name);
@@ -293,7 +293,7 @@ export function useAcousticLayerIsolation(
       const singleLayer = findSingleTopLevelLayer(liveTree);
       if (singleLayer) {
         const name = singleLayer.raw?.name || singleLayer.model?.name;
-        const layerId = singleLayer.raw?.id || singleLayer.model?.id;
+        const layerId = getExplorerNodeId(singleLayer);
         const geometryIds = getGeometryLeafIdsFromNode(singleLayer);
         if (name && layerId && geometryIds.length > 0) {
           console.log('[useAcousticLayerIsolation] Acoustic mode + single-layer model — auto-defined whole model:', name);

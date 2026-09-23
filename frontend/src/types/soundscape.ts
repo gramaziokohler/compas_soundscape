@@ -6,6 +6,7 @@
  */
 
 import type { DrawnArea } from './area-drawing';
+import type { IRAcousticParameters } from './audio';
 
 /** Global generation settings for a soundscape session */
 export interface SoundscapeGlobalSettings {
@@ -32,6 +33,9 @@ export interface SoundscapeSoundConfig {
   entity_node_id?: string; // Full Speckle object hash ID for entity matching
   entity_indices?: number[];     // All linked entity indices
   entity_node_ids?: string[];    // Stable applicationIds for all linked entities
+  /** Per-entity display metadata (parallel to entity_indices) — fallback identity
+   *  used when an applicationId no longer resolves after a model update. */
+  entity_meta?: { name?: string; layer?: string }[];
   seed_copies: number;
   steps: number;
   /** Parent analysis card index (links this sound config back to its context/usage card) */
@@ -139,6 +143,8 @@ export interface SoundscapeIRMetadata {
   file_size: number;
   normalization_convention?: string;
   channel_ordering?: string;
+  peak_amplitude?: number;
+  acoustic_parameters?: IRAcousticParameters;
 }
 
 /** Serializable pyroomacoustics simulation settings */
@@ -198,7 +204,7 @@ export interface SoundscapeSimulationConfig {
       points: number[][];
     }>; // grid configs at simulation time (for drift detection + reset)
   };
-  ir_gain_db?: number;
+  ir_gain?: number;
   ir_normalize_enabled?: boolean;
   material_assignments_enabled?: boolean;
   ir_import_mode?: 'single' | 'per-pair';

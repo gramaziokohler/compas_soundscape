@@ -78,6 +78,7 @@ interface SourceChain {
   // JSAmbisonics convolver (handles all orders)
   convolver: any; // ambisonics.convolver
   sourceIRBuffer: AudioBuffer | null; // Per-source IR buffer (for simulation mode)
+  sourceIRPeak: number; // Peak amplitude of the IR fed to the convolver (0 = no IR / identity)
   normGainValue: number; // Peak-normalization gain factor (1.0 = no normalization)
 
   // Source state
@@ -113,8 +114,8 @@ export class AmbisonicIRMode implements IAudioMode {
   // Receiver mode lock (position fixed, only rotation allowed)
   private receiverPosition: Position | null = null;
 
-  // Current IR gain in dB (applied to new source chains)
-  private currentIRGainDb: number = 0;
+  // Current IR gain as a linear peak-offset (-1..1), applied per source chain
+  private currentIRGainOffset: number = 0;
 
   // Normalization toggle state
   private normalizeEnabled: boolean = false;
@@ -202,11 +203,15 @@ export class AmbisonicIRMode implements IAudioMode {
     await this.initializePipeline();
 
     if (orderChanged && this.sourceChains.size > 0) {
-      // Order changed - must recreate source chains (convolvers are order-specific)
+      // Order changed - must recreate source chains (convolvers are order-specific).
+      // Use the persistent `audioBuffer` (always present), NOT `bufferSource?.buffer`:
+      // timeline playback runs through transient `voices`, so `bufferSource` is null for
+      // every source and the old code silently dropped all chains — which then made a
+      // subsequent per-source (simulation) IR update fail with "source not found".
       console.log(`[AmbisonicIRMode] Order changed from ${previousOrder} to ${order}, recreating ${this.sourceChains.size} source chains`);
       const existingSources = Array.from(this.sourceChains.entries()).map(([id, chain]) => ({
         id,
-        buffer: chain.bufferSource?.buffer ?? null,
+        buffer: chain.audioBuffer,
         position: chain.position,
         isPlaying: chain.isPlaying,
         volume: chain.gainNode.gain.value,
@@ -216,18 +221,13 @@ export class AmbisonicIRMode implements IAudioMode {
       // Remove old chains
       existingSources.forEach(({ id }) => this.removeSource(id));
 
-      // Recreate with new order
-      existingSources.forEach(({ id, buffer, position, isPlaying, volume, isMuted }) => {
-        if (buffer) {
-          this.createSource(id, buffer, position);
-          const chain = this.sourceChains.get(id);
-          if (chain) {
-            chain.gainNode.gain.value = volume;
-            chain.muteGainNode.gain.value = isMuted ? 0 : 1;
-            if (isPlaying) {
-              this.playSource(id);
-            }
-          }
+      // Recreate with new order, restoring volume + mute state
+      existingSources.forEach(({ id, buffer, position, volume, isMuted }) => {
+        this.createSource(id, buffer, position);
+        const chain = this.sourceChains.get(id);
+        if (chain) {
+          chain.gainNode.gain.value = volume;
+          chain.muteGainNode.gain.value = isMuted ? 0 : 1;
         }
       });
     } else {
@@ -446,7 +446,8 @@ export class AmbisonicIRMode implements IAudioMode {
     muteGainNode.gain.value = 1.0; // Unmuted by default
 
     const irGainNode = this.audioContext.createGain();
-    irGainNode.gain.value = Math.pow(10, this.currentIRGainDb / 20);
+    const initialIRPeak = this.irBuffer ? this.computePeak(this.irBuffer) : 0;
+    irGainNode.gain.value = this.computeIRGainValue(initialIRPeak);
 
     // Create JSAmbisonics convolver for multi-channel IR
     const convolver = new ambisonics.convolver(this.audioContext, this.ambisonicOrder);
@@ -492,6 +493,7 @@ export class AmbisonicIRMode implements IAudioMode {
       levelMeter,
       convolver,
       sourceIRBuffer: null, // No per-source IR yet (will be set in simulation mode)
+      sourceIRPeak: initialIRPeak,
       normGainValue: this.globalNormGain,
       position,
       isPlaying: false,
@@ -591,7 +593,9 @@ export class AmbisonicIRMode implements IAudioMode {
 
     chain.convolver.updateFilters(identityIR);
     chain.sourceIRBuffer = null;
+    chain.sourceIRPeak = 0;
     chain.normGainValue = 1.0;
+    this.applyIRGain(chain);
     if (this.normalizeEnabled && this.audioContext) {
       chain.normGainNode.gain.setValueAtTime(1.0, this.audioContext.currentTime);
     }
@@ -621,7 +625,9 @@ export class AmbisonicIRMode implements IAudioMode {
 
     chain.convolver.updateFilters(silentIR);
     chain.sourceIRBuffer = null;
+    chain.sourceIRPeak = 0;
     chain.normGainValue = 1.0;
+    this.applyIRGain(chain);
     if (this.normalizeEnabled && this.audioContext) {
       chain.normGainNode.gain.setValueAtTime(1.0, this.audioContext.currentTime);
     }
@@ -634,12 +640,6 @@ export class AmbisonicIRMode implements IAudioMode {
    * Allows per-source IR assignment for source-receiver pair workflows
    */
   async setSourceImpulseResponse(sourceId: string, irBuffer: AudioBuffer): Promise<void> {
-    const chain = this.sourceChains.get(sourceId);
-    if (!chain) {
-      console.warn(`[AmbisonicIRMode] Source "${sourceId}" not found for IR update`);
-      return;
-    }
-
     if (!this.audioContext) {
       console.error('[AmbisonicIRMode] Cannot set source IR - not initialized');
       return;
@@ -666,10 +666,27 @@ export class AmbisonicIRMode implements IAudioMode {
     // Resample if needed, no gain manipulation
     const processedBuffer = this.resampleIfNeeded(bufferToProcess);
 
+    // The per-source IR dictates the ambisonic order. If it differs from the
+    // currently active order (e.g. an imported global IR left SOA/TOA active and
+    // this is a FOA simulation IR), rebuild the convolvers/decoder at the correct
+    // order first — otherwise `convolver.updateFilters` reads out of range and the
+    // convolution silently breaks.
+    const order: AmbisonicOrder =
+      processedBuffer.numberOfChannels === 9 ? 2 :
+      processedBuffer.numberOfChannels === 16 ? 3 : 1;
+    await this.ensureOrder(order);
+
+    const chain = this.sourceChains.get(sourceId);
+    if (!chain) {
+      console.warn(`[AmbisonicIRMode] Source "${sourceId}" not found for IR update`);
+      return;
+    }
+
     // Update JSAmbisonics convolver with new IR
     // Convert SN3D → N3D if JSAmbisonics decoder is active
     chain.convolver.updateFilters(this.getConvolverIR(processedBuffer));
     chain.sourceIRBuffer = processedBuffer;
+    chain.sourceIRPeak = this.computePeak(processedBuffer);
 
     // Compute per-source normalization gain
     chain.normGainValue = this.computeNormGain(processedBuffer);
@@ -677,7 +694,44 @@ export class AmbisonicIRMode implements IAudioMode {
       chain.normGainNode.gain.setValueAtTime(chain.normGainValue, this.audioContext.currentTime);
     }
 
+    // Apply the current IR gain offset so the rendered peak matches the preview
+    this.applyIRGain(chain);
+
     console.log(`[AmbisonicIRMode] ✅ Updated IR for source "${sourceId}" (${channels}ch → ${bufferToProcess.numberOfChannels}ch, ${bufferToProcess.length} samples @ ${bufferToProcess.sampleRate}Hz)`);
+  }
+
+  /**
+   * Rebuild the pipeline and every source chain at a new ambisonic order.
+   * Used when a per-source IR changes order. Chains are recreated from their
+   * persistent `audioBuffer` (never `bufferSource`, which is null during
+   * timeline/voice playback). No-op when the order is unchanged.
+   */
+  private async ensureOrder(order: AmbisonicOrder): Promise<void> {
+    if (order === this.ambisonicOrder) return;
+
+    console.log(`[AmbisonicIRMode] Per-source order change ${this.ambisonicOrder} → ${order}; rebuilding pipeline + source chains`);
+    const existing = Array.from(this.sourceChains.entries()).map(([id, chain]) => ({
+      id,
+      buffer: chain.audioBuffer,
+      position: chain.position,
+      volume: chain.gainNode.gain.value,
+      isMuted: chain.muteGainNode.gain.value === 0,
+    }));
+
+    this.ambisonicOrder = order;
+    this.numAmbisonicChannels = Math.pow(order + 1, 2);
+
+    await this.initializePipeline();
+
+    existing.forEach(({ id }) => this.removeSource(id));
+    existing.forEach(({ id, buffer, position, volume, isMuted }) => {
+      this.createSource(id, buffer, position);
+      const chain = this.sourceChains.get(id);
+      if (chain) {
+        chain.gainNode.gain.value = volume;
+        chain.muteGainNode.gain.value = isMuted ? 0 : 1;
+      }
+    });
   }
 
 
@@ -692,6 +746,9 @@ export class AmbisonicIRMode implements IAudioMode {
     // Update JSAmbisonics convolver with new IR
     // Convert SN3D → N3D if JSAmbisonics decoder is active
     chain.convolver.updateFilters(this.getConvolverIR(this.irBuffer));
+    // Keep the chain's peak + gain offset in sync with the new global IR
+    chain.sourceIRPeak = this.computePeak(this.irBuffer);
+    this.applyIRGain(chain);
   }
 
   /**
@@ -1037,23 +1094,60 @@ export class AmbisonicIRMode implements IAudioMode {
     chain.muteGainNode.gain.setValueAtTime(gainValue, this.audioContext.currentTime);
   }
 
+  /** Peak absolute sample (max across channels) of an IR buffer. */
+  private computePeak(buffer: AudioBuffer): number {
+    let peak = 0;
+    for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+      const data = buffer.getChannelData(ch);
+      for (let i = 0; i < data.length; i++) {
+        const abs = Math.abs(data[i]);
+        if (abs > peak) peak = abs;
+      }
+    }
+    return peak;
+  }
+
   /**
-   * Set IR gain (dB) applied uniformly to all source chains.
-   * Positive values amplify, negative values attenuate.
-   * Range: -12 to +12 dB.
+   * Gain multiplier that realises the current peak offset for a chain whose IR
+   * has the given natural peak: (effectivePeak + offset) / effectivePeak.
+   * effectivePeak is 1.0 when normalization is on (normGain does the scaling),
+   * otherwise the IR's own peak. Returns 1.0 for identity / no-IR chains.
+   * Returns 0 when the offset reaches the mute point (peak + offset <= 0).
    */
-  setIRGain(dB: number): void {
+  private computeIRGainValue(sourceIRPeak: number): number {
+    if (!(sourceIRPeak > 0)) return 1.0;
+    const effectivePeak = (this.normalizeEnabled && sourceIRPeak > IMPULSE_RESPONSE.MIN_AMPLITUDE_THRESHOLD)
+      ? IMPULSE_RESPONSE.NORMALIZATION_SCALE
+      : sourceIRPeak;
+    if (effectivePeak <= 0) return 1.0;
+    return Math.max(0, (effectivePeak + this.currentIRGainOffset) / effectivePeak);
+  }
+
+  /** Re-apply the current peak-offset gain to a single chain. */
+  private applyIRGain(chain: SourceChain): void {
     if (!this.audioContext) return;
-    this.currentIRGainDb = Math.max(-12, Math.min(12, dB));
-    const linearGain = Math.pow(10, this.currentIRGainDb / 20);
+    chain.irGainNode.gain.setValueAtTime(this.computeIRGainValue(chain.sourceIRPeak), this.audioContext.currentTime);
+  }
+
+  /**
+   * Set the IR gain as a linear peak-offset (-1..1) applied uniformly to all
+   * source chains. Each IR is scaled so its convolver-input peak becomes
+   * effectivePeak + offset; reaching 0 mutes, reaching 1 clips.
+   */
+  setIRGain(offset: number): void {
+    this.currentIRGainOffset = Math.max(
+      IMPULSE_RESPONSE.GAIN_OFFSET_MIN,
+      Math.min(IMPULSE_RESPONSE.GAIN_OFFSET_MAX, offset)
+    );
     for (const chain of this.sourceChains.values()) {
-      chain.irGainNode.gain.setValueAtTime(linearGain, this.audioContext.currentTime);
+      this.applyIRGain(chain);
     }
   }
 
   /**
    * Enable or disable IR peak normalization.
    * When enabled, the IR is scaled so its peak amplitude equals NORMALIZATION_SCALE.
+   * Re-applies the peak-offset gain because the effective peak changes.
    */
   setNormalize(enabled: boolean): void {
     this.normalizeEnabled = enabled;
@@ -1063,6 +1157,7 @@ export class AmbisonicIRMode implements IAudioMode {
         enabled ? chain.normGainValue : 1.0,
         this.audioContext.currentTime
       );
+      this.applyIRGain(chain);
     }
   }
 

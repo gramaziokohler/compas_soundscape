@@ -4,10 +4,9 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { EntityInfoPanel } from '@/components/layout/sidebar/EntityInfoPanel';
 import { UI_RIGHT_SIDEBAR } from '@/utils/constants';
-import { useSpeckleStore, useAcousticLayerStore, useUIStore } from '@/store';
+import { useSpeckleStore, useAcousticLayerStore, useUIStore, useAudioControlsStore, useSoundscapeStore } from '@/store';
 import { useSpeckleFiltering } from '@/hooks/useSpeckleFiltering';
-import { getRootNodesForModel, getGeometryLeafIdsFromNode } from '@/hooks/useSpeckleTree';
-import type { SoundEvent } from '@/types';
+import { getRootNodesForModel, getGeometryLeafIdsFromNode, getExplorerNodeId } from '@/hooks/useSpeckleTree';
 import { getScale } from '@/utils/scale';
 
 const INITIAL_WIDTH = 320;
@@ -19,7 +18,6 @@ interface SceneContextMenuProps {
   x: number;
   y: number;
   onClose: () => void;
-  generatedSounds?: SoundEvent[];
   onGoToReceiver?: (receiverId: string) => void;
   onOpenExplorer?: () => void;
 }
@@ -37,7 +35,6 @@ export function SceneContextMenu({
   x,
   y,
   onClose,
-  generatedSounds,
   onGoToReceiver,
   onOpenExplorer,
 }: SceneContextMenuProps) {
@@ -54,6 +51,33 @@ export function SceneContextMenu({
 
   const selectedEntity = useSpeckleStore((s) => s.selectedEntity);
   const panelTitle = selectedEntity?.objectName || selectedEntity?.objectType || 'Object Info';
+  // Real generated events (same source the sound section uses) — used only to
+  // resolve the preview keys this panel is responsible for.
+  const generatedSounds = useSoundscapeStore((s) => s.generatedSounds);
+
+  // ── Preview keys owned by this panel ──
+  // Closing the panel stops a sound that was previewed from it (or its card),
+  // but never a preview started somewhere unrelated.
+  const previewKeys = useMemo<string[]>(() => {
+    const sd = selectedEntity?.soundData;
+    if (selectedEntity?.objectType !== 'Sound' || !sd) return [];
+    const keys: string[] = [`pregen:${sd.promptIndex}`];
+    generatedSounds.forEach((s) => {
+      if (s.prompt_index === sd.promptIndex) keys.push(s.id);
+    });
+    return keys;
+  }, [selectedEntity, generatedSounds]);
+  const previewKeysRef = useRef<string[]>([]);
+  useEffect(() => { previewKeysRef.current = previewKeys; }, [previewKeys]);
+  useEffect(() => {
+    return () => {
+      const store = useAudioControlsStore.getState();
+      const current = store.previewingSoundId;
+      if (current && previewKeysRef.current.includes(current)) {
+        store.handlePreviewStop(current);
+      }
+    };
+  }, []);
 
   // ── Viewer filtering state (syncs with ObjectExplorer via same stateKey) ──
   const viewMode = useSpeckleStore((s) => s.viewMode);
@@ -86,7 +110,7 @@ export function SceneContextMenu({
 
     const findNode = (nodes: any[]): any | null => {
       for (const node of nodes) {
-        const nodeId = node.raw?.id || node.model?.id || node.id;
+        const nodeId = getExplorerNodeId(node);
         if (nodeId === selectedEntity.objectId) return node;
         const children = node.model?.children || node.children;
         if (children) {
@@ -377,7 +401,6 @@ export function SceneContextMenu({
       >
         <EntityInfoPanel
           onGoToReceiver={onGoToReceiver}
-          generatedSounds={generatedSounds}
         />
       </div>
 

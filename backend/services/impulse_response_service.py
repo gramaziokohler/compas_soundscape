@@ -27,6 +27,16 @@ class ImpulseResponseService:
     def __init__(self):
         """Initialize IR service and ensure directories exist"""
         os.makedirs(IMPULSE_RESPONSE_DIR, exist_ok=True)
+        # path -> (mtime, peak) cache so list_impulse_responses does not re-read
+        # every file's samples on each call.
+        self._peak_cache: dict[str, tuple[float, float]] = {}
+
+    @staticmethod
+    def _compute_peak(audio_data: np.ndarray) -> float:
+        """Peak absolute sample (max across channels) in the float [-1, 1] domain."""
+        if audio_data.size == 0:
+            return 0.0
+        return float(np.max(np.abs(audio_data)))
     
     def detect_ir_format(self, channels: int) -> str:
         """
@@ -171,6 +181,23 @@ class ImpulseResponseService:
         # Calculate duration
         duration = audio_data.shape[1] / sample_rate
         
+        # Peak absolute amplitude (max across channels) in float domain
+        peak_amplitude = self._compute_peak(audio_data)
+
+        # Acoustic metrics — same computation the pyroomacoustics worker runs after
+        # compute_rir(). Use the first channel, matching its FOA convention
+        # (W = channel 0). Failure must not break the upload.
+        acoustic_parameters = None
+        try:
+            # Lazy import: utils.acoustic_measurement pulls in pyroomacoustics, only
+            # needed when an IR is actually uploaded (matches choras_service).
+            from utils.acoustic_measurement import AcousticMeasurement
+            acoustic_parameters = AcousticMeasurement.calculate_acoustic_parameters_from_rir(
+                audio_data[0], sample_rate
+            )
+        except Exception as ap_err:
+            print(f"Warning: acoustic parameters failed for IR '{name}': {ap_err}")
+
         # Create metadata
         metadata = ImpulseResponseMetadata(
             id=unique_id,
@@ -181,7 +208,9 @@ class ImpulseResponseService:
             original_channels=original_channels,
             sample_rate=sample_rate,
             duration=duration,
-            file_size=file_size
+            file_size=file_size,
+            peak_amplitude=peak_amplitude,
+            acoustic_parameters=acoustic_parameters
         )
         
         return metadata, output_path
@@ -226,6 +255,16 @@ class ImpulseResponseService:
                     ir_format = self.detect_ir_format(channels)
                     file_hash = filename[:8]
                 
+                # Peak amplitude (cached by path+mtime so repeat listings stay cheap)
+                mtime = os.path.getmtime(filepath)
+                cached = self._peak_cache.get(filepath)
+                if cached is not None and cached[0] == mtime:
+                    peak_amplitude = cached[1]
+                else:
+                    ir_samples, _ = sf.read(filepath, always_2d=True)
+                    peak_amplitude = self._compute_peak(ir_samples)
+                    self._peak_cache[filepath] = (mtime, peak_amplitude)
+                
                 metadata = ImpulseResponseMetadata(
                     id=file_hash,
                     url=f"{IMPULSE_RESPONSE_URL_PREFIX}/{filename}",
@@ -235,7 +274,8 @@ class ImpulseResponseService:
                     original_channels=channels,
                     sample_rate=sample_rate,
                     duration=duration,
-                    file_size=file_size
+                    file_size=file_size,
+                    peak_amplitude=peak_amplitude
                 )
                 
                 irs.append(metadata)

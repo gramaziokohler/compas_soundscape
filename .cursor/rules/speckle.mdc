@@ -78,7 +78,7 @@ and projects it onto a classic `Collection`/`DataObject` tree) — but only when
 
 ```python
 from specklepy.objects.data_objects import DataObject
-from specklepy.core.api.inputs.version_inputs import CreateVersionInput
+from specklepy.api.inputs.version_inputs import CreateVersionInput
 
 obj = DataObject(data={"key": "value"})
 obj_id = operations.send(obj, [transport])

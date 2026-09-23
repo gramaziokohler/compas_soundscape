@@ -129,6 +129,13 @@ class ImpulseResponseMetadata(BaseModel):
     sample_rate: int
     duration: float  # Duration in seconds
     file_size: int  # Size in bytes
+    # Peak absolute amplitude (max across channels, float-normalised [-1, 1] domain).
+    # Used by the import-irs gain slider to place clip/mute thresholds.
+    peak_amplitude: Optional[float] = None
+    # Acoustic metrics (RT60/EDT/C50/D50/DRR/relative level) measured from this IR
+    # with utils.acoustic_measurement.AcousticMeasurement — same method as the
+    # pyroomacoustics simulation cards.
+    acoustic_parameters: Optional[dict] = None
 
 
 class ImpulseResponseListResponse(BaseModel):
@@ -290,6 +297,9 @@ class SoundscapeSoundConfig(BaseModel):
     # Multi-entity support (new format)
     entity_indices: Optional[list[int]] = None
     entity_node_ids: Optional[list[str]] = None
+    # Per-entity display metadata (parallel to entity_indices) — fallback identity
+    # when an applicationId no longer resolves after a model republish.
+    entity_meta: Optional[list[dict]] = None
     # Sound category from foley/scenario analysis (e.g. "background", "sound_event", "speech")
     category: Optional[str] = None
     # Scenario pipeline reference (scenarioId + foley/speech ids + raw entry fields),
@@ -371,6 +381,8 @@ class SoundscapeIRMetadata(BaseModel):
     file_size: int
     normalization_convention: Optional[str] = None
     channel_ordering: Optional[str] = None
+    peak_amplitude: Optional[float] = None
+    acoustic_parameters: Optional[dict] = None
 
 
 class SoundscapeSimulationSettings(BaseModel):
@@ -402,6 +414,7 @@ class SoundscapeSimulationConfig(BaseModel):
     receiver_positions: Optional[dict[str, list[float]]] = None  # receiverId -> [x, y, z]
     simulation_positions: Optional[dict] = None  # {sources, receivers, sound_to_pos_key}
     ir_gain_db: Optional[float] = None
+    ir_gain: Optional[float] = None  # Linear peak-offset (-1..1) for import-irs gain
     ir_normalize_enabled: Optional[bool] = None
     material_assignments_enabled: Optional[bool] = None
     ir_import_mode: Optional[str] = None  # "single" | "per-pair"

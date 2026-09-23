@@ -52,11 +52,13 @@ from gql import gql
 from specklepy.api.client import SpeckleClient
 from specklepy.api import operations
 from specklepy.transports.server import ServerTransport
-from specklepy.core.api.inputs.project_inputs import WorkspaceProjectCreateInput
-from specklepy.core.api.inputs.model_inputs import CreateModelInput
-from specklepy.core.api.inputs.version_inputs import CreateVersionInput
+from specklepy.api.inputs.project_inputs import WorkspaceProjectCreateInput
+from specklepy.api.inputs.model_inputs import CreateModelInput
+from specklepy.api.inputs.version_inputs import CreateVersionInput
 from specklepy.objects import Base
 from specklepy.objects.data_objects import DataObject
+
+from utils.geometry import canonical_object_id
 
 from config.constants import (
     SPECKLE_SERVER_URL,
@@ -77,9 +79,10 @@ logger = logging.getLogger(__name__)
 _LEGACY_VERSION_CACHE: Dict[str, Dict[str, str]] = {}
 _LEGACY_VERSION_LOCK = threading.Lock()
 _MATERIALIZE_LOCK = threading.Lock()
-# ``v2`` prefix invalidates legacy copies materialized before the displayValue
-# applicationId fix below — an ensure-ready call re-materializes them from the bundle.
-_LEGACY_VERSION_REDIS_PREFIX = "speckle:legacy_version:v2:"
+# ``v3`` prefix invalidates cached mappings created before ``created_at`` was
+# included (needed by the frontend version watcher to tell a real new publish
+# from a re-materialized copy).
+_LEGACY_VERSION_REDIS_PREFIX = "speckle:legacy_version:v3:"
 _redis_client = None
 
 # Appended to the version message of every legacy copy created with the viewer-safe
@@ -418,7 +421,15 @@ class SpeckleService:
 
                 # Already a classic object graph — nothing to materialize.
                 if not referenced_object.startswith("bundle."):
-                    result = {"version_id": version.id, "object_id": referenced_object}
+                    result = {
+                        "version_id": version.id,
+                        "object_id": referenced_object,
+                        "created_at": (
+                            version.created_at.isoformat()
+                            if getattr(version, "created_at", None)
+                            else None
+                        ),
+                    }
                     _cache_set_legacy_version(bundle_version_id, result)
                     return result
 
@@ -452,7 +463,15 @@ class SpeckleService:
                     )
                 )
 
-                result = {"version_id": legacy_version.id, "object_id": legacy_object_id}
+                result = {
+                    "version_id": legacy_version.id,
+                    "object_id": legacy_object_id,
+                    "created_at": (
+                        legacy_version.created_at.isoformat()
+                        if getattr(legacy_version, "created_at", None)
+                        else None
+                    ),
+                }
                 _cache_set_legacy_version(bundle_version_id, result)
                 logger.info(
                     f"Materialized {bundle_version_id} -> legacy version "
@@ -499,7 +518,15 @@ class SpeckleService:
                 healed = self._materialize_legacy_version(latest.id)
                 if healed:
                     return healed
-                return {"version_id": latest.id, "object_id": ref}
+                return {
+                    "version_id": latest.id,
+                    "object_id": ref,
+                    "created_at": (
+                        latest.created_at.isoformat()
+                        if getattr(latest, "created_at", None)
+                        else None
+                    ),
+                }
 
             # A copy we materialized before the geometry fix → re-materialize from the
             # newest bundle version still present in the model.
@@ -521,9 +548,50 @@ class SpeckleService:
                         )
                         return healed
 
-            return {"version_id": latest.id, "object_id": ref}
+            return {
+                "version_id": latest.id,
+                "object_id": ref,
+                "created_at": (
+                    latest.created_at.isoformat()
+                    if getattr(latest, "created_at", None)
+                    else None
+                ),
+            }
         except Exception as exc:
             logger.warning(f"ensure_model_ready failed for model {model_id}: {exc}")
+            return None
+
+    def get_model_latest_version(self, model_id: str) -> Optional[Dict]:
+        """Read-only: return the latest version summary for a model.
+
+        Used by the frontend version watcher to detect a newer commit without
+        triggering the materialization side-effects of ``ensure_model_ready``.
+        Returns ``{version_id, object_id, created_at, author_name,
+        source_application, message}`` or ``None`` when unauthenticated/missing.
+        """
+        if not self.client or not self.project_id:
+            logger.error("Not authenticated or no project selected.")
+            return None
+
+        try:
+            mwv = self.client.model.get_with_versions(
+                model_id=model_id, project_id=self.project_id, versions_limit=1
+            )
+            versions = list(mwv.versions.items) if mwv and mwv.versions else []
+            if not versions:
+                return None
+            latest = versions[0]
+            serialized = self._serialize_version(latest)
+            return {
+                "version_id": latest.id,
+                "object_id": serialized.get("referenced_object") or latest.id,
+                "created_at": serialized.get("created_at"),
+                "author_name": serialized.get("author_name"),
+                "source_application": serialized.get("source_application"),
+                "message": serialized.get("message"),
+            }
+        except Exception as exc:
+            logger.warning(f"get_model_latest_version failed for model {model_id}: {exc}")
             return None
 
     def get_ingestion_status(self, ingestion_id: str) -> Optional[Dict]:
@@ -1016,7 +1084,7 @@ class SpeckleService:
         object_types = {}
         
         # Track objects with their layer context
-        def manual_traverse(obj, depth=0, current_layer=None):
+        def manual_traverse(obj, depth=0, current_layer=None, from_display_value=False):
             """Manually traverse object tree while tracking layer context"""
             nonlocal total_objects
             
@@ -1061,24 +1129,29 @@ class SpeckleService:
                 # Only include objects in the selected layer
                 should_include = current_layer and current_layer.lower() == layer_name.lower()
             
-            # Check if this object has displayValue OR if it IS geometry itself
+            # Check if this object has displayValue OR if it IS geometry itself.
+            # A Mesh that is the displayValue of a parent object must NOT be
+            # emitted as a separate geometry object — the parent already
+            # contributes it, and emitting both duplicates every surface (and
+            # splits the material assignments onto the copy that welding drops).
             if should_include:
                 if hasattr(obj, 'displayValue') and obj.displayValue is not None:
                     objects_with_display.append((obj, current_layer))
-                elif isinstance(obj, Mesh):
+                elif isinstance(obj, Mesh) and not from_display_value:
                     # Object IS geometry (e.g., from Rhino/3dm files)
                     objects_with_display.append((obj, current_layer))
             
             # Recurse through all properties, passing the current layer context
             for prop_name in obj.get_member_names():
                 value = getattr(obj, prop_name, None)
+                child_from_dv = from_display_value or prop_name == "displayValue"
                 
                 if isinstance(value, Base):
-                    manual_traverse(value, depth + 1, current_layer)
+                    manual_traverse(value, depth + 1, current_layer, child_from_dv)
                 elif isinstance(value, list):
                     for item in value:
                         if isinstance(item, Base):
-                            manual_traverse(item, depth + 1, current_layer)
+                            manual_traverse(item, depth + 1, current_layer, child_from_dv)
         
         manual_traverse(root_object)
         
@@ -1086,7 +1159,16 @@ class SpeckleService:
         logger.info(f"Object types found: {object_types}")
         logger.info(f"Found {len(objects_with_display)} objects with geometry (displayValue or direct Mesh)")
         
-        object_ids_set = set(object_ids_filter) if object_ids_filter else None
+        # The frontend keys object ids by the viewer WorldTree node id, which may
+        # carry a '#<n>' duplicate suffix (and may be the applicationId). Normalize
+        # both sides so an assignment/filter keyed by '<hash>#3' still matches the
+        # bare '<hash>' the backend received.
+        object_ids_set = None
+        if object_ids_filter:
+            object_ids_set = set()
+            for _x in object_ids_filter:
+                object_ids_set.add(_x)
+                object_ids_set.add(canonical_object_id(_x))
         # Maps obj_id → layer path for downstream consumers (e.g. get_model_entities)
         object_layers: dict[str, str | None] = {}
 
@@ -1097,12 +1179,21 @@ class SpeckleService:
             obj_app_id = getattr(obj, 'applicationId', None)  # Rhino GUID — stable across commits
 
             # When filtering by explicit object IDs, skip objects not in the list
-            if object_ids_set is not None and obj_id not in object_ids_set:
-                continue
+            if object_ids_set is not None:
+                aliases = {obj_id, canonical_object_id(obj_id)}
+                if obj_app_id:
+                    aliases.add(obj_app_id)
+                    aliases.add(canonical_object_id(obj_app_id))
+                if not (aliases & object_ids_set):
+                    continue
             
             logger.info(f"Processing object: {obj_name} (id: {obj_id})")
             
             start_face = face_count
+            # Extra identifier aliases contributed by this object's display meshes
+            # (the frontend's viewer tree exposes those nodes too, so saved
+            # assignments may be keyed by a mesh id rather than the host object).
+            display_mesh_ids: set[str] = set()
             
             # Check if object IS a Mesh directly (Rhino/3dm files)
             if isinstance(obj, Mesh):
@@ -1129,6 +1220,10 @@ class SpeckleService:
                 for mesh in display_val:
                     mesh_data = extract_mesh_data(mesh)
                     if mesh_data:
+                        mesh_id = getattr(mesh, 'id', None)
+                        if mesh_id:
+                            display_mesh_ids.add(mesh_id)
+                            display_mesh_ids.add(canonical_object_id(mesh_id))
                         # Add vertices
                         all_vertices.extend(mesh_data['vertices'])
                         
@@ -1145,12 +1240,19 @@ class SpeckleService:
                 object_ids.append(obj_id)
                 object_names.append(obj_name)
                 face_range = [start_face, face_count - 1]
-                object_face_ranges[obj_id] = face_range
-                object_layers[obj_id] = obj_layer
-                # Also index by applicationId (Rhino GUID) so the frontend can send either ID
-                if obj_app_id and obj_app_id != obj_id:
-                    object_face_ranges[obj_app_id] = face_range
-                    object_layers[obj_app_id] = obj_layer
+                # Index by the raw id, its canonical (suffix-stripped) form, the
+                # applicationId (Rhino GUID / stable id), and the display meshes'
+                # ids — all under both raw and canonical forms — so the frontend
+                # can send whichever id its viewer tree exposed.
+                alias_keys = {obj_id, canonical_object_id(obj_id), *display_mesh_ids}
+                if obj_app_id:
+                    alias_keys.add(obj_app_id)
+                    alias_keys.add(canonical_object_id(obj_app_id))
+                for key in alias_keys:
+                    if not key:
+                        continue
+                    object_face_ranges.setdefault(key, face_range)
+                    object_layers.setdefault(key, obj_layer)
                 logger.info(f"Added {face_count - start_face} faces from {obj_name} (id={obj_id}, applicationId={obj_app_id}, layer={obj_layer})")
         
         logger.info(f"Total geometry extracted: {len(all_vertices)} vertices, {len(all_faces)} faces across {len(object_ids)} objects (units: '{root_units}', scaled to meters)")

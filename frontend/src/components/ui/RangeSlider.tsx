@@ -33,6 +33,11 @@ interface RangeSliderProps {
   onBlueBackground?: boolean;
   /** Default value to reset to on double-click. If omitted, double-click reset is disabled. */
   defaultValue?: number;
+  /**
+   * Threshold markers drawn as ticks on the track with a small label beneath.
+   * Used to flag the exact points where a value would clip / mute (e.g. IR gain).
+   */
+  markers?: Array<{ value: number; label: string; tone?: 'primary' | 'warning' | 'error' }>;
 }
 
 /** Floor width for the slider track itself — below this it wraps to its own line instead of shrinking further. */
@@ -87,6 +92,7 @@ export function RangeSlider({
   color,
   onBlueBackground = false,
   defaultValue,
+  markers,
 }: RangeSliderProps) {
   const resolvedPrecision = precision ?? decimalsFromStep(step);
   const resolvedFormatValue =
@@ -155,6 +161,21 @@ export function RangeSlider({
   const displayMin = minLabel ?? min.toString();
   const displayMax = maxLabel ?? max.toString();
 
+  const markerToneColor = (tone?: 'primary' | 'warning' | 'error'): string => {
+    if (tone === 'warning') return 'var(--color-warning)';
+    if (tone === 'error') return 'var(--color-error)';
+    if (tone === 'primary') return color ?? (onBlueBackground ? 'var(--color-on-blue)' : 'var(--color-primary)');
+    return onBlueBackground ? 'var(--color-on-blue-muted)' : 'var(--color-secondary-hover)';
+  };
+
+  const markerPercent = (v: number): number => {
+    if (max <= min) return 0;
+    const clamped = Math.min(max, Math.max(min, v));
+    return Math.min(100, Math.max(0, ((clamped - min) / (max - min)) * 100));
+  };
+
+  const hasMarkers = !!(markers && markers.length > 0);
+
   return (
     <div
       className={`${className}`}
@@ -175,21 +196,49 @@ export function RangeSlider({
           {label}
         </span>
         <div className="flex items-center gap-1 flex-1">
-          <input
-            type="range"
-            min={min}
-            max={max}
-            step={step}
-            value={value}
-            onChange={handleChange}
-            onPointerDown={() => onDragStart?.()}
-            onPointerUp={handlePointerUp}
-            onDoubleClick={handleDoubleClick}
-            disabled={disabled}
-            className={`c-slider flex-1 ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
-            style={{ ...sliderStyle, minWidth: `${MIN_SLIDER_WIDTH_PX}px` }}
-            title={defaultValue !== undefined ? `Double-click to reset (${resolvedFormatValue(defaultValue)})` : hoverText}
-          />
+          <div
+            className="flex-1"
+            style={{ minWidth: `${MIN_SLIDER_WIDTH_PX}px`, paddingBottom: hasMarkers ? 12 : 0 }}
+          >
+            <div className="relative">
+              <input
+                type="range"
+                min={min}
+                max={max}
+                step={step}
+                value={value}
+                onChange={handleChange}
+                onPointerDown={() => onDragStart?.()}
+                onPointerUp={handlePointerUp}
+                onDoubleClick={handleDoubleClick}
+                disabled={disabled}
+                className={`c-slider w-full ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                style={sliderStyle}
+                title={defaultValue !== undefined ? `Double-click to reset (${resolvedFormatValue(defaultValue)})` : hoverText}
+              />
+              {markers?.map((m, i) => (
+                <span
+                  key={`marker-tick-${i}`}
+                  aria-hidden
+                  className="absolute top-0 bottom-0 pointer-events-none"
+                  style={{ left: `${markerPercent(m.value)}%`, width: 1, backgroundColor: markerToneColor(m.tone) }}
+                />
+              ))}
+            </div>
+            {hasMarkers && (
+              <div className="relative h-0">
+                {markers!.map((m, i) => (
+                  <span
+                    key={`marker-label-${i}`}
+                    className="absolute -translate-x-1/2 whitespace-nowrap text-[9px] leading-none"
+                    style={{ left: `${markerPercent(m.value)}%`, top: 2, color: markerToneColor(m.tone) }}
+                  >
+                    {m.label}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
           {valueField}          
         </div>
       </div>

@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { VirtualTreeItem } from '@/components/scene/VirtualTreeItem';
-import { useSpeckleTree, getRootNodesForModel, getGeometryLeafIdsFromNode, getHeaderAndSubheader, countTopLevelLayers } from '@/hooks/useSpeckleTree';
+import { useSpeckleTree, getRootNodesForModel, getGeometryLeafIdsFromNode, getExplorerNodeId, getHeaderAndSubheader, countTopLevelLayers } from '@/hooks/useSpeckleTree';
 import { useSpeckleFiltering } from '@/hooks/useSpeckleFiltering';
 import { useSpeckleInteractions } from '@/hooks/useSpeckleInteractions';
 import { useObjectSelectionPhase } from '@/hooks/useObjectSelectionPhase';
@@ -243,6 +243,21 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
     });
   }, [virtualItems, isAcousticMode, selectedAcousticGeometryIds, isWholeModel, phase]);
 
+  // Geometry-leaf union across the currently selected rows. A material /
+  // scattering edit on any selected row applies to this whole set, so a
+  // multi-selection (shift-click in the tree or in the 3D viewer) is assigned
+  // in one action.
+  const selectedRowGeometryIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const item of filteredVirtualItems) {
+      const nodeId = getExplorerNodeId(item.data);
+      if (nodeId && selectedObjectIds.includes(nodeId)) {
+        for (const id of getGeometryLeafIdsFromNode(item.data)) set.add(id);
+      }
+    }
+    return Array.from(set);
+  }, [filteredVirtualItems, selectedObjectIds]);
+
   // Expose reset-all function to parent panel
   useEffect(() => {
     if (resetAllRef) {
@@ -361,7 +376,7 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
     if (!container || container.clientHeight === 0) return false;
 
     const itemIndex = virtualItemsRef.current.findIndex(
-      (item) => item.data.raw?.id === objectId
+      (item) => getExplorerNodeId(item.data) === objectId
     );
     if (itemIndex === -1) return false; // not in view yet (expansion pending)
 
@@ -422,13 +437,13 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
       let bestOrder = -1;
       for (let order = 0; order < items.length; order++) {
         const item = items[order];
-        const nodeId = item.data.raw?.id || item.data.model?.id || item.data.id;
+        const nodeId = getExplorerNodeId(item.data);
         const indent = item.indent ?? 0;
         const exact = nodeId === id;
         const contains = !exact && getGeometryLeafIdsFromNode(item.data).includes(id);
         if (!exact && !contains) continue;
         if (bestNodeId === null || indent > bestIndent || (indent === bestIndent && order > bestOrder)) {
-          bestNodeId = nodeId;
+          bestNodeId = nodeId ?? null;
           bestIndent = indent;
           bestOrder = order;
         }
@@ -555,12 +570,17 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
     }
 
     const acousticItem = filteredVirtualItems.find(
-      (item) => selectedAcousticLayerIds.includes(item.data.raw?.id)
-        || selectedAcousticLayerNames.includes(item.data.raw?.name),
+      (item) => {
+        const id = getExplorerNodeId(item.data);
+        const rawId = item.data.raw?.id;
+        return (!!id && selectedAcousticLayerIds.includes(id))
+          || (!!rawId && selectedAcousticLayerIds.includes(rawId))
+          || selectedAcousticLayerNames.includes(item.data.raw?.name);
+      },
     );
     if (!acousticItem || acousticItem.isExpanded) return;
 
-    const layerId = acousticItem.data.raw?.id;
+    const layerId = getExplorerNodeId(acousticItem.data);
     if (!layerId) return;
 
     acousticLayerExpandedRef.current = expandKey;
@@ -621,7 +641,7 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
       const leaves = getGeometryLeafIdsFromNode(item.data);
       if (leaves.length === 0) continue;
       if (!leaves.every((id) => draft.has(id))) continue;
-      const nodeId = item.data.raw?.id || item.data.model?.id || item.id;
+      const nodeId = getExplorerNodeId(item.data) || item.id;
       if (!nodeId) continue;
       const { header } = getHeaderAndSubheader(item.data.raw, modelFileName, indent === 0);
       picked.push({ id: nodeId, name: header });
@@ -662,7 +682,7 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
 
   // Tree item callbacks
   const handleItemClick = useCallback((item: TreeItem, event: React.MouseEvent) => {
-    const objectId = item.data.raw?.id;
+    const objectId = getExplorerNodeId(item.data);
     if (!objectId) return;
 
     // Selection phase: clicking a row toggles its checkbox (tri-state).
@@ -882,12 +902,17 @@ export function ObjectExplorer({ resetAllRef, maxTreeHeight }: ObjectExplorerPro
                     showScattering={acousticCardType === 'pyroomacoustics'}
                     sortedMaterials={sortedMaterials}
                     materialColors={materialColors}
+                    selectedGeometryIds={selectedRowGeometryIds}
                     selectionPhase={phase}
                     selectionChecked={selectionChecked}
                     selectionIndeterminate={selectionIndeterminate}
                     onToggleSelection={toggleSelectionForItem}
                     hideIsolateButton={phase || (isAcousticMode && hasDefinedLayer)}
-                    isAcousticLayerRow={hasDefinedLayer && (selectedAcousticLayerIds.includes(item.data.raw?.id) || selectedAcousticLayerNames.includes(itemName))}
+                    isAcousticLayerRow={hasDefinedLayer && (
+                      selectedAcousticLayerIds.includes(getExplorerNodeId(item.data) || '')
+                      || selectedAcousticLayerIds.includes(item.data.raw?.id)
+                      || selectedAcousticLayerNames.includes(itemName)
+                    )}
                   />
                 );
               } catch (error) {

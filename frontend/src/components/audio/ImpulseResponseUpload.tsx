@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Spinner } from '@/components/ui/Spinner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import type { ImpulseResponseMetadata, SourceReceiverIRMapping } from "@/types/audio";
-import { API_BASE_URL, IR_HOVER_LINE, IR_LOW_ENERGY_THRESHOLD, SIMULATION_POSITION_MATCH_THRESHOLD } from "@/utils/constants";
+import { API_BASE_URL, IR_HOVER_LINE, IR_LOW_ENERGY_THRESHOLD, IMPULSE_RESPONSE, SIMULATION_POSITION_MATCH_THRESHOLD } from "@/utils/constants";
 import { trimDisplayName } from "@/utils/utils";
 import { parsePositionKey } from "@/utils/positionKey";
 
@@ -56,6 +56,12 @@ interface ImpulseResponseUploadProps {
   onListenerAssignmentCleared?: (pairs: SourceReceiverPair[]) => void;
   /** True when the IR list renders on a solid generated (blue) card. Drives on-blue tokens. */
   onBlueBackground?: boolean;
+  /** Linear peak-offset (-1..1) applied to every IR preview (import-irs gain). */
+  irGain?: number;
+  /** When true, IRs are previewed peak-normalized to 1.0 (matches the audio normalize toggle). */
+  irNormalizeEnabled?: boolean;
+  /** Reports each IR's peak amplitude (metadata, falling back to the decoded buffer). */
+  onIRPeaksChange?: (peaks: Record<string, number>) => void;
 }
 
 type ReceiverGroup = {
@@ -97,6 +103,9 @@ export function ImpulseResponseUpload({
   onListenerIRUploaded,
   onListenerAssignmentCleared,
   onBlueBackground = false,
+  irGain = 0,
+  irNormalizeEnabled = false,
+  onIRPeaksChange,
 }: ImpulseResponseUploadProps) {
   const handleError = useApiErrorHandler();
   const [impulseResponses, setImpulseResponses] = useState<ImpulseResponseMetadata[]>([]);
@@ -107,6 +116,10 @@ export function ImpulseResponseUpload({
 
   const [bufferCache, setBufferCache] = useState<Map<string, AudioBuffer>>(new Map());
   const [bufferLoadingIds, setBufferLoadingIds] = useState<Set<string>>(new Set());
+  // True (max across channels) peak amplitude per IR, from the decoded buffer.
+  const [bufferPeaks, setBufferPeaks] = useState<Map<string, number>>(new Map());
+  // Last reported peak map — prevents a callback-identity change from looping.
+  const lastReportedPeaksRef = useRef<string>('');
   // Dedupes concurrent buffer loads of the same IR (effects + hover can race).
   const bufferLoadPromisesRef = useRef<Map<string, Promise<AudioBuffer | null>>>(new Map());
   const [lowEnergyIRIds, setLowEnergyIRIds] = useState<Set<string>>(new Set());
@@ -226,12 +239,15 @@ export function ImpulseResponseUpload({
         const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
         let peakSum = 0;
+        let maxPeak = 0;
         for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
           const data = audioBuffer.getChannelData(ch);
           let chPeak = 0;
           for (let i = 0; i < data.length; i++) { const abs = Math.abs(data[i]); if (abs > chPeak) chPeak = abs; }
           peakSum += chPeak;
+          if (chPeak > maxPeak) maxPeak = chPeak;
         }
+        setBufferPeaks(prev => { const m = new Map(prev); m.set(ir.id, maxPeak); return m; });
         if (isLowEnergyPeak(peakSum / audioBuffer.numberOfChannels)) {
           setLowEnergyIRIds(prev => new Set(prev).add(ir.id));
         }
@@ -252,6 +268,36 @@ export function ImpulseResponseUpload({
     bufferLoadPromisesRef.current.set(ir.id, p);
     return p;
   };
+
+  // Peak amplitude for an IR, using the SAME reference as the audio engine.
+  // The engine computes the peak from the DECODED buffer (max across channels),
+  // so prefer that decoded value here: the gain slider's mute/clip thresholds
+  // and the preview scale then match the gain the engine actually applies.
+  // (Backend `peak_amplitude` metadata is the raw file peak and can differ, e.g.
+  // 0.91 vs 1.0 after the browser's decode/resample.) Fall back to metadata while
+  // the buffer is still loading.
+  const getIRPeak = useCallback((ir: ImpulseResponseMetadata): number | null => {
+    const decoded = bufferPeaks.get(ir.id);
+    if (typeof decoded === 'number' && Number.isFinite(decoded) && decoded > 0) return decoded;
+    const meta = (ir as any).peak_amplitude ?? ir.peakAmplitude;
+    return typeof meta === 'number' && Number.isFinite(meta) && meta > 0 ? meta : null;
+  }, [bufferPeaks]);
+
+  // Combined preview scale = (effectivePeak + offset) / rawPeak.
+  // effectivePeak is 1.0 when the audio normalize toggle is on (normGain does the rest),
+  // otherwise the IR's own raw peak. Returns 0 when the offset reaches the mute point.
+  const computePreviewScale = useCallback((peak: number | null): number => {
+    if (peak === null || !Number.isFinite(peak) || peak <= 0) return 1;
+    const effectivePeak = (irNormalizeEnabled && peak > IMPULSE_RESPONSE.MIN_AMPLITUDE_THRESHOLD)
+      ? IMPULSE_RESPONSE.NORMALIZATION_SCALE
+      : peak;
+    if (effectivePeak <= 0) return 1;
+    return Math.max(0, (effectivePeak + irGain) / peak);
+  }, [irNormalizeEnabled, irGain]);
+
+  // Only the import-irs card drives a gain-aware (full-scale) preview. The read-only
+  // simulation lists keep their self-normalised thumbnails.
+  const gainPreview = onIRPeaksChange !== undefined;
 
   /** Downloads the exact IR WAV file (original bytes, not the decoded/re-encoded buffer). */
   const handleDownloadIR = useCallback(async (ir: ImpulseResponseMetadata) => {
@@ -418,6 +464,25 @@ export function ImpulseResponseUpload({
     return { groups: Array.from(groups.values()), unmapped };
   }, [sourceReceiverIRMapping, pairDefinitions, impulseResponses, receiverGroups, receiverDisplayNames]);
 
+  // Report peaks upward (used by the gain slider trim range / markers) whenever they change.
+  useEffect(() => {
+    if (!onIRPeaksChange) return;
+    const peaks: Record<string, number> = {};
+    const collect = (ir: ImpulseResponseMetadata | null) => {
+      if (!ir) return;
+      const p = getIRPeak(ir);
+      if (p !== null) peaks[ir.id] = p;
+    };
+    for (const ir of impulseResponses) collect(ir);
+    if (groupedByReceiver) {
+      for (const g of groupedByReceiver.groups) for (const s of g.sources) collect(s.ir);
+    }
+    const serialized = JSON.stringify(peaks);
+    if (serialized === lastReportedPeaksRef.current) return;
+    lastReportedPeaksRef.current = serialized;
+    onIRPeaksChange(peaks);
+  }, [impulseResponses, groupedByReceiver, bufferPeaks, getIRPeak, onIRPeaksChange]);
+
   // ── Import progress (import-irs card only) ─────────────────────────────────
   const slotStats = useMemo(() => {
     if (!allowPairUploads || !groupedByReceiver) return null;
@@ -552,6 +617,7 @@ export function ImpulseResponseUpload({
     const { posLabel, soundCount, soundNames } = getSourceRowInfo(sourceId, options?.fullName ?? sourceName);
     const tooltipNames = options?.fullName ?? soundNames;
     const irBuffer = bufferCache.get(ir.id) ?? null;
+    const previewScale = computePreviewScale(getIRPeak(ir));
 
     return (
       <div
@@ -588,6 +654,7 @@ export function ImpulseResponseUpload({
           loading={bufferLoadingIds.has(ir.id)}
           onBlueBackground={onBlueBackground}
           lowEnergy={isLowEnergy}
+          amplitudeScale={gainPreview ? previewScale : undefined}
         />
         {options?.onClear && (
           <button
@@ -945,6 +1012,7 @@ export function ImpulseResponseUpload({
               impulseResponses.map(ir => {
                 const isLowEnergy = lowEnergyIRIds.has(ir.id);
                 const irBuffer = bufferCache.get(ir.id) ?? null;
+                const previewScale = computePreviewScale(getIRPeak(ir));
                 return (
                   <div
                     key={ir.id}
@@ -985,6 +1053,7 @@ export function ImpulseResponseUpload({
                         loading={bufferLoadingIds.has(ir.id)}
                         onBlueBackground={onBlueBackground}
                         lowEnergy={isLowEnergy}
+                        amplitudeScale={gainPreview ? previewScale : undefined}
                       />
                     </div>
                   </div>
@@ -1030,6 +1099,8 @@ export function ImpulseResponseUpload({
             enableWaveform={true}
             hideTextInfo={false}
             onDownload={() => handleDownloadIR(hoveredIR)}
+            amplitudeScale={gainPreview ? computePreviewScale(getIRPeak(hoveredIR)) : undefined}
+            fullScale={gainPreview}
           />
         </div>
       )}

@@ -20,8 +20,21 @@ import type { SoundMetadata, TimelineSound } from '@/types/audio';
 export class PlaybackSchedulerService {
   private transport: Transport;
 
+  /** Unsubscribes from the orchestrator's graph-changed event. */
+  private unsubGraphChanged: (() => void) | null = null;
+
+  /** The orchestrator currently subscribed to (to detect real changes). */
+  private currentOrchestrator: AudioOrchestrator | null = null;
+
   constructor(audioOrchestrator?: AudioOrchestrator | null, audioContext?: AudioContext | null) {
     this.transport = new Transport(audioOrchestrator || null, audioContext || null);
+    this.currentOrchestrator = audioOrchestrator || null;
+    // Subscribe immediately if an orchestrator was supplied at construction.
+    if (audioOrchestrator) {
+      this.unsubGraphChanged = audioOrchestrator.onGraphChanged(() => {
+        this.transport.handleGraphChanged();
+      });
+    }
   }
 
   /**
@@ -30,9 +43,31 @@ export class PlaybackSchedulerService {
    * The scheduler is created before the async orchestrator init completes, so the
    * constructor may capture a null orchestrator; the coordinator handles this via
    * setAudioOrchestrator() once it becomes available.
+   *
+   * The graph-changed subscription is owned here (not by a React effect) so it is
+   * established the moment the transport receives its orchestrator — exactly when
+   * playback becomes possible — and re-established if the orchestrator changes.
    */
   public setAudioOrchestrator(orchestrator: AudioOrchestrator | null): void {
+    const changed = orchestrator !== this.currentOrchestrator;
+    this.currentOrchestrator = orchestrator;
+
+    // Drop any previous subscription before switching orchestrators.
+    this.unsubGraphChanged?.();
+    this.unsubGraphChanged = null;
+
     this.transport.setAudioOrchestrator(orchestrator);
+
+    if (orchestrator) {
+      this.unsubGraphChanged = orchestrator.onGraphChanged(() => {
+        this.transport.handleGraphChanged();
+      });
+      // Catch up if a graph change happened before we were subscribed (or before
+      // this scheduler existed): re-issue the current position onto the live mode.
+      if (changed && this.transport.isPlaying()) {
+        this.transport.handleGraphChanged();
+      }
+    }
   }
 
   public setAudioContext(audioContext: AudioContext | null): void {
@@ -89,6 +124,15 @@ export class PlaybackSchedulerService {
     this.transport.seek(ms);
   }
 
+  /**
+   * Re-dispatch in-flight playback after the audio graph was rebuilt (mode switch,
+   * IR/order change). Re-seeks at the current position while playing; no-op when
+   * paused/stopped. Called from the AudioOrchestrator's graph-changed event.
+   */
+  public handleGraphChanged(): void {
+    this.transport.handleGraphChanged();
+  }
+
   public getPositionMs(): number {
     return this.transport.getPositionMs();
   }
@@ -105,6 +149,9 @@ export class PlaybackSchedulerService {
    * Dispose of all resources
    */
   public dispose(): void {
+    this.unsubGraphChanged?.();
+    this.unsubGraphChanged = null;
+    this.currentOrchestrator = null;
     this.transport.dispose();
   }
 }
