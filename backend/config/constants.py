@@ -779,6 +779,11 @@ CF_ACCESS_REQUIRE = os.environ.get("CF_ACCESS_REQUIRE", "").lower() in ("true", 
 CF_ACCESS_JWT_HEADER = "Cf-Access-Jwt-Assertion"
 CF_ACCESS_COOKIE = "CF_Authorization"
 CF_ACCESS_JWKS_CACHE_TTL_S = int(os.environ.get("CF_ACCESS_JWKS_CACHE_TTL_S", "3600"))
+# Tolerance for small origin<->Cloudflare clock differences when validating the
+# Access JWT's `nbf`/`iat`/`exp` claims. Without it a skewed origin clock rejects
+# every freshly issued token, so only older sessions resolve and new logins
+# silently fall back to anonymous. Default 60 s.
+CF_ACCESS_JWT_LEEWAY_S = int(os.environ.get("CF_ACCESS_JWT_LEEWAY_S", "60"))
 
 # Opaque session cookie. Sessions are non-expiring (sliding): the cookie is
 # re-issued on every visit and the server-side row never expires.

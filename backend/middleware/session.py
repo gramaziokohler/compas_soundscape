@@ -87,13 +87,23 @@ class SessionMiddleware(BaseHTTPMiddleware):
         email = None
         if cf_configured():
             email = extract_email(request)
-            if not email and CF_ACCESS_REQUIRE:
-                # Access is enforced but this request carries no valid token.
-                # Reject defensively if the origin is ever hit directly.
-                return JSONResponse(
-                    {"detail": "Not authenticated (Cloudflare Access)"},
-                    status_code=401,
+            if not email:
+                # Diagnostic: Cloudflare is configured but this request carried
+                # no verifiable Access token (missing/expired/rotated/clock-skew
+                # rejected, or the origin was hit directly). We fall back to the
+                # anonymous session unless enforcement is on — logging makes that
+                # silent degradation visible.
+                logger.info(
+                    "Cloudflare Access configured but no verifiable token on %s — anonymous fallback",
+                    request.url.path,
                 )
+                if CF_ACCESS_REQUIRE:
+                    # Access is enforced but this request carries no valid token.
+                    # Reject defensively if the origin is ever hit directly.
+                    return JSONResponse(
+                        {"detail": "Not authenticated (Cloudflare Access)"},
+                        status_code=401,
+                    )
         elif AUTH_DEV_BYPASS:
             email = DEV_USER_EMAIL
 

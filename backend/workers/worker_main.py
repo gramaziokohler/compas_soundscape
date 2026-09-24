@@ -24,14 +24,6 @@ import time
 
 from dotenv import load_dotenv, find_dotenv
 
-from services.job_store import WorkerJobStore
-from config.constants import WORKER_HEARTBEAT_INTERVAL_S, JOB_CANCEL_CHANNEL
-from utils.console import configure_utf8_stdio
-
-# Workers also print non-ASCII job/status text (e.g. GPU prompt progress) — a
-# legacy-code-page stdout would raise UnicodeEncodeError and kill the job.
-configure_utf8_stdio()
-
 
 def _load_env_files() -> None:
     """Load the same `.env.local` / `.env` the API uses (searched upward from the
@@ -43,6 +35,21 @@ def _load_env_files() -> None:
         load_dotenv(_env_local, override=True)   # admin overrides (not shipped to users)
     if _env:
         load_dotenv(_env)
+
+
+# Load the environment BEFORE importing any project package: Python runs this
+# file's module-level imports once, and `config.constants` snapshots os.environ
+# at that moment. Importing it after .env is loaded is what makes CF_ACCESS_* /
+# REDIS_URL / TANGOFLUX_* resolve correctly in workers.
+_load_env_files()
+
+from services.job_store import WorkerJobStore
+from config.constants import WORKER_HEARTBEAT_INTERVAL_S, JOB_CANCEL_CHANNEL
+from utils.console import configure_utf8_stdio
+
+# Workers also print non-ASCII job/status text (e.g. GPU prompt progress) — a
+# legacy-code-page stdout would raise UnicodeEncodeError and kill the job.
+configure_utf8_stdio()
 
 
 class WorkerState:
@@ -143,7 +150,6 @@ def main() -> None:
     args = parser.parse_args()
 
     worker_id = _make_worker_id(args.role, args.worker_id)
-    _load_env_files()
     job_store = WorkerJobStore()
     state = WorkerState()
     shutdown = threading.Event()
